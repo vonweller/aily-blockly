@@ -23,6 +23,11 @@
         cursor: pointer;
         color: #818992;
         font-size: 12px;
+        margin-right: 8px;
+
+        &:last-child {
+            margin-right: 0;
+        }
 
         .icon {
             font-size: 20px;
