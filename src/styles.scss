@@ -1,1 +1,15 @@
 /* You can add global styles to this file, and also import other style files */
+body{
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    background: linear-gradient(135deg, #f5e6ff 0%, #e0c3fc 100%);
+    overflow: hidden;
+}
+
+
+.ccenter{
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
