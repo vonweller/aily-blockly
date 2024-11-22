@@ -1,5 +1,11 @@
 import { Component } from '@angular/core';
 import * as Blockly from 'blockly';
+import {
+  ContinuousToolbox,
+  ContinuousFlyout,
+  ContinuousMetrics,
+} from './plugins/continuous-toolbox/src/index.js';
+import './plugins/toolbox-search/src/index.js';
 
 @Component({
   selector: 'blockly-arduino',
@@ -10,36 +16,49 @@ import * as Blockly from 'blockly';
 export class BlocklyArduinoComponent {
 
   toolbox = {
-    "kind": "flyoutToolbox",
+    "kind": "categoryToolbox",
     "contents": [
       {
-        "kind": "block",
-        "type": "controls_if"
+        'kind': 'search',
+        'name': 'Search',
+        'contents': [],
       },
       {
-        "kind": "block",
-        "type": "controls_repeat_ext"
+        "kind": "category",
+        "name": "Control",
+        "contents": [
+          {
+            "kind": "block",
+            "type": "controls_if"
+          },
+          {
+            "kind": "block",
+            "type": "controls_whileUntil"
+          },
+          {
+            "kind": "block",
+            "type": "controls_for"
+          }
+        ]
       },
       {
-        "kind": "block",
-        "type": "logic_compare"
-      },
-      {
-        "kind": "block",
-        "type": "math_number"
-      },
-      {
-        "kind": "block",
-        "type": "math_arithmetic"
-      },
-      {
-        "kind": "block",
-        "type": "text"
-      },
-      {
-        "kind": "block",
-        "type": "text_print"
-      },
+        "kind": "category",
+        "name": "Logic",
+        "contents": [
+          {
+            "kind": "block",
+            "type": "logic_compare"
+          },
+          {
+            "kind": "block",
+            "type": "logic_operation"
+          },
+          {
+            "kind": "block",
+            "type": "logic_boolean"
+          }
+        ]
+      }
     ]
   }
 
@@ -47,6 +66,11 @@ export class BlocklyArduinoComponent {
     setTimeout(() => {
       const workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
+        plugins: {
+          toolbox: ContinuousToolbox,
+          flyoutsVerticalToolbox: ContinuousFlyout,
+          metricsManager: ContinuousMetrics,
+        },
         theme: 'zelos',
       });
     }, 50);
