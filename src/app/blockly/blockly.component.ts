@@ -6,14 +6,17 @@ import {
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index.js';
+import { arduinoGenerator } from './generators/arduino/arduino.js';
 
 @Component({
   selector: 'blockly-arduino',
   imports: [],
-  templateUrl: './blockly-arduino.component.html',
-  styleUrl: './blockly-arduino.component.scss'
+  templateUrl: './blockly.component.html',
+  styleUrl: './blockly.component.scss'
 })
-export class BlocklyArduinoComponent {
+export class BlocklyComponent {
+
+  workspace: Blockly.WorkspaceSvg;
 
   toolbox = {
     "kind": "categoryToolbox",
@@ -64,7 +67,7 @@ export class BlocklyArduinoComponent {
 
   ngAfterViewInit(): void {
     setTimeout(() => {
-      const workspace = Blockly.inject('blocklyDiv', {
+      this.workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
         plugins: {
           toolbox: ContinuousToolbox,
@@ -73,7 +76,17 @@ export class BlocklyArduinoComponent {
         },
         theme: 'zelos',
       });
+
+      this.workspace.addChangeListener(() => {
+        let code = arduinoGenerator.workspaceToCode(this.workspace);
+      });
     }, 50);
+  }
+
+  // 加载库
+  loadLibraries() {
+
+
 
   }
 }
