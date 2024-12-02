@@ -25,6 +25,11 @@ export let HEADER_MENU = [
         }
     ], [
         {
+            name: '设备',
+            action: 'Device_connect',
+            icon: 'fa-light fa-microchip'
+        },
+        {
             name: '编译',
             action: 'Project_build',
             icon: 'fa-light fa-wrench'

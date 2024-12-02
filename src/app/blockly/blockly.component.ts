@@ -6,7 +6,8 @@ import {
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index.js';
-import { arduinoGenerator } from './generators/arduino/arduino.js';
+import { arduinoGenerator } from './generators/arduino/arduino';
+import { BlocklyService } from './blockly.service';
 
 @Component({
   selector: 'blockly-arduino',
@@ -16,53 +17,32 @@ import { arduinoGenerator } from './generators/arduino/arduino.js';
 })
 export class BlocklyComponent {
 
-  workspace: Blockly.WorkspaceSvg;
+  get workspace() {
+    return this.blocklyService.workspace
+  }
 
-  toolbox = {
-    "kind": "categoryToolbox",
-    "contents": [
-      {
-        'kind': 'search',
-        'name': 'Search',
-        'contents': [],
-      },
-      {
-        "kind": "category",
-        "name": "Control",
-        "contents": [
-          {
-            "kind": "block",
-            "type": "controls_if"
-          },
-          {
-            "kind": "block",
-            "type": "controls_whileUntil"
-          },
-          {
-            "kind": "block",
-            "type": "controls_for"
-          }
-        ]
-      },
-      {
-        "kind": "category",
-        "name": "Logic",
-        "contents": [
-          {
-            "kind": "block",
-            "type": "logic_compare"
-          },
-          {
-            "kind": "block",
-            "type": "logic_operation"
-          },
-          {
-            "kind": "block",
-            "type": "logic_boolean"
-          }
-        ]
-      }
-    ]
+  set workspace(workspace) {
+    this.blocklyService.workspace = workspace
+  }
+
+  get toolbox() {
+    return this.blocklyService.toolbox
+  }
+
+  set toolbox(toolbox) {
+    this.blocklyService.toolbox = toolbox
+  }
+
+  constructor(
+    private blocklyService: BlocklyService
+  ) {
+
+  }
+
+  ngOnInit(): void {
+    //Called after the constructor, initializing input properties, and the first call to ngOnChanges.
+    //Add 'implements OnInit' to the class.
+    this.loadLibraries();
   }
 
   ngAfterViewInit(): void {
@@ -84,9 +64,8 @@ export class BlocklyComponent {
   }
 
   // 加载库
-  loadLibraries() {
-
-
-
+  async loadLibraries() {
+    let libs = await this.blocklyService.loadLibraries();
+    // console.log(libs);
   }
 }

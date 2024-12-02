@@ -1,8 +1,8 @@
 export const APP = {
     name: "B4A",
-    website: "https://b4a.clz.me",
-    updateUrl: "https://b4a.clz.me/update.json",
-    boardUrl: "https://b4a.clz.me/boards.json",
-    libraryUrl: "https://b4a.clz.me/libraries.json",
-    exampleUrl: "https://b4a.clz.me/examples.json",
+    website: "https://b4a.clz.me",  // 官网地址
+    updateUrl: "https://b4a.clz.me/update.json", // 软件升级地址
+    boardUrl: "https://b4a.clz.me/boards.json",  // 开发板地址
+    libraryUrl: "https://b4a.clz.me/libraries.json",  // 库地址
+    exampleUrl: "https://b4a.clz.me/examples.json",   // 示例程序地址
 }
