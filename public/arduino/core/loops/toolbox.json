@@ -1,0 +1,74 @@
+{
+    "kind": "category",
+    "name": "Loops",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "arduino_setup"
+        },
+        {
+            "kind": "block",
+            "type": "arduino_loop"
+        },
+        {
+            "kind": "block",
+            "type": "controls_repeat_ext",
+            "inputs": {
+                "TIMES": {
+                    "block": {
+                        "type": "math_number",
+                        "fields": {
+                            "NUM": 10
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "kind": "block",
+            "type": "controls_repeat"
+        },
+        {
+            "kind": "block",
+            "type": "controls_whileUntil"
+        },
+        {
+            "kind": "block",
+            "type": "controls_for",
+            "inputs": {
+                "FROM": {
+                    "block": {
+                        "type": "math_number",
+                        "fields": {
+                            "NUM": 1
+                        }
+                    }
+                },
+                "TO": {
+                    "block": {
+                        "type": "math_number",
+                        "fields": {
+                            "NUM": 10
+                        }
+                    }
+                },
+                "BY": {
+                    "block": {
+                        "type": "math_number",
+                        "fields": {
+                            "NUM": 1
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "kind": "block",
+            "type": "controls_flow_statements"
+        },
+        {
+            "kind": "block",
+            "type": "logic_ternary"
+        }
+    ]
+}

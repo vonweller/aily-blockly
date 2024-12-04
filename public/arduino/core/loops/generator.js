@@ -1,9 +1,3 @@
-/**
- * @fileoverview Generating Arduino for setup/loop blocks.
- * @suppress {missingRequire}
- */
-'use strict';
-
 Arduino['arduino_setup'] = function (block) {
   const code = Arduino.statementToCode(block, 'ARDUINO_SETUP');
   Arduino.addUserSetup('setup', code)

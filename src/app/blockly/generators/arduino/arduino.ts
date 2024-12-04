@@ -296,12 +296,6 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 }
 
 function initGeneratorFunctions() {
-  // const arduinoGenerator = new Blockly.Generator('ARDUINO');
-  // // 暴露给全局对象，用以添加库时使用
-  // window['ArduinoGenerator'] = arduinoGenerator;
-  // let ArduinoGenerator.codeDict = {};
-  // window['ARDUINO'] = arduinoGenerator.forBlock;
-  // window['STATEMENT_TO_CODE'] = arduinoGenerator.statementToCode;
 
   window['addMacro'] = (tag, code) => {
     if (ArduinoGenerator.codeDict['macros'][tag] === undefined) {
@@ -350,6 +344,48 @@ function initGeneratorFunctions() {
       ArduinoGenerator.codeDict['loops'][tag] = code;
     }
   };
+
+  window['getVarType'] = function (varName) {
+    // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
+    // for (const key in variableMap) {
+    //   for (let index = 0; index < variableMap[key].length; index++) {
+    //     let variableModel = variableMap[key][index];
+    //     if (variableModel && variableModel.name == varName) return variableModel.type
+    //   }
+    // }
+    return 'int'
+  }
+
+  window['getValue'] = function (block, name: string, type = '') {
+    let code = '?'
+    if (type == 'input_statement' || type == 'input_value') {
+      try {
+        code = arduinoGenerator.statementToCode(block, name);
+        return code.replace(/(^\s*)/, "")
+      } catch (error) {
+        code = arduinoGenerator.valueToCode(block, name, Order.ATOMIC)
+        return code
+      }
+    }
+    if (type == 'field_variable') {
+      code = arduinoGenerator.nameDB_.getName(block.getFieldValue(name), 'VARIABLE')
+      return code
+    }
+    // if (type == 'field_dropdown' || type == 'field_number' || type == 'field_multilinetext') {
+    code = block.getFieldValue(name)
+    return code
+  }
+
+  window['isGlobal'] = (block) => {
+    let currentBlock = block
+    while (currentBlock.parentBlock_ != null) {
+      currentBlock = currentBlock.parentBlock_
+      if (currentBlock.type == 'arduino_setup') {
+        return true
+      }
+    }
+    return false
+  }
 }
 
 export const VAR_TYPE = [

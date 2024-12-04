@@ -1,4 +1,3 @@
 [
-    "74HC595",
-    "blinker"
+    "buzzer"
 ]

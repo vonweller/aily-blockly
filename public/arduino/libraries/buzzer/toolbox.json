@@ -1,0 +1,22 @@
+{
+    "kind": "category",
+    "name": "Buzzer",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "buzzer_play"
+        },
+        {
+            "kind": "block",
+            "type": "buzzer_stop"
+        },
+        {
+            "kind": "block",
+            "type": "buzzer_play_noTimer"
+        },
+        {
+            "kind": "block",
+            "type": "Buzzer_stop_noTimer"
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+    "kind": "category",
+    "name": "Logic",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "time_delay",
+            "inputs": {
+                "TIME": {
+                    "block": {
+                        "type": "math_number",
+                        "fields": {
+                            "NUM": 1000
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "kind": "block",
+            "type": "time_millis"
+        }
+    ]
+}

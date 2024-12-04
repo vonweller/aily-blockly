@@ -1,3 +1,21 @@
+app-header {
+    ::ng-deep {
+        .header-box {
+            position: fixed;
+        }
+    }
+}
+
+blockly-arduino {
+    ::ng-deep {
+        .blocklyBox{
+            position: fixed;
+            top: 72px;
+            height: calc(100% - 72px);
+        }
+    }
+}
+
 .bg {
     position: absolute;
     width: 100vw;
@@ -61,85 +79,3 @@
         border-radius: 50%;
     }
 }
-
-
-// /* BG */
-
-// position: absolute;
-// width: 1920px;
-// height: 1080px;
-
-
-
-// /* Rectangle 362 */
-
-// position: absolute;
-// width: 1920px;
-// height: 1080px;
-
-// background: linear-gradient(360deg, #F0F7FF 0%, #E4F0FE 100%);
-
-
-// /* Mask group */
-
-// position: absolute;
-// width: 1920px;
-// height: 1080px;
-
-
-
-// /* Rectangle 363 */
-
-// position: absolute;
-// width: 1920px;
-// height: 1080px;
-
-// background: linear-gradient(360deg, #F0F7FF 0%, #E4F0FE 100%);
-
-
-// /* Group 1000006162 */
-
-// position: absolute;
-// width: 2385px;
-// height: 1307px;
-
-
-
-// /* Ellipse 63 */
-
-// position: absolute;
-// width: 940.5px;
-// height: 689px;
-
-// background: rgba(125, 219, 255, 0.6);
-// filter: blur(151.85px);
-
-
-// /* Ellipse 64 */
-
-// position: absolute;
-// width: 850px;
-// height: 689px;
-
-// background: rgba(125, 177, 255, 0.44);
-// filter: blur(151.85px);
-
-
-// /* Ellipse 67 */
-
-// position: absolute;
-// width: 850px;
-// height: 689px;
-
-// background: rgba(125, 158, 255, 0.2);
-// filter: blur(151.85px);
-
-
-// /* Ellipse 68 */
-
-// position: absolute;
-// width: 850px;
-// height: 689px;
-
-// background: rgba(125, 158, 255, 0.2);
-// filter: blur(151.85px);

@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 import * as Blockly from 'blockly';
+import * as zhHans from 'blockly/msg/zh-hans';
 import {
   ContinuousToolbox,
   ContinuousFlyout,
@@ -40,32 +41,34 @@ export class BlocklyComponent {
   }
 
   ngOnInit(): void {
-    //Called after the constructor, initializing input properties, and the first call to ngOnChanges.
-    //Add 'implements OnInit' to the class.
+    this.blocklyService.init();
     this.loadLibraries();
   }
 
   ngAfterViewInit(): void {
     setTimeout(() => {
+      // console.log(zhHans);
+      
+      Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
-        plugins: {
-          toolbox: ContinuousToolbox,
-          flyoutsVerticalToolbox: ContinuousFlyout,
-          metricsManager: ContinuousMetrics,
-        },
+        // plugins: {
+        //   toolbox: ContinuousToolbox,
+        //   flyoutsVerticalToolbox: ContinuousFlyout,
+        //   metricsManager: ContinuousMetrics,
+        // },
         theme: 'zelos',
       });
 
       this.workspace.addChangeListener(() => {
         let code = arduinoGenerator.workspaceToCode(this.workspace);
       });
+      window['Arduino'] = <any>arduinoGenerator
     }, 50);
   }
 
   // 加载库
   async loadLibraries() {
     let libs = await this.blocklyService.loadLibraries();
-    // console.log(libs);
   }
 }

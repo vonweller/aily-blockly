@@ -26,15 +26,12 @@
             "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
             "suppressPrefixSuffix": true,
             "mutator": "controls_if_mutator",
-            "b4a":{
+            "generator":{
                 "code":"if(${IF0}) {\n  ${DO0}}\n"
             },
             "extensions": [
                 "controls_if_tooltip"
-            ],
-            "toolbox": {
-                "show": true
-            }
+            ]
         },
         {
             "type": "controls_ifelse",
@@ -65,15 +62,12 @@
             "tooltip": "%{BKYCONTROLS_IF_TOOLTIP_2}",
             "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
             "suppressPrefixSuffix": true,
-            "b4a":{
+            "generator":{
                 "code":"if(${IF0}) {\n  ${DO0}} else {\n  ${ELSE}}\n"
             },
             "extensions": [
                 "controls_if_tooltip"
-            ],
-            "toolbox": {
-                "show": true
-            }
+            ]
         },
         {
             "type": "logic_compare",
@@ -122,10 +116,7 @@
             "output": "Boolean",
             "style": "logic_blocks",
             "helpUrl": "%{BKY_LOGIC_COMPARE_HELPURL}",
-            "toolbox": {
-                "show": true
-            },
-            "b4a":{
+            "generator":{
                 "code":"${A} ${OP} ${B}"
             }
         },
@@ -165,10 +156,7 @@
             "extensions": [
                 "logic_op_tooltip"
             ],
-            "toolbox": {
-                "show": true
-            },
-            "b4a":{
+            "generator":{
                 "code":"${A} ${OP} ${B}"
             }
         },
@@ -186,10 +174,7 @@
             "style": "logic_blocks",
             "tooltip": "%{BKY_LOGIC_NEGATE_TOOLTIP}",
             "helpUrl": "%{BKY_LOGIC_NEGATE_HELPURL}",
-            "toolbox": {
-                "show": true
-            },
-            "b4a":{
+            "generator":{
                 "code":"!${BOOL}"
             }
         },
@@ -216,10 +201,7 @@
             "style": "logic_blocks",
             "tooltip": "%{BKY_LOGIC_BOOLEAN_TOOLTIP}",
             "helpUrl": "%{BKY_LOGIC_BOOLEAN_HELPURL}",
-            "toolbox": {
-                "show": true
-            },
-            "b4a":{
+            "generator":{
                 "code":"${BOOL}"
             }
         },
@@ -254,10 +236,7 @@
             "extensions": [
                 "logic_ternary"
             ],
-            "toolbox": {
-                "show": true
-            },
-            "b4a":{
+            "generator":{
                 "code":"${IF}?${THEN}:${ELSE}"
             }
         }

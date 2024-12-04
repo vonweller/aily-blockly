@@ -1,5 +1,3 @@
-import { icons } from "blockly";
-
 export let HEADER_MENU = [
     [
         {

@@ -18,9 +18,19 @@ export class BlocklyService {
     ]
   }
 
+  // get boardConfig() {
+  //   return 
+  // }
+
+  boardConfig;
+
   constructor(
     private http: HttpClient
   ) { }
+
+  async init() {
+    this.boardConfig = await lastValueFrom(this.http.get<any[]>('/board/Arduino_UNO.json', { responseType: 'json' }))
+  }
 
   async loadLibraries() {
     let coreLibraries = await lastValueFrom(this.http.get<any[]>('/arduino/core/core.json', { responseType: 'json' }))
@@ -29,6 +39,8 @@ export class BlocklyService {
       const libName = coreLibraries[index];
       this.loadLibrary(libName, 'core')
     }
+    // core和第三方库之间加一个分割线
+    this.addToolboxSep();
     for (let index = 0; index < otherLibraries.length; index++) {
       const libName = otherLibraries[index];
       this.loadLibrary(libName)
@@ -38,14 +50,15 @@ export class BlocklyService {
   loadLibrary(libName: String, path: String = 'libraries') {
     return new Promise(async (resolve, reject) => {
       try {
-        let libData = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/index.json`, { responseType: 'json' }))
-        console.log(libData);
-
+        let blocks = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/index.json`, { responseType: 'json' }))
+        let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
+        // console.log(blocks, toolbox);
         // lib分三部分加载，json, generator, toolbox
-        if (libData.block) await this.loadLibBlock(libData)
-        if (libData.generator) await this.loadLibScript(libData.generator)
-        if (libData.toolbox && libData.show) await this.loadLibToolbox(libData.toolbox)
-        // resolve(true)
+        if (blocks) this.loadLibBlocks(blocks)
+        if (toolbox) this.loadLibToolbox(toolbox)
+        // if (toolbox) this.workspace.updateToolbox(toolbox)
+        // if (libData.generator) await this.loadLibScript(libData.generator)
+
 
       } catch (error) {
         resolve(false)
@@ -53,14 +66,28 @@ export class BlocklyService {
     })
   }
 
-  async loadLibBlock(libData: LibData) {
-    return new Promise(async (resolve, reject) => {
-      let libJson = processJsonVar(libData)
-      console.log(libJson);
-      
-      processingJsonGenerator(libJson, libData.name)
-      resolve(true)
+  loadLibBlocks(blocks) {
+    for (let index = 0; index < blocks.length; index++) {
+      let block = blocks[index];
+      block = processJsonVar(block, this.boardConfig)
+      Blockly.defineBlocksWithJsonArray([block])
+      // processingJsonGenerator(block)
+    }
+  }
+
+  addToolboxSep() {
+    this.toolbox.contents.push({
+      "kind": "sep",
+      "cssConfig": {
+        "container": "sepLine"
+      }
     })
+    this.workspace.updateToolbox(this.toolbox)
+  }
+
+  loadLibToolbox(toolboxItem) {
+    this.toolbox.contents.push(toolboxItem)
+    this.workspace.updateToolbox(this.toolbox)
   }
 
   loadLibScript(filePath) {
@@ -76,32 +103,41 @@ export class BlocklyService {
     })
   }
 
-  async loadLibToolbox(libData) {
-    return new Promise(async (resolve, reject) => {
-      // this.loadUrl(path).subscribe(
-      //   (config: any) => {
-      //     // console.log(config);
-      //     this.toolbox['contents'].push(config)
-      //     resolve(true)
-      //   },
-      //   error => {
-      //     resolve(false)
-      //   })
-    })
-  }
-
-
-
-
-
 }
 
 export interface LibData {
   name: string,
-  block?: string
+  blocks?: string
   generator?: string
   toolbox?: string,
   json?: any,
   show?: boolean
 }
+
+export interface LibDataBlock {
+  inputsInline: boolean,
+  message0?: string
+  type?: string
+  args0?: any,
+  previousStatement?: any,
+  nextStatement?: any,
+  colour?: number,
+  tooltip?: string,
+  helpUrl?: string,
+  generator: string
+}
+
+export interface LibDataGenerator {
+  code: string,
+  macros?: string
+  libraries?: string
+  variables?: string,
+  objects?: string,
+  functions?: string,
+  setups?: string,
+  userSetups?: string,
+  loop?: string,
+  userLoop?: string,
+}
+
 
