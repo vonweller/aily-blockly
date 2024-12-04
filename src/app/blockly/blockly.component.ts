@@ -9,6 +9,7 @@ import {
 import './plugins/toolbox-search/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
+import { DEV_THEME } from './theme.config.js';
 
 @Component({
   selector: 'blockly-arduino',
@@ -57,7 +58,8 @@ export class BlocklyComponent {
         //   flyoutsVerticalToolbox: ContinuousFlyout,
         //   metricsManager: ContinuousMetrics,
         // },
-        theme: 'zelos',
+        renderer: 'thrasos',
+        theme: Blockly.Theme.defineTheme('modest',DEV_THEME)
       });
 
       this.workspace.addChangeListener(() => {

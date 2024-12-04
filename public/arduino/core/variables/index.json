@@ -1,0 +1,56 @@
+[
+    {
+        "kind": "button",
+        "text": "创建 变量",
+        "callbackKey": "CREATE_VARIABLE"
+    },
+    {
+        "type": "variables_set",
+        "message0": "变量赋值 %1 赋值 %2",
+        "args0": [
+            {
+                "type": "field_variable",
+                "name": "VAR",
+                "variable": "var",
+                "variableTypes": [
+                    "b4aVariable"
+                ],
+                "defaultType": "b4aVariable"
+            },
+            {
+                "type": "input_value",
+                "name": "VALUE"
+            }
+        ],
+        "previousStatement": null,
+        "nextStatement": null,
+        "style": "variable_blocks",
+        "tooltip": "%{BKY_VARIABLES_SET_TOOLTIP}",
+        "helpUrl": "%{BKY_VARIABLES_SET_HELPURL}",
+        "extensions": [
+            "contextMenu_variableSetterGetter"
+        ]
+    },
+    {
+        "type": "variables_get",
+        "message0": "%1",
+        "args0": [
+            {
+                "type": "field_variable",
+                "name": "VAR",
+                "variable": "var",
+                "variableTypes": [
+                    "b4aVariable"
+                ],
+                "defaultType": "b4aVariable"
+            }
+        ],
+        "output": null,
+        "style": "variable_blocks",
+        "helpUrl": "%{BKY_VARIABLES_GET_HELPURL}",
+        "tooltip": "%{BKY_VARIABLES_GET_TOOLTIP}",
+        "extensions": [
+            "contextMenu_variableSetterGetter"
+        ]
+    }
+]

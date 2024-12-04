@@ -2,5 +2,8 @@
     "io",
     "logic",
     "loops",
-    "serial"
+    "serial",
+    "time",
+    "variables",
+    "functions"
 ]

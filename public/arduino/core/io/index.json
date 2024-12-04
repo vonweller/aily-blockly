@@ -3,7 +3,7 @@
         "inputsInline": true,
         "message0": "引脚 %1 模式设置为 %2",
         "type": "io_pinmode",
-        "colour": "#48c2c4",
+        "colour": "#FFCF5C",
         "args0": [
             {
                 "type": "input_value",
@@ -24,7 +24,7 @@
         "inputsInline": true,
         "message0": "引脚 %1输出数字信号 %2",
         "type": "io_digitalwrite",
-        "colour": "#48c2c4",
+        "colour": "#FFCF5C",
         "args0": [
             {
                 "type": "input_value",
@@ -45,7 +45,7 @@
         "inputsInline": true,
         "message0": "读取引脚 %1 的数字信号",
         "type": "io_digitalread",
-        "colour": "#48c2c4",
+        "colour": "#FFCF5C",
         "args0": [
             {
                 "type": "input_value",
@@ -61,7 +61,7 @@
         "inputsInline": true,
         "message0": "引脚 %1 输出PWM信号%2",
         "type": "io_analogwrite",
-        "colour": "#48c2c4",
+        "colour": "#FFCF5C",
         "args0": [
             {
                 "type": "input_value",
@@ -82,7 +82,7 @@
         "inputsInline": true,
         "message0": "读取引脚 %1 的模拟信号",
         "type": "io_analogread",
-        "colour": "#48c2c4",
+        "colour": "#FFCF5C",
         "args0": [
             {
                 "type": "input_value",
@@ -98,7 +98,7 @@
         "inputsInline": true,
         "message0": "数字引脚%1",
         "type": "io_pin_digi",
-        "colour": "#66bb6a",
+        "colour": "#00C48C",
         "args0": [
             {
                 "type": "field_dropdown",
@@ -115,7 +115,7 @@
         "inputsInline": true,
         "message0": "模拟引脚%1",
         "type": "io_pin_adc",
-        "colour": "#66bb6a",
+        "colour": "#00C48C",
         "args0": [
             {
                 "type": "field_dropdown",
@@ -132,7 +132,7 @@
         "inputsInline": true,
         "message0": "PWM引脚%1",
         "type": "io_pin_pwm",
-        "colour": "#66bb6a",
+        "colour": "#00C48C",
         "args0": [
             {
                 "type": "field_dropdown",
@@ -169,7 +169,7 @@
             }
         ],
         "output": "Any",
-        "colour": "#66bb6a",
+        "colour": "#00C48C",
         "tooltip": "mode",
         "helpUrl": "",
         "generator": {
@@ -196,7 +196,7 @@
             }
         ],
         "output": "Any",
-        "colour": "#66bb6a",
+        "colour": "#00C48C",
         "tooltip": "state",
         "helpUrl": "",
         "generator": {
