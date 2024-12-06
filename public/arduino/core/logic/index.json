@@ -1,244 +1,236 @@
-{
-    "category": "逻辑",
-    "icon": "fa-light fa-code-branch",
-    "colour": "#48c2c4",
-    "version": "0.0.1",
-    "blocks": [
-        {
-            "type": "controls_if",
-            "message0": "%{BKY_CONTROLS_IF_MSG_IF} %1",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "IF0"
-                }
-            ],
-            "message1": "%{BKY_CONTROLS_IF_MSG_THEN} %1",
-            "args1": [
-                {
-                    "type": "input_statement",
-                    "name": "DO0"
-                }
-            ],
-            "previousStatement": null,
-            "nextStatement": null,
-            "style": "logic_blocks",
-            "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
-            "suppressPrefixSuffix": true,
-            "mutator": "controls_if_mutator",
-            "generator":{
-                "code":"if(${IF0}) {\n  ${DO0}}\n"
+[
+    {
+        "type": "controls_if",
+        "message0": "如果 %1",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "IF0"
+            }
+        ],
+        "message1": "则执行 %1",
+        "args1": [
+            {
+                "type": "input_statement",
+                "name": "DO0"
+            }
+        ],
+        "previousStatement": null,
+        "nextStatement": null,
+        "style": "logic_blocks",
+        "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
+        "generator": {
+            "code": "if(${IF0}) {\n  ${DO0}}\n"
+        },
+        "extensions": [
+            "controls_if_tooltip"
+        ]
+    },
+    {
+        "type": "controls_ifelse",
+        "message0": "%{BKY_CONTROLS_IF_MSG_IF} %1",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "IF0"
+            }
+        ],
+        "message1": "%{BKY_CONTROLS_IF_MSG_THEN} %1",
+        "args1": [
+            {
+                "type": "input_statement",
+                "name": "DO0"
+            }
+        ],
+        "message2": "%{BKY_CONTROLS_IF_MSG_ELSE} %1",
+        "args2": [
+            {
+                "type": "input_statement",
+                "name": "ELSE"
+            }
+        ],
+        "previousStatement": null,
+        "nextStatement": null,
+        "style": "logic_blocks",
+        "tooltip": "%{BKYCONTROLS_IF_TOOLTIP_2}",
+        "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
+        "suppressPrefixSuffix": true,
+        "generator": {
+            "code": "if(${IF0}) {\n  ${DO0}} else {\n  ${ELSE}}\n"
+        },
+        "extensions": [
+            "controls_if_tooltip"
+        ]
+    },
+    {
+        "type": "logic_compare",
+        "message0": "%1 %2 %3",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "A"
             },
-            "extensions": [
-                "controls_if_tooltip"
-            ]
-        },
-        {
-            "type": "controls_ifelse",
-            "message0": "%{BKY_CONTROLS_IF_MSG_IF} %1",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "IF0"
-                }
-            ],
-            "message1": "%{BKY_CONTROLS_IF_MSG_THEN} %1",
-            "args1": [
-                {
-                    "type": "input_statement",
-                    "name": "DO0"
-                }
-            ],
-            "message2": "%{BKY_CONTROLS_IF_MSG_ELSE} %1",
-            "args2": [
-                {
-                    "type": "input_statement",
-                    "name": "ELSE"
-                }
-            ],
-            "previousStatement": null,
-            "nextStatement": null,
-            "style": "logic_blocks",
-            "tooltip": "%{BKYCONTROLS_IF_TOOLTIP_2}",
-            "helpUrl": "%{BKY_CONTROLS_IF_HELPURL}",
-            "suppressPrefixSuffix": true,
-            "generator":{
-                "code":"if(${IF0}) {\n  ${DO0}} else {\n  ${ELSE}}\n"
+            {
+                "type": "field_dropdown",
+                "name": "OP",
+                "options": [
+                    [
+                        "==",
+                        "=="
+                    ],
+                    [
+                        "!=",
+                        "!="
+                    ],
+                    [
+                        "<",
+                        "<"
+                    ],
+                    [
+                        ">",
+                        ">"
+                    ],
+                    [
+                        ">=",
+                        ">="
+                    ],
+                    [
+                        "<=",
+                        "<="
+                    ]
+                ]
             },
-            "extensions": [
-                "controls_if_tooltip"
-            ]
-        },
-        {
-            "type": "logic_compare",
-            "message0": "%1 %2 %3",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "A"
-                },
-                {
-                    "type": "field_dropdown",
-                    "name": "OP",
-                    "options": [
-                        [
-                            "==",
-                            "=="
-                        ],
-                        [
-                            "!=",
-                            "!="
-                        ],
-                        [
-                            "<",
-                            "<"
-                        ],
-                        [
-                            ">",
-                            ">"
-                        ],
-                        [
-                            ">=",
-                            ">="
-                        ],
-                        [
-                            "<=",
-                            "<="
-                        ]
-                    ]
-                },
-                {
-                    "type": "input_value",
-                    "name": "B"
-                }
-            ],
-            "inputsInline": true,
-            "output": "Boolean",
-            "style": "logic_blocks",
-            "helpUrl": "%{BKY_LOGIC_COMPARE_HELPURL}",
-            "generator":{
-                "code":"${A} ${OP} ${B}"
+            {
+                "type": "input_value",
+                "name": "B"
             }
-        },
-        {
-            "type": "logic_operation",
-            "message0": "%1 %2 %3",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "A",
-                    "check": "Any"
-                },
-                {
-                    "type": "field_dropdown",
-                    "name": "OP",
-                    "options": [
-                        [
-                            "与",
-                            "&&"
-                        ],
-                        [
-                            "或",
-                            "||"
-                        ]
-                    ]
-                },
-                {
-                    "type": "input_value",
-                    "name": "B",
-                    "check": "Any"
-                }
-            ],
-            "inputsInline": true,
-            "output": "Boolean",
-            "style": "logic_blocks",
-            "helpUrl": "%{BKY_LOGIC_OPERATION_HELPURL}",
-            "extensions": [
-                "logic_op_tooltip"
-            ],
-            "generator":{
-                "code":"${A} ${OP} ${B}"
-            }
-        },
-        {
-            "type": "logic_negate",
-            "message0": "%{BKY_LOGIC_NEGATE_TITLE}",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "BOOL",
-                    "check": "Boolean"
-                }
-            ],
-            "output": "Boolean",
-            "style": "logic_blocks",
-            "tooltip": "%{BKY_LOGIC_NEGATE_TOOLTIP}",
-            "helpUrl": "%{BKY_LOGIC_NEGATE_HELPURL}",
-            "generator":{
-                "code":"!${BOOL}"
-            }
-        },
-        {
-            "type": "logic_boolean",
-            "message0": "%1",
-            "args0": [
-                {
-                    "type": "field_dropdown",
-                    "name": "BOOL",
-                    "options": [
-                        [
-                            "%{BKY_LOGIC_BOOLEAN_TRUE}",
-                            "true"
-                        ],
-                        [
-                            "%{BKY_LOGIC_BOOLEAN_FALSE}",
-                            "false"
-                        ]
-                    ]
-                }
-            ],
-            "output": "Boolean",
-            "style": "logic_blocks",
-            "tooltip": "%{BKY_LOGIC_BOOLEAN_TOOLTIP}",
-            "helpUrl": "%{BKY_LOGIC_BOOLEAN_HELPURL}",
-            "generator":{
-                "code":"${BOOL}"
-            }
-        },
-        {
-            "type": "logic_ternary",
-            "message0": "%{BKY_LOGIC_TERNARY_CONDITION} %1",
-            "args0": [
-                {
-                    "type": "input_value",
-                    "name": "IF",
-                    "check": "Boolean"
-                }
-            ],
-            "message1": "%{BKY_LOGIC_TERNARY_IF_TRUE} %1",
-            "args1": [
-                {
-                    "type": "input_value",
-                    "name": "THEN"
-                }
-            ],
-            "message2": "%{BKY_LOGIC_TERNARY_IF_FALSE} %1",
-            "args2": [
-                {
-                    "type": "input_value",
-                    "name": "ELSE"
-                }
-            ],
-            "output": null,
-            "style": "logic_blocks",
-            "tooltip": "%{BKY_LOGIC_TERNARY_TOOLTIP}",
-            "helpUrl": "%{BKY_LOGIC_TERNARY_HELPURL}",
-            "extensions": [
-                "logic_ternary"
-            ],
-            "generator":{
-                "code":"${IF}?${THEN}:${ELSE}"
-            }
+        ],
+        "inputsInline": true,
+        "output": "Boolean",
+        "style": "logic_blocks",
+        "helpUrl": "%{BKY_LOGIC_COMPARE_HELPURL}",
+        "generator": {
+            "code": "${A} ${OP} ${B}"
         }
-    ]
-}
+    },
+    {
+        "type": "logic_operation",
+        "message0": "%1 %2 %3",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "A",
+                "check": "Any"
+            },
+            {
+                "type": "field_dropdown",
+                "name": "OP",
+                "options": [
+                    [
+                        "与",
+                        "&&"
+                    ],
+                    [
+                        "或",
+                        "||"
+                    ]
+                ]
+            },
+            {
+                "type": "input_value",
+                "name": "B",
+                "check": "Any"
+            }
+        ],
+        "inputsInline": true,
+        "output": "Boolean",
+        "style": "logic_blocks",
+        "helpUrl": "%{BKY_LOGIC_OPERATION_HELPURL}",
+        "extensions": [
+            "logic_op_tooltip"
+        ],
+        "generator": {
+            "code": "${A} ${OP} ${B}"
+        }
+    },
+    {
+        "type": "logic_negate",
+        "message0": "%{BKY_LOGIC_NEGATE_TITLE}",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "BOOL",
+                "check": "Boolean"
+            }
+        ],
+        "output": "Boolean",
+        "style": "logic_blocks",
+        "tooltip": "%{BKY_LOGIC_NEGATE_TOOLTIP}",
+        "helpUrl": "%{BKY_LOGIC_NEGATE_HELPURL}",
+        "generator": {
+            "code": "!${BOOL}"
+        }
+    },
+    {
+        "type": "logic_boolean",
+        "message0": "%1",
+        "args0": [
+            {
+                "type": "field_dropdown",
+                "name": "BOOL",
+                "options": [
+                    [
+                        "%{BKY_LOGIC_BOOLEAN_TRUE}",
+                        "true"
+                    ],
+                    [
+                        "%{BKY_LOGIC_BOOLEAN_FALSE}",
+                        "false"
+                    ]
+                ]
+            }
+        ],
+        "output": "Boolean",
+        "style": "logic_blocks",
+        "tooltip": "%{BKY_LOGIC_BOOLEAN_TOOLTIP}",
+        "helpUrl": "%{BKY_LOGIC_BOOLEAN_HELPURL}",
+        "generator": {
+            "code": "${BOOL}"
+        }
+    },
+    {
+        "type": "logic_ternary",
+        "message0": "%{BKY_LOGIC_TERNARY_CONDITION} %1",
+        "args0": [
+            {
+                "type": "input_value",
+                "name": "IF",
+                "check": "Boolean"
+            }
+        ],
+        "message1": "%{BKY_LOGIC_TERNARY_IF_TRUE} %1",
+        "args1": [
+            {
+                "type": "input_value",
+                "name": "THEN"
+            }
+        ],
+        "message2": "%{BKY_LOGIC_TERNARY_IF_FALSE} %1",
+        "args2": [
+            {
+                "type": "input_value",
+                "name": "ELSE"
+            }
+        ],
+        "output": null,
+        "style": "logic_blocks",
+        "tooltip": "%{BKY_LOGIC_TERNARY_TOOLTIP}",
+        "helpUrl": "%{BKY_LOGIC_TERNARY_HELPURL}",
+        "extensions": [
+            "logic_ternary"
+        ],
+        "generator": {
+            "code": "${IF}?${THEN}:${ELSE}"
+        }
+    }
+]

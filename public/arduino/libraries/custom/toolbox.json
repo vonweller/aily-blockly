@@ -1,0 +1,10 @@
+{
+    "kind": "category",
+    "name": "Custom",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "custom_mled"
+        }
+    ]
+}

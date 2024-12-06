@@ -40,30 +40,21 @@ export class BlocklyService {
       this.loadLibrary(libName, 'core')
     }
     // core和第三方库之间加一个分割线
-    this.addToolboxSep();
+    // this.addToolboxSep();
     for (let index = 0; index < otherLibraries.length; index++) {
       const libName = otherLibraries[index];
       this.loadLibrary(libName)
     }
   }
 
-  loadLibrary(libName: String, path: String = 'libraries') {
-    return new Promise(async (resolve, reject) => {
-      try {
-        let blocks = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/index.json`, { responseType: 'json' }))
-        let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
-        // console.log(blocks, toolbox);
-        // lib分三部分加载，json, generator, toolbox
-        if (blocks) this.loadLibBlocks(blocks)
-        if (toolbox) this.loadLibToolbox(toolbox)
-        // if (toolbox) this.workspace.updateToolbox(toolbox)
-        // if (libData.generator) await this.loadLibScript(libData.generator)
-
-
-      } catch (error) {
-        resolve(false)
-      }
-    })
+  async loadLibrary(libName: String, path: String = 'libraries') {
+    let blocks = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/index.json`, { responseType: 'json' }))
+    let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
+    // lib分三部分加载，json, generator, toolbox
+    if (blocks) this.loadLibBlocks(blocks)
+    if (toolbox) this.loadLibToolbox(toolbox)
+    // if (toolbox) this.workspace.updateToolbox(toolbox)
+    // if (libData.generator) await this.loadLibScript(libData.generator)
   }
 
   loadLibBlocks(blocks) {

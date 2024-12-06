@@ -8,10 +8,6 @@
         },
         {
             "kind": "block",
-            "type": "io_digitalwrite"
-        },
-        {
-            "kind": "block",
             "type": "controls_ifelse"
         },
         {
@@ -29,10 +25,6 @@
         {
             "kind": "block",
             "type": "logic_boolean"
-        },
-        {
-            "kind": "block",
-            "type": "logic_ternary"
         }
     ]
 }

@@ -1,0 +1,29 @@
+{
+    "name": "aily-blockly/core/custom",
+    "author": "奈何col",
+    "description": "串口通信",
+    "version": "0.0.1",
+    "config": {
+        "category": "Serial",
+        "icon": "fa-light fa-arrow-right-arrow-left",
+        "colour": "#66bb6a"
+    },
+    "compatibility": {
+        "core": [
+            "arduino:avr",
+            "esp32:esp32",
+            "esp8266:esp8266"
+        ],
+        "voltage": [3.3,5]
+    },
+    "keywords": [
+        "aily",
+        "blockly",
+        "core",
+        "io"
+    ],
+    "scripts": {},
+    "private": true,
+    "dependencies": {},
+    "devDependencies": {}
+}

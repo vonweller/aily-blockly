@@ -1,40 +1,40 @@
 export let DEV_THEME = {
     name: 'dev_theme',
-    // fontStyle: {
-    //     family: 'Google Sans',
-    //     weight: 'bold',
-    //     size: 16,
-    // },
+    fontStyle: {
+        family: 'MiSans Regular',
+        // weight: 'bold',
+        size: 10,
+    },
     blockStyles: {
         logic_blocks: {
-            colourPrimary: '#D1C4E9',
-            colourSecondary: '#EDE7F6',
-            colorTertiary: '#B39DDB',
+            colourPrimary: '#BE52F2',
+            colourSecondary: '#BE52F2',
+            colorTertiary: '#BE52F2',
         },
         loop_blocks: {
-            colourPrimary: '#A5D6A7',
-            colourSecondary: '#E8F5E9',
-            colorTertiary: '#66BB6A',
+            colourPrimary: '#FFCF5C',
+            colourSecondary: '#FFCF5C',
+            colorTertiary: '#FFCF5C',
         },
         math_blocks: {
-            colourPrimary: '#2196F3',
-            colourSecondary: '#1E88E5',
-            colorTertiary: '#0D47A1',
+            colourPrimary: '#0084F4',
+            colourSecondary: '#0084F4',
+            colorTertiary: '#0084F4',
         },
         text_blocks: {
-            colourPrimary: '#FFCA28',
-            colourSecondary: '#FFF8E1',
-            colorTertiary: '#FF8F00',
+            colourPrimary: '#FF647C',
+            colourSecondary: '#FF647C',
+            colorTertiary: '#FF647C',
         },
         list_blocks: {
-            colourPrimary: '#4DB6AC',
-            colourSecondary: '#B2DFDB',
-            colorTertiary: '#009688',
+            colourPrimary: '#6979F8',
+            colourSecondary: '#6979F8',
+            colorTertiary: '#6979F8',
         },
         variable_blocks: {
-            colourPrimary: '#EF9A9A',
-            colourSecondary: '#FFEBEE',
-            colorTertiary: '#EF5350',
+            colourPrimary: '#F2994A',
+            colourSecondary: '#F2994A',
+            colorTertiary: '#F2994A',
         },
         variable_dynamic_blocks: {
             colourPrimary: '#EF9A9A',
@@ -42,9 +42,9 @@ export let DEV_THEME = {
             colorTertiary: '#EF5350',
         },
         procedure_blocks: {
-            colourPrimary: '#D7CCC8',
-            colourSecondary: '#EFEBE9',
-            colorTertiary: '#BCAAA4',
+            colourPrimary: '#00C48C',
+            colourSecondary: '#00C48C',
+            colorTertiary: '#00C48C',
         },
     },
 }

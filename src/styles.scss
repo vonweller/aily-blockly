@@ -5,6 +5,7 @@ body{
     margin: 0;
     // background: linear-gradient(135deg, #f5e6ff 0%, #e0c3fc 100%);
     overflow: hidden;
+    font-family: 'MiSans Regular', sans-serif;
 }
 
 
@@ -12,4 +13,10 @@ body{
     display: flex;
     justify-content: center;
     align-items: center;
+}
+
+@font-face {
+    font-family: 'MiSans Regular';
+    src: url('/fonts/MiSans-Regular.woff2') format('woff2');
+    font-display: swap;
 }
