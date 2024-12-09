@@ -36,6 +36,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": "node_modules/blockly/media/",
+                "output": "blockly/media"
               }
             ],
             "styles": [

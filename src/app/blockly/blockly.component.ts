@@ -58,7 +58,9 @@ export class BlocklyComponent {
         //   flyoutsVerticalToolbox: ContinuousFlyout,
         //   metricsManager: ContinuousMetrics,
         // },
+        media: 'blockly/media/',
         renderer: 'thrasos',
+        trashcan: true,
         theme: Blockly.Theme.defineTheme('modest',DEV_THEME)
       });
 
