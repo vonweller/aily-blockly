@@ -52,12 +52,7 @@ export class BlocklyService {
     if (blocks) this.loadLibBlocks(blocks)
     let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
     if (toolbox) this.loadLibToolbox(toolbox)
-    try {
-      let generator = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/generator.js`))
-      if (generator) console.log(generator);
-    } catch (error) {
-      console.log(error);
-    }
+    this.loadLibGenerator(`/arduino/${path}/${libName}/generator.js`)
   }
 
   loadLibBlocks(blocks) {
