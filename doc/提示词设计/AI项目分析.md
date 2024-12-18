@@ -40,15 +40,25 @@ S：error: #error Please set a mode BLINKER_BLE/BLINKER_WIFI/BLINKER_MQTT ! Plea
 
 R：该问题是你没在程序中定义物联网设备接入模式造成的。你可以在程序的初始位置添加宏定义语句#define BLINKER_WIFI，定义设备接入模式为WiFi。
 你可以拖拽以下块到程序初始位置，以解决这个报错。
-[blockly-]
+[block - ]
 
 
 ## 模组使用
 S: 当前开发板为Arduino uno R4
 U: LCD1602模组应该怎么接？
 R：推荐使用以下连接方式：
-|-|-|-|
 
+| 1602 LCD | Arduino |
+| -------- | ------- |
+| RS       | 12      |
+| R/W      | GND     |
+| Enable   | 11      |
+| D4       | 5       |
+| D5       | 4       |
+| D6       | 3       |
+| D7       | 2       |
 
-是否需要我帮您连接到您的硬件：
+你可以使用以下块，完成LCD1602显示屏的初始化：
+
+[block - ]
 

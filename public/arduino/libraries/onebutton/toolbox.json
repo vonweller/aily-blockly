@@ -1,0 +1,30 @@
+{
+    "kind": "category",
+    "name": "oneButton",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "onebutton_set_longpress_interval"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_attach_longpress_start"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_attach_longpress_stop"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_attach_during_longpress"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_set_longpress_interval"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_tick"
+        }
+    ]
+}

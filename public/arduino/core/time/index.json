@@ -16,19 +16,6 @@
         "helpUrl": "",
         "generator": {
             "code": "delay(${TIME});"
-        },
-        "toolbox": {
-            "show": true,
-            "inputs": {
-                "TIME": {
-                    "block": {
-                        "type": "math_number",
-                        "fields": {
-                            "NUM": 1000
-                        }
-                    }
-                }
-            }
         }
     },
     {

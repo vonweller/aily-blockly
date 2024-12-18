@@ -4,7 +4,11 @@
     "contents": [
         {
             "kind": "block",
-            "type": "custom_mled"
+            "type": "custom_mled_on"
+        },
+        {
+            "kind": "block",
+            "type": "custom_mled_off"
         }
     ]
 }
