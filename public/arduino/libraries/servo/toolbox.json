@@ -1,0 +1,14 @@
+{
+    "kind": "category",
+    "name": "Servo",
+    "contents": [
+        {
+            "kind": "block",
+            "type": "servo_attach"
+        },
+        {
+            "kind": "block",
+            "type": "servo_write"
+        }
+    ]
+}

@@ -1,5 +1,3 @@
-'use strict';
-
 Arduino['variable_define'] = function (block) {
   let varType = getValue(block, 'TYPE', 'field_dropdown')
   let varName = getValue(block, 'VAR', 'field_variable')

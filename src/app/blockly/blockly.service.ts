@@ -48,13 +48,16 @@ export class BlocklyService {
   }
 
   async loadLibrary(libName: String, path: String = 'libraries') {
-    let blocks = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/index.json`, { responseType: 'json' }))
-    let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
-    // lib分三部分加载，json, generator, toolbox
+    let blocks = await lastValueFrom(this.http.get<LibData>(`/arduino/${path}/${libName}/block.json`, { responseType: 'json' }))
     if (blocks) this.loadLibBlocks(blocks)
+    let toolbox = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/toolbox.json`, { responseType: 'json' }))
     if (toolbox) this.loadLibToolbox(toolbox)
-    // if (toolbox) this.workspace.updateToolbox(toolbox)
-    // if (libData.generator) await this.loadLibScript(libData.generator)
+    try {
+      let generator = await lastValueFrom(this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(`/arduino/${path}/${libName}/generator.js`))
+      if (generator) console.log(generator);
+    } catch (error) {
+      console.log(error);
+    }
   }
 
   loadLibBlocks(blocks) {
@@ -81,7 +84,7 @@ export class BlocklyService {
     this.workspace.updateToolbox(this.toolbox)
   }
 
-  loadLibScript(filePath) {
+  loadLibGenerator(filePath) {
     return new Promise((resolve, reject) => {
       let script = document.createElement('script');
       script.type = 'text/javascript';

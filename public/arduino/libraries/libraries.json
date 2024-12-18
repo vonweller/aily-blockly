@@ -1,5 +1,6 @@
 [
     "buzzer",
     "custom",
-    "onebutton"
+    "onebutton",
+    "servo"
 ]
