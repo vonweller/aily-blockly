@@ -1,9 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { APP } from '../configs/app.config';
 import { lastValueFrom } from 'rxjs';
 import * as Blockly from 'blockly';
-import { processingJsonGenerator, processJsonVar } from './abf';
+import { processJsonVar } from './abf';
 
 @Injectable({
   providedIn: 'root'

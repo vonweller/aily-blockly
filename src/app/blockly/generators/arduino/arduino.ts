@@ -128,7 +128,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     // loop
     ArduinoGenerator.codeDict['loops'] = Object.create(null);
 
-    initGeneratorFunctions();
+    // initGeneratorFunctions();
 
     this.isInitialized = true;
   }
@@ -293,59 +293,55 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     return at;
   }
 
-}
-
-function initGeneratorFunctions() {
-
-  window['addMacro'] = (tag, code) => {
+  addMacro(tag, code) {
     if (ArduinoGenerator.codeDict['macros'][tag] === undefined) {
       ArduinoGenerator.codeDict['macros'][tag] = code;
     }
   };
 
-  window['addLibrary'] = (tag, code) => {
+  addLibrary(tag, code) {
     if (ArduinoGenerator.codeDict['libraries'][tag] === undefined) {
       ArduinoGenerator.codeDict['libraries'][tag] = code;
     }
-  };
+  }
 
-  window['addVariable'] = (tag, code) => {
+  addVariable(tag, code) {
     if (ArduinoGenerator.codeDict['variables'][tag] === undefined) {
       ArduinoGenerator.codeDict['variables'][tag] = code;
     }
-  };
+  }
 
-  window['addObject'] = (tag, code) => {
+  addObject(tag, code) {
     if (ArduinoGenerator.codeDict['objects'][tag] === undefined) {
       ArduinoGenerator.codeDict['objects'][tag] = code;
     }
-  };
+  }
 
-  window['addFunction'] = (tag, code) => {
+  addFunction(tag, code) {
     if (ArduinoGenerator.codeDict['functions'][tag] === undefined) {
       ArduinoGenerator.codeDict['functions'][tag] = code;
     }
-  };
+  }
 
-  window['addSetup'] = (tag, code) => {
+  addSetup(tag, code) {
     if (ArduinoGenerator.codeDict['setups'][tag] === undefined) {
       ArduinoGenerator.codeDict['setups'][tag] = code;
     }
-  };
+  }
 
-  window['addUserSetup'] = (tag, code) => {
+  addUserSetup(tag, code) {
     if (ArduinoGenerator.codeDict['userSetups'][tag] === undefined) {
       ArduinoGenerator.codeDict['userSetups'][tag] = code;
     }
-  };
+  }
 
-  window['addLoop'] = (tag, code) => {
+  addLoop(tag, code) {
     if (ArduinoGenerator.codeDict['loops'][tag] === undefined) {
       ArduinoGenerator.codeDict['loops'][tag] = code;
     }
-  };
+  }
 
-  window['getVarType'] = function (varName) {
+  getVarType(varName) {
     // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
     // for (const key in variableMap) {
     //   for (let index = 0; index < variableMap[key].length; index++) {
@@ -356,7 +352,7 @@ function initGeneratorFunctions() {
     return 'int'
   }
 
-  window['getValue'] = function (block, name: string, type = '') {
+  getValue(block, name: string, type = '') {
     let code = '?'
     if (type == 'input_statement' || type == 'input_value') {
       try {
@@ -376,7 +372,7 @@ function initGeneratorFunctions() {
     return code
   }
 
-  window['isGlobal'] = (block) => {
+  varIsGlobal(block) {
     let currentBlock = block
     while (currentBlock.parentBlock_ != null) {
       currentBlock = currentBlock.parentBlock_
@@ -386,7 +382,101 @@ function initGeneratorFunctions() {
     }
     return false
   }
+
 }
+
+// function initGeneratorFunctions() {
+
+//   window['addMacro'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['macros'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['macros'][tag] = code;
+//     }
+//   };
+
+//   window['addLibrary'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['libraries'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['libraries'][tag] = code;
+//     }
+//   };
+
+//   window['addVariable'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['variables'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['variables'][tag] = code;
+//     }
+//   };
+
+//   window['addObject'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['objects'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['objects'][tag] = code;
+//     }
+//   };
+
+//   window['addFunction'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['functions'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['functions'][tag] = code;
+//     }
+//   };
+
+//   window['addSetup'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['setups'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['setups'][tag] = code;
+//     }
+//   };
+
+//   window['addUserSetup'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['userSetups'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['userSetups'][tag] = code;
+//     }
+//   };
+
+//   window['addLoop'] = (tag, code) => {
+//     if (ArduinoGenerator.codeDict['loops'][tag] === undefined) {
+//       ArduinoGenerator.codeDict['loops'][tag] = code;
+//     }
+//   };
+
+//   window['getVarType'] = function (varName) {
+//     // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
+//     // for (const key in variableMap) {
+//     //   for (let index = 0; index < variableMap[key].length; index++) {
+//     //     let variableModel = variableMap[key][index];
+//     //     if (variableModel && variableModel.name == varName) return variableModel.type
+//     //   }
+//     // }
+//     return 'int'
+//   }
+
+//   window['getValue'] = function (block, name: string, type = '') {
+//     let code = '?'
+//     if (type == 'input_statement' || type == 'input_value') {
+//       try {
+//         code = arduinoGenerator.statementToCode(block, name);
+//         return code.replace(/(^\s*)/, "")
+//       } catch (error) {
+//         code = arduinoGenerator.valueToCode(block, name, Order.ATOMIC)
+//         return code
+//       }
+//     }
+//     if (type == 'field_variable') {
+//       code = arduinoGenerator.nameDB_.getName(block.getFieldValue(name), 'VARIABLE')
+//       return code
+//     }
+//     // if (type == 'field_dropdown' || type == 'field_number' || type == 'field_multilinetext') {
+//     code = block.getFieldValue(name)
+//     return code
+//   }
+
+//   window['isGlobal'] = (block) => {
+//     let currentBlock = block
+//     while (currentBlock.parentBlock_ != null) {
+//       currentBlock = currentBlock.parentBlock_
+//       if (currentBlock.type == 'arduino_setup') {
+//         return true
+//       }
+//     }
+//     return false
+//   }
+// }
 
 export const VAR_TYPE = [
   { name: 'int', value: 'int' },

@@ -1,157 +1,116 @@
 [
     {
-        "type": "onebutton_create",
-        "message0": "创建 OneButton 按钮，使用引脚 %1 低电平激活 %2 启用内置上拉 %3",
+        "inputsInline": true,
+        "message0": "初始化按钮 在引脚 %1",
+        "type": "onebutton_setup",
         "args0": [
             {
-                "type": "field_number",
+                "type": "field_dropdown",
                 "name": "PIN",
-                "value": 0
-            },
-            {
-                "type": "field_checkbox",
-                "name": "ACTIVE_LOW",
-                "checked": true
-            },
-            {
-                "type": "field_checkbox",
-                "name": "PULLUP_ACTIVE",
-                "checked": true
+                "options": "${board.digitalPins}"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "创建OneButton对象",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "OneButton button(${PIN}, ${ACTIVE_LOW}, ${PULLUP_ACTIVE});"
+            "code": "button.setup(${PIN});",
+            "object": "OneButton button;"
         }
     },
     {
-        "type": "onebutton_attach_click",
-        "message0": "为按钮设置单击事件 %1",
+        "inputsInline": true,
+        "message0": "按钮单击事件 %1",
+        "type": "onebutton_attachClick",
         "args0": [
             {
-                "type": "input_value",
-                "name": "CLICK_FUNCTION"
+                "type": "input_statement",
+                "name": "CLICK_FUNC"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Attach click event",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "button.attachClick(${CLICK_FUNCTION});"
+            "code": "button.attachClick(${CLICK_FUNC});",
+            "library": "#include <OneButton.h>"
         }
     },
     {
-        "type": "onebutton_attach_doubleclick",
-        "message0": "为按钮设置双击事件 %1",
+        "inputsInline": true,
+        "message0": "按钮双击事件 %1",
+        "type": "onebutton_attachDoubleClick",
         "args0": [
             {
-                "type": "input_value",
-                "name": "DOUBLECLICK_FUNCTION"
+                "type": "input_statement",
+                "name": "DOUBLE_CLICK_FUNC"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Attach double click event",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "button.attachDoubleClick(${DOUBLECLICK_FUNCTION});"
+            "code": "button.attachDoubleClick(${DOUBLE_CLICK_FUNC});"
         }
     },
     {
-        "type": "onebutton_attach_longpress_start",
-        "message0": "为按钮设置长按开始事件 %1",
+        "inputsInline": true,
+        "message0": "按钮长按开始事件 %1",
+        "type": "onebutton_attachLongPressStart",
         "args0": [
             {
-                "type": "input_value",
-                "name": "LONGPRESSSTART_FUNCTION"
+                "type": "input_statement",
+                "name": "LONG_PRESS_START_FUNC"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Attach long press start event",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "button.attachLongPressStart(${LONGPRESSSTART_FUNCTION});"
+            "code": "button.attachLongPressStart(${LONG_PRESS_START_FUNC});"
         }
     },
     {
-        "type": "onebutton_attach_longpress_stop",
-        "message0": "为按钮设置长按停止事件 %1",
+        "inputsInline": true,
+        "message0": "按钮长按停止事件 %1",
+        "type": "onebutton_attachLongPressStop",
         "args0": [
             {
-                "type": "input_value",
-                "name": "LONGPRESSSTOP_FUNCTION"
+                "type": "input_statement",
+                "name": "LONG_PRESS_STOP_FUNC"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Attach long press stop event",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "button.attachLongPressStop(${LONGPRESSSTOP_FUNCTION});"
+            "code": "button.attachLongPressStop(${LONG_PRESS_STOP_FUNC});"
         }
     },
     {
-        "type": "onebutton_attach_during_longpress",
-        "message0": "为按钮设置长按期间事件 %1",
+        "inputsInline": true,
+        "message0": "按钮长按持续事件 %1",
+        "type": "onebutton_attachDuringLongPress",
         "args0": [
             {
-                "type": "input_value",
-                "name": "DURINGLONGPRESS_FUNCTION"
+                "type": "input_statement",
+                "name": "DURING_LONG_PRESS_FUNC"
             }
         ],
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Attach during long press event",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
-            "code": "button.attachDuringLongPress(${DURINGLONGPRESS_FUNCTION});"
+            "code": "button.attachDuringLongPress(${DURING_LONG_PRESS_FUNC});"
         }
     },
     {
-        "type": "onebutton_set_longpress_interval",
-        "message0": "设置长按间隔 %1 ms",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "INTERVAL"
-            }
-        ],
         "inputsInline": true,
-        "previousStatement": null,
-        "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Set long press interval",
-        "helpUrl": "",
-        "generator": {
-            "code": "button.setLongPressIntervalMs(${INTERVAL});"
-        }
-    },
-    {
+        "message0": "检查按钮状态",
         "type": "onebutton_tick",
-        "message0": "执行按钮 tick",
-        "inputsInline": true,
         "previousStatement": null,
         "nextStatement": null,
-        "colour": 230,
-        "tooltip": "Call button tick",
-        "helpUrl": "",
+        "colour": "#FF5733",
         "generator": {
             "code": "button.tick();"
         }

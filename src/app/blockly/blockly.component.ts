@@ -42,8 +42,6 @@ export class BlocklyComponent {
   }
 
   ngOnInit(): void {
-    this.blocklyService.init();
-    this.loadLibraries();
   }
 
   ngAfterViewInit(): void {
@@ -67,7 +65,9 @@ export class BlocklyComponent {
       this.workspace.addChangeListener(() => {
         let code = arduinoGenerator.workspaceToCode(this.workspace);
       });
-      window['Arduino'] = <any>arduinoGenerator
+      window['Arduino'] = <any>arduinoGenerator;
+      this.blocklyService.init();
+      this.loadLibraries();
     }, 50);
   }
 

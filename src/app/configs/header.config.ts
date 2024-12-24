@@ -25,7 +25,8 @@ export let HEADER_MENU = [
         {
             name: '设备',
             action: 'Device_connect',
-            icon: 'fa-light fa-microchip'
+            icon: 'fa-light fa-microchip',
+            device: true
         },
         {
             name: '编译',

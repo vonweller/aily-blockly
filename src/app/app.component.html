@@ -7,4 +7,9 @@
 </div>
 <app-header></app-header>
 <blockly-arduino></blockly-arduino>
+<app-project-btn (click)="openProjectManager()"></app-project-btn>
+@if (showProjectManager) {
+    <app-project-manager></app-project-manager>
+}
 
+<app-aily-chat></app-aily-chat>

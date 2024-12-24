@@ -1,26 +1,30 @@
 {
     "kind": "category",
-    "name": "oneButton",
+    "name": "OneButton",
     "contents": [
         {
             "kind": "block",
-            "type": "onebutton_set_longpress_interval"
+            "type": "onebutton_setup"
         },
         {
             "kind": "block",
-            "type": "onebutton_attach_longpress_start"
+            "type": "onebutton_attachClick"
         },
         {
             "kind": "block",
-            "type": "onebutton_attach_longpress_stop"
+            "type": "onebutton_attachDoubleClick"
         },
         {
             "kind": "block",
-            "type": "onebutton_attach_during_longpress"
+            "type": "onebutton_attachLongPressStart"
         },
         {
             "kind": "block",
-            "type": "onebutton_set_longpress_interval"
+            "type": "onebutton_attachLongPressStop"
+        },
+        {
+            "kind": "block",
+            "type": "onebutton_attachDuringLongPress"
         },
         {
             "kind": "block",

@@ -7,6 +7,9 @@ import {
 } from "@ngx-translate/core";
 import { HeaderComponent } from './components/header/header.component';
 import { BlocklyComponent } from './blockly/blockly.component';
+import { ProjectBtnComponent } from './components/project-btn/project-btn.component';
+import { ProjectManagerComponent } from './components/project-mangager/project-manager.component';
+import { AilyChatComponent } from './components/aily-chat/aily-chat.component';
 
 @Component({
   selector: 'app-root',
@@ -14,7 +17,10 @@ import { BlocklyComponent } from './blockly/blockly.component';
     BlocklyComponent,
     TranslatePipe,
     TranslateDirective,
-    HeaderComponent
+    HeaderComponent,
+    ProjectBtnComponent,
+    ProjectManagerComponent,
+    AilyChatComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
@@ -22,9 +28,15 @@ import { BlocklyComponent } from './blockly/blockly.component';
 export class AppComponent {
   title = 'aily-blockly';
 
+  showProjectManager = false;
+
   constructor(private translate: TranslateService) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
+  }
+
+  openProjectManager(){
+    this.showProjectManager = !this.showProjectManager;
   }
 }
