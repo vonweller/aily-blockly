@@ -1,14 +1,16 @@
-import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
-import { NgxDragResizeModule, NgxResizeHandleType } from 'ngx-drag-resize';
+import { Component } from '@angular/core';
+import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 
 @Component({
   selector: 'app-aily-chat',
-  imports: [NgxDragResizeModule],
+  imports: [
+    InnerWindowComponent
+  ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss'
 })
 export class AilyChatComponent {
-  readonly handleType = NgxResizeHandleType;
+
 
   // private isDragging = false;
   // private startX: number;

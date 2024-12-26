@@ -41,10 +41,17 @@
                 "glob": "**/*",
                 "input": "node_modules/blockly/media/",
                 "output": "blockly/media"
+              },
+              {
+                "glob": "**/*",
+                "input": "./node_modules/monaco-editor/min/vs",
+                "output": "/assets/vs"
               }
             ],
             "styles": [
-              "src/styles.scss"
+              "src/styles.scss",
+              "node_modules/ng-zorro-antd/code-editor/style/index.css",
+              "node_modules/angular2-draggable/css/resizable.min.css"
             ],
             "scripts": []
           },
@@ -54,12 +61,12 @@
                 {
                   "type": "initial",
                   "maximumWarning": "500kB",
-                  "maximumError": "1MB"
+                  "maximumError": "2MB"
                 },
                 {
                   "type": "anyComponentStyle",
                   "maximumWarning": "4kB",
-                  "maximumError": "8kB"
+                  "maximumError": "128kB"
                 }
               ],
               "outputHashing": "all"

@@ -1,1 +1,6 @@
-<p>inner-window works!</p>
+<div class="inner-window" ngDraggable [handle]="Handle" ngResizable [rzHandles]="'all'">
+    <div class="header" #Handle>{{title}}</div>
+    <div class="content">
+        <ng-content></ng-content>
+    </div>
+</div>

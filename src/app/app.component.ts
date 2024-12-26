@@ -9,7 +9,9 @@ import { HeaderComponent } from './components/header/header.component';
 import { BlocklyComponent } from './blockly/blockly.component';
 import { ProjectBtnComponent } from './components/project-btn/project-btn.component';
 import { ProjectManagerComponent } from './components/project-mangager/project-manager.component';
-import { AilyChatComponent } from './components/aily-chat/aily-chat.component';
+import { AilyChatComponent } from './tools/aily-chat/aily-chat.component';
+import { SerialMonitorComponent } from './tools/serial-monitor/serial-monitor.component';
+import { CodeViewerComponent } from './tools/code-viewer/code-viewer.component';
 
 @Component({
   selector: 'app-root',
@@ -20,7 +22,9 @@ import { AilyChatComponent } from './components/aily-chat/aily-chat.component';
     HeaderComponent,
     ProjectBtnComponent,
     ProjectManagerComponent,
-    AilyChatComponent
+    AilyChatComponent,
+    CodeViewerComponent,
+    SerialMonitorComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
