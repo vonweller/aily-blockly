@@ -1,5 +1,15 @@
-<div class="inner-window" ngDraggable [handle]="Handle" ngResizable [rzHandles]="'all'">
-    <div class="header" #Handle>{{title}}</div>
+<div class="inner-window animate__animated animate__faster" ngDraggable [handle]="Handle" ngResizable [rzHandles]="'all'"
+[ngClass]="{'animate__fadeOutTopRight': isMinimize,
+'animate__fadeOut': isClose,
+}">
+    <div class="header">
+        <div class="title ccenter" #Handle>{{title}}</div>
+        <div class="btns ccenter">
+            <div class="ccenter" (click)="minimize()"><i class="fa-light fa-minus"></i></div>
+            <div class="ccenter" (click)="maximize()"><i class="fa-light fa-square"></i></div>
+            <div class="ccenter" (click)="close()"><i class="fa-light fa-xmark"></i></div>
+        </div>
+    </div>
     <div class="content">
         <ng-content></ng-content>
     </div>

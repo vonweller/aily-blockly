@@ -3,7 +3,7 @@ export function processingJsonGenerator(blockJson) {
     if (blockJson.generator) {
         let Arduino: any = window['Arduino']
         let getValue: any = window['getValue']
-        Arduino[blockJson.type] = (block) => {
+        Arduino.forBlock[blockJson.type] = (block) => {
             // 添加宏
             if (blockJson.generator.macro) {
                 window['addMacro'](blockJson.generator.macro, blockJson.generator.macro)

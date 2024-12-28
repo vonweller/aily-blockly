@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { lastValueFrom } from 'rxjs';
+import { lastValueFrom, Subject } from 'rxjs';
 import * as Blockly from 'blockly';
 import { processJsonVar } from './abf';
 
@@ -16,6 +16,8 @@ export class BlocklyService {
     "contents": [
     ]
   }
+
+  codeSubject = new Subject<string>();
 
   // get boardConfig() {
   //   return 
@@ -36,13 +38,13 @@ export class BlocklyService {
     let otherLibraries = await lastValueFrom(this.http.get<any[]>('/arduino/libraries/libraries.json', { responseType: 'json' }))
     for (let index = 0; index < coreLibraries.length; index++) {
       const libName = coreLibraries[index];
-      this.loadLibrary(libName, 'core')
+      await this.loadLibrary(libName, 'core')
     }
     // core和第三方库之间加一个分割线
     // this.addToolboxSep();
     for (let index = 0; index < otherLibraries.length; index++) {
       const libName = otherLibraries[index];
-      this.loadLibrary(libName)
+      await this.loadLibrary(libName)
     }
   }
 

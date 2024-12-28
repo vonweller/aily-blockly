@@ -1,10 +1,14 @@
 import { Component } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
+import { NzInputModule } from 'ng-zorro-antd/input';
+import { FormsModule } from '@angular/forms';
 
 @Component({
   selector: 'app-aily-chat',
   imports: [
-    InnerWindowComponent
+    InnerWindowComponent,
+    NzInputModule,
+    FormsModule
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss'
@@ -15,6 +19,7 @@ export class AilyChatComponent {
   // private isDragging = false;
   // private startX: number;
   // private startWidth: number;
+  inputValue = '';
 
   ngOnInit() {
   }

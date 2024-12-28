@@ -1,16 +1,16 @@
-Arduino['arduino_setup'] = function (block) {
+Arduino.forBlock['arduino_setup'] = function (block) {
   const code = Arduino.statementToCode(block, 'ARDUINO_SETUP');
   Arduino.addUserSetup('setup', code)
   return null;
 };
 
-Arduino['arduino_loop'] = function (block) {
+Arduino.forBlock['arduino_loop'] = function (block) {
   const code = Arduino.statementToCode(block, 'ARDUINO_LOOP');
   Arduino.addLoop('loop', code)
   return null;
 };
 
-Arduino['controls_repeat_ext'] = function (block) {
+Arduino.forBlock['controls_repeat_ext'] = function (block) {
   // Repeat n times.
   let repeats;
   if (block.getField('TIMES')) {
@@ -38,9 +38,9 @@ Arduino['controls_repeat_ext'] = function (block) {
   return code;
 };
 
-Arduino['controls_repeat'] = Arduino['controls_repeat_ext'];
+Arduino.forBlock['controls_repeat'] = Arduino.forBlock['controls_repeat_ext'];
 
-Arduino['controls_whileUntil'] = function (block) {
+Arduino.forBlock['controls_whileUntil'] = function (block) {
   // Do while/until loop.
   const until = block.getFieldValue('MODE') === 'UNTIL';
   let argument0 =
@@ -56,7 +56,7 @@ Arduino['controls_whileUntil'] = function (block) {
   return 'while (' + argument0 + ') {\n' + branch + '}\n';
 };
 
-Arduino['controls_for'] = function (block) {
+Arduino.forBlock['controls_for'] = function (block) {
   // For loop.
   const variable0 = Arduino.nameDB_.getName(block.getFieldValue('VAR'), 'VARIABLE');
   // getValue(block,'VAR')
@@ -85,7 +85,7 @@ Arduino['controls_for'] = function (block) {
   return code;
 };
 
-Arduino['controls_flow_statements'] = function (block) {
+Arduino.forBlock['controls_flow_statements'] = function (block) {
   // Flow statements: continue, break.
   let xfix = '';
   if (Arduino.STATEMENT_PREFIX) {

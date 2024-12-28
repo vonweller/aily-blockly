@@ -1,4 +1,4 @@
-Arduino['math_number'] = function (block) {
+Arduino.forBlock['math_number'] = function (block) {
   // Numeric value.
   const code = Number(block.getFieldValue('NUM'));
   const order = code >= 0 ? Arduino.ORDER_ATOMIC :

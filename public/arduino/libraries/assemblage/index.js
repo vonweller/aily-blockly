@@ -1,6 +1,6 @@
 'use strict';
 
-Arduino['variable_var_type'].prototype.processB4ACodeBefore = function (block, blockJson) {
+Arduino.forBlock['variable_var_type'].prototype.processB4ACodeBefore = function (block, blockJson) {
   // console.log(block);
   blockJson.b4a.primary = 'variable_var_type_' + Math.random();
 
@@ -25,7 +25,7 @@ Arduino['variable_var_type'].prototype.processB4ACodeBefore = function (block, b
   }
 }
 
-Arduino['variable_var_name'].prototype.processB4ACodeBefore = function (block, blockJson) {
+Arduino.forBlock['variable_var_name'].prototype.processB4ACodeBefore = function (block, blockJson) {
   blockJson.b4a.primary = 'variable_var_name_' + Math.random();
   let code = blockJson.b4a;
 
@@ -54,9 +54,9 @@ Arduino['variable_var_name'].prototype.processB4ACodeBefore = function (block, b
   return code;
 }
 
-Arduino['assemblage_var_type'].prototype.processB4ACodeBefore = Arduino['variable_var_type'].prototype.processB4ACodeBefore;
+Arduino.forBlock['assemblage_var_type'].prototype.processB4ACodeBefore = Arduino.forBlock['variable_var_type'].prototype.processB4ACodeBefore;
 
-Arduino['assemblage_add'].prototype.processB4ACodeBefore = function (block, blockJson) {
+Arduino.forBlock['assemblage_add'].prototype.processB4ACodeBefore = function (block, blockJson) {
   let code = blockJson.b4a;
 
   const OBJECT = block.getField('OBJECT');
@@ -85,7 +85,7 @@ Arduino['assemblage_add'].prototype.processB4ACodeBefore = function (block, bloc
 }
 
 //
-// // Arduino['assemblage_set_value'] = function (block) {
+// // Arduino.forBlock['assemblage_set_value'] = function (block) {
 // //   console.log(3333, block);
 // //   const code = block.getFieldValue('DEFAULT') || {};
 // //   // const order = code >= 0 ? Arduino.ORDER_ATOMIC :
@@ -93,7 +93,7 @@ Arduino['assemblage_add'].prototype.processB4ACodeBefore = function (block, bloc
 // //   return [code, Arduino.ORDER_UNARY_NEGATION];
 // // };
 //
-// // Arduino['assemblage_set'] = function (block) {
+// // Arduino.forBlock['assemblage_set'] = function (block) {
 // //   // Variable setter.
 // //   let argument0 = getValue(block, 'VALUE') || '0'
 // //   console.log(argument0);
@@ -103,8 +103,8 @@ Arduino['assemblage_add'].prototype.processB4ACodeBefore = function (block, bloc
 // //   // return `${varName} = ${argument0};\n`
 // // };
 //
-// // Arduino['assemblage_get_dynamic'] = Arduino['assemblage_get']
-// // Arduino['assemblage_set_dynamic'] = Arduino['assemblage_set_value']
+// // Arduino.forBlock['assemblage_get_dynamic'] = Arduino.forBlock['assemblage_get']
+// // Arduino.forBlock['assemblage_set_dynamic'] = Arduino.forBlock['assemblage_set_value']
 //
 // // goog.provide('Blockly.Blocks.set');
 // // goog.require('Blockly.Blocks');

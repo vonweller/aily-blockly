@@ -7,7 +7,7 @@ import {
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index.js';
-import { arduinoGenerator } from './generators/arduino/arduino';
+import { arduinoGenerator, DEFAULT_DATA } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
 
@@ -46,8 +46,6 @@ export class BlocklyComponent {
 
   ngAfterViewInit(): void {
     setTimeout(() => {
-      // console.log(zhHans);
-      
       Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
@@ -58,16 +56,27 @@ export class BlocklyComponent {
         // },
         media: 'blockly/media/',
         renderer: 'thrasos',
+        theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
         trashcan: true,
-        theme: Blockly.Theme.defineTheme('modest',DEV_THEME)
+        grid: {
+          spacing: 20,          // 网格间距为20像素
+          length: 3,           // 网格点的大小
+          colour: '#ccc',
+          snap: true
+        }
+      });
+      this.workspace.addChangeListener((event) => {
+        let code = arduinoGenerator.workspaceToCode(this.workspace);
+        this.blocklyService.codeSubject.next(code);
       });
 
-      this.workspace.addChangeListener(() => {
-        let code = arduinoGenerator.workspaceToCode(this.workspace);
-      });
       window['Arduino'] = <any>arduinoGenerator;
       this.blocklyService.init();
       this.loadLibraries();
+      setTimeout(() => {
+        this.loadDefaultData();
+      }, 500);
+
     }, 50);
   }
 
@@ -75,4 +84,14 @@ export class BlocklyComponent {
   async loadLibraries() {
     let libs = await this.blocklyService.loadLibraries();
   }
+
+  loadDefaultData() {
+    let tempJson = JSON.parse(DEFAULT_DATA)
+    this.loadJson(tempJson)
+  }
+
+  loadJson(json) {
+    Blockly.serialization.workspaces.load(json, this.workspace)
+  }
+
 }

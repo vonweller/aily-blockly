@@ -43,7 +43,7 @@ const inputTypes = Blockly.inputs.inputTypes
 
 export class ArduinoGenerator extends Blockly.CodeGenerator {
 
-  static codeDict = {};
+  codeDict = {};
 
   /** @param name Name of the language the generator is for. */
   constructor(name = 'Arduino') {
@@ -110,25 +110,25 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
 
     // codeDict主要是为了防止代码重复生成
-    ArduinoGenerator.codeDict = {};
+    this.codeDict = {};
     // 宏定义  
-    ArduinoGenerator.codeDict['macros'] = Object.create(null);
+    this.codeDict['macros'] = Object.create(null);
     // 库引用
-    ArduinoGenerator.codeDict['libraries'] = Object.create(null);
+    this.codeDict['libraries'] = Object.create(null);
     // 变量
-    ArduinoGenerator.codeDict['variables'] = Object.create(null);
+    this.codeDict['variables'] = Object.create(null);
     // 对象
-    ArduinoGenerator.codeDict['objects'] = Object.create(null);
+    this.codeDict['objects'] = Object.create(null);
     // 函数
-    ArduinoGenerator.codeDict['functions'] = Object.create(null);
+    this.codeDict['functions'] = Object.create(null);
     // setup
-    ArduinoGenerator.codeDict['setups'] = Object.create(null);
+    this.codeDict['setups'] = Object.create(null);
     // 用户自定义setup
-    ArduinoGenerator.codeDict['userSetups'] = Object.create(null);
+    this.codeDict['userSetups'] = Object.create(null);
     // loop
-    ArduinoGenerator.codeDict['loops'] = Object.create(null);
-
-    // initGeneratorFunctions();
+    this.codeDict['loops'] = Object.create(null);
+    // 用户自定义loop
+    this.codeDict['userLoops'] = Object.create(null);
 
     this.isInitialized = true;
   }
@@ -140,14 +140,66 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
    * @returns Completed code.
    */
   override finish(code: string): string {
-    // Convert the definitions dictionary into a list.
-    const definitions = Object.values(this.definitions_);
-    // Call Blockly.CodeGenerator's finish.
     super.finish(code);
+    // this.isInitialized = false;
+    this.nameDB_!.reset();
+
+    // 提取代码
+    let macros = [];
+    let libraries = [];
+    let variables = [];
+    let objects = [];
+    let functions = [];
+    let setups = [];
+    let userSetups = [];
+    let loops = [];
+    let userLoops = [];
+
+    for (const key in this.codeDict['macros']) {
+      macros.push(this.codeDict['macros'][key])
+    }
+    for (const key in this.codeDict['libraries']) {
+      libraries.push(this.codeDict['libraries'][key])
+    }
+    for (const key in this.codeDict['variables']) {
+      variables.push(this.codeDict['variables'][key])
+    }
+    for (const key in this.codeDict['objects']) {
+      objects.push(this.codeDict['objects'][key])
+    }
+    for (const key in this.codeDict['functions']) {
+      functions.push(this.codeDict['functions'][key])
+    }
+    for (const key in this.codeDict['setups']) {
+      setups.push(this.codeDict['setups'][key])
+    }
+    for (const key in this.codeDict['userSetups']) {
+      userSetups.push(this.codeDict['userSetups'][key])
+    }
+    for (const key in this.codeDict['userLoops']) {
+      userLoops.push(this.codeDict['userLoops'][key])
+    }
+    for (const key in this.codeDict['loops']) {
+      loops.push(this.codeDict['loops'][key])
+    }
+
     this.isInitialized = false;
 
-    this.nameDB_!.reset();
-    return definitions.join('\n\n') + '\n\n\n' + code;
+    let newcode =
+      (macros.length > 0 ? `${macros.join('\n')}\n\n` : '') +
+      (libraries.length > 0 ? `${libraries.join('\n')}\n\n` : '') +
+      (variables.length > 0 ? `${variables.join('\n')}\n\n` : '') +
+      (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
+      (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
+      `void setup() {\n` +
+      `${setups.join('\n')}` +
+      `${userSetups.join('\n')}` +
+      `}\n\n` +
+      `void loop() {\n` +
+      `${userLoops.join('\n')}` +
+      `${loops.join('\n')}` +
+      `}`
+    return newcode;
   }
 
   /**
@@ -294,50 +346,50 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
   }
 
   addMacro(tag, code) {
-    if (ArduinoGenerator.codeDict['macros'][tag] === undefined) {
-      ArduinoGenerator.codeDict['macros'][tag] = code;
+    if (this.codeDict['macros'][tag] === undefined) {
+      this.codeDict['macros'][tag] = code;
     }
   };
 
   addLibrary(tag, code) {
-    if (ArduinoGenerator.codeDict['libraries'][tag] === undefined) {
-      ArduinoGenerator.codeDict['libraries'][tag] = code;
+    if (this.codeDict['libraries'][tag] === undefined) {
+      this.codeDict['libraries'][tag] = code;
     }
   }
 
   addVariable(tag, code) {
-    if (ArduinoGenerator.codeDict['variables'][tag] === undefined) {
-      ArduinoGenerator.codeDict['variables'][tag] = code;
+    if (this.codeDict['variables'][tag] === undefined) {
+      this.codeDict['variables'][tag] = code;
     }
   }
 
   addObject(tag, code) {
-    if (ArduinoGenerator.codeDict['objects'][tag] === undefined) {
-      ArduinoGenerator.codeDict['objects'][tag] = code;
+    if (this.codeDict['objects'][tag] === undefined) {
+      this.codeDict['objects'][tag] = code;
     }
   }
 
   addFunction(tag, code) {
-    if (ArduinoGenerator.codeDict['functions'][tag] === undefined) {
-      ArduinoGenerator.codeDict['functions'][tag] = code;
+    if (this.codeDict['functions'][tag] === undefined) {
+      this.codeDict['functions'][tag] = code;
     }
   }
 
   addSetup(tag, code) {
-    if (ArduinoGenerator.codeDict['setups'][tag] === undefined) {
-      ArduinoGenerator.codeDict['setups'][tag] = code;
+    if (this.codeDict['setups'][tag] === undefined) {
+      this.codeDict['setups'][tag] = code;
     }
   }
 
   addUserSetup(tag, code) {
-    if (ArduinoGenerator.codeDict['userSetups'][tag] === undefined) {
-      ArduinoGenerator.codeDict['userSetups'][tag] = code;
+    if (this.codeDict['userSetups'][tag] === undefined) {
+      this.codeDict['userSetups'][tag] = code;
     }
   }
 
   addLoop(tag, code) {
-    if (ArduinoGenerator.codeDict['loops'][tag] === undefined) {
-      ArduinoGenerator.codeDict['loops'][tag] = code;
+    if (this.codeDict['loops'][tag] === undefined) {
+      this.codeDict['loops'][tag] = code;
     }
   }
 
@@ -385,99 +437,6 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
 }
 
-// function initGeneratorFunctions() {
-
-//   window['addMacro'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['macros'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['macros'][tag] = code;
-//     }
-//   };
-
-//   window['addLibrary'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['libraries'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['libraries'][tag] = code;
-//     }
-//   };
-
-//   window['addVariable'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['variables'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['variables'][tag] = code;
-//     }
-//   };
-
-//   window['addObject'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['objects'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['objects'][tag] = code;
-//     }
-//   };
-
-//   window['addFunction'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['functions'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['functions'][tag] = code;
-//     }
-//   };
-
-//   window['addSetup'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['setups'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['setups'][tag] = code;
-//     }
-//   };
-
-//   window['addUserSetup'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['userSetups'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['userSetups'][tag] = code;
-//     }
-//   };
-
-//   window['addLoop'] = (tag, code) => {
-//     if (ArduinoGenerator.codeDict['loops'][tag] === undefined) {
-//       ArduinoGenerator.codeDict['loops'][tag] = code;
-//     }
-//   };
-
-//   window['getVarType'] = function (varName) {
-//     // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
-//     // for (const key in variableMap) {
-//     //   for (let index = 0; index < variableMap[key].length; index++) {
-//     //     let variableModel = variableMap[key][index];
-//     //     if (variableModel && variableModel.name == varName) return variableModel.type
-//     //   }
-//     // }
-//     return 'int'
-//   }
-
-//   window['getValue'] = function (block, name: string, type = '') {
-//     let code = '?'
-//     if (type == 'input_statement' || type == 'input_value') {
-//       try {
-//         code = arduinoGenerator.statementToCode(block, name);
-//         return code.replace(/(^\s*)/, "")
-//       } catch (error) {
-//         code = arduinoGenerator.valueToCode(block, name, Order.ATOMIC)
-//         return code
-//       }
-//     }
-//     if (type == 'field_variable') {
-//       code = arduinoGenerator.nameDB_.getName(block.getFieldValue(name), 'VARIABLE')
-//       return code
-//     }
-//     // if (type == 'field_dropdown' || type == 'field_number' || type == 'field_multilinetext') {
-//     code = block.getFieldValue(name)
-//     return code
-//   }
-
-//   window['isGlobal'] = (block) => {
-//     let currentBlock = block
-//     while (currentBlock.parentBlock_ != null) {
-//       currentBlock = currentBlock.parentBlock_
-//       if (currentBlock.type == 'arduino_setup') {
-//         return true
-//       }
-//     }
-//     return false
-//   }
-// }
-
 export const VAR_TYPE = [
   { name: 'int', value: 'int' },
   { name: 'long', value: 'long' },
@@ -489,3 +448,15 @@ export const VAR_TYPE = [
 ]
 
 export const arduinoGenerator = new ArduinoGenerator();
+
+
+export const DEFAULT_DATA = `{
+  "dependencies": {
+  },
+  "blocks": {
+    "languageVersion": 0, "blocks": [
+      { "type": "arduino_setup", "id": "arduino_setup_id0", "x": 30, "y": 30 },
+      { "type": "arduino_loop", "id": "arduino_loop_id0", "x": 330, "y": 30 }
+    ]
+  }
+}`

@@ -9,12 +9,12 @@
  */
 'use strict';
 
-Arduino['text_multiline'] = function (block) {
+Arduino.forBlock['text_multiline'] = function (block) {
   let code = `"${getValue(block, 'TEXT', 'field_multilinetext').replace(/\n/g, '\\n')}"`;
   return [code, Arduino.ORDER_ATOMIC];
 };
 
-Arduino['text_length'] = function (block) {
+Arduino.forBlock['text_length'] = function (block) {
   let code = getValue(block, 'TEXT', 'input_value');
   // if(code.match(/^"(\S*?)"$/))
   if (code.match(/^"(\S*?)"$/) != null) {

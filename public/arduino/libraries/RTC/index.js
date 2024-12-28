@@ -1,4 +1,4 @@
-Arduino['rtc_begin'] = function (block) {
+Arduino.forBlock['rtc_begin'] = function (block) {
     let RTC_TYPE = getValue(block, 'RTC_TYPE', 'field_dropdown');
     Arduino.addMacro('#include <Wire.h>', '#include <Wire.h>')
     switch (RTC_TYPE) {
@@ -17,7 +17,7 @@ Arduino['rtc_begin'] = function (block) {
     return code;
 }
 
-Arduino['rtc_date'] = function (block) {
+Arduino.forBlock['rtc_date'] = function (block) {
     let monthList = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     let year = getValue(block, 'YEAR', 'input_value')
     if (year == '') year = new Date().getFullYear()
@@ -29,7 +29,7 @@ Arduino['rtc_date'] = function (block) {
     return code;
 }
 
-Arduino['rtc_time'] = function (block) {
+Arduino.forBlock['rtc_time'] = function (block) {
     let hour = getValue(block, 'HOUR', 'input_value')
     if (hour == '') hour = new Date().getHours()
     let minute = getValue(block, 'MINUTE', 'input_value')
