@@ -16,7 +16,7 @@ import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
 import { BlocklyService2 } from './blockly.service2';
-import { Toolbox } from 'blockly';
+import { browserEvents, Toolbox } from 'blockly';
 
 @Component({
   selector: 'blockly-arduino',
@@ -71,9 +71,6 @@ export class BlocklyComponent {
 
   draggingBlock = null;
   tempNewBlock = null;
-  svgGroup = Blockly.utils.dom.createSvgElement('svg', {
-    class: 'blocklyFlyout',
-  });
 
   ngAfterViewInit(): void {
     setTimeout(() => {
@@ -99,6 +96,19 @@ export class BlocklyComponent {
         //   this.draggingBlock = this.workspace.getBlockById(event.blockId);
         // }
         // let code = arduinoGenerator.workspaceToCode(this.workspace);
+      });
+      this.blocklyDiv.nativeElement.addEventListener('mousemove', (event) => {
+        if (!this.draggingBlock) return;
+
+        if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
+          const xml: any = Blockly.Xml.blockToDom(this.draggingBlock);
+          this.draggingBlock.dispose(false);
+          const newBlock: any = Blockly.Xml.domToBlock(xml, this.workspace);
+          newBlock.moveBy(
+            event.clientX - 180 - this.workspace.scrollX,
+            event.clientY - 70 - this.workspace.scrollY,
+          );
+        }
       });
 
       this.workspace2 = Blockly.inject('blocklyDiv2', {
@@ -135,82 +145,181 @@ export class BlocklyComponent {
           },
         ],
       };
+      this.workspace2.updateToolbox(toolboxJson);
 
       this.workspace2.addChangeListener((event: any) => {
-        console.log('change2', event);
-        // if (event.type === Blockly.Events.BLOCK_DRAG && event.isStart) {
-        //   this.draggingBlock = this.workspace2.getBlockById(event.blockId);
-        // }
-        if (event.type === 'click' && event.targetType === 'block') {
+        if (event.type === Blockly.Events.BLOCK_DRAG && event.isStart) {
           this.draggingBlock = this.workspace2.getBlockById(event.blockId);
         }
+        // if (event.type === 'click' && event.targetType === 'block') {
+        //   this.draggingBlock = this.workspace2.getBlockById(event.blockId);
+        // }
         // let code = arduinoGenerator.workspaceToCode(this.workspace2);
       });
 
-      // const toolbox = new Toolbox(this.workspace2);
-      // toolbox.HtmlDiv = toolboxJson;
-      // toolbox.render(toolboxJson);
-      this.workspace2.updateToolbox(toolboxJson);
+      Blockly.serialization.workspaces.load(
+        {
+          blocks: {
+            languageVersion: 0,
+            blocks: [
+              {
+                type: 'controls_if',
+                id: 'j.:oqr+^)OI8SG+$@%XV',
+                x: 63,
+                y: 238,
+              },
+              {
+                type: 'lists_create_with',
+                id: 'jnB5|zH|2VEn~Gz@I2o!',
+                x: 38,
+                y: 138,
+                extraState: {
+                  itemCount: 3,
+                },
+              },
+              {
+                type: 'text_append',
+                id: 'dF@=$k`$x:=|x/X9$Yf0',
+                x: 38,
+                y: 88,
+                fields: {
+                  VAR: {
+                    id: 'NkZFMkM#e!G)24F,My^S',
+                  },
+                },
+                inputs: {
+                  TEXT: {
+                    shadow: {
+                      type: 'text',
+                      id: 'G,PV-2E*OTO=)EVPJ6xO',
+                      fields: {
+                        TEXT: '',
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          variables: [
+            {
+              name: 'item',
+              id: 'NkZFMkM#e!G)24F,My^S',
+            },
+          ],
+        },
+        this.workspace,
+      );
 
-      // // 获取要移动的节点
-      // let elementToMove: any = document.getElementsByClassName(
-      //   'blocklyBlockDragSurface',
+      // const workspace = this.workspace;
+      // workspace.cleanUp();
+      // const blockCanvas = workspace.getCanvas();
+      // const clone: any = blockCanvas.cloneNode(true);
+      // clone.removeAttribute('transform');
+      // const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      // svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      // svg.appendChild(clone);
+      // svg.setAttribute('width', '100%');
+      // svg.setAttribute('height', '100%');
+      // svg.setAttribute(
+      //   'class',
+      //   'blocklySvg ' +
+      //     (workspace.options.renderer || 'geras') +
+      //     '-renderer ' +
+      //     (workspace.getTheme ? workspace.getTheme().name + '-theme' : ''),
       // );
+      // svg.style.backgroundColor = 'transparent';
+      // browserEvents.conditionalBind(svg, 'pointerdown', this, (point) => {
+      //   let parent = point.target;
+      //   let blocklyDraggable = null;
+      //   while (parent) {
+      //     if (parent.nodeName.includes('svg')) {
+      //       break;
+      //     }
+      //     if (
+      //       parent.className?.baseVal?.includes('blocklyDraggable') &&
+      //       parent.parentNode?.className?.baseVal?.includes(
+      //         'blocklyBlockCanvas',
+      //       )
+      //     ) {
+      //       blocklyDraggable = parent;
+      //       break;
+      //     }
+      //     parent = parent.parentNode;
+      //   }
+      //   if (blocklyDraggable?.dataset?.id) {
+      //     const block = this.workspace.getBlockById(
+      //       blocklyDraggable?.dataset?.id,
+      //     );
+      //   }
+      // });
+      // this.aiToolbox.nativeElement.appendChild(svg);
+
+      // 获取要移动的节点
+      let elementToMove: any = document.getElementsByClassName(
+        'blocklyBlockDragSurface',
+      );
+
+      elementToMove[0].style.top = '70px';
+      elementToMove[1].style.top = 'calc(40% - 72px)';
+
+      this.dynamicContent.nativeElement.append(...elementToMove);
+
+      // browserEvents.conditionalBind(
+      //   this.blocklyDiv.nativeElement,
+      //   'pointermove',
+      //   this,
+      //   (event) => {
+      //     if (this.tempNewBlock) {
+      //       this.tempNewBlock.select();
+      //       this.tempNewBlock.setDragging(true);
+      //       this.tempNewBlock.startDrag();
+      //       this.tempNewBlock.moveDuringDrag(
+      //         new Blockly.utils.Coordinate(
+      //           event.clientX - 180 - this.workspace.scrollX,
+      //           event.clientY - 70 - this.workspace.scrollY,
+      //         ),
+      //       );
+      //       return;
+      //     }
       //
-      // console.log(1111, elementToMove);
-      // console.log(2222, this.blocklyDiv.nativeElement.parentElement);
-      // elementToMove[0].style.top = '70px';
-      // elementToMove[1].style.top = 'calc(40% - 72px)';
+      //     if (!this.draggingBlock) return;
+      //     if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
+      //       const xml: any = Blockly.Xml.blockToDom(this.draggingBlock);
+      //       this.draggingBlock.dispose(false);
+      //       this.tempNewBlock = Blockly.Xml.domToBlock(xml, this.workspace);
+      //     }
+      //   },
+      // );
+
+      // this.blocklyDiv2.nativeElement.addEventListener('mousemove', (event) => {
+      //   if (!this.draggingBlock) return;
       //
-      // this.dynamicContent.nativeElement.append(...elementToMove);
-
-      this.blocklyDiv2.nativeElement.addEventListener('mousemove', (event) => {
-        const width = this.blocklyDiv.nativeElement.offsetWidth;
-        const height = this.blocklyDiv.nativeElement.offsetHeight;
-
-        console.log(
-          'Mouse moved:',
-          event.clientX,
-          event.clientY,
-          width,
-          height,
-        );
-
-        if (!this.draggingBlock) return;
-
-        console.log(this.draggingBlock.id);
-        // const block = this.workspace2.getBlockById(this.draggingBlock.id);
-
-        const block = this.draggingBlock;
-        block.select();
-        block.setDragging(true);
-        block.startDrag();
-        block.moveDuringDrag(
-          new Blockly.utils.Coordinate(
-            event.clientX - 200,
-            event.clientY - 450,
-          ),
-        );
-
-        // if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
-        //   const xml: any = Blockly.Xml.blockToDom(this.draggingBlock);
-        //   this.draggingBlock.dispose(false);
-        //   const newBlock = Blockly.Xml.domToBlock(xml, this.workspace);
-        //   newBlock.moveBy(
-        //     event.clientX - 180 - this.workspace.scrollX,
-        //     event.clientY - 70 - this.workspace.scrollY,
-        //   );
-        //   this.draggingBlock = newBlock;
-        //   console.log(1111);
-        //   // TODO 拖拽时不触发mousemove事件导致无法实时更新block位置
-        // }
-
-        // console.log(3333, this.tempNewBlock?.workspace?.id);
-        // if (this.tempNewBlock?.workspace?.id === this.workspace.id) {
-        //   // console.log(2222, this.tempNewBlock);
-        //   // TODO 拖拽时不触发mousemove事件导致无法实时更新block位置
-        // }
-      });
+      //   // const block = this.draggingBlock;
+      //   // block.select();
+      //   // block.setDragging(true);
+      //   // block.startDrag();
+      //   // const gesture = this.workspace2.getGesture(event);
+      //   // if (gesture) {
+      //   //   gesture.handleBlockStart(event, block);
+      //   // }
+      //   // block.moveDuringDrag(
+      //   //   new Blockly.utils.Coordinate(
+      //   //     event.clientX - 200,
+      //   //     event.clientY - 450,
+      //   //   ),
+      //   // );
+      //
+      //   // if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
+      //   //   const xml: any = Blockly.Xml.blockToDom(this.draggingBlock);
+      //   //   this.draggingBlock.dispose(false);
+      //   //   const newBlock: any = Blockly.Xml.domToBlock(xml, this.workspace);
+      //   //   newBlock.moveTo(
+      //   //     event.clientX - 180 - this.workspace.scrollX,
+      //   //     event.clientY - 70 - this.workspace.scrollY,
+      //   //   );
+      //   // }
+      // });
 
       window['Arduino'] = <any>arduinoGenerator;
       window['workspace1'] = this.workspace;
