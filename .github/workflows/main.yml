@@ -33,4 +33,4 @@ jobs:
           username: ubuntu
           key: ${{ secrets.PRIVATEKEY }}
           uploads: |
-            dist/aily-software => ${{ secrets.TARGET }}
+            dist/aily-blockly => ${{ secrets.TARGET }}
