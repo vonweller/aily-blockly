@@ -1,7 +1,7 @@
 [
     {
         "type": "arduino_setup",
-        "message0": "🚩初始化 %1",
+        "message0": "▶️初始化 %1",
         "args0": [
             {
                 "type": "input_statement",
@@ -14,7 +14,7 @@
     },
     {
         "type": "arduino_loop",
-        "message0": "🚩循环执行 %1",
+        "message0": "🔁循环执行 %1",
         "args0": [
             {
                 "type": "input_statement",
