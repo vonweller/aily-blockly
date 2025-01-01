@@ -1,0 +1,8 @@
+[
+    "arduino_uno",
+    "arduino_mega",
+    "esp32c3",
+    "esp32s3",
+    "raspberrypi_pico",
+    "wifiduino32"
+]

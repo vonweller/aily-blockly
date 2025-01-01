@@ -30,7 +30,7 @@ export class BlocklyService {
   ) { }
 
   async init() {
-    this.boardConfig = await lastValueFrom(this.http.get<any[]>('/board/Arduino_UNO.json', { responseType: 'json' }))
+    this.boardConfig = await lastValueFrom(this.http.get<any[]>('/board/arduino_uno/arduino_uno.json', { responseType: 'json' }))
   }
 
   async loadLibraries() {

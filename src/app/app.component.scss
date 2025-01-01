@@ -10,8 +10,8 @@ blockly-arduino {
     ::ng-deep {
         .blocklyBox{
             position: fixed;
-            top: 72px;
-            height: calc(100% - 72px);
+            top: 60px;
+            height: calc(100% - 60px);
         }
     }
 }
