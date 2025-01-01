@@ -62,6 +62,22 @@ export class BlocklyComponent {
     this.blocklyService2.toolbox = toolbox;
   }
 
+  get draggingBlock() {
+    return this.blocklyService.draggingBlock;
+  }
+
+  set draggingBlock(draggingBlock: any) {
+    this.blocklyService.draggingBlock = draggingBlock;
+  }
+
+  get offsetX() {
+    return this.blocklyService.offsetX;
+  }
+
+  get offsetY() {
+    return this.blocklyService.offsetY;
+  }
+
   constructor(
     private blocklyService: BlocklyService,
     private blocklyService2: BlocklyService2,
@@ -69,8 +85,10 @@ export class BlocklyComponent {
 
   ngOnInit(): void {}
 
-  draggingBlock = null;
   tempNewBlock = null;
+
+  block;
+  manager;
 
   ngAfterViewInit(): void {
     setTimeout(() => {
@@ -97,19 +115,23 @@ export class BlocklyComponent {
         // }
         // let code = arduinoGenerator.workspaceToCode(this.workspace);
       });
-      this.blocklyDiv.nativeElement.addEventListener('mousemove', (event) => {
-        if (!this.draggingBlock) return;
+      this.blocklyDiv.nativeElement.addEventListener(
+        'mousemove',
+        (event: any) => {
+          if (!this.draggingBlock) return;
 
-        if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
-          const xml: any = Blockly.Xml.blockToDom(this.draggingBlock);
-          this.draggingBlock.dispose(false);
-          const newBlock: any = Blockly.Xml.domToBlock(xml, this.workspace);
-          newBlock.moveBy(
-            event.clientX - 180 - this.workspace.scrollX,
-            event.clientY - 70 - this.workspace.scrollY,
-          );
-        }
-      });
+          if (this.draggingBlock?.workspace?.id !== this.workspace.id) {
+            const xml: any = Blockly.Xml.blockToDom(this.draggingBlock); // .clone()
+
+            const newBlock: any = Blockly.Xml.domToBlock(xml, this.workspace);
+            newBlock.moveBy(
+              event.clientX - 180 - this.workspace.scrollX - this.offsetX,
+              event.clientY - 70 - this.workspace.scrollY - this.offsetY,
+            );
+            this.draggingBlock = null;
+          }
+        },
+      );
 
       this.workspace2 = Blockly.inject('blocklyDiv2', {
         toolbox: {
@@ -157,59 +179,88 @@ export class BlocklyComponent {
         // let code = arduinoGenerator.workspaceToCode(this.workspace2);
       });
 
-      Blockly.serialization.workspaces.load(
-        {
-          blocks: {
-            languageVersion: 0,
-            blocks: [
-              {
-                type: 'controls_if',
-                id: 'j.:oqr+^)OI8SG+$@%XV',
-                x: 63,
-                y: 238,
-              },
-              {
-                type: 'lists_create_with',
-                id: 'jnB5|zH|2VEn~Gz@I2o!',
-                x: 38,
-                y: 138,
-                extraState: {
-                  itemCount: 3,
-                },
-              },
-              {
-                type: 'text_append',
-                id: 'dF@=$k`$x:=|x/X9$Yf0',
-                x: 38,
-                y: 88,
-                fields: {
-                  VAR: {
-                    id: 'NkZFMkM#e!G)24F,My^S',
-                  },
-                },
-                inputs: {
-                  TEXT: {
-                    shadow: {
-                      type: 'text',
-                      id: 'G,PV-2E*OTO=)EVPJ6xO',
-                      fields: {
-                        TEXT: '',
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          },
-          variables: [
-            {
-              name: 'item',
-              id: 'NkZFMkM#e!G)24F,My^S',
-            },
-          ],
-        },
-        this.workspace,
-      );
+      // Blockly.serialization.workspaces.load(
+      //   {
+      //     blocks: {
+      //       languageVersion: 0,
+      //       blocks: [
+      //         {
+      //           type: 'controls_if',
+      //           id: 'j.:oqr+^)OI8SG+$@%XV',
+      //           x: 63,
+      //           y: 238,
+      //         },
+      //         {
+      //           type: 'lists_create_with',
+      //           id: 'jnB5|zH|2VEn~Gz@I2o!',
+      //           x: 38,
+      //           y: 138,
+      //           extraState: {
+      //             itemCount: 3,
+      //           },
+      //         },
+      //         {
+      //           type: 'text_append',
+      //           id: 'dF@=$k`$x:=|x/X9$Yf0',
+      //           x: 38,
+      //           y: 88,
+      //           fields: {
+      //             VAR: {
+      //               id: 'NkZFMkM#e!G)24F,My^S',
+      //             },
+      //           },
+      //           inputs: {
+      //             TEXT: {
+      //               shadow: {
+      //                 type: 'text',
+      //                 id: 'G,PV-2E*OTO=)EVPJ6xO',
+      //                 fields: {
+      //                   TEXT: '',
+      //                 },
+      //               },
+      //             },
+      //           },
+      //         },
+      //       ],
+      //     },
+      //     variables: [
+      //       {
+      //         name: 'item',
+      //         id: 'NkZFMkM#e!G)24F,My^S',
+      //       },
+      //     ],
+      //   },
+      //   this.workspace,
+      // );
+
+      // Blockly.serialization.workspaces.load(
+      //   {
+      //     blocks: {
+      //       blocks: [
+      //         {
+      //           type: 'controls_if',
+      //           id: 'first',
+      //           x: 0,
+      //           y: 0,
+      //         },
+      //         {
+      //           type: 'controls_if',
+      //           id: 'other',
+      //           x: 200,
+      //           y: 200,
+      //         },
+      //       ],
+      //     },
+      //   },
+      //   this.workspace,
+      // );
+      // this.block = this.workspace.getBlockById('first');
+      // this.block.setDragging(true);
+      // this.manager = new Blockly.InsertionMarkerManager(this.block);
+      //
+      // this.manager.update(new Blockly.utils.Coordinate(190, 200), null);
+      // const markers = this.manager.getInsertionMarkers();
+      // const marker = markers[0];
 
       // const workspace = this.workspace;
       // workspace.cleanUp();
@@ -255,15 +306,15 @@ export class BlocklyComponent {
       // });
       // this.aiToolbox.nativeElement.appendChild(svg);
 
-      // 获取要移动的节点
-      let elementToMove: any = document.getElementsByClassName(
-        'blocklyBlockDragSurface',
-      );
-
-      elementToMove[0].style.top = '70px';
-      elementToMove[1].style.top = 'calc(40% - 72px)';
-
-      this.dynamicContent.nativeElement.append(...elementToMove);
+      // // 获取要移动的节点
+      // let elementToMove: any = document.getElementsByClassName(
+      //   'blocklyBlockDragSurface',
+      // );
+      //
+      // elementToMove[0].style.top = '70px';
+      // elementToMove[1].style.top = 'calc(40% - 72px)';
+      //
+      // this.dynamicContent.nativeElement.append(...elementToMove);
 
       // browserEvents.conditionalBind(
       //   this.blocklyDiv.nativeElement,

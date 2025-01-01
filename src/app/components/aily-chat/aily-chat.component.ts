@@ -1,11 +1,12 @@
 import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
 import { NgxDragResizeModule, NgxResizeHandleType } from 'ngx-drag-resize';
+import { AilyBlocklyComponent } from '../aily-blockly/aily-blockly.component';
 
 @Component({
   selector: 'app-aily-chat',
-  imports: [NgxDragResizeModule],
+  imports: [NgxDragResizeModule, AilyBlocklyComponent],
   templateUrl: './aily-chat.component.html',
-  styleUrl: './aily-chat.component.scss'
+  styleUrl: './aily-chat.component.scss',
 })
 export class AilyChatComponent {
   readonly handleType = NgxResizeHandleType;
@@ -14,19 +15,15 @@ export class AilyChatComponent {
   // private startX: number;
   // private startWidth: number;
 
-  ngOnInit() {
-  }
+  ngOnInit() {}
 
   ngAfterViewInit(): void {
     // console.log(this.dragHandle);
-
     // this.dragHandle.nativeElement.addEventListener('mousedown', (e: MouseEvent) => {
     //   console.log('mousedown');
-
     //   this.isDragging = true;
     //   this.startX = e.clientX;
     //   this.startWidth = this.resizableDiv.nativeElement.getBoundingClientRect().width;
-
     //   this.dragHandle.nativeElement.addEventListener('mousemove', this.handleMouseMove);
     //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
     // });
