@@ -1,16 +1,36 @@
 {
-    "name": "WiFiduino",
-    "version":"1.0.0",
-    "description": "WiFiduino",
+    "name": "ESP32C3",
+    "version": "1.0.0",
+    "description": "ESP32C3 compatible board",
     "compilerTool": "arduino-cli",
-    "core": "esp8266:esp8266@3.0.2",
-    "type": "esp8266:esp8266:wifiduino",
-    "compilerParam": "compile -v -b esp8266:esp8266:wifiduino",
-    "uploadParam": "upload -v -b esp8266:esp8266:wifiduino -p ${serial}",
+    "core": "esp32:esp32@2.0.4",
+    "type": "esp32:esp32:esp32c3",
+    "compilerParam": "compile -v -b esp32:esp32:esp32c3",
+    "uploadParam": "upload -v -b esp32:esp32:esp32c3 -p ${serial}",
     "analogPins": [
         [
             "A0",
             "A0"
+        ],
+        [
+            "A1",
+            "A1"
+        ],
+        [
+            "A2",
+            "A2"
+        ],
+        [
+            "A3",
+            "A3"
+        ],
+        [
+            "A4",
+            "A4"
+        ],
+        [
+            "A5",
+            "A5"
         ]
     ],
     "digitalPins": [

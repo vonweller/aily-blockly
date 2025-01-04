@@ -1,36 +1,36 @@
 .header-box {
     display: flex;
-    height: 58px;
+    align-items: center;
+    height: 60px;
     width: 100%;
-    padding: 8px;
 
     .logo-box {
         width: 180px;
-        height: 74px;
-        margin: -8px 16px 0 -8px;
+        height: 60px;
         background-color: #FFF;
     }
 
     .zone {
         background: #FFF;
         border-radius: 8px;
-        margin-right: 12px;
+        margin-left: 8px;
         padding: 5px;
+        height: 50px;
 
         &:last-child {
-            margin-right: 16px;
+            margin-right: 8px;
             margin-left: auto;
         }
     }
 
     .btn {
-        width: 50px;
-        height: 50px;
+        width: 42px;
+        height: 42px;
         flex-direction: column;
         border-radius: 8px;
         cursor: pointer;
         color: #818992;
-        font-size: 11px;
+        font-size: 10px;
         margin-right: 8px;
 
         &:last-child {
@@ -38,13 +38,13 @@
         }
 
         .icon {
-            font-size: 20px;
+            font-size: 18px;
             margin-bottom: 3px;
         }
 
         &:hover {
             color: #2A74FF;
-            background-color: #F5F6F7;
+            // background-color: #F5F6F7;
         }
     }
 }

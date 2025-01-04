@@ -45,7 +45,7 @@ export class BlocklyComponent {
   }
 
   ngAfterViewInit(): void {
-    setTimeout(() => {
+    setTimeout(async () => {
       Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
@@ -69,14 +69,10 @@ export class BlocklyComponent {
         let code = arduinoGenerator.workspaceToCode(this.workspace);
         this.blocklyService.codeSubject.next(code);
       });
-
       window['Arduino'] = <any>arduinoGenerator;
       this.blocklyService.init();
-      this.loadLibraries();
-      setTimeout(() => {
-        this.loadDefaultData();
-      }, 500);
-
+      await this.loadLibraries();
+      this.loadDefaultData();
     }, 50);
   }
 
