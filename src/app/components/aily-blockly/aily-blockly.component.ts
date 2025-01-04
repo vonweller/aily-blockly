@@ -4,6 +4,7 @@ import * as zhHans from 'blockly/msg/zh-hans';
 import { DEV_THEME } from '../../blockly/theme.config';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { browserEvents } from 'blockly';
+import { BlockDragStrategy } from './plugins/chat-blockly/dragging/block_drag_strategy';
 
 @Component({
   selector: 'app-aily-blockly',
@@ -29,6 +30,10 @@ export class AilyBlocklyComponent implements OnInit {
   //     },
   //   ],
   // };
+
+  get mainWorkspace() {
+    return this.blocklyService.workspace;
+  }
 
   get draggingBlock() {
     return this.blocklyService.draggingBlock;
@@ -61,6 +66,33 @@ export class AilyBlocklyComponent implements OnInit {
   // TODO 懒加载机制优化
 
   // TODO 实时block连接检查
+  updateConnectionPreview() {
+    // this.draggingBlock.updateConnectionPreview();
+    // const blockDragStrategy = new BlockDragStrategy(this.draggingBlock);
+    // console.log(blockDragStrategy);
+    // this.draggingBlock.dragTargetAreas
+    // console.log(2222);
+    // const workspace = this.mainWorkspace;
+    // const blockCanvas = workspace.getCanvas();
+    // const clone: any = blockCanvas.cloneNode(true);
+    //
+    // const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    // svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    // svg.appendChild(clone);
+    // svg.setAttribute('width', '100%');
+    // svg.setAttribute('height', '100%');
+    // svg.setAttribute(
+    //   'class',
+    //   'blocklySvg ' +
+    //     (workspace.options.renderer || 'geras') +
+    //     '-renderer ' +
+    //     (workspace.getTheme ? workspace.getTheme().name + '-theme' : ''),
+    // );
+    // svg.style.backgroundColor = 'transparent';
+    //
+    // this.workspace.addFlyout(svg);
+    console.log(1111);
+  }
 
   // TODO 拖拽范围icon处理
 
@@ -98,6 +130,9 @@ export class AilyBlocklyComponent implements OnInit {
       renderer: 'thrasos',
       trashcan: true,
       theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
+      plugins: {
+        IDragStrategy: BlockDragStrategy,
+      },
     });
 
     // Blockly.serialization.workspaces.load(
@@ -187,6 +222,8 @@ export class AilyBlocklyComponent implements OnInit {
       .getWorkspace()
       .addChangeListener((event: any) => {});
 
+    browserEvents.unbind(this.workspace.getFlyout().boundEvents[0]);
+
     this.workspace.getFlyout().contents.forEach(({ block }) => {
       browserEvents.bind(block.svgGroup_, 'pointerdown', this, (event: any) => {
         this.offsetX = event.offsetX - block.relativeCoords.x;
@@ -210,6 +247,7 @@ export class AilyBlocklyComponent implements OnInit {
     onresize();
   }
 
+  surfaceGlobalRoot: any;
   surfaceGlobal: any;
 
   setDragSurfaceGlobal(sourceDom: any) {
@@ -218,8 +256,8 @@ export class AilyBlocklyComponent implements OnInit {
         'blocklyBlockDragSurface',
       );
       this.surfaceGlobal = surfaceDom?.[0];
-      const globalDom = document.createElement('div');
-      globalDom.setAttribute(
+      this.surfaceGlobalRoot = document.createElement('div');
+      this.surfaceGlobalRoot.setAttribute(
         'class',
         'surfaceGlobal ' +
           (this.workspace.options.renderer || 'geras') +
@@ -228,8 +266,8 @@ export class AilyBlocklyComponent implements OnInit {
             ? this.workspace.getTheme().name + '-theme'
             : ''),
       );
-      globalDom.append(...surfaceDom);
-      document.body.append(globalDom);
+      this.surfaceGlobalRoot.append(...surfaceDom);
+      document.body.append(this.surfaceGlobalRoot);
       this.surfaceGlobal.style.display = 'none';
       return;
     }
@@ -244,17 +282,18 @@ export class AilyBlocklyComponent implements OnInit {
     this.setDragSurfaceGlobal(this.blocklyArea.nativeElement);
     if (event.type === Blockly.Events.BLOCK_DRAG && event.isStart) {
       this.draggingBlock = this.workspace.getBlockById(event.blockId);
+      this.updateConnectionPreview();
     } else if (event.type === Blockly.Events.BLOCK_DRAG && !event.isStart) {
     }
   }
 
   ngOnDestroy() {
-    this.surfaceGlobal.remove();
-    this.surfaceGlobal = null;
+    this.surfaceGlobalRoot?.remove();
+    this.surfaceGlobalRoot = null;
 
-    this.workspace.getFlyout().contents.forEach(({ block }) => {
-      browserEvents.unbind(block.svgGroup_);
-    });
+    // this.workspace.getFlyout().contents.forEach(({ block }) => {
+    //   browserEvents.unbind(block.svgGroup_);
+    // });
 
     this.workspace.removeChangeListener();
   }
