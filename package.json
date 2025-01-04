@@ -20,6 +20,7 @@
     "@angular/router": "^19.0.0",
     "@ngx-translate/core": "^16.0.3",
     "blockly": "^11.1.1",
+    "ng-zorro-antd": "^19.0.0",
     "ngx-drag-resize": "^1.0.3",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",

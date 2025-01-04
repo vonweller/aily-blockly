@@ -1,4 +1,4 @@
-<div class="aily-chat" ngxDrag ngxResize [ngxResizeMinWidth]="280">
+<div class="aily-chat" ngxDrag>
   <div class="header" ngxDragHandle>aily chat</div>
   <div class="handle TopLeft" [ngxResizeHandle]="handleType.TopLeft"></div>
   <div class="handle Top" [ngxResizeHandle]="handleType.Top"></div>
@@ -15,7 +15,7 @@
   ></div>
   <div class="handle Left" [ngxResizeHandle]="handleType.Left"></div>
   <div class="content">
-    <app-aily-blockly
+    <app-aily-coding
       [data]="{
         kind: 'flyoutToolbox',
         contents: [
@@ -29,10 +29,8 @@
           },
         ],
       }"
-    ></app-aily-blockly>
-    <br />
-    <br />
-    <app-aily-blockly
+    ></app-aily-coding>
+    <app-aily-coding
       [data]="{
         kind: 'flyoutToolbox',
         contents: [
@@ -42,9 +40,8 @@
           },
         ],
       }"
-    ></app-aily-blockly>
-    <br />
-    <app-aily-blockly
+    ></app-aily-coding>
+    <app-aily-coding
       [data]="{
         kind: 'flyoutToolbox',
         contents: [
@@ -54,6 +51,28 @@
           },
         ],
       }"
-    ></app-aily-blockly>
+    ></app-aily-coding>
+    <app-aily-coding
+      [data]="{
+        kind: 'flyoutToolbox',
+        contents: [
+          {
+            kind: 'block',
+            type: 'controls_whileUntil',
+          },
+        ],
+      }"
+    ></app-aily-coding>
+    <app-aily-coding
+      [data]="{
+        kind: 'flyoutToolbox',
+        contents: [
+          {
+            kind: 'block',
+            type: 'controls_whileUntil',
+          },
+        ],
+      }"
+    ></app-aily-coding>
   </div>
 </div>

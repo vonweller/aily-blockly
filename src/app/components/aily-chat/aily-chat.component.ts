@@ -1,10 +1,10 @@
-import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
+import { Component } from '@angular/core';
 import { NgxDragResizeModule, NgxResizeHandleType } from 'ngx-drag-resize';
-import { AilyBlocklyComponent } from '../aily-blockly/aily-blockly.component';
+import { AilyCodingComponent } from '../aily-coding/aily-coding.component';
 
 @Component({
   selector: 'app-aily-chat',
-  imports: [NgxDragResizeModule, AilyBlocklyComponent],
+  imports: [NgxDragResizeModule, AilyCodingComponent],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
 })
