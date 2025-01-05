@@ -5,21 +5,67 @@ import { Injectable } from '@angular/core';
 })
 export class IwindowService {
 
-  windows: IWindow[] = [];
+  windows: IWindowOpt[] = [
+    {
+      position: {
+        top: 0,
+        right: 0,
+      },
+      size: {
+        width: 400,
+        height: 600,
+      },
+      type: 'code-viewer',
+      title: '代码查看',
+      zindex: 999,
+    },
+    {
+      position: {
+        top: 0,
+        right: 0,
+      },
+      size: {
+        width: 400,
+        height: 600,
+      },
+      type: 'serial-monitor',
+      title: '串口助手',
+      zindex: 0,
+    },
+    {
+      position: {
+        top: 0,
+        right: 0,
+      },
+      size: {
+        width: 400,
+        height: 600,
+      },
+      type: 'aily-chat',
+      title: 'AI助手',
+      zindex: 0,
+    },
+  ];
 
   constructor() { }
 
-  openWindow(window: IWindow) {
-    this.windows.push(window);
+  openWindow(opt: IWindowOpt) {
+    this.windows.push(opt);
   }
 
-  closeWindow(index: number) {
+  closeWindow(opt: IWindowOpt) {
+    console.log(opt);
+
+    let index = this.windows.indexOf(opt);
+    console.log(index);
     this.windows.splice(index, 1);
+    console.log(this.windows);
+    
   }
 }
 
 
-interface IWindow {
+export interface IWindowOpt {
   position: {
     top: number,
     right: number,
@@ -28,6 +74,7 @@ interface IWindow {
     width: number,
     height: number,
   },
+  type: string,
   title: string,
-  index: number,
+  zindex: number,
 }

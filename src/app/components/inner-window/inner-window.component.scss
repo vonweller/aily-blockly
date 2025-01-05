@@ -1,14 +1,10 @@
 .inner-window {
-    width: 400px;
-    height: 600px;
     background: #CCC;
     position: absolute;
-    right: 0;
-    top: 80px;
     z-index: 9;
     border-radius: 5px;
     overflow: hidden;
-    box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
     user-select: none;
 }
 
@@ -66,5 +62,5 @@
 }
 
 .ng-resizable-diagonal{
-    display: none;
+    opacity: 0;
 }

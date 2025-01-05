@@ -1,181 +1,168 @@
-.aily-chat {
-    width: 280px;
-    height: 500px;
-    background: #CCC;
-    position: absolute;
-    right: 0;
-    top: 0;
-    z-index: 9;
-    border-radius: 5px;
-    overflow: hidden;
-}
-
-.header {
-    position: absolute;
-    width: 100%;
-    height: 40px;
-    background: #666;
-    cursor: move;
+.window-box {
+    position: relative;
     display: flex;
-    align-items: center;
-    padding-left: 10px;
-    color: #fff;
-    font-size: 12px;
-}
-
-.content {
-    position: absolute;
-    top: 40px;
-    background-color: aquamarine;
-    height: calc(100% - 40px);
-    width: 100%;
-}
-
-.handle {
-    position: absolute;
-
-    &.TopLeft {
-        top: 0;
-        left: 0;
-        width: 10px;
-        height: 10px;
-        cursor: nw-resize;
-        z-index: 4;
-    }
-
-    &.TopRight {
-        top: 0;
-        right: 0;
-        width: 10px;
-        height: 10px;
-        cursor: ne-resize;
-        z-index: 4;
-    }
-
-    &.BottomLeft {
-        bottom: 0;
-        left: 0;
-        width: 10px;
-        height: 10px;
-        cursor: sw-resize;
-        z-index: 4;
-    }
-
-    &.BottomRight {
-        bottom: 0;
-        right: 0;
-        width: 10px;
-        height: 10px;
-        cursor: se-resize;
-        z-index: 4;
-    }
-
-    &.Top {
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 10px;
-        cursor: ns-resize;
-        z-index: 3;
-    }
-
-    &.Right {
-        top: 0;
-        right: 0;
-        width: 10px;
-        height: 100%;
-        cursor: ew-resize;
-        z-index: 3;
-    }
-
-    &.Bottom {
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        height: 10px;
-        cursor: ns-resize;
-        z-index: 3;
-    }
-
-    &.Left {
-        top: 0;
-        left: 0;
-        width: 10px;
-        height: 100%;
-        cursor: ew-resize;
-        z-index: 3;
-    }
-}
-
-$handle-thickness: 10px;
-
-[data-resize-handle='Top'],
-[data-resize-handle='Right'] {
-    top: 0;
-    right: 0;
-}
-
-[data-resize-handle='Bottom'],
-[data-resize-handle='Left'] {
-    bottom: 0;
-    left: 0;
-}
-
-[data-resize-handle='Top'],
-[data-resize-handle='Bottom'] {
-    width: 100%;
-    height: $handle-thickness;
-    cursor: ns-resize;
-}
-
-[data-resize-handle='Right'],
-[data-resize-handle='Left'] {
+    flex-direction: column;
     height: 100%;
-    width: $handle-thickness;
-    cursor: ew-resize;
 }
 
-[data-resize-handle='TopLeft'],
-[data-resize-handle='TopRight'],
-[data-resize-handle='BottomLeft'],
-[data-resize-handle='BottomRight'] {
-    width: $handle-thickness;
-    height: $handle-thickness;
-    z-index: 4;
+.settings {
+    background: #444;
+    padding: 5px 10px;
+
+    .line {
+        display: flex;
+    }
+
+    .item {
+        display: flex;
+        align-items: center;
+        color: #EEE;
+        position: relative;
+        height: 28px;
+        font-size: 12px;
+
+        .text {
+            padding:0 10px;
+            flex-shrink: 0;
+        }
+
+        &:first-child{
+            .text {
+                padding-left:0;
+            }
+        }
+
+        .port {
+            height: 24px;
+            width: 100px;
+            background-color: #fff;
+            border: 1px solid #d9d9d9;
+            border-radius: 2px;
+            position: relative;
+            display: flex;
+            justify-content: flex-start;
+            padding-left: 10px;
+            color: #444;
+            font-size: 14px;
+
+            .btn {
+                width: 20px;
+                height: 24px;
+                cursor: pointer;
+                position: absolute;
+                right: 0;
+                color: rgb(0, 96, 160);
+
+                &:nth-child(2) {
+                    right: 20px;
+                }
+
+                &:hover {
+                    color: rgb(0, 140, 233);
+                }
+            }
+        }
+
+        nz-select {
+            width: 120px;
+        }
+    }
+
+    .more {
+        width: 36px;
+        height: 28px;
+        font-size: 20px;
+        color: #EEE;
+        cursor: pointer;
+        justify-content: flex-end;
+        position: absolute;
+        right: 10px;
+
+        &:hover {
+            color: #FFF;
+        }
+
+    }
 }
 
-[data-resize-handle='TopLeft'],
-[data-resize-handle='TopRight'] {
-    top: 0;
+.monitor {
+    // background: red;
+    position: relative;
+    flex-grow: 1;
+
+    .r-box {
+        height: calc(100% - 28px);
+        // background: #555;
+    }
+
+    .btns {
+        position: absolute;
+        bottom: 0;
+    }
 }
 
-[data-resize-handle='BottomLeft'],
-[data-resize-handle='BottomRight'] {
+.sender {
+    background: #444;
+    position: relative;
+
+    .s-box {
+        display: flex;
+        width: 100%;
+        padding: 5px 10px;
+
+        .btn {
+            width: 36px;
+            font-size: 20px;
+            color: #EEE;
+            cursor: pointer;
+            justify-content: flex-end;
+
+            &:hover {
+                color: #FFF;
+            }
+        }
+    }
+
+    .btns {
+        position: relative;
+    }
+}
+
+
+
+.btns {
+    display: flex;
+    width: 100%;
+    background: #555;
+    color: #EEE;
+    position: absolute;
     bottom: 0;
-}
 
-[data-resize-handle='TopLeft'],
-[data-resize-handle='BottomLeft'] {
-    left: 0;
-}
+    .btn {
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        position: relative;
 
-[data-resize-handle='TopRight'],
-[data-resize-handle='BottomRight'] {
-    right: 0;
-}
+        &:hover {
+            color: #FFF;
+        }
 
-[data-resize-handle='TopLeft'] {
-    cursor: nw-resize;
-}
+        &.right2 {
+            position: absolute;
+            right: 28px;
+        }
 
-[data-resize-handle='TopRight'] {
-    cursor: ne-resize;
-}
+        &.right {
+            position: absolute;
+            right: 0;
+        }
 
-[data-resize-handle='BottomLeft'] {
-    cursor: sw-resize;
-}
-
-[data-resize-handle='BottomRight'] {
-    cursor: se-resize;
+        .text {
+            font-size: 10px;
+            transform: scale(0.9);
+            position: absolute;
+            left: 12px;
+        }
+    }
 }

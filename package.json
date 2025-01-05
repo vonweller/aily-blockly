@@ -22,9 +22,13 @@
     "angular2-draggable": "^16.0.0",
     "animate.css": "^4.1.1",
     "blockly": "^11.1.1",
+    "lightweight-charts": "^4.2.2",
+    "marked": "^15.0.5",
+    "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.0",
     "rxjs": "~7.8.0",
+    "shiki": "^1.26.1",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"
   },
