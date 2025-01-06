@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ViewChild } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import {
   TranslateService,
@@ -41,6 +41,7 @@ export class AppComponent {
 
   showProjectManager = false;
 
+  @ViewChild('WindowsBounds') windowsBounds;
 
   get windows() {
     return this.iwindowService.windows
@@ -53,6 +54,10 @@ export class AppComponent {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
+  }
+
+  ngAfterViewInit(): void {
+    this.iwindowService.bounds = this.windowsBounds.nativeElement;
   }
 
   openProjectManager() {

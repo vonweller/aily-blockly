@@ -2,7 +2,7 @@ export let HEADER_MENU = [
     [
         {
             name: 'Aily',
-            action: 'AI_open',
+            action: 'open-aily-chat',
             icon: 'fa-light fa-message-bot'
         }
     ], [
@@ -41,12 +41,12 @@ export let HEADER_MENU = [
     ], [
         {
             name: '查看代码',
-            action: 'Code_open',
+            action: 'open-code-viewer',
             icon: 'fa-light fa-file-code'
         },
         {
             name: '串口工具',
-            action: 'Tool_serial',
+            action: 'open-serial-monitor',
             icon: 'fa-light fa-monitor-waveform'
         },
     ], [

@@ -20,7 +20,7 @@ import { FormsModule } from "@angular/forms";
 import { MarkdownPipe } from "../../../../pipes/markdown.pipe";
 
 @Component({
-  selector: "gpt-dialog",
+  selector: "aily-dialog",
   templateUrl: "./dialog.component.html",
   styleUrls: ["./dialog.component.scss"],
   standalone: true,
@@ -84,8 +84,7 @@ export class DialogComponent implements OnInit {
     private message: NzMessageService,
     private speechService: SpeechService,
     private sanitizer: DomSanitizer,
-    private chatService: ChatService,
-    private modalService: NzModalService
+    private chatService: ChatService
   ) { }
 
   ngOnInit(): void { }

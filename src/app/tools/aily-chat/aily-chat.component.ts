@@ -3,6 +3,7 @@ import { InnerWindowComponent } from '../../components/inner-window/inner-window
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { InputBoxComponent } from './components/input-box/input-box.component';
+import { DialogComponent } from './components/dialog/dialog.component';
 
 @Component({
   selector: 'app-aily-chat',
@@ -10,7 +11,8 @@ import { InputBoxComponent } from './components/input-box/input-box.component';
     InnerWindowComponent,
     NzInputModule,
     FormsModule,
-    InputBoxComponent
+    InputBoxComponent,
+    DialogComponent
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss'
@@ -18,9 +20,25 @@ import { InputBoxComponent } from './components/input-box/input-box.component';
 export class AilyChatComponent {
 
 
-  // private isDragging = false;
-  // private startX: number;
-  // private startWidth: number;
+  list = [
+    {
+      content: 'Hello, how can I help you?',
+    },
+    {
+      content: 'I want to know the weather today.',
+      role: 'user',
+    },
+    {
+      content: 'Where are you now?',
+    },
+    {
+      content: 'I am in Beijing.',
+      role: 'user',
+    },
+    {
+      content: 'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
+    },
+  ]
   inputValue = '';
 
   ngOnInit() {

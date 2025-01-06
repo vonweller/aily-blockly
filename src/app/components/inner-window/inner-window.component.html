@@ -1,14 +1,15 @@
-<div class="inner-window animate__animated animate__faster" 
-    ngDraggable [handle]="Handle" ngResizable [rzHandles]="'all'" 
-    [ngClass]="{'animate__fadeOutTopRight': isMinimize,'animate__fadeOut': isClose,}" 
-    [ngStyle]="{'width': opt.size.width + 'px', 'height': opt.size.height + 'px', 
-    'top': opt.position.top + 'px', 'right': opt.position.right + 'px',
+<div class="inner-window animate__animated animate__fadeIn animate__faster" ngDraggable ngResizable [inBounds]="true"
+    [bounds]="windowsBounds" [rzMinWidth]="400" [rzMinHeight]="600" [position]="opt.position"
+    (endOffset)="onMoveEnd($event)" [handle]="Handle" [rzHandles]="'all'" (started)="onFoucs($event)"
+    (click)="onFoucs($event)"
+    [ngClass]="{'animate__fadeOutTopRight': isMinimize,'animate__fadeOut': isClose}"
+     [ngStyle]="{'width': opt.size.width + 'px', 'height': opt.size.height + 'px', 
     'z-index': opt.zindex
     }">
     <div class="header">
-        <div class="title ccenter" #Handle>{{opt.title}}</div>
+        <div class="title ccenter" #Handle (dblclick)="maximize()">{{opt.title}}</div>
         <div class="btns ccenter">
-            <div class="ccenter" (click)="minimize()"><i class="fa-light fa-minus"></i></div>
+            <!-- <div class="ccenter" (click)="minimize()"><i class="fa-light fa-minus"></i></div> -->
             <div class="ccenter" (click)="maximize()"><i class="fa-light fa-square"></i></div>
             <div class="ccenter" (click)="close()"><i class="fa-light fa-xmark"></i></div>
         </div>

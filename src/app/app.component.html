@@ -11,7 +11,7 @@
 @if (showProjectManager) {
 <app-project-manager></app-project-manager>
 }
-
+<div class="bounds" #WindowsBounds>
 @for (item of windows; track item) {
 <app-inner-window [opt]="item">
     @switch(item.type) {
@@ -27,3 +27,4 @@
     }
 </app-inner-window>
 }
+</div>

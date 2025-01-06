@@ -6,6 +6,7 @@
     overflow: hidden;
     box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
     user-select: none;
+    transition: scale 0.1s;
 }
 
 .header {
@@ -64,3 +65,7 @@
 .ng-resizable-diagonal{
     opacity: 0;
 }
+
+// .maximize{
+//     transform: scale(1.2);
+// }
