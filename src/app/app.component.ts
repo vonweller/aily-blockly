@@ -16,6 +16,7 @@ import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { CommonModule } from '@angular/common';
 import { IwindowService } from './services/iwindow.service';
 import { InnerWindowComponent } from './components/inner-window/inner-window.component';
+import { TerminalComponent } from './tools/terminal/terminal.component';
 
 @Component({
   selector: 'app-root',
@@ -31,7 +32,8 @@ import { InnerWindowComponent } from './components/inner-window/inner-window.com
     SerialMonitorComponent,
     // BrowserAnimationsModule,
     CommonModule,
-    InnerWindowComponent
+    InnerWindowComponent,
+    TerminalComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
