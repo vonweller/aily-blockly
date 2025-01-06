@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ViewChild } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import {
   TranslateService,
@@ -14,6 +14,8 @@ import { SerialMonitorComponent } from './tools/serial-monitor/serial-monitor.co
 import { CodeViewerComponent } from './tools/code-viewer/code-viewer.component';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { CommonModule } from '@angular/common';
+import { IwindowService } from './services/iwindow.service';
+import { InnerWindowComponent } from './components/inner-window/inner-window.component';
 
 @Component({
   selector: 'app-root',
@@ -28,7 +30,8 @@ import { CommonModule } from '@angular/common';
     CodeViewerComponent,
     SerialMonitorComponent,
     // BrowserAnimationsModule,
-    CommonModule
+    CommonModule,
+    InnerWindowComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
@@ -38,13 +41,26 @@ export class AppComponent {
 
   showProjectManager = false;
 
-  constructor(private translate: TranslateService) {
+  @ViewChild('WindowsBounds') windowsBounds;
+
+  get windows() {
+    return this.iwindowService.windows
+  }
+
+  constructor(
+    private translate: TranslateService,
+    private iwindowService: IwindowService
+  ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
   }
 
-  openProjectManager(){
+  ngAfterViewInit(): void {
+    this.iwindowService.bounds = this.windowsBounds.nativeElement;
+  }
+
+  openProjectManager() {
     this.showProjectManager = !this.showProjectManager;
   }
 }

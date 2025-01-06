@@ -21,9 +21,13 @@ export class CodeViewerComponent {
   ) { }
 
   ngOnInit(): void {
-    this.blocklyService.codeSubject.subscribe(code => {
-      this.code = code;
+  }
 
+  ngAfterViewInit(): void {
+    this.blocklyService.codeSubject.subscribe(code => {
+      setTimeout(() => {
+        this.code = code;
+      }, 100);
     })
   }
 }

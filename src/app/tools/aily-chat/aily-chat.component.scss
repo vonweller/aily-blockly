@@ -1,5 +1,38 @@
-.input{
-    position: absolute;
-    bottom: 0;
-    width: 100%;
+.window-box {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.dialog-list {
+    padding: 5px 10px;
+    flex-grow: 1;
+}
+
+.sender {
+    background: #444;
+    position: relative;
+
+    .s-box {
+        display: flex;
+        width: 100%;
+        padding: 5px 10px;
+
+        .btn {
+            width: 36px;
+            font-size: 20px;
+            color: #EEE;
+            cursor: pointer;
+            justify-content: flex-end;
+
+            &:hover {
+                color: #FFF;
+            }
+        }
+    }
+
+    .btns {
+        position: relative;
+    }
 }

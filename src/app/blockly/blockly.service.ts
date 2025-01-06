@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { lastValueFrom, Subject } from 'rxjs';
+import { BehaviorSubject, lastValueFrom, Subject } from 'rxjs';
 import * as Blockly from 'blockly';
 import { processJsonVar } from './abf';
 
@@ -17,7 +17,7 @@ export class BlocklyService {
     ]
   }
 
-  codeSubject = new Subject<string>();
+  codeSubject = new BehaviorSubject<string>('');
 
   // get boardConfig() {
   //   return 

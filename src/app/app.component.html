@@ -9,9 +9,22 @@
 <blockly-arduino></blockly-arduino>
 <app-project-btn (click)="openProjectManager()"></app-project-btn>
 @if (showProjectManager) {
-    <app-project-manager></app-project-manager>
+<app-project-manager></app-project-manager>
 }
-
-<!-- <app-aily-chat></app-aily-chat>
-<app-serial-monitor></app-serial-monitor>-->
-<!-- <app-code-viewer></app-code-viewer>  -->
+<div class="bounds" #WindowsBounds>
+@for (item of windows; track item) {
+<app-inner-window [opt]="item">
+    @switch(item.type) {
+    @case('serial-monitor') {
+    <app-serial-monitor></app-serial-monitor>
+    }
+    @case('aily-chat') {
+    <app-aily-chat></app-aily-chat>
+    }
+    @case('code-viewer') {
+    <app-code-viewer></app-code-viewer>
+    }
+    }
+</app-inner-window>
+}
+</div>

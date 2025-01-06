@@ -5,7 +5,7 @@
     @for(zone of headerMenu;track $index){
     <div class="zone ccenter">
         @for (btn of zone; track $index) {
-        <div class="btn ccenter">
+        <div class="btn ccenter" (click)="onClick(btn)">
             <div class="icon"><i class="{{btn.icon}}"></i></div>
             <div class="text">{{btn.name}}</div>
         </div>
