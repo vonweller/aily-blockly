@@ -1,0 +1,437 @@
+.dialog-box {
+    display: flex;
+    padding-top: 10px;
+
+    ::ng-deep {
+        .function {
+            padding: 5px 10px;
+            border-bottom: 1px solid #bbb;
+        }
+    }
+}
+
+nz-avatar {
+    flex-shrink: 0;
+}
+
+.bubble {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: 25px 75px 0 25px;
+    background: #ddd;
+    width: 100%;
+    min-height: 44px;
+    border-radius: 0 10px 10px 10px;
+    position: relative;
+    // padding-bottom: 10px;
+
+    .tail {
+        width: 0;
+        height: 0;
+        border-bottom: 10px solid transparent;
+        border-right: 10px solid #ddd;
+        position: absolute;
+        top: 0px;
+        left: -9px;
+    }
+
+    .user-info {
+        position: absolute;
+        top: -25px;
+        left: -7px;
+
+        .name {
+            display: flex;
+
+            .prompt-setting {
+                margin-left: 15px;
+            }
+        }
+    }
+
+    .content {
+        padding: 5px 15px;
+        min-height: 45px;
+    }
+
+    .state {
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        height: 25px;
+        display: flex;
+        align-items: center;
+        padding: 15px;
+        color: #1283d4;
+        cursor: pointer;
+
+        i {
+            font-size: 16px;
+            animation: rrotate 2s linear infinite;
+        }
+
+        div {
+            margin-left: 5px;
+            font-size: 10px;
+        }
+
+        &:hover {
+            color: #389fff;
+        }
+    }
+}
+
+.mine {
+    flex-direction: row-reverse;
+
+    .bubble {
+        margin: 25px 25px 0 75px;
+        background: #c6def1;
+        border-radius: 10px 0 10px 10px;
+
+        .tail {
+            border-bottom: none;
+            border-right: none;
+            border-bottom: 10px solid transparent;
+            border-left: 10px solid #c6def1;
+            left: auto;
+            right: -9px !important;
+        }
+    }
+
+
+}
+
+.content {
+    ::ng-deep {
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            font-weight: bold;
+            color: #222;
+            margin-top: 0;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 1em;
+        }
+
+        h2 {
+            font-size: 28px;
+            margin-bottom: 1em;
+        }
+
+        h3 {
+            font-size: 24px;
+            margin-bottom: 1em;
+        }
+
+        h4 {
+            font-size: 20px;
+            margin-bottom: 1em;
+        }
+
+        h5 {
+            font-size: 16px;
+            margin-bottom: 1em;
+        }
+
+        h6 {
+            font-size: 14px;
+            margin-bottom: 1em;
+        }
+
+        p,
+        ul,
+        ol,
+        pre,
+        table,
+        blockquote {
+            margin-top: 1em;
+            margin-bottom: 1em;
+            font-size: 16px;
+        }
+
+        ul,
+        ol {
+            padding-left: 1.5em;
+        }
+
+        blockquote {
+            padding: 0.5em 1em;
+            border-left: 0.25em solid #ccc;
+            color: #666;
+        }
+
+        a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: #eee;
+            position: relative;
+            margin-top: 30px;
+
+            &:hover {
+                .export-btn {
+                    visibility: visible;
+                }
+            }
+        }
+
+        table,
+        th,
+        td {
+            border: 1px solid #ccc;
+        }
+
+        th,
+        td {
+            padding: 0.5em;
+            text-align: left;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #ccc;
+            margin: 2em 0;
+        }
+
+        // 代码显示
+        pre {
+            display: grid;
+            position: relative;
+            margin-top: 30px;
+            overflow: visible;
+
+            code {
+                display: block;
+                overflow-x: auto;
+                padding: 0.5em 1em;
+            }
+        }
+
+        .export {
+            position: absolute;
+            right: 108px;
+            top: -20px;
+            font-size: 12px;
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: none;
+            border: none;
+            opacity: 0.3;
+        }
+
+        .export-btn {
+            position: absolute;
+            right: 0;
+            top: -20px;
+            font-size: 12px;
+            width: 35px;
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            border: none;
+            white-space: nowrap;
+            opacity: 0.5;
+            background: none;
+
+            &:hover {
+                opacity: 1;
+            }
+
+            &.excel {
+                right: 0;
+                border: 1px solid #555;
+            }
+
+            &.json {
+                right: 36px;
+                border: 1px solid #555;
+            }
+
+            &.sql {
+                right: 72px;
+                border: 1px solid #555;
+            }
+        }
+
+        .copy-btn {
+            position: absolute;
+            right: 0;
+            top: -20px;
+            font-size: 12px;
+            width: 35px;
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            border: none;
+            white-space: nowrap;
+            opacity: 0.5;
+            background: none;
+            border: 1px solid #555;
+
+            &:hover {
+                opacity: 1;
+            }
+        }
+
+        a {
+            color: #007bff;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        p {
+            margin-top: 5px;
+            margin-bottom: 5px;
+            font-size: 16px;
+        }
+    }
+}
+
+.voice-btn {
+    margin-left: 15px;
+    cursor: pointer;
+
+    i.fa-play {
+        color: #00772c;
+    }
+
+    i.fa-stop {
+        color: rgb(133, 0, 0);
+    }
+}
+
+.ps {
+    padding-top: 5px;
+    margin: 0 15px 15px 15px;
+    border-top: 1px solid #bbb;
+    color: #646464;
+}
+
+.unlogin {
+    position: absolute;
+    top: 15px;
+    right: 15px
+}
+
+.user-selector {
+    display: flex;
+    align-items: center;
+    margin: -10px 0 10px 15px;
+
+    // &:first-child {
+    //     // margin: -10px 0 20px 15px;
+    //     margin: 0 0 5px 15px;
+    // }
+
+    .btns {
+        display: flex;
+        flex-wrap: wrap;
+        background-color: #eee;
+        min-height: 40px;
+        border-radius: 25px;
+        padding: 5px;
+
+        &.disabled {
+            opacity: 0.6;
+        }
+
+        >div {
+            cursor: pointer;
+            min-width: 80px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 5px 15px;
+
+            &.selected {
+                background: #007bff;
+                border-radius: 20px;
+                color: #FFF;
+            }
+        }
+
+    }
+
+    i {
+        cursor: pointer;
+        margin-left: 10px;
+        font-size: 20px;
+        opacity: 0.5;
+
+        &:hover {
+            color: #007bff;
+            opacity: 0.8;
+        }
+    }
+
+    input{
+        background: transparent;
+        border: none;
+        outline: none;
+        padding: 0 10px;
+        width: 100%;
+    }
+}
+
+.selector-box {
+    margin-top: -10px;
+    >div{
+        margin: 5px 15px 5px 15px;
+    }
+}
+
+@media (max-width: 768px) {
+    .mobile-hide {
+        display: none;
+    }
+}
+
+.image-box {
+    display: flex;
+    padding: 8px 0 0 8px;
+
+    >div {
+        width: 104px;
+        height: 104px;
+        padding: 8px;
+        border: 1px solid #d9d9d9;
+        border-radius: 2px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #FFF;
+        margin: 0 8px 0 0;
+
+        img {
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+        }
+    }
+}

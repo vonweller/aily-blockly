@@ -2,13 +2,15 @@ import { Component } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
+import { InputBoxComponent } from './components/input-box/input-box.component';
 
 @Component({
   selector: 'app-aily-chat',
   imports: [
     InnerWindowComponent,
     NzInputModule,
-    FormsModule
+    FormsModule,
+    InputBoxComponent
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss'

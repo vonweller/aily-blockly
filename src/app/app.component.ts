@@ -14,6 +14,8 @@ import { SerialMonitorComponent } from './tools/serial-monitor/serial-monitor.co
 import { CodeViewerComponent } from './tools/code-viewer/code-viewer.component';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { CommonModule } from '@angular/common';
+import { IwindowService } from './services/iwindow.service';
+import { InnerWindowComponent } from './components/inner-window/inner-window.component';
 
 @Component({
   selector: 'app-root',
@@ -28,7 +30,8 @@ import { CommonModule } from '@angular/common';
     CodeViewerComponent,
     SerialMonitorComponent,
     // BrowserAnimationsModule,
-    CommonModule
+    CommonModule,
+    InnerWindowComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
@@ -38,13 +41,21 @@ export class AppComponent {
 
   showProjectManager = false;
 
-  constructor(private translate: TranslateService) {
+
+  get windows() {
+    return this.iwindowService.windows
+  }
+
+  constructor(
+    private translate: TranslateService,
+    private iwindowService: IwindowService
+  ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
   }
 
-  openProjectManager(){
+  openProjectManager() {
     this.showProjectManager = !this.showProjectManager;
   }
 }

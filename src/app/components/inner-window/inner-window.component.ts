@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { Component, Input } from '@angular/core';
+import { Component, input, Input } from '@angular/core';
 import { AngularDraggableModule } from 'angular2-draggable';
+import { IWindowOpt, IwindowService } from '../../services/iwindow.service';
 @Component({
   selector: 'app-inner-window',
   imports: [AngularDraggableModule,
@@ -11,10 +12,22 @@ import { AngularDraggableModule } from 'angular2-draggable';
 })
 export class InnerWindowComponent {
 
-  @Input() title: string;
+  @Input() width: number = 400;
+  @Input() height: number = 600;
+
+  @Input() top: number = 65;
+  @Input() right: number = 0;
+
+  @Input() opt: IWindowOpt;
 
   isMinimize = false;
   isClose = false;
+
+  constructor(
+    private iwindowService: IwindowService
+  ) {
+
+  }
 
   minimize() {
     this.isMinimize = true;
@@ -26,6 +39,7 @@ export class InnerWindowComponent {
 
   close() {
     this.isClose = true;
+    this.iwindowService.closeWindow(this.opt);
   }
 
 }
