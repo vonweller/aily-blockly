@@ -1,7 +1,16 @@
-
+<div class="window-box">
     <div class="dialog-list">
+        @for (item of list; track item) {
+        <aily-dialog [data]="item"></aily-dialog>
+        }
 
     </div>
-    <div class="input">
-        <!-- <qa-input></qa-input>   -->
+    <div class="sender">
+        <div class="s-box">
+            <textarea nz-input placeholder="Controlled autosize" [nzAutosize]="{ minRows: 3, maxRows: 5 }"></textarea>
+            <div class="btn ccenter">
+                <i class="fa-light fa-paper-plane"></i>
+            </div>
+        </div>
     </div>
+</div>

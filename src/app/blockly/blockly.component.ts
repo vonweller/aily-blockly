@@ -67,7 +67,7 @@ export class BlocklyComponent {
       });
       this.workspace.addChangeListener((event) => {
         let code = arduinoGenerator.workspaceToCode(this.workspace);
-        this.blocklyService.codeSubject.next(code);
+          this.blocklyService.codeSubject.next(code);
       });
       window['Arduino'] = <any>arduinoGenerator;
       this.blocklyService.init();

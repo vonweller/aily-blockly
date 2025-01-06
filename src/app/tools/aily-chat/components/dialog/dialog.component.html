@@ -1,7 +1,7 @@
 <div class="dialog-box animate__animated animate__faster animate__fadeIn" [ngClass]="{'mine':mine}" (click)="debug()">
     <div class="bubble">
         <div class="tail"></div>
-        <div class="user-info">
+        <!-- <div class="user-info">
             <div class="name" *ngIf="!mine">
                 <div class="voice-btn play" *ngIf="!isPlaying" (click)="playAll()">
                     <i class="fa-light fa-play"></i>
@@ -11,7 +11,7 @@
                 </div>
             </div>
             <div class="date"></div>
-        </div>
+        </div> -->
         <div class="content" [innerHTML]="this.data.content | markdown" #mdContent>
         </div>
         <div class="state" *ngIf="!mine&&!isDone&&!system" (click)="stop()">
