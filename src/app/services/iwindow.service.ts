@@ -23,7 +23,6 @@ export class IwindowService {
     console.log(index);
     this.windows.splice(index, 1);
     console.log(this.windows);
-
   }
 
   getMaxZindex() {

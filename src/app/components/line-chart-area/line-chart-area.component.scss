@@ -1,19 +1,6 @@
-// :host {
-//     width: 100%;
-//     height: 100%;
-//     position: relative;
-
-//     [echarts] {
-//         width: 100%;
-//         height: 100%;
-//     }
-
-// }
-
 .chart-box {
-    margin: 10px;
-    height: calc(100% - 10px);
-    width: calc(100% - 5px);
+    height: 100%;
+    width: 100%;
     border-radius: 10px;
     overflow: hidden;
     display: flex;

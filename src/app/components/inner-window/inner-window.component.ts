@@ -36,11 +36,12 @@ export class InnerWindowComponent {
     private iwindowService: IwindowService
   ) { }
 
+  ngOnInit(): void {
+console.log(this.opt);
+
+  }
+
   ngAfterViewInit(): void {
-    // setTimeout(() => {
-    //   this.oldSize = JSON.parse(JSON.stringify(this.opt.size));
-    //   this.oldPosition = JSON.parse(JSON.stringify(this.opt.position));
-    // }, 500);
   }
 
   minimize() {

@@ -26,10 +26,13 @@ export class HeaderComponent {
         this.iwindowService.openWindow({ type: 'aily-chat', title: 'AI助手' });
         break;
       case 'open-code-viewer':
-        this.iwindowService.openWindow({ type: 'code-viewer', title: '菜单' });
+        this.iwindowService.openWindow({ type: 'code-viewer', title: '代码预览' });
         break;
       case 'open-serial-monitor':
         this.iwindowService.openWindow({ type: 'serial-monitor', title: '串口助手' });
+        setTimeout(() => {
+         this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' }); 
+        }, 50);
         break
     }
   }

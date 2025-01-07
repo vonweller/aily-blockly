@@ -17,6 +17,8 @@ import { CommonModule } from '@angular/common';
 import { IwindowService } from './services/iwindow.service';
 import { InnerWindowComponent } from './components/inner-window/inner-window.component';
 import { TerminalComponent } from './tools/terminal/terminal.component';
+import { LineChartAreaComponent } from './components/line-chart-area/line-chart-area.component';
+import { DataChartComponent } from './tools/data-chart/data-chart.component';
 
 @Component({
   selector: 'app-root',
@@ -33,7 +35,8 @@ import { TerminalComponent } from './tools/terminal/terminal.component';
     // BrowserAnimationsModule,
     CommonModule,
     InnerWindowComponent,
-    TerminalComponent
+    TerminalComponent,
+    DataChartComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
