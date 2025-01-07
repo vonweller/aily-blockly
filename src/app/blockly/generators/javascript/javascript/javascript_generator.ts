@@ -11,13 +11,24 @@
 
 // Former goog.module ID: Blockly.JavaScript
 
-import type {Block} from '../../core/block.js';
-import {CodeGenerator} from '../../core/generator.js';
-import {inputTypes} from '../../core/inputs/input_types.js';
-import {Names, NameType} from '../../core/names.js';
-import * as stringUtils from '../../core/utils/string.js';
-import * as Variables from '../../core/variables.js';
-import type {Workspace} from '../../core/workspace.js';
+import {
+  Block,
+  CodeGenerator,
+  Names,
+  Variables,
+  Workspace,
+  utils,
+} from 'blockly';
+const NameType = Names.NameType;
+const stringUtils = utils.string;
+// @ts-ignore
+import { inputTypes } from 'blockly/core/inputs/input_types';
+// import {CodeGenerator} from '../../core/generator.js';
+// import {inputTypes} from '../../core/inputs/input_types.js';
+// import {Names, NameType} from '../../core/names.js';
+// import * as stringUtils from '../../core/utils/string.js';
+// import * as Variables from '../../core/variables.js';
+// import type {Workspace} from '../../core/workspace.js';
 
 /**
  * Order of operation ENUMs.
@@ -67,7 +78,7 @@ export enum Order {
  */
 export class JavascriptGenerator extends CodeGenerator {
   /** List of outer-inner pairings that do NOT require parentheses. */
-  ORDER_OVERRIDES: [Order, Order][] = [
+  override ORDER_OVERRIDES: [Order, Order][] = [
     // (foo()).bar -> foo().bar
     // (foo())[0] -> foo()[0]
     [Order.FUNCTION_CALL, Order.MEMBER],
@@ -147,7 +158,7 @@ export class JavascriptGenerator extends CodeGenerator {
    *
    * @param workspace Workspace to generate code from.
    */
-  init(workspace: Workspace) {
+  override init(workspace: Workspace) {
     super.init(workspace);
 
     if (!this.nameDB_) {
@@ -190,7 +201,7 @@ export class JavascriptGenerator extends CodeGenerator {
    * @param code Generated code.
    * @returns Completed code.
    */
-  finish(code: string): string {
+  override finish(code: string): string {
     // Convert the definitions dictionary into a list.
     const definitions = Object.values(this.definitions_);
     // Call Blockly.CodeGenerator's finish.
@@ -208,7 +219,7 @@ export class JavascriptGenerator extends CodeGenerator {
    * @param line Line of generated code.
    * @returns Legal line of code.
    */
-  scrubNakedValue(line: string): string {
+  override scrubNakedValue(line: string): string {
     return line + ';\n';
   }
 
@@ -252,7 +263,7 @@ export class JavascriptGenerator extends CodeGenerator {
    * @param thisOnly True to generate code for only this statement.
    * @returns JavaScript code with comments and subsequent blocks added.
    */
-  scrub_(block: Block, code: string, thisOnly = false): string {
+  override scrub_(block: Block, code: string, thisOnly = false): string {
     let commentCode = '';
     // Only collect comments for blocks that aren't inline.
     if (!block.outputConnection || !block.outputConnection.targetConnection) {

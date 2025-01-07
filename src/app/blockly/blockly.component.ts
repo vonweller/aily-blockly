@@ -10,39 +10,34 @@ import './plugins/toolbox-search/src/index.js';
 import { arduinoGenerator, DEFAULT_DATA } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
+import { javascriptGenerator } from 'blockly/javascript';
 
 @Component({
   selector: 'blockly-arduino',
   imports: [],
   templateUrl: './blockly.component.html',
-  styleUrl: './blockly.component.scss'
+  styleUrl: './blockly.component.scss',
 })
 export class BlocklyComponent {
-
   get workspace() {
-    return this.blocklyService.workspace
+    return this.blocklyService.workspace;
   }
 
   set workspace(workspace) {
-    this.blocklyService.workspace = workspace
+    this.blocklyService.workspace = workspace;
   }
 
   get toolbox() {
-    return this.blocklyService.toolbox
+    return this.blocklyService.toolbox;
   }
 
   set toolbox(toolbox) {
-    this.blocklyService.toolbox = toolbox
+    this.blocklyService.toolbox = toolbox;
   }
 
-  constructor(
-    private blocklyService: BlocklyService
-  ) {
+  constructor(private blocklyService: BlocklyService) {}
 
-  }
-
-  ngOnInit(): void {
-  }
+  ngOnInit(): void {}
 
   ngAfterViewInit(): void {
     setTimeout(async () => {
@@ -59,17 +54,19 @@ export class BlocklyComponent {
         theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
         trashcan: true,
         grid: {
-          spacing: 20,          // 网格间距为20像素
-          length: 3,           // 网格点的大小
+          spacing: 20, // 网格间距为20像素
+          length: 3, // 网格点的大小
           colour: '#ccc',
-          snap: true
-        }
+          snap: true,
+        },
       });
       this.workspace.addChangeListener((event) => {
         let code = arduinoGenerator.workspaceToCode(this.workspace);
-          this.blocklyService.codeSubject.next(code);
+        // let code = javascriptGenerator.workspaceToCode(this.workspace);
+        this.blocklyService.codeSubject.next(code);
       });
       window['Arduino'] = <any>arduinoGenerator;
+      window['Blockly'] = Blockly;
       this.blocklyService.init();
       await this.loadLibraries();
       this.loadDefaultData();
@@ -82,12 +79,11 @@ export class BlocklyComponent {
   }
 
   loadDefaultData() {
-    let tempJson = JSON.parse(DEFAULT_DATA)
-    this.loadJson(tempJson)
+    let tempJson = JSON.parse(DEFAULT_DATA);
+    this.loadJson(tempJson);
   }
 
   loadJson(json) {
-    Blockly.serialization.workspaces.load(json, this.workspace)
+    Blockly.serialization.workspaces.load(json, this.workspace);
   }
-
 }

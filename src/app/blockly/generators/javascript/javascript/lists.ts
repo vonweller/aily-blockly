@@ -10,11 +10,13 @@
 
 // Former goog.module ID: Blockly.JavaScript.lists
 
-import type {CreateWithBlock} from '../../blocks/lists.js';
-import type {Block} from '../../core/block.js';
-import {NameType} from '../../core/names.js';
-import type {JavascriptGenerator} from './javascript_generator.js';
-import {Order} from './javascript_generator.js';
+import { Block, Names } from 'blockly';
+import NameType = Names.NameType;
+import type { CreateWithBlock } from '../../blocks/lists.js';
+// import type {Block} from '../../core/block.js';
+// import {NameType} from '../../core/names.js';
+import type { JavascriptGenerator } from './javascript_generator.js';
+import { Order } from './javascript_generator.js';
 
 export function lists_create_empty(
   block: Block,
@@ -305,10 +307,10 @@ export function lists_getSublist(
   // Get sublist.
   // Dictionary of WHEREn field choices and their CamelCase equivalents.
   const wherePascalCase = {
-    'FIRST': 'First',
-    'LAST': 'Last',
-    'FROM_START': 'FromStart',
-    'FROM_END': 'FromEnd',
+    FIRST: 'First',
+    LAST: 'Last',
+    FROM_START: 'FromStart',
+    FROM_END: 'FromEnd',
   };
   type WhereOption = keyof typeof wherePascalCase;
   const list = generator.valueToCode(block, 'LIST', Order.MEMBER) || '[]';
