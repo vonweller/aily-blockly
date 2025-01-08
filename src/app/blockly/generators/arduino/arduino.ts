@@ -1,48 +1,47 @@
 import * as Blockly from 'blockly';
 
 export enum Order {
-  ATOMIC = 0,            // 0 "" ...
-  NEW = 1.1,             // new
-  MEMBER = 1.2,          // . []
-  FUNCTION_CALL = 2,     // ()
-  INCREMENT = 3,         // ++
-  DECREMENT = 3,         // --
-  BITWISE_NOT = 4.1,     // ~
-  UNARY_PLUS = 4.2,      // +
-  UNARY_NEGATION = 4.3,  // -
-  LOGICAL_NOT = 4.4,     // !
-  TYPEOF = 4.5,          // typeof
-  VOID = 4.6,            // void
-  DELETE = 4.7,          // delete
-  AWAIT = 4.8,           // await
-  EXPONENTIATION = 5.0,  // **
-  MULTIPLICATION = 5.1,  // *
-  DIVISION = 5.2,        // /
-  MODULUS = 5.3,         // %
-  SUBTRACTION = 6.1,     // -
-  ADDITION = 6.2,        // +
-  BITWISE_SHIFT = 7,     // << >> >>>
-  RELATIONAL = 8,        // < <= > >=
-  IN = 8,                // in
-  INSTANCEOF = 8,        // instanceof
-  EQUALITY = 9,          // == != === !==
-  BITWISE_AND = 10,      // &
-  BITWISE_XOR = 11,      // ^
-  BITWISE_OR = 12,       // |
-  LOGICAL_AND = 13,      // &&
-  LOGICAL_OR = 14,       // ||
-  CONDITIONAL = 15,      // ?:
-  ASSIGNMENT = 16,       // = += -= **= *= /= %= <<= >>= ...
-  YIELD = 17,            // yield
-  COMMA = 18,            // ,
-  NONE = 99,             // (...)
+  ATOMIC = 0, // 0 "" ...
+  NEW = 1.1, // new
+  MEMBER = 1.2, // . []
+  FUNCTION_CALL = 2, // ()
+  INCREMENT = 3, // ++
+  DECREMENT = 3, // --
+  BITWISE_NOT = 4.1, // ~
+  UNARY_PLUS = 4.2, // +
+  UNARY_NEGATION = 4.3, // -
+  LOGICAL_NOT = 4.4, // !
+  TYPEOF = 4.5, // typeof
+  VOID = 4.6, // void
+  DELETE = 4.7, // delete
+  AWAIT = 4.8, // await
+  EXPONENTIATION = 5.0, // **
+  MULTIPLICATION = 5.1, // *
+  DIVISION = 5.2, // /
+  MODULUS = 5.3, // %
+  SUBTRACTION = 6.1, // -
+  ADDITION = 6.2, // +
+  BITWISE_SHIFT = 7, // << >> >>>
+  RELATIONAL = 8, // < <= > >=
+  IN = 8, // in
+  INSTANCEOF = 8, // instanceof
+  EQUALITY = 9, // == != === !==
+  BITWISE_AND = 10, // &
+  BITWISE_XOR = 11, // ^
+  BITWISE_OR = 12, // |
+  LOGICAL_AND = 13, // &&
+  LOGICAL_OR = 14, // ||
+  CONDITIONAL = 15, // ?:
+  ASSIGNMENT = 16, // = += -= **= *= /= %= <<= >>= ...
+  YIELD = 17, // yield
+  COMMA = 18, // ,
+  NONE = 99, // (...)
 }
 
-const stringUtils = Blockly.utils.string
-const inputTypes = Blockly.inputs.inputTypes
+const stringUtils = Blockly.utils.string;
+const inputTypes = Blockly.inputs.inputTypes;
 
 export class ArduinoGenerator extends Blockly.CodeGenerator {
-
   codeDict = {};
 
   /** @param name Name of the language the generator is for. */
@@ -58,14 +57,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
     this.addReservedWords(
       'setup,loop,if,else,for,switch,case,while,do,break,continue,return,goto,' +
-      'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
-      'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
-      'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
-      'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
-      'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
-      'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
-      'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
-      'detachInterrupt,interrupts,noInterrupts'
+        'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
+        'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
+        'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
+        'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
+        'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
+        'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
+        'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
+        'detachInterrupt,interrupts,noInterrupts',
     );
   }
 
@@ -92,7 +91,10 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     const devVarList = Blockly.Variables.allDeveloperVariables(workspace);
     for (let i = 0; i < devVarList.length; i++) {
       defvars.push(
-        this.nameDB_.getName(devVarList[i], Blockly.Names.NameType.DEVELOPER_VARIABLE),
+        this.nameDB_.getName(
+          devVarList[i],
+          Blockly.Names.NameType.DEVELOPER_VARIABLE,
+        ),
       );
     }
 
@@ -100,7 +102,10 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     const variables = Blockly.Variables.allUsedVarModels(workspace);
     for (let i = 0; i < variables.length; i++) {
       defvars.push(
-        this.nameDB_.getName(variables[i].getId(), Blockly.Names.NameType.VARIABLE),
+        this.nameDB_.getName(
+          variables[i].getId(),
+          Blockly.Names.NameType.VARIABLE,
+        ),
       );
     }
 
@@ -111,7 +116,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
     // codeDict主要是为了防止代码重复生成
     this.codeDict = {};
-    // 宏定义  
+    // 宏定义
     this.codeDict['macros'] = Object.create(null);
     // 库引用
     this.codeDict['libraries'] = Object.create(null);
@@ -156,31 +161,31 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     let userLoops = [];
 
     for (const key in this.codeDict['macros']) {
-      macros.push(this.codeDict['macros'][key])
+      macros.push(this.codeDict['macros'][key]);
     }
     for (const key in this.codeDict['libraries']) {
-      libraries.push(this.codeDict['libraries'][key])
+      libraries.push(this.codeDict['libraries'][key]);
     }
     for (const key in this.codeDict['variables']) {
-      variables.push(this.codeDict['variables'][key])
+      variables.push(this.codeDict['variables'][key]);
     }
     for (const key in this.codeDict['objects']) {
-      objects.push(this.codeDict['objects'][key])
+      objects.push(this.codeDict['objects'][key]);
     }
     for (const key in this.codeDict['functions']) {
-      functions.push(this.codeDict['functions'][key])
+      functions.push(this.codeDict['functions'][key]);
     }
     for (const key in this.codeDict['setups']) {
-      setups.push(this.codeDict['setups'][key])
+      setups.push(this.codeDict['setups'][key]);
     }
     for (const key in this.codeDict['userSetups']) {
-      userSetups.push(this.codeDict['userSetups'][key])
+      userSetups.push(this.codeDict['userSetups'][key]);
     }
     for (const key in this.codeDict['userLoops']) {
-      userLoops.push(this.codeDict['userLoops'][key])
+      userLoops.push(this.codeDict['userLoops'][key]);
     }
     for (const key in this.codeDict['loops']) {
-      loops.push(this.codeDict['loops'][key])
+      loops.push(this.codeDict['loops'][key]);
     }
 
     this.isInitialized = false;
@@ -198,7 +203,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       `void loop() {\n` +
       `${userLoops.join('\n')}` +
       `${loops.join('\n')}` +
-      `}`
+      `}`;
     return newcode;
   }
 
@@ -253,7 +258,11 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
    * @param thisOnly True to generate code for only this statement.
    * @returns JavaScript code with comments and subsequent blocks added.
    */
-  override scrub_(block: Blockly.Block, code: string, thisOnly = false): string {
+  override scrub_(
+    block: Blockly.Block,
+    code: string,
+    thisOnly = false,
+  ): string {
     let commentCode = '';
     // Only collect comments for blocks that aren't inline.
     if (!block.outputConnection || !block.outputConnection.targetConnection) {
@@ -349,7 +358,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     if (this.codeDict['macros'][tag] === undefined) {
       this.codeDict['macros'][tag] = code;
     }
-  };
+  }
 
   addLibrary(tag, code) {
     if (this.codeDict['libraries'][tag] === undefined) {
@@ -401,40 +410,42 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     //     if (variableModel && variableModel.name == varName) return variableModel.type
     //   }
     // }
-    return 'int'
+    return 'int';
   }
 
   getValue(block, name: string, type = '') {
-    let code = '?'
+    let code = '?';
     if (type == 'input_statement' || type == 'input_value') {
       try {
         code = arduinoGenerator.statementToCode(block, name);
-        return code.replace(/(^\s*)/, "")
+        return code.replace(/(^\s*)/, '');
       } catch (error) {
-        code = arduinoGenerator.valueToCode(block, name, Order.ATOMIC)
-        return code
+        code = arduinoGenerator.valueToCode(block, name, Order.ATOMIC);
+        return code;
       }
     }
     if (type == 'field_variable') {
-      code = arduinoGenerator.nameDB_.getName(block.getFieldValue(name), 'VARIABLE')
-      return code
+      code = arduinoGenerator.nameDB_.getName(
+        block.getFieldValue(name),
+        'VARIABLE',
+      );
+      return code;
     }
     // if (type == 'field_dropdown' || type == 'field_number' || type == 'field_multilinetext') {
-    code = block.getFieldValue(name)
-    return code
+    code = block.getFieldValue(name);
+    return code;
   }
 
   varIsGlobal(block) {
-    let currentBlock = block
+    let currentBlock = block;
     while (currentBlock.parentBlock_ != null) {
-      currentBlock = currentBlock.parentBlock_
+      currentBlock = currentBlock.parentBlock_;
       if (currentBlock.type == 'arduino_setup') {
-        return true
+        return true;
       }
     }
-    return false
+    return false;
   }
-
 }
 
 export const VAR_TYPE = [
@@ -444,11 +455,10 @@ export const VAR_TYPE = [
   { name: 'double', value: 'double' },
   { name: 'char', value: 'char' },
   { name: 'String', value: 'String' },
-  { name: 'boolean', value: 'boolean' }
-]
+  { name: 'boolean', value: 'boolean' },
+];
 
 export const arduinoGenerator = new ArduinoGenerator();
-
 
 export const DEFAULT_DATA = `{
   "dependencies": {
@@ -459,4 +469,4 @@ export const DEFAULT_DATA = `{
       { "type": "arduino_loop", "id": "arduino_loop_id0", "x": 330, "y": 30 }
     ]
   }
-}`
+}`;

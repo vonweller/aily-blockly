@@ -3,8 +3,8 @@ import { RouterOutlet } from '@angular/router';
 import {
   TranslateService,
   TranslatePipe,
-  TranslateDirective
-} from "@ngx-translate/core";
+  TranslateDirective,
+} from '@ngx-translate/core';
 import { HeaderComponent } from './components/header/header.component';
 import { BlocklyComponent } from './blockly/blockly.component';
 import { ProjectBtnComponent } from './components/project-btn/project-btn.component';
@@ -22,7 +22,9 @@ import { DataChartComponent } from './tools/data-chart/data-chart.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet,
+  standalone: true,
+  imports: [
+    RouterOutlet,
     BlocklyComponent,
     TranslatePipe,
     TranslateDirective,
@@ -39,7 +41,7 @@ import { DataChartComponent } from './tools/data-chart/data-chart.component';
     DataChartComponent
   ],
   templateUrl: './app.component.html',
-  styleUrl: './app.component.scss'
+  styleUrl: './app.component.scss',
 })
 export class AppComponent {
   title = 'aily-blockly';
@@ -49,12 +51,12 @@ export class AppComponent {
   @ViewChild('WindowsBounds') windowsBounds;
 
   get windows() {
-    return this.iwindowService.windows
+    return this.iwindowService.windows;
   }
 
   constructor(
     private translate: TranslateService,
-    private iwindowService: IwindowService
+    private iwindowService: IwindowService,
   ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
