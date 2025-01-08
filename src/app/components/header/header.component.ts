@@ -34,6 +34,9 @@ export class HeaderComponent {
          this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' }); 
         }, 50);
         break
+        case 'open-terminal':
+          this.iwindowService.openWindow({ type: 'terminal', title: '终端' });
+        break
     }
   }
 }
