@@ -1,9 +1,1 @@
-[
-    "io",
-    "logic",
-    "loops",
-    "serial",
-    "time",
-    "variables",
-    "functions"
-]
+["io", "logic", "loops", "math", "serial", "time", "variables", "functions"]

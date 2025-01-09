@@ -53,7 +53,8 @@
               "node_modules/ng-zorro-antd/ng-zorro-antd.min.css",
               "node_modules/ng-zorro-antd/code-editor/style/index.css",
               "node_modules/angular2-draggable/css/resizable.min.css",
-              "node_modules/animate.css/animate.min.css"
+              "node_modules/animate.css/animate.min.css",
+              "node_modules/@xterm/xterm/css/xterm.css"
             ],
             "scripts": []
           },

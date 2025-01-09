@@ -1,93 +1,121 @@
-Arduino.forBlock['arduino_setup'] = function (block) {
-  const code = Arduino.statementToCode(block, 'ARDUINO_SETUP');
-  Arduino.addUserSetup('setup', code)
+const stringUtils = Blockly.utils.string;
+
+Arduino.forBlock["arduino_setup"] = function (block) {
+  const code = Arduino.statementToCode(block, "ARDUINO_SETUP");
+  Arduino.addUserSetup("setup", code);
   return null;
 };
 
-Arduino.forBlock['arduino_loop'] = function (block) {
-  const code = Arduino.statementToCode(block, 'ARDUINO_LOOP');
-  Arduino.addLoop('loop', code)
+Arduino.forBlock["arduino_loop"] = function (block) {
+  const code = Arduino.statementToCode(block, "ARDUINO_LOOP");
+  Arduino.addLoop("loop", code);
   return null;
 };
 
-Arduino.forBlock['controls_repeat_ext'] = function (block) {
+Arduino.forBlock["controls_repeat_ext"] = function (block) {
   // Repeat n times.
   let repeats;
-  if (block.getField('TIMES')) {
+  if (block.getField("TIMES")) {
     // Internal number.
-    repeats = String(Number(block.getFieldValue('TIMES')));
+    repeats = String(Number(block.getFieldValue("TIMES")));
   } else {
     // External number.
     repeats =
-      Arduino.valueToCode(block, 'TIMES', Arduino.ORDER_ASSIGNMENT) ||
-      '0';
+      Arduino.valueToCode(block, "TIMES", Arduino.ORDER_ASSIGNMENT) || "0";
   }
-  let branch = Arduino.statementToCode(block, 'DO');
+  let branch = Arduino.statementToCode(block, "DO");
   branch = Arduino.addLoopTrap(branch, block);
-  let code = '';
-  const loopVar =
-    Arduino.nameDB_.getDistinctName('count', 'VARIABLE');
+  let code = "";
+  const loopVar = Arduino.nameDB_.getDistinctName("count", "VARIABLE");
   let endVar = repeats;
   if (!repeats.match(/^\w+$/) && !stringUtils.isNumber(repeats)) {
-    endVar =
-      Arduino.nameDB_.getDistinctName('repeat_end', 'VARIABLE');
-    code += 'int ' + endVar + ' = ' + repeats + ';\n';
+    endVar = Arduino.nameDB_.getDistinctName("repeat_end", "VARIABLE");
+    code += "int " + endVar + " = " + repeats + ";\n";
   }
-  code += 'for (int ' + loopVar + ' = 0; ' + loopVar + ' < ' + endVar + '; ' +
-    loopVar + '++) {\n' + branch + '}\n';
+  code +=
+    "for (int " +
+    loopVar +
+    " = 0; " +
+    loopVar +
+    " < " +
+    endVar +
+    "; " +
+    loopVar +
+    "++) {\n" +
+    branch +
+    "}\n";
   return code;
 };
 
-Arduino.forBlock['controls_repeat'] = Arduino.forBlock['controls_repeat_ext'];
+Arduino.forBlock["controls_repeat"] = Arduino.forBlock["controls_repeat_ext"];
 
-Arduino.forBlock['controls_whileUntil'] = function (block) {
+Arduino.forBlock["controls_whileUntil"] = function (block) {
   // Do while/until loop.
-  const until = block.getFieldValue('MODE') === 'UNTIL';
+  const until = block.getFieldValue("MODE") === "UNTIL";
   let argument0 =
     Arduino.valueToCode(
-      block, 'BOOL',
-      until ? Arduino.ORDER_LOGICAL_NOT : Arduino.ORDER_NONE) ||
-    'false';
-  let branch = Arduino.statementToCode(block, 'DO');
+      block,
+      "BOOL",
+      until ? Arduino.ORDER_LOGICAL_NOT : Arduino.ORDER_NONE,
+    ) || "false";
+  let branch = Arduino.statementToCode(block, "DO");
   branch = Arduino.addLoopTrap(branch, block);
   if (until) {
-    argument0 = '!' + argument0;
+    argument0 = "!" + argument0;
   }
-  return 'while (' + argument0 + ') {\n' + branch + '}\n';
+  return "while (" + argument0 + ") {\n" + branch + "}\n";
 };
 
-Arduino.forBlock['controls_for'] = function (block) {
+Arduino.forBlock["controls_for"] = function (block) {
   // For loop.
-  const variable0 = Arduino.nameDB_.getName(block.getFieldValue('VAR'), 'VARIABLE');
+  const variable0 = Arduino.nameDB_.getName(
+    block.getFieldValue("VAR"),
+    "VARIABLE",
+  );
   // getValue(block,'VAR')
 
-  const argument0 = Arduino.valueToCode(block, 'FROM', Arduino.ORDER_ASSIGNMENT) || '0';
-  const argument1 = Arduino.valueToCode(block, 'TO', Arduino.ORDER_ASSIGNMENT) || '0';
-  const increment = Arduino.valueToCode(block, 'BY', Arduino.ORDER_ASSIGNMENT) || '1';
-  let branch = Arduino.statementToCode(block, 'DO');
+  const argument0 =
+    Arduino.valueToCode(block, "FROM", Arduino.ORDER_ASSIGNMENT) || "0";
+  const argument1 =
+    Arduino.valueToCode(block, "TO", Arduino.ORDER_ASSIGNMENT) || "0";
+  const increment =
+    Arduino.valueToCode(block, "BY", Arduino.ORDER_ASSIGNMENT) || "1";
+  let branch = Arduino.statementToCode(block, "DO");
   branch = Arduino.addLoopTrap(branch, block);
   let code;
   let up = true;
-  if (stringUtils.isNumber(argument0) && stringUtils.isNumber(argument1) && stringUtils.isNumber(increment))
+  if (
+    stringUtils.isNumber(argument0) &&
+    stringUtils.isNumber(argument1) &&
+    stringUtils.isNumber(increment)
+  )
     up = Number(argument0) <= Number(argument1);
-  else
-    if (Number(increment) < 0) up = false;
-  code = 'for (' + variable0 + ' = ' + argument0 + '; ' + variable0 +
-    (up ? ' <= ' : ' >= ') + argument1 + '; ' + variable0;
+  else if (Number(increment) < 0) up = false;
+  code =
+    "for (" +
+    variable0 +
+    " = " +
+    argument0 +
+    "; " +
+    variable0 +
+    (up ? " <= " : " >= ") +
+    argument1 +
+    "; " +
+    variable0;
   const step = Math.abs(Number(increment));
   if (step === 1) {
-    code += up ? '++' : '--';
+    code += up ? "++" : "--";
   } else {
-    code += (up ? ' += ' : ' -= ') + step;
+    code += (up ? " += " : " -= ") + step;
   }
-  code += ') {\n' + branch + '}\n';
-  Arduino.addVariable(variable0, 'int ' + variable0 + ';')
+  code += ") {\n" + branch + "}\n";
+  Arduino.addVariable(variable0, "int " + variable0 + ";");
   return code;
 };
 
-Arduino.forBlock['controls_flow_statements'] = function (block) {
+Arduino.forBlock["controls_flow_statements"] = function (block) {
   // Flow statements: continue, break.
-  let xfix = '';
+  let xfix = "";
   if (Arduino.STATEMENT_PREFIX) {
     // Automatic prefix insertion is switched off for this block.  Add manually.
     xfix += Arduino.injectId(Arduino.STATEMENT_PREFIX, block);
@@ -106,11 +134,11 @@ Arduino.forBlock['controls_flow_statements'] = function (block) {
       xfix += Arduino.injectId(Arduino.STATEMENT_PREFIX, loop);
     }
   }
-  switch (block.getFieldValue('FLOW')) {
-    case 'BREAK':
-      return xfix + 'break;\n';
-    case 'CONTINUE':
-      return xfix + 'continue;\n';
+  switch (block.getFieldValue("FLOW")) {
+    case "BREAK":
+      return xfix + "break;\n";
+    case "CONTINUE":
+      return xfix + "continue;\n";
   }
-  throw Error('Unknown flow statement.');
+  throw Error("Unknown flow statement.");
 };

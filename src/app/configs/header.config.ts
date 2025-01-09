@@ -49,6 +49,11 @@ export let HEADER_MENU = [
             action: 'open-serial-monitor',
             icon: 'fa-light fa-monitor-waveform'
         },
+        {
+            name: '终端',
+            action: 'open-terminal',
+            icon: 'fa-light fa-rectangle-terminal'
+        },
     ], [
         {
             name: '课程',

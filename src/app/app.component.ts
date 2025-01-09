@@ -3,8 +3,8 @@ import { RouterOutlet } from '@angular/router';
 import {
   TranslateService,
   TranslatePipe,
-  TranslateDirective
-} from "@ngx-translate/core";
+  TranslateDirective,
+} from '@ngx-translate/core';
 import { HeaderComponent } from './components/header/header.component';
 import { BlocklyComponent } from './blockly/blockly.component';
 import { ProjectBtnComponent } from './components/project-btn/project-btn.component';
@@ -16,10 +16,15 @@ import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { CommonModule } from '@angular/common';
 import { IwindowService } from './services/iwindow.service';
 import { InnerWindowComponent } from './components/inner-window/inner-window.component';
+import { TerminalComponent } from './tools/terminal/terminal.component';
+import { LineChartAreaComponent } from './components/line-chart-area/line-chart-area.component';
+import { DataChartComponent } from './tools/data-chart/data-chart.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet,
+  standalone: true,
+  imports: [
+    RouterOutlet,
     BlocklyComponent,
     TranslatePipe,
     TranslateDirective,
@@ -31,10 +36,12 @@ import { InnerWindowComponent } from './components/inner-window/inner-window.com
     SerialMonitorComponent,
     // BrowserAnimationsModule,
     CommonModule,
-    InnerWindowComponent
+    InnerWindowComponent,
+    TerminalComponent,
+    DataChartComponent
   ],
   templateUrl: './app.component.html',
-  styleUrl: './app.component.scss'
+  styleUrl: './app.component.scss',
 })
 export class AppComponent {
   title = 'aily-blockly';
@@ -44,12 +51,12 @@ export class AppComponent {
   @ViewChild('WindowsBounds') windowsBounds;
 
   get windows() {
-    return this.iwindowService.windows
+    return this.iwindowService.windows;
   }
 
   constructor(
     private translate: TranslateService,
-    private iwindowService: IwindowService
+    private iwindowService: IwindowService,
   ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
