@@ -1,29 +1,23 @@
 {
-  "name": "@aily-blockly/core-logic",
+  "name": "@aily-blockly/core-lists",
   "author": "奈何col",
-  "description": "逻辑控制库",
+  "description": "数组",
   "version": "0.0.1",
   "config": {
-    "category": "Logic",
+    "category": "Lists",
     "icon": "fal fa-microchip",
     "colour": "#66bb6a"
-  },
-  "compatibility": {
-    "core": [
-      "arduino:avr",
-      "esp32:esp32",
-      "esp8266:esp8266"
-    ],
-    "voltage": [
-      3.3,
-      5
-    ]
   },
   "keywords": [
     "aily",
     "blockly",
     "core",
-    "io"
+    "lists"
+  ],
+  "files": [
+    "toolbox.json",
+    "block.json",
+    "generator.js"
   ],
   "scripts": {},
   "private": true,

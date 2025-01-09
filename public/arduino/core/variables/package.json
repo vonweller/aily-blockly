@@ -1,29 +1,19 @@
 {
-  "name": "@aily-blockly/core-loops",
+  "name": "@aily-blockly/core-variables",
   "author": "奈何col",
-  "description": "逻辑控制库",
+  "description": "变量",
   "version": "0.0.1",
   "config": {
-    "category": "Loops",
+    "category": "Variables",
     "icon": "fa-light fa-arrows-repeat",
     "colour": "#48c2c4"
   },
-  "compatibility": {
-    "core": [
-      "arduino:avr",
-      "esp32:esp32",
-      "esp8266:esp8266"
-    ],
-    "voltage": [
-      3.3,
-      5
-    ]
-  },
+  "compatibility": {},
   "keywords": [
     "aily",
     "blockly",
     "core",
-    "loops"
+    "variables"
   ],
   "scripts": {},
   "private": true,
