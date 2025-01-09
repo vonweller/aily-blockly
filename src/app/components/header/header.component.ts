@@ -26,7 +26,11 @@ export class HeaderComponent {
         this.iwindowService.openWindow({ type: 'aily-chat', title: 'AI助手' });
         break;
       case 'open-code-viewer':
-        this.iwindowService.openWindow({ type: 'code-viewer', title: '代码预览' });
+        this.iwindowService.openWindow({
+          type: 'code-viewer', title: '代码预览',
+          size: { width: 400, height: window.innerHeight - 65 - 200 },
+          position: { x: window.innerWidth - 400, y: 65}
+        });
         break;
       case 'open-serial-monitor':
         this.iwindowService.openWindow({ type: 'serial-monitor', title: '串口助手' });
