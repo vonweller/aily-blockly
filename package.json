@@ -20,6 +20,8 @@
     "@angular/router": "^19.0.0",
     "@ctrl/tinycolor": "^4.1.0",
     "@ngx-translate/core": "^16.0.3",
+    "@xterm/addon-clipboard": "^0.1.0",
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "angular2-draggable": "^16.0.0",
     "animate.css": "^4.1.1",

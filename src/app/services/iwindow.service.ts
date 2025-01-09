@@ -42,6 +42,8 @@ export interface IWindowOpt {
   size?: {
     width: number,
     height: number,
+    minWidth?: number,
+    minHeight?: number,
   },
   type: string,
   title: string,
