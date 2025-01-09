@@ -1,5 +1,5 @@
 <div class="inner-window animate__animated animate__fadeIn animate__faster" ngDraggable ngResizable [inBounds]="true"
-    [bounds]="windowsBounds" [rzMinWidth]="400" [rzMinHeight]="600" [position]="opt.position"
+    [bounds]="windowsBounds" [rzMinWidth]="opt.size.minWidth" [rzMinHeight]="opt.size.minHeight" [position]="opt.position"
     (endOffset)="onMoveEnd($event)" [handle]="Handle" [rzHandles]="'all'" (started)="onFoucs($event)"
     (click)="onFoucs($event)"
     [ngClass]="{'animate__fadeOutTopRight': isMinimize,'animate__fadeOut': isClose}"

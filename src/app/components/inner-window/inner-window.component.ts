@@ -15,18 +15,17 @@ export class InnerWindowComponent {
 
   @Input() opt: IWindowOpt;
 
+  optDefault = {
+    position: { x: 0, y: 0 },
+    size: { width: 400, height: 600, minWidth: 400, minHeight: 600 },
+    zindex: 0,
+  }
+
   @ViewChild('block') block: AngularResizableDirective;
 
   get windowsBounds() {
     return this.iwindowService.bounds;
   }
-
-  // myOutOfBounds = {
-  //   top: false,
-  //   right: false,
-  //   bottom: false,
-  //   left: false,
-  // };
 
   isMinimize = false;
   isMaximize = false;
@@ -37,8 +36,8 @@ export class InnerWindowComponent {
   ) { }
 
   ngOnInit(): void {
-console.log(this.opt);
-
+    console.log(this.opt);
+    this.opt = Object.assign(this.optDefault, this.opt);
   }
 
   ngAfterViewInit(): void {

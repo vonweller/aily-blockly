@@ -31,11 +31,15 @@ export class HeaderComponent {
       case 'open-serial-monitor':
         this.iwindowService.openWindow({ type: 'serial-monitor', title: '串口助手' });
         setTimeout(() => {
-         this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' }); 
+          this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
         }, 50);
         break
-        case 'open-terminal':
-          this.iwindowService.openWindow({ type: 'terminal', title: '终端' });
+      case 'open-terminal':
+        this.iwindowService.openWindow({
+          type: 'terminal', title: '终端',
+          size: { width: window.innerWidth - 180, height: 200 },
+          position: { x: 180, y: window.innerHeight - 200 }
+        });
         break
     }
   }
