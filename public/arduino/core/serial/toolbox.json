@@ -1,26 +1,26 @@
 {
-    "kind": "category",
-    "name": "Serial",
-    "contents": [
-        {
-            "kind": "block",
-            "type": "serial_begin"
-        },
-        {
-            "kind": "block",
-            "type": "serial_available"
-        },
-        {
-            "kind": "block",
-            "type": "serial_read"
-        },
-        {
-            "kind": "block",
-            "type": "serial_print"
-        },
-        {
-            "kind": "block",
-            "type": "serial_println"
-        }
-    ]
+  "kind": "category",
+  "name": "Serial",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "serial_begin"
+    },
+    {
+      "kind": "block",
+      "type": "serial_available"
+    },
+    {
+      "kind": "block",
+      "type": "serial_read"
+    },
+    {
+      "kind": "block",
+      "type": "serial_print"
+    },
+    {
+      "kind": "block",
+      "type": "serial_println"
+    }
+  ]
 }

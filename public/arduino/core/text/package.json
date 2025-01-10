@@ -1,0 +1,17 @@
+{
+  "name": "@aily-blockly/core-text",
+  "author": "奈何col",
+  "description": "文本相关函数",
+  "version": "0.0.1",
+  "compatibility": {},
+  "keywords": [
+    "aily",
+    "blockly",
+    "core",
+    "text"
+  ],
+  "scripts": {},
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {}
+}

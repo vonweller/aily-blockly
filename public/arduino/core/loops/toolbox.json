@@ -65,10 +65,6 @@
     {
       "kind": "block",
       "type": "controls_flow_statements"
-    },
-    {
-      "kind": "block",
-      "type": "logic_ternary"
     }
   ]
 }

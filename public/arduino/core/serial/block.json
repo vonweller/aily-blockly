@@ -1,103 +1,103 @@
 [
-    {
-        "inputsInline": true,
-        "message0": "初始化串口%1 设置波特率为%2",
-        "type": "serial_begin",
-        "colour": "#48c2c4",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "SERIAL",
-                "options": "${board.serialPort}"
-            },
-            {
-                "type": "field_number",
-                "name": "SPEED",
-                "value": 9600
-            }
-        ],
-        "generator": {
-            "code": "${SERIAL}.begin(${SPEED});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
+  {
+    "inputsInline": true,
+    "message0": "初始化串口%1 设置波特率为%2",
+    "type": "serial_begin",
+    "colour": "#48c2c4",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "SERIAL",
+        "options": "${board.serialPort}"
+      },
+      {
+        "type": "field_number",
+        "name": "SPEED",
+        "value": 9600
+      }
+    ],
+    "generator": {
+      "code": "${SERIAL}.begin(${SPEED});"
     },
-    {
-        "inputsInline": true,
-        "message0": "串口%1缓冲区有数据",
-        "type": "serial_available",
-        "colour": "#48c2c4",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "SERIAL",
-                "options": "${board.serialPort}"
-            }
-        ],
-        "generator": {
-            "code": "${SERIAL}.available();"
-        },
-        "output": "Number"
+    "previousStatement": null,
+    "nextStatement": null
+  },
+  {
+    "inputsInline": true,
+    "message0": "串口%1缓冲区有数据",
+    "type": "serial_available",
+    "colour": "#48c2c4",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "SERIAL",
+        "options": "${board.serialPort}"
+      }
+    ],
+    "generator": {
+      "code": "${SERIAL}.available();"
     },
-    {
-        "inputsInline": true,
-        "message0": "读取串口%1数据",
-        "type": "serial_read",
-        "colour": "#48c2c4",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "SERIAL",
-                "options": "${board.serialPort}"
-            }
-        ],
-        "generator": {
-            "code": "serial.read();"
-        },
-        "output": "Any"
+    "output": "Number"
+  },
+  {
+    "inputsInline": true,
+    "message0": "读取串口%1数据",
+    "type": "serial_read",
+    "colour": "#48c2c4",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "SERIAL",
+        "options": "${board.serialPort}"
+      }
+    ],
+    "generator": {
+      "code": "${SERIAL}.read();"
     },
-    {
-        "inputsInline": true,
-        "message0": "串口%1输出%2",
-        "type": "serial_print",
-        "colour": "#48c2c4",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "SERIAL",
-                "options": "${board.serialPort}"
-            },
-            {
-                "type": "input_value",
-                "name": "VAR"
-            }
-        ],
-        "generator": {
-            "code": "${SERIAL}.print(${VAR});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
+    "output": "Any"
+  },
+  {
+    "inputsInline": true,
+    "message0": "串口%1输出%2",
+    "type": "serial_print",
+    "colour": "#48c2c4",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "SERIAL",
+        "options": "${board.serialPort}"
+      },
+      {
+        "type": "input_value",
+        "name": "VAR"
+      }
+    ],
+    "generator": {
+      "code": "${SERIAL}.print(${VAR});"
     },
-    {
-        "inputsInline": true,
-        "message0": "串口%1输出%2并换行",
-        "type": "serial_println",
-        "colour": "#48c2c4",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "SERIAL",
-                "options": "${board.serialPort}"
-            },
-            {
-                "type": "input_value",
-                "name": "VAR"
-            }
-        ],
-        "generator": {
-            "code": "${SERIAL}.println(${VAR});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
-    }
+    "previousStatement": null,
+    "nextStatement": null
+  },
+  {
+    "inputsInline": true,
+    "message0": "串口%1输出%2并换行",
+    "type": "serial_println",
+    "colour": "#48c2c4",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "SERIAL",
+        "options": "${board.serialPort}"
+      },
+      {
+        "type": "input_value",
+        "name": "VAR"
+      }
+    ],
+    "generator": {
+      "code": "${SERIAL}.println(${VAR});"
+    },
+    "previousStatement": null,
+    "nextStatement": null
+  }
 ]
