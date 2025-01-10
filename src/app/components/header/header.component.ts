@@ -38,9 +38,9 @@ export class HeaderComponent {
         break;
       case 'open-serial-monitor':
         this.iwindowService.openWindow({ type: 'serial-monitor', title: '串口助手' });
-        setTimeout(() => {
-          this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
-        }, 50);
+        // setTimeout(() => {
+        //   this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
+        // }, 50);
         break
       case 'open-terminal':
         this.iwindowService.openWindow({
