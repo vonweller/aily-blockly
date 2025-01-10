@@ -23,16 +23,24 @@ export class HeaderComponent {
     // console.log(btn);
     switch (btn.action) {
       case 'open-aily-chat':
-        this.iwindowService.openWindow({ type: 'aily-chat', title: 'AI助手' });
+        this.iwindowService.openWindow({
+          type: 'aily-chat', title: 'AI助手',
+          size: { width: 600, height: 500 },
+          position: { x: window.innerWidth / 2 - 300, y: window.innerHeight / 2 - 200 }
+        });
         break;
       case 'open-code-viewer':
-        this.iwindowService.openWindow({ type: 'code-viewer', title: '代码预览' });
+        this.iwindowService.openWindow({
+          type: 'code-viewer', title: '代码预览',
+          size: { width: 400, height: window.innerHeight - 65 - 200 },
+          position: { x: window.innerWidth - 400, y: 65 }
+        });
         break;
       case 'open-serial-monitor':
         this.iwindowService.openWindow({ type: 'serial-monitor', title: '串口助手' });
-        setTimeout(() => {
-          this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
-        }, 50);
+        // setTimeout(() => {
+        //   this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
+        // }, 50);
         break
       case 'open-terminal':
         this.iwindowService.openWindow({

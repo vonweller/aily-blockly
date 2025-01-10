@@ -19,6 +19,7 @@ import { InnerWindowComponent } from './components/inner-window/inner-window.com
 import { TerminalComponent } from './tools/terminal/terminal.component';
 import { LineChartAreaComponent } from './components/line-chart-area/line-chart-area.component';
 import { DataChartComponent } from './tools/data-chart/data-chart.component';
+import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.component';
 
 @Component({
   selector: 'app-root',
@@ -38,7 +39,8 @@ import { DataChartComponent } from './tools/data-chart/data-chart.component';
     CommonModule,
     InnerWindowComponent,
     TerminalComponent,
-    DataChartComponent
+    DataChartComponent,
+    BlocklyEditorComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
@@ -64,7 +66,16 @@ export class AppComponent {
   }
 
   ngAfterViewInit(): void {
-    this.iwindowService.bounds = this.windowsBounds.nativeElement;
+    // this.iwindowService.bounds = this.windowsBounds.nativeElement;
+    setTimeout(() => {
+      this.iwindowService.openWindow({
+        type: 'blockly-editor',
+        title: 'Blockly Editor',
+        size: { width: window.innerWidth, height: window.innerHeight },
+        position: { x: 0, y: 0 },
+        zindex: 0
+      });
+    }, 500);
   }
 
   openProjectManager() {

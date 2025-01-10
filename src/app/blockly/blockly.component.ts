@@ -13,7 +13,7 @@ import { DEV_THEME } from './theme.config.js';
 import { javascriptGenerator } from 'blockly/javascript';
 
 @Component({
-  selector: 'blockly-arduino',
+  selector: 'blockly-main',
   imports: [],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
@@ -49,7 +49,6 @@ export class BlocklyComponent {
         //   flyoutsVerticalToolbox: ContinuousFlyout,
         //   metricsManager: ContinuousMetrics,
         // },
-        media: 'blockly/media/',
         renderer: 'thrasos',
         theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
         trashcan: true,
