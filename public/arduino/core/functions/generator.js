@@ -86,7 +86,7 @@ Arduino.forBlock["procedures_callnoreturn"] = function (block) {
   // Call a procedure with no return value.
   // Generated code is for a function call as a statement is the same as a
   // function call as a value, with the addition of line ending.
-  const tuple = Arduino.forBlock["procedures_callreturn"](block, generator);
+  const tuple = Arduino.forBlock["procedures_callreturn"](block, Arduino);
   return tuple[0] + ";\n";
 };
 

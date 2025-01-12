@@ -3,13 +3,13 @@ const stringUtils = Blockly.utils.string;
 Arduino.forBlock["arduino_setup"] = function (block) {
   const code = Arduino.statementToCode(block, "ARDUINO_SETUP");
   Arduino.addUserSetup("setup", code);
-  return null;
+  return `steup() {\n${code}}\n`;
 };
 
 Arduino.forBlock["arduino_loop"] = function (block) {
   const code = Arduino.statementToCode(block, "ARDUINO_LOOP");
   Arduino.addLoop("loop", code);
-  return null;
+  return `loop() {\n${code}}\n`;
 };
 
 Arduino.forBlock["controls_repeat_ext"] = function (block) {

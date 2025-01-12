@@ -248,17 +248,17 @@ Arduino.forBlock["lists_setIndex"] = function (block) {
  * @param opt_at The optional offset when indexing from start/end.
  * @returns Index expression.
  */
-const getSubstringIndex = function (listName, where, opt_at) {
-  if (where === "FIRST") {
-    return "0";
-  } else if (where === "FROM_END") {
-    return listName + ".length - 1 - " + opt_at;
-  } else if (where === "LAST") {
-    return listName + ".length - 1";
-  } else {
-    return opt_at;
-  }
-};
+// const getSubstringIndex = function (listName, where, opt_at) {
+//   if (where === "FIRST") {
+//     return "0";
+//   } else if (where === "FROM_END") {
+//     return listName + ".length - 1 - " + opt_at;
+//   } else if (where === "LAST") {
+//     return listName + ".length - 1";
+//   } else {
+//     return opt_at;
+//   }
+// };
 
 Arduino.forBlock["lists_getSublist"] = function (block) {
   // Get sublist.
