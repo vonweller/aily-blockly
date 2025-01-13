@@ -145,75 +145,66 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
    * @returns Completed code.
    */
   override finish(code: string): string {
-    // Convert the definitions dictionary into a list.
-    const definitions = Object.values(this.definitions_);
-    // Call Blockly.CodeGenerator's finish.
     super.finish(code);
+    // this.isInitialized = false;
+    this.nameDB_!.reset();
+
+    // 提取代码
+    let macros = [];
+    let libraries = [];
+    let variables = [];
+    let objects = [];
+    let functions = [];
+    let setups = [];
+    let userSetups = [];
+    let loops = [];
+    let userLoops = [];
+
+    for (const key in this.codeDict['macros']) {
+      macros.push(this.codeDict['macros'][key]);
+    }
+    for (const key in this.codeDict['libraries']) {
+      libraries.push(this.codeDict['libraries'][key]);
+    }
+    for (const key in this.codeDict['variables']) {
+      variables.push(this.codeDict['variables'][key]);
+    }
+    for (const key in this.codeDict['objects']) {
+      objects.push(this.codeDict['objects'][key]);
+    }
+    for (const key in this.codeDict['functions']) {
+      functions.push(this.codeDict['functions'][key]);
+    }
+    for (const key in this.codeDict['setups']) {
+      setups.push(this.codeDict['setups'][key]);
+    }
+    for (const key in this.codeDict['userSetups']) {
+      userSetups.push(this.codeDict['userSetups'][key]);
+    }
+    for (const key in this.codeDict['userLoops']) {
+      userLoops.push(this.codeDict['userLoops'][key]);
+    }
+    for (const key in this.codeDict['loops']) {
+      loops.push(this.codeDict['loops'][key]);
+    }
+
     this.isInitialized = false;
 
-    this.nameDB_!.reset();
-    return definitions.join('\n\n') + '\n\n\n' + code;
-    //
-    // super.finish(code);
-    // // this.isInitialized = false;
-    // this.nameDB_!.reset();
-    //
-    // // 提取代码
-    // let macros = [];
-    // let libraries = [];
-    // let variables = [];
-    // let objects = [];
-    // let functions = [];
-    // let setups = [];
-    // let userSetups = [];
-    // let loops = [];
-    // let userLoops = [];
-    //
-    // for (const key in this.codeDict['macros']) {
-    //   macros.push(this.codeDict['macros'][key]);
-    // }
-    // for (const key in this.codeDict['libraries']) {
-    //   libraries.push(this.codeDict['libraries'][key]);
-    // }
-    // for (const key in this.codeDict['variables']) {
-    //   variables.push(this.codeDict['variables'][key]);
-    // }
-    // for (const key in this.codeDict['objects']) {
-    //   objects.push(this.codeDict['objects'][key]);
-    // }
-    // for (const key in this.codeDict['functions']) {
-    //   functions.push(this.codeDict['functions'][key]);
-    // }
-    // for (const key in this.codeDict['setups']) {
-    //   setups.push(this.codeDict['setups'][key]);
-    // }
-    // for (const key in this.codeDict['userSetups']) {
-    //   userSetups.push(this.codeDict['userSetups'][key]);
-    // }
-    // for (const key in this.codeDict['userLoops']) {
-    //   userLoops.push(this.codeDict['userLoops'][key]);
-    // }
-    // for (const key in this.codeDict['loops']) {
-    //   loops.push(this.codeDict['loops'][key]);
-    // }
-    //
-    // this.isInitialized = false;
-    //
-    // let newcode =
-    //   (macros.length > 0 ? `${macros.join('\n')}\n\n` : '') +
-    //   (libraries.length > 0 ? `${libraries.join('\n')}\n\n` : '') +
-    //   (variables.length > 0 ? `${variables.join('\n')}\n\n` : '') +
-    //   (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
-    //   (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
-    //   `void setup() {\n` +
-    //   `${setups.join('\n')}` +
-    //   `${userSetups.join('\n')}` +
-    //   `}\n\n` +
-    //   `void loop() {\n` +
-    //   `${userLoops.join('\n')}` +
-    //   `${loops.join('\n')}` +
-    //   `}`;
-    // return newcode;
+    let newcode =
+      (macros.length > 0 ? `${macros.join('\n')}\n\n` : '') +
+      (libraries.length > 0 ? `${libraries.join('\n')}\n\n` : '') +
+      (variables.length > 0 ? `${variables.join('\n')}\n\n` : '') +
+      (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
+      (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
+      `void setup() {\n` +
+      `${setups.join('\n')}` +
+      `${userSetups.join('\n')}` +
+      `}\n\n` +
+      `void loop() {\n` +
+      `${userLoops.join('\n')}` +
+      `${loops.join('\n')}` +
+      `}`;
+    return newcode;
   }
 
   /**

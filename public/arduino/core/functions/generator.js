@@ -60,6 +60,7 @@ Arduino.forBlock["procedures_defreturn"] = function (block) {
   // TODO(#7600): find better approach than casting to any to override
   // CodeGenerator declaring .definitions protected.
   Arduino.definitions_["%" + funcName] = code;
+  Arduino.addFunction(funcName, code);
   return null;
 };
 

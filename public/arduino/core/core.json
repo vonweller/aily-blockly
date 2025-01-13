@@ -8,5 +8,6 @@
   "serial",
   "time",
   "variables",
-  "functions"
+  "functions",
+  "sensor"
 ]
