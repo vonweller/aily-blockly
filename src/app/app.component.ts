@@ -12,12 +12,10 @@ import { ProjectManagerComponent } from './components/project-manager/project-ma
 import { AilyChatComponent } from './tools/aily-chat/aily-chat.component';
 import { SerialMonitorComponent } from './tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from './tools/code-viewer/code-viewer.component';
-import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { CommonModule } from '@angular/common';
 import { IwindowService } from './services/iwindow.service';
 import { InnerWindowComponent } from './components/inner-window/inner-window.component';
 import { TerminalComponent } from './tools/terminal/terminal.component';
-import { LineChartAreaComponent } from './components/line-chart-area/line-chart-area.component';
 import { DataChartComponent } from './tools/data-chart/data-chart.component';
 import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.component';
 
