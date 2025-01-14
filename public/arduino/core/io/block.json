@@ -1,206 +1,191 @@
 [
-    {
-        "inputsInline": true,
-        "message0": "引脚 %1 模式设置为 %2",
-        "type": "io_pinmode",
-        "colour": "#FFCF5C",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "PIN"
-            },
-            {
-                "type": "input_value",
-                "name": "MODE"
-            }
-        ],
-        "generator": {
-            "code": "pinMode(${PIN}, ${MODE});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
+  {
+    "inputsInline": true,
+    "message0": "引脚 %1 模式设置为 %2",
+    "type": "io_pinmode",
+    "colour": "#FFCF5C",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PIN"
+      },
+      {
+        "type": "input_value",
+        "name": "MODE"
+      }
+    ],
+    "generator": {
+      "code": "pinMode(${PIN}, ${MODE});"
     },
-    {
-        "inputsInline": true,
-        "message0": "引脚 %1输出数字信号 %2",
-        "type": "io_digitalwrite",
-        "colour": "#FFCF5C",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "PIN"
-            },
-            {
-                "type": "input_value",
-                "name": "STATE"
-            }
-        ],
-        "generator": {
-            "code": "digitalWrite(${PIN}, ${STATE});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
+    "previousStatement": null,
+    "nextStatement": null
+  },
+  {
+    "inputsInline": true,
+    "message0": "引脚 %1输出数字信号 %2",
+    "type": "io_digitalwrite",
+    "colour": "#FFCF5C",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PIN"
+      },
+      {
+        "type": "input_value",
+        "name": "STATE"
+      }
+    ],
+    "generator": {
+      "code": "digitalWrite(${PIN}, ${STATE});"
     },
-    {
-        "inputsInline": true,
-        "message0": "读取引脚 %1 的数字信号",
-        "type": "io_digitalread",
-        "colour": "#FFCF5C",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "PIN"
-            }
-        ],
-        "generator": {
-            "code": "digitalRead(${PIN})"
-        },
-        "output": "Any"
+    "previousStatement": null,
+    "nextStatement": null
+  },
+  {
+    "inputsInline": true,
+    "message0": "读取引脚 %1 的数字信号",
+    "type": "io_digitalread",
+    "colour": "#FFCF5C",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PIN"
+      }
+    ],
+    "generator": {
+      "code": "digitalRead(${PIN})"
     },
-    {
-        "inputsInline": true,
-        "message0": "引脚 %1 输出PWM信号%2",
-        "type": "io_analogwrite",
-        "colour": "#FFCF5C",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "PIN"
-            },
-            {
-                "type": "input_value",
-                "name": "PWM"
-            }
-        ],
-        "generator": {
-            "code": "analogWrite(${PIN}, ${PWM});"
-        },
-        "previousStatement": null,
-        "nextStatement": null
+    "output": "Any"
+  },
+  {
+    "inputsInline": true,
+    "message0": "引脚 %1 输出PWM信号%2",
+    "type": "io_analogwrite",
+    "colour": "#FFCF5C",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PIN"
+      },
+      {
+        "type": "input_value",
+        "name": "PWM"
+      }
+    ],
+    "generator": {
+      "code": "analogWrite(${PIN}, ${PWM});"
     },
-    {
-        "inputsInline": true,
-        "message0": "读取引脚 %1 的模拟信号",
-        "type": "io_analogread",
-        "colour": "#FFCF5C",
-        "args0": [
-            {
-                "type": "input_value",
-                "name": "PIN"
-            }
-        ],
-        "generator": {
-            "code": "analogRead(${PIN})"
-        },
-        "output": "Any"
+    "previousStatement": null,
+    "nextStatement": null
+  },
+  {
+    "inputsInline": true,
+    "message0": "读取引脚 %1 的模拟信号",
+    "type": "io_analogread",
+    "colour": "#FFCF5C",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PIN"
+      }
+    ],
+    "generator": {
+      "code": "analogRead(${PIN})"
     },
-    {
-        "inputsInline": true,
-        "message0": "数字引脚%1",
-        "type": "io_pin_digi",
-        "colour": "#00C48C",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "PIN",
-                "options": "${board.digitalPins}"
-            }
-        ],
-        "generator": {
-            "code": "${PIN}"
-        },
-        "output": "Any"
+    "output": "Any"
+  },
+  {
+    "inputsInline": true,
+    "message0": "数字引脚%1",
+    "type": "io_pin_digi",
+    "colour": "#00C48C",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "PIN",
+        "options": "${board.digitalPins}"
+      }
+    ],
+    "generator": {
+      "code": "${PIN}"
     },
-    {
-        "inputsInline": true,
-        "message0": "模拟引脚%1",
-        "type": "io_pin_adc",
-        "colour": "#00C48C",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "PIN",
-                "options": "${board.analogPins}"
-            }
-        ],
-        "generator": {
-            "code": "${PIN}"
-        },
-        "output": "Any"
+    "output": "Any"
+  },
+  {
+    "inputsInline": true,
+    "message0": "模拟引脚%1",
+    "type": "io_pin_adc",
+    "colour": "#00C48C",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "PIN",
+        "options": "${board.analogPins}"
+      }
+    ],
+    "generator": {
+      "code": "${PIN}"
     },
-    {
-        "inputsInline": true,
-        "message0": "PWM引脚%1",
-        "type": "io_pin_pwm",
-        "colour": "#00C48C",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "PIN",
-                "options": "${board.pwmPins}"
-            }
-        ],
-        "generator": {
-            "code": "${PIN}"
-        },
-        "output": "Any"
+    "output": "Any"
+  },
+  {
+    "inputsInline": true,
+    "message0": "PWM引脚%1",
+    "type": "io_pin_pwm",
+    "colour": "#00C48C",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "PIN",
+        "options": "${board.pwmPins}"
+      }
+    ],
+    "generator": {
+      "code": "${PIN}"
     },
-    {
-        "type": "io_mode",
-        "message0": "%1模式",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "MODE",
-                "options": [
-                    [
-                        "INPUT",
-                        "INPUT"
-                    ],
-                    [
-                        "OUTPUT",
-                        "OUTPUT"
-                    ],
-                    [
-                        "INPUT_PULLUP",
-                        "INPUT_PULLUP"
-                    ]
-                ]
-            }
-        ],
-        "output": "Any",
-        "colour": "#00C48C",
-        "tooltip": "mode",
-        "helpUrl": "",
-        "generator": {
-            "code": "${MODE}"
-        }
-    },
-    {
-        "type": "io_state",
-        "message0": "%1电平",
-        "args0": [
-            {
-                "type": "field_dropdown",
-                "name": "STATE",
-                "options": [
-                    [
-                        "LOW",
-                        "LOW"
-                    ],
-                    [
-                        "HIGH",
-                        "HIGH"
-                    ]
-                ]
-            }
-        ],
-        "output": "Any",
-        "colour": "#00C48C",
-        "tooltip": "state",
-        "helpUrl": "",
-        "generator": {
-            "code": "${STATE}"
-        }
+    "output": "Any"
+  },
+  {
+    "type": "io_mode",
+    "message0": "%1模式",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "MODE",
+        "options": [
+          ["INPUT", "INPUT"],
+          ["OUTPUT", "OUTPUT"],
+          ["INPUT_PULLUP", "INPUT_PULLUP"]
+        ]
+      }
+    ],
+    "output": "Any",
+    "colour": "#00C48C",
+    "tooltip": "mode",
+    "helpUrl": "",
+    "generator": {
+      "code": "${MODE}"
     }
+  },
+  {
+    "type": "io_state",
+    "message0": "%1电平",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "STATE",
+        "options": [
+          ["LOW", "LOW"],
+          ["HIGH", "HIGH"]
+        ]
+      }
+    ],
+    "output": "Any",
+    "colour": "#00C48C",
+    "tooltip": "state",
+    "helpUrl": "",
+    "generator": {
+      "code": "${STATE}"
+    }
+  }
 ]

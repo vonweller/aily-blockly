@@ -1,0 +1,21 @@
+{
+  "name": "@aily-blockly/core-sensor",
+  "author": "奈何col",
+  "description": "传感器",
+  "version": "0.0.1",
+  "config": {
+    "category": "sensor",
+    "icon": "fal fa-microchip",
+    "colour": "#66bb6a"
+  },
+  "keywords": [
+    "aily",
+    "blockly",
+    "core",
+    "sensor"
+  ],
+  "scripts": {},
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {}
+}
