@@ -1,6 +1,1 @@
-[
-    "buzzer",
-    "onebutton",
-    "servo",
-    "custom"
-]
+["EEPROM", "buzzer", "onebutton", "servo", "custom"]
