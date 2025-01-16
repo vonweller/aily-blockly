@@ -1,12 +1,17 @@
 {
   "name": "aily-blockly",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "aily blockly dev",
+  "main": "electron/main.js",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && electron ./app/main.js --serve\"",
+    "electron:build": "ng build --base-href ./ && set HTTPS_PROXY=http://127.0.0.1:7890 && electron-forge package",
+    "build2": "npx @electron/packager . --platform=win32 --arch=x64 --out=dist",
+    "make": "electron-forge make"
   },
   "private": true,
   "dependencies": {
@@ -41,6 +46,8 @@
     "@angular/cli": "^19.0.0",
     "@angular/compiler-cli": "^19.0.0",
     "@types/jasmine": "~5.1.0",
+    "concurrently": "^9.1.2",
+    "electron": "^33.3.1",
     "jasmine-core": "~5.4.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
@@ -48,6 +55,7 @@
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
     "prettier": "^3.4.2",
-    "typescript": "~5.6.2"
+    "typescript": "~5.6.2",
+    "wait-on": "^8.0.2"
   }
 }
