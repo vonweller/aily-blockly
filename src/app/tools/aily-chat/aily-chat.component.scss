@@ -1,38 +1,39 @@
 .window-box {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .dialog-list {
-    padding: 5px 10px;
-    flex-grow: 1;
+  padding: 5px 10px;
+  flex-grow: 1;
+  overflow: auto;
 }
 
 .sender {
-    background: #444;
+  background: #444;
+  position: relative;
+
+  .s-box {
+    display: flex;
+    width: 100%;
+    padding: 5px 10px;
+
+    .btn {
+      width: 36px;
+      font-size: 20px;
+      color: #eee;
+      cursor: pointer;
+      justify-content: flex-end;
+
+      &:hover {
+        color: #fff;
+      }
+    }
+  }
+
+  .btns {
     position: relative;
-
-    .s-box {
-        display: flex;
-        width: 100%;
-        padding: 5px 10px;
-
-        .btn {
-            width: 36px;
-            font-size: 20px;
-            color: #EEE;
-            cursor: pointer;
-            justify-content: flex-end;
-
-            &:hover {
-                color: #FFF;
-            }
-        }
-    }
-
-    .btns {
-        position: relative;
-    }
+  }
 }

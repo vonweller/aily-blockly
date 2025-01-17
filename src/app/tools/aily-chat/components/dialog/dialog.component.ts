@@ -6,23 +6,23 @@ import {
   OnInit,
   SecurityContext,
   ViewChild,
-} from "@angular/core";
-import { ChatService } from "../../services/chat.service";
-import { NzMessageService } from "ng-zorro-antd/message";
-import { SpeechService } from "../../services/speech.service";
-import { CommonModule } from "@angular/common";
-import { NzAvatarModule } from "ng-zorro-antd/avatar";
-import { NzButtonModule } from "ng-zorro-antd/button";
-import { DomSanitizer } from "@angular/platform-browser";
-import { NzModalService } from "ng-zorro-antd/modal";
-import { NzImageModule } from "ng-zorro-antd/image";
-import { FormsModule } from "@angular/forms";
-import { MarkdownPipe } from "../../../../pipes/markdown.pipe";
+} from '@angular/core';
+import { ChatService } from '../../services/chat.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
+import { SpeechService } from '../../services/speech.service';
+import { CommonModule } from '@angular/common';
+import { NzAvatarModule } from 'ng-zorro-antd/avatar';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { DomSanitizer } from '@angular/platform-browser';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { NzImageModule } from 'ng-zorro-antd/image';
+import { FormsModule } from '@angular/forms';
+import { MarkdownPipe } from '../../../../pipes/markdown.pipe';
 
 @Component({
-  selector: "aily-dialog",
-  templateUrl: "./dialog.component.html",
-  styleUrls: ["./dialog.component.scss"],
+  selector: 'aily-dialog',
+  templateUrl: './dialog.component.html',
+  styleUrls: ['./dialog.component.scss'],
   standalone: true,
   imports: [
     CommonModule,
@@ -38,7 +38,7 @@ export class DialogComponent implements OnInit {
   data: any;
 
   get isDone() {
-    if (typeof this.data.isDone == "boolean") return this.data.isDone;
+    if (typeof this.data.isDone == 'boolean') return this.data.isDone;
     return true;
   }
 
@@ -47,7 +47,7 @@ export class DialogComponent implements OnInit {
   }
 
   get mine() {
-    return this.data.role == "user";
+    return this.data.role == 'user';
   }
 
   get system() {
@@ -59,7 +59,7 @@ export class DialogComponent implements OnInit {
   // }
 
   get user() {
-    return ''
+    return '';
   }
 
   // get chatList(): any {
@@ -84,10 +84,10 @@ export class DialogComponent implements OnInit {
     private message: NzMessageService,
     private speechService: SpeechService,
     private sanitizer: DomSanitizer,
-    private chatService: ChatService
-  ) { }
+    private chatService: ChatService,
+  ) {}
 
-  ngOnInit(): void { }
+  ngOnInit(): void {}
 
   getSafeHTML(html: string) {
     return this.sanitizer.sanitize(SecurityContext.HTML, html);
@@ -109,7 +109,7 @@ export class DialogComponent implements OnInit {
           //   this.playOneByOne();
           // }
         },
-        (err) => { },
+        (err) => {},
         () => {
           this.showCopyBtn();
           this.showExportBtn();
@@ -124,18 +124,17 @@ export class DialogComponent implements OnInit {
     }, 500);
   }
 
-
   // 在pre标签的右上角显示复制按钮
-  @ViewChild("mdContent")
+  @ViewChild('mdContent')
   mdContent: ElementRef;
   showCopyBtn() {
-    const pres = this.mdContent.nativeElement.querySelectorAll("pre");
+    const pres = this.mdContent.nativeElement.querySelectorAll('pre');
     for (let index = 0; index < pres.length; index++) {
       const pre = pres[index];
       if (pre) {
-        const copyBtn = document.createElement("button");
-        copyBtn.innerText = "复制";
-        copyBtn.className = "copy-btn";
+        const copyBtn = document.createElement('button');
+        copyBtn.innerText = '复制';
+        copyBtn.className = 'copy-btn';
         copyBtn.onclick = () => this.copyCode(pre);
         pre.appendChild(copyBtn);
       }
@@ -144,39 +143,39 @@ export class DialogComponent implements OnInit {
 
   //将code标签中的内容复制到剪贴板
   copyCode(pre) {
-    const code = pre.querySelector("code");
+    const code = pre.querySelector('code');
     if (code) {
       const range = document.createRange();
       range.selectNode(code);
       window.getSelection().removeAllRanges();
       window.getSelection().addRange(range);
-      document.execCommand("copy");
+      document.execCommand('copy');
       window.getSelection().removeAllRanges();
-      this.message.success("已复制代码到剪贴板");
+      this.message.success('已复制代码到剪贴板');
     }
   }
 
   // 显示表格导出按钮
   showExportBtn() {
-    const tables = this.mdContent.nativeElement.querySelectorAll("table");
+    const tables = this.mdContent.nativeElement.querySelectorAll('table');
     for (let index = 0; index < tables.length; index++) {
       const table = tables[index];
       if (table) {
-        const exportBtn = document.createElement("button");
-        exportBtn.innerText = "导出";
-        exportBtn.className = "export";
+        const exportBtn = document.createElement('button');
+        exportBtn.innerText = '导出';
+        exportBtn.className = 'export';
         table.appendChild(exportBtn);
-        const exportBtn1 = document.createElement("button");
-        exportBtn1.innerText = "Excel";
-        exportBtn1.className = "export-btn excel";
+        const exportBtn1 = document.createElement('button');
+        exportBtn1.innerText = 'Excel';
+        exportBtn1.className = 'export-btn excel';
         table.appendChild(exportBtn1);
-        const exportBtn2 = document.createElement("button");
-        exportBtn2.innerText = "Json";
-        exportBtn2.className = "export-btn json";
+        const exportBtn2 = document.createElement('button');
+        exportBtn2.innerText = 'Json';
+        exportBtn2.className = 'export-btn json';
         table.appendChild(exportBtn2);
-        const exportBtn3 = document.createElement("button");
-        exportBtn3.innerText = "SQL";
-        exportBtn3.className = "export-btn sql";
+        const exportBtn3 = document.createElement('button');
+        exportBtn3.innerText = 'SQL';
+        exportBtn3.className = 'export-btn sql';
         table.appendChild(exportBtn3);
         // 点击按钮后弹出导出选项，选择导出格式
         exportBtn1.onclick = () => {
@@ -193,20 +192,18 @@ export class DialogComponent implements OnInit {
   }
 
   // 表格导出excel
-  exportToExcel(tableEl, filename = "table") {
+  exportToExcel(tableEl, filename = 'table') {
     // /* 获取表格数据 */
     // const sheetData = XLSX.utils.table_to_sheet(tableEl);
-
     // /* 将表格数据写入工作簿 */
     // const workbook = XLSX.utils.book_new();
     // XLSX.utils.book_append_sheet(workbook, sheetData, "Sheet1");
-
     // /* 导出excel文件 */
     // XLSX.writeFile(workbook, `${filename}.xlsx`);
   }
 
   // 表格导出json
-  exportToJson(tableEl, filename = "table") {
+  exportToJson(tableEl, filename = 'table') {
     const table = tableEl;
     const data = [];
 
@@ -224,47 +221,49 @@ export class DialogComponent implements OnInit {
       data.push(rowData);
     }
     const jsonData = JSON.stringify(data);
-    const blob = new Blob([jsonData], { type: "application/json" });
-    const a = document.createElement("a");
+    const blob = new Blob([jsonData], { type: 'application/json' });
+    const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${filename}.json`;
     a.click();
   }
 
   // 表格导出SQL
-  exportToSQL(tableEl, filename = "table") {
-    const tableName = "my_table";
+  exportToSQL(tableEl, filename = 'table') {
+    const tableName = 'my_table';
     const table = tableEl;
-    const thead = table.getElementsByTagName("thead")[0];
-    const tbody = table.getElementsByTagName("tbody")[0];
-    const columnNames = Array.from(thead.getElementsByTagName("th")).map((
-      th: any,
-    ) => th.textContent.trim());
-    const rows = tbody.getElementsByTagName("tr");
+    const thead = table.getElementsByTagName('thead')[0];
+    const tbody = table.getElementsByTagName('tbody')[0];
+    const columnNames = Array.from(thead.getElementsByTagName('th')).map(
+      (th: any) => th.textContent.trim(),
+    );
+    const rows = tbody.getElementsByTagName('tr');
     const data = Array.from(rows).map((row: any) =>
-      Array.from(row.getElementsByTagName("td")).map((td: any) =>
-        td.textContent.trim()
-      )
+      Array.from(row.getElementsByTagName('td')).map((td: any) =>
+        td.textContent.trim(),
+      ),
     );
 
     let createTableSql = `CREATE TABLE ${tableName} (\n`;
     columnNames.forEach((columnName, index) => {
-      createTableSql += `  ${columnName} VARCHAR(255)${index !== columnNames.length - 1 ? "," : ""
-        }\n`;
+      createTableSql += `  ${columnName} VARCHAR(255)${
+        index !== columnNames.length - 1 ? ',' : ''
+      }\n`;
     });
-    createTableSql += ");\n";
+    createTableSql += ');\n';
 
-    let insertSql = "";
+    let insertSql = '';
     data.forEach((row) => {
-      insertSql += `INSERT INTO ${tableName} (${columnNames.join(", ")
-        }) VALUES ('${row.join("', '")}');\n`;
+      insertSql += `INSERT INTO ${tableName} (${columnNames.join(
+        ', ',
+      )}) VALUES ('${row.join("', '")}');\n`;
     });
 
     const sqlFileContent = createTableSql + insertSql;
     const blob = new Blob([sqlFileContent], {
-      type: "text/plain;charset=utf-8",
+      type: 'text/plain;charset=utf-8',
     });
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${filename}.sql`;
     a.click();
@@ -277,7 +276,7 @@ export class DialogComponent implements OnInit {
     this.isPlaying = true;
     // 以逗号或句号为分隔符，将字符串分割成数组
     let list = this.data.content.split(this.reg);
-    let text = "";
+    let text = '';
     for (let index = this.playIndex; index < list.length - 1; index++) {
       text = text + list[index];
     }
@@ -333,6 +332,6 @@ export class DialogComponent implements OnInit {
   }
 
   goto(url) {
-    window.open(url, "_blank");
+    window.open(url, '_blank');
   }
 }
