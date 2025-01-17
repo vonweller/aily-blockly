@@ -1,16 +1,37 @@
 {
   "name": "aily-blockly",
   "version": "1.0.0",
+  "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
+  "build": {
+    "asar": false,
+    "directories": {
+      "output": "dist/aily-blockly/"
+    },
+    "files": [
+      "!**/*",
+      "electron/**/*",
+      {
+        "from":"dist/aily-blockly/browser",
+        "to":"renderer"
+      }
+    ],
+    "win": {
+      "target": "dir",
+      "sign": null,
+      "signAndEditExecutable": false,
+      "artifactName": "${productName}-${version}.${ext}"
+    }
+  },
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && electron ./app/main.js --serve\"",
-    "electron:build": "ng build --base-href ./ && set HTTPS_PROXY=http://127.0.0.1:7890 && electron-forge package",
-    "build2": "npx @electron/packager . --platform=win32 --arch=x64 --out=dist",
+    "electron:build": "ng build --base-href ./ && electron-builder build",
+    "electron:build-local": "set HTTPS_PROXY=http://127.0.0.1:7890 && set ELECTRON_BUILDER_PROXY=http://127.0.0.1:7890 && electron-builder build",
     "make": "electron-forge make"
   },
   "private": true,
@@ -48,6 +69,7 @@
     "@types/jasmine": "~5.1.0",
     "concurrently": "^9.1.2",
     "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
     "jasmine-core": "~5.4.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
