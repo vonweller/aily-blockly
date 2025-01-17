@@ -31,8 +31,7 @@
     "watch": "ng build --watch --configuration development",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && electron ./app/main.js --serve\"",
     "electron:build": "ng build --base-href ./ && electron-builder build",
-    "electron:build-local": "set HTTPS_PROXY=http://127.0.0.1:7890 && set ELECTRON_BUILDER_PROXY=http://127.0.0.1:7890 && electron-builder build",
-    "make": "electron-forge make"
+    "electron:build-local": "ng build --base-href ./ && set HTTPS_PROXY=http://127.0.0.1:7890 && set ELECTRON_BUILDER_PROXY=http://127.0.0.1:7890 && electron-builder build"
   },
   "private": true,
   "dependencies": {

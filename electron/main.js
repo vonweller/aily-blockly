@@ -25,7 +25,7 @@ function createWindow() {
     // const url = new URL(path.join('file:', __dirname, 'index.html'));
     // console.log(url);
     // mainWindow.loadFile(`file://${__dirname}/index.html`);
-    mainWindow.loadFile(`index.html`);
+    mainWindow.loadFile(`renderer/index.html`);
   }
 
   // 加载你的前端文件或路由，如 index.html
