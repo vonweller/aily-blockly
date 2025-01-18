@@ -1,0 +1,8 @@
+{
+  "/api": {
+    "target": "https://api.openjumper.cn",
+    "changeOrigin": true,
+    "secure": false,
+    "logLevel": "debug"
+  }
+}

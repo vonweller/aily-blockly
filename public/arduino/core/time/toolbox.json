@@ -1,24 +1,32 @@
 {
-    "kind": "category",
-    "name": "Time",
-    "contents": [
-        {
-            "kind": "block",
-            "type": "time_delay",
-            "inputs": {
-                "TIME": {
-                    "block": {
-                        "type": "math_number",
-                        "fields": {
-                            "NUM": 1000
-                        }
-                    }
-                }
+  "kind": "category",
+  "name": "Time",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "time_delay",
+      "inputs": {
+        "TIME": {
+          "block": {
+            "type": "math_number",
+            "fields": {
+              "NUM": 1000
             }
-        },
-        {
-            "kind": "block",
-            "type": "time_millis"
+          }
         }
-    ]
+      }
+    },
+    {
+      "kind": "block",
+      "type": "time_millis"
+    },
+    {
+      "kind": "block",
+      "type": "system_time"
+    },
+    {
+      "kind": "block",
+      "type": "system_date"
+    }
+  ]
 }
