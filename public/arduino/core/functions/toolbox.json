@@ -1,5 +1,5 @@
 {
-    "kind": "category",
-    "name": "Functions",
-    "contents": []
+  "kind": "category",
+  "name": "Functions",
+  "custom": "PROCEDURE"
 }

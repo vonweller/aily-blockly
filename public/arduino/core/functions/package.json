@@ -1,34 +1,27 @@
 {
-    "name": "@aily-blockly/core-io",
-    "author": "奈何col",
-    "description": "舵机控制支持库，支持Arduino UNO、MEGA、ESP8266、ESP32等开发板",
-    "version": "0.0.1",
-    "config": {
-        "category": "I/O",
-        "icon": "fal fa-microchip",
-        "colour": "#66bb6a"
-    },
-    "compatibility": {
-        "core": [
-            "arduino:avr",
-            "esp32:esp32",
-            "esp8266:esp8266"
-        ],
-        "voltage": [3.3,5]
-    },
-    "keywords": [
-        "aily",
-        "blockly",
-        "core",
-        "io"
-    ],
-    "files": [
-        "toolbox.json",
-        "block.json",
-        "generator.js"
-    ],
-    "scripts": {},
-    "private": true,
-    "dependencies": {},
-    "devDependencies": {}
+  "name": "@aily-blockly/core-functions",
+  "author": "奈何col",
+  "description": "函数方法",
+  "version": "0.0.1",
+  "config": {
+    "category": "Functions",
+    "icon": "fal fa-microchip",
+    "colour": "#66bb6a"
+  },
+  "compatibility": {},
+  "keywords": [
+    "aily",
+    "blockly",
+    "core",
+    "functions"
+  ],
+  "files": [
+    "toolbox.json",
+    "block.json",
+    "generator.js"
+  ],
+  "scripts": {},
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {}
 }

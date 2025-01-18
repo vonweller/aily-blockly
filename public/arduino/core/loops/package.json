@@ -1,29 +1,32 @@
 {
-    "name": "aily-blockly/core/loops",
-    "author": "奈何col",
-    "description": "逻辑控制库",
-    "version": "0.0.1",
-    "config": {
-        "category": "Loops",
-        "icon": "fa-light fa-arrows-repeat",
-        "colour": "#48c2c4"
-    },
-    "compatibility": {
-        "core": [
-            "arduino:avr",
-            "esp32:esp32",
-            "esp8266:esp8266"
-        ],
-        "voltage": [3.3,5]
-    },
-    "keywords": [
-        "aily",
-        "blockly",
-        "core",
-        "loops"
+  "name": "@aily-blockly/core-loops",
+  "author": "奈何col",
+  "description": "逻辑控制库",
+  "version": "0.0.1",
+  "config": {
+    "category": "Loops",
+    "icon": "fa-light fa-arrows-repeat",
+    "colour": "#48c2c4"
+  },
+  "compatibility": {
+    "core": [
+      "arduino:avr",
+      "esp32:esp32",
+      "esp8266:esp8266"
     ],
-    "scripts": {},
-    "private": true,
-    "dependencies": {},
-    "devDependencies": {}
+    "voltage": [
+      3.3,
+      5
+    ]
+  },
+  "keywords": [
+    "aily",
+    "blockly",
+    "core",
+    "loops"
+  ],
+  "scripts": {},
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {}
 }

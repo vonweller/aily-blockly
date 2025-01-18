@@ -1,1 +1,13 @@
-["io", "logic", "loops", "math", "serial", "time", "variables", "functions"]
+[
+  "io",
+  "logic",
+  "loops",
+  "math",
+  "text",
+  "lists",
+  "serial",
+  "time",
+  "variables",
+  "functions",
+  "sensor"
+]

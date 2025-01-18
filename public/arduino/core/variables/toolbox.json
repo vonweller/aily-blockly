@@ -1,33 +1,6 @@
 {
-    "kind": "category",
-    "name": "Variables",
-    "contents": [
-        {
-            "kind": "button",
-            "text": "创建 变量",
-            "callbackKey": "CREATE_VARIABLE"
-        },
-        {
-            "kind": "block",
-            "type": "variable_define",
-            "inputs": {
-                "VALUE": {
-                    "block": {
-                        "type": "math_number",
-                        "fields": {
-                            "NUM": 0
-                        }
-                    }
-                }
-            }
-        },
-        {
-            "kind": "block",
-            "type": "variables_set"
-        },
-        {
-            "kind": "block",
-            "type": "variables_get"
-        }
-    ]
+  "kind": "category",
+  "name": "Variables",
+  "categorystyle": "variable_category",
+  "custom": "VARIABLE_DYNAMIC"
 }
