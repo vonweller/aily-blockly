@@ -21,16 +21,8 @@ function createWindow() {
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
   } else {
-    // mainWindow.loadFile('index.html');
-    // const url = new URL(path.join('file:', __dirname, 'index.html'));
-    // console.log(url);
-    // mainWindow.loadFile(`file://${__dirname}/index.html`);
     mainWindow.loadFile(`renderer/index.html`);
   }
-
-  // 加载你的前端文件或路由，如 index.html
-  //   console.log('file://' + path.join(__dirname, 'dist/aily-blockly/browser/index.html'));
-  //   mainWindow.loadURL('file://' + path.join(__dirname, 'dist/aily-blockly/browser/index.html'));
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
