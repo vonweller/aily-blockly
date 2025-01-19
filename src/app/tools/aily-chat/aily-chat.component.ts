@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ElementRef, ViewChild } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -13,6 +13,9 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
   styleUrl: './aily-chat.component.scss',
 })
 export class AilyChatComponent {
+  @ViewChild('chatContainer') chatContainer: ElementRef;
+  @ViewChild('chatList') chatList: ElementRef;
+
   list: any = [
     {
       content: 'Hello, how can I help you?',
@@ -27,6 +30,14 @@ export class AilyChatComponent {
     {
       content: 'I am in Beijing.',
       role: 'user',
+    },
+    {
+      content:
+        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
+    },
+    {
+      content:
+        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
     },
     {
       content:
@@ -50,6 +61,7 @@ export class AilyChatComponent {
     //   this.dragHandle.nativeElement.addEventListener('mousemove', this.handleMouseMove);
     //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
     // });
+    this.scrollToBottom(true);
   }
 
   // private handleMouseMove = (e: MouseEvent) => {
@@ -88,6 +100,8 @@ export class AilyChatComponent {
       role: 'system',
     });
 
+    this.scrollToBottom();
+
     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
     fetchEventSource('/api/v1/chat', {
       method: 'POST',
@@ -96,13 +110,17 @@ export class AilyChatComponent {
       },
       body: JSON.stringify(msg),
       onmessage: (event) => {
-        this.list.find((v: any) => v.uuid === uuid).content += event.data;
+        const obj = this.list.find((v: any) => v.uuid === uuid);
+        if (obj.isDone) return;
+        obj.content += event.data;
         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
-        // if (event.data === '[DONE]') {
-        //   this.list.find((v: any) => v.uuid === uuid).role = 'system';
-        //   this.list.find((v: any) => v.uuid === uuid).isDone = true;
-        // }
-        // TODO 滚动细节处理 @downey
+        if (event.data.includes('[DONE]')) {
+          obj.role = 'system';
+          obj.isDone = true;
+          console.log(obj.content);
+        }
+
+        this.scrollToBottom();
       },
       onerror(event) {
         console.log('服务异常', event);
@@ -111,5 +129,23 @@ export class AilyChatComponent {
         console.log('服务关闭');
       },
     }).then();
+  }
+
+  scrollToBottom(offset: any = -30) {
+    if (this.chatList?.nativeElement && this.chatContainer?.nativeElement) {
+      setTimeout(() => {
+        // if (
+        //   offset != true &&
+        //   this.chatContainer.nativeElement.scrollTop +
+        //     this.chatContainer.nativeElement.clientHeight -
+        //     this.chatContainer.nativeElement.scrollHeight <
+        //     offset
+        // ) {
+        //   return;
+        // }
+        this.chatContainer.nativeElement.scrollTop =
+          this.chatList.nativeElement.scrollHeight;
+      }, 20);
+    }
   }
 }

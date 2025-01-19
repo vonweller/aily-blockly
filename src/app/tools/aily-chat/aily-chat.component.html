@@ -1,8 +1,10 @@
 <div class="window-box">
-  <div class="dialog-list">
-    @for (item of list; track item) {
-      <aily-dialog [data]="item"></aily-dialog>
-    }
+  <div class="dialog-list" #chatContainer>
+    <div class="chat-list" #chatList>
+      @for (item of list; track item) {
+        <aily-dialog [data]="item"></aily-dialog>
+      }
+    </div>
   </div>
   <div class="sender">
     <div class="s-box">

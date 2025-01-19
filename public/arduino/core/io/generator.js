@@ -50,3 +50,29 @@ Arduino.forBlock["io_analogwrite"] = function (block, generator) {
   const value = generator.valueToCode(block, "PWM", Arduino.ORDER_ATOMIC);
   return `analogWrite(${pin}, ${value});\n`;
 };
+
+Arduino.forBlock["io_pulsein"] = function (block, generator) {
+  const pin = generator.valueToCode(block, "PULSEPIN", Arduino.ORDER_ATOMIC);
+  const type = block.getFieldValue("PULSETYPE");
+
+  // Arduino.reservePin(block, pin, "INPUT", "Pulse Pin");
+
+  const pinSetupCode = "pinMode(" + pin + ", INPUT);\n";
+  Arduino.addSetup("io_" + pin, pinSetupCode, false);
+
+  return `pulseIn(${pin},${type});\n`;
+};
+
+Arduino.forBlock["io_pulsetimeout"] = function (block, generator) {
+  const pin = generator.valueToCode(block, "PULSEPIN", Arduino.ORDER_ATOMIC);
+  const type = block.getFieldValue("PULSETYPE");
+  const timeout = block.getFieldValue("TIMEOUT");
+  // const timeout = generator.valueToCode(block, "TIMEOUT", Arduino.ORDER_ATOMIC);
+
+  // Arduino.reservePin(block, pin, "INPUT", "Pulse Pin");
+
+  const pinSetupCode = "pinMode(" + pin + ", INPUT);\n";
+  Arduino.addSetup("io_" + pin, pinSetupCode, false);
+
+  return `pulseIn(${pin},${type},${timeout});\n`;
+};

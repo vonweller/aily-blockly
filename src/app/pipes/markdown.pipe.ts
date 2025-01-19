@@ -41,9 +41,14 @@ export class MarkdownPipe implements PipeTransform {
     if (!value) {
       return '';
     }
-    let result = await this.marked.parse(value || '');
+    try {
+      value = value.replace(/(```[a-z]*)(?!\n)(?![a-z])/g, '$1\n');
+      value = await this.marked.parse(value || '');
+    } catch (err) {
+      console.error(err);
+    }
     // 替换图片url路径
     // result = result.replace(/src=".\//g, `src="` + CONFIG.BASE_URL).replace(/src="..\//g, `src="` + CONFIG.BASE_URL)
-    return this.sanitizer.bypassSecurityTrustHtml(result);
+    return this.sanitizer.bypassSecurityTrustHtml(value);
   }
 }
