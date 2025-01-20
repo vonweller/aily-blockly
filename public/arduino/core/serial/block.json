@@ -41,7 +41,7 @@
   },
   {
     "inputsInline": true,
-    "message0": "读取串口%1数据",
+    "message0": "读取串口%1数据 %2",
     "type": "serial_read",
     "colour": "#48c2c4",
     "args0": [
@@ -49,10 +49,20 @@
         "type": "field_dropdown",
         "name": "SERIAL",
         "options": "${board.serialPort}"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "TYPE",
+        "options": [
+          ["read", "read"],
+          ["peek", "peek"],
+          ["parseInt", "parseInt"],
+          ["parseFloat", "parseFloat"]
+        ]
       }
     ],
     "generator": {
-      "code": "${SERIAL}.read();"
+      "code": "${SERIAL}.${TYPE}();"
     },
     "output": "Any"
   },

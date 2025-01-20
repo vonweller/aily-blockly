@@ -165,6 +165,21 @@
     "style": "loop_blocks",
     "helpUrl": "%{BKY_CONTROLS_FLOW_STATEMENTS_HELPURL}",
     "suppressPrefixSuffix": true,
-    "extensions": ["controls_flow_tooltip", "controls_flow_in_loop_check"]
+    "extensions": []
+  },
+  {
+    "type": "controls_whileForever",
+    "message0": "🔁 永远循环 %1",
+    "args0": [
+      {
+        "type": "input_statement",
+        "name": "DO"
+      }
+    ],
+    "previousStatement": null,
+    "nextStatement": null,
+    "style": "loop_blocks",
+    "helpUrl": "%{BKY_CONTROLS_WHILEUNTIL_HELPURL}",
+    "extensions": ["controls_whileUntil_tooltip"]
   }
 ]

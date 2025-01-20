@@ -1,3 +1,9 @@
+Arduino.forBlock["time_delay"] = function (block, generator) {
+  const delayTime =
+    generator.valueToCode(block, "TIME", generator.ORDER_ATOMIC) || "1000";
+  return `delay(${delayTime});\n`;
+};
+
 Arduino.forBlock["controls_if"] = function (block) {
   // If/elseif/else condition.
   let n = 0;

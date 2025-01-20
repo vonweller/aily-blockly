@@ -36,6 +36,14 @@ const getSubstringIndex = function (stringName, where, opt_at) {
   }
 };
 
+Arduino.forBlock["string_add_string"] = function (block) {
+  const string1 = block.getFieldValue("STRING1") || "";
+  const string2 = block.getFieldValue("STRING2") || "";
+  const code =
+    forceString(`"${string1}"`)[0] + " + " + forceString(`"${string2}"`)[0];
+  return [code, Arduino.ORDER_ADDITION];
+};
+
 Arduino.forBlock["text"] = function (block) {
   // Text value.
   const code = Arduino.quote_(block.getFieldValue("TEXT"));

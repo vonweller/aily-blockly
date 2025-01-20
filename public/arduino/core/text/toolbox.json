@@ -4,6 +4,10 @@
   "contents": [
     {
       "kind": "block",
+      "type": "string_add_string"
+    },
+    {
+      "kind": "block",
       "type": "text"
     },
     {

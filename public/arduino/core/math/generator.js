@@ -403,3 +403,20 @@ Arduino.forBlock["math_atan2"] = function (block) {
     Arduino.ORDER_DIVISION,
   ];
 };
+
+Arduino.forBlock["math_round_to_decimal"] = function (block) {
+  const numberToRound =
+    Arduino.valueToCode(block, "NUMBER", Arduino.ORDER_NONE) || "0";
+  const decimals =
+    Arduino.valueToCode(block, "DECIMALS", Arduino.ORDER_NONE) || "0";
+
+  const code = `parseFloat(${numberToRound}.toFixed(${decimals}))`;
+  return [code, Arduino.ORDER_FUNCTION_CALL];
+};
+
+Arduino.forBlock["math_bitwise_not"] = function (block) {
+  const number =
+    Arduino.valueToCode(block, "NUM", Arduino.ORDER_BITWISE_NOT) || "0";
+  const code = `~${number}`;
+  return [code, Arduino.ORDER_BITWISE_NOT];
+};

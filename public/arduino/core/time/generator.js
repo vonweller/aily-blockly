@@ -1,9 +1,3 @@
-Arduino.forBlock["time_delay"] = function (block, generator) {
-  const delayTime =
-    generator.valueToCode(block, "TIME", generator.ORDER_ATOMIC) || "1000";
-  return `delay(${delayTime});\n`;
-};
-
 Arduino.forBlock["time_millis"] = function (block, generator) {
   return ["millis()", generator.ORDER_ATOMIC];
 };

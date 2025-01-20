@@ -1,5 +1,25 @@
 [
   {
+    "type": "string_add_string",
+    "message0": "String(%1) + String(%2)",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING1",
+        "text": "hello"
+      },
+      {
+        "type": "field_input",
+        "name": "STRING2",
+        "text": "world"
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "tooltip": "Concatenates two strings.",
+    "helpUrl": ""
+  },
+  {
     "type": "text",
     "message0": "%1",
     "args0": [
