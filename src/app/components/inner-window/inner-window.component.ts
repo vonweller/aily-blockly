@@ -29,7 +29,7 @@ export class InnerWindowComponent {
   constructor(private iwindowService: IwindowService) {}
 
   ngOnInit(): void {
-    console.log(this.opt);
+    // console.log(this.opt);
     this.opt.position = this.opt.position || this.optDefault.position;
     this.opt.size = this.opt.size || this.optDefault.size;
     this.opt.zindex = this.opt.zindex || this.optDefault.zindex;
@@ -43,7 +43,7 @@ export class InnerWindowComponent {
   offsetPosition = { x: 0, y: 0 };
 
   maximize() {
-    console.log(JSON.stringify(this.opt.position));
+    // console.log(JSON.stringify(this.opt.position));
 
     if (
       this.opt.size.width == window.innerWidth &&

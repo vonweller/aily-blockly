@@ -18,6 +18,7 @@ import { InnerWindowComponent } from './components/inner-window/inner-window.com
 import { TerminalComponent } from './tools/terminal/terminal.component';
 import { DataChartComponent } from './tools/data-chart/data-chart.component';
 import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.component';
+import { ElectronService } from './services/electron.service';
 
 @Component({
   selector: 'app-root',
@@ -57,10 +58,12 @@ export class AppComponent {
   constructor(
     private translate: TranslateService,
     private iwindowService: IwindowService,
+    private electronService: ElectronService
   ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
+    this.electronService.init();
   }
 
   ngAfterViewInit(): void {
