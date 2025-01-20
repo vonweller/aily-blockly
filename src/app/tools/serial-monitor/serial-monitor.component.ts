@@ -1,10 +1,12 @@
-import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
+import { Component } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ElectronService } from '../../services/electron.service';
+
+let SerialPort;
 
 @Component({
   selector: 'app-serial-monitor',
@@ -32,13 +34,9 @@ export class SerialMonitorComponent {
   // 异常捕获
   showError = false;
 
-  serialPort;
-
   serialList = [];
 
-  constructor(private electronService: ElectronService) {
-    this.serialPort = this.electronService.serialPort;
-  }
+  constructor(private electronService: ElectronService) {}
 
   ngOnInit() {}
 
@@ -47,7 +45,11 @@ export class SerialMonitorComponent {
   openMore() {}
 
   async openPortList() {
-    this.serialList = (await this.serialPort.list()).map((item) => item.path);
-    console.log(this.serialList);
+    if (this.electronService.isElectron) {
+      this.serialList = (await window['SerialPort'].list()).map(
+        (item) => item.path,
+      );
+      console.log(this.serialList);
+    }
   }
 }

@@ -8,17 +8,15 @@ export class ElectronService {
 
   electron = window['ielectron'];
 
-  SerialPort;
-
   constructor() {}
 
   async init() {
     if (this.electron && typeof this.electron.versions() == 'object') {
       console.log('Running in electron', this.electron.versions());
       this.isElectron = true;
-
-      this.SerialPort = window['ielectron'].SerialPort;
-      console.log(await this.SerialPort.list());
+      // 在这里把 相关nodejs内容 挂载到 window 上
+      // 调用前先判断isElectron
+      window['SerialPort'] = window['ielectron'].SerialPort;
     } else {
       console.log('Running in browser');
     }
