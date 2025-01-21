@@ -88,6 +88,9 @@ export class AilyChatComponent {
       role: 'system',
     });
 
+    let ended = false;
+    let result = null;
+
     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
     fetchEventSource('/api/v1/chat', {
       method: 'POST',
@@ -96,7 +99,21 @@ export class AilyChatComponent {
       },
       body: JSON.stringify(msg),
       onmessage: (event) => {
-        this.list.find((v: any) => v.uuid === uuid).content += event.data;
+        if (event.event === 'result') {
+          ended = true;
+        }
+
+        if (ended) {
+          result = JSON.parse(event.data);
+        } else {
+          this.list.find((v: any) => v.uuid === uuid).content += event.data;
+        }
+
+        if (event.data === '[DONE]') {
+          this.list.find((v: any) => v.uuid === uuid).role = result.role;
+          this.list.find((v: any) => v.uuid === uuid).isDone = true;
+        }
+        // this.list.find((v: any) => v.uuid === uuid).content += event.data;
         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
         // if (event.data === '[DONE]') {
         //   this.list.find((v: any) => v.uuid === uuid).role = 'system';
