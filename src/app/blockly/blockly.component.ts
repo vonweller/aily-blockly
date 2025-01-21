@@ -10,7 +10,6 @@ import './plugins/toolbox-search/src/index.js';
 import { arduinoGenerator, DEFAULT_DATA } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
-import { javascriptGenerator } from 'blockly/javascript';
 
 @Component({
   selector: 'blockly-main',
