@@ -44,6 +44,103 @@ Arduino.forBlock["string_add_string"] = function (block) {
   return [code, Arduino.ORDER_ADDITION];
 };
 
+Arduino.forBlock["string_charAt"] = function (block) {
+  const string = block.getFieldValue("STRING") || "";
+  const num = block.getFieldValue("NUM") || 0;
+  const code = forceString(
+    forceString(`"${string}"`)[0] + `.charAt(${num}-1)`,
+  )[0];
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["string_length"] = function (block) {
+  const string = block.getFieldValue("STRING") || "";
+  const code = forceString(`"${string}"`)[0] + ".length()";
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["string_indexOf"] = function (block) {
+  const string1 = block.getFieldValue("STRING1") || "";
+  const string2 = block.getFieldValue("STRING2") || "";
+  const code =
+    forceString(`"${string1}"`)[0] +
+    ".indexOf(" +
+    forceString(`"${string2}"`)[0] +
+    ") != -1";
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["string_substring"] = function (block) {
+  const string = block.getFieldValue("STRING") || "";
+  const start = block.getFieldValue("START");
+  const startIndex = block.getFieldValue("START_INDEX") || 0;
+  const last = block.getFieldValue("LAST");
+  const lastIndex = block.getFieldValue("LAST_INDEX") || 0;
+  const code = `dfstring.substring("${string}",${start},${startIndex},${last},${lastIndex})`;
+
+  Arduino.addLibrary("DFString", "#include <DFString.h>");
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["string_find_str"] = function (block) {
+  const string1 = block.getFieldValue("STRING1") || "";
+  const string2 = block.getFieldValue("STRING2") || "";
+  const find = block.getFieldValue("FIND") || "";
+  const code = `dfstring.${find}(String("${string1}"), String("${string2}"))`;
+
+  Arduino.addLibrary("DFString", "#include <DFString.h>");
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["string_to"] = function (block) {
+  const string = block.getFieldValue("STRING") || "";
+  const type = block.getFieldValue("TYPE");
+  const code = `String("${string}").${type}()`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["number_to"] = function (block) {
+  const num = block.getFieldValue("NUM") || 0;
+  const code = `String(char(${num}))`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["toascii"] = function (block) {
+  const string = block.getFieldValue("STRING") || "";
+  const code = `toascii("${string}")`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["number_to_string"] = function (block) {
+  const num = block.getFieldValue("NUM") || 0;
+  const code = `String(${num})`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["map_to"] = function (block) {
+  const num = block.getFieldValue("NUM") || 0;
+  const firstStart = block.getFieldValue("FIRST_START") || 0;
+  const firstEnd = block.getFieldValue("FIRST_END") || 1023;
+  const lastStart = block.getFieldValue("LAST_START") || 0;
+  const lastEnd = block.getFieldValue("LAST_END") || 255;
+  const code = `map(${num}, ${firstStart}, ${firstEnd}, ${lastStart}, ${lastEnd})`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
+Arduino.forBlock["constrain"] = function (block) {
+  const num = block.getFieldValue("NUM") || 0;
+  const min = block.getFieldValue("MIN") || 0;
+  const max = block.getFieldValue("MAX") || 100;
+  const code = `constrain(${num}, ${min}, ${max})`;
+
+  return [code, Arduino.ORDER_ADDITION];
+};
+
 Arduino.forBlock["text"] = function (block) {
   // Text value.
   const code = Arduino.quote_(block.getFieldValue("TEXT"));

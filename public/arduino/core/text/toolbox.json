@@ -8,6 +8,50 @@
     },
     {
       "kind": "block",
+      "type": "string_charAt"
+    },
+    {
+      "kind": "block",
+      "type": "string_length"
+    },
+    {
+      "kind": "block",
+      "type": "string_indexOf"
+    },
+    {
+      "kind": "block",
+      "type": "string_substring"
+    },
+    {
+      "kind": "block",
+      "type": "string_find_str"
+    },
+    {
+      "kind": "block",
+      "type": "string_to"
+    },
+    {
+      "kind": "block",
+      "type": "number_to"
+    },
+    {
+      "kind": "block",
+      "type": "toascii"
+    },
+    {
+      "kind": "block",
+      "type": "number_to_string"
+    },
+    {
+      "kind": "block",
+      "type": "map_to"
+    },
+    {
+      "kind": "block",
+      "type": "constrain"
+    },
+    {
+      "kind": "block",
       "type": "text"
     },
     {
