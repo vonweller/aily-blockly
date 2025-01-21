@@ -2,15 +2,15 @@ import { Component, ViewChild } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { ElectronService } from '../../services/electron.service';
 
 @Component({
   selector: 'app-terminal',
   imports: [],
   templateUrl: './terminal.component.html',
-  styleUrl: './terminal.component.scss'
+  styleUrl: './terminal.component.scss',
 })
 export class TerminalComponent {
-
   @ViewChild('terminal') terminalEl: any;
 
   terminal;
@@ -18,19 +18,21 @@ export class TerminalComponent {
   clipboardAddon;
   command: string = '';
 
+  constructor(private electronService: ElectronService) {}
+
   ngAfterViewInit(): void {
     this.terminal = new Terminal();
-    // 
+    //
     this.fitAddon = new FitAddon();
     this.terminal.open(this.terminalEl.nativeElement);
     setTimeout(() => {
       this.fitAddon.fit();
     }, 50);
-    // 
+    //
     this.clipboardAddon = new ClipboardAddon();
     this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.loadAddon(this.fitAddon);
-    // 
+    //
 
     this.terminal.write('> ');
     this.terminal.onData((data) => {
@@ -51,6 +53,12 @@ export class TerminalComponent {
           this.terminal.write(data);
       }
     });
+
+    if (this.electronService.isElectron) {
+      this.nodePtyInit();
+    } else {
+      this.cloudPtyInit();
+    }
   }
 
   sendCommand(command: string): void {
@@ -60,5 +68,13 @@ export class TerminalComponent {
     //   this.term.write(response.output + '\r\n');
     //   this.term.write('Hello from \x1B[1;3;31mxterm.js\x1B[0m $ ');
     // });
+  }
+
+  nodePtyInit() {
+
+  }
+
+  cloudPtyInit() {
+    // 初始化云端工具
   }
 }
