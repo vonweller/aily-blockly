@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Tray, Menu } = require("electron");
-const path = require("path");
+import { app, BrowserWindow, Tray, Menu } from "electron";
+import path from "path";
+import { initTerminal } from "./xterm.js";
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -14,6 +15,7 @@ function createWindow() {
     show: true, // 不显示主窗口，实现“后台运行”的效果
     webPreferences: {
       nodeIntegration: true,
+      // contextIsolation: false,
       webSecurity: false,
       preload: path.join(__dirname, "preload.js"),
     },
@@ -73,6 +75,8 @@ function createTray() {
 app.on("ready", () => {
   createWindow();
   //   createTray();
+
+  initTerminal(".");
 });
 
 // 当所有窗口都被关闭时退出应用（macOS 除外）
