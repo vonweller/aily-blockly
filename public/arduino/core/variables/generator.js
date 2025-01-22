@@ -23,6 +23,9 @@ Arduino.forBlock["variables_set"] = function (block) {
   const argument0 =
     Arduino.valueToCode(block, "VALUE", Arduino.ORDER_ASSIGNMENT) || "0";
   const varName = Arduino.getVariableName(block.getFieldValue("VAR"));
+
+  Arduino.addVariable("variable_float", `volatile float ${varName};`);
+  // TODO 还得区分创建的类型 @downey
   return varName + " = " + argument0 + ";\n";
 };
 
