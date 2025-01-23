@@ -94,13 +94,68 @@ export class AilyChatComponent {
 
     const uuid = this.getRandomString();
 
+    const content = `
+#### 这是一个测试标题
+
+\`\`\`blockly
+{
+  "kind": "flyoutToolbox",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "controls_if"
+    },
+    {
+      "kind": "block",
+      "type": "controls_whileUntil"
+    }
+  ]
+}
+\`\`\`
+
+# 好嘛
+
+| 什么
+
+\`\`\`blockly
+{
+  "kind": "flyoutToolbox",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "controls_if"
+    }
+  ]
+}
+\`\`\`
+
+## 这个是二级标题
+`;
+
+    const segments = this.splitContent(content);
+
+    const contentList = [];
+
+    const ruleView = /```blockly\s([\s\S]*?)\s```/;
+    segments.forEach((match, index) => {
+      const exec = ruleView.exec(match);
+      if (exec) {
+        contentList.push(exec);
+      } else {
+        contentList.push(match);
+      }
+    });
+
     this.list.push({
       uuid,
-      content: '',
+      content,
+      contentList,
       role: 'system',
     });
 
     this.scrollToBottom();
+
+    return;
 
     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
     fetchEventSource('/api/v1/chat', {
@@ -129,6 +184,45 @@ export class AilyChatComponent {
         console.log('服务关闭');
       },
     }).then();
+  }
+
+  splitContent(content) {
+    // 正则表达式，匹配```blockly到下一个```之间的内容
+    const regex = /```blockly([\s\S]*?)```/g;
+
+    // 使用正则表达式进行匹配
+    const matches = content.match(regex);
+
+    // 处理匹配结果，将每次```blockly前面的内容也作为一个分段
+    let segments = [];
+    let lastIndex = 0;
+
+    if (matches) {
+      matches.forEach((match) => {
+        const startIndex = content.indexOf(match, lastIndex);
+
+        // 添加```blockly前面的内容
+        if (startIndex > 0) {
+          segments.push(content.slice(lastIndex, startIndex));
+        }
+
+        // 添加```blockly到```之间的内容
+        segments.push(match);
+
+        // 更新lastIndex
+        lastIndex = startIndex + match.length;
+      });
+
+      // 添加最后一段内容（如果有）
+      if (lastIndex < content.length) {
+        segments.push(content.slice(lastIndex));
+      }
+    } else {
+      // 如果没有匹配到```blockly，则整个content作为一段
+      segments.push(content);
+    }
+
+    return segments;
   }
 
   scrollToBottom(offset: any = -30) {

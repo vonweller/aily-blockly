@@ -23,6 +23,10 @@ export class BlocklyService {
 
   boardConfig;
 
+  draggingBlock: any;
+  offsetX: number = 0;
+  offsetY: number = 0;
+
   constructor(private http: HttpClient) {}
 
   async init() {
