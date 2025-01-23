@@ -94,6 +94,7 @@ export class AilyChatComponent {
 
     const uuid = this.getRandomString();
 
+    // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
     const content = `
 #### 这是一个测试标题
 
@@ -140,6 +141,10 @@ export class AilyChatComponent {
     segments.forEach((match, index) => {
       const exec = ruleView.exec(match);
       if (exec) {
+        try {
+          const data = JSON.parse(exec[1]);
+          exec.push(data);
+        } catch (err) {}
         contentList.push(exec);
       } else {
         contentList.push(match);

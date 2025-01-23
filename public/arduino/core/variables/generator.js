@@ -1,15 +1,16 @@
 Arduino.forBlock["variable_define"] = function (block) {
-  let varType = getValue(block, "TYPE", "field_dropdown");
-  let varName = getValue(block, "VAR", "field_variable");
-  let value = getValue(block, "VALUE", "input_value");
-  if (varType == "char") {
+  const varType = block.getFieldValue("TYPE");
+  const varName = block.getFieldValue("VAR");
+  let value = block.getFieldValue("VALUR");
+  if (varType === "char") {
     value = value.replace(/^\"/, "'").replace(/\"$/, "'");
   }
-  let code = `${varType} ${varName} = ${value};`;
-  if (isGlobal(block)) {
-    Arduino.addVariable(varName, code);
-    return "";
-  } else return code + "\n";
+  const code = `${varType} ${varName} = ${value};`;
+  // if (isGlobal(block)) {
+  //   Arduino.addVariable(varName, code);
+  //   return "";
+  // } else return code + "\n";
+  return [code, Arduino.ORDER_ATOMIC];
 };
 
 Arduino.forBlock["variables_get"] = function (block) {

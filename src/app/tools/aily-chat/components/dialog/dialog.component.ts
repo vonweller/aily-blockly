@@ -18,6 +18,7 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzImageModule } from 'ng-zorro-antd/image';
 import { FormsModule } from '@angular/forms';
 import { MarkdownPipe } from '../../../../pipes/markdown.pipe';
+import { AilyCodingComponent } from '../../../../components/aily-coding/aily-coding.component';
 
 @Component({
   selector: 'aily-dialog',
@@ -31,6 +32,7 @@ import { MarkdownPipe } from '../../../../pipes/markdown.pipe';
     NzButtonModule,
     MarkdownPipe,
     NzImageModule,
+    AilyCodingComponent,
   ],
 })
 export class DialogComponent implements OnInit {
@@ -98,6 +100,7 @@ export class DialogComponent implements OnInit {
   reg = /[。|；|?|!|.]/g;
 
   ngAfterViewInit(): void {
+    console.log(this.data.contentList);
     if (this.data.subject) {
       this.data.subject.subscribe(
         (res: any) => {
