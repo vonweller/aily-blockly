@@ -82,16 +82,20 @@ export class BlocklyComponent {
         },
       });
 
-      this.workspace.registerButtonCallback('CREATE_VARIABLE', (button) => {
-        console.log('CREATE_VARIABLE');
-        Blockly.Variables.createVariableButtonHandler(
-          this.workspace,
-          () => {
-            console.log('变量创建成功');
-          },
-          'aily-variable',
-        );
-      });
+      // this.workspace.registerButtonCallback(
+      //   'CREATE_NUMBER_VARIABLE',
+      //   (button) => {
+      //     console.log('CREATE_NUMBER_VARIABLE');
+      //     Blockly.Variables.createVariableButtonHandler(
+      //       this.workspace,
+      //       (name) => {
+      //         console.log('变量创建成功');
+      //       },
+      //       'aily-variable',
+      //     );
+      //   },
+      // );
+
       this.workspace.registerButtonCallback('CREATE_OBJECT', (button) => {
         console.log('CREATE_OBJECT');
       });
