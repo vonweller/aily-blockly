@@ -1,8 +1,49 @@
 [
   {
-    "kind": "button",
-    "text": "创建 变量",
-    "callbackKey": "CREATE_VARIABLE"
+    "inputsInline": false,
+    "type": "variable_define",
+    "message0": "变量定义 类型%1 变量名%2 初值%3",
+    "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "TYPE",
+        "options": [
+          ["整型", "int"],
+          ["长整型", "long"],
+          ["浮点型", "float"],
+          ["双精度浮点型", "double"],
+          ["字符型", "char"],
+          ["布尔型", "boolean"]
+        ]
+      },
+      {
+        "type": "field_variable",
+        "name": "VAR",
+        "variable": "var",
+        "variableTypes": ["aily-variable"],
+        "defaultType": "aily-variable"
+      },
+      {
+        "type": "input_value",
+        "name": "VALUE"
+      }
+    ],
+    "previousStatement": null,
+    "nextStatement": null,
+    "colour": "#ff8c1a",
+    "toolbox": {
+      "show": true,
+      "inputs": {
+        "VALUE": {
+          "block": {
+            "type": "math_number",
+            "fields": {
+              "NUM": 0
+            }
+          }
+        }
+      }
+    }
   },
   {
     "type": "variables_get",

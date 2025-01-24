@@ -188,10 +188,15 @@ export class AilyBlocklyComponent implements OnInit {
       .addChangeListener((event: any) => {});
 
     this.workspace.getFlyout().contents.forEach(({ block }) => {
-      browserEvents.bind(block.svgGroup_, 'pointerdown', this, (event: any) => {
-        this.offsetX = event.offsetX - block.relativeCoords.x;
-        this.offsetY = event.offsetY - block.relativeCoords.y;
-      });
+      browserEvents.bind(
+        block.svgGroup_ || block.svgGroup,
+        'pointerdown',
+        this,
+        (event: any) => {
+          this.offsetX = event.offsetX - block.relativeCoords.x;
+          this.offsetY = event.offsetY - block.relativeCoords.y + 20;
+        },
+      );
     });
 
     // browserEvents.bind(
@@ -249,12 +254,12 @@ export class AilyBlocklyComponent implements OnInit {
   }
 
   ngOnDestroy() {
-    this.surfaceGlobal.remove();
+    this.surfaceGlobal?.remove();
     this.surfaceGlobal = null;
 
-    this.workspace.getFlyout().contents.forEach(({ block }) => {
-      browserEvents.unbind(block.svgGroup_);
-    });
+    // this.workspace.getFlyout().contents.forEach(({ block }) => {
+    //   browserEvents.unbind(block.svgGroup_ || block.svgGroup);
+    // });
 
     this.workspace.removeChangeListener();
   }

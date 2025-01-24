@@ -16,11 +16,24 @@
             </div>
             <div class="date"></div>
         </div> -->
-    <div
-      class="content"
-      [innerHTML]="data.content | markdown | async"
-      #mdContent
-    ></div>
+    @if (!data.contentList?.length) {
+      <div
+        class="content"
+        [innerHTML]="data.content | markdown | async"
+        #mdContent
+      ></div>
+    }
+    <div class="content" *ngIf="data.contentList?.length" #mdContent>
+      @for (v of data.contentList || []; track $index) {
+        @if (typeof v === "string") {
+          <div [innerHTML]="v | markdown | async"></div>
+        } @else {
+          <div>
+            <app-aily-coding [data]="v[v.length - 1]"></app-aily-coding>
+          </div>
+        }
+      }
+    </div>
     <div class="state" *ngIf="!mine && !isDone && !system" (click)="stop()">
       <i class="fa-duotone fa-spinner-third"></i>
       <div>停止</div>

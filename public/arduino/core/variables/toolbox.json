@@ -2,5 +2,33 @@
   "kind": "category",
   "name": "Variables",
   "categorystyle": "variable_category",
-  "custom": "VARIABLE_DYNAMIC"
+  "contents": [
+    {
+      "kind": "button",
+      "text": "新建数字类型变量",
+      "callbackKey": "CREATE_NUMBER_VARIABLE"
+    },
+    {
+      "kind": "button",
+      "text": "新建字符串类型变量",
+      "callbackKey": "CREATE_STRING_VARIABLE"
+    },
+    {
+      "kind": "button",
+      "text": "新建列表",
+      "callbackKey": "CREATE_LIST"
+    },
+    {
+      "kind": "block",
+      "type": "variable_define"
+    },
+    {
+      "kind": "block",
+      "type": "variables_get"
+    },
+    {
+      "kind": "block",
+      "type": "variables_set"
+    }
+  ]
 }
