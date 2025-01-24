@@ -1,6 +1,10 @@
 import { app, BrowserWindow, Tray, Menu } from "electron";
 import path from "path";
 import { initTerminal } from "./xterm.js";
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
