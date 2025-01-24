@@ -1,3 +1,5 @@
+// 这个文件用于初始化xterm.js终端，以及处理终端的输入输出
+
 import * as pty from '@lydell/node-pty';
 import { ipcMain  } from 'electron';
 
