@@ -1,5 +1,5 @@
-const { contextBridge, ipcRenderer } = require("electron");
-const { SerialPort } = require("serialport");
+import { contextBridge, ipcRenderer } from "electron";
+import { SerialPort } from "serialport";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer,
