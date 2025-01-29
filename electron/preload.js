@@ -18,21 +18,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // 判断是否是Linux
     isLinux: () => process.platform === "linux",
   },
-  terminal:{
+  terminal: {
     init: (path) => {
       const shell = process.platform === "win32" ? "powershell.exe" : "bash";
       const terminal = pty.spawn(shell, [], {
         name: "xterm-color",
         cwd: path,
       });
-  
       terminal.on("data", (data) => {
         ipcRenderer.send("terminal-output", data);
       });
-  
       ipcRenderer.on("terminal-input", (event, input) => {
         terminal.write(input);
       });
+    },
+    runScript: (scriptPath) => {
+      ipcRenderer.send('run-node-script', scriptPath);
+    }
+  },
+  window: {
+    create: (options) => {
+      ipcRenderer.send('window-create', options);
+    },
+    close: () => {
+      ipcRenderer.send('window-close');
     }
   }
 });
