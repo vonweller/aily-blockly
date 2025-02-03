@@ -13,18 +13,19 @@ Blockly.getMainWorkspace().registerButtonCallback(
 );
 
 Arduino.forBlock["variable_define"] = function (block) {
-  const varType = block.getFieldValue("TYPE");
-  const varName = block.getFieldValue("VAR");
-  let value = block.getFieldValue("VALUR");
-  if (varType === "char") {
-    value = value.replace(/^\"/, "'").replace(/\"$/, "'");
+  const gorp = block.getFieldValue("GORP");
+  let type = block.getFieldValue("TYPE");
+  const name = block.getFieldValue("VAR");
+  let value = Arduino.valueToCode(block, "VALUE", Arduino.ORDER_ATOMIC);
+  if (!value) {
+    value = ["volatile String*"].includes(type) ? `""` : 0;
   }
-  const code = `${varType} ${varName} = ${value};`;
-  // if (isGlobal(block)) {
-  //   Arduino.addVariable(varName, code);
-  //   return "";
-  // } else return code + "\n";
-  return [code, Arduino.ORDER_ATOMIC];
+  if (gorp === "part") {
+    type = type.replace(/volatile\s/, "");
+    return `${type} ${name} = ${value};\n`;
+  }
+  Arduino.addVariable(`${type}_${name}`, `${type} ${name};`);
+  return `${name} = ${value};\n`;
 };
 
 const setLibraryVariable = (type, code) => {
