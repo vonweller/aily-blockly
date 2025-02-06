@@ -2,6 +2,9 @@ import { CommonModule } from '@angular/common';
 import { Component } from '@angular/core';
 import { HEADER_MENU } from '../../configs/header.config';
 import { IwindowService } from '../../services/iwindow.service';
+import { arduinoGenerator, DEFAULT_DATA } from '../../blockly/generators/arduino/arduino';
+import { ArduinoCliService } from '../../services/arduino-cli.service';
+import { BlocklyService } from '../../blockly/blockly.service';
 
 @Component({
   selector: 'app-header',
@@ -14,7 +17,9 @@ export class HeaderComponent {
   headerMenu = HEADER_MENU;
 
   constructor(
-    private iwindowService: IwindowService
+    private iwindowService: IwindowService,
+    private arduinoCliService: ArduinoCliService,
+    private blocklyService: BlocklyService
   ) {
 
   }
@@ -49,6 +54,15 @@ export class HeaderComponent {
           size: { width: window.innerWidth - 180, height: 200 },
           position: { x: 180, y: window.innerHeight - 200 }
         });
+        break
+      case 'open-prj-builder':
+        this.iwindowService.openWindow({
+          type: 'terminal', title: '终端',
+          size: { width: window.innerWidth - 180, height: 200 },
+          position: { x: 180, y: window.innerHeight - 200 }
+        });
+        let code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+        this.arduinoCliService.build(code).then(() => {});
         break
     }
   }

@@ -30,7 +30,7 @@ export let HEADER_MENU = [
         },
         {
             name: '编译',
-            action: 'Project_build',
+            action: 'open-prj-builder',
             icon: 'fa-light fa-wrench'
         },
         {
