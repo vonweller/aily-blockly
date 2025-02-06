@@ -25,10 +25,6 @@ export class ArduinoCliService {
 
   cliPath = '.\\child\\arduino-cli.exe';
 
-  get isElectron(): boolean {
-    return !!(window && window.process && window.process.type);
-  }
-
   child_build: childProcess.ChildProcess;
   child_upload: childProcess.ChildProcess;
 
@@ -43,9 +39,9 @@ export class ArduinoCliService {
   ) { 
     if (this.electronService.isElectron) {
       console.log('isElectron')
-      this.childProcess = window.require('child_process');
-      this.os = window.require('os');
-      this.fs = window.require('fs');
+      this.childProcess = window["myChildProcess"];
+      this.os = window["myOs"];
+      this.fs = window["myFs"];
       this.cliPath = this.fs.existsSync('./resources/app') ? '.\\resources\\child\\arduino-cli.exe' : '.\\child\\arduino-cli.exe';
     } else {
       console.log('isBrowser')
@@ -103,13 +99,18 @@ export class ArduinoCliService {
       console.log('state: ', state)
       console.log(this.RunStage.BUILD_START('arduino:avr:uno'))
 
-      this.child_build = this.childProcess.spawn(this.cliPath, params.split(' '))
-      this.child_build.stdout!.on('data', (dataBuffer: Buffer) => {
+      const cmdList = params.split(' ')
+
+      const child_build = this.childProcess.spawn('cmd.exe', ['/c', 'dir'])
+      console.log("childBuild: ", child_build.stdout)
+    
+      child_build.stdout.on('data', (dataBuffer: Buffer) => {
         let data = dataBuffer.toString();
         // TODO 往terminal里面写入信息
         console.log(data)
-      })
-      this.child_build.stderr!.on('data', (dataBuffer: Buffer) => {
+      });
+      
+      child_build.stderr!.on('data', (dataBuffer: Buffer) => {
         let data = dataBuffer.toString();
         if (state === RunState.BUILDING && data.includes('error:')) {
           state = RunState.BUILD_FAILED;
@@ -117,7 +118,7 @@ export class ArduinoCliService {
         // TODO 往terminal里面写入信息
         console.log(data)
       })
-      this.child_build.on('close', (code) => {
+      child_build.on('close', (code) => {
         if (state == RunState.BUILDING && code == 0) {
           state = RunState.BUILD_DONE;
           // TODO 往terminal里面写入信息
