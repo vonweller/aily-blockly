@@ -12,30 +12,31 @@
 <app-project-manager></app-project-manager>
 } -->
 <div class="bounds" #WindowsBounds>
-    @for (item of windows; track item) {
+  @for (item of windows; track item) {
     <app-inner-window [opt]="item">
-        @switch(item.type) {
-        @case('blockly-editor') {
-            <app-blockly-editor></app-blockly-editor>
+      @switch (item.type) {
+        @case ("blockly-editor") {
+          <app-blockly-editor></app-blockly-editor>
         }
-        @case('serial-monitor') {
-        <app-serial-monitor></app-serial-monitor>
+        @case ("serial-monitor") {
+          <app-serial-monitor></app-serial-monitor>
+          <!-- <app-file-tree></app-file-tree> -->
         }
-        @case('aily-chat') {
-        <app-aily-chat></app-aily-chat>
+        @case ("aily-chat") {
+          <app-aily-chat></app-aily-chat>
         }
-        @case('code-viewer') {
-        <app-code-viewer></app-code-viewer>
+        @case ("code-viewer") {
+          <app-code-viewer></app-code-viewer>
         }
-        @case('terminal') {
-        <app-terminal></app-terminal>
+        @case ("terminal") {
+          <app-terminal></app-terminal>
         }
-        @case('data-chart') {
-        <app-data-chart></app-data-chart>
+        @case ("data-chart") {
+          <app-data-chart></app-data-chart>
         }
-        }
+      }
     </app-inner-window>
-    }
+  }
 
-    <!-- <app-terminal> </app-terminal> -->
+  <!-- <app-terminal> </app-terminal> -->
 </div>
