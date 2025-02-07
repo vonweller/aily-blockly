@@ -8,21 +8,11 @@
     },
     {
       "kind": "block",
-      "type": "lists_create_with"
+      "type": "init_lists_create_with"
     },
     {
       "kind": "block",
-      "type": "lists_repeat",
-      "inputs": {
-        "NUM": {
-          "shadow": {
-            "type": "math_number",
-            "fields": {
-              "NUM": 5
-            }
-          }
-        }
-      }
+      "type": "lists_create_with"
     },
     {
       "kind": "block",
