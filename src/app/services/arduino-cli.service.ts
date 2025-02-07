@@ -39,13 +39,34 @@ export class ArduinoCliService {
   ) { 
     if (this.electronService.isElectron) {
       console.log('isElectron')
-      this.childProcess = window["myChildProcess"];
-      this.os = window["myOs"];
-      this.fs = window["myFs"];
+      this.childProcess = window["ChildProcess"];
+      this.os = window["os"];
+      this.fs = window["fs"];
       this.cliPath = this.fs.existsSync('./resources/app') ? '.\\resources\\child\\arduino-cli.exe' : '.\\child\\arduino-cli.exe';
     } else {
       console.log('isBrowser')
     }
+  }
+
+  installCore(core ='arduino:avr') {
+    // arduino-cli core install arduino:avr
+    return new Promise(async (resolve, reject) => {
+      function onStdout(data) {
+        console.log(data)
+      }
+      function onStderr(data) {
+        console.log(data)
+      }
+      function onClose(code) {
+        if (code === 0) {
+          resolve(true)
+        } else {
+          reject(false)
+        }
+      }
+
+      const installer = await window["ChildProcess"].spawn(this.cliPath, ['core', 'install', core, '--config-dir', '.\\temp'], onStdout, onStderr, onClose)
+    })
   }
 
   createTempProject(content, name='temp.ino') {
@@ -61,9 +82,10 @@ export class ArduinoCliService {
     return `.\\temp\\${name}`;
   }
 
-  async build(code, compileCmd='compile --fqbn arduino:avr:uno', name='temp.ino') {
+  async build(code, compileCmd='compile --fqbn arduino:avr:uno --library .\\temp\\staging\\packages', name='temp.ino') {
     const filePath = this.createTempProject(code, name);
-    return await this.runBuild(`${this.cliPath} ${compileCmd} ${filePath}`);
+    await this.installCore();
+    await this.runBuild(`${this.cliPath} ${compileCmd} ${filePath}`);
   }
 
   killChild() {
@@ -101,39 +123,35 @@ export class ArduinoCliService {
 
       const cmdList = params.split(' ')
 
-      const child_build = this.childProcess.spawn('cmd.exe', ['/c', 'dir'])
-      console.log("childBuild: ", child_build.stdout)
-    
-      child_build.stdout.on('data', (dataBuffer: Buffer) => {
-        let data = dataBuffer.toString();
-        // TODO 往terminal里面写入信息
+      const that = this
+
+      function onStdout(data) {
         console.log(data)
-      });
-      
-      child_build.stderr!.on('data', (dataBuffer: Buffer) => {
-        let data = dataBuffer.toString();
-        if (state === RunState.BUILDING && data.includes('error:')) {
-          state = RunState.BUILD_FAILED;
-        }
-        // TODO 往terminal里面写入信息
+      }
+
+      function onStderr(data) {
         console.log(data)
-      })
-      child_build.on('close', (code) => {
-        if (state == RunState.BUILDING && code == 0) {
+      }
+
+      function onClose(code) {
+        if (state === RunState.BUILDING && code === 0) {
           state = RunState.BUILD_DONE;
           // TODO 往terminal里面写入信息
           // TODO 往terminal写入RunStage.BUILD_DONE
           console.log('state: ', RunState.BUILD_DONE)
-          console.log(this.RunStage.BUILD_DONE)
+          console.log(that.RunStage.BUILD_DONE)
           resolve(true);
           return;
         }
-        if (state == RunState.BUILD_FAILED || code == null) {
+        if (state === RunState.BUILD_FAILED || code == null) {
           // TODO 往terminal里面写入信息
           console.log('state: ', RunState.BUILD_FAILED)
           reject(false);
         }
-      })
+      }
+
+      this.child_build = window["ChildProcess"].spawn(cmdList[0], cmdList.slice(1), onStdout, onStderr, onClose)
+      console.log("childBuild: ", this.child_build)
     });
   }
 

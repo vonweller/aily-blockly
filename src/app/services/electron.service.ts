@@ -17,6 +17,9 @@ export class ElectronService {
       // 在这里把 相关nodejs内容 挂载到 window 上
       // 调用前先判断isElectron
       window['SerialPort'] = window['ielectron'].SerialPort;
+      window['ChildProcess'] = window['ielectron'].ChildProcess;
+      window["os"] = window['ielectron'].os;
+      window["fs"] = window['ielectron'].fs;
     } else {
       console.log('Running in browser');
     }
