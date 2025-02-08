@@ -1,27 +1,58 @@
 [
   {
-    "inputsInline": false,
+    "inputsInline": true,
     "type": "variable_define",
-    "message0": "变量定义 类型%1 变量名%2 初值%3",
+    "message0": "声明 %1 %2 为 %3 并赋值 %4",
     "args0": [
+      {
+        "type": "field_dropdown",
+        "name": "GORP",
+        "options": [
+          ["全局变量", "global"],
+          ["局部变量", "part"]
+        ]
+      },
+      {
+        "type": "field_input",
+        "name": "VAR",
+        "text": "item"
+      },
       {
         "type": "field_dropdown",
         "name": "TYPE",
         "options": [
-          ["整型", "int"],
-          ["长整型", "long"],
-          ["浮点型", "float"],
-          ["双精度浮点型", "double"],
-          ["字符型", "char"],
-          ["布尔型", "boolean"]
+          ["整型", "volatile int"],
+          ["无符号整数", "volatile unsigned int"],
+          ["长整数", "volatile long"],
+          ["无符号长整数", "volatile unsigned long"],
+          ["小数", "volatile float"],
+          ["双精度浮点数", "volatile double"],
+          ["布尔", "volatile bool"],
+          ["字节", "volatile byte"],
+          ["字符", "volatile char"],
+          ["无符号字符", "volatile unsigned char"],
+          ["字符串", "String"],
+          ["uint8_t", "volatile uint8_t"],
+          ["uint16_t", "volatile uint16_t"],
+          ["uint32_t", "volatile uint32_t"],
+          ["uint64_t", "volatile uint64_t"],
+          ["int*", "volatile int*"],
+          ["unsigned int*", "volatile unsigned int*"],
+          ["word*", "volatile word*"],
+          ["long*", "volatile long*"],
+          ["unsigned long*", "volatile unsigned long*"],
+          ["float*", "volatile float*"],
+          ["double*", "volatile double*"],
+          ["bool*", "volatile bool*"],
+          ["byte*", "volatile byte*"],
+          ["char*", "volatile char*"],
+          ["unsigned char*", "volatile unsigned char*"],
+          ["String*", "volatile String*"],
+          ["uint8_t*", "volatile uint8_t*"],
+          ["uint16_t*", "volatile uint16_t*"],
+          ["uint32_t*", "volatile uint32_t*"],
+          ["uint64_t*", "volatile uint64_t*"]
         ]
-      },
-      {
-        "type": "field_variable",
-        "name": "VAR",
-        "variable": "var",
-        "variableTypes": ["aily-variable"],
-        "defaultType": "aily-variable"
       },
       {
         "type": "input_value",
