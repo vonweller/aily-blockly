@@ -20,6 +20,7 @@ import { DataChartComponent } from './tools/data-chart/data-chart.component';
 import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.component';
 import { ElectronService } from './services/electron.service';
 import { FileTreeComponent } from './components/file-tree/file-tree.component';
+import { FooterComponent } from './components/footer/footer.component';
 
 @Component({
   selector: 'app-root',
@@ -30,6 +31,7 @@ import { FileTreeComponent } from './components/file-tree/file-tree.component';
     TranslatePipe,
     TranslateDirective,
     HeaderComponent,
+    FooterComponent,
     ProjectBtnComponent,
     ProjectManagerComponent,
     AilyChatComponent,
@@ -69,15 +71,15 @@ export class AppComponent {
 
   ngAfterViewInit(): void {
     // this.iwindowService.bounds = this.windowsBounds.nativeElement;
-    setTimeout(() => {
-      this.iwindowService.openWindow({
-        type: 'blockly-editor',
-        title: 'Blockly Editor',
-        size: { width: window.innerWidth, height: window.innerHeight },
-        position: { x: 0, y: 0 },
-        zindex: 0
-      });
-    }, 500);
+    // setTimeout(() => {
+    //   this.iwindowService.openWindow({
+    //     type: 'blockly-editor',
+    //     title: 'Blockly Editor',
+    //     size: { width: window.innerWidth, height: window.innerHeight },
+    //     position: { x: 0, y: 0 },
+    //     zindex: 0
+    //   });
+    // }, 500);
   }
 
   openProjectManager() {

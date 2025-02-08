@@ -1,86 +1,22 @@
-// app-header {
-//     ::ng-deep {
-//         .header-box {
-//             position: fixed;
-//         }
-//     }
-// }
+.main {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
 
-// blockly-arduino {
-//     ::ng-deep {
-//         .blocklyBox{
-//             position: fixed;
-//             top: 60px;
-//             height: calc(100% - 60px);
-//         }
-//     }
-// }
+  app-blockly-editor {
+    height: calc(100vh - 80px);
+  }
+}
 
-// .bg {
-//     position: absolute;
-//     width: 100vw;
-//     height: 100vh;
-//     z-index: -1;
-
-//     .c1 {
-//         position: absolute;
-//         top: -15vh;
-//         left: -15vw;
-//         width: 75vw;
-//         height: 80vh;
-//         background: linear-gradient(360deg, #F0F7FF 0%, #E4F0FE 100%);
-//         border-radius: 50%;
-//         filter: blur(50px);
-//     }
-
-//     .c2 {
-//         position: absolute;
-//         bottom: -15vh;
-//         left: -15vw;
-//         width: 45vw;
-//         height: 60vh;
-//         background: linear-gradient(360deg, #F0F7FF 0%, #7DDBFF99 100%);
-//         border-radius: 50%;
-//         filter: blur(50px);
-//         transform: rotate(-25deg);
-//     }
-
-//     .c3 {
-//         position: absolute;
-//         width: 90vw;
-//         height: 90vh;
-//         bottom: 10vh;
-//         left: 10vw;
-//         transform: rotate(-35deg);
-//         background: rgba(125, 177, 255, 0.44);
-//         filter: blur(90px);
-//         border-radius: 50%;
-//     }
-
-//     .c4 {
-//         position: absolute;
-//         top: -15vh;
-//         right: -15vw;
-//         width: 30vw;
-//         height: 70vh;
-//         background: rgba(125, 157, 255, 0.3);
-//         filter: blur(50px);
-//         border-radius: 50%;
-//     }
-
-//     .c5 {
-//         position: absolute;
-//         bottom: -15vh;
-//         right: -15vw;
-//         width: 30vw;
-//         height: 70vh;
-//         background: rgba(125, 157, 255, 0.3);
-//         filter: blur(50px);
-//         border-radius: 50%;
-//     }
-// }
-
-.bounds{
-    width: 100vw;
-    height: 100vh;
+.bounds {
+  width: 100vw;
+  height: 100vh;
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  app-inner-window{
+    pointer-events: auto;
+  }
 }

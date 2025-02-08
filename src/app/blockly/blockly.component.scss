@@ -1,12 +1,12 @@
 .blocklyBox {
     width: 100%;
     height: 100%;
+    
 
     ::ng-deep {
         .blocklyToolboxDiv {
             width: 180px;
-            // margin-right: 15px;
-            background: #FFF;
+            background: #323232;
             border-right: 1px solid #E0E0E0;
         }
 
