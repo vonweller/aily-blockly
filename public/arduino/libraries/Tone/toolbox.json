@@ -1,0 +1,14 @@
+{
+  "kind": "category",
+  "name": "Tone",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "io_tone"
+    },
+    {
+      "kind": "block",
+      "type": "io_notone"
+    }
+  ]
+}

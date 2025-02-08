@@ -1,5 +1,266 @@
 [
   {
+    "type": "string_add_string",
+    "message0": "String(%1) + String(%2)",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING1",
+        "text": "hello"
+      },
+      {
+        "type": "field_input",
+        "name": "STRING2",
+        "text": "world"
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "tooltip": "Concatenates two strings.",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_charAt",
+    "message0": "%1 的第 %2 个字符",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING",
+        "text": "hello"
+      },
+      {
+        "type": "field_number",
+        "name": "NUM",
+        "value": 1
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_length",
+    "message0": "%1 的字符数",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING",
+        "text": "world"
+      }
+    ],
+    "output": "Number",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_indexOf",
+    "message0": "%1 包含 %2 ?",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING1",
+        "text": "hello"
+      },
+      {
+        "type": "field_input",
+        "name": "STRING2",
+        "text": "world"
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_substring",
+    "message0": "%1 获取 %2 %3 个字符到 %4 %5 个字符",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING",
+        "text": "apple"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "START",
+        "options": [
+          ["第", "0"],
+          ["倒数第", "1"]
+        ]
+      },
+      {
+        "type": "field_number",
+        "name": "START_INDEX",
+        "value": 1
+      },
+      {
+        "type": "field_dropdown",
+        "name": "LAST",
+        "options": [
+          ["第", "0"],
+          ["倒数第", "1"]
+        ]
+      },
+      {
+        "type": "field_number",
+        "name": "LAST_INDEX",
+        "value": 2
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_find_str",
+    "message0": "查找 %1 在 %2 中 %3 出现位置",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING1",
+        "text": "ap"
+      },
+      {
+        "type": "field_input",
+        "name": "STRING2",
+        "text": "apple"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "FIND",
+        "options": [
+          ["首次", "indexOf"],
+          ["最后一次", "lastIndexOf"]
+        ]
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "string_to",
+    "message0": "将字符串 %1 转换为 %2",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING",
+        "text": "world"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "TYPE",
+        "options": [
+          ["整数", "toInt"],
+          ["小数", "toFloat"]
+        ]
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "number_to",
+    "message0": "将数字 %1 转换为ASCII字符串",
+    "args0": [
+      {
+        "type": "field_number",
+        "name": "NUM",
+        "value": 0
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "toascii",
+    "message0": "将字符 %1 转换为ASCII数值",
+    "args0": [
+      {
+        "type": "field_input",
+        "name": "STRING",
+        "text": "world"
+      }
+    ],
+    "output": "Number",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "number_to_string",
+    "message0": "将数字 %1 转换为字符串",
+    "args0": [
+      {
+        "type": "field_number",
+        "name": "NUM",
+        "value": 0
+      }
+    ],
+    "output": "String",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "map_to",
+    "message0": "映射 %1 从[%2,%3]到[%4,%5]",
+    "args0": [
+      {
+        "type": "field_number",
+        "name": "NUM",
+        "value": 0
+      },
+      {
+        "type": "field_number",
+        "name": "FIRST_START",
+        "value": 0
+      },
+      {
+        "type": "field_number",
+        "name": "FIRST_END",
+        "value": 1023
+      },
+      {
+        "type": "field_number",
+        "name": "LAST_START",
+        "value": 0
+      },
+      {
+        "type": "field_number",
+        "name": "LAST_END",
+        "value": 255
+      }
+    ],
+    "output": "Number",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
+    "type": "constrain",
+    "message0": "约束 %1 介于(最小值)%2和(最大值)%3之间",
+    "args0": [
+      {
+        "type": "field_number",
+        "name": "NUM",
+        "value": 0
+      },
+      {
+        "type": "field_number",
+        "name": "MIN",
+        "value": 0
+      },
+      {
+        "type": "field_number",
+        "name": "MAX",
+        "value": 100
+      }
+    ],
+    "output": "Number",
+    "style": "text_blocks",
+    "helpUrl": ""
+  },
+  {
     "type": "text",
     "message0": "%1",
     "args0": [

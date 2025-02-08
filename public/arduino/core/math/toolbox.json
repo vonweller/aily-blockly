@@ -216,6 +216,46 @@
           }
         }
       }
+    },
+    {
+      "kind": "block",
+      "type": "math_round_to_decimal",
+      "inputs": {
+        "NUMBER": {
+          "block": {
+            "kind": "block",
+            "type": "math_number",
+            "fields": {
+              "NUM": "123.456"
+            }
+          }
+        },
+        "DECIMALS": {
+          "block": {
+            "kind": "block",
+            "type": "math_number",
+            "fields": {
+              "NUM": "2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "block",
+      "type": "math_bitwise_not",
+      "inputs": {
+        "NUM": {
+          "block": {
+            "kind": "block",
+            "type": "math_number",
+            "fields": {
+              "NUM": "5"
+            }
+          }
+        }
+      },
+      "output": "Number"
     }
   ]
 }

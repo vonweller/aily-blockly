@@ -18,6 +18,9 @@ import { InnerWindowComponent } from './components/inner-window/inner-window.com
 import { TerminalComponent } from './tools/terminal/terminal.component';
 import { DataChartComponent } from './tools/data-chart/data-chart.component';
 import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.component';
+import { ElectronService } from './services/electron.service';
+import { FileTreeComponent } from './components/file-tree/file-tree.component';
+import { FooterComponent } from './components/footer/footer.component';
 
 @Component({
   selector: 'app-root',
@@ -28,17 +31,18 @@ import { BlocklyEditorComponent } from './tools/blockly-editor/blockly-editor.co
     TranslatePipe,
     TranslateDirective,
     HeaderComponent,
+    FooterComponent,
     ProjectBtnComponent,
     ProjectManagerComponent,
     AilyChatComponent,
     CodeViewerComponent,
     SerialMonitorComponent,
-    // BrowserAnimationsModule,
     CommonModule,
     InnerWindowComponent,
     TerminalComponent,
     DataChartComponent,
-    BlocklyEditorComponent
+    BlocklyEditorComponent,
+    FileTreeComponent
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
@@ -57,23 +61,25 @@ export class AppComponent {
   constructor(
     private translate: TranslateService,
     private iwindowService: IwindowService,
+    private electronService: ElectronService
   ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
     this.translate.use('zh');
+    this.electronService.init();
   }
 
   ngAfterViewInit(): void {
     // this.iwindowService.bounds = this.windowsBounds.nativeElement;
-    setTimeout(() => {
-      this.iwindowService.openWindow({
-        type: 'blockly-editor',
-        title: 'Blockly Editor',
-        size: { width: window.innerWidth, height: window.innerHeight },
-        position: { x: 0, y: 0 },
-        zindex: 0
-      });
-    }, 500);
+    // setTimeout(() => {
+    //   this.iwindowService.openWindow({
+    //     type: 'blockly-editor',
+    //     title: 'Blockly Editor',
+    //     size: { width: window.innerWidth, height: window.innerHeight },
+    //     position: { x: 0, y: 0 },
+    //     zindex: 0
+    //   });
+    // }, 500);
   }
 
   openProjectManager() {

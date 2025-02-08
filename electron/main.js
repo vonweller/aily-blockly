@@ -1,5 +1,10 @@
-const { app, BrowserWindow, Tray, Menu } = require("electron");
-const path = require("path");
+import { app, BrowserWindow, Tray, Menu, ipcMain } from "electron";
+import path from "path";
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as pty from '@lydell/node-pty';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -14,6 +19,7 @@ function createWindow() {
     show: true, // 不显示主窗口，实现“后台运行”的效果
     webPreferences: {
       nodeIntegration: true,
+      // contextIsolation: false,
       webSecurity: false,
       preload: path.join(__dirname, "preload.js"),
     },
@@ -87,4 +93,54 @@ app.on("activate", () => {
   if (mainWindow === null) {
     createWindow();
   }
+});
+
+// 终端相关(dev)
+const terminals = new Map()
+ipcMain.on('terminal-create', (event, args) => {
+  const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'];
+  const ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-color',
+    cols: 80,
+    rows: 30,
+    cwd: process.env.HOME,
+    env: process.env
+  });
+
+  ptyProcess.on('data', (data) => {
+    mainWindow.webContents.send('terminal-data', data);
+  });
+
+  ipcMain.on('terminal-input', (event, input) => {
+    ptyProcess.write(input);
+  });
+
+  // 关闭终端
+  ipcMain.on('terminal-close', (event) => {
+    ptyProcess.kill();
+  });
+});
+
+// 多窗口相关(dev)
+ipcMain.on('window-create', (event, data) => {
+  const child = new BrowserWindow({
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+
+  child.loadFile('dist/angular-app/index.html', { hash: `#/child?data=${data}` });
+
+  child.on('closed', () => {
+    childWindows.delete(child);
+  });
+
+  childWindows.add(child);
+});
+
+// 窗口间消息转发
+ipcMain.on('send-to-child', (event, message) => {
+  childWindows.forEach(child => child.webContents.send('message-from-main', message));
 });

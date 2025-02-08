@@ -7,6 +7,8 @@
 **库安装**
 ```
 npm i
+cd electron
+npm i
 ```  
 
 **浏览器运行**

@@ -1,9 +1,12 @@
-import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
+import { Component } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { ElectronService } from '../../services/electron.service';
+
+let SerialPort;
 
 @Component({
   selector: 'app-serial-monitor',
@@ -12,16 +15,14 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
     NzSelectModule,
     NzInputModule,
     FormsModule,
-    NzToolTipModule
+    NzToolTipModule,
   ],
   templateUrl: './serial-monitor.component.html',
-  styleUrl: './serial-monitor.component.scss'
+  styleUrl: './serial-monitor.component.scss',
 })
 export class SerialMonitorComponent {
-
   // 波特率
-  baudRate = "115200";
-
+  baudRate = '115200';
   // 自动滚动
   autoScroll = true;
   // 自动换行
@@ -33,16 +34,22 @@ export class SerialMonitorComponent {
   // 异常捕获
   showError = false;
 
+  serialList = [];
 
-  ngOnInit() {
+  constructor(private electronService: ElectronService) {}
+
+  ngOnInit() {}
+
+  ngAfterViewInit(): void {}
+
+  openMore() {}
+
+  async openPortList() {
+    if (this.electronService.isElectron) {
+      this.serialList = (await window['SerialPort'].list()).map(
+        (item) => item.path,
+      );
+      console.log(this.serialList);
+    }
   }
-
-  ngAfterViewInit(): void {
-
-  }
-
-  openMore() {
-
-  }
-
 }

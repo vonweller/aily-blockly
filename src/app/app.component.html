@@ -1,41 +1,33 @@
-<!-- <div class="bg">
-    <div class="c1"></div>
-    <div class="c2"></div>
-    <div class="c3"></div>
-    <div class="c4"></div>
-    <div class="c5"></div>
+<div class="main">
+  <app-header></app-header>
+  <app-blockly-editor></app-blockly-editor>
+  <app-footer></app-footer>
 </div>
-<app-header></app-header>
-<blockly-main></blockly-main>
-<app-project-btn (click)="openProjectManager()"></app-project-btn>
-@if (showProjectManager) {
-<app-project-manager></app-project-manager>
-} -->
 <div class="bounds" #WindowsBounds>
-    @for (item of windows; track item) {
+  @for (item of windows; track item) {
     <app-inner-window [opt]="item">
-        @switch(item.type) {
-        @case('blockly-editor') {
-            <app-blockly-editor></app-blockly-editor>
+      @switch (item.type) {
+        @case ("blockly-editor") {
+          <app-blockly-editor></app-blockly-editor>
         }
-        @case('serial-monitor') {
-        <app-serial-monitor></app-serial-monitor>
+        @case ("serial-monitor") {
+          <app-serial-monitor></app-serial-monitor>
         }
-        @case('aily-chat') {
-        <app-aily-chat></app-aily-chat>
+        @case ("aily-chat") {
+          <app-aily-chat></app-aily-chat>
         }
-        @case('code-viewer') {
-        <app-code-viewer></app-code-viewer>
+        @case ("code-viewer") {
+          <app-code-viewer></app-code-viewer>
         }
-        @case('terminal') {
-        <app-terminal></app-terminal>
+        @case ("terminal") {
+          <app-terminal></app-terminal>
         }
-        @case('data-chart') {
-        <app-data-chart></app-data-chart>
+        @case ("data-chart") {
+          <app-data-chart></app-data-chart>
         }
-        }
+      }
     </app-inner-window>
-    }
+  }
 
-    <!-- <app-terminal> </app-terminal> -->
+  <!-- <app-terminal> </app-terminal> -->
 </div>

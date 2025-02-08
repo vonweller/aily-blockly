@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ElementRef, ViewChild } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -13,6 +13,9 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
   styleUrl: './aily-chat.component.scss',
 })
 export class AilyChatComponent {
+  @ViewChild('chatContainer') chatContainer: ElementRef;
+  @ViewChild('chatList') chatList: ElementRef;
+
   list: any = [
     {
       content: 'Hello, how can I help you?',
@@ -27,6 +30,14 @@ export class AilyChatComponent {
     {
       content: 'I am in Beijing.',
       role: 'user',
+    },
+    {
+      content:
+        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
+    },
+    {
+      content:
+        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
     },
     {
       content:
@@ -50,6 +61,7 @@ export class AilyChatComponent {
     //   this.dragHandle.nativeElement.addEventListener('mousemove', this.handleMouseMove);
     //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
     // });
+    this.scrollToBottom(true);
   }
 
   // private handleMouseMove = (e: MouseEvent) => {
@@ -82,11 +94,73 @@ export class AilyChatComponent {
 
     const uuid = this.getRandomString();
 
+    // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
+    const content = `
+#### 这是一个测试标题
+
+\`\`\`blockly
+{
+  "kind": "flyoutToolbox",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "controls_if"
+    },
+    {
+      "kind": "block",
+      "type": "controls_whileUntil"
+    }
+  ]
+}
+\`\`\`
+
+# 好嘛
+
+| 什么
+
+\`\`\`blockly
+{
+  "kind": "flyoutToolbox",
+  "contents": [
+    {
+      "kind": "block",
+      "type": "controls_if"
+    }
+  ]
+}
+\`\`\`
+
+## 这个是二级标题
+`;
+
+    const segments = this.splitContent(content);
+
+    const contentList = [];
+
+    const ruleView = /```blockly\s([\s\S]*?)\s```/;
+    segments.forEach((match, index) => {
+      const exec = ruleView.exec(match);
+      if (exec) {
+        try {
+          const data = JSON.parse(exec[1]);
+          exec.push(data);
+        } catch (err) {}
+        contentList.push(exec);
+      } else {
+        contentList.push(match);
+      }
+    });
+
     this.list.push({
       uuid,
-      content: '',
+      content,
+      contentList,
       role: 'system',
     });
+
+    this.scrollToBottom();
+
+    return;
 
     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
     fetchEventSource('/api/v1/chat', {
@@ -96,13 +170,17 @@ export class AilyChatComponent {
       },
       body: JSON.stringify(msg),
       onmessage: (event) => {
-        this.list.find((v: any) => v.uuid === uuid).content += event.data;
+        const obj = this.list.find((v: any) => v.uuid === uuid);
+        if (obj.isDone) return;
+        obj.content += event.data;
         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
-        // if (event.data === '[DONE]') {
-        //   this.list.find((v: any) => v.uuid === uuid).role = 'system';
-        //   this.list.find((v: any) => v.uuid === uuid).isDone = true;
-        // }
-        // TODO 滚动细节处理 @downey
+        if (event.data.includes('[DONE]')) {
+          obj.role = 'system';
+          obj.isDone = true;
+          console.log(obj.content);
+        }
+
+        this.scrollToBottom();
       },
       onerror(event) {
         console.log('服务异常', event);
@@ -111,5 +189,62 @@ export class AilyChatComponent {
         console.log('服务关闭');
       },
     }).then();
+  }
+
+  splitContent(content) {
+    // 正则表达式，匹配```blockly到下一个```之间的内容
+    const regex = /```blockly([\s\S]*?)```/g;
+
+    // 使用正则表达式进行匹配
+    const matches = content.match(regex);
+
+    // 处理匹配结果，将每次```blockly前面的内容也作为一个分段
+    let segments = [];
+    let lastIndex = 0;
+
+    if (matches) {
+      matches.forEach((match) => {
+        const startIndex = content.indexOf(match, lastIndex);
+
+        // 添加```blockly前面的内容
+        if (startIndex > 0) {
+          segments.push(content.slice(lastIndex, startIndex));
+        }
+
+        // 添加```blockly到```之间的内容
+        segments.push(match);
+
+        // 更新lastIndex
+        lastIndex = startIndex + match.length;
+      });
+
+      // 添加最后一段内容（如果有）
+      if (lastIndex < content.length) {
+        segments.push(content.slice(lastIndex));
+      }
+    } else {
+      // 如果没有匹配到```blockly，则整个content作为一段
+      segments.push(content);
+    }
+
+    return segments;
+  }
+
+  scrollToBottom(offset: any = -30) {
+    if (this.chatList?.nativeElement && this.chatContainer?.nativeElement) {
+      setTimeout(() => {
+        // if (
+        //   offset != true &&
+        //   this.chatContainer.nativeElement.scrollTop +
+        //     this.chatContainer.nativeElement.clientHeight -
+        //     this.chatContainer.nativeElement.scrollHeight <
+        //     offset
+        // ) {
+        //   return;
+        // }
+        this.chatContainer.nativeElement.scrollTop =
+          this.chatList.nativeElement.scrollHeight;
+      }, 20);
+    }
   }
 }
