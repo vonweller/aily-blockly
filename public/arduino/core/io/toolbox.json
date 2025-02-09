@@ -1,6 +1,7 @@
 {
   "kind": "category",
   "name": "I/O",
+  "icon": "fa-light fa-books",
   "contents": [
     {
       "kind": "block",

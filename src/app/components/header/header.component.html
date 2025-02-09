@@ -2,9 +2,10 @@
   <div class="logo-box ccenter">aily.</div>
   <div class="menu ccenter">
     <div class="btn ccenter">
-      <div class="icon"><i class="fa-regular fa-bars"></i></div>
+      <i class="fa-regular fa-bars"></i>
     </div>
   </div>
+  <div class="project-box ccenter">Project Name</div>
   <div class="toolbox">
     @for (zone of headerMenu; track $index) {
       <div class="zone ccenter">
@@ -15,7 +16,10 @@
             nzTooltipTitle="{{ btn.name }}"
             (click)="onClick(btn)"
           >
-            <div class="icon"><i class="{{ btn.icon }}"></i></div>
+            <i class="{{ btn.icon }}"></i>
+            <!-- <div class="icon">
+              <i class="{{ btn.icon }}"></i>
+            </div> -->
             <!-- <div class="text">{{btn.name}}</div> -->
           </div>
         }
