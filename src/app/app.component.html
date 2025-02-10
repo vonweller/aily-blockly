@@ -1,9 +1,12 @@
 <div class="main">
   <app-header></app-header>
-  <app-blockly-editor></app-blockly-editor>
-  <app-footer></app-footer>
+  <div class="mid-box">
+    <app-blockly-editor></app-blockly-editor>
+    <div *ngIf="showRbox" style="background: red;width: 300px;height: 100%;"></div>
+  </div>
+  <app-footer (click)="openRbox()"></app-footer>
 </div>
-<div class="bounds" #WindowsBounds>
+<!-- <div class="bounds" #WindowsBounds>
   @for (item of windows; track item) {
     <app-inner-window [opt]="item">
       @switch (item.type) {
@@ -28,6 +31,4 @@
       }
     </app-inner-window>
   }
-
-  <!-- <app-terminal> </app-terminal> -->
-</div>
+</div> -->

@@ -1,4 +1,4 @@
-import { Component, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ViewChild } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import {
   TranslateService,
@@ -42,7 +42,7 @@ import { FooterComponent } from './components/footer/footer.component';
     TerminalComponent,
     DataChartComponent,
     BlocklyEditorComponent,
-    FileTreeComponent
+    FileTreeComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
@@ -61,7 +61,8 @@ export class AppComponent {
   constructor(
     private translate: TranslateService,
     private iwindowService: IwindowService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private cd:ChangeDetectorRef
   ) {
     this.translate.addLangs(['zh', 'en']);
     this.translate.setDefaultLang('zh');
@@ -84,5 +85,13 @@ export class AppComponent {
 
   openProjectManager() {
     this.showProjectManager = !this.showProjectManager;
+  }
+
+  showRbox = false;
+  openRbox() {
+    this.showRbox = !this.showRbox;
+    setTimeout(() => {
+      this.cd.detectChanges();
+    }, 100);
   }
 }

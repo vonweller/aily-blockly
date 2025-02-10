@@ -4,8 +4,14 @@
   display: flex;
   flex-direction: column;
 
-  app-blockly-editor {
+  .mid-box {
     height: calc(100vh - 80px);
+    position: relative;
+    display: flex;
+
+    app-blockly-editor{
+      flex-grow: 1;
+    }
   }
 }
 
@@ -15,6 +21,7 @@
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 999;
   pointer-events: none;
   app-inner-window{
     pointer-events: auto;

@@ -1,6 +1,7 @@
 {
   "kind": "category",
   "name": "Lists",
+  "icon": "fa-light fa-books",
   "contents": [
     {
       "kind": "block",

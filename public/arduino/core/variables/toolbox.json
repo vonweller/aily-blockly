@@ -1,6 +1,7 @@
 {
   "kind": "category",
   "name": "Variables",
+  "icon": "fa-light fa-books",
   "categorystyle": "variable_category",
   "contents": [
     {
