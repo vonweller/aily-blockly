@@ -48,7 +48,11 @@ export class ArduinoCliService {
     }
   }
 
-  installCore(core ='arduino:avr') {
+  upload(board = 'esp32:esp32:wifiduino32', port = 'COM3') {
+    return this.runUpload(`${this.cliPath} upload -b ${board} -p ${port} .\\temp`)
+  }
+
+  installCore(core ='esp32:esp32') {
     // arduino-cli core install arduino:avr
     return new Promise(async (resolve, reject) => {
       function onStdout(data) {
@@ -65,7 +69,7 @@ export class ArduinoCliService {
         }
       }
 
-      const installer = await window["ChildProcess"].spawn(this.cliPath, ['core', 'install', core, '--config-dir', '.\\temp'], onStdout, onStderr, onClose)
+      const installer = await window["ChildProcess"].spawn(this.cliPath, ['core', 'install', core], onStdout, onStderr, onClose)
     })
   }
 
@@ -82,7 +86,7 @@ export class ArduinoCliService {
     return `.\\temp\\${name}`;
   }
 
-  async build(code, compileCmd='compile --fqbn arduino:avr:uno --library .\\temp\\staging\\packages', name='temp.ino') {
+  async build(code, compileCmd ='compile -b esp32:esp32:wifiduino32', name='temp.ino') {
     const filePath = this.createTempProject(code, name);
     await this.installCore();
     await this.runBuild(`${this.cliPath} ${compileCmd} ${filePath}`);
@@ -90,7 +94,7 @@ export class ArduinoCliService {
 
   killChild() {
     if (typeof this.child_build != 'undefined') {
-      this.child_build.stdout!.destroy();
+      // this.child_build.stdout!.destroy();
       if (this.os.platform() === 'win32') {
         this.childProcess.exec('taskkill /pid ' + this.child_build.pid + ' /f /t')
       } else {
@@ -99,8 +103,8 @@ export class ArduinoCliService {
     }
 
     if (typeof this.child_upload != 'undefined') {
-      this.child_upload.stdout!.destroy()
-      this.child_upload.stderr!.destroy()
+      // this.child_upload.stdout!.destroy()
+      // this.child_upload.stderr!.destroy()
       if (this.os.platform() === 'win32')
         this.childProcess.exec('taskkill /pid ' + this.child_upload.pid + ' /f /t')
       else
@@ -119,7 +123,7 @@ export class ArduinoCliService {
 
       console.log('runBuild: ', params)
       console.log('state: ', state)
-      console.log(this.RunStage.BUILD_START('arduino:avr:uno'))
+      console.log(this.RunStage.BUILD_START('esp32:esp32:wifiduino32'))
 
       const cmdList = params.split(' ')
 
@@ -163,31 +167,34 @@ export class ArduinoCliService {
       // 发送state
       // 发送runStage.BUILD_START
 
-      this.child_upload = this.childProcess.spawn(this.cliPath, params.split(' '))
-      this.child_upload.stdout!.on('data', (dataBuffer: Buffer) => {
-        let data = dataBuffer.toString();
-        // TODO 往terminal里面写入信息
-      })
-      this.child_upload.stderr!.on('data', (dataBuffer: Buffer) => {
-        let data = dataBuffer.toString();
-        if (state === RunState.UPLOADING && data.includes('error:')) {
-          state = RunState.UPLOAD_FAILED;
-        // TODO 往terminal里面写入信息
-        }
-      })
-      this.child_upload.on('close', (code) => {
-        if (state == RunState.UPLOADING && code == 0) {
+      console.log('runUpload: ', params)
+
+      const cmdList = params.split(' ')
+      const that = this
+
+      function onStdout(data) {
+        console.log(data)
+      }
+
+      function onStderr(data) {
+        console.log(data)
+      }
+
+      function onClose(code) {
+        if (state === RunState.UPLOADING && code === 0) {
           state = RunState.UPLOAD_DONE;
           // TODO 往terminal里面写入信息
-          // TODO 往terminal写入runStage.BUILD_DONE
+          // TODO 往terminal写入RunStage.BUILD_DONE
           resolve(true);
           return;
         }
-        if (state == RunState.UPLOAD_FAILED || code == null) {
+        if (state === RunState.UPLOAD_FAILED || code == null) {
           // TODO 往terminal里面写入信息
           reject(false);
         }
-      })
+      }
+
+      this.child_upload = window["ChildProcess"].spawn(cmdList[0], cmdList.slice(1), onStdout, onStderr, onClose)
     });
   }
 }

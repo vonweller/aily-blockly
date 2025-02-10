@@ -35,7 +35,7 @@ export let HEADER_MENU = [
         },
         {
             name: '上传',
-            action: 'Project_upload',
+            action: 'open-prj-uploader',
             icon: 'fa-light fa-download'
         }
     ], [

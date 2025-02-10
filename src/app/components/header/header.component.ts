@@ -64,6 +64,14 @@ export class HeaderComponent {
         let code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
         this.arduinoCliService.build(code).then(() => {});
         break
+      case 'open-prj-uploader':
+        this.iwindowService.openWindow({
+          type: 'terminal', title: '终端',
+          size: { width: window.innerWidth - 180, height: 200 },
+          position: { x: 180, y: window.innerHeight - 200 }
+        });
+        this.arduinoCliService.upload().then(() => {});
+        break
     }
   }
 }
