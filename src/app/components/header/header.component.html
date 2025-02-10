@@ -1,13 +1,17 @@
 <div class="header-box">
-  <div class="logo-box ccenter">aily.</div>
-  <div class="menu ccenter">
-    <div class="btn ccenter">
+  <!-- <div class="logo-box ccenter">aily.</div> -->
+  <div class="menu ccenter" (click)="openMenu()">
+    <div class="btn ccenter" nz-tooltip nzTooltipTitle="菜单">
       <i class="fa-regular fa-bars"></i>
     </div>
   </div>
+  <div class="board ccenter" nz-tooltip nzTooltipTitle="开发板选择">
+    Arduino UNO R3 (COM3)
+    <div class="down ccenter"><i class="fa-regular fa-angle-down"></i></div>
+  </div>
   <div class="project-box ccenter">Project Name</div>
   <div class="toolbox">
-    @for (zone of headerMenu; track $index) {
+    @for (zone of headerBtns; track $index) {
       <div class="zone ccenter">
         @for (btn of zone; track $index) {
           <div
@@ -17,10 +21,9 @@
             (click)="onClick(btn)"
           >
             <i class="{{ btn.icon }}"></i>
-            <!-- <div class="icon">
-              <i class="{{ btn.icon }}"></i>
-            </div> -->
-            <!-- <div class="text">{{btn.name}}</div> -->
+            @if(btn.more){
+              <div class="more ccenter">AI</div>
+            }
           </div>
         }
       </div>
@@ -33,3 +36,18 @@
         </div>
     </div> -->
 </div>
+<!-- menu -->
+@if (showMenu) {
+  <div class="menu-box" #menuBox>
+    @for (item of headerMenu; track $index) {
+      @if (item.sep) {
+        <div class="sep"></div>
+      } @else {
+        <div class="menu-item ccenter">
+          <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
+          <div class="text">{{ item.name }}</div>
+        </div>
+      }
+    }
+  </div>
+}

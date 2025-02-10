@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
-import { HEADER_MENU } from '../../configs/header.config';
+import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
+import { HEADER_BTNS, HEADER_MENU } from '../../configs/header.config';
 import { IwindowService } from '../../services/iwindow.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 @Component({
@@ -10,9 +10,29 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent {
+  headerBtns = HEADER_BTNS;
   headerMenu = HEADER_MENU;
 
+  @ViewChild('menuBox') menuBox:ElementRef;
+
   constructor(private iwindowService: IwindowService) {}
+
+  showMenu = false;
+  openMenu() {
+    this.showMenu = !this.showMenu;
+    if (this.showMenu) {
+      document.addEventListener('click', this.handleDocumentClick);
+    } else {
+      document.removeEventListener('click', this.handleDocumentClick);
+    }
+  }
+
+  handleDocumentClick = (event: MouseEvent) => {
+    if (this.menuBox && !this.menuBox.nativeElement.contains(event.target as Node)) {
+      this.showMenu = false;
+      document.removeEventListener('click', this.handleDocumentClick);
+    }
+  };
 
   onClick(btn) {
     // console.log(btn);

@@ -1,70 +1,120 @@
+export let HEADER_BTNS = [
+  // [
+  //     {
+  //         name: 'Aily',
+  //         action: 'open-aily-chat',
+  //         icon: 'fa-light fa-message-bot'
+  //     }
+  // ], [
+  //     {
+  //         name: '打开工程',
+  //         action: 'Project_open',
+  //         icon: 'fa-light fa-folder-open'
+  //     },
+  //     {
+  //         name: '新建工程',
+  //         action: 'Project_new',
+  //         icon: 'fa-light fa-file-circle-plus'
+  //     },
+  //     {
+  //         name: '保存工程',
+  //         action: 'Project_save',
+  //         icon: 'fa-light fa-file-export'
+  //     }
+  // ],
+  [
+    // {
+    //     name: '设备',
+    //     action: 'Device_connect',
+    //     icon: 'fa-light fa-microchip',
+    //     device: true
+    // },
+    {
+      name: '编译',
+      action: 'Project_build',
+      icon: 'fa-light fa-arrows-rotate',
+    },
+    {
+      name: '上传',
+      action: 'Project_upload',
+      icon: 'fa-light fa-play',
+    },
+  ],
+  [
+    {
+      name: '查看代码',
+      action: 'open-code-viewer',
+      icon: 'fa-light fa-file-code',
+    },
+    {
+      name: '串口工具',
+      action: 'open-serial-monitor',
+      icon: 'fa-light fa-monitor-waveform',
+    },
+    {
+      name: '终端',
+      action: 'open-terminal',
+      icon: 'fa-light fa-rectangle-terminal',
+    },
+  ],
+  [
+    {
+      name: '课程',
+      action: 'Classroom_open',
+      icon: 'fa-light fa-graduation-cap',
+    },
+    {
+      name: 'AI助手',
+      action: 'Setting_open',
+      icon: 'fa-regular fa-star-christmas',
+      more: 'AI',
+    },
+  ],
+];
+
 export let HEADER_MENU = [
-    // [
-    //     {
-    //         name: 'Aily',
-    //         action: 'open-aily-chat',
-    //         icon: 'fa-regular fa-message-bot'
-    //     }
-    // ], [
-    //     {
-    //         name: '打开工程',
-    //         action: 'Project_open',
-    //         icon: 'fa-regular fa-folder-open'
-    //     },
-    //     {
-    //         name: '新建工程',
-    //         action: 'Project_new',
-    //         icon: 'fa-regular fa-file-circle-plus'
-    //     },
-    //     {
-    //         name: '保存工程',
-    //         action: 'Project_save',
-    //         icon: 'fa-regular fa-file-export'
-    //     }
-    // ], 
-    [
-        // {
-        //     name: '设备',
-        //     action: 'Device_connect',
-        //     icon: 'fa-regular fa-microchip',
-        //     device: true
-        // },
-        {
-            name: '编译',
-            action: 'Project_build',
-            icon: 'fa-regular fa-arrows-rotate'
-        },
-        {
-            name: '上传',
-            action: 'Project_upload',
-            icon: 'fa-regular fa-play'
-        }
-    ], [
-        {
-            name: '查看代码',
-            action: 'open-code-viewer',
-            icon: 'fa-regular fa-file-code'
-        },
-        {
-            name: '串口工具',
-            action: 'open-serial-monitor',
-            icon: 'fa-regular fa-monitor-waveform'
-        },
-        {
-            name: '终端',
-            action: 'open-terminal',
-            icon: 'fa-regular fa-rectangle-terminal'
-        },
-    ], [
-        {
-            name: '课程',
-            action: 'Classroom_open',
-            icon: 'fa-regular fa-graduation-cap'
-        },
-        {
-            name: '设置',
-            action: 'Setting_open',
-            icon: 'fa-regular fa-gear'
-        }
-    ]
-]
+  {
+    name: '新建项目',
+    action: 'Project_new',
+    icon: 'fa-light fa-file',
+  },
+  {
+    name: '打开项目',
+    action: 'Project_open',
+    icon: 'fa-light fa-folder-open',
+  },
+  {
+    name: '保存项目',
+    action: 'Project_save',
+    icon: 'fa-light fa-file-check',
+  },
+  {
+    name: '另存为',
+    action: 'Project_save2',
+    icon: 'fa-light fa-copy',
+  },
+  {
+    sep: true,
+  },
+  {
+    name: '导出代码',
+    action: 'Code_export',
+    icon: 'fa-light fa-square-code',
+  },
+  {
+    sep: true,
+  },
+  {
+    name: '设置',
+    action: 'Project_upload',
+    icon: 'fa-light fa-gear',
+  },
+  {
+    sep: true,
+  },
+  {
+    name: '退出',
+    action: 'Project_upload',
+    icon: 'fa-light fa-xmark',
+  },
+];
