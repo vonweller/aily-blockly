@@ -13,6 +13,8 @@ import { DEV_THEME } from './theme.config.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 
+import './custom-category';
+
 @Component({
   selector: 'blockly-main',
   imports: [NzModalModule],
@@ -57,9 +59,9 @@ export class BlocklyComponent {
   constructor(
     private blocklyService: BlocklyService,
     private modal: NzModalService,
-  ) {}
+  ) { }
 
-  ngOnInit(): void {}
+  ngOnInit(): void { }
 
   ngAfterViewInit(): void {
     setTimeout(async () => {

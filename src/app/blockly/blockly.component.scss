@@ -1,13 +1,37 @@
 .blocklyBox {
     width: 100%;
     height: 100%;
-    
+
 
     ::ng-deep {
         .blocklyToolboxDiv {
             width: 180px;
             background: #323232;
             border-right: 1px solid #E0E0E0;
+            padding: 0;
+
+            .blocklyToolboxCategory {
+                .blocklyTreeRow {
+                    height: 40px;
+                    display: flex;
+                    align-items: center;
+                    cursor: pointer;
+                }
+
+                .blocklyTreeRowContentContainer {
+                    display: flex;
+                    align-items: center;
+
+                    .tbc-icon-box {
+                        width: 40px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    }
+
+                }
+
+            }
         }
 
     }
