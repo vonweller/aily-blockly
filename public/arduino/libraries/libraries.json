@@ -1,1 +1,9 @@
-["EEPROM", "Tone", "buzzer", "onebutton", "servo", "custom"]
+[
+    "EEPROM",
+    "Tone", 
+    "buzzer", 
+    "onebutton", 
+    "Ultrasonic", 
+    "servo", 
+    "custom"
+]

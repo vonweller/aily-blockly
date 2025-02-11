@@ -1,7 +1,7 @@
 {
   "kind": "category",
   "name": "Serial",
-  "icon": "fa-light fa-books",
+  "icon": "fa-light fa-arrow-right-arrow-left",
   "contents": [
     {
       "kind": "block",
