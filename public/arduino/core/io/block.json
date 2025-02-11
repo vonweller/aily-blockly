@@ -187,5 +187,56 @@
     "generator": {
       "code": "${STATE}"
     }
+  },
+  {
+    "type": "io_pulsein",
+    "message0": "脉冲长度（微秒） 管脚 # %1 状态 %2",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PULSEPIN"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "PULSETYPE",
+        "options": [
+          ["高", "HIGH"],
+          ["低", "LOW"]
+        ]
+      }
+    ],
+    "previousStatement": null,
+    "nextStatement": null,
+    "colour": 160,
+    "tooltip": "在指定引脚上生成指定长度的高或低电平脉冲。",
+    "helpUrl": ""
+  },
+  {
+    "type": "io_pulsetimeout",
+    "message0": "脉冲长度（微秒） 管脚 # %1 状态 %2 超时（微妙） %3",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "PULSEPIN"
+      },
+      {
+        "type": "field_dropdown",
+        "name": "PULSETYPE",
+        "options": [
+          ["高", "HIGH"],
+          ["低", "LOW"]
+        ]
+      },
+      {
+        "type": "field_number",
+        "name": "TIMEOUT",
+        "value": 1000000
+      }
+    ],
+    "previousStatement": null,
+    "nextStatement": null,
+    "colour": 160,
+    "tooltip": "在指定引脚上生成指定长度的高或低电平脉冲，超时。",
+    "helpUrl": ""
   }
 ]

@@ -324,5 +324,41 @@
     "style": "math_blocks",
     "tooltip": "%{BKY_MATH_ATAN2_TOOLTIP}",
     "helpUrl": "%{BKY_MATH_ATAN2_HELPURL}"
+  },
+  {
+    "inputsInline": true,
+    "type": "math_round_to_decimal",
+    "message0": "保留 %2 位小数的 %1",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "NUMBER",
+        "check": "Number"
+      },
+      {
+        "type": "input_value",
+        "name": "DECIMALS",
+        "check": "Number"
+      }
+    ],
+    "output": "Number",
+    "style": "math_blocks",
+    "tooltip": "将数字 %1 保留 %2 位小数。",
+    "helpUrl": ""
+  },
+  {
+    "type": "math_bitwise_not",
+    "message0": "~ %1",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "NUM",
+        "check": "Number"
+      }
+    ],
+    "output": "Number",
+    "style": "math_blocks",
+    "tooltip": "按位取反 %1。",
+    "helpUrl": ""
   }
 ]

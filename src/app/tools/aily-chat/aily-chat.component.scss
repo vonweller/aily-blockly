@@ -9,6 +9,7 @@
   padding: 5px 10px;
   flex-grow: 1;
   overflow: auto;
+  overflow-anchor: auto;
 }
 
 .sender {
@@ -24,7 +25,6 @@
       width: 36px;
       font-size: 20px;
       color: #eee;
-      cursor: pointer;
       justify-content: flex-end;
 
       &:hover {

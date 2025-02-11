@@ -37,8 +37,22 @@ export class ProjectService {
 
 
   // 新建项目
+  project_new() {
+    
+  }
 
   // 保存项目
+  project_save() {
+    
+  }
 
   // 打开项目
+  project_open() {
+    
+  }
+
+  // 另存为项目
+  project_save_as() {
+    
+  }
 }

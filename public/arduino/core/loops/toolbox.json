@@ -1,6 +1,7 @@
 {
   "kind": "category",
   "name": "Loops",
+  "icon": "fa-light fa-books",
   "contents": [
     {
       "kind": "block",
@@ -65,6 +66,10 @@
     {
       "kind": "block",
       "type": "controls_flow_statements"
+    },
+    {
+      "kind": "block",
+      "type": "controls_whileForever"
     }
   ]
 }

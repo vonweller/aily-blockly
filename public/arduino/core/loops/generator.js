@@ -142,3 +142,8 @@ Arduino.forBlock["controls_flow_statements"] = function (block) {
   }
   throw Error("Unknown flow statement.");
 };
+
+Arduino.forBlock["controls_whileForever"] = function (block) {
+  const branch = Arduino.statementToCode(block, "DO");
+  return "while (1) {\n" + branch + "}\n";
+};

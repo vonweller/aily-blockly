@@ -1,11 +1,12 @@
+:host{
+    position: relative;
+}
+
 blockly-main {
     ::ng-deep {
         .blocklyBox{
-            // position: fixed;
-            // top: 60px;
-            // height: calc(100% - 105px);
             width: 100%;
-            height: calc(100% - 60px);
+            height: 100%;
         }
     }
 }

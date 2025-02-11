@@ -18,7 +18,8 @@ Arduino.forBlock["serial_println"] = function (block) {
 
 Arduino.forBlock["serial_read"] = function (block) {
   const obj = block.getFieldValue("SERIAL");
-  return [`${obj}.read()`, Arduino.ORDER_FUNCTION_CALL];
+  const type = block.getFieldValue("TYPE");
+  return [`${obj}.${type}()`, Arduino.ORDER_FUNCTION_CALL];
 };
 
 Arduino.forBlock["serial_available"] = function (block) {

@@ -13,7 +13,7 @@ export class AilyCodingComponent {
   @Input() data: any = {};
 
   protected readonly JSON = JSON;
-  type: number = 0; // 0 code 1 blockly
+  type: number = 1; // 0 code 1 blockly
 
   constructor() {}
 

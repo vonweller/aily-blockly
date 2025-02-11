@@ -1,13 +1,14 @@
 .project-mangager-btn {
-    position: fixed;
+    position: absolute;
     bottom: 0;
     left: 0;
     height: 45px;
-    width: 180px;
+    width: 179px;
     cursor: pointer;
-    background-color: #f8f9fa;
+    background-color: #323232;
+    z-index: 99;
 
     &:hover {
-        background-color: #e9ecef;
+        color: #2a74ff;
     }
 }

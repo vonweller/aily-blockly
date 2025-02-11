@@ -1,7 +1,22 @@
 {
   "kind": "category",
   "name": "Logic",
+  "icon": "fa-light fa-books",
   "contents": [
+    {
+      "kind": "block",
+      "type": "time_delay",
+      "inputs": {
+        "TIME": {
+          "block": {
+            "type": "math_number",
+            "fields": {
+              "NUM": 1000
+            }
+          }
+        }
+      }
+    },
     {
       "kind": "block",
       "type": "controls_if"

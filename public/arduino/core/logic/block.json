@@ -1,5 +1,24 @@
 [
   {
+    "type": "time_delay",
+    "message0": "延迟 %1 ms",
+    "args0": [
+      {
+        "type": "input_value",
+        "name": "TIME"
+      }
+    ],
+    "inputsInline": true,
+    "previousStatement": null,
+    "nextStatement": null,
+    "colour": 230,
+    "tooltip": "time_delay",
+    "helpUrl": "",
+    "generator": {
+      "code": "delay(${TIME});"
+    }
+  },
+  {
     "type": "controls_if",
     "message0": "🔀如果 %1",
     "args0": [
@@ -70,12 +89,12 @@
         "type": "field_dropdown",
         "name": "OP",
         "options": [
-          ["==", "=="],
-          ["!=", "!="],
-          ["<", "<"],
-          [">", ">"],
-          [">=", ">="],
-          ["<=", "<="]
+          ["==", "EQ"],
+          ["!=", "NEQ"],
+          ["<", "LT"],
+          [">", "GT"],
+          [">=", "GTE"],
+          ["<=", "LTE"]
         ]
       },
       {
@@ -104,8 +123,8 @@
         "type": "field_dropdown",
         "name": "OP",
         "options": [
-          ["与", "&&"],
-          ["或", "||"]
+          ["与", "AND"],
+          ["或", "OR"]
         ]
       },
       {

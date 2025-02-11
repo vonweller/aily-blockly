@@ -3,6 +3,22 @@ Arduino.forBlock["lists_create_empty"] = function (block) {
   return ["[]", Arduino.ORDER_ATOMIC];
 };
 
+Arduino.forBlock["init_lists_create_with"] = function (block) {
+  let type = block.getFieldValue("TYPE");
+  const name = block.getFieldValue("VAR");
+  const createWithBlock = block;
+  const elements = new Array(createWithBlock.itemCount_);
+  for (let i = 0; i < createWithBlock.itemCount_; i++) {
+    elements[i] =
+      Arduino.valueToCode(block, "ADD" + i, Arduino.ORDER_NONE) || "null";
+  }
+  Arduino.addVariable(
+    `${type}_${name}`,
+    `${type} ${name}[]={${elements.join(", ")}};`,
+  );
+  return "";
+};
+
 Arduino.forBlock["lists_create_with"] = function (block) {
   // Create a list with any number of elements of any type.
   const createWithBlock = block;

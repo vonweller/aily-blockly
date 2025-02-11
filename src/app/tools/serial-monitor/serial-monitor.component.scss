@@ -48,7 +48,6 @@
             .btn {
                 width: 20px;
                 height: 24px;
-                cursor: pointer;
                 position: absolute;
                 right: 0;
                 color: rgb(0, 96, 160);
@@ -114,7 +113,6 @@
             width: 36px;
             font-size: 20px;
             color: #EEE;
-            cursor: pointer;
             justify-content: flex-end;
 
             &:hover {
@@ -141,7 +139,6 @@
     .btn {
         width: 28px;
         height: 28px;
-        cursor: pointer;
         position: relative;
 
         &:hover {
