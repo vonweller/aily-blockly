@@ -81,4 +81,18 @@ export class HeaderComponent {
         break;
     }
   }
+
+  minimize() {
+    console.log(window['iWindow']);
+    
+    window['iWindow'].minimize();
+  }
+
+  maximize() {
+    window['iWindow'].maximize();
+  }
+
+  close() {
+    window['iWindow'].close();
+  }
 }

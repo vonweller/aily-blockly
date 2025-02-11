@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from "electron";
-import { SerialPort } from "serialport";
+const { contextBridge, ipcRenderer } = require("electron");
+const { SerialPort } = require("serialport");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer,
@@ -33,15 +33,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       });
     },
     runScript: (scriptPath) => {
-      ipcRenderer.send('run-node-script', scriptPath);
-    }
-  },
-  window: {
-    create: (options) => {
-      ipcRenderer.send('window-create', options);
+      ipcRenderer.send("run-node-script", scriptPath);
     },
-    close: () => {
-      ipcRenderer.send('window-close');
-    }
-  }
+  },
+  iWindow: {
+    new: (options) => ipcRenderer.send("window-new", options),
+    minimize: () => ipcRenderer.send("window-minimize"),
+    maximize: () => ipcRenderer.send("window-maximize"),
+    close: () => ipcRenderer.send("window-close"),
+  },
 });
