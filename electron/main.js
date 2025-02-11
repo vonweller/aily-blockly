@@ -1,8 +1,8 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain } from "electron";
 import path from "path";
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-import * as pty from '@lydell/node-pty';
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import * as pty from "@lydell/node-pty";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -96,57 +96,62 @@ app.on("activate", () => {
 });
 
 // 终端相关(dev)
-const terminals = new Map()
-ipcMain.on('terminal-create', (event, args) => {
-  const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'];
+const terminals = new Map();
+ipcMain.on("terminal-create", (event, args) => {
+  const shell = process.env[process.platform === "win32" ? "COMSPEC" : "SHELL"];
   const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-color',
+    name: "xterm-color",
     cols: 80,
     rows: 30,
     cwd: process.env.HOME,
-    env: process.env
+    env: process.env,
   });
 
-  ptyProcess.on('data', (data) => {
-    mainWindow.webContents.send('terminal-data', data);
+  ptyProcess.on("data", (data) => {
+    mainWindow.webContents.send("terminal-data", data);
   });
 
-  ipcMain.on('terminal-input', (event, input) => {
+  ipcMain.on("terminal-input", (event, input) => {
     ptyProcess.write(input);
   });
 
   // 关闭终端
-  ipcMain.on('terminal-close', (event) => {
+  ipcMain.on("terminal-close", (event) => {
     ptyProcess.kill();
   });
 });
 
 // 多窗口相关(dev)
-ipcMain.on('window-new', (event, data) => {
-  const child = new BrowserWindow({
+ipcMain.on("window-new", (event, data) => {
+  const subWindow = new BrowserWindow({
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      sandbox: true
-    }
+      sandbox: true,
+    },
   });
 
-  child.loadFile('dist/angular-app/index.html', { hash: `#/child?data=${data}` });
+  if (serve) {
+    subWindow.loadURL("http://localhost:4200/sub");
+  } else {
+    subWindow.loadFile(`renderer/index.html`, { hash: `#/sub` });
+  }
 
-  child.on('closed', () => {
+  subWindow.on("closed", () => {
+    subWindow.close();
     childWindows.delete(child);
   });
 
-  childWindows.add(child);
+  // childWindows.add(child);
 });
 
-ipcMain.on('window-minimize', () => {
+ipcMain.on("window-minimize", () => {
   if (mainWindow) {
     mainWindow.minimize();
   }
 });
 
-ipcMain.on('window-maximize', () => {
+ipcMain.on("window-maximize", () => {
   if (mainWindow) {
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
@@ -156,7 +161,7 @@ ipcMain.on('window-maximize', () => {
   }
 });
 
-ipcMain.on('window-close', () => {
+ipcMain.on("window-close", () => {
   if (mainWindow) {
     mainWindow.close();
     app.quit();
@@ -164,6 +169,15 @@ ipcMain.on('window-close', () => {
 });
 
 // 窗口间消息转发
-ipcMain.on('send-to-child', (event, message) => {
-  childWindows.forEach(child => child.webContents.send('message-from-main', message));
+ipcMain.on("send-to-child", (event, message) => {
+  childWindows.forEach((child) =>
+    child.webContents.send("message-from-main", message),
+  );
+});
+
+// 项目管理相关
+ipcMain.handle("project-new", (event) => {
+  const projectPath = createTemporaryProject();
+  event.returnValue = projectPath;
+  console.log("project-new path", projectPath);
 });

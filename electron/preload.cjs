@@ -37,9 +37,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   iWindow: {
-    new: (options) => ipcRenderer.send("window-new", options),
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
     close: () => ipcRenderer.send("window-close"),
+  },
+  subWindow: {
+    new: (options) => ipcRenderer.send("window-new", options),
+  },
+  project: {
+    new: () => ipcRenderer.invoke("project-new"),
+    open: (path) => ipcRenderer.invoke("project-open", path),
+    save: () => ipcRenderer.invoke("project-save"),
+    saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
   },
 });

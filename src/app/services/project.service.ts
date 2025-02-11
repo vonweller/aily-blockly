@@ -4,17 +4,24 @@ import { ResponseModel } from '../interfaces/response.interface';
 import { API } from '../configs/api.config';
 
 interface ProjectData {
-  "name": string,
-  "version": string,
-  "author": string,
-  "description": string,
+  name: string;
+  version: string;
+  author: string;
+  description: string;
 }
 
 @Injectable({
   providedIn: 'root',
 })
 export class ProjectService {
-  constructor(private http: HttpClient) { }
+  projectData: ProjectData = {
+    name: '新的项目',
+    version: '1.0.0',
+    author: 'coloz',
+    description: 'aily project',
+  };
+
+  constructor(private http: HttpClient) {}
 
   /**
    * 库列表
@@ -42,24 +49,19 @@ export class ProjectService {
     });
   }
 
-
   // 新建项目
   project_new() {
-
+    window['subWindow'].new({
+      path: 'sub',
+    });
   }
 
   // 保存项目
-  project_save() {
-
-  }
+  project_save() {}
 
   // 打开项目
-  project_open() {
-
-  }
+  project_open() {}
 
   // 另存为项目
-  project_save_as() {
-
-  }
+  project_save_as() {}
 }

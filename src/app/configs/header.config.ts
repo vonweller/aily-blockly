@@ -1,34 +1,5 @@
 export let HEADER_BTNS:IHeaderMenuItem[][] = [
-  // [
-  //     {
-  //         name: 'Aily',
-  //         action: 'open-aily-chat',
-  //         icon: 'fa-light fa-message-bot'
-  //     }
-  // ], [
-  //     {
-  //         name: '打开工程',
-  //         action: 'Project_open',
-  //         icon: 'fa-light fa-folder-open'
-  //     },
-  //     {
-  //         name: '新建工程',
-  //         action: 'Project_new',
-  //         icon: 'fa-light fa-file-circle-plus'
-  //     },
-  //     {
-  //         name: '保存工程',
-  //         action: 'Project_save',
-  //         icon: 'fa-light fa-file-export'
-  //     }
-  // ],
   [
-    // {
-    //     name: '设备',
-    //     action: 'Device_connect',
-    //     icon: 'fa-light fa-microchip',
-    //     device: true
-    // },
     {
       name: '编译',
       action: 'Project_build',
@@ -100,7 +71,7 @@ export let HEADER_MENU = [
   },
   {
     name: '另存为',
-    action: 'Project_save2',
+    action: 'Project_save_as',
     icon: 'fa-light fa-copy',
   },
   {
@@ -108,7 +79,7 @@ export let HEADER_MENU = [
   },
   {
     name: '在资源管理器打开',
-    action: 'Code_export',
+    action: 'Explorer_open',
     icon: 'fa-light fa-browser',
   },
   {
@@ -121,7 +92,7 @@ export let HEADER_MENU = [
   },
   {
     name: '设置',
-    action: 'Project_upload',
+    action: 'Setting_open',
     icon: 'fa-light fa-gear',
   },
   {
@@ -129,7 +100,7 @@ export let HEADER_MENU = [
   },
   {
     name: '退出',
-    action: 'Project_upload',
+    action: 'App_exit',
     icon: 'fa-light fa-xmark',
   },
 ];

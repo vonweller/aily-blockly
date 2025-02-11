@@ -4,6 +4,7 @@ import { HEADER_BTNS, HEADER_MENU } from '../../configs/header.config';
 import { IwindowService } from '../../services/iwindow.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
+import { ProjectService } from '../../services/project.service';
 
 @Component({
   selector: 'app-header',
@@ -17,7 +18,14 @@ export class HeaderComponent {
 
   @ViewChild('menuBox') menuBox: ElementRef;
 
-  constructor(private iwindowService: IwindowService) {}
+  get projectData() {
+    return this.projectService.projectData;
+  }
+
+  constructor(
+    private projectService: ProjectService,
+    private iwindowService: IwindowService,
+  ) {}
 
   showMenu = false;
   openMenu() {
@@ -82,9 +90,36 @@ export class HeaderComponent {
     }
   }
 
+  onMenuClick(item) {
+    switch (item.action) {
+      case 'Project_new':
+        this.projectService.project_new();
+        break;
+      case 'Project_save':
+        this.projectService.project_save();
+        break;
+      case 'Project_open':
+        this.projectService.project_open();
+        break;
+      case 'Project_save_as':
+        this.projectService.project_save_as();
+        break;
+      case 'Explorer_open':
+        break;
+      case 'Code_export':
+          break;
+      case 'Setting_open':
+          break;
+      case 'App_exit':
+          break;
+      default:
+        break;
+    }
+  }
+
   minimize() {
     console.log(window['iWindow']);
-    
+
     window['iWindow'].minimize();
   }
 
