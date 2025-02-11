@@ -1,10 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
-import path from "path";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import * as pty from "@lydell/node-pty";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const path = require("path");
+const pty = require("@lydell/node-pty");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -20,9 +16,8 @@ function createWindow() {
     transparent: true,
     webPreferences: {
       nodeIntegration: true,
-      // contextIsolation: false,
       webSecurity: false,
-      preload: path.join(__dirname, "preload.cjs"),
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -31,6 +26,7 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
+    mainWindow.webContents.openDevTools();
   }
 
   // 当主窗口被关闭时，进行相应的处理
@@ -94,7 +90,7 @@ ipcMain.on("window-open", (event, data) => {
     webPreferences: {
       nodeIntegration: true,
       webSecurity: false,
-      preload: path.join(__dirname, "preload.cjs")
+      preload: path.join(__dirname, "preload.js")
     },
   });
 
@@ -103,6 +99,7 @@ ipcMain.on("window-open", (event, data) => {
     subWindow.webContents.openDevTools();
   } else {
     subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
+    subWindow.webContents.openDevTools();
   }
 });
 

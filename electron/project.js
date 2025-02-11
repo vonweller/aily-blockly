@@ -1,6 +1,6 @@
-import * as fs from "fs";
-import * as path from "path";
-import * as os from "os";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 /**
  * 新建临时项目文件夹，并生成 package.json 文件

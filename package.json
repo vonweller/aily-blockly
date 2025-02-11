@@ -11,10 +11,16 @@
     },
     "files": [
       "!**/*",
-      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
       {
         "from": "dist/aily-blockly/browser",
-        "to": "renderer"
+        "to": "app/renderer"
+      },
+      {
+        "from": "electron",
+        "to": "app/electron"
       }
     ],
     "win": {
