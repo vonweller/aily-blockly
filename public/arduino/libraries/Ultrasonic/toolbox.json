@@ -1,7 +1,7 @@
 {
   "kind": "category",
-  "name": "Sensor",
-  "icon": "fa-light fa-books",
+  "name": "Ultrasonic",
+  "icon": "iconfont icon-sr04",
   "contents": [
     {
       "kind": "block",

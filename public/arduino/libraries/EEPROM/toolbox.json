@@ -1,6 +1,7 @@
 {
   "kind": "category",
   "name": "EEPROM",
+  "icon": "fa-light fa-database",
   "contents": [
     {
       "kind": "block",

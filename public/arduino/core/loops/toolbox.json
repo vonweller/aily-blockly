@@ -1,7 +1,7 @@
 {
   "kind": "category",
   "name": "Loops",
-  "icon": "fa-light fa-books",
+  "icon": "fa-light fa-arrows-repeat",
   "contents": [
     {
       "kind": "block",

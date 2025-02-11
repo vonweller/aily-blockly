@@ -14,6 +14,8 @@ export class ElectronService {
   constructor() {}
 
   async init() {
+    console.log(this.electron);
+    
     if (this.electron && typeof this.electron.versions() == 'object') {
       console.log('Running in electron', this.electron.versions());
       this.isElectron = true;
@@ -23,6 +25,7 @@ export class ElectronService {
       console.log(this.ipcRenderer);
 
       for (let key in this.electron) {
+        console.log('load ' + key);
         window[key] = this.electron[key];
       }
     } else {

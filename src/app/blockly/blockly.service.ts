@@ -67,7 +67,7 @@ export class BlocklyService {
     ).catch((error) => {
       blocks = null;
     });
-    console.log(blocks);
+    // console.log(blocks);
 
     if (blocks) {
       this.loadLibBlocks(blocks);

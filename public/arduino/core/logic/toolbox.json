@@ -1,7 +1,7 @@
 {
   "kind": "category",
   "name": "Logic",
-  "icon": "fa-light fa-books",
+  "icon": "fa-light fa-split",
   "contents": [
     {
       "kind": "block",

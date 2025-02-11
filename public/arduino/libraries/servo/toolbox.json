@@ -1,6 +1,7 @@
 {
     "kind": "category",
     "name": "Servo",
+    "icon": "iconfont icon-servo",
     "contents": [
         {
             "kind": "block",
