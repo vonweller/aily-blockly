@@ -97,6 +97,11 @@ export let HEADER_MENU = [
     sep: true,
   },
   {
+    name: '在资源管理器打开',
+    action: 'Code_export',
+    icon: 'fa-light fa-browser',
+  },
+  {
     name: '导出代码',
     action: 'Code_export',
     icon: 'fa-light fa-square-code',
