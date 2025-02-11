@@ -1,4 +1,4 @@
-export let HEADER_BTNS:IHeaderMenuItem[][] = [
+export let HEADER_BTNS: IHeaderMenuItem[][] = [
   [
     {
       name: '编译',
@@ -29,8 +29,6 @@ export let HEADER_BTNS:IHeaderMenuItem[][] = [
       action: 'open-terminal',
       icon: 'fa-light fa-rectangle-terminal',
     },
-  ],
-  [
     {
       name: '课程',
       action: 'Classroom_open',
@@ -42,12 +40,18 @@ export let HEADER_BTNS:IHeaderMenuItem[][] = [
       icon: 'fa-regular fa-star-christmas',
       more: 'AI',
     },
-  ],
+    {
+      name: '更多',
+      action: 'more',
+      icon: 'fa-regular fa-ellipsis-vertical',
+    },
+  ]
 ];
 
 interface IHeaderMenuItem {
   name: string;
   action: string;
+  data?: string;
   icon: string;
   color?: string;
   more?: string;
@@ -56,22 +60,23 @@ interface IHeaderMenuItem {
 export let HEADER_MENU = [
   {
     name: '新建项目',
-    action: 'Project_new',
+    action: 'open-window',
+    data: { path: 'project-new', alwaysOnTop: true },
     icon: 'fa-light fa-file',
   },
   {
     name: '打开项目',
-    action: 'Project_open',
+    action: 'project-open',
     icon: 'fa-light fa-folder-open',
   },
   {
     name: '保存项目',
-    action: 'Project_save',
+    action: 'project-save',
     icon: 'fa-light fa-file-check',
   },
   {
     name: '另存为',
-    action: 'Project_save_as',
+    action: 'project-save-as',
     icon: 'fa-light fa-copy',
   },
   {
@@ -79,12 +84,12 @@ export let HEADER_MENU = [
   },
   {
     name: '在资源管理器打开',
-    action: 'Explorer_open',
+    action: 'explorer-open',
     icon: 'fa-light fa-browser',
   },
   {
     name: '导出代码',
-    action: 'Code_export',
+    action: 'code-export',
     icon: 'fa-light fa-square-code',
   },
   {
@@ -92,7 +97,8 @@ export let HEADER_MENU = [
   },
   {
     name: '设置',
-    action: 'Setting_open',
+    action: 'open-window',
+    path: 'settings',
     icon: 'fa-light fa-gear',
   },
   {
@@ -100,7 +106,7 @@ export let HEADER_MENU = [
   },
   {
     name: '退出',
-    action: 'App_exit',
+    action: 'app-exit',
     icon: 'fa-light fa-xmark',
   },
 ];

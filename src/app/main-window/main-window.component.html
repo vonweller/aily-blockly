@@ -1,8 +1,8 @@
-<div class="main">
-    <app-header></app-header>
-    <div class="mid-box">
-      <app-blockly-editor></app-blockly-editor>
-      <div *ngIf="showRbox" style="background: red;width: 300px;height: 100%;"></div>
-    </div>
-    <app-footer (click)="openRbox()"></app-footer>
+<div class="main-window-box">
+  <app-header></app-header>
+  <div class="mid-box">
+    <app-blockly-editor></app-blockly-editor>
+    <div *ngIf="showRbox" style="background: red;width: 300px;height: 100%;"></div>
   </div>
+  <app-footer (click)="openRbox()"></app-footer>
+</div>

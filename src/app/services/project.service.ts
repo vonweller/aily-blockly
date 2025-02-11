@@ -51,9 +51,6 @@ export class ProjectService {
 
   // 新建项目
   project_new() {
-    window['subWindow'].new({
-      path: 'sub',
-    });
   }
 
   // 保存项目
