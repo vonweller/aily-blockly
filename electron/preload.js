@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { SerialPort } from "serialport";
+import { spawn, exec } from "child_process";
+
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer,
@@ -43,6 +45,31 @@ contextBridge.exposeInMainWorld("electronAPI", {
     close: () => {
       ipcRenderer.send('window-close');
     }
+  },
+  ChildProcess: {
+    spawn: (command, args, onStdout, onStderr, onClose) => {
+      const child = spawn(command, args);
+      child.stdout.on("data", (data) => onStdout(data.toString()));
+      child.stderr.on("data", (data) => onStderr(data.toString()));
+      child.on("close", onClose);
+      return child;
+    },
+    exec: (command) => {
+      return new Promise((resolve, reject) => {
+        exec(command, (error, stdout, stderr) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve({ stdout, stderr });
+          }
+        });
+      });
+    }
+  },
+  fs: {
+    existsSync: (path) => existsSync(path),
+    mkdirSync: (path) => mkdirSync(path),
+    writeFileSync: (path, data) => writeFileSync(path, data),
   }
 });
 
