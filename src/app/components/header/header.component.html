@@ -19,9 +19,10 @@
             nz-tooltip
             nzTooltipTitle="{{ btn.name }}"
             (click)="onClick(btn)"
+            [ngStyle]="{ color: btn.color ? btn.color : '' }"
           >
             <i class="{{ btn.icon }}"></i>
-            @if(btn.more){
+            @if (btn.more) {
               <div class="more ccenter">AI</div>
             }
           </div>

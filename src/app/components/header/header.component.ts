@@ -3,9 +3,11 @@ import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
 import { HEADER_BTNS, HEADER_MENU } from '../../configs/header.config';
 import { IwindowService } from '../../services/iwindow.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { FormsModule } from '@angular/forms';
+
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, NzToolTipModule],
+  imports: [CommonModule, FormsModule, NzToolTipModule],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -13,7 +15,7 @@ export class HeaderComponent {
   headerBtns = HEADER_BTNS;
   headerMenu = HEADER_MENU;
 
-  @ViewChild('menuBox') menuBox:ElementRef;
+  @ViewChild('menuBox') menuBox: ElementRef;
 
   constructor(private iwindowService: IwindowService) {}
 
@@ -28,7 +30,10 @@ export class HeaderComponent {
   }
 
   handleDocumentClick = (event: MouseEvent) => {
-    if (this.menuBox && !this.menuBox.nativeElement.contains(event.target as Node)) {
+    if (
+      this.menuBox &&
+      !this.menuBox.nativeElement.contains(event.target as Node)
+    ) {
       this.showMenu = false;
       document.removeEventListener('click', this.handleDocumentClick);
     }

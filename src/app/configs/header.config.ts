@@ -1,4 +1,4 @@
-export let HEADER_BTNS = [
+export let HEADER_BTNS:IHeaderMenuItem[][] = [
   // [
   //     {
   //         name: 'Aily',
@@ -33,11 +33,13 @@ export let HEADER_BTNS = [
       name: '编译',
       action: 'Project_build',
       icon: 'fa-light fa-arrows-rotate',
+      color: '#34a5ff',
     },
     {
       name: '上传',
       action: 'Project_upload',
       icon: 'fa-light fa-play',
+      color: '#009d12',
     },
   ],
   [
@@ -64,13 +66,21 @@ export let HEADER_BTNS = [
       icon: 'fa-light fa-graduation-cap',
     },
     {
-      name: 'AI助手',
+      name: 'AI',
       action: 'Setting_open',
       icon: 'fa-regular fa-star-christmas',
       more: 'AI',
     },
   ],
 ];
+
+interface IHeaderMenuItem {
+  name: string;
+  action: string;
+  icon: string;
+  color?: string;
+  more?: string;
+}
 
 export let HEADER_MENU = [
   {

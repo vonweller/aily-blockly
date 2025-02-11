@@ -26,8 +26,9 @@
     margin-left: 10px;
     color: #818992;
     cursor: pointer;
+    opacity: 0.7;
     &:hover {
-      color: #2a74ff;
+      opacity: 1;
     }
 
     .down {
@@ -64,6 +65,7 @@
     flex-direction: column;
     border-radius: 8px;
     color: #818992;
+    opacity: 0.7;
     font-size: 19px;
     margin-right: 8px;
     padding-top: 2px;
@@ -77,7 +79,7 @@
     }
 
     &:hover {
-      color: #2a74ff;
+      opacity: 1;
     }
   }
 }
