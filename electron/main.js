@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-import * as pty from '@lydell/node-pty';
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import * as pty from "@lydell/node-pty";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -10,13 +10,14 @@ const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 
 let mainWindow;
-let tray;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 740,
-    show: true, // 不显示主窗口，实现“后台运行”的效果
+    frame: false,
+    autoHideMenuBar: true,
+    transparent: true,
     webPreferences: {
       nodeIntegration: true,
       // contextIsolation: false,
@@ -27,6 +28,7 @@ function createWindow() {
 
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
+    mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
   }
@@ -37,48 +39,8 @@ function createWindow() {
   });
 }
 
-function createTray() {
-  // 指定托盘图标，路径可替换为实际图标路径
-  const iconPath = path.join(__dirname, "tray_icon.png");
-  tray = new Tray(iconPath);
-
-  // 系统托盘菜单
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: "显示主窗口",
-      click: () => {
-        if (mainWindow) {
-          mainWindow.show();
-        }
-      },
-    },
-    {
-      label: "退出",
-      click: () => {
-        app.quit();
-      },
-    },
-  ]);
-
-  tray.setToolTip("这是一个后台运行的示例应用");
-  tray.setContextMenu(contextMenu);
-
-  // 点击托盘图标自动显示/隐藏主窗口
-  tray.on("click", () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-      }
-    }
-  });
-}
-
-// 当 Electron 完成初始化并准备好创建浏览器窗口时调用
 app.on("ready", () => {
   createWindow();
-  //   createTray();
 });
 
 // 当所有窗口都被关闭时退出应用（macOS 除外）
@@ -96,74 +58,95 @@ app.on("activate", () => {
 });
 
 // 终端相关(dev)
-const terminals = new Map()
-ipcMain.on('terminal-create', (event, args) => {
-  const shell = process.env[process.platform === 'win32' ? 'COMSPEC' : 'SHELL'];
+const terminals = new Map();
+ipcMain.on("terminal-create", (event, args) => {
+  const shell = process.env[process.platform === "win32" ? "COMSPEC" : "SHELL"];
   const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-color',
+    name: "xterm-color",
     cols: 80,
     rows: 30,
     cwd: process.env.HOME,
-    env: process.env
+    env: process.env,
   });
 
-  ptyProcess.on('data', (data) => {
-    mainWindow.webContents.send('terminal-data', data);
+  ptyProcess.on("data", (data) => {
+    mainWindow.webContents.send("terminal-data", data);
   });
 
-  ipcMain.on('terminal-input', (event, input) => {
+  ipcMain.on("terminal-input", (event, input) => {
     ptyProcess.write(input);
   });
 
   // 关闭终端
-  ipcMain.on('terminal-close', (event) => {
+  ipcMain.on("terminal-close", (event) => {
     ptyProcess.kill();
   });
 });
 
 // 多窗口相关(dev)
-ipcMain.on('window-new', (event, data) => {
-  const child = new BrowserWindow({
+ipcMain.on("window-open", (event, data) => {
+  console.log("window-open", data);
+  const subWindow = new BrowserWindow({
+    frame: false,
+    autoHideMenuBar: true,
+    transparent: true,
+    alwaysOnTop: data.alwaysOnTop ? data.alwaysOnTop : false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      sandbox: true
-    }
+      nodeIntegration: true,
+      webSecurity: false,
+      preload: path.join(__dirname, "preload.cjs")
+    },
   });
 
-  child.loadFile('dist/angular-app/index.html', { hash: `#/child?data=${data}` });
+  if (serve) {
+    subWindow.loadURL(`http://localhost:4200/${data.path}`);
+    subWindow.webContents.openDevTools();
+  } else {
+    subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
+  }
+});
 
-  child.on('closed', () => {
-    childWindows.delete(child);
+ipcMain.on("window-minimize", (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow) {
+    senderWindow.minimize();
+  }
+});
+
+ipcMain.on("window-maximize", (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow.isMaximized()) {
+    senderWindow.unmaximize();
+  } else {
+    senderWindow.maximize();
+  }
+});
+
+ipcMain.on("window-close", (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  senderWindow.close();
+});
+
+ipcMain.on("window-alwaysOnTop", (event, alwaysOnTop) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  senderWindow.setAlwaysOnTop(alwaysOnTop);
+});
+
+// 项目管理相关
+ipcMain.handle("select-folder", async (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(senderWindow, {
+    defaultPath: data.path,
+    properties: ["openDirectory"],
   });
-
-  childWindows.add(child);
-});
-
-ipcMain.on('window-minimize', () => {
-  if (mainWindow) {
-    mainWindow.minimize();
+  if (result.canceled) {
+    return data.path;
   }
+  return result.filePaths[0];
 });
 
-ipcMain.on('window-maximize', () => {
-  if (mainWindow) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow.maximize();
-    }
-  }
-});
-
-ipcMain.on('window-close', () => {
-  if (mainWindow) {
-    mainWindow.close();
-    app.quit();
-  }
-});
-
-// 窗口间消息转发
-ipcMain.on('send-to-child', (event, message) => {
-  childWindows.forEach(child => child.webContents.send('message-from-main', message));
+ipcMain.handle("project-new", (event) => {
+  const projectPath = createTemporaryProject();
+  event.returnValue = projectPath;
+  console.log("project-new path", projectPath);
 });

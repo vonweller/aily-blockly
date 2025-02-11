@@ -2,20 +2,30 @@ const { contextBridge, ipcRenderer } = require("electron");
 const { SerialPort } = require("serialport");
 
 contextBridge.exposeInMainWorld("electronAPI", {
-  ipcRenderer,
+  ipcRenderer: {
+    send: (channel, data) => ipcRenderer.send(channel, data),
+    on: (channel, callback) => ipcRenderer.on(channel, callback),
+    invoke: (channel, data) => ipcRenderer.invoke(channel, data),
+  },
+  path: {
+    getUserHome: () => require("os").homedir(),
+    getUserDocuments: () => {
+      let path = require("os").homedir() + "\\Documents\\aily-project";
+      if (!require("fs").existsSync(path)) {
+        require("fs").mkdirSync(path, { recursive: true });
+      }
+      return path;
+    }
+  },
   versions: () => process.versions,
   SerialPort: {
     list: async () => await SerialPort.list(),
     create: (options) => new SerialPort(options),
   },
   platform: {
-    // 获取操作系统类型
     type: () => process.platform,
-    // 判断是否是Windows
     isWindows: () => process.platform === "win32",
-    // 判断是否是macOS
     isMacOS: () => process.platform === "darwin",
-    // 判断是否是Linux
     isLinux: () => process.platform === "linux",
   },
   terminal: {
@@ -37,9 +47,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
   },
   iWindow: {
-    new: (options) => ipcRenderer.send("window-new", options),
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
     close: () => ipcRenderer.send("window-close"),
+  },
+  subWindow: {
+    open: (options) => ipcRenderer.send("window-open", options),
+  },
+  project: {
+    new: () => ipcRenderer.invoke("project-new"),
+    open: (path) => ipcRenderer.invoke("project-open", path),
+    save: () => ipcRenderer.invoke("project-save"),
+    saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
   },
 });
