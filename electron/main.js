@@ -21,7 +21,7 @@ function createWindow() {
       nodeIntegration: true,
       // contextIsolation: false,
       webSecurity: false,
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -122,7 +122,7 @@ ipcMain.on('terminal-create', (event, args) => {
 });
 
 // 多窗口相关(dev)
-ipcMain.on('window-create', (event, data) => {
+ipcMain.on('window-new', (event, data) => {
   const child = new BrowserWindow({
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -138,6 +138,29 @@ ipcMain.on('window-create', (event, data) => {
   });
 
   childWindows.add(child);
+});
+
+ipcMain.on('window-minimize', () => {
+  if (mainWindow) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.on('window-maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.on('window-close', () => {
+  if (mainWindow) {
+    mainWindow.close();
+    app.quit();
+  }
 });
 
 // 窗口间消息转发

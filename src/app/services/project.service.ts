@@ -3,11 +3,18 @@ import { HttpClient } from '@angular/common/http';
 import { ResponseModel } from '../interfaces/response.interface';
 import { API } from '../configs/api.config';
 
+interface ProjectData {
+  "name": string,
+  "version": string,
+  "author": string,
+  "description": string,
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class ProjectService {
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient) { }
 
   /**
    * 库列表
@@ -38,21 +45,21 @@ export class ProjectService {
 
   // 新建项目
   project_new() {
-    
+
   }
 
   // 保存项目
   project_save() {
-    
+
   }
 
   // 打开项目
   project_open() {
-    
+
   }
 
   // 另存为项目
   project_save_as() {
-    
+
   }
 }

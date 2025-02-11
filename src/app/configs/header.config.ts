@@ -1,4 +1,4 @@
-export let HEADER_BTNS = [
+export let HEADER_BTNS:IHeaderMenuItem[][] = [
   // [
   //     {
   //         name: 'Aily',
@@ -33,11 +33,13 @@ export let HEADER_BTNS = [
       name: '编译',
       action: 'open-prj-builder',
       icon: 'fa-light fa-arrows-rotate',
+      color: '#34a5ff',
     },
     {
       name: '上传',
       action: 'open-prj-uploader',
       icon: 'fa-light fa-play',
+      color: '#009d12',
     },
   ],
   [
@@ -64,13 +66,21 @@ export let HEADER_BTNS = [
       icon: 'fa-light fa-graduation-cap',
     },
     {
-      name: 'AI助手',
+      name: 'AI',
       action: 'Setting_open',
       icon: 'fa-regular fa-star-christmas',
       more: 'AI',
     },
   ],
 ];
+
+interface IHeaderMenuItem {
+  name: string;
+  action: string;
+  icon: string;
+  color?: string;
+  more?: string;
+}
 
 export let HEADER_MENU = [
   {
@@ -95,6 +105,11 @@ export let HEADER_MENU = [
   },
   {
     sep: true,
+  },
+  {
+    name: '在资源管理器打开',
+    action: 'Code_export',
+    icon: 'fa-light fa-browser',
   },
   {
     name: '导出代码',
