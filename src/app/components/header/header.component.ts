@@ -7,6 +7,7 @@ import { FormsModule } from '@angular/forms';
 import { ProjectService } from '../../services/project.service';
 import { WindowService } from '../../services/window.service';
 import { BuilderService } from '../../services/builder.service';
+import { UploaderService } from '../../services/uploader.service';
 import { IwindowService } from '../../services/iwindow.service';
 
 @Component({
@@ -30,6 +31,7 @@ export class HeaderComponent {
     private windowService: WindowService,
     private iwindowService: IwindowService,
     private builderService: BuilderService,
+    private uploaderService: UploaderService,
   ) { }
 
   showMenu = false;
@@ -97,6 +99,7 @@ export class HeaderComponent {
         this.builderService.build();
         break
       case 'open-prj-uploader':
+        this.uploaderService.upload();
         break
     }
   }

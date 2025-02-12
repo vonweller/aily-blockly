@@ -179,10 +179,44 @@ function arduinoCliBuilder(prjPath) {
     });
 }
 
+function arduinoCliUploader(port, prjPath) {
+    const cliPath = '.\\child\\arduino-cli.exe';
+
+    // 读取prjPath下的builder.json文件
+    const builderJsonPath = path.join(prjPath, "builder.json");
+    if (!fs.existsSync(builderJsonPath)) {
+        throw new Error("builder.json not found");
+    }
+    const builderJsonContent = fs.readFileSync(builderJsonPath, "utf8");
+    const builderJson = JSON.parse(builderJsonContent);
+
+    return new Promise((resolve, reject) => {
+        console.log("FQBN: ", builderJson.type);
+        const arduinoCli = spawn(
+            cliPath, 
+            ['upload', '-b', builderJson.type, '--input-dir', builderJson.compilerOutput, '-p', port]);
+        arduinoCli.stdout.on('data', (data) => {
+            console.log(`stdout: ${data}`);
+        });
+        arduinoCli.stderr.on('data', (data) => {
+            console.error(`stderr: ${data}`);
+        });
+        arduinoCli.on('close', (code) => {
+            console.log(`child process exited with code ${code}`);
+            if (code === 0) {
+                resolve();
+            } else {
+                reject();
+            }
+        });
+    });
+}
+
 module.exports = {
     getDependencies,
     initArduinoCliConf,
     arduinoCliBuilder,
     arduinoCodeGen,
     genBuilderJson,
+    arduinoCliUploader
 };

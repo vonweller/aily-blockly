@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const pty = require("@lydell/node-pty");
 
-const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder } = require("./shell");
+const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./shell");
 const {installPackageByArduinoCli} = require("./board");
 
 const args = process.argv.slice(1);
@@ -200,6 +200,16 @@ ipcMain.handle("builder-build", async (event, data) => {
     return { success: true };
   } catch (error) {
     console.error("builder-build error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("uploader-upload", async (event, data) => {
+  try {
+    await arduinoCliUploader(data.port, data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("uploader-upload error: ", error);
     return { success: false };
   }
 });

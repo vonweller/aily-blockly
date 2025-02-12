@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
     build: (data) => ipcRenderer.invoke("builder-build", data),
-  }
+  },
+  uploader: {
+    upload: (data) => ipcRenderer.invoke("uploader-upload", data),
+  },
 });
 
