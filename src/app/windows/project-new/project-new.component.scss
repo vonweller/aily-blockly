@@ -67,13 +67,27 @@
 
 .fa-spinner-third {
     animation: rotate45 1s steps(60, end) infinite;
-  }
+}
 
-  @keyframes rotate45 {
+@keyframes rotate45 {
     from {
-      transform: rotate(0deg);
+        transform: rotate(0deg);
     }
+
     to {
-      transform: rotate(360deg);
+        transform: rotate(360deg);
+    }
+}
+
+.board-selector {
+    display: flex;
+    flex-wrap: wrap;
+
+    .board {
+        width: 300px;
+        height: 200px;
+        background: #3e4243;
+        border-radius: 5px;
+        margin: 0 10px 10px 0;
     }
 }
