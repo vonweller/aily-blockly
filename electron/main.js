@@ -95,7 +95,7 @@ ipcMain.on("window-open", (event, data) => {
   });
 
   if (serve) {
-    subWindow.loadURL(`http://localhost:4200/${data.path}`);
+    subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
     subWindow.webContents.openDevTools();
   } else {
     subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
