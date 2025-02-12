@@ -61,5 +61,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     save: () => ipcRenderer.invoke("project-save"),
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
   },
+  builder: {
+    init: (data) => ipcRenderer.invoke("builder-init", data),
+    codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
+    build: (data) => ipcRenderer.invoke("builder-build", data),
+  }
 });
 

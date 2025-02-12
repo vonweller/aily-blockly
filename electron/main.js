@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const pty = require("@lydell/node-pty");
 
+const { getDependencies, initArduinoCliConf, arduinoCodeGen } = require("./shell");
+const {installPackageByArduinoCli} = require("./board");
+
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 
@@ -146,4 +149,23 @@ ipcMain.handle("project-new", (event) => {
   const projectPath = createTemporaryProject();
   event.returnValue = projectPath;
   console.log("project-new path", projectPath);
+});
+
+ipcMain.handle("builder-init", (event, data) => {
+  const deps = getDependencies(data.prjPath);
+  // arduino-cli配置文件路径（每个项目下都有一个）
+  let cliYamlPath = initArduinoCliConf(data.prjPath, data.appDataPath)
+  console.log("arduino-prj-new: ", cliYamlPath);
+  
+  deps.boardConfList.map(async (boardConf) => {
+    console.log("arduino-prj-new", deps, cliYamlPath);
+    await installPackageByArduinoCli(boardConf.core, cliYamlPath);
+  });
+  // TODO library install
+
+  return {core: deps.boardConfList[0].core, cliYamlPath};
+});
+
+ipcMain.handle("builder-codeGen", (event, data) => {
+  arduinoCodeGen(data.core, data.tmpPath, data.cliYamlPath);
 });

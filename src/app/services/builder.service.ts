@@ -1,0 +1,37 @@
+import { Injectable } from '@angular/core';
+import { arduinoGenerator, DEFAULT_DATA } from '../blockly/generators/arduino/arduino';
+import { BlocklyService } from '../blockly/blockly.service';
+import { ProjectService } from './project.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class BuilderService {
+
+  constructor(
+    private blocklyService: BlocklyService,
+    private projectService: ProjectService
+  ) { }
+
+  async build() {
+    console.log('start build');
+    // 生成arduino代码以及组织需要的依赖
+    // TODO 获取APPData路径
+    const appDataPath = "D:\\temp\\board"
+    // TODO 获取当前项目路径
+    const prjPath = "D:\\temp\\ailyPrj"
+    const result = await window["builder"].init({prjPath, appDataPath})
+    console.log(result)
+
+    // // TODO 临时文件夹
+    // const tmpPath = "D:\\temp\\ailyPrj\\sketch"
+    // // 转换代码
+    // const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    // // 生成文件，并写入临时文件夹的.ino文件
+    // window["builder"].codeGen({tmpPath, code});
+
+    // // 编译
+    // window["builder"].build({tmpPath})
+    // // window['ipcRenderer'].invoke('project-build', code)
+  }
+}
