@@ -70,7 +70,7 @@ function getDependencies(prjPath) {
 
     result.boardList.map(depPath => {
         const depName = getDependencieName(depPath);
-        const depConf = getDependencieConfJson(depPath, ["core", "compilerTool", "compilerParam", "uploadParam"]);
+        const depConf = getDependencieConfJson(depPath, ["core", "type", "compilerTool", "compilerParam", "uploadParam"]);
         result["boardConfList"].push(depConf);
     });
     result.libraryList.map(depPath => {
@@ -114,16 +114,54 @@ function initArduinoCliConf(prjPath, rootPath) {
     return cliYamlPath;
 }
 
-function arduinoCodeGen(code, dirPath) {
-    const codePath = path.join(dirPath, "src.ino");
+function genBuilderJson(data, prjPath) {
+    const builderJson = {
+        "core": data.core,
+        "type": data.type,
+        "compilerOutput": data.compilerOutput,
+        "compilerParam": data.compilerParam,
+        "cliYamlPath": data.cliYamlPath,
+        "sketchPath": data.sketchPath,
+    }
+
+    const builderJsonPath = path.join(prjPath, "builder.json");
+    fs.writeFileSync(builderJsonPath, JSON.stringify(builderJson, null, 2));
+}
+
+function arduinoCodeGen(code, prjPath) {
+    // 读取prjPath下的builder.json文件
+    const builderJsonPath = path.join(prjPath, "builder.json");
+    if (!fs.existsSync(builderJsonPath)) {
+        throw new Error("builder.json not found");
+    }
+    const builderJsonContent = fs.readFileSync(builderJsonPath, "utf8");
+    const builderJson = JSON.parse(builderJsonContent);
+
+    const sketchPath = builderJson.sketchPath;
+    if (!fs.existsSync(sketchPath)) {
+        fs.mkdirSync(sketchPath, { recursive: true });
+    }
+    const folderName = path.basename(sketchPath);
+    const codePath = path.join(sketchPath, `${folderName}.ino`);
     fs.writeFileSync(codePath, code);
 }
 
-function arduinoCliBuilder(core, sketchPath, cliYamlPath, outputDir="") {
+function arduinoCliBuilder(prjPath) {
     const cliPath = '.\\child\\arduino-cli.exe';
 
+    // 读取prjPath下的builder.json文件
+    const builderJsonPath = path.join(prjPath, "builder.json");
+    if (!fs.existsSync(builderJsonPath)) {
+        throw new Error("builder.json not found");
+    }
+    const builderJsonContent = fs.readFileSync(builderJsonPath, "utf8");
+    const builderJson = JSON.parse(builderJsonContent);
+
     return new Promise((resolve, reject) => {
-        const arduinoCli = spawn(cliPath, ['compile', '--fqbn', core, sketchPath, '--config-file', cliYamlPath]);
+        console.log("FQBN: ", builderJson.type);
+        const arduinoCli = spawn(
+            cliPath, 
+            ['compile', '-b', builderJson.type, builderJson.sketchPath, '--config-file', builderJson.cliYamlPath, '--output-dir', builderJson.compilerOutput]);
         arduinoCli.stdout.on('data', (data) => {
             console.log(`stdout: ${data}`);
         });
@@ -146,4 +184,5 @@ module.exports = {
     initArduinoCliConf,
     arduinoCliBuilder,
     arduinoCodeGen,
+    genBuilderJson,
 };

@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const pty = require("@lydell/node-pty");
 
-const { getDependencies, initArduinoCliConf, arduinoCodeGen } = require("./shell");
+const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder } = require("./shell");
 const {installPackageByArduinoCli} = require("./board");
 
 const args = process.argv.slice(1);
@@ -151,21 +151,55 @@ ipcMain.handle("project-new", (event) => {
   console.log("project-new path", projectPath);
 });
 
-ipcMain.handle("builder-init", (event, data) => {
-  const deps = getDependencies(data.prjPath);
-  // arduino-cli配置文件路径（每个项目下都有一个）
-  let cliYamlPath = initArduinoCliConf(data.prjPath, data.appDataPath)
-  console.log("arduino-prj-new: ", cliYamlPath);
-  
-  deps.boardConfList.map(async (boardConf) => {
-    console.log("arduino-prj-new", deps, cliYamlPath);
-    await installPackageByArduinoCli(boardConf.core, cliYamlPath);
-  });
-  // TODO library install
+ipcMain.handle("builder-init", async (event, data) => {
+  try {
+    const deps = getDependencies(data.prjPath);
+    // arduino-cli配置文件路径（每个项目下都有一个）
+    let cliYamlPath = initArduinoCliConf(data.prjPath, data.appDataPath)
+    console.log("arduino-prj-new: ", cliYamlPath);
 
-  return {core: deps.boardConfList[0].core, cliYamlPath};
+    const core = deps.boardConfList[0].core;
+    await installPackageByArduinoCli(core, cliYamlPath);
+
+    await Promise.all(
+      deps.libraryConfList.map(async (libraryConf) => {
+        // TODO: 处理 library 安装逻辑
+      })
+    );
+
+    genBuilderJson({
+       core, 
+       cliYamlPath, 
+       type: deps.boardConfList[0].type,
+       sketchPath: data.prjPath + '/mySketch',
+       compilerOutput: data.prjPath + '/output',
+       compilerParam: deps.boardConfList[0].compilerParam ,
+       uploadParam: deps.boardConfList[0].uploadParam,
+      }, data.prjPath);
+
+    return { success: true };
+  } catch (error) {
+    console.error("builder-init error: ", error);
+    return { success: false };
+  }
 });
 
-ipcMain.handle("builder-codeGen", (event, data) => {
-  arduinoCodeGen(data.core, data.tmpPath, data.cliYamlPath);
+ipcMain.handle("builder-codeGen", async (event, data) => {
+  try {
+    arduinoCodeGen(data.code, data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("builder-codeGen error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("builder-build", async (event, data) => {
+  try {
+    await arduinoCliBuilder(data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("builder-build error: ", error);
+    return { success: false };
+  }
 });

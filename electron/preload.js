@@ -62,7 +62,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
   },
   builder: {
-    init: (data) => ipcRenderer.invoke("builder-init", data),
+    init: (data) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer.invoke("builder-init", data)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
     codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
     build: (data) => ipcRenderer.invoke("builder-build", data),
   }

@@ -20,18 +20,28 @@ export class BuilderService {
     const appDataPath = "D:\\temp\\board"
     // TODO 获取当前项目路径
     const prjPath = "D:\\temp\\ailyPrj"
-    const result = await window["builder"].init({prjPath, appDataPath})
-    console.log(result)
 
-    // // TODO 临时文件夹
-    // const tmpPath = "D:\\temp\\ailyPrj\\sketch"
-    // // 转换代码
-    // const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    // // 生成文件，并写入临时文件夹的.ino文件
-    // window["builder"].codeGen({tmpPath, code});
+    const initResult = await window["builder"].init({prjPath, appDataPath})
+    if (!initResult.success) {
+      console.error("init failed: ", initResult)
+      return
+    }
 
-    // // 编译
-    // window["builder"].build({tmpPath})
-    // // window['ipcRenderer'].invoke('project-build', code)
+    // 转换代码
+    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    // 生成文件，并写入临时文件夹的.ino文件
+    const genResult = await window["builder"].codeGen({code, prjPath});
+    if (!genResult.success) {
+      console.error("codeGen failed: ", genResult)
+      return
+    }
+
+    // 编译
+    const buildResult = await window["builder"].build({prjPath})
+    if (!buildResult.success) {
+      console.error("build failed: ", buildResult)
+      return
+    }
+    console.log('build success');
   }
 }
