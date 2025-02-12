@@ -31,7 +31,7 @@ export class BlocklyService {
 
   async init() {
     this.boardConfig = await lastValueFrom(
-      this.http.get<any[]>('/board/arduino_uno/arduino_uno.json', {
+      this.http.get<any[]>('board/arduino_uno/arduino_uno.json', {
         responseType: 'json',
       }),
     );
@@ -39,10 +39,10 @@ export class BlocklyService {
 
   async loadLibraries() {
     let coreLibraries = await lastValueFrom(
-      this.http.get<any[]>('/arduino/core/core.json', { responseType: 'json' }),
+      this.http.get<any[]>('arduino/core/core.json', { responseType: 'json' }),
     );
     let otherLibraries = await lastValueFrom(
-      this.http.get<any[]>('/arduino/libraries/libraries.json', {
+      this.http.get<any[]>('arduino/libraries/libraries.json', {
         responseType: 'json',
       }),
     );
@@ -61,7 +61,7 @@ export class BlocklyService {
   async loadLibrary(libName: String, path: String = 'libraries') {
     let blocks;
     blocks = await lastValueFrom(
-      this.http.get<LibData>(`/arduino/${path}/${libName}/block.json`, {
+      this.http.get<LibData>(`arduino/${path}/${libName}/block.json`, {
         responseType: 'json',
       }),
     ).catch((error) => {
@@ -73,16 +73,16 @@ export class BlocklyService {
       this.loadLibBlocks(blocks);
     } else {
       //  加载js形式的block定义
-      this.loadLibBlocksJS(`/arduino/${path}/${libName}/block.js`);
+      this.loadLibBlocksJS(`arduino/${path}/${libName}/block.js`);
     }
     let toolbox = await lastValueFrom(
       this.http.get<Blockly.utils.toolbox.ToolboxDefinition>(
-        `/arduino/${path}/${libName}/toolbox.json`,
+        `arduino/${path}/${libName}/toolbox.json`,
         { responseType: 'json' },
       ),
     );
     if (toolbox) this.loadLibToolbox(toolbox);
-    this.loadLibGenerator(`/arduino/${path}/${libName}/generator.js`);
+    this.loadLibGenerator(`arduino/${path}/${libName}/generator.js`);
   }
 
   loadLibBlocks(blocks) {

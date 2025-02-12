@@ -1,7 +1,7 @@
 {
   "kind": "category",
   "name": "Math",
-  "icon": "fa-light fa-books",
+  "icon": "fa-light fa-calculator",
   "contents": [
     {
       "kind": "block",

@@ -2,8 +2,9 @@ body {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  overflow: hidden;
   font-family: "MiSans Regular", sans-serif;
+  overflow: hidden;
+  background: transparent !important;
 }
 
 .ccenter {
@@ -12,13 +13,13 @@ body {
   align-items: center;
 }
 
-@font-face {
-  font-family: "MiSans Regular";
-  src: url("/fonts/MiSans-Regular.woff2") format("woff2");
-  font-display: swap;
-}
+// @font-face {
+//   font-family: "MiSans Regular";
+//   src: url("/fonts/MiSans-Regular.woff2") format("woff2");
+//   font-display: swap;
+// }
 
-.btn{
+.btn {
   cursor: pointer;
 }
 

@@ -8,6 +8,8 @@ import { BlocklyService } from '../../blockly/blockly.service';
 
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
+import { ProjectService } from '../../services/project.service';
+import { WindowService } from '../../services/window.service';
 
 @Component({
   selector: 'app-header',
@@ -21,11 +23,16 @@ export class HeaderComponent {
 
   @ViewChild('menuBox') menuBox: ElementRef;
 
-  constructor
-  (private iwindowService: IwindowService,
+  get projectData() {
+    return this.projectService.projectData;
+  }
+
+  constructor(
+    private projectService: ProjectService,
+    private windowService: WindowService,
     private arduinoCliService: ArduinoCliService,
     private blocklyService: BlocklyService
-  ) {}
+  ) { }
 
   showMenu = false;
   openMenu() {
@@ -33,83 +40,76 @@ export class HeaderComponent {
     if (this.showMenu) {
       document.addEventListener('click', this.handleDocumentClick);
     } else {
-      document.removeEventListener('click', this.handleDocumentClick);
+      this.closeMenu();
     }
   }
 
+  closeMenu() {
+    this.showMenu = false;
+    document.removeEventListener('click', this.handleDocumentClick);
+  }
+
   handleDocumentClick = (event: MouseEvent) => {
-    if (
-      this.menuBox &&
-      !this.menuBox.nativeElement.contains(event.target as Node)
-    ) {
-      this.showMenu = false;
-      document.removeEventListener('click', this.handleDocumentClick);
+    if (this.menuBox && !this.menuBox.nativeElement.contains(event.target as Node)) {
+      this.closeMenu();
     }
   };
 
   onClick(btn) {
     // console.log(btn);
-    switch (btn.action) {
-      case 'open-aily-chat':
-        this.iwindowService.openWindow({
-          type: 'aily-chat',
-          title: 'AI助手',
-          size: { width: 600, height: 500 },
-          position: {
-            x: window.innerWidth / 2 - 300,
-            y: window.innerHeight / 2 - 200,
-          },
-        });
+    // switch (btn.action) {
+    //   case 'open-aily-chat':
+    //     this.iwindowService.openWindow({
+    //       type: 'aily-chat',
+    //       title: 'AI助手',
+    //       size: { width: 600, height: 500 },
+    //       position: {
+    //         x: window.innerWidth / 2 - 300,
+    //         y: window.innerHeight / 2 - 200,
+    //       },
+    //     });
+    //     break;
+    //   case 'open-code-viewer':
+    //     this.iwindowService.openWindow({
+    //       type: 'code-viewer',
+    //       title: '代码预览',
+    //       size: { width: 400, height: window.innerHeight - 65 - 200 },
+    //       position: { x: window.innerWidth - 400, y: 65 },
+    //     });
+    //     break;
+    //   case 'open-serial-monitor':
+    //     this.iwindowService.openWindow({
+    //       type: 'serial-monitor',
+    //       title: '串口助手',
+    //     });
+    //     // 显示串口图表
+    //     // setTimeout(() => {
+    //     //   this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
+    //     // }, 50);
+    //     break;
+    //   case 'open-terminal':
+    //     this.iwindowService.openWindow({
+    //       type: 'terminal',
+    //       title: '终端',
+    //       size: { width: window.innerWidth - 180, height: 200 },
+    //       position: { x: 180, y: window.innerHeight - 200 },
+    //     });
+    //     break;
+    // }
+  }
+
+  onMenuClick(item) {
+    switch (item.action) {
+      case 'open-window':
+        this.windowService.open(item.data);
         break;
-      case 'open-code-viewer':
-        this.iwindowService.openWindow({
-          type: 'code-viewer',
-          title: '代码预览',
-          size: { width: 400, height: window.innerHeight - 65 - 200 },
-          position: { x: window.innerWidth - 400, y: 65 },
-        });
+      default:
         break;
-      case 'open-serial-monitor':
-        this.iwindowService.openWindow({
-          type: 'serial-monitor',
-          title: '串口助手',
-        });
-        // 显示串口图表
-        // setTimeout(() => {
-        //   this.iwindowService.openWindow({ type: 'data-chart', title: '数据图表' });
-        // }, 50);
-        break;
-      case 'open-terminal':
-        this.iwindowService.openWindow({
-          type: 'terminal',
-          title: '终端',
-          size: { width: window.innerWidth - 180, height: 200 },
-          position: { x: 180, y: window.innerHeight - 200 },
-        });
-        break
-      case 'open-prj-builder':
-        this.iwindowService.openWindow({
-          type: 'terminal', title: '终端',
-          size: { width: window.innerWidth - 180, height: 200 },
-          position: { x: 180, y: window.innerHeight - 200 }
-        });
-        let code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-        this.arduinoCliService.build(code).then(() => {});
-        break
-      case 'open-prj-uploader':
-        this.iwindowService.openWindow({
-          type: 'terminal', title: '终端',
-          size: { width: window.innerWidth - 180, height: 200 },
-          position: { x: 180, y: window.innerHeight - 200 }
-        });
-        this.arduinoCliService.upload().then(() => {});
-        break
     }
+    this.closeMenu();
   }
 
   minimize() {
-    console.log(window['iWindow']);
-    
     window['iWindow'].minimize();
   }
 

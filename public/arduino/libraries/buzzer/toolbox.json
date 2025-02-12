@@ -1,6 +1,7 @@
 {
     "kind": "category",
     "name": "Buzzer",
+    "icon": "iconfont icon-buzzer",
     "contents": [
         {
             "kind": "block",

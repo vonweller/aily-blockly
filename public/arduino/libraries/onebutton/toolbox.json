@@ -1,6 +1,7 @@
 {
     "kind": "category",
     "name": "OneButton",
+    "icon":"fa-light fa-circle-dot",
     "contents": [
         {
             "kind": "block",

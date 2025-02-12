@@ -1,0 +1,27 @@
+<div class="sub-window-box">
+  <div class="header">
+    <div class="title">{{title}}</div>
+    <div class="win-btns">
+      @for(btn of winBtns;track btn){
+      @if(btn === 'minimize'){
+      <div class="btn ccenter minimize" (click)="minimize()">
+        <i class="fa-regular fa-minus"></i>
+      </div>
+      }
+      @if(btn === 'maximize'){
+      <div class="btn ccenter maximize" (click)="maximize()">
+        <i class="fa-regular fa-square"></i>
+      </div>
+      }
+      @if(btn === 'close'){
+      <div class="btn ccenter close" (click)="close()">
+        <i class="fa-regular fa-xmark"></i>
+      </div>
+      }
+      }
+    </div>
+  </div>
+  <div class="content">
+    <ng-content></ng-content>
+  </div>
+</div>
