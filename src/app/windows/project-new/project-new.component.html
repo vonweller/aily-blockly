@@ -21,7 +21,14 @@
             <div class="right">
                 @if(currentStep==0){
                 <div class="right-inner">
-                    test
+                    <div class="board-selector">
+                        <div class="board" *ngFor="let board of boards" (click)="selectBoard(board)">
+                            <div class="img-box">
+                                <img [src]="board.img" />
+                            </div>
+                            <div class="name">{{board.name}}</div>
+                        </div>
+                    </div>
                 </div>
                 }@else{
                 <div class="right-inner">
