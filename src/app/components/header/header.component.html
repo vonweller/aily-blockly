@@ -9,7 +9,9 @@
     Arduino UNO R4 WiFi (COM3)
     <div class="down ccenter"><i class="fa-regular fa-angle-down"></i></div>
   </div>
-  <div class="null-box"></div>
+  <div class="null-box" (click)="maximize()">
+    <!-- <div class="drag-box"></div> -->
+  </div>
   <div class="project-box ccenter">{{projectData.name}}</div>
   <div class="toolbox">
     @for (zone of headerBtns; track $index) {

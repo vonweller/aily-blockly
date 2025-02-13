@@ -1,8 +1,43 @@
 <div class="main-window-box">
   <app-header></app-header>
   <div class="mid-box">
-    <app-blockly-editor></app-blockly-editor>
-    <div *ngIf="showRbox" style="background: red;width: 300px;height: 100%;"></div>
+    <nz-layout>
+      <nz-content>
+        <div class="editor-box">
+          <app-blockly-editor></app-blockly-editor>
+        </div>
+        <div
+          nz-resizable
+          class="resizable-box"
+          [style.height.px]="bottomHeight"
+          [nzMaxHeight]="500"
+          [nzMinHeight]="50"
+          (nzResize)="onContentResize($event)"
+        >
+          <nz-resize-handle nzDirection="top" nzCursorType="grid">
+            <div class="content-resize-line"></div>
+          </nz-resize-handle>
+          <div class="bottom-box">
+            <app-terminal></app-terminal>
+          </div>
+        </div>
+      </nz-content>
+      <nz-sider
+        [nzWidth]="siderWidth"
+        nz-resizable
+        [nzMinWidth]="50"
+        [nzMaxWidth]="500"
+        (nzResize)="onSideResize($event)"
+      >
+        <nz-resize-handle nzDirection="left" nzCursorType="grid">
+          <div class="sider-resize-line"></div>
+        </nz-resize-handle>
+        <div class="right-box">
+          <app-aily-chat></app-aily-chat>
+        </div>
+      </nz-sider>
+    </nz-layout>
   </div>
-  <app-footer (click)="openRbox()"></app-footer>
+
+  <app-footer></app-footer>
 </div>

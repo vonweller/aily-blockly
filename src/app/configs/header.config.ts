@@ -98,7 +98,7 @@ export let HEADER_MENU = [
   {
     name: '设置',
     action: 'open-window',
-    data: { path: 'settings', alwaysOnTop: true },
+    data: { path: 'settings', alwaysOnTop: true, width: 700, height: 550 },
     icon: 'fa-light fa-gear',
   },
   {

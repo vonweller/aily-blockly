@@ -85,6 +85,12 @@ export class BlocklyComponent {
         media: 'blockly/media',
       });
 
+      // 监听容器尺寸变化，刷新Blockly工作区
+      const resizeObserver = new ResizeObserver(() => {
+        Blockly.svgResize(this.workspace);
+      });
+      resizeObserver.observe(this.blocklyDiv.nativeElement);
+
       // this.workspace.registerButtonCallback(
       //   'CREATE_NUMBER_VARIABLE',
       //   (button) => {

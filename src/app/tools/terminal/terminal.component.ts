@@ -1,4 +1,4 @@
-import { Component, ViewChild } from '@angular/core';
+import { Component, ElementRef, ViewChild } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -11,7 +11,7 @@ import { ElectronService } from '../../services/electron.service';
   styleUrl: './terminal.component.scss',
 })
 export class TerminalComponent {
-  @ViewChild('terminal') terminalEl: any;
+  @ViewChild('terminal') terminalEl: ElementRef;
 
   terminal;
   fitAddon;
@@ -32,7 +32,6 @@ export class TerminalComponent {
     this.clipboardAddon = new ClipboardAddon();
     this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.loadAddon(this.fitAddon);
-    //
 
     this.terminal.write('> ');
     this.terminal.onData((data) => {

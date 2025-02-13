@@ -1,16 +1,18 @@
+$footer-height: 30px;
+$footer-inner-height: 28px;
+
 .footer-box {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  height: 35px;
+  height: $footer-height;
   background: #2b2d30;
   border-top: 2px solid #222427;
-  // padding-left: 12px;
 }
 
 .btn {
-  width: 35px;
-  height: 35px;
+  width: $footer-inner-height;
+  height:$footer-inner-height;
 
   &:hover {
     background: #3b3d40;
@@ -24,8 +26,8 @@
   align-items: center;
 
   .loading {
-    width: 35px;
-    height: 35px;
+    width: $footer-inner-height;
+    height: $footer-inner-height;
     .fa-loader {
       animation: rotate45 1s steps(8, end) infinite;
     }

@@ -1,10 +1,14 @@
-.terminal-box{
-    height: 100%;
-    width: 100%;
-    position: absolute;
+.terminal-box {
+  height: 100%;
+  width: 100%;
 
-    >div{
-        height: 100%;
-        width: 100%; 
+  ::ng-deep {
+    .terminal {
+      height: 100%;
     }
+
+    .xterm {
+      padding: 10px;
+    }
+  }
 }
