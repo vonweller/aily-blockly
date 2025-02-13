@@ -9,7 +9,7 @@ import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { ToolContainerComponent } from '../components/tool-container/tool-container.component';
 import { GuideComponent } from '../components/guide/guide.component';
-import { ToolContainerService } from '../components/tool-container/tool-container.service';
+import { UiService } from '../services/ui.service';
 
 @Component({
   selector: 'app-main-window',
@@ -29,32 +29,40 @@ import { ToolContainerService } from '../components/tool-container/tool-containe
   styleUrl: './main-window.component.scss',
 })
 export class MainWindowComponent {
-  constructor(
-    private toolContainerService: ToolContainerService
-  ) {}
-
-
-  ngAfterViewInit(): void {
-    this.toolContainerService.actionSubject.subscribe((action: string) => {
-      console.log(action);
-    });
-  }
-
   showRbox = false;
   showBbox = false;
 
-  openRbox() {
-    this.showRbox = !this.showRbox;
-    setTimeout(() => {
-      // this.cd.detectChanges();
-    }, 100);
+  constructor(
+    private uiService: UiService
+  ) { }
+
+  ngAfterViewInit(): void {
+    this.uiService.actionSubject.subscribe((e: any) => {
+      console.log(e);
+      switch (e.type) {
+        case 'tool':
+          if (e.data === 'terminal') {
+            if (e.action === 'open') {
+              this.showBbox = true;
+            } else {
+              this.showBbox = false;
+            }
+          } else {
+            if (e.action === 'open') {
+              this.showRbox = true;
+            } else {
+              // this.showBbox = false;
+            }
+          }
+          break;
+        default:
+          break;
+      }
+    });
   }
 
-  openBbox() {
-    this.showBbox = !this.showBbox;
-    setTimeout(() => {
-      // this.cd.detectChanges();
-    }, 100);
+  closeRightBox() {
+    this.showRbox = false;
   }
 
   bottomHeight = 210;

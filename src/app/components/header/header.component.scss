@@ -41,12 +41,6 @@ $header-inner-height: 38px;
     flex-grow: 1;
     height: 100%;
     -webkit-app-region: drag;
-    // pointer-events: auto;
-    // .drag-box{
-    //   -webkit-app-region: drag;
-    //   height: 100%;
-    //   width: 100%;
-    // }
   }
 
   .project-box {
@@ -89,6 +83,11 @@ $header-inner-height: 38px;
     }
 
     &:hover {
+      opacity: 1;
+    }
+
+    &.selected{
+      color: #fff;
       opacity: 1;
     }
   }

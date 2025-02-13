@@ -18,7 +18,7 @@
     <div class="zone ccenter">
       @for (btn of zone; track $index) {
       <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name }}" (click)="onClick(btn)"
-        [ngStyle]="{ color: btn.color ? btn.color : '' }">
+        [ngStyle]="{ color: btn.color ? btn.color : '' }" [ngClass]="{ selected: isOpenTool(btn) }">
         <i class="{{ btn.icon }}"></i>
         @if (btn.more) {
         <div class="more ccenter">{{btn.more}}</div>

@@ -1,6 +1,6 @@
-import { Component, Output } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
-import { ToolContainerService } from './tool-container.service';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-tool-container',
@@ -9,15 +9,19 @@ import { ToolContainerService } from './tool-container.service';
   styleUrl: './tool-container.component.scss',
 })
 export class ToolContainerComponent {
-  @Output() showRbox = false;
+  @Input() title: string;
 
-  constructor(private toolContainerService: ToolContainerService) {}
+  @Output() closeEvent = new EventEmitter();
+
+  constructor(
+    private uiService: UiService
+  ) { }
 
   trash() {
-    this.toolContainerService.actionSubject.next('trash');
+    this.uiService.clearTerminal();
   }
 
   close() {
-    this.toolContainerService.actionSubject.next('close');
+    this.closeEvent.emit();
   }
 }
