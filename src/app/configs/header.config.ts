@@ -45,7 +45,7 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
       action: 'more',
       icon: 'fa-regular fa-ellipsis-vertical',
     },
-  ]
+  ],
 ];
 
 interface IHeaderMenuItem {
@@ -61,7 +61,7 @@ export let HEADER_MENU = [
   {
     name: '新建项目',
     action: 'open-window',
-    data: { path: 'project-new', alwaysOnTop: true },
+    data: { path: 'project-new', alwaysOnTop: true, width: 700, height: 550 },
     icon: 'fa-light fa-file',
   },
   {
@@ -98,7 +98,7 @@ export let HEADER_MENU = [
   {
     name: '设置',
     action: 'open-window',
-    path: 'settings',
+    data: { path: 'settings', alwaysOnTop: true },
     icon: 'fa-light fa-gear',
   },
   {
