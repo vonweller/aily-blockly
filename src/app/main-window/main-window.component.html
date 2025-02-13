@@ -1,9 +1,10 @@
 <div class="main-window-box">
   <app-header></app-header>
-  <div class="mid-box">
+  <div class="content-box">
     <nz-layout>
       <nz-content>
-        <div class="editor-box">
+        <div class="middle-box">
+          <!-- <app-guide></app-guide> -->
           <app-blockly-editor></app-blockly-editor>
         </div>
         <div
@@ -18,7 +19,9 @@
             <div class="content-resize-line"></div>
           </nz-resize-handle>
           <div class="bottom-box">
-            <app-terminal></app-terminal>
+            <app-tool-container>
+              <app-terminal></app-terminal>
+            </app-tool-container>
           </div>
         </div>
       </nz-content>

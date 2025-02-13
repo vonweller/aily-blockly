@@ -7,6 +7,9 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
+import { ToolContainerComponent } from '../components/tool-container/tool-container.component';
+import { GuideComponent } from '../components/guide/guide.component';
+import { ToolContainerService } from '../components/tool-container/tool-container.service';
 
 @Component({
   selector: 'app-main-window',
@@ -18,12 +21,25 @@ import { TerminalComponent } from '../tools/terminal/terminal.component';
     NzLayoutModule,
     NzResizableModule,
     AilyChatComponent,
-    TerminalComponent
+    TerminalComponent,
+    ToolContainerComponent,
+    GuideComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
 })
 export class MainWindowComponent {
+  constructor(
+    private toolContainerService: ToolContainerService
+  ) {}
+
+
+  ngAfterViewInit(): void {
+    this.toolContainerService.actionSubject.subscribe((action: string) => {
+      console.log(action);
+    });
+  }
+
   showRbox = false;
   showBbox = false;
 

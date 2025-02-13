@@ -6,7 +6,7 @@
   border-radius: 5px;
   overflow: hidden;
 
-  .mid-box {
+  .content-box {
     height: calc(100vh - 70px);
     width: 100%;
     position: relative;
@@ -18,9 +18,22 @@ app-blockly-editor {
   height: 100%;
 }
 
+.middle-box{
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
 .bottom-box {
   width: 100%;
   height: 100%;
+  position: relative;
+}
+
+.right-box{
+  width: 100%;
+  height: 100%;
+  position: relative;
 }
 
 nz-layout {
@@ -36,11 +49,6 @@ nz-layout {
   }
 }
 
-nz-sider {
-  background: #ff6a6a;
-  color: #fff;
-}
-
 nz-sider.nz-resizable-resizing {
   transition: none;
 }
@@ -48,16 +56,10 @@ nz-sider.nz-resizable-resizing {
 nz-content {
   display: flex;
   flex-direction: column;
-  background: #ff6a6a;
-  color: #fff;
 }
 
 nz-content > div {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
 }
 
 nz-content .resizable-box {
@@ -75,11 +77,11 @@ nz-header,
 .sider-resize-line {
   height: 100%;
   width: 5px;
-  border-right: 1px solid #e8e8e8;
+  border-right: 2px solid #222427;
 }
 
 .content-resize-line {
   width: 100%;
   height: 5px;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 2px solid #222427;
 }
