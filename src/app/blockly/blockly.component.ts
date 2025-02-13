@@ -82,6 +82,7 @@ export class BlocklyComponent {
           colour: '#ccc',
           snap: true,
         },
+        media: 'blockly/media',
       });
 
       // this.workspace.registerButtonCallback(
