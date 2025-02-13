@@ -54,12 +54,38 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   subWindow: {
     open: (options) => ipcRenderer.send("window-open", options),
+    close: () => ipcRenderer.send("window-close"),
   },
   project: {
-    new: () => ipcRenderer.invoke("project-new"),
+    new: (data) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer.invoke("project-new", data)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
     open: (path) => ipcRenderer.invoke("project-open", path),
     save: () => ipcRenderer.invoke("project-save"),
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
+    getProjectData: () => {
+      return window["projectData"] || {
+        name: 'new project',
+        path: '',
+        author: '',
+        description: '',
+        board: '',
+        type: 'web',
+        framework: 'angular',
+        version: '1.0.0',
+      };
+    },
+    setProjectData: (data) => {
+      window["projectData"] = data;
+    },
+  },
+  package: {
+    init: (data) => ipcRenderer.invoke("package-init", data),
+    install: (data) => ipcRenderer.invoke("package-install", data),
   },
   builder: {
     init: (data) => {
@@ -75,5 +101,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
+  tester: {
+    send: (data) => {
+      console.log("tester-send: ", data);
+      ipcRenderer.send("tester-send", data)},
+  }
 });
 

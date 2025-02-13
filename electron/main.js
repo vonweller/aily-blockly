@@ -4,6 +4,8 @@ const pty = require("@lydell/node-pty");
 
 const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./shell");
 const {installPackageByArduinoCli} = require("./board");
+const { createProject } = require("./project");
+const { installPackage, initNpmRegistry } = require("./package");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -145,10 +147,14 @@ ipcMain.handle("select-folder", async (event, data) => {
   return result.filePaths[0];
 });
 
-ipcMain.handle("project-new", (event) => {
-  const projectPath = createTemporaryProject();
-  event.returnValue = projectPath;
-  console.log("project-new path", projectPath);
+ipcMain.handle("project-new", async (event, data) => {
+  try {
+    const projectPath = createProject(data);
+    return { success: true, data: projectPath };
+  } catch (error) {
+    console.error("project-new error: ", error);
+    return { success: false };
+  }
 });
 
 ipcMain.handle("builder-init", async (event, data) => {
@@ -210,6 +216,26 @@ ipcMain.handle("uploader-upload", async (event, data) => {
     return { success: true };
   } catch (error) {
     console.error("uploader-upload error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("package-init", async (event, data) => {
+  try {
+    initNpmRegistry();
+    return { success: true };
+  } catch (error) {
+    console.error("package-init error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("package-install", async (event, data) => {
+  try {
+    await installPackage(data.prjPath, data?.package);
+    return { success: true };
+  } catch (error) {
+    console.error("package-install error: ", error);
     return { success: false };
   }
 });

@@ -161,7 +161,7 @@ function arduinoCliBuilder(prjPath) {
         console.log("FQBN: ", builderJson.type);
         const arduinoCli = spawn(
             cliPath, 
-            ['compile', '-b', builderJson.type, builderJson.sketchPath, '--config-file', builderJson.cliYamlPath, '--output-dir', builderJson.compilerOutput]);
+            ['compile', '-b', builderJson.type, builderJson.sketchPath, '--config-file', builderJson.cliYamlPath, '--output-dir', builderJson.compilerOutput, '--log-level', 'trace']);
         arduinoCli.stdout.on('data', (data) => {
             console.log(`stdout: ${data}`);
         });
