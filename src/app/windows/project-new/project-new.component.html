@@ -16,18 +16,21 @@
                     </nz-steps>
                     <ng-template #iconTemplate><i class="fa-duotone fa-solid fa-spinner-third"></i></ng-template>
                 </div>
-
             </div>
             <div class="right">
                 @if(currentStep==0){
                 <div class="right-inner">
                     <div class="board-selector">
-                        <div class="board" *ngFor="let board of boards" (click)="selectBoard(board)">
+                        <div class="board ccenter btn" [ngClass]="{'selected':currentBoard==board }" *ngFor="let board of boards" (click)="selectBoard(board)">
                             <div class="img-box">
                                 <img [src]="board.img" />
                             </div>
                             <div class="name">{{board.name}}</div>
                         </div>
+                    </div>
+                    <div class="desc-box">
+                        <div class="title">开发板介绍</div>
+                        <div class="content">{{currentBoard.desc}}</div>
                     </div>
                 </div>
                 }@else{
