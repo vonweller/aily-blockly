@@ -17,5 +17,9 @@ export const routes: Routes = [
     {
         path: "project-new",
         loadComponent: () => import('./windows/project-new/project-new.component').then(m => m.ProjectNewComponent)
+    },
+    {
+        path: "settings",
+        loadComponent: () => import('./windows/settings/settings.component').then(m => m.SettingsComponent)
     }
 ];

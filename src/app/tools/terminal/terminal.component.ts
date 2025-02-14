@@ -1,24 +1,33 @@
-import { Component, ViewChild } from '@angular/core';
+import { Component, ElementRef, ViewChild } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { ElectronService } from '../../services/electron.service';
+import { UiService } from '../../services/ui.service';
+import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 
 @Component({
   selector: 'app-terminal',
-  imports: [],
+  imports: [ToolContainerComponent],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
 export class TerminalComponent {
-  @ViewChild('terminal') terminalEl: any;
+  @ViewChild('terminal') terminalEl: ElementRef;
 
   terminal;
   fitAddon;
   clipboardAddon;
   command: string = '';
 
-  constructor(private electronService: ElectronService) {}
+  constructor(
+    private electronService: ElectronService,
+    private uiService: UiService
+  ) { }
+
+  close() {
+    this.uiService.closeTool('terminal');
+  }
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal();
@@ -32,7 +41,6 @@ export class TerminalComponent {
     this.clipboardAddon = new ClipboardAddon();
     this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.loadAddon(this.fitAddon);
-    //
 
     this.terminal.write('> ');
     this.terminal.onData((data) => {

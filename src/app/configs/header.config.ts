@@ -2,13 +2,13 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
   [
     {
       name: '编译',
-      action: 'open-prj-builder',
+      data: { type: 'cmd', data: 'compile' },
       icon: 'fa-light fa-arrows-rotate',
       color: '#34a5ff',
     },
     {
       name: '上传',
-      action: 'open-prj-uploader',
+      data: { type: 'cmd', data: 'upload' },
       icon: 'fa-light fa-play',
       color: '#009d12',
     },
@@ -16,43 +16,39 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
   [
     {
       name: '查看代码',
-      action: 'open-code-viewer',
+      data: { type: 'tool', data: "code-viewer" },
       icon: 'fa-light fa-file-code',
     },
     {
       name: '串口工具',
-      action: 'open-serial-monitor',
+      data: { type: 'tool', data: "serial-monitor" },
       icon: 'fa-light fa-monitor-waveform',
     },
     {
       name: '终端',
-      action: 'open-terminal',
+      data: { type: 'tool', data: "terminal" },
       icon: 'fa-light fa-rectangle-terminal',
     },
     {
-      name: '课程',
-      action: 'Classroom_open',
-      icon: 'fa-light fa-graduation-cap',
-    },
-    {
       name: 'AI',
-      action: 'Setting_open',
+      data: { type: 'tool', data: "ai-chat" },
       icon: 'fa-regular fa-star-christmas',
       more: 'AI',
     },
-    {
-      name: '更多',
-      action: 'more',
-      icon: 'fa-regular fa-ellipsis-vertical',
-    },
-  ]
+    // {
+    //   name: '更多',
+    //   type: 'more',
+    //   icon: 'fa-regular fa-ellipsis-vertical',
+    // },
+  ],
 ];
 
 interface IHeaderMenuItem {
   name: string;
-  action: string;
-  data?: string;
-  icon: string;
+  action?: string;
+  type?: string;
+  data?: any;
+  icon?: string;
   color?: string;
   more?: string;
 }
@@ -60,8 +56,7 @@ interface IHeaderMenuItem {
 export let HEADER_MENU = [
   {
     name: '新建项目',
-    action: 'open-window',
-    data: { path: 'project-new', alwaysOnTop: true },
+    data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 700, height: 550 },
     icon: 'fa-light fa-file',
   },
   {
@@ -98,7 +93,7 @@ export let HEADER_MENU = [
   {
     name: '设置',
     action: 'open-window',
-    path: 'settings',
+    data: { type: 'window', path: 'settings', alwaysOnTop: true, width: 700, height: 550 },
     icon: 'fa-light fa-gear',
   },
   {

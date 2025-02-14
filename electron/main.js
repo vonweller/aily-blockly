@@ -92,6 +92,8 @@ ipcMain.on("window-open", (event, data) => {
     autoHideMenuBar: true,
     transparent: true,
     alwaysOnTop: data.alwaysOnTop ? data.alwaysOnTop : false,
+    width: data.width ? data.width : 800,
+    height: data.height ? data.height : 600,
     webPreferences: {
       nodeIntegration: true,
       webSecurity: false,
