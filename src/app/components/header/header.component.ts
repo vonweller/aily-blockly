@@ -110,6 +110,18 @@ export class HeaderComponent {
       case 'open-window':
         this.windowService.open(item.data);
         break;
+      case 'project-open':
+        // TODO 传入路径
+        const path = 'C:\\Users\\stao\\Documents\\aily-project\\ailyPrj9'
+        this.projectService.project_open(path).then((res) => {
+          if (res) {
+            console.log('打开项目成功');
+            // TODO 加载对应的blockly.json文件
+          } else {
+            console.log('打开项目失败');
+          }
+        });
+        break;
       default:
         break;
     }

@@ -88,7 +88,34 @@ export class ProjectService {
   project_save() {}
 
   // 打开项目
-  project_open() {}
+  async project_open(path) {
+    const pathExist = window['path'].isExists(path);
+    if (!pathExist) {
+      console.error('path not exist: ', path);
+      return false;
+    }
+
+    // 读取项目下得package.json
+    const packageJsonPath = path + '/package.json';
+    const packageJsonContent = window['file'].readSync(packageJsonPath);
+    if (!packageJsonContent) {
+      console.error('package.json not exist: ', packageJsonPath);
+      return false;
+    }
+
+    this.projectData = JSON.parse(packageJsonContent);
+    this.currentProject = path;
+
+    // 判断项目目录下是否有node_modules
+    const nodeModulesPath = this.currentProject + '/node_modules';
+    const nodeModulesExist = window['path'].isExists(nodeModulesPath);
+    if (!nodeModulesExist) {
+      console.log('node_modules not exist, install dependencies');
+      await this.project_install(this.currentProject, this.projectData.board);
+    }
+
+    return true;
+  }
 
   // 另存为项目
   project_save_as() {}

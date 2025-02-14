@@ -104,10 +104,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
-  tester: {
-    send: (data) => {
-      console.log("tester-send: ", data);
-      ipcRenderer.send("tester-send", data)},
+  file: {
+    readSync: (path) => require("fs").readFileSync(path, "utf8"),
   }
 });
 
