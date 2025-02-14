@@ -10,6 +10,7 @@ import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { ToolContainerComponent } from '../components/tool-container/tool-container.component';
 import { GuideComponent } from '../components/guide/guide.component';
 import { UiService } from '../services/ui.service';
+import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 
 @Component({
   selector: 'app-main-window',
@@ -24,6 +25,7 @@ import { UiService } from '../services/ui.service';
     TerminalComponent,
     ToolContainerComponent,
     GuideComponent,
+    SerialMonitorComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
