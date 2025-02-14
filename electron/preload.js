@@ -16,7 +16,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
         require("fs").mkdirSync(path, { recursive: true });
       }
       return path;
-    }
+    },
+    getAppDataPath: () => {
+      let home = require("os").homedir();
+      let path;
+      if (process.platform === "win32") {
+        path = home + "\\AppData\\Roaming\\aily-project";
+      } else if (process.platform === "darwin") {
+        path = home + "/Library/Application Support/aily-project";
+      } else {
+        path = home + "/.config/aily-project";
+      }
+      if (!require("fs").existsSync(path)) {
+        require("fs").mkdirSync(path, { recursive: true });
+      }
+      return path;
+    },
+    isExists: (path) => { return require("fs").existsSync(path) },
   },
   versions: () => process.versions,
   SerialPort: {
@@ -67,21 +83,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     open: (path) => ipcRenderer.invoke("project-open", path),
     save: () => ipcRenderer.invoke("project-save"),
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
-    getProjectData: () => {
-      return window["projectData"] || {
-        name: 'new project',
-        path: '',
-        author: '',
-        description: '',
-        board: '',
-        type: 'web',
-        framework: 'angular',
-        version: '1.0.0',
-      };
-    },
-    setProjectData: (data) => {
-      window["projectData"] = data;
-    },
+    update: (data) => ipcRenderer.send("project-update", data),
+    newTmp: () => ipcRenderer.invoke("project-newTmp"),
   },
   package: {
     init: (data) => ipcRenderer.invoke("package-init", data),

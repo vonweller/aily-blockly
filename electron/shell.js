@@ -124,13 +124,13 @@ function genBuilderJson(data, prjPath) {
         "sketchPath": data.sketchPath,
     }
 
-    const builderJsonPath = path.join(prjPath, "builder.json");
+    const builderJsonPath = path.join(prjPath, ".builder.json");
     fs.writeFileSync(builderJsonPath, JSON.stringify(builderJson, null, 2));
 }
 
 function arduinoCodeGen(code, prjPath) {
     // 读取prjPath下的builder.json文件
-    const builderJsonPath = path.join(prjPath, "builder.json");
+    const builderJsonPath = path.join(prjPath, ".builder.json");
     if (!fs.existsSync(builderJsonPath)) {
         throw new Error("builder.json not found");
     }
@@ -150,7 +150,7 @@ function arduinoCliBuilder(prjPath) {
     const cliPath = '.\\child\\arduino-cli.exe';
 
     // 读取prjPath下的builder.json文件
-    const builderJsonPath = path.join(prjPath, "builder.json");
+    const builderJsonPath = path.join(prjPath, ".builder.json");
     if (!fs.existsSync(builderJsonPath)) {
         throw new Error("builder.json not found");
     }
@@ -183,7 +183,7 @@ function arduinoCliUploader(port, prjPath) {
     const cliPath = '.\\child\\arduino-cli.exe';
 
     // 读取prjPath下的builder.json文件
-    const builderJsonPath = path.join(prjPath, "builder.json");
+    const builderJsonPath = path.join(prjPath, ".builder.json");
     if (!fs.existsSync(builderJsonPath)) {
         throw new Error("builder.json not found");
     }

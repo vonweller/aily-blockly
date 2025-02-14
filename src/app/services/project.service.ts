@@ -19,22 +19,26 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
-  // projectData: ProjectData = {
-  //   name: 'new project',
-  //   path: '',
-  //   author: '',
-  //   description: '',
-  //   board: '',
-  //   type: 'web',
-  //   framework: 'angular',
-  //   version: '1.0.0',
-  // };
-
-  projectData: ProjectData = window['project'].getProjectData();
+  appDataPath = window['path'].getAppDataPath();
+  projectData: ProjectData = {
+    name: 'new project',
+    path: '',
+    author: '',
+    description: '',
+    board: '',
+    type: 'web',
+    framework: 'angular',
+    version: '1.0.0',
+  };
 
   currentProject: string;
 
   constructor(private http: HttpClient) {
+    window['ipcRenderer'].on('project-update', (event, newData: ProjectData) => {
+      console.log('收到更新的 projectData: ', newData);
+      this.projectData = newData;
+      this.currentProject = this.projectData.path + '/' + this.projectData.name;
+    });
   }
 
   /**
@@ -63,6 +67,11 @@ export class ProjectService {
     });
   }
 
+  async project_exist(data) {
+    const prjPath = data.path + '/' + data.name;
+    return window["path"].isExists(prjPath);
+  }
+
   // 新建项目
   async project_new(data) {
     const newResult = await window['project'].new(data);
@@ -71,17 +80,8 @@ export class ProjectService {
       return false;
     }
     console.log('new project success: ', newResult.data);
-    
-    const prjPath = newResult.data;
 
-    // 依赖安装
-    const installResult = await window['package'].install({ prjPath, package: data.board });
-    if (!installResult.success) {
-      console.error('install failed: ', installResult);
-      return false;
-    }
-
-    return prjPath;
+    window['project'].update({ data });
   }
 
   // 保存项目
@@ -92,4 +92,19 @@ export class ProjectService {
 
   // 另存为项目
   project_save_as() {}
+
+  // 安装依赖
+  async project_install(prjPath, board) {
+    if (!board) {
+      console.error('board is empty');
+      return false;
+    }
+
+    // TODO 状态反馈
+    const installResult = await window['package'].install({ prjPath, package: board });
+    if (!installResult.success) {
+      console.error('install failed: ', installResult);
+      return false;
+    }
+  }
 }

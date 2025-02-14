@@ -94,7 +94,30 @@ export class ProjectNewComponent {
   }
 
   async createProject() {
+    // 判断是否有同名项目
+    const isExist = await this.projectService.project_exist(this.projectData);
+    console.log('isExist: ', isExist);
+    if (isExist) {
+      console.log('项目已存在');
+      // TODO 反馈项目已存在
+      return;
+    }
+
+    console.log('开始创建项目');
+
     this.currentStep = 2;
-    const prjPath = await this.projectService.project_new(this.projectData);
+    await this.projectService.project_new(this.projectData);
+    await this.projectService.project_install(
+      this.projectData.path + '/' + this.projectData.name,
+      this.projectData.board
+    );
+
+    console.log('项目创建成功');
+    this.currentStep = 3;
+
+    setTimeout(() => {
+      console.log('关闭窗口');
+      window['subWindow'].close();
+    }, 1000);
   }
 }

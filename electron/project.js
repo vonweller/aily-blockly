@@ -41,22 +41,22 @@ function createTemporaryProject() {
   // 创建临时文件夹
   fs.mkdirSync(projectFolderPath, { recursive: true });
 
-  // 构造 package.json 内容
-  const packageJson = {
-    name: "new-project",
-    version: "1.0.0",
-    description: "aily blockly project",
-    main: "index.js",
-    scripts: {
-      start: "electron .",
-    },
-    author: "",
-    license: "ISC",
-  };
+  // // 构造 package.json 内容
+  // const packageJson = {
+  //   name: "new-project",
+  //   version: "1.0.0",
+  //   description: "aily blockly project",
+  //   main: "index.js",
+  //   scripts: {
+  //     start: "electron .",
+  //   },
+  //   author: "",
+  //   license: "ISC",
+  // };
 
-  // 写入 package.json 文件
-  const packageJsonPath = path.join(projectFolderPath, "package.json");
-  fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+  // // 写入 package.json 文件
+  // const packageJsonPath = path.join(projectFolderPath, "package.json");
+  // fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
   console.log(`临时项目文件夹已创建于: ${projectFolderPath}`);
   return projectFolderPath;

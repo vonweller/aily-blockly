@@ -15,11 +15,11 @@ export class BuilderService {
 
   async build() {
     console.log('start build');
-    // 生成arduino代码以及组织需要的依赖
-    // TODO 获取APPData路径
-    const appDataPath = "D:\\temp\\board"
-    // TODO 获取当前项目路径
-    const prjPath = "D:\\temp\\ailyPrj"
+    // 获取APPData路径（主要用于存放包缓存）
+    const appDataPath = this.projectService.appDataPath
+    
+    // 获取当前项目路径
+    const prjPath = this.projectService.currentProject
 
     const initResult = await window["builder"].init({prjPath, appDataPath})
     if (!initResult.success) {

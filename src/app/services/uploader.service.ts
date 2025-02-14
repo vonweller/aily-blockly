@@ -1,17 +1,20 @@
 import { Injectable } from '@angular/core';
+import { ProjectService } from './project.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class UploaderService {
 
-  constructor() { }
+  constructor(
+    private projectService: ProjectService
+  ) { }
 
   async upload() {
     console.log('start upload');
     // 上传
-    // TODO 获取当前项目路径
-    const prjPath = "D:\\temp\\ailyPrj"
+    // 获取当前项目路径
+    const prjPath = this.projectService.currentProject
 
     // TODO 获取port
     const port = "COM3"

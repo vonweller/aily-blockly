@@ -32,7 +32,8 @@ export class HeaderComponent {
     private iwindowService: IwindowService,
     private builderService: BuilderService,
     private uploaderService: UploaderService,
-  ) {}
+  ) {
+  }
 
   showMenu = false;
   openMenu() {

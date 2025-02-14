@@ -4,7 +4,7 @@ const pty = require("@lydell/node-pty");
 
 const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./shell");
 const {installPackageByArduinoCli} = require("./board");
-const { createProject } = require("./project");
+const { createProject, createTemporaryProject } = require("./project");
 const { installPackage, initNpmRegistry } = require("./package");
 
 const args = process.argv.slice(1);
@@ -157,6 +157,22 @@ ipcMain.handle("project-new", async (event, data) => {
   }
 });
 
+ipcMain.handle("project-newTmp", async (event, data) => {
+  try {
+    const projectPath = createTemporaryProject();
+    return { success: true, data: projectPath };
+  } catch (error) {
+    console.error("project-tmp error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.on('project-update', (event, data) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('project-update', data.data);
+  }
+});
+
 ipcMain.handle("builder-init", async (event, data) => {
   try {
     const deps = getDependencies(data.prjPath);
@@ -173,12 +189,15 @@ ipcMain.handle("builder-init", async (event, data) => {
       })
     );
 
+    // 临时文件夹路径
+    const tmpPath = createTemporaryProject();
+
     genBuilderJson({
        core, 
        cliYamlPath, 
        type: deps.boardConfList[0].type,
-       sketchPath: data.prjPath + '/mySketch',
-       compilerOutput: data.prjPath + '/output',
+       sketchPath: path.join(tmpPath, 'mySketch'),
+       compilerOutput: path.join(tmpPath, 'output'),
        compilerParam: deps.boardConfList[0].compilerParam ,
        uploadParam: deps.boardConfList[0].uploadParam,
       }, data.prjPath);
