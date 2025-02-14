@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       let home = require("os").homedir();
       let path;
       if (process.platform === "win32") {
-        path = home + "\\AppData\\Roaming\\aily-project";
+        path = home + "\\AppData\\Local\\aily-project";
       } else if (process.platform === "darwin") {
         path = home + "/Library/Application Support/aily-project";
       } else {
