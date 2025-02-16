@@ -9,23 +9,27 @@
     Arduino UNO R4 WiFi (COM3)
     <div class="down ccenter"><i class="fa-regular fa-angle-down"></i></div>
   </div>
-  <div class="null-box" (click)="maximize()">
-    <!-- <div class="drag-box"></div> -->
-  </div>
-  <div class="project-box ccenter">{{projectData.name}}</div>
+  <div class="null-box drag" (dblclick)="maximize()"></div>
+  <div class="project-box ccenter">{{ projectData.name }}</div>
   <div class="toolbox">
     @for (zone of headerBtns; track $index) {
-    <div class="zone ccenter">
-      @for (btn of zone; track $index) {
-      <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name }}" (click)="onClick(btn)"
-        [ngStyle]="{ color: btn.color ? btn.color : '' }" [ngClass]="{ selected: isOpenTool(btn) }">
-        <i class="{{ btn.icon }}"></i>
-        @if (btn.more) {
-        <div class="more ccenter">{{btn.more}}</div>
+      <div class="zone ccenter">
+        @for (btn of zone; track $index) {
+          <div
+            class="btn ccenter"
+            nz-tooltip
+            nzTooltipTitle="{{ btn.name }}"
+            (click)="onClick(btn)"
+            [ngStyle]="{ color: btn.color ? btn.color : '' }"
+            [ngClass]="{ selected: isOpenTool(btn) }"
+          >
+            <i class="{{ btn.icon }}"></i>
+            @if (btn.more) {
+              <div class="more ccenter">{{ btn.more }}</div>
+            }
+          </div>
         }
       </div>
-      }
-    </div>
     }
   </div>
   <div class="win-btns">
@@ -42,16 +46,16 @@
 </div>
 <!-- menu -->
 @if (showMenu) {
-<div class="menu-box" #menuBox>
-  @for (item of headerMenu; track $index) {
-  @if (item.sep) {
-  <div class="sep"></div>
-  } @else {
-  <div class="menu-item ccenter" (click)="onMenuClick(item)">
-    <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
-    <div class="text">{{ item.name }}</div>
+  <div class="menu-box" #menuBox>
+    @for (item of headerMenu; track $index) {
+      @if (item.sep) {
+        <div class="sep"></div>
+      } @else {
+        <div class="menu-item ccenter" (click)="onMenuClick(item)">
+          <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
+          <div class="text">{{ item.name }}</div>
+        </div>
+      }
+    }
   </div>
-  }
-  }
-</div>
 }

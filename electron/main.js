@@ -1,6 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
-const pty = require("@lydell/node-pty");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -51,32 +50,6 @@ app.on("activate", () => {
   if (mainWindow === null) {
     createWindow();
   }
-});
-
-// 终端相关(dev)
-const terminals = new Map();
-ipcMain.on("terminal-create", (event, args) => {
-  const shell = process.env[process.platform === "win32" ? "COMSPEC" : "SHELL"];
-  const ptyProcess = pty.spawn(shell, [], {
-    name: "xterm-color",
-    cols: 80,
-    rows: 30,
-    cwd: process.env.HOME,
-    env: process.env,
-  });
-
-  ptyProcess.on("data", (data) => {
-    mainWindow.webContents.send("terminal-data", data);
-  });
-
-  ipcMain.on("terminal-input", (event, input) => {
-    ptyProcess.write(input);
-  });
-
-  // 关闭终端
-  ipcMain.on("terminal-close", (event) => {
-    ptyProcess.kill();
-  });
 });
 
 // 多窗口相关(dev)

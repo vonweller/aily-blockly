@@ -4,11 +4,13 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { ElectronService } from '../../services/electron.service';
 import { UiService } from '../../services/ui.service';
-import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
+import { NzTabsModule } from 'ng-zorro-antd/tabs';
 
 @Component({
   selector: 'app-terminal',
-  imports: [ToolContainerComponent],
+  imports: [
+    NzTabsModule
+  ],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
@@ -27,6 +29,10 @@ export class TerminalComponent {
 
   close() {
     this.uiService.closeTool('terminal');
+  }
+
+  trash(){
+    
   }
 
   ngAfterViewInit(): void {

@@ -9,19 +9,31 @@ import { UiService } from '../../services/ui.service';
   styleUrl: './tool-container.component.scss',
 })
 export class ToolContainerComponent {
-  @Input() title: string;
+  @Input() title: string = '工具';
 
   @Output() closeEvent = new EventEmitter();
 
-  constructor(
-    private uiService: UiService
-  ) { }
+  @Output() copyEvent = new EventEmitter();
 
-  trash() {
-    this.uiService.clearTerminal();
-  }
+  @Output() trashEvent = new EventEmitter();
+
+  @Output() refreshEvent = new EventEmitter();
+
+  constructor(private uiService: UiService) {}
 
   close() {
     this.closeEvent.emit();
+  }
+
+  trash() {
+    this.trashEvent.emit();
+  }
+
+  refresh() {
+    this.refreshEvent.emit();
+  }
+
+  copy() {
+    this.copyEvent.emit();
   }
 }
