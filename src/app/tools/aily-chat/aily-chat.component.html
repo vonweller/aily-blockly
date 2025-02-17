@@ -1,7 +1,7 @@
 <app-tool-container [title]="'AI助手'">
   <div class="window-box">
-    <div class="dialog-list" #chatContainer>
-      <div class="chat-list" #chatList>
+    <div class="dialog-list sscroll" #chatContainer>
+      <div #chatList>
         @for (item of list; track item) {
           <aily-dialog [data]="item"></aily-dialog>
         }
