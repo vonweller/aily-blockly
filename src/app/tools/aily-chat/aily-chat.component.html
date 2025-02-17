@@ -14,8 +14,14 @@
         [nzAutosize]="{ minRows: 3, maxRows: 5 }"
         [(ngModel)]="inputValue"
       ></textarea>
-      <div class="btn ccenter">
-        <i class="fa-light fa-paper-plane" (click)="send()"></i>
+      <div class="btns">
+        <!-- <div class="btn ccenter">
+          <i class="fa-light fa-clock-rotate-left"></i>
+        </div> -->
+        <div class="btn ccenter">
+          <i class="fa-light fa-microphone"></i>
+        </div>
+        <button nz-button nzType="primary" (click)="send()">发送</button>
       </div>
     </div>
   </div>

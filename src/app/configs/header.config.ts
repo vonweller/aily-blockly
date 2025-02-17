@@ -3,7 +3,7 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
     {
       name: '编译',
       data: { type: 'cmd', data: 'compile' },
-      icon: 'fa-regular fa-arrows-rotate',
+      icon: 'fa-regular fa-circle-check',
       color: '#34a5ff',
     },
     {

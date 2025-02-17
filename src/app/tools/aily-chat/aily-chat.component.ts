@@ -1,14 +1,13 @@
 import { Component, ElementRef, ViewChild } from '@angular/core';
-import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
-import { InputBoxComponent } from './components/input-box/input-box.component';
 import { DialogComponent } from './components/dialog/dialog.component';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { NzButtonModule } from 'ng-zorro-antd/button';
 
 @Component({
   selector: 'app-aily-chat',
-  imports: [NzInputModule, FormsModule, DialogComponent],
+  imports: [NzInputModule, FormsModule, DialogComponent, NzButtonModule],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
 })
