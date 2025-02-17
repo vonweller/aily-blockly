@@ -26,10 +26,14 @@ export class HeaderComponent {
     return this.uiService.openToolList;
   }
 
+  get terminalIsOpen(){
+    return this.uiService.terminalIsOpen
+  }
+
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
-  ) { }
+  ) {}
 
   showMenu = false;
   openMenu() {
@@ -47,7 +51,10 @@ export class HeaderComponent {
   }
 
   handleDocumentClick = (event: MouseEvent) => {
-    if (this.menuBox && !this.menuBox.nativeElement.contains(event.target as Node)) {
+    if (
+      this.menuBox &&
+      !this.menuBox.nativeElement.contains(event.target as Node)
+    ) {
       this.closeMenu();
     }
   };
@@ -57,7 +64,9 @@ export class HeaderComponent {
   }
 
   isOpenTool(btn) {
-    if (btn.data && btn.data.data) {
+    if (btn.data.type == 'terminal') {
+      return this.terminalIsOpen
+    } else if (btn.data && btn.data.data) {
       return this.openToolList.indexOf(btn.data.data) !== -1;
     }
     return false;
@@ -75,6 +84,9 @@ export class HeaderComponent {
         break;
       case 'tool':
         this.uiService.turnTool(item.data);
+        break;
+      case 'terminal':
+        this.uiService.turnTerminal(item.data);
         break;
       case 'run-cmd':
         this.uiService.runCmd(item.data);

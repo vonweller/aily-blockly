@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild } from '@angular/core';
+import { Component, ElementRef, Input, ViewChild } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -8,13 +8,14 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 
 @Component({
   selector: 'app-terminal',
-  imports: [
-    NzTabsModule
-  ],
+  imports: [NzTabsModule],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
 export class TerminalComponent {
+  @Input() tab = 'default';
+  selectedTabIndex = 0;
+
   @ViewChild('terminal') terminalEl: ElementRef;
 
   terminal;
@@ -24,16 +25,14 @@ export class TerminalComponent {
 
   constructor(
     private electronService: ElectronService,
-    private uiService: UiService
-  ) { }
+    private uiService: UiService,
+  ) {}
 
   close() {
     this.uiService.closeTool('terminal');
   }
 
-  trash(){
-    
-  }
+  trash() {}
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal();
@@ -84,9 +83,7 @@ export class TerminalComponent {
     // });
   }
 
-  nodePtyInit() {
-
-  }
+  nodePtyInit() {}
 
   cloudPtyInit() {
     // 初始化云端工具

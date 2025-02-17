@@ -4,10 +4,17 @@ import { FormsModule } from '@angular/forms';
 import { DialogComponent } from './components/dialog/dialog.component';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { NzButtonModule } from 'ng-zorro-antd/button';
+import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 
 @Component({
   selector: 'app-aily-chat',
-  imports: [NzInputModule, FormsModule, DialogComponent, NzButtonModule],
+  imports: [
+    NzInputModule,
+    FormsModule,
+    DialogComponent,
+    NzButtonModule,
+    ToolContainerComponent,
+  ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
 })
@@ -134,11 +141,11 @@ export class AilyChatComponent {
 
     const segments = this.splitContent(content);
 
-    const contentList = [];
+    const contentList: any = [];
 
     const ruleView = /```blockly\s([\s\S]*?)\s```/;
     segments.forEach((match, index) => {
-      const exec = ruleView.exec(match);
+      const exec: any = ruleView.exec(match);
       if (exec) {
         try {
           const data = JSON.parse(exec[1]);
@@ -190,7 +197,7 @@ export class AilyChatComponent {
     }).then();
   }
 
-  splitContent(content) {
+  splitContent(content: any) {
     // 正则表达式，匹配```blockly到下一个```之间的内容
     const regex = /```blockly([\s\S]*?)```/g;
 
@@ -198,7 +205,7 @@ export class AilyChatComponent {
     const matches = content.match(regex);
 
     // 处理匹配结果，将每次```blockly前面的内容也作为一个分段
-    let segments = [];
+    let segments:any = [];
     let lastIndex = 0;
 
     if (matches) {

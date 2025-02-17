@@ -27,7 +27,7 @@ import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component'
     ToolContainerComponent,
     GuideComponent,
     SerialMonitorComponent,
-    CodeViewerComponent
+    CodeViewerComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -35,28 +35,34 @@ import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component'
 export class MainWindowComponent {
   showRbox = false;
   showBbox = false;
+  terminalTab = 'default';
 
-  constructor(
-    private uiService: UiService
-  ) { }
+  get topTool() {
+    return this.uiService.topTool;
+  }
+
+  constructor(private uiService: UiService) {}
 
   ngAfterViewInit(): void {
     this.uiService.actionSubject.subscribe((e: any) => {
       console.log(e);
+
       switch (e.type) {
         case 'tool':
-          if (e.data === 'terminal') {
-            if (e.action === 'open') {
-              this.showBbox = true;
-            } else {
-              this.showBbox = false;
-            }
+          if (e.action === 'open') {
+            this.showRbox = true;
           } else {
-            if (e.action === 'open') {
-              this.showRbox = true;
-            } else {
-              // this.showBbox = false;
+            if (this.topTool === null) {
+              this.showRbox = false;
             }
+          }
+          break;
+        case 'terminal':
+          if (e.action === 'open') {
+            this.showBbox = true;
+            this.terminalTab = e.data;
+          } else {
+            this.showBbox = false;
           }
           break;
         default:

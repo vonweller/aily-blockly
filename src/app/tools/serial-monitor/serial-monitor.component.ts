@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ElectronService } from '../../services/electron.service';
+import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 
 let SerialPort;
 
@@ -16,6 +17,7 @@ let SerialPort;
     NzInputModule,
     FormsModule,
     NzToolTipModule,
+    ToolContainerComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
