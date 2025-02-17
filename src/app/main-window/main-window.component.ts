@@ -11,6 +11,7 @@ import { ToolContainerComponent } from '../components/tool-container/tool-contai
 import { GuideComponent } from '../components/guide/guide.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
+import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
 
 @Component({
   selector: 'app-main-window',
@@ -25,7 +26,8 @@ import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.c
     TerminalComponent,
     ToolContainerComponent,
     GuideComponent,
-    SerialMonitorComponent
+    SerialMonitorComponent,
+    CodeViewerComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

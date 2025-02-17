@@ -10,6 +10,7 @@ $header-inner-height: 38px;
   width: 100%;
   background: #2b2d30;
   border-bottom: 2px solid #222427;
+  user-select: none;
 
   .menu {
     width: $header-inner-height;
@@ -40,7 +41,11 @@ $header-inner-height: 38px;
   .null-box {
     flex-grow: 1;
     height: 100%;
-    -webkit-app-region: drag;
+    position: relative;
+
+    &.drag {
+      -webkit-app-region: drag;
+    }
   }
 
   .project-box {
@@ -86,7 +91,7 @@ $header-inner-height: 38px;
       opacity: 1;
     }
 
-    &.selected{
+    &.selected {
       color: #fff;
       opacity: 1;
     }

@@ -8,6 +8,10 @@
   justify-content: space-between;
   height: 30px;
 
+  .title {
+    padding-left: 10px;
+  }
+
   .tool-btns {
     display: flex;
     .btn {
@@ -50,6 +54,24 @@ nz-tabset {
     .ant-tabs-tab-active {
       button {
         color: #fff !important;
+      }
+    }
+  }
+
+  &.ant-tabs-editable-card {
+    ::ng-deep {
+      button {
+        padding: 0 !important;
+        color: #a5a5a5;
+      }
+
+      .ant-tabs-tab {
+        padding: 8px;
+      }
+
+      .ant-tabs-tab-remove {
+        margin-right: -2px;
+        margin-left: 4px;
       }
     }
   }

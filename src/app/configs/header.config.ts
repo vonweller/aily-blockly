@@ -3,21 +3,26 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
     {
       name: '编译',
       data: { type: 'cmd', data: 'compile' },
-      icon: 'fa-light fa-arrows-rotate',
+      icon: 'fa-regular fa-arrows-rotate',
       color: '#34a5ff',
     },
     {
       name: '上传',
       data: { type: 'cmd', data: 'upload' },
-      icon: 'fa-light fa-play',
+      icon: 'fa-regular fa-play',
       color: '#009d12',
     },
   ],
   [
     {
+      name: '终端',
+      data: { type: 'tool', data: "terminal" },
+      icon: 'fa-light fa-rectangle-terminal',
+    },
+    {
       name: '查看代码',
       data: { type: 'tool', data: "code-viewer" },
-      icon: 'fa-light fa-file-code',
+      icon: 'fa-light fa-rectangle-code',
     },
     {
       name: '串口工具',
@@ -25,14 +30,9 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
       icon: 'fa-light fa-monitor-waveform',
     },
     {
-      name: '终端',
-      data: { type: 'tool', data: "terminal" },
-      icon: 'fa-light fa-rectangle-terminal',
-    },
-    {
       name: 'AI',
       data: { type: 'tool', data: "ai-chat" },
-      icon: 'fa-regular fa-star-christmas',
+      icon: 'fa-light fa-star-christmas',
       more: 'AI',
     },
     // {

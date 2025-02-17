@@ -1,4 +1,20 @@
-<app-tool-container (closeEvent)="close()">
-    <div class="terminal-box" #terminal>
+<div class="tool-container">
+  <div class="header">
+    <nz-tabset [nzSize]="'small'">
+      <nz-tab nzTitle="终端"></nz-tab>
+      <nz-tab nzTitle="编译"></nz-tab>
+      <nz-tab nzTitle="错误"></nz-tab>
+    </nz-tabset>
+    <div class="tool-btns">
+      <div class="btn ccenter" (click)="trash()">
+        <i class="fa-light fa-trash"></i>
+      </div>
+      <div class="btn ccenter" (click)="close()">
+        <i class="fa-light fa-xmark"></i>
+      </div>
     </div>
-</app-tool-container>
+  </div>
+  <div class="content">
+    <div class="terminal-box" #terminal></div>
+  </div>
+</div>
