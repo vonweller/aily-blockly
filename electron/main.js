@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
+const pty = require("@lydell/node-pty");
 
-const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./shell");
+const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./terminal");
 const {installPackageByArduinoCli} = require("./board");
 const { createProject, createTemporaryProject } = require("./project");
 const { installPackage, initNpmRegistry } = require("./package");
@@ -233,3 +234,40 @@ ipcMain.handle("package-install", async (event, data) => {
     return { success: false };
   }
 });
+
+ipcMain.on("terminal-data", async (event, data) => {
+  console.log("terminal-data: ", data);
+});
+
+// 终端相关(dev)
+const terminals = new Map();
+ipcMain.on("terminal-create", (event, args) => {
+  const shell = process.env[process.platform === "win32" ? "powershell.exe" : "bash"];
+  const ptyProcess = pty.spawn(shell, [], {
+    name: "xterm-color",
+    cols: args.cols,
+    rows: args.rows,
+    cwd: args.cwd || process.env.HOME,
+    env: process.env,
+  });
+
+  ptyProcess.on("data", (data) => {
+    console.log("ptyProcessData: ", data);
+    mainWindow.webContents.send("terminal-inc-data", data);
+  });
+
+  terminals[ptyProcess.pid] = ptyProcess;
+
+  ipcMain.on("terminal-to-pty", (event, input) => {
+    console.log("terminal-to-pty: ", input);
+    ptyProcess.write(input + '\r\n');
+  });
+
+  // 关闭终端
+  ipcMain.on("terminal-close", (event, pid) => {
+    console.log("pid: ", pid);
+    ptyProcess.kill();
+  });
+});
+
+

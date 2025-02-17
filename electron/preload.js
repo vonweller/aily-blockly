@@ -46,22 +46,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: () => process.platform === "linux",
   },
   terminal: {
-    init: (path) => {
-      const shell = process.platform === "win32" ? "powershell.exe" : "bash";
-      const terminal = pty.spawn(shell, [], {
-        name: "xterm-color",
-        cwd: path,
-      });
-      terminal.on("data", (data) => {
-        ipcRenderer.send("terminal-output", data);
-      });
-      ipcRenderer.on("terminal-input", (event, input) => {
-        terminal.write(input);
+    init: (data) => {
+      ipcRenderer.send("terminal-create", data);
+    },
+    onData: (callback) => {
+      ipcRenderer.on("terminal-inc-data", (event, data) => {
+        callback(data);
       });
     },
-    runScript: (scriptPath) => {
-      ipcRenderer.send("run-node-script", scriptPath);
-    },
+    sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
+    close: (pid) => ipcRenderer.send('terminal-close', pid)
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),

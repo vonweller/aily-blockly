@@ -4,7 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { ElectronService } from '../../services/electron.service';
 import { UiService } from '../../services/ui.service';
+import { ProjectService } from '../../services/project.service';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
+import { copyFileSync } from 'fs';
 
 @Component({
   selector: 'app-terminal',
@@ -21,14 +23,21 @@ export class TerminalComponent {
   fitAddon;
   clipboardAddon;
   command: string = '';
+  commandPrefix: string = '';
+  lastData: string = '';
+  dataBuffer: string = '';
+  dataTimeout: any;
+
 
   constructor(
     private electronService: ElectronService,
-    private uiService: UiService
+    private uiService: UiService,
+    private projectService: ProjectService
   ) { }
 
   close() {
     this.uiService.closeTool('terminal');
+    this.closeNodePty('test');
   }
 
   trash(){
@@ -37,7 +46,6 @@ export class TerminalComponent {
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal();
-    //
     this.fitAddon = new FitAddon();
     this.terminal.open(this.terminalEl.nativeElement);
     setTimeout(() => {
@@ -52,8 +60,9 @@ export class TerminalComponent {
     this.terminal.onData((data) => {
       switch (data) {
         case '\r': // Enter
-          this.terminal.write('\r\n');
+          // this.terminal.write('\r\n');
           this.sendCommand(this.command);
+          this.terminal.write('\r\n')
           this.command = '';
           break;
         case '\u007F': // Backspace (DEL)
@@ -73,22 +82,34 @@ export class TerminalComponent {
     } else {
       this.cloudPtyInit();
     }
+
+    window['terminal'].onData((data) => {
+      // 判断是否是命令行中的路径前缀
+      console.log("newData: ", data);
+      this.terminal.write(data);
+    })
   }
 
   sendCommand(command: string): void {
-    console.log(command);
-
-    // this.http.post('/api/execute', { command }).subscribe((response: any) => {
-    //   this.term.write(response.output + '\r\n');
-    //   this.term.write('Hello from \x1B[1;3;31mxterm.js\x1B[0m $ ');
-    // });
+    console.log("send command: ", command);
+    window['terminal'].sendInput(command);
   }
 
   nodePtyInit() {
-
+    console.log("currentPrj: ", this.projectService.currentProject)
+    // 初始化本地工具
+    window['terminal'].init({
+      cols: 90,
+      rows: 100,
+      cwd: this.projectService.currentProject
+    });
   }
 
   cloudPtyInit() {
     // 初始化云端工具
+  }
+
+  closeNodePty(pid) {
+    window['terminal'].close(pid);
   }
 }
