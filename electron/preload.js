@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -70,5 +70,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onDisconnected: (callback) => ipcRenderer.on("ble-disconnected", callback),
     sendData: (deviceId, data) => ipcRenderer.send("ble-send-data", deviceId, data),
     onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback)
+  },
+  other: {
+    openByExplorer: (path) => shell.openPath(path),
+    openByBrowser: (url) => shell.openExternal(url),
   },
 });

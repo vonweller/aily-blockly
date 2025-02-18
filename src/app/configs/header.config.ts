@@ -79,7 +79,7 @@ export let HEADER_MENU = [
   },
   {
     name: '在资源管理器打开',
-    action: 'explorer-open',
+    data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
   },
   {

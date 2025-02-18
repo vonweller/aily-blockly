@@ -26,14 +26,14 @@ export class HeaderComponent {
     return this.uiService.openToolList;
   }
 
-  get terminalIsOpen(){
+  get terminalIsOpen() {
     return this.uiService.terminalIsOpen
   }
 
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
-  ) {}
+  ) { }
 
   showMenu = false;
   openMenu() {
@@ -90,6 +90,13 @@ export class HeaderComponent {
         break;
       case 'run-cmd':
         this.uiService.runCmd(item.data);
+        break;
+      case 'other':
+        if (item.data.action == 'openByExplorer') {
+          window['other'].openByExplorer(window['path'].getUserDocuments());
+        }else if (item.data.action == 'openByBrowser') {
+          window['other'].openByBrowser(item.data.url);
+        }
         break;
       default:
         break;
