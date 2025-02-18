@@ -1,6 +1,7 @@
 {
     "lang": "zh_CN",
     "theme": "default",
+    "font": "default",
     "project_path": "%HOMEPATH%/Documents/aily-project",
     "npm_registry": [
         "https://registry.npm.taobao.org/"

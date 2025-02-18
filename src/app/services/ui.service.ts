@@ -24,7 +24,7 @@ export class UiService {
   // 用来记录terminal是否打开
   terminalIsOpen = false;
 
-  constructor() {}
+  constructor() { }
 
   openWindow(opt: WindowOpts) {
     window['subWindow'].open(opt);
@@ -32,7 +32,7 @@ export class UiService {
 
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
-    if (this.topTool==opt.data) {
+    if (this.topTool == opt.data) {
       this.closeTool(opt.data);
     } else {
       this.openTool(opt.data);
@@ -85,7 +85,7 @@ export class UiService {
     // this.actionSubject.next({ action: 'clear-terminal' });
   }
 
-  runCmd(cmd: string) {}
+  runCmd(cmd: string) { }
 
   // 更新footer右下角的状态
   updateState(state: {
@@ -95,6 +95,12 @@ export class UiService {
     timeout?: number;
   }) {
     this.stateSubject.next(state);
+  }
+
+
+  // 关闭当前窗口
+  closeWindow() {
+    window['iWindow'].close();
   }
 }
 
