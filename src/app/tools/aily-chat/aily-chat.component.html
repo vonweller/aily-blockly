@@ -1,4 +1,4 @@
-<app-tool-container [title]="'AI助手'">
+<app-tool-container [title]="'AI助手'" (closeEvent)="close()">
   <div class="window-box">
     <div class="dialog-list sscroll" #chatContainer>
       <div #chatList>

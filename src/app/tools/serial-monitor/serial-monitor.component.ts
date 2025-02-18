@@ -6,6 +6,7 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ElectronService } from '../../services/electron.service';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
+import { UiService } from '../../services/ui.service';
 
 let SerialPort;
 
@@ -38,11 +39,18 @@ export class SerialMonitorComponent {
 
   serialList = [];
 
-  constructor(private electronService: ElectronService) {}
+  constructor(
+    private electronService: ElectronService,
+    private uiService: UiService
+  ) {}
 
   ngOnInit() {}
 
   ngAfterViewInit(): void {}
+
+  close() {
+    this.uiService.closeTool('serial-monitor');
+  }
 
   openMore() {}
 
@@ -54,4 +62,6 @@ export class SerialMonitorComponent {
       console.log(this.serialList);
     }
   }
+
+
 }

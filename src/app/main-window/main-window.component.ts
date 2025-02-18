@@ -45,8 +45,7 @@ export class MainWindowComponent {
 
   ngAfterViewInit(): void {
     this.uiService.actionSubject.subscribe((e: any) => {
-      console.log(e);
-
+      // console.log(e);
       switch (e.type) {
         case 'tool':
           if (e.action === 'open') {
