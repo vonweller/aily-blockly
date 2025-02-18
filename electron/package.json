@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "@lydell/node-pty": "^1.0.3",
+    "noble": "^1.9.1",
     "npm": "^11.0.0",
     "serialport": "^13.0.0"
   }
