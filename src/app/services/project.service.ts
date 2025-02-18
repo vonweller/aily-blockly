@@ -15,13 +15,13 @@ interface ProjectData {
 })
 export class ProjectService {
   projectData: ProjectData = {
-    name: '新的项目',
+    name: 'aily blockly',
     version: '1.0.0',
     author: 'coloz',
     description: 'aily project',
   };
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient) { }
 
   /**
    * 库列表
@@ -51,14 +51,31 @@ export class ProjectService {
 
   // 新建项目
   project_new() {
+
+    //  调用cli创建项目
+
+    //  加载项目package.json文件
+    this.projectData = {
+      name: '新的项目',
+      version: '1.0.0',
+      author: 'coloz',
+      description: 'aily project',
+    };
+
+    // 安装依赖
+
+    // 加载blockly组件
+
   }
 
   // 保存项目
-  project_save() {}
+  project_save() {
+    // 导出blockly json配置并保存
+   }
 
   // 打开项目
-  project_open() {}
+  project_open() { }
 
   // 另存为项目
-  project_save_as() {}
+  project_save_as() { }
 }

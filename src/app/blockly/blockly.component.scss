@@ -9,6 +9,8 @@
             background: #323232;
             border-right: 1px solid #E0E0E0;
             padding: 0;
+            scrollbar-width: thin !important;
+            scrollbar-color: rgba(255, 255, 255, 0.2) transparent; 
 
             .blocklyToolboxCategory {
                 .blocklyTreeRow {
