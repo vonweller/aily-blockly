@@ -1,5 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
+const pty = require("@lydell/node-pty");
+
+const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./terminal");
+const {installPackageByArduinoCli} = require("./board");
+const { createProject, createTemporaryProject } = require("./project");
+const { installPackage, initNpmRegistry } = require("./package");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -117,11 +123,153 @@ ipcMain.handle("select-folder", async (event, data) => {
   return result.filePaths[0];
 });
 
-ipcMain.handle("project-new", (event) => {
-  const projectPath = createTemporaryProject();
-  event.returnValue = projectPath;
-  console.log("project-new path", projectPath);
+ipcMain.handle("project-new", async (event, data) => {
+  try {
+    const projectPath = createProject(data);
+    return { success: true, data: projectPath };
+  } catch (error) {
+    console.error("project-new error: ", error);
+    return { success: false };
+  }
 });
+
+ipcMain.handle("project-newTmp", async (event, data) => {
+  try {
+    const projectPath = createTemporaryProject();
+    return { success: true, data: projectPath };
+  } catch (error) {
+    console.error("project-tmp error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.on('project-update', (event, data) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('project-update', data.data);
+  }
+});
+
+ipcMain.handle("builder-init", async (event, data) => {
+  try {
+    const deps = getDependencies(data.prjPath);
+    // arduino-cli配置文件路径（每个项目下都有一个）
+    let cliYamlPath = initArduinoCliConf(data.prjPath, data.appDataPath)
+    console.log("arduino-prj-new: ", cliYamlPath);
+
+    const core = deps.boardConfList[0].core;
+    await installPackageByArduinoCli(core, cliYamlPath);
+
+    await Promise.all(
+      deps.libraryConfList.map(async (libraryConf) => {
+        // TODO: 处理 library 安装逻辑
+      })
+    );
+
+    // 临时文件夹路径
+    const tmpPath = createTemporaryProject();
+
+    genBuilderJson({
+       core, 
+       cliYamlPath, 
+       type: deps.boardConfList[0].type,
+       sketchPath: path.join(tmpPath, 'mySketch'),
+       compilerOutput: path.join(tmpPath, 'output'),
+       compilerParam: deps.boardConfList[0].compilerParam ,
+       uploadParam: deps.boardConfList[0].uploadParam,
+      }, data.prjPath);
+
+    return { success: true };
+  } catch (error) {
+    console.error("builder-init error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("builder-codeGen", async (event, data) => {
+  try {
+    arduinoCodeGen(data.code, data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("builder-codeGen error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("builder-build", async (event, data) => {
+  try {
+    await arduinoCliBuilder(data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("builder-build error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("uploader-upload", async (event, data) => {
+  try {
+    await arduinoCliUploader(data.port, data.prjPath);
+    return { success: true };
+  } catch (error) {
+    console.error("uploader-upload error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("package-init", async (event, data) => {
+  try {
+    initNpmRegistry();
+    return { success: true };
+  } catch (error) {
+    console.error("package-init error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.handle("package-install", async (event, data) => {
+  try {
+    await installPackage(data.prjPath, data?.package);
+    return { success: true };
+  } catch (error) {
+    console.error("package-install error: ", error);
+    return { success: false };
+  }
+});
+
+ipcMain.on("terminal-data", async (event, data) => {
+  console.log("terminal-data: ", data);
+});
+
+// 终端相关(dev)
+const terminals = new Map();
+ipcMain.on("terminal-create", (event, args) => {
+  const shell = process.env[process.platform === "win32" ? "powershell.exe" : "bash"];
+  const ptyProcess = pty.spawn(shell, [], {
+    name: "xterm-color",
+    cols: args.cols,
+    rows: args.rows,
+    cwd: args.cwd || process.env.HOME,
+    env: process.env,
+  });
+
+  ptyProcess.on("data", (data) => {
+    console.log("ptyProcessData: ", data);
+    mainWindow.webContents.send("terminal-inc-data", data);
+  });
+
+  terminals[ptyProcess.pid] = ptyProcess;
+
+  ipcMain.on("terminal-to-pty", (event, input) => {
+    console.log("terminal-to-pty: ", input);
+    ptyProcess.write(input + '\r\n');
+  });
+
+  // 关闭终端
+  ipcMain.on("terminal-close", (event, pid) => {
+    console.log("pid: ", pid);
+    ptyProcess.kill();
+  });
+});
+
 
 
 function openByExplorer(projectPath) {

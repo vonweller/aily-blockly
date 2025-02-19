@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
+const { spawn, exec } = require("child_process");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -15,7 +16,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
         require("fs").mkdirSync(path, { recursive: true });
       }
       return path;
-    }
+    },
+    getAppDataPath: () => {
+      let home = require("os").homedir();
+      let path;
+      if (process.platform === "win32") {
+        path = home + "\\AppData\\Local\\aily-project";
+      } else if (process.platform === "darwin") {
+        path = home + "/Library/Application Support/aily-project";
+      } else {
+        path = home + "/.config/aily-project";
+      }
+      if (!require("fs").existsSync(path)) {
+        require("fs").mkdirSync(path, { recursive: true });
+      }
+      return path;
+    },
+    isExists: (path) => { return require("fs").existsSync(path) },
   },
   versions: () => process.versions,
   SerialPort: {
@@ -29,22 +46,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: () => process.platform === "linux",
   },
   terminal: {
-    init: (path) => {
-      const shell = process.platform === "win32" ? "powershell.exe" : "bash";
-      const terminal = pty.spawn(shell, [], {
-        name: "xterm-color",
-        cwd: path,
-      });
-      terminal.on("data", (data) => {
-        ipcRenderer.send("terminal-output", data);
-      });
-      ipcRenderer.on("terminal-input", (event, input) => {
-        terminal.write(input);
+    init: (data) => {
+      ipcRenderer.send("terminal-create", data);
+    },
+    onData: (callback) => {
+      ipcRenderer.on("terminal-inc-data", (event, data) => {
+        callback(data);
       });
     },
-    runScript: (scriptPath) => {
-      ipcRenderer.send("run-node-script", scriptPath);
-    },
+    sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
+    close: (pid) => ipcRenderer.send('terminal-close', pid)
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
@@ -53,12 +64,42 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   subWindow: {
     open: (options) => ipcRenderer.send("window-open", options),
+    close: () => ipcRenderer.send("window-close"),
   },
   project: {
-    new: () => ipcRenderer.invoke("project-new"),
+    new: (data) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer.invoke("project-new", data)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
     open: (path) => ipcRenderer.invoke("project-open", path),
     save: () => ipcRenderer.invoke("project-save"),
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
+    update: (data) => ipcRenderer.send("project-update", data),
+    newTmp: () => ipcRenderer.invoke("project-newTmp"),
+  },
+  package: {
+    init: (data) => ipcRenderer.invoke("package-init", data),
+    install: (data) => ipcRenderer.invoke("package-install", data),
+  },
+  builder: {
+    init: (data) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer.invoke("builder-init", data)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
+    codeGen: (data) => ipcRenderer.invoke("builder-codeGen", data),
+    build: (data) => ipcRenderer.invoke("builder-build", data),
+  },
+  uploader: {
+    upload: (data) => ipcRenderer.invoke("uploader-upload", data),
+  },
+  file: {
+    readSync: (path) => require("fs").readFileSync(path, "utf8"),
   },
   ble: {
     startScan: () => ipcRenderer.send("ble-start-scan"),
@@ -76,3 +117,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
     openByBrowser: (url) => shell.openExternal(url),
   },
 });
+

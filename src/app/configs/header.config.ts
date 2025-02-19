@@ -61,7 +61,7 @@ export let HEADER_MENU = [
   },
   {
     name: '打开项目',
-    action: 'project-open',
+    data: { type: 'cmd', data: 'project-open' },
     icon: 'fa-light fa-folder-open',
   },
   {

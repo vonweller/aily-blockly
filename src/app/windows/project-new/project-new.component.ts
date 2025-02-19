@@ -6,6 +6,7 @@ import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzStepsModule } from 'ng-zorro-antd/steps';
 import { ElectronService } from '../../services/electron.service';
+import { ProjectService } from '../../services/project.service';
 
 @Component({
   selector: 'app-project-new',
@@ -25,31 +26,31 @@ export class ProjectNewComponent {
 
   boards = [
     {
-      value: '@blockly/board/arduino_uno@1.0.0',
+      value: '@aily-blockly/board-arduino_uno@1.0.0',
       name: 'Arduino UNO R3',
       img: 'board/arduino_uno/arduino_uno.png',
       desc: 'Arduino UNO R3 是一款基于ATmega328P的开源电子原型平台，包含数字I/O口14个（其中6个支持PWM输出），模拟输入口6个，16MHz晶振，USB接口，电源接口，ICSP接口等。',
     },
     {
-      value: '@blockly/board/arduino_mega@1.0.0',
+      value: '@aily-blockly/board-arduino_mega@1.0.0',
       name: 'Arduino MEGA',
       img: 'board/arduino_mega/arduino_mega.png',
       desc: 'Arduino MEGA 是一款基于ATmega2560的开源电子原型平台，包含数字I/O口54个（其中14个支持PWM输出），模拟输入口16个，16MHz晶振，USB接口，电源接口，ICSP接口等。',
     },
     {
-      value: '@blockly/board/esp32c3@1.0.0',
+      value: '@aily-blockly/board-esp32c3@1.0.0',
       name: 'esp32c3',
       img: 'board/esp32c3/esp32c3.png',
       desc: 'esp32c3 是一款基于ESP32-C3的开源电子原型平台，包含数字I/O口14个（其中6个支持PWM输出），模拟输入口6个，2.4GHz Wi-Fi，蓝牙5.0，USB接口，电源接口，ICSP接口等。',
     },
     {
-      value: '@blockly/board/raspberrypi_pico@1.0.0',
+      value: '@aily-blockly/board-raspberrypi_pico@1.0.0',
       name: 'RaspberryPi Pico',
       img: 'board/raspberrypi_pico/raspberrypi_pico.png',
       desc: 'RaspberryPi Pico 是一款基于RP2040的开源电子原型平台，包含数字I/O口26个（其中16个支持PWM输出），模拟输入口3个，133MHz主频，USB接口，电源接口，ICSP接口等。',
     },
     {
-      value: '@blockly/board/wifiduino32@1.0.0',
+      value: '@aily-blockly/board-wifiduino32@1.0.0',
       name: 'Wifiduino32',
       img: 'board/wifiduino32/wifiduino32.png',
       desc: 'Wifiduino32 是一款基于ESP32的开源电子原型平台，包含数字I/O口38个（其中6个支持PWM输出），模拟输入口6个，2.4GHz Wi-Fi，蓝牙4.2，USB接口，电源接口，ICSP接口等。',
@@ -66,7 +67,10 @@ export class ProjectNewComponent {
     version: '1.0.0',
   };
 
-  constructor(private electronService: ElectronService) {}
+  constructor(
+    private electronService: ElectronService,
+    private projectService: ProjectService
+  ) {}
 
   ngOnInit() {
     if (this.electronService.isElectron) {
@@ -89,5 +93,31 @@ export class ProjectNewComponent {
     // 在这里对返回的 folderPath 进行后续处理
   }
 
-  createProject() {}
+  async createProject() {
+    // 判断是否有同名项目
+    const isExist = await this.projectService.project_exist(this.projectData);
+    console.log('isExist: ', isExist);
+    if (isExist) {
+      console.log('项目已存在');
+      // TODO 反馈项目已存在
+      return;
+    }
+
+    console.log('开始创建项目');
+
+    this.currentStep = 2;
+    await this.projectService.project_new(this.projectData);
+    await this.projectService.project_install(
+      this.projectData.path + '/' + this.projectData.name,
+      this.projectData.board
+    );
+
+    console.log('项目创建成功');
+    this.currentStep = 3;
+
+    setTimeout(() => {
+      console.log('关闭窗口');
+      window['subWindow'].close();
+    }, 1000);
+  }
 }

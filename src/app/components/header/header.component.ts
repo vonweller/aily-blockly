@@ -5,6 +5,8 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
 import { ProjectService } from '../../services/project.service';
 import { UiService } from '../../services/ui.service';
+import { BuilderService } from '../../services/builder.service';
+import { UploaderService } from '../../services/uploader.service';
 
 @Component({
   selector: 'app-header',
@@ -33,6 +35,8 @@ export class HeaderComponent {
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
+    private builderService: BuilderService,
+    private uploaderService: UploaderService,
   ) { }
 
   showMenu = false;
@@ -90,6 +94,24 @@ export class HeaderComponent {
         break;
       case 'run-cmd':
         this.uiService.runCmd(item.data);
+        break;
+      case 'cmd':
+        if (item.data.data === 'compile') {
+          this.builderService.build();
+        } else if (item.data.data === 'upload') {
+          this.uploaderService.upload();
+        } else if (item.data.data === 'project-open') {
+          // TODO 传入路径
+          const path = 'C:\\Users\\stao\\Documents\\aily-project\\ailyPrj9'
+          this.projectService.project_open(path).then((res) => {
+            if (res) {
+              console.log('打开项目成功');
+              // TODO 加载对应的blockly.json文件
+            } else {
+              console.log('打开项目失败');
+            }
+          })
+        };
         break;
       case 'other':
         if (item.data.action == 'openByExplorer') {
