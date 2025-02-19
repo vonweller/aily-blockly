@@ -1,6 +1,7 @@
 .sub-window-box {
   border-radius: 5px;
   overflow: hidden;
+  border: 1px solid #666;
 }
 
 .header {
@@ -50,6 +51,6 @@
 }
 
 .content{
-  height: calc(100vh - 35px);
+  height: calc(100vh - 38px);
   background: #323437;
 }

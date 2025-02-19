@@ -6,34 +6,45 @@
 }
 
 .dialog-list {
-  padding: 5px 10px;
-  flex-grow: 1;
-  overflow: auto;
-  overflow-anchor: auto;
+  padding: 5px 5px 5px 10px;
+  height: calc(100% - 190px);
+  overflow-y:scroll;
 }
 
 .sender {
-  background: #444;
   position: relative;
+  // max-width: 300px;
+  height: 180px;
+  flex-shrink: 0;
 
   .s-box {
-    display: flex;
     width: 100%;
-    padding: 5px 10px;
+    padding: 10px;
+
+    textarea {
+      background: #292929;
+      border-radius: 5px;
+    }
+
+    .btns {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 5px;
+    }
 
     .btn {
-      width: 36px;
-      font-size: 20px;
+      width: 32px;
+      height: 32px;
+      font-size: 18px;
       color: #eee;
-      justify-content: flex-end;
 
       &:hover {
         color: #fff;
       }
     }
-  }
 
-  .btns {
-    position: relative;
+    button {
+      margin-left: 10px;
+    }
   }
 }

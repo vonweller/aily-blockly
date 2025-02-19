@@ -21,5 +21,9 @@ export const routes: Routes = [
     {
         path: "settings",
         loadComponent: () => import('./windows/settings/settings.component').then(m => m.SettingsComponent)
+    },
+    {
+        path: "about",
+        loadComponent: () => import('./windows/about/about.component').then(m => m.AboutComponent)
     }
 ];

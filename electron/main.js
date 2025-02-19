@@ -271,3 +271,13 @@ ipcMain.on("terminal-create", (event, args) => {
 });
 
 
+
+function openByExplorer(projectPath) {
+  const pathToOpen = "C:\\Users\\coloz\\Desktop"; // 示例路径
+  shell.openPath(pathToOpen)
+    .then((errorMessage) => {
+      if (errorMessage) {
+        console.error("打开路径出错:", errorMessage);
+      }
+    });
+}

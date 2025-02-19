@@ -1,6 +1,25 @@
 <app-sub-window [title]="'设置'" [winBtns]="['close']">
     <div class="window-inner">
         <div class="window-content">
+            <div class="left">
+                <div class="left-inner">
+                    @for (item of items; track item.name){
+                    <div class="type-btn btn" (click)="selectType(item)" [ngClass]="{'selected': item.name === currentType.name}">
+                        <div class="icon ccenter"><i class="{{item.icon}}"></i></div>
+                        {{item.name}}
+                    </div>
+                    }
+                </div>
+            </div>
+            <div class="right">
+
             </div>
         </div>
+        <div class="window-footer">
+            <div class="btns">
+                <button nz-button nzType="default"(click)="cancel()">取消</button>
+                <button nz-button nzType="primary" (click)="apply()">应用</button>
+            </div>
+        </div>
+    </div>
 </app-sub-window>

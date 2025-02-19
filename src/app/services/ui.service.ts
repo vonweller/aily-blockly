@@ -13,10 +13,18 @@ export class UiService {
   // 用来更新footer右下角的状态
   stateSubject = new Subject();
 
-  // 用来记录当前打开的工具
-  openToolList = [];
+  // 用来记录当前已打开的工具
+  openToolList: string[] = [];
 
-  constructor() {}
+  // 用来获取当前最上层的工具
+  get topTool() {
+    return this.openToolList[this.openToolList.length - 1] || null;
+  }
+
+  // 用来记录terminal是否打开
+  terminalIsOpen = false;
+
+  constructor() { }
 
   openWindow(opt: WindowOpts) {
     window['subWindow'].open(opt);
@@ -24,23 +32,52 @@ export class UiService {
 
   // 这个方法是给header用的
   turnTool(opt: ToolOpts) {
-    if (this.openToolList.indexOf(opt.data) === -1) {
-      this.openTool(opt.data);
-    } else {
+    if (this.topTool == opt.data) {
       this.closeTool(opt.data);
+    } else {
+      this.openTool(opt.data);
     }
   }
 
   // 如果其它组件/程序要打开工具，调用这个方法
   openTool(name: string) {
-    this.actionSubject.next({ action: 'open', type: 'tool', data: name });
+    if (name == 'terminal') {
+      this.openTerminal();
+      return;
+    }
+    this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
+    this.actionSubject.next({ action: 'open', type: 'tool', data: name });
   }
 
   // 如果其它组件/程序要关闭工具，调用这个方法
   closeTool(name: string) {
-    this.actionSubject.next({ action: 'close', type: 'tool', data: name });
+    if (name == 'terminal') {
+      this.closeTerminal();
+      return;
+    }
     this.openToolList = this.openToolList.filter((e) => e !== name);
+    this.actionSubject.next({ action: 'close', type: 'tool', data: name });
+  }
+
+  turnTerminal(data) {
+    if (this.terminalIsOpen) {
+      this.closeTerminal();
+    } else {
+      this.openTerminal(data);
+    }
+  }
+
+  openTerminal(data = 'default') {
+    this.actionSubject.next({ action: 'open', type: 'terminal', data });
+    this.terminalIsOpen = true;
+    console.log(this.terminalIsOpen);
+  }
+
+  closeTerminal() {
+    this.actionSubject.next({ action: 'close', type: 'terminal' });
+    this.terminalIsOpen = false;
+    console.log(this.terminalIsOpen);
   }
 
   // 清空终端
@@ -48,7 +85,7 @@ export class UiService {
     // this.actionSubject.next({ action: 'clear-terminal' });
   }
 
-  runCmd(cmd: string) {}
+  runCmd(cmd: string) { }
 
   // 更新footer右下角的状态
   updateState(state: {
@@ -58,6 +95,12 @@ export class UiService {
     timeout?: number;
   }) {
     this.stateSubject.next(state);
+  }
+
+
+  // 关闭当前窗口
+  closeWindow() {
+    window['iWindow'].close();
   }
 }
 

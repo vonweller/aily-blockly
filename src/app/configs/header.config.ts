@@ -3,7 +3,7 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
     {
       name: '编译',
       data: { type: 'cmd', data: 'compile' },
-      icon: 'fa-regular fa-arrows-rotate',
+      icon: 'fa-regular fa-circle-check',
       color: '#34a5ff',
     },
     {
@@ -16,7 +16,7 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
   [
     {
       name: '终端',
-      data: { type: 'tool', data: "terminal" },
+      data: { type: 'terminal', data: "default" },
       icon: 'fa-light fa-rectangle-terminal',
     },
     {
@@ -31,7 +31,7 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
     },
     {
       name: 'AI',
-      data: { type: 'tool', data: "ai-chat" },
+      data: { type: 'tool', data: "aily-chat" },
       icon: 'fa-light fa-star-christmas',
       more: 'AI',
     },
@@ -79,7 +79,7 @@ export let HEADER_MENU = [
   },
   {
     name: '在资源管理器打开',
-    action: 'explorer-open',
+    data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
   },
   {
@@ -95,6 +95,15 @@ export let HEADER_MENU = [
     action: 'open-window',
     data: { type: 'window', path: 'settings', alwaysOnTop: true, width: 700, height: 550 },
     icon: 'fa-light fa-gear',
+  },
+  {
+    sep: true,
+  },
+  {
+    name: '关于本软件',
+    action: 'open-url',
+    data: { type: 'window', path: 'about', alwaysOnTop: true, width: 700, height: 550 },
+    icon: 'fa-light fa-a',
   },
   {
     sep: true,

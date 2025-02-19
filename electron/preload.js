@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 const { spawn, exec } = require("child_process");
 
@@ -100,6 +100,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   file: {
     readSync: (path) => require("fs").readFileSync(path, "utf8"),
-  }
+  },
+  ble: {
+    startScan: () => ipcRenderer.send("ble-start-scan"),
+    stopScan: () => ipcRenderer.send("ble-stop-scan"),
+    connect: (deviceId) => ipcRenderer.send("ble-connect", deviceId),
+    disconnect: (deviceId) => ipcRenderer.send("ble-disconnect", deviceId),
+    onDeviceFound: (callback) => ipcRenderer.on("ble-device-found", callback),
+    onConnected: (callback) => ipcRenderer.on("ble-connected", callback),
+    onDisconnected: (callback) => ipcRenderer.on("ble-disconnected", callback),
+    sendData: (deviceId, data) => ipcRenderer.send("ble-send-data", deviceId, data),
+    onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback)
+  },
+  other: {
+    openByExplorer: (path) => shell.openPath(path),
+    openByBrowser: (url) => shell.openExternal(url),
+  },
 });
 

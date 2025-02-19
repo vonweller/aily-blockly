@@ -31,3 +31,9 @@ body {
   $bbackground: #2b2d30;
   $lline: #222427;
 }
+
+
+.sscroll{
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent; 
+}

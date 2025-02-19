@@ -21,14 +21,14 @@ interface ProjectData {
 export class ProjectService {
   appDataPath = window['path'].getAppDataPath();
   projectData: ProjectData = {
-    name: 'new project',
+    name: 'aily blockly',
+    version: '1.0.0',
     path: '',
     author: '',
     description: '',
     board: '',
     type: 'web',
     framework: 'angular',
-    version: '1.0.0',
   };
 
   currentProject: string;
@@ -84,8 +84,27 @@ export class ProjectService {
     window['project'].update({ data });
   }
 
+  // project_new() {
+
+  //   //  调用cli创建项目
+
+  //   //  加载项目package.json文件
+  //   this.projectData = {
+  //     name: '新的项目',
+  //     version: '1.0.0',
+  //     author: 'coloz',
+  //     description: 'aily project',
+  //   };
+
+  //   // 安装依赖
+
+  //   // 加载blockly组件
+  // }
+
   // 保存项目
-  project_save() {}
+  project_save() {
+    // 导出blockly json配置并保存
+   }
 
   // 打开项目
   async project_open(path) {
