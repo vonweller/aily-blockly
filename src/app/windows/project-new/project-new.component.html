@@ -29,21 +29,27 @@
       <div class="right">
         @if (currentStep == 0) {
           <div class="right-inner">
-            <div class="board-selector">
-              <div
-                class="board ccenter btn"
-                [ngClass]="{ selected: currentBoard == board }"
-                *ngFor="let board of boards"
-                (click)="selectBoard(board)"
-              >
-                <div class="img-box">
-                  <img [src]="board.img" />
+            <div class="board-selector sscroll">
+              @for (board of boardList; track board.name) {
+                <div
+                  class="board ccenter btn"
+                  [ngClass]="{ selected: currentBoard == board }"
+                  (click)="selectBoard(board)"
+                >
+                  <div class="img-box">
+                    <img [src]="board.img" />
+                  </div>
+                  <div class="name">{{ board.name }}</div>
                 </div>
-                <div class="name">{{ board.name }}</div>
-              </div>
+              }
             </div>
             <div class="desc-box">
-              <div class="title">开发板介绍</div>
+              <div class="title">
+                开发板介绍
+                <div class="doc btn" (click)="openUrl(currentBoard.url)">
+                  阅读文档
+                </div>
+              </div>
               <div class="content">{{ currentBoard.desc }}</div>
             </div>
           </div>
@@ -85,7 +91,12 @@
             </button>
           }
         }
-        <button nz-button  nzType="primary"   [disabled]="currentStep != 1"  (click)="createProject()">
+        <button
+          nz-button
+          nzType="primary"
+          [disabled]="currentStep != 1"
+          (click)="createProject()"
+        >
           创建项目
         </button>
       </div>

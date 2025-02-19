@@ -1,6 +1,6 @@
 {
   "name": "arduino_uno",
-  "version": "1.0.0",
+  "version": "1.8.6",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -11,8 +11,8 @@
   "license": "ISC",
   "libDependencies": {},
   "boardDependencies": {
-    "@aily-project/board/avr": "1.8.6",
+    "@aily-project/compiler/avr-gcc": "7.3.0",
     "@aily-project/tool/avrdude": "6.3.0",
-    "@aily-project/tool/avr-gcc": "7.3.0"
+    "@aily-project/sdk/avr": "1.8.6"
   }
 }

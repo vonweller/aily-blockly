@@ -7,6 +7,8 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzStepsModule } from 'ng-zorro-antd/steps';
 import { ElectronService } from '../../services/electron.service';
 import { ProjectService } from '../../services/project.service';
+import { ConfigService } from '../../services/config.service';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-project-new',
@@ -24,44 +26,13 @@ import { ProjectService } from '../../services/project.service';
 export class ProjectNewComponent {
   currentStep = 0;
 
-  boards = [
-    {
-      value: '@aily-blockly/board-arduino_uno@1.0.0',
-      name: 'Arduino UNO R3',
-      img: 'board/arduino_uno/arduino_uno.png',
-      desc: 'Arduino UNO R3 是一款基于ATmega328P的开源电子原型平台，包含数字I/O口14个（其中6个支持PWM输出），模拟输入口6个，16MHz晶振，USB接口，电源接口，ICSP接口等。',
-    },
-    {
-      value: '@aily-blockly/board-arduino_mega@1.0.0',
-      name: 'Arduino MEGA',
-      img: 'board/arduino_mega/arduino_mega.png',
-      desc: 'Arduino MEGA 是一款基于ATmega2560的开源电子原型平台，包含数字I/O口54个（其中14个支持PWM输出），模拟输入口16个，16MHz晶振，USB接口，电源接口，ICSP接口等。',
-    },
-    {
-      value: '@aily-blockly/board-esp32c3@1.0.0',
-      name: 'esp32c3',
-      img: 'board/esp32c3/esp32c3.png',
-      desc: 'esp32c3 是一款基于ESP32-C3的开源电子原型平台，包含数字I/O口14个（其中6个支持PWM输出），模拟输入口6个，2.4GHz Wi-Fi，蓝牙5.0，USB接口，电源接口，ICSP接口等。',
-    },
-    {
-      value: '@aily-blockly/board-raspberrypi_pico@1.0.0',
-      name: 'RaspberryPi Pico',
-      img: 'board/raspberrypi_pico/raspberrypi_pico.png',
-      desc: 'RaspberryPi Pico 是一款基于RP2040的开源电子原型平台，包含数字I/O口26个（其中16个支持PWM输出），模拟输入口3个，133MHz主频，USB接口，电源接口，ICSP接口等。',
-    },
-    {
-      value: '@aily-blockly/board-wifiduino32@1.0.0',
-      name: 'Wifiduino32',
-      img: 'board/wifiduino32/wifiduino32.png',
-      desc: 'Wifiduino32 是一款基于ESP32的开源电子原型平台，包含数字I/O口38个（其中6个支持PWM输出），模拟输入口6个，2.4GHz Wi-Fi，蓝牙4.2，USB接口，电源接口，ICSP接口等。',
-    },
-  ];
-
+  boardList: any[] = [];
+  currentBoard: any = null;
   projectData = {
     name: 'new project',
     path: '',
     description: '',
-    board: this.boards[0].value,
+    board: null,
     type: 'web',
     framework: 'angular',
     version: '1.0.0',
@@ -69,16 +40,20 @@ export class ProjectNewComponent {
 
   constructor(
     private electronService: ElectronService,
-    private projectService: ProjectService
+    private projectService: ProjectService,
+    private configService: ConfigService,
   ) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     if (this.electronService.isElectron) {
       this.projectData.path = window['path'].getUserDocuments();
     }
+    await this.configService.init();
+    this.boardList = this.configService.boardList;
+    this.currentBoard = this.boardList[0];
+    this.projectData.board = this.currentBoard.value;
   }
 
-  currentBoard = this.boards[0];
   selectBoard(board) {
     this.currentBoard = board;
     this.projectData.board = board.value;
@@ -109,7 +84,7 @@ export class ProjectNewComponent {
     await this.projectService.project_new(this.projectData);
     await this.projectService.project_install(
       this.projectData.path + '/' + this.projectData.name,
-      this.projectData.board
+      this.projectData.board,
     );
 
     console.log('项目创建成功');
@@ -119,5 +94,11 @@ export class ProjectNewComponent {
       console.log('关闭窗口');
       window['subWindow'].close();
     }, 1000);
+  }
+
+  openUrl(url) {
+    if (this.electronService.isElectron) {
+      window['other'].openByBrowser(url);
+    }
   }
 }

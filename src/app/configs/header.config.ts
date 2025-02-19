@@ -56,7 +56,7 @@ interface IHeaderMenuItem {
 export let HEADER_MENU = [
   {
     name: '新建项目',
-    data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 700, height: 550 },
+    data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
     icon: 'fa-light fa-file',
   },
   {
