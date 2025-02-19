@@ -4,8 +4,15 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "unzip": "unzip -o -d $HOME/.arduino15/packages/arduino/hardware/avr/1.8.5/ $HOME/.arduino15/packages/arduino/hardware/avr/1.8.5/avr/cores/arduino.zip"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "libDependencies": {},
+  "boardDependencies": {
+    "@aily-project/board/avr": "1.8.6",
+    "@aily-project/tool/avrdude": "6.3.0",
+    "@aily-project/tool/avr-gcc": "7.3.0"
+  }
 }
