@@ -1,4 +1,5 @@
 import { Component } from '@angular/core';
+import { version } from '../../../../package.json';
 
 @Component({
   selector: 'app-guide',
@@ -7,5 +8,5 @@ import { Component } from '@angular/core';
   styleUrl: './guide.component.scss'
 })
 export class GuideComponent {
-
+  version = version;
 }
