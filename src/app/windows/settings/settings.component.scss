@@ -1,16 +1,29 @@
 @import "../project-new/project-new.component.scss";
 
 .type-btn {
-    height: 48px;
-    display: flex;
-    align-items: center;
+  height: 48px;
+  display: flex;
+  align-items: center;
 
-    .icon {
-        width: 24px;
-        height: 24px;
-    }
+  .icon {
+    width: 24px;
+    height: 24px;
+  }
 
-    &.selected {
-        color: #348ce9;
+  &.selected {
+    color: #348ce9;
+  }
+}
+
+.langs {
+  display: flex;
+  .lang {
+    flex-direction: column;
+    font-size: 12px;
+    width: 80px;
+    cursor: pointer;
+    img {
+      width: 28px;
     }
+  }
 }

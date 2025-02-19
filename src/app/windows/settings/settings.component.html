@@ -1,25 +1,51 @@
 <app-sub-window [title]="'设置'" [winBtns]="['close']">
-    <div class="window-inner">
-        <div class="window-content">
-            <div class="left">
-                <div class="left-inner">
-                    @for (item of items; track item.name){
-                    <div class="type-btn btn" (click)="selectType(item)" [ngClass]="{'selected': item.name === currentType.name}">
-                        <div class="icon ccenter"><i class="{{item.icon}}"></i></div>
-                        {{item.name}}
-                    </div>
-                    }
+  <div class="window-inner">
+    <div class="window-content">
+      <div class="left">
+        <div class="left-inner">
+          @for (item of items; track item.name) {
+            <div
+              class="type-btn btn"
+              (click)="selectType(item)"
+              [ngClass]="{ selected: item.name === currentType.name }"
+            >
+              <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
+              {{ item.name }}
+            </div>
+          }
+        </div>
+      </div>
+      <div class="right">
+        <div class="right-inner">
+          <div class="item">
+            <div>项目文件夹:</div>
+            <input nz-input [(ngModel)]="data.project_path" />
+          </div>
+          <div class="item">
+            <div>语言:</div>
+            <div class="langs">
+                <div  class="lang ccenter">
+                    <img src="i18n/zh.jpg" alt="" srcset="">
+                    <span>中文</span>
+                </div>
+                <div  class="lang ccenter">
+                    <img src="i18n/zh.jpg" alt="" srcset="">
+                    <span>中文(繁體)</span>
+                </div>
+                <div class="lang ccenter">
+                    <img src="i18n/en.jpg" alt="" srcset="">
+                    <span>English</span>
                 </div>
             </div>
-            <div class="right">
-
-            </div>
+          </div>
         </div>
-        <div class="window-footer">
-            <div class="btns">
-                <button nz-button nzType="default"(click)="cancel()">取消</button>
-                <button nz-button nzType="primary" (click)="apply()">应用</button>
-            </div>
-        </div>
+      </div>
     </div>
+    <div class="window-footer">
+      <div class="btns">
+        <button nz-button nzType="default" (click)="cancel()">取消</button>
+        <button nz-button nzType="primary" (click)="apply()">应用</button>
+      </div>
+    </div>
+  </div>
 </app-sub-window>
