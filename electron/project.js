@@ -1,3 +1,4 @@
+const { ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -13,15 +14,22 @@ function genPackageJson(projectData) {
     scripts: {
       start: "electron .",
     },
+    dependencies: {
+      [projectData.board]: '^' + projectData.boardVersion,
+    }
   }
 }
 
 function writePackageJson(data, prjPath) {
+  const boardParts = data.board.split('@');
+  const boardName = boardParts[1];
+  const boardVersion = boardParts[2];
   const packageJson = genPackageJson({
     name: data.name,
     version: data.version,
     description: data.description,
-    board: data.board,
+    board: '@' + boardName,
+    boardVersion: boardVersion
   });
   const packageJsonPath = path.join(prjPath, "package.json");
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
@@ -83,8 +91,34 @@ function createProject(data) {
   return projectPath;
 }
 
+function registerProjectHandlers(mainWindow) {
+  ipcMain.handle("project-new", async (event, data) => {
+    try {
+      const projectPath = createProject(data);
+      return { success: true, data: projectPath };
+    } catch (error) {
+      console.error("project-new error: ", error);
+      return { success: false };
+    }
+  });
+  
+  ipcMain.handle("project-newTmp", async (event, data) => {
+    try {
+      const projectPath = createTemporaryProject();
+      return { success: true, data: projectPath };
+    } catch (error) {
+      console.error("project-tmp error: ", error);
+      return { success: false };
+    }
+  });
+  
+  ipcMain.on('project-update', (event, data) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('project-update', data);
+    }
+  });
+}
 
 module.exports = {
-  createTemporaryProject,
-  createProject,
+  registerProjectHandlers
 }

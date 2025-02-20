@@ -1,16 +1,59 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
-const pty = require("@lydell/node-pty");
+const os = require("os");
 
-const { getDependencies, initArduinoCliConf, arduinoCodeGen, genBuilderJson, arduinoCliBuilder, arduinoCliUploader } = require("./terminal");
-const {installPackageByArduinoCli} = require("./board");
-const { createProject, createTemporaryProject } = require("./project");
-const { installPackage, initNpmRegistry } = require("./package");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { registerProjectHandlers } = require("./project");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 
+// ipc handlers模块
+const { registerTerminalHandlers } = require("./terminal");
+const { registerBoardHandlers } = require("./board");
+
 let mainWindow;
+
+// 获取系统默认的应用数据目录
+function getAppDataPath() {
+  let home = os.homedir();
+  let path;
+  if (process.platform === "win32") {
+    path = home + "\\AppData\\Local\\aily-project";
+  } else if (process.platform === "darwin") {
+    path = home + "/Library/Application Support/aily-project";
+  } else {
+    path = home + "/.config/aily-project";
+  }
+  if (!require("fs").existsSync(path)) {
+    require("fs").mkdirSync(path, { recursive: true });
+  }
+  return path;
+}
+
+// 环境变量加载
+function loadEnv() {
+  // 将child目录添加到环境变量PATH中
+  process.env.PATH += path.delimiter + path.join(__dirname, "..", "child");
+
+  // 读取同级目录下的config.json文件
+  const confContent = require("fs").readFileSync(path.join(__dirname, "config.json"));
+  const conf = JSON.parse(confContent);
+
+  console.log("conf: ", conf);
+
+  // app data path
+  process.env.AILY_APPDATA_PATH = getAppDataPath();
+  // npm registry
+  process.env.AILY_NPM_REGISTRY = conf['npm_registry'][0];
+  // 全局npm包路径
+  process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
+  // 默认全局编译器路径
+  process.env.AILY_COMPILER_PATH = path.join(process.env.AILY_APPDATA_PATH, "compiler");
+  // 默认全局烧录器路径
+  process.env.AILY_TOOL_PATH = path.join(process.env.AILY_APPDATA_PATH, "tool");
+  // 默认全局SDK路径
+  process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -38,6 +81,17 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  try {
+    loadEnv();
+  } catch (error) {
+    console.error("loadEnv error: ", error);
+  }
+
+  // 注册ipc handlers
+  registerProjectHandlers(mainWindow);
+  registerTerminalHandlers(mainWindow);
+  registerBoardHandlers(mainWindow);
 }
 
 app.on("ready", () => {
@@ -121,151 +175,4 @@ ipcMain.handle("select-folder", async (event, data) => {
     return data.path;
   }
   return result.filePaths[0];
-});
-
-ipcMain.handle("project-new", async (event, data) => {
-  try {
-    const projectPath = createProject(data);
-    return { success: true, data: projectPath };
-  } catch (error) {
-    console.error("project-new error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("project-newTmp", async (event, data) => {
-  try {
-    const projectPath = createTemporaryProject();
-    return { success: true, data: projectPath };
-  } catch (error) {
-    console.error("project-tmp error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.on('project-update', (event, data) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('project-update', data.data);
-  }
-});
-
-ipcMain.handle("builder-init", async (event, data) => {
-  try {
-    const deps = getDependencies(data.prjPath);
-    // arduino-cli配置文件路径（每个项目下都有一个）
-    let cliYamlPath = initArduinoCliConf(data.prjPath, data.appDataPath)
-    console.log("arduino-prj-new: ", cliYamlPath);
-
-    const core = deps.boardConfList[0].core;
-    await installPackageByArduinoCli(core, cliYamlPath);
-
-    await Promise.all(
-      deps.libraryConfList.map(async (libraryConf) => {
-        // TODO: 处理 library 安装逻辑
-      })
-    );
-
-    // 临时文件夹路径
-    const tmpPath = createTemporaryProject();
-
-    genBuilderJson({
-       core, 
-       cliYamlPath, 
-       type: deps.boardConfList[0].type,
-       sketchPath: path.join(tmpPath, 'mySketch'),
-       compilerOutput: path.join(tmpPath, 'output'),
-       compilerParam: deps.boardConfList[0].compilerParam ,
-       uploadParam: deps.boardConfList[0].uploadParam,
-      }, data.prjPath);
-
-    return { success: true };
-  } catch (error) {
-    console.error("builder-init error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("builder-codeGen", async (event, data) => {
-  try {
-    arduinoCodeGen(data.code, data.prjPath);
-    return { success: true };
-  } catch (error) {
-    console.error("builder-codeGen error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("builder-build", async (event, data) => {
-  try {
-    await arduinoCliBuilder(data.prjPath);
-    return { success: true };
-  } catch (error) {
-    console.error("builder-build error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("uploader-upload", async (event, data) => {
-  try {
-    await arduinoCliUploader(data.port, data.prjPath);
-    return { success: true };
-  } catch (error) {
-    console.error("uploader-upload error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("package-init", async (event, data) => {
-  try {
-    initNpmRegistry();
-    return { success: true };
-  } catch (error) {
-    console.error("package-init error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.handle("package-install", async (event, data) => {
-  try {
-    await installPackage(data.prjPath, data?.package);
-    return { success: true };
-  } catch (error) {
-    console.error("package-install error: ", error);
-    return { success: false };
-  }
-});
-
-ipcMain.on("terminal-data", async (event, data) => {
-  console.log("terminal-data: ", data);
-});
-
-// 终端相关(dev)
-const terminals = new Map();
-ipcMain.on("terminal-create", (event, args) => {
-  const shell = process.env[process.platform === "win32" ? "powershell.exe" : "bash"];
-  const ptyProcess = pty.spawn(shell, [], {
-    name: "xterm-color",
-    cols: args.cols,
-    rows: args.rows,
-    cwd: args.cwd || process.env.HOME,
-    env: process.env,
-  });
-
-  ptyProcess.on("data", (data) => {
-    console.log("ptyProcessData: ", data);
-    mainWindow.webContents.send("terminal-inc-data", data);
-  });
-
-  terminals[ptyProcess.pid] = ptyProcess;
-
-  ipcMain.on("terminal-to-pty", (event, input) => {
-    console.log("terminal-to-pty: ", input);
-    ptyProcess.write(input + '\r\n');
-  });
-
-  // 关闭终端
-  ipcMain.on("terminal-close", (event, pid) => {
-    console.log("pid: ", pid);
-    ptyProcess.kill();
-  });
 });

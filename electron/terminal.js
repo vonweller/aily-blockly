@@ -262,16 +262,75 @@ function updateTerminal(data) {
   mainWindow.webContents.send("terminal", { action: "update", data });
 }
 
+function registerTerminalHandlers(mainWindow) {
+  ipcMain.handle("builder-codeGen", async (event, data) => {
+    try {
+      arduinoCodeGen(data.code, data.prjPath);
+      return { success: true };
+    } catch (error) {
+      console.error("builder-codeGen error: ", error);
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle("builder-build", async (event, data) => {
+    try {
+      await arduinoCliBuilder(data.prjPath);
+      return { success: true };
+    } catch (error) {
+      console.error("builder-build error: ", error);
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle("uploader-upload", async (event, data) => {
+    try {
+      await arduinoCliUploader(data.port, data.prjPath);
+      return { success: true };
+    } catch (error) {
+      console.error("uploader-upload error: ", error);
+      return { success: false };
+    }
+  });
+
+  ipcMain.on("terminal-data", async (event, data) => {
+    console.log("terminal-data: ", data);
+  });
+
+  const terminals = new Map();
+  ipcMain.on("terminal-create", (event, args) => {
+    const shell = process.env[process.platform === "win32" ? "powershell.exe" : "bash"];
+    const ptyProcess = pty.spawn(shell, [], {
+      name: "xterm-color",
+      cols: args.cols,
+      rows: args.rows,
+      cwd: args.cwd || process.env.HOME,
+      env: process.env,
+    });
+
+    ptyProcess.on("data", (data) => {
+      console.log("ptyProcessData: ", data);
+      mainWindow.webContents.send("terminal-inc-data", data);
+    });
+
+    terminals[ptyProcess.pid] = ptyProcess;
+
+    ipcMain.on("terminal-to-pty", (event, input) => {
+      console.log("terminal-to-pty: ", input);
+      // TODO 判断是否是npm install命令, 且带有 -g 参数，如果有则需要添加--prefix,定位到相应的AppDdata/aily-project目录
+      
+      ptyProcess.write(input + '\r\n');
+    });
+
+    // 关闭终端
+    ipcMain.on("terminal-close", (event, pid) => {
+      console.log("pid: ", pid);
+      ptyProcess.kill();
+    });
+  });
+}
+
 
 module.exports = {
-  getDependencies,
-  initArduinoCliConf,
-  genBuilderJson,
-  arduinoCodeGen,
-  arduinoCliBuilder,
-  arduinoCliUploader,
-  initTerminal,
-  openTerminal,
-  closeTerminal,
-  updateTerminal,
+  registerTerminalHandlers,
 };

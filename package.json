@@ -21,6 +21,10 @@
       {
         "from": "electron",
         "to": "app/electron"
+      },
+      {
+        "from": "child",
+        "to": "app/child"
       }
     ],
     "win": {
@@ -41,6 +45,8 @@
   },
   "private": true,
   "dependencies": {
+    "@aily-project/compiler-arm-none-eabi-gcc": "^7.2.1",
+    "@aily-project/tool-bossac": "^1.9.1",
     "@angular/animations": "^19.0.0",
     "@angular/common": "^19.0.0",
     "@angular/compiler": "^19.0.0",
@@ -50,6 +56,7 @@
     "@angular/platform-browser-dynamic": "^19.0.0",
     "@angular/router": "^19.0.0",
     "@ctrl/tinycolor": "^4.1.0",
+    "@lydell/node-pty": "^1.1.0",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@ngx-translate/core": "^16.0.3",
     "@xterm/addon-clipboard": "^0.1.0",
