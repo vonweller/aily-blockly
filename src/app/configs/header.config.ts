@@ -1,3 +1,5 @@
+import { Action } from "rxjs/internal/scheduler/Action";
+
 export let HEADER_BTNS: IHeaderMenuItem[][] = [
   [
     {
@@ -61,7 +63,7 @@ export let HEADER_MENU = [
   },
   {
     name: '打开项目',
-    data: { type: 'cmd', data: 'project-open' },
+    data: { type: 'explorer', data: 'project-open' },
     icon: 'fa-light fa-folder-open',
   },
   {
@@ -114,3 +116,24 @@ export let HEADER_MENU = [
     icon: 'fa-light fa-xmark',
   },
 ];
+
+export let GUIDE_HEADER_MENU = [
+  {
+    name: '新建项目',
+    data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
+    icon: 'fa-light fa-file',
+  },
+  {
+    name: '打开项目',
+    data: { type: 'explorer', data: 'project-open' },
+    icon: 'fa-light fa-folder-open',
+  },
+  {
+    name: '示例程序',
+    data: { type: 'window', path: 'example', alwaysOnTop: true, width: 820, height: 550 },
+    icon: 'fa-light fa-folder-open',
+  },
+  {
+    sep: true,
+  },
+]
