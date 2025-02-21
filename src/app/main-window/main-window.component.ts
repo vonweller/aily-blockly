@@ -8,11 +8,11 @@ import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { ToolContainerComponent } from '../components/tool-container/tool-container.component';
-import { GuideComponent } from '../components/guide/guide.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
+import { GuideComponent } from './components/guide/guide.component';
 
 @Component({
   selector: 'app-main-window',

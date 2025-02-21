@@ -1,8 +1,8 @@
 import { Component } from '@angular/core';
-import { version } from '../../../../package.json';
-import { GUIDE_HEADER_MENU } from '../../configs/header.config';
-import { UiService } from '../../services/ui.service';
-import { ProjectService } from '../../services/project.service';
+import { GUIDE_HEADER_MENU } from '../../../configs/header.config';
+import { UiService } from '../../../services/ui.service';
+import { ProjectService } from '../../../services/project.service';
+import { version } from '../../../../../package.json';
 
 @Component({
   selector: 'app-guide',
