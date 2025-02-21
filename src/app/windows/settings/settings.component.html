@@ -16,29 +16,50 @@
         </div>
       </div>
       <div class="right">
-        <div class="right-inner">
-          <div class="item">
-            <div>项目文件夹:</div>
-            <input nz-input [(ngModel)]="data.project_path" />
-          </div>
-          <div class="item">
-            <div>语言:</div>
-            <div class="langs">
-                <div  class="lang ccenter">
-                    <img src="i18n/zh.jpg" alt="" srcset="">
+        @switch (currentType.name) {
+          @case ("基础设置") {
+            <div class="right-inner">
+              <div class="item">
+                <div>项目文件夹:</div>
+                <input nz-input [(ngModel)]="data.project_path" />
+              </div>
+              <div class="item">
+                <div>语言:</div>
+                <div class="langs">
+                  <div class="lang ccenter">
+                    <img src="i18n/zh.jpg" alt="" srcset="" />
                     <span>中文</span>
-                </div>
-                <div  class="lang ccenter">
-                    <img src="i18n/zh.jpg" alt="" srcset="">
+                  </div>
+                  <div class="lang ccenter">
+                    <img src="i18n/zh.jpg" alt="" srcset="" />
                     <span>中文(繁體)</span>
-                </div>
-                <div class="lang ccenter">
-                    <img src="i18n/en.jpg" alt="" srcset="">
+                  </div>
+                  <div class="lang ccenter">
+                    <img src="i18n/en.jpg" alt="" srcset="" />
                     <span>English</span>
+                  </div>
                 </div>
+              </div>
             </div>
-          </div>
-        </div>
+          }
+          @case ("主体设置") {}
+          @case ("仓库设置") {}
+          @case ("开发板管理") {
+            <div class="right-inner">
+              <div>
+                <nz-input-group [nzSuffix]="suffixIconSearch">
+                  <input type="text" nz-input placeholder="input search text" />
+                </nz-input-group>
+                <ng-template #suffixIconSearch>
+                  <i class="fa-regular fa-magnifying-glass"></i>
+                </ng-template>
+              </div>
+              <div>
+
+              </div>
+            </div>
+          }
+        }
       </div>
     </div>
     <div class="window-footer">
