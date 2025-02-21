@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectorRef } from '@angular/core';
 import { UiService } from '../../services/ui.service';
 
 @Component({
@@ -14,10 +14,14 @@ export class FooterComponent {
     'icon': 'check-circle',
     'timeout': 0
   };
-  constructor(private uiService: UiService) {
+  constructor(
+    private uiService: UiService,
+    private cd: ChangeDetectorRef
+  ) {
     this.uiService.stateSubject.subscribe((e: any) => {
       console.log("footer state update", e);
       this.state = e;
+      this.cd.detectChanges();
     });
   }
 }

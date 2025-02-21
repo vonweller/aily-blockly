@@ -92,13 +92,7 @@ export class HeaderComponent {
   async openProject(data) {
     const path = await this.selectFolder();
     if (path) {
-      this.projectService.project_open(path).then((res) => {
-        if (res) {
-          console.log('打开项目成功');
-        } else {
-          console.log('打开项目失败');
-        }
-      })
+      await this.projectService.project_open(path);
     }
   }
 

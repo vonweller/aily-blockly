@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectorRef } from '@angular/core';
 import { BlocklyEditorComponent } from '../tools/blockly-editor/blockly-editor.component';
 import { FooterComponent } from '../components/footer/footer.component';
 import { HeaderComponent } from '../components/header/header.component';
@@ -47,6 +47,7 @@ export class MainWindowComponent {
   constructor(
     private uiService: UiService,
     private projectService: ProjectService,
+    private cd: ChangeDetectorRef
   ) {}
 
   ngAfterViewInit(): void {
@@ -77,6 +78,7 @@ export class MainWindowComponent {
 
     this.projectService.loaded.subscribe((loaded) => {
       this.loaded = loaded;
+      this.cd.detectChanges();
     });
   }
 
