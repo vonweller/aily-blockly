@@ -19,6 +19,8 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
+  loaded = new BehaviorSubject<boolean>(false);
+
   appDataPath = window['path'].getAppDataPath();
   projectData: ProjectData = {
     name: 'aily blockly',
@@ -34,11 +36,15 @@ export class ProjectService {
   currentProject: string;
 
   constructor(private http: HttpClient) {
-    window['ipcRenderer'].on('project-update', (event, newData: ProjectData) => {
-      console.log('收到更新的 projectData: ', newData);
-      this.projectData = newData;
-      this.currentProject = this.projectData.path + '/' + this.projectData.name;
-    });
+    window['ipcRenderer'].on(
+      'project-update',
+      (event, newData: ProjectData) => {
+        console.log('收到更新的 projectData: ', newData);
+        this.projectData = newData;
+        this.currentProject =
+          this.projectData.path + '/' + this.projectData.name;
+      },
+    );
   }
 
   /**
@@ -69,7 +75,7 @@ export class ProjectService {
 
   async project_exist(data) {
     const prjPath = data.path + '/' + data.name;
-    return window["path"].isExists(prjPath);
+    return window['path'].isExists(prjPath);
   }
 
   // 新建项目
@@ -104,7 +110,7 @@ export class ProjectService {
   // 保存项目
   project_save() {
     // 导出blockly json配置并保存
-   }
+  }
 
   // 打开项目
   async project_open(path) {
@@ -132,7 +138,7 @@ export class ProjectService {
       console.log('node_modules not exist, install dependencies');
       await this.project_install(this.currentProject, this.projectData.board);
     }
-
+    this.loaded.next(true);
     return true;
   }
 
@@ -147,7 +153,10 @@ export class ProjectService {
     }
 
     // TODO 状态反馈
-    const installResult = await window['package'].install({ prjPath, package: board });
+    const installResult = await window['package'].install({
+      prjPath,
+      package: board,
+    });
     if (!installResult.success) {
       console.error('install failed: ', installResult);
       return false;

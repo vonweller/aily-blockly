@@ -12,6 +12,7 @@ import { GuideComponent } from '../components/guide/guide.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
+import { ProjectService } from '../services/project.service';
 
 @Component({
   selector: 'app-main-window',
@@ -37,11 +38,16 @@ export class MainWindowComponent {
   showBbox = false;
   terminalTab = 'default';
 
+  loaded = false;
+
   get topTool() {
     return this.uiService.topTool;
   }
 
-  constructor(private uiService: UiService) {}
+  constructor(
+    private uiService: UiService,
+    private projectService: ProjectService,
+  ) {}
 
   ngAfterViewInit(): void {
     this.uiService.actionSubject.subscribe((e: any) => {
@@ -67,6 +73,10 @@ export class MainWindowComponent {
         default:
           break;
       }
+    });
+
+    this.projectService.loaded.subscribe((loaded) => {
+      this.loaded = loaded;
     });
   }
 

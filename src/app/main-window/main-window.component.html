@@ -4,8 +4,11 @@
     <nz-layout>
       <nz-content>
         <div class="middle-box">
-          <app-guide></app-guide>
-          <!-- <app-blockly-editor></app-blockly-editor> -->
+          @if (loaded) {
+            <app-blockly-editor></app-blockly-editor>
+          } @else {
+            <app-guide></app-guide>
+          }
         </div>
         @if (showBbox) {
           <div
@@ -38,17 +41,17 @@
           </nz-resize-handle>
           <div class="right-box">
             <!-- <app-tool-container (closeEvent)="closeRightBox()"> -->
-              @switch(topTool){
-                @case ('code-viewer'){
-                  <app-code-viewer></app-code-viewer>
-                }
-                @case ('serial-monitor'){
-                  <app-serial-monitor></app-serial-monitor>
-                }
-                @case ('aily-chat'){
-                  <app-aily-chat></app-aily-chat>
-                }
-              }              
+            @switch (topTool) {
+              @case ("code-viewer") {
+                <app-code-viewer></app-code-viewer>
+              }
+              @case ("serial-monitor") {
+                <app-serial-monitor></app-serial-monitor>
+              }
+              @case ("aily-chat") {
+                <app-aily-chat></app-aily-chat>
+              }
+            }
             <!-- </app-tool-container> -->
           </div>
         </nz-sider>
