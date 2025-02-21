@@ -88,12 +88,10 @@ export class ProjectNewComponent {
 
     const prjPath = this.projectData.path + '/' + this.projectData.name;
 
-    setTimeout(() => {
-      // 发送项目更新
-      window['project'].update({ path: prjPath });
-      // 关闭窗口
-      window['subWindow'].close();
-    }, 1000);
+    // 发送项目更新
+    window['project'].update({ path: prjPath });
+    // 关闭窗口
+    window['subWindow'].close();
   }
 
   openUrl(url) {

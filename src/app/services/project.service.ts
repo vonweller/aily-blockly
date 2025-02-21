@@ -176,11 +176,9 @@ export class ProjectService {
 
     this.uiService.stateSubject.next({text: '项目加载中...'});
     // TODO 加载blockly组件
-    setTimeout(() => {
-      this.uiService.stateSubject.next({text: '项目加载成功', timeout: 3000});
-      this.loaded.next(true);
-    }, 1000);
-    return true;
+    this.uiService.stateSubject.next({ text: '项目加载成功', timeout: 3000 });
+    this.loaded.next(true);
+    // return true;
   }
 
   // 另存为项目
