@@ -16,7 +16,7 @@ export class BuilderService {
   async build() {
     console.log('start build');
     // 获取APPData路径（主要用于存放包缓存）
-    const appDataPath = this.projectService.appDataPath
+    const appDataPath = process.env['AILY_APPDATA_PATH'];
     
     // 获取当前项目路径
     const prjPath = this.projectService.currentProject

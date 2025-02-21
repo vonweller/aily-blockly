@@ -102,7 +102,7 @@ export class HeaderComponent {
           this.uploaderService.upload();
         } else if (item.data.data === 'project-open') {
           // TODO 传入路径
-          const path = 'C:\\Users\\stao\\Documents\\aily-project\\ailyPrj9'
+          const path = 'C:\\Users\\stao\\Documents\\aily-project\\test6'
           this.projectService.project_open(path).then((res) => {
             if (res) {
               console.log('打开项目成功');

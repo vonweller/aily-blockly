@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject } from 'rxjs';
 import { ResponseModel } from '../interfaces/response.interface';
 import { API } from '../configs/api.config';
+import { UiService } from './ui.service';
 
 interface ProjectData {
   name: string;
@@ -19,9 +20,9 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
+
   loaded = new BehaviorSubject<boolean>(false);
 
-  appDataPath = window['path'].getAppDataPath();
   projectData: ProjectData = {
     name: 'aily blockly',
     version: '1.0.0',
@@ -35,16 +36,15 @@ export class ProjectService {
 
   currentProject: string;
 
-  constructor(private http: HttpClient) {
-    window['ipcRenderer'].on(
-      'project-update',
-      (event, newData: ProjectData) => {
-        console.log('收到更新的 projectData: ', newData);
-        this.projectData = newData;
-        this.currentProject =
-          this.projectData.path + '/' + this.projectData.name;
-      },
-    );
+  constructor(
+    private http: HttpClient,
+    private uiService: UiService,
+  ) {
+    window['ipcRenderer'].on('project-update', (event, data) => {
+      console.log('收到更新的: ', data);
+      this.currentProject = data.path;
+      this.project_open(this.currentProject);
+    });
   }
 
   /**
@@ -80,14 +80,15 @@ export class ProjectService {
 
   // 新建项目
   async project_new(data) {
+    this.uiService.stateSubject.next({text: '正在创建项目...'});
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
       return false;
     }
     console.log('new project success: ', newResult.data);
-
-    window['project'].update({ data });
+    this.uiService.stateSubject.next({text: '项目创建成功', timeout: 3000});
+    return true;
   }
 
   // project_new() {
@@ -122,6 +123,7 @@ export class ProjectService {
 
     // 读取项目下得package.json
     const packageJsonPath = path + '/package.json';
+
     const packageJsonContent = window['file'].readSync(packageJsonPath);
     if (!packageJsonContent) {
       console.error('package.json not exist: ', packageJsonPath);
@@ -131,12 +133,41 @@ export class ProjectService {
     this.projectData = JSON.parse(packageJsonContent);
     this.currentProject = path;
 
-    // 判断项目目录下是否有node_modules
-    const nodeModulesPath = this.currentProject + '/node_modules';
-    const nodeModulesExist = window['path'].isExists(nodeModulesPath);
-    if (!nodeModulesExist) {
-      console.log('node_modules not exist, install dependencies');
-      await this.project_install(this.currentProject, this.projectData.board);
+    console.log("prjData: ", this.projectData);
+
+    // 安装依赖
+    await this.dependencies_install({ file: packageJsonPath });
+
+    // 安装子依赖项
+    const pkgData = JSON.parse(packageJsonContent);
+    const boardDeps = Object.keys(pkgData.dependencies || {}).filter(dep => dep.startsWith('@aily-project/board-'));
+    for (const dep of boardDeps) {
+      // 分解依赖项名称
+      const depParts = dep.split('/');
+      const depParent = depParts[0];
+      const depName = depParts[1];
+      const depPath = path + '/node_modules/' + depParent + '/' + depName;
+      const pkgPackageJsonPath = depPath + '/package.json';
+
+      // 读取板子的package.json文件
+      const pkgPackageJson = window['file'].readSync(pkgPackageJsonPath);
+      if (!pkgPackageJson) {
+        console.error('package.json not exist: ', pkgPackageJsonPath);
+        return false;
+      }
+
+      const pkgPackageJsonContent = JSON.parse(pkgPackageJson);
+      const boardDependencies = pkgPackageJsonContent.boardDependencies || {};
+
+      console.log('boardDependencies: ', boardDependencies);
+
+      for (const [depName, depVersion] of Object.entries(boardDependencies)) {
+        const pkg = `${depName}@${depVersion}`;
+        await this.dependencies_install({
+          package: pkg,
+          global: true,
+        });
+      }
     }
     this.loaded.next(true);
     return true;
@@ -146,17 +177,10 @@ export class ProjectService {
   project_save_as() {}
 
   // 安装依赖
-  async project_install(prjPath, board) {
-    if (!board) {
-      console.error('board is empty');
-      return false;
-    }
-
+  async dependencies_install(data) {
     // TODO 状态反馈
-    const installResult = await window['package'].install({
-      prjPath,
-      package: board,
-    });
+    console.log("install Data: ", data);
+    const installResult = await window['dependencies'].install(data);
     if (!installResult.success) {
       console.error('install failed: ', installResult);
       return false;

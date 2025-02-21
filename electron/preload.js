@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 const { spawn, exec } = require("child_process");
+const { get } = require("http");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -12,21 +13,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getUserHome: () => require("os").homedir(),
     getUserDocuments: () => {
       let path = require("os").homedir() + "\\Documents\\aily-project";
-      if (!require("fs").existsSync(path)) {
-        require("fs").mkdirSync(path, { recursive: true });
-      }
-      return path;
-    },
-    getAppDataPath: () => {
-      let home = require("os").homedir();
-      let path;
-      if (process.platform === "win32") {
-        path = home + "\\AppData\\Local\\aily-project";
-      } else if (process.platform === "darwin") {
-        path = home + "/Library/Application Support/aily-project";
-      } else {
-        path = home + "/.config/aily-project";
-      }
       if (!require("fs").existsSync(path)) {
         require("fs").mkdirSync(path, { recursive: true });
       }
@@ -80,9 +66,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     update: (data) => ipcRenderer.send("project-update", data),
     newTmp: () => ipcRenderer.invoke("project-newTmp"),
   },
-  package: {
-    init: (data) => ipcRenderer.invoke("package-init", data),
-    install: (data) => ipcRenderer.invoke("package-install", data),
+  dependencies: {
+    init: (data) => ipcRenderer.invoke("dependencies-init", data),
+    install: (data) => ipcRenderer.invoke("dependencies-install", data),
   },
   builder: {
     init: (data) => {

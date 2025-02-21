@@ -82,16 +82,16 @@ export class ProjectNewComponent {
 
     this.currentStep = 2;
     await this.projectService.project_new(this.projectData);
-    await this.projectService.project_install(
-      this.projectData.path + '/' + this.projectData.name,
-      this.projectData.board,
-    );
-
+  
     console.log('项目创建成功');
     this.currentStep = 3;
 
+    const prjPath = this.projectData.path + '/' + this.projectData.name;
+
     setTimeout(() => {
-      console.log('关闭窗口');
+      // 发送项目更新
+      window['project'].update({ path: prjPath });
+      // 关闭窗口
       window['subWindow'].close();
     }, 1000);
   }
