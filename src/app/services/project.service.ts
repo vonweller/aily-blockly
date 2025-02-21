@@ -20,6 +20,9 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
+  loaded = new BehaviorSubject<boolean>(false);
+
+  appDataPath = window['path'].getAppDataPath();
   projectData: ProjectData = {
     name: 'aily blockly',
     version: '1.0.0',
@@ -72,7 +75,7 @@ export class ProjectService {
 
   async project_exist(data) {
     const prjPath = data.path + '/' + data.name;
-    return window["path"].isExists(prjPath);
+    return window['path'].isExists(prjPath);
   }
 
   // 新建项目
@@ -108,7 +111,7 @@ export class ProjectService {
   // 保存项目
   project_save() {
     // 导出blockly json配置并保存
-   }
+  }
 
   // 打开项目
   async project_open(path) {
@@ -171,6 +174,7 @@ export class ProjectService {
 
     alert("打开项目成功")
 
+    this.loaded.next(true);
     return true;
   }
 

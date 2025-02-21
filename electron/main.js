@@ -62,6 +62,8 @@ function createWindow() {
     width: 1200,
     height: 780,
     frame: false,
+    minWidth: 1200,
+    minHeight:780,
     autoHideMenuBar: true,
     transparent: true,
     webPreferences: {
