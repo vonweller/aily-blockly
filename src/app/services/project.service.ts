@@ -20,9 +20,7 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
-
   loaded = new BehaviorSubject<boolean>(false);
-
   projectData: ProjectData = {
     name: 'aily blockly',
     version: '1.0.0',
@@ -115,12 +113,15 @@ export class ProjectService {
 
   // 打开项目
   async project_open(path) {
+    this.uiService.stateSubject.next({text: '正在打开项目...'});
+    // 判断路径是否存在
     const pathExist = window['path'].isExists(path);
     if (!pathExist) {
       console.error('path not exist: ', path);
       return false;
     }
 
+    this.uiService.stateSubject.next({text: '依赖安装中...'});
     // 读取项目下得package.json
     const packageJsonPath = path + '/package.json';
 
@@ -146,6 +147,9 @@ export class ProjectService {
       const depParts = dep.split('/');
       const depParent = depParts[0];
       const depName = depParts[1];
+
+      this.uiService.stateSubject.next({text: '安装依赖: ' + dep});
+
       const depPath = path + '/node_modules/' + depParent + '/' + depName;
       const pkgPackageJsonPath = depPath + '/package.json';
 
@@ -169,7 +173,13 @@ export class ProjectService {
         });
       }
     }
-    this.loaded.next(true);
+
+    this.uiService.stateSubject.next({text: '项目加载中...'});
+    // TODO 加载blockly组件
+    setTimeout(() => {
+      this.uiService.stateSubject.next({text: '项目加载成功', timeout: 3000});
+      this.loaded.next(true);
+    }, 1000);
     return true;
   }
 
