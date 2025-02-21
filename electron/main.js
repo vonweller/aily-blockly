@@ -34,6 +34,8 @@ function getAppDataPath() {
 function loadEnv() {
   // 将child目录添加到环境变量PATH中
   process.env.PATH += path.delimiter + path.join(__dirname, "..", "child");
+  // TODO 需要配合解压node环境时命名的指定，当前默认为node
+  process.env.PATH += path.delimiter + path.join(__dirname, "..", "child", "node");
 
   // 读取同级目录下的config.json文件
   const confContent = require("fs").readFileSync(path.join(__dirname, "config.json"));
