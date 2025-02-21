@@ -84,6 +84,7 @@ function createWindow() {
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
     mainWindow = null;
+    app.quit();
   });
 
   try {
