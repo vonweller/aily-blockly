@@ -40,8 +40,11 @@ body {
   $lline: #222427;
 }
 
-
 .sscroll {
   scrollbar-width: thin !important;
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.bborder {
+  border: 1px solid #505050;
 }

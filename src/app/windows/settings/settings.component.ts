@@ -5,6 +5,7 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { UiService } from '../../services/ui.service';
+import { NzRadioModule } from 'ng-zorro-antd/radio';
 
 @Component({
   selector: 'app-settings',
@@ -14,6 +15,7 @@ import { UiService } from '../../services/ui.service';
     SubWindowComponent,
     NzButtonModule,
     NzInputModule,
+    NzRadioModule
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
@@ -26,6 +28,13 @@ export class SettingsComponent {
       content: [
         { name: '默认项目文件夹', key: 'fa-light fa-gear' },
         { name: '语言', key: 'base.lang' },
+      ],
+    },
+    {
+      name: '编译设置',
+      icon: 'fa-light fa-screwdriver-wrench',
+      content: [
+
       ],
     },
     {
@@ -48,8 +57,17 @@ export class SettingsComponent {
     },
   ];
 
+  UiThemeValue='dark';
+  blocklyThemeValue='default';
+
+  npmRegistryListStr = `https://registry.npmjs.org/
+https://registry.npm.taobao.org/`;
+
+  boardList=[,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,]
+
   data: any = {
     project_path: '',
+    npm_registry: [],
   };
 
   constructor(private uiService: UiService) {}
@@ -64,6 +82,8 @@ export class SettingsComponent {
   }
 
   apply() {
+    // 保存到config.json，如有需要立即加载的，再加载
+
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
   }
