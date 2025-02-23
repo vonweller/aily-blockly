@@ -36,7 +36,7 @@ export class ProjectService {
 
   constructor(
     private http: HttpClient,
-    private uiService: UiService,
+    private uiService: UiService
   ) {
     window['ipcRenderer'].on('project-update', (event, data) => {
       console.log('收到更新的: ', data);
@@ -78,33 +78,25 @@ export class ProjectService {
 
   // 新建项目
   async project_new(data) {
-    this.uiService.stateSubject.next({text: '正在创建项目...'});
+    this.uiService.stateSubject.next({ text: '正在创建项目...' });
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
       return false;
     }
-    console.log('new project success: ', newResult.data);
-    this.uiService.stateSubject.next({text: '项目创建成功', timeout: 3000});
-    return true;
+    this.uiService.stateSubject.next({ text: '项目创建成功' });
+    const prjPath = newResult.data;
+
+    // 依赖安装
+    this.uiService.stateSubject.next({ text: '依赖安装中...' });
+    await this.dependencies_install(`${prjPath}/package.json`);
+    this.uiService.stateSubject.next({ text: '依赖安装成功', timeout: 3000 });
+
+    // 发送项目更新
+    window['project'].update({ path: prjPath });
+
+    return prjPath;
   }
-
-  // project_new() {
-
-  //   //  调用cli创建项目
-
-  //   //  加载项目package.json文件
-  //   this.projectData = {
-  //     name: '新的项目',
-  //     version: '1.0.0',
-  //     author: 'coloz',
-  //     description: 'aily project',
-  //   };
-
-  //   // 安装依赖
-
-  //   // 加载blockly组件
-  // }
 
   // 保存项目
   project_save() {
@@ -120,73 +112,105 @@ export class ProjectService {
       console.error('path not exist: ', path);
       return false;
     }
+    this.uiService.stateSubject.next({text: '项目加载中...'});
+    
+    // 读取package.json文件
+    const packageJsonContent = window['file'].readSync(`${path}/package.json`);
+    if (!packageJsonContent) {
+      console.error('package.json not exist: ', path);
+      return false;
+    }
+    this.projectData = JSON.parse(packageJsonContent);
+  
+    // 判断是否需要安装package.json依赖
+    if (!window['path'].isExists(`${path}/node_modules`)) {
+      await this.dependencies_install(`${path}/package.json`);
+    }
+    
+    this.loaded.next(true);
+    
+    // TODO 加载blockly组件
 
-    this.uiService.stateSubject.next({text: '依赖安装中...'});
-    // 读取项目下得package.json
-    const packageJsonPath = path + '/package.json';
+    this.uiService.stateSubject.next({ text: '项目加载成功', timeout: 3000 });
 
-    const packageJsonContent = window['file'].readSync(packageJsonPath);
+    // 后台加载板子依赖
+    this.board_dependencies_install(`${path}/package.json`);
+  }
+
+  // 另存为项目
+  project_save_as() {}
+
+  // 读取package.json文件
+  read_package_json(path) {
+    const packageJsonContent = window['file'].readSync(path);
+    if (!packageJsonContent) {
+      console.error('package.json not exist: ', path);
+      return {};
+    }
+
+    return JSON.parse(packageJsonContent);
+  }
+
+  /**
+   * 依赖安装
+   * @param packageJsonPath 项目package.json文件路径
+   * @returns 
+   */
+  async dependencies_install(packageJsonPath) {
+    // 安装依赖
+    await this.install_package({ file: packageJsonPath });
+  }
+
+
+  /**
+   * 板子核心依赖安装
+   * @param packageJsonPath 项目package.json文件路径
+   * @returns 
+   */
+  async board_dependencies_install(packageJsonPath) {
+    // 获取packageJson所在目录
+    const path = packageJsonPath.substring(0, packageJsonPath.lastIndexOf('/'));
+
+    const packageJsonContent = this.read_package_json(packageJsonPath);
     if (!packageJsonContent) {
       console.error('package.json not exist: ', packageJsonPath);
       return false;
     }
-
-    this.projectData = JSON.parse(packageJsonContent);
-    this.currentProject = path;
-
-    console.log("prjData: ", this.projectData);
-
-    // 安装依赖
-    await this.dependencies_install({ file: packageJsonPath });
-
-    // 安装子依赖项
-    const pkgData = JSON.parse(packageJsonContent);
-    const boardDeps = Object.keys(pkgData.dependencies || {}).filter(dep => dep.startsWith('@aily-project/board-'));
+    const boardDeps = Object.keys(packageJsonContent.dependencies || {}).filter(dep => dep.startsWith('@aily-project/board-'));
     for (const dep of boardDeps) {
       // 分解依赖项名称
       const depParts = dep.split('/');
       const depParent = depParts[0];
       const depName = depParts[1];
 
-      this.uiService.stateSubject.next({text: '安装依赖: ' + dep});
-
       const depPath = path + '/node_modules/' + depParent + '/' + depName;
       const pkgPackageJsonPath = depPath + '/package.json';
 
       // 读取板子的package.json文件
-      const pkgPackageJson = window['file'].readSync(pkgPackageJsonPath);
-      if (!pkgPackageJson) {
+      const pkgPackageJsonContent = this.read_package_json(pkgPackageJsonPath);
+      if (!pkgPackageJsonContent) {
         console.error('package.json not exist: ', pkgPackageJsonPath);
-        return false;
+        continue;
       }
-
-      const pkgPackageJsonContent = JSON.parse(pkgPackageJson);
       const boardDependencies = pkgPackageJsonContent.boardDependencies || {};
 
       console.log('boardDependencies: ', boardDependencies);
 
       for (const [depName, depVersion] of Object.entries(boardDependencies)) {
         const pkg = `${depName}@${depVersion}`;
-        await this.dependencies_install({
+
+        this.uiService.stateSubject.next({ text: '安装依赖: ' + pkg });
+        await this.install_package({
           package: pkg,
           global: true,
         });
       }
     }
-
-    this.uiService.stateSubject.next({text: '项目加载中...'});
-    // TODO 加载blockly组件
-    this.uiService.stateSubject.next({ text: '项目加载成功', timeout: 3000 });
-    this.loaded.next(true);
-    // return true;
+    this.uiService.stateSubject.next({ text: '板子依赖安装成功', timeout: 3000 });
   }
 
-  // 另存为项目
-  project_save_as() {}
-
   // 安装依赖
-  async dependencies_install(data) {
-    // TODO 状态反馈
+  async install_package(data) {
     console.log("install Data: ", data);
     const installResult = await window['dependencies'].install(data);
     if (!installResult.success) {

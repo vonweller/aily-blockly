@@ -42,6 +42,7 @@ export class ProjectNewComponent {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
+    private uiService: UiService,
   ) {}
 
   async ngOnInit() {
@@ -78,20 +79,14 @@ export class ProjectNewComponent {
       return;
     }
 
-    console.log('开始创建项目');
-
     this.currentStep = 2;
-    await this.projectService.project_new(this.projectData);
-  
-    console.log('项目创建成功');
-    this.currentStep = 3;
+    const prjPath = await this.projectService.project_new(this.projectData);
 
-    const prjPath = this.projectData.path + '/' + this.projectData.name;
-
-    // 发送项目更新
-    window['project'].update({ path: prjPath });
-    // 关闭窗口
-    window['subWindow'].close();
+    setTimeout(() => {
+      this.currentStep = 3;
+      // 关闭窗口
+      window['subWindow'].close();
+    }, 1000);
   }
 
   openUrl(url) {

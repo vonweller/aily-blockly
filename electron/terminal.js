@@ -299,7 +299,7 @@ function registerTerminalHandlers(mainWindow) {
 
   const terminals = new Map();
   ipcMain.on("terminal-create", (event, args) => {
-    const shell = process.env[process.platform === "win32" ? "powershell.exe" : "bash"];
+    const shell = process.platform === "win32" ? "powershell.exe" : "bash";
     const ptyProcess = pty.spawn(shell, [], {
       name: "xterm-color",
       cols: args.cols,
@@ -310,14 +310,21 @@ function registerTerminalHandlers(mainWindow) {
 
     ptyProcess.on("data", (data) => {
       console.log("ptyProcessData: ", data);
-      mainWindow.webContents.send("terminal-inc-data", data);
+      if (data !== ">>") {
+        mainWindow.webContents.send("terminal-inc-data", data);
+      }
     });
 
     terminals[ptyProcess.pid] = ptyProcess;
 
     ipcMain.on("terminal-to-pty", (event, input) => {
-      console.log("terminal-to-pty: ", input);
-      // TODO 判断是否是npm install命令, 且带有 -g 参数，如果有则需要添加--prefix,定位到相应的AppDdata/aily-project目录
+      // 对npm命令进行特殊处理
+      if (input.trim().startsWith("npm")) {
+        input += ` --register ${process.env.AILY_NPM_REGISTRY}`;
+        if (/\b(-g|--global)\b/.test(input)) {
+          input += ` --prefix ${process.env.AILY_NPM_PREFIX}`;
+        }
+      }
       
       ptyProcess.write(input + '\r\n');
     });
