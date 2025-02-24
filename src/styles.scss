@@ -2,7 +2,7 @@ body {
   width: 100vw;
   height: 100vh;
   margin: 0;
-  font-family: "MiSans Regular", sans-serif !important;
+  font-family: "MiSans Regular", "FiraCode Regular" !important;
   overflow: hidden;
   background: transparent !important;
 }
@@ -47,4 +47,8 @@ body {
 
 .bborder {
   border: 1px solid #505050;
+}
+
+.vsfont{
+  font-family: Consolas, "Courier New", monospace;
 }

@@ -44,7 +44,10 @@ export class TerminalComponent {
   trash() {}
 
   ngAfterViewInit(): void {
-    this.terminal = new Terminal();
+    this.terminal = new Terminal({
+      fontFamily: 'Consolas, "Courier New", monospace', // 设置字体
+      fontSize: 14,                      // 设置字体大小
+    });
     this.fitAddon = new FitAddon();
     this.terminal.open(this.terminalEl.nativeElement);
     setTimeout(() => {

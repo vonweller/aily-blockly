@@ -3,15 +3,15 @@
   <div class="dir">{{ data.dir }}</div>
   @if (mode == 1) {
     <div
-      class="data"
+      class="data vsfont"
       [ngClass]="{ send: data.dir == '>', error: data.data.includes('error:') }"
     >
       {{ data.data }}
-      <div class="zf">/r</div>
-      <div class="zf">/n</div>
+      <span class="zf">/r</span>
+      <span class="zf">/n</span>
     </div>
   } @else {
-    <div class="data">{{ data.source }}</div>
+    <div class="data vsfont">{{ data.source }}</div>
   }
 </div>
 

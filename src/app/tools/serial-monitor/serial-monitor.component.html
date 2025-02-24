@@ -85,7 +85,7 @@
         </div>
       </div>
       <div class="monitor">
-        <div class="r-box">
+        <div class="r-box sscroll">
           @for (item of dataList; track $index) {
             <app-data-item [data]="item"></app-data-item>
           }
@@ -125,7 +125,7 @@
         </nz-resize-handle>
         <div class="s-box">
           <textarea
-            class="sscroll"
+            class="sscroll vsfont"
             nz-input
             [(ngModel)]="inputValue"
           ></textarea>

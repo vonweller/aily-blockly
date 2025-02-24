@@ -1,17 +1,19 @@
 .item {
   display: flex;
   line-height: 24px;
+
   .time {
     flex-shrink: 0;
     color: #999;
   }
+
   .dir {
     color: #999;
     margin: 0 10px 0 5px;
   }
 
   .data {
-    display: flex;
+    // display: flex;
   }
 
   .send {
@@ -25,7 +27,7 @@
   .zf {
     width: 14px;
     height: 20px;
-    background: rgba(252, 187, 9, 0.5);
+    background: rgba(255, 140, 0, 0.3);
     color: #fff;
     margin: 0 2px;
   }
