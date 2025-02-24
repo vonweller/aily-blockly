@@ -6,9 +6,9 @@
 }
 
 .dialog-list {
-  padding: 5px 5px 5px 10px;
+  padding: 0 5px 0 10px;
   height: calc(100% - 180px);
-  overflow-y:scroll;
+  overflow-y: auto;
 }
 
 .sender {
@@ -51,8 +51,8 @@
   }
 }
 
-nz-resize-handle{
-  .line{
+nz-resize-handle {
+  .line {
     margin-top: 5px;
     height: 2px;
     background: rgba(255, 255, 255, 0.1);

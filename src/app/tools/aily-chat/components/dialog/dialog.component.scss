@@ -10,7 +10,7 @@ nz-avatar {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    margin: 15px 10px 0 10px;
+    margin: 5px 10px 5px 10px;
     background: #555;
     width: 100%;
     min-height: 44px;
@@ -77,7 +77,7 @@ nz-avatar {
     flex-direction: row-reverse;
 
     .bubble {
-        margin: 15px 10px 0 10px;
+        margin: 5px 10px 5px 10px;
         background: #365f7e;
         border-radius: 10px 0 10px 10px;
 
