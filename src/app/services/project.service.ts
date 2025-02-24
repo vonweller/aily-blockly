@@ -105,15 +105,15 @@ export class ProjectService {
 
   // 打开项目
   async project_open(path) {
-    this.uiService.stateSubject.next({text: '正在打开项目...'});
+    this.uiService.stateSubject.next({ text: '正在打开项目...' });
     // 判断路径是否存在
     const pathExist = window['path'].isExists(path);
     if (!pathExist) {
       console.error('path not exist: ', path);
       return false;
     }
-    this.uiService.stateSubject.next({text: '项目加载中...'});
-    
+    this.uiService.stateSubject.next({ text: '项目加载中...' });
+
     // 读取package.json文件
     const packageJsonContent = window['file'].readSync(`${path}/package.json`);
     if (!packageJsonContent) {
@@ -121,14 +121,14 @@ export class ProjectService {
       return false;
     }
     this.projectData = JSON.parse(packageJsonContent);
-  
+
     // 判断是否需要安装package.json依赖
     if (!window['path'].isExists(`${path}/node_modules`)) {
       await this.dependencies_install(`${path}/package.json`);
     }
-    
+
     this.loaded.next(true);
-    
+
     // TODO 加载blockly组件
 
     this.uiService.stateSubject.next({ text: '项目加载成功', timeout: 3000 });
@@ -138,7 +138,7 @@ export class ProjectService {
   }
 
   // 另存为项目
-  project_save_as() {}
+  project_save_as() { }
 
   // 读取package.json文件
   read_package_json(path) {
@@ -199,14 +199,14 @@ export class ProjectService {
       for (const [depName, depVersion] of Object.entries(boardDependencies)) {
         const pkg = `${depName}@${depVersion}`;
 
-        this.uiService.stateSubject.next({ text: '安装依赖: ' + pkg });
+        this.uiService.stateSubject.next({ state: 'loading', text: '安装依赖: ' + pkg });
         await this.install_package({
           package: pkg,
           global: true,
         });
       }
     }
-    this.uiService.stateSubject.next({ text: '板子依赖安装成功', timeout: 3000 });
+    this.uiService.stateSubject.next({ state: 'done', text: '开发板依赖安装成功', timeout: 5000 });
   }
 
   // 安装依赖

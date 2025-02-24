@@ -1,5 +1,5 @@
 import { Component } from '@angular/core';
-import { GUIDE_HEADER_MENU } from '../../../configs/header.config';
+import { GUIDE_MENU } from '../../../configs/header.config';
 import { UiService } from '../../../services/ui.service';
 import { ProjectService } from '../../../services/project.service';
 import { version } from '../../../../../package.json';
@@ -12,8 +12,9 @@ import { version } from '../../../../../package.json';
 })
 export class GuideComponent {
   version = version;
-  headerMenu = GUIDE_HEADER_MENU;
+  guideMenu = GUIDE_MENU;
   showMenu = true;
+  recentlyProjects = [, , , , ,];
 
   get projectData() {
     return this.projectService.projectData;
@@ -22,7 +23,7 @@ export class GuideComponent {
   constructor(
     private uiService: UiService,
     private projectService: ProjectService
-  ) {}
+  ) { }
 
   onMenuClick(e: any) {
     this.process(e);
@@ -41,6 +42,10 @@ export class GuideComponent {
     if (path) {
       await this.projectService.project_open(path);
     }
+  }
+
+  async openProjectByPath(data) {
+    await this.projectService.project_open(data.path);
   }
 
   process(item) {

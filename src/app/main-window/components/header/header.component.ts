@@ -1,13 +1,13 @@
 import { CommonModule } from '@angular/common';
 import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
-import { HEADER_BTNS, HEADER_MENU } from '../../configs/header.config';
+import { HEADER_BTNS, HEADER_MENU } from '../../../configs/header.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
-import { ProjectService } from '../../services/project.service';
-import { UiService } from '../../services/ui.service';
-import { BuilderService } from '../../services/builder.service';
-import { UploaderService } from '../../services/uploader.service';
-import { MenuComponent } from '../menu/menu.component';
+import { ProjectService } from '../../../services/project.service';
+import { UiService } from '../../../services/ui.service';
+import { BuilderService } from '../../../services/builder.service';
+import { UploaderService } from '../../../services/uploader.service';
+import { MenuComponent } from '../../../components/menu/menu.component';
 
 @Component({
   selector: 'app-header',
