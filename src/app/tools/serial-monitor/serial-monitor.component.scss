@@ -37,9 +37,12 @@
 .settings {
   background: #444;
   padding: 0 10px;
+  margin: 10px;
+  border-radius: 5px;
 
   .line {
     display: flex;
+    align-items: center;
   }
 
   .item {
@@ -142,6 +145,11 @@
     .right2 {
       position: absolute;
       right: 42px;
+    }
+
+    .right3 {
+      position: absolute;
+      right: 74px;
     }
   }
 }

@@ -79,6 +79,14 @@
               <nz-option nzValue="115200" nzLabel="115200"></nz-option>
             </nz-select>
           </div>
+          <div>
+            <!-- <button nz-button [nzSize]="'small'" nzType="primary">Open</button> -->
+            <nz-switch [(ngModel)]="switchValue"></nz-switch>
+          </div>
+          <!-- <div>
+            <button nz-button [nzSize]="'small'" nzType="primary" (click)="send('DTR')">DTR</button>
+            <button nz-button [nzSize]="'small'" nzType="primary" (click)="send('RTS')">RTS</button>
+          </div> -->
           <!-- <div class="more ccenter" (click)="openMore()">
             <i class="fa-light fa-circle-chevron-down"></i>
           </div> -->
@@ -104,10 +112,13 @@
           <div class="btn ccenter" nz-tooltip nzTooltipTitle="时间戳">
             <i class="fa-light fa-timer"></i>
           </div>
-          <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出数据">
+          <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索">
+            <i class="fa-regular fa-magnifying-glass"></i>
+          </div>
+          <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出">
             <i class="fa-light fa-download"></i>
           </div>
-          <div class="btn ccenter right" nz-tooltip nzTooltipTitle="清除屏幕">
+          <div class="btn ccenter right" nz-tooltip nzTooltipTitle="清除">
             <i class="fa-light fa-trash-can"></i>
           </div>
         </div>

@@ -13,6 +13,7 @@ import { SubWindowComponent } from '../../components/sub-window/sub-window.compo
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { DataItemComponent } from './components/data-item/data-item.component';
+import { NzSwitchModule } from 'ng-zorro-antd/switch';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -27,12 +28,16 @@ import { DataItemComponent } from './components/data-item/data-item.component';
     NzResizableModule,
     SubWindowComponent,
     CommonModule,
-    DataItemComponent
+    DataItemComponent,
+    NzSwitchModule,
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
 })
 export class SerialMonitorComponent {
+
+  switchValue = false;
+
   get windowInfo() {
     return (
       '串口监视器 ' +
@@ -102,13 +107,13 @@ export class SerialMonitorComponent {
     private electronService: ElectronService,
     private uiService: UiService,
     private router: Router,
-  ) {}
+  ) { }
 
   ngOnInit() {
     this.currentUrl = this.router.url;
   }
 
-  ngAfterViewInit(): void {}
+  ngAfterViewInit(): void { }
 
   close() {
     this.uiService.closeTool('serial-monitor');
@@ -119,7 +124,7 @@ export class SerialMonitorComponent {
     this.bottomHeight = height!;
   }
 
-  openMore() {}
+  openMore() { }
 
   async openPortList() {
     if (this.electronService.isElectron) {
@@ -130,10 +135,10 @@ export class SerialMonitorComponent {
     }
   }
 
-  send() {}
+  send(e = '') { }
 
   //
 
   // 清除显示
-  clean() {}
+  clean() { }
 }
