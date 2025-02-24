@@ -98,43 +98,6 @@ $header-inner-height: 38px;
   }
 }
 
-.menu-box {
-  background: #2b2d30;
-  border-radius: 5px;
-  width: 280px;
-  position: absolute;
-  top: $header-height;
-  left: 1px;
-  z-index: 999;
-  flex-direction: column;
-  padding: 3px 0;
-
-  .menu-item {
-    padding-left: 10px;
-    height: 30px;
-    justify-content: flex-start;
-    margin: 0 3px;
-    border-radius: 5px;
-    cursor: pointer;
-    color: #ddd;
-
-    .icon {
-      width: 20px;
-      margin-right: 10px;
-    }
-
-    &:hover {
-      background: #405e8d;
-    }
-  }
-
-  .sep {
-    height: 1px;
-    background: #444;
-    margin: 2px 0;
-  }
-}
-
 .more {
   position: absolute;
   top: 3px;

@@ -46,16 +46,5 @@
 </div>
 <!-- menu -->
 @if (showMenu) {
-  <div class="menu-box bborder" #menuBox>
-    @for (item of headerMenu; track $index) {
-      @if (item.sep) {
-        <div class="sep"></div>
-      } @else {
-        <div class="menu-item ccenter" (click)="onMenuClick(item)">
-          <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
-          <div class="text">{{ item.name }}</div>
-        </div>
-      }
-    }
-  </div>
+  <app-menu [menuList]="headerMenu" (closeEvent)="closeMenu()" (itemClickEvent)="onMenuClick($event)"></app-menu>
 }

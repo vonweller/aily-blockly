@@ -7,8 +7,12 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ElectronService } from '../../services/electron.service';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
-
-let SerialPort;
+import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
+import { Router } from '@angular/router';
+import { CommonModule } from '@angular/common';
+import { DataItemComponent } from './components/data-item/data-item.component';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -16,14 +20,63 @@ let SerialPort;
     InnerWindowComponent,
     NzSelectModule,
     NzInputModule,
+    NzButtonModule,
     FormsModule,
     NzToolTipModule,
-    ToolContainerComponent
+    ToolContainerComponent,
+    NzResizableModule,
+    SubWindowComponent,
+    CommonModule,
+    DataItemComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
 })
 export class SerialMonitorComponent {
+  get windowInfo() {
+    return (
+      '串口监视器 ' +
+      '( ' +
+      this.currentPort +
+      ' - ' +
+      this.currentBaudRate +
+      ' )'
+    );
+  }
+
+  dataList = [
+    {
+      time: '12:12:12',
+      data: 'testtest testtest testtest testtesst testtest testtest testtesst testtest testtest testtesst testtest testtest testtesst testtest testtest testtest',
+      dir: '>',
+    },
+    {
+      time: '12:12:13',
+      data: 'testtest testtest testtest testtest',
+      dir: '<',
+    },
+    {
+      time: '12:12:14',
+      data: "error: WiFi connection failed, password incorrect",
+      dir: '<',
+    },
+    {
+      time: '12:12:15',
+      data: 'testtest testtest testtest testtest',
+      dir: '<',
+    },
+    {
+      time: '12:12:16',
+      data: 'testtest testtest testtest testtest',
+      dir: '<',
+    },
+    {
+      time: '12:12:17',
+      data: 'testtest testtest testtest testtest',
+      dir: '<',
+    },
+  ];
+
   // 波特率
   baudRate = '115200';
   // 自动滚动
@@ -39,17 +92,31 @@ export class SerialMonitorComponent {
 
   serialList = [];
 
+  inputValue;
+
+  currentPort = 'COM3';
+  currentBaudRate = '115200';
+  currentUrl;
+
   constructor(
     private electronService: ElectronService,
-    private uiService: UiService
+    private uiService: UiService,
+    private router: Router,
   ) {}
 
-  ngOnInit() {}
+  ngOnInit() {
+    this.currentUrl = this.router.url;
+  }
 
   ngAfterViewInit(): void {}
 
   close() {
     this.uiService.closeTool('serial-monitor');
+  }
+
+  bottomHeight = 180;
+  onContentResize({ height }: NzResizeEvent): void {
+    this.bottomHeight = height!;
   }
 
   openMore() {}
@@ -63,5 +130,10 @@ export class SerialMonitorComponent {
     }
   }
 
+  send() {}
 
+  //
+
+  // 清除显示
+  clean() {}
 }

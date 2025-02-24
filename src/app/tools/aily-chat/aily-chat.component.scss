@@ -7,23 +7,25 @@
 
 .dialog-list {
   padding: 5px 5px 5px 10px;
-  height: calc(100% - 190px);
+  height: calc(100% - 180px);
   overflow-y:scroll;
 }
 
 .sender {
   position: relative;
-  // max-width: 300px;
-  height: 180px;
   flex-shrink: 0;
 
   .s-box {
     width: 100%;
-    padding: 10px;
+    height: 100%;
+    padding: 10px 10px 5px 10px;
+    position: relative;
 
     textarea {
       background: #292929;
       border-radius: 5px;
+      height: calc(100% - 40px);
+      resize: none;
     }
 
     .btns {
@@ -46,5 +48,13 @@
     button {
       margin-left: 10px;
     }
+  }
+}
+
+nz-resize-handle{
+  .line{
+    margin-top: 5px;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.1);
   }
 }

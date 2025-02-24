@@ -2,6 +2,7 @@
  */
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
+import { ElectronService } from './electron.service';
 
 @Injectable({
   providedIn: 'root',
@@ -24,7 +25,15 @@ export class UiService {
   // 用来记录terminal是否打开
   terminalIsOpen = false;
 
-  constructor() { }
+  constructor(private electronService: ElectronService) {}
+
+  init(): void {
+    if (this.electronService.isElectron) {
+      window['ipcRenderer'].on('window-go-main', (event, data) => {
+        this.openTool(data.replace('/', ''));
+      });
+    }
+  }
 
   openWindow(opt: WindowOpts) {
     window['subWindow'].open(opt);
@@ -48,6 +57,7 @@ export class UiService {
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
     this.actionSubject.next({ action: 'open', type: 'tool', data: name });
+    console.log('kkkkkkkkkkk');
   }
 
   // 如果其它组件/程序要关闭工具，调用这个方法
@@ -85,7 +95,7 @@ export class UiService {
     // this.actionSubject.next({ action: 'clear-terminal' });
   }
 
-  runCmd(cmd: string) { }
+  runCmd(cmd: string) {}
 
   // 更新footer右下角的状态
   updateState(state: {
@@ -96,7 +106,6 @@ export class UiService {
   }) {
     this.stateSubject.next(state);
   }
-
 
   // 关闭当前窗口
   closeWindow() {

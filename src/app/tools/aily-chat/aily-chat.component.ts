@@ -6,6 +6,7 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
+import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 
 @Component({
   selector: 'app-aily-chat',
@@ -15,6 +16,7 @@ import { UiService } from '../../services/ui.service';
     DialogComponent,
     NzButtonModule,
     ToolContainerComponent,
+    NzResizableModule
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
@@ -93,6 +95,11 @@ export class AilyChatComponent {
     //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
     // });
     this.scrollToBottom(true);
+  }
+
+  bottomHeight = 180;
+  onContentResize({ height }: NzResizeEvent): void {
+    this.bottomHeight = height!;
   }
 
   close() {

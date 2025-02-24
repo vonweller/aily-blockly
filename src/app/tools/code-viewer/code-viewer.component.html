@@ -1,3 +1,19 @@
-<app-tool-container [title]="'代码查看'" (closeEvent)="close()">
+@if (currentUrl == "/code-viewer") {
+  <app-sub-window
+    [title]="windowInfo"
+    [winBtns]="['go-main', 'minimize', 'maximize', 'close']"
+  >
+    <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+  </app-sub-window>
+} @else {
+  <app-tool-container
+    [title]="windowInfo"
+    [path]="'/code-viewer'"
+    (closeEvent)="close()"
+  >
+    <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+  </app-tool-container>
+}
+<ng-template #windowBoxTemplate>
   <app-code-editor [code]="code"></app-code-editor>
-</app-tool-container>
+</ng-template>

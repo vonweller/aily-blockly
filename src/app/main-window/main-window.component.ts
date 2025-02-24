@@ -47,8 +47,12 @@ export class MainWindowComponent {
   constructor(
     private uiService: UiService,
     private projectService: ProjectService,
-    private cd: ChangeDetectorRef
+    private cd: ChangeDetectorRef,
   ) {}
+
+  ngOnInit(): void {
+    this.uiService.init();
+  }
 
   ngAfterViewInit(): void {
     this.uiService.actionSubject.subscribe((e: any) => {
@@ -74,6 +78,7 @@ export class MainWindowComponent {
         default:
           break;
       }
+      this.cd.detectChanges();
     });
 
     this.projectService.loaded.subscribe((loaded) => {

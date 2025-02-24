@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
-import { UiService } from '../../services/ui.service';
+import { UiService, WindowOpts } from '../../services/ui.service';
 
 @Component({
   selector: 'app-tool-container',
@@ -10,6 +10,7 @@ import { UiService } from '../../services/ui.service';
 })
 export class ToolContainerComponent {
   @Input() title: string = '工具';
+  @Input() path: string;
 
   @Output() closeEvent = new EventEmitter();
 
@@ -35,5 +36,16 @@ export class ToolContainerComponent {
 
   copy() {
     this.copyEvent.emit();
+  }
+
+  openWindow() {
+    this.uiService.openWindow({
+      path: this.path,
+      title: this.title,
+      // alwaysOnTop: true,
+      width: 1200,
+      height: 800,
+    });
+    this.close();
   }
 }

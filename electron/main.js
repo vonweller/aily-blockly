@@ -35,10 +35,13 @@ function loadEnv() {
   // 将child目录添加到环境变量PATH中
   process.env.PATH += path.delimiter + path.join(__dirname, "..", "child");
   // TODO 需要配合解压node环境时命名的指定，当前默认为node
-  process.env.PATH += path.delimiter + path.join(__dirname, "..", "child", "node");
+  process.env.PATH +=
+    path.delimiter + path.join(__dirname, "..", "child", "node");
 
   // 读取同级目录下的config.json文件
-  const confContent = require("fs").readFileSync(path.join(__dirname, "config.json"));
+  const confContent = require("fs").readFileSync(
+    path.join(__dirname, "config.json"),
+  );
   const conf = JSON.parse(confContent);
 
   console.log("conf: ", conf);
@@ -46,11 +49,14 @@ function loadEnv() {
   // app data path
   process.env.AILY_APPDATA_PATH = getAppDataPath();
   // npm registry
-  process.env.AILY_NPM_REGISTRY = conf['npm_registry'][0];
+  process.env.AILY_NPM_REGISTRY = conf["npm_registry"][0];
   // 全局npm包路径
   process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
   // 默认全局编译器路径
-  process.env.AILY_COMPILER_PATH = path.join(process.env.AILY_APPDATA_PATH, "compiler");
+  process.env.AILY_COMPILER_PATH = path.join(
+    process.env.AILY_APPDATA_PATH,
+    "compiler",
+  );
   // 默认全局烧录器路径
   process.env.AILY_TOOL_PATH = path.join(process.env.AILY_APPDATA_PATH, "tool");
   // 默认全局SDK路径
@@ -63,7 +69,7 @@ function createWindow() {
     height: 780,
     frame: false,
     minWidth: 1200,
-    minHeight:780,
+    minHeight: 780,
     autoHideMenuBar: true,
     transparent: true,
     webPreferences: {
@@ -130,7 +136,7 @@ ipcMain.on("window-open", (event, data) => {
     webPreferences: {
       nodeIntegration: true,
       webSecurity: false,
-      preload: path.join(__dirname, "preload.js")
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -161,6 +167,12 @@ ipcMain.on("window-maximize", (event) => {
 
 ipcMain.on("window-close", (event) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  senderWindow.close();
+});
+
+ipcMain.on("window-go-main", (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  mainWindow.webContents.send("window-go-main", data);
   senderWindow.close();
 });
 

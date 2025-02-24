@@ -40,6 +40,16 @@
     font-size: 18px;
   }
 
+  .go-main{
+    // border-right: 1px solid #333;
+    margin-right: 10px;
+    font-size: 17px;
+    background: transparent !important;
+    &:hover {
+      color: rgb(75, 151, 221);
+    }
+  }
+
   .close {
     font-size: 19px;
 

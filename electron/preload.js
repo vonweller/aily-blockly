@@ -18,7 +18,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }
       return path;
     },
-    isExists: (path) => { return require("fs").existsSync(path) },
+    isExists: (path) => {
+      return require("fs").existsSync(path);
+    },
   },
   versions: () => process.versions,
   SerialPort: {
@@ -41,12 +43,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       });
     },
     sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
-    close: (pid) => ipcRenderer.send('terminal-close', pid)
+    close: (pid) => ipcRenderer.send("terminal-close", pid),
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
     close: () => ipcRenderer.send("window-close"),
+    goMain: (data) => ipcRenderer.send("window-go-main", data),
   },
   subWindow: {
     open: (options) => ipcRenderer.send("window-open", options),
@@ -55,7 +58,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   project: {
     new: (data) => {
       return new Promise((resolve, reject) => {
-        ipcRenderer.invoke("project-new", data)
+        ipcRenderer
+          .invoke("project-new", data)
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
@@ -73,7 +77,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   builder: {
     init: (data) => {
       return new Promise((resolve, reject) => {
-        ipcRenderer.invoke("builder-init", data)
+        ipcRenderer
+          .invoke("builder-init", data)
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       });
@@ -95,12 +100,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onDeviceFound: (callback) => ipcRenderer.on("ble-device-found", callback),
     onConnected: (callback) => ipcRenderer.on("ble-connected", callback),
     onDisconnected: (callback) => ipcRenderer.on("ble-disconnected", callback),
-    sendData: (deviceId, data) => ipcRenderer.send("ble-send-data", deviceId, data),
-    onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback)
+    sendData: (deviceId, data) =>
+      ipcRenderer.send("ble-send-data", deviceId, data),
+    onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback),
   },
   other: {
     openByExplorer: (path) => shell.openPath(path),
     openByBrowser: (url) => shell.openExternal(url),
   },
 });
-

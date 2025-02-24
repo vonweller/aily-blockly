@@ -7,10 +7,11 @@ import { ProjectService } from '../../services/project.service';
 import { UiService } from '../../services/ui.service';
 import { BuilderService } from '../../services/builder.service';
 import { UploaderService } from '../../services/uploader.service';
+import { MenuComponent } from '../menu/menu.component';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, FormsModule, NzToolTipModule],
+  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -18,7 +19,7 @@ export class HeaderComponent {
   headerBtns = HEADER_BTNS;
   headerMenu = HEADER_MENU;
 
-  @ViewChild('menuBox') menuBox: ElementRef;
+  // @ViewChild('menuBox') menuBox: ElementRef;
 
   get projectData() {
     return this.projectService.projectData;
@@ -29,7 +30,7 @@ export class HeaderComponent {
   }
 
   get terminalIsOpen() {
-    return this.uiService.terminalIsOpen
+    return this.uiService.terminalIsOpen;
   }
 
   constructor(
@@ -37,31 +38,16 @@ export class HeaderComponent {
     private uiService: UiService,
     private builderService: BuilderService,
     private uploaderService: UploaderService,
-  ) { }
+  ) {}
 
   showMenu = false;
   openMenu() {
     this.showMenu = !this.showMenu;
-    if (this.showMenu) {
-      document.addEventListener('click', this.handleDocumentClick);
-    } else {
-      this.closeMenu();
-    }
   }
 
   closeMenu() {
     this.showMenu = false;
-    document.removeEventListener('click', this.handleDocumentClick);
   }
-
-  handleDocumentClick = (event: MouseEvent) => {
-    if (
-      this.menuBox &&
-      !this.menuBox.nativeElement.contains(event.target as Node)
-    ) {
-      this.closeMenu();
-    }
-  };
 
   onClick(item) {
     this.process(item);
@@ -69,7 +55,7 @@ export class HeaderComponent {
 
   isOpenTool(btn) {
     if (btn.data.type == 'terminal') {
-      return this.terminalIsOpen
+      return this.terminalIsOpen;
     } else if (btn.data && btn.data.data) {
       return this.openToolList.indexOf(btn.data.data) !== -1;
     }
@@ -120,7 +106,7 @@ export class HeaderComponent {
           this.uploaderService.upload();
         } else if (item.data.data === 'project-open') {
           // TODO 传入路径
-          const path = 'C:\\Users\\stao\\Documents\\aily-project\\test6'
+          const path = 'C:\\Users\\stao\\Documents\\aily-project\\test6';
           this.projectService.project_open(path).then((res) => {
             if (res) {
               console.log('打开项目成功');
@@ -128,13 +114,13 @@ export class HeaderComponent {
             } else {
               console.log('打开项目失败');
             }
-          })
-        };
+          });
+        }
         break;
       case 'other':
         if (item.data.action == 'openByExplorer') {
           window['other'].openByExplorer(window['path'].getUserDocuments());
-        }else if (item.data.action == 'openByBrowser') {
+        } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);
         }
         break;

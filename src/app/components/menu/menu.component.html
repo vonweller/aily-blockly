@@ -1,0 +1,16 @@
+<div
+  class="menu-box bborder"
+  #menuBox
+  [ngStyle]="{ left: position.x + 'px', top: position.y + 'px' }"
+>
+  @for (item of menuList; track $index) {
+    @if (item.sep) {
+      <div class="sep"></div>
+    } @else {
+      <div class="menu-item ccenter" (click)="itemClick(item)">
+        <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
+        <div class="text">{{ item.name }}</div>
+      </div>
+    }
+  }
+</div>

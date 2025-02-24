@@ -25,5 +25,17 @@ export const routes: Routes = [
     {
         path: "about",
         loadComponent: () => import('./windows/about/about.component').then(m => m.AboutComponent)
+    },
+    {
+        path: "serial-monitor",
+        loadComponent: () => import('./tools/serial-monitor/serial-monitor.component').then(m => m.SerialMonitorComponent)
+    },
+    {
+        path: "aily-chat",
+        loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
+    },
+    {
+        path: "code-viewer",
+        loadComponent: () => import('./tools/code-viewer/code-viewer.component').then(m => m.CodeViewerComponent)
     }
 ];
