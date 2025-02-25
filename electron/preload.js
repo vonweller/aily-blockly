@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 const { spawn, exec } = require("child_process");
 const { get } = require("http");
+// const { Bonjour } = require('bonjour-service');
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -26,6 +27,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   SerialPort: {
     list: async () => await SerialPort.list(),
     create: (options) => new SerialPort(options),
+  },
+  Bonjour: {
+    // list: async () => await Bonjour.list(),
   },
   platform: {
     type: () => process.platform,

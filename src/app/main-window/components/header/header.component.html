@@ -5,31 +5,28 @@
       <i class="fa-regular fa-bars"></i>
     </div>
   </div>
-  <div class="board ccenter" nz-tooltip nzTooltipTitle="开发板选择">
-    Arduino UNO R4 WiFi (COM3)
+  <div class="board ccenter" nz-tooltip nzTooltipTitle="端口选择" (click)="openDeviceList()">
+    Arduino UNO R4 WiFi
+    @if(currentPort){
+    ({{currentPort}})
+    }
     <div class="down ccenter"><i class="fa-regular fa-angle-down"></i></div>
   </div>
   <div class="null-box drag" (dblclick)="maximize()"></div>
   <div class="project-box ccenter">{{ projectData.name }}</div>
   <div class="toolbox">
     @for (zone of headerBtns; track $index) {
-      <div class="zone ccenter">
-        @for (btn of zone; track $index) {
-          <div
-            class="btn ccenter"
-            nz-tooltip
-            nzTooltipTitle="{{ btn.name }}"
-            (click)="onClick(btn)"
-            [ngStyle]="{ color: btn.color ? btn.color : '' }"
-            [ngClass]="{ selected: isOpenTool(btn) }"
-          >
-            <i class="{{ btn.icon }}"></i>
-            @if (btn.more) {
-              <div class="more ccenter">{{ btn.more }}</div>
-            }
-          </div>
+    <div class="zone ccenter">
+      @for (btn of zone; track $index) {
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name }}" (click)="onClick(btn)"
+        [ngStyle]="{ color: btn.color ? btn.color : '' }" [ngClass]="{ selected: isOpenTool(btn) }">
+        <i class="{{ btn.icon }}"></i>
+        @if (btn.more) {
+        <div class="more ccenter">{{ btn.more }}</div>
         }
       </div>
+      }
+    </div>
     }
   </div>
   <div class="win-btns">
@@ -46,5 +43,10 @@
 </div>
 <!-- menu -->
 @if (showMenu) {
-  <app-menu [menuList]="headerMenu" (closeEvent)="closeMenu()" (itemClickEvent)="onMenuClick($event)"></app-menu>
+<app-menu [menuList]="headerMenu" (closeEvent)="closeMenu()" (itemClickEvent)="onMenuClick($event)"></app-menu>
+}
+<!-- device port list -->
+@if (showDeviceList) {
+<app-menu [position]="{x:40,y:40}" [width]="200" [menuList]="devicePortList" (closeEvent)="closeDeviceList()"
+  (itemClickEvent)="selectDevice($event)"></app-menu>
 }

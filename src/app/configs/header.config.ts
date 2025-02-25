@@ -1,4 +1,4 @@
-export let HEADER_BTNS: IHeaderMenuItem[][] = [
+export let HEADER_BTNS: IMenuItem[][] = [
   [
     {
       name: '编译',
@@ -43,17 +43,18 @@ export let HEADER_BTNS: IHeaderMenuItem[][] = [
   ],
 ];
 
-interface IHeaderMenuItem {
-  name: string;
+interface IMenuItem {
+  name?: string;
   action?: string;
   type?: string;
   data?: any;
   icon?: string;
   color?: string;
   more?: string;
+  sep?: boolean;
 }
 
-export let HEADER_MENU = [
+export let HEADER_MENU:IMenuItem[] = [
   {
     name: '新建项目',
     data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
@@ -115,7 +116,7 @@ export let HEADER_MENU = [
   },
 ];
 
-export let GUIDE_MENU = [
+export let GUIDE_MENU:IMenuItem[] = [
   {
     name: '新建项目',
     data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
@@ -130,8 +131,5 @@ export let GUIDE_MENU = [
     name: '示例程序',
     data: { type: 'window', path: 'example', alwaysOnTop: true, width: 820, height: 550 },
     icon: 'fa-light fa-folder-open',
-  },
-  {
-    sep: true,
-  },
+  }
 ]
