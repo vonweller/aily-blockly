@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, ElementRef, ViewChild, viewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, ViewChild, viewChild } from '@angular/core';
 import { HEADER_BTNS, HEADER_MENU } from '../../../configs/header.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
@@ -42,13 +42,27 @@ export class HeaderComponent {
     this.serialService.currentPort = port;
   }
 
+  get currentBoard(){
+    return this.projectData.board;
+  }
+
+  loaded = false;
+
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
     private builderService: BuilderService,
     private uploaderService: UploaderService,
-    private serialService: SerialService
+    private serialService: SerialService,
+    private cd: ChangeDetectorRef,
   ) { }
+
+  ngAfterViewInit(): void {
+    this.projectService.loaded.subscribe((loaded) => {
+      this.loaded = loaded;
+      this.cd.detectChanges();
+    });
+  }
 
   showMenu = false;
   openMenu() {

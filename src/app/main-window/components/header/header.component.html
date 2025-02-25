@@ -5,8 +5,10 @@
       <i class="fa-regular fa-bars"></i>
     </div>
   </div>
+
+  @if(loaded){
   <div class="board ccenter" nz-tooltip nzTooltipTitle="端口选择" (click)="openDeviceList()">
-    Arduino UNO R4 WiFi
+    {{currentBoard}}
     @if(currentPort){
     ({{currentPort}})
     }@else{
@@ -14,6 +16,7 @@
     }
     <div class="down ccenter"><i class="fa-regular fa-angle-down"></i></div>
   </div>
+  }
   <div class="null-box drag" (dblclick)="maximize()"></div>
   <div class="project-box ccenter">{{ projectData.name }}</div>
   <div class="toolbox">
