@@ -70,25 +70,25 @@ npm run electron:build-local
 ---
 <div style="display: flex; flex-wrap: wrap;">
     <a href="https://www.seekfree.cn/" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" width=200 style="margin: 0 20px 20px 0" />
     </a>
     <a href="https://www.seeedstudio.com/" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
     <a href="https://www.diandeng.tech/" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\diandeng\logo.png" alt="diandeng Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\diandeng\logo.png" alt="diandeng Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
     <a href="https://www.openjumper.com/" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\openjumper\logo.png" alt="openjumper Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\openjumper\logo.png" alt="openjumper Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
     <a href="https://www.titlab.cn/" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\titlab\logo.png" alt="titlab Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\titlab\logo.png" alt="titlab Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
     <a href="" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
     <a href="" style="height:80px; display: flex; align-items: center;">
-        <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
+        <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" width=200 style="margin: 0 20px 20px 0;" />
     </a>
 </div>
 
