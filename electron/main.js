@@ -204,3 +204,12 @@ ipcMain.handle("select-folder", async (event, data) => {
   }
   return result.filePaths[0];
 });
+
+// 环境变量
+ipcMain.handle("env-set", (event, data) => {
+  process.env[data.key] = data.value;
+})
+
+ipcMain.handle("env-get", (event, key) => {
+  return process.env[key];
+})

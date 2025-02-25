@@ -13,6 +13,7 @@ import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.c
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
+import { SettingsService } from '../services/settings.service';
 
 @Component({
   selector: 'app-main-window',

@@ -77,6 +77,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
   dependencies: {
     init: (data) => ipcRenderer.invoke("dependencies-init", data),
     install: (data) => ipcRenderer.invoke("dependencies-install", data),
+    boardList: () => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("board-list")
+          .then((result) => resolve(result["boards"]))
+          .catch((error) => reject(error));
+      });
+    },
+    installedList: () => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("installed-dependencies")
+          .then((result) => resolve(result["deps"]))
+          .catch((error) => reject(error));
+      });
+    }
   },
   builder: {
     init: (data) => {
@@ -112,4 +128,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     openByExplorer: (path) => shell.openPath(path),
     openByBrowser: (url) => shell.openExternal(url),
   },
+  env: {
+    set: (data) => ipcRenderer.invoke("env-set", data),
+    get: (key) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("env-get", key)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
+  }
 });

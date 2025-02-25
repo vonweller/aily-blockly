@@ -89,10 +89,15 @@
               <div class="board-list sscroll bborder">
                 @for (board of boardList; track $index) {
                   <div class="board-item">
-                    <div>Arduino UNO R3</div>
-                    <div class="version">&#64;1.8.3</div>
+                    <div>{{ board.name }}</div>
+                    <div class="version">&#64;{{ board.version }}</div>
                     <div class="btns">
-                      <div class="btn link">安装</div>
+                      @if (board.installed) {
+                        <div class="btn link">卸载</div>
+                      } @else {
+                        <div class="btn link">安装</div>
+                      }
+                      <!-- <div class="btn link">安装</div> -->
                       <!-- <div class="btn link">移除</div> -->
                     </div>
                   </div>
