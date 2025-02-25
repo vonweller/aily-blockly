@@ -63,11 +63,20 @@ npm run electron:build-local
 
 
 
+## 项目赞助
+本项目由以下企业和个人赞助
+
+企业赞助
+---
+<img src=".\brand\seekfree\logo.png" alt="seekfree Logo" width="200" style="margin: 0 20px 20px 0;"/> 
+<img src=".\brand\diandeng\logo.png" alt="diandeng Logo" width="200" style="margin: 0 20px 20px 0;"/> 
+</br>
+<img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" width="200" style="margin: 0 20px 20px 0;"/> 
+<img src=".\brand\openjumper\logo.png" alt="openjumper Logo" width="200" style="margin: 0 20px 20px 0;"/> 
+</br>
+<img src=".\brand\titlab\logo.png" alt="titlab Logo" width="200" style="margin: 0 20px 20px 0;"/> 
 
 
+个人赞助
+---
 
-
-
-
-## 相关依赖
-[Animate.css](https://animate.style/)  
