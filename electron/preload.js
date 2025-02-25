@@ -125,7 +125,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback),
   },
   other: {
-    openByExplorer: (path) => shell.openPath(path),
+    openByExplorer: (path) => {
+      if (process.platform === 'win32') {
+        exec(`explorer.exe "${path}"`, (error) => { });
+      } else {
+        shell.openPath(path)
+      }
+    },
     openByBrowser: (url) => shell.openExternal(url),
   },
   env: {
