@@ -9,6 +9,7 @@ import { ElectronService } from '../../services/electron.service';
 import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { UiService } from '../../services/ui.service';
+import { generateDateString } from '../../func/func';
 
 @Component({
   selector: 'app-project-new',
@@ -29,7 +30,7 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   currentBoard: any = null;
   projectData = {
-    name: 'new project',
+    name: '',
     path: '',
     description: '',
     board: null,
@@ -53,6 +54,7 @@ export class ProjectNewComponent {
     this.boardList = this.configService.boardList;
     this.currentBoard = this.boardList[0];
     this.projectData.board = this.currentBoard.value;
+    this.projectData.name ='project_' + generateDateString();
   }
 
   selectBoard(board) {
