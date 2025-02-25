@@ -125,7 +125,7 @@ export class ProjectService {
     this.currentProject = path;
 
     // 设置项目路径到环境变量
-    window["env"].set({key: "AILY_PRJ_PATH", value: path});
+    window["env"].set({ key: "AILY_PRJ_PATH", value: path });
 
     // 判断是否需要安装package.json依赖
     if (!window['path'].isExists(`${path}/node_modules`)) {
@@ -133,8 +133,10 @@ export class ProjectService {
     }
     this.loaded.next(true);
 
-    // TODO 加载blockly组件
+    // 添加到最近打开的项目
+    this.addRecentlyProjects({ name: this.projectData.name, path: path });
 
+    // TODO 加载blockly组件
     this.uiService.updateState({ state: 'done', text: '项目加载成功', timeout: 3000 });
 
     // 后台加载板子依赖
@@ -222,4 +224,35 @@ export class ProjectService {
       return false;
     }
   }
+
+  // 通过localStorage存储最近打开的项目
+  get recentlyProjects(): any[] {
+    let data;
+    let dataStr = localStorage.getItem('recentlyProjects')
+    if (dataStr) {
+      data = JSON.parse(dataStr);
+    } else {
+      data = [];
+    }
+    return data
+  }
+
+  set recentlyProjects(data) {
+    localStorage.setItem('recentlyProjects', JSON.stringify(data));
+  }
+
+  addRecentlyProjects(data: { name: string, path: string }) {
+    let temp: any[] = this.recentlyProjects
+    temp.unshift(data);
+    temp = temp.filter((item, index) => {
+      return temp.findIndex((item2) => item2.path === item.path) === index;
+    });
+    if (temp.length > 10) {
+      temp.pop();
+    }
+    this.recentlyProjects = temp;
+    console.log(temp);
+    console.log(this.recentlyProjects);
+  }
+
 }

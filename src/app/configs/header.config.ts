@@ -54,11 +54,11 @@ interface IMenuItem {
   sep?: boolean;
 }
 
-export let HEADER_MENU:IMenuItem[] = [
+export let HEADER_MENU: IMenuItem[] = [
   {
     name: '新建项目',
     data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
-    icon: 'fa-light fa-file',
+    icon: 'fa-light fa-file-circle-plus',
   },
   {
     name: '打开项目',
@@ -68,7 +68,7 @@ export let HEADER_MENU:IMenuItem[] = [
   {
     name: '保存项目',
     action: 'project-save',
-    icon: 'fa-light fa-file-check',
+    icon: 'fa-light fa-file-circle-check',
   },
   {
     name: '另存为',
@@ -116,11 +116,11 @@ export let HEADER_MENU:IMenuItem[] = [
   },
 ];
 
-export let GUIDE_MENU:IMenuItem[] = [
+export let GUIDE_MENU: IMenuItem[] = [
   {
     name: '新建项目',
     data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
-    icon: 'fa-light fa-file',
+    icon: 'fa-light fa-file-circle-plus',
   },
   {
     name: '打开项目',
@@ -128,8 +128,13 @@ export let GUIDE_MENU:IMenuItem[] = [
     icon: 'fa-light fa-folder-open',
   },
   {
+    name: '用户手册',
+    data: { type: 'other', action: 'openByBrowser', data: 'https://aily.pro/doc' },
+    icon: 'fa-light fa-book-open-cover',
+  },
+  {
     name: '示例程序',
-    data: { type: 'window', path: 'example', alwaysOnTop: true, width: 820, height: 550 },
-    icon: 'fa-light fa-folder-open',
+    data: { type: 'other', action: 'openByBrowser', data: 'https://aily.pro' },
+    icon: 'fa-light fa-books',
   }
 ]
