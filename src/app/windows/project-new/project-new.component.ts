@@ -33,6 +33,7 @@ export class ProjectNewComponent {
     path: '',
     description: '',
     board: null,
+    boardValue: null,
     type: 'web',
     framework: 'angular',
     version: '1.0.0',
@@ -52,12 +53,14 @@ export class ProjectNewComponent {
     await this.configService.init();
     this.boardList = this.configService.boardList;
     this.currentBoard = this.boardList[0];
-    this.projectData.board = this.currentBoard.value;
+    this.projectData.board = this.currentBoard.name;
+    this.projectData.boardValue = this.currentBoard.value;
   }
 
   selectBoard(board) {
     this.currentBoard = board;
-    this.projectData.board = board.value;
+    this.projectData.board = board.name;
+    this.projectData.boardValue = board.value;
   }
 
   async selectFolder() {
