@@ -38,10 +38,24 @@
         align-items: center;
         margin-bottom: 15px;
         height: 40px;
+        position: relative;
 
-        > div:first-child {
+        >div:first-child {
           width: 120px;
           flex-shrink: 0;
+        }
+
+        input {
+          background: #363636;
+          z-index: 1;
+        }
+
+        .error {
+          color: rgb(255, 80, 80);
+          font-size: 12px;
+          position: absolute;
+          bottom: -15px;
+          left: 130px;
         }
       }
     }
@@ -112,10 +126,12 @@
 
 .desc-box {
   height: 95px;
+
   .title {
     border-bottom: 1px solid #43494b;
     margin-bottom: 5px;
     position: relative;
+
     .doc {
       position: absolute;
       right: 0;

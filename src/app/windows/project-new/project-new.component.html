@@ -50,7 +50,11 @@
           </div>
           <div class="item">
             <div>项目名称:</div>
-            <input nz-input [(ngModel)]="projectData.name" />
+            <input nz-input [(ngModel)]="projectData.name" (ngModelChange)="checkPathIsExist()" />
+            @if(showIsExist){
+              <div class="error animate__animated animate__faster animate__fadeInDown">项目名称已存在，请修改后再创建</div>
+            }
+            
           </div>
           <div class="item">
             <div>保存路径:</div>

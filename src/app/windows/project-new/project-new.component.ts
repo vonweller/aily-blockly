@@ -44,7 +44,7 @@ export class ProjectNewComponent {
     private projectService: ProjectService,
     private configService: ConfigService,
     private uiService: UiService,
-  ) {}
+  ) { }
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
@@ -54,7 +54,7 @@ export class ProjectNewComponent {
     this.boardList = this.configService.boardList;
     this.currentBoard = this.boardList[0];
     this.projectData.board = this.currentBoard.value;
-    this.projectData.name ='project_' + generateDateString();
+    this.projectData.name = 'project_' + generateDateString();
   }
 
   selectBoard(board) {
@@ -66,18 +66,27 @@ export class ProjectNewComponent {
     const folderPath = await window['ipcRenderer'].invoke('select-folder', {
       path: this.projectData.path,
     });
-    console.log('选中的文件夹路径：', folderPath);
+    // console.log('选中的文件夹路径：', folderPath);
     this.projectData.path = folderPath;
     // 在这里对返回的 folderPath 进行后续处理
   }
 
+  // 检查路径是否存在
+  showIsExist = false;
+  async checkPathIsExist() {
+    let isExist = await this.projectService.project_exist(this.projectData);
+    if (isExist) {
+      this.showIsExist = true;
+      return;
+    } else {
+      this.showIsExist = false;
+    }
+    return isExist;
+  }
+
   async createProject() {
     // 判断是否有同名项目
-    const isExist = await this.projectService.project_exist(this.projectData);
-    console.log('isExist: ', isExist);
-    if (isExist) {
-      console.log('项目已存在');
-      // TODO 反馈项目已存在
+    if (this.checkPathIsExist()) {
       return;
     }
 
