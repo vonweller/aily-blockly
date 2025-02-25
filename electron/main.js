@@ -1,7 +1,7 @@
 const path = require("path");
 const os = require("os");
 
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen } = require("electron");
 const { registerProjectHandlers } = require("./project");
 
 const args = process.argv.slice(1);
@@ -108,6 +108,16 @@ function createWindow() {
 
 app.on("ready", () => {
   createWindow();
+  // 这个用于双击实现窗口最大化，之后调
+  // setInterval(() => {
+  //   const cursorPos = screen.getCursorScreenPoint(); // 全局鼠标坐标
+  //   const winPos = mainWindow.getBounds();             // 窗口在屏幕中的位置和大小
+
+  //   // 计算鼠标在窗口中的位置
+  //   const relativeX = cursorPos.x - winPos.x;
+  //   const relativeY = cursorPos.y - winPos.y;
+  //   // console.log('鼠标在窗口中的位置：', relativeX, relativeY);
+  // }, 1000);
 });
 
 // 当所有窗口都被关闭时退出应用（macOS 除外）
