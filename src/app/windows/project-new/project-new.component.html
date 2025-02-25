@@ -52,9 +52,9 @@
             <div>项目名称:</div>
             <input nz-input [(ngModel)]="projectData.name" (ngModelChange)="checkPathIsExist()" />
             @if(showIsExist){
-              <div class="error animate__animated animate__faster animate__fadeInDown">项目名称已存在，请修改后再创建</div>
+            <div class="error animate__animated animate__faster animate__fadeInDown">项目名称已存在，请修改后再创建</div>
             }
-            
+
           </div>
           <div class="item">
             <div>保存路径:</div>
@@ -74,7 +74,7 @@
     <div class="window-footer">
       <div class="btns">
         @if (currentStep == 0) {
-        <button nz-button nzType="primary" (click)="currentStep = 1">
+        <button nz-button nzType="primary" (click)="currentStep = currentStep + 1">
           下一步
         </button>
         } @else {
@@ -82,11 +82,16 @@
         <button nz-button nzType="default" (click)="currentStep = 0">
           上一步
         </button>
-        }
-        }
-        <button nz-button nzType="primary" [disabled]="currentStep != 1" (click)="createProject()">
+        <button nz-button nzType="primary" [disabled]="showIsExist" (click)="createProject()">
           创建项目
         </button>
+        }
+        }
+        @if (currentStep == 2) {
+          <button nz-button nzType="default" nzLoading>
+            正在创建
+          </button>
+        }
       </div>
     </div>
   </div>

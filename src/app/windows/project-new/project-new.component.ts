@@ -73,11 +73,10 @@ export class ProjectNewComponent {
 
   // 检查路径是否存在
   showIsExist = false;
-  async checkPathIsExist() {
+  async checkPathIsExist(): Promise<boolean> {
     let isExist = await this.projectService.project_exist(this.projectData);
     if (isExist) {
       this.showIsExist = true;
-      return;
     } else {
       this.showIsExist = false;
     }
@@ -86,16 +85,15 @@ export class ProjectNewComponent {
 
   async createProject() {
     // 判断是否有同名项目
-    if (this.checkPathIsExist()) {
+    if (await this.checkPathIsExist()) {
       return;
     }
-
     this.currentStep = 2;
+
+    // 这里prjPath有啥用？
     const prjPath = await this.projectService.project_new(this.projectData);
 
     setTimeout(() => {
-      this.currentStep = 3;
-      // 关闭窗口
       window['subWindow'].close();
     }, 1000);
   }

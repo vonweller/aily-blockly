@@ -247,7 +247,7 @@ export class ProjectService {
     temp = temp.filter((item, index) => {
       return temp.findIndex((item2) => item2.path === item.path) === index;
     });
-    if (temp.length > 10) {
+    if (temp.length > 6) {
       temp.pop();
     }
     this.recentlyProjects = temp;
