@@ -68,46 +68,27 @@ npm run electron:build-local
 
 企业赞助
 ---
-<style>
-.brand-box {
-    display: flex;
-    flex-wrap: wrap;
-}
-
-a{
-    height:80px;
-    display: flex;
-    align-items: center;
-}
-
-.brand-img {
-    margin: 0 20px 20px 0;
-    max-width: 200px;
-    max-height: 50px;
-}
-</style>
-
-<div class="brand-box">
-    <a href="https://www.seekfree.cn/">
-        <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" class="brand-img" />
+<div style="display: flex; flex-wrap: wrap;">
+    <a href="https://www.seekfree.cn/" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="https://www.seeedstudio.com/">
-        <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" class="brand-img" />
+    <a href="https://www.seeedstudio.com/" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="https://www.diandeng.tech/">
-        <img src=".\brand\diandeng\logo.png" alt="diandeng Logo" class="brand-img" />
+    <a href="https://www.diandeng.tech/" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\diandeng\logo.png" alt="diandeng Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="https://www.openjumper.com/">
-        <img src=".\brand\openjumper\logo.png" alt="openjumper Logo" class="brand-img" />
+    <a href="https://www.openjumper.com/" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\openjumper\logo.png" alt="openjumper Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="https://www.titlab.cn/">
-        <img src=".\brand\titlab\logo.png" alt="titlab Logo" class="brand-img" />
+    <a href="https://www.titlab.cn/" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\titlab\logo.png" alt="titlab Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="">
-        <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" class="brand-img" />
+    <a href="" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
-    <a href="">
-        <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" class="brand-img" />
+    <a href="" style="height:80px; display: flex; align-items: center;">
+        <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" style="margin: 0 20px 20px 0; max-width: 200px; max-height: 50px;" />
     </a>
 </div>
 
