@@ -1,6 +1,12 @@
 .item {
   display: flex;
   line-height: 24px;
+  padding: 1px 3px;
+
+  &:hover{
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+  }
 
   .time {
     flex-shrink: 0;

@@ -1,7 +1,7 @@
 <div
   class="menu-box bborder"
   #menuBox
-  [ngStyle]="{ left: position.x + 'px', top: position.y + 'px' }"
+  [ngStyle]="{ left: position.x + 'px', top: position.y + 'px' ,'width': width + 'px'}"
 >
   @for (item of menuList; track $index) {
     @if (item.sep) {

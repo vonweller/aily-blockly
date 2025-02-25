@@ -38,6 +38,8 @@ export class DataItemComponent {
   menuClick(item) {
     this.convert2Hex(this.data.data)
     this.mode = 2;
+
+    this.closeMenu()
   }
 
   convert2Hex(data) {

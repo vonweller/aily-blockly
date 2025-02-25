@@ -23,6 +23,8 @@ export class MenuComponent {
     y: 40,
   };
 
+  @Input() width = 250;
+
   @Output() itemClickEvent = new EventEmitter();
 
   @Output() closeEvent = new EventEmitter();
