@@ -6,6 +6,7 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { UiService } from '../../services/ui.service';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
+import { SettingsService } from '../../services/settings.service';
 
 @Component({
   selector: 'app-settings',
@@ -63,14 +64,30 @@ export class SettingsComponent {
   npmRegistryListStr = `https://registry.npmjs.org/
 https://registry.npm.taobao.org/`;
 
-  boardList=[,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,]
+  // boardList=[,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,]
+
+  get boardList() {
+    return this.settingsService.boardList;
+  }
 
   data: any = {
     project_path: '',
     npm_registry: [],
   };
 
-  constructor(private uiService: UiService) {}
+  constructor(
+    private uiService: UiService,
+    private settingsService: SettingsService,
+  ) {
+    this.init();
+  }
+
+  init() {
+    console.log('init settings');
+    this.settingsService.getBoardList().then(() => {
+      console.log('boardList: ', this.boardList);
+    });
+  }
 
   currentType = this.items[0];
   selectType(item) {

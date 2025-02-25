@@ -121,12 +121,15 @@ export class ProjectService {
       return false;
     }
     this.projectData = JSON.parse(packageJsonContent);
+    this.currentProject = path;
+
+    // 设置项目路径到环境变量
+    window["env"].set({key: "AILY_PRJ_PATH", value: path});
 
     // 判断是否需要安装package.json依赖
     if (!window['path'].isExists(`${path}/node_modules`)) {
       await this.dependencies_install(`${path}/package.json`);
     }
-
     this.loaded.next(true);
 
     // TODO 加载blockly组件

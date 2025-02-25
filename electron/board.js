@@ -75,6 +75,54 @@ function installDependenciesByFile(packageJsonPath) {
     });
 }
 
+// board包列表
+function searchBoards() {
+    return new Promise((resolve, reject) => {
+        // npm search --json=true --registry=process.env.AILY_NPM_REGISTRY
+        const child = spawn('npm', ['search', '@aily-project/board' ,'--json=true', '--registry', process.env.AILY_NPM_REGISTRY], { shell: true });
+        let result = '';
+        child.stdout.on('data', (data) => {
+            result += data.toString();
+        });
+        child.stderr.on('data', (data) => {
+            console.error(data.toString());
+        });
+        child.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(`npm process exited with code ${code}`));
+            } else {
+                resolve(JSON.parse(result));
+            }
+        });
+    });
+}
+
+// 已安装的依赖列表
+function installedDependencies() {
+    // console.log("processEnv: ", process.env)
+    const currentPrjPath = process.env.AILY_PRJ_PATH;
+    if (!currentPrjPath) {
+        return Promise.resolve([]);
+    }
+    return new Promise((resolve, reject) => {
+        const child = spawn('npm', ['ls', '--json=true', '--depth=0', `--prefix=${currentPrjPath}`], { shell: true });
+        let result = '';
+        child.stdout.on('data', (data) => {
+            result += data.toString();
+        });
+        child.stderr.on('data', (data) => {
+            console.error(data.toString());
+        });
+        child.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(`npm process exited with code ${code}`));
+            } else {
+                resolve(JSON.parse(result));
+            }
+        });
+    });
+}
+
 
 function registerBoardHandlers(mainWindow) {
     ipcMain.handle("builder-init", async (event, data) => {
@@ -136,6 +184,27 @@ function registerBoardHandlers(mainWindow) {
             return { success: true };
         } catch (error) {
             console.error("package-install error: ", error);
+            return { success: false };
+        }
+    });
+
+    ipcMain.handle("board-list", async (event, data) => {
+        try {
+            const boards = await searchBoards();
+            return { success: true, boards };
+        } catch (error) {
+            console.error("board-list error: ", error);
+            return { success: false };
+        }
+    });
+
+    ipcMain.handle("installed-dependencies", async (event, data) => {
+        try {
+            const result = await installedDependencies();
+            const deps = result.dependencies ? result.dependencies : [];
+            return { success: true, deps };
+        } catch (error) {
+            console.error("installed-dependencies error: ", error);
             return { success: false };
         }
     });
