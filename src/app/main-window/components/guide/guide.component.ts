@@ -14,10 +14,14 @@ export class GuideComponent {
   version = version;
   guideMenu = GUIDE_MENU;
   showMenu = true;
-  recentlyProjects = [, , , , ,];
+  showMore = false;
 
   get projectData() {
     return this.projectService.projectData;
+  }
+
+  get recentlyProjects() {
+    return this.projectService.recentlyProjects
   }
 
   constructor(

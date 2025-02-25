@@ -9,6 +9,7 @@ import { ElectronService } from '../../services/electron.service';
 import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { UiService } from '../../services/ui.service';
+import { generateDateString } from '../../func/func';
 
 @Component({
   selector: 'app-project-new',
@@ -29,7 +30,7 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   currentBoard: any = null;
   projectData = {
-    name: 'new project',
+    name: '',
     path: '',
     description: '',
     board: null,
@@ -44,7 +45,7 @@ export class ProjectNewComponent {
     private projectService: ProjectService,
     private configService: ConfigService,
     private uiService: UiService,
-  ) {}
+  ) { }
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
@@ -55,6 +56,7 @@ export class ProjectNewComponent {
     this.currentBoard = this.boardList[0];
     this.projectData.board = this.currentBoard.name;
     this.projectData.boardValue = this.currentBoard.value;
+    this.projectData.name = 'project_' + generateDateString();
   }
 
   selectBoard(board) {
@@ -67,27 +69,34 @@ export class ProjectNewComponent {
     const folderPath = await window['ipcRenderer'].invoke('select-folder', {
       path: this.projectData.path,
     });
-    console.log('选中的文件夹路径：', folderPath);
+    // console.log('选中的文件夹路径：', folderPath);
     this.projectData.path = folderPath;
     // 在这里对返回的 folderPath 进行后续处理
   }
 
+  // 检查路径是否存在
+  showIsExist = false;
+  async checkPathIsExist(): Promise<boolean> {
+    let isExist = await this.projectService.project_exist(this.projectData);
+    if (isExist) {
+      this.showIsExist = true;
+    } else {
+      this.showIsExist = false;
+    }
+    return isExist;
+  }
+
   async createProject() {
     // 判断是否有同名项目
-    const isExist = await this.projectService.project_exist(this.projectData);
-    console.log('isExist: ', isExist);
-    if (isExist) {
-      console.log('项目已存在');
-      // TODO 反馈项目已存在
+    if (await this.checkPathIsExist()) {
       return;
     }
-
     this.currentStep = 2;
+
+    // 这里prjPath有啥用？
     const prjPath = await this.projectService.project_new(this.projectData);
 
     setTimeout(() => {
-      this.currentStep = 3;
-      // 关闭窗口
       window['subWindow'].close();
     }, 1000);
   }
