@@ -12,7 +12,7 @@ export class UiService {
   actionSubject = new Subject();
 
   // 用来更新footer右下角的状态
-  stateSubject = new Subject();
+  stateSubject = new Subject<ActionState>();
 
   // 用来记录当前已打开的工具
   openToolList: string[] = [];
@@ -98,12 +98,7 @@ export class UiService {
   runCmd(cmd: string) {}
 
   // 更新footer右下角的状态
-  updateState(state: {
-    text: string;
-    color?: string;
-    icon?: string;
-    timeout?: number;
-  }) {
+  updateState(state: ActionState) {
     this.stateSubject.next(state);
   }
 
@@ -125,4 +120,13 @@ export interface ToolOpts {
   type: string;
   data: string;
   title?: string;
+}
+
+export interface ActionState {
+  text: string;
+  desc?: string;
+  state?: 'done' | 'error' | 'warn' | 'loading' | string,
+  color?: string;
+  icon?: string;
+  timeout?: number;
 }

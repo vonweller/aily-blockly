@@ -8,8 +8,9 @@
   </div> -->
 
   <!-- 这里显示状态，如保存中，项目加载中，正在安装xxx等 -->
+  @if(actionData){
   <div class="state ccenter">
-    @switch(data.state){
+    @switch(actionData.state){
     @case('loading'){
     <div class="icon loading ccenter">
       <i class="fa-duotone fa-solid fa-loader"></i>
@@ -31,6 +32,7 @@
     </div>
     }
     }
-    {{ data.text }}
+    {{ actionData.text }}
   </div>
+  }
 </div>

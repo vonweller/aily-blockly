@@ -21,6 +21,7 @@ interface ProjectData {
 })
 export class ProjectService {
   loaded = new BehaviorSubject<boolean>(false);
+
   projectData: ProjectData = {
     name: 'aily blockly',
     version: '1.0.0',
@@ -78,19 +79,19 @@ export class ProjectService {
 
   // 新建项目
   async project_new(data) {
-    this.uiService.stateSubject.next({ text: '正在创建项目...' });
+    this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
       return false;
     }
-    this.uiService.stateSubject.next({ text: '项目创建成功' });
+    this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     const prjPath = newResult.data;
 
     // 依赖安装
-    this.uiService.stateSubject.next({ text: '依赖安装中...' });
+    this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
     await this.dependencies_install(`${prjPath}/package.json`);
-    this.uiService.stateSubject.next({ text: '依赖安装成功', timeout: 3000 });
+    this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
 
     // 发送项目更新
     window['project'].update({ path: prjPath });
@@ -105,14 +106,14 @@ export class ProjectService {
 
   // 打开项目
   async project_open(path) {
-    this.uiService.stateSubject.next({ text: '正在打开项目...' });
+    this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
     // 判断路径是否存在
     const pathExist = window['path'].isExists(path);
     if (!pathExist) {
       console.error('path not exist: ', path);
       return false;
     }
-    this.uiService.stateSubject.next({ text: '项目加载中...' });
+    this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
 
     // 读取package.json文件
     const packageJsonContent = window['file'].readSync(`${path}/package.json`);
@@ -131,7 +132,7 @@ export class ProjectService {
 
     // TODO 加载blockly组件
 
-    this.uiService.stateSubject.next({ text: '项目加载成功', timeout: 3000 });
+    this.uiService.updateState({ state: 'done', text: '项目加载成功', timeout: 3000 });
 
     // 后台加载板子依赖
     this.board_dependencies_install(`${path}/package.json`);
@@ -199,14 +200,14 @@ export class ProjectService {
       for (const [depName, depVersion] of Object.entries(boardDependencies)) {
         const pkg = `${depName}@${depVersion}`;
 
-        this.uiService.stateSubject.next({ state: 'loading', text: '安装依赖: ' + pkg });
+        this.uiService.updateState({ state: 'loading', text: '安装依赖: ' + pkg });
         await this.install_package({
           package: pkg,
           global: true,
         });
       }
     }
-    this.uiService.stateSubject.next({ state: 'done', text: '开发板依赖安装成功', timeout: 5000 });
+    this.uiService.updateState({ state: 'done', text: '开发板依赖安装成功', timeout: 5000 });
   }
 
   // 安装依赖
