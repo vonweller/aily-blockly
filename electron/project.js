@@ -5,32 +5,40 @@ const os = require("os");
 const { Interface } = require("readline");
 
 
-function genPackageJson(projectData) {
-  return {
-    name: projectData.name,
-    version: projectData.version,
-    description: projectData.description,
-    main: "index.js",
-    scripts: {
-      start: "electron .",
-    },
-    dependencies: {
-      [projectData.board]: '^' + projectData.boardVersion,
-    }
-  }
-}
+// function genPackageJson(projectData) {
+//   return {
+//     name: projectData.name,
+//     version: projectData.version,
+//     description: projectData.description,
+//     main: "index.js",
+//     board: projectData.board,
+//     scripts: {
+//       start: "electron .",
+//     },
+//     dependencies: {
+//       [projectData.board]: '^' + projectData.boardVersion,
+//     }
+//   }
+// }
 
 function writePackageJson(data, prjPath) {
-  const boardParts = data.board.split('@');
-  const boardName = boardParts[1];
-  const boardVersion = boardParts[2];
-  const packageJson = genPackageJson({
-    name: data.name,
-    version: data.version,
-    description: data.description,
-    board: '@' + boardName,
-    boardVersion: boardVersion
-  });
+  const boardParts = data.boardValue.split('@');
+  const boardDeps = boardParts[1];
+  const boardDepsVersion = boardParts[2];
+
+  const packageJson = {
+    name : data.name,
+    version : data.version,
+    description : data.description,
+    main : "index.js",
+    board : data.board,
+    scripts : {
+      start : "electron ."
+    },
+    dependencies : {
+      [`@${boardDeps}`]: `^${boardDepsVersion}`
+    }
+  }
   const packageJsonPath = path.join(prjPath, "package.json");
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 }
