@@ -8,7 +8,7 @@ import { UiService } from '../../../services/ui.service';
 import { BuilderService } from '../../../services/builder.service';
 import { UploaderService } from '../../../services/uploader.service';
 import { MenuComponent } from '../../../components/menu/menu.component';
-import { SerialService } from '../../../services/serial.service';
+import { PortItem, SerialService } from '../../../services/serial.service';
 
 @Component({
   selector: 'app-header',
@@ -73,32 +73,24 @@ export class HeaderComponent {
     this.showMenu = false;
   }
 
-  showDeviceList = false;
-  devicePortList = []
-  openDeviceList() {
-    this.showDeviceList = !this.showDeviceList;
+  showPortList = false;
+  portList: PortItem[] = []
+  openPortList() {
+    this.showPortList = !this.showPortList;
     this.getDevicePortList();
   }
 
-  closeDeviceList() {
-    this.showDeviceList = false;
+  closePortList() {
+    this.showPortList = false;
   }
 
-  selectDevice(deviceItem) {
-    // console.log(deviceItem);
-    this.currentPort = deviceItem.data.data;
+  selectPort(portItem) {
+    this.currentPort = portItem.name;
   }
 
   async getDevicePortList() {
-    let serialList = await this.serialService.getSerialPorts();
+    this.portList = await this.serialService.getSerialPorts();
     // console.log('串口列表：', serialList);
-    this.devicePortList = serialList.map((item) => {
-      return {
-        name: item,
-        data: { type: 'serial', data: item },
-        icon: 'fa-light fa-usb-drive',
-      }
-    });
   }
 
   onClick(item) {

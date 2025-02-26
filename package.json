@@ -68,10 +68,9 @@
     "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.1",
-    "resize-observer-polyfill": "^1.5.1",
     "rxjs": "~7.8.0",
     "shiki": "^1.26.1",
-    "simplebar": "^6.3.0",
+    "simplebar-angular": "^3.3.0",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"
   },

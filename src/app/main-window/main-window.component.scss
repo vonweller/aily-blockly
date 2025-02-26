@@ -14,13 +14,35 @@
 app-blockly-editor {
   width: 100%;
   height: 100%;
+  // display: block;
 }
 
-.middle-box{
+app-guide {
+  width: 100%;
+  height: 100%;
+  // display: block;
+}
+
+.middle-box {
   width: 100%;
   height: 100%;
   position: relative;
-  overflow: auto;
+  min-height: 0;
+
+  ngx-simplebar {
+    height: 100%;
+    width: 100%;
+
+    ::ng-deep {
+      .simplebar-content-wrapper {
+        height: 100%;
+      }
+
+      .simplebar-content {
+        height: 100%;
+      }
+    }
+  }
 }
 
 .bottom-box {
@@ -29,7 +51,7 @@ app-blockly-editor {
   position: relative;
 }
 
-.right-box{
+.right-box {
   width: 100%;
   height: 100%;
   position: relative;
@@ -57,7 +79,7 @@ nz-content {
   flex-direction: column;
 }
 
-nz-content > div {
+nz-content>div {
   width: 100%;
 }
 
@@ -67,7 +89,7 @@ nz-content .resizable-box {
 
 nz-content,
 nz-header,
-::ng-deep nz-sider > .ant-layout-sider-children {
+::ng-deep nz-sider>.ant-layout-sider-children {
   display: flex;
   align-items: center;
   justify-content: center;

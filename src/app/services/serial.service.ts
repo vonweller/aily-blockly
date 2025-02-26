@@ -13,15 +13,32 @@ export class SerialService {
     private electronService: ElectronService
   ) { }
 
-  async getSerialPorts() {
+  // 此处还未考虑linux、macos适配
+  async getSerialPorts(): Promise<PortItem[]> {
     if (this.electronService.isElectron) {
-      let serialList = (await window['SerialPort'].list()).map(
-        (item) => item.path,
-      );
+      let serialList = (await window['SerialPort'].list()).map((item) => {
+        let friendlyName: string = item.friendlyName.replace(/ \(COM\d+\)$/, '');
+        let icon: string = item.friendlyName.includes('蓝牙') ? "fa-light fa-bluetooth" : 'fa-light fa-usb-drive';
+        return {
+          name: item.path,
+          text: friendlyName,
+          type: 'serial',
+          icon: icon,
+        }
+      });
       return serialList;
     } else {
       const port = await navigator['serial'].requestPort();
-      return [port];
+      return [{ port: port, name: '' }];
     }
   }
+}
+
+
+export interface PortItem {
+  port: string,
+  name?: string,
+  text?: string,
+  type?: string,
+  icon?: string
 }

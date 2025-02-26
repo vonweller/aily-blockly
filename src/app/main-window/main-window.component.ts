@@ -13,7 +13,7 @@ import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.c
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
-import { SettingsService } from '../services/settings.service';
+import { SimplebarAngularModule } from 'simplebar-angular';
 
 @Component({
   selector: 'app-main-window',
@@ -30,6 +30,7 @@ import { SettingsService } from '../services/settings.service';
     GuideComponent,
     SerialMonitorComponent,
     CodeViewerComponent,
+    SimplebarAngularModule
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -41,6 +42,12 @@ export class MainWindowComponent {
 
   loaded = false;
 
+  options = {
+    autoHide: true,
+    clickOnTrack: true,
+    scrollbarMinSize: 50,
+  };
+
   get topTool() {
     return this.uiService.topTool;
   }
@@ -49,7 +56,7 @@ export class MainWindowComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private cd: ChangeDetectorRef,
-  ) {}
+  ) { }
 
   ngOnInit(): void {
     this.uiService.init();

@@ -17,6 +17,14 @@
       .icon {
         width: 20px;
         margin-right: 10px;
+        flex-shrink: 0;
+      }
+
+      .text{
+        margin-left: 10px;
+        white-space: nowrap;
+        color: #999;
+        flex-shrink: 1;
       }
   
       &:hover {
