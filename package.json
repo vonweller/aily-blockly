@@ -45,8 +45,6 @@
   },
   "private": true,
   "dependencies": {
-    "@aily-project/compiler-arm-none-eabi-gcc": "^7.2.1",
-    "@aily-project/tool-bossac": "^1.9.1",
     "@angular/animations": "^19.0.0",
     "@angular/common": "^19.0.0",
     "@angular/compiler": "^19.0.0",
@@ -70,8 +68,10 @@
     "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.1",
+    "resize-observer-polyfill": "^1.5.1",
     "rxjs": "~7.8.0",
     "shiki": "^1.26.1",
+    "simplebar": "^6.3.0",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"
   },
