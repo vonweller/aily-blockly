@@ -111,7 +111,7 @@ export let HEADER_MENU: IMenuItem[] = [
   },
   {
     name: '退出',
-    action: 'app-exit',
+    data: { type: 'other', action: 'exitApp' },
     icon: 'fa-light fa-xmark',
   },
 ];

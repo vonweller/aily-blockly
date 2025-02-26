@@ -57,7 +57,6 @@ export class UiService {
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
     this.actionSubject.next({ action: 'open', type: 'tool', data: name });
-    console.log('kkkkkkkkkkk');
   }
 
   // 如果其它组件/程序要关闭工具，调用这个方法

@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }
     },
     openByBrowser: (url) => shell.openExternal(url),
+    exitApp: () => ipcRenderer.send("window-close"),
   },
   env: {
     set: (data) => ipcRenderer.invoke("env-set", data),

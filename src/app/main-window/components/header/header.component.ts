@@ -34,15 +34,15 @@ export class HeaderComponent {
     return this.uiService.terminalIsOpen;
   }
 
-  get currentPort(){
+  get currentPort() {
     return this.serialService.currentPort;
   }
 
-  set currentPort(port){
+  set currentPort(port) {
     this.serialService.currentPort = port;
   }
 
-  get currentBoard(){
+  get currentBoard() {
     return this.projectData.board;
   }
 
@@ -92,7 +92,7 @@ export class HeaderComponent {
   async getDevicePortList() {
     let serialList = await this.serialService.getSerialPorts();
     // console.log('串口列表：', serialList);
-    this.devicePortList=serialList.map((item) => {
+    this.devicePortList = serialList.map((item) => {
       return {
         name: item,
         data: { type: 'serial', data: item },
@@ -174,6 +174,8 @@ export class HeaderComponent {
           window['other'].openByExplorer(window['path'].getUserDocuments());
         } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);
+        } else if (item.data.action == 'exitApp') {
+          window['other'].exitApp();
         }
         break;
       default:
