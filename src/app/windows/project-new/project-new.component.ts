@@ -8,7 +8,6 @@ import { NzStepsModule } from 'ng-zorro-antd/steps';
 import { ElectronService } from '../../services/electron.service';
 import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
-import { UiService } from '../../services/ui.service';
 import { generateDateString } from '../../func/func';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 
@@ -31,15 +30,14 @@ export class ProjectNewComponent {
 
   boardList: any[] = [];
   currentBoard: any = null;
-  projectData = {
+  newProjectData: NewProjectData = {
     name: '',
     path: '',
-    description: '',
-    board: null,
-    boardValue: null,
-    type: 'web',
-    framework: 'angular',
-    version: '1.0.0',
+    board: {
+      name: '',
+      value: '',
+      version: '',
+    }
   };
 
   boardVersion = '';
@@ -52,35 +50,40 @@ export class ProjectNewComponent {
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
-      this.projectData.path = window['path'].getUserDocuments();
+      this.newProjectData.path = window['path'].getUserDocuments();
     }
     await this.configService.init();
     this.boardList = this.configService.boardList;
     this.currentBoard = this.boardList[0];
-    this.projectData.board = this.currentBoard.name;
-    this.projectData.boardValue = this.currentBoard.value;
-    this.projectData.name = 'project_' + generateDateString();
+
+    this.newProjectData.board.name = this.currentBoard.name;
+    this.newProjectData.board.value = this.currentBoard.value;
+    this.newProjectData.board.version = this.currentBoard.version;
+
+    this.newProjectData.name = 'project_' + generateDateString();
   }
 
-  selectBoard(board) {
-    this.currentBoard = board;
-    this.projectData.board = board.name;
-    this.projectData.boardValue = board.value;
+  selectBoard(boardInfo: BoardInfo) {
+    this.currentBoard = boardInfo;
+    this.newProjectData.board.name = boardInfo.name;
+    this.newProjectData.board.value = boardInfo.value;
+    this.newProjectData.board.version = boardInfo.version;
   }
 
   async selectFolder() {
     const folderPath = await window['ipcRenderer'].invoke('select-folder', {
-      path: this.projectData.path,
+      path: this.newProjectData.path,
     });
     // console.log('选中的文件夹路径：', folderPath);
-    this.projectData.path = folderPath;
+    this.newProjectData.path = folderPath;
     // 在这里对返回的 folderPath 进行后续处理
   }
 
   // 检查项目名称是否存在
   showIsExist = false;
   async checkPathIsExist(): Promise<boolean> {
-    let isExist = await this.projectService.project_exist(this.projectData);
+    let path = this.newProjectData.path + '/' + this.newProjectData.name;
+    let isExist = window['path'].isExists(path);
     if (isExist) {
       this.showIsExist = true;
     } else {
@@ -88,19 +91,15 @@ export class ProjectNewComponent {
     }
     return isExist;
   }
-  
+
   async createProject() {
     // 判断是否有同名项目
     if (await this.checkPathIsExist()) {
       return;
     }
-    if (await this.checkPathIsExist()) {
-      return;
-    }
     this.currentStep = 2;
 
-    // 这里prjPath有啥用？
-    const prjPath = await this.projectService.project_new(this.projectData);
+    await this.projectService.projectNew(this.newProjectData);
 
     setTimeout(() => {
       window['subWindow'].close();
@@ -111,5 +110,26 @@ export class ProjectNewComponent {
     if (this.electronService.isElectron) {
       window['other'].openByBrowser(url);
     }
+  }
+}
+
+
+export interface BoardInfo {
+  "value": string,// 开发板在仓库中的名称
+  "name": string, // 开发板名称
+  "version": string,
+  "img": string,
+  "desc": string,
+  "url": string,
+  "brand": string
+}
+
+export interface NewProjectData {
+  name: string,
+  path: string,
+  board: {
+    name: string,
+    value: string,
+    version: string
   }
 }

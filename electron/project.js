@@ -2,24 +2,6 @@ const { ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { Interface } = require("readline");
-
-
-// function genPackageJson(projectData) {
-//   return {
-//     name: projectData.name,
-//     version: projectData.version,
-//     description: projectData.description,
-//     main: "index.js",
-//     board: projectData.board,
-//     scripts: {
-//       start: "electron .",
-//     },
-//     dependencies: {
-//       [projectData.board]: '^' + projectData.boardVersion,
-//     }
-//   }
-// }
 
 function writePackageJson(data, prjPath) {
   const boardParts = data.boardValue.split('@');
@@ -27,15 +9,15 @@ function writePackageJson(data, prjPath) {
   const boardDepsVersion = boardParts[2];
 
   const packageJson = {
-    name : data.name,
-    version : data.version,
-    description : data.description,
-    main : "index.js",
-    board : data.board,
-    scripts : {
-      start : "electron ."
+    name: data.name,
+    version: data.version,
+    description: data.description,
+    main: "index.js",
+    board: data.board,
+    scripts: {
+      start: "electron ."
     },
-    dependencies : {
+    dependencies: {
       [`@${boardDeps}`]: `^${boardDepsVersion}`
     }
   }
@@ -56,23 +38,6 @@ function createTemporaryProject() {
 
   // 创建临时文件夹
   fs.mkdirSync(projectFolderPath, { recursive: true });
-
-  // // 构造 package.json 内容
-  // const packageJson = {
-  //   name: "new-project",
-  //   version: "1.0.0",
-  //   description: "aily blockly project",
-  //   main: "index.js",
-  //   scripts: {
-  //     start: "electron .",
-  //   },
-  //   author: "",
-  //   license: "ISC",
-  // };
-
-  // // 写入 package.json 文件
-  // const packageJsonPath = path.join(projectFolderPath, "package.json");
-  // fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
   console.log(`临时项目文件夹已创建于: ${projectFolderPath}`);
   return projectFolderPath;
@@ -109,7 +74,7 @@ function registerProjectHandlers(mainWindow) {
       return { success: false };
     }
   });
-  
+
   ipcMain.handle("project-newTmp", async (event, data) => {
     try {
       const projectPath = createTemporaryProject();
@@ -119,7 +84,7 @@ function registerProjectHandlers(mainWindow) {
       return { success: false };
     }
   });
-  
+
   ipcMain.on('project-update', (event, data) => {
     if (mainWindow) {
       mainWindow.webContents.send('project-update', data);

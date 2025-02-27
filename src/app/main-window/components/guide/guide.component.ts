@@ -44,12 +44,12 @@ export class GuideComponent {
   async openProject(data) {
     const path = await this.selectFolder();
     if (path) {
-      await this.projectService.project_open(path);
+      await this.projectService.projectOpen(path);
     }
   }
 
   async openProjectByPath(data) {
-    await this.projectService.project_open(data.path);
+    await this.projectService.projectOpen(data.path);
   }
 
   process(item) {

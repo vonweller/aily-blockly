@@ -17,17 +17,13 @@ export class BlocklyService {
 
   codeSubject = new BehaviorSubject<string>('');
 
-  // get boardConfig() {
-  //   return
-  // }
-
   boardConfig;
 
   draggingBlock: any;
   offsetX: number = 0;
   offsetY: number = 0;
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient) { }
 
   async init() {
     this.boardConfig = await lastValueFrom(
@@ -134,6 +130,11 @@ export class BlocklyService {
       document.getElementsByTagName('head')[0].appendChild(script);
     });
   }
+
+  // getBlocklyJsonData() {
+  //   return Blockly.serialization.workspaces.save(this.workspace);
+  // }
+
 }
 
 export interface LibData {

@@ -48,20 +48,18 @@
           <div class="item">
             <div>开发板:</div>
             <nz-input-group [nzSuffix]="suffixIconSearch">
-              <input class="board" nz-input [(ngModel)]="projectData.board" [disabled]="true"/>
+              <input class="board" nz-input [(ngModel)]="newProjectData.board.name" [disabled]="true"/>
             </nz-input-group>
             <ng-template #suffixIconSearch>
               <i class="fa-light fa-at"></i>
             </ng-template>
-            <nz-select [(ngModel)]="boardVersion">
+            <nz-select [(ngModel)]="newProjectData.board.version">
               <nz-option nzValue="1.0.0" nzLabel="1.0.0"></nz-option>
-              <nz-option nzValue="12.0.0" nzLabel="12.0.0"></nz-option>
-              <nz-option nzValue="12.1.12" nzLabel="12.1.12"></nz-option>
             </nz-select>
           </div>
           <div class="item">
             <div>项目名称:</div>
-            <input nz-input [(ngModel)]="projectData.name" (ngModelChange)="checkPathIsExist()" />
+            <input nz-input [(ngModel)]="newProjectData.name" (ngModelChange)="checkPathIsExist()" />
             @if(showIsExist){
             <div class="error animate__animated animate__faster animate__fadeInDown">项目名称已存在，请修改</div>
             }
@@ -69,7 +67,7 @@
           <div class="item">
             <div>保存路径:</div>
             <nz-input-group [nzAddOnAfter]="addOnAfterTemplate">
-              <input nz-input [(ngModel)]="projectData.path" [disabled]="true"/>
+              <input nz-input [(ngModel)]="newProjectData.path" [disabled]="true"/>
             </nz-input-group>
             <ng-template #addOnAfterTemplate>
               <div class="btn ccenter ffull" (click)="selectFolder()">

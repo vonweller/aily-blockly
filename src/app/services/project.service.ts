@@ -4,6 +4,7 @@ import { BehaviorSubject } from 'rxjs';
 import { ResponseModel } from '../interfaces/response.interface';
 import { API } from '../configs/api.config';
 import { UiService } from './ui.service';
+import { NewProjectData } from '../windows/project-new/project-new.component';
 
 interface ProjectData {
   name: string;
@@ -42,7 +43,7 @@ export class ProjectService {
     window['ipcRenderer'].on('project-update', (event, data) => {
       console.log('收到更新的: ', data);
       this.currentProject = data.path;
-      this.project_open(this.currentProject);
+      this.projectOpen(this.currentProject);
     });
   }
 
@@ -72,19 +73,30 @@ export class ProjectService {
     });
   }
 
-  async project_exist(data) {
-    const prjPath = data.path + '/' + data.name;
-    return window['path'].isExists(prjPath);
-  }
-
   // 新建项目
-  async project_new(data) {
+  async projectNew(data: NewProjectData) {
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
+
+    // 1. 检查开发板module是否存在, 不存在则安装
+
+
+    // 2. 创建项目目录，复制开发板module中的template到项目目录
+
+
+    // 3. 加载项目目录，打开blockly编辑器
+
+
+    // 4. 安装库依赖，加载库依赖（用户可以先编程，库依赖在后台安装，安装完一个加载一个）
+
+
+    // 5. 检查开发板依赖是否安装，安装开发板依赖（用户可以先编程，开发板依赖在后台安装）
+
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
       return false;
     }
+
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     const prjPath = newResult.data;
 
@@ -100,12 +112,12 @@ export class ProjectService {
   }
 
   // 保存项目
-  project_save() {
+  projectSave() {
     // 导出blockly json配置并保存
   }
 
   // 打开项目
-  async project_open(path) {
+  async projectOpen(path) {
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
     // 判断路径是否存在
     const pathExist = window['path'].isExists(path);
@@ -144,10 +156,10 @@ export class ProjectService {
   }
 
   // 另存为项目
-  project_save_as() { }
+  projectSaveAs() { }
 
   // 读取package.json文件
-  read_package_json(path) {
+  readPackageJson(path) {
     const packageJsonContent = window['file'].readSync(path);
     if (!packageJsonContent) {
       console.error('package.json not exist: ', path);
@@ -177,7 +189,7 @@ export class ProjectService {
     // 获取packageJson所在目录
     const path = packageJsonPath.substring(0, packageJsonPath.lastIndexOf('/'));
 
-    const packageJsonContent = this.read_package_json(packageJsonPath);
+    const packageJsonContent = this.readPackageJson(packageJsonPath);
     if (!packageJsonContent) {
       console.error('package.json not exist: ', packageJsonPath);
       return false;
@@ -193,7 +205,7 @@ export class ProjectService {
       const pkgPackageJsonPath = depPath + '/package.json';
 
       // 读取板子的package.json文件
-      const pkgPackageJsonContent = this.read_package_json(pkgPackageJsonPath);
+      const pkgPackageJsonContent = this.readPackageJson(pkgPackageJsonPath);
       if (!pkgPackageJsonContent) {
         console.error('package.json not exist: ', pkgPackageJsonPath);
         continue;

@@ -45,6 +45,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
 
 interface IMenuItem {
   name?: string;
+  text?: string;
   action?: string;
   type?: string;
   data?: any;
@@ -57,21 +58,25 @@ interface IMenuItem {
 export let HEADER_MENU: IMenuItem[] = [
   {
     name: '新建项目',
+    text: 'Ctrl + N',
     data: { type: 'window', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
     icon: 'fa-light fa-file-circle-plus',
   },
   {
     name: '打开项目',
+    text: 'Ctrl + O',
     data: { type: 'explorer', data: 'project-open' },
     icon: 'fa-light fa-folder-open',
   },
   {
     name: '保存项目',
+    text: 'Ctrl + S',
     action: 'project-save',
     icon: 'fa-light fa-file-circle-check',
   },
   {
     name: '另存为',
+    text: 'Ctrl + Shift + S',
     action: 'project-save-as',
     icon: 'fa-light fa-copy',
   },

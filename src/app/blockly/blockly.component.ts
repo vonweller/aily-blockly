@@ -170,6 +170,11 @@ export class BlocklyComponent {
     this.loadJson(tempJson);
   }
 
+  saveData(){
+    let json = Blockly.serialization.workspaces.save(this.workspace);
+    console.log(json);
+  }
+
   loadJson(json) {
     Blockly.serialization.workspaces.load(json, this.workspace);
   }
