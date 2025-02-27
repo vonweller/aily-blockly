@@ -74,16 +74,21 @@ export class ProjectService {
   }
 
   // 新建项目
-  async projectNew(data: NewProjectData) {
+  async projectNew(newProjectData: NewProjectData) {
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
 
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
+    let path = newProjectData.path + newProjectData.name
+
+    
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
-
-
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用
+    this.projectOpen(path)
+    // 检查项目
+
+
     // 3. 加载开发板module中的board.json到全局
 
 
@@ -109,24 +114,24 @@ export class ProjectService {
 
 
 
-    const newResult = await window['project'].new(data);
-    if (!newResult.success) {
-      console.error('new project failed: ', newResult);
-      return false;
-    }
+    // const newResult = await window['project'].new(data);
+    // if (!newResult.success) {
+    //   console.error('new project failed: ', newResult);
+    //   return false;
+    // }
 
-    this.uiService.updateState({ state: 'done', text: '项目创建成功' });
-    const prjPath = newResult.data;
+    // this.uiService.updateState({ state: 'done', text: '项目创建成功' });
+    // const prjPath = newResult.data;
 
-    // 依赖安装
-    this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
-    await this.dependencies_install(`${prjPath}/package.json`);
-    this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
+    // // 依赖安装
+    // this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
+    // await this.dependencies_install(`${prjPath}/package.json`);
+    // this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
 
-    // 发送项目更新
-    window['project'].update({ path: prjPath });
+    // // 发送项目更新
+    // window['project'].update({ path: prjPath });
 
-    return prjPath;
+    // return prjPath;
   }
 
   // 保存项目

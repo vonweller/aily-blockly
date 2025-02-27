@@ -50,7 +50,7 @@ export class ProjectNewComponent {
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
-      this.newProjectData.path = window['path'].getUserDocuments();
+      this.newProjectData.path = window['path'].getUserDocuments() + '\\';
     }
     await this.configService.init();
     this.boardList = this.configService.boardList;
@@ -75,7 +75,7 @@ export class ProjectNewComponent {
       path: this.newProjectData.path,
     });
     // console.log('选中的文件夹路径：', folderPath);
-    this.newProjectData.path = folderPath;
+    this.newProjectData.path = folderPath + '\\';
     // 在这里对返回的 folderPath 进行后续处理
   }
 
