@@ -25,6 +25,9 @@ export class UiService {
   // 用来记录terminal是否打开
   terminalIsOpen = false;
 
+  // 用来本次软件运行日志
+  
+
   constructor(private electronService: ElectronService) {}
 
   init(): void {

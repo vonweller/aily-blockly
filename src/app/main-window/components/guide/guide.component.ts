@@ -1,5 +1,5 @@
 import { Component } from '@angular/core';
-import { GUIDE_MENU } from '../../../configs/header.config';
+import { GUIDE_MENU } from '../../../configs/menu.config';
 import { UiService } from '../../../services/ui.service';
 import { ProjectService } from '../../../services/project.service';
 import { version } from '../../../../../package.json';

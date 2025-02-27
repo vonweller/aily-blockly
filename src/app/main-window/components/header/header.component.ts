@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, ElementRef, ViewChild, viewChild } from '@angular/core';
-import { HEADER_BTNS, HEADER_MENU } from '../../../configs/header.config';
+import { HEADER_BTNS, HEADER_MENU } from '../../../configs/menu.config';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { FormsModule } from '@angular/forms';
 import { ProjectService } from '../../../services/project.service';
