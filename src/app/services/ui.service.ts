@@ -25,10 +25,11 @@ export class UiService {
   // 用来记录terminal是否打开
   terminalIsOpen = false;
 
-  // 用来本次软件运行日志
-  
 
-  constructor(private electronService: ElectronService) {}
+  theme = 'dark';
+
+
+  constructor(private electronService: ElectronService) { }
 
   init(): void {
     if (this.electronService.isElectron) {
@@ -97,7 +98,7 @@ export class UiService {
     // this.actionSubject.next({ action: 'clear-terminal' });
   }
 
-  runCmd(cmd: string) {}
+  runCmd(cmd: string) { }
 
   // 更新footer右下角的状态
   updateState(state: ActionState) {

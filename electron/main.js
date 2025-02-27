@@ -1,7 +1,7 @@
 const path = require("path");
 const os = require("os");
 
-const { app, BrowserWindow, ipcMain, dialog, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 const { registerProjectHandlers } = require("./project");
 
 const args = process.argv.slice(1);
@@ -213,3 +213,12 @@ ipcMain.handle("env-set", (event, data) => {
 ipcMain.handle("env-get", (event, key) => {
   return process.env[key];
 })
+
+// 用于嵌入的iframe打开外部链接
+app.on('web-contents-created', (event, contents) => {
+  // 处理iframe中的链接点击
+  contents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' }; // 阻止在Electron中打开
+  });
+});
