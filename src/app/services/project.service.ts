@@ -76,21 +76,28 @@ export class ProjectService {
   // 新建项目
   async projectNew(data: NewProjectData) {
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
-
     // 1. 检查开发板module是否存在, 不存在则安装
 
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
 
 
+
     // 3. 加载项目目录，打开blockly编辑器
+    this.uiService.updateState({ state: 'done', text: '项目创建成功' });
 
 
     // 4. 安装库依赖，加载库依赖（用户可以先编程，库依赖在后台安装，安装完一个加载一个）
+    let lib = 'xxxxx';
+    this.uiService.updateState({ state: 'loading', text: '正在安装' + lib });
 
 
     // 5. 检查开发板依赖是否安装，安装开发板依赖（用户可以先编程，开发板依赖在后台安装）
+    let board = 'xxxxx';
+    this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
 
+
+    
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
