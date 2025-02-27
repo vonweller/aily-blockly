@@ -101,9 +101,9 @@ export class ProjectNewComponent {
 
     await this.projectService.projectNew(this.newProjectData);
 
-    setTimeout(() => {
-      window['subWindow'].close();
-    }, 1000);
+    // setTimeout(() => {
+    //   window['subWindow'].close();
+    // }, 1000);
   }
 
   openUrl(url) {

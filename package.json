@@ -64,7 +64,7 @@
     "animate.css": "^4.1.1",
     "blockly": "^11.2.1",
     "lightweight-charts": "^4.2.2",
-    "marked": "^15.0.5",
+    "marked": "^15.0.7",
     "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.1",

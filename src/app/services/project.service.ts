@@ -75,18 +75,53 @@ export class ProjectService {
 
   // 新建项目
   async projectNew(newProjectData: NewProjectData) {
+    console.log('newProjectData: ', newProjectData);
+    let projectPath = newProjectData.path + newProjectData.name
+    let boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
+    
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
 
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-    let path = newProjectData.path + newProjectData.name
+  
 
-    
+
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用
-    this.projectOpen(path)
-    // 检查项目
+    this.projectOpen(projectPath)
+
+
+
+    // const newResult = await window['project'].new(data);
+    // if (!newResult.success) {
+    //   console.error('new project failed: ', newResult);
+    //   return false;
+    // }
+
+    // this.uiService.updateState({ state: 'done', text: '项目创建成功' });
+    // const prjPath = newResult.data;
+
+    // // 依赖安装
+    // this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
+    // await this.dependencies_install(`${prjPath}/package.json`);
+    // this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
+
+    // // 发送项目更新
+    // window['project'].update({ path: prjPath });
+
+    // return prjPath;
+  }
+
+  // 打开项目
+  async projectOpen(path) {
+    this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
+    // 0. 判断路径是否存在
+    const pathExist = window['path'].isExists(path);
+    if (!pathExist) {
+      console.error('path not exist: ', path);
+      return false;
+    }
 
 
     // 3. 加载开发板module中的board.json到全局
@@ -114,77 +149,43 @@ export class ProjectService {
 
 
 
-    // const newResult = await window['project'].new(data);
-    // if (!newResult.success) {
-    //   console.error('new project failed: ', newResult);
+    // this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
+
+    // // 读取package.json文件
+    // const packageJsonContent = window['file'].readSync(`${path}/package.json`);
+    // if (!packageJsonContent) {
+    //   console.error('package.json not exist: ', path);
     //   return false;
     // }
+    // this.projectData = JSON.parse(packageJsonContent);
+    // this.currentProject = path;
 
-    // this.uiService.updateState({ state: 'done', text: '项目创建成功' });
-    // const prjPath = newResult.data;
+    // // 设置项目路径到环境变量
+    // window["env"].set({ key: "AILY_PRJ_PATH", value: path });
 
-    // // 依赖安装
-    // this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
-    // await this.dependencies_install(`${prjPath}/package.json`);
-    // this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
+    // // 判断是否需要安装package.json依赖
+    // if (!window['path'].isExists(`${path}/node_modules`)) {
+    //   await this.dependencies_install(`${path}/package.json`);
+    // }
+    // this.loaded.next(true);
 
-    // // 发送项目更新
-    // window['project'].update({ path: prjPath });
+    // // 添加到最近打开的项目
+    // this.addRecentlyProjects({ name: this.projectData.name, path: path });
 
-    // return prjPath;
+    // // TODO 加载blockly组件
+    // this.uiService.updateState({ state: 'done', text: '项目加载成功', timeout: 3000 });
+
+    // // 后台加载板子依赖
+    // this.board_dependencies_install(`${path}/package.json`);
   }
 
   // 保存项目
   projectSave() {
     // 导出blockly json配置并保存
+
+
   }
 
-  // 打开项目
-  async projectOpen(path) {
-    this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
-    // 0. 判断路径是否存在
-    const pathExist = window['path'].isExists(path);
-    if (!pathExist) {
-      console.error('path not exist: ', path);
-      return false;
-    }
-
-    // 1. 加载package.boardDependencies，检查开发板module是否存在, 不存在则安装
-
-
-    // 3. 加载项目目录，打开blockly编辑器
-
-
-
-    this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
-
-    // 读取package.json文件
-    const packageJsonContent = window['file'].readSync(`${path}/package.json`);
-    if (!packageJsonContent) {
-      console.error('package.json not exist: ', path);
-      return false;
-    }
-    this.projectData = JSON.parse(packageJsonContent);
-    this.currentProject = path;
-
-    // 设置项目路径到环境变量
-    window["env"].set({ key: "AILY_PRJ_PATH", value: path });
-
-    // 判断是否需要安装package.json依赖
-    if (!window['path'].isExists(`${path}/node_modules`)) {
-      await this.dependencies_install(`${path}/package.json`);
-    }
-    this.loaded.next(true);
-
-    // 添加到最近打开的项目
-    this.addRecentlyProjects({ name: this.projectData.name, path: path });
-
-    // TODO 加载blockly组件
-    this.uiService.updateState({ state: 'done', text: '项目加载成功', timeout: 3000 });
-
-    // 后台加载板子依赖
-    this.board_dependencies_install(`${path}/package.json`);
-  }
 
   // 另存为项目
   projectSaveAs() { }

@@ -1,8 +1,6 @@
 const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
-const { spawn, exec } = require("child_process");
-const { get } = require("http");
-// const { Bonjour } = require('bonjour-service');
+const { exec } = require("child_process");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -93,6 +91,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
           .catch((error) => reject(error));
       });
     }
+  },
+  npm: {
+    install: (data) => ipcRenderer.invoke("npm-install", data),
+    list: (data) => ipcRenderer.invoke("npm-list", data),
+    search: (data) => ipcRenderer.invoke("npm-search", data),
+    info: (data) => ipcRenderer.invoke("npm-info", data),
   },
   builder: {
     init: (data) => {
