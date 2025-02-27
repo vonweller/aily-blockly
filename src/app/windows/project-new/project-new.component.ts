@@ -10,6 +10,7 @@ import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { UiService } from '../../services/ui.service';
 import { generateDateString } from '../../func/func';
+import { NzSelectModule } from 'ng-zorro-antd/select';
 
 @Component({
   selector: 'app-project-new',
@@ -20,6 +21,7 @@ import { generateDateString } from '../../func/func';
     NzButtonModule,
     NzInputModule,
     NzStepsModule,
+    NzSelectModule
   ],
   templateUrl: './project-new.component.html',
   styleUrl: './project-new.component.scss',
@@ -40,11 +42,12 @@ export class ProjectNewComponent {
     version: '1.0.0',
   };
 
+  boardVersion = '';
+
   constructor(
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
-    private uiService: UiService,
   ) { }
 
   async ngOnInit() {
@@ -74,7 +77,7 @@ export class ProjectNewComponent {
     // 在这里对返回的 folderPath 进行后续处理
   }
 
-  // 检查路径是否存在
+  // 检查项目名称是否存在
   showIsExist = false;
   async checkPathIsExist(): Promise<boolean> {
     let isExist = await this.projectService.project_exist(this.projectData);
@@ -85,9 +88,12 @@ export class ProjectNewComponent {
     }
     return isExist;
   }
-
+  
   async createProject() {
     // 判断是否有同名项目
+    if (await this.checkPathIsExist()) {
+      return;
+    }
     if (await this.checkPathIsExist()) {
       return;
     }

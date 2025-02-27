@@ -48,6 +48,36 @@
         input {
           background: #363636;
           z-index: 1;
+          color: rgba(255, 255, 255, 0.7) !important;
+
+          &.board{
+            border-radius: 2px 0 0 2px;
+          }
+        }
+
+        nz-input-group{
+          background: #363636;
+
+          ::ng-deep{
+            .ant-input-group-addon{
+              width: 35px;
+              height: 32px;
+              padding: 0;
+            }
+          }
+        }
+
+        nz-select {
+          width: 150px;
+          flex-shrink: 0;
+          margin-left: -1px;
+          background: #363636;
+
+          ::ng-deep {
+            nz-select-top-control {
+              border-radius: 0 2px 2px 0;
+            }
+          }
         }
 
         .error {
