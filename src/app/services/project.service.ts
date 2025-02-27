@@ -80,24 +80,35 @@ export class ProjectService {
 
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-
-
-
-    // 3. 加载项目目录，打开blockly编辑器
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
 
 
-    // 4. 安装库依赖，加载库依赖（用户可以先编程，库依赖在后台安装，安装完一个加载一个）
+    // 此后就是打开项目(projectOpen)的逻辑，理论可复用
+    // 3. 加载开发板module中的board.json到全局
+
+
+    // 4. 打开blockly编辑器
+
+
+    // 5. 安装库依赖，加载库依赖(安装一个，加载一个)
     let lib = 'xxxxx';
     this.uiService.updateState({ state: 'loading', text: '正在安装' + lib });
 
 
-    // 5. 检查开发板依赖是否安装，安装开发板依赖（用户可以先编程，开发板依赖在后台安装）
+    // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
+    this.uiService.updateState({ state: 'done', text: '项目加载成功' });
+
+
+    // 7. 检查开发板依赖（compiler、sdk、tool）是否安装，安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
     let board = 'xxxxx';
     this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
 
 
-    
+    // 8. 完成
+    this.uiService.updateState({ state: 'done', text: board + '安装成功' });
+
+
+
     const newResult = await window['project'].new(data);
     if (!newResult.success) {
       console.error('new project failed: ', newResult);
@@ -126,12 +137,20 @@ export class ProjectService {
   // 打开项目
   async projectOpen(path) {
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
-    // 判断路径是否存在
+    // 0. 判断路径是否存在
     const pathExist = window['path'].isExists(path);
     if (!pathExist) {
       console.error('path not exist: ', path);
       return false;
     }
+
+    // 1. 加载package.boardDependencies，检查开发板module是否存在, 不存在则安装
+
+
+    // 3. 加载项目目录，打开blockly编辑器
+
+
+
     this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
 
     // 读取package.json文件
