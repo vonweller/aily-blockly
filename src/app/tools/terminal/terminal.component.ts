@@ -28,6 +28,8 @@ export class TerminalComponent {
   dataBuffer: string = '';
   dataTimeout: any;
 
+  terminalPid;
+
   constructor(
     private electronService: ElectronService,
     private uiService: UiService,
@@ -35,8 +37,8 @@ export class TerminalComponent {
   ) { }
 
   close() {
+    this.closeNodePty();
     this.uiService.closeTool('terminal');
-    this.closeNodePty('test');
   }
 
   trash() { }
@@ -46,33 +48,10 @@ export class TerminalComponent {
       fontFamily: 'Consolas, "Courier New", monospace',
       fontSize: 14,
       scrollback: 1000,
+      cursorBlink: true,
+      convertEol: true,
     });
-    this.fitAddon = new FitAddon();
     this.terminal.open(this.terminalEl.nativeElement);
-    this.clipboardAddon = new ClipboardAddon();
-    this.terminal.loadAddon(this.clipboardAddon);
-    this.terminal.loadAddon(this.fitAddon);
-
-    this.terminal.write('> ');
-    this.terminal.onData((data) => {
-      switch (data) {
-        case '\r': // Enter
-          // this.terminal.write('\r\n');
-          this.sendCommand(this.command);
-          this.terminal.write('\r\n')
-          this.command = '';
-          break;
-        case '\u007F': // Backspace (DEL)
-          if (this.command.length > 0) {
-            this.command = this.command.slice(0, -1);
-            this.terminal.write('\b \b');
-          }
-          break;
-        default: // Other characters
-          this.command += data;
-          this.terminal.write(data);
-      }
-    });
 
     if (this.electronService.isElectron) {
       this.nodePtyInit();
@@ -80,48 +59,69 @@ export class TerminalComponent {
       this.cloudPtyInit();
     }
 
+    this.fitContainer();
+    this.listenRightClick();
+
+    this.terminal.onData(data => {
+      window['terminal'].sendInput(data);
+    });
+
     window['terminal'].onData((data) => {
-      // 判断是否是命令行中的路径前缀
-      console.log("newData: ", data);
       this.terminal.write(data);
     })
-
-    this.fitContainer();
   }
 
   ngOnDestroy(): void {
+    this.terminalEl.nativeElement.removeEventListener('contextmenu', this.contextMenuListener);
     this.resizeObserver.disconnect();
   }
 
-  // 用于监听窗口大小变化
+  // 用于监听容器大小变化，改变terminal大小
   resizeObserver;
   resizeTimeout;
   fitContainer() {
-    // 添加窗口resize事件监听，监听terminal元素的大小变化
+    this.fitAddon = new FitAddon();
+    this.terminal.loadAddon(this.fitAddon);
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimeout) {
         clearTimeout(this.resizeTimeout);
       }
       this.resizeTimeout = setTimeout(() => {
         this.fitAddon.fit();
-        // // 同步更新PTY大小，resize没实现，以后再考虑
-        // if (this.electronService.isElectron) {
-        //   const dimensions = this.fitAddon.proposeDimensions();
-        //   if (dimensions && dimensions.cols && dimensions.rows) {
-        //     window['terminal'].resize(dimensions.cols, dimensions.rows);
-        //   }
-        // }
-      }, 50);
+        if (this.electronService.isElectron) {
+          const dimensions = this.fitAddon.proposeDimensions();
+          if (dimensions && dimensions.cols && dimensions.rows) {
+            window['terminal'].resize({ pid: this.terminalPid, cols: dimensions.cols, rows: dimensions.rows });
+          }
+        }
+      }, 100);
     });
     this.resizeObserver.observe(this.terminalEl.nativeElement);
   }
 
-  sendCommand(command: string): void {
-    console.log("send command: ", command);
-    window['terminal'].sendInput(command);
+  // 监听右键点击
+  contextMenuListener;
+  listenRightClick() {
+    this.clipboardAddon = new ClipboardAddon();
+    this.terminal.loadAddon(this.clipboardAddon);
+    this.contextMenuListener = (event) => {
+      event.preventDefault();
+      navigator.clipboard.readText().then(text => {
+        if (text) {
+          this.terminal.write(text);
+        }
+      }).catch(err => {
+        console.error('获取剪贴板内容失败:', err);
+      });
+    };
+    this.terminalEl.nativeElement.addEventListener('contextmenu', this.contextMenuListener);
   }
 
   nodePtyInit() {
+    window['ipcRenderer'].on('terminal-created', (event, data) => {
+      this.terminalPid = data.pid;
+      console.log('终端已创建，PID:', this.terminalPid);
+    });
     console.log("currentPrj: ", this.projectService.currentProject)
     // 初始化本地工具
     window['terminal'].init({
@@ -135,7 +135,7 @@ export class TerminalComponent {
     // 初始化云端工具
   }
 
-  closeNodePty(pid) {
-    window['terminal'].close(pid);
+  closeNodePty() {
+    window['terminal'].close({ pid: this.terminalPid });
   }
 }

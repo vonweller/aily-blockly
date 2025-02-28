@@ -214,35 +214,6 @@ function arduinoCliUploader(port, prjPath) {
   });
 }
 
-// mainWindow;
-
-// // 终端相关(dev)
-// const terminals = new Map();
-// ipcMain.on("terminal-create", (event, args) => {
-//   const shell = process.env[process.platform === "win32" ? "COMSPEC" : "SHELL"];
-//   const ptyProcess = pty.spawn(shell, [], {
-//     name: "xterm-color",
-//     cols: 80,
-//     rows: 30,
-//     cwd: process.env.HOME,
-//     env: process.env,
-//   });
-
-//   ptyProcess.on("data", (data) => {
-//     console.log("terminal-data1: ", data);
-//     mainWindow.webContents.send("terminal-data", data);
-//   });
-
-//   ipcMain.on("terminal-input", (event, input) => {
-//     ptyProcess.write(input);
-//   });
-
-//   // 关闭终端
-//   ipcMain.on("terminal-close", (event) => {
-//     ptyProcess.kill();
-//   });
-// });
-
 function initTerminal(window) {
   mainWindow = window;
   mainWindow.webContents.on("did-finish-load", () => {
@@ -302,37 +273,40 @@ function registerTerminalHandlers(mainWindow) {
     const shell = process.platform === "win32" ? "powershell.exe" : "bash";
     const ptyProcess = pty.spawn(shell, [], {
       name: "xterm-color",
-      cols: args.cols,
-      rows: args.rows,
+      cols: args.cols || 80,  // 确保有合适的默认值
+      rows: args.rows || 24,
       cwd: args.cwd || process.env.HOME,
       env: process.env,
     });
 
     ptyProcess.on("data", (data) => {
-      console.log("ptyProcessData: ", data);
-      if (data !== ">>") {
-        mainWindow.webContents.send("terminal-inc-data", data);
-      }
+      mainWindow.webContents.send("terminal-inc-data", data);
     });
 
-    terminals[ptyProcess.pid] = ptyProcess;
+    console.log("terminal-created pid ", ptyProcess.pid);
+    terminals.set(ptyProcess.pid, ptyProcess);
+    event.reply("terminal-created", { pid: ptyProcess.pid });
 
     ipcMain.on("terminal-to-pty", (event, input) => {
-      // 对npm命令进行特殊处理
-      if (input.trim().startsWith("npm")) {
-        input += ` --register ${process.env.AILY_NPM_REGISTRY}`;
-        if (/\b(-g|--global)\b/.test(input)) {
-          input += ` --prefix ${process.env.AILY_NPM_PREFIX}`;
-        }
+      ptyProcess.write(input);
+    });
+
+    // 终端大小调整处理
+    ipcMain.on("terminal-resize", (event, { pid, cols, rows }) => {
+      const ptyProcess = terminals.get(parseInt(pid, 10));
+      if (ptyProcess) {
+        ptyProcess.resize(cols, rows);
       }
-      
-      ptyProcess.write(input + '\r\n');
     });
 
     // 关闭终端
-    ipcMain.on("terminal-close", (event, pid) => {
-      console.log("pid: ", pid);
-      ptyProcess.kill();
+    ipcMain.on("terminal-close", (event, data) => {
+      console.log("terminal-close pid ", data.pid);
+      const ptyProcess = terminals.get(parseInt(data.pid, 10));
+      if (ptyProcess) {
+        ptyProcess.kill();
+        terminals.delete(parseInt(data.pid, 10));
+      }
     });
   });
 }

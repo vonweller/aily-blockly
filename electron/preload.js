@@ -45,7 +45,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       });
     },
     sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
-    close: (pid) => ipcRenderer.send("terminal-close", pid),
+    close: (data) => ipcRenderer.send("terminal-close", data),
+    resize: (data) => ipcRenderer.send("terminal-resize", data)
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
