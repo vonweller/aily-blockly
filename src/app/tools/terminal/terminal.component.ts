@@ -104,13 +104,13 @@ export class TerminalComponent {
       }
       this.resizeTimeout = setTimeout(() => {
         this.fitAddon.fit();
-        // 同步更新PTY大小
-        if (this.electronService.isElectron) {
-          const dimensions = this.fitAddon.proposeDimensions();
-          if (dimensions && dimensions.cols && dimensions.rows) {
-            window['terminal'].resize(dimensions.cols, dimensions.rows);
-          }
-        }
+        // // 同步更新PTY大小，resize没实现，以后再考虑
+        // if (this.electronService.isElectron) {
+        //   const dimensions = this.fitAddon.proposeDimensions();
+        //   if (dimensions && dimensions.cols && dimensions.rows) {
+        //     window['terminal'].resize(dimensions.cols, dimensions.rows);
+        //   }
+        // }
       }, 50);
     });
     this.resizeObserver.observe(this.terminalEl.nativeElement);
