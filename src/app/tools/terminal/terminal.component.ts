@@ -6,7 +6,6 @@ import { ElectronService } from '../../services/electron.service';
 import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
-import { copyFileSync } from 'fs';
 
 @Component({
   selector: 'app-terminal',
@@ -29,7 +28,6 @@ export class TerminalComponent {
   dataBuffer: string = '';
   dataTimeout: any;
 
-
   constructor(
     private electronService: ElectronService,
     private uiService: UiService,
@@ -41,19 +39,16 @@ export class TerminalComponent {
     this.closeNodePty('test');
   }
 
-  trash() {}
+  trash() { }
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal({
-      fontFamily: 'Consolas, "Courier New", monospace', // 设置字体
-      fontSize: 14,                      // 设置字体大小
+      fontFamily: 'Consolas, "Courier New", monospace',
+      fontSize: 14,
+      scrollback: 1000,
     });
     this.fitAddon = new FitAddon();
     this.terminal.open(this.terminalEl.nativeElement);
-    setTimeout(() => {
-      this.fitAddon.fit();
-    }, 50);
-    //
     this.clipboardAddon = new ClipboardAddon();
     this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.loadAddon(this.fitAddon);
@@ -90,6 +85,35 @@ export class TerminalComponent {
       console.log("newData: ", data);
       this.terminal.write(data);
     })
+
+    this.fitContainer();
+  }
+
+  ngOnDestroy(): void {
+    this.resizeObserver.disconnect();
+  }
+
+  // 用于监听窗口大小变化
+  resizeObserver;
+  resizeTimeout;
+  fitContainer() {
+    // 添加窗口resize事件监听，监听terminal元素的大小变化
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.resizeTimeout) {
+        clearTimeout(this.resizeTimeout);
+      }
+      this.resizeTimeout = setTimeout(() => {
+        this.fitAddon.fit();
+        // 同步更新PTY大小
+        if (this.electronService.isElectron) {
+          const dimensions = this.fitAddon.proposeDimensions();
+          if (dimensions && dimensions.cols && dimensions.rows) {
+            window['terminal'].resize(dimensions.cols, dimensions.rows);
+          }
+        }
+      }, 50);
+    });
+    this.resizeObserver.observe(this.terminalEl.nativeElement);
   }
 
   sendCommand(command: string): void {
@@ -101,8 +125,8 @@ export class TerminalComponent {
     console.log("currentPrj: ", this.projectService.currentProject)
     // 初始化本地工具
     window['terminal'].init({
-      cols: 90,
-      rows: 100,
+      cols: 120,
+      rows: 200,
       cwd: this.projectService.currentProject
     });
   }

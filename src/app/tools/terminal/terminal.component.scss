@@ -1,5 +1,9 @@
 @import "../../components/tool-container/tool-container.component.scss";
 
+.content{
+  overflow: hidden;
+}
+
 .terminal-box {
   height: 100%;
   width: 100%;
@@ -11,7 +15,6 @@
 
     .xterm {
       padding: 10px;
-      background: red;
     }
 
     .xterm-viewport{

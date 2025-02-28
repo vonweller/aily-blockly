@@ -10,7 +10,7 @@ export class ElectronService {
 
   // ipcRenderer: typeof ipcRenderer;
 
-  constructor() {}
+  constructor() { }
 
   async init() {
     if (this.electron && typeof this.electron.versions() == 'object') {
@@ -32,5 +32,9 @@ export class ElectronService {
     window['ipcRenderer'].on('terminal', (event, data) => {
       console.log('收到来自主进程的数据:', data.data);
     });
+  }
+
+  npmRun(data: { cmd: string, path: string }) {
+    window['npm'].run(data)
   }
 }

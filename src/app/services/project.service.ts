@@ -78,13 +78,13 @@ export class ProjectService {
     console.log('newProjectData: ', newProjectData);
     let projectPath = newProjectData.path + newProjectData.name
     let boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
-    
+
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
-
+    window['npm'].run({ cmd: `i ${boardPackage}`, path: '' })
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-  
+
 
 
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });

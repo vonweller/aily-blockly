@@ -93,10 +93,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   npm: {
-    install: (data) => ipcRenderer.invoke("npm-install", data),
-    list: (data) => ipcRenderer.invoke("npm-list", data),
-    search: (data) => ipcRenderer.invoke("npm-search", data),
-    info: (data) => ipcRenderer.invoke("npm-info", data),
+    run: (data) => ipcRenderer.invoke("npm-run", data),
+  },
+  node: {
+    run: (data) => ipcRenderer.invoke("node-run", data),
   },
   builder: {
     init: (data) => {
