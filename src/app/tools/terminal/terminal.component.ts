@@ -22,12 +22,6 @@ export class TerminalComponent {
   terminal;
   fitAddon;
   clipboardAddon;
-  command: string = '';
-  commandPrefix: string = '';
-  lastData: string = '';
-  dataBuffer: string = '';
-  dataTimeout: any;
-
   terminalPid;
 
   constructor(
@@ -37,11 +31,15 @@ export class TerminalComponent {
   ) { }
 
   close() {
-    this.closeNodePty();
     this.uiService.closeTool('terminal');
   }
 
-  trash() { }
+  trash() { 
+    this.terminal.write('\x1bc');
+    if (this.electronService.isElectron) {
+      window['terminal'].sendInput('clear\r');
+    }
+  }
 
   ngAfterViewInit(): void {
     this.terminal = new Terminal({
@@ -72,6 +70,7 @@ export class TerminalComponent {
   }
 
   ngOnDestroy(): void {
+    this.closeNodePty();
     this.terminalEl.nativeElement.removeEventListener('contextmenu', this.contextMenuListener);
     this.resizeObserver.disconnect();
   }

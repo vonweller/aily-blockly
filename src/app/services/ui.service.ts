@@ -90,7 +90,6 @@ export class UiService {
   closeTerminal() {
     this.actionSubject.next({ action: 'close', type: 'terminal' });
     this.terminalIsOpen = false;
-    console.log(this.terminalIsOpen);
   }
 
   // 清空终端
