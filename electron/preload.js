@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   path: {
     getUserHome: () => require("os").homedir(),
+    getAppData: () => process.env.AILY_APPDATA_PATH,
     getUserDocuments: () => {
       let path = require("os").homedir() + "\\Documents\\aily-project";
       if (!require("fs").existsSync(path)) {
@@ -25,9 +26,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   SerialPort: {
     list: async () => await SerialPort.list(),
     create: (options) => new SerialPort(options),
-  },
-  Bonjour: {
-    // list: async () => await Bonjour.list(),
   },
   platform: {
     type: () => process.platform,
@@ -52,7 +50,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
     close: () => ipcRenderer.send("window-close"),
+    // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),
+    // 向其他窗口发送消息
+    send: (data) => ipcRenderer.invoke("window-send", data),
+    onReceive: (callback) => ipcRenderer.on("window-receive", callback),
   },
   subWindow: {
     open: (options) => ipcRenderer.send("window-open", options),
@@ -92,12 +94,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
           .catch((error) => reject(error));
       });
     }
-  },
-  npm: {
-    run: (data) => ipcRenderer.invoke("npm-run", data),
-  },
-  node: {
-    run: (data) => ipcRenderer.invoke("node-run", data),
   },
   builder: {
     init: (data) => {

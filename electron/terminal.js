@@ -214,25 +214,6 @@ function arduinoCliUploader(port, prjPath) {
   });
 }
 
-function initTerminal(window) {
-  mainWindow = window;
-  mainWindow.webContents.on("did-finish-load", () => {
-    mainWindow.webContents.send("termina", {});
-  });
-}
-
-function openTerminal() {
-  mainWindow.webContents.send("terminal", { action: "open" });
-}
-
-function closeTerminal() {
-  mainWindow.webContents.send("terminal", { action: "close" });
-}
-
-function updateTerminal(data) {
-  mainWindow.webContents.send("terminal", { action: "update", data });
-}
-
 function registerTerminalHandlers(mainWindow) {
   ipcMain.handle("builder-codeGen", async (event, data) => {
     try {

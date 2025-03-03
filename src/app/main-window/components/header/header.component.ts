@@ -141,7 +141,7 @@ export class HeaderComponent {
         this.uiService.turnTerminal(item.data);
         break;
       case 'run-cmd':
-        this.uiService.runCmd(item.data);
+        // this.uiService.runCmd(item.data);
         break;
       case 'cmd':
         if (item.data.data === 'compile') {

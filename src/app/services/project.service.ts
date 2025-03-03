@@ -5,6 +5,7 @@ import { ResponseModel } from '../interfaces/response.interface';
 import { API } from '../configs/api.config';
 import { UiService } from './ui.service';
 import { NewProjectData } from '../windows/project-new/project-new.component';
+import { TerminalService } from '../tools/terminal/terminal.service';
 
 interface ProjectData {
   name: string;
@@ -38,7 +39,8 @@ export class ProjectService {
 
   constructor(
     private http: HttpClient,
-    private uiService: UiService
+    private uiService: UiService,
+    private terminalService: TerminalService
   ) {
     window['ipcRenderer'].on('project-update', (event, data) => {
       console.log('收到更新的: ', data);
@@ -76,12 +78,17 @@ export class ProjectService {
   // 新建项目
   async projectNew(newProjectData: NewProjectData) {
     console.log('newProjectData: ', newProjectData);
-    let projectPath = newProjectData.path + newProjectData.name
-    let boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
+    const appDataPath = window['path'].getAppData();
+    const projectPath = newProjectData.path + newProjectData.name
+    const boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
+    const registry = 'https://registry.openjumper.cn';
 
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
-    window['npm'].run({ cmd: `i ${boardPackage}`, path: '' })
+    await this.terminalService.open();
+    setTimeout(() => {
+      this.terminalService.send(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
+    }, 1000);
 
     // 2. 创建项目目录，复制开发板module中的template到项目目录
 
@@ -89,7 +96,7 @@ export class ProjectService {
 
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用
-    this.projectOpen(projectPath)
+    // this.projectOpen(projectPath)
 
 
 

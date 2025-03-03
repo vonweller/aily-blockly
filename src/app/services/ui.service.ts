@@ -24,17 +24,25 @@ export class UiService {
 
   // 用来记录terminal是否打开
   terminalIsOpen = false;
-
-
   theme = 'dark';
 
 
   constructor(private electronService: ElectronService) { }
 
+
+  // 初始化UI服务，这个服务仅供main-window使用  
   init(): void {
     if (this.electronService.isElectron) {
-      window['ipcRenderer'].on('window-go-main', (event, data) => {
-        this.openTool(data.replace('/', ''));
+      window['ipcRenderer'].on('window-go-main', (event, toolName) => {
+        this.openTool(toolName);
+      });
+      window['ipcRenderer'].on('window-receive', (event, message) => {
+        if (message.data == 'open-terminal') {
+          this.openTerminal();
+        }
+        if (message.data == 'close-terminal') {
+          this.closeTerminal();
+        }
       });
     }
   }
@@ -96,8 +104,6 @@ export class UiService {
   clearTerminal() {
     // this.actionSubject.next({ action: 'clear-terminal' });
   }
-
-  runCmd(cmd: string) { }
 
   // 更新footer右下角的状态
   updateState(state: ActionState) {
