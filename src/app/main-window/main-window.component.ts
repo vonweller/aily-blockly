@@ -60,6 +60,7 @@ export class MainWindowComponent {
 
   ngOnInit(): void {
     this.uiService.init();
+    this.projectService.init();
   }
 
   ngAfterViewInit(): void {

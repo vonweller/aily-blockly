@@ -6,6 +6,8 @@ import { API } from '../configs/api.config';
 import { UiService } from './ui.service';
 import { NewProjectData } from '../windows/project-new/project-new.component';
 import { TerminalService } from '../tools/terminal/terminal.service';
+import { BlocklyService } from '../blockly/blockly.service';
+import { ElectronService } from './electron.service';
 
 interface ProjectData {
   name: string;
@@ -37,16 +39,40 @@ export class ProjectService {
 
   currentProject: string;
 
+  isMainWindow = false;
+
   constructor(
     private http: HttpClient,
     private uiService: UiService,
-    private terminalService: TerminalService
+    private terminalService: TerminalService,
+    private blocklyService: BlocklyService,
+    private electronService: ElectronService
   ) {
     window['ipcRenderer'].on('project-update', (event, data) => {
       console.log('收到更新的: ', data);
       this.currentProject = data.path;
       this.projectOpen(this.currentProject);
     });
+  }
+
+  // 初始化UI服务，这个init函数仅供main-window使用  
+  init(): void {
+    if (this.electronService.isElectron) {
+      this.isMainWindow = true;
+      window['ipcRenderer'].on('window-receive', async (event, message) => {
+        console.log('window-receive', message);
+        if (message.data.action == 'open-project') {
+          this.projectOpen(message.data.path);
+        }
+        // 反馈完成结果
+        if (message.messageId) {
+          window['ipcRenderer'].send('main-window-response', {
+            messageId: message.messageId,
+            result: "success"
+          });
+        }
+      });
+    }
   }
 
   /**
@@ -86,19 +112,24 @@ export class ProjectService {
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.terminalService.open();
-    setTimeout(() => {
-      this.terminalService.send(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
-    }, 1000);
-
+    await this.terminalService.sendAsync(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-
-
+    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.value}/template`;
+    // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
+    await this.terminalService.sendAsync(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
+    await this.terminalService.sendAsync(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
+    // node命令创建目录并复制文件
+    // window['file'].mkdirSync(projectPath);
+    // window['file'].copySync(templatePath, projectPath);
+    // 3. 修改package.json文件
+    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    packageJson.name = newProjectData.name;
+    window['file'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
 
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
-    // 此后就是打开项目(projectOpen)的逻辑，理论可复用
+    // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
+    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
     // this.projectOpen(projectPath)
-
-
 
     // const newResult = await window['project'].new(data);
     // if (!newResult.success) {
@@ -121,25 +152,38 @@ export class ProjectService {
   }
 
   // 打开项目
-  async projectOpen(path) {
+  async projectOpen(projectPath) {
+    const registry = 'https://registry.openjumper.cn';
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
     // 0. 判断路径是否存在
-    const pathExist = window['path'].isExists(path);
+    const pathExist = window['path'].isExists(projectPath);
     if (!pathExist) {
-      console.error('path not exist: ', path);
+      console.error('path not exist: ', projectPath);
       return false;
     }
+    // 1. 终端进入项目目录
+    await this.terminalService.open();
+    await this.terminalService.sendAsync(`cd ${projectPath}`);
+    // 2. 安装项目依赖
+    this.uiService.updateState({ state: 'loading', text: '正在安装依赖' });
+    await this.terminalService.sendAsync(`npm install --registry=${registry}`);
+    // 3. 加载开发板module中的board.json
+    this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
+    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
+    console.log('boardModule: ', boardModule);
+    let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
+    console.log('boardJsonPath: ', boardJsonPath);
+    const boardJson = JSON.parse(window['file'].readFileSync(boardJsonPath));
+    this.blocklyService.loadBoardConfig(boardJson);
+    // 4. 打开blockly library
+    this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
+    const librariesModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/lib-'));
+    console.log('librariesModule: ', librariesModule);
 
 
-    // 3. 加载开发板module中的board.json到全局
+    // 5. 打开blockly编辑器
 
-
-    // 4. 打开blockly编辑器
-
-
-    // 5. 安装库依赖，加载库依赖(安装一个，加载一个)
-    let lib = 'xxxxx';
-    this.uiService.updateState({ state: 'loading', text: '正在安装' + lib });
 
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
@@ -155,11 +199,15 @@ export class ProjectService {
     this.uiService.updateState({ state: 'done', text: board + '安装成功' });
 
 
+    // 9. 安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
+
+
+
 
     // this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
 
     // // 读取package.json文件
-    // const packageJsonContent = window['file'].readSync(`${path}/package.json`);
+    // const packageJsonContent = window['file'].readFileSync(`${path}/package.json`);
     // if (!packageJsonContent) {
     //   console.error('package.json not exist: ', path);
     //   return false;
@@ -199,7 +247,7 @@ export class ProjectService {
 
   // 读取package.json文件
   readPackageJson(path) {
-    const packageJsonContent = window['file'].readSync(path);
+    const packageJsonContent = window['file'].readFileSync(path);
     if (!packageJsonContent) {
       console.error('package.json not exist: ', path);
       return {};

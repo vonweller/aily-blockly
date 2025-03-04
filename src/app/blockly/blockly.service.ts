@@ -26,11 +26,11 @@ export class BlocklyService {
   constructor(private http: HttpClient) { }
 
   async init() {
-    this.boardConfig = await lastValueFrom(
-      this.http.get<any[]>('board/arduino_uno/arduino_uno.json', {
-        responseType: 'json',
-      }),
-    );
+
+  }
+
+  loadBoardConfig(boardConfig) {
+    this.boardConfig = boardConfig
   }
 
   async loadLibraries() {

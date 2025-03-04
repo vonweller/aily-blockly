@@ -154,7 +154,7 @@ export class BlocklyComponent {
 
       window['Arduino'] = <any>arduinoGenerator;
       (window as any)['Blockly'] = Blockly;
-      this.blocklyService.init();
+      // this.blocklyService.init();
       await this.loadLibraries();
       this.loadDefaultData();
     }, 50);

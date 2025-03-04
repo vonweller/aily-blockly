@@ -22,19 +22,8 @@ export class ElectronService {
         console.log('load ' + key);
         window[key] = this.electron[key];
       }
-      this.initTerminal();
     } else {
       console.log('Running in browser');
     }
-  }
-
-  initTerminal() {
-    window['ipcRenderer'].on('terminal', (event, data) => {
-      console.log('收到来自主进程的数据:', data.data);
-    });
-  }
-
-  npmRun(data: { cmd: string, path: string }) {
-    window['npm'].run(data)
   }
 }

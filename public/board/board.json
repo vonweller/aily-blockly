@@ -2,7 +2,7 @@
   {
     "value": "@aily-project/board-arduino_uno",
     "name": "Arduino UNO R3",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "img": "board/arduino_uno/arduino_uno.png",
     "desc": "Arduino UNO R3 是一款基于ATmega328P的开源电子原型平台，包含数字I/O口14个（其中6个支持PWM输出），模拟输入口6个，16MHz晶振，USB接口，电源接口，ICSP接口等。",
     "url":"https://arduino.me/s/board?aid=698",

@@ -54,7 +54,9 @@
               <i class="fa-light fa-at"></i>
             </ng-template>
             <nz-select [(ngModel)]="newProjectData.board.version">
-              <nz-option nzValue="1.0.0" nzLabel="1.0.0"></nz-option>
+              @for (version of boardVersionList; track version) {
+              <nz-option [nzValue]="version" [nzLabel]="version"></nz-option>
+              }
             </nz-select>
           </div>
           <div class="item">
@@ -82,7 +84,7 @@
     <div class="window-footer">
       <div class="btns">
         @if (currentStep == 0) {
-        <button nz-button nzType="primary" (click)="currentStep = currentStep + 1">
+        <button nz-button nzType="primary" (click)="nextStep()">
           下一步
         </button>
         } @else {

@@ -10,6 +10,7 @@ import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { generateDateString } from '../../func/func';
 import { NzSelectModule } from 'ng-zorro-antd/select';
+import { TerminalService } from '../../tools/terminal/terminal.service';
 
 @Component({
   selector: 'app-project-new',
@@ -46,6 +47,7 @@ export class ProjectNewComponent {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
+    private terminalService: TerminalService
   ) { }
 
   async ngOnInit() {
@@ -66,8 +68,24 @@ export class ProjectNewComponent {
   selectBoard(boardInfo: BoardInfo) {
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
-    this.newProjectData.board.value = boardInfo.value;
+    this.newProjectData.board.value = boardInfo.value;  // 包名
     this.newProjectData.board.version = boardInfo.version;
+  }
+
+  // 可用版本列表
+  boardVersionList = [];
+  async nextStep() {
+    this.boardVersionList = [this.newProjectData.board.version];
+    this.currentStep = this.currentStep + 1;
+    await this.terminalService.open();
+    let versionListStr = await this.terminalService.sendAsync(`npm view ${this.newProjectData.board.value} versions --registry https://registry.openjumper.cn`);
+    try {
+      this.boardVersionList = JSON.parse(versionListStr);
+    } catch (error) {
+      console.log('解析版本列表失败：', error);
+      console.log('版本列表字符串：', versionListStr);
+    }
+    console.log('boardVersionList:', this.boardVersionList);
   }
 
   async selectFolder() {

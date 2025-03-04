@@ -65,6 +65,7 @@ export class TerminalComponent {
     });
 
     window['terminal'].onData((data) => {
+      // console.log(data);
       this.terminal.write(data);
     })
   }
@@ -119,9 +120,9 @@ export class TerminalComponent {
   nodePtyInit() {
     window['ipcRenderer'].on('terminal-created', (event, data) => {
       this.terminalPid = data.pid;
-      console.log('终端已创建，PID:', this.terminalPid);
+      // console.log('终端已创建，PID:', this.terminalPid);
     });
-    console.log("currentPrj: ", this.projectService.currentProject)
+    // console.log("currentPrj: ", this.projectService.currentProject)
     // 初始化本地工具
     window['terminal'].init({
       cols: 120,
