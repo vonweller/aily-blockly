@@ -33,7 +33,12 @@ export class BlocklyService {
     this.boardConfig = boardConfig
   }
 
-  async loadLibraries() {
+  // 加载blockly的json数据
+  loadAbiJson(jsonData) {
+    Blockly.serialization.workspaces.load(jsonData, this.workspace);
+  }
+
+  async loadLibrariesByUrl() {
     let coreLibraries = await lastValueFrom(
       this.http.get<any[]>('arduino/core/core.json', { responseType: 'json' }),
     );
@@ -44,17 +49,17 @@ export class BlocklyService {
     );
     for (let index = 0; index < coreLibraries.length; index++) {
       const libName = coreLibraries[index];
-      await this.loadLibrary(libName, 'core');
+      await this.loadLibraryByUrl(libName, 'core');
     }
     // core和第三方库之间加一个分割线
     // this.addToolboxSep();
     for (let index = 0; index < otherLibraries.length; index++) {
       const libName = otherLibraries[index];
-      await this.loadLibrary(libName);
+      await this.loadLibraryByUrl(libName);
     }
   }
 
-  async loadLibrary(libName: String, path: String = 'libraries') {
+  async loadLibraryByUrl(libName: String, path: String = 'libraries') {
     let blocks;
     blocks = await lastValueFrom(
       this.http.get<LibData>(`arduino/${path}/${libName}/block.json`, {
@@ -79,6 +84,31 @@ export class BlocklyService {
     );
     if (toolbox) this.loadLibToolbox(toolbox);
     this.loadLibGenerator(`arduino/${path}/${libName}/generator.js`);
+  }
+
+  loadLibrary(libPackagePath) {
+    console.log('loadLibrary', libPackagePath);
+
+    // 加载block
+    const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
+    if (blockFileIsExist) {
+      let blocks = JSON.parse(window['file'].readFileSync(libPackagePath + '/block.json'));
+      this.loadLibBlocks(blocks);
+    } else {
+      //  加载js形式的block定义
+      this.loadLibBlocksJS(libPackagePath + '/block.js');
+    }
+    // 加载toolbox
+    const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
+    if (toolboxFileIsExist) {
+      let toolbox = JSON.parse(window['file'].readFileSync(libPackagePath + '/toolbox.json'));
+      this.loadLibToolbox(toolbox);
+    }
+    // 加载generator
+    const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
+    if (generatorFileIsExist) {
+      this.loadLibGenerator(libPackagePath + '/generator.js');
+    }
   }
 
   loadLibBlocks(blocks) {

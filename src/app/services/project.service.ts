@@ -8,6 +8,7 @@ import { NewProjectData } from '../windows/project-new/project-new.component';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { BlocklyService } from '../blockly/blockly.service';
 import { ElectronService } from './electron.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 interface ProjectData {
   name: string;
@@ -24,7 +25,8 @@ interface ProjectData {
   providedIn: 'root',
 })
 export class ProjectService {
-  loaded = new BehaviorSubject<boolean>(false);
+
+  stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved'>('default');
 
   projectData: ProjectData = {
     name: 'aily blockly',
@@ -46,7 +48,8 @@ export class ProjectService {
     private uiService: UiService,
     private terminalService: TerminalService,
     private blocklyService: BlocklyService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private message: NzMessageService,
   ) {
     window['ipcRenderer'].on('project-update', (event, data) => {
       console.log('收到更新的: ', data);
@@ -129,38 +132,27 @@ export class ProjectService {
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
     await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
-    // this.projectOpen(projectPath)
-
-    // const newResult = await window['project'].new(data);
-    // if (!newResult.success) {
-    //   console.error('new project failed: ', newResult);
-    //   return false;
-    // }
-
-    // this.uiService.updateState({ state: 'done', text: '项目创建成功' });
-    // const prjPath = newResult.data;
-
-    // // 依赖安装
-    // this.uiService.updateState({ state: 'loading', text: '依赖安装中...' });
-    // await this.dependencies_install(`${prjPath}/package.json`);
-    // this.uiService.updateState({ state: 'done', text: '依赖安装成功', timeout: 3000 });
-
-    // // 发送项目更新
-    // window['project'].update({ path: prjPath });
-
-    // return prjPath;
+    this.uiService.closeWindow();
   }
 
   // 打开项目
   async projectOpen(projectPath) {
+    this.stateSubject.next('loading');
     const registry = 'https://registry.openjumper.cn';
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
+    // this.uiService.
     // 0. 判断路径是否存在
     const pathExist = window['path'].isExists(projectPath);
     if (!pathExist) {
       console.error('path not exist: ', projectPath);
+      this.message.warning('该项目路径不存在');
+      this.removeRecentlyProject({ path: projectPath })
       return false;
     }
+    // 加载项目package.json
+    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    // 添加到最近打开的项目
+    this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
     console.log('currentPid: ', this.terminalService.currentPid);
@@ -170,41 +162,31 @@ export class ProjectService {
     await this.terminalService.sendCmd(`npm install --registry=${registry}`);
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
-    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
     console.log('boardModule: ', boardModule);
     let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
     console.log('boardJsonPath: ', boardJsonPath);
     const boardJson = JSON.parse(window['file'].readFileSync(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
-    // 4. 打开blockly library
-    this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
-    const librariesModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/lib-'));
-    console.log('librariesModule: ', librariesModule);
-
-
-    // 5. 打开blockly编辑器
-
-
+    // 4. 加载blockly library
+    this.uiService.updateState({ state: 'loading', text: '正在加载blockly库' });
+    const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
+    console.log('libraryModuleList: ', libraryModuleList);
+    for (let index = 0; index < libraryModuleList.length; index++) {
+      const libPackageName = libraryModuleList[index];
+      const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
+      this.blocklyService.loadLibrary(libPackagePath);
+    }
+    // 5. 加载project.abi数据
+    this.uiService.updateState({ state: 'loading', text: '正在加载blockly程序' });
+    let jsonData = JSON.parse(window['file'].readFileSync(`${projectPath}/project.abi`));
+    this.blocklyService.loadAbiJson(jsonData);
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
     this.uiService.updateState({ state: 'done', text: '项目加载成功' });
-
-
-    // 7. 检查开发板依赖（compiler、sdk、tool）是否安装，安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
-    let board = 'xxxxx';
-    this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
-
-
-    // 8. 完成
-    this.uiService.updateState({ state: 'done', text: board + '安装成功' });
-
-
-    // 9. 安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
-
-
-
-
+    this.stateSubject.next('loaded');
+    // 7. 后台安装开发板依赖
+    this.installBoardDependencies();
     // this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
 
     // // 读取package.json文件
@@ -225,14 +207,18 @@ export class ProjectService {
     // }
     // this.loaded.next(true);
 
-    // // 添加到最近打开的项目
-    // this.addRecentlyProjects({ name: this.projectData.name, path: path });
+  }
 
-    // // TODO 加载blockly组件
-    // this.uiService.updateState({ state: 'done', text: '项目加载成功', timeout: 3000 });
+  installBoardDependencies() {
+    // 检查开发板依赖是否安装，未安装则安装
 
-    // // 后台加载板子依赖
-    // this.board_dependencies_install(`${path}/package.json`);
+    // 7. 检查开发板依赖（compiler、sdk、tool）是否安装，安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
+    let board = 'xxxxx';
+    this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
+    // 8. 完成
+    this.uiService.updateState({ state: 'done', text: board + '安装成功' });
+    // 9. 安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
+    this.stateSubject.next('loaded');
   }
 
   // 保存项目
@@ -341,7 +327,7 @@ export class ProjectService {
     localStorage.setItem('recentlyProjects', JSON.stringify(data));
   }
 
-  addRecentlyProjects(data: { name: string, path: string }) {
+  addRecentlyProject(data: { name: string, path: string }) {
     let temp: any[] = this.recentlyProjects
     temp.unshift(data);
     temp = temp.filter((item, index) => {
@@ -351,8 +337,14 @@ export class ProjectService {
       temp.pop();
     }
     this.recentlyProjects = temp;
-    console.log(temp);
-    console.log(this.recentlyProjects);
+  }
+
+  removeRecentlyProject(data: { path: string }) {
+    let temp: any[] = this.recentlyProjects
+    temp = temp.filter((item) => {
+      return item.path !== data.path;
+    });
+    this.recentlyProjects = temp;
   }
 
 }

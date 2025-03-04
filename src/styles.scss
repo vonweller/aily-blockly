@@ -19,6 +19,14 @@ body {
   font-display: swap;
 }
 
+.ant-message {
+  top: 40px !important;
+
+  .ant-message-notice-content {
+    border-radius: 25px;
+  }
+}
+
 .btn {
   cursor: pointer;
 
@@ -49,7 +57,7 @@ body {
   border: 1px solid #505050;
 }
 
-.vsfont{
+.vsfont {
   font-family: Consolas, "Courier New", monospace;
 }
 
@@ -59,7 +67,7 @@ body {
   text-overflow: ellipsis;
 }
 
-.ffull{
+.ffull {
   width: 100%;
   height: 100%;
 }

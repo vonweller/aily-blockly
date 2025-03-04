@@ -155,15 +155,15 @@ export class BlocklyComponent {
       window['Arduino'] = <any>arduinoGenerator;
       (window as any)['Blockly'] = Blockly;
       // this.blocklyService.init();
-      await this.loadLibraries();
-      this.loadDefaultData();
+      // await this.loadLibraries();
+      // this.loadDefaultData();
     }, 50);
   }
 
   // 加载库
-  async loadLibraries() {
-    let libs = await this.blocklyService.loadLibraries();
-  }
+  // async loadLibraries() {
+  //   let libs = await this.blocklyService.loadLibraries();
+  // }
 
   loadDefaultData() {
     let tempJson = JSON.parse(DEFAULT_DATA);

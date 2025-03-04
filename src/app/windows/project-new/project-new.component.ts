@@ -84,11 +84,7 @@ export class ProjectNewComponent {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    // await this.uiService.openTerminal();
-    // let versionListStr = await this.terminalService.sendCmd(`npm view ${this.newProjectData.board.value} versions --registry https://registry.openjumper.cn`);
     this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.value)).reverse();
-    console.log(this.boardVersionList);
-
   }
 
   async selectFolder() {
