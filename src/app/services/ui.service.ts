@@ -102,17 +102,24 @@ export class UiService {
   }
 
   async openTerminal(data = 'default') {
-    this.actionSubject.next({ action: 'open', type: 'terminal', data });
-    this.terminalIsOpen = true;
-
+    if (this.isMainWindow) {
+      this.actionSubject.next({ action: 'open', type: 'terminal', data });
+      this.terminalIsOpen = true;
+    } else {
+      await window['iWindow'].send({ to: 'main', data: { action: 'open-terminal' } });
+    }
     return new Promise((resolve, reject) => {
       setTimeout(() => { resolve(true) }, 1000);
     });
   }
 
   closeTerminal() {
-    this.actionSubject.next({ action: 'close', type: 'terminal' });
-    this.terminalIsOpen = false;
+    if (this.isMainWindow) {
+      this.actionSubject.next({ action: 'close', type: 'terminal' });
+      this.terminalIsOpen = false;
+    } else {
+      window['iWindow'].send({ to: 'main', data: { action: 'close-terminal' } });
+    }
   }
 
   // 清空终端

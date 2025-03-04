@@ -2,7 +2,7 @@ const path = require("path");
 const os = require("os");
 
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
-const { registerProjectHandlers } = require("./project");
+
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -12,6 +12,9 @@ process.env.DEV = serve;
 const { registerTerminalHandlers } = require("./terminal");
 const { registerBoardHandlers } = require("./board");
 const { registerWindowHandlers } = require("./window");
+const { registerNpmHandlers } = require("./npm");
+// 这个不知道还用不用  
+const { registerProjectHandlers } = require("./project");
 
 let mainWindow;
 
@@ -106,6 +109,7 @@ function createWindow() {
   registerTerminalHandlers(mainWindow);
   registerBoardHandlers(mainWindow);
   registerWindowHandlers(mainWindow);
+  registerNpmHandlers(mainWindow);
 }
 
 app.on("ready", () => {

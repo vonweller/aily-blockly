@@ -111,13 +111,13 @@ export class ProjectService {
 
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
-    await this.terminalService.open();
-    await this.terminalService.sendAsync(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
+    await this.uiService.openTerminal();
+    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
     const templatePath = `${appDataPath}/node_modules/${newProjectData.board.value}/template`;
     // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
-    await this.terminalService.sendAsync(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
-    await this.terminalService.sendAsync(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
+    await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
+    await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
     // node命令创建目录并复制文件
     // window['file'].mkdirSync(projectPath);
     // window['file'].copySync(templatePath, projectPath);
@@ -162,11 +162,12 @@ export class ProjectService {
       return false;
     }
     // 1. 终端进入项目目录
-    await this.terminalService.open();
-    await this.terminalService.sendAsync(`cd ${projectPath}`);
+    await this.uiService.openTerminal();
+    console.log('currentPid: ', this.terminalService.currentPid);
+    await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖
     this.uiService.updateState({ state: 'loading', text: '正在安装依赖' });
-    await this.terminalService.sendAsync(`npm install --registry=${registry}`);
+    await this.terminalService.sendCmd(`npm install --registry=${registry}`);
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));

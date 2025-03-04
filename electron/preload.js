@@ -34,23 +34,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: () => process.platform === "linux",
   },
   terminal: {
-    init: (data) => {
-      ipcRenderer.send("terminal-create", data);
-    },
+    init: (data) => ipcRenderer.invoke("terminal-create", data),
     onData: (callback) => {
       ipcRenderer.on("terminal-inc-data", (event, data) => {
         callback(data);
       });
     },
-    sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
-    sendInputAsync: (input) => {
-      return new Promise((resolve, reject) => {
-        ipcRenderer
-          .invoke("terminal-to-pty-async", input)
-          .then((result) => resolve(result))
-          .catch((error) => reject(error));
-      });
-    },
+    sendInput: (data) => ipcRenderer.send("terminal-to-pty", data),
+    sendInputAsync: (data) => ipcRenderer.invoke("terminal-to-pty-async", data),
     close: (data) => ipcRenderer.send("terminal-close", data),
     resize: (data) => ipcRenderer.send("terminal-resize", data)
   },
@@ -154,7 +145,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       });
     },
   },
-  // state: {
-  //   update: (data) => ipcRenderer.send("state-update", data),
-  // }
+  npm: {
+    run: (data) => ipcRenderer.invoke("npm-run", data),
+  }
 });

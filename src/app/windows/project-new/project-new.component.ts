@@ -11,6 +11,8 @@ import { ConfigService } from '../../services/config.service';
 import { generateDateString } from '../../func/func';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { TerminalService } from '../../tools/terminal/terminal.service';
+import { UiService } from '../../services/ui.service';
+import { NpmService } from '../../services/npm.service';
 
 @Component({
   selector: 'app-project-new',
@@ -47,7 +49,9 @@ export class ProjectNewComponent {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
-    private terminalService: TerminalService
+    private terminalService: TerminalService,
+    private uiService: UiService,
+    private npmService: NpmService
   ) { }
 
   async ngOnInit() {
@@ -61,8 +65,11 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.value = this.currentBoard.value;
     this.newProjectData.board.version = this.currentBoard.version;
-
     this.newProjectData.name = 'project_' + generateDateString();
+
+    // 终端操作
+    this.uiService.openTerminal();
+    this.terminalService.currentPid = localStorage.getItem('currentPid');
   }
 
   selectBoard(boardInfo: BoardInfo) {
@@ -77,15 +84,11 @@ export class ProjectNewComponent {
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    await this.terminalService.open();
-    let versionListStr = await this.terminalService.sendAsync(`npm view ${this.newProjectData.board.value} versions --registry https://registry.openjumper.cn`);
-    try {
-      this.boardVersionList = JSON.parse(versionListStr);
-    } catch (error) {
-      console.log('解析版本列表失败：', error);
-      console.log('版本列表字符串：', versionListStr);
-    }
-    console.log('boardVersionList:', this.boardVersionList);
+    // await this.uiService.openTerminal();
+    // let versionListStr = await this.terminalService.sendCmd(`npm view ${this.newProjectData.board.value} versions --registry https://registry.openjumper.cn`);
+    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.value)).reverse();
+    console.log(this.boardVersionList);
+
   }
 
   async selectFolder() {
