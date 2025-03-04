@@ -38,6 +38,12 @@ export class BlocklyService {
     Blockly.serialization.workspaces.load(jsonData, this.workspace);
   }
 
+  // 
+  getAbiJson() {
+    let json = Blockly.serialization.workspaces.save(this.workspace);
+    return json;
+  }
+
   async loadLibrariesByUrl() {
     let coreLibraries = await lastValueFrom(
       this.http.get<any[]>('arduino/core/core.json', { responseType: 'json' }),
@@ -87,8 +93,7 @@ export class BlocklyService {
   }
 
   loadLibrary(libPackagePath) {
-    console.log('loadLibrary', libPackagePath);
-
+    // console.log('loadLibrary', libPackagePath);
     // 加载block
     const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
     if (blockFileIsExist) {
