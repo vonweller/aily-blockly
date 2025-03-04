@@ -1,5 +1,6 @@
 const path = require("path");
 const os = require("os");
+const fs = require("fs");
 
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 const { registerProjectHandlers } = require("./project");
@@ -32,12 +33,46 @@ function getAppDataPath() {
   return path;
 }
 
+// 执行7z解压缩操作
+function unzip7z(zippath, destpath) {
+  const child_process = require("child_process");
+  const child = child_process.spawnSync("7za.exe", ["x", zippath, "-o" + destpath]);
+  console.log("unzip7z: ", child.stdout.toString());
+}
+
+// 检查Node
+function checkNodePath(childPath) {
+  // 检查是否存在node环境
+  const nodePath = path.join(childPath, "node");
+  if (!fs.existsSync(nodePath)) {
+    // node zip文件路径
+    const nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
+    // node unzip路径
+    const nodeDestPath = childPath
+    // 执行解压缩操作
+    try {
+      unzip7z(nodeZipPath, nodeDestPath)
+      // 重命名解压后的文件夹
+      const nodeDir = path.join(nodeDestPath, path.basename(nodeZipPath, path.extname(nodeZipPath)))
+      fs.renameSync(nodeDir, nodePath)
+    } catch (err) {
+      console.err("Node init error, err: ", err)
+    }
+  }
+}
+
 // 环境变量加载
 function loadEnv() {
   // 将child目录添加到环境变量PATH中
-  process.env.PATH += path.delimiter + path.join(__dirname, "..", "child");
-  // TODO 需要配合解压node环境时命名的指定，当前默认为node
-  process.env.PATH += path.delimiter + path.join(__dirname, "..", "child", "node");
+  const childPath = path.join(__dirname, "..", "child")
+  process.env.PATH = childPath + path.delimiter + process.env.PATH;
+  
+  // node环境加载
+  checkNodePath(childPath)
+
+  const nodePath = path.join(childPath, "node")
+  // 将node环境的路径配置在系统PATH环境的最前面，以实现优先调用内置的node环境
+  process.env.PATH = nodePath + path.delimiter + process.env.PATH;
 
   // 读取同级目录下的config.json文件
   const confContent = require("fs").readFileSync(
@@ -63,6 +98,7 @@ function loadEnv() {
   // 默认全局SDK路径
   process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
 }
+
 
 function createWindow() {
   mainWindow = new BrowserWindow({
