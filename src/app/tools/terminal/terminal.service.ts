@@ -22,7 +22,6 @@ export class TerminalService {
       cwd: opts.cwd
     })
     this.currentPid = pid;
-    localStorage.setItem('currentPid', pid);
   }
 
   close() {

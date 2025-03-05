@@ -66,6 +66,8 @@ export class ProjectService {
         console.log('window-receive', message);
         if (message.data.action == 'open-project') {
           this.projectOpen(message.data.path);
+        } else {
+          return;
         }
         // 反馈完成结果
         if (message.messageId) {

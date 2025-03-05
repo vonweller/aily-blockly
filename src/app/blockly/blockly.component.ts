@@ -128,11 +128,11 @@ export class BlocklyComponent {
       //   modal.triggerOk;
       // };
 
-      // this.workspace.addChangeListener((event) => {
-      //   let code = arduinoGenerator.workspaceToCode(this.workspace);
-      //   console.log(code);
-      //   this.blocklyService.codeSubject.next(code);
-      // });
+      this.workspace.addChangeListener((event) => {
+        console.log(event);
+        let code = arduinoGenerator.workspaceToCode(this.workspace);
+        this.blocklyService.codeSubject.next(code);
+      });
 
       // this.blocklyDiv.nativeElement.addEventListener(
       //   'mousemove',

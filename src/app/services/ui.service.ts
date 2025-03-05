@@ -3,6 +3,7 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 import { ElectronService } from './electron.service';
+import { TerminalService } from '../tools/terminal/terminal.service';
 
 @Injectable({
   providedIn: 'root',
@@ -29,7 +30,8 @@ export class UiService {
 
 
   constructor(
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private terminalService: TerminalService
   ) { }
 
 
@@ -43,16 +45,21 @@ export class UiService {
 
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         console.log('window-receive', message);
+        let data;
         if (message.data.action == 'open-terminal') {
-          await this.openTerminal();
+          data = await this.openTerminal();
+          // console.log('open-terminal', pid);
         } else if (message.data.action == 'close-terminal') {
           this.closeTerminal();
+        } else {
+          return;
         }
         // 反馈完成结果
         if (message.messageId) {
           window['ipcRenderer'].send('main-window-response', {
             messageId: message.messageId,
-            result: "success"
+            result: "success",
+            data,
           });
         }
       });
@@ -101,15 +108,20 @@ export class UiService {
     }
   }
 
-  async openTerminal(data = 'default') {
-    if (this.isMainWindow) {
-      this.actionSubject.next({ action: 'open', type: 'terminal', data });
-      this.terminalIsOpen = true;
-    } else {
-      await window['iWindow'].send({ to: 'main', data: { action: 'open-terminal' } });
-    }
-    return new Promise((resolve, reject) => {
-      setTimeout(() => { resolve(true) }, 1000);
+  async openTerminal(data = 'default'): Promise<{ pid: number }> {
+    return new Promise(async (resolve, reject) => {
+      if (this.isMainWindow) {
+        this.actionSubject.next({ action: 'open', type: 'terminal', data });
+        this.terminalIsOpen = true;
+        setTimeout(() => {
+          resolve({ pid: this.terminalService.currentPid });
+        }, 1000);
+      } else {
+        // 其它窗口调用
+        let { pid } = await window['iWindow'].send({ to: 'main', data: { action: 'open-terminal' } });
+        console.log('open-terminal', pid);
+        resolve({ pid });
+      }
     });
   }
 
