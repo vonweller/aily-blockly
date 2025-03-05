@@ -38,7 +38,7 @@ export class TerminalComponent {
   trash() {
     this.terminal.write('\x1bc');
     if (this.electronService.isElectron) {
-      this.terminalService.send('clear');
+      this.terminalService.send('clear\r');
     }
   }
 
