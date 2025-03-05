@@ -100,7 +100,7 @@ export class TerminalComponent {
     this.resizeObserver.observe(this.terminalEl.nativeElement);
   }
 
-  // 监听右键点击
+  // 监听右键点击, 咱贴文本
   contextMenuListener;
   listenRightClick() {
     this.clipboardAddon = new ClipboardAddon();
@@ -109,7 +109,7 @@ export class TerminalComponent {
       event.preventDefault();
       navigator.clipboard.readText().then(text => {
         if (text) {
-          this.terminal.write(text);
+          this.terminalService.send(text);
         }
       }).catch(err => {
         console.error('获取剪贴板内容失败:', err);

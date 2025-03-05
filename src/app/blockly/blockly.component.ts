@@ -58,13 +58,25 @@ export class BlocklyComponent {
 
   constructor(
     private blocklyService: BlocklyService,
-    private modal: NzModalService,
+    // private modal: NzModalService,
   ) { }
 
   ngOnInit(): void { }
 
   ngAfterViewInit(): void {
     setTimeout(async () => {
+      // 禁用blockly的警告
+      console.warn = (function (originalWarn) {
+        return function (msg) {
+          // 过滤掉块重定义的警告
+          if (msg.includes('overwrites previous definition')) {
+            return;
+          }
+          // 保留其他警告
+          originalWarn.apply(console, arguments);
+        };
+      })(console.warn);
+
       Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', {
         toolbox: this.toolbox,
@@ -129,8 +141,8 @@ export class BlocklyComponent {
       // };
 
       // this.workspace.addChangeListener((event) => {
+      //   console.log(event);
       //   let code = arduinoGenerator.workspaceToCode(this.workspace);
-      //   console.log(code);
       //   this.blocklyService.codeSubject.next(code);
       // });
 

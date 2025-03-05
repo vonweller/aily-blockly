@@ -73,7 +73,8 @@ function registerWindowHandlers(mainWindow) {
                     if (response.messageId === messageId) {
                         // 收到对应ID的响应，移除监听器并返回结果
                         ipcMain.removeListener('main-window-response', responseListener);
-                        resolve(response.result || "success");
+                        // console.log('window-send response', response);
+                        resolve(response.data || "success");
                     }
                 };
                 // 注册监听器
@@ -96,7 +97,7 @@ function registerWindowHandlers(mainWindow) {
 
     // 用于sub窗口改变main窗口状态显示
     ipcMain.on('state-update', (event, data) => {
-        console.log('state-update ： ', data);
+        console.log('state-update: ', data);
         mainWindow.webContents.send('state-update', data);
     });
 }

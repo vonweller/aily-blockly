@@ -31,7 +31,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
     GuideComponent,
     SerialMonitorComponent,
     CodeViewerComponent,
-    SimplebarAngularModule
+    SimplebarAngularModule,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -42,6 +42,7 @@ export class MainWindowComponent {
   terminalTab = 'default';
 
   loaded = false;
+  showLibManager = false;
 
   options = {
     autoHide: true,
@@ -98,7 +99,7 @@ export class MainWindowComponent {
           this.message.loading('project Loading...');
           this.loaded = true;
           console.log('blockly loading');
-          
+
           break;
         case 'loaded':
           this.message.remove();

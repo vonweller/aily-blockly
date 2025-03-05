@@ -23,7 +23,7 @@ export class HeaderComponent {
   // @ViewChild('menuBox') menuBox: ElementRef;
 
   get projectData() {
-    return this.projectService.projectData;
+    return this.projectService.currentPackageData;
   }
 
   get openToolList() {

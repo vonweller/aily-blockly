@@ -68,8 +68,10 @@ export class ProjectNewComponent {
     this.newProjectData.name = 'project_' + generateDateString();
 
     // 终端操作
-    this.uiService.openTerminal();
-    this.terminalService.currentPid = localStorage.getItem('currentPid');
+    let { pid } = await this.uiService.openTerminal();
+    console.log('终端pid：', pid);
+    
+    this.terminalService.currentPid = pid;
   }
 
   selectBoard(boardInfo: BoardInfo) {

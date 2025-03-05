@@ -32,7 +32,7 @@ function registerTerminalHandlers(mainWindow) {
       const timeout = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
-          console.log("创建终端超时，但仍继续");
+          // console.log("创建终端超时，但仍继续");
           resolve({ pid: ptyProcess.pid });
         }
       }, 5000); // 5秒超时
@@ -45,6 +45,7 @@ function registerTerminalHandlers(mainWindow) {
           clearTimeout(timeout);
           isResolved = true;
           // console.log("检测到终端提示符，终端准备就绪");
+          // console.log("终端准备就绪, pid ", ptyProcess.pid);
           resolve({ pid: ptyProcess.pid });
         }
       });
@@ -78,9 +79,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 异步输入，可以获取到数据
   ipcMain.handle('terminal-to-pty-async', async (event, { pid, input }) => {
-    console.log('terminal-to-pty-async pid ', pid);
-    
     const ptyProcess = terminals.get(parseInt(pid, 10));
+    console.log('terminal-to-pty-async pid ', pid);
     return new Promise((resolve, reject) => {
       try {
         let commandOutput = '';

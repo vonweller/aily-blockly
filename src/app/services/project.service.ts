@@ -1,8 +1,5 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject } from 'rxjs';
-import { ResponseModel } from '../interfaces/response.interface';
-import { API } from '../configs/api.config';
 import { UiService } from './ui.service';
 import { NewProjectData } from '../windows/project-new/project-new.component';
 import { TerminalService } from '../tools/terminal/terminal.service';
@@ -10,15 +7,15 @@ import { BlocklyService } from '../blockly/blockly.service';
 import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
-interface ProjectData {
+interface ProjectPackageData {
   name: string;
-  version: string;
-  author: string;
-  description: string;
-  path: string;
-  board: string;
-  type: string;
-  framework: string;
+  version?: string;
+  author?: string;
+  description?: string;
+  path?: string;
+  board?: string;
+  type?: string;
+  framework?: string;
 }
 
 @Injectable({
@@ -28,15 +25,8 @@ export class ProjectService {
 
   stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved'>('default');
 
-  projectData: ProjectData = {
+  currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
-    version: '1.0.0',
-    path: '',
-    author: '',
-    description: '',
-    board: '',
-    type: 'web',
-    framework: 'angular',
   };
 
   currentProject: string;
@@ -44,7 +34,6 @@ export class ProjectService {
   isMainWindow = false;
 
   constructor(
-    private http: HttpClient,
     private uiService: UiService,
     private terminalService: TerminalService,
     private blocklyService: BlocklyService,
@@ -66,6 +55,8 @@ export class ProjectService {
         console.log('window-receive', message);
         if (message.data.action == 'open-project') {
           this.projectOpen(message.data.path);
+        } else {
+          return;
         }
         // 反馈完成结果
         if (message.messageId) {
@@ -76,32 +67,6 @@ export class ProjectService {
         }
       });
     }
-  }
-
-  /**
-   * 库列表
-   * @param data
-   */
-  list(data: any) {
-    return this.http.get<ResponseModel>(API.projectList, {
-      params: data,
-    });
-  }
-
-  /**
-   * 库搜索
-   * @param data
-   * @param data.text 搜索关键字
-   * @param data.size
-   * @param data.from
-   * @param data.quality
-   * @param data.popularity
-   * @param data.maintenance
-   */
-  search(data: any) {
-    return this.http.get<ResponseModel>(API.projectSearch, {
-      params: data,
-    });
   }
 
   // 新建项目
@@ -153,6 +118,7 @@ export class ProjectService {
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
+    this.currentPackageData = packageJson;
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
     console.log('currentPid: ', this.terminalService.currentPid);
@@ -187,26 +153,6 @@ export class ProjectService {
     this.stateSubject.next('loaded');
     // 7. 后台安装开发板依赖
     this.installBoardDependencies();
-    // this.uiService.updateState({ state: 'loading', text: '项目加载中...' });
-
-    // // 读取package.json文件
-    // const packageJsonContent = window['file'].readFileSync(`${path}/package.json`);
-    // if (!packageJsonContent) {
-    //   console.error('package.json not exist: ', path);
-    //   return false;
-    // }
-    // this.projectData = JSON.parse(packageJsonContent);
-    // this.currentProject = path;
-
-    // // 设置项目路径到环境变量
-    // window["env"].set({ key: "AILY_PRJ_PATH", value: path });
-
-    // // 判断是否需要安装package.json依赖
-    // if (!window['path'].isExists(`${path}/node_modules`)) {
-    //   await this.dependencies_install(`${path}/package.json`);
-    // }
-    // this.loaded.next(true);
-
   }
 
   installBoardDependencies() {
