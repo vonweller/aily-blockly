@@ -6,6 +6,7 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { ConfigService } from '../../../../services/config.service';
 
 @Component({
   selector: 'app-lib-manager',
@@ -15,7 +16,7 @@ import { CommonModule } from '@angular/common';
     NzInputModule,
     NzButtonModule,
     NzToolTipModule,
-    NzSelectModule 
+    NzSelectModule
   ],
   templateUrl: './lib-manager.component.html',
   styleUrl: './lib-manager.component.scss'
@@ -24,26 +25,30 @@ export class LibManagerComponent {
 
   @Output() close = new EventEmitter();
 
-  libList: PackageInfo[] = [];
+  LibraryList: PackageInfo[] = [];
 
   version;
-  versionList=[]
+  versionList = []
 
   constructor(
-    private npmService: NpmService
+    private npmService: NpmService,
+    private configService: ConfigService
   ) { }
 
-  ngOnInit(): void {
-    this.npmService.search({ text: 'lib-' }).subscribe(res => {
-      console.log(res);
-      this.libList = res.objects.map(item => item.package);
-    })
+  ngOnInit() {
+    this.configService.loadLibraryList().then((data: any) => {
+      this.LibraryList = data;
+      this.processForSearch(this.LibraryList);
+      this.checkInstalled();
+    });
   }
 
+  // 为全文搜索做准备
   processForSearch(array) {
     for (let index = 0; index < array.length; index++) {
       const item = array[index];
-      item['fulltext'] = `${item.nickname} ${item.description} ${item.keywords.join(' ')}${item.brand} ${item.author.name}`;
+      // ${item.keywords.join(' ')}
+      item['fulltext'] = `${item.nickname} ${item.description} ${item.brand} ${item.author.name}`;
     }
   }
 
@@ -51,12 +56,23 @@ export class LibManagerComponent {
     this.close.emit();
   }
 
-  installLib(lib){
-
+  // 获取已经安装的包，用于在界面上显示"移除"按钮
+  checkInstalled() {
+    window['npm'].run({ cmd: `npm list --depth=0 --json` }).then((data) => {
+      console.log(data);
+    });
   }
 
-  removeLib(lib){
+  installLib(lib) {
+    window['npm'].run({ cmd: `npm install ${lib.name}@${this.version} --registry https://registry.openjumper.cn` }).then(() => {
 
+    });
+  }
+
+  removeLib(lib) {
+    window['npm'].run({ cmd: `npm install ${lib.name}@${this.version} --registry https://registry.openjumper.cn` }).then(() => {
+
+    });
   }
 }
 
@@ -74,6 +90,6 @@ interface PackageInfo {
   "publisher"?: any,
   "maintainers"?: any[],
   "links"?: any,
-  "brand"?:string,
+  "brand"?: string,
   "fulltext"?: string
 }

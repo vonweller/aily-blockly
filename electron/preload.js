@@ -71,8 +71,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     open: (path) => ipcRenderer.invoke("project-open", path),
     save: () => ipcRenderer.invoke("project-save"),
     saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
-    update: (data) => ipcRenderer.send("project-update", data),
-    newTmp: () => ipcRenderer.invoke("project-newTmp"),
+    // update: (data) => ipcRenderer.send("project-update", data),
+    // newTmp: () => ipcRenderer.invoke("project-newTmp"),
   },
   dependencies: {
     init: (data) => ipcRenderer.invoke("dependencies-init", data),

@@ -58,8 +58,7 @@ export class ProjectNewComponent {
     if (this.electronService.isElectron) {
       this.newProjectData.path = window['path'].getUserDocuments() + '\\';
     }
-    await this.configService.init();
-    this.boardList = this.configService.boardList;
+    this.boardList = await this.configService.loadBoardList();
     this.currentBoard = this.boardList[0];
 
     this.newProjectData.board.name = this.currentBoard.name;

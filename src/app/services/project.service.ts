@@ -40,11 +40,11 @@ export class ProjectService {
     private electronService: ElectronService,
     private message: NzMessageService,
   ) {
-    window['ipcRenderer'].on('project-update', (event, data) => {
-      console.log('收到更新的: ', data);
-      this.currentProject = data.path;
-      this.projectOpen(this.currentProject);
-    });
+    // window['ipcRenderer'].on('project-update', (event, data) => {
+    //   console.log('收到更新的: ', data);
+    //   this.currentProject = data.path;
+    //   this.projectOpen(this.currentProject);
+    // });
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用  
@@ -178,84 +178,6 @@ export class ProjectService {
   // 另存为项目
   projectSaveAs() { }
 
-  // 读取package.json文件
-  readPackageJson(path) {
-    const packageJsonContent = window['file'].readFileSync(path);
-    if (!packageJsonContent) {
-      console.error('package.json not exist: ', path);
-      return {};
-    }
-
-    return JSON.parse(packageJsonContent);
-  }
-
-  /**
-   * 依赖安装
-   * @param packageJsonPath 项目package.json文件路径
-   * @returns 
-   */
-  async dependencies_install(packageJsonPath) {
-    // 安装依赖
-    await this.install_package({ file: packageJsonPath });
-  }
-
-
-  /**
-   * 板子核心依赖安装
-   * @param packageJsonPath 项目package.json文件路径
-   * @returns 
-   */
-  async board_dependencies_install(packageJsonPath) {
-    // 获取packageJson所在目录
-    const path = packageJsonPath.substring(0, packageJsonPath.lastIndexOf('/'));
-
-    const packageJsonContent = this.readPackageJson(packageJsonPath);
-    if (!packageJsonContent) {
-      console.error('package.json not exist: ', packageJsonPath);
-      return false;
-    }
-    const boardDeps = Object.keys(packageJsonContent.dependencies || {}).filter(dep => dep.startsWith('@aily-project/board-'));
-    for (const dep of boardDeps) {
-      // 分解依赖项名称
-      const depParts = dep.split('/');
-      const depParent = depParts[0];
-      const depName = depParts[1];
-
-      const depPath = path + '/node_modules/' + depParent + '/' + depName;
-      const pkgPackageJsonPath = depPath + '/package.json';
-
-      // 读取板子的package.json文件
-      const pkgPackageJsonContent = this.readPackageJson(pkgPackageJsonPath);
-      if (!pkgPackageJsonContent) {
-        console.error('package.json not exist: ', pkgPackageJsonPath);
-        continue;
-      }
-      const boardDependencies = pkgPackageJsonContent.boardDependencies || {};
-
-      console.log('boardDependencies: ', boardDependencies);
-
-      for (const [depName, depVersion] of Object.entries(boardDependencies)) {
-        const pkg = `${depName}@${depVersion}`;
-
-        this.uiService.updateState({ state: 'loading', text: '安装依赖: ' + pkg });
-        await this.install_package({
-          package: pkg,
-          global: true,
-        });
-      }
-    }
-    this.uiService.updateState({ state: 'done', text: '开发板依赖安装成功', timeout: 5000 });
-  }
-
-  // 安装依赖
-  async install_package(data) {
-    console.log("install Data: ", data);
-    const installResult = await window['dependencies'].install(data);
-    if (!installResult.success) {
-      console.error('install failed: ', installResult);
-      return false;
-    }
-  }
 
   // 通过localStorage存储最近打开的项目
   get recentlyProjects(): any[] {
