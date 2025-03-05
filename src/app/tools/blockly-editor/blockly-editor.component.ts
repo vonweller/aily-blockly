@@ -1,12 +1,14 @@
 import { Component } from '@angular/core';
 import { BlocklyComponent } from '../../blockly/blockly.component';
 import { ProjectBtnComponent } from '../../components/project-btn/project-btn.component';
+import { LibManagerComponent } from './components/lib-manager/lib-manager.component';
 
 @Component({
   selector: 'app-blockly-editor',
   imports: [
     BlocklyComponent,
-    ProjectBtnComponent
+    ProjectBtnComponent,
+    LibManagerComponent
   ],
   templateUrl: './blockly-editor.component.html',
   styleUrl: './blockly-editor.component.scss'

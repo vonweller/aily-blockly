@@ -16,10 +16,6 @@ export class GuideComponent {
   showMenu = true;
   showMore = false;
 
-  get projectData() {
-    return this.projectService.projectData;
-  }
-
   get recentlyProjects() {
     return this.projectService.recentlyProjects
   }
@@ -35,7 +31,7 @@ export class GuideComponent {
 
   async selectFolder() {
     const folderPath = await window['ipcRenderer'].invoke('select-folder', {
-      path: this.projectData.path,
+      path: '',
     });
     console.log('选中的文件夹路径：', folderPath);
     return folderPath;
