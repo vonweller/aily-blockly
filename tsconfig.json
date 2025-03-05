@@ -28,6 +28,8 @@
     "strictTemplates": true
   },
   "exclude": [
-    "child"
+    "child",
+    "electron",
+    
   ]
 }

@@ -60,8 +60,16 @@
   margin-bottom: 10px;
   display: flex;
   align-items: center;
-  padding-left: 10px;
+  // padding-left: 10px;
   // border-bottom: 1px solid #43494b;
+  margin-top: 20px;
+  &:first-child {
+    margin-top: 0;
+  }
+}
+
+textarea{
+  background: #363636;
 }
 
 .registry {
