@@ -26,7 +26,7 @@
               <div class="img-box">
                 <img [src]="board.img" />
               </div>
-              <div class="name">{{ board.name }}</div>
+              <div class="name">{{ board.nickname }}</div>
             </div>
             }
           </div>
@@ -38,7 +38,7 @@
               </div>
             </div>
             @if (currentBoard) {
-            <div class="content">{{ currentBoard.desc }}</div>
+            <div class="content">{{ currentBoard.description }}</div>
             }
           </div>
         </div>

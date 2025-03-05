@@ -74,7 +74,7 @@ export class ProjectService {
     console.log('newProjectData: ', newProjectData);
     const appDataPath = window['path'].getAppData();
     const projectPath = newProjectData.path + newProjectData.name
-    const boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
+    const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
     const registry = 'https://registry.openjumper.cn';
 
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
@@ -82,7 +82,7 @@ export class ProjectService {
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.value}/template`;
+    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
     // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
     await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);

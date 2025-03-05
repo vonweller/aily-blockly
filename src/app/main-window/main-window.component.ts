@@ -96,21 +96,19 @@ export class MainWindowComponent {
     this.projectService.stateSubject.subscribe((state) => {
       switch (state) {
         case 'loading':
-          this.message.loading('project Loading...');
+          this.message.loading('Project Loading...');
           this.loaded = true;
-          console.log('blockly loading');
-
           break;
         case 'loaded':
           this.message.remove();
-          this.message.success('Project loaded');
+          this.message.success('Project Loaded');
           break;
         case 'saving':
-          this.message.loading('project Saving ...');
+          this.message.loading('Project Saving ...');
           break;
         case 'saved':
           this.message.remove();
-          this.message.success('Project saved');
+          this.message.success('Project Saved');
           break;
         default:
           break;
