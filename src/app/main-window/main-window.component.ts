@@ -14,6 +14,7 @@ import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component'
 import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-main-window',
@@ -55,11 +56,13 @@ export class MainWindowComponent {
   constructor(
     private uiService: UiService,
     private projectService: ProjectService,
+    private message: NzMessageService,
     private cd: ChangeDetectorRef,
   ) { }
 
   ngOnInit(): void {
     this.uiService.init();
+    this.projectService.init();
   }
 
   ngAfterViewInit(): void {
@@ -89,8 +92,28 @@ export class MainWindowComponent {
       this.cd.detectChanges();
     });
 
-    this.projectService.loaded.subscribe((loaded) => {
-      this.loaded = loaded;
+    this.projectService.stateSubject.subscribe((state) => {
+      switch (state) {
+        case 'loading':
+          this.message.loading('project Loading...');
+          this.loaded = true;
+          console.log('blockly loading');
+          
+          break;
+        case 'loaded':
+          this.message.remove();
+          this.message.success('Project loaded');
+          break;
+        case 'saving':
+          this.message.loading('project Saving ...');
+          break;
+        case 'saved':
+          this.message.remove();
+          this.message.success('Project saved');
+          break;
+        default:
+          break;
+      }
       this.cd.detectChanges();
     });
   }

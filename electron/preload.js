@@ -34,15 +34,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: () => process.platform === "linux",
   },
   terminal: {
-    init: (data) => {
-      ipcRenderer.send("terminal-create", data);
-    },
+    init: (data) => ipcRenderer.invoke("terminal-create", data),
     onData: (callback) => {
       ipcRenderer.on("terminal-inc-data", (event, data) => {
         callback(data);
       });
     },
-    sendInput: (input) => ipcRenderer.send("terminal-to-pty", input),
+    sendInput: (data) => ipcRenderer.send("terminal-to-pty", data),
+    sendInputAsync: (data) => ipcRenderer.invoke("terminal-to-pty-async", data),
     close: (data) => ipcRenderer.send("terminal-close", data),
     resize: (data) => ipcRenderer.send("terminal-resize", data)
   },
@@ -111,21 +110,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
   file: {
-    readSync: (path) => require("fs").readFileSync(path, "utf8"),
+    readFileSync: (path) => require("fs").readFileSync(path, "utf8"),
+    writeFileSync: (path, data) => require("fs").writeFileSync(path, data),
+    mkdirSync: (path) => require("fs").mkdirSync(path, { recursive: true }),
+    copySync: (src, dest) => require("fs-extra").copySync(src, dest),
   },
   ble: {
-    startScan: () => ipcRenderer.send("ble-start-scan"),
-    stopScan: () => ipcRenderer.send("ble-stop-scan"),
-    connect: (deviceId) => ipcRenderer.send("ble-connect", deviceId),
-    disconnect: (deviceId) => ipcRenderer.send("ble-disconnect", deviceId),
-    onDeviceFound: (callback) => ipcRenderer.on("ble-device-found", callback),
-    onConnected: (callback) => ipcRenderer.on("ble-connected", callback),
-    onDisconnected: (callback) => ipcRenderer.on("ble-disconnected", callback),
-    sendData: (deviceId, data) =>
-      ipcRenderer.send("ble-send-data", deviceId, data),
-    onDataReceived: (callback) => ipcRenderer.on("ble-data-received", callback),
+
+  },
+  wifi: {
+
   },
   other: {
+    // 通过资源管理器打开 
     openByExplorer: (path) => {
       if (process.platform === 'win32') {
         exec(`explorer.exe "${path}"`, (error) => { });
@@ -133,6 +130,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
         shell.openPath(path)
       }
     },
+    // 通过浏览器打开
     openByBrowser: (url) => shell.openExternal(url),
     exitApp: () => ipcRenderer.send("window-close"),
   },
@@ -146,5 +144,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
           .catch((error) => reject(error));
       });
     },
+  },
+  npm: {
+    run: (data) => ipcRenderer.invoke("npm-run", data),
   }
 });

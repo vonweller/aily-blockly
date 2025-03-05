@@ -25,23 +25,35 @@ export class UiService {
   // 用来记录terminal是否打开
   terminalIsOpen = false;
   theme = 'dark';
+  isMainWindow = false;
 
 
-  constructor(private electronService: ElectronService) { }
+  constructor(
+    private electronService: ElectronService
+  ) { }
 
 
-  // 初始化UI服务，这个服务仅供main-window使用  
+  // 初始化UI服务，这个init函数仅供main-window使用  
   init(): void {
     if (this.electronService.isElectron) {
+      this.isMainWindow = true;
       window['ipcRenderer'].on('window-go-main', (event, toolName) => {
         this.openTool(toolName);
       });
-      window['ipcRenderer'].on('window-receive', (event, message) => {
-        if (message.data == 'open-terminal') {
-          this.openTerminal();
-        }
-        if (message.data == 'close-terminal') {
+
+      window['ipcRenderer'].on('window-receive', async (event, message) => {
+        console.log('window-receive', message);
+        if (message.data.action == 'open-terminal') {
+          await this.openTerminal();
+        } else if (message.data.action == 'close-terminal') {
           this.closeTerminal();
+        }
+        // 反馈完成结果
+        if (message.messageId) {
+          window['ipcRenderer'].send('main-window-response', {
+            messageId: message.messageId,
+            result: "success"
+          });
         }
       });
     }
@@ -89,15 +101,25 @@ export class UiService {
     }
   }
 
-  openTerminal(data = 'default') {
-    this.actionSubject.next({ action: 'open', type: 'terminal', data });
-    this.terminalIsOpen = true;
-    console.log(this.terminalIsOpen);
+  async openTerminal(data = 'default') {
+    if (this.isMainWindow) {
+      this.actionSubject.next({ action: 'open', type: 'terminal', data });
+      this.terminalIsOpen = true;
+    } else {
+      await window['iWindow'].send({ to: 'main', data: { action: 'open-terminal' } });
+    }
+    return new Promise((resolve, reject) => {
+      setTimeout(() => { resolve(true) }, 1000);
+    });
   }
 
   closeTerminal() {
-    this.actionSubject.next({ action: 'close', type: 'terminal' });
-    this.terminalIsOpen = false;
+    if (this.isMainWindow) {
+      this.actionSubject.next({ action: 'close', type: 'terminal' });
+      this.terminalIsOpen = false;
+    } else {
+      window['iWindow'].send({ to: 'main', data: { action: 'close-terminal' } });
+    }
   }
 
   // 清空终端
@@ -107,7 +129,12 @@ export class UiService {
 
   // 更新footer右下角的状态
   updateState(state: ActionState) {
-    this.stateSubject.next(state);
+    // 判断当前url是否是main-window
+    if (this.isMainWindow) {
+      this.stateSubject.next(state);
+    } else {
+      window['ipcRenderer'].send('state-update', state);
+    }
   }
 
   // 关闭当前窗口

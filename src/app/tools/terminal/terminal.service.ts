@@ -10,18 +10,46 @@ export class TerminalService {
 
   isLocked = false;
 
+  currentPid;
+
   constructor(
   ) { }
 
-  async open() {
-    await window['iWindow'].send({ to: 'main', data: 'open-terminal' });
+  async create(opts) {
+    const { pid } = await window['terminal'].init({
+      cols: 120,
+      rows: 200,
+      cwd: opts.cwd
+    })
+    this.currentPid = pid;
+    localStorage.setItem('currentPid', pid);
   }
 
-  async close() {
-    await window['iWindow'].send({ to: 'main', data: 'close-terminal' });
+  close() {
+    window['terminal'].close({ pid: this.currentPid });
   }
 
-  send(cmd: string) {
-    window['terminal'].sendInput(cmd + '\r');
+  resize(opts) {
+    window['terminal'].resize({ pid: this.currentPid, cols: opts.cols, rows: opts.rows });
+  }
+
+  send(input: string) {
+    window['terminal'].sendInput({ pid: this.currentPid, input });
+  }
+
+  // sendCmd(cmd: string) {
+  //   window['terminal'].sendInput({ pid: this.currentPid, input: cmd + '\r' });
+  // }
+
+  async sendCmd(input: string): Promise<any> {
+    return new Promise(async (resolve, reject) => {
+      window['terminal'].sendInputAsync({ pid: this.currentPid, input: input + '\r' })
+        .then(output => {
+          resolve(output);
+        })
+        .catch(err => {
+          console.error('执行错误:', err);
+        });
+    });
   }
 }

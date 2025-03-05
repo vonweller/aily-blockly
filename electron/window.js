@@ -64,9 +64,40 @@ function registerWindowHandlers(mainWindow) {
     ipcMain.handle("window-send", (event, data) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         if (data.to == 'main') {
-            mainWindow.webContents.send("window-receive", { form: '', data: data.data });
+            // 创建唯一消息ID
+            const messageId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+            // 创建Promise等待响应
+            return new Promise((resolve) => {
+                // 设置一次性监听器接收响应
+                const responseListener = (event, response) => {
+                    if (response.messageId === messageId) {
+                        // 收到对应ID的响应，移除监听器并返回结果
+                        ipcMain.removeListener('main-window-response', responseListener);
+                        resolve(response.result || "success");
+                    }
+                };
+                // 注册监听器
+                ipcMain.on('main-window-response', responseListener);
+                // 发送消息到main窗口，带上messageId
+                mainWindow.webContents.send("window-receive", {
+                    form: senderWindow.id,
+                    data: data.data,
+                    messageId: messageId
+                });
+                // 设置9秒超时
+                setTimeout(() => {
+                    ipcMain.removeListener('main-window-response', responseListener);
+                    resolve("timeout");
+                }, 9000);
+            });
         }
-        return "success";
+        return true;
+    });
+
+    // 用于sub窗口改变main窗口状态显示
+    ipcMain.on('state-update', (event, data) => {
+        console.log('state-update ： ', data);
+        mainWindow.webContents.send('state-update', data);
     });
 }
 

@@ -58,8 +58,8 @@ export class HeaderComponent {
   ) { }
 
   ngAfterViewInit(): void {
-    this.projectService.loaded.subscribe((loaded) => {
-      this.loaded = loaded;
+    this.projectService.stateSubject.subscribe((state) => {
+      this.loaded = state == 'loaded';
       this.cd.detectChanges();
     });
   }

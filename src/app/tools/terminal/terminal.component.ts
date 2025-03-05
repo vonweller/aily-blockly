@@ -6,6 +6,7 @@ import { ElectronService } from '../../services/electron.service';
 import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
+import { TerminalService } from './terminal.service';
 
 @Component({
   selector: 'app-terminal',
@@ -22,26 +23,26 @@ export class TerminalComponent {
   terminal;
   fitAddon;
   clipboardAddon;
-  terminalPid;
 
   constructor(
     private electronService: ElectronService,
     private uiService: UiService,
-    private projectService: ProjectService
+    private projectService: ProjectService,
+    private terminalService: TerminalService
   ) { }
 
   close() {
     this.uiService.closeTool('terminal');
   }
 
-  trash() { 
+  trash() {
     this.terminal.write('\x1bc');
     if (this.electronService.isElectron) {
-      window['terminal'].sendInput('clear\r');
+      this.terminalService.send('clear');
     }
   }
 
-  ngAfterViewInit(): void {
+  async ngAfterViewInit() {
     this.terminal = new Terminal({
       fontFamily: 'Consolas, "Courier New", monospace',
       fontSize: 14,
@@ -52,16 +53,16 @@ export class TerminalComponent {
     this.terminal.open(this.terminalEl.nativeElement);
 
     if (this.electronService.isElectron) {
-      this.nodePtyInit();
+      await this.nodePtyInit();
     } else {
-      this.cloudPtyInit();
+      await this.cloudPtyInit();
     }
 
     this.fitContainer();
     this.listenRightClick();
 
-    this.terminal.onData(data => {
-      window['terminal'].sendInput(data);
+    this.terminal.onData(input => {
+      this.terminalService.send(input);
     });
 
     window['terminal'].onData((data) => {
@@ -73,6 +74,7 @@ export class TerminalComponent {
     this.closeNodePty();
     this.terminalEl.nativeElement.removeEventListener('contextmenu', this.contextMenuListener);
     this.resizeObserver.disconnect();
+    this.terminal.dispose();
   }
 
   // 用于监听容器大小变化，改变terminal大小
@@ -90,7 +92,7 @@ export class TerminalComponent {
         if (this.electronService.isElectron) {
           const dimensions = this.fitAddon.proposeDimensions();
           if (dimensions && dimensions.cols && dimensions.rows) {
-            window['terminal'].resize({ pid: this.terminalPid, cols: dimensions.cols, rows: dimensions.rows });
+            this.terminalService.resize({ cols: dimensions.cols, rows: dimensions.rows });
           }
         }
       }, 100);
@@ -116,25 +118,19 @@ export class TerminalComponent {
     this.terminalEl.nativeElement.addEventListener('contextmenu', this.contextMenuListener);
   }
 
-  nodePtyInit() {
-    window['ipcRenderer'].on('terminal-created', (event, data) => {
-      this.terminalPid = data.pid;
-      console.log('终端已创建，PID:', this.terminalPid);
-    });
-    console.log("currentPrj: ", this.projectService.currentProject)
-    // 初始化本地工具
-    window['terminal'].init({
+  async nodePtyInit() {
+    await this.terminalService.create({
       cols: 120,
       rows: 200,
       cwd: this.projectService.currentProject
     });
   }
 
-  cloudPtyInit() {
+  async cloudPtyInit() {
     // 初始化云端工具
   }
 
   closeNodePty() {
-    window['terminal'].close({ pid: this.terminalPid });
+    this.terminalService.close();
   }
 }

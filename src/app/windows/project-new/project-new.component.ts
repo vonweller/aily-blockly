@@ -10,6 +10,9 @@ import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { generateDateString } from '../../func/func';
 import { NzSelectModule } from 'ng-zorro-antd/select';
+import { TerminalService } from '../../tools/terminal/terminal.service';
+import { UiService } from '../../services/ui.service';
+import { NpmService } from '../../services/npm.service';
 
 @Component({
   selector: 'app-project-new',
@@ -46,6 +49,9 @@ export class ProjectNewComponent {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
+    private terminalService: TerminalService,
+    private uiService: UiService,
+    private npmService: NpmService
   ) { }
 
   async ngOnInit() {
@@ -59,15 +65,26 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.value = this.currentBoard.value;
     this.newProjectData.board.version = this.currentBoard.version;
-
     this.newProjectData.name = 'project_' + generateDateString();
+
+    // 终端操作
+    this.uiService.openTerminal();
+    this.terminalService.currentPid = localStorage.getItem('currentPid');
   }
 
   selectBoard(boardInfo: BoardInfo) {
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
-    this.newProjectData.board.value = boardInfo.value;
+    this.newProjectData.board.value = boardInfo.value;  // 包名
     this.newProjectData.board.version = boardInfo.version;
+  }
+
+  // 可用版本列表
+  boardVersionList = [];
+  async nextStep() {
+    this.boardVersionList = [this.newProjectData.board.version];
+    this.currentStep = this.currentStep + 1;
+    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.value)).reverse();
   }
 
   async selectFolder() {
