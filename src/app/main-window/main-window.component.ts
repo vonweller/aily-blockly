@@ -27,7 +27,6 @@ import { NzMessageService } from 'ng-zorro-antd/message';
     NzResizableModule,
     AilyChatComponent,
     TerminalComponent,
-    ToolContainerComponent,
     GuideComponent,
     SerialMonitorComponent,
     CodeViewerComponent,

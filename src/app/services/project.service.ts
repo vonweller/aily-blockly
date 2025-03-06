@@ -81,7 +81,8 @@ export class ProjectService {
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
+    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
+    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
     const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
     // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
@@ -123,11 +124,12 @@ export class ProjectService {
     this.currentPackageData = packageJson;
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
+    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
     console.log('currentPid: ', this.terminalService.currentPid);
     await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖
     this.uiService.updateState({ state: 'loading', text: '正在安装依赖' });
-    await this.terminalService.sendCmd(`npm install --registry=${registry}`);
+    await this.terminalService.sendCmd(`npm install`);
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
@@ -172,8 +174,6 @@ export class ProjectService {
   // 保存项目
   projectSave() {
     // 导出blockly json配置并保存
-
-
   }
 
 

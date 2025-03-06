@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { ChangeDetectorRef, Component, EventEmitter, Output } from '@angular/core';
 import { NpmService } from '../../../../services/npm.service';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -8,6 +8,10 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ConfigService } from '../../../../services/config.service';
 import { ProjectService } from '../../../../services/project.service';
+import { BlocklyService } from '../../../../blockly/blockly.service';
+import { TerminalService } from '../../../terminal/terminal.service';
+import { UiService } from '../../../../services/ui.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-lib-manager',
@@ -27,19 +31,33 @@ export class LibManagerComponent {
   @Output() close = new EventEmitter();
 
   LibraryList: PackageInfo[] = [];
+  installedPackageList: string[] = [];
+
+  loading = false;
 
   constructor(
     private npmService: NpmService,
     private configService: ConfigService,
-    private projectService: ProjectService
+    private projectService: ProjectService,
+    private blocklyService: BlocklyService,
+    private terminalService: TerminalService,
+    private uiService: UiService,
+    private message: NzMessageService,
+    private cd: ChangeDetectorRef
   ) { }
 
   ngOnInit() {
     this.configService.loadLibraryList().then((data: any) => {
       this.checkInstalled();
       this.LibraryList = this.process(data);
-      console.log(this.LibraryList);
+      // console.log(this.LibraryList);
     });
+  }
+
+  async checkInstalled() {
+    // 获取已经安装的包，用于在界面上显示"移除"按钮
+    this.installedPackageList = await this.npmService.getInstalledPackageList(this.projectService.currentProjectPath)
+    this.cd.detectChanges();
   }
 
   // 处理库列表数据，为显示做准备
@@ -50,6 +68,8 @@ export class LibManagerComponent {
       item['fulltext'] = `${item.nickname} ${item.description} ${item.keywords} ${item.brand} ${item.author}`;
       // 为版本选择做准备
       item['versionList'] = [item.version];
+      // 为状态做准备
+      item['state'] = 'default'; // default, installing, uninstalling
     }
     return array;
   }
@@ -71,34 +91,47 @@ export class LibManagerComponent {
     this.close.emit();
   }
 
-  // 获取已经安装的包，用于在界面上显示"移除"按钮
-  installedPackages = [];
-  checkInstalled() {
-    window['npm'].run({ cmd: `npm list --depth=0 --json --prefix ${this.projectService.currentProjectPath}` }).then((data) => {
-      // console.log(data.dependencies);
-      for (let key in data.dependencies) {
-        const item = data.dependencies[key];
-        this.installedPackages.push(key + '@' + item.version);
-      }
-    });
+  getVerisons(lib) {
+    this.loading = true;
+    this.npmService.getPackageVersionList(lib.name).then((data) => {
+      lib.versionList = data;
+      this.loading = false;
+    })
   }
 
   isInstalled(lib) {
-    return this.installedPackages.indexOf(lib.name + '@' + lib.version) > -1;
+    return this.installedPackageList.indexOf(lib.name + '@' + lib.version) > -1;
   }
 
-  installLib(lib) {
-    window['npm'].run({ cmd: `npm install ${lib.name}@${lib.version} --registry https://registry.openjumper.cn` }).then(() => {
-
+  async installLib(lib) {
+    lib.state = 'installing';
+    this.message.loading(`${lib.nickname} Installing...`);
+    let registry = 'https://registry.openjumper.cn';
+    await this.uiService.openTerminal();
+    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
+    this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`).then(async () => {
+      await this.checkInstalled();
+      lib.state = 'default';
+      this.message.success(`${lib.nickname} Installed`);
+      // 通知blockly加载新库
+      const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
+      this.blocklyService.loadLibrary(libPackagePath);
     });
   }
 
-  removeLib(lib) {
+  async removeLib(lib) {
     // 移除库前，应先检查项目代码是否使用了该库，如果使用了，应提示用户
     // 这个比较复杂没想好怎么写（陈吕洲 2025.3.6）
-
-    window['npm'].run({ cmd: `npm uninstall ${lib.name}@${lib.version} --registry https://registry.openjumper.cn` }).then(() => {
-
+    lib.state = 'uninstalling';
+    this.message.loading(`${lib.nickname} Uninstalling...`);
+    // 通知blockly移除库
+    const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
+    this.blocklyService.removeLibrary(libPackagePath);
+    await this.uiService.openTerminal();
+    this.terminalService.sendCmd(`npm uninstall ${lib.name}`).then(async () => {
+      this.checkInstalled();
+      lib.state = 'default';
+      this.message.success(`${lib.nickname} Uninstalled`);
     });
   }
 }
@@ -119,5 +152,6 @@ interface PackageInfo {
   "maintainers"?: any[],
   "links"?: any,
   "brand"?: string,
-  "fulltext"?: string
+  "fulltext"?: string,
+  state: 'default' | 'installing' | 'uninstalling'
 }
