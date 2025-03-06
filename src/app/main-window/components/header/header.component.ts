@@ -85,6 +85,7 @@ export class HeaderComponent {
 
   closePortList() {
     this.showPortList = false;
+    this.cd.detectChanges();
   }
 
   selectPort(portItem) {
