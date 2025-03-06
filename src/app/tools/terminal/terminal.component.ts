@@ -116,6 +116,27 @@ export class TerminalComponent {
       });
     };
     this.terminalEl.nativeElement.addEventListener('contextmenu', this.contextMenuListener);
+
+    // 添加复制功能
+    this.terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      // Ctrl+Shift+C 用于复制
+      if (event.type === 'keydown' && event.ctrlKey && event.key === 'c') {
+        if (this.terminal.hasSelection()) {
+          this.clipboardAddon.copy();
+          return false; // 阻止事件继续传播
+        }
+      }
+      // 也可以添加 Ctrl+Shift+V 用于粘贴
+      if (event.type === 'keydown' && event.ctrlKey && event.key === 'v') {
+        navigator.clipboard.readText().then(text => {
+          if (text) {
+            this.terminalService.send(text);
+          }
+        });
+        return false;
+      }
+      return true; // 允许其他键盘事件正常处理
+    });
   }
 
   async nodePtyInit() {
