@@ -12,6 +12,7 @@ import { BlocklyService } from '../../../../blockly/blockly.service';
 import { TerminalService } from '../../../terminal/terminal.service';
 import { UiService } from '../../../../services/ui.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzTagModule } from 'ng-zorro-antd/tag';
 
 @Component({
   selector: 'app-lib-manager',
@@ -21,12 +22,16 @@ import { NzMessageService } from 'ng-zorro-antd/message';
     NzInputModule,
     NzButtonModule,
     NzToolTipModule,
-    NzSelectModule
+    NzSelectModule,
+    NzTagModule
   ],
   templateUrl: './lib-manager.component.html',
   styleUrl: './lib-manager.component.scss'
 })
 export class LibManagerComponent {
+
+  tagList= ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
+  // customColors = ['#f50', '#2db7f5', '#87d068', '#108ee9'];
 
   @Output() close = new EventEmitter();
 
