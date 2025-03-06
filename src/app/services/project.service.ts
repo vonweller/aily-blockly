@@ -29,7 +29,6 @@ export class ProjectService {
     name: 'aily blockly',
   };
 
-  currentProject: string;
   currentProjectPath: string;
 
   isMainWindow = false;
@@ -122,9 +121,6 @@ export class ProjectService {
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
-    
-    // 将当前项目路径添加到currentProject
-    this.currentProject = projectPath;
   
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
@@ -163,16 +159,51 @@ export class ProjectService {
     this.installBoardDependencies();
   }
 
-  installBoardDependencies() {
-    // 检查开发板依赖是否安装，未安装则安装
+  async installBoardDependencies() {
+    const appDataPath = await window['env'].get("AILY_APPDATA_PATH");
+    console.log('appDataPath: ', appDataPath);
 
-    // 7. 检查开发板依赖（compiler、sdk、tool）是否安装，安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
-    let board = 'xxxxx';
-    this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
-    // 8. 完成
-    this.uiService.updateState({ state: 'done', text: board + '安装成功' });
-    // 9. 安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
-    this.stateSubject.next('loaded');
+    setTimeout(async () => {
+      try {
+        // 检查开发板依赖是否安装，未安装则安装
+        // 读取 package.json 文件
+        const packageJsonPath = `${this.currentProjectPath}/package.json`;
+        const packageJson = JSON.parse(window['file'].readFileSync(packageJsonPath));
+        
+        const boardDependencies = packageJson.boardDependencies || {};
+
+        Object.entries(boardDependencies).forEach(async ([key, version]) => {
+          console.log("key: ", key);
+          // 判断是否已安装
+          const depPath = `${appDataPath}/node_modules/${key}`;
+          if (window['path'].isExists(depPath)) {
+            console.log(`依赖 ${key} 已安装`);
+          } else {
+            // 未安装则安装
+            this.uiService.updateState({
+              state: 'loading',
+              text: `正在安装${key}依赖`
+            });
+
+            try {
+              // 安装依赖
+              const npmCmd = `npm install ${key}@${version} --prefix ${appDataPath}`;
+              console.log('npmCmd: ', npmCmd);
+              await window['npm'].run({cmd: npmCmd});
+              console.log(`依赖 ${key} 安装成功`);
+            } catch (error) {
+              console.error(`依赖 ${key} 安装失败:`, error);
+            }
+          }
+        });
+
+        this.uiService.updateState({state: 'done', text: '开发板依赖安装完成'});
+
+      } catch (error) {
+        console.error('安装开发板依赖时出错:', error);
+        this.uiService.updateState({state: 'error', text: '开发板依赖安装失败'});
+      }
+    }, 2000);
   }
 
   // 保存项目

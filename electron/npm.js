@@ -17,8 +17,8 @@ function registerNpmHandlers(mainWindow) {
                 }
                 try {
                     // 直接解析 JSON，无需额外处理
-                    const result = JSON.parse(stdout);
-                    resolve(result);
+                    // const result = JSON.parse(stdout);
+                    resolve(stdout);
                 } catch (e) {
                     reject(new Error(e.message));
                 }

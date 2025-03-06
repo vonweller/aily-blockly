@@ -89,15 +89,17 @@ function loadEnv() {
   process.env.AILY_APPDATA_PATH = getAppDataPath();
   // npm registry
   process.env.AILY_NPM_REGISTRY = conf["npm_registry"][0];
+  // 7za path
+  process.env.AILY_7ZA_PATH = path.join(childPath, "7za.exe")
   // 全局npm包路径
   process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
   // 默认全局编译器路径
-  process.env.AILY_COMPILER_PATH = path.join(
+  process.env.AILY_COMPILERS_PATH = path.join(
     process.env.AILY_APPDATA_PATH,
     "compiler",
   );
   // 默认全局烧录器路径
-  process.env.AILY_TOOL_PATH = path.join(process.env.AILY_APPDATA_PATH, "tool");
+  process.env.AILY_TOOLS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools");
   // 默认全局SDK路径
   process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
 }

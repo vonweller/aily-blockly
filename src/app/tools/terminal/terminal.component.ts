@@ -143,7 +143,7 @@ export class TerminalComponent {
     await this.terminalService.create({
       cols: 120,
       rows: 200,
-      cwd: this.projectService.currentProject
+      cwd: this.projectService.currentProjectPath
     });
   }
 

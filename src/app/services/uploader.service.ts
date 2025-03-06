@@ -19,7 +19,7 @@ export class UploaderService {
   ) { }
 
   async upload() {
-    const projectPath = this.projectService.currentProject;
+    const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
 

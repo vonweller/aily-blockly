@@ -20,7 +20,7 @@ export class BuilderService {
   ) { }
 
   async build() {
-    const projectPath = this.projectService.currentProject;
+    const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const sketchPath = tempPath + '/sketch';
     const sketchFilePath = sketchPath + '/sketch.ino';
