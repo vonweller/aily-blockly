@@ -152,18 +152,18 @@ export class HeaderComponent {
         break;
       case 'cmd':
         if (item.data.data === 'compile') {
-          if(item.state === 'doing') return;
+          if (item.state === 'doing') return;
           item.state = 'doing';
           this.builderService.build().then(result => {
-            item.state = 'doing';
-          }).catch(err => {
             item.state = 'done';
+          }).catch(err => {
+            item.state = 'error';
           })
         } else if (item.data.data === 'upload') {
-          if(item.state === 'doing') return;
+          if (item.state === 'doing') return;
           item.state = 'doing';
           this.uploaderService.upload().then(result => {
-            item.state = 'doing';
+            item.state = 'done';
           }).catch(err => {
             item.state = 'error';
           })
@@ -208,7 +208,7 @@ export class HeaderComponent {
 }
 
 
-export interface RunState{
+export interface RunState {
   state: 'default' | 'doing' | 'done' | 'error' | 'warn';
   text: string;
 }
