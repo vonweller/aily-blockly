@@ -9,10 +9,11 @@ import { BuilderService } from '../../../services/builder.service';
 import { UploaderService } from '../../../services/uploader.service';
 import { MenuComponent } from '../../../components/menu/menu.component';
 import { PortItem, SerialService } from '../../../services/serial.service';
+import { ActBtnComponent } from '../act-btn/act-btn.component';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent],
+  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent, ActBtnComponent],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -55,6 +56,7 @@ export class HeaderComponent {
     private uploaderService: UploaderService,
     private serialService: SerialService,
     private cd: ChangeDetectorRef,
+
   ) { }
 
   ngAfterViewInit(): void {
@@ -77,7 +79,7 @@ export class HeaderComponent {
   portList: PortItem[] = []
   boardKeywords = []; // 这个用来高亮显示正确开发板，如['arduino uno']，则端口菜单中如有包含'arduino uno'的串口则高亮显示
   openPortList() {
-    let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3','');
+    let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3', '');
     this.boardKeywords = [boardname];
     this.showPortList = !this.showPortList;
     this.getDevicePortList();
@@ -150,9 +152,21 @@ export class HeaderComponent {
         break;
       case 'cmd':
         if (item.data.data === 'compile') {
-          this.builderService.build();
+          if(item.state === 'doing') return;
+          item.state = 'doing';
+          this.builderService.build().then(result => {
+            item.state = 'doing';
+          }).catch(err => {
+            item.state = 'done';
+          })
         } else if (item.data.data === 'upload') {
-          this.uploaderService.upload();
+          if(item.state === 'doing') return;
+          item.state = 'doing';
+          this.uploaderService.upload().then(result => {
+            item.state = 'doing';
+          }).catch(err => {
+            item.state = 'error';
+          })
         } else if (item.data.data === 'project-open') {
           // TODO 传入路径
           const path = 'C:\\Users\\stao\\Documents\\aily-project\\test6';
@@ -191,4 +205,10 @@ export class HeaderComponent {
   close() {
     window['iWindow'].close();
   }
+}
+
+
+export interface RunState{
+  state: 'default' | 'doing' | 'done' | 'error' | 'warn';
+  text: string;
 }

@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { arduinoGenerator, DEFAULT_DATA } from '../blockly/generators/arduino/arduino';
 import { BlocklyService } from '../blockly/blockly.service';
 import { ProjectService } from './project.service';
-import { UiService } from './ui.service';
+import { ActionState, UiService } from './ui.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
@@ -19,7 +19,7 @@ export class BuilderService {
     private message: NzMessageService,
   ) { }
 
-  async build() {
+  async build(): Promise<ActionState> {
     const projectPath = this.projectService.currentProject;
     const tempPath = projectPath + '/.temp';
     const sketchPath = tempPath + '/sketch';

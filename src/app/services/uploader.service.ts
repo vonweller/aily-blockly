@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { ProjectService } from './project.service';
 import { SerialService } from './serial.service';
-import { UiService } from './ui.service';
+import { ActionState, UiService } from './ui.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
@@ -18,7 +18,7 @@ export class UploaderService {
     private message: NzMessageService,
   ) { }
 
-  async upload() {
+  async upload(): Promise<ActionState> {
     const projectPath = this.projectService.currentProject;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
@@ -84,7 +84,7 @@ export class UploaderService {
     }
 
     // 组合sdk、上传工具的路径
-    const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`; 
+    const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
     const uploaderPath = await window["env"].get('AILY_TOOL_PATH') + `/${uploader}`;
     const toolsPath = await window["env"].get('AILY_TOOL_PATH');
 

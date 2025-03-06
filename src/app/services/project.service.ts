@@ -168,9 +168,10 @@ export class ProjectService {
 
     // 7. 检查开发板依赖（compiler、sdk、tool）是否安装，安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
     let board = 'xxxxx';
-    this.uiService.updateState({ state: 'loading', text: '正在安装' + board });
+    this.uiService.updateState({ state: 'doing', text: '正在安装' + board });
     // 8. 完成
     this.uiService.updateState({ state: 'done', text: board + '安装成功' });
+    this.uiService.updateState({ state: 'doing', text: board + '安装成功',timeout:9999999999 });
     // 9. 安装开发板依赖（开发板依赖要编译时才用到，用户可以先编程，开发板依赖在后台安装）
     this.stateSubject.next('loaded');
   }
