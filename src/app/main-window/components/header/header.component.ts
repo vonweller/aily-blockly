@@ -10,6 +10,7 @@ import { UploaderService } from '../../../services/uploader.service';
 import { MenuComponent } from '../../../components/menu/menu.component';
 import { PortItem, SerialService } from '../../../services/serial.service';
 import { ActBtnComponent } from '../act-btn/act-btn.component';
+import { IMenuItem } from '../../../configs/menu.config';
 
 @Component({
   selector: 'app-header',
@@ -133,7 +134,7 @@ export class HeaderComponent {
     }
   }
 
-  process(item) {
+  process(item:IMenuItem) {
     switch (item.data.type) {
       case 'window':
         this.uiService.openWindow(item.data);

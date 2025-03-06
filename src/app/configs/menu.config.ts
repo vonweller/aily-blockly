@@ -54,7 +54,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
   ],
 ];
 
-interface IMenuItem {
+export interface IMenuItem {
   name?: string;
   text?: string;
   action?: string;
