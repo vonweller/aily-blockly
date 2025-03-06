@@ -119,6 +119,10 @@ export class ProjectService {
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
+    
+    // 将当前项目路径添加到currentProject
+    this.currentProject = projectPath;
+  
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
     console.log('currentPid: ', this.terminalService.currentPid);

@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
+const { existsSync } = require("fs");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -114,6 +115,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     writeFileSync: (path, data) => require("fs").writeFileSync(path, data),
     mkdirSync: (path) => require("fs").mkdirSync(path, { recursive: true }),
     copySync: (src, dest) => require("fs-extra").copySync(src, dest),
+    existsSync: (path) => require("fs").existsSync(path),
   },
   ble: {
 
