@@ -18,7 +18,8 @@ export class SerialService {
     if (this.electronService.isElectron) {
       let serialList = (await window['SerialPort'].list()).map((item) => {
         let friendlyName: string = item.friendlyName.replace(/ \(COM\d+\)$/, '');
-        let icon: string = item.friendlyName.includes('蓝牙') ? "fa-light fa-bluetooth" : 'fa-light fa-usb-drive';
+        let keywords = ["蓝牙", "ble", "bluetooth"];
+        let icon: string = keywords.some(keyword => item.friendlyName.toLowerCase().includes(keyword.toLowerCase())) ? "fa-light fa-bluetooth" : 'fa-light fa-usb-drive';
         return {
           name: item.path,
           text: friendlyName,
