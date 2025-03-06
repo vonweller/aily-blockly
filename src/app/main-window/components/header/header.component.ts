@@ -79,8 +79,6 @@ export class HeaderComponent {
   openPortList() {
     let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3','');
     this.boardKeywords = [boardname];
-    console.log('boardKeywords:', this.boardKeywords);
-
     this.showPortList = !this.showPortList;
     this.getDevicePortList();
   }
@@ -91,11 +89,12 @@ export class HeaderComponent {
 
   selectPort(portItem) {
     this.currentPort = portItem.name;
+    this.closePortList();
   }
 
   async getDevicePortList() {
     this.portList = await this.serialService.getSerialPorts();
-    // console.log('串口列表：', serialList);
+    this.cd.detectChanges();
   }
 
   onClick(item) {
