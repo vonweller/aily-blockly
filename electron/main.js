@@ -15,7 +15,7 @@ const { registerBoardHandlers } = require("./board");
 const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
 // 这个不知道还用不用  
-const { registerProjectHandlers } = require("./project");
+// const { registerProjectHandlers } = require("./project");
 
 let mainWindow;
 
@@ -141,7 +141,7 @@ function createWindow() {
   }
 
   // 注册ipc handlers
-  registerProjectHandlers(mainWindow);
+  // registerProjectHandlers(mainWindow);
   registerTerminalHandlers(mainWindow);
   registerBoardHandlers(mainWindow);
   registerWindowHandlers(mainWindow);

@@ -30,6 +30,7 @@ export class ProjectService {
   };
 
   currentProject: string;
+  currentProjectPath: string;
 
   isMainWindow = false;
 
@@ -40,11 +41,11 @@ export class ProjectService {
     private electronService: ElectronService,
     private message: NzMessageService,
   ) {
-    window['ipcRenderer'].on('project-update', (event, data) => {
-      console.log('收到更新的: ', data);
-      this.currentProject = data.path;
-      this.projectOpen(this.currentProject);
-    });
+    // window['ipcRenderer'].on('project-update', (event, data) => {
+    //   console.log('收到更新的: ', data);
+    //   this.currentProject = data.path;
+    //   this.projectOpen(this.currentProject);
+    // });
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用  
@@ -74,15 +75,16 @@ export class ProjectService {
     console.log('newProjectData: ', newProjectData);
     const appDataPath = window['path'].getAppData();
     const projectPath = newProjectData.path + newProjectData.name
-    const boardPackage = newProjectData.board.value + '@' + newProjectData.board.version;
+    const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
     const registry = 'https://registry.openjumper.cn';
 
     this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath} --registry=${registry}`);
+    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
+    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
-    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.value}/template`;
+    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
     // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
     await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
@@ -107,6 +109,7 @@ export class ProjectService {
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
     // this.uiService.
     // 0. 判断路径是否存在
+    this.currentProjectPath = projectPath;
     const pathExist = window['path'].isExists(projectPath);
     if (!pathExist) {
       console.error('path not exist: ', projectPath);
@@ -125,11 +128,12 @@ export class ProjectService {
   
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
+    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
     console.log('currentPid: ', this.terminalService.currentPid);
     await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖
     this.uiService.updateState({ state: 'loading', text: '正在安装依赖' });
-    await this.terminalService.sendCmd(`npm install --registry=${registry}`);
+    await this.terminalService.sendCmd(`npm install`);
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
@@ -174,92 +178,12 @@ export class ProjectService {
   // 保存项目
   projectSave() {
     // 导出blockly json配置并保存
-
-
   }
 
 
   // 另存为项目
   projectSaveAs() { }
 
-  // 读取package.json文件
-  readPackageJson(path) {
-    const packageJsonContent = window['file'].readFileSync(path);
-    if (!packageJsonContent) {
-      console.error('package.json not exist: ', path);
-      return {};
-    }
-
-    return JSON.parse(packageJsonContent);
-  }
-
-  /**
-   * 依赖安装
-   * @param packageJsonPath 项目package.json文件路径
-   * @returns 
-   */
-  async dependencies_install(packageJsonPath) {
-    // 安装依赖
-    await this.install_package({ file: packageJsonPath });
-  }
-
-
-  /**
-   * 板子核心依赖安装
-   * @param packageJsonPath 项目package.json文件路径
-   * @returns 
-   */
-  async board_dependencies_install(packageJsonPath) {
-    // 获取packageJson所在目录
-    const path = packageJsonPath.substring(0, packageJsonPath.lastIndexOf('/'));
-
-    const packageJsonContent = this.readPackageJson(packageJsonPath);
-    if (!packageJsonContent) {
-      console.error('package.json not exist: ', packageJsonPath);
-      return false;
-    }
-    const boardDeps = Object.keys(packageJsonContent.dependencies || {}).filter(dep => dep.startsWith('@aily-project/board-'));
-    for (const dep of boardDeps) {
-      // 分解依赖项名称
-      const depParts = dep.split('/');
-      const depParent = depParts[0];
-      const depName = depParts[1];
-
-      const depPath = path + '/node_modules/' + depParent + '/' + depName;
-      const pkgPackageJsonPath = depPath + '/package.json';
-
-      // 读取板子的package.json文件
-      const pkgPackageJsonContent = this.readPackageJson(pkgPackageJsonPath);
-      if (!pkgPackageJsonContent) {
-        console.error('package.json not exist: ', pkgPackageJsonPath);
-        continue;
-      }
-      const boardDependencies = pkgPackageJsonContent.boardDependencies || {};
-
-      console.log('boardDependencies: ', boardDependencies);
-
-      for (const [depName, depVersion] of Object.entries(boardDependencies)) {
-        const pkg = `${depName}@${depVersion}`;
-
-        this.uiService.updateState({ state: 'loading', text: '安装依赖: ' + pkg });
-        await this.install_package({
-          package: pkg,
-          global: true,
-        });
-      }
-    }
-    this.uiService.updateState({ state: 'done', text: '开发板依赖安装成功', timeout: 5000 });
-  }
-
-  // 安装依赖
-  async install_package(data) {
-    console.log("install Data: ", data);
-    const installResult = await window['dependencies'].install(data);
-    if (!installResult.success) {
-      console.error('install failed: ', installResult);
-      return false;
-    }
-  }
 
   // 通过localStorage存储最近打开的项目
   get recentlyProjects(): any[] {

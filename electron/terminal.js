@@ -24,7 +24,7 @@ function registerTerminalHandlers(mainWindow) {
         env: process.env,
       });
 
-      console.log("new terminal pid ", ptyProcess.pid);
+      console.log("new terminal pid: ", ptyProcess.pid);
       terminals.set(ptyProcess.pid, ptyProcess);
       // 设置一个标志来避免重复解析
       let isResolved = false;

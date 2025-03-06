@@ -75,7 +75,12 @@ export class HeaderComponent {
 
   showPortList = false;
   portList: PortItem[] = []
+  boardKeywords = []; // 这个用来高亮显示正确开发板，如['arduino uno']，则端口菜单中如有包含'arduino uno'的串口则高亮显示
   openPortList() {
+    let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3','');
+    this.boardKeywords = [boardname];
+    console.log('boardKeywords:', this.boardKeywords);
+
     this.showPortList = !this.showPortList;
     this.getDevicePortList();
   }

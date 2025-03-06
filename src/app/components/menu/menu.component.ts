@@ -29,6 +29,8 @@ export class MenuComponent {
 
   @Output() closeEvent = new EventEmitter();
 
+  @Input() keywords = [];
+
   ngAfterViewInit(): void {
     document.addEventListener('click', this.handleDocumentClick);
     document.addEventListener('contextmenu', this.handleDocumentClick)
@@ -55,5 +57,13 @@ export class MenuComponent {
 
   closeMenu() {
     this.closeEvent.emit('');
+  }
+
+  isHighlight(text) {
+    if (!text) return false;
+    const lowerText = text.toLowerCase();
+    return this.keywords.some((keyword) => 
+      keyword && lowerText.includes(keyword.toLowerCase())
+    );
   }
 }

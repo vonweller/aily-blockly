@@ -38,7 +38,7 @@ export class ProjectNewComponent {
     path: '',
     board: {
       name: '',
-      value: '',
+      nickname: '',
       version: '',
     }
   };
@@ -58,35 +58,34 @@ export class ProjectNewComponent {
     if (this.electronService.isElectron) {
       this.newProjectData.path = window['path'].getUserDocuments() + '\\';
     }
-    await this.configService.init();
-    this.boardList = this.configService.boardList;
+    this.boardList = await this.configService.loadBoardList();
     this.currentBoard = this.boardList[0];
 
+    this.newProjectData.board.nickname = this.currentBoard.nickname;
     this.newProjectData.board.name = this.currentBoard.name;
-    this.newProjectData.board.value = this.currentBoard.value;
     this.newProjectData.board.version = this.currentBoard.version;
     this.newProjectData.name = 'project_' + generateDateString();
 
     // 终端操作
     let { pid } = await this.uiService.openTerminal();
     console.log('终端pid：', pid);
-    
+
     this.terminalService.currentPid = pid;
   }
 
   selectBoard(boardInfo: BoardInfo) {
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
-    this.newProjectData.board.value = boardInfo.value;  // 包名
+    this.newProjectData.board.nickname = boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
   }
 
   // 可用版本列表
-  boardVersionList = [];
+  boardVersionList: any[] = [];
   async nextStep() {
     this.boardVersionList = [this.newProjectData.board.version];
     this.currentStep = this.currentStep + 1;
-    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.value)).reverse();
+    this.boardVersionList = (await this.npmService.getPackageVersionList(this.newProjectData.board.name)).reverse();
   }
 
   async selectFolder() {
@@ -134,11 +133,11 @@ export class ProjectNewComponent {
 
 
 export interface BoardInfo {
-  "value": string,// 开发板在仓库中的名称
-  "name": string, // 开发板名称
+  "name": string, // 开发板在仓库中的名称开发板名称
+  "nickname": string, // 显示的开发板名称
   "version": string,
   "img": string,
-  "desc": string,
+  "description": string,
   "url": string,
   "brand": string
 }
@@ -148,7 +147,7 @@ export interface NewProjectData {
   path: string,
   board: {
     name: string,
-    value: string,
+    nickname: string,
     version: string
   }
 }

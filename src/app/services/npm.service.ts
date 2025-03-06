@@ -12,9 +12,25 @@ export class NpmService {
 
 
   // 指定获取packageName的可用版本列表
-  async getPackageVersionList(packageName: string): Promise<any[]> {
-    let PackageVersionList = await window['npm'].run({ cmd: `npm view ${packageName} versions --registry https://registry.openjumper.cn --json` })
-    return PackageVersionList;
+  async getPackageVersionList(packageName: string): Promise<string[]> {
+    let data = await window['npm'].run({ cmd: `npm view ${packageName} versions --registry https://registry.openjumper.cn --json` })
+    let packageVersionList = [];
+    if (typeof data === 'string') {
+      packageVersionList.push(data);
+    } else {
+      packageVersionList = data;
+    }
+    return packageVersionList;
+  }
+
+  async getInstalledPackageList(path) {
+    let data = await window['npm'].run({ cmd: `npm list --depth=0 --json --prefix ${path}` });
+    let installedPackageList = [];
+    for (let key in data.dependencies) {
+      const item = data.dependencies[key];
+      installedPackageList.push(key + '@' + item.version);
+    }
+    return installedPackageList;
   }
 
   /**
