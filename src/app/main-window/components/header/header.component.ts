@@ -162,6 +162,7 @@ export class HeaderComponent {
         } else if (item.data.data === 'upload') {
           if (item.state === 'doing') return;
           item.state = 'doing';
+          // 检查距离上次编译代码是否有变更，如无变更，则直接上传，否则重新编译再上传
           this.uploaderService.upload().then(result => {
             item.state = 'done';
           }).catch(err => {
