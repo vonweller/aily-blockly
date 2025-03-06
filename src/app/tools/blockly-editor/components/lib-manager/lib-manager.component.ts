@@ -7,6 +7,7 @@ import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ConfigService } from '../../../../services/config.service';
+import { ProjectService } from '../../../../services/project.service';
 
 @Component({
   selector: 'app-lib-manager',
@@ -27,28 +28,42 @@ export class LibManagerComponent {
 
   LibraryList: PackageInfo[] = [];
 
-  version;
-  versionList = []
-
   constructor(
     private npmService: NpmService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private projectService: ProjectService
   ) { }
 
   ngOnInit() {
     this.configService.loadLibraryList().then((data: any) => {
-      this.LibraryList = data;
-      this.processForSearch(this.LibraryList);
       this.checkInstalled();
+      this.LibraryList = this.process(data);
+      console.log(this.LibraryList);
     });
   }
 
-  // 为全文搜索做准备
-  processForSearch(array) {
+  // 处理库列表数据，为显示做准备
+  process(array) {
     for (let index = 0; index < array.length; index++) {
       const item = array[index];
-      // ${item.keywords.join(' ')}
-      item['fulltext'] = `${item.nickname} ${item.description} ${item.brand} ${item.author.name}`;
+      // 为全文搜索做准备
+      item['fulltext'] = `${item.nickname} ${item.description} ${item.keywords} ${item.brand} ${item.author}`;
+      // 为版本选择做准备
+      item['versionList'] = [item.version];
+    }
+    return array;
+  }
+
+  keyword: string;
+  search(keyword) {
+    if (keyword) {
+      this.LibraryList = this.LibraryList.filter((item) => {
+        return item.fulltext.includes(keyword);
+      });
+    } else {
+      this.configService.loadLibraryList().then((data: any) => {
+        this.LibraryList = this.process(data);
+      });
     }
   }
 
@@ -57,20 +72,32 @@ export class LibManagerComponent {
   }
 
   // 获取已经安装的包，用于在界面上显示"移除"按钮
+  installedPackages = [];
   checkInstalled() {
-    window['npm'].run({ cmd: `npm list --depth=0 --json` }).then((data) => {
-      console.log(data);
+    window['npm'].run({ cmd: `npm list --depth=0 --json --prefix ${this.projectService.currentProjectPath}` }).then((data) => {
+      // console.log(data.dependencies);
+      for (let key in data.dependencies) {
+        const item = data.dependencies[key];
+        this.installedPackages.push(key + '@' + item.version);
+      }
     });
   }
 
+  isInstalled(lib) {
+    return this.installedPackages.indexOf(lib.name + '@' + lib.version) > -1;
+  }
+
   installLib(lib) {
-    window['npm'].run({ cmd: `npm install ${lib.name}@${this.version} --registry https://registry.openjumper.cn` }).then(() => {
+    window['npm'].run({ cmd: `npm install ${lib.name}@${lib.version} --registry https://registry.openjumper.cn` }).then(() => {
 
     });
   }
 
   removeLib(lib) {
-    window['npm'].run({ cmd: `npm install ${lib.name}@${this.version} --registry https://registry.openjumper.cn` }).then(() => {
+    // 移除库前，应先检查项目代码是否使用了该库，如果使用了，应提示用户
+    // 这个比较复杂没想好怎么写（陈吕洲 2025.3.6）
+
+    window['npm'].run({ cmd: `npm uninstall ${lib.name}@${lib.version} --registry https://registry.openjumper.cn` }).then(() => {
 
     });
   }
@@ -82,6 +109,7 @@ interface PackageInfo {
   "scope"?: string,
   "description"?: string,
   "version"?: string,
+  "versionList"?: string[],
   "keywords"?: string[],
   "date"?: string,
   "author"?: {

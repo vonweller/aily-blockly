@@ -30,6 +30,7 @@ export class ProjectService {
   };
 
   currentProject: string;
+  currentProjectPath: string;
 
   isMainWindow = false;
 
@@ -107,6 +108,7 @@ export class ProjectService {
     this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
     // this.uiService.
     // 0. 判断路径是否存在
+    this.currentProjectPath = projectPath;
     const pathExist = window['path'].isExists(projectPath);
     if (!pathExist) {
       console.error('path not exist: ', projectPath);
