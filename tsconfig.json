@@ -19,7 +19,9 @@
     "target": "ES2022",
     "module": "ES2022",
     "allowJs": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
@@ -30,6 +32,11 @@
   "exclude": [
     "child",
     "electron",
-    
+    "dist",
+    "node_modules",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "src/environments/*.ts",
+    "temp/**/*"
   ]
 }
