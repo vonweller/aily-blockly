@@ -27,7 +27,7 @@ export class BuilderService {
     const librariesPath = tempPath + '/libraries';
     const buildPath = tempPath + '/build';
 
-    this.uiService.updateState({ state: 'loading', text: '编译准备中...' });
+    this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
 
     // 创建临时文件夹
     await this.uiService.openTerminal();
@@ -96,7 +96,7 @@ export class BuilderService {
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
     const toolsPath = await window["env"].get('AILY_TOOL_PATH');
 
-    this.uiService.updateState({ state: 'loading', text: '准备完成，开始编译中...' });
+    this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
 
     // 编译
     await this.terminalService.sendCmd(`arduino-cli.exe ${compilerParam} --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}' --verbose`);

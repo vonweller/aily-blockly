@@ -88,7 +88,7 @@ export class UploaderService {
     const uploaderPath = await window["env"].get('AILY_TOOL_PATH') + `/${uploader}`;
     const toolsPath = await window["env"].get('AILY_TOOL_PATH');
 
-    this.uiService.updateState({ state: 'loading', text: '准备完成，开始上传...' });
+    this.uiService.updateState({ state: 'doing', text: '准备完成，开始上传...' });
 
     // 上传
     await this.uiService.openTerminal();

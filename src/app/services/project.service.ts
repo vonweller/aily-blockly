@@ -78,7 +78,7 @@ export class ProjectService {
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
     const registry = 'https://registry.openjumper.cn';
 
-    this.uiService.updateState({ state: 'loading', text: '正在创建项目...' });
+    this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
@@ -106,7 +106,7 @@ export class ProjectService {
   async projectOpen(projectPath) {
     this.stateSubject.next('loading');
     const registry = 'https://registry.openjumper.cn';
-    this.uiService.updateState({ state: 'loading', text: '正在打开项目...' });
+    this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
     // this.uiService.
     // 0. 判断路径是否存在
     this.currentProjectPath = projectPath;
@@ -132,10 +132,10 @@ export class ProjectService {
     console.log('currentPid: ', this.terminalService.currentPid);
     await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖
-    this.uiService.updateState({ state: 'loading', text: '正在安装依赖' });
+    this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
     await this.terminalService.sendCmd(`npm install`);
     // 3. 加载开发板module中的board.json
-    this.uiService.updateState({ state: 'loading', text: '正在加载开发板配置' });
+    this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
     console.log('boardModule: ', boardModule);
     let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
@@ -143,7 +143,7 @@ export class ProjectService {
     const boardJson = JSON.parse(window['file'].readFileSync(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
     // 4. 加载blockly library
-    this.uiService.updateState({ state: 'loading', text: '正在加载blockly库' });
+    this.uiService.updateState({ state: 'doing', text: '正在加载blockly库' });
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
     console.log('libraryModuleList: ', libraryModuleList);
     for (let index = 0; index < libraryModuleList.length; index++) {
@@ -152,7 +152,7 @@ export class ProjectService {
       this.blocklyService.loadLibrary(libPackagePath);
     }
     // 5. 加载project.abi数据
-    this.uiService.updateState({ state: 'loading', text: '正在加载blockly程序' });
+    this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
     let jsonData = JSON.parse(window['file'].readFileSync(`${projectPath}/project.abi`));
     this.blocklyService.loadAbiJson(jsonData);
 
