@@ -65,6 +65,7 @@ export class HeaderComponent {
       this.loaded = state == 'loaded';
       this.cd.detectChanges();
     });
+    this.listenShortcutKeys();
   }
 
   showMenu = false;
@@ -134,7 +135,7 @@ export class HeaderComponent {
     }
   }
 
-  process(item:IMenuItem) {
+  process(item: IMenuItem) {
     switch (item.data.type) {
       case 'window':
         this.uiService.openWindow(item.data);
@@ -206,6 +207,82 @@ export class HeaderComponent {
 
   close() {
     window['iWindow'].close();
+  }
+
+  // 快捷键功能，监听键盘事件,执行对应的操作
+  private shortcutMap: Map<string, IMenuItem> = new Map();
+
+  private initShortcutMap(): void {
+    for (const item of HEADER_MENU) {
+      if (item.text) {
+        // 将快捷键文本转换成标准格式(如: "ctrl+s")
+        const shortcutKey = this.normalizeShortcutKey(item.text);
+        if (shortcutKey) {
+          this.shortcutMap.set(shortcutKey, item);
+        }
+      }
+    }
+    console.log('已初始化快捷键映射:', Array.from(this.shortcutMap.keys()));
+  }
+  
+  // 转换快捷键文本为标准格式
+  private normalizeShortcutKey(shortcutText: string): string {
+    if (!shortcutText) return '';
+    
+    return shortcutText.toLowerCase().split('+')
+      .map(part => part.trim())
+      .sort((a, b) => {
+        // 保证修饰键的顺序：ctrl 在前，shift 在后，其他按字母顺序
+        if (a === 'ctrl') return -1;
+        if (b === 'ctrl') return 1;
+        if (a === 'shift') return -1;
+        if (b === 'shift') return 1;
+        return a.localeCompare(b);
+      })
+      .join('+');
+  }
+  
+  // 从键盘事件生成标准化的快捷键字符串
+  private getShortcutFromEvent(event: KeyboardEvent): string {
+    const parts: string[] = [];
+    
+    if (event.ctrlKey) parts.push('ctrl');
+    if (event.shiftKey) parts.push('shift');
+    if (event.altKey) parts.push('alt');
+    
+    // 添加主键，忽略修饰键本身
+    const key = event.key.toLowerCase();
+    if (!['control', 'shift', 'alt'].includes(key)) {
+      parts.push(key);
+    }
+    
+    return parts.join('+');
+  }
+  
+  // 监听快捷键
+  listenShortcutKeys() {
+    this.initShortcutMap();
+    window.addEventListener('keydown', (event: KeyboardEvent) => {
+      // 只处理包含修饰键的组合键
+      if (event.ctrlKey || event.shiftKey || event.altKey) {
+        const shortcutKey = this.getShortcutFromEvent(event);
+        const menuItem = this.shortcutMap.get(shortcutKey);
+        
+        if (menuItem) {
+          event.preventDefault(); // 阻止默认行为
+          console.log('快捷键触发:', menuItem.name, shortcutKey);
+          
+          // 执行对应的操作
+          if (menuItem.data && menuItem.data.type) {
+            this.process(menuItem);
+          } else if (menuItem.action) {
+            // 如果需要处理action类型的菜单项，可以在这里添加逻辑
+            // this.handleMenuAction(menuItem);
+            console.log('需要处理action:', menuItem.action);
+          }
+        }
+      }
+    });
   }
 }
 
