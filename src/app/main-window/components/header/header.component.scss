@@ -139,3 +139,12 @@ $header-inner-height: 38px;
     }
   }
 }
+
+.ports{
+  ::ng-deep{
+    .name{
+      width: 55px;
+      flex-shrink: 0;
+    }
+  }
+}
