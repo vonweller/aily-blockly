@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { ProjectService } from './project.service';
 import { SerialService } from './serial.service';
-import { UiService } from './ui.service';
+import { ActionState, UiService } from './ui.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
@@ -18,7 +18,7 @@ export class UploaderService {
     private message: NzMessageService,
   ) { }
 
-  async upload() {
+  async upload(): Promise<ActionState> {
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
@@ -83,7 +83,7 @@ export class UploaderService {
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`; 
     const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
-    this.uiService.updateState({ state: 'loading', text: '准备完成，开始上传...' });
+    this.uiService.updateState({ state: 'doing', text: '准备完成，开始上传...' });
 
     // 上传
     await this.uiService.openTerminal();

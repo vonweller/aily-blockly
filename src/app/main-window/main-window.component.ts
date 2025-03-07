@@ -15,6 +15,7 @@ import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NotificationComponent } from './components/notification/notification.component';
 
 @Component({
   selector: 'app-main-window',
@@ -31,6 +32,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
+    NotificationComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

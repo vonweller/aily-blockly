@@ -172,7 +172,7 @@ export interface ToolOpts {
 export interface ActionState {
   text: string;
   desc?: string;
-  state?: 'done' | 'error' | 'warn' | 'loading' | string,
+  state?: 'done' | 'doing' | 'error' | 'warn' | 'loading' | string,
   color?: string;
   icon?: string;
   timeout?: number;

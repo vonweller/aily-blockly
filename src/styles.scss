@@ -72,7 +72,11 @@ body {
   height: 100%;
 }
 
-.loading {
+.lloading {
+  .fa-spinner-third {
+    animation: rotate45 2s steps(60, end) infinite;
+  }
+
   .fa-loader {
     animation: rotate45 1s steps(8, end) infinite;
   }

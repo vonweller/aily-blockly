@@ -3,15 +3,26 @@ export let HEADER_BTNS: IMenuItem[][] = [
     {
       name: '编译',
       data: { type: 'cmd', data: 'compile' },
-      icon: 'fa-regular fa-circle-check',
-      color: '#34a5ff',
+      icon: 'fa-regular fa-check',
+      type: 'act-btn',
+      color: '#006adc',
+      state: 'default',
     },
     {
-      name: '上传',
+      name: '烧录',
       data: { type: 'cmd', data: 'upload' },
       icon: 'fa-regular fa-play',
-      color: '#009d12',
+      type: 'act-btn',
+      color: '#009600',
+      state: 'default',
     },
+    // {
+    //   name: '调试',
+    //   data: { type: 'cmd', data: 'debug' },
+    //   icon: 'fa-regular fa-rocket',
+    //   type: 'act-btn',
+    //   color: '#f18800',
+    // },
   ],
   [
     {
@@ -43,7 +54,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
   ],
 ];
 
-interface IMenuItem {
+export interface IMenuItem {
   name?: string;
   text?: string;
   action?: string;
@@ -53,6 +64,7 @@ interface IMenuItem {
   color?: string;
   more?: string;
   sep?: boolean;
+  state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
 }
 
 export let HEADER_MENU: IMenuItem[] = [
