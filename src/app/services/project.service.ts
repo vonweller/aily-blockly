@@ -172,30 +172,25 @@ export class ProjectService {
         
         const boardDependencies = packageJson.boardDependencies || {};
 
-        Object.entries(boardDependencies).forEach(async ([key, version]) => {
-          console.log("key: ", key);
+        for (const [key, version] of Object.entries(boardDependencies)) {
           // 判断是否已安装
           const depPath = `${appDataPath}/node_modules/${key}`;
           if (window['path'].isExists(depPath)) {
             console.log(`依赖 ${key} 已安装`);
           } else {
             // 未安装则安装
-            this.uiService.updateState({
-              state: 'loading',
-              text: `正在安装${key}依赖`
-            });
+            this.uiService.updateState({state: 'loading', text: `正在安装${key}依赖`});
 
             try {
               // 安装依赖
               const npmCmd = `npm install ${key}@${version} --prefix ${appDataPath}`;
-              console.log('npmCmd: ', npmCmd);
-              await window['npm'].run({cmd: npmCmd});
+              await window['npm'].run({ cmd: npmCmd });
               console.log(`依赖 ${key} 安装成功`);
             } catch (error) {
               console.error(`依赖 ${key} 安装失败:`, error);
             }
           }
-        });
+        }
 
         this.uiService.updateState({state: 'done', text: '开发板依赖安装完成'});
 

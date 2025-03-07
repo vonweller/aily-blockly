@@ -67,32 +67,27 @@ export class UploaderService {
 
     // 获取sdk、上传工具的名称和版本
     let sdk = ""
-    let uploader = ""
 
     Object.entries(boardDependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/sdk-')) {
         sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
       }
-      if (key.startsWith('@aily-project/tool-')) {
-        uploader = key.replace(/^@aily-project\/tool-/, '') + '@' + version;
-      }
     });
 
-    if (!sdk || !uploader) {
-      this.message.error('缺少sdk或上传工具');
+    if (!sdk) {
+      this.message.error('缺少sdk信息');
       return;
     }
 
     // 组合sdk、上传工具的路径
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`; 
-    const uploaderPath = await window["env"].get('AILY_TOOL_PATH') + `/${uploader}`;
-    const toolsPath = await window["env"].get('AILY_TOOL_PATH');
+    const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
     this.uiService.updateState({ state: 'loading', text: '准备完成，开始上传...' });
 
     // 上传
     await this.uiService.openTerminal();
-    const uploadCmd = `arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --uploader-path ${uploaderPath} --tools-path ${toolsPath} --verbose`;
+    const uploadCmd = `arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --tools-path ${toolsPath} --verbose`;
     console.log("uploadCmd: ", uploadCmd);
     await this.terminalService.sendCmd(uploadCmd);
 

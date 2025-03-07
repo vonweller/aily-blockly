@@ -92,9 +92,9 @@ export class BuilderService {
     }
 
     // 组合编译器、sdk、tools的路径
-    const compilerPath = await window["env"].get('AILY_COMPILER_PATH') + `./${compiler}`;
+    const compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
-    const toolsPath = await window["env"].get('AILY_TOOL_PATH');
+    const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
     this.uiService.updateState({ state: 'loading', text: '准备完成，开始编译中...' });
 
