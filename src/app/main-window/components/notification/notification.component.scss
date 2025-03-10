@@ -8,6 +8,52 @@
     padding: 15px;
     border-radius: 10px;
     box-shadow: 0 0 5px 0 rgba(0, 0, 0, 0.1);
+    width: 260px;
+
+    .box {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border:5px solid #5c5c5c;
+        position: relative;
+
+        .num-box{
+            position: absolute;
+        }
+        
+        i{
+            font-size: 35px;
+        }
+
+        .fa-spinner-third{
+            font-size: 59.5px;
+        }
+
+        .fa-check {
+            color: #007400;
+        }
+
+        &.done{
+            border-color: #007400;
+        }
+
+        .fa-xmark {
+            color: rgb(139, 0, 0);
+        }
+
+        &.error{
+            border-color: rgb(139, 0, 0);
+        }
+
+        .fa-exclamation {
+            color: rgb(255, 119, 0);
+            font-size: 32px;
+        }
+
+        &.warn{
+            border-color: rgb(255, 119, 0);
+        }
+    }
 
     .text-box {
         margin-left: 15px;

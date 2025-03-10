@@ -80,7 +80,7 @@ function registerTerminalHandlers(mainWindow) {
   // 异步输入，可以获取到数据
   ipcMain.handle('terminal-to-pty-async', async (event, { pid, input }) => {
     const ptyProcess = terminals.get(parseInt(pid, 10));
-    console.log('terminal-to-pty-async pid ', pid);
+    console.log('terminal-to-pty-async pid ', pid, ' input ', input);
     return new Promise((resolve, reject) => {
       try {
         let commandOutput = '';

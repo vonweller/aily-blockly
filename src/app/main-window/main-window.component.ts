@@ -16,6 +16,7 @@ import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NotificationComponent } from './components/notification/notification.component';
+import { NoticeService } from '../services/notice.service';
 
 @Component({
   selector: 'app-main-window',
@@ -60,6 +61,7 @@ export class MainWindowComponent {
     private projectService: ProjectService,
     private message: NzMessageService,
     private cd: ChangeDetectorRef,
+    private notice: NoticeService
   ) { }
 
   ngOnInit(): void {
@@ -131,5 +133,30 @@ export class MainWindowComponent {
 
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
+  }
+
+  progress = 0;
+  test(e) {
+    switch (e) {
+      case '+':
+        this.progress += 10;
+        this.notice.update({ title: 'test', text: 'test', state: 'doing', progress: this.progress, setTimeout: 0 });
+        break;
+      case '-':
+        this.progress -= 10;
+        this.notice.update({ title: 'test', text: 'test', state: 'doing', progress: this.progress, setTimeout: 0 });
+        break;
+      case 'done':
+        this.notice.update({ title: 'test', text: 'test', state: 'done', setTimeout: 55000 });
+        break;
+      case 'error':
+        this.notice.update({ title: 'test', text: 'test', state: 'error', setTimeout: 55000 });
+        break;
+      case 'warn':
+        this.notice.update({ title: 'test', text: 'test', state: 'warn', setTimeout: 55000 });
+        break;
+      default:
+        break;
+    }
   }
 }
