@@ -51,4 +51,45 @@ export class TerminalService {
         });
     });
   }
+
+  // 使用流式输出执行命令
+  async executeWithStream(
+    input: string,
+    lineCallback: (line: string) => void,
+    completeCallback?: () => void
+  ): Promise<any> {
+    const { streamId } = await window['terminal'].startStream(this.currentPid);
+
+    // 注册监听器
+    const removeListener = window['terminal'].onStreamData(
+      streamId, 
+      (lines: string[], complete: boolean) => {
+        // 处理每行数据
+        lines.forEach(line => lineCallback(line));
+
+        // 如果完成，调用完成回调
+        if (complete && completeCallback) {
+          completeCallback();
+          // 清理监听器
+          removeListener();
+        }
+      }
+    );
+
+    try {
+      await window['terminal'].sendInput({ pid: this.currentPid, input: input + '\r' });
+
+      // 在固定时间后停止流（如果未正常结束）
+      setTimeout(() => {
+        window['electronAPI'].terminal.stopStream(this.currentPid, streamId);
+        removeListener();
+        if (completeCallback) completeCallback();
+      }, 300000); // 5分钟超时
+    } catch (error) {
+      // 出错时清理资源
+      window['electronAPI'].terminal.stopStream(this.currentPid, streamId);
+      removeListener();
+      throw error;
+    }
+  }
 }

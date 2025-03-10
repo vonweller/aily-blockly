@@ -44,7 +44,41 @@ contextBridge.exposeInMainWorld("electronAPI", {
     sendInput: (data) => ipcRenderer.send("terminal-to-pty", data),
     sendInputAsync: (data) => ipcRenderer.invoke("terminal-to-pty-async", data),
     close: (data) => ipcRenderer.send("terminal-close", data),
-    resize: (data) => ipcRenderer.send("terminal-resize", data)
+    resize: (data) => ipcRenderer.send("terminal-resize", data),
+    // 开始流式监听
+    startStream: (pid) => {
+      const streamId = `stream_${Date.now()}`;
+      return ipcRenderer.invoke('terminal-stream-start', { pid, streamId });
+    },
+
+    // 停止流式监听
+    stopStream: (pid, streamId) => {
+      return ipcRenderer.invoke('terminal-stream-stop', { pid, streamId });
+    },
+
+    // 监听流数据
+    onStreamData: (streamId, callback) => {
+      const listener = (event, data) => {
+        callback(data.lines, data.complete);
+      };
+
+      ipcRenderer.on(`terminal-stream-data-${streamId}`, listener);
+
+      // 返回解除监听函数
+      return () => {
+        ipcRenderer.removeListener(`terminal-stream-data-${streamId}`, listener);
+      };
+    },
+
+    // 执行命令并流式获取输出
+    executeWithStream: (pid, command) => {
+      const streamId = `stream_${Date.now()}`;
+      return ipcRenderer.invoke('terminal-to-pty-stream', {
+        pid,
+        input: command + '\r',
+        streamId
+      });
+    }
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),

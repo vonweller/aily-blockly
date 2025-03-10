@@ -5,6 +5,7 @@ import { ProjectService } from './project.service';
 import { ActionState, UiService } from './ui.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NoticeService } from '../services/notice.service';
 
 @Injectable({
   providedIn: 'root'
@@ -17,6 +18,7 @@ export class BuilderService {
     private projectService: ProjectService,
     private terminalService: TerminalService,
     private message: NzMessageService,
+    private notice: NoticeService
   ) { }
 
   async build(): Promise<ActionState> {
@@ -98,10 +100,78 @@ export class BuilderService {
 
     this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
 
-    // 编译
-    await this.terminalService.sendCmd(`arduino-cli.exe ${compilerParam} --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}' --verbose`);
+    // 创建返回的 Promise
+    return new Promise<ActionState>((resolve, reject) => {
+      const compileCommand = `arduino-cli.exe ${compilerParam} --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}' --verbose`;
 
-    this.uiService.updateState({ state: 'done', text: '编译完成' });
-    this.message.success('编译完成');
+      const title = `正在编译 ${boardJson.name}`;
+      const completeTitle = `编译完成`;
+
+      // 用于跟踪编译状态
+      let buildCompleted = false;
+      let lastProgress = 0;
+      let lastBuildText = '';
+      let isErrored = false;
+      let errorText = '编译失败';
+
+      // 使用流式输出执行命令
+      this.terminalService.executeWithStream(
+        compileCommand,
+        (line) => {
+          // 处理每一行输出
+          const trimmedLine = line.trim();
+
+          // 提取构建文本
+          if (trimmedLine.startsWith('BuildText:')) {
+            const buildText = trimmedLine.replace('BuildText:', '').trim();
+            console.log("Build text:", buildText);
+            lastBuildText = buildText;
+            // this.uiService.updateState({ state: 'doing', text: buildText });
+          }
+          // 提取进度信息
+          else if (trimmedLine.startsWith('progress')) {
+            console.log(trimmedLine);
+            const progressInfo = trimmedLine.replace('progress', '').trim();
+            const progressMatch = progressInfo.match(/(\d+)%?/);
+
+            if (progressMatch) {
+              const progressValue = parseInt(progressMatch[1], 10);
+              lastProgress = progressValue;
+
+              // 进度为100%时标记完成
+              if (progressValue === 100 && !buildCompleted) {
+                buildCompleted = true;
+                // this.uiService.updateState({ state: 'done', text: '编译完成' });
+                // this.message.success('编译成功');
+                // resolve({ state: 'done', text: '编译完成' });
+              }
+            }
+          }
+          // 检查错误信息
+          else if (trimmedLine.toLowerCase().includes('error:') ||
+            trimmedLine.toLowerCase().includes('failed')) {
+            console.error("检测到编译错误:", trimmedLine);
+            isErrored = true;
+          }
+
+          if (isErrored) {
+            this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
+          } else {
+            // 更新状态
+            if (!buildCompleted) {
+              this.notice.update({ title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0 });
+            } else {
+              this.notice.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
+              this.uiService.updateState({ state: 'done', text: '编译完成' });
+            }
+          }
+        },
+      ).catch(error => {
+        console.error("编译命令执行失败:", error);
+        this.uiService.updateState({ state: 'error', text: '编译失败' });
+        this.message.error('编译失败: ' + error.message);
+        resolve({ state: 'error', text: '编译失败' });
+      });
+    });
   }
 }
