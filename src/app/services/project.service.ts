@@ -23,7 +23,7 @@ interface ProjectPackageData {
 })
 export class ProjectService {
 
-  stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved'>('default');
+  stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved' | 'error'>('default');
 
   currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
@@ -104,7 +104,6 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath) {
-    this.stateSubject.next('loading');
     const registry = 'https://registry.openjumper.cn';
     this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
     // this.uiService.
@@ -112,11 +111,12 @@ export class ProjectService {
     this.currentProjectPath = projectPath;
     const pathExist = window['path'].isExists(projectPath);
     if (!pathExist) {
-      console.error('path not exist: ', projectPath);
+      console.log('path not exist: ', projectPath);
       this.message.warning('该项目路径不存在');
       this.removeRecentlyProject({ path: projectPath })
       return false;
     }
+    this.stateSubject.next('loading');
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     // 添加到最近打开的项目
