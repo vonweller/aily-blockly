@@ -222,7 +222,7 @@ export class HeaderComponent {
         }
       }
     }
-    console.log('已初始化快捷键映射:', Array.from(this.shortcutMap.keys()));
+    // console.log('已初始化快捷键映射:', Array.from(this.shortcutMap.keys()));
   }
   
   // 转换快捷键文本为标准格式

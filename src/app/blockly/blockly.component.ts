@@ -7,17 +7,16 @@ import {
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index.js';
-import { arduinoGenerator, DEFAULT_DATA } from './generators/arduino/arduino';
+import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
-import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 
 import './custom-category';
 
 @Component({
   selector: 'blockly-main',
-  imports: [NzModalModule],
+  imports: [],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
 })
@@ -140,11 +139,11 @@ export class BlocklyComponent {
       //   modal.triggerOk;
       // };
 
-      // this.workspace.addChangeListener((event) => {
-      //   console.log(event);
-      //   let code = arduinoGenerator.workspaceToCode(this.workspace);
-      //   this.blocklyService.codeSubject.next(code);
-      // });
+      this.workspace.addChangeListener((event) => {
+        // console.log(event);
+        let code = arduinoGenerator.workspaceToCode(this.workspace);
+        this.blocklyService.codeSubject.next(code);
+      });
 
       // this.blocklyDiv.nativeElement.addEventListener(
       //   'mousemove',
