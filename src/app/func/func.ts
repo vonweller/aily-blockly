@@ -7,8 +7,6 @@ export function generateDateString(date: Date = new Date()): string {
     const month = monthAbbr[date.getMonth()];
     // 获取日期并格式化为两位数字
     const day = date.getDate().toString().padStart(2, '0');
-    // 随机生成一个 a-z 的字符
-    const randomChar = String.fromCharCode(97 + Math.floor(Math.random() * 26));
     // 返回形如 "may01x" 的字符串
-    return `${month}${day}${randomChar}`;
+    return `${month}${day}`;
 }
