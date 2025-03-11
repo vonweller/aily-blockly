@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, Renderer2 } from '@angular/core';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { NoticeOptions, NoticeService } from '../../../../services/notice.service';
 import { CommonModule } from '@angular/common';
@@ -23,9 +23,13 @@ export class NotificationComponent {
   animationFrameId: number; // 动画帧ID
   animationDuration = 300; // 动画持续时间（毫秒）
 
+  tempWidth = 250;
+
   constructor(
     private noticeService: NoticeService,
-    private cd:ChangeDetectorRef
+    private cd: ChangeDetectorRef,
+    private elementRef: ElementRef,
+    private renderer: Renderer2
   ) { }
 
   timer;
@@ -47,6 +51,7 @@ export class NotificationComponent {
           this.close();
         }, this.data.setTimeout);
       }
+      this.tempWidth = 100 + this.getTextWidth();
       this.cd.detectChanges();
     });
   }
@@ -106,6 +111,34 @@ export class NotificationComponent {
   easeOutQuad(t: number): number {
     return t * (2 - t);
   }
+
+  // 计算.text的宽度
+  getTextWidth() {
+    const text = this.data?.text;
+    if (!text) {
+      return 0;
+    }
+    const span = this.renderer.createElement('span');
+    this.renderer.setStyle(span, 'position', 'absolute');
+    this.renderer.setStyle(span, 'visibility', 'hidden');
+    this.renderer.setStyle(span, 'white-space', 'nowrap');
+    this.renderer.setStyle(span, 'font-size', '12px');
+    this.renderer.setStyle(span, 'font-family', 'PingFang SC');
+    this.renderer.setStyle(span, 'font-weight', '400');
+    this.renderer.setStyle(span, 'line-height', '20px');
+    this.renderer.setStyle(span, 'padding', '0 10px');
+    this.renderer.setStyle(span, 'border-radius', '10px');
+    this.renderer.setStyle(span, 'background-color', 'rgba(0, 0, 0, 0.5)');
+    this.renderer.setStyle(span, 'color', '#fff');
+    this.renderer.setStyle(span, 'opacity', '0');
+    this.renderer.setStyle(span, 'z-index', '-1');
+    this.renderer.appendChild(span, this.renderer.createText(text));
+    this.renderer.appendChild(this.elementRef.nativeElement, span);
+    const width = span.offsetWidth;
+    this.renderer.removeChild(this.elementRef.nativeElement, span);
+    return width;
+  }
+
 
   stop() {
     this.data.stop();

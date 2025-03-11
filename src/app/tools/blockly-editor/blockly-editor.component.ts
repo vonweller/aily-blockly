@@ -38,10 +38,10 @@ export class BlocklyEditorComponent {
         break;
       case '-':
         this.progress -= 10;
-        this.notice.update({ title: 'test', text: 'test', state: 'doing', progress: this.progress, setTimeout: 0 });
+        this.notice.update({ title: '编译中', text: '预处理文件中', state: 'doing', progress: this.progress, setTimeout: 0 });
         break;
       case 'done':
-        this.notice.update({ title: 'test', text: 'test', state: 'done', setTimeout: 55000 });
+        this.notice.update({ title: '编译完成', text: '固件1.1MB', state: 'done', setTimeout: 55000 });
         break;
       case 'error':
         this.notice.update({ title: '编译失败', text: 'fdasfdasfasdfdasfasdfasdfasdfasdfasfsdafasdsdfasdfasdfasdfasfsdafasdf', state: 'error', setTimeout: 0 });

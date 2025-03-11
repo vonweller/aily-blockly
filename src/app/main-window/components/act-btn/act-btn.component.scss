@@ -4,6 +4,14 @@
     transform: all 0.3s;
     position: relative;
 
+    .default{
+        cursor: pointer;
+    }
+
+    .lloading{
+        cursor: wait;
+    }
+
     .qq {
         width: 22px;
         height: 22px;
