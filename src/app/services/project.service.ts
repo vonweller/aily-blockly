@@ -122,7 +122,7 @@ export class ProjectService {
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
-  
+
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
@@ -146,7 +146,7 @@ export class ProjectService {
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
       const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
-      this.blocklyService.loadLibrary(libPackagePath);
+      await this.blocklyService.loadLibrary(libPackagePath);
     }
     // 5. 加载project.abi数据
     this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
@@ -234,7 +234,7 @@ export class ProjectService {
 
 
   // 另存为项目
-  projectSaveAs(path) { 
+  projectSaveAs(path) {
     // 导出blockly json配置并保存    
   }
 
