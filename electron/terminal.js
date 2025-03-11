@@ -88,7 +88,6 @@ function registerTerminalHandlers(mainWindow) {
         // 临时数据处理函数
         const dataHandler = (e) => {
           // 累积所有输出
-          console.log("output: ", e);
           commandOutput += e;
 
           // 检查是否检测到命令提示符，表示命令已完成

@@ -61,6 +61,14 @@ export class TerminalService {
     return streamId;
   }
 
+  async stopStream(streamId: string): Promise<any> {
+    if (!this.currentPid) {
+      throw new Error('终端未初始化');
+    }
+
+    await window['terminal'].stopStream(this.currentPid, streamId);
+  }
+
   // 使用流式输出执行命令
   async executeWithStream(
     input: string,
@@ -97,7 +105,7 @@ export class TerminalService {
       }, 300000); // 5分钟超时
     } catch (error) {
       // 出错时清理资源
-      window['electronAPI'].terminal.stopStream(this.currentPid, streamId);
+      window['terminal'].stopStream(this.currentPid, streamId);
       removeListener();
       throw error;
     }
@@ -110,7 +118,7 @@ export class TerminalService {
     if (!this.currentPid) {
       return Promise.reject('终端未初始化');
     }
-    return window['electronAPI'].terminal.interrupt(this.currentPid);
+    return window['terminal'].interrupt(this.currentPid);
   }
 
   /**

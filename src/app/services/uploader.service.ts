@@ -25,16 +25,51 @@ export class UploaderService {
     private notice: NoticeService
   ) { }
 
-  private uploadInProgress = false;
-  private currentUploadStreamId: string | null = null;
+  uploadInProgress = false;
+  currentUploadStreamId: string | null = null;
+  uploadResolver: ((value: ActionState) => void) | null = null
+
+  // 定义正则表达式，匹配常见的进度格式
+  progressRegexPatterns = [
+    // Writing | ################################################## | 78% 0.12s
+    /\|\s*#+\s*\|\s*\d+%.*$/,
+    // [==============================] 84% (11/13 pages)
+    /\[\s*={1,}>*\s*\]\s*\d+%.*$/,
+    // Writing | ████████████████████████████████████████████████▉  | 98% 
+    /\|\s*\d+%\s*$/,
+    // 或者只是数字+百分号（例如：[====>    ] 70%）
+    /\b(\d+)%\b/,
+    // 70% 13/18
+    // /^(\d+)%\s+\d+\/\d+/,
+    // 标准格式：数字%（例如：70%）
+    // /(?:进度|Progress)[^\d]*?(\d+)%/i,
+    // 带空格的格式（例如：70 %）
+    // /(?:进度|Progress)[^\d]*?(\d+)\s*%/i,
+  ];
 
   async upload(): Promise<ActionState> {
+    if (this.uploadInProgress) {
+      this.message.error('上传正在进行中');
+      return ({ state: 'error', text: '上传正在进行中' });
+    }
+    if (!this.serialService.currentPort) {
+      this.message.error('请先选择串口');
+      this.uploadInProgress = false;
+      return ({ state: 'error', text: '请先选择串口' });
+    }
+
+    this.uploadInProgress = true;
+    let isErrored = false;
+    let uploadCompleted = false;
+
     // 获取code
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
     if (code !== this.builderService.lastCode) {
       // 编译
       await this.builderService.build();
     }
+
+    this.notice.update(null)
 
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
@@ -44,22 +79,6 @@ export class UploaderService {
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     const dependencies = packageJson.dependencies || {};
     const boardDependencies = packageJson.boardDependencies || {};
-
-    // 定义更精确的正则表达式，匹配常见的进度格式
-    const progressRegexPatterns = [
-      // 标准格式：数字%（例如：70%）
-      /(?:进度|Progress)[^\d]*?(\d+)%/i,
-      // 带空格的格式（例如：70 %）
-      /(?:进度|Progress)[^\d]*?(\d+)\s*%/i,
-      // 或者只是数字+百分号（例如：[====>    ] 70%）
-      /\b(\d+)%\b/,
-      // Writing | ████████████████████████████████████████████████▉  | 98% 
-      /\|\s*\d+%\s*$/,
-      // 70% 13/18
-      /^(\d+)%\s+\d+\/\d+/,
-      // Writing | ################################################## | 78% 0.12s
-      /\|\s*#+\s*\|\s*\d+%.*$/
-    ];
 
     // 从dependencies中查找以@aily-project/board-开头的依赖
     let board = ""
@@ -71,7 +90,8 @@ export class UploaderService {
 
     if (!board) {
       this.message.error('缺少板子信息');
-      return;
+      this.uploadInProgress = false;
+      return ({ state: 'error', text: '缺少板子信息' });
     }
 
     // 获取板子信息(board.json)
@@ -80,16 +100,17 @@ export class UploaderService {
 
     if (!boardJson) {
       this.message.error('缺少板子信息');
-      return;
+      this.uploadInProgress = false;
+      return ({ state: 'error', text: '缺少板子信息' });
     }
+
+    this.notice.update(null)
+
+    let lastUploadText = `正在上传${boardJson.name}`;
 
     // 获取上传参数
     let uploadParam = boardJson.uploadParam;
     // 替换uploadParam中的${serial}为当前串口
-    if (!this.serialService.currentPort) {
-      this.message.error('请先选择串口');
-      return;
-    }
     uploadParam = uploadParam.replace('${serial}', this.serialService.currentPort);
 
     // 获取sdk、上传工具的名称和版本
@@ -103,7 +124,8 @@ export class UploaderService {
 
     if (!sdk) {
       this.message.error('缺少sdk信息');
-      return;
+      this.uploadInProgress = false;
+      return ({ state: 'error', text: '缺少sdk信息' });
     }
 
     // 组合sdk、上传工具的路径
@@ -115,25 +137,20 @@ export class UploaderService {
 
     this.uiService.updateState({ state: 'doing', text: '准备完成，开始上传...' });
 
-    const title = '上传中';
-    const completeTitle = '上传完成';
-    const errorTitle = '上传失败';
-    const completeText = '上传完成';
-
-    let uploadCompleted = false;
-    let isErrored = false;
-    let lastProgress = 0;
-    let lastUploadText = `正在上传${boardJson.name}`;
-    let errorText = '';
-
     return new Promise<ActionState>((resolve, reject) => {
+      const title = '上传中';
+      const completeTitle = '上传完成';
+      const errorTitle = '上传失败';
+      const completeText = '上传完成';
+      let lastProgress = 0;
+
+      let errorText = '';
       const uploadCmd = `arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --tools-path ${toolsPath} --verbose`;
-      // console.log("uploadCmd: ", uploadCmd);
-      // await this.terminalService.sendCmd(uploadCmd);
 
-      // this.uiService.updateState({ state: 'done', text: '上传完成' });
-      // this.message.success('上传完成');
-
+      console.log("start progress: ", lastProgress);
+      this.uploadInProgress = true;
+      this.notice.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
+    
       this.terminalService.startStream().then(streamId => {
         this.currentUploadStreamId = streamId;
 
@@ -141,14 +158,18 @@ export class UploaderService {
         this.terminalService.executeWithStream(
           uploadCmd,
           streamId,
-          (line) => {
+          async (line) => {
+            // 判断是否已取消，如果已取消则不在处理输出
+            if (!this.uploadInProgress) {
+              resolve({ state: 'canceled', text: '上传已取消' });
+            }
+
             // 处理每一行输出
             const trimmedLine = line.trim();
-            console.log("trimmedLine: ", trimmedLine);
             // 尝试使用所有模式匹配进度
             let progressValue = null;
 
-            for (const regex of progressRegexPatterns) {
+            for (const regex of this.progressRegexPatterns) {
               const match = trimmedLine.match(regex);
               if (match) {
                 // 提取数字部分
@@ -159,8 +180,6 @@ export class UploaderService {
                 }
               }
             }
-
-            console.log("progressValue: ", progressValue);
 
             // 如果找到有效的进度值
             if (progressValue !== null) {
@@ -184,16 +203,20 @@ export class UploaderService {
             if (isErrored) {
               this.notice.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
               this.uploadInProgress = false;
+              await this.terminalService.stopStream(streamId);
               reject({ state: 'error', text: errorText });
             } else {
               // 上传
               if (!uploadCompleted) {
-                this.notice.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0 });
+                this.notice.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
+                  this.cancelBuild()}});
               } else {
                 this.notice.update({ title: completeTitle, text: completeText, state: 'done', setTimeout: 55000 });
                 this.uiService.updateState({ state: 'done', text: completeText });
 
                 this.uploadInProgress = false;
+                this.uploadResolver = null;
+                await this.terminalService.stopStream(streamId);
                 resolve({ state: 'done', text: '上传完成' });
               }
             }
@@ -203,10 +226,48 @@ export class UploaderService {
           this.uiService.updateState({ state: 'error', text: '上传失败' });
           this.message.error('上传失败: ' + error.message);
           this.uploadInProgress = false;
-          resolve({ state: 'error', text: error.message });
+          this.uploadResolver = null;
+          reject({ state: 'error', text: error.message });
         });
 
       });
     });
   }
+
+  /**
+  * 取消当前上传过程
+  */
+  cancelBuild() {
+    this.uploadInProgress = false;
+
+    if (this.uploadResolver) {
+      this.uploadResolver({ state: 'canceled', text: '上传已取消' });
+      this.uploadResolver = null;
+    }
+
+    // 中断终端
+    this.terminalService.interrupt()
+      .then(() => {
+        // 如果当前有流ID，尝试停止流
+        if (this.currentUploadStreamId) {
+          window['terminal'].stopStream(
+            this.terminalService.currentPid,
+            this.currentUploadStreamId
+          ).then(() => {
+            console.log('上传已停止');
+            this.notice.update(null);
+            this.terminalService.stopStream(this.currentUploadStreamId);
+            this.currentUploadStreamId = null;
+            this.message.success('上传已中断');
+          });
+        }
+      })
+      .catch(error => {
+        console.error('取消上传失败:', error);
+        this.notice.update(null)
+        this.message.warning('取消上传失败: ' + error.message);
+        return false;
+      });
+  }
 }
+

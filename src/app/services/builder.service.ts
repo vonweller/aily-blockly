@@ -23,10 +23,13 @@ export class BuilderService {
 
   private buildInProgress = false;
   private currentBuildStreamId: string | null = null;
+  private buildResolver: ((value: ActionState) => void) | null = null;
 
   lastCode = "";
 
   async build(): Promise<ActionState> {
+    this.notice.update(null);
+
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const sketchPath = tempPath + '/sketch';
@@ -34,7 +37,11 @@ export class BuilderService {
     const librariesPath = tempPath + '/libraries';
     const buildPath = tempPath + '/build';
 
-    this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
+    this.buildInProgress = true;
+    this.currentBuildStreamId = null;
+    this.buildResolver = null;
+
+    // this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
 
     // 创建临时文件夹
     await this.uiService.openTerminal();
@@ -66,6 +73,7 @@ export class BuilderService {
 
     if (!board) {
       console.error('缺少板子信息');
+      this.buildInProgress = false;
       return { state: 'error', text: '缺少板子信息' };
     }
 
@@ -75,6 +83,7 @@ export class BuilderService {
 
     if (!boardJson) {
       console.error('缺少板子信息');
+      this.buildInProgress = false;
       return { state: 'error', text: '缺少板子信息' };
     }
 
@@ -96,6 +105,7 @@ export class BuilderService {
 
     if (!compiler || !sdk) {
       console.error('缺少编译器或sdk');
+      this.buildInProgress = false;
       return { state: 'error', text: '缺少编译器或sdk' };
     }
 
@@ -108,6 +118,8 @@ export class BuilderService {
 
     // 创建返回的 Promise
     return new Promise<ActionState>((resolve, reject) => {
+      this.buildResolver = resolve;
+
       const compileCommand = `arduino-cli.exe ${compilerParam} --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}' --verbose`;
 
       const title = `正在编译 ${boardJson.name}`;
@@ -127,7 +139,12 @@ export class BuilderService {
         this.terminalService.executeWithStream(
           compileCommand,
           streamId,
-          (line) => {
+          async (line) => {
+            // 判断是否已取消，如果已取消则不在处理输出
+            if (!this.buildInProgress) {
+              resolve({ state: 'canceled', text: '编译已取消' });
+            }
+
             // 处理每一行输出
             const trimmedLine = line.trim();
 
@@ -151,9 +168,6 @@ export class BuilderService {
                 // 进度为100%时标记完成
                 if (progressValue === 100 && !buildCompleted) {
                   buildCompleted = true;
-                  // this.uiService.updateState({ state: 'done', text: '编译完成' });
-                  // this.message.success('编译成功');
-                  // resolve({ state: 'done', text: '编译完成' });
                 }
               }
             }
@@ -166,12 +180,15 @@ export class BuilderService {
 
             if (isErrored) {
               this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
+              this.buildInProgress = false;
+              await this.terminalService.stopStream(streamId);
+              reject({ state: 'error', text: errorText });
             } else {
               // 更新状态
               if (!buildCompleted) {
                 this.notice.update({
-                  title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: async () => {
-                    await this.cancelBuild();
+                  title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
+                    this.cancelBuild();
                   }
                 });
               } else {
@@ -179,6 +196,8 @@ export class BuilderService {
                 this.uiService.updateState({ state: 'done', text: '编译完成' });
 
                 this.buildInProgress = false;
+                this.buildResolver = null;
+                await this.terminalService.stopStream(streamId);
                 resolve({ state: 'done', text: '编译完成' });
               }
             }
@@ -188,49 +207,46 @@ export class BuilderService {
           this.uiService.updateState({ state: 'error', text: '编译失败' });
           this.message.error('编译失败: ' + error.message);
           this.buildInProgress = false;
+          this.buildResolver = null;
+          this.terminalService.stopStream(streamId);
           resolve({ state: 'error', text: error.message });
         });
-      });
+      })
     });
   }
 
   /**
  * 取消当前编译过程
  */
-  cancelBuild(): Promise<boolean> {
-    if (!this.buildInProgress) {
-      return Promise.resolve(false);
-    }
-
+  cancelBuild() {
     this.buildInProgress = false;
 
-    // 先尝试普通中断
-    return this.terminalService.interrupt()
+    if (this.buildResolver) {
+      this.buildResolver({ state: 'canceled', text: '编译已取消' });
+      this.buildResolver = null;
+    }
+
+    // 中断终端
+    this.terminalService.interrupt()
       .then(() => {
         // 如果当前有流ID，尝试停止流
         if (this.currentBuildStreamId) {
-          return window['terminal'].stopStream(
+          window['terminal'].stopStream(
             this.terminalService.currentPid,
             this.currentBuildStreamId
-          );
+          ).then(() => {
+            console.log('编译流已停止');
+            this.notice.update(null);
+            this.terminalService.stopStream(this.currentBuildStreamId);
+            this.currentBuildStreamId = null;
+            this.message.success('编译已中断');
+          });
         }
-        return Promise.resolve();
-      })
-      .then(() => {
-        // 等待短暂时间后，如果进程还在，使用强制终止
-        return new Promise(resolve => {
-          setTimeout(() => {
-            this.terminalService.killProcess('arduino-cli.exe')
-              .finally(() => resolve(true));
-          }, 1000);
-        });
-      })
-      .then(() => {
-        this.uiService.updateState({ state: 'canceled', text: '编译已取消' });
-        return true;
       })
       .catch(error => {
         console.error('取消编译失败:', error);
+        this.notice.update(null)
+        this.message.warning('取消编译失败: ' + error.message);
         return false;
       });
   }
