@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { ChangeDetectorRef, Component } from '@angular/core';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { NoticeOptions, NoticeService } from '../../../../services/notice.service';
 import { CommonModule } from '@angular/common';
@@ -24,7 +24,8 @@ export class NotificationComponent {
   animationDuration = 300; // 动画持续时间（毫秒）
 
   constructor(
-    private noticeService: NoticeService
+    private noticeService: NoticeService,
+    private cd:ChangeDetectorRef
   ) { }
 
   timer;
@@ -46,6 +47,7 @@ export class NotificationComponent {
           this.close();
         }, this.data.setTimeout);
       }
+      this.cd.detectChanges();
     });
   }
 
@@ -63,6 +65,7 @@ export class NotificationComponent {
     setTimeout(() => {
       this.data = null;
       this.willClose = false;
+      this.cd.detectChanges();
     }, 500);
   }
 
