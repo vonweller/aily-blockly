@@ -52,13 +52,31 @@ export class TerminalService {
     });
   }
 
+  async startStream(): Promise<string> {
+    if (!this.currentPid) {
+      throw new Error('终端未初始化');
+    }
+
+    const { streamId } = await window['terminal'].startStream(this.currentPid);
+    return streamId;
+  }
+
+  async stopStream(streamId: string): Promise<any> {
+    if (!this.currentPid) {
+      throw new Error('终端未初始化');
+    }
+
+    await window['terminal'].stopStream(this.currentPid, streamId);
+  }
+
   // 使用流式输出执行命令
   async executeWithStream(
     input: string,
+    streamId: string,
     lineCallback: (line: string) => void,
     completeCallback?: () => void
   ): Promise<any> {
-    const { streamId } = await window['terminal'].startStream(this.currentPid);
+    // const { streamId } = await window['terminal'].startStream(this.currentPid);
 
     // 注册监听器
     const removeListener = window['terminal'].onStreamData(
@@ -87,9 +105,30 @@ export class TerminalService {
       }, 300000); // 5分钟超时
     } catch (error) {
       // 出错时清理资源
-      window['electronAPI'].terminal.stopStream(this.currentPid, streamId);
+      window['terminal'].stopStream(this.currentPid, streamId);
       removeListener();
       throw error;
     }
+  }
+
+  /**
+ * 中断当前执行的命令
+ */
+  interrupt(): Promise<any> {
+    if (!this.currentPid) {
+      return Promise.reject('终端未初始化');
+    }
+    return window['terminal'].interrupt(this.currentPid);
+  }
+
+  /**
+   * 强制终止指定进程
+   * @param processName 可选，进程名称，如 'arduino-cli.exe'
+   */
+  killProcess(processName?: string): Promise<any> {
+    if (!this.currentPid) {
+      return Promise.reject('终端未初始化');
+    }
+    return window['electronAPI'].terminal.killProcess(this.currentPid, processName);
   }
 }

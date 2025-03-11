@@ -88,7 +88,6 @@ function registerTerminalHandlers(mainWindow) {
         // 临时数据处理函数
         const dataHandler = (e) => {
           // 累积所有输出
-          console.log("output: ", e);
           commandOutput += e;
 
           // 检查是否检测到命令提示符，表示命令已完成
@@ -253,6 +252,59 @@ function registerTerminalHandlers(mainWindow) {
 
       ptyProcess.kill();
       terminals.delete(parseInt(pid, 10));
+    }
+  });
+
+  // 在 terminal.js 的 registerTerminalHandlers 函数中添加
+  ipcMain.handle("terminal-interrupt", (event, { pid }) => {
+    const ptyProcess = terminals.get(parseInt(pid, 10));
+    if (!ptyProcess) {
+      return { success: false, error: 'Terminal not found' };
+    }
+
+    try {
+      // 发送 Ctrl+C 信号中断当前进程
+      if (process.platform === 'win32') {
+        // Windows 上发送 Ctrl+C
+        ptyProcess.write('\x03');
+      } else {
+        // Unix/Linux/macOS 上发送 SIGINT 信号
+        ptyProcess.write('\x03');
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || 'Failed to interrupt process' };
+    }
+  });
+
+  // 添加强制终止方法（当Ctrl+C不起作用时使用）
+  ipcMain.handle("terminal-kill-process", async (event, { pid, processName }) => {
+    const ptyProcess = terminals.get(parseInt(pid, 10));
+    if (!ptyProcess) {
+      return { success: false, error: 'Terminal not found' };
+    }
+
+    try {
+      if (process.platform === 'win32') {
+        // Windows上终止进程
+        if (processName) {
+          // 先尝试用taskkill终止指定名称的进程
+          ptyProcess.write(`taskkill /F /IM ${processName} /T\r`);
+        } else {
+          // 无名称则发送Ctrl+Break
+          ptyProcess.write('\x03\x1A');  // Ctrl+C 然后 Ctrl+Z
+        }
+      } else {
+        // Unix系统
+        ptyProcess.write('\x03\x1A');  // Ctrl+C 然后 Ctrl+Z
+        // 也可以使用 killall
+        if (processName) {
+          ptyProcess.write(`pkill -9 ${processName}\r`);
+        }
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message || '终止进程失败' };
     }
   });
 

@@ -42,7 +42,7 @@ export class NotificationComponent {
       if (this.timer) {
         clearTimeout(this.timer);
       }
-      if (this.data.setTimeout) {
+      if (this.data?.setTimeout) {
         this.timer = setTimeout(() => {
           this.close();
         }, this.data.setTimeout);
