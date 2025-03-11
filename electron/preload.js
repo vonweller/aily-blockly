@@ -78,7 +78,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
         input: command + '\r',
         streamId
       });
-    }
+    },
+
+    // 中断当前执行的命令（发送 Ctrl+C）
+    interrupt: (pid) => ipcRenderer.invoke("terminal-interrupt", { pid }),
+
+    // 强制终止进程（当普通中断无效时）
+    killProcess: (pid, processName) => ipcRenderer.invoke("terminal-kill-process", { pid, processName }),
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),

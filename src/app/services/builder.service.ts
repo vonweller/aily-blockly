@@ -21,6 +21,11 @@ export class BuilderService {
     private notice: NoticeService
   ) { }
 
+  private buildInProgress = false;
+  private currentBuildStreamId: string | null = null;
+
+  lastCode = "";
+
   async build(): Promise<ActionState> {
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
@@ -41,6 +46,7 @@ export class BuilderService {
 
     // 生成sketch文件
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    this.lastCode = code;
     await window['file'].writeFileSync(sketchFilePath, code);
 
     // TODO 生成libraries中的文件
@@ -60,7 +66,7 @@ export class BuilderService {
 
     if (!board) {
       console.error('缺少板子信息');
-      return;
+      return { state: 'error', text: '缺少板子信息' };
     }
 
     // 获取板子信息(board.json)
@@ -69,7 +75,7 @@ export class BuilderService {
 
     if (!boardJson) {
       console.error('缺少板子信息');
-      return;
+      return { state: 'error', text: '缺少板子信息' };
     }
 
     // 获取编译命令
@@ -90,7 +96,7 @@ export class BuilderService {
 
     if (!compiler || !sdk ) {
       console.error('缺少编译器或sdk');
-      return;
+      return { state: 'error', text: '缺少编译器或sdk' };
     }
 
     // 组合编译器、sdk、tools的路径
@@ -114,64 +120,114 @@ export class BuilderService {
       let isErrored = false;
       let errorText = '编译失败';
 
-      // 使用流式输出执行命令
-      this.terminalService.executeWithStream(
-        compileCommand,
-        (line) => {
-          // 处理每一行输出
-          const trimmedLine = line.trim();
+      this.terminalService.startStream().then(streamId => {
+        this.currentBuildStreamId = streamId;
 
-          // 提取构建文本
-          if (trimmedLine.startsWith('BuildText:')) {
-            const buildText = trimmedLine.replace('BuildText:', '').trim();
-            console.log("Build text:", buildText);
-            lastBuildText = buildText;
-            // this.uiService.updateState({ state: 'doing', text: buildText });
-          }
-          // 提取进度信息
-          else if (trimmedLine.startsWith('progress')) {
-            console.log(trimmedLine);
-            const progressInfo = trimmedLine.replace('progress', '').trim();
-            const progressMatch = progressInfo.match(/(\d+)%?/);
+        // 使用流式输出执行命令
+        this.terminalService.executeWithStream(
+          compileCommand,
+          streamId,
+          (line) => {
+            // 处理每一行输出
+            const trimmedLine = line.trim();
 
-            if (progressMatch) {
-              const progressValue = parseInt(progressMatch[1], 10);
-              lastProgress = progressValue;
+            // 提取构建文本
+            if (trimmedLine.startsWith('BuildText:')) {
+              const buildText = trimmedLine.replace('BuildText:', '').trim();
+              console.log("Build text:", buildText);
+              lastBuildText = buildText;
+              // this.uiService.updateState({ state: 'doing', text: buildText });
+            }
+            // 提取进度信息
+            else if (trimmedLine.startsWith('progress')) {
+              console.log(trimmedLine);
+              const progressInfo = trimmedLine.replace('progress', '').trim();
+              const progressMatch = progressInfo.match(/(\d+)%?/);
 
-              // 进度为100%时标记完成
-              if (progressValue === 100 && !buildCompleted) {
-                buildCompleted = true;
-                // this.uiService.updateState({ state: 'done', text: '编译完成' });
-                // this.message.success('编译成功');
-                // resolve({ state: 'done', text: '编译完成' });
+              if (progressMatch) {
+                const progressValue = parseInt(progressMatch[1], 10);
+                lastProgress = progressValue;
+
+                // 进度为100%时标记完成
+                if (progressValue === 100 && !buildCompleted) {
+                  buildCompleted = true;
+                  // this.uiService.updateState({ state: 'done', text: '编译完成' });
+                  // this.message.success('编译成功');
+                  // resolve({ state: 'done', text: '编译完成' });
+                }
               }
             }
-          }
-          // 检查错误信息
-          else if (trimmedLine.toLowerCase().includes('error:') ||
-            trimmedLine.toLowerCase().includes('failed')) {
-            console.error("检测到编译错误:", trimmedLine);
-            isErrored = true;
-          }
-
-          if (isErrored) {
-            this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
-          } else {
-            // 更新状态
-            if (!buildCompleted) {
-              this.notice.update({ title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0 });
-            } else {
-              this.notice.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
-              this.uiService.updateState({ state: 'done', text: '编译完成' });
+            // 检查错误信息
+            else if (trimmedLine.toLowerCase().includes('error:') ||
+              trimmedLine.toLowerCase().includes('failed')) {
+              console.error("检测到编译错误:", trimmedLine);
+              isErrored = true;
             }
-          }
-        },
-      ).catch(error => {
-        console.error("编译命令执行失败:", error);
-        this.uiService.updateState({ state: 'error', text: '编译失败' });
-        this.message.error('编译失败: ' + error.message);
-        resolve({ state: 'error', text: '编译失败' });
+
+            if (isErrored) {
+              this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
+            } else {
+              // 更新状态
+              if (!buildCompleted) {
+                this.notice.update({ title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0 });
+              } else {
+                this.notice.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
+                this.uiService.updateState({ state: 'done', text: '编译完成' });
+
+                this.buildInProgress = false;
+                resolve({ state: 'done', text: '编译完成' });
+              }
+            }
+          },
+        ).catch(error => {
+          console.error("编译命令执行失败:", error);
+          this.uiService.updateState({ state: 'error', text: '编译失败' });
+          this.message.error('编译失败: ' + error.message);
+          this.buildInProgress = false;
+          resolve({ state: 'error', text: error.message });
+        });
       });
     });
+  }
+
+  /**
+ * 取消当前编译过程
+ */
+  cancelBuild(): Promise<boolean> {
+    if (!this.buildInProgress) {
+      return Promise.resolve(false);
+    }
+
+    this.buildInProgress = false;
+
+    // 先尝试普通中断
+    return this.terminalService.interrupt()
+      .then(() => {
+        // 如果当前有流ID，尝试停止流
+        if (this.currentBuildStreamId) {
+          return window['terminal'].stopStream(
+            this.terminalService.currentPid,
+            this.currentBuildStreamId
+          );
+        }
+        return Promise.resolve();
+      })
+      .then(() => {
+        // 等待短暂时间后，如果进程还在，使用强制终止
+        return new Promise(resolve => {
+          setTimeout(() => {
+            this.terminalService.killProcess('arduino-cli.exe')
+              .finally(() => resolve(true));
+          }, 1000);
+        });
+      })
+      .then(() => {
+        this.uiService.updateState({ state: 'canceled', text: '编译已取消' });
+        return true;
+      })
+      .catch(error => {
+        console.error('取消编译失败:', error);
+        return false;
+      });
   }
 }
