@@ -12,7 +12,7 @@ export class NoticeService {
 
   constructor() { }
 
-  update(opts: NoticeOptions) {
+  update(opts: NoticeOptions | null) {
     this.stateSubject.next(opts);
   }
 }
