@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
-import { NoticeOptions, NoticeService } from '../../../services/notice.service';
+import { NoticeOptions, NoticeService } from '../../../../services/notice.service';
 import { CommonModule } from '@angular/common';
 
 @Component({
@@ -43,11 +43,7 @@ export class NotificationComponent {
       }
       if (this.data.setTimeout) {
         this.timer = setTimeout(() => {
-          this.willClose = true;
-          setTimeout(() => {
-            this.data = null;
-            this.willClose = false;
-          }, 500);
+          this.close();
         }, this.data.setTimeout);
       }
     });
@@ -63,7 +59,11 @@ export class NotificationComponent {
   }
 
   close() {
-    this.data = null;
+    this.willClose = true;
+    setTimeout(() => {
+      this.data = null;
+      this.willClose = false;
+    }, 500);
   }
 
   // 开始进度动画
@@ -102,6 +102,18 @@ export class NotificationComponent {
   // 缓动函数，使动画更自然
   easeOutQuad(t: number): number {
     return t * (2 - t);
+  }
+
+  stop() {
+    this.data.stop();
+  }
+
+  view() {
+    console.log('viewDetail');
+  }
+
+  askAI() {
+    console.log('askAI');
   }
 
 }

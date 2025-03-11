@@ -7,7 +7,6 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
-import { ToolContainerComponent } from '../components/tool-container/tool-container.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
@@ -15,7 +14,7 @@ import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { NotificationComponent } from './components/notification/notification.component';
+import { NotificationComponent } from '../tools/blockly-editor/components/notification/notification.component';
 import { NoticeService } from '../services/notice.service';
 
 @Component({
@@ -33,7 +32,6 @@ import { NoticeService } from '../services/notice.service';
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
-    NotificationComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -60,8 +58,7 @@ export class MainWindowComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private message: NzMessageService,
-    private cd: ChangeDetectorRef,
-    private notice: NoticeService
+    private cd: ChangeDetectorRef
   ) { }
 
   ngOnInit(): void {
@@ -134,29 +131,4 @@ export class MainWindowComponent {
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
   }
-
-  // progress = 0;
-  // test(e) {
-  //   switch (e) {
-  //     case '+':
-  //       this.progress += 10;
-  //       this.notice.update({ title: 'test', text: 'test', state: 'doing', progress: this.progress, setTimeout: 0 });
-  //       break;
-  //     case '-':
-  //       this.progress -= 10;
-  //       this.notice.update({ title: 'test', text: 'test', state: 'doing', progress: this.progress, setTimeout: 0 });
-  //       break;
-  //     case 'done':
-  //       this.notice.update({ title: 'test', text: 'test', state: 'done', setTimeout: 55000 });
-  //       break;
-  //     case 'error':
-  //       this.notice.update({ title: 'test', text: 'test', state: 'error', setTimeout: 55000 });
-  //       break;
-  //     case 'warn':
-  //       this.notice.update({ title: 'test', text: 'test', state: 'warn', setTimeout: 55000 });
-  //       break;
-  //     default:
-  //       break;
-  //   }
-  // }
 }

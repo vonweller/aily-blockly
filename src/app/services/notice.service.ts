@@ -22,5 +22,6 @@ export interface NoticeOptions {
   text?: string,
   state?: string,
   progress?: number,
-  setTimeout?: number
+  setTimeout?: number,
+  stop?: Function,
 }

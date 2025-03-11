@@ -1,31 +1,33 @@
 .notification-box {
-    position: fixed;
-    bottom: 44px;
+    position: absolute;
+    bottom: 16px;
     right: 16px;
     display: flex;
     align-items: center;
-    background: rgba(15, 15, 15, 0.8);
-    padding: 15px;
+    background: rgba(10, 10, 10, 0.8);
+    padding: 15px 0 15px 15px;
     border-radius: 10px;
     box-shadow: 0 0 5px 0 rgba(0, 0, 0, 0.1);
-    width: 260px;
+    min-width: 250px;
+    max-width: 400px;
 
     .box {
         width: 60px;
         height: 60px;
         border-radius: 50%;
-        border:5px solid #5c5c5c;
+        border: 5px solid #5c5c5c;
         position: relative;
+        flex-shrink: 0;
 
-        .num-box{
+        .num-box {
             position: absolute;
         }
-        
-        i{
+
+        i {
             font-size: 35px;
         }
 
-        .fa-spinner-third{
+        .fa-spinner-third {
             font-size: 59.5px;
         }
 
@@ -33,7 +35,7 @@
             color: #007400;
         }
 
-        &.done{
+        &.done {
             border-color: #007400;
         }
 
@@ -41,7 +43,7 @@
             color: rgb(139, 0, 0);
         }
 
-        &.error{
+        &.error {
             border-color: rgb(139, 0, 0);
         }
 
@@ -50,33 +52,53 @@
             font-size: 32px;
         }
 
-        &.warn{
+        &.warn {
             border-color: rgb(255, 119, 0);
         }
     }
 
     .text-box {
         margin-left: 15px;
+        width: calc(100% - 115px);
 
-        >div:last-child {
-            margin-top: 5px;
+        >div:nth-child(2) {
+            margin-top: 4px;
             color: #999;
+            white-space: wrap;
+        }
+
+        .btns {
+            margin-top: 2px;
+            display: flex;
+
+            .btn {
+                margin-right: 15px;
+            }
+
+            .red {
+                color: rgb(192, 20, 20);
+
+                &:hover {
+                    color: rgb(241, 89, 89);
+                }
+            }
         }
     }
 
     &:hover {
         .btn {
             visibility: visible;
+            color: rgb(63, 177, 230);
+
+            &:hover {
+                color: rgb(116, 192, 228);
+            }
         }
     }
 
-    .btn {
-        visibility: hidden;
+    .close {
         width: 40px;
         height: 40px;
-        position: absolute;
-        right: 0px;
-        top: 0px;
         font-size: 20px;
     }
 }

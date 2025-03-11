@@ -10,3 +10,21 @@ blockly-main {
         }
     }
 }
+
+.test {
+    position: fixed;
+    top: 300px;
+    right: 100px;
+    display: flex;
+    >div{
+      cursor: pointer;
+      width: 50px;
+      height: 30px;
+      background: red;
+      color: white;
+      margin-right: 2px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  }
