@@ -51,7 +51,7 @@ export class NotificationComponent {
           this.close();
         }, this.data.setTimeout);
       }
-      this.tempWidth = 100 + this.getTextWidth();
+      this.tempWidth = 112 + this.getTextWidth();
       this.cd.detectChanges();
     });
   }
@@ -120,16 +120,8 @@ export class NotificationComponent {
     }
     const span = this.renderer.createElement('span');
     this.renderer.setStyle(span, 'position', 'absolute');
-    this.renderer.setStyle(span, 'visibility', 'hidden');
     this.renderer.setStyle(span, 'white-space', 'nowrap');
     this.renderer.setStyle(span, 'font-size', '12px');
-    this.renderer.setStyle(span, 'font-family', 'PingFang SC');
-    this.renderer.setStyle(span, 'font-weight', '400');
-    this.renderer.setStyle(span, 'line-height', '20px');
-    this.renderer.setStyle(span, 'padding', '0 10px');
-    this.renderer.setStyle(span, 'border-radius', '10px');
-    this.renderer.setStyle(span, 'background-color', 'rgba(0, 0, 0, 0.5)');
-    this.renderer.setStyle(span, 'color', '#fff');
     this.renderer.setStyle(span, 'opacity', '0');
     this.renderer.setStyle(span, 'z-index', '-1');
     this.renderer.appendChild(span, this.renderer.createText(text));
