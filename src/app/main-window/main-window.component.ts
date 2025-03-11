@@ -96,8 +96,11 @@ export class MainWindowComponent {
     this.projectService.stateSubject.subscribe((state) => {
       switch (state) {
         case 'loading':
-          this.message.loading('Project Loading...');
-          this.loaded = true;
+          this.loaded = false;
+          setTimeout(() => {
+            this.message.loading('Project Loading...');
+            this.loaded = true;
+          }, 100);
           break;
         case 'loaded':
           this.message.remove();

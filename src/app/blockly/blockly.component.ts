@@ -57,13 +57,13 @@ export class BlocklyComponent {
   }
 
   constructor(
-    private blocklyService: BlocklyService,
-    // private modal: NzModalService,
+    private blocklyService: BlocklyService
   ) { }
 
   ngOnInit(): void { }
 
   ngAfterViewInit(): void {
+    // this.blocklyService.init();
     setTimeout(async () => {
       // 禁用blockly的警告
       console.warn = (function (originalWarn) {
@@ -166,10 +166,13 @@ export class BlocklyComponent {
 
       window['Arduino'] = <any>arduinoGenerator;
       (window as any)['Blockly'] = Blockly;
-      // this.blocklyService.init();
       // await this.loadLibraries();
       // this.loadDefaultData();
     }, 50);
+  }
+
+  ngOnDestroy(): void {
+    this.blocklyService.reset();
   }
 
   // 加载库

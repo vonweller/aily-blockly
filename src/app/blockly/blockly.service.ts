@@ -25,9 +25,9 @@ export class BlocklyService {
 
   constructor(private http: HttpClient) { }
 
-  async init() {
-
-  }
+  // async init() {
+  //   this.workspace = null;
+  // }
 
   loadBoardConfig(boardConfig) {
     this.boardConfig = boardConfig
@@ -253,6 +253,55 @@ export class BlocklyService {
     // 注意：已注册的generator函数可能无法直接移除
   }
 
+  reset() {
+    // 清理所有注册的自定义块
+    // for (const blockType in Blockly.Blocks) {
+    //   // 只清理自定义块，保留内置块
+    //   if (Blockly.Blocks.hasOwnProperty(blockType) && !blockType.startsWith('builtin_')) {
+    //     delete Blockly.Blocks[blockType];
+    //   }
+    // }
+
+    // 移除所有加载的脚本标签（block.js 和 generator.js）
+    const scripts = document.getElementsByTagName('script');
+    const scriptSrcsToRemove = [];
+
+    for (let i = 0; i < scripts.length; i++) {
+      const scriptSrc = scripts[i].src;
+      // 检查脚本是否是库相关的
+      if (scriptSrc.includes('/block.js') || scriptSrc.includes('/generator.js')) {
+        scriptSrcsToRemove.push(scripts[i]);
+      }
+    }
+
+    // 移除已标记的脚本标签
+    scriptSrcsToRemove.forEach(script => {
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    });
+
+    // // 清理生成器函数
+    // if (Blockly.Arduino) {
+    //   // 重置任何可能已注册的Arduino生成器函数
+    //   // 注意：具体实现可能需要根据您的生成器结构进行调整
+    //   Blockly.Arduino = {}; // 或者保留基本结构但清除自定义函数
+    // }
+
+    // 处理工作区
+    if (this.workspace) {
+      this.workspace.dispose();
+    }
+
+    // 重置工具箱
+    this.toolbox = {
+      kind: 'categoryToolbox',
+      contents: [],
+    };
+
+    // 重置其他可能的状态
+    this.codeSubject.next('');
+  }
 }
 
 export interface LibData {

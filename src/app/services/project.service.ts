@@ -234,7 +234,9 @@ export class ProjectService {
 
 
   // 另存为项目
-  projectSaveAs() { }
+  projectSaveAs(path) { 
+    // 导出blockly json配置并保存    
+  }
 
 
   // 通过localStorage存储最近打开的项目
