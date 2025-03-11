@@ -36,7 +36,7 @@ export class BuilderService {
     await this.terminalService.sendCmd(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-    
+
     await this.terminalService.sendCmd(`cd "${tempPath}"`);
 
     // 生成sketch文件
@@ -79,7 +79,7 @@ export class BuilderService {
     // 获取编译器、sdk、tool的名称和版本
     let compiler = ""
     let sdk = ""
-  
+
     Object.entries(boardDependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/compiler-')) {
         compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
@@ -88,7 +88,7 @@ export class BuilderService {
       }
     });
 
-    if (!compiler || !sdk ) {
+    if (!compiler || !sdk) {
       console.error('缺少编译器或sdk');
       return;
     }
@@ -159,7 +159,13 @@ export class BuilderService {
           } else {
             // 更新状态
             if (!buildCompleted) {
-              this.notice.update({ title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0 });
+              this.notice.update({
+                title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
+                  // this.terminalService.kill();
+                  console.log("停止编译");
+                  
+                }
+              });
             } else {
               this.notice.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
               this.uiService.updateState({ state: 'done', text: '编译完成' });
