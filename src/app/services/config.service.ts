@@ -7,10 +7,14 @@ import { lastValueFrom } from 'rxjs';
 })
 export class ConfigService {
 
+  data = {}
+
   constructor(private http: HttpClient) { }
 
   async init() {
-    await this.loadBoardList();
+    let configFilePath = window['path'].getElectronPath();
+    this.data = await JSON.parse(window['file'].readFileSync(`${configFilePath}/config.json`));
+    console.log(this.data);
   }
 
   configData;

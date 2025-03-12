@@ -12,13 +12,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   path: {
     getUserHome: () => require("os").homedir(),
     getAppData: () => process.env.AILY_APPDATA_PATH,
-    getUserDocuments: () => {
-      let path = require("os").homedir() + "\\Documents";
-      return path;
-    },
-    isExists: (path) => {
-      return require("fs").existsSync(path);
-    },
+    getUserDocuments: () => require("os").homedir() + "\\Documents",
+    isExists: (path) => existsSync(path),
+    getElectronPath: () => __dirname,
   },
   versions: () => process.versions,
   SerialPort: {

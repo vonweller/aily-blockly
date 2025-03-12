@@ -56,7 +56,7 @@ export class ProjectNewComponent {
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
-      this.newProjectData.path = window['path'].getUserDocuments() + '\\aily-project';
+      this.newProjectData.path = window['path'].getUserDocuments() + '\\aily-project\\';
     }
     this.boardList = await this.configService.loadBoardList();
     this.currentBoard = this.boardList[0];
