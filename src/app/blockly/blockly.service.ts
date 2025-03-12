@@ -306,6 +306,16 @@ export class BlocklyService {
   getWorkspaceJson() {
     return Blockly.serialization.workspaces.save(this.workspace);
   }
+
+  // 创建变量用
+  prompt(message: string, defaultValue: string = '') {
+    // const dialogRef = this.dialog.open(PromptDialogComponent, {
+    //   width: '300px',
+    //   data: { message, defaultValue }
+    // });
+
+    // return dialogRef.afterClosed();
+  }
 }
 
 export interface LibData {

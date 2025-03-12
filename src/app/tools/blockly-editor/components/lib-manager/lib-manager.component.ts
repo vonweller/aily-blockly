@@ -61,7 +61,7 @@ export class LibManagerComponent {
 
   async checkInstalled() {
     // 获取已经安装的包，用于在界面上显示"移除"按钮
-    this.installedPackageList = await this.npmService.getInstalledPackageList(this.projectService.currentProjectPath)
+    this.installedPackageList = await this.npmService.getInstalledPackageList(this.projectService.currentProjectPath);
     this.cd.detectChanges();
   }
 

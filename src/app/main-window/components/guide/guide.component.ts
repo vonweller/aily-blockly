@@ -56,6 +56,13 @@ export class GuideComponent {
       case 'explorer':
         this.openProject(item.data);
         break;
+      case 'other':
+        if (item.data.action == 'openByBrowser') {
+          window['other'].openByBrowser(item.data.url);
+        }
+        break;
+      default:
+        break;
     }
   }
 }

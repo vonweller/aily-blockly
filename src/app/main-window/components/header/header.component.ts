@@ -208,7 +208,7 @@ export class HeaderComponent {
         }
         break;
       case 'other':
-        if (item.data.action == 'openByExplorer') {  
+        if (item.data.action == 'openByExplorer') {
           window['other'].openByExplorer(this.projectService.currentProjectPath);
         } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);

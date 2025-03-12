@@ -10,13 +10,15 @@ import './plugins/toolbox-search/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
-import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
-
+// import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 import './custom-category';
+import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 
 @Component({
   selector: 'blockly-main',
-  imports: [],
+  imports: [
+    PromptDialogComponent
+  ],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
 })
@@ -59,7 +61,9 @@ export class BlocklyComponent {
     private blocklyService: BlocklyService
   ) { }
 
-  ngOnInit(): void { }
+  ngOnInit(): void {
+    this.setPrompt();
+  }
 
   ngAfterViewInit(): void {
     // this.blocklyService.init();
@@ -173,6 +177,29 @@ export class BlocklyComponent {
 
   ngOnDestroy(): void {
     this.blocklyService.reset();
+  }
+
+
+  showPromptDialog = false;
+  defaultValue = 'value';
+  setPrompt() {
+    Blockly.dialog.setPrompt((message, defaultValue) => {
+      // console.log('message：', message);
+      // console.log('defaultValue：', defaultValue);
+      return new Promise((resolve) => {
+        this.showPromptDialog = true;
+        this.defaultValue = defaultValue;
+        // resolve(value);
+      });
+    });
+  }
+
+  closePromptDialog() {
+    this.showPromptDialog = false;
+  }
+
+  varNameChange(e) {
+    console.log('varNameChange', e);
   }
 
 }
