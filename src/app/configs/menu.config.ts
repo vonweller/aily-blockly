@@ -129,9 +129,13 @@ export let HEADER_MENU: IMenuItem[] = [
   },
   {
     name: '关于本软件',
-    action: 'open-url',
-    data: { type: 'window', path: 'about', alwaysOnTop: true, width: 700, height: 550 },
-    icon: 'fa-light fa-a',
+    data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },
+    icon: 'fa-light fa-globe-pointer',
+  },
+  {
+    name: 'Github',
+    data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/ailyProject/aily-blockly' },
+    icon: 'fa-brands fa-github-alt',
   },
   {
     sep: true,
@@ -156,12 +160,12 @@ export let GUIDE_MENU: IMenuItem[] = [
   },
   {
     name: '用户手册',
-    data: { type: 'other', action: 'openByBrowser', data: 'https://aily.pro/doc' },
+    data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro/doc' },
     icon: 'fa-light fa-book-open-cover',
   },
   {
     name: '示例程序',
-    data: { type: 'other', action: 'openByBrowser', data: 'https://aily.pro' },
+    data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },
     icon: 'fa-light fa-books',
   }
 ]

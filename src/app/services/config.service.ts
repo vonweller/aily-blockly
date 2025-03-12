@@ -7,7 +7,7 @@ import { lastValueFrom } from 'rxjs';
 })
 export class ConfigService {
 
-  data = {}
+  data: AppConfig;
 
   constructor(private http: HttpClient) { }
 
@@ -17,15 +17,9 @@ export class ConfigService {
     console.log(this.data);
   }
 
-  configData;
-  async loadConfigFile() {
-    let appPath = window['path'].join(window['app'].getPath('userData'), 'config.json');
-    this.configData = await JSON.parse(window['file'].readFileSync(`${appPath}/config.json`));
-  }
-
-  async saveConfigFile() {
-    let appPath = window['path'].join(window['app'].getPath('userData'), 'config.json');
-    window['file'].writeFileSync(`${appPath}/config.json`, JSON.stringify(this.configData, null, 2));
+  async save() {
+    let configFilePath = window['path'].getElectronPath();
+    window['file'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 
   boardList;
@@ -46,5 +40,23 @@ export class ConfigService {
       }),
     );
     return this.libraryList;
+  }
+}
+
+interface AppConfig {
+  "lang": "zh_CN" | "en_US",
+  "theme": "default" | "dark" | "light",
+  // "font": "default",
+  "project_path": "%HOMEPATH%\\Documents\\aily-project",
+  "npm_registry": string[],
+  "board_list": string[],
+  "lib_list": string[],
+  "compile": {
+    "verbose": boolean,
+    "warnings": "error" | "warning" | "none"
+  },
+  "upload": {
+    "verbose": true,
+    "warnings": "error" | "warning" | "none"
   }
 }
