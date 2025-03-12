@@ -49,7 +49,7 @@ export class ProjectService {
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用  
- async init() {
+  async init() {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-receive', async (event, message) => {
@@ -110,7 +110,7 @@ export class ProjectService {
     // this.uiService.
     // 0. 判断路径是否存在
     this.currentProjectPath = projectPath;
-    const pathExist = window['path'].isExists(projectPath);
+    const pathExist = window['path'].isExists(projectPath + '/project.abi');
     if (!pathExist) {
       console.log('path not exist: ', projectPath);
       this.message.warning('该项目路径不存在');
