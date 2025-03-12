@@ -83,13 +83,13 @@ export let HEADER_MENU: IMenuItem[] = [
   {
     name: '保存项目',
     text: 'Ctrl + S',
-    action: 'project-save',
+    data: { type: 'cmd', data: 'save' },
     icon: 'fa-light fa-file-circle-check',
   },
   {
     name: '另存为',
     text: 'Ctrl + Shift + S',
-    action: 'project-save-as',
+    data: { type: 'cmd', data: 'save-as' },
     icon: 'fa-light fa-copy',
   },
   {

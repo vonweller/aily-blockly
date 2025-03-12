@@ -302,6 +302,10 @@ export class BlocklyService {
     // 重置其他可能的状态
     this.codeSubject.next('');
   }
+
+  getWorkspaceJson() {
+    return Blockly.serialization.workspaces.save(this.workspace);
+  }
 }
 
 export interface LibData {

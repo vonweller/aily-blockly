@@ -179,6 +179,7 @@ app.on("activate", () => {
 });
 
 // 项目管理相关
+// 打开项目用
 ipcMain.handle("select-folder", async (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(senderWindow, {
@@ -189,6 +190,37 @@ ipcMain.handle("select-folder", async (event, data) => {
     return data.path;
   }
   return result.filePaths[0];
+});
+
+// 另存为用
+ipcMain.handle("select-folder-saveAs", async (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  
+  // 构建默认路径，确保包含建议的文件名
+  let defaultPath;
+  if (data.path) {
+    defaultPath = data.path;
+    // 如果同时提供了建议名称，则附加到路径上
+    if (data.suggestedName) {
+      defaultPath = path.join(defaultPath, data.suggestedName);
+    }
+  } else if (data.suggestedName) {
+    defaultPath = path.join(app.getPath('documents'), data.suggestedName);
+  } else {
+    defaultPath = app.getPath('documents');
+  }
+  const result = await dialog.showSaveDialog(senderWindow, {
+    defaultPath: defaultPath,
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+    buttonLabel: '保存',
+    title: '项目另存为'
+  });
+  
+  if (result.canceled) {
+    return data.path || '';
+  }
+  // 直接返回用户选择的完整路径，保留文件名部分
+  return result.filePath;
 });
 
 // 环境变量

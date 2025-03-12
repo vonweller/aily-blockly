@@ -228,14 +228,30 @@ export class ProjectService {
   }
 
   // 保存项目
-  projectSave() {
+  save(path = this.currentProjectPath) {
     // 导出blockly json配置并保存
+    const jsonData = this.blocklyService.getWorkspaceJson();
+    window['file'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData, null, 2));
+    this.stateSubject.next('saved');
   }
 
-
-  // 另存为项目
-  projectSaveAs(path) {
-    // 导出blockly json配置并保存    
+  saveAs(path) {
+    //在当前路径下创建一个新的目录
+    window['file'].mkdirSync(path);
+    // 复制项目目录到新路径
+    window['file'].copySync(this.currentProjectPath, path);
+    // 修改package.json文件
+    this.save(path);
+    // 修改package.json文件
+    const packageJson = JSON.parse(window['file'].readFileSync(`${path}/package.json`));
+    // 获取新的项目名称
+    let name = path.split('\\').pop();
+    packageJson.name = name;
+    window['file'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
+    // 修改当前项目路径
+    this.currentProjectPath = path;
+    this.currentPackageData = packageJson;
+    this.addRecentlyProject({ name: this.currentPackageData.name, path: path });
   }
 
 
