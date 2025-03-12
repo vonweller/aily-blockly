@@ -102,6 +102,8 @@ function loadEnv() {
   process.env.AILY_TOOLS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools");
   // 默认全局SDK路径
   process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
+  // zip包下载地址
+  process.env.AILY_ZIP_URL = 'https://blockly.openjumper.cn/'
 }
 
 
