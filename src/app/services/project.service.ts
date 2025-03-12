@@ -254,6 +254,15 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path });
   }
 
+  close() {
+    this.currentProjectPath = '';
+    this.currentPackageData = {
+      name: 'aily blockly',
+    };
+    this.stateSubject.next('default');
+    this.uiService.closeTerminal();
+  }
+
 
   // 通过localStorage存储最近打开的项目
   get recentlyProjects(): any[] {

@@ -61,7 +61,23 @@ export class HeaderComponent {
 
   ngAfterViewInit(): void {
     this.projectService.stateSubject.subscribe((state) => {
-      this.loaded = state == 'loaded';
+      if (state == 'loaded') {
+        this.loaded = true;
+        // 将headerMenu中有disabled的按钮置为可用
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled) {
+            menu.disabled = false;
+          }
+        });
+      } else {
+        this.loaded = false;
+        // 将headerMenu中有disabled的按钮置禁用
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled === false) {
+            menu.disabled = true;
+          }
+        });
+      }
       this.cd.detectChanges();
     });
     this.listenShortcutKeys();
@@ -115,6 +131,7 @@ export class HeaderComponent {
   }
 
   onMenuClick(item) {
+    if (item.disabled) return;
     this.process(item);
     this.closeMenu();
   }
@@ -186,11 +203,14 @@ export class HeaderComponent {
           if (path) {
             this.projectService.saveAs(path);
           }
+        } else if (item.data.data === 'close') {
+          this.projectService.close();
         }
         break;
       case 'other':
         if (item.data.action == 'openByExplorer') {
-          window['other'].openByExplorer(window['path'].getUserDocuments());
+          let path = this.projectService.currentProjectPath;
+          window['other'].openByExplorer(path);
         } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);
         } else if (item.data.action == 'exitApp') {
