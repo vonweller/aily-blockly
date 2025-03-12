@@ -14,6 +14,8 @@ function stripAnsiEscapeCodes(text) {
 
 function registerTerminalHandlers(mainWindow) {
   ipcMain.handle("terminal-create", (event, args) => {
+    console.log("terminal-create args ", args);
+    
     return new Promise((resolve, reject) => {
       const shell = process.platform === "win32" ? "powershell.exe" : "bash";
       const ptyProcess = pty.spawn(shell, [], {

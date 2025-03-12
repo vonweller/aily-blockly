@@ -67,7 +67,7 @@ export class ProjectService {
           });
         }
       });
-      this.currentProjectPath = await window['env'].get("AILY_PROJECT_PATH");
+      this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
     }
   }
 
@@ -255,15 +255,15 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path });
   }
 
-  close() {
+  async close() {
     this.currentProjectPath = '';
     this.currentPackageData = {
       name: 'aily blockly',
     };
     this.stateSubject.next('default');
     this.uiService.closeTerminal();
+    this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
   }
-
 
   // 通过localStorage存储最近打开的项目
   get recentlyProjects(): any[] {
