@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getUserHome: () => require("os").homedir(),
     getAppData: () => process.env.AILY_APPDATA_PATH,
     getUserDocuments: () => {
-      let path = require("os").homedir() + "\\Documents\\aily-project";
+      let path = require("os").homedir() + "\\Documents";
       if (!require("fs").existsSync(path)) {
         require("fs").mkdirSync(path, { recursive: true });
       }

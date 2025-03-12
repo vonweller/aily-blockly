@@ -49,7 +49,7 @@ export class ProjectService {
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用  
-  init(): void {
+ async init() {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-receive', async (event, message) => {
@@ -67,6 +67,7 @@ export class ProjectService {
           });
         }
       });
+      this.currentProjectPath = await window['env'].get("AILY_PROJECT_PATH");
     }
   }
 

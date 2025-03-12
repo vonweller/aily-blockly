@@ -208,8 +208,8 @@ export class HeaderComponent {
         }
         break;
       case 'other':
-        if (item.data.action == 'openByExplorer') {
-          let path = this.projectService.currentProjectPath;
+        if (item.data.action == 'openByExplorer') {  
+          let path = this.projectService.currentProjectPath.replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());       
           window['other'].openByExplorer(path);
         } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);

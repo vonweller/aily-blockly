@@ -69,7 +69,7 @@ function loadEnv() {
   // 将child目录添加到环境变量PATH中
   const childPath = path.join(__dirname, "..", "child")
   process.env.PATH = childPath + path.delimiter + process.env.PATH;
-  
+
   // node环境加载
   checkNodePath(childPath)
 
@@ -102,6 +102,8 @@ function loadEnv() {
   process.env.AILY_TOOLS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools");
   // 默认全局SDK路径
   process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
+
+  process.env.AILY_PROJECT_PATH = conf["project_path"];
 }
 
 
@@ -195,7 +197,7 @@ ipcMain.handle("select-folder", async (event, data) => {
 // 另存为用
 ipcMain.handle("select-folder-saveAs", async (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  
+
   // 构建默认路径，确保包含建议的文件名
   let defaultPath;
   if (data.path) {
@@ -215,7 +217,7 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
     buttonLabel: '保存',
     title: '项目另存为'
   });
-  
+
   if (result.canceled) {
     return data.path || '';
   }
