@@ -14,9 +14,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getAppData: () => process.env.AILY_APPDATA_PATH,
     getUserDocuments: () => {
       let path = require("os").homedir() + "\\Documents";
-      if (!require("fs").existsSync(path)) {
-        require("fs").mkdirSync(path, { recursive: true });
-      }
       return path;
     },
     isExists: (path) => {
@@ -50,26 +47,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
       const streamId = `stream_${Date.now()}`;
       return ipcRenderer.invoke('terminal-stream-start', { pid, streamId });
     },
-
     // 停止流式监听
     stopStream: (pid, streamId) => {
       return ipcRenderer.invoke('terminal-stream-stop', { pid, streamId });
     },
-
     // 监听流数据
     onStreamData: (streamId, callback) => {
       const listener = (event, data) => {
         callback(data.lines, data.complete);
       };
-
       ipcRenderer.on(`terminal-stream-data-${streamId}`, listener);
-
       // 返回解除监听函数
       return () => {
         ipcRenderer.removeListener(`terminal-stream-data-${streamId}`, listener);
       };
     },
-
     // 执行命令并流式获取输出
     executeWithStream: (pid, command) => {
       const streamId = `stream_${Date.now()}`;
@@ -99,41 +91,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   subWindow: {
     open: (options) => ipcRenderer.send("window-open", options),
     close: () => ipcRenderer.send("window-close"),
-  },
-  project: {
-    new: (data) => {
-      return new Promise((resolve, reject) => {
-        ipcRenderer
-          .invoke("project-new", data)
-          .then((result) => resolve(result))
-          .catch((error) => reject(error));
-      });
-    },
-    open: (path) => ipcRenderer.invoke("project-open", path),
-    save: () => ipcRenderer.invoke("project-save"),
-    saveAs: (path) => ipcRenderer.invoke("project-saveAs", path),
-    // update: (data) => ipcRenderer.send("project-update", data),
-    // newTmp: () => ipcRenderer.invoke("project-newTmp"),
-  },
-  dependencies: {
-    init: (data) => ipcRenderer.invoke("dependencies-init", data),
-    install: (data) => ipcRenderer.invoke("dependencies-install", data),
-    boardList: () => {
-      return new Promise((resolve, reject) => {
-        ipcRenderer
-          .invoke("board-list")
-          .then((result) => resolve(result["boards"]))
-          .catch((error) => reject(error));
-      });
-    },
-    installedList: () => {
-      return new Promise((resolve, reject) => {
-        ipcRenderer
-          .invoke("installed-dependencies")
-          .then((result) => resolve(result["deps"]))
-          .catch((error) => reject(error));
-      });
-    }
   },
   builder: {
     init: (data) => {
