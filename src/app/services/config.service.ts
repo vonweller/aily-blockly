@@ -11,10 +11,13 @@ export class ConfigService {
 
   constructor(private http: HttpClient) { }
 
-  async init() {
+  init() {
+    this.load();
+  }
+
+  async load() {
     let configFilePath = window['path'].getElectronPath();
     this.data = await JSON.parse(window['file'].readFileSync(`${configFilePath}/config.json`));
-    console.log(this.data);
   }
 
   async save() {
