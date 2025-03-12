@@ -1,10 +1,7 @@
 .prompt-box {
     background: #2b2d30;
     border-radius: 5px;
-    position: fixed;
-    z-index: 999;
     flex-direction: column;
-    padding: 3px 0;
     width: 300px;
     overflow: hidden;
     user-select: none;
@@ -13,7 +10,7 @@
 .header {
     display: flex;
     align-items: center;
-    height: 30px;
+    height: 34px;
     border-bottom: 1px solid #222427;
     background: #2b2d30;
 }

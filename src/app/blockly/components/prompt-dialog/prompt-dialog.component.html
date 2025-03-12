@@ -1,4 +1,4 @@
-<div class="prompt-box bborder" [ngStyle]="{ left: position.x + 'px', top: position.y + 'px'}">
+<div class="prompt-box bborder">
     <div class="header">
         <div class="title">{{ title }}</div>
         <div class="win-btns">
@@ -10,7 +10,7 @@
     <div class="content">
         <input nz-input type="text"  [(ngModel)]="value" (keyup.enter)="onConfirm()" />
         <div class="footer">
-            <button nz-button nzType="primary" [nzSize]="'small'" (click)="onConfirm()">确定</button>
+            <button nz-button nzType="primary" (click)="onConfirm()">确定</button>
         </div>
     </div>
 </div>

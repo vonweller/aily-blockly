@@ -13,11 +13,13 @@ import { DEV_THEME } from './theme.config.js';
 // import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 import './custom-category';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
+import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 
 @Component({
   selector: 'blockly-main',
   imports: [
-    PromptDialogComponent
+    PromptDialogComponent,
+    NzModalModule
   ],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
@@ -58,7 +60,8 @@ export class BlocklyComponent {
   }
 
   constructor(
-    private blocklyService: BlocklyService
+    private blocklyService: BlocklyService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit(): void {
@@ -180,26 +183,34 @@ export class BlocklyComponent {
   }
 
 
-  showPromptDialog = false;
-  defaultValue = 'value';
+  // showPromptDialog = false;
+  // defaultValue = 'value';
   setPrompt() {
     Blockly.dialog.setPrompt((message, defaultValue) => {
-      // console.log('message：', message);
-      // console.log('defaultValue：', defaultValue);
       return new Promise((resolve) => {
-        this.showPromptDialog = true;
-        this.defaultValue = defaultValue;
-        // resolve(value);
+        this.modal.create({
+          nzTitle: null,
+          nzFooter: null,
+          nzClosable: false,
+          nzBodyStyle: {
+            padding: '0',
+          },
+          nzWidth: '300px',
+          nzContent: PromptDialogComponent,
+          nzOnOk: (e) => {
+            resolve(e);
+          },
+        });
       });
     });
   }
 
-  closePromptDialog() {
-    this.showPromptDialog = false;
-  }
+  // closePromptDialog() {
+  //   this.showPromptDialog = false;
+  // }
 
-  varNameChange(e) {
-    console.log('varNameChange', e);
-  }
+  // varNameChange(e) {
+  //   console.log('varNameChange', e);
+  // }
 
 }

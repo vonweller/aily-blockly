@@ -12,7 +12,6 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 })
 export class PromptDialogComponent {
   @Input() title = 'Prompt';
-  @Input() position = { x: 0, y: 0 };
 
   @Output() confirm = new EventEmitter();
   @Output() close = new EventEmitter();
@@ -24,13 +23,6 @@ export class PromptDialogComponent {
   }
 
   ngOnInit(): void {
-    // 获取窗口的宽度和高度,放置到中间位置
-    let width = window.innerWidth;
-    let height = window.innerHeight;
-    this.position = {
-      x: (width - 300) / 2,
-      y: (height - 300) / 2
-    };
   }
 
   onConfirm() {
