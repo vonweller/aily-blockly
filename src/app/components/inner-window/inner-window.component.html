@@ -2,9 +2,9 @@
   class="inner-window animate__animated animate__fadeIn animate__faster"
   ngDraggable
   ngResizable
-  [rzMinWidth]="opt.size.minWidth"
-  [rzMinHeight]="opt.size.minHeight"
-  [position]="opt.position"
+  [rzMinWidth]="opts.size.minWidth"
+  [rzMinHeight]="opts.size.minHeight"
+  [position]="opts.position"
   (endOffset)="onMoveEnd($event)"
   (rzStop)="onResizeStop($event)"
   [handle]="Handle"
@@ -16,14 +16,14 @@
     animate__fadeOut: isClose,
   }"
   [ngStyle]="{
-    width: opt.size.width + 'px',
-    height: opt.size.height + 'px',
-    'z-index': opt.zindex,
+    width: opts.size.width + 'px',
+    height: opts.size.height + 'px',
+    'z-index': opts.zindex,
   }"
 >
   <div class="header">
     <div class="title ccenter" #Handle (dblclick)="maximize()">
-      {{ opt.title }}
+      {{ opts.title }}
     </div>
     <div class="btns ccenter">
       <div class="ccenter" (click)="minimize()">

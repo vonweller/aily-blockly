@@ -57,14 +57,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
     this.addReservedWords(
       'setup,loop,if,else,for,switch,case,while,do,break,continue,return,goto,' +
-        'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
-        'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
-        'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
-        'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
-        'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
-        'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
-        'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
-        'detachInterrupt,interrupts,noInterrupts',
+      'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
+      'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
+      'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
+      'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
+      'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
+      'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
+      'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
+      'detachInterrupt,interrupts,noInterrupts',
     );
   }
 
@@ -402,15 +402,17 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
+  // 变量相关
+  variableTypes = {};
   getVarType(varName) {
-    // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
-    // for (const key in variableMap) {
-    //   for (let index = 0; index < variableMap[key].length; index++) {
-    //     let variableModel = variableMap[key][index];
-    //     if (variableModel && variableModel.name == varName) return variableModel.type
-    //   }
-    // }
+    if (this.variableTypes[varName]) {
+      return this.variableTypes[varName];
+    }
     return 'int';
+  }
+
+  setVarType(varName, type) {
+    this.variableTypes[varName] = type;
   }
 
   getValue(block, name: string, type = '') {
@@ -448,14 +450,5 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
   }
 }
 
-export const VAR_TYPE = [
-  { name: 'int', value: 'int' },
-  { name: 'long', value: 'long' },
-  { name: 'float', value: 'float' },
-  { name: 'double', value: 'double' },
-  { name: 'char', value: 'char' },
-  { name: 'String', value: 'String' },
-  { name: 'boolean', value: 'boolean' },
-];
 
 export const arduinoGenerator = new ArduinoGenerator();

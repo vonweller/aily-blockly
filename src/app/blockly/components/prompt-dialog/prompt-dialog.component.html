@@ -1,0 +1,16 @@
+<div class="prompt-box bborder" [ngStyle]="{ left: position.x + 'px', top: position.y + 'px'}">
+    <div class="header">
+        <div class="title">{{ title }}</div>
+        <div class="win-btns">
+            <div class="btn ccenter close" (click)="onClose()">
+                <i class="fa-light fa-xmark"></i>
+            </div>
+        </div>
+    </div>
+    <div class="content">
+        <input nz-input type="text"  [(ngModel)]="value" (keyup.enter)="onConfirm()" />
+        <div class="footer">
+            <button nz-button nzType="primary" [nzSize]="'small'" (click)="onConfirm()">确定</button>
+        </div>
+    </div>
+</div>
