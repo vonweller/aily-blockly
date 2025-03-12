@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { ProjectService } from './project.service';
 import { SerialService } from './serial.service';
-import { arduinoGenerator, DEFAULT_DATA } from '../blockly/generators/arduino/arduino';
+import { arduinoGenerator } from '../blockly/generators/arduino/arduino';
 import { ActionState, UiService } from './ui.service';
 import { BuilderService } from './builder.service';
 import { TerminalService } from '../tools/terminal/terminal.service';

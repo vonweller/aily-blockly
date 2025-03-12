@@ -49,7 +49,7 @@ export class ProjectService {
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用  
-  init(): void {
+  async init() {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-receive', async (event, message) => {
@@ -67,6 +67,7 @@ export class ProjectService {
           });
         }
       });
+      this.currentProjectPath = await window['env'].get("AILY_PROJECT_PATH");
     }
   }
 
@@ -109,7 +110,7 @@ export class ProjectService {
     // this.uiService.
     // 0. 判断路径是否存在
     this.currentProjectPath = projectPath;
-    const pathExist = window['path'].isExists(projectPath);
+    const pathExist = window['path'].isExists(projectPath + '/project.abi');
     if (!pathExist) {
       console.log('path not exist: ', projectPath);
       this.message.warning('该项目路径不存在');
@@ -122,7 +123,7 @@ export class ProjectService {
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
-  
+
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
@@ -146,7 +147,7 @@ export class ProjectService {
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
       const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
-      this.blocklyService.loadLibrary(libPackagePath);
+      await this.blocklyService.loadLibrary(libPackagePath);
     }
     // 5. 加载project.abi数据
     this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
@@ -228,14 +229,39 @@ export class ProjectService {
   }
 
   // 保存项目
-  projectSave() {
+  save(path = this.currentProjectPath) {
     // 导出blockly json配置并保存
+    const jsonData = this.blocklyService.getWorkspaceJson();
+    window['file'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData, null, 2));
+    this.stateSubject.next('saved');
   }
 
+  saveAs(path) {
+    //在当前路径下创建一个新的目录
+    window['file'].mkdirSync(path);
+    // 复制项目目录到新路径
+    window['file'].copySync(this.currentProjectPath, path);
+    // 修改package.json文件
+    this.save(path);
+    // 修改package.json文件
+    const packageJson = JSON.parse(window['file'].readFileSync(`${path}/package.json`));
+    // 获取新的项目名称
+    let name = path.split('\\').pop();
+    packageJson.name = name;
+    window['file'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
+    // 修改当前项目路径
+    this.currentProjectPath = path;
+    this.currentPackageData = packageJson;
+    this.addRecentlyProject({ name: this.currentPackageData.name, path: path });
+  }
 
-  // 另存为项目
-  projectSaveAs(path) { 
-    // 导出blockly json配置并保存    
+  close() {
+    this.currentProjectPath = '';
+    this.currentPackageData = {
+      name: 'aily blockly',
+    };
+    this.stateSubject.next('default');
+    this.uiService.closeTerminal();
   }
 
 

@@ -37,6 +37,10 @@
         color: #f7ce42;
       }
     }
+
+    &.disabled{
+      opacity: 0.6;
+    }
   }
 
   .sep {

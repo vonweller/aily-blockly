@@ -459,14 +459,3 @@ export const VAR_TYPE = [
 ];
 
 export const arduinoGenerator = new ArduinoGenerator();
-
-export const DEFAULT_DATA = `{
-  "dependencies": {
-  },
-  "blocks": {
-    "languageVersion": 0, "blocks": [
-      { "type": "arduino_setup", "id": "arduino_setup_id0", "x": 30, "y": 30 },
-      { "type": "arduino_loop", "id": "arduino_loop_id0", "x": 330, "y": 30 }
-    ]
-  }
-}`;

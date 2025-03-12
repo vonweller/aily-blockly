@@ -65,6 +65,7 @@ export interface IMenuItem {
   more?: string;
   sep?: boolean;
   state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
+  disabled?: boolean;
 }
 
 export let HEADER_MENU: IMenuItem[] = [
@@ -83,14 +84,16 @@ export let HEADER_MENU: IMenuItem[] = [
   {
     name: '保存项目',
     text: 'Ctrl + S',
-    action: 'project-save',
+    data: { type: 'cmd', data: 'save' },
     icon: 'fa-light fa-file-circle-check',
+    disabled: true,
   },
   {
     name: '另存为',
     text: 'Ctrl + Shift + S',
-    action: 'project-save-as',
+    data: { type: 'cmd', data: 'save-as' },
     icon: 'fa-light fa-copy',
+    disabled: true,
   },
   {
     sep: true,
@@ -99,12 +102,19 @@ export let HEADER_MENU: IMenuItem[] = [
     name: '在资源管理器打开',
     data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
+    // disabled: true,
   },
   {
-    name: '导出代码',
-    action: 'code-export',
-    icon: 'fa-light fa-square-code',
+    name: '关闭项目',
+    data: { type: 'cmd', data: 'close' },
+    icon: 'fa-light fa-folder-closed',
+    disabled: true,
   },
+  // {
+  //   name: '导出代码',
+  //   action: 'code-export',
+  //   icon: 'fa-light fa-square-code',
+  // },
   {
     sep: true,
   },

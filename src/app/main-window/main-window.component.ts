@@ -107,11 +107,15 @@ export class MainWindowComponent {
           this.message.success('Project Loaded');
           break;
         case 'saving':
-          this.message.loading('Project Saving ...');
+          this.message.loading('Project Saving...');
           break;
         case 'saved':
           this.message.remove();
           this.message.success('Project Saved');
+          break;
+        case 'default':
+          // this.message.success('Project Closed');
+          this.loaded = false;
           break;
         default:
           break;

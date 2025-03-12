@@ -7,17 +7,16 @@ import {
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index.js';
-import { arduinoGenerator, DEFAULT_DATA } from './generators/arduino/arduino';
+import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
-import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 
 import './custom-category';
 
 @Component({
   selector: 'blockly-main',
-  imports: [NzModalModule],
+  imports: [],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
 })
@@ -139,13 +138,6 @@ export class BlocklyComponent {
       //   });
       //   modal.triggerOk;
       // };
-
-      // this.workspace.addChangeListener((event) => {
-      //   console.log(event);
-      //   let code = arduinoGenerator.workspaceToCode(this.workspace);
-      //   this.blocklyService.codeSubject.next(code);
-      // });
-
       // this.blocklyDiv.nativeElement.addEventListener(
       //   'mousemove',
       //   (event: any) => {
@@ -166,23 +158,21 @@ export class BlocklyComponent {
 
       window['Arduino'] = <any>arduinoGenerator;
       (window as any)['Blockly'] = Blockly;
-      // await this.loadLibraries();
-      // this.loadDefaultData();
+      this.workspace.addChangeListener((event) => {
+        try {
+          let code = arduinoGenerator.workspaceToCode(this.workspace);
+          this.blocklyService.codeSubject.next(code);
+        } catch (error) {
+          // 仅在开发环境下打印错误，避免用户看到错误
+          console.debug('代码生成时出现错误，可能是某些块尚未注册：', error);
+          // 错误发生时不更新代码
+        }
+      });
     }, 50);
   }
 
   ngOnDestroy(): void {
     this.blocklyService.reset();
   }
-
-  // 加载库
-  // async loadLibraries() {
-  //   let libs = await this.blocklyService.loadLibraries();
-  // }
-
-  // loadDefaultData() {
-  //   let tempJson = JSON.parse(DEFAULT_DATA);
-  //   this.loadJson(tempJson);
-  // }
 
 }

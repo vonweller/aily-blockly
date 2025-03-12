@@ -92,7 +92,7 @@ export class BlocklyService {
     this.loadLibGenerator(`arduino/${path}/${libName}/generator.js`);
   }
 
-  loadLibrary(libPackagePath) {
+  async loadLibrary(libPackagePath) {
     // console.log('loadLibrary', libPackagePath);
     // 加载block
     const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
@@ -112,7 +112,7 @@ export class BlocklyService {
     // 加载generator
     const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
     if (generatorFileIsExist) {
-      this.loadLibGenerator(libPackagePath + '/generator.js');
+      await this.loadLibGenerator(libPackagePath + '/generator.js');
     }
   }
 
@@ -301,6 +301,10 @@ export class BlocklyService {
 
     // 重置其他可能的状态
     this.codeSubject.next('');
+  }
+
+  getWorkspaceJson() {
+    return Blockly.serialization.workspaces.save(this.workspace);
   }
 }
 

@@ -57,12 +57,27 @@ export class HeaderComponent {
     private uploaderService: UploaderService,
     private serialService: SerialService,
     private cd: ChangeDetectorRef,
-
   ) { }
 
   ngAfterViewInit(): void {
     this.projectService.stateSubject.subscribe((state) => {
-      this.loaded = state == 'loaded';
+      if (state == 'loaded') {
+        this.loaded = true;
+        // 将headerMenu中有disabled的按钮置为可用
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled) {
+            menu.disabled = false;
+          }
+        });
+      } else {
+        this.loaded = false;
+        // 将headerMenu中有disabled的按钮置禁用
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled === false) {
+            menu.disabled = true;
+          }
+        });
+      }
       this.cd.detectChanges();
     });
     this.listenShortcutKeys();
@@ -116,6 +131,7 @@ export class HeaderComponent {
   }
 
   onMenuClick(item) {
+    if (item.disabled) return;
     this.process(item);
     this.closeMenu();
   }
@@ -124,7 +140,16 @@ export class HeaderComponent {
     const folderPath = await window['ipcRenderer'].invoke('select-folder', {
       path: this.projectData.path,
     });
-    console.log('选中的文件夹路径：', folderPath);
+    // console.log('选中的文件夹路径：', folderPath);
+    return folderPath;
+  }
+
+  async selectSaveAsFolder() {
+    const folderPath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
+      path: this.projectData.path,
+      suggestedName: this.projectData.name + '_new',
+    });
+    // console.log('选中的文件夹路径：', folderPath);
     return folderPath;
   }
 
@@ -135,7 +160,7 @@ export class HeaderComponent {
     }
   }
 
-  process(item: IMenuItem) {
+  async process(item: IMenuItem) {
     switch (item.data.type) {
       case 'window':
         this.uiService.openWindow(item.data);
@@ -170,22 +195,22 @@ export class HeaderComponent {
           }).catch(err => {
             item.state = 'error';
           })
-        } else if (item.data.data === 'project-open') {
-          // TODO 传入路径
-          const path = 'C:\\Users\\stao\\Documents\\aily-project\\test6';
-          this.projectService.projectOpen(path).then((res) => {
-            if (res) {
-              console.log('打开项目成功');
-              // TODO 加载对应的blockly.json文件
-            } else {
-              console.log('打开项目失败');
-            }
-          });
+        } else if (item.data.data === 'save') {
+          this.projectService.save();
+        } else if (item.data.data === 'save-as') {
+          const path = await this.selectSaveAsFolder();
+          console.log('save as path:', path);
+          if (path) {
+            this.projectService.saveAs(path);
+          }
+        } else if (item.data.data === 'close') {
+          this.projectService.close();
         }
         break;
       case 'other':
-        if (item.data.action == 'openByExplorer') {
-          window['other'].openByExplorer(window['path'].getUserDocuments());
+        if (item.data.action == 'openByExplorer') {  
+          let path = this.projectService.currentProjectPath.replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());       
+          window['other'].openByExplorer(path);
         } else if (item.data.action == 'openByBrowser') {
           window['other'].openByBrowser(item.data.url);
         } else if (item.data.action == 'exitApp') {
@@ -222,13 +247,13 @@ export class HeaderComponent {
         }
       }
     }
-    console.log('已初始化快捷键映射:', Array.from(this.shortcutMap.keys()));
+    // console.log('已初始化快捷键映射:', Array.from(this.shortcutMap.keys()));
   }
-  
+
   // 转换快捷键文本为标准格式
   private normalizeShortcutKey(shortcutText: string): string {
     if (!shortcutText) return '';
-    
+
     return shortcutText.toLowerCase().split('+')
       .map(part => part.trim())
       .sort((a, b) => {
@@ -241,24 +266,24 @@ export class HeaderComponent {
       })
       .join('+');
   }
-  
+
   // 从键盘事件生成标准化的快捷键字符串
   private getShortcutFromEvent(event: KeyboardEvent): string {
     const parts: string[] = [];
-    
+
     if (event.ctrlKey) parts.push('ctrl');
     if (event.shiftKey) parts.push('shift');
     if (event.altKey) parts.push('alt');
-    
+
     // 添加主键，忽略修饰键本身
     const key = event.key.toLowerCase();
     if (!['control', 'shift', 'alt'].includes(key)) {
       parts.push(key);
     }
-    
+
     return parts.join('+');
   }
-  
+
   // 监听快捷键
   listenShortcutKeys() {
     this.initShortcutMap();
@@ -267,11 +292,11 @@ export class HeaderComponent {
       if (event.ctrlKey || event.shiftKey || event.altKey) {
         const shortcutKey = this.getShortcutFromEvent(event);
         const menuItem = this.shortcutMap.get(shortcutKey);
-        
+
         if (menuItem) {
           event.preventDefault(); // 阻止默认行为
           console.log('快捷键触发:', menuItem.name, shortcutKey);
-          
+
           // 执行对应的操作
           if (menuItem.data && menuItem.data.type) {
             this.process(menuItem);

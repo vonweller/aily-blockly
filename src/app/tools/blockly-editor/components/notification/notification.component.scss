@@ -5,11 +5,15 @@
     display: flex;
     align-items: center;
     background: rgba(10, 10, 10, 0.8);
-    padding: 15px 0 15px 15px;
+    padding: 10px 0 10px 10px;
     border-radius: 10px;
     box-shadow: 0 0 5px 0 rgba(0, 0, 0, 0.1);
     min-width: 250px;
     max-width: 400px;
+    width: 250px;
+    height: 90px;
+    transition: all 0.3s ease;
+    overflow: hidden;
 
     .box {
         width: 60px;
@@ -58,13 +62,14 @@
     }
 
     .text-box {
-        margin-left: 15px;
+        margin-left: 10px;
+        flex:1;
         width: calc(100% - 115px);
 
         >div:nth-child(2) {
-            margin-top: 4px;
+            margin-top: 2px;
             color: #999;
-            white-space: wrap;
+            font-size: 12px;
         }
 
         .btns {
@@ -73,6 +78,7 @@
 
             .btn {
                 margin-right: 15px;
+                font-size: 12px;
             }
 
             .red {
@@ -85,20 +91,12 @@
         }
     }
 
-    &:hover {
-        .btn {
-            visibility: visible;
-            color: rgb(63, 177, 230);
-
-            &:hover {
-                color: rgb(116, 192, 228);
-            }
-        }
-    }
-
     .close {
-        width: 40px;
-        height: 40px;
+        width: 30px;
+        height: 100%;
         font-size: 20px;
+        :hover {
+            color: rgb(116, 192, 228);
+        }
     }
 }
