@@ -77,12 +77,10 @@ export class ProjectService {
     const appDataPath = window['path'].getAppData();
     const projectPath = newProjectData.path + newProjectData.name
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
-    const registry = 'https://registry.openjumper.cn';
 
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
     await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath}`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
     const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
@@ -105,7 +103,6 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath) {
-    const registry = 'https://registry.openjumper.cn';
     this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
     // this.uiService.
     // 0. 判断路径是否存在
@@ -126,7 +123,6 @@ export class ProjectService {
 
     // 1. 终端进入项目目录
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
     console.log('currentPid: ', this.terminalService.currentPid);
     await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
