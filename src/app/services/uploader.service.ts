@@ -66,18 +66,24 @@ export class UploaderService {
     let isErrored = false;
     let uploadCompleted = false;
 
-    // 获取code
-    // const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    // if (code !== this.builderService.lastCode) {
-    //   // 编译
-    //   await this.builderService.build();
-    // }
-
     this.notice.update(null)
+
+    // 对比代码是否有变化
+    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    if (code !== this.builderService.lastCode) {
+      // 编译
+      await this.builderService.build();
+    }
 
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
+
+    // 判断buildPath是否存在
+    if (!window['file'].existsSync(buildPath)) {
+      // 编译
+      await this.builderService.build();
+    }
 
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
@@ -219,6 +225,7 @@ export class UploaderService {
               this.notice.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
               this.uploadInProgress = false;
               await this.terminalService.stopStream(streamId);
+              this.uiService.updateState({ state: 'error', text: errorText });
               reject({ state: 'error', text: errorText });
             } else {
               // 上传
@@ -274,6 +281,7 @@ export class UploaderService {
             this.terminalService.stopStream(this.currentUploadStreamId);
             this.currentUploadStreamId = null;
             this.message.success('上传已中断');
+            this.uiService.updateState({ state: 'done', text: '上传已中断' });
           });
         }
       })
