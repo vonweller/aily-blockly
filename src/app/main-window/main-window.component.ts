@@ -97,10 +97,10 @@ export class MainWindowComponent {
       switch (state) {
         case 'loading':
           this.loaded = false;
-          setTimeout(() => {
-            this.message.loading('Project Loading...');
-            this.loaded = true;
-          }, 100);
+          // setTimeout(() => {
+          this.message.loading('Project Loading...');
+          this.loaded = true;
+          // }, 10);
           break;
         case 'loaded':
           this.message.remove();
