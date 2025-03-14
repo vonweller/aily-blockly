@@ -115,6 +115,8 @@ export class ProjectService {
       return false;
     }
     this.stateSubject.next('loading');
+    // 延迟50ms，为了等待blockly实例初始化完成
+    await new Promise(resolve => setTimeout(resolve, 50));
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     // 添加到最近打开的项目
@@ -122,15 +124,14 @@ export class ProjectService {
     this.currentPackageData = packageJson;
 
     // 1. 终端进入项目目录
-    await this.uiService.openTerminal();
-    console.log('currentPid: ', this.terminalService.currentPid);
-    await this.terminalService.sendCmd(`cd ${projectPath}`);
     // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
     const nodeModulesExist = window['path'].isExists(projectPath + '/node_modules');
     if (!nodeModulesExist) {
       this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
+      await this.uiService.openTerminal();
+      await this.terminalService.sendCmd(`cd ${projectPath}`);
       await this.terminalService.sendCmd(`npm install`);
-    } 
+    }
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
@@ -140,11 +141,11 @@ export class ProjectService {
     const boardJson = JSON.parse(window['file'].readFileSync(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
     // 4. 加载blockly library
-    this.uiService.updateState({ state: 'doing', text: '正在加载blockly库' });
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
-    console.log('libraryModuleList: ', libraryModuleList);
+    // console.log('libraryModuleList: ', libraryModuleList);
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
+      this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
       const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
       await this.blocklyService.loadLibrary(libPackagePath);
     }
