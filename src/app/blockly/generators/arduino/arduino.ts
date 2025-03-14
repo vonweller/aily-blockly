@@ -402,6 +402,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
+  addUserLoop(tag, code) {
+    if (this.codeDict['userLoops'][tag] === undefined) {
+      this.codeDict['userLoops'][tag] = code;
+    }
+  }
+
   // 变量相关
   variableTypes = {};
   getVarType(varName) {
