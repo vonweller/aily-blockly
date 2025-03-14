@@ -129,9 +129,12 @@ export class ProjectService {
     await this.terminalService.sendCmd(`npm config set @aily-project:registry ${registry}`);
     console.log('currentPid: ', this.terminalService.currentPid);
     await this.terminalService.sendCmd(`cd ${projectPath}`);
-    // 2. 安装项目依赖
-    this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
-    await this.terminalService.sendCmd(`npm install`);
+    // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
+    const nodeModulesExist = window['path'].isExists(projectPath + '/node_modules');
+    if (!nodeModulesExist) {
+      this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
+      await this.terminalService.sendCmd(`npm install`);
+    } 
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
