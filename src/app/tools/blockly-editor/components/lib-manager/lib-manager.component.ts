@@ -30,7 +30,7 @@ import { NzTagModule } from 'ng-zorro-antd/tag';
 })
 export class LibManagerComponent {
 
-  tagList= ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
+  tagList = ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
   // customColors = ['#f50', '#2db7f5', '#87d068', '#108ee9'];
 
   @Output() close = new EventEmitter();
@@ -70,7 +70,7 @@ export class LibManagerComponent {
     for (let index = 0; index < array.length; index++) {
       const item = array[index];
       // 为全文搜索做准备
-      item['fulltext'] = `${item.nickname} ${item.description} ${item.keywords} ${item.brand} ${item.author}`;
+      item['fulltext'] = `${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/[^\w\s]/g, '');
       // 为版本选择做准备
       item['versionList'] = [item.version];
       // 为状态做准备

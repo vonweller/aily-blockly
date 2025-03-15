@@ -13,6 +13,7 @@ import { NzSelectModule } from 'ng-zorro-antd/select';
 import { TerminalService } from '../../tools/terminal/terminal.service';
 import { UiService } from '../../services/ui.service';
 import { NpmService } from '../../services/npm.service';
+import { NzTagModule } from 'ng-zorro-antd/tag';
 
 @Component({
   selector: 'app-project-new',
@@ -23,7 +24,8 @@ import { NpmService } from '../../services/npm.service';
     NzButtonModule,
     NzInputModule,
     NzStepsModule,
-    NzSelectModule
+    NzSelectModule,
+    NzTagModule
   ],
   templateUrl: './project-new.component.html',
   styleUrl: './project-new.component.scss',
@@ -31,6 +33,7 @@ import { NpmService } from '../../services/npm.service';
 export class ProjectNewComponent {
   currentStep = 0;
 
+  _boardList: any[] = [];
   boardList: any[] = [];
   currentBoard: any = null;
   newProjectData: NewProjectData = {
@@ -45,6 +48,12 @@ export class ProjectNewComponent {
 
   boardVersion = '';
 
+  // 搜索开发板关键字
+  keyword='';
+  tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'nulllab'];
+
+  tagListRandom;
+
   constructor(
     private electronService: ElectronService,
     private projectService: ProjectService,
@@ -58,8 +67,12 @@ export class ProjectNewComponent {
     if (this.electronService.isElectron) {
       this.newProjectData.path = window['path'].getUserDocuments() + '\\aily-project\\';
     }
-    this.boardList = await this.configService.loadBoardList();
+    this._boardList = this.process(await this.configService.loadBoardList());
+    this.boardList = JSON.parse(JSON.stringify(this._boardList));
     this.currentBoard = this.boardList[0];
+
+    // 随机提取前五个
+    this.tagListRandom = this.tagList.sort(() => Math.random() - 0.5).slice(0, 5);
 
     this.newProjectData.board.nickname = this.currentBoard.nickname;
     this.newProjectData.board.name = this.currentBoard.name;
@@ -72,6 +85,26 @@ export class ProjectNewComponent {
 
     this.terminalService.currentPid = pid;
   }
+
+  process(array) {
+    let _array = JSON.parse(JSON.stringify(array));
+    for (let index = 0; index < _array.length; index++) {
+      const item = _array[index];
+      // 为全文搜索做准备
+      item['fulltext'] = `${item.nickname}${item.brand}${item.description}${item.keywords}`.replace(/[^\w\s]/g, '').toLowerCase();
+    }
+    return _array;
+  }
+
+  search(keyword=this.keyword) {
+    if (keyword) {
+      keyword = keyword.toLowerCase();
+      this.boardList = this._boardList.filter(item => item.fulltext.includes(keyword));
+    } else {
+      this.boardList = JSON.parse(JSON.stringify(this._boardList));
+    }
+  }
+
 
   selectBoard(boardInfo: BoardInfo) {
     this.currentBoard = boardInfo;
