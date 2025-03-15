@@ -198,7 +198,7 @@ export class ProjectService {
             continue;
           }
 
-          this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖` });
+          this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
 
           try {
             const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
@@ -206,7 +206,7 @@ export class ProjectService {
 
             // 添加超时保护和正确的参数名
             await Promise.race([
-              window['electronAPI'].npm.run({ cmd: npmCmd }),
+              window['npm'].run({ cmd: npmCmd }),
               new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
               )

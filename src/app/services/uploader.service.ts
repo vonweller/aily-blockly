@@ -39,6 +39,10 @@ export class UploaderService {
     /\|\s*\d+%\s*$/,
     // 或者只是数字+百分号（例如：[====>    ] 70%）
     /\b(\d+)%\b/,
+    // Writing at 0x0005446e... (18 %)
+    // Writing at 0x0002d89e... (40 %)
+    // Writing at 0x0003356b... (50 %)
+    /Writing\s+at\s+0x[0-9a-f]+\.\.\.\s+\(\d+\s*%\)/i,
     // 70% 13/18
     // /^(\d+)%\s+\d+\/\d+/,
     // 标准格式：数字%（例如：70%）
@@ -62,18 +66,24 @@ export class UploaderService {
     let isErrored = false;
     let uploadCompleted = false;
 
-    // 获取code
+    this.notice.update(null)
+
+    // 对比代码是否有变化
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
     if (code !== this.builderService.lastCode) {
       // 编译
       await this.builderService.build();
     }
 
-    this.notice.update(null)
-
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
+
+    // 判断buildPath是否存在
+    if (!window['file'].existsSync(buildPath)) {
+      // 编译
+      await this.builderService.build();
+    }
 
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
@@ -169,13 +179,24 @@ export class UploaderService {
             // 尝试使用所有模式匹配进度
             let progressValue = null;
 
+            // 使用通用提取方法获取进度
+            // const progressValue = this.extractProgressFromLine(trimmedLine);
+
             for (const regex of this.progressRegexPatterns) {
               const match = trimmedLine.match(regex);
               if (match) {
                 // 提取数字部分
-                const numericMatch = trimmedLine.match(/(\d+)%/);
+                console.log("match: ", match);
+                let numericMatch = trimmedLine.match(/(\d+)%/);
+                if (!numericMatch) {
+                  numericMatch = trimmedLine.match(/(\d+)\s*%/);
+                }
+                console.log("numericMatch: ", numericMatch);
                 if (numericMatch) {
                   progressValue = parseInt(numericMatch[1], 10);
+                  if (lastProgress == 0 && progressValue >= 99) {
+                    progressValue = 0;
+                  }
                   break; // 找到匹配后停止循环
                 }
               }
@@ -204,6 +225,7 @@ export class UploaderService {
               this.notice.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
               this.uploadInProgress = false;
               await this.terminalService.stopStream(streamId);
+              this.uiService.updateState({ state: 'error', text: errorText });
               reject({ state: 'error', text: errorText });
             } else {
               // 上传
@@ -259,6 +281,7 @@ export class UploaderService {
             this.terminalService.stopStream(this.currentUploadStreamId);
             this.currentUploadStreamId = null;
             this.message.success('上传已中断');
+            this.uiService.updateState({ state: 'done', text: '上传已中断' });
           });
         }
       })

@@ -182,6 +182,7 @@ export class BuilderService {
               this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
               this.buildInProgress = false;
               await this.terminalService.stopStream(streamId);
+              this.uiService.updateState({ state: 'error', text: errorText });
               reject({ state: 'error', text: errorText });
             } else {
               // 更新状态
@@ -240,6 +241,7 @@ export class BuilderService {
             this.terminalService.stopStream(this.currentBuildStreamId);
             this.currentBuildStreamId = null;
             this.message.success('编译已中断');
+            this.uiService.updateState({ state: 'done', text: '编译已取消' });
           });
         }
       })
