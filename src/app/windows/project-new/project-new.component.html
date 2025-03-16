@@ -47,6 +47,7 @@
             </div>
             }
           </div>
+          @if(currentBoard){
           <div class="desc-box">
             <div class="title">
               {{currentBoard.nickname}}
@@ -54,10 +55,9 @@
                 阅读文档
               </div>
             </div>
-            @if (currentBoard) {
             <div class="content">{{ currentBoard.description }}</div>
-            }
           </div>
+          }
         </div>
         } @else {
         <!-- 基本设定页面 -->
