@@ -21,7 +21,7 @@
         @if (currentStep == 0) {
         <div class="right-inner flex-start">
           <div class="search-box">
-            <nz-input-group [nzSuffix]="suffixIconSearch">
+            <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
               <input nz-input placeholder="搜索开发板" [(ngModel)]="keyword" (ngModelChange)="search()" />
             </nz-input-group>
             <ng-template #suffixIconSearch>

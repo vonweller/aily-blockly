@@ -33,8 +33,6 @@ import { NzTagModule } from 'ng-zorro-antd/tag';
 export class ProjectNewComponent {
   currentStep = 0;
 
-  _boardList: any[] = [];
-  boardList: any[] = [];
   currentBoard: any = null;
   newProjectData: NewProjectData = {
     name: '',
@@ -49,9 +47,10 @@ export class ProjectNewComponent {
   boardVersion = '';
 
   // 搜索开发板关键字
-  keyword='';
-  tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'nullLab','Raspberry Pi'];
-
+  keyword = '';
+  tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'nullLab', 'Raspberry Pi'];
+  _boardList: any[] = [];
+  boardList: any[] = [];
   tagListRandom;
 
   constructor(
@@ -91,14 +90,14 @@ export class ProjectNewComponent {
     for (let index = 0; index < _array.length; index++) {
       const item = _array[index];
       // 为全文搜索做准备
-      item['fulltext'] = `${item.nickname}${item.brand}${item.description}${item.keywords}`.replace(/[^\w\s]/g, '').toLowerCase();
+      item['fulltext'] = `${item.nickname}${item.brand}${item.description}${item.keywords}`.replace(/\s/g, '').toLowerCase();
     }
     return _array;
   }
 
-  search(keyword=this.keyword) {
+  search(keyword = this.keyword) {
     if (keyword) {
-      keyword = keyword.toLowerCase();
+      keyword = keyword.replace(/\s/g, '').toLowerCase();
       this.boardList = this._boardList.filter(item => item.fulltext.includes(keyword));
     } else {
       this.boardList = JSON.parse(JSON.stringify(this._boardList));

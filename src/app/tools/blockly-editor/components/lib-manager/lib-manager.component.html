@@ -3,22 +3,24 @@
         <div class="btn ccenter" (click)="back()" nz-tooltip nzTooltipTitle="返回">
             <i class="fa-regular fa-chevron-left"></i>
         </div>
-        <nz-input-group nzSearch [nzAddOnAfter]="suffixIconButton" [nzSize]="'small'">
-            <input type="text" nz-input placeholder="搜索库" [(ngModel)]="keyword" (ngModelChange)="search($event)" />
+        <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
+            <input type="text" nz-input placeholder="搜索库" [(ngModel)]="keyword" (ngModelChange)="search()" />
         </nz-input-group>
-        <ng-template #suffixIconButton>
-            <button nz-button nzType="primary" nzSearch [nzSize]="'small'" style="height: 24px;">
-                <i class="fa-regular fa-magnifying-glass"></i>
-            </button>
-        </ng-template>
+        <ng-template #suffixIconSearch>
+            @if(keyword.length > 0){
+            <i class="fa-light fa-xmark" (click)="keyword='';search()"></i>
+            } @else {
+            <i class="fa-light fa-search"></i>
+            }
+          </ng-template>
         <div class="tag-list">
             @for (tag of tagList; track tag) {
-            <nz-tag>{{ tag }}</nz-tag>
+            <nz-tag (click)="keyword=tag;search()">{{ tag }}</nz-tag>
             }
         </div>
     </div>
     <div class="lib-list">
-        @for( lib of LibraryList;track lib.name ) {
+        @for( lib of libraryList;track lib.name ) {
         <div class="lib-item">
             <div class="name ellipsis">{{lib.nickname}}<span>{{lib.author}}</span></div>
             <div class="desc ellipsis">{{lib.description}}</div>
