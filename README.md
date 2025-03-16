@@ -65,8 +65,7 @@ npm run electron:build-local
 ## 项目赞助
 本项目由以下企业和个人赞助
 
-企业赞助
----
+### 企业赞助  
 <div>
 <a target="_blank" href="https://www.seekfree.cn/" style="height:80px; display: flex; align-items: center;">
     <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" width=200 />
@@ -90,6 +89,7 @@ npm run electron:build-local
     <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" width=200 />
 </a>
 </div>
-个人赞助
----
+
+### 个人赞助   
+
 
