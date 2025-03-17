@@ -58,10 +58,10 @@ npm run electron:build
     <img src=".\brand\titlab\logo.png" alt="titlab Logo" width=200 />
 </a>
 <a target="_blank" href="" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" width=200 />
+    <img src=".\brand\emakefun\logo.png" alt="emakefun Logo" width=200 />
 </a>
 <a target="_blank" href="" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\nulllab\logo.png" alt="nulllab Logo" width=200 />
+    <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" width=200 />
 </a>
 </div>
 
