@@ -68,8 +68,6 @@ export class BuilderService {
     Object.entries(dependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/board-')) {
         board = key
-      } else if (key.startsWith('@aily-project/lib-core-')) {
-        // 排除掉以lib-core开头的文件夹
       } else if (key.startsWith('@aily-project/lib-')) {
         libsPath.push(key)
       }
@@ -95,6 +93,7 @@ export class BuilderService {
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
       let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
+      if (!window['file'].existsSync(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
       await this.terminalService.sendCmd(`7z x "${sourcePath}" -o"${targetPath}" -y`);
