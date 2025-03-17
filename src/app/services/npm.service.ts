@@ -13,7 +13,7 @@ export class NpmService {
 
   // 指定获取packageName的可用版本列表
   async getPackageVersionList(packageName: string): Promise<string[]> {
-    let data = await window['npm'].run({ cmd: `npm view ${packageName} versions --registry https://registry.openjumper.cn --json` })
+    let data = JSON.parse(await window['npm'].run({ cmd: `npm view ${packageName} versions --json` }))
     let packageVersionList = [];
     if (typeof data === 'string') {
       packageVersionList.push(data);
