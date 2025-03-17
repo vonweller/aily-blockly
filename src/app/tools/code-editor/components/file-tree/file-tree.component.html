@@ -1,9 +1,36 @@
-<nz-tree [nzData]="nodes" nzShowIcon [nzExpandedIcon]="multiExpandedIconTpl">
-    <ng-template #multiExpandedIconTpl let-node let-origin="origin">
-        @if (!origin.isLeaf) {
-        <i class="fa-light {{node.isExpanded?'fa-folder-open':'fa-folder'}}"></i>
+<div class="file-explorer">
+    <div class="file-explorer-header">
+        <span>资源管理器</span>
+        <button class="refresh-btn" (click)="refresh()" title="刷新">
+            <i class="fa-solid fa-sync"></i>
+        </button>
+    </div>
+
+    @if (isLoading) {
+    <div class="loading">
+        <i class="fa-solid fa-spinner fa-spin"></i> 正在加载...
+    </div>
+    } @else if (nodes.length === 0) {
+    <div class="empty-folder">
+        <i class="fa-solid fa-folder-open"></i>
+        <p>文件夹为空</p>
+    </div>
+    } @else {
+    <nz-tree [nzData]="nodes" [nzTreeTemplate]="nzTreeTemplate" [nzExpandedIcon]="blankTemplate"
+        (nzClick)="activeNode($event)">
+    </nz-tree>
+    }
+</div>
+
+<ng-template #nzTreeTemplate let-node let-origin="origin">
+    <span class="custom-node">
+        @if (!node.isLeaf) {
+        <i class="fa-light {{node.isExpanded ? 'fa-folder-open' : 'fa-folder'}}"></i>
         } @else {
-        <i class="fa-light fa-file"></i>
+        <i class="fa-solid fa-file" [class]="getFileIcon(node.title)"></i>
         }
-    </ng-template>
-</nz-tree>
+        <span class="node-title">{{node.title}}</span>
+    </span>
+</ng-template>
+
+<ng-template #blankTemplate></ng-template>
