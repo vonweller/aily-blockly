@@ -27,9 +27,9 @@ export class FooterComponent {
   changeState(e: ActionState) {
     this.actionData = e;
     this.cd.detectChanges();
-    // 默认超时设置12秒, warn 和 error 不超时 
+    // 默认超时设置10秒, warn 和 error 不超时 
     if (!this.actionData.timeout && this.actionData.state === 'loading' || this.actionData.state === 'done') {
-      this.actionData.timeout = 12000;
+      this.actionData.timeout = 10000;
     }
     if (this.actionData.timeout) {
       clearTimeout(this.timer);
