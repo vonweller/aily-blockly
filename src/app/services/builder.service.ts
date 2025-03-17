@@ -186,6 +186,7 @@ export class BuilderService {
             }
             // 检查错误信息
             else if (trimmedLine.toLowerCase().includes('error:') ||
+              trimmedLine.toLowerCase().includes('error during build:') ||
               trimmedLine.toLowerCase().includes('failed') || 
               trimmedLine.toLowerCase().includes('fatal')) {
               console.error("检测到编译错误:", trimmedLine);
