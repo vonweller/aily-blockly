@@ -148,7 +148,7 @@ function registerTerminalHandlers(mainWindow) {
 
       // 查找所有完整的行
       for (let i = 0; i < buffer.length; i++) {
-        if (buffer[i] === '\n') {
+        if (buffer[i] === '\n' || buffer[i] === '\r') {
           lines.push(buffer.substring(lastNewlineIndex, i + 1));
           lastNewlineIndex = i + 1;
         }
