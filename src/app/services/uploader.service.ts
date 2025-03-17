@@ -44,11 +44,11 @@ export class UploaderService {
     // Writing at 0x0003356b... (50 %)
     /Writing\s+at\s+0x[0-9a-f]+\.\.\.\s+\(\d+\s*%\)/i,
     // 70% 13/18
-    // /^(\d+)%\s+\d+\/\d+/,
+    /^(\d+)%\s+\d+\/\d+/,
     // 标准格式：数字%（例如：70%）
-    // /(?:进度|Progress)[^\d]*?(\d+)%/i,
+    /(?:进度|Progress)[^\d]*?(\d+)%/i,
     // 带空格的格式（例如：70 %）
-    // /(?:进度|Progress)[^\d]*?(\d+)\s*%/i,
+    /(?:进度|Progress)[^\d]*?(\d+)\s*%/i,
   ];
 
   async upload(): Promise<ActionState> {
@@ -181,7 +181,7 @@ export class UploaderService {
 
             // 使用通用提取方法获取进度
             // const progressValue = this.extractProgressFromLine(trimmedLine);
-
+            // console.log("trimmedLine: ", trimmedLine);
             for (const regex of this.progressRegexPatterns) {
               const match = trimmedLine.match(regex);
               if (match) {

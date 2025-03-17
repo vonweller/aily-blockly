@@ -76,18 +76,85 @@ export class TerminalService {
     lineCallback: (line: string) => void,
     completeCallback?: () => void
   ): Promise<any> {
-    // const { streamId } = await window['terminal'].startStream(this.currentPid);
+    // 状态变量，用于处理回车符
+    let currentBuffer = '';
+
+    // 处理原始数据的函数
+    const processRawData = (data: string) => {
+      // 处理包含回车符的数据
+      if (data.includes('\r')) {
+        // 分割回车符
+        const parts = data.split('\r');
+
+        for (let i = 0; i < parts.length; i++) {
+          if (i === 0 && parts[i].trim().length > 0) {
+            // 第一部分追加到当前缓冲区
+            currentBuffer += parts[i];
+
+            // 如果只有一个部分且没有回车符结尾，则不处理
+            if (parts.length === 1 && !data.endsWith('\r')) {
+              continue;
+            }
+
+            // 传递当前行给回调
+            lineCallback(currentBuffer);
+          } else if (parts[i].trim().length > 0) {
+            // 新行，直接处理
+            lineCallback(parts[i]);
+          }
+
+          // 更新缓冲区
+          currentBuffer = parts[i];
+        }
+      }
+      // 处理常规换行数据
+      else if (data.includes('\n')) {
+        // 分割换行符
+        const lines = data.split('\n');
+
+        // 处理除最后一行外的所有行
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = currentBuffer + lines[i];
+          if (line.trim().length > 0) {
+            lineCallback(line);
+          }
+          currentBuffer = '';
+        }
+
+        // 最后一行可能是不完整的
+        currentBuffer = lines[lines.length - 1];
+
+        // 如果数据以换行符结束，则处理缓冲区并清空它
+        if (data.endsWith('\n')) {
+          if (currentBuffer.trim().length > 0) {
+            lineCallback(currentBuffer);
+          }
+          currentBuffer = '';
+        }
+      }
+      // 没有特殊字符的情况，追加到缓冲区
+      else {
+        currentBuffer += data;
+      }
+    };
 
     // 注册监听器
     const removeListener = window['terminal'].onStreamData(
-      streamId, 
-      (lines: string[], complete: boolean) => {
-        // 处理每行数据
-        lines.forEach(line => lineCallback(line));
+      streamId,
+      (rawData: string[], complete: boolean) => {
+        // 处理每块原始数据
+        rawData.forEach(data => processRawData(data));
 
-        // 如果完成，调用完成回调
-        if (complete && completeCallback) {
-          completeCallback();
+        // 如果完成，处理任何剩余的缓冲区数据
+        if (complete) {
+          if (currentBuffer.trim().length > 0) {
+            lineCallback(currentBuffer);
+          }
+          currentBuffer = '';
+
+          if (completeCallback) {
+            completeCallback();
+          }
           // 清理监听器
           removeListener();
         }
