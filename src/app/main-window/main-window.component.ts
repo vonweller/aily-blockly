@@ -16,6 +16,7 @@ import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NotificationComponent } from '../tools/blockly-editor/components/notification/notification.component';
 import { NoticeService } from '../services/notice.service';
+import { CodeEditorComponent } from '../tools/code-editor/code-editor.component';
 
 @Component({
   selector: 'app-main-window',
@@ -32,6 +33,7 @@ import { NoticeService } from '../services/notice.service';
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
+    CodeEditorComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

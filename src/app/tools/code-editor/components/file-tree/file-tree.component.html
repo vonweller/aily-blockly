@@ -1,0 +1,9 @@
+<nz-tree [nzData]="nodes" nzShowIcon [nzExpandedIcon]="multiExpandedIconTpl">
+    <ng-template #multiExpandedIconTpl let-node let-origin="origin">
+        @if (!origin.isLeaf) {
+        <i class="fa-light {{node.isExpanded?'fa-folder-open':'fa-folder'}}"></i>
+        } @else {
+        <i class="fa-light fa-file"></i>
+        }
+    </ng-template>
+</nz-tree>
