@@ -167,22 +167,6 @@ export class BuilderService {
               lastBuildText = buildText;
               // this.uiService.updateState({ state: 'doing', text: buildText });
             }
-            // 提取进度信息
-            else if (trimmedLine.startsWith('progress')) {
-              console.log(trimmedLine);
-              const progressInfo = trimmedLine.replace('progress', '').trim();
-              const progressMatch = progressInfo.match(/(\d+)%?/);
-
-              if (progressMatch) {
-                const progressValue = parseInt(progressMatch[1], 10);
-                lastProgress = progressValue;
-
-                // 进度为100%时标记完成
-                if (progressValue === 100 && !buildCompleted) {
-                  buildCompleted = true;
-                }
-              }
-            }
             // 检查错误信息
             else if (trimmedLine.toLowerCase().includes('error:') ||
               trimmedLine.toLowerCase().includes('error during build:') ||
@@ -191,6 +175,23 @@ export class BuilderService {
               console.error("检测到编译错误:", trimmedLine);
               errorText = trimmedLine;
               isErrored = true;
+            }
+            else {
+              // 提取进度信息
+              console.log(trimmedLine);
+              const progressInfo = trimmedLine.trim();
+
+              // Match patterns like [========================================          ] 80%
+              const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
+              if (barProgressMatch) {
+                const progressValue = parseInt(barProgressMatch[1], 10);
+                lastProgress = progressValue;
+
+                // 进度为100%时标记完成
+                if (progressValue === 100 && !buildCompleted) {
+                  buildCompleted = true;
+                }
+              }
             }
 
             if (isErrored) {
