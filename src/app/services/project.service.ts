@@ -116,7 +116,7 @@ export class ProjectService {
     }
     this.stateSubject.next('loading');
     // 延迟50ms，为了等待blockly实例初始化完成
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     // 添加到最近打开的项目

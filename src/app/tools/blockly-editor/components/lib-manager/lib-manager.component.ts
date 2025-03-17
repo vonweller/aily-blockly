@@ -30,13 +30,15 @@ import { NzTagModule } from 'ng-zorro-antd/tag';
 })
 export class LibManagerComponent {
 
-  tagList= ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
-  // customColors = ['#f50', '#2db7f5', '#87d068', '#108ee9'];
-
   @Output() close = new EventEmitter();
 
-  LibraryList: PackageInfo[] = [];
+
+  keyword: string = '';
+  tagList = ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
+  libraryList: PackageInfo[] = [];
+  _libraryList: PackageInfo[] = [];
   installedPackageList: string[] = [];
+  tagListRandom;
 
   loading = false;
 
@@ -54,8 +56,8 @@ export class LibManagerComponent {
   ngOnInit() {
     this.configService.loadLibraryList().then((data: any) => {
       this.checkInstalled();
-      this.LibraryList = this.process(data);
-      // console.log(this.LibraryList);
+      this._libraryList = this.process(data);
+      this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
     });
   }
 
@@ -70,25 +72,23 @@ export class LibManagerComponent {
     for (let index = 0; index < array.length; index++) {
       const item = array[index];
       // 为全文搜索做准备
-      item['fulltext'] = `${item.nickname} ${item.description} ${item.keywords} ${item.brand} ${item.author}`;
+      item['fulltext'] = `${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
       // 为版本选择做准备
       item['versionList'] = [item.version];
       // 为状态做准备
       item['state'] = 'default'; // default, installing, uninstalling
     }
+    console.log(array);
+    
     return array;
   }
 
-  keyword: string;
-  search(keyword) {
+  search(keyword = this.keyword) {
     if (keyword) {
-      this.LibraryList = this.LibraryList.filter((item) => {
-        return item.fulltext.includes(keyword);
-      });
+      keyword = keyword.replace(/\s/g, '').toLowerCase();
+      this.libraryList = this._libraryList.filter((item) => item.fulltext.includes(keyword));
     } else {
-      this.configService.loadLibraryList().then((data: any) => {
-        this.LibraryList = this.process(data);
-      });
+      this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
     }
   }
 

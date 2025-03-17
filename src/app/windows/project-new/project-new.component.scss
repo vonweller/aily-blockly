@@ -1,6 +1,7 @@
 .window-inner {
   position: relative;
   height: calc(100vh - 35px);
+  user-select: none;
 }
 
 .window-content {
@@ -32,6 +33,11 @@
       display: flex;
       flex-direction: column;
       justify-content: center;
+      position: relative;
+
+      &.flex-start{
+        justify-content: flex-start;
+      }
 
       .item {
         display: flex;
@@ -50,20 +56,8 @@
           z-index: 1;
           color: rgba(255, 255, 255, 0.7) !important;
 
-          &.board{
+          &.board {
             border-radius: 2px 0 0 2px;
-          }
-        }
-
-        nz-input-group{
-          background: #363636;
-
-          ::ng-deep{
-            .ant-input-group-addon{
-              width: 35px;
-              height: 32px;
-              padding: 0;
-            }
           }
         }
 
@@ -86,6 +80,18 @@
           position: absolute;
           bottom: -15px;
           left: 130px;
+        }
+      }
+
+      nz-input-group {
+        background: #363636;
+
+        ::ng-deep {
+          .ant-input-group-addon {
+            width: 35px;
+            height: 32px;
+            padding: 0;
+          }
         }
       }
     }
@@ -130,18 +136,20 @@
   align-content: flex-start;
   gap: 15px;
   overflow-y: auto;
-  height: calc(100% - 95px);
+  // height: calc(100% - 95px);
+  padding-bottom: 110px;
 
   .board {
     width: 180px;
-    height: 140px;
+    height: 110px;
     background: #3e4243;
     border-radius: 5px;
     flex-direction: column;
+    justify-content: flex-start;
 
     img {
-      width: 100px;
-      height: 100px;
+      width: 80px;
+      height: 80px;
     }
 
     &.selected {
@@ -155,11 +163,19 @@
 }
 
 .desc-box {
-  height: 95px;
+  height: 100px;
+  width: 100%;
+  position: absolute;
+  bottom: 0;
+  border-radius: 10px;
+  padding: 5px 10px;
+  background: rgba(59, 59, 59, 0.9);
+  overflow: hidden;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.2);
 
   .title {
     border-bottom: 1px solid #43494b;
-    margin-bottom: 5px;
+    margin-bottom: 3px;
     position: relative;
 
     .doc {
@@ -171,5 +187,28 @@
 
   .content {
     height: 65px;
+    color: #bbb;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  margin-bottom: 10px;
+
+  nz-input-group {
+    width: 150px;
+    flex-grow: 1;
+    margin-right: 10px;
+  }
+}
+
+.tag-list{
+  nz-tag{
+    cursor: pointer;
   }
 }
