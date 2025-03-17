@@ -56,18 +56,22 @@ export class BuilderService {
     this.lastCode = code;
     await window['file'].writeFileSync(sketchFilePath, code);
 
-    // TODO 生成libraries中的文件
-
     // 加载项目package.json
     const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
     const dependencies = packageJson.dependencies || {};
     const boardDependencies = packageJson.boardDependencies || {};
 
     // 从dependencies中查找以@aily-project/board-开头的依赖
+    
     let board = ""
+    const libsPath = []
     Object.entries(dependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/board-')) {
         board = key
+      } else if (key.startsWith('@aily-project/lib-core-')) {
+        // 排除掉以lib-core开头的文件夹
+      } else if (key.startsWith('@aily-project/lib-')) {
+        libsPath.push(key)
       }
     });
 
@@ -85,6 +89,15 @@ export class BuilderService {
       console.error('缺少板子信息');
       this.buildInProgress = false;
       return { state: 'error', text: '缺少板子信息' };
+    }
+
+    // 解压libraries到临时文件夹
+    console.log("libsPath: ", libsPath);
+    for (let lib of libsPath) {
+      let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
+      let targetName = lib.split('@aily-project/')[1];
+      let targetPath = `${librariesPath}/${targetName}`;
+      await this.terminalService.sendCmd(`7z x "${sourcePath}" -o"${targetPath}" -y`);
     }
 
     // 获取编译命令
@@ -120,7 +133,7 @@ export class BuilderService {
     return new Promise<ActionState>((resolve, reject) => {
       this.buildResolver = resolve;
 
-      const compileCommand = `arduino-cli.exe ${compilerParam} --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}' --verbose`;
+      const compileCommand = `arduino-cli.exe ${compilerParam} --libraries '${librariesPath}' --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
 
       const title = `正在编译 ${boardJson.name}`;
       const completeTitle = `编译完成`;
@@ -173,8 +186,10 @@ export class BuilderService {
             }
             // 检查错误信息
             else if (trimmedLine.toLowerCase().includes('error:') ||
-              trimmedLine.toLowerCase().includes('failed')) {
+              trimmedLine.toLowerCase().includes('failed') || 
+              trimmedLine.toLowerCase().includes('fatal')) {
               console.error("检测到编译错误:", trimmedLine);
+              errorText = trimmedLine;
               isErrored = true;
             }
 
