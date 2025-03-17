@@ -42,26 +42,26 @@ npm run electron:build
 
 ### 企业赞助  
 <div>
-<a target="_blank" href="https://www.seekfree.cn/" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\seekfree\logo.png" alt="seekfree Logo" width=200 />
+<a target="_blank" href="https://www.seekfree.cn/" >
+    <img src=".\brand\seekfree\logo.png" alt="seekfree" width=200 />
 </a>
-<a target="_blank" href="https://www.seeedstudio.com/" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio Logo" width=200 />
+<a target="_blank" href="https://www.seeedstudio.com/" >
+    <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio" width=200 />
 </a>
-<a target="_blank" href="https://www.diandeng.tech/" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\diandeng\logo.png" alt="diandeng Logo" width=200 />
+<a target="_blank" href="https://www.diandeng.tech/" >
+    <img src=".\brand\diandeng\logo.png" alt="diandeng" width=200 />
 </a>
-<a target="_blank" href="https://www.openjumper.com/" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\openjumper\logo.png" alt="openjumper Logo" width=200 />
+<a target="_blank" href="https://www.openjumper.com/" >
+    <img src=".\brand\openjumper\logo.png" alt="openjumper" width=200 />
 </a>
-<a target="_blank" href="https://www.titlab.cn/" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\titlab\logo.png" alt="titlab Logo" width=200 />
+<a target="_blank" href="https://www.titlab.cn/" >
+    <img src=".\brand\titlab\logo.png" alt="titlab" width=200 />
 </a>
-<a target="_blank" href="" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\emakefun\logo.png" alt="emakefun Logo" width=200 />
+<a target="_blank" href="https://www.emakefun.com" >
+    <img src=".\brand\emakefun\logo.png" alt="emakefun" width=200 />
 </a>
-<a target="_blank" href="" style="height:80px; display: flex; align-items: center;">
-    <img src=".\brand\keyesrobot\logo.png" alt="keyesrobot Logo" width=200 />
+<a target="_blank" href="http://www.keyes-robot.com/" >
+    <img src=".\brand\keyes\logo.png" alt="keyes" width=200 />
 </a>
 </div>
 
