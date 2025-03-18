@@ -3,14 +3,15 @@
     width: 250px;
     display: flex;
     flex-direction: column;
+    background: #2b2d30;
 
     .file-explorer-header {
         display: flex;
+        height: 30px;
         justify-content: space-between;
         align-items: center;
         padding: 8px;
-        font-weight: bold;
-        border-bottom: 1px solid #e8e8e8;
+        // border-bottom: 1px solid #e8e8e8;
 
         .refresh-btn {
             background: none;

@@ -1,6 +1,14 @@
-<div>
-    <div>
+<div class="code-editor">
+    <div class="left-box">
         <app-file-tree></app-file-tree>
     </div>
-
+    <div class="right-box">
+        <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" nzType="editable-card" [nzHideAdd]="true"
+            (nzClose)="closeTab($event)">
+            @for (tab of tabs; track tab) {
+            <nz-tab nzClosable [nzTitle]="tab"></nz-tab>
+            }
+        </nz-tabset>
+        <app-monaco-editor></app-monaco-editor>
+    </div>
 </div>

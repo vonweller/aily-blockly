@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
-import { CodeEditorComponent } from '../../components/code-editor/code-editor.component';
+import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-editor.component';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
@@ -11,7 +11,7 @@ import { CommonModule } from '@angular/common';
 @Component({
   selector: 'app-code-viewer',
   imports: [
-    CodeEditorComponent,
+    MonacoEditorComponent,
     InnerWindowComponent,
     ToolContainerComponent,
     SubWindowComponent,

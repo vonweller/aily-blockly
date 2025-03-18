@@ -1,0 +1,16 @@
+.code-editor{
+    display: flex;
+    height: 100%;
+    position: relative;
+}
+
+.right-box{
+    display: flex;
+    flex-grow: 1;
+    flex-direction: column;
+    position: relative;
+    app-monaco-editor{
+        width: 100%;
+        height: 100%;
+    }
+}
