@@ -34,7 +34,7 @@ export class LibManagerComponent {
 
 
   keyword: string = '';
-  tagList = ['传感器', '执行器', '通信', '显示', '音频', '人机交互', '机器人', 'AI', '物联网'];
+  tagList = ['传感器', '执行器', '通信', '显示', '声音', '存储', '机器人', 'AI', '物联网', '其他'];
   libraryList: PackageInfo[] = [];
   _libraryList: PackageInfo[] = [];
   installedPackageList: string[] = [];
@@ -79,7 +79,7 @@ export class LibManagerComponent {
       item['state'] = 'default'; // default, installing, uninstalling
     }
     console.log(array);
-    
+
     return array;
   }
 
