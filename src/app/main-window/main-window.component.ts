@@ -46,15 +46,15 @@ export class MainWindowComponent {
   loaded = false;
   showLibManager = false;
 
+  get topTool() {
+    return this.uiService.topTool;
+  }
+
   options = {
     autoHide: true,
     clickOnTrack: true,
     scrollbarMinSize: 50,
   };
-
-  get topTool() {
-    return this.uiService.topTool;
-  }
 
   constructor(
     private uiService: UiService,

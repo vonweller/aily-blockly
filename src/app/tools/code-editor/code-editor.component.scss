@@ -1,16 +1,66 @@
-.code-editor{
+.code-editor {
     display: flex;
     height: 100%;
     position: relative;
 }
 
-.right-box{
+.right-box {
     display: flex;
     flex-grow: 1;
     flex-direction: column;
     position: relative;
-    app-monaco-editor{
+
+    app-monaco-editor {
         width: 100%;
         height: 100%;
+    }
+}
+
+nz-tabset {
+    background: #242424;
+    ::ng-deep {
+        nz-tabs-nav {
+            height: 30px;
+            margin: 0 !important;
+        }
+
+        .ant-tabs-tab {
+            font-size: 12px !important;
+            margin: 0 !important;
+
+            button {
+                padding: 0 10px;
+                color: #a5a5a5;
+            }
+        }
+
+        .ant-tabs-ink-bar {
+            height: 1px !important;
+        }
+
+        .ant-tabs-tab-active {
+            background: #222222 !important;
+            button {
+                color: #fff !important;
+            }
+        }
+    }
+
+    &.ant-tabs-editable-card {
+        ::ng-deep {
+            button {
+                padding: 0 !important;
+                color: #a5a5a5;
+            }
+
+            .ant-tabs-tab {
+                padding: 8px;
+            }
+
+            .ant-tabs-tab-remove {
+                margin-right: -2px;
+                margin-left: 4px;
+            }
+        }
     }
 }

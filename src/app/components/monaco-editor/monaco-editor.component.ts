@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, Input, input, ViewChild } from '@angular/core';
+import { Component, EventEmitter, Input, input, Output, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzCodeEditorModule, NzCodeEditorComponent } from 'ng-zorro-antd/code-editor';
 
@@ -26,6 +26,7 @@ export class MonacoEditorComponent {
   }
 
   @Input() code = '';
+  @Output() codeChange = new EventEmitter<string>();
 
   constructor(
   ) { }
@@ -39,4 +40,7 @@ export class MonacoEditorComponent {
   ngOnDestroy() {
   }
 
+  onCodeChange(newCode: string): void {
+    this.codeChange.emit(newCode);
+  }
 }

@@ -4,14 +4,14 @@
     <nz-layout>
       <nz-content>
         <div class="middle-box">
-          <ngx-simplebar [options]="options">
-            @if (loaded) {
-            <app-blockly-editor></app-blockly-editor>
-            } @else {
-            <app-guide></app-guide>
-            }
-          </ngx-simplebar>
+          @if (loaded) {
+          <app-blockly-editor></app-blockly-editor>
           <!-- <app-code-editor></app-code-editor> -->
+          }@else{
+          <ngx-simplebar [options]="options">
+            <app-guide></app-guide>
+          </ngx-simplebar>
+          }
         </div>
         @if (showBbox) {
         <div nz-resizable class="resizable-box" [style.height.px]="bottomHeight" [nzMaxHeight]="500" [nzMinHeight]="50"
