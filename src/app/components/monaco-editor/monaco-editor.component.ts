@@ -5,16 +5,16 @@ import { NzCodeEditorModule, NzCodeEditorComponent } from 'ng-zorro-antd/code-ed
 
 
 @Component({
-  selector: 'app-code-editor',
+  selector: 'app-monaco-editor',
   imports: [
     NzCodeEditorModule,
     CommonModule,
     FormsModule
   ],
-  templateUrl: './code-editor.component.html',
-  styleUrl: './code-editor.component.scss'
+  templateUrl: './monaco-editor.component.html',
+  styleUrl: './monaco-editor.component.scss'
 })
-export class CodeEditorComponent {
+export class MonacoEditorComponent {
 
   @ViewChild(NzCodeEditorComponent) codeEditor: NzCodeEditorComponent;
 

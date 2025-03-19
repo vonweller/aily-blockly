@@ -11,6 +11,7 @@ import { MenuComponent } from '../../../components/menu/menu.component';
 import { PortItem, SerialService } from '../../../services/serial.service';
 import { ActBtnComponent } from '../act-btn/act-btn.component';
 import { IMenuItem } from '../../../configs/menu.config';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-header',
@@ -57,6 +58,7 @@ export class HeaderComponent {
     private uploaderService: UploaderService,
     private serialService: SerialService,
     private cd: ChangeDetectorRef,
+    private message: NzMessageService
   ) { }
 
   ngAfterViewInit(): void {
@@ -169,6 +171,10 @@ export class HeaderComponent {
         this.openProject(item.data);
         break;
       case 'tool':
+        if (['串口工具', 'AI', '应用商店'].includes(item.name)) {
+          this.message.warning('功能暂未开放');
+          break;
+        }
         this.uiService.turnTool(item.data);
         break;
       case 'terminal':

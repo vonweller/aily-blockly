@@ -80,7 +80,7 @@ export class UploaderService {
     const buildPath = tempPath + '/build';
 
     // 判断buildPath是否存在
-    if (!window['file'].existsSync(buildPath)) {
+    if (!window['path'].isExists(buildPath)) {
       // 编译
       await this.builderService.build();
     }

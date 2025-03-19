@@ -46,11 +46,11 @@ export let HEADER_BTNS: IMenuItem[][] = [
       icon: 'fa-light fa-star-christmas',
       more: 'AI',
     },
-    // {
-    //   name: '更多',
-    //   type: 'more',
-    //   icon: 'fa-regular fa-ellipsis-vertical',
-    // },
+    {
+      name: '应用商店',
+      data: { type: 'tool', data: "store" },
+      icon: 'fa-light fa-store',
+    },
   ],
 ];
 
