@@ -54,32 +54,44 @@ export class LibManagerComponent {
   ) { }
 
   ngOnInit() {
-    this.configService.loadLibraryList().then((data: any) => {
-      this.checkInstalled();
+    this.configService.loadLibraryList().then(async (data: any) => {
       this._libraryList = this.process(data);
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
+      this.checkInstalled();
     });
   }
 
   async checkInstalled() {
     // 获取已经安装的包，用于在界面上显示"移除"按钮
     this.installedPackageList = await this.npmService.getInstalledPackageList(this.projectService.currentProjectPath);
+    for (let index = 0; index < this._libraryList.length; index++) {
+      const item = this._libraryList[index];
+      if (this.isInstalled(item)) {
+        item['state'] = 'installed';
+        item['fulltext'] = `已安装${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
+      } else {
+        item['state'] = 'default';
+        item['fulltext'] = item.fulltext.replace('已安装', '');
+      }
+    }
     this.cd.detectChanges();
+  }
+
+  isInstalled(lib) {
+    return this.installedPackageList.indexOf(lib.name + '@' + lib.version) > -1
   }
 
   // 处理库列表数据，为显示做准备
   process(array) {
     for (let index = 0; index < array.length; index++) {
       const item = array[index];
-      // 为全文搜索做准备
-      item['fulltext'] = `${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
       // 为版本选择做准备
       item['versionList'] = [item.version];
       // 为状态做准备
-      item['state'] = 'default'; // default, installing, uninstalling
+      item['state'] = 'default'; // default, installed, installing, uninstalling
+      // 为全文搜索做准备
+      item['fulltext'] = `${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
     }
-    console.log(array);
-
     return array;
   }
 
@@ -102,10 +114,6 @@ export class LibManagerComponent {
       lib.versionList = data;
       this.loading = false;
     })
-  }
-
-  isInstalled(lib) {
-    return this.installedPackageList.indexOf(lib.name + '@' + lib.version) > -1;
   }
 
   async installLib(lib) {
@@ -157,5 +165,5 @@ interface PackageInfo {
   "links"?: any,
   "brand"?: string,
   "fulltext"?: string,
-  state: 'default' | 'installing' | 'uninstalling'
+  state: 'default' | 'installed' | 'installing' | 'uninstalling'
 }
