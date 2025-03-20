@@ -3,6 +3,7 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
+import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 
 @Component({
   selector: 'app-prompt-dialog',
@@ -13,12 +14,10 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 export class PromptDialogComponent {
   @Input() title = 'Prompt';
 
-  @Output() confirm = new EventEmitter();
-  @Output() close = new EventEmitter();
-
   value = '';
 
   constructor(
+    private modal: NzModalRef
   ) {
   }
 
@@ -26,11 +25,10 @@ export class PromptDialogComponent {
   }
 
   onConfirm() {
-    this.confirm.emit(this.value);
+    this.modal.triggerOk()
   }
 
-
   onClose() {
-    this.close.emit();
+    this.modal.triggerCancel()
   }
 }

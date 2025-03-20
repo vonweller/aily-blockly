@@ -182,25 +182,24 @@ export class BlocklyComponent {
     this.blocklyService.reset();
   }
 
-
-  // showPromptDialog = false;
-  // defaultValue = 'value';
   setPrompt() {
-    Blockly.dialog.setPrompt((message, defaultValue) => {
-      return new Promise((resolve) => {
-        this.modal.create({
-          nzTitle: null,
-          nzFooter: null,
-          nzClosable: false,
-          nzBodyStyle: {
-            padding: '0',
-          },
-          nzWidth: '300px',
-          nzContent: PromptDialogComponent,
-          nzOnOk: (e) => {
-            resolve(e);
-          },
-        });
+    Blockly.dialog.setPrompt((message, defaultValue, callback) => {
+      // console.log('对话框初始化，消息:', message, '默认值:', defaultValue);
+      this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzWidth: '300px',
+        nzContent: PromptDialogComponent,
+        nzOnOk: (e) => {
+          callback(e.value);
+        },
+        nzOnCancel: () => {
+          console.log('cancel');
+        }
       });
     });
   }
