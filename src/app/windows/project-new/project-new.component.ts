@@ -48,7 +48,7 @@ export class ProjectNewComponent {
 
   // 搜索开发板关键字
   keyword = '';
-  tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'nullLab', 'Raspberry Pi'];
+  tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'emakefun', 'Raspberry Pi'];
   _boardList: any[] = [];
   boardList: any[] = [];
   tagListRandom;

@@ -11,7 +11,6 @@
         justify-content: space-between;
         align-items: center;
         padding: 8px;
-        // border-bottom: 1px solid #e8e8e8;
 
         .refresh-btn {
             background: none;
@@ -24,5 +23,69 @@
                 color: #1890ff;
             }
         }
+    }
+
+    .file-explorer-content {
+
+        ngx-simplebar {
+            height: 100%;
+            width: 100%;
+
+            ::ng-deep {
+                .simplebar-content-wrapper {
+                    height: 100%;
+                }
+
+                .simplebar-content {
+                    height: 100%;
+                }
+            }
+        }
+
+        nz-tree {
+            ::ng-deep {
+                .ant-tree-treenode {
+                    padding: 0;
+                    cursor: pointer;
+                }
+
+                .ant-tree-treenode-selected{
+                    background: #3a3a3a;
+                }
+
+                .ant-tree-node-selected{
+                    background: none;
+                    &:hover{
+                        background: none;
+                    }
+                }
+
+                .ant-tree-switcher{
+                    width: 0;
+                }
+            }
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            font-size: 12px;
+
+            .icon {
+                height: 28px;
+                width: 28px;
+                font-size: 10px;
+            }
+            .file-name{
+                height: 100%;
+            }
+        }
+    }
+}
+
+.arrow{
+    transition: transform 0.3s;
+    &.down{
+        transform: rotate(90deg);
     }
 }

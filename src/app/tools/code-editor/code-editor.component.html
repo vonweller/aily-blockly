@@ -1,14 +1,28 @@
 <div class="code-editor">
     <div class="left-box">
-        <app-file-tree></app-file-tree>
+        <app-file-tree [rootPath]="projectPath" [(selectedFile)]="selectedFile"
+            (selectedFileChange)="selectedFileChange($event)"></app-file-tree>
     </div>
     <div class="right-box">
-        <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" nzType="editable-card" [nzHideAdd]="true"
-            (nzClose)="closeTab($event)">
-            @for (tab of tabs; track tab) {
-            <nz-tab nzClosable [nzTitle]="tab"></nz-tab>
+        @if (openedFiles.length > 0) {
+        <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)"
+            nzType="editable-card" [nzHideAdd]="true" (nzClose)="closeTab($event)">
+            @for (file of openedFiles; track file.path; let i = $index) {
+            <nz-tab nzClosable [nzTitle]="titleTemplate">
+                <ng-template #titleTemplate>
+                    <span class="tab-inner" (mousedown)="handleMiddleClick($event, i)">
+                        {{ file.title }} <span class="blue-point" *ngIf="file.isDirty"></span>
+                    </span>
+                </ng-template>
+            </nz-tab>
             }
         </nz-tabset>
-        <app-monaco-editor></app-monaco-editor>
+        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)"></app-monaco-editor>
+        } @else {
+        <div class="empty-editor">
+            <p>没有打开的文件</p>
+            <p>从左侧资源管理器中选择文件</p>
+        </div>
+        }
     </div>
 </div>

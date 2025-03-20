@@ -2,35 +2,54 @@
     <div class="file-explorer-header">
         <span>资源管理器</span>
         <button class="refresh-btn" (click)="refresh()" title="刷新">
-            <i class="fa-solid fa-sync"></i>
+            <i class="fa-light fa-sync"></i>
         </button>
     </div>
-
-    @if (isLoading) {
-    <div class="loading">
-        <i class="fa-solid fa-spinner fa-spin"></i> 正在加载...
-    </div>
-    } @else if (nodes.length === 0) {
-    <div class="empty-folder">
-        <i class="fa-solid fa-folder-open"></i>
-        <p>文件夹为空</p>
-    </div>
-    } @else {
-    <nz-tree [nzData]="nodes" [nzTreeTemplate]="nzTreeTemplate" [nzExpandedIcon]="blankTemplate"
-        (nzClick)="activeNode($event)">
-    </nz-tree>
-    }
-</div>
-
-<ng-template #nzTreeTemplate let-node let-origin="origin">
-    <span class="custom-node">
-        @if (!node.isLeaf) {
-        <i class="fa-light {{node.isExpanded ? 'fa-folder-open' : 'fa-folder'}}"></i>
+    <div class="file-explorer-content">
+        @if (isLoading) {
+        <div class="loading">
+            <i class="fa-solid fa-spinner fa-spin"></i> 正在加载...
+        </div>
+        } @else if (isEmpty()) {
+        <div class="empty-folder">
+            <i class="fa-solid fa-folder-open"></i>
+            <p>文件夹为空</p>
+        </div>
         } @else {
-        <i class="fa-solid fa-file" [class]="getFileIcon(node.title)"></i>
+        <nz-tree-view [nzTreeControl]="treeControl" [nzDataSource]="dataSource" [nzDirectoryTree]="true">
+            <!-- 叶子节点 (文件) -->
+            <nz-tree-node *nzTreeNodeDef="let node" nzTreeNodePadding>
+                <nz-tree-node-toggle nzTreeNodeNoopToggle></nz-tree-node-toggle>
+                <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
+                    (nzClick)="nodeClick(node); nodeSelection.toggle(node)">
+                    <div class="file-item">
+                        <div class="icon ccenter">
+                            <i [class]="getFileIcon(node.title)"></i>
+                        </div>
+                        <span class="file-name">{{node.title}}</span>
+                    </div>
+                </nz-tree-node-option>
+            </nz-tree-node>
+            <!-- 非叶子节点 (文件夹) -->
+            <nz-tree-node *nzTreeNodeDef="let node; when: hasChild" nzTreeNodePadding>
+                <nz-tree-node-toggle>
+                    @if (!node.loading) {
+                    <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':treeControl.isExpanded(node)}"></i>
+                    }@else{
+                    <i class="fa-duotone fa-solid fa-loader lloading"></i>
+                    }
+                </nz-tree-node-toggle>
+                <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
+                    (nzClick)="nodeClick(node);nodeSelection.toggle(node)">
+                    <div class="file-item">
+                        <div class="icon ccenter">
+                            <i class="fa-light {{treeControl.isExpanded(node) ? 'fa-folder-open' : 'fa-folder'}}"></i>
+                        </div>
+                        <span class="file-name">{{node.title}}</span>
+                    </div>
+                </nz-tree-node-option>
+            </nz-tree-node>
+        </nz-tree-view>
         }
-        <span class="node-title">{{node.title}}</span>
-    </span>
-</ng-template>
-
-<ng-template #blankTemplate></ng-template>
+    </div>
+</div>
