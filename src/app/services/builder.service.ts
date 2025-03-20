@@ -54,10 +54,10 @@ export class BuilderService {
     // 生成sketch文件
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
     this.lastCode = code;
-    await window['file'].writeFileSync(sketchFilePath, code);
+    await window['fs'].writeFileSync(sketchFilePath, code);
 
     // 加载项目package.json
-    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     const dependencies = packageJson.dependencies || {};
     const boardDependencies = packageJson.boardDependencies || {};
 
@@ -82,7 +82,7 @@ export class BuilderService {
     }
 
     // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['file'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
+    const boardJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
     console.log("boardJson: ", boardJson);
 
     if (!boardJson) {

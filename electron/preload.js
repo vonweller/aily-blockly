@@ -104,12 +104,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploader: {
     upload: (data) => ipcRenderer.invoke("uploader-upload", data),
   },
-  file: {
+  fs: {
     readFileSync: (path) => require("fs").readFileSync(path, "utf8"),
     readDirSync: (path) => require("fs").readdirSync(path, { withFileTypes: true }),
     writeFileSync: (path, data) => require("fs").writeFileSync(path, data),
     mkdirSync: (path) => require("fs").mkdirSync(path, { recursive: true }),
     copySync: (src, dest) => require("fs-extra").copySync(src, dest),
+    existsSync: (path) => require("fs").existsSync(path),
+    statSync: (path) => require("fs").statSync(path),
+    isDirectory: (path) => require("fs").statSync(path).isDirectory(),
   },
   ble: {
 

@@ -12,7 +12,7 @@ export class FileService {
 
 
   readDir(path: string): NzTreeNodeOptions[] {
-    let entries = window['file'].readDirSync(path);
+    let entries = window['fs'].readDirSync(path);
     console.log('entries', entries);
 
     let result = [];

@@ -5,10 +5,7 @@ import { Injectable } from '@angular/core';
 })
 export class ElectronService {
   isElectron = false;
-
   electron = window['electronAPI'];
-
-  // ipcRenderer: typeof ipcRenderer;
 
   constructor() { }
 
@@ -26,4 +23,37 @@ export class ElectronService {
       console.log('Running in browser');
     }
   }
+
+  /**
+  * 读取文件内容
+  */
+  readFile(filePath: string) {
+    return window['fs'].readFileSync(filePath, 'utf8');
+  }
+
+  /**
+   * 读取目录内容
+   */
+  readDir(dirPath: string) {
+    return window['fs'].readDirSync(dirPath);
+  }
+
+  /**
+ * 判断路径是否存在
+ */
+  exists(path: string): boolean {
+    return window['fs'].existsSync(path)
+  }
+
+  /**
+   * 判断是否为目录
+   */
+  isDirectory(path: string) {
+    return window['fs'].isDirectory(path);
+  }
+
+  isFile(path: string) {
+    return window['fs'].isFile(path);
+  }
+
 }

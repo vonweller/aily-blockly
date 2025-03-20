@@ -1,10 +1,10 @@
 import { Component } from '@angular/core';
 import { FileTreeComponent } from './components/file-tree/file-tree.component';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
-import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-editor.component';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { CommonModule } from '@angular/common';
 import { ProjectService } from '../../services/project.service';
+import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-editor.component';
 
 export interface OpenedFile {
   path: string;      // 文件路径
@@ -35,6 +35,9 @@ export class CodeEditorComponent {
     return this.projectService.currentProjectPath
   }
 
+  sdkPath;
+  librariesPath;
+
   constructor(
     private modal: NzModalService,
     private projectService: ProjectService
@@ -54,7 +57,7 @@ export class CodeEditorComponent {
       this.selectedIndex = existingFileIndex;
     } else {
       // 否则新建标签页
-      const content = window['file'].readFileSync(filePath);
+      const content = window['fs'].readFileSync(filePath);
       const newFile: OpenedFile = {
         path: filePath,
         title: file.title,
@@ -78,6 +81,9 @@ export class CodeEditorComponent {
       this.code = '';
       this.selectedFile = '';
     }
+
+    this.sdkPath="D:\\Git\\aily-project-lod\\packages\\sdk\\avr\\avr@1.8.6";
+    this.librariesPath="C:\\Users\\coloz\\Documents\\Arduino\\sketch_mar16a\\libraries";
   }
 
   // 关闭标签页
@@ -125,7 +131,7 @@ export class CodeEditorComponent {
   // 保存文件
   saveFile(index: number): void {
     const file = this.openedFiles[index];
-    window['file'].writeFileSync(file.path, file.content);
+    window['fs'].writeFileSync(file.path, file.content);
     file.isDirty = false;
   }
 

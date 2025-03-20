@@ -1,18 +1,18 @@
 import { ChangeDetectorRef, Component, EventEmitter, Output } from '@angular/core';
-import { NpmService } from '../../../../services/npm.service';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { ConfigService } from '../../../../services/config.service';
-import { ProjectService } from '../../../../services/project.service';
-import { BlocklyService } from '../../../../blockly/blockly.service';
-import { TerminalService } from '../../../terminal/terminal.service';
-import { UiService } from '../../../../services/ui.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { NpmService } from '../../services/npm.service';
+import { ConfigService } from '../../services/config.service';
+import { ProjectService } from '../../services/project.service';
+import { BlocklyService } from '../../blockly/blockly.service';
+import { TerminalService } from '../../tools/terminal/terminal.service';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-lib-manager',

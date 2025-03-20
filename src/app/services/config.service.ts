@@ -17,12 +17,12 @@ export class ConfigService {
 
   async load() {
     let configFilePath = window['path'].getElectronPath();
-    this.data = await JSON.parse(window['file'].readFileSync(`${configFilePath}/config.json`));
+    this.data = await JSON.parse(window['fs'].readFileSync(`${configFilePath}/config.json`));
   }
 
   async save() {
     let configFilePath = window['path'].getElectronPath();
-    window['file'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
+    window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 
   boardList;

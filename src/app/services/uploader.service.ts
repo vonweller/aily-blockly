@@ -86,7 +86,7 @@ export class UploaderService {
     }
 
     // 加载项目package.json
-    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     const dependencies = packageJson.dependencies || {};
     const boardDependencies = packageJson.boardDependencies || {};
 
@@ -105,7 +105,7 @@ export class UploaderService {
     }
 
     // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['file'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
+    const boardJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
     console.log("boardJson: ", boardJson);
 
     if (!boardJson) {

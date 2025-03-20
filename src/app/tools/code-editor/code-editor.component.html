@@ -17,7 +17,7 @@
             </nz-tab>
             }
         </nz-tabset>
-        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)"></app-monaco-editor>
+        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)" [sdkPath]="sdkPath" [librariesPath]="librariesPath"></app-monaco-editor>
         } @else {
         <div class="empty-editor">
             <p>没有打开的文件</p>
