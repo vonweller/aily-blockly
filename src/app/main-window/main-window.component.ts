@@ -44,6 +44,7 @@ export class MainWindowComponent {
   terminalTab = 'default';
 
   loaded = false;
+  mode;
   showLibManager = false;
 
   get topTool() {
@@ -122,6 +123,11 @@ export class MainWindowComponent {
         default:
           break;
       }
+      this.cd.detectChanges();
+    });
+
+    this.projectService.modeSubject.subscribe((mode) => {
+      this.mode = mode;
       this.cd.detectChanges();
     });
   }

@@ -25,6 +25,8 @@ export class ProjectService {
 
   stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved' | 'error'>('default');
 
+  modeSubject = new BehaviorSubject<'blockly' | 'code' | 'default'>('default');
+
   currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
   };
@@ -107,14 +109,23 @@ export class ProjectService {
     // this.uiService.
     // 0. 判断路径是否存在
     this.currentProjectPath = projectPath;
-    const pathExist = window['path'].isExists(projectPath + '/project.abi');
-    if (!pathExist) {
+    const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
+    if (!abiIsExist) {
+      const pathIsExist = window['path'].isExists(projectPath + '/');
+      if (pathIsExist) {
+        // 打开代码编辑器
+        this.stateSubject.next('loading');
+        this.modeSubject.next('code');
+        this.uiService.updateState({ state: 'done', text: '项目加载成功' });
+        return true
+      }
       console.log('path not exist: ', projectPath);
       this.message.warning('该项目路径不存在');
       this.removeRecentlyProject({ path: projectPath })
       return false;
     }
     this.stateSubject.next('loading');
+    this.modeSubject.next('blockly');
     // 延迟50ms，为了等待blockly实例初始化完成
     await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json

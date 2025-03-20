@@ -5,8 +5,11 @@
       <nz-content>
         <div class="middle-box">
           @if (loaded) {
+          @if(mode === 'blockly') {
           <app-blockly-editor></app-blockly-editor>
-          <!-- <app-code-editor></app-code-editor> -->
+          } @else {
+          <app-code-editor></app-code-editor>
+          }
           }@else{
           <ngx-simplebar [options]="options">
             <app-guide></app-guide>
