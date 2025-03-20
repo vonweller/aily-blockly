@@ -12,6 +12,7 @@ import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
 // import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 import './custom-category';
+import './custom-field'
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 

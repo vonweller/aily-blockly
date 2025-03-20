@@ -159,7 +159,15 @@ export class ProjectService {
       const libPackageName = libraryModuleList[index];
       this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
       const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
-      await this.blocklyService.loadLibrary(libPackagePath);
+      try {
+        await this.blocklyService.loadLibrary(libPackagePath);
+      } catch (error) {
+        console.error('加载库失败: ', error);
+        this.uiService.updateState({ state: 'error', text: libPackageName + ' 加载失败' });
+        this.message.error(libPackageName + ' 加载失败');
+        return false;
+      }
+
     }
     // 5. 加载project.abi数据
     this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
