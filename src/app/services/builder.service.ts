@@ -93,7 +93,7 @@ export class BuilderService {
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
       let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
-      if (!window['file'].existsSync(sourcePath)) continue;
+      if (!window['path'].isExists(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
       await this.terminalService.sendCmd(`7z x "${sourcePath}" -o"${targetPath}" -y`);
