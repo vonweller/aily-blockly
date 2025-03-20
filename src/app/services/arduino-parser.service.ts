@@ -37,8 +37,6 @@ export class ArduinoParserService {
 
     private async parseDirectory(directoryPath: string): Promise<void> {
         const files = this.electronService.readDir(directoryPath);
-        console.log(files);
-
         for (const file of files) {
             const filePath = file.path + '/' + file.name;
             if (this.electronService.isDirectory(filePath)) {

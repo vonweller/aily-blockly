@@ -47,14 +47,16 @@ export class MonacoEditorComponent {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    setTimeout(async () => {
-      if (this.codeEditor) {
-        // 解析Arduino SDK和库
-        if (this.sdkPath && this.librariesPath) {
-          await this.loadArduinoCompletions();
+    if (changes['sdkPath'] || changes['librariesPath']) {
+      setTimeout(async () => {
+        if (this.codeEditor) {
+          // 解析Arduino SDK和库
+          if (this.sdkPath && this.librariesPath) {
+            await this.loadArduinoCompletions();
+          }
         }
-      }
-    }, 500);
+      }, 500);
+    }
   }
 
   ngOnDestroy() {
