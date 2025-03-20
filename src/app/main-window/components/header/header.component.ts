@@ -190,6 +190,7 @@ export class HeaderComponent {
           this.builderService.build().then(result => {
             item.state = 'done';
           }).catch(err => {
+            console.error("编译失败: ", err);
             item.state = 'error';
           })
         } else if (item.data.data === 'upload') {
