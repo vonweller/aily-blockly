@@ -10,8 +10,8 @@
             @for (file of openedFiles; track file.path; let i = $index) {
             <nz-tab nzClosable [nzTitle]="titleTemplate">
                 <ng-template #titleTemplate>
-                    <span (mousedown)="handleMiddleClick($event, i)">
-                        {{ file.title }} <span *ngIf="file.isDirty">*</span>
+                    <span class="tab-inner" (mousedown)="handleMiddleClick($event, i)">
+                        {{ file.title }} <span class="blue-point" *ngIf="file.isDirty"></span>
                     </span>
                 </ng-template>
             </nz-tab>
