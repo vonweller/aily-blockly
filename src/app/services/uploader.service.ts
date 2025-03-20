@@ -53,11 +53,11 @@ export class UploaderService {
 
   async upload(): Promise<ActionState> {
     if (this.uploadInProgress) {
-      this.message.error('上传正在进行中');
-      return ({ state: 'error', text: '上传正在进行中' });
+      this.message.warning('上传中，请稍后');
+      return ({ state: 'error', text: '上传中，请稍后' });
     }
     if (!this.serialService.currentPort) {
-      this.message.error('请先选择串口');
+      this.message.warning('请先选择串口');
       this.uploadInProgress = false;
       return ({ state: 'error', text: '请先选择串口' });
     }
