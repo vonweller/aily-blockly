@@ -12,11 +12,14 @@
             } @else {
             <i class="fa-light fa-search"></i>
             }
-          </ng-template>
+        </ng-template>
         <div class="tag-list">
             @for (tag of tagList; track tag) {
             <nz-tag (click)="keyword=tag;search()">{{ tag }}</nz-tag>
             }
+            <span style="position: absolute;top: 10px;color: #444;">|</span>
+            <nz-tag style="margin-left: 11px;" (click)="keyword='已安装';search()">已安装</nz-tag>
+            <nz-tag (click)="keyword='核心库';search()">核心库</nz-tag>
         </div>
     </div>
     <div class="lib-list">

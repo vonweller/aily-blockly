@@ -14,8 +14,6 @@ import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { NotificationComponent } from '../tools/blockly-editor/components/notification/notification.component';
-import { NoticeService } from '../services/notice.service';
 import { CodeEditorComponent } from '../tools/code-editor/code-editor.component';
 
 @Component({

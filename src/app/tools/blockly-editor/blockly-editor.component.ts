@@ -1,15 +1,13 @@
 import { ChangeDetectorRef, Component } from '@angular/core';
 import { BlocklyComponent } from '../../blockly/blockly.component';
-import { ProjectBtnComponent } from '../../components/project-btn/project-btn.component';
-import { LibManagerComponent } from './components/lib-manager/lib-manager.component';
-import { NotificationComponent } from './components/notification/notification.component';
-import { NoticeService } from '../../services/notice.service';
+import { LibManagerComponent } from '../../components/lib-manager/lib-manager.component';
+import { NotificationComponent } from '../../components/notification/notification.component';
+import { ProjectService } from '../../services/project.service';
 
 @Component({
   selector: 'app-blockly-editor',
   imports: [
     BlocklyComponent,
-    ProjectBtnComponent,
     LibManagerComponent,
     NotificationComponent
   ],
@@ -20,13 +18,18 @@ export class BlocklyEditorComponent {
   showProjectManager = false;
 
   constructor(
-    private notice: NoticeService,
-    private cd: ChangeDetectorRef
+    private cd: ChangeDetectorRef,
+    private projectService: ProjectService,
   ) { }
 
   openProjectManager() {
     this.showProjectManager = !this.showProjectManager;
     this.cd.detectChanges();
+  }
+
+  // 测试用
+  reload() {
+    this.projectService.projectOpen(this.projectService.currentProjectPath);
   }
 
   // progress = 0;

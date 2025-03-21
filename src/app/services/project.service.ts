@@ -90,12 +90,12 @@ export class ProjectService {
     await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
     // node命令创建目录并复制文件
-    // window['file'].mkdirSync(projectPath);
-    // window['file'].copySync(templatePath, projectPath);
+    // window['fs'].mkdirSync(projectPath);
+    // window['fs'].copySync(templatePath, projectPath);
     // 3. 修改package.json文件
-    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     packageJson.name = newProjectData.name;
-    window['file'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
+    window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
 
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
@@ -117,6 +117,7 @@ export class ProjectService {
         this.stateSubject.next('loading');
         this.modeSubject.next('code');
         this.uiService.updateState({ state: 'done', text: '项目加载成功' });
+        this.stateSubject.next('loaded');
         return true
       }
       console.log('path not exist: ', projectPath);
@@ -127,9 +128,9 @@ export class ProjectService {
     this.stateSubject.next('loading');
     this.modeSubject.next('blockly');
     // 延迟50ms，为了等待blockly实例初始化完成
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 120));
     // 加载项目package.json
-    const packageJson = JSON.parse(window['file'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     // 添加到最近打开的项目
     this.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
@@ -149,7 +150,7 @@ export class ProjectService {
     console.log('boardModule: ', boardModule);
     let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
     console.log('boardJsonPath: ', boardJsonPath);
-    const boardJson = JSON.parse(window['file'].readFileSync(boardJsonPath));
+    const boardJson = JSON.parse(window['fs'].readFileSync(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
@@ -158,11 +159,19 @@ export class ProjectService {
       const libPackageName = libraryModuleList[index];
       this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
       const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
-      await this.blocklyService.loadLibrary(libPackagePath);
+      try {
+        await this.blocklyService.loadLibrary(libPackagePath);
+      } catch (error) {
+        console.error('加载库失败: ', error);
+        this.uiService.updateState({ state: 'error', text: libPackageName + ' 加载失败' });
+        this.message.error(libPackageName + ' 加载失败');
+        return false;
+      }
+
     }
     // 5. 加载project.abi数据
     this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
-    let jsonData = JSON.parse(window['file'].readFileSync(`${projectPath}/project.abi`));
+    let jsonData = JSON.parse(window['fs'].readFileSync(`${projectPath}/project.abi`));
     this.blocklyService.loadAbiJson(jsonData);
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
@@ -198,7 +207,7 @@ export class ProjectService {
           return;
         }
 
-        const packageJson = JSON.parse(window['file'].readFileSync(packageJsonPath));
+        const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath));
         const boardDependencies = packageJson.boardDependencies || {};
 
         for (const [key, version] of Object.entries(boardDependencies)) {
@@ -243,23 +252,23 @@ export class ProjectService {
   save(path = this.currentProjectPath) {
     // 导出blockly json配置并保存
     const jsonData = this.blocklyService.getWorkspaceJson();
-    window['file'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData, null, 2));
+    window['fs'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData, null, 2));
     this.stateSubject.next('saved');
   }
 
   saveAs(path) {
     //在当前路径下创建一个新的目录
-    window['file'].mkdirSync(path);
+    window['fs'].mkdirSync(path);
     // 复制项目目录到新路径
-    window['file'].copySync(this.currentProjectPath, path);
+    window['fs'].copySync(this.currentProjectPath, path);
     // 修改package.json文件
     this.save(path);
     // 修改package.json文件
-    const packageJson = JSON.parse(window['file'].readFileSync(`${path}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${path}/package.json`));
     // 获取新的项目名称
     let name = path.split('\\').pop();
     packageJson.name = name;
-    window['file'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
+    window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
     // 修改当前项目路径
     this.currentProjectPath = path;
     this.currentPackageData = packageJson;

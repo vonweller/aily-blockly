@@ -97,7 +97,7 @@ export class BlocklyService {
     // 加载block
     const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
     if (blockFileIsExist) {
-      let blocks = JSON.parse(window['file'].readFileSync(libPackagePath + '/block.json'));
+      let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
       this.loadLibBlocks(blocks);
     } else {
       //  加载js形式的block定义
@@ -106,7 +106,7 @@ export class BlocklyService {
     // 加载toolbox
     const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
     if (toolboxFileIsExist) {
-      let toolbox = JSON.parse(window['file'].readFileSync(libPackagePath + '/toolbox.json'));
+      let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
       this.loadLibToolbox(toolbox);
     }
     // 加载generator
@@ -172,7 +172,7 @@ export class BlocklyService {
     // 移除block定义
     const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
     if (blockFileIsExist) {
-      let blocks = JSON.parse(window['file'].readFileSync(libPackagePath + '/block.json'));
+      let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
       this.removeLibBlocks(blocks);
     } else {
       // 对于JS形式加载的block，需要使用block文件名作为标识
@@ -183,7 +183,7 @@ export class BlocklyService {
     // 移除toolbox项
     const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
     if (toolboxFileIsExist) {
-      let toolbox = JSON.parse(window['file'].readFileSync(libPackagePath + '/toolbox.json'));
+      let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
       this.removeLibToolbox(toolbox);
     }
 

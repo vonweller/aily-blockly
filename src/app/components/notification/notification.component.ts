@@ -1,7 +1,7 @@
 import { ChangeDetectorRef, Component, ElementRef, Renderer2 } from '@angular/core';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
-import { NoticeOptions, NoticeService } from '../../../../services/notice.service';
 import { CommonModule } from '@angular/common';
+import { NoticeOptions, NoticeService } from '../../services/notice.service';
 
 @Component({
   selector: 'app-notification',

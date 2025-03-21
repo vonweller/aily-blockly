@@ -42,27 +42,36 @@
             }
         }
 
-        nz-tree {
-            ::ng-deep {
-                .ant-tree-treenode {
-                    padding: 0;
-                    cursor: pointer;
-                }
+        // nz-tree {
+        //     ::ng-deep {
+        //         .ant-tree-treenode {
+        //             padding: 0;
+        //             cursor: pointer;
+        //         }
 
-                .ant-tree-treenode-selected{
-                    background: #3a3a3a;
-                }
+        //         .ant-tree-treenode-selected{
+        //             background: #3a3a3a;
+        //         }
 
-                .ant-tree-node-selected{
-                    background: none;
-                    &:hover{
-                        background: none;
-                    }
-                }
+        //         .ant-tree-node-selected{
+        //             background: none;
+        //             &:hover{
+        //                 background: none;
+        //             }
+        //         }
 
-                .ant-tree-switcher{
-                    width: 0;
-                }
+        //         .ant-tree-switcher{
+        //             width: 0;
+        //         }
+        //     }
+        // }
+
+        nz-tree-node {
+            padding: 0;
+            height: 24px;
+
+            &::before {
+                bottom: 0 !important;
             }
         }
 
@@ -72,20 +81,22 @@
             font-size: 12px;
 
             .icon {
-                height: 28px;
-                width: 28px;
+                height: 24px;
+                width: 24px;
                 font-size: 10px;
             }
-            .file-name{
+
+            .file-name {
                 height: 100%;
             }
         }
     }
 }
 
-.arrow{
+.arrow {
     transition: transform 0.3s;
-    &.down{
+
+    &.down {
         transform: rotate(90deg);
     }
 }

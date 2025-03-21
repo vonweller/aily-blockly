@@ -17,12 +17,17 @@
             </nz-tab>
             }
         </nz-tabset>
-        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)"></app-monaco-editor>
+        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)" [sdkPath]="sdkPath"
+            [librariesPath]="librariesPath"></app-monaco-editor>
         } @else {
-        <div class="empty-editor">
-            <p>没有打开的文件</p>
-            <p>从左侧资源管理器中选择文件</p>
+        <div class="empty-editor" style="padding: 15px;">
+            <div>这是代码编辑器，是一个测试功能，还不能正常使用</div>
+            <div>进入到这个页面是因为你打开了一个不存在.abi文件的目录</div>
+            <div>你可以通过界面左上角的菜单重新打开正确的项目</div>
+            <div>奈何col 2025.3.20</div>
         </div>
         }
     </div>
 </div>
+
+<app-notification></app-notification>
