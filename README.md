@@ -4,6 +4,8 @@
 aily Project是一个硬件开发集成环境，计划集成诸多AI能力，帮助硬件开发者更畅快的进行开发。  
 aily Blockly是aily Project下的blockly IDE，前期面向非专业用户提供AI辅助编程能力，长远目标是打破专业开发和非专业开发的界限，最终实现自然语言编程。  
 
+![Aily Blockly](doc\img\screenshot.png)
+
 ## 计划功能
 · AI加持（项目模板生成、块/库生成、自动调试）  
 · 工程化管理项目  
