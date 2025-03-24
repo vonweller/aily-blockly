@@ -92,9 +92,9 @@ export class BlocklyComponent {
         //   flyoutsVerticalToolbox: ContinuousFlyout,
         //   metricsManager: ContinuousMetrics,
         // },
-        // theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
-        theme: 'zelos',
-        renderer: 'zelos',
+        theme: Blockly.Theme.defineTheme('zelos', DEV_THEME),
+        // theme: 'zelos',
+        renderer: 'thrasos',
         trashcan: true,
         grid: {
           spacing: 20, // 网格间距为20像素
@@ -106,7 +106,7 @@ export class BlocklyComponent {
         zoom: {
           controls: false,  // 不显示缩放控制按钮
           wheel: true,      // 启用鼠标滚轮缩放
-          startScale: 0.85,  // 初始缩放比例
+          startScale: 1,  // 初始缩放比例
           maxScale: 1.5,      // 最大缩放比例
           minScale: 0.5,    // 最小缩放比例
           scaleSpeed: 1.05,  // 缩放速度
