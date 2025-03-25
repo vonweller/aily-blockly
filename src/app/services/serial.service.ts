@@ -37,7 +37,7 @@ export class SerialService {
 
 
 export interface PortItem {
-  port: string,
+  port?: string,
   name?: string,
   text?: string,
   type?: string,
