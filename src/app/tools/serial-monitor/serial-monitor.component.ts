@@ -333,6 +333,7 @@ export class SerialMonitorComponent {
 
   send(e = '') {
     this.SerialMonitorService.sendData(this.inputValue);
+    this.SerialMonitorService.dataUpdated.next();
   }
 
   // 清除显示
