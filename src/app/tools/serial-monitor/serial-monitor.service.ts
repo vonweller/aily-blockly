@@ -19,7 +19,7 @@ declare global {
 })
 export class SerialMonitorService {
   viewMode = {
-    showHex: true, // hex显示
+    showHex: false, // hex显示
     showCtrlChar: true, // 控制字符显示
     autoWarp: true, // 换行显示
     autoScroll: true, // 自动滚动显示

@@ -1,31 +1,41 @@
 .item {
   display: flex;
+  // align-items: center;
   line-height: 24px;
   padding: 1px 3px;
 
-  &:hover{
+  &:hover {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 5px;
   }
 
   .time {
     // line-height: 12px;
-    font-size: 12px;
+    // font-size: 12px;
     flex-shrink: 0;
     color: #888;
   }
 
   .dir {
     color: #888;
+    background-color: #333;
+    padding: 0 2px;
+    border-radius: 5px;
     margin: 0 5px 0 5px;
+    font-size: 10px;
+    // height: 20px;
+
+    &.send {
+      background-color: #4e6694 !important;
+      color: #999;
+    }
   }
 
   .data {
     // display: flex;
-  }
-
-  .send {
-    color: rgb(133, 200, 255);
+    &.send {
+      color: rgb(130, 182, 225);
+    }
   }
 
   .error {

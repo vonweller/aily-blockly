@@ -326,10 +326,17 @@ export class SerialMonitorComponent {
     this.SerialMonitorService.viewMode[name] = !this.SerialMonitorService.viewMode[name];
   }
 
-  send(e = '') { }
+  clearView() {
+    this.SerialMonitorService.dataList = [];
+    this.SerialMonitorService.dataUpdated.next();
+  }
+
+  send(e = '') {
+    this.SerialMonitorService.sendData(this.inputValue);
+  }
 
   // 清除显示
-  clean() {
+  cleanInput() {
 
   }
 }
