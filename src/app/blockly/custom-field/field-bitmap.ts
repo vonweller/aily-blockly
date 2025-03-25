@@ -673,9 +673,6 @@ Blockly.Css.register(`
   display: flex;
   justify-content: center;
 }
-.dropdownEditor.has-buttons {
-  margin-bottom: 20px;
-}
 .pixelContainer {
   margin: 20px;
 }
@@ -696,6 +693,7 @@ Blockly.Css.register(`
 }
 .controlButton {
   margin: 5px 0;
+  color: #333;
 }
 .blocklyDropDownContent.contains-bitmap-editor {
   max-height: none;
