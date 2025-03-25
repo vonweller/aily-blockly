@@ -199,7 +199,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       `void setup() {\n` +
       `${setups.join('\n')}` +
       `${userSetups.join('\n')}` +
-      `\n}\n\n` +
+      `}\n\n` +
       `void loop() {\n` +
       `${userLoops.join('\n')}` +
       `${loops.join('\n')}` +
