@@ -198,10 +198,10 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
       `void setup() {\n` +
       (setups.length > 0 ? `  ${setups.join('\n  ')}\n` : '') +
-      (userSetups.length > 0 ? `  ${userSetups.join('\n  ')}\n` : '') +
+      (userSetups.length > 0 ? `${userSetups.join('\n  ')}\n` : '') +
       `}\n\n` +
       `void loop() {\n` +
-      (userLoops.length > 0 ? `  ${userLoops.join('\n  ')}\n` : '') +
+      (userLoops.length > 0 ? `${userLoops.join('\n  ')}\n` : '') +
       (loops.length > 0 ? `  ${loops.join('\n  ')}\n` : '') +
       `}`;
     return newcode;
