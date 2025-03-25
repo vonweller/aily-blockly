@@ -1,10 +1,8 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
-import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
+import { ChangeDetectorRef, Component, ViewChild } from '@angular/core';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
-import { ElectronService } from '../../services/electron.service';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
@@ -18,12 +16,12 @@ import { PortItem, SerialService } from '../../services/serial.service';
 import { ProjectService } from '../../services/project.service';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { SerialMonitorService } from './serial-monitor.service';
-import { SimplebarAngularModule } from 'simplebar-angular';
+import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 
 @Component({
   selector: 'app-serial-monitor',
   imports: [
-    InnerWindowComponent,
+    // InnerWindowComponent,
     NzSelectModule,
     NzInputModule,
     NzButtonModule,
@@ -43,8 +41,10 @@ import { SimplebarAngularModule } from 'simplebar-angular';
 })
 export class SerialMonitorComponent {
 
+  @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
+
   options = {
-    autoHide: true,
+    autoHide: false,
     clickOnTrack: true,
     scrollbarMinSize: 50,
   };
@@ -63,7 +63,7 @@ export class SerialMonitorComponent {
     return this.SerialMonitorService.dataList;
   }
 
-  // = [
+  // dataList = [
   //   {
   //     time: '12:12:12',
   //     data: 'testtest testtest testtest testtesst testtest testtest testtesst testt\nest testtest test\rtesst testtest testtest te\n\rsttesst testtest testtest testtest',
@@ -93,19 +93,97 @@ export class SerialMonitorComponent {
   //     time: '12:12:17',
   //     data: 'testtest testtest testtest testtest',
   //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
+  //   },    {
+  //     time: '12:12:17',
+  //     data: 'testtest testtest testtest testtest',
+  //     dir: '<',
   //   },
   // ];
 
-  // 自动滚动
-  autoScroll = true;
-  // 自动换行
-  autoWrap = true;
-  // 显示时间戳
-  showTimestamp = true;
-  // HEX显示
-  showHex = false;
-  // 异常捕获
-  showError = false;
+  get autoScroll() {
+    return this.SerialMonitorService.viewMode.autoScroll;
+  }
+
+  get autoWarp() {
+    return this.SerialMonitorService.viewMode.autoWarp;
+  }
+
+  get showTimestamp() {
+    return this.SerialMonitorService.viewMode.showTimestamp;
+  }
+
+  get showHex() {
+    return this.SerialMonitorService.viewMode.showHex;
+  }
+
+  get showCtrlChar() {
+    return this.SerialMonitorService.viewMode.showCtrlChar;
+  }
+
 
   serialList = [];
 
@@ -144,6 +222,9 @@ export class SerialMonitorComponent {
   ngAfterViewInit() {
     this.SerialMonitorService.dataUpdated.subscribe(() => {
       this.cd.detectChanges();
+      if (this.autoScroll) {
+        this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+      }
     });
   }
 
@@ -231,7 +312,6 @@ export class SerialMonitorComponent {
     this.closeBaudList();
   }
 
-
   switchPort() {
     if (!this.switchValue) {
       return
@@ -240,6 +320,10 @@ export class SerialMonitorComponent {
       path: this.currentPort,
       baudRate: parseInt(this.currentBaudRate)
     });
+  }
+
+  changeViewMode(name) {
+    this.SerialMonitorService.viewMode[name] = !this.SerialMonitorService.viewMode[name];
   }
 
   send(e = '') { }

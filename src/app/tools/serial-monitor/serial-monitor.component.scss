@@ -31,7 +31,6 @@
 .main-box {
   display: flex;
   flex-direction: column;
-  // flex-grow: 1;
   width: 100%;
 }
 
@@ -133,14 +132,30 @@
 
 .monitor {
   position: relative;
-  flex-grow: 0;
+  flex: 1;
+  min-height: 0;
 
   .r-box {
     height: calc(100% - 42px);
     background: #292929;
     border-radius: 5px;
     margin: 0 10px;
-    padding: 5px 10px;
+
+    ngx-simplebar {
+      height: 100%;
+      width: 100%;
+
+      ::ng-deep {
+        .simplebar-content-wrapper {
+          height: 100%;
+          padding: 10px;
+        }
+
+        .simplebar-content {
+          height: 100%;
+        }
+      }
+    }
   }
 
   .btns {
@@ -174,9 +189,16 @@
   height: 32px;
   font-size: 18px;
   color: #eee;
+  margin-right: 3px;
 
   &:hover {
     color: #fff;
+  }
+
+  &.actived {
+    background: #1c77c8;
+    // color: #eee;
+    border-radius:5px;
   }
 }
 

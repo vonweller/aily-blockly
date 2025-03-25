@@ -18,15 +18,15 @@ declare global {
   providedIn: 'root'
 })
 export class SerialMonitorService {
-  dataViewMode = {
-    hex: true, // hex显示
-    ctrlChar: true, // 控制字符显示
-    warp: true, // 换行显示
-    scroll: true, // 自动滚动显示
-    time: true, // 时间显示
+  viewMode = {
+    showHex: true, // hex显示
+    showCtrlChar: true, // 控制字符显示
+    autoWarp: true, // 换行显示
+    autoScroll: true, // 自动滚动显示
+    showTimestamp: true, // 时间显示
   }
 
-  inputViewMode = {
+  inputMode = {
     hex: false,
     enter: false,
   }
@@ -178,7 +178,7 @@ export class SerialMonitorService {
       
       if (typeof data === 'string') {
         // 如果输入模式是hex，则将字符串解析为hex
-        if (this.inputViewMode.hex) {
+        if (this.inputMode.hex) {
           // 移除空格和非hex字符
           const hexString = data.replace(/[^0-9A-Fa-f]/g, '');
           // 确保有偶数个字符
@@ -189,7 +189,7 @@ export class SerialMonitorService {
           // 普通字符串
           let textToSend = data;
           // 如果设置了enter选项，添加换行符
-          if (this.inputViewMode.enter) {
+          if (this.inputMode.enter) {
             textToSend += '\r\n';
           }
           bufferToSend = Buffer.from(textToSend);

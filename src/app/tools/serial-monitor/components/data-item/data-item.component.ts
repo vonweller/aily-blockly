@@ -20,8 +20,8 @@ export class DataItemComponent {
 
   mode = 1; //1:文本查看 2:Hex查看
 
-  get dataViewMode() {
-    return this.serialMonitorService.dataViewMode;
+  get viewMode() {
+    return this.serialMonitorService.viewMode;
   }
 
   @HostListener('contextmenu', ['$event'])

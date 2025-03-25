@@ -1,10 +1,17 @@
 <div class="item">
-  @if (dataViewMode.time) {
+  @if (viewMode.showTimestamp) {
   <div class="time">{{ data.time }}</div>
+  <div class="dir">
+    @if(data.dir == 's') {
+    &lt;
+    }@else {
+    &gt;
+    }
+  </div>
   }
-  <div class="dir">{{ data.dir }}</div>
   @if (mode == 1) {
-  <div class="data vsfont" [ngClass]="{ send: data.dir == '>', error: data.data.includes('error:') }" [innerHTML]="data.data">
+  <div class="data vsfont" [ngClass]="{ send: data.dir == '>', error: data.data.includes('error:') }"
+    [innerHTML]="data.data">
     <!-- {{ data.data }} -->
     <!-- <span class="zf">/r</span>
     <span class="zf">/n</span> -->

@@ -9,13 +9,15 @@
   }
 
   .time {
+    // line-height: 12px;
+    font-size: 12px;
     flex-shrink: 0;
-    color: #999;
+    color: #888;
   }
 
   .dir {
-    color: #999;
-    margin: 0 10px 0 5px;
+    color: #888;
+    margin: 0 5px 0 5px;
   }
 
   .data {
