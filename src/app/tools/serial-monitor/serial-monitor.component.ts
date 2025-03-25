@@ -52,7 +52,7 @@ export class SerialMonitorComponent {
   dataList = [
     {
       time: '12:12:12',
-      data: 'testtest testtest testtest testtesst testtest testtest testtesst testtest testtest testtesst testtest testtest testtesst testtest testtest testtest',
+      data: 'testtest testtest testtest testtesst testtest testtest testtesst testt\nest testtest test\rtesst testtest testtest te\n\rsttesst testtest testtest testtest',
       dir: '>',
     },
     {

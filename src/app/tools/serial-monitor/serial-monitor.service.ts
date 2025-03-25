@@ -5,11 +5,11 @@ import { Injectable } from '@angular/core';
 })
 export class SerialMonitorService {
   dataViewMode = {
-    hex: true,
-    ctrlChar: true,
-    warp: true,
-    scroll: true,
-    time: true,
+    hex: true, // hex显示
+    ctrlChar: true, // 控制字符显示
+    warp: true, // 换行显示
+    scroll: true, // 自动滚动显示
+    time: true, // 时间显示
   }
 
   inputViewMode = {
@@ -17,7 +17,13 @@ export class SerialMonitorService {
     enter: false,
   }
 
-  data = [];
+  dataList: dataItem[] = [];
 
   constructor() { }
+}
+
+interface dataItem {
+  time: string,
+  data: any,
+  dir: 'r' | 's'
 }
