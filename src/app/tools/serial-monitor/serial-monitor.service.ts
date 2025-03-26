@@ -32,6 +32,8 @@ export class SerialMonitorService {
   inputMode = {
     hexMode: false,
     sendByEnter: false,
+    endR: true,
+    endN: true,
   }
 
   dataList: dataItem[] = [];
@@ -46,6 +48,18 @@ export class SerialMonitorService {
   // 状态观察对象
   connectionStatus = new BehaviorSubject<boolean>(false);
   availablePorts = new BehaviorSubject<any[]>([]);
+
+  sendHistoryList = [];
+
+  quickSendList = [
+    { name: 'DTR', type: 'signal', data: 'DTR' },
+    { name: 'RTS', type: 'signal', data: 'RTS' },
+    { name: 'AT', type: 'text', data: 'AT\r\n' },
+    { name: '状态获取', type: 'hex', data: 'FF DF A1 FF' },
+    { name: '温度查询', type: 'hex', data: 'FF DF A1 F2' },
+    { name: '湿度查询', type: 'hex', data: 'FF DF A1 F1' },
+    { name: '状态获取', type: 'hex', data: 'FF DF A1 F0' },
+  ]
 
   constructor(
     private projectService: ProjectService,
@@ -178,10 +192,8 @@ export class SerialMonitorService {
     if (!this.isConnected || !this.serialPort) {
       return Promise.resolve(false);
     }
-
     return new Promise((resolve) => {
       let bufferToSend;
-
       if (typeof data === 'string') {
         // 如果输入模式是hex，则将字符串解析为hex
         if (this.inputMode.hexMode) {
@@ -195,8 +207,11 @@ export class SerialMonitorService {
           // 普通字符串
           let textToSend = data;
           // 如果设置了enter选项，添加换行符
-          if (this.inputMode.sendByEnter) {
-            textToSend += '\r\n';
+          if (this.inputMode.endR) {
+            textToSend += '\r';
+          }
+          if (this.inputMode.endN) {
+            textToSend += '\n';
           }
           bufferToSend = Buffer.from(textToSend);
         }
@@ -352,6 +367,51 @@ export class SerialMonitorService {
     // 写入文件
     this.electronService.writeFile(folderPath, fileContent);
     this.message.success('数据已成功导出到' + folderPath);
+  }
+
+  /**
+   * 发送控制信号(DTR/RTS)到串口
+   * @param signalType 信号类型: 'DTR' 或 'RTS'
+   * @param state 信号状态: true为设置，false为清除，不传则切换当前状态
+   * @returns 操作是否成功
+   */
+  sendSignal(signalType: 'DTR' | 'RTS', state?: boolean): Promise<boolean> {
+    if (!this.isConnected || !this.serialPort) {
+      this.message.error('串口未连接，无法发送信号');
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      try {
+        const methodName = signalType.toLowerCase();
+        // 如果没提供状态，则获取当前状态并取反
+        if (state === undefined && typeof this.serialPort[methodName + 'Bool'] === 'function') {
+          state = !this.serialPort[methodName + 'Bool']();
+        }
+
+        // 调用串口对象的方法设置信号
+        this.serialPort.set({ [methodName]: state }, (err: any) => {
+          if (err) {
+            console.error(`设置${signalType}信号失败:`, err);
+            this.message.error(`设置${signalType}信号失败`);
+            resolve(false);
+          } else {
+            // 记录信号发送到数据列表
+            this.dataList.push({
+              time: new Date().toLocaleTimeString(),
+              data: Buffer.from(`[设置${signalType}信号: ${state ? '开启' : '关闭'}]`),
+              dir: 's'
+            });
+            this.dataUpdated.next();
+            resolve(true);
+          }
+        });
+      } catch (error) {
+        console.error('发送信号时出错:', error);
+        this.message.error('发送信号失败');
+        resolve(false);
+      }
+    });
   }
 }
 

@@ -17,6 +17,8 @@ import { ProjectService } from '../../services/project.service';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { SerialMonitorService } from './serial-monitor.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
+import { HistoryMessageListComponent } from './components/history-message-list/history-message-list.component';
+import { QuickSendListComponent } from './components/quick-send-list/quick-send-list.component';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -34,7 +36,9 @@ import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-ang
     DataItemComponent,
     NzSwitchModule,
     MenuComponent,
-    SimplebarAngularModule
+    SimplebarAngularModule,
+    HistoryMessageListComponent,
+    QuickSendListComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
@@ -44,7 +48,7 @@ export class SerialMonitorComponent {
   @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
 
   get viewMode() {
-    return this.SerialMonitorService.viewMode;
+    return this.serialMonitorService.viewMode;
   }
 
   options = {
@@ -64,7 +68,7 @@ export class SerialMonitorComponent {
   }
 
   get dataList() {
-    return this.SerialMonitorService.dataList;
+    return this.serialMonitorService.dataList;
   }
 
   // dataList = [
@@ -169,34 +173,40 @@ export class SerialMonitorComponent {
   // ];
 
   get autoScroll() {
-    return this.SerialMonitorService.viewMode.autoScroll;
+    return this.serialMonitorService.viewMode.autoScroll;
   }
 
   get autoWrap() {
-    return this.SerialMonitorService.viewMode.autoWrap;
+    return this.serialMonitorService.viewMode.autoWrap;
   }
 
   get showTimestamp() {
-    return this.SerialMonitorService.viewMode.showTimestamp;
+    return this.serialMonitorService.viewMode.showTimestamp;
   }
 
   get showHex() {
-    return this.SerialMonitorService.viewMode.showHex;
+    return this.serialMonitorService.viewMode.showHex;
   }
 
   get showCtrlChar() {
-    return this.SerialMonitorService.viewMode.showCtrlChar;
+    return this.serialMonitorService.viewMode.showCtrlChar;
   }
 
   get hexMode() {
-    return this.SerialMonitorService.inputMode.hexMode;
+    return this.serialMonitorService.inputMode.hexMode;
   }
 
   get sendByEnter() {
-    return this.SerialMonitorService.inputMode.sendByEnter
+    return this.serialMonitorService.inputMode.sendByEnter
   }
 
-  serialList = [];
+  get endR() {
+    return this.serialMonitorService.inputMode.endR
+  }
+
+  get endN() {
+    return this.serialMonitorService.inputMode.endN
+  }
 
   inputValue;
 
@@ -216,7 +226,7 @@ export class SerialMonitorComponent {
   constructor(
     private projectService: ProjectService,
     private serialService: SerialService,
-    private SerialMonitorService: SerialMonitorService,
+    private serialMonitorService: SerialMonitorService,
     private uiService: UiService,
     private router: Router,
     private cd: ChangeDetectorRef
@@ -231,7 +241,7 @@ export class SerialMonitorComponent {
   }
 
   ngAfterViewInit() {
-    this.SerialMonitorService.dataUpdated.subscribe(() => {
+    this.serialMonitorService.dataUpdated.subscribe(() => {
       setTimeout(() => {
         this.cd.detectChanges();
         if (this.autoScroll) {
@@ -242,14 +252,14 @@ export class SerialMonitorComponent {
   }
 
   ngOnDestroy() {
-    this.SerialMonitorService.disconnect();
+    this.serialMonitorService.disconnect();
   }
 
   close() {
     this.uiService.closeTool('serial-monitor');
   }
 
-  bottomHeight = 180;
+  bottomHeight = 210;
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
   }
@@ -329,28 +339,52 @@ export class SerialMonitorComponent {
     if (!this.switchValue) {
       return
     }
-    this.SerialMonitorService.connect({
+    this.serialMonitorService.connect({
       path: this.currentPort,
       baudRate: parseInt(this.currentBaudRate)
     });
   }
 
   changeViewMode(name) {
-    this.SerialMonitorService.viewMode[name] = !this.SerialMonitorService.viewMode[name];
+    this.serialMonitorService.viewMode[name] = !this.serialMonitorService.viewMode[name];
   }
 
   clearView() {
-    this.SerialMonitorService.dataList = [];
-    this.SerialMonitorService.dataUpdated.next();
+    this.serialMonitorService.dataList = [];
+    this.serialMonitorService.dataUpdated.next();
   }
 
   changeInputMode(name) {
-    this.SerialMonitorService.inputMode[name] = !this.SerialMonitorService.inputMode[name];
+    this.serialMonitorService.inputMode[name] = !this.serialMonitorService.inputMode[name];
   }
 
-  send(e = '') {
-    this.SerialMonitorService.sendData(this.inputValue);
-    this.SerialMonitorService.dataUpdated.next();
+  send(data = this.inputValue) {
+    this.serialMonitorService.sendData(data);
+    this.serialMonitorService.dataUpdated.next();
+    if (this.inputValue.trim() !== '') {
+      // 避免保存空内容到历史记录
+      if (!this.serialMonitorService.sendHistoryList.includes(this.inputValue)) {
+        this.serialMonitorService.sendHistoryList.unshift(this.inputValue); // 添加到列表开头
+        // 限制历史记录数量，例如最多保存20条
+        if (this.serialMonitorService.sendHistoryList.length > 20) {
+          this.serialMonitorService.sendHistoryList.pop();
+        }
+      }
+    }
+  }
+
+  onKeyDown(event: KeyboardEvent) {
+    if (this.serialMonitorService.inputMode.sendByEnter) {
+      if (event.key === 'Enter') {
+        this.send();
+        event.preventDefault();
+      }
+      return;
+    }
+    if (event.ctrlKey && event.key === 'Enter') {
+      this.send();
+      event.preventDefault();
+    }
   }
 
   // 清除显示
@@ -359,6 +393,27 @@ export class SerialMonitorComponent {
   }
 
   exportData() {
-    this.SerialMonitorService.exportData();
+    this.serialMonitorService.exportData();
+  }
+
+  // 历史记录相关
+  showHistoryList = false;
+  openHistoryList() {
+    this.showHistoryList = !this.showHistoryList;
+  }
+
+  get sendHistoryList() {
+    return this.serialMonitorService.sendHistoryList;
+  }
+
+  editHistory(content: string) {
+    this.inputValue = content;
+    this.showHistoryList = false;
+  }
+
+  resendHistory(content: string) {
+    this.inputValue = content;
+    this.send();
+    this.showHistoryList = false;
   }
 }
