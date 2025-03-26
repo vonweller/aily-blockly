@@ -445,4 +445,8 @@ export class SerialMonitorComponent {
   openSettings() {
 
   }
+
+  openSearchBox() {
+
+  }
 }
