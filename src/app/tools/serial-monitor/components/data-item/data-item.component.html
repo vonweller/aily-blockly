@@ -9,23 +9,15 @@
     RX
     }
   </div>
-  <!-- } -->
-  @if (mode == 1) {
   <div class="data vsfont"
     [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
-    [innerHTML]="data.data">
-    <!-- {{ data.data }} -->
-    <!-- <span class="zf">/r</span>
-      <span class="zf">/n</span> -->
+    [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
   </div>
-  } @else {
-  <div class="data vsfont">{{ data.source }}</div>
-  }
 </div>
 }@else{
 <span class="data vsfont"
   [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
-  [innerHTML]="data.data">
+  [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
 </span>
 }
 

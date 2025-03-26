@@ -23,20 +23,11 @@
     border-radius: 5px;
     margin: 0 5px 0 5px;
     font-size: 10px;
-    // height: 20px;
 
     &.send {
       background-color: #4e6694 !important;
       color: #999;
     }
-  }
-
-  .zf {
-    width: 14px;
-    height: 20px;
-    background: rgba(255, 140, 0, 0.3);
-    color: #fff;
-    margin: 0 2px;
   }
 }
 
@@ -53,5 +44,20 @@
 
   &.error {
     color: rgb(182, 0, 0);
+  }
+
+  ::ng-deep {
+    .zf {
+      width: 14px;
+      height: 20px;
+      background: rgba(255, 140, 0, 0.3);
+      color: #fff;
+      margin: 0 2px;
+      border-radius: 5px;
+    }
+
+    .hex {
+      margin-right: 7px;
+    }
   }
 }

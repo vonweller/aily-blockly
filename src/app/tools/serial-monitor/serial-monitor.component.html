@@ -103,6 +103,10 @@
             [ngClass]="{'actived':showTimestamp}">
             <i class="fa-light fa-timer"></i>
           </div>
+          <div class="btn ccenter" nz-tooltip nzTooltipTitle="显示不可见字符" (click)="changeViewMode('showCtrlChar')"
+            [ngClass]="{'actived':showCtrlChar}">
+            <i class="fa-light fa-eye"></i>
+          </div>
           <!-- <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索">
             <i class="fa-light fa-magnifying-glass"></i>
           </div> -->

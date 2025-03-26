@@ -5,7 +5,6 @@ const path = require('path');
 function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-open", (event, data) => {
-        console.log("window-open", data);
         const subWindow = new BrowserWindow({
             frame: false,
             autoHideMenuBar: true,
@@ -20,12 +19,12 @@ function registerWindowHandlers(mainWindow) {
             },
         });
 
-        if (process.env.DEV) {
+        if (process.env.DEV === 'true' || process.env.DEV === true) {
             subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
             subWindow.webContents.openDevTools();
         } else {
             subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
-            // subWindow.webContents.openDevTools();
+            subWindow.webContents.openDevTools();
         }
     });
 
