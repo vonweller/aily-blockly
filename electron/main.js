@@ -13,7 +13,10 @@ process.env.DEV = serve;
 const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
+
+// debug模块
 const { registerShortcuts } = require("./debug");
+const { initLogger } = require("./logger");
 
 let mainWindow;
 
@@ -142,6 +145,7 @@ function createWindow() {
 
   try {
     loadEnv();
+    initLogger(process.env.AILY_APPDATA_PATH);
   } catch (error) {
     console.error("loadEnv error: ", error);
   }

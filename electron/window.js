@@ -27,7 +27,6 @@ function registerWindowHandlers(mainWindow) {
             subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
             // subWindow.webContents.openDevTools();
         }
-
         registerShortcuts(subWindow);
     });
 
