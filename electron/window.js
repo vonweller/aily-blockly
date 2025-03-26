@@ -1,6 +1,7 @@
 // 窗口控制
 const { ipcMain, BrowserWindow } = require("electron");
 const path = require('path');
+const { registerShortcuts } = require("./debug");
 
 function registerWindowHandlers(mainWindow) {
 
@@ -21,11 +22,13 @@ function registerWindowHandlers(mainWindow) {
 
         if (process.env.DEV === 'true' || process.env.DEV === true) {
             subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
-            subWindow.webContents.openDevTools();
+            // subWindow.webContents.openDevTools();
         } else {
             subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
-            subWindow.webContents.openDevTools();
+            // subWindow.webContents.openDevTools();
         }
+
+        registerShortcuts(subWindow);
     });
 
     ipcMain.on("window-minimize", (event) => {

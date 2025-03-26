@@ -13,6 +13,7 @@ process.env.DEV = serve;
 const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
+const { registerShortcuts } = require("./debug");
 
 let mainWindow;
 
@@ -125,11 +126,13 @@ function createWindow() {
 
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
   }
+
+  registerShortcuts(mainWindow);
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
