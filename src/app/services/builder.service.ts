@@ -68,8 +68,6 @@ export class BuilderService {
     Object.entries(dependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/board-')) {
         board = key
-      } else if (key.startsWith('@aily-project/lib-core-')) {
-        // 排除掉以lib-core开头的文件夹
       } else if (key.startsWith('@aily-project/lib-')) {
         libsPath.push(key)
       }
@@ -95,6 +93,7 @@ export class BuilderService {
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
       let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
+      if (!window['path'].isExists(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
       await this.terminalService.sendCmd(`7z x "${sourcePath}" -o"${targetPath}" -y`);
@@ -168,14 +167,24 @@ export class BuilderService {
               lastBuildText = buildText;
               // this.uiService.updateState({ state: 'doing', text: buildText });
             }
-            // 提取进度信息
-            else if (trimmedLine.startsWith('progress')) {
+            // 检查错误信息
+            else if (trimmedLine.toLowerCase().includes('error:') ||
+              trimmedLine.toLowerCase().includes('error during build:') ||
+              trimmedLine.toLowerCase().includes('failed') || 
+              trimmedLine.toLowerCase().includes('fatal')) {
+              console.error("检测到编译错误:", trimmedLine);
+              errorText = trimmedLine;
+              isErrored = true;
+            }
+            else {
+              // 提取进度信息
               console.log(trimmedLine);
-              const progressInfo = trimmedLine.replace('progress', '').trim();
-              const progressMatch = progressInfo.match(/(\d+)%?/);
+              const progressInfo = trimmedLine.trim();
 
-              if (progressMatch) {
-                const progressValue = parseInt(progressMatch[1], 10);
+              // Match patterns like [========================================          ] 80%
+              const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
+              if (barProgressMatch) {
+                const progressValue = parseInt(barProgressMatch[1], 10);
                 lastProgress = progressValue;
 
                 // 进度为100%时标记完成
@@ -183,14 +192,6 @@ export class BuilderService {
                   buildCompleted = true;
                 }
               }
-            }
-            // 检查错误信息
-            else if (trimmedLine.toLowerCase().includes('error:') ||
-              trimmedLine.toLowerCase().includes('failed') || 
-              trimmedLine.toLowerCase().includes('fatal')) {
-              console.error("检测到编译错误:", trimmedLine);
-              errorText = trimmedLine;
-              isErrored = true;
             }
 
             if (isErrored) {

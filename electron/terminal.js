@@ -18,11 +18,30 @@ function registerTerminalHandlers(mainWindow) {
     
     return new Promise((resolve, reject) => {
       const shell = process.platform === "win32" ? "powershell.exe" : "bash";
+
+      // 确定工作目录
+      let cwd = args.cwd;
+      if (!cwd) {
+        // Windows使用USERPROFILE，其他平台使用HOME
+        cwd = process.platform === "win32"
+          ? process.env.USERPROFILE
+          : process.env.HOME;
+      }
+
+      // 检查cwd是否存在
+      const fs = require('fs');
+      if (!fs.existsSync(cwd)) {
+        console.warn(`指定的工作目录不存在: ${cwd}，将使用系统临时目录`);
+        cwd = require('os').tmpdir(); // 使用临时目录作为最后的备选
+      }
+
+      console.log(`启动终端，工作目录: ${cwd}`);
+
       const ptyProcess = pty.spawn(shell, [], {
         name: "xterm-color",
         cols: args.cols || 80,  // 确保有合适的默认值
         rows: args.rows || 24,
-        cwd: args.cwd || process.env.HOME,
+        cwd: cwd,
         env: process.env,
       });
 
