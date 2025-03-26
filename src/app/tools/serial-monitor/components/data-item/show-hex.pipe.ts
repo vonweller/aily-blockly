@@ -1,11 +1,14 @@
 import { Pipe, PipeTransform } from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 @Pipe({
   name: 'showHex',
   standalone: true
 })
 export class ShowHexPipe implements PipeTransform {
-  transform(value: Uint8Array | string): string {
+  constructor(private sanitizer: DomSanitizer) {}
+  
+  transform(value: Uint8Array | string): SafeHtml {
     if (!value) return '';
     let bytes: Uint8Array;
     
@@ -21,6 +24,7 @@ export class ShowHexPipe implements PipeTransform {
       `<span class="hex">${byte.toString(16).padStart(2, '0').toUpperCase()}</span>`
     );
     
-    return hexArray.join('');
+    // 使用DomSanitizer标记HTML为安全
+    return this.sanitizer.bypassSecurityTrustHtml(hexArray.join(''));
   }
 }
