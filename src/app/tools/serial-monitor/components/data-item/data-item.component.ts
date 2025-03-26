@@ -66,6 +66,7 @@ export class DataItemComponent {
         break;
     }
     this.closeMenu()
+    this.cd.detectChanges();
   }
 
   copyText() {

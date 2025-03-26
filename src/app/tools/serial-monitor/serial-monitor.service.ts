@@ -30,8 +30,8 @@ export class SerialMonitorService {
   }
 
   inputMode = {
-    hex: false,
-    enter: false,
+    hexMode: false,
+    sendByEnter: false,
   }
 
   dataList: dataItem[] = [];
@@ -184,7 +184,7 @@ export class SerialMonitorService {
 
       if (typeof data === 'string') {
         // 如果输入模式是hex，则将字符串解析为hex
-        if (this.inputMode.hex) {
+        if (this.inputMode.hexMode) {
           // 移除空格和非hex字符
           const hexString = data.replace(/[^0-9A-Fa-f]/g, '');
           // 确保有偶数个字符
@@ -195,7 +195,7 @@ export class SerialMonitorService {
           // 普通字符串
           let textToSend = data;
           // 如果设置了enter选项，添加换行符
-          if (this.inputMode.enter) {
+          if (this.inputMode.sendByEnter) {
             textToSend += '\r\n';
           }
           bufferToSend = Buffer.from(textToSend);

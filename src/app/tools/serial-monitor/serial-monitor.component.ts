@@ -188,6 +188,13 @@ export class SerialMonitorComponent {
     return this.SerialMonitorService.viewMode.showCtrlChar;
   }
 
+  get hexMode() {
+    return this.SerialMonitorService.inputMode.hexMode;
+  }
+
+  get sendByEnter() {
+    return this.SerialMonitorService.inputMode.sendByEnter
+  }
 
   serialList = [];
 
@@ -225,10 +232,12 @@ export class SerialMonitorComponent {
 
   ngAfterViewInit() {
     this.SerialMonitorService.dataUpdated.subscribe(() => {
-      this.cd.detectChanges();
-      if (this.autoScroll) {
-        this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
-      }
+      setTimeout(() => {
+        this.cd.detectChanges();
+        if (this.autoScroll) {
+          this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+        }
+      }, 10);
     });
   }
 
@@ -333,6 +342,10 @@ export class SerialMonitorComponent {
   clearView() {
     this.SerialMonitorService.dataList = [];
     this.SerialMonitorService.dataUpdated.next();
+  }
+
+  changeInputMode(name) {
+    this.SerialMonitorService.inputMode[name] = !this.SerialMonitorService.inputMode[name];
   }
 
   send(e = '') {

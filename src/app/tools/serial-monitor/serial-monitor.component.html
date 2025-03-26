@@ -127,11 +127,13 @@
         <div class="s-box">
           <textarea class="sscroll vsfont" nz-input [(ngModel)]="inputValue"></textarea>
           <div class="btns">
-            <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示">
+            <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示" (click)="changeInputMode('hexMode')"
+              [ngClass]="{'actived':hexMode}">
               <i class="fa-thin fa-rectangle"></i>
               <div>Hex</div>
             </div>
-            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="回车发送">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="回车发送" (click)="changeInputMode('sendByEnter')"
+              [ngClass]="{'actived':sendByEnter}">
               <i class="fa-light fa-arrow-turn-down-left"></i>
             </div>
             <!-- <div class="btn ccenter right" nz-tooltip nzTooltipTitle="发送文件">
