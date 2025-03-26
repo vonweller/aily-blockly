@@ -1,1 +1,18 @@
-<app-code-editor [code]="code"></app-code-editor>
+@if (currentUrl == "/code-viewer") {
+  <app-sub-window
+    [title]="windowInfo"
+    [winBtns]="['go-main', 'minimize', 'maximize', 'close']"
+  >
+    <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+  </app-sub-window>
+} @else {
+  <app-tool-container
+    [title]="windowInfo"
+    (closeEvent)="close()"
+  >
+    <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+  </app-tool-container>
+}
+<ng-template #windowBoxTemplate>
+  <app-monaco-editor [code]="code"></app-monaco-editor>
+</ng-template>

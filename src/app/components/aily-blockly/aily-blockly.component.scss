@@ -1,5 +1,4 @@
-:host {
-}
+:host {}
 
 #blockly-area {
   position: relative;
@@ -7,10 +6,15 @@
 
 #blockly-div {
   ::ng-deep {
+
     .blocklyFlyoutBackground,
     .blocklyTrash {
       opacity: 0;
       display: none;
+    }
+
+    .blocklyToolboxContents {
+      padding-bottom: 35px;
     }
   }
 }

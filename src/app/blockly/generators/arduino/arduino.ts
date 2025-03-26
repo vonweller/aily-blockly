@@ -57,14 +57,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
 
     this.addReservedWords(
       'setup,loop,if,else,for,switch,case,while,do,break,continue,return,goto,' +
-        'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
-        'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
-        'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
-        'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
-        'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
-        'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
-        'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
-        'detachInterrupt,interrupts,noInterrupts',
+      'define,include,HIGH,LOW,INPUT,OUTPUT,INPUT_PULLUP,true,false,integer,' +
+      'constants,floating,point,void,boolean,char,unsigned,byte,int,word,long,' +
+      'float,double,string,String,array,static,volatile,const,sizeof,pinMode,' +
+      'digitalWrite,digitalRead,analogReference,analogRead,analogWrite,tone,' +
+      'noTone,shiftOut,shitIn,pulseIn,millis,micros,delay,delayMicroseconds,' +
+      'min,max,abs,constrain,map,pow,sqrt,sin,cos,tan,randomSeed,random,' +
+      'lowByte,highByte,bitRead,bitWrite,bitSet,bitClear,bit,attachInterrupt,' +
+      'detachInterrupt,interrupts,noInterrupts',
     );
   }
 
@@ -197,12 +197,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
       (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
       `void setup() {\n` +
-      `${setups.join('\n')}` +
-      `${userSetups.join('\n')}` +
+      (setups.length > 0 ? `  ${setups.join('\n  ')}\n` : '') +
+      (userSetups.length > 0 ? `${userSetups.join('\n  ')}\n` : '') +
       `}\n\n` +
       `void loop() {\n` +
-      `${userLoops.join('\n')}` +
-      `${loops.join('\n')}` +
+      (userLoops.length > 0 ? `${userLoops.join('\n  ')}\n` : '') +
+      (loops.length > 0 ? `  ${loops.join('\n  ')}\n` : '') +
       `}`;
     return newcode;
   }
@@ -232,7 +232,7 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       .replace(/\\/g, '\\\\')
       .replace(/\n/g, '\\\n')
       .replace(/'/g, "\\'");
-    return "'" + string + "'";
+    return "\"" + string + "\"";
   }
 
   /**
@@ -402,15 +402,23 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
+  addUserLoop(tag, code) {
+    if (this.codeDict['userLoops'][tag] === undefined) {
+      this.codeDict['userLoops'][tag] = code;
+    }
+  }
+
+  // 变量相关
+  variableTypes = {};
   getVarType(varName) {
-    // let variableMap = arduinoGenerator.nameDB_.variableMap_.variableMap_
-    // for (const key in variableMap) {
-    //   for (let index = 0; index < variableMap[key].length; index++) {
-    //     let variableModel = variableMap[key][index];
-    //     if (variableModel && variableModel.name == varName) return variableModel.type
-    //   }
-    // }
+    if (this.variableTypes[varName]) {
+      return this.variableTypes[varName];
+    }
     return 'int';
+  }
+
+  setVarType(varName, type) {
+    this.variableTypes[varName] = type;
   }
 
   getValue(block, name: string, type = '') {
@@ -448,25 +456,5 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
   }
 }
 
-export const VAR_TYPE = [
-  { name: 'int', value: 'int' },
-  { name: 'long', value: 'long' },
-  { name: 'float', value: 'float' },
-  { name: 'double', value: 'double' },
-  { name: 'char', value: 'char' },
-  { name: 'String', value: 'String' },
-  { name: 'boolean', value: 'boolean' },
-];
 
 export const arduinoGenerator = new ArduinoGenerator();
-
-export const DEFAULT_DATA = `{
-  "dependencies": {
-  },
-  "blocks": {
-    "languageVersion": 0, "blocks": [
-      { "type": "arduino_setup", "id": "arduino_setup_id0", "x": 30, "y": 30 },
-      { "type": "arduino_loop", "id": "arduino_loop_id0", "x": 330, "y": 30 }
-    ]
-  }
-}`;

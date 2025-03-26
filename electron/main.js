@@ -1,28 +1,125 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
-import path from "path";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import * as pty from "@lydell/node-pty";
+const path = require("path");
+const os = require("os");
+const fs = require("fs");
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
+
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
+process.env.DEV = serve;
+
+// ipc handlers模块
+const { registerTerminalHandlers } = require("./terminal");
+const { registerWindowHandlers } = require("./window");
+const { registerNpmHandlers } = require("./npm");
 
 let mainWindow;
+
+// 获取系统默认的应用数据目录
+function getAppDataPath() {
+  let home = os.homedir();
+  let path;
+  if (process.platform === "win32") {
+    path = home + "\\AppData\\Local\\aily-project";
+  } else if (process.platform === "darwin") {
+    path = home + "/Library/Application Support/aily-project";
+  } else {
+    path = home + "/.config/aily-project";
+  }
+  if (!require("fs").existsSync(path)) {
+    require("fs").mkdirSync(path, { recursive: true });
+  }
+  return path;
+}
+
+// 执行7z解压缩操作
+function unzip7z(zippath, destpath) {
+  const child_process = require("child_process");
+  const child = child_process.spawnSync("7za.exe", ["x", zippath, "-o" + destpath]);
+  console.log("unzip7z: ", child.stdout.toString());
+}
+
+// 检查Node
+function checkNodePath(childPath) {
+  // 检查是否存在node环境
+  const nodePath = path.join(childPath, "node");
+  if (!fs.existsSync(nodePath)) {
+    // node zip文件路径
+    const nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
+    // node unzip路径
+    const nodeDestPath = childPath
+    // 执行解压缩操作
+    try {
+      unzip7z(nodeZipPath, nodeDestPath)
+      // 重命名解压后的文件夹
+      const nodeDir = path.join(nodeDestPath, path.basename(nodeZipPath, path.extname(nodeZipPath)))
+      fs.renameSync(nodeDir, nodePath)
+    } catch (err) {
+      console.err("Node init error, err: ", err)
+    }
+  }
+}
+
+// 环境变量加载
+function loadEnv() {
+  // 将child目录添加到环境变量PATH中
+  const childPath = path.join(__dirname, "..", "child")
+  process.env.PATH = childPath + path.delimiter + process.env.PATH;
+
+  // node环境加载
+  checkNodePath(childPath)
+
+  const nodePath = path.join(childPath, "node")
+  // 将node环境的路径配置在系统PATH环境的最前面，以实现优先调用内置的node环境
+  process.env.PATH = nodePath + path.delimiter + process.env.PATH;
+
+  // 读取同级目录下的config.json文件
+  const confContent = require("fs").readFileSync(
+    path.join(__dirname, "config.json"),
+  );
+  const conf = JSON.parse(confContent);
+
+  console.log("conf: ", conf);
+
+  // app data path
+  process.env.AILY_APPDATA_PATH = getAppDataPath();
+  // npm registry
+  process.env.AILY_NPM_REGISTRY = conf["npm_registry"][0];
+  // 7za path
+  process.env.AILY_7ZA_PATH = path.join(childPath, "7za.exe")
+  // 全局npm包路径
+  process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
+  // 默认全局编译器路径
+  process.env.AILY_COMPILERS_PATH = path.join(
+    process.env.AILY_APPDATA_PATH,
+    "compiler",
+  );
+  // 默认全局烧录器路径
+  process.env.AILY_TOOLS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools");
+  // 默认全局SDK路径
+  process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
+  // zip包下载地址
+  process.env.AILY_ZIP_URL = 'https://blockly.openjumper.cn/'
+
+  process.env.AILY_PROJECT_PATH = conf["project_path"];
+}
+
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
-    height: 740,
+    height: 780,
     frame: false,
+    minWidth: 1200,
+    minHeight: 780,
     autoHideMenuBar: true,
     transparent: true,
+    alwaysOnTop: false,
     webPreferences: {
       nodeIntegration: true,
-      // contextIsolation: false,
       webSecurity: false,
-      preload: path.join(__dirname, "preload.cjs"),
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -31,16 +128,39 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
+    mainWindow.webContents.openDevTools();
   }
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
     mainWindow = null;
+    app.quit();
   });
+
+  try {
+    loadEnv();
+  } catch (error) {
+    console.error("loadEnv error: ", error);
+  }
+
+  // 注册ipc handlers
+  registerTerminalHandlers(mainWindow);
+  registerWindowHandlers(mainWindow);
+  registerNpmHandlers(mainWindow);
 }
 
 app.on("ready", () => {
   createWindow();
+  // 这个用于双击实现窗口最大化，之后调
+  // setInterval(() => {
+  //   const cursorPos = screen.getCursorScreenPoint(); // 全局鼠标坐标
+  //   const winPos = mainWindow.getBounds();             // 窗口在屏幕中的位置和大小
+
+  //   // 计算鼠标在窗口中的位置
+  //   const relativeX = cursorPos.x - winPos.x;
+  //   const relativeY = cursorPos.y - winPos.y;
+  //   // console.log('鼠标在窗口中的位置：', relativeX, relativeY);
+  // }, 1000);
 });
 
 // 当所有窗口都被关闭时退出应用（macOS 除外）
@@ -57,82 +177,8 @@ app.on("activate", () => {
   }
 });
 
-// 终端相关(dev)
-const terminals = new Map();
-ipcMain.on("terminal-create", (event, args) => {
-  const shell = process.env[process.platform === "win32" ? "COMSPEC" : "SHELL"];
-  const ptyProcess = pty.spawn(shell, [], {
-    name: "xterm-color",
-    cols: 80,
-    rows: 30,
-    cwd: process.env.HOME,
-    env: process.env,
-  });
-
-  ptyProcess.on("data", (data) => {
-    mainWindow.webContents.send("terminal-data", data);
-  });
-
-  ipcMain.on("terminal-input", (event, input) => {
-    ptyProcess.write(input);
-  });
-
-  // 关闭终端
-  ipcMain.on("terminal-close", (event) => {
-    ptyProcess.kill();
-  });
-});
-
-// 多窗口相关(dev)
-ipcMain.on("window-open", (event, data) => {
-  console.log("window-open", data);
-  const subWindow = new BrowserWindow({
-    frame: false,
-    autoHideMenuBar: true,
-    transparent: true,
-    alwaysOnTop: data.alwaysOnTop ? data.alwaysOnTop : false,
-    webPreferences: {
-      nodeIntegration: true,
-      webSecurity: false,
-      preload: path.join(__dirname, "preload.cjs")
-    },
-  });
-
-  if (serve) {
-    subWindow.loadURL(`http://localhost:4200/${data.path}`);
-    subWindow.webContents.openDevTools();
-  } else {
-    subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
-  }
-});
-
-ipcMain.on("window-minimize", (event) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  if (senderWindow) {
-    senderWindow.minimize();
-  }
-});
-
-ipcMain.on("window-maximize", (event) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  if (senderWindow.isMaximized()) {
-    senderWindow.unmaximize();
-  } else {
-    senderWindow.maximize();
-  }
-});
-
-ipcMain.on("window-close", (event) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  senderWindow.close();
-});
-
-ipcMain.on("window-alwaysOnTop", (event, alwaysOnTop) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  senderWindow.setAlwaysOnTop(alwaysOnTop);
-});
-
 // 项目管理相关
+// 打开项目用
 ipcMain.handle("select-folder", async (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(senderWindow, {
@@ -145,8 +191,51 @@ ipcMain.handle("select-folder", async (event, data) => {
   return result.filePaths[0];
 });
 
-ipcMain.handle("project-new", (event) => {
-  const projectPath = createTemporaryProject();
-  event.returnValue = projectPath;
-  console.log("project-new path", projectPath);
+// 另存为用
+ipcMain.handle("select-folder-saveAs", async (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
+  // 构建默认路径，确保包含建议的文件名
+  let defaultPath;
+  if (data.path) {
+    defaultPath = data.path;
+    // 如果同时提供了建议名称，则附加到路径上
+    if (data.suggestedName) {
+      defaultPath = path.join(defaultPath, data.suggestedName);
+    }
+  } else if (data.suggestedName) {
+    defaultPath = path.join(app.getPath('documents'), data.suggestedName);
+  } else {
+    defaultPath = app.getPath('documents');
+  }
+  const result = await dialog.showSaveDialog(senderWindow, {
+    defaultPath: defaultPath,
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+    buttonLabel: '保存',
+    title: '项目另存为'
+  });
+
+  if (result.canceled) {
+    return data.path || '';
+  }
+  // 直接返回用户选择的完整路径，保留文件名部分
+  return result.filePath;
+});
+
+// 环境变量
+ipcMain.handle("env-set", (event, data) => {
+  process.env[data.key] = data.value;
+})
+
+ipcMain.handle("env-get", (event, key) => {
+  return process.env[key];
+})
+
+// 用于嵌入的iframe打开外部链接
+app.on('web-contents-created', (event, contents) => {
+  // 处理iframe中的链接点击
+  contents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' }; // 阻止在Electron中打开
+  });
 });

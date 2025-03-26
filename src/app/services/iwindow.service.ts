@@ -4,24 +4,24 @@ import { Injectable } from '@angular/core';
   providedIn: 'root',
 })
 export class IwindowService {
-  windows: IWindowOpt[] = [];
+  windows: IWindowOpts[] = [];
 
   // bounds: HTMLElement;
 
   constructor() {}
 
-  openWindow(opt: IWindowOpt) {
-    opt.zindex = opt.zindex == 0 ? opt.zindex : this.getMaxZindex() + 1;
-    opt.size = opt.size || { width: 400, height: 600 };
-    opt.position = opt.position || {
-      x: window.innerWidth - opt.size.width,
+  openWindow(opts: IWindowOpts) {
+    opts.zindex = opts.zindex == 0 ? opts.zindex : this.getMaxZindex() + 1;
+    opts.size = opts.size || { width: 400, height: 600 };
+    opts.position = opts.position || {
+      x: window.innerWidth - opts.size.width,
       y: 65,
     };
-    this.windows.push(opt);
+    this.windows.push(opts);
   }
 
-  closeWindow(opt: IWindowOpt) {
-    let index = this.windows.indexOf(opt);
+  closeWindow(opts: IWindowOpts) {
+    let index = this.windows.indexOf(opts);
     this.windows.splice(index, 1);
   }
 
@@ -33,7 +33,7 @@ export class IwindowService {
   }
 }
 
-export interface IWindowOpt {
+export interface IWindowOpts {
   position?: {
     x: number;
     y: number;
@@ -44,7 +44,7 @@ export interface IWindowOpt {
     minWidth?: number;
     minHeight?: number;
   };
-  type: string;
+  type?: string;
   title: string;
   zindex?: number;
 }

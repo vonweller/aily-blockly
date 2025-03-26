@@ -1,5 +1,19 @@
 <blockly-main></blockly-main>
-<app-project-btn (click)="openProjectManager()"></app-project-btn>
-<!-- @if (showProjectManager) {
-<app-project-manager></app-project-manager>
-} -->
+<div class="project-mangager-btn ccenter">
+  <div class="mangager ccenter" (click)="openProjectManager()">项目管理</div>
+  <div class="reload btn link ccenter" (click)="reload()">
+    <i class="fa-light fa-sync"></i>
+  </div>
+</div>
+@if (showProjectManager) {
+<app-lib-manager (close)="showProjectManager=false"></app-lib-manager>
+}
+<app-notification></app-notification>
+
+<!-- <div class="test">
+  <div (click)="test('+')">+</div>
+  <div (click)="test('-')">-</div>
+  <div (click)="test('done')">done</div>
+  <div (click)="test('error')">error</div>
+  <div (click)="test('warn')">warn</div>
+</div> -->

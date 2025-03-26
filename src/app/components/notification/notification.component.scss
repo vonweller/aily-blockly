@@ -1,0 +1,102 @@
+.notification-box {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    background: rgba(10, 10, 10, 0.8);
+    padding: 10px 0 10px 10px;
+    border-radius: 10px;
+    box-shadow: 0 0 5px 0 rgba(0, 0, 0, 0.1);
+    min-width: 250px;
+    max-width: 400px;
+    width: 250px;
+    height: 90px;
+    transition: all 0.3s ease;
+    overflow: hidden;
+
+    .box {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: 5px solid #5c5c5c;
+        position: relative;
+        flex-shrink: 0;
+
+        .num-box {
+            position: absolute;
+        }
+
+        i {
+            font-size: 35px;
+        }
+
+        .fa-spinner-third {
+            font-size: 59.5px;
+        }
+
+        .fa-check {
+            color: #007400;
+        }
+
+        &.done {
+            border-color: #007400;
+        }
+
+        .fa-xmark {
+            color: rgb(139, 0, 0);
+        }
+
+        &.error {
+            border-color: rgb(139, 0, 0);
+        }
+
+        .fa-exclamation {
+            color: rgb(255, 119, 0);
+            font-size: 32px;
+        }
+
+        &.warn {
+            border-color: rgb(255, 119, 0);
+        }
+    }
+
+    .text-box {
+        margin-left: 10px;
+        flex:1;
+        width: calc(100% - 115px);
+
+        >div:nth-child(2) {
+            margin-top: 2px;
+            color: #999;
+            font-size: 12px;
+        }
+
+        .btns {
+            margin-top: 2px;
+            display: flex;
+
+            .btn {
+                margin-right: 15px;
+                font-size: 12px;
+            }
+
+            .red {
+                color: rgb(192, 20, 20);
+
+                &:hover {
+                    color: rgb(241, 89, 89);
+                }
+            }
+        }
+    }
+
+    .close {
+        width: 30px;
+        height: 100%;
+        font-size: 20px;
+        :hover {
+            color: rgb(116, 192, 228);
+        }
+    }
+}

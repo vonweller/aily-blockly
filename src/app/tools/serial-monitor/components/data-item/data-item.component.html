@@ -1,0 +1,27 @@
+@if (viewMode.showTimestamp) {
+<div class="item">
+  <!-- @if (viewMode.showTimestamp) { -->
+  <div class="time">{{ data.time }}</div>
+  <div class="dir" [ngClass]="{ send: data.dir == 's'}">
+    @if(data.dir == 's') {
+    TX
+    }@else {
+    RX
+    }
+  </div>
+  <div class="data vsfont"
+    [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
+    [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
+  </div>
+</div>
+}@else{
+<span class="data vsfont"
+  [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
+  [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
+</span>
+}
+
+@if (showMenu) {
+<app-menu [menuList]="rightMenu" [position]="position" [width]="125" (closeEvent)="closeMenu()"
+  (itemClickEvent)="menuClick($event)"></app-menu>
+}
