@@ -31,22 +31,27 @@
     }
   }
 
-  .data {
-    // display: flex;
-    &.send {
-      color: rgb(130, 182, 225);
-    }
-  }
-
-  .error {
-    color: rgb(182, 0, 0);
-  }
-
   .zf {
     width: 14px;
     height: 20px;
     background: rgba(255, 140, 0, 0.3);
     color: #fff;
     margin: 0 2px;
+  }
+}
+
+.data {
+  // display: flex;
+
+  &.nowrap {
+    white-space: nowrap;
+  }
+
+  &.send {
+    color: rgb(130, 182, 225);
+  }
+
+  &.error {
+    color: rgb(182, 0, 0);
   }
 }

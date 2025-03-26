@@ -1,5 +1,6 @@
+@if (viewMode.showTimestamp) {
 <div class="item">
-  @if (viewMode.showTimestamp) {
+  <!-- @if (viewMode.showTimestamp) { -->
   <div class="time">{{ data.time }}</div>
   <div class="dir" [ngClass]="{ send: data.dir == 's'}">
     @if(data.dir == 's') {
@@ -8,18 +9,25 @@
     RX
     }
   </div>
-  }
+  <!-- } -->
   @if (mode == 1) {
-  <div class="data vsfont" [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:') }"
+  <div class="data vsfont"
+    [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
     [innerHTML]="data.data">
     <!-- {{ data.data }} -->
     <!-- <span class="zf">/r</span>
-    <span class="zf">/n</span> -->
+      <span class="zf">/n</span> -->
   </div>
   } @else {
   <div class="data vsfont">{{ data.source }}</div>
   }
 </div>
+}@else{
+<span class="data vsfont"
+  [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
+  [innerHTML]="data.data">
+</span>
+}
 
 @if (showMenu) {
 <app-menu [menuList]="rightMenu" [position]="position" [width]="125" (closeEvent)="closeMenu()"
