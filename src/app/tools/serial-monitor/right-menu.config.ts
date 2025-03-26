@@ -1,18 +1,12 @@
 export let RIGHT_MENU = [
   {
     name: '复制文本',
-    data: {
-      type: 'window',
-      path: 'project-new',
-      alwaysOnTop: true,
-      width: 820,
-      height: 550,
-    },
+    data: {},
     icon: 'fa-light fa-copy',
   },
   {
     name: 'Hex显示',
-    data: { type: 'explorer', data: 'project-open' },
+    data: {},
     icon: 'fa-light fa-square-code',
   },
   {

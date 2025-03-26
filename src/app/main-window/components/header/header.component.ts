@@ -171,7 +171,7 @@ export class HeaderComponent {
         this.openProject(item.data);
         break;
       case 'tool':
-        if (['串口工具', 'AI', '应用商店'].includes(item.name)) {
+        if (['AI', '应用商店'].includes(item.name)) {
           this.message.warning('功能暂未开放');
           break;
         }

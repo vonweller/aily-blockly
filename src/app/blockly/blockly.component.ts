@@ -12,7 +12,10 @@ import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
 // import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 import './custom-category';
-import './custom-field'
+import './custom-field/field-bitmap.js';
+import './custom-field/field-image.js';
+import './custom-field/field-multilineinput.js';
+
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 
@@ -92,8 +95,9 @@ export class BlocklyComponent {
         //   flyoutsVerticalToolbox: ContinuousFlyout,
         //   metricsManager: ContinuousMetrics,
         // },
+        theme: Blockly.Theme.defineTheme('zelos', DEV_THEME),
+        // theme: 'zelos',
         renderer: 'thrasos',
-        theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
         trashcan: true,
         grid: {
           spacing: 20, // 网格间距为20像素
@@ -102,6 +106,14 @@ export class BlocklyComponent {
           snap: true,
         },
         media: 'blockly/media',
+        zoom: {
+          controls: false,  // 不显示缩放控制按钮
+          wheel: true,      // 启用鼠标滚轮缩放
+          startScale: 1,  // 初始缩放比例
+          maxScale: 1.5,      // 最大缩放比例
+          minScale: 0.5,    // 最小缩放比例
+          scaleSpeed: 1.05,  // 缩放速度
+        },
       });
 
       // 监听容器尺寸变化，刷新Blockly工作区

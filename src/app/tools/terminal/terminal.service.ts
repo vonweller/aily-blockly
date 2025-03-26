@@ -166,7 +166,7 @@ export class TerminalService {
 
       // 在固定时间后停止流（如果未正常结束）
       setTimeout(() => {
-        window['electronAPI'].terminal.stopStream(this.currentPid, streamId);
+        window['terminal'].stopStream(this.currentPid, streamId);
         removeListener();
         if (completeCallback) completeCallback();
       }, 300000); // 5分钟超时
@@ -196,6 +196,6 @@ export class TerminalService {
     if (!this.currentPid) {
       return Promise.reject('终端未初始化');
     }
-    return window['electronAPI'].terminal.killProcess(this.currentPid, processName);
+    return window['terminal'].killProcess(this.currentPid, processName);
   }
 }

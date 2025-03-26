@@ -2,6 +2,7 @@ import { Component, HostListener, Input } from '@angular/core';
 import { MenuComponent } from '../../../../components/menu/menu.component';
 import { CommonModule } from '@angular/common';
 import { RIGHT_MENU } from '../../right-menu.config';
+import { SerialMonitorService } from '../../serial-monitor.service';
 
 @Component({
   selector: 'app-data-item',
@@ -19,6 +20,10 @@ export class DataItemComponent {
 
   mode = 1; //1:文本查看 2:Hex查看
 
+  get viewMode() {
+    return this.serialMonitorService.viewMode;
+  }
+
   @HostListener('contextmenu', ['$event'])
   onRightClick(event: MouseEvent) {
     event.preventDefault();
@@ -29,7 +34,10 @@ export class DataItemComponent {
     return false;
   }
 
-  constructor() {}
+  constructor(
+    private serialMonitorService: SerialMonitorService
+  ) { }
+
 
   closeMenu() {
     this.showMenu = false;
@@ -38,7 +46,6 @@ export class DataItemComponent {
   menuClick(item) {
     this.convert2Hex(this.data.data)
     this.mode = 2;
-
     this.closeMenu()
   }
 
@@ -51,6 +58,6 @@ export class DataItemComponent {
     // 返回由空格分隔的 HEX 字符串，也可以根据需求修改格式
     this.data['source'] = hexArray.join(' ');
     console.log(this.data['source']);
-    
   }
+
 }

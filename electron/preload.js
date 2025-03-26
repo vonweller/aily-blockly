@@ -20,7 +20,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   versions: () => process.versions,
   SerialPort: {
     list: async () => await SerialPort.list(),
-    create: (options) => new SerialPort(options),
+    create: (options) => {
+      const port = new SerialPort(options);
+      return {
+        write: (data, callback) => port.write(data, callback),
+        open: (callback) => port.open(callback),
+        close: (callback) => port.close(callback),
+        on: (event, callback) => {
+          port.on(event, callback);
+          return port; // 允许链式调用
+        },
+        off: (event, callback) => {
+          port.off(event, callback);
+          return port;
+        },
+        get path() { return port.path; },
+        get isOpen() { return port.isOpen; }
+      };
+    }
   },
   platform: {
     type: () => process.platform,

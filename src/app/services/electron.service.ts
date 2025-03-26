@@ -5,7 +5,7 @@ import { Injectable } from '@angular/core';
 })
 export class ElectronService {
   isElectron = false;
-  electron = window['electronAPI'];
+  electron: any = window['electronAPI'];
 
   constructor() { }
 
