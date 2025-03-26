@@ -86,18 +86,26 @@
           </ngx-simplebar>
         </div>
         <div class="btns">
-          <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示" (click)="changeViewMode('showHex')" [ngClass]="{'actived':showHex}">
+          <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示" (click)="changeViewMode('showHex')"
+            [ngClass]="{'actived':showHex}">
             <i class="fa-thin fa-rectangle"></i>
             <div>Hex</div>
           </div>
-          <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动换行" (click)="changeViewMode('autoWarp')" [ngClass]="{'actived':autoWarp}">
+          <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动换行" (click)="changeViewMode('autoWrap')"
+            [ngClass]="{'actived':autoWrap}">
             <i class="fa-light fa-arrow-turn-down-left"></i>
           </div>
-          <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动滚动" (click)="changeViewMode('autoScroll')" [ngClass]="{'actived':autoScroll}">
+          <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动滚动" (click)="changeViewMode('autoScroll')"
+            [ngClass]="{'actived':autoScroll}">
             <i class="fa-light fa-arrow-down-to-line"></i>
           </div>
-          <div class="btn ccenter" nz-tooltip nzTooltipTitle="时间戳" (click)="changeViewMode('showTimestamp')" [ngClass]="{'actived':showTimestamp}">
+          <div class="btn ccenter" nz-tooltip nzTooltipTitle="时间戳" (click)="changeViewMode('showTimestamp')"
+            [ngClass]="{'actived':showTimestamp}">
             <i class="fa-light fa-timer"></i>
+          </div>
+          <div class="btn ccenter" nz-tooltip nzTooltipTitle="显示不可见字符" (click)="changeViewMode('showCtrlChar')"
+            [ngClass]="{'actived':showCtrlChar}">
+            <i class="fa-light fa-eye"></i>
           </div>
           <!-- <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索">
             <i class="fa-light fa-magnifying-glass"></i>

@@ -3,10 +3,12 @@ import { MenuComponent } from '../../../../components/menu/menu.component';
 import { CommonModule } from '@angular/common';
 import { RIGHT_MENU } from '../../right-menu.config';
 import { SerialMonitorService } from '../../serial-monitor.service';
+import { ShowNRPipe } from './show-nr.pipe';
+import { ShowHexPipe } from './show-hex.pipe';
 
 @Component({
   selector: 'app-data-item',
-  imports: [MenuComponent, CommonModule],
+  imports: [MenuComponent, CommonModule,ShowNRPipe,ShowHexPipe],
   templateUrl: './data-item.component.html',
   styleUrl: './data-item.component.scss',
 })

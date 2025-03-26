@@ -43,6 +43,10 @@ export class SerialMonitorComponent {
 
   @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
 
+  get viewMode() {
+    return this.SerialMonitorService.viewMode;
+  }
+
   options = {
     autoHide: false,
     clickOnTrack: true,
@@ -168,8 +172,8 @@ export class SerialMonitorComponent {
     return this.SerialMonitorService.viewMode.autoScroll;
   }
 
-  get autoWarp() {
-    return this.SerialMonitorService.viewMode.autoWarp;
+  get autoWrap() {
+    return this.SerialMonitorService.viewMode.autoWrap;
   }
 
   get showTimestamp() {
