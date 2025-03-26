@@ -272,7 +272,14 @@ export class SerialMonitorService {
     const folderPath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
       title: '导出串口数据',
       path: this.projectService.currentProjectPath,
-      suggestedName: 'log_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.txt',
+      suggestedName: 'log_' + new Date().toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }).replace(/[/,:]/g, '_').replace(/\s/g, '_') + '.txt',
       filters: [
         { name: '文本文件', extensions: ['txt'] },
         { name: '所有文件', extensions: ['*'] }
