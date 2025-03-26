@@ -249,6 +249,29 @@ export class SerialMonitorComponent {
         }
       }, 10);
     });
+
+    // 添加滚动事件监听
+    setTimeout(() => {
+      if (this.simplebar && this.simplebar.SimpleBar) {
+        this.simplebar.SimpleBar.getScrollElement().addEventListener('scroll', this.handleScroll.bind(this));
+      }
+    }, 100);
+  }
+
+  // 处理滚动事件
+  handleScroll(event) {
+    const scrollElement = event.target;
+    const scrollTop = scrollElement.scrollTop;
+    const maxScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
+
+    // 检查是否手动向上滚动(当距离底部超过10px时)
+    if (maxScrollTop - scrollTop > 10) {
+      // 用户向上滚动了，关闭自动滚动
+      if (this.viewMode.autoScroll) {
+        this.viewMode.autoScroll = false;
+        this.cd.detectChanges();
+      }
+    }
   }
 
   ngOnDestroy() {
@@ -337,7 +360,8 @@ export class SerialMonitorComponent {
 
   switchPort() {
     if (!this.switchValue) {
-      return
+      this.serialMonitorService.disconnect();
+      return;
     }
     this.serialMonitorService.connect({
       path: this.currentPort,
@@ -415,5 +439,10 @@ export class SerialMonitorComponent {
     this.inputValue = content;
     this.send();
     this.showHistoryList = false;
+  }
+
+
+  openSettings() {
+
   }
 }

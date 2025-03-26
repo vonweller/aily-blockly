@@ -10,45 +10,23 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     <!-- <div class="left-bar">
-      <div
-        class="btn ccenter selected"
-        nz-tooltip
-        nzTooltipTitle="基础设置"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter selected" nz-tooltip nzTooltipTitle="基础设置" nzTooltipPlacement="left">
         <i class="fa-light fa-gear"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="图表显示"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="图表显示" nzTooltipPlacement="left">
         <i class="fa-light fa-chart-line"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="调试辅助"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="调试辅助" nzTooltipPlacement="left">
         <i class="fa-light fa-bug"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="自动化"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动化" nzTooltipPlacement="left">
         <i class="fa-light fa-code-branch"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="高亮设置"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="高亮设置" nzTooltipPlacement="left">
         <i class="fa-light fa-paint-roller"></i>
+      </div>
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="快捷发送" nzTooltipPlacement="left">
+        <i class="fa-light fa-keyboard"></i>
       </div>
     </div> -->
     <div class="main-box">
@@ -71,6 +49,9 @@
                 <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':showBaudList}"></i>
               </div>
             </div>
+          </div>
+          <div class="setting-btn btn ccenter" nz-tooltip nzTooltipTitle="更多设置" (click)="openSettings()">
+            <i class="fa-light fa-gear"></i>
           </div>
           <div class="switch">
             <nz-switch [(ngModel)]="switchValue" (ngModelChange)="switchPort()"></nz-switch>
