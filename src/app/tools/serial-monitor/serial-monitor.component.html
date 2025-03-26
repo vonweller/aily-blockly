@@ -83,6 +83,7 @@
             @for (item of dataList; track $index) {
             <app-data-item [data]="item"></app-data-item>
             }
+            <div style="height: 10px;"></div>
           </ngx-simplebar>
         </div>
         <div class="btns">
@@ -110,7 +111,7 @@
           <!-- <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索">
             <i class="fa-light fa-magnifying-glass"></i>
           </div> -->
-          <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出">
+          <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出" (click)="exportData()">
             <i class="fa-light fa-download"></i>
           </div>
           <div class="btn ccenter right" nz-tooltip nzTooltipTitle="清除" (click)="clearView()">
@@ -133,9 +134,9 @@
             <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="回车发送">
               <i class="fa-light fa-arrow-turn-down-left"></i>
             </div>
-            <div class="btn ccenter right" nz-tooltip nzTooltipTitle="发送文件">
+            <!-- <div class="btn ccenter right" nz-tooltip nzTooltipTitle="发送文件">
               <i class="fa-light fa-file-export"></i>
-            </div>
+            </div> -->
             <button nz-button nzType="primary" (click)="send()">发送</button>
           </div>
         </div>

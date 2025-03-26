@@ -15,6 +15,7 @@ import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { CodeEditorComponent } from '../tools/code-editor/code-editor.component';
+import { AppStoreComponent } from '../tools/app-store/app-store.component';
 
 @Component({
   selector: 'app-main-window',
@@ -31,7 +32,8 @@ import { CodeEditorComponent } from '../tools/code-editor/code-editor.component'
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
-    CodeEditorComponent
+    CodeEditorComponent,
+    AppStoreComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

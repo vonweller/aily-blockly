@@ -39,6 +39,13 @@ export class ElectronService {
   }
 
   /**
+   * 写文件
+   */
+  writeFile(filePath: string, content: string) {
+    window['fs'].writeFileSync(filePath, content);
+  }
+
+  /**
  * 判断路径是否存在
  */
   exists(path: string): boolean {

@@ -344,4 +344,8 @@ export class SerialMonitorComponent {
   cleanInput() {
 
   }
+
+  exportData() {
+    this.SerialMonitorService.exportData();
+  }
 }

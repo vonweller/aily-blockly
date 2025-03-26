@@ -1,6 +1,9 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
-import { Buffer } from 'buffer'; 
+import { Buffer } from 'buffer';
+import { ProjectService } from '../../services/project.service';
+import { ElectronService } from '../../services/electron.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 // 声明Electron API全局接口
 declare global {
@@ -34,18 +37,22 @@ export class SerialMonitorService {
   dataList: dataItem[] = [];
 
   dataUpdated = new Subject<void>();
-  
+
   // 串口相关属性
   private serialPort: any = null;
   private lastDataTime = 0;
   private isConnected = false;
-  
+
   // 状态观察对象
   connectionStatus = new BehaviorSubject<boolean>(false);
   availablePorts = new BehaviorSubject<any[]>([]);
 
-  constructor() { }
-  
+  constructor(
+    private projectService: ProjectService,
+    private electronService: ElectronService,
+    private message: NzMessageService
+  ) { }
+
   /**
    * 获取可用串口列表
    */
@@ -80,8 +87,7 @@ export class SerialMonitorService {
       };
 
       this.serialPort = window.electronAPI.SerialPort.create(serialOptions);
-      console.log('连接到串口:', this.serialPort);
-      
+      // console.log('连接到串口:', this.serialPort);
       return new Promise((resolve, reject) => {
         this.serialPort.on('open', () => {
           this.isConnected = true;
@@ -140,11 +146,11 @@ export class SerialMonitorService {
   private processReceivedData(data) {
     const currentTime = Date.now();
     const timeString = new Date().toLocaleTimeString();
-    
+
     // 检查是否需要创建新的数据项
-    if (this.dataList.length === 0 || 
-        currentTime - this.lastDataTime > 1000 || 
-        this.dataList[this.dataList.length - 1].dir !== 'r') {
+    if (this.dataList.length === 0 ||
+      currentTime - this.lastDataTime > 1000 ||
+      this.dataList[this.dataList.length - 1].dir !== 'r') {
       // 创建新的数据项
       this.dataList.push({
         time: timeString,
@@ -158,7 +164,7 @@ export class SerialMonitorService {
       const combinedData = Buffer.concat([lastItem.data, data]);
       lastItem.data = combinedData;
     }
-    
+
     // 更新最后一次接收数据的时间
     this.lastDataTime = currentTime;
 
@@ -175,7 +181,7 @@ export class SerialMonitorService {
 
     return new Promise((resolve) => {
       let bufferToSend;
-      
+
       if (typeof data === 'string') {
         // 如果输入模式是hex，则将字符串解析为hex
         if (this.inputMode.hex) {
@@ -210,7 +216,7 @@ export class SerialMonitorService {
             data: bufferToSend,
             dir: 's'
           });
-          
+
           this.dataUpdated.next();
           resolve(true);
         }
@@ -253,6 +259,92 @@ export class SerialMonitorService {
    */
   isPortConnected(): boolean {
     return this.isConnected;
+  }
+
+
+  async exportData() {
+    if (this.dataList.length === 0) {
+      console.warn('没有数据可以导出');
+      return;
+    }
+
+    // 弹出保存对话框
+    const folderPath = await window['ipcRenderer'].invoke('select-folder-saveAs', {
+      title: '导出串口数据',
+      path: this.projectService.currentProjectPath,
+      suggestedName: 'log_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.txt',
+      filters: [
+        { name: '文本文件', extensions: ['txt'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+    // console.log('选中的文件夹路径：', folderPath);
+
+    if (!folderPath) {
+      return;
+    }
+
+    // 准备要写入的内容
+    let fileContent = '';
+
+    // 根据viewMode设置处理每个数据项
+    for (const item of this.dataList) {
+      // 添加时间戳
+      if (this.viewMode.showTimestamp) {
+        fileContent += `[${item.time}] `;
+        fileContent += item.dir === 's' ? 'TX: ' : 'RX: ';
+      }
+
+      // 处理数据内容
+      let dataContent = '';
+      if (this.viewMode.showHex) {
+        // 转换为Hex显示
+        if (Buffer.isBuffer(item.data)) {
+          dataContent = Array.from(item.data)
+            .map(byte => byte.toString(16).padStart(2, '0'))
+            .join(' ');
+        } else {
+          dataContent = Buffer.from(String(item.data)).toString('hex');
+        }
+      } else {
+        // 文本模式
+        let textData = '';
+        if (Buffer.isBuffer(item.data)) {
+          textData = item.data.toString();
+        } else {
+          textData = String(item.data);
+        }
+
+        // 控制字符处理
+        if (this.viewMode.showCtrlChar) {
+          // 替换常见控制字符为可见符号
+          dataContent = textData
+            .replace(/\r\n/g, '\\r\\n\n')
+            .replace(/\n/g, '\\n\n')
+            .replace(/\r/g, '\\r\n')
+            .replace(/\t/g, '\\t')
+            .replace(/\f/g, '\\f')
+            .replace(/\v/g, '\\v')
+            .replace(/\0/g, '\\0');
+        } else {
+          dataContent = textData;
+        }
+      }
+
+      // 添加数据内容
+      fileContent += dataContent;
+
+      // 如果不是自动换行模式且是最后一个数据项，不添加额外换行
+      if (this.viewMode.autoWrap || fileContent.endsWith('\n')) {
+        // 已经有换行了
+      } else {
+        fileContent += '\n';
+      }
+    }
+
+    // 写入文件
+    this.electronService.writeFile(folderPath, fileContent);
+    this.message.success('数据已成功导出到' + folderPath);
   }
 }
 

@@ -24,7 +24,7 @@ export class ShowNRPipe implements PipeTransform {
     strValue = this.escapeHtml(strValue);
 
     // 替换换行符
-    strValue = strValue.replace(/\n/g, '<span class="zf">\\n</span>');
+    strValue = strValue.replace(/\n/g, '<span class="zf">\\n</span><br>');
 
     // 替换回车符
     strValue = strValue.replace(/\r/g, '<span class="zf">\\r</span>');

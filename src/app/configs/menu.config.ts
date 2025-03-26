@@ -48,7 +48,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
     },
     {
       name: '应用商店',
-      data: { type: 'tool', data: "store" },
+      data: { type: 'tool', data: "app-store" },
       icon: 'fa-light fa-store',
     },
   ],

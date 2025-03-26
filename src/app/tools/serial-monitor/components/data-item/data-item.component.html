@@ -1,5 +1,5 @@
 @if (viewMode.showTimestamp) {
-<div class="item">
+<div class="item" [ngClass]="{'highlight':showHighlight}">
   <!-- @if (viewMode.showTimestamp) { -->
   <div class="time">{{ data.time }}</div>
   <div class="dir" [ngClass]="{ send: data.dir == 's'}">
@@ -11,13 +11,13 @@
   </div>
   <div class="data vsfont"
     [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
-    [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
+    [innerHTML]="viewMode.showHex||showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : (data.data| addNewLine))">
   </div>
 </div>
 }@else{
 <span class="data vsfont"
   [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
-  [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : data.data)">
+  [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : (data.data | addNewLine))">
 </span>
 }
 
