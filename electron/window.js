@@ -24,7 +24,7 @@ function registerWindowHandlers(mainWindow) {
             subWindow.webContents.openDevTools();
         } else {
             subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
-            subWindow.webContents.openDevTools();
+            // subWindow.webContents.openDevTools();
         }
     });
 
