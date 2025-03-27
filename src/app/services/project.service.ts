@@ -298,6 +298,7 @@ export class ProjectService {
   // 保存项目
   save(path = this.currentProjectPath) {
     // 导出blockly json配置并保存
+    // console.log('save path: ', path);
     const jsonData = this.blocklyService.getWorkspaceJson();
     window['fs'].writeFileSync(`${path}/project.abi`, JSON.stringify(jsonData, null, 2));
     this.stateSubject.next('saved');

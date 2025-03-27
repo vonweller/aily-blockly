@@ -19,6 +19,9 @@ import { SerialMonitorService } from './serial-monitor.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { HistoryMessageListComponent } from './components/history-message-list/history-message-list.component';
 import { QuickSendListComponent } from './components/quick-send-list/quick-send-list.component';
+import { CompactType, GridsterComponent, GridsterItemComponent, GridType } from 'angular-gridster2';
+import { BAUDRATE_LIST } from './config';
+import { SettingMoreComponent } from './components/setting-more/setting-more.component';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -38,7 +41,10 @@ import { QuickSendListComponent } from './components/quick-send-list/quick-send-
     MenuComponent,
     SimplebarAngularModule,
     HistoryMessageListComponent,
-    QuickSendListComponent
+    QuickSendListComponent,
+    SettingMoreComponent,
+    GridsterComponent,
+    GridsterItemComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
@@ -57,6 +63,29 @@ export class SerialMonitorComponent {
     scrollbarMinSize: 50,
   };
 
+  gridOptions = {
+    margin: 10,
+    outerMargin: false,
+    minCols: 8,
+    maxCols: 8,
+    minRows: 4,
+    maxRows: 16,
+    gridType: GridType.Fit,
+    compactType: CompactType.None,
+    pushItems: true,
+    draggable: {
+      enabled: true
+    },
+    resizable: {
+      enabled: true
+    }
+  };
+
+  gridDashboard = [
+    { cols: 2, rows: 1, y: 0, x: 0 },
+    { cols: 2, rows: 2, y: 0, x: 2 }
+  ];
+
   switchValue = false;
 
   get windowInfo() {
@@ -70,107 +99,6 @@ export class SerialMonitorComponent {
   get dataList() {
     return this.serialMonitorService.dataList;
   }
-
-  // dataList = [
-  //   {
-  //     time: '12:12:12',
-  //     data: 'testtest testtest testtest testtesst testtest testtest testtesst testt\nest testtest test\rtesst testtest testtest te\n\rsttesst testtest testtest testtest',
-  //     dir: '>',
-  //   },
-  //   {
-  //     time: '12:12:13',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },
-  //   {
-  //     time: '12:12:14',
-  //     data: "error: WiFi connection failed, password incorrect",
-  //     dir: '<',
-  //   },
-  //   {
-  //     time: '12:12:15',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },
-  //   {
-  //     time: '12:12:16',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },
-  //   {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },    {
-  //     time: '12:12:17',
-  //     data: 'testtest testtest testtest testtest',
-  //     dir: '<',
-  //   },
-  // ];
 
   get autoScroll() {
     return this.serialMonitorService.viewMode.autoScroll;
@@ -326,19 +254,8 @@ export class SerialMonitorComponent {
 
   // 波特率选择列表相关 
   showBaudList = false;
-  baudList = [
-    { name: '4800' },
-    { name: '9600' },
-    { name: '19200' },
-    { name: '38400' },
-    { name: '57600' },
-    { name: '115200' },
-    { name: '230400' },
-    { name: '460800' },
-    { name: '921600' },
-    { name: '1000000' },
-    { name: '2000000' }
-  ]
+  baudList = BAUDRATE_LIST;
+
   openBaudList(el) {
     // console.log(el.srcElement);
     // 获取元素左下角位置
@@ -441,9 +358,9 @@ export class SerialMonitorComponent {
     this.showHistoryList = false;
   }
 
-
-  openSettings() {
-
+  showMoreSettings = false;
+  openMoreSettings() {
+    this.showMoreSettings = !this.showMoreSettings;
   }
 
   openSearchBox() {

@@ -188,7 +188,7 @@ export class SerialMonitorService {
   /**
    * 发送数据到串口
    */
-  sendData(data: string): Promise<boolean> {
+  sendData(data: string, mode = 'text'): Promise<boolean> {
     if (!this.isConnected || !this.serialPort) {
       return Promise.resolve(false);
     }
@@ -196,7 +196,7 @@ export class SerialMonitorService {
       let bufferToSend;
       if (typeof data === 'string') {
         // 如果输入模式是hex，则将字符串解析为hex
-        if (this.inputMode.hexMode) {
+        if (this.inputMode.hexMode || mode === 'hex') {
           // 移除空格和非hex字符
           const hexString = data.replace(/[^0-9A-Fa-f]/g, '');
           // 确保有偶数个字符

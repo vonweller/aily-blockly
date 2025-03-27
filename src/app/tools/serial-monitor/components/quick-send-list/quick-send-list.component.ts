@@ -37,7 +37,19 @@ export class QuickSendListComponent {
   }
 
   send(item) {
-
+    switch (item.type) {
+      case 'text':
+        this.serialMonitorService.sendData(item.data);
+        break;
+      case 'hex':
+        this.serialMonitorService.sendData(item.data, 'hex');
+        break;
+      case 'signal':
+        this.serialMonitorService.sendSignal(item.data);
+        break;
+      default:
+        break;
+    }
   }
 
   addBtn() {

@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, lastValueFrom, Subject } from 'rxjs';
+import { BehaviorSubject, lastValueFrom } from 'rxjs';
 import * as Blockly from 'blockly';
 import { processJsonVar } from './abf';
 
@@ -12,7 +12,13 @@ export class BlocklyService {
 
   toolbox = {
     kind: 'categoryToolbox',
-    contents: [],
+    contents: [
+      {
+        'kind': 'search',
+        'name': 'Search',
+        'contents': [],
+      }
+    ],
   };
 
   codeSubject = new BehaviorSubject<string>('');
@@ -296,7 +302,11 @@ export class BlocklyService {
     // 重置工具箱
     this.toolbox = {
       kind: 'categoryToolbox',
-      contents: [],
+      contents: [{
+        'kind': 'search',
+        'name': 'Search',
+        'contents': [],
+      }],
     };
 
     // 重置其他可能的状态

@@ -15,7 +15,6 @@ const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
 
 // debug模块
-const { registerShortcuts } = require("./debug");
 const { initLogger } = require("./logger");
 
 let mainWindow;
@@ -135,7 +134,7 @@ function createWindow() {
     // mainWindow.webContents.openDevTools();
   }
 
-  registerShortcuts(mainWindow);
+  // registerShortcuts(mainWindow);
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {

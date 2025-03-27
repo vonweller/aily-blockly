@@ -1,7 +1,6 @@
 // 窗口控制
 const { ipcMain, BrowserWindow } = require("electron");
 const path = require('path');
-const { registerShortcuts } = require("./debug");
 
 function registerWindowHandlers(mainWindow) {
 
@@ -27,7 +26,6 @@ function registerWindowHandlers(mainWindow) {
             subWindow.loadFile(`renderer/index.html`, { hash: `#/${data.path}` });
             // subWindow.webContents.openDevTools();
         }
-        registerShortcuts(subWindow);
     });
 
     ipcMain.on("window-minimize", (event) => {

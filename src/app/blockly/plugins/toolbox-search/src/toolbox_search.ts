@@ -9,7 +9,7 @@
  * in its flyout.
  */
 import * as Blockly from 'blockly/core';
-import {BlockSearcher} from './block_searcher';
+import { BlockSearcher } from './block_searcher';
 
 /* eslint-disable @typescript-eslint/naming-convention */
 
@@ -52,9 +52,8 @@ export class ToolboxSearchCategory extends Blockly.ToolboxCategory {
     this.searchField = document.createElement('input');
     this.searchField.type = 'search';
     this.searchField.placeholder = 'Search';
-    this.workspace_.RTL
-      ? (this.searchField.style.marginRight = '8px')
-      : (this.searchField.style.marginLeft = '8px');
+    this.searchField.spellcheck = false;
+    this.searchField.classList.add("search-box");
     this.searchField.addEventListener('keyup', (event) => {
       if (event.key === 'Escape') {
         this.parentToolbox_.clearSelection();
@@ -174,11 +173,11 @@ export class ToolboxSearchCategory extends Blockly.ToolboxCategory {
 
     this.flyoutItems_ = query
       ? this.blockSearcher.blockTypesMatching(query).map((blockType) => {
-          return {
-            kind: 'block',
-            type: blockType,
-          };
-        })
+        return {
+          kind: 'block',
+          type: blockType,
+        };
+      })
       : [];
 
     if (!this.flyoutItems_.length) {
