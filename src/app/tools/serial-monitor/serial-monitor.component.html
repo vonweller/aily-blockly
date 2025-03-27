@@ -35,7 +35,7 @@
           <div class="item">
             <div class="title">串口</div>
             <div class="item-inner ccenter" (click)="openPortList($event)">
-              <div>{{currentPort}}</div>
+              <div class="value">{{currentPort}}</div>
               <div class="arrow-box">
                 <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':showPortList}"></i>
               </div>
@@ -44,22 +44,41 @@
           <div class="item">
             <div class="title">波特率</div>
             <div class="item-inner ccenter" (click)="openBaudList($event)">
-              <div>{{currentBaudRate}}</div>
+              <div class="value">{{currentBaudRate}}</div>
               <div class="arrow-box">
                 <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':showBaudList}"></i>
               </div>
             </div>
           </div>
-          <div class="setting-btn btn ccenter" nz-tooltip nzTooltipTitle="更多设置" (click)="openSettings()">
+          <div class="setting-btn btn ccenter" nz-tooltip nzTooltipTitle="更多设置" (click)="openMoreSettings()">
+            @if(showMoreSettings){
+            <i class="fa-light fa-xmark"></i>
+            }@else {
             <i class="fa-light fa-gear"></i>
+            }
           </div>
           <div class="switch">
             <nz-switch [(ngModel)]="switchValue" (ngModelChange)="switchPort()"></nz-switch>
           </div>
         </div>
       </div>
+      @if(showMoreSettings){
+      <app-setting-more></app-setting-more>
+      }
       <div class="monitor">
         <div class="r-box">
+          <!-- <gridster [options]="gridOptions">
+            @for (widget of gridDashboard; track widget) {
+            <gridster-item [item]="widget">
+              <ngx-simplebar [options]="options">
+                @for (item of dataList; track $index) {
+                <app-data-item [data]="item"></app-data-item>
+                }
+                <div style="height: 10px;"></div>
+              </ngx-simplebar>
+            </gridster-item>
+            }
+          </gridster> -->
           <ngx-simplebar [options]="options">
             @for (item of dataList; track $index) {
             <app-data-item [data]="item"></app-data-item>

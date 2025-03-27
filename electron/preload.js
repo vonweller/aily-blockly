@@ -34,6 +34,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
           port.off(event, callback);
           return port;
         },
+        set: (options, callback) => port.set(options, callback),
+        dtrBool: () => {
+          if (typeof port.dtrBool === 'function') {
+            return port.dtrBool();
+          }
+          return false; // 如果方法不存在，返回默认值
+        },
+        // 添加获取RTS状态的方法
+        rtsBool: () => {
+          if (typeof port.rtsBool === 'function') {
+            return port.rtsBool();
+          }
+          return false; // 如果方法不存在，返回默认值
+        },
         get path() { return port.path; },
         get isOpen() { return port.isOpen; }
       };
