@@ -6,7 +6,7 @@ import {
   ContinuousFlyout,
   ContinuousMetrics,
 } from './plugins/continuous-toolbox/src/index.js';
-import './plugins/toolbox-search/src/index.js';
+import './plugins/toolbox-search/src/index';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
