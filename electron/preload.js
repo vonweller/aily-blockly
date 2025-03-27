@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isExists: (path) => existsSync(path),
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
+    join: (...args) => require("path").join(...args),
   },
   versions: () => process.versions,
   SerialPort: {

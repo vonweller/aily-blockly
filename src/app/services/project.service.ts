@@ -73,6 +73,40 @@ export class ProjectService {
     }
   }
 
+  // 检测复制是否成功
+  async checkCopySuccess(filePath) {
+    if (!window['path'].isExists(filePath)) {
+      let checkCount = 0;
+      const maxChecks = 10; // 5秒 / 500ms = 10次
+
+      const checkFileExistence = () => {
+        return new Promise((resolve, reject) => {
+          const timer = setInterval(() => {
+            checkCount++;
+            if (window['path'].isExists(filePath)) {
+              clearInterval(timer);
+              resolve(true);
+            } else if (checkCount >= maxChecks) {
+              clearInterval(timer);
+              this.message.error('项目创建失败：无法找到项目文件');
+              this.uiService.updateState({ state: 'error', text: '项目创建失败' });
+              reject(new Error('项目文件创建超时'));
+            }
+          }, 500);
+        });
+      };
+
+      try {
+        await checkFileExistence();
+        return true;
+      } catch (error) {
+        console.error('项目创建失败:', error);
+        return false;
+      }
+    }
+    return true;
+  }
+
   // 新建项目
   async projectNew(newProjectData: NewProjectData) {
     console.log('newProjectData: ', newProjectData);
@@ -92,6 +126,13 @@ export class ProjectService {
     // node命令创建目录并复制文件
     // window['fs'].mkdirSync(projectPath);
     // window['fs'].copySync(templatePath, projectPath);
+
+    // 判断复制是否成功
+    const packageJsonPath = window['path'].join(projectPath, 'package.json');
+    if (!await this.checkCopySuccess(packageJsonPath)) {
+      return;
+    }
+
     // 3. 修改package.json文件
     const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     packageJson.name = newProjectData.name;

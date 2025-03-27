@@ -46,7 +46,10 @@ function registerTerminalHandlers(mainWindow) {
       });
 
       console.log("new terminal pid: ", ptyProcess.pid);
-      terminals.set(ptyProcess.pid, ptyProcess);
+      // 当前win10上有问题，所以先固定一个terminal
+      terminals.set("currentPid", ptyProcess);
+
+      // terminals.set(ptyProcess.pid, ptyProcess);
       // 设置一个标志来避免重复解析
       let isResolved = false;
       // 设置超时保护
@@ -74,7 +77,8 @@ function registerTerminalHandlers(mainWindow) {
   });
 
   ipcMain.on("terminal-to-pty", (event, { pid, input }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (ptyProcess) {
       ptyProcess.write(input);
     }
@@ -82,7 +86,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 终端大小调整处理
   ipcMain.on("terminal-resize", (event, { pid, cols, rows }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (ptyProcess) {
       ptyProcess.resize(cols, rows);
     }
@@ -100,7 +105,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 异步输入，可以获取到数据
   ipcMain.handle('terminal-to-pty-async', async (event, { pid, input }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     console.log('terminal-to-pty-async pid ', pid, ' input ', input);
     return new Promise((resolve, reject) => {
       try {
@@ -147,7 +153,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 添加流式输出处理函数
   ipcMain.handle("terminal-stream-start", (event, { pid, streamId }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
@@ -202,7 +209,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 停止流式输出
   ipcMain.handle('terminal-stream-stop', (event, { pid, streamId }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
@@ -237,7 +245,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 执行命令并流式输出结果
   ipcMain.handle('terminal-to-pty-stream', async (event, { pid, input, streamId }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
@@ -264,7 +273,8 @@ function registerTerminalHandlers(mainWindow) {
 
   ipcMain.on("terminal-close", (event, { pid }) => {
     console.log("terminal-close pid ", pid);
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (ptyProcess) {
       // 清理流回调
       if (streamCallbacks.has(pid)) {
@@ -278,7 +288,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 在 terminal.js 的 registerTerminalHandlers 函数中添加
   ipcMain.handle("terminal-interrupt", (event, { pid }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    currentPid = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
@@ -300,7 +311,8 @@ function registerTerminalHandlers(mainWindow) {
 
   // 添加强制终止方法（当Ctrl+C不起作用时使用）
   ipcMain.handle("terminal-kill-process", async (event, { pid, processName }) => {
-    const ptyProcess = terminals.get(parseInt(pid, 10));
+    // const ptyProcess = terminals.get(parseInt(pid, 10));
+    const ptyProcess = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
