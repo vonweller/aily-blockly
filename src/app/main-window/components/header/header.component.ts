@@ -63,7 +63,7 @@ export class HeaderComponent {
 
   ngAfterViewInit(): void {
     this.projectService.stateSubject.subscribe((state) => {
-      if (state == 'loaded') {
+      if (state == 'loaded' || state == 'saved') {
         this.loaded = true;
         // 将headerMenu中有disabled的按钮置为可用
         this.headerMenu.forEach((menu) => {
