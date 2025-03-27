@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -28,10 +28,15 @@
       }
     ],
     "win": {
-      "target": "dir",
+      "target": "nsis",
       "sign": null,
       "signAndEditExecutable": false,
       "artifactName": "${productName}-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
     }
   },
   "scripts": {
