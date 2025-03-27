@@ -194,7 +194,7 @@ export class UploaderService {
                 console.log("numericMatch: ", numericMatch);
                 if (numericMatch) {
                   progressValue = parseInt(numericMatch[1], 10);
-                  if (lastProgress == 0 && progressValue >= 99) {
+                  if (lastProgress == 0 && progressValue > 100) {
                     progressValue = 0;
                   }
                   break; // 找到匹配后停止循环

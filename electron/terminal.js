@@ -289,7 +289,7 @@ function registerTerminalHandlers(mainWindow) {
   // 在 terminal.js 的 registerTerminalHandlers 函数中添加
   ipcMain.handle("terminal-interrupt", (event, { pid }) => {
     // const ptyProcess = terminals.get(parseInt(pid, 10));
-    currentPid = terminals.get("currentPid");
+    const ptyProcess = terminals.get("currentPid");
     if (!ptyProcess) {
       return { success: false, error: 'Terminal not found' };
     }
