@@ -51,21 +51,15 @@ export class SerialMonitorService {
 
   sendHistoryList = [];
 
-  quickSendList = [
-    { name: 'DTR', type: 'signal', data: 'DTR' },
-    { name: 'RTS', type: 'signal', data: 'RTS' },
-    { name: 'AT', type: 'text', data: 'AT\r\n' },
-    { name: '状态获取', type: 'hex', data: 'FF DF A1 FF' },
-    { name: '温度查询', type: 'hex', data: 'FF DF A1 F2' },
-    { name: '湿度查询', type: 'hex', data: 'FF DF A1 F1' },
-    { name: '状态获取', type: 'hex', data: 'FF DF A1 F0' },
-  ]
+  quickSendList: QuickSendItem[] = []
 
   constructor(
     private projectService: ProjectService,
     private electronService: ElectronService,
     private message: NzMessageService
-  ) { }
+  ) {
+    this.loadQuickSendList();
+  }
 
   /**
    * 获取可用串口列表
@@ -188,7 +182,7 @@ export class SerialMonitorService {
   /**
    * 发送数据到串口
    */
-  sendData(data: string, mode = 'text'): Promise<boolean> {
+  sendData(data: string, mode = 'text', IgnoreEnd = false): Promise<boolean> {
     if (!this.isConnected || !this.serialPort) {
       return Promise.resolve(false);
     }
@@ -207,11 +201,13 @@ export class SerialMonitorService {
           // 普通字符串
           let textToSend = data;
           // 如果设置了enter选项，添加换行符
-          if (this.inputMode.endR) {
-            textToSend += '\r';
-          }
-          if (this.inputMode.endN) {
-            textToSend += '\n';
+          if (!IgnoreEnd) {
+            if (this.inputMode.endR) {
+              textToSend += '\r';
+            }
+            if (this.inputMode.endN) {
+              textToSend += '\n';
+            }
           }
           bufferToSend = Buffer.from(textToSend);
         }
@@ -413,10 +409,42 @@ export class SerialMonitorService {
       }
     });
   }
+
+  saveQuickSendList() {
+    // 保存到localStorage中
+    const data = JSON.stringify(this.quickSendList);
+    localStorage.setItem('quickSendList', data);
+  }
+
+  loadQuickSendList() {
+    // 从localStorage中加载
+    const data = localStorage.getItem('quickSendList');
+    if (data) {
+      try {
+        this.quickSendList = JSON.parse(data);
+      } catch (e) {
+        console.error('解析快速发送列表失败:', e);
+      }
+    } else {
+      // 如果没有数据，则使用默认值
+      this.quickSendList = [
+        { name: 'DTR', type: 'signal', data: 'DTR' },
+        { name: 'RTS', type: 'signal', data: 'RTS' },
+        { name: '发送文本', type: 'text', data: 'This is aily blockly' },
+        { name: '发送Hex', type: 'hex', data: 'FF FF A1 A2 A3 A4 A5' }
+      ];
+    }
+  }
 }
 
-interface dataItem {
+export interface dataItem {
   time: string,
   data: any,
   dir: 'r' | 's'
+}
+
+export interface QuickSendItem {
+  "name": string,
+  "type": "signal" | "text" | "hex",
+  "data": string
 }

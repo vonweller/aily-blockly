@@ -7,10 +7,14 @@
                 {{item.name}}
             </div>
             }
-            <div style="width: 40px;height:24px;flex-shrink: 0; "></div>
+            <!-- <div style="width: 40px;height:24px;flex-shrink: 0; "></div> -->
         </div>
     </ngx-simplebar>
-    <div class="btn setting ccenter" (click)="addBtn()">
-        <i class="fa-regular fa-plus"></i>
+    <div class="btn setting ccenter" (click)="edit()">
+        @if(showMore){
+        <i class="fa-light fa-xmark"></i>
+        }@else{
+        <i class="fa-light fa-pencil"></i>
+        }
     </div>
 </div>

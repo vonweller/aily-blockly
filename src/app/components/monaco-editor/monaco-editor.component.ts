@@ -18,7 +18,7 @@ export class MonacoEditorComponent {
 
   @ViewChild(NzCodeEditorComponent) codeEditor: NzCodeEditorComponent;
 
-  editorOption: any = {
+  @Input() options: any = {
     language: 'cpp',
     theme: 'vs-dark',
     lineNumbers: 'on',
@@ -26,6 +26,7 @@ export class MonacoEditorComponent {
   }
 
   @Input() code = '';
+
   @Output() codeChange = new EventEmitter<string>();
 
   @Input() sdkPath: string;
@@ -65,6 +66,13 @@ export class MonacoEditorComponent {
 
   onCodeChange(newCode: string): void {
     this.codeChange.emit(newCode);
+  }
+
+  editorInitialized(editor: any): void {
+    // console.log(editor);
+    // setTimeout(() => {
+    //   editor.getAction('editor.action.formatDocument').run();
+    // }, 3000);
   }
 
   /**
@@ -148,4 +156,5 @@ export class MonacoEditorComponent {
     // 重新加载
     await this.loadArduinoCompletions();
   }
+
 }

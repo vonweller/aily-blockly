@@ -60,23 +60,21 @@
 
 .setting {
     position: absolute;
-    right: 0;
-    cursor: pointer;
     top: 0;
-    height: 40px;
-    width: 40px;
-    background: rgba(0, 0, 0, 0.5);
-    border-radius: 5px;
-    visibility: hidden;
+    right: 0;
+    font-size: 18px;
+    width: 38px;
+    height: 38px;
+    padding-top: 2px;
 
     &:hover {
-        background: rgba(0, 0, 0, 0.8);
+        color: #fff;
     }
 }
 
 ngx-simplebar {
     height: 40px;
-    width: 100%;
+    width: calc(100% - 40px);
 
     ::ng-deep {
         .simplebar-content-wrapper {

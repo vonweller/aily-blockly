@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild } from '@angular/core';
+import { Component, ElementRef, EventEmitter, Output, ViewChild } from '@angular/core';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { SerialMonitorService } from '../../serial-monitor.service';
 import { CommonModule } from '@angular/common';
@@ -39,7 +39,7 @@ export class QuickSendListComponent {
   send(item) {
     switch (item.type) {
       case 'text':
-        this.serialMonitorService.sendData(item.data);
+        this.serialMonitorService.sendData(item.data, 'text', true);
         break;
       case 'hex':
         this.serialMonitorService.sendData(item.data, 'hex');
@@ -52,15 +52,10 @@ export class QuickSendListComponent {
     }
   }
 
-  addBtn() {
-
-  }
-
-  delBtn(item) {
-
-  }
-
-  editBtn(item) {
-
+  @Output() openMore = new EventEmitter();
+  showMore = false;
+  edit() {
+    this.showMore = !this.showMore;
+    this.openMore.emit(this.showMore);
   }
 }
