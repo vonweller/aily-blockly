@@ -10,52 +10,30 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     <!-- <div class="left-bar">
-      <div
-        class="btn ccenter selected"
-        nz-tooltip
-        nzTooltipTitle="基础设置"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter selected" nz-tooltip nzTooltipTitle="基础设置" nzTooltipPlacement="left">
         <i class="fa-light fa-gear"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="图表显示"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="图表显示" nzTooltipPlacement="left">
         <i class="fa-light fa-chart-line"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="调试辅助"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="调试辅助" nzTooltipPlacement="left">
         <i class="fa-light fa-bug"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="自动化"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="自动化" nzTooltipPlacement="left">
         <i class="fa-light fa-code-branch"></i>
       </div>
-      <div
-        class="btn ccenter"
-        nz-tooltip
-        nzTooltipTitle="高亮设置"
-        nzTooltipPlacement="left"
-      >
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="高亮设置" nzTooltipPlacement="left">
         <i class="fa-light fa-paint-roller"></i>
+      </div>
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="快捷发送" nzTooltipPlacement="left">
+        <i class="fa-light fa-keyboard"></i>
       </div>
     </div> -->
     <div class="main-box">
       <div class="settings">
         <div class="line">
           <div class="item">
-            <div class="text">串口</div>
+            <div class="title">串口</div>
             <div class="item-inner ccenter" (click)="openPortList($event)">
               <div>{{currentPort}}</div>
               <div class="arrow-box">
@@ -64,13 +42,16 @@
             </div>
           </div>
           <div class="item">
-            <div class="text">波特率</div>
+            <div class="title">波特率</div>
             <div class="item-inner ccenter" (click)="openBaudList($event)">
               <div>{{currentBaudRate}}</div>
               <div class="arrow-box">
                 <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':showBaudList}"></i>
               </div>
             </div>
+          </div>
+          <div class="setting-btn btn ccenter" nz-tooltip nzTooltipTitle="更多设置" (click)="openSettings()">
+            <i class="fa-light fa-gear"></i>
           </div>
           <div class="switch">
             <nz-switch [(ngModel)]="switchValue" (ngModelChange)="switchPort()"></nz-switch>
@@ -108,9 +89,9 @@
             [ngClass]="{'actived':showCtrlChar}">
             <i class="fa-light fa-eye"></i>
           </div>
-          <!-- <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索">
+          <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索" (click)="openSearchBox()">
             <i class="fa-light fa-magnifying-glass"></i>
-          </div> -->
+          </div>
           <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出" (click)="exportData()">
             <i class="fa-light fa-download"></i>
           </div>
@@ -119,13 +100,19 @@
           </div>
         </div>
       </div>
-      <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="500" [nzMinHeight]="180"
+      <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="600" [nzMinHeight]="210"
         (nzResize)="onContentResize($event)">
         <nz-resize-handle nzDirection="top">
           <div class="line"></div>
         </nz-resize-handle>
         <div class="s-box">
-          <textarea class="sscroll vsfont" nz-input [(ngModel)]="inputValue"></textarea>
+          <!-- 快捷发送栏 -->
+          <div class="settings" style="padding: 0;">
+            <app-quick-send-list></app-quick-send-list>
+          </div>
+          <div class="input-box">
+            <textarea class="sscroll vsfont" nz-input [(ngModel)]="inputValue" (keydown)="onKeyDown($event)"></textarea>
+          </div>
           <div class="btns">
             <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示" (click)="changeInputMode('hexMode')"
               [ngClass]="{'actived':hexMode}">
@@ -136,11 +123,24 @@
               [ngClass]="{'actived':sendByEnter}">
               <i class="fa-light fa-arrow-turn-down-left"></i>
             </div>
-            <!-- <div class="btn ccenter right" nz-tooltip nzTooltipTitle="发送文件">
-              <i class="fa-light fa-file-export"></i>
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="\r 结束符" (click)="changeInputMode('endR')"
+              [ngClass]="{'actived':endR}">
+              <i class="fa-light fa-r"></i>
+            </div>
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="\n 结束符" (click)="changeInputMode('endN')"
+              [ngClass]="{'actived':endN}">
+              <i class="fa-light fa-n"></i>
+            </div>
+            <!-- <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="历史记录" (click)="openHistoryList()">
+              <i class="fa-light fa-clock-rotate-left"></i>
             </div> -->
-            <button nz-button nzType="primary" (click)="send()">发送</button>
+            <button class="right ccenter" nz-button nzType="primary" nz-tooltip
+              [nzTooltipTitle]="sendByEnter?'Enter':'Ctrl+Enter'" (click)="send()">发送</button>
           </div>
+          @if(showHistoryList) {
+          <app-history-message-list (close)="showHistoryList=false" (send)="send($event)"
+            (value)="this.inputValue=$event;showHistoryList=false"></app-history-message-list>
+          }
         </div>
       </div>
     </div>
