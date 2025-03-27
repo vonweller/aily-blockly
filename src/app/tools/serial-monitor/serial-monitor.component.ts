@@ -22,6 +22,7 @@ import { QuickSendListComponent } from './components/quick-send-list/quick-send-
 import { CompactType, GridsterComponent, GridsterItemComponent, GridType } from 'angular-gridster2';
 import { BAUDRATE_LIST } from './config';
 import { SettingMoreComponent } from './components/setting-more/setting-more.component';
+import { QuickSendEditorComponent } from './components/quick-send-editor/quick-send-editor.component';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -44,7 +45,8 @@ import { SettingMoreComponent } from './components/setting-more/setting-more.com
     QuickSendListComponent,
     SettingMoreComponent,
     GridsterComponent,
-    GridsterItemComponent
+    GridsterItemComponent,
+    QuickSendEditorComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
@@ -362,6 +364,12 @@ export class SerialMonitorComponent {
   openMoreSettings() {
     this.showMoreSettings = !this.showMoreSettings;
   }
+
+  showQuickSendEditor = false;
+  openQuickSendEditor() {
+    this.showQuickSendEditor = !this.showQuickSendEditor;
+  }
+
 
   openSearchBox() {
 
