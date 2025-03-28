@@ -41,7 +41,7 @@
       "target": "nsis",
       "sign": null,
       "signAndEditExecutable": false,
-      "artifactName": "${productName}-${version}.${ext}",
+      "artifactName": "aily-blockly-${version}.${ext}",
       "icon": "public/favicon.ico"
     },
     "nsis": {
@@ -55,7 +55,7 @@
       "runAfterFinish": false,
       "differentialPackage": false,
       "uninstallDisplayName": "${productName} ${version}",
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "aily-blockly-Setup-${version}.${ext}",
       "installerIcon": "public/favicon.ico",
       "uninstallerIcon": "public/favicon.ico",
       "createStartMenuShortcut": true,
