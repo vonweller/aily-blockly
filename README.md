@@ -34,9 +34,9 @@ npm run electron
 
 **electron打包**
 ```
-npm run electron:build
+npm run build
 ```
-打包后生成路径为dist\aily-blockly\win-unpacked
+打包后生成路径为dist\aily-blockly
 
 
 ## 项目赞助
