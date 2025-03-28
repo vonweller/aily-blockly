@@ -178,5 +178,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   npm: {
     run: (data) => ipcRenderer.invoke("npm-run", data),
-  }
+  },
+  updater: {
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    quitAndInstall: () => ipcRenderer.send('quit-and-install'),
+    onUpdateStatus: (callback) => {
+      ipcRenderer.on('update-status', (_, status) => callback(status));
+      return () => {
+        ipcRenderer.removeAllListeners('update-status');
+      };
+    }
+  },
 });

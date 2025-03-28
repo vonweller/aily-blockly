@@ -13,7 +13,7 @@ process.env.DEV = serve;
 const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
-
+const { registerUpdaterHandlers } = require("./updater");
 // debug模块
 const { initLogger } = require("./logger");
 
@@ -153,10 +153,12 @@ function createWindow() {
   registerTerminalHandlers(mainWindow);
   registerWindowHandlers(mainWindow);
   registerNpmHandlers(mainWindow);
+  registerUpdaterHandlers(mainWindow);
 }
 
 app.on("ready", () => {
   createWindow();
+
   // 这个用于双击实现窗口最大化，之后调
   // setInterval(() => {
   //   const cursorPos = screen.getCursorScreenPoint(); // 全局鼠标坐标
