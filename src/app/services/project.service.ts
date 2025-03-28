@@ -74,7 +74,7 @@ export class ProjectService {
   }
 
   // 检测复制是否成功
-  async checkCopySuccess(filePath) {
+  async checkIsExisits(filePath) {
     if (!window['path'].isExists(filePath)) {
       let checkCount = 0;
       const maxChecks = 10; // 5秒 / 500ms = 10次
@@ -88,9 +88,9 @@ export class ProjectService {
               resolve(true);
             } else if (checkCount >= maxChecks) {
               clearInterval(timer);
-              this.message.error('项目创建失败：无法找到项目文件');
-              this.uiService.updateState({ state: 'error', text: '项目创建失败' });
-              reject(new Error('项目文件创建超时'));
+              this.message.error('无法找到项目文件: ' + filePath);
+              this.uiService.updateState({ state: 'error', text: '无法找到项目文件: ' + filePath });
+              reject(new Error('无法找到项目文件: ' + filePath));
             }
           }, 500);
         });
@@ -100,7 +100,7 @@ export class ProjectService {
         await checkFileExistence();
         return true;
       } catch (error) {
-        console.error('项目创建失败:', error);
+        console.error('文件不存在:', error);
         return false;
       }
     }
@@ -129,7 +129,7 @@ export class ProjectService {
 
     // 判断复制是否成功
     const packageJsonPath = window['path'].join(projectPath, 'package.json');
-    if (!await this.checkCopySuccess(packageJsonPath)) {
+    if (!await this.checkIsExisits(packageJsonPath)) {
       return;
     }
 
@@ -191,6 +191,12 @@ export class ProjectService {
     console.log('boardModule: ', boardModule);
     let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
     console.log('boardJsonPath: ', boardJsonPath);
+
+    // 判断board.json是否存在
+    if (!await this.checkIsExisits(boardJsonPath)) {
+      return;
+    }
+
     const boardJson = JSON.parse(window['fs'].readFileSync(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
     // 4. 加载blockly library
