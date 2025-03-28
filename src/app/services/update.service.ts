@@ -31,7 +31,7 @@ export class UpdateService {
     }
 
     // 监听更新状态
-    window['electronAPI'].updater.onUpdateStatus((status) => {
+    window['updater'].onUpdateStatus((status) => {
       console.log('更新状态:', status);
       
       switch (status.status) {
@@ -74,13 +74,13 @@ export class UpdateService {
 
   checkForUpdates() {
     if (this.electronService.isElectron) {
-      window['electronAPI'].updater.checkForUpdates();
+      window['updater'].checkForUpdates();
     }
   }
 
   quitAndInstall() {
     if (this.electronService.isElectron) {
-      window['electronAPI'].updater.quitAndInstall();
+      window['updater'].quitAndInstall();
     }
   }
 
