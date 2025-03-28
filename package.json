@@ -11,6 +11,9 @@
         "url": "https://update.aily.pro/"
       }
     ],
+    "productName": "aily blockly",
+    "appId": "blockly.aily.pro",
+    "forceCodeSigning": false,
     "asar": false,
     "directories": {
       "output": "dist/aily-blockly/"
@@ -30,29 +33,41 @@
       },
       {
         "from": "child",
-        "to": "app/child"
+        "to": "app/child",
+        "filter": ["**/*", "!node/**"]
       }
     ],
     "win": {
       "target": "nsis",
       "sign": null,
       "signAndEditExecutable": false,
-      "artifactName": "${productName}-${version}.${ext}"
+      "artifactName": "${productName}-${version}.${ext}",
+      "icon": "public/favicon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "perMachine": true,
+      "allowElevation": true,
+      "deleteAppDataOnUninstall": true,
+      "include": "build/installer.nsh",
+      "runAfterFinish": false,
+      "differentialPackage": false,
+      "uninstallDisplayName": "${productName} ${version}",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "installerIcon": "public/favicon.ico",
+      "uninstallerIcon": "public/favicon.ico",
+      "createStartMenuShortcut": true,
+      "shortcutName": "aily blockly"
     }
   },
   "scripts": {
     "ng": "ng",
     "start": "ng serve --proxy-config proxy.conf.json",
-    "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "electron": "concurrently \"npm start\" \"wait-on tcp:4200 && electron ./electron/main.js --serve\"",
-    "electron:build": "ng build --base-href ./ && electron-builder build",
-    "electron:build-local": "ng build --base-href ./ && set HTTPS_PROXY=http://127.0.0.1:7890 && set ELECTRON_BUILDER_PROXY=http://127.0.0.1:7890 && electron-builder build"
+    "build": "ng build --base-href ./ && electron-builder build"
   },
   "private": true,
   "dependencies": {
@@ -77,8 +92,6 @@
     "animate.css": "^4.1.1",
     "blockly": "^11.2.2",
     "buffer": "^6.0.3",
-    "electron-log": "^5.3.3",
-    "electron-updater": "^6.6.2",
     "install": "^0.13.0",
     "lightweight-charts": "^4.2.3",
     "marked": "^15.0.7",
