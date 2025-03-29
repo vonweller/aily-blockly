@@ -39,9 +39,9 @@
     "win": {
       "target": "nsis",
       "sign": null,
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "artifactName": "aily-blockly-${version}.${ext}",
-      "icon": "public/favicon.ico"
+      "icon": "public/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -54,8 +54,8 @@
       "runAfterFinish": false,
       "differentialPackage": false,
       "artifactName": "aily-blockly-Setup-${version}.${ext}",
-      "installerIcon": "public/favicon.ico",
-      "uninstallerIcon": "public/favicon.ico",
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
       "createStartMenuShortcut": true,
       "shortcutName": "aily blockly"
     }
