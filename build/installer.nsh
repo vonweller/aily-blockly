@@ -23,3 +23,14 @@
   ; 最后再等待一下确保文件系统操作完成
   Sleep 1000
 !macroend
+
+!macro customInstall
+  ; 创建node目录（如果不存在）
+  CreateDirectory "$INSTDIR\app\child\node"
+  
+  ; 使用7za.exe解压node-v9.11.2-win-x64.7z到node目录
+  nsExec::Exec '"$INSTDIR\app\child\7za.exe" x "$INSTDIR\app\child\node-v9.11.2-win-x64.7z" -o"$INSTDIR\app\child\node" -y'
+  
+  ; 等待解压完成
+  Sleep 2000
+!macroend
