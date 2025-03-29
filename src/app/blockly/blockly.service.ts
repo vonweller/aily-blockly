@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, lastValueFrom } from 'rxjs';
 import * as Blockly from 'blockly';
 import { processJsonVar } from './abf';
+import { NoticeService } from '../services/notice.service';
 
 @Injectable({
   providedIn: 'root',
@@ -29,7 +30,10 @@ export class BlocklyService {
   offsetX: number = 0;
   offsetY: number = 0;
 
-  constructor(private http: HttpClient) { }
+  constructor(
+    private http: HttpClient,
+    private notice: NoticeService
+  ) { }
 
   // async init() {
   //   this.workspace = null;
@@ -98,27 +102,38 @@ export class BlocklyService {
     this.loadLibGenerator(`arduino/${path}/${libName}/generator.js`);
   }
 
-  async loadLibrary(libPackagePath) {
+  async loadLibrary(libPackageName, projectPath) {
+    const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
     // console.log('loadLibrary', libPackagePath);
     // 加载block
-    const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
-    if (blockFileIsExist) {
-      let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
-      this.loadLibBlocks(blocks);
-    } else {
-      //  加载js形式的block定义
-      this.loadLibBlocksJS(libPackagePath + '/block.js');
-    }
-    // 加载toolbox
-    const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
-    if (toolboxFileIsExist) {
-      let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
-      this.loadLibToolbox(toolbox);
-    }
-    // 加载generator
-    const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
-    if (generatorFileIsExist) {
-      await this.loadLibGenerator(libPackagePath + '/generator.js');
+    try {
+      const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
+      if (blockFileIsExist) {
+        let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
+        this.loadLibBlocks(blocks);
+      } else {
+        //  加载js形式的block定义
+        this.loadLibBlocksJS(libPackagePath + '/block.js');
+      }
+      // 加载toolbox
+      const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
+      if (toolboxFileIsExist) {
+        let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
+        this.loadLibToolbox(toolbox);
+      }
+      // 加载generator
+      const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
+      if (generatorFileIsExist) {
+        await this.loadLibGenerator(libPackagePath + '/generator.js');
+      }
+    } catch (error) {
+      console.error(error);
+      this.notice.update({
+        title: '加载库失败',
+        text: `失败项目: ${libPackageName}`,
+        state: 'error',
+        detail: error,
+      })
     }
   }
 

@@ -16,6 +16,8 @@ import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { CodeEditorComponent } from '../tools/code-editor/code-editor.component';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
+import { UpdateService } from '../services/update.service';
+import { NzModalModule } from 'ng-zorro-antd/modal';
 
 @Component({
   selector: 'app-main-window',
@@ -33,7 +35,8 @@ import { AppStoreComponent } from '../tools/app-store/app-store.component';
     CodeViewerComponent,
     SimplebarAngularModule,
     CodeEditorComponent,
-    AppStoreComponent
+    AppStoreComponent,
+    NzModalModule
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -61,12 +64,14 @@ export class MainWindowComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private message: NzMessageService,
-    private cd: ChangeDetectorRef
+    private cd: ChangeDetectorRef,
+    private updateService: UpdateService,
   ) { }
 
   ngOnInit(): void {
     this.uiService.init();
     this.projectService.init();
+    this.updateService.init();
   }
 
   ngAfterViewInit(): void {
