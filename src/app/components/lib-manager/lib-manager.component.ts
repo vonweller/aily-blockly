@@ -126,8 +126,8 @@ export class LibManagerComponent {
       lib.state = 'default';
       this.message.success(`${lib.nickname} Installed`);
       // 通知blockly加载新库
-      const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
-      this.blocklyService.loadLibrary(libPackagePath);
+      // const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
+      this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
     });
   }
 
