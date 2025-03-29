@@ -35,9 +35,21 @@
 !macroend
 
 !macro customUnInstall
-
+  ; 创建临时空目录用于 Robocopy 镜像删除
+  CreateDirectory "$TEMP\empty_dir_for_cleanup"
+  
+  ; 使用 Robocopy 将空目录镜像到安装目录(实现删除效果)
+  nsExec::ExecToStack 'cmd.exe /c robocopy "$TEMP\empty_dir_for_cleanup" "$INSTDIR" /MIR /NFL /NDL /NJH /NJS /NC /NS /MT:16'
+  
+  ; 删除临时空目录
+  RMDir "$TEMP\empty_dir_for_cleanup"
+  
   Sleep 2000
-  ; 尝试删除安装目录本身
+  
+  ; 再次尝试直接删除安装目录(此时应该为空或几乎为空)
+  nsExec::ExecToStack 'cmd.exe /c rd /s /q "$INSTDIR"'
+  Sleep 1000
+  RMDir /r "$INSTDIR"
+  Sleep 1000
   RMDir "$INSTDIR"
-
 !macroend
