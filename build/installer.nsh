@@ -27,11 +27,17 @@
 !macro customInstall
   
   ; 使用7za.exe解压node-v9.11.2-win-x64.7z到node目录
-  nsExec::Exec '"$INSTDIR\resources\app\child\7za.exe" x "$INSTDIR\resources\app\child\node-v9.11.2-win-x64.7z" -o"$INSTDIR\resources\app\child" -y'
-
-  ; 重命名node-v9.11.2-win-x64为node
-  Rename "$INSTDIR\resources\app\child\node-v9.11.2-win-x64" "$INSTDIR\resources\app\child\node"
+  nsExec::ExecToStack '"$INSTDIR\resources\app\child\7za.exe" x "$INSTDIR\resources\app\child\node-v9.11.2-win-x64.7z" -o"$INSTDIR\resources\app\child\node" -y'
   
   ; 等待解压完成
   Sleep 2000
+
+!macroend
+
+!macro customUnInstall
+
+  Sleep 2000
+  ; 尝试删除安装目录本身
+  RMDir "$INSTDIR"
+
 !macroend
