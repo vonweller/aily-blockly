@@ -25,11 +25,12 @@
 !macroend
 
 !macro customInstall
-  ; 创建node目录（如果不存在）
-  CreateDirectory "$INSTDIR\app\child\node"
   
   ; 使用7za.exe解压node-v9.11.2-win-x64.7z到node目录
-  nsExec::Exec '"$INSTDIR\app\child\7za.exe" x "$INSTDIR\app\child\node-v9.11.2-win-x64.7z" -o"$INSTDIR\app\child\node" -y'
+  nsExec::Exec '"$INSTDIR\resources\app\child\7za.exe" x "$INSTDIR\resources\app\child\node-v9.11.2-win-x64.7z" -o"$INSTDIR\resources\app\child" -y'
+
+  ; 重命名node-v9.11.2-win-x64为node
+  Rename "$INSTDIR\resources\app\child\node-v9.11.2-win-x64" "$INSTDIR\resources\app\child\node"
   
   ; 等待解压完成
   Sleep 2000

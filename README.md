@@ -36,7 +36,8 @@ npm run electron
 ```
 npm run build
 ```
-打包后生成路径为dist\aily-blockly
+打包需要开启windows的开发者模式
+打包后生成的安装包在路径为dist\aily-blockly
 
 
 ## 项目赞助
