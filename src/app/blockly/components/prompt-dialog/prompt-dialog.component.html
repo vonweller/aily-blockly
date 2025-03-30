@@ -10,7 +10,7 @@
     <div class="content">
         <input nz-input type="text"  [(ngModel)]="value" (keyup.enter)="onConfirm()" />
         <div class="footer">
-            <button nz-button nzType="primary" (click)="onConfirm()">确定</button>
+            <button nz-button [nzSize]="'small'" nzType="primary" (click)="onConfirm()">确定</button>
         </div>
     </div>
 </div>
