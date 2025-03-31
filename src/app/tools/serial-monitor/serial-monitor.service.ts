@@ -91,16 +91,26 @@ export class SerialMonitorService {
         dataBits: options.dataBits || 8,
         stopBits: options.stopBits || 1,
         parity: options.parity || 'none',
+        flowControl: options.flowControl || 'none',
         autoOpen: false
       };
 
       this.serialPort = window.electronAPI.SerialPort.create(serialOptions);
-      // console.log('连接到串口:', this.serialPort);
+      
       return new Promise((resolve, reject) => {
         this.serialPort.on('open', () => {
           this.isConnected = true;
           this.connectionStatus.next(true);
           this.setupDataListeners();
+          
+          // 记录连接信息到数据列表
+          this.dataList.push({
+            time: new Date().toLocaleTimeString(),
+            data: Buffer.from(`[串口已连接: ${options.path} ${options.baudRate}波特 ${options.dataBits}数据位 ${options.stopBits}停止位 ${options.parity}校验 ${options.flowControl}流控]`),
+            dir: 's'
+          });
+          this.dataUpdated.next();
+          
           resolve(true);
         });
 
