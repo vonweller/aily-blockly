@@ -184,6 +184,7 @@ export class SerialMonitorService {
    */
   sendData(data: string, mode = 'text', IgnoreEnd = false): Promise<boolean> {
     if (!this.isConnected || !this.serialPort) {
+      this.message.warning('串口未连接，请先打开串口');
       return Promise.resolve(false);
     }
     return new Promise((resolve) => {
@@ -373,10 +374,10 @@ export class SerialMonitorService {
    */
   sendSignal(signalType: 'DTR' | 'RTS', state?: boolean): Promise<boolean> {
     if (!this.isConnected || !this.serialPort) {
-      this.message.error('串口未连接，无法发送信号');
+      this.message.warning('串口未连接，请先打开串口');
       return Promise.resolve(false);
     }
-
+    
     return new Promise((resolve) => {
       try {
         const methodName = signalType.toLowerCase();
