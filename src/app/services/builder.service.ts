@@ -96,7 +96,7 @@ export class BuilderService {
       if (!window['path'].isExists(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
-      await this.terminalService.sendCmd(`7z x "${sourcePath}" -o"${targetPath}" -y`);
+      await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
     }
 
     // 获取编译命令
