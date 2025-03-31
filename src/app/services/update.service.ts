@@ -1,28 +1,29 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subject } from 'rxjs';
 import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
+import { UpdateDialogComponent } from '../main-window/components/update-dialog/update-dialog.component';
 
 @Injectable({
   providedIn: 'root',
 })
 export class UpdateService {
-  private updateAvailable = new BehaviorSubject<boolean>(false);
-  updateAvailable$ = this.updateAvailable.asObservable();
+  updateAvailable = new BehaviorSubject<boolean>(false);
 
-  private updateProgress = new BehaviorSubject<number>(0);
-  updateProgress$ = this.updateProgress.asObservable();
+  updateProgress = new BehaviorSubject<number>(0);
 
-  private updateStatus = new BehaviorSubject<string>('');
-  updateStatus$ = this.updateStatus.asObservable();
+  updateStatus = new BehaviorSubject<string>('');
+
+  dialogAction = new Subject();
 
   private updateInfo: any = null;
+  private isDownloading = false;
 
   constructor(
     private electronService: ElectronService,
     private message: NzMessageService,
-    // private modal: NzModalService
+    private modal: NzModalService
   ) { }
 
   init() {
@@ -43,7 +44,20 @@ export class UpdateService {
           this.updateAvailable.next(true);
           this.updateStatus.next('available');
           this.updateInfo = status.info;
-          this.message.info(`发现新版本: ${status.info.version}`);
+
+          // 检查是否已经跳过此版本
+          const skippedVersions = this.getSkippedVersions();
+          if (skippedVersions.includes(status.info.version)) {
+            console.log(`已跳过版本 ${status.info.version}，不再提示`);
+            break;
+          }
+
+          // 判断是否已下载，如果已下载则直接显示安装对话框
+          if (status.info.isDownloaded) {
+            this.showUpdateDialog(status.info, true);
+          } else {
+            this.showUpdateDialog(status.info, false);
+          }
           break;
 
         case 'not-available':
@@ -54,6 +68,7 @@ export class UpdateService {
         case 'error':
           this.updateStatus.next('error');
           console.error('更新错误:', status.error);
+          this.isDownloading = false;
           break;
 
         case 'progress':
@@ -63,11 +78,10 @@ export class UpdateService {
 
         case 'downloaded':
           this.updateStatus.next('downloaded');
-          this.showUpdateDialog(status.info);
+          this.isDownloading = false;
           break;
       }
     });
-
     // 应用启动时检查更新
     this.checkForUpdates();
   }
@@ -78,19 +92,95 @@ export class UpdateService {
     }
   }
 
-  quitAndInstall() {
-    if (this.electronService.isElectron) {
-      window['updater'].quitAndInstall();
+  downloadUpdate() {
+    this.isDownloading = true;
+    window['updater'].downloadUpdate();
+  }
+
+  cancelDownload() {
+    this.isDownloading = false;
+    if (window['updater'].cancelDownload) {
+      window['updater'].cancelDownload();
     }
   }
 
-  private showUpdateDialog(info: any) {
-    // this.modal.confirm({
-    //   nzTitle: '应用更新',
-    //   nzContent: `已下载新版本 ${info.version}，是否现在重启应用安装更新？`,
-    //   nzOkText: '立即重启',
-    //   nzCancelText: '稍后重启',
-    //   nzOnOk: () => this.quitAndInstall()
-    // });
+  quitAndInstall() {
+    window['updater'].quitAndInstall();
+  }
+
+  skipVersion(version: string) {
+    if (!version) return;
+
+    const skippedVersions = this.getSkippedVersions();
+    if (!skippedVersions.includes(version)) {
+      skippedVersions.push(version);
+      localStorage.setItem('skippedVersions', JSON.stringify(skippedVersions));
+      console.log(`已将版本 ${version} 添加到跳过列表`);
+    }
+  }
+
+  private getSkippedVersions(): string[] {
+    const stored = localStorage.getItem('skippedVersions');
+    return stored ? JSON.parse(stored) : [];
+  }
+
+  dialogActionSubscription;
+  private showUpdateDialog(info: any, isDownloaded: boolean = false) {
+    console.log('showUpdateDialog', info, isDownloaded);
+    const mode = isDownloaded ? 'downloaded' : 'available';
+    const title = isDownloaded ?
+      `更新已准备就绪` :
+      `发现新版本 ${info.version}`;
+    const text = isDownloaded ?
+      `新版本 ${info.version} 已下载完成，是否立即安装？` :
+      `是否要下载并安装此更新？`;
+
+    const modalRef = this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: {
+        padding: '0',
+      },
+      nzWidth: '320px',
+      nzContent: UpdateDialogComponent,
+      nzData: {
+        title: title,
+        text: text,
+        mode: mode,
+        progress: 0,
+        version: info.version,
+      },
+      nzMaskClosable: false,
+    });
+
+    modalRef.afterClose.subscribe(async result => {
+      if (this.dialogActionSubscription) {
+        this.dialogActionSubscription.unsubscribe();
+      }
+      switch (result.result) {
+        case 'skip':
+          // 跳过版本
+          this.skipVersion(info.version);
+          break;
+        case 'install':
+          // 安装更新
+          this.quitAndInstall();
+          break;
+        case 'download_stop':
+          // 取消下载
+          this.cancelDownload();
+          break;
+        default:
+          // 取消操作
+          break;
+      }
+    });
+
+    this.dialogActionSubscription = this.dialogAction.subscribe((action) => {
+      if (action === 'download') {
+        this.downloadUpdate();
+      }
+    })
   }
 }

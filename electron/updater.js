@@ -5,9 +5,50 @@ const { autoUpdater } = require('electron-updater');
 // 添加自动更新处理函数
 function registerUpdaterHandlers(mainWindow) {
 
+  // 强制使用开发环境配置
+  if (process.env.DEV === 'true' || process.env.DEV === true) {
+    autoUpdater.forceDevUpdateConfig = true;
+    autoUpdater.allowDowngrade = true;
+    autoUpdater.logger = require("electron-log");
+    autoUpdater.logger.transports.file.level = "debug";
+    // 可以模拟更新下载
+    ipcMain.handle('simulate-update', () => {
+      // 模拟一个更新事件
+      mainWindow.webContents.send('update-status', {
+        status: 'available',
+        info: { version: '1.0.1', releaseDate: new Date().toISOString() }
+      });
+
+      // 模拟下载进度
+      let progress = 0;
+      const progressInterval = setInterval(() => {
+        progress += 10;
+        mainWindow.webContents.send('update-status', {
+          status: 'progress',
+          progress: { percent: progress }
+        });
+
+        if (progress >= 100) {
+          clearInterval(progressInterval);
+          mainWindow.webContents.send('update-status', {
+            status: 'downloaded',
+            info: { version: '1.0.1', releaseDate: new Date().toISOString() }
+          });
+        }
+      }, 1000);
+    });
+  }
+
+  autoUpdater.autoDownload = false;  // 禁用自动下载
+  // autoUpdater.allowDowngrade = true; // 允许版本降级
+  autoUpdater.useMultipleRangeRequest = false; // 禁用多范围请求
+  autoUpdater.disableDifferentialDownload = true; // 禁用差量下载，使用完整下载
+
   // 添加IPC处理程序，允许从渲染进程手动检查更新
-  ipcMain.handle('check-for-updates', () => {
-    return autoUpdater.checkForUpdates();
+  ipcMain.handle('check-for-updates', async () => {
+    const result = await autoUpdater.checkForUpdates();
+    console.log('检查更新结果:', result);
+    return JSON.parse(JSON.stringify(result))
   });
 
   // 添加IPC处理程序，允许从渲染进程安装更新
@@ -15,6 +56,10 @@ function registerUpdaterHandlers(mainWindow) {
     autoUpdater.quitAndInstall();
   });
 
+  // 添加IPC处理程序，手动下载更新
+  ipcMain.handle('download-update', () => {
+    return autoUpdater.downloadUpdate();
+  });
 
   // 日志设置
   autoUpdater.logger = require("electron-log");
@@ -57,18 +102,6 @@ function registerUpdaterHandlers(mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'downloaded',
       info: info
-    });
-
-    // 可选：询问用户是否立即重启应用
-    dialog.showMessageBox({
-      type: 'info',
-      title: '应用更新',
-      message: '已下载新版本，是否现在重启应用?',
-      buttons: ['是', '否']
-    }).then((buttonIndex) => {
-      if (buttonIndex.response === 0) {
-        autoUpdater.quitAndInstall();
-      }
     });
   });
 

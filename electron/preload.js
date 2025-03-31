@@ -181,12 +181,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   updater: {
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    downloadUpdate: () => ipcRenderer.invoke('download-update'),
+    cancelDownload: () => ipcRenderer.invoke('cancel-download'), 
     quitAndInstall: () => ipcRenderer.send('quit-and-install'),
     onUpdateStatus: (callback) => {
-      ipcRenderer.on('update-status', (_, status) => callback(status));
-      return () => {
-        ipcRenderer.removeAllListeners('update-status');
-      };
+      ipcRenderer.on('update-status', (_, data) => callback(data));
     }
   },
 });
