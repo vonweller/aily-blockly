@@ -48,10 +48,9 @@ export class UpdateService {
           // 检查是否已经跳过此版本
           const skippedVersions = this.getSkippedVersions();
           if (skippedVersions.includes(status.info.version)) {
-            console.log(`已跳过版本 ${status.info.version}，不再提示`);
+            // console.log(`已跳过版本 ${status.info.version}，不再提示`);
             break;
           }
-
           // 判断是否已下载，如果已下载则直接显示安装对话框
           if (status.info.isDownloaded) {
             this.showUpdateDialog(status.info, true);
@@ -110,12 +109,11 @@ export class UpdateService {
 
   skipVersion(version: string) {
     if (!version) return;
-
     const skippedVersions = this.getSkippedVersions();
     if (!skippedVersions.includes(version)) {
       skippedVersions.push(version);
       localStorage.setItem('skippedVersions', JSON.stringify(skippedVersions));
-      console.log(`已将版本 ${version} 添加到跳过列表`);
+      // console.log(`已将版本 ${version} 添加到跳过列表`);
     }
   }
 
@@ -126,7 +124,7 @@ export class UpdateService {
 
   dialogActionSubscription;
   private showUpdateDialog(info: any, isDownloaded: boolean = false) {
-    console.log('showUpdateDialog', info, isDownloaded);
+    // console.log('showUpdateDialog', info, isDownloaded);
     const mode = isDownloaded ? 'downloaded' : 'available';
     const title = isDownloaded ?
       `更新已准备就绪` :
@@ -158,7 +156,7 @@ export class UpdateService {
       if (this.dialogActionSubscription) {
         this.dialogActionSubscription.unsubscribe();
       }
-      switch (result.result) {
+      switch (result) {
         case 'skip':
           // 跳过版本
           this.skipVersion(info.version);

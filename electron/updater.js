@@ -47,7 +47,7 @@ function registerUpdaterHandlers(mainWindow) {
   // 添加IPC处理程序，允许从渲染进程手动检查更新
   ipcMain.handle('check-for-updates', async () => {
     const result = await autoUpdater.checkForUpdates();
-    console.log('检查更新结果:', result);
+    // console.log('检查更新结果:', result);
     return JSON.parse(JSON.stringify(result))
   });
 
