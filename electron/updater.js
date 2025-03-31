@@ -6,38 +6,12 @@ const { autoUpdater } = require('electron-updater');
 function registerUpdaterHandlers(mainWindow) {
 
   // 强制使用开发环境配置
-  if (process.env.DEV === 'true' || process.env.DEV === true) {
-    autoUpdater.forceDevUpdateConfig = true;
-    autoUpdater.allowDowngrade = true;
-    autoUpdater.logger = require("electron-log");
-    autoUpdater.logger.transports.file.level = "debug";
-    // 可以模拟更新下载
-    ipcMain.handle('simulate-update', () => {
-      // 模拟一个更新事件
-      mainWindow.webContents.send('update-status', {
-        status: 'available',
-        info: { version: '1.0.1', releaseDate: new Date().toISOString() }
-      });
-
-      // 模拟下载进度
-      let progress = 0;
-      const progressInterval = setInterval(() => {
-        progress += 10;
-        mainWindow.webContents.send('update-status', {
-          status: 'progress',
-          progress: { percent: progress }
-        });
-
-        if (progress >= 100) {
-          clearInterval(progressInterval);
-          mainWindow.webContents.send('update-status', {
-            status: 'downloaded',
-            info: { version: '1.0.1', releaseDate: new Date().toISOString() }
-          });
-        }
-      }, 1000);
-    });
-  }
+  // if (process.env.DEV === 'true' || process.env.DEV === true) {
+  //   autoUpdater.forceDevUpdateConfig = true;
+  //   autoUpdater.allowDowngrade = true;
+  //   autoUpdater.logger = require("electron-log");
+  //   autoUpdater.logger.transports.file.level = "debug";
+  // }
 
   autoUpdater.autoDownload = false;  // 禁用自动下载
   // autoUpdater.allowDowngrade = true; // 允许版本降级
