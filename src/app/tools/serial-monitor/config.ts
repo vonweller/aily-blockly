@@ -31,16 +31,16 @@ export const STOP_BITS_LIST = [
 
 // 校验位配置选项
 export const PARITY_LIST = [
-    { name: '无校验', value: 'none', isDefault: true },
-    { name: '偶校验', value: 'even' },
+    { name: '无', value: 'none', isDefault: true },
     { name: '奇校验', value: 'odd' },
-    { name: '标记校验', value: 'mark' },
-    { name: '空格校验', value: 'space' }
+    { name: '偶校验', value: 'even' },
+    { name: '标记', value: 'mark' },
+    { name: '空格', value: 'space' }
 ]
 
 // 流控制配置选项
 export const FLOW_CONTROL_LIST = [
     { name: '无', value: 'none', isDefault: true },
-    { name: '硬件', value: 'hardware' },
-    { name: '软件', value: 'software' }
+    { name: 'RTS/CTS', value: 'hardware' },
+    { name: 'XON/XOFF', value: 'software' }
 ]

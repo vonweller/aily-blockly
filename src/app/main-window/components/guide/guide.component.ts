@@ -49,17 +49,15 @@ export class GuideComponent {
   }
 
   process(item) {
-    switch (item.data.type) {
-      case 'window':
+    switch (item.action) {
+      case 'project-new':
         this.uiService.openWindow(item.data);
         break;
-      case 'explorer':
+      case 'project-open':
         this.openProject(item.data);
         break;
-      case 'other':
-        if (item.data.action == 'openByBrowser') {
-          window['other'].openByBrowser(item.data.url);
-        }
+      case 'browser-open':
+        window['other'].openByBrowser(item.data.url);
         break;
       default:
         break;

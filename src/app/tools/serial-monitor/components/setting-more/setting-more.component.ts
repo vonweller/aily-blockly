@@ -31,14 +31,18 @@ export class SettingMoreComponent {
 
   showMenu = false;
 
+  dataBits = '8';
+  stopBits = '1';
+  parity = 'none';
+  flowControl = 'none';
+
   @Output() settingsChanged = new EventEmitter<any>();
 
   ngOnInit(): void {
-    // 初始化默认值
-    this.selectedDataBits = this.dataBitsList.find(item => item.isDefault);
-    this.selectedStopBits = this.stopBitsList.find(item => item.isDefault);
-    this.selectedParity = this.parityList.find(item => item.isDefault);
-    this.selectedFlowControl = this.flowControlList.find(item => item.isDefault);
+    this.selectedDataBits = this.dataBitsList.find(item => item.isDefault) || this.dataBitsList[0];
+    this.selectedStopBits = this.stopBitsList.find(item => item.isDefault) || this.stopBitsList[0];
+    this.selectedParity = this.parityList.find(item => item.isDefault) || this.parityList[0];
+    this.selectedFlowControl = this.flowControlList.find(item => item.isDefault) || this.flowControlList[0];
   }
 
   // 当设置更改时触发事件

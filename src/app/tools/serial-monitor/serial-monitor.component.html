@@ -63,7 +63,7 @@
         </div>
       </div>
       @if(showMoreSettings){
-      <app-setting-more></app-setting-more>
+      <app-setting-more (settingsChanged)="onSettingsChanged($event)"></app-setting-more>
       }
       <div class="monitor">
         <div class="r-box">
@@ -179,6 +179,6 @@
 
 <!-- baudrate list -->
 @if (showBaudList) {
-<app-menu [position]="position" [width]="100" [menuList]="baudList" (closeEvent)="closeBaudList()"
+<app-menu [position]="position" [width]="90" [menuList]="baudList" (closeEvent)="closeBaudList()"
   (itemClickEvent)="selectBaud($event)"></app-menu>
 }

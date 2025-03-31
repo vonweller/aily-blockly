@@ -23,6 +23,7 @@ import { CompactType, GridsterComponent, GridsterItemComponent, GridType } from 
 import { BAUDRATE_LIST } from './config';
 import { SettingMoreComponent } from './components/setting-more/setting-more.component';
 import { QuickSendEditorComponent } from './components/quick-send-editor/quick-send-editor.component';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -144,6 +145,11 @@ export class SerialMonitorComponent {
   currentBaudRate = '9600';
   currentUrl;
 
+  // 添加高级串口设置相关属性
+  dataBits = '8';
+  stopBits = '1';
+  parity = 'none';
+  flowControl = 'none';
 
   get projectData() {
     return this.projectService.currentPackageData;
@@ -159,7 +165,8 @@ export class SerialMonitorComponent {
     private serialMonitorService: SerialMonitorService,
     private uiService: UiService,
     private router: Router,
-    private cd: ChangeDetectorRef
+    private cd: ChangeDetectorRef,
+    private message: NzMessageService
   ) { }
 
   ngOnInit() {
@@ -282,9 +289,22 @@ export class SerialMonitorComponent {
       this.serialMonitorService.disconnect();
       return;
     }
+
+    if (!this.currentPort) {
+      this.message.warning('请先选择串口');
+      setTimeout(() => {
+        this.switchValue = false;
+      }, 300);
+      return;
+    }
+
     this.serialMonitorService.connect({
       path: this.currentPort,
-      baudRate: parseInt(this.currentBaudRate)
+      baudRate: parseInt(this.currentBaudRate),
+      dataBits: parseInt(this.dataBits),
+      stopBits: parseFloat(this.stopBits),
+      parity: this.parity,
+      flowControl: this.flowControl
     });
   }
 
@@ -363,6 +383,25 @@ export class SerialMonitorComponent {
   showMoreSettings = false;
   openMoreSettings() {
     this.showMoreSettings = !this.showMoreSettings;
+  }
+
+  onSettingsChanged(settings) {
+    // 更新组件中的高级设置
+    this.dataBits = settings.dataBits.value;
+    this.stopBits = settings.stopBits.value;
+    this.parity = settings.parity.value;
+    this.flowControl = settings.flowControl.value;
+
+    // 如果已经连接，需要断开重连以应用新设置
+    if (this.switchValue) {
+      this.switchValue = false;
+      this.serialMonitorService.disconnect().then(() => {
+        setTimeout(() => {
+          this.switchValue = true;
+          this.switchPort();
+        }, 300);
+      });
+    }
   }
 
   showQuickSendEditor = false;

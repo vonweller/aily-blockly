@@ -12,6 +12,8 @@ import { PortItem, SerialService } from '../../../services/serial.service';
 import { ActBtnComponent } from '../act-btn/act-btn.component';
 import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 
 @Component({
   selector: 'app-header',
@@ -58,7 +60,8 @@ export class HeaderComponent {
     private uploaderService: UploaderService,
     private serialService: SerialService,
     private cd: ChangeDetectorRef,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private modal: NzModalService
   ) { }
 
   ngAfterViewInit(): void {
@@ -155,7 +158,7 @@ export class HeaderComponent {
     return folderPath;
   }
 
-  async openProject(data) {
+  async openProject() {
     const path = await this.selectFolder();
     if (path) {
       await this.projectService.projectOpen(path);
@@ -163,14 +166,41 @@ export class HeaderComponent {
   }
 
   async process(item: IMenuItem) {
-    switch (item.data.type) {
-      case 'window':
+    switch (item.action) {
+      case 'project-new':
+        if (this.loaded) { // 只在已加载项目时检查
+          const canContinue = await this.checkUnsavedChanges('new');
+          if (!canContinue) return;
+        }
         this.uiService.openWindow(item.data);
         break;
-      case 'explorer':
-        this.openProject(item.data);
+      case 'project-open':
+        if (this.loaded) { // 只在已加载项目时检查
+          const canContinue = await this.checkUnsavedChanges('open');
+          if (!canContinue) return;
+        }
+        this.openProject();
         break;
-      case 'tool':
+      case 'project-save':
+        this.projectService.save();
+        break;
+      case 'project-save-as':
+        const path = await this.selectSaveAsFolder();
+        if (path) {
+          this.projectService.saveAs(path);
+        }
+        break;
+      case 'project-close':
+        if (this.loaded) { // 只在已加载项目时检查
+          const canContinue = await this.checkUnsavedChanges('close');
+          if (!canContinue) return;
+        }
+        this.projectService.close();
+        break;
+      case 'project-open-by-explorer':
+        window['other'].openByExplorer(this.projectService.currentProjectPath);
+        break;
+      case 'tool-open':
         if (['AI', '应用商店'].includes(item.name)) {
           this.message.warning('功能暂未开放');
           break;
@@ -180,50 +210,36 @@ export class HeaderComponent {
       case 'terminal':
         this.uiService.turnTerminal(item.data);
         break;
-      case 'run-cmd':
-        // this.uiService.runCmd(item.data);
+      case 'compile':
+        if (item.state === 'doing') return;
+        item.state = 'doing';
+        this.builderService.build().then(result => {
+          item.state = 'done';
+        }).catch(err => {
+          console.error("编译失败: ", err);
+          item.state = 'error';
+        })
         break;
-      case 'cmd':
-        if (item.data.data === 'compile') {
-          if (item.state === 'doing') return;
-          item.state = 'doing';
-          this.builderService.build().then(result => {
-            item.state = 'done';
-          }).catch(err => {
-            console.error("编译失败: ", err);
-            item.state = 'error';
-          })
-        } else if (item.data.data === 'upload') {
-          if (item.state === 'doing') return;
-          item.state = 'doing';
-          // 检查距离上次编译代码是否有变更，如无变更，则直接上传，否则重新编译再上传
-          this.uploaderService.upload().then(result => {
-            item.state = 'done';
-          }).catch(err => {
-            item.state = 'error';
-          })
-        } else if (item.data.data === 'save') {
-          this.projectService.save();
-        } else if (item.data.data === 'save-as') {
-          const path = await this.selectSaveAsFolder();
-          console.log('save as path:', path);
-          if (path) {
-            this.projectService.saveAs(path);
-          }
-        } else if (item.data.data === 'close') {
-          this.projectService.close();
-        }
+      case 'upload':
+        if (item.state === 'doing') return;
+        item.state = 'doing';
+        this.uploaderService.upload().then(result => {
+          item.state = 'done';
+        }).catch(err => {
+          item.state = 'error';
+        });
         break;
-      case 'other':
-        if (item.data.action == 'openByExplorer') {
-          window['other'].openByExplorer(this.projectService.currentProjectPath);
-        } else if (item.data.action == 'openByBrowser') {
-          window['other'].openByBrowser(item.data.url);
-        } else if (item.data.action == 'exitApp') {
-          window['other'].exitApp();
-        }
+      case 'settings-open':
+        this.uiService.openWindow(item.data);
+        break;
+      case 'browser-open':
+        window['other'].openByBrowser(item.data.url);
+        break;
+      case 'app-exit':
+        this.close();
         break;
       default:
+        console.log('未处理的操作:', item.action);
         break;
     }
   }
@@ -236,13 +252,15 @@ export class HeaderComponent {
     window['iWindow'].maximize();
   }
 
-  close() {
-    window['iWindow'].close();
+  async close() {
+    const canClose = await this.checkUnsavedChanges('close');
+    if (canClose) {
+      window['iWindow'].close();
+    }
   }
 
   // 快捷键功能，监听键盘事件,执行对应的操作
   private shortcutMap: Map<string, IMenuItem> = new Map();
-
   private initShortcutMap(): void {
     for (const item of HEADER_MENU) {
       if (item.text) {
@@ -313,6 +331,63 @@ export class HeaderComponent {
           }
         }
       }
+    });
+  }
+
+  async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
+    // 检查项目是否有未保存的更改
+    if (!await this.projectService.hasUnsavedChanges()) {
+      return true;
+    }
+
+    // 根据不同操作设置不同的提示文本
+    let title = '有未保存的更改';
+    let text = '是否保存当前项目？';
+    if (action === 'open') {
+      text = '在打开新项目前，是否保存当前项目的更改？';
+    } else if (action === 'new') {
+      text = '在创建新项目前，是否保存当前项目的更改？';
+    } else if (action === 'close') {
+      text = '是否在关闭前保存更改？';
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzWidth: '320px',
+        nzContent: UnsaveDialogComponent,
+        nzData: { title, text },
+        // nzDraggable: true,
+      });
+
+      modalRef.afterClose.subscribe(async result => {
+        if (!result) {
+          // 用户直接关闭对话框，视为取消操作
+          resolve(false);
+          return;
+        }
+        switch (result.result) {
+          case 'save':
+            // 保存项目并继续
+            await this.projectService.save();
+            resolve(true);
+            break;
+          case 'continue':
+            // 不保存，但继续操作
+            resolve(true);
+            break;
+          case 'cancel':
+          default:
+            // 取消操作
+            resolve(false);
+            break;
+        }
+      });
     });
   }
 }
