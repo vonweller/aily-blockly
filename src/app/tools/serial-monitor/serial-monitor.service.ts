@@ -451,7 +451,8 @@ export class SerialMonitorService {
 export interface dataItem {
   time: string,
   data: any,
-  dir: 'r' | 's'
+  dir: 'r' | 's',
+  searchHighlight?: boolean
 }
 
 export interface QuickSendItem {

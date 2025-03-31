@@ -81,10 +81,15 @@
           </gridster> -->
           <ngx-simplebar [options]="options">
             @for (item of dataList; track $index) {
-            <app-data-item [data]="item"></app-data-item>
+            <app-data-item [data]="item" [searchKeyword]="searchKeyword"></app-data-item>
             }
             <div style="height: 10px;"></div>
           </ngx-simplebar>
+          @if(searchBoxVisible) {
+          <app-search-box (keywordChange)="keywordChange($event)" (prevResult)="navigatePrev()"
+            (nextResult)="navigateNext()" [resultsCount]="searchResults.length" [currentIndex]="currentSearchIndex">
+          </app-search-box>
+          }
         </div>
         <div class="btns">
           <div class="btn ccenter hex" nz-tooltip nzTooltipTitle="HEX显示" (click)="changeViewMode('showHex')"
@@ -109,7 +114,7 @@
             <i class="fa-light fa-eye"></i>
           </div>
           <div class="btn ccenter right3" nz-tooltip nzTooltipTitle="搜索" (click)="openSearchBox()">
-            <i class="fa-light fa-magnifying-glass"></i>
+            <i class="fa-light fa-magnifying-glass" [ngClass]="{'actived': searchBoxVisible}"></i>
           </div>
           <div class="btn ccenter right2" nz-tooltip nzTooltipTitle="导出" (click)="exportData()">
             <i class="fa-light fa-download"></i>

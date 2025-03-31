@@ -39,7 +39,7 @@
   margin: 10px;
   border-radius: 5px;
   user-select: none;
-  
+
   .line {
     display: flex;
     align-items: center;
@@ -153,6 +153,7 @@
     background: #292929;
     border-radius: 5px;
     margin: 0 10px;
+    position: relative;
 
     ngx-simplebar {
       ::ng-deep {
@@ -210,6 +211,10 @@
     &.actived {
       background: rgba(40, 100, 250, 0.8);
       border-radius: 5px;
+    }
+
+    i.actived {
+      color: #4f77dd;
     }
   }
 }

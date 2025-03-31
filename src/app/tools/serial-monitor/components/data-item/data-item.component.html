@@ -1,5 +1,5 @@
 @if (viewMode.showTimestamp) {
-<div class="item" [ngClass]="{'highlight':showHighlight}">
+<div class="item" [ngClass]="{'highlight': showHighlight, 'search-active': data.searchHighlight}">
   <!-- @if (viewMode.showTimestamp) { -->
   <div class="time">{{ data.time }}</div>
   <div class="dir" [ngClass]="{ send: data.dir == 's'}">

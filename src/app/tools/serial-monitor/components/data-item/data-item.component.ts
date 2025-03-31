@@ -18,6 +18,7 @@ export class DataItemComponent {
   rightMenu = JSON.parse(JSON.stringify(RIGHT_MENU));
 
   @Input() data;
+  @Input() searchKeyword: string = '';
 
   position = { x: 0, y: 0 };
   showMenu = false;
@@ -94,5 +95,27 @@ export class DataItemComponent {
     } else {
       this.rightMenu[2].name = '高亮标记';
     }
+  }
+
+  // 添加一个方法来高亮搜索关键词
+  highlightSearchTerm(text: string, searchTerm: string): string {
+    if (!searchTerm || searchTerm.trim() === '') return text;
+    const regex = new RegExp(searchTerm, 'gi');
+    return text.replace(regex, match => `<span class="search-highlight">${match}</span>`);
+  }
+
+  // 添加一个获取文本内容的方法
+  getDisplayText() {
+    if (!this.data || !this.data.data) return '';
+
+    let text = '';
+    if (Buffer.isBuffer(this.data.data)) {
+      text = this.data.data.toString();
+    } else {
+      text = String(this.data.data);
+    }
+
+    // 应用高亮
+    return this.highlightSearchTerm(text, this.searchKeyword);
   }
 }

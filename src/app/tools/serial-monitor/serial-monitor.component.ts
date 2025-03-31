@@ -24,6 +24,8 @@ import { BAUDRATE_LIST } from './config';
 import { SettingMoreComponent } from './components/setting-more/setting-more.component';
 import { QuickSendEditorComponent } from './components/quick-send-editor/quick-send-editor.component';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { SearchBoxComponent } from './components/search-box/search-box.component';
+import { Buffer } from 'buffer';
 
 @Component({
   selector: 'app-serial-monitor',
@@ -47,7 +49,8 @@ import { NzMessageService } from 'ng-zorro-antd/message';
     SettingMoreComponent,
     GridsterComponent,
     GridsterItemComponent,
-    QuickSendEditorComponent
+    QuickSendEditorComponent,
+    SearchBoxComponent
   ],
   templateUrl: './serial-monitor.component.html',
   styleUrl: './serial-monitor.component.scss',
@@ -166,7 +169,8 @@ export class SerialMonitorComponent {
     private uiService: UiService,
     private router: Router,
     private cd: ChangeDetectorRef,
-    private message: NzMessageService
+    private message: NzMessageService,
+
   ) { }
 
   ngOnInit() {
@@ -409,8 +413,74 @@ export class SerialMonitorComponent {
     this.showQuickSendEditor = !this.showQuickSendEditor;
   }
 
+  // 搜索相关
+  searchKeyword = '';
+  searchResults = [];
+  currentSearchIndex = -1;
+  searchBoxVisible = false;
 
   openSearchBox() {
+    this.searchBoxVisible = !this.searchBoxVisible;
+  }
 
+  keywordChange(keyword: string) {
+    this.searchKeyword = keyword;
+    this.searchResults = [];
+    this.currentSearchIndex = -1;
+
+    if (!keyword || keyword.trim() === '') {
+      // 清除所有高亮
+      this.serialMonitorService.dataUpdated.next();
+      return;
+    }
+
+    // 搜索匹配项
+    this.serialMonitorService.dataList.forEach((item, index) => {
+      // 将Buffer数据转为字符串进行搜索
+      const itemText = Buffer.isBuffer(item.data) ? item.data.toString() : String(item.data);
+
+      if (itemText.toLowerCase().includes(keyword.toLowerCase())) {
+        this.searchResults.push(index);
+      }
+    });
+
+    // 如果有结果，选择第一个
+    if (this.searchResults.length > 0) {
+      this.navigateToResult(0);
+    }
+  }
+
+  navigateToResult(index: number) {
+    if (this.searchResults.length === 0) return;
+
+    // 确保索引在有效范围内
+    if (index < 0) index = this.searchResults.length - 1;
+    if (index >= this.searchResults.length) index = 0;
+
+    this.currentSearchIndex = index;
+    const dataIndex = this.searchResults[index];
+
+    // 滚动到匹配项
+    setTimeout(() => {
+      const elements = document.querySelectorAll('.item');
+      if (elements && elements[dataIndex]) {
+        // 高亮当前匹配项
+        elements[dataIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // 通知数据项更新高亮状态
+        this.serialMonitorService.dataList.forEach((item, idx) => {
+          item['searchHighlight'] = idx === dataIndex;
+        });
+        this.serialMonitorService.dataUpdated.next();
+      }
+    }, 10);
+  }
+
+  navigatePrev() {
+    this.navigateToResult(this.currentSearchIndex - 1);
+  }
+
+  navigateNext() {
+    this.navigateToResult(this.currentSearchIndex + 1);
   }
 }
