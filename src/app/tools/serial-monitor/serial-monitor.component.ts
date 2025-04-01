@@ -186,7 +186,9 @@ export class SerialMonitorComponent {
       setTimeout(() => {
         this.cd.detectChanges();
         if (this.autoScroll) {
-          this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+          if(this.simplebar.SimpleBar){
+            this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+          }
         }
       }, 10);
     });
