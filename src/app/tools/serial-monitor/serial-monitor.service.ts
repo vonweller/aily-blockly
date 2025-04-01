@@ -107,7 +107,7 @@ export class SerialMonitorService {
           this.dataList.push({
             time: new Date().toLocaleTimeString(),
             data: Buffer.from(`[串口已连接: ${options.path} ${options.baudRate}波特 ${options.dataBits}数据位 ${options.stopBits}停止位 ${options.parity}校验 ${options.flowControl}流控]`),
-            dir: 's'
+            dir: 'SYS'
           });
           this.dataUpdated.next();
           
@@ -168,12 +168,12 @@ export class SerialMonitorService {
     // 检查是否需要创建新的数据项
     if (this.dataList.length === 0 ||
       currentTime - this.lastDataTime > 1000 ||
-      this.dataList[this.dataList.length - 1].dir !== 'r') {
+      this.dataList[this.dataList.length - 1].dir !== 'RX') {
       // 创建新的数据项
       this.dataList.push({
         time: timeString,
         data: data,
-        dir: 'r'
+        dir: 'RX'
       });
     } else {
       // 将数据添加到最后一个项目
@@ -236,7 +236,7 @@ export class SerialMonitorService {
           this.dataList.push({
             time: new Date().toLocaleTimeString(),
             data: bufferToSend,
-            dir: 's'
+            dir: 'TX'
           });
 
           this.dataUpdated.next();
@@ -321,7 +321,7 @@ export class SerialMonitorService {
       // 添加时间戳
       if (this.viewMode.showTimestamp) {
         fileContent += `[${item.time}] `;
-        fileContent += item.dir === 's' ? 'TX: ' : 'RX: ';
+        fileContent += item.dir;
       }
 
       // 处理数据内容
@@ -407,7 +407,7 @@ export class SerialMonitorService {
             this.dataList.push({
               time: new Date().toLocaleTimeString(),
               data: Buffer.from(`[设置${signalType}信号: ${state ? '开启' : '关闭'}]`),
-              dir: 's'
+              dir: 'SYS'
             });
             this.dataUpdated.next();
             resolve(true);
@@ -451,8 +451,8 @@ export class SerialMonitorService {
 export interface dataItem {
   time: string,
   data: any,
-  dir: 'r' | 's',
-  searchHighlight?: boolean
+  dir: 'TX' | 'RX' | 'SYS',
+  searchHighlight?: boolean,
 }
 
 export interface QuickSendItem {

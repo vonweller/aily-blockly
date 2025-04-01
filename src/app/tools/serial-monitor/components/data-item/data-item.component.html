@@ -2,12 +2,8 @@
 <div class="item" [ngClass]="{'highlight': showHighlight, 'search-active': data.searchHighlight}">
   <!-- @if (viewMode.showTimestamp) { -->
   <div class="time">{{ data.time }}</div>
-  <div class="dir" [ngClass]="{ send: data.dir == 's'}">
-    @if(data.dir == 's') {
-    TX
-    }@else {
-    RX
-    }
+  <div class="dir" [ngClass]="{ 'tx': data.dir == 'TX','sys':data.dir=='SYS' }">
+    {{data.dir}}
   </div>
   <div class="data vsfont"
     [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
