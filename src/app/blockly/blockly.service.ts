@@ -102,11 +102,12 @@ export class BlocklyService {
     this.loadLibGenerator(`arduino/${path}/${libName}/generator.js`);
   }
 
+  // 通过node_modules加载库
   async loadLibrary(libPackageName, projectPath) {
     const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
     // console.log('loadLibrary', libPackagePath);
-    // 加载block
     try {
+          // 加载block
       const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
       if (blockFileIsExist) {
         let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
@@ -140,9 +141,8 @@ export class BlocklyService {
   loadLibBlocks(blocks) {
     for (let index = 0; index < blocks.length; index++) {
       let block = blocks[index];
-      block = processJsonVar(block, this.boardConfig);
+      block = processJsonVar(block, this.boardConfig);// 替换开发板相关变量
       Blockly.defineBlocksWithJsonArray([block]);
-      // processingJsonGenerator(block)
     }
   }
 

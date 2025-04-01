@@ -113,6 +113,23 @@ export function processJsonVar(sourceJson, boardConfig) {
     return JSON.parse(jsonString)
 }
 
+export function processI18n(sourceJson, i18nData) {
+    // 创建blocks的副本，避免修改原始数据
+    const updatedBlocks = JSON.parse(JSON.stringify(sourceJson));
+    // 遍历blocks数组
+    for (let i = 0; i < updatedBlocks.length; i++) {
+        const block = updatedBlocks[i];
+        const blockType = block.type;
+
+        // 检查i18n中是否有对应类型的消息
+        if (i18nData[blockType] && i18nData[blockType].message0) {
+            // 替换message0
+            block.message0 = i18nData[blockType].message0;
+        }
+    }
+    return updatedBlocks;
+}
+
 /**
  *  处理json文件中的代码生成中的变量，如：${PIN1}
  */
