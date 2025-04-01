@@ -4,6 +4,7 @@
   line-height: 24px;
   padding: 1px 3px;
   border-radius: 5px;
+  margin-bottom: 1px;
 
   &.highlight {
     background: rgba(57, 135, 252, 0.5);
@@ -55,7 +56,11 @@
     white-space: nowrap;
   }
 
-  &.send {
+  &.sys {
+    color: #0b8800;
+  }
+
+  &.tx {
     color: rgb(130, 182, 225);
   }
 

@@ -6,13 +6,13 @@
     {{data.dir}}
   </div>
   <div class="data vsfont"
-    [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
+    [ngClass]="{ 'tx': data.dir == 'TX', 'sys':data.dir == 'SYS', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
     [innerHTML]="viewMode.showHex||showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : (data.data| addNewLine))">
   </div>
 </div>
 }@else{
 <span class="data vsfont"
-  [ngClass]="{ send: data.dir == 's', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
+  [ngClass]="{ 'tx': data.dir == 'TX', 'sys':data.dir == 'SYS', error: data.data.includes('error:'),'nowrap': !viewMode.autoWrap }"
   [innerHTML]="viewMode.showHex ? (data.data | showHex) : (viewMode.showCtrlChar ? (data.data | showNR) : (data.data | addNewLine))">
 </span>
 }
