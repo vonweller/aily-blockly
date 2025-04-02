@@ -3,10 +3,11 @@ import { GUIDE_MENU } from '../../../configs/menu.config';
 import { UiService } from '../../../services/ui.service';
 import { ProjectService } from '../../../services/project.service';
 import { version } from '../../../../../package.json';
+import { TranslateModule } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-guide',
-  imports: [],
+  imports: [TranslateModule],
   templateUrl: './guide.component.html',
   styleUrl: './guide.component.scss'
 })

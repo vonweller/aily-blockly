@@ -97,7 +97,8 @@ https://registry.npm.taobao.org/`;
   }
 
   selectLang(lang) {
-    this.translationService.setLanguage(lang.code)
+    this.translationService.setLanguage(lang.code);
+    window['ipcRenderer'].send('setting-changed', {action:'language-changed', data: lang.code});
   }
 
   currentType = this.items[0];
