@@ -6,6 +6,7 @@ import { TerminalService } from '../tools/terminal/terminal.service';
 import { BlocklyService } from '../blockly/blockly.service';
 import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import Pinyin from 'chinese-to-pinyin';
 
 interface ProjectPackageData {
   name: string;
@@ -107,6 +108,12 @@ export class ProjectService {
     return true;
   }
 
+  // 检测字符串是否包含中文字符
+  containsChineseCharacters(str: string): boolean {
+    const chineseRegex = /[\u4e00-\u9fa5]/;
+    return chineseRegex.test(str);
+  }
+
   // 新建项目
   async projectNew(newProjectData: NewProjectData) {
     console.log('newProjectData: ', newProjectData);
@@ -135,7 +142,16 @@ export class ProjectService {
 
     // 3. 修改package.json文件
     const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-    packageJson.name = newProjectData.name;
+    if (this.containsChineseCharacters(newProjectData.name)) {
+      packageJson.name = Pinyin(newProjectData.name, {
+        removeSpace: true,    // 移除空格
+        removeTone: true,     // 移除音调
+        keepRest: true   // 保留其他字符
+      });
+    } else {
+      packageJson.name = newProjectData.name;
+    }
+
     window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
 
     this.uiService.updateState({ state: 'done', text: '项目创建成功' });
