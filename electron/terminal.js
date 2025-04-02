@@ -1,6 +1,7 @@
 // 这个文件用于和cli交互，进行编译和烧录等操作
 const { ipcMain } = require("electron");
 const pty = require("@lydell/node-pty");
+const { isWin32 } = require("./platform");
 
 // 匹配 PowerShell 提示符: PS D:\path>   以后需要匹配mac os和linux的提示符（陈吕洲 2025.3.4）
 const promptRegex = /PS [A-Z]:(\\[^\\]+)+>/g;
@@ -15,15 +16,20 @@ function stripAnsiEscapeCodes(text) {
 function registerTerminalHandlers(mainWindow) {
   ipcMain.handle("terminal-create", (event, args) => {
     console.log("terminal-create args ", args);
-    
+    const shellMap = {
+      "win32": "powershell.exe",
+      "darwin": "zsh",
+      "linux": "bash",
+    }
+
     return new Promise((resolve, reject) => {
-      const shell = process.platform === "win32" ? "powershell.exe" : "bash";
+      const shell = shellMap[process.platform] ;
 
       // 确定工作目录
       let cwd = args.cwd;
       if (!cwd) {
         // Windows使用USERPROFILE，其他平台使用HOME
-        cwd = process.platform === "win32"
+        cwd = isWin32
           ? process.env.USERPROFILE
           : process.env.HOME;
       }

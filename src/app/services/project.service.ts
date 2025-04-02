@@ -51,7 +51,7 @@ export class ProjectService {
     // });
   }
 
-  // 初始化UI服务，这个init函数仅供main-window使用  
+  // 初始化UI服务，这个init函数仅供main-window使用
   async init() {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
@@ -205,7 +205,9 @@ export class ProjectService {
     this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
     console.log('boardModule: ', boardModule);
-    let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
+    // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
+    // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
+    let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
     console.log('boardJsonPath: ', boardJsonPath);
 
     // 判断board.json是否存在
@@ -275,6 +277,8 @@ export class ProjectService {
           this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
 
           try {
+            // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
+
             const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
             console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
 

@@ -4,6 +4,8 @@ const fs = require("fs");
 
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 
+const { isWin32, isDarwin, isLinux } = require("./platform");
+
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('enable-features', 'V8LazyCodeGeneration,V8CacheOptions');
 
@@ -25,9 +27,9 @@ let mainWindow;
 function getAppDataPath() {
   let home = os.homedir();
   let path;
-  if (process.platform === "win32") {
+  if (isWin32) {
     path = home + "\\AppData\\Local\\aily-project";
-  } else if (process.platform === "darwin") {
+  } else if (isDarwin) {
     path = home + "/Library/Application Support/aily-project";
   } else {
     path = home + "/.config/aily-project";
@@ -45,16 +47,31 @@ async function checkNodePath(childPath) {
     // 将解压缩操作移到单独的进程中
     return new Promise((resolve, reject) => {
       const child_process = require("child_process");
-      const nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z");
+      let nodeZipPath
+      if (isDarwin) {
+        nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
+        const command = `tar -xzf ${nodePath} -C ${childPath} && mv ${nodePath.replace('.tar.gz', '')} ${childPath}/node`;
+        try {
+          child_process.execSync(command, {stdio: 'inherit'});
+          console.log('解压成功！');
+          resolve();
+        } catch (error) {
+          console.error("解压失败，错误码:", error);
+          reject(error);
+        }
+        return;
+      }
+
+      // node zip文件路径
+      nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
       const child = child_process.spawn("7za.exe", ["x", nodeZipPath, "-o" + childPath]);
-      
+
       child.on('close', (code) => {
         if (code !== 0) {
           console.error("解压失败，错误码:", code);
           reject(code);
           return;
         }
-        
         // 重命名解压后的文件夹
         const nodeDir = path.join(childPath, path.basename(nodeZipPath, path.extname(nodeZipPath)));
         fs.renameSync(nodeDir, nodePath);
@@ -128,6 +145,7 @@ function createWindow() {
 
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
+    // mainWindow.loadURL("http://127.0.0.1:4200");
     // mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);

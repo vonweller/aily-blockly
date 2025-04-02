@@ -44,4 +44,4 @@ testem.log
 Thumbs.db
 temp
 child/node*
-!child/node*.7z
+!child/node-*.*
