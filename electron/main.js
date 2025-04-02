@@ -4,6 +4,7 @@ const fs = require("fs");
 
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 
+const { isWin32, isDarwin, isLinux } = require("./platform");
 
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
@@ -23,9 +24,9 @@ let mainWindow;
 function getAppDataPath() {
   let home = os.homedir();
   let path;
-  if (process.platform === "win32") {
+  if (isWin32) {
     path = home + "\\AppData\\Local\\aily-project";
-  } else if (process.platform === "darwin") {
+  } else if (isDarwin) {
     path = home + "/Library/Application Support/aily-project";
   } else {
     path = home + "/.config/aily-project";
@@ -37,10 +38,21 @@ function getAppDataPath() {
 }
 
 // 执行7z解压缩操作
-function unzip7z(zippath, destpath) {
+async function unzip7z(zippath, destpath) {
   const child_process = require("child_process");
-  const child = child_process.spawnSync("7za.exe", ["x", zippath, "-o" + destpath]);
-  console.log("unzip7z: ", child.stdout.toString());
+  let child
+  if (isDarwin) {
+    const command = `tar -xzf ${zippath} -C ${destpath} && mv ${zippath.replace('.tar.gz', '')} ${destpath}/node`;
+    try {
+      child_process.execSync(command, {stdio: 'inherit'});
+      console.log('解压成功！');
+    } catch (error) {
+      throw new Error(`解压失败：${error.message}`);
+    }
+  } else {
+    child = child_process.spawnSync("7za.exe", ["x", zippath, "-o" + destpath]);
+    console.log("unzip7z: ", child.stdout.toString());
+  }
 }
 
 // 检查Node
@@ -48,18 +60,24 @@ function checkNodePath(childPath) {
   // 检查是否存在node环境
   const nodePath = path.join(childPath, "node");
   if (!fs.existsSync(nodePath)) {
-    // node zip文件路径
-    const nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
+    let nodeZipPath
+    if (isDarwin) {
+      nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
+    } else {
+      // node zip文件路径
+      nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
+    }
     // node unzip路径
     const nodeDestPath = childPath
     // 执行解压缩操作
     try {
       unzip7z(nodeZipPath, nodeDestPath)
+      if (isDarwin) return;
       // 重命名解压后的文件夹
       const nodeDir = path.join(nodeDestPath, path.basename(nodeZipPath, path.extname(nodeZipPath)))
       fs.renameSync(nodeDir, nodePath)
     } catch (err) {
-      console.err("Node init error, err: ", err)
+      console.error("Node init error, err: ", err)
     }
   }
 }
@@ -128,6 +146,7 @@ function createWindow() {
 
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
+    // mainWindow.loadURL("http://127.0.0.1:4200");
     // mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
