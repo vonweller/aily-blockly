@@ -58,49 +58,239 @@ export class FieldImageSelector extends Blockly.FieldImage {
    * 打开文件选择器
    */
   openFilePicker() {
-    // 创建一个原生dialog元素弹窗
     const dialog = document.createElement('dialog');
+    dialog.setAttribute('class', 'image-cropper-dialog');
     dialog.innerHTML = `
+    <div class="image-cropper-container">
       <div class="header">
-        <div class="title">{{ title }}</div>
+        <div class="title">图片裁剪</div>
         <div class="win-btns">
           <div class="btn ccenter close">
             <i class="fa-light fa-xmark"></i>
           </div>
         </div>
       </div>
-      <div class="content">
-        <input type="file" accept="image/*" style="display: none;">
-        <button style="margin-top: 10px;">选择图片</button>
+
+      <div class="crop-container">
+        <div class="crop-wait">
+           <input class="crop-file" type="file" accept="image/*" style="display: none;">
+           <div class="crop-wait__label">选择图片</div>
+           <div class="crop-wait__tip">支持JPG、PNG格式</div>
+        </div>
+        <img class="preview-image">
+        <div class="crop-area"></div>
+
+        <div class="controls">
+          <button class="reset">重置</button>
+          <button class="reload">重选</button>
+          <input type="range" class="zoom" min="0.1" max="3" step="0.1" value="1">
+          <button class="rotate-left">↺</button>
+          <button class="rotate-right">↻</button>
+          <button class="confirm">确认</button>
+        </div>
       </div>
-    `;
-    dialog.setAttribute('class', 'sub-window-box bborder');
-    dialog.style.flexDirection = 'column';
-    dialog.style.justifyContent = 'center';
-    dialog.style.alignItems = 'center';
+    </div>
+  `;
     dialog.style.backgroundColor = '#2b2d30';
     dialog.style.borderRadius = '5px';
     dialog.style.boxShadow = '0 0 10px rgba(0, 0, 0, 0.2)';
     dialog.style.padding = '0';
     dialog.style.color = '#fff';
-    dialog.style.width = '400px';
-    dialog.style.height = '200px';
     dialog.style.overflow = 'hidden';
     dialog.style.border = 'none';
+
+    // 初始化状态
+    let scale: number = 1;
+    let rotation: number = 0;
+    let isDragging: boolean = false;
+    let startX: number = 0;
+    let startY: number = 0;
+    let posX: number = 0;
+    let posY: number = 0;
+
+    // 获取元素引用
+    const waitBox = dialog.querySelector('.crop-wait') as HTMLDivElement;
+    const fileLabelBtn = dialog.querySelector('.crop-wait__label') as HTMLDivElement;
+    const closeBtn = dialog.querySelector('.close.btn') as HTMLDivElement;
+    const fileInput = dialog.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const previewImg = dialog.querySelector<HTMLImageElement>('.preview-image')!;
+    const cropArea = dialog.querySelector<HTMLDivElement>('.crop-area')!;
+    const zoomSlider = dialog.querySelector<HTMLInputElement>('.zoom')!;
+    const rotateLeftBtn = dialog.querySelector<HTMLButtonElement>('.rotate-left')!;
+    const rotateRightBtn = dialog.querySelector<HTMLButtonElement>('.rotate-right')!;
+    const resetBtn = dialog.querySelector<HTMLButtonElement>('.reset')!;
+    const reloadBtn = dialog.querySelector<HTMLButtonElement>('.reload')!;
+    const confirmBtn = dialog.querySelector<HTMLButtonElement>('.confirm')!;
+
+    fileLabelBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // 设置裁剪区域尺寸
+    const setCropAreaSize = (): void => {
+      cropArea.style.width = `${FieldImageSelector.DEFAULT_WIDTH}px`;
+      cropArea.style.height = `${FieldImageSelector.DEFAULT_HEIGHT}px`;
+      cropArea.style.left = `calc(50% - ${FieldImageSelector.DEFAULT_WIDTH/2}px)`;
+      cropArea.style.top = `calc(50% - ${FieldImageSelector.DEFAULT_HEIGHT/2}px)`;
+    };
+
+    // 更新图片变换
+    const updateImageTransform = (): void => {
+      previewImg.style.transform = `
+      translate(${posX}px, ${posY}px)
+      scale(${scale})
+      rotate(${rotation}deg)
+    `;
+    };
+
+    // 文件选择处理
+    fileInput.addEventListener('change', (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = (e: ProgressEvent<FileReader>) => {
+        if (!e.target?.result) return;
+        waitBox.style.display = 'none';
+
+        previewImg.src = e.target.result as string;
+        setCropAreaSize();
+
+        // 重置状态
+        scale = 1;
+        rotation = 0;
+        posX = 0;
+        posY = 0;
+        zoomSlider.value = '1';
+        updateImageTransform();
+      };
+
+      reader.readAsDataURL(file);
+    });
+
+    // 鼠标事件处理
+    const handleMouseDown = (e: MouseEvent): void => {
+      isDragging = true;
+      startX = e.clientX - posX;
+      startY = e.clientY - posY;
+    };
+
+    const handleMouseMove = (e: MouseEvent): void => {
+      if (!isDragging) return;
+      posX = e.clientX - startX;
+      posY = e.clientY - startY;
+      updateImageTransform();
+    };
+
+    const handleMouseUp = (): void => {
+      isDragging = false;
+    };
+
+    previewImg.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    // 缩放控制
+    zoomSlider.addEventListener('input', (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      scale = parseFloat(target.value);
+      updateImageTransform();
+    });
+
+    // 旋转控制
+    rotateLeftBtn.addEventListener('click', () => {
+      rotation -= 90;
+      updateImageTransform();
+    });
+
+    rotateRightBtn.addEventListener('click', () => {
+      rotation += 90;
+      updateImageTransform();
+    });
+
+    // 重置功能
+    resetBtn.addEventListener('click', () => {
+      scale = 1;
+      rotation = 0;
+      posX = 0;
+      posY = 0;
+      zoomSlider.value = '1';
+      updateImageTransform();
+    });
+
+    // 重选功能
+    reloadBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // 确认裁剪
+    confirmBtn.addEventListener('click', () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = FieldImageSelector.DEFAULT_WIDTH;
+      canvas.height = FieldImageSelector.DEFAULT_HEIGHT;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx || !previewImg.complete) {
+        alert('裁剪失败，请选择有效图片');
+        return;
+      }
+
+      // 计算裁剪参数
+      const imgRect = previewImg.getBoundingClientRect();
+      const cropRect = cropArea.getBoundingClientRect();
+
+      const scaleX = previewImg.naturalWidth / imgRect.width;
+      const scaleY = previewImg.naturalHeight / imgRect.height;
+
+      const sourceX = (cropRect.left - imgRect.left) * scaleX;
+      const sourceY = (cropRect.top - imgRect.top) * scaleY;
+      const sourceWidth = FieldImageSelector.DEFAULT_WIDTH * scaleX;
+      const sourceHeight = FieldImageSelector.DEFAULT_HEIGHT * scaleY;
+
+      // 执行裁剪
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.drawImage(
+          previewImg,
+          sourceX, sourceY, sourceWidth, sourceHeight,
+          -canvas.width / 2, -canvas.height / 2,
+          canvas.width, canvas.height
+      );
+      ctx.restore();
+
+      // 更新字段值
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        console.log("dataUrl", dataUrl);
+        this.setValue(dataUrl);
+        Blockly.Events.fire(new Blockly.Events.BlockChange(
+            this.sourceBlock_, 'field', this.name, this.getValue(), dataUrl
+        ));
+      } catch (error) {
+        console.error('图片导出失败:', error);
+      }
+
+      dialog.close();
+      document.body.removeChild(dialog);
+    });
+
+    // 关闭对话框
+    closeBtn.addEventListener('click', () => {
+      dialog.close();
+      document.body.removeChild(dialog);
+    });
+
     document.body.appendChild(dialog);
     dialog.showModal();
 
-
-    // const input = document.createElement('input');
-    // input.type = 'file';
-    // input.accept = 'image/*';
-    // input.addEventListener('change', (event) => {
-    //   const target = event.target as HTMLInputElement;
-    //   if (target.files && target.files[0]) {
-    //     this.handleImageSelection(target.files[0]);
-    //   }
-    // });
-    // input.click();
+    // 清理事件监听器
+    dialog.addEventListener('close', () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    });
   }
 
   /**
@@ -207,69 +397,170 @@ export class FieldImageSelector extends Blockly.FieldImage {
 Blockly.fieldRegistry.register('field_image_selector', FieldImageSelector);
 
 Blockly.Css.register(`
-.sub-window-box {
-  border-radius: 5px;
-  overflow: hidden;
-}
+.image-cropper-dialog {
+  &::backdrop {
+    background: rgba(0, 0, 0, 0.75);
+  }
 
-.header {
-  display: flex;
-  align-items: center;
-  height: 35px;
-  border-bottom: 1px solid #222427;
-  background: #2b2d30;
-}
+  .header {
+    display: flex;
+    align-items: center;
+    height: 35px;
+    border-bottom: 1px solid #222427;
+    background: #2b2d30;
+  }
 
-.title {
-  height: 100%;
-  padding-left: 10px;
-  display: flex;
-  align-items: center;
-  flex-grow: 1;
-  -webkit-app-region: drag;
-}
+  .title {
+    height: 100%;
+    padding-left: 10px;
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+  }
 
-.win-btns {
-  display: flex;
-  align-items: center;
-  font-size: 15px;
+  .win-btns {
+    display: flex;
+    align-items: center;
+    font-size: 15px;
 
-  .btn {
-    font-size: 16px;
-    width: 33px;
-    height: 33px;
-    margin-right: 0;
+    .btn {
+      font-size: 16px;
+      width: 33px;
+      height: 33px;
+      margin-right: 0;
 
-    &:hover {
-      background: #3a3c3f;
+      &:hover {
+        background: #3a3c3f;
+      }
+    }
+
+    .minimize {
+      font-size: 18px;
+    }
+
+    .go-main{
+      // border-right: 1px solid #333;
+      margin-right: 10px;
+      font-size: 17px;
+      background: transparent !important;
+      &:hover {
+        color: rgb(75, 151, 221);
+      }
+    }
+
+    .close {
+      font-size: 19px;
+
+      &:hover {
+        color: rgb(145, 0, 0);
+      }
     }
   }
 
-  .minimize {
-    font-size: 18px;
+  .image-cropper-container {
+    position: relative;
+    width: 600px;
+    height: 500px;
+    background: #2b2d30;
+    border-radius: 5px;
+    overflow: hidden;
   }
 
-  .go-main{
-    // border-right: 1px solid #333;
-    margin-right: 10px;
-    font-size: 17px;
-    background: transparent !important;
-    &:hover {
-      color: rgb(75, 151, 221);
+  .crop-container {
+    position: relative;
+    width: 100%;
+    height: calc(100% - 40px);
+    overflow: hidden;
+  }
+
+  .preview-image {
+    position: absolute;
+    cursor: move;
+    transform-origin: center;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  .crop-area {
+    position: absolute;
+    border: 2px solid #1890ff;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);
+    pointer-events: none;
+  }
+
+  .controls {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    background: rgba(40,40,40,0.8);
+    padding: 8px;
+    border-radius: 4px;
+  }
+
+  button {
+    padding: 6px 12px;
+    background: #1890ff;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+  }
+
+  input[type="range"] {
+    width: 120px;
+  }
+
+  .crop-wait {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    .crop-wait__label {
+      line-height: 1.5715;
+      position: relative;
+      display: inline-block;
+      font-weight: 400;
+      white-space: nowrap;
+      text-align: center;
+      background-image: none;
+      border: 1px solid transparent;
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.015);
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: manipulation;
+      height: 32px;
+      padding: 4px 15px;
+      font-size: 14px;
+      border-radius: 2px;
+      color: rgba(255, 255, 255, 0.95);
+      border-color: #434343;
+      background: transparent;
+
+      &:hover {
+        color: #165996;
+        border-color: #165996;
+        background: transparent;
+      }
+    }
+
+    .crop-wait__tip {
+      margin-top: 10px;
+      color: #888;
+      font-size: 12px;
+    }
+
+    .crop-file {
+      position: absolute;
+      inset: 0;
     }
   }
-
-  .close {
-    font-size: 19px;
-
-    &:hover {
-      color: rgb(145, 0, 0);
-    }
-  }
-}
-
-.content{
-  height: calc(100vh - 38px);
-  background: #323437;
 }
 `);
