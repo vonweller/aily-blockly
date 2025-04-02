@@ -247,3 +247,9 @@ app.on('web-contents-created', (event, contents) => {
     return { action: 'deny' }; // 阻止在Electron中打开
   });
 });
+
+// settingChanged
+ipcMain.on("setting-changed", (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  mainWindow.webContents.send("setting-changed", data);
+});

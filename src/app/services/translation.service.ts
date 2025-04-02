@@ -17,7 +17,7 @@ export class TranslationService {
 
   // 记录已加载的语言
   private loadedLanguages: Set<string> = new Set();
-  
+
   constructor(
     private translate: TranslateService,
     private http: HttpClient
@@ -27,15 +27,22 @@ export class TranslationService {
   async init() {
     // 只获取语言列表，不预加载翻译数据
     await this.getLanguageList();
-    
+
     // 设置默认语言
     const defaultLang = this.getSystemLanguage();
     this.translate.setDefaultLang(defaultLang);
     console.log(`Default language set to: ${defaultLang}`);
-    
+
     // 加载并设置当前选择的语言
     const currentLang = this.getSelectedLanguage();
     await this.setLanguage(currentLang);
+
+    window['ipcRenderer'].on('setting-changed', (event, data) => {
+      console.log('ipcRenderer setLanguage', data);
+      if (data.action == 'language-changed') {
+        this.setLanguage(data.data);
+      }
+    });
   }
 
   async getLanguageList() {
@@ -76,7 +83,7 @@ export class TranslationService {
       this.translate.setTranslation(lang, languageData);
       this.loadedLanguages.add(lang);
     }
-    
+
     // 使用该语言
     this.translate.use(lang);
     localStorage.setItem('language', lang);
