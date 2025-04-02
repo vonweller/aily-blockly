@@ -266,9 +266,6 @@ export class FieldImageSelector extends Blockly.FieldImage {
         const dataUrl = canvas.toDataURL('image/png');
         console.log("dataUrl", dataUrl);
         this.setValue(dataUrl);
-        Blockly.Events.fire(new Blockly.Events.BlockChange(
-            this.sourceBlock_, 'field', this.name, this.getValue(), dataUrl
-        ));
       } catch (error) {
         console.error('图片导出失败:', error);
       }
@@ -459,8 +456,8 @@ Blockly.Css.register(`
 
   .image-cropper-container {
     position: relative;
-    width: 600px;
-    height: 500px;
+    width: 70vw;
+    height: 70vh;
     background: #2b2d30;
     border-radius: 5px;
     overflow: hidden;
