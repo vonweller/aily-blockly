@@ -22,5 +22,9 @@
         "EXIT": "退出",
         "USER_MANUAL": "用户手册",
         "EXAMPLES": "示例程序"
+    },
+    "GUIDE": {
+        "START": "开始",
+        "RECENTLY":"最近"
     }
 }
