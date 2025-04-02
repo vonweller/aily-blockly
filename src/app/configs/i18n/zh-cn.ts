@@ -1,7 +1,7 @@
-// CHINESE
 export const locale = {
-  lang: "简体中文",
-  img: "chinese.jpg",
+  name: "简体中文",
+  lang: "zh-cn",
+  img: "zh-cn.jpg",
   data: {
     ACCOUNT: {
       USERNAME: "用户名 / 手机号",

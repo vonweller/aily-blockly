@@ -1,7 +1,7 @@
-// USA
 export const locale = {
-	lang: 'English',
-	img: 'english.jpg',
+	name: 'English',
+	lang: 'en',
+	img: 'en.jpg',
 	data: {
 		ACCOUNT: {
 			USERNAME: "username / e-mail",
@@ -80,7 +80,7 @@ export const locale = {
 			SHORTCUT: 'Desktop Shortcut',
 			OTA: 'Update Firmware',
 			UNBIND: 'Unbind',
-			NO_ACTION:'No action available'
+			NO_ACTION: 'No action available'
 		},
 		SHARING: {
 			SHARING: 'SHARING',
@@ -257,26 +257,26 @@ export const locale = {
 			CLOSED: 'Closed',
 			PAY: 'Pay'
 		},
-		WIDGET:{
-			TEXT:'Text',
-			BUTTON:'Button',
-			DATA:'Data',
-			SLIDER:'Slider',
+		WIDGET: {
+			TEXT: 'Text',
+			BUTTON: 'Button',
+			DATA: 'Data',
+			SLIDER: 'Slider',
 			SELECT: "Select",
-			COLOR:'Color',
-			STICK:'Stick',
-			CHART:'Chart',
-			MAP:'Map',
-			VIDEO:'Video',
-			INPUT:'Input',
-			IMAGE:'Image',
-			DEBUG:'Debug',
-			CUSTOM:'Custom',
-			EDIT:'Edit',
-			DELETE:'Delete',
-			CANCEL:'Cancel',
-			POSITION:'Position',
-			SIZE:'Size',
+			COLOR: 'Color',
+			STICK: 'Stick',
+			CHART: 'Chart',
+			MAP: 'Map',
+			VIDEO: 'Video',
+			INPUT: 'Input',
+			IMAGE: 'Image',
+			DEBUG: 'Debug',
+			CUSTOM: 'Custom',
+			EDIT: 'Edit',
+			DELETE: 'Delete',
+			CANCEL: 'Cancel',
+			POSITION: 'Position',
+			SIZE: 'Size',
 		}
 	}
 };

@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
 import { locale as enLang } from '../configs/i18n/en';
-import { locale as chLang } from '../configs/i18n/ch';
-
+import { locale as zhcnLang } from '../configs/i18n/zh-cn';
+import { locale as zhhkLang } from '../configs/i18n/zh-hk';
 
 export interface Locale {
   lang: string;
@@ -18,9 +18,11 @@ export class TranslationService {
   }
 
   init() {
-    this.translate.setDefaultLang(this.getSystemLanguage());
-    this.translate.setTranslation(enLang.lang, enLang.data, true);
-    this.translate.setTranslation(chLang.lang, chLang.data, true);
+    this.translate.setTranslation(enLang.lang, enLang.data);
+    this.translate.setTranslation(zhcnLang.lang, zhcnLang.data);
+    this.translate.setTranslation(zhhkLang.lang, zhhkLang.data);
+    let defaultLang = this.getSystemLanguage();
+    this.translate.setDefaultLang(defaultLang);
     this.setLanguage(this.getSelectedLanguage());
   }
 
@@ -29,12 +31,9 @@ export class TranslationService {
     return language.toLocaleLowerCase()
   }
 
-  setLanguage(lang) {
-    if (lang) {
-      this.translate.use(this.translate.getDefaultLang());
-      this.translate.use(lang);
-      localStorage.setItem('language', lang);
-    }
+  setLanguage(lang: string) {
+    this.translate.use(lang);
+    localStorage.setItem('language', lang);
   }
 
   getLanguageList() {

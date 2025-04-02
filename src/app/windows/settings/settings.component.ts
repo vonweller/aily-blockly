@@ -7,6 +7,7 @@ import { CommonModule } from '@angular/common';
 import { UiService } from '../../services/ui.service';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { SettingsService } from '../../services/settings.service';
+import { TranslationService } from '../../services/translation.service';
 
 @Component({
   selector: 'app-settings',
@@ -58,8 +59,8 @@ export class SettingsComponent {
     },
   ];
 
-  UiThemeValue='dark';
-  blocklyThemeValue='default';
+  UiThemeValue = 'dark';
+  blocklyThemeValue = 'default';
 
   npmRegistryListStr = `https://registry.npmjs.org/
 https://registry.npm.taobao.org/`;
@@ -70,6 +71,8 @@ https://registry.npm.taobao.org/`;
     return this.settingsService.boardList;
   }
 
+  langList = [];
+
   data: any = {
     project_path: '',
     npm_registry: [],
@@ -78,6 +81,7 @@ https://registry.npm.taobao.org/`;
   constructor(
     private uiService: UiService,
     private settingsService: SettingsService,
+    private translationService: TranslationService
   ) {
     this.init();
   }
@@ -87,6 +91,9 @@ https://registry.npm.taobao.org/`;
     this.settingsService.getBoardList().then(() => {
       console.log('boardList: ', this.boardList);
     });
+
+    this.langList = this.translationService.getLanguageList();
+    console.log('langList: ', this.langList);
   }
 
   currentType = this.items[0];

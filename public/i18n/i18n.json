@@ -1,0 +1,14 @@
+[
+    {
+        "name": "English",
+        "code": "en"
+    },
+    {
+        "name": "中文",
+        "code": "zh_cn"
+    },
+    {
+        "name": "中文(繁体)",
+        "code": "zh_hk"
+    }
+]
