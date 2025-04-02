@@ -261,6 +261,8 @@ export class ProjectService {
           this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
 
           try {
+            // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
+
             const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
             console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
 

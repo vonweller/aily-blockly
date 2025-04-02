@@ -48,7 +48,7 @@ export class BlocklyService {
     Blockly.serialization.workspaces.load(jsonData, this.workspace);
   }
 
-  // 
+  //
   getAbiJson() {
     let json = Blockly.serialization.workspaces.save(this.workspace);
     return json;
@@ -104,7 +104,7 @@ export class BlocklyService {
 
   // 通过node_modules加载库
   async loadLibrary(libPackageName, projectPath) {
-    const libPackagePath = projectPath + '\\node_modules\\' + libPackageName;
+    const libPackagePath = projectPath + '/node_modules/' + libPackageName;
     // console.log('loadLibrary', libPackagePath);
     try {
           // 加载block
@@ -179,7 +179,7 @@ export class BlocklyService {
     return new Promise((resolve, reject) => {
       let script = document.createElement('script');
       script.type = 'text/javascript';
-      script.src = filePath;
+      script.src = 'file:///' + filePath;
       script.onload = () => {
         resolve(true);
       };
