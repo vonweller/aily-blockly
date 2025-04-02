@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -33,7 +33,10 @@
       {
         "from": "child",
         "to": "app/child",
-        "filter": ["**/*", "!node/**"]
+        "filter": [
+          "**/*",
+          "!node/**"
+        ]
       }
     ],
     "win": {
