@@ -1,12 +1,30 @@
 {
     "MENU": {
-        "PROJECT_NEW": "新建项目",
-        "PROJECT_OPEN": "打开项目",
-        "PROJECT_SAVE": "保存项目",
-        "BUILD": "编译",
-        "RUN": "上传",
+        "PROJECT_NEW": "新建專案",
+        "PROJECT_OPEN": "開啟專案",
+        "PROJECT_SAVE": "儲存專案",
+        "PROJECT_SAVE_AS": "另存為",
+        "PROJECT_CLOSE": "關閉專案",
+        "OPEN_IN_EXPLORER": "在資源管理器開啟",
+        "BUILD": "編譯",
+        "RUN": "燒錄",
         "STOP": "停止",
-        "CODE": "查看代码",
-        "TOOL_SERIAL": "串口工具"
+        "CODE": "查看程式碼",
+        "CODE_EXPORT": "匯出程式碼",
+        "DEBUG": "除錯",
+        "TERMINAL": "終端機",
+        "TOOL_SERIAL": "串口工具",
+        "AI": "AI",
+        "APP_STORE": "應用商店",
+        "SETTINGS": "設定",
+        "ABOUT": "關於本軟體",
+        "GITHUB": "Github",
+        "EXIT": "退出",
+        "USER_MANUAL": "使用者手冊",
+        "EXAMPLES": "範例程式"
+    },
+    "GUIDE": {
+        "START": "開始",
+        "RECENTLY": "最近"
     }
 }

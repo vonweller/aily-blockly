@@ -14,10 +14,11 @@ import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
+import { TranslateModule } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent, ActBtnComponent],
+  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent, ActBtnComponent, TranslateModule],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })

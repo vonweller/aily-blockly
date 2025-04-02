@@ -27,10 +27,10 @@
       <!-- 对于编译、上传等按钮，使用 act-btn 组件 -->
       @if(loaded){
       <app-act-btn [icon]="btn.icon" [color]="btn.color" [(state)]="btn.state" nz-tooltip
-        nzTooltipTitle="{{ btn.name }}" (click)="onClick(btn)"></app-act-btn>
+        nzTooltipTitle="{{ btn.name | translate}}" (click)="onClick(btn)"></app-act-btn>
       }
       }@else{
-      <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name }}" (click)="onClick(btn)"
+      <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name | translate}}" (click)="onClick(btn)"
         [ngStyle]="{ color: btn.color ? btn.color : '' }" [ngClass]="{ selected: isOpenTool(btn) }">
         <i class="{{ btn.icon }}"></i>
         @if (btn.more) {

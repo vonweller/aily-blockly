@@ -1,9 +1,9 @@
 import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { TranslateService } from '@ngx-translate/core';
 import { CommonModule } from '@angular/common';
 import { ElectronService } from './services/electron.service';
 import { ConfigService } from './services/config.service';
+import { TranslationService } from './services/translation.service';
 
 @Component({
   selector: 'app-root',
@@ -16,16 +16,14 @@ export class AppComponent {
   title = 'aily-blockly';
 
   constructor(
-    private translate: TranslateService,
     private electronService: ElectronService,
-    private configService:ConfigService
+    private configService:ConfigService,
+    private translationService: TranslationService
   ) {}
 
  async ngOnInit() {
-    this.translate.addLangs(['zh', 'en']);
-    this.translate.setDefaultLang('zh');
-    this.translate.use('zh');
     await this.electronService.init();
     await this.configService.init();
+    await this.translationService.init();
   }
 }
