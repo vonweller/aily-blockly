@@ -72,7 +72,7 @@ export class TranslationService {
 
   getSystemLanguage(): string {
     const language = navigator.language || (navigator.languages && navigator.languages[0]);
-    return language.toLowerCase();
+    return language.toLowerCase().replace('-', '_');
   }
 
   async setLanguage(lang: string) {
