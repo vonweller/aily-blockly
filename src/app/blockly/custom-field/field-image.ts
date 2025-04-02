@@ -361,7 +361,13 @@ export class FieldImageSelector extends Blockly.FieldImage {
     this.imageData = newValue;
 
     if (this.imageElement) {
-      this.imageElement.setAttribute('src', newValue);
+      // this.imageElement.setAttribute('src', newValue);
+      const img = new Image();
+      img.onload = () => {
+        this.imageElement.setAttribute('src', newValue);
+      };
+      img.src = newValue;
+      // TODO base64 图片不显示 @downey @coloz
     }
 
     // 触发变更事件
