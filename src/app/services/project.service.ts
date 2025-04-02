@@ -6,7 +6,7 @@ import { TerminalService } from '../tools/terminal/terminal.service';
 import { BlocklyService } from '../blockly/blockly.service';
 import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import Pinyin from 'chinese-to-pinyin';
+import { pinyin } from "pinyin-pro";
 
 interface ProjectPackageData {
   name: string;
@@ -118,7 +118,7 @@ export class ProjectService {
   async projectNew(newProjectData: NewProjectData) {
     console.log('newProjectData: ', newProjectData);
     const appDataPath = window['path'].getAppData();
-    const projectPath = newProjectData.path + newProjectData.name
+    const projectPath = (newProjectData.path + newProjectData.name).replace(/\s/g, '_');
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
@@ -143,11 +143,10 @@ export class ProjectService {
     // 3. 修改package.json文件
     const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
     if (this.containsChineseCharacters(newProjectData.name)) {
-      packageJson.name = Pinyin(newProjectData.name, {
-        removeSpace: true,    // 移除空格
-        removeTone: true,     // 移除音调
-        keepRest: true   // 保留其他字符
-      });
+      packageJson.name = pinyin(newProjectData.name, {
+        toneType: "none",
+        separator: ""
+      }).replace(/\s/g, '_');
     } else {
       packageJson.name = newProjectData.name;
     }
