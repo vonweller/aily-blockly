@@ -39,11 +39,16 @@
           </div>
           <div class="board-selector sscroll">
             @for (board of boardList; track board.name) {
-            <div class="board ccenter btn" [ngClass]="{ selected: currentBoard == board }" (click)="selectBoard(board)">
+            <div class="board ccenter btn" [ngClass]="{ selected: currentBoard == board, disabled: board.disabled }"
+              (click)="selectBoard(board)">
               <div class="img-box">
                 <img [src]="'http://blockly.openjumper.cn/img/'+board.img" />
               </div>
-              <div class="name">{{ board.nickname }}</div>
+              <div class="name">{{ board.nickname }}
+                @if(board.disabled){
+                <span>(dev)</span>
+                }
+              </div>
             </div>
             }
           </div>

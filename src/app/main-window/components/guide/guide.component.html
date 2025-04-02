@@ -4,7 +4,7 @@
       aily blockly IDE
       <div class="version">ver {{version}}</div>
     </div>
-    <div class="title">开始</div>
+    <div class="title">{{'GUIDE.START' | translate}}</div>
     @if (showMenu) {
     <div class="menu-box">
       @for (item of guideMenu; track $index) {
@@ -15,14 +15,14 @@
         <div class="icon ccenter">
           <i class="{{ item.icon }}"></i>
         </div>
-        <div class="text">{{ item.name }}</div>
+        <div class="text">{{ item.name | translate}}</div>
       </div>
       }
       }
     </div>
     }
     @if(recentlyProjects.length > 0) {
-    <div class="title">最近</div>
+    <div class="title">{{'GUIDE.RECENTLY' | translate}}</div>
     <div class="menu-box">
       @for(project of recentlyProjects; track $index) {
       <div class="project btn link" (click)="openProjectByPath(project)">

@@ -6,6 +6,9 @@ const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
+app.commandLine.appendSwitch('enable-features', 'V8LazyCodeGeneration,V8CacheOptions');
+
 const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
@@ -37,48 +40,44 @@ function getAppDataPath() {
   return path;
 }
 
-// 执行7z解压缩操作
-async function unzip7z(zippath, destpath) {
-  const child_process = require("child_process");
-  let child
-  if (isDarwin) {
-    const command = `tar -xzf ${zippath} -C ${destpath} && mv ${zippath.replace('.tar.gz', '')} ${destpath}/node`;
-    try {
-      child_process.execSync(command, {stdio: 'inherit'});
-      console.log('解压成功！');
-    } catch (error) {
-      throw new Error(`解压失败：${error.message}`);
-    }
-  } else {
-    child = child_process.spawnSync("7za.exe", ["x", zippath, "-o" + destpath]);
-    console.log("unzip7z: ", child.stdout.toString());
-  }
-}
-
 // 检查Node
-function checkNodePath(childPath) {
-  // 检查是否存在node环境
+async function checkNodePath(childPath) {
   const nodePath = path.join(childPath, "node");
   if (!fs.existsSync(nodePath)) {
-    let nodeZipPath
-    if (isDarwin) {
-      nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
-    } else {
+    // 将解压缩操作移到单独的进程中
+    return new Promise((resolve, reject) => {
+      const child_process = require("child_process");
+      let nodeZipPath
+      if (isDarwin) {
+        nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
+        const command = `tar -xzf ${nodePath} -C ${childPath} && mv ${nodePath.replace('.tar.gz', '')} ${childPath}/node`;
+        try {
+          child_process.execSync(command, {stdio: 'inherit'});
+          console.log('解压成功！');
+          resolve();
+        } catch (error) {
+          console.error("解压失败，错误码:", error);
+          reject(error);
+        }
+        return;
+      }
+
       // node zip文件路径
       nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
-    }
-    // node unzip路径
-    const nodeDestPath = childPath
-    // 执行解压缩操作
-    try {
-      unzip7z(nodeZipPath, nodeDestPath)
-      if (isDarwin) return;
-      // 重命名解压后的文件夹
-      const nodeDir = path.join(nodeDestPath, path.basename(nodeZipPath, path.extname(nodeZipPath)))
-      fs.renameSync(nodeDir, nodePath)
-    } catch (err) {
-      console.error("Node init error, err: ", err)
-    }
+      const child = child_process.spawn("7za.exe", ["x", nodeZipPath, "-o" + childPath]);
+
+      child.on('close', (code) => {
+        if (code !== 0) {
+          console.error("解压失败，错误码:", code);
+          reject(code);
+          return;
+        }
+        // 重命名解压后的文件夹
+        const nodeDir = path.join(childPath, path.basename(nodeZipPath, path.extname(nodeZipPath)));
+        fs.renameSync(nodeDir, nodePath);
+        resolve();
+      });
+    });
   }
 }
 
@@ -169,10 +168,12 @@ function createWindow() {
   }
 
   // 注册ipc handlers
-  registerTerminalHandlers(mainWindow);
-  registerWindowHandlers(mainWindow);
-  registerNpmHandlers(mainWindow);
-  registerUpdaterHandlers(mainWindow);
+  setTimeout(() => {
+    registerTerminalHandlers(mainWindow);
+    registerWindowHandlers(mainWindow);
+    registerNpmHandlers(mainWindow);
+    registerUpdaterHandlers(mainWindow);
+  }, 500);
 }
 
 app.on("ready", () => {
@@ -265,4 +266,10 @@ app.on('web-contents-created', (event, contents) => {
     shell.openExternal(url);
     return { action: 'deny' }; // 阻止在Electron中打开
   });
+});
+
+// settingChanged
+ipcMain.on("setting-changed", (event, data) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  mainWindow.webContents.send("setting-changed", data);
 });

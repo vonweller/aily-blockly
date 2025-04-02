@@ -9,7 +9,7 @@
     @if(item.icon){
     <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
     }
-    <div class="name">{{ item.name }}</div>
+    <div class="name">{{ item.name | translate }}</div>
     <div class="text ellipsis">{{ item.text }}</div>
   </div>
   }

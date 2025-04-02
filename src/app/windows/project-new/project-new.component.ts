@@ -104,8 +104,8 @@ export class ProjectNewComponent {
     }
   }
 
-
   selectBoard(boardInfo: BoardInfo) {
+    // if (boardInfo.disabled) return;
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo.nickname;
@@ -205,7 +205,8 @@ export interface BoardInfo {
   "img": string,
   "description": string,
   "url": string,
-  "brand": string
+  "brand": string,
+  "disabled": boolean, // 是否禁用
 }
 
 export interface NewProjectData {
