@@ -35,7 +35,7 @@
       justify-content: center;
       position: relative;
 
-      &.flex-start{
+      &.flex-start {
         justify-content: flex-start;
       }
 
@@ -158,6 +158,13 @@
 
     .name {
       white-space: nowrap;
+      span{
+        color: rgb(154, 154, 255);
+      }
+    }
+
+    &.disabled {
+      background: #3f3f3f;
     }
   }
 }
@@ -207,8 +214,8 @@
   }
 }
 
-.tag-list{
-  nz-tag{
+.tag-list {
+  nz-tag {
     cursor: pointer;
   }
 }
