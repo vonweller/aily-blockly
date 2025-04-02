@@ -23,23 +23,11 @@
             <div>语言:</div>
             <div class="langs">
               @for(lang of langList; track lang) {
-              <div class="lang ccenter" [ngClass]="{ selected: lang.selected }">
-                <img src="i18n/{{ lang }}/{{ lang }}.jpg" alt="" srcset="" />
+              <div class="lang ccenter" [ngClass]="{ selected: currentLang==lang.code }" (click)="selectLang(lang)">
+                <img src="i18n/{{ lang.code }}/{{ lang.code }}.jpg" alt="" srcset="" />
                 <span>{{ lang.name }}</span>
               </div>
               }
-              <!-- <div class="lang ccenter" [ngClass]="{ selected: true }">
-                <img src="i18n/zh_cn/zh_cn.jpg" alt="" srcset="" />
-                <span>中文</span>
-              </div>
-              <div class="lang ccenter">
-                <img src="i18n/zh_hk/zh_hk.jpg" alt="" srcset="" />
-                <span>中文(繁體)</span>
-              </div>
-              <div class="lang ccenter">
-                <img src="i18n/en/en.jpg" alt="" srcset="" />
-                <span>English</span>
-              </div> -->
             </div>
           </div>
         </div>

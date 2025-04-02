@@ -71,7 +71,13 @@ https://registry.npm.taobao.org/`;
     return this.settingsService.boardList;
   }
 
-  langList = [];
+  get langList() {
+    return this.translationService.languageList;
+  }
+
+  get currentLang() {
+    return this.translationService.getSelectedLanguage();
+  }
 
   data: any = {
     project_path: '',
@@ -88,12 +94,10 @@ https://registry.npm.taobao.org/`;
 
   init() {
     console.log('init settings');
-    this.settingsService.getBoardList().then(() => {
-      console.log('boardList: ', this.boardList);
-    });
+  }
 
-    this.langList = this.translationService.getLanguageList();
-    console.log('langList: ', this.langList);
+  selectLang(lang) {
+    this.translationService.setLanguage(lang.code)
   }
 
   currentType = this.items[0];

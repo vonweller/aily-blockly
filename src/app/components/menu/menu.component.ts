@@ -7,10 +7,11 @@ import {
   Output,
   ViewChild,
 } from '@angular/core';
+import { TranslateModule } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-menu',
-  imports: [CommonModule],
+  imports: [CommonModule, TranslateModule],
   templateUrl: './menu.component.html',
   styleUrl: './menu.component.scss',
 })
@@ -62,7 +63,7 @@ export class MenuComponent {
   isHighlight(text) {
     if (!text) return false;
     const lowerText = text.toLowerCase();
-    return this.keywords.some((keyword) => 
+    return this.keywords.some((keyword) =>
       keyword && lowerText.includes(keyword.toLowerCase())
     );
   }
