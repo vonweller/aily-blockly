@@ -17,7 +17,7 @@ export class FieldImageSelector extends Blockly.FieldImage {
    */
   constructor(value?: string, validator?: Blockly.FieldValidator<string>) {
     const src = value || FieldImageSelector.DEFAULT_IMAGE;
-    
+
     super(
       src,
       FieldImageSelector.DEFAULT_WIDTH,
@@ -28,9 +28,9 @@ export class FieldImageSelector extends Blockly.FieldImage {
         (field as FieldImageSelector).openFilePicker();
       }
     );
-    
+
     this.imageData = src;
-    
+
     // 添加验证器
     if (validator) {
       this.setValidator(validator);
@@ -58,16 +58,49 @@ export class FieldImageSelector extends Blockly.FieldImage {
    * 打开文件选择器
    */
   openFilePicker() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.addEventListener('change', (event) => {
-      const target = event.target as HTMLInputElement;
-      if (target.files && target.files[0]) {
-        this.handleImageSelection(target.files[0]);
-      }
-    });
-    input.click();
+    // 创建一个原生dialog元素弹窗
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = `
+      <div class="header">
+        <div class="title">{{ title }}</div>
+        <div class="win-btns">
+          <div class="btn ccenter close">
+            <i class="fa-light fa-xmark"></i>
+          </div>
+        </div>
+      </div>
+      <div class="content">
+        <input type="file" accept="image/*" style="display: none;">
+        <button style="margin-top: 10px;">选择图片</button>
+      </div>
+    `;
+    dialog.setAttribute('class', 'sub-window-box bborder');
+    dialog.style.flexDirection = 'column';
+    dialog.style.justifyContent = 'center';
+    dialog.style.alignItems = 'center';
+    dialog.style.backgroundColor = '#2b2d30';
+    dialog.style.borderRadius = '5px';
+    dialog.style.boxShadow = '0 0 10px rgba(0, 0, 0, 0.2)';
+    dialog.style.padding = '0';
+    dialog.style.color = '#fff';
+    dialog.style.width = '400px';
+    dialog.style.height = '200px';
+    dialog.style.overflow = 'hidden';
+    dialog.style.border = 'none';
+    document.body.appendChild(dialog);
+    dialog.showModal();
+
+
+    // const input = document.createElement('input');
+    // input.type = 'file';
+    // input.accept = 'image/*';
+    // input.addEventListener('change', (event) => {
+    //   const target = event.target as HTMLInputElement;
+    //   if (target.files && target.files[0]) {
+    //     this.handleImageSelection(target.files[0]);
+    //   }
+    // });
+    // input.click();
   }
 
   /**
@@ -80,7 +113,7 @@ export class FieldImageSelector extends Blockly.FieldImage {
       this.resizeImage(imageData).then(resizedImage => {
         this.setValue(resizedImage);
         this.imageData = resizedImage;
-        
+
         // 触发变更事件
         if (this.sourceBlock_ && this.sourceBlock_.workspace) {
           Blockly.Events.fire(new Blockly.Events.BlockChange(
@@ -100,10 +133,10 @@ export class FieldImageSelector extends Blockly.FieldImage {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
+
         canvas.width = FieldImageSelector.DEFAULT_WIDTH;
         canvas.height = FieldImageSelector.DEFAULT_HEIGHT;
-        
+
         if (ctx) {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           resolve(canvas.toDataURL('image/png'));
@@ -136,14 +169,14 @@ export class FieldImageSelector extends Blockly.FieldImage {
     if (newValue === null || newValue === this.imageData) {
       return;
     }
-    
+
     const oldValue = this.imageData;
     this.imageData = newValue;
-    
+
     if (this.imageElement) {
       this.imageElement.setAttribute('src', newValue);
     }
-    
+
     // 触发变更事件
     if (this.sourceBlock_ && Blockly.Events.isEnabled()) {
       Blockly.Events.fire(new Blockly.Events.BlockChange(
@@ -172,3 +205,71 @@ export class FieldImageSelector extends Blockly.FieldImage {
 
 // 注册自定义字段
 Blockly.fieldRegistry.register('field_image_selector', FieldImageSelector);
+
+Blockly.Css.register(`
+.sub-window-box {
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  border-bottom: 1px solid #222427;
+  background: #2b2d30;
+}
+
+.title {
+  height: 100%;
+  padding-left: 10px;
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  -webkit-app-region: drag;
+}
+
+.win-btns {
+  display: flex;
+  align-items: center;
+  font-size: 15px;
+
+  .btn {
+    font-size: 16px;
+    width: 33px;
+    height: 33px;
+    margin-right: 0;
+
+    &:hover {
+      background: #3a3c3f;
+    }
+  }
+
+  .minimize {
+    font-size: 18px;
+  }
+
+  .go-main{
+    // border-right: 1px solid #333;
+    margin-right: 10px;
+    font-size: 17px;
+    background: transparent !important;
+    &:hover {
+      color: rgb(75, 151, 221);
+    }
+  }
+
+  .close {
+    font-size: 19px;
+
+    &:hover {
+      color: rgb(145, 0, 0);
+    }
+  }
+}
+
+.content{
+  height: calc(100vh - 38px);
+  background: #323437;
+}
+`);
