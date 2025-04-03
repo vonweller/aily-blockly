@@ -50,7 +50,7 @@ async function checkNodePath(childPath) {
       let nodeZipPath
       if (isDarwin) {
         nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
-        const command = `tar -xzf ${nodePath} -C ${childPath} && mv ${nodePath.replace('.tar.gz', '')} ${childPath}/node`;
+        const command = `tar -xzf ${nodeZipPath} -C ${childPath} && mv ${nodeZipPath.replace('.tar.gz', '')} ${nodePath}`;
         try {
           child_process.execSync(command, {stdio: 'inherit'});
           console.log('解压成功！');
