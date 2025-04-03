@@ -15,6 +15,8 @@ import { UiService } from '../../services/ui.service';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 
+const { pt } = (window as any)['electronAPI'].platform;
+
 @Component({
   selector: 'app-project-new',
   imports: [
@@ -64,7 +66,7 @@ export class ProjectNewComponent {
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
-      this.newProjectData.path = window['path'].getUserDocuments() + '/aily-project/';
+      this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
     this._boardList = this.process(await this.configService.loadBoardList());
     this.boardList = JSON.parse(JSON.stringify(this._boardList));
@@ -125,8 +127,8 @@ export class ProjectNewComponent {
       path: this.newProjectData.path,
     });
     // console.log('选中的文件夹路径：', folderPath);
-    if (folderPath.slice(-1) !== '/') {
-      this.newProjectData.path = folderPath + '/';
+    if (folderPath.slice(-1) !== pt) {
+      this.newProjectData.path = folderPath + pt;
     }
     // 在这里对返回的 folderPath 进行后续处理
   }
@@ -134,7 +136,7 @@ export class ProjectNewComponent {
   // 检查项目名称是否存在
   showIsExist = false;
   async checkPathIsExist(): Promise<boolean> {
-    let path = this.newProjectData.path + '/' + this.newProjectData.name;
+    let path = this.newProjectData.path + pt + this.newProjectData.name;
     let isExist = window['path'].isExists(path);
     if (isExist) {
       this.showIsExist = true;
@@ -172,7 +174,7 @@ export class ProjectNewComponent {
     for (let charCode = 97; charCode <= 122; charCode++) {
       const suffix = String.fromCharCode(charCode);
       const projectName: string = prefix + suffix;
-      const projectPath = this.newProjectData.path + '/' + projectName;
+      const projectPath = this.newProjectData.path + pt + projectName;
 
       if (!window['path'].isExists(projectPath)) {
         return projectName;
@@ -183,7 +185,7 @@ export class ProjectNewComponent {
     let numberSuffix = 0;
     while (true) {
       const projectName = prefix + 'a' + numberSuffix;
-      const projectPath = this.newProjectData.path + '/' + projectName;
+      const projectPath = this.newProjectData.path + pt + projectName;
 
       if (!window['path'].isExists(projectPath)) {
         return projectName;

@@ -3,6 +3,9 @@ const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
 
+// 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
+const pt = process.platform === "win32" ? "\\" : "/"
+
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
@@ -12,7 +15,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   path: {
     getUserHome: () => require("os").homedir(),
     getAppData: () => process.env.AILY_APPDATA_PATH,
-    getUserDocuments: () => require("os").homedir() + "/Documents",
+    getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
@@ -56,6 +59,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   platform: {
     type: process.platform,
+    pt,
     isWindows: process.platform === "win32",
     isMacOS: process.platform === "darwin",
     isLinux: process.platform === "linux",
