@@ -25,6 +25,9 @@
     <div class="lib-list">
         @for( lib of libraryList;track lib.name ) {
         <div class="lib-item">
+            @if(lib.tested){
+            <div class="state"></div>
+            }
             <div class="name ellipsis">{{lib.nickname}}<span>{{lib.author}}</span></div>
             <div class="desc ellipsis">{{lib.description}}</div>
             <div class="footer">

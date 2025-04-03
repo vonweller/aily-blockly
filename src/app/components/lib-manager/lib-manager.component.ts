@@ -165,5 +165,6 @@ interface PackageInfo {
   "links"?: any,
   "brand"?: string,
   "fulltext"?: string,
+  tested: boolean,
   state: 'default' | 'installed' | 'installing' | 'uninstalling'
 }
