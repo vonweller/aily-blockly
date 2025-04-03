@@ -41,45 +41,45 @@ function getAppDataPath() {
 }
 
 // 检查Node
-async function checkNodePath(childPath) {
-  const nodePath = path.join(childPath, "node");
-  if (!fs.existsSync(nodePath)) {
-    // 将解压缩操作移到单独的进程中
-    return new Promise((resolve, reject) => {
-      const child_process = require("child_process");
-      let nodeZipPath
-      if (isDarwin) {
-        nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
-        const command = `tar -xzf ${nodeZipPath} -C ${childPath} && mv ${nodeZipPath.replace('.tar.gz', '')} ${nodePath}`;
-        try {
-          child_process.execSync(command, {stdio: 'inherit'});
-          console.log('解压成功！');
-          resolve();
-        } catch (error) {
-          console.error("解压失败，错误码:", error);
-          reject(error);
-        }
-        return;
-      }
+// async function checkNodePath(childPath) {
+//   const nodePath = path.join(childPath, "node");
+//   if (!fs.existsSync(nodePath)) {
+//     // 将解压缩操作移到单独的进程中
+//     return new Promise((resolve, reject) => {
+//       const child_process = require("child_process");
+//       let nodeZipPath
+//       if (isDarwin) {
+//         nodeZipPath = path.join(childPath, "node-v9.11.2-darwin-x64.tar.gz")
+//         const command = `tar -xzf ${nodeZipPath} -C ${childPath} && mv ${nodeZipPath.replace('.tar.gz', '')} ${nodePath}`;
+//         try {
+//           child_process.execSync(command, {stdio: 'inherit'});
+//           console.log('解压成功！');
+//           resolve();
+//         } catch (error) {
+//           console.error("解压失败，错误码:", error);
+//           reject(error);
+//         }
+//         return;
+//       }
 
-      // node zip文件路径
-      nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
-      const child = child_process.spawn("7za.exe", ["x", nodeZipPath, "-o" + childPath]);
+//       // node zip文件路径
+//       nodeZipPath = path.join(childPath, "node-v9.11.2-win-x64.7z")
+//       const child = child_process.spawn("7za.exe", ["x", nodeZipPath, "-o" + childPath]);
 
-      child.on('close', (code) => {
-        if (code !== 0) {
-          console.error("解压失败，错误码:", code);
-          reject(code);
-          return;
-        }
-        // 重命名解压后的文件夹
-        const nodeDir = path.join(childPath, path.basename(nodeZipPath, path.extname(nodeZipPath)));
-        fs.renameSync(nodeDir, nodePath);
-        resolve();
-      });
-    });
-  }
-}
+//       child.on('close', (code) => {
+//         if (code !== 0) {
+//           console.error("解压失败，错误码:", code);
+//           reject(code);
+//           return;
+//         }
+//         // 重命名解压后的文件夹
+//         const nodeDir = path.join(childPath, path.basename(nodeZipPath, path.extname(nodeZipPath)));
+//         fs.renameSync(nodeDir, nodePath);
+//         resolve();
+//       });
+//     });
+//   }
+// }
 
 // 环境变量加载
 function loadEnv() {
@@ -88,7 +88,7 @@ function loadEnv() {
   process.env.PATH = childPath + path.delimiter + process.env.PATH;
 
   // node环境加载
-  checkNodePath(childPath)
+  // checkNodePath(childPath)
 
   const nodePath = path.join(childPath, "node")
   // 将node环境的路径配置在系统PATH环境的最前面，以实现优先调用内置的node环境
