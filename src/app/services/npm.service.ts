@@ -24,7 +24,7 @@ export class NpmService {
   }
 
   async getInstalledPackageList(path) {
-    let data = JSON.parse(await window['npm'].run({ cmd: `npm list --depth=0 --json --prefix ${path}` }));
+    let data = JSON.parse(await window['npm'].run({ cmd: `npm list --depth=0 --json --prefix "${path}"` }));
     let installedPackageList = [];
     for (let key in data.dependencies) {
       const item = data.dependencies[key];
