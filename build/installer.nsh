@@ -32,6 +32,9 @@
   ; 等待解压完成
   Sleep 2000
 
+  ; 删除解压后的压缩包，节省磁盘空间
+  Delete "$INSTDIR\resources\app\child\node-v9.11.2-win-x64.7z"
+
 !macroend
 
 !macro customUnInstall

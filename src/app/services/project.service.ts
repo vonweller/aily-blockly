@@ -120,7 +120,8 @@ export class ProjectService {
   async projectNew(newProjectData: NewProjectData) {
     console.log('newProjectData: ', newProjectData);
     const appDataPath = window['path'].getAppData();
-    const projectPath = (newProjectData.path + newProjectData.name).replace(/\s/g, '_');
+    // const projectPath = (newProjectData.path + newProjectData.name).replace(/\s/g, '_');
+    const projectPath = window['path'].join(newProjectData.path, newProjectData.name.replace(/\s/g, '_'));
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
@@ -205,7 +206,7 @@ export class ProjectService {
     if (!nodeModulesExist) {
       this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
       await this.uiService.openTerminal();
-      await this.terminalService.sendCmd(`cd ${projectPath}`);
+      await this.terminalService.sendCmd(`cd "${projectPath}"`);
       await this.terminalService.sendCmd(`npm install`);
     }
     // 3. 加载开发板module中的board.json

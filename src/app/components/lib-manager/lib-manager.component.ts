@@ -120,7 +120,7 @@ export class LibManagerComponent {
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} Installing...`);
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`cd ${this.projectService.currentProjectPath}`);
+    await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
     this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`).then(async () => {
       await this.checkInstalled();
       lib.state = 'default';
@@ -165,5 +165,6 @@ interface PackageInfo {
   "links"?: any,
   "brand"?: string,
   "fulltext"?: string,
+  tested: boolean,
   state: 'default' | 'installed' | 'installing' | 'uninstalling'
 }
