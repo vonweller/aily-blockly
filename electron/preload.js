@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   path: {
     getUserHome: () => require("os").homedir(),
     getAppData: () => process.env.AILY_APPDATA_PATH,
-    getUserDocuments: () => require("os").homedir() + "\\Documents",
+    getUserDocuments: () => require("os").homedir() + "/Documents",
     isExists: (path) => existsSync(path),
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
@@ -55,10 +55,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   platform: {
-    type: () => process.platform,
-    isWindows: () => process.platform === "win32",
-    isMacOS: () => process.platform === "darwin",
-    isLinux: () => process.platform === "linux",
+    type: process.platform,
+    isWindows: process.platform === "win32",
+    isMacOS: process.platform === "darwin",
+    isLinux: process.platform === "linux",
   },
   terminal: {
     init: (data) => ipcRenderer.invoke("terminal-create", data),
@@ -153,7 +153,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   },
   other: {
-    // 通过资源管理器打开 
+    // 通过资源管理器打开
     openByExplorer: (path) => {
       if (process.platform === 'win32') {
         exec(`explorer.exe "${path}"`, (error) => { });
@@ -182,7 +182,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   updater: {
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
     downloadUpdate: () => ipcRenderer.invoke('download-update'),
-    cancelDownload: () => ipcRenderer.invoke('cancel-download'), 
+    cancelDownload: () => ipcRenderer.invoke('cancel-download'),
     quitAndInstall: () => ipcRenderer.send('quit-and-install'),
     onUpdateStatus: (callback) => {
       ipcRenderer.on('update-status', (_, data) => callback(data));

@@ -64,7 +64,7 @@ export class ProjectNewComponent {
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
-      this.newProjectData.path = window['path'].getUserDocuments() + '\\aily-project\\';
+      this.newProjectData.path = window['path'].getUserDocuments() + '/aily-project/';
     }
     this._boardList = this.process(await this.configService.loadBoardList());
     this.boardList = JSON.parse(JSON.stringify(this._boardList));
@@ -125,7 +125,9 @@ export class ProjectNewComponent {
       path: this.newProjectData.path,
     });
     // console.log('选中的文件夹路径：', folderPath);
-    this.newProjectData.path = folderPath + '\\';
+    if (folderPath.slice(-1) !== '/') {
+      this.newProjectData.path = folderPath + '/';
+    }
     // 在这里对返回的 folderPath 进行后续处理
   }
 
