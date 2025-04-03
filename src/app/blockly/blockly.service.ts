@@ -2,8 +2,10 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, lastValueFrom } from 'rxjs';
 import * as Blockly from 'blockly';
-import { processJsonVar } from './abf';
+import { processI18n, processJsonVar } from './abf';
 import { NoticeService } from '../services/notice.service';
+import { TranslateService } from '@ngx-translate/core';
+import { ElectronService } from '../services/electron.service';
 
 @Injectable({
   providedIn: 'root',
@@ -32,7 +34,9 @@ export class BlocklyService {
 
   constructor(
     private http: HttpClient,
-    private notice: NoticeService
+    private notice: NoticeService,
+    private translateService: TranslateService,
+    private electronService: ElectronService
   ) { }
 
   // async init() {
@@ -107,25 +111,34 @@ export class BlocklyService {
     const libPackagePath = projectPath + '/node_modules/' + libPackageName;
     // console.log('loadLibrary', libPackagePath);
     try {
-          // 加载block
+      // 加载block
       const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
       if (blockFileIsExist) {
         let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
+        let i18nData = null;
+        // 检查多语言文件是否存在
+        const i18nFilePath = libPackagePath + '/i18n/' + this.translateService.currentLang + '.json';
+        if (this.electronService.exists(i18nFilePath)) {
+          i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
+          blocks = processI18n(blocks, i18nData);
+        }
         this.loadLibBlocks(blocks);
-      } else {
-        //  加载js形式的block定义
-        this.loadLibBlocksJS(libPackagePath + '/block.js');
-      }
-      // 加载toolbox
-      const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
-      if (toolboxFileIsExist) {
-        let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
-        this.loadLibToolbox(toolbox);
-      }
-      // 加载generator
-      const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
-      if (generatorFileIsExist) {
-        await this.loadLibGenerator(libPackagePath + '/generator.js');
+        // else {
+        //   //  加载js形式的block定义
+        //   this.loadLibBlocksJS(libPackagePath + '/block.js');
+        // }
+        // 加载toolbox
+        const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
+        if (toolboxFileIsExist) {
+          let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
+          if (i18nData) toolbox.name = i18nData.toolbox_name;
+          this.loadLibToolbox(toolbox);
+        }
+        // 加载generator
+        const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
+        if (generatorFileIsExist) {
+          await this.loadLibGenerator(libPackagePath + '/generator.js');
+        }
       }
     } catch (error) {
       console.error(error);
@@ -141,7 +154,7 @@ export class BlocklyService {
   loadLibBlocks(blocks) {
     for (let index = 0; index < blocks.length; index++) {
       let block = blocks[index];
-      block = processJsonVar(block, this.boardConfig);// 替换开发板相关变量
+      block = processJsonVar(block, this.boardConfig); // 替换开发板相关变量
       Blockly.defineBlocksWithJsonArray([block]);
     }
   }

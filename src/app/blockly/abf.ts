@@ -116,15 +116,28 @@ export function processJsonVar(sourceJson, boardConfig) {
 export function processI18n(sourceJson, i18nData) {
     // 创建blocks的副本，避免修改原始数据
     const updatedBlocks = JSON.parse(JSON.stringify(sourceJson));
+    
     // 遍历blocks数组
     for (let i = 0; i < updatedBlocks.length; i++) {
         const block = updatedBlocks[i];
         const blockType = block.type;
-
-        // 检查i18n中是否有对应类型的消息
-        if (i18nData[blockType] && i18nData[blockType].message0) {
-            // 替换message0
-            block.message0 = i18nData[blockType].message0;
+        
+        // 检查i18n中是否有对应类型的块
+        if (i18nData[blockType]) {
+            // 检查所有可能的message字段
+            let messageIndex = 0;
+            // 循环检查原始块中的每个messageX字段
+            while (block[`message${messageIndex}`] !== undefined) {
+                const messageKey = `message${messageIndex}`;
+                
+                // 如果i18n数据中存在对应的翻译，则替换
+                if (i18nData[blockType][messageKey]) {
+                    block[messageKey] = i18nData[blockType][messageKey];
+                }
+                
+                // 检查下一个messageX字段
+                messageIndex++;
+            }
         }
     }
     return updatedBlocks;
