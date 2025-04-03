@@ -1,0 +1,30 @@
+{
+    "MENU": {
+        "PROJECT_NEW": "新しいプロジェクト",
+        "PROJECT_OPEN": "プロジェクトを開く",
+        "PROJECT_SAVE": "プロジェクトを保存",
+        "PROJECT_SAVE_AS": "プロジェクトを名前を付けて保存",
+        "PROJECT_CLOSE": "プロジェクトを閉じる",
+        "OPEN_IN_EXPLORER": "エクスプローラーで開く",
+        "BUILD": "ビルド",
+        "RUN": "実行",
+        "STOP": "停止",
+        "CODE": "コードを見る",
+        "CODE_EXPORT": "コードをエクスポート",
+        "DEBUG": "デバッグ",
+        "TERMINAL": "ターミナル",
+        "TOOL_SERIAL": "シリアルツール",
+        "AI": "AI",
+        "APP_STORE": "アプリストア",
+        "SETTINGS": "設定",
+        "ABOUT": "バージョン情報",
+        "GITHUB": "Github",
+        "EXIT": "終了",
+        "USER_MANUAL": "ユーザーマニュアル",
+        "EXAMPLES": "サンプル"
+    },
+    "GUIDE": {
+        "START": "開始",
+        "RECENTLY": "最近"
+    }
+}

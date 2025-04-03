@@ -1,0 +1,30 @@
+{
+    "MENU": {
+        "PROJECT_NEW": "Nuevo Proyecto",
+        "PROJECT_OPEN": "Abrir Proyecto",
+        "PROJECT_SAVE": "Guardar Proyecto",
+        "PROJECT_SAVE_AS": "Guardar Proyecto Como",
+        "PROJECT_CLOSE": "Cerrar Proyecto",
+        "OPEN_IN_EXPLORER": "Abrir en el Explorador",
+        "BUILD": "Compilar",
+        "RUN": "Ejecutar",
+        "STOP": "Detener",
+        "CODE": "Ver Código",
+        "CODE_EXPORT": "Exportar Código",
+        "DEBUG": "Depurar",
+        "TERMINAL": "Terminal",
+        "TOOL_SERIAL": "Herramienta Serial",
+        "AI": "IA",
+        "APP_STORE": "Tienda de Aplicaciones",
+        "SETTINGS": "Ajustes",
+        "ABOUT": "Acerca de",
+        "GITHUB": "Github",
+        "EXIT": "Salir",
+        "USER_MANUAL": "Manual de Usuario",
+        "EXAMPLES": "Ejemplos"
+    },
+    "GUIDE": {
+        "START": "Comenzar",
+        "RECENTLY": "Recientemente"
+    }
+}

@@ -1,0 +1,30 @@
+{
+    "MENU": {
+        "PROJECT_NEW": "Nouveau Projet",
+        "PROJECT_OPEN": "Ouvrir Projet",
+        "PROJECT_SAVE": "Enregistrer Projet",
+        "PROJECT_SAVE_AS": "Enregistrer Projet Sous",
+        "PROJECT_CLOSE": "Fermer Projet",
+        "OPEN_IN_EXPLORER": "Ouvrir dans l'Explorateur",
+        "BUILD": "Compiler",
+        "RUN": "Exécuter",
+        "STOP": "Arrêter",
+        "CODE": "Voir le Code",
+        "CODE_EXPORT": "Exporter le Code",
+        "DEBUG": "Déboguer",
+        "TERMINAL": "Terminal",
+        "TOOL_SERIAL": "Outil Série",
+        "AI": "IA",
+        "APP_STORE": "App Store",
+        "SETTINGS": "Paramètres",
+        "ABOUT": "À propos",
+        "GITHUB": "Github",
+        "EXIT": "Quitter",
+        "USER_MANUAL": "Manuel de l'Utilisateur",
+        "EXAMPLES": "Exemples"
+    },
+    "GUIDE": {
+        "START": "Démarrer",
+        "RECENTLY": "Récemment"
+    }
+}
