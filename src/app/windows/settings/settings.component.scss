@@ -17,11 +17,16 @@
 
 .langs {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+
   .lang {
     flex-direction: column;
     font-size: 12px;
-    width: 80px;
+    width: 60px;
+
     cursor: pointer;
+
     img {
       width: 28px;
     }
@@ -63,12 +68,13 @@
   // padding-left: 10px;
   // border-bottom: 1px solid #43494b;
   margin-top: 20px;
+
   &:first-child {
     margin-top: 0;
   }
 }
 
-textarea{
+textarea {
   background: #363636;
 }
 

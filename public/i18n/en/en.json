@@ -22,5 +22,9 @@
         "EXIT": "Exit",
         "USER_MANUAL": "User Manual",
         "EXAMPLES": "Examples"
+    },
+    "GUIDE": {
+        "START": "START",
+        "RECENTLY": "RECENTLY"
     }
 }

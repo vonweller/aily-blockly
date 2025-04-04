@@ -1,0 +1,30 @@
+{
+    "MENU": {
+        "PROJECT_NEW": "새 프로젝트",
+        "PROJECT_OPEN": "프로젝트 열기",
+        "PROJECT_SAVE": "프로젝트 저장",
+        "PROJECT_SAVE_AS": "프로젝트 다른 이름으로 저장",
+        "PROJECT_CLOSE": "프로젝트 닫기",
+        "OPEN_IN_EXPLORER": "탐색기에서 열기",
+        "BUILD": "빌드",
+        "RUN": "실행",
+        "STOP": "중지",
+        "CODE": "코드 보기",
+        "CODE_EXPORT": "코드 내보내기",
+        "DEBUG": "디버그",
+        "TERMINAL": "터미널",
+        "TOOL_SERIAL": "시리얼 도구",
+        "AI": "AI",
+        "APP_STORE": "앱 스토어",
+        "SETTINGS": "설정",
+        "ABOUT": "정보",
+        "GITHUB": "Github",
+        "EXIT": "종료",
+        "USER_MANUAL": "사용자 설명서",
+        "EXAMPLES": "예제"
+    },
+    "GUIDE": {
+        "START": "시작",
+        "RECENTLY": "최근"
+    }
+}

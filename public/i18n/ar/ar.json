@@ -1,0 +1,30 @@
+{
+    "MENU": {
+        "PROJECT_NEW": "مشروع جديد",
+        "PROJECT_OPEN": "فتح مشروع",
+        "PROJECT_SAVE": "حفظ مشروع",
+        "PROJECT_SAVE_AS": "حفظ المشروع باسم",
+        "PROJECT_CLOSE": "إغلاق المشروع",
+        "OPEN_IN_EXPLORER": "فتح في مستكشف الملفات",
+        "BUILD": "بناء",
+        "RUN": "تشغيل",
+        "STOP": "إيقاف",
+        "CODE": "عرض الكود",
+        "CODE_EXPORT": "تصدير الكود",
+        "DEBUG": "تصحيح الأخطاء",
+        "TERMINAL": "طرفية",
+        "TOOL_SERIAL": "أداة تسلسلية",
+        "AI": "الذكاء الاصطناعي",
+        "APP_STORE": "متجر التطبيقات",
+        "SETTINGS": "إعدادات",
+        "ABOUT": "حول",
+        "GITHUB": "Github",
+        "EXIT": "خروج",
+        "USER_MANUAL": "دليل المستخدم",
+        "EXAMPLES": "أمثلة"
+    },
+    "GUIDE": {
+        "START": "ابدأ",
+        "RECENTLY": "الأخيرة"
+    }
+}

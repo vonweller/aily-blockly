@@ -72,6 +72,17 @@ export class MainWindowComponent {
     this.uiService.init();
     this.projectService.init();
     this.updateService.init();
+    // 语言设置变化后，重新加载项目
+    window['ipcRenderer'].on('setting-changed', (event, data) => {
+      console.log('ipcRenderer setLanguage', data);
+      if (this.mode != 'blockly') return;
+      if (data.action == 'language-changed') {
+        this.projectService.save();
+        setTimeout(() => {
+          this.projectService.projectOpen();
+        }, 100);
+      }
+    });
   }
 
   ngAfterViewInit(): void {
