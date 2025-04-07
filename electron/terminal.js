@@ -4,24 +4,29 @@ const pty = require("@lydell/node-pty");
 const { isWin32 } = require("./platform");
 
 // 匹配 PowerShell 提示符: PS D:\path>   以后需要匹配mac os和linux的提示符（陈吕洲 2025.3.4）
-const promptRegex = /PS [A-Z]:(\\[^\\]+)+>/g;
+const promptRegexMap = {
+  "win32": /PS [A-Z]:(\\[^\\]+)+>/g,
+  "darwin": /(\x1B\[[0-9;]*[A-Za-z])*[^#%>]*[#%>]\s*$/,
+  "linux": /(\x1B\[[0-9;]*[A-Za-z])*[^#%>]*[#%>]\s*$/
+}
+const shellMap = {
+  "win32": "powershell.exe",
+  "darwin": "zsh",
+  "linux": "bash",
+}
+
+const promptRegex = promptRegexMap[process.platform]
 const terminals = new Map();
 
 // 清除ANSI转义序列的函数
 function stripAnsiEscapeCodes(text) {
   // 匹配所有ANSI转义序列
-  return text.replace(/\x1B\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?[m|K|h|l|H|A-Z]/g, '');
+  return text.replace(/\x1B\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?[m|K|h|l|H|A-Z]/g, '')
 }
 
 function registerTerminalHandlers(mainWindow) {
   ipcMain.handle("terminal-create", (event, args) => {
     console.log("terminal-create args ", args);
-    const shellMap = {
-      "win32": "powershell.exe",
-      "darwin": "zsh",
-      "linux": "bash",
-    }
-
     return new Promise((resolve, reject) => {
       const shell = shellMap[process.platform] ;
 
@@ -124,6 +129,7 @@ function registerTerminalHandlers(mainWindow) {
           commandOutput += e;
 
           // 检查是否检测到命令提示符，表示命令已完成
+          commandOutput = stripAnsiEscapeCodes(commandOutput.trim())
           if (promptRegex.test(commandOutput)) {
             clearTimeout(commandTimeout);
             ptyProcess.removeListener('data', dataHandler);
@@ -133,7 +139,7 @@ function registerTerminalHandlers(mainWindow) {
             if (lastPromptIndex > 0) {
               commandOutput = commandOutput.substring(0, lastPromptIndex);
             }
-            resolve(stripAnsiEscapeCodes(commandOutput.trim()));
+            resolve(commandOutput);
           }
         };
 

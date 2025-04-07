@@ -15,6 +15,7 @@ import { DEV_THEME } from './theme.config.js';
 import './custom-category';
 import './custom-field/field-bitmap.js';
 import './custom-field/field-image.js';
+import './custom-field/field-tone';
 import './custom-field/field-multilineinput.js';
 import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';

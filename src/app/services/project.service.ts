@@ -8,6 +8,8 @@ import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { pinyin } from "pinyin-pro";
 
+const { isMacOS } = (window as any)['electronAPI'].platform;
+
 interface ProjectPackageData {
   name: string;
   version?: string;
@@ -125,12 +127,18 @@ export class ProjectService {
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
     // 1. 检查开发板module是否存在, 不存在则安装
     await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix ${appDataPath}`);
+    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix "${appDataPath}"`);
     // 2. 创建项目目录，复制开发板module中的template到项目目录
     const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
     // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
-    await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
-    await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
+    if (isMacOS) {
+      // TODO 此命令应该是各系统通用的，可进行验证无问题均换成此命令 @downey @coloz
+      await this.terminalService.sendCmd(`mkdir -p "${projectPath}"`);
+      await this.terminalService.sendCmd(`cp -r "${templatePath}/" "${projectPath}"`);
+    } else {
+      await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
+      await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
+    }
     // node命令创建目录并复制文件
     // window['fs'].mkdirSync(projectPath);
     // window['fs'].copySync(templatePath, projectPath);
