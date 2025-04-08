@@ -71,3 +71,11 @@ npm run build
 ### 个人赞助   
 
 
+## 项目使用到的主要开源项目
+[electron]()本项目使用electron构建桌面程序  
+[angular]()本项目使用angular作为渲染端构建主要UI逻辑  
+[node]()本项目使用npm和node进行包管理和执行必要脚本  
+[7z]()本项目使用7z减小部分包的大小（如巨大的ESP32编译器）  
+[arduino-cli]()本项目使用arduino cli构建arduino项目  
+其他内容可见[package.json](./package.json)  
+

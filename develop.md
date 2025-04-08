@@ -7,7 +7,7 @@
 内为程序必须的组件：
 1. node：程序使用npm和node进行包管理和执行必要脚本，该npm中添加了npmrc文件，用以指向到aily blockly仓库
 2. 7za：为了减少部分包的大小，我们使用7z极限压缩来降低部分包（如编译器）的大小
-3. arduino-cli：用于组织和编译arduino项目
+3. arduino-cli：用于构建arduino项目
 
 ## /build  
 改部分是安装/卸载程序的脚本。
