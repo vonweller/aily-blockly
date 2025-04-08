@@ -12,33 +12,16 @@ aily Blockly是aily Project下的blockly IDE，前期面向非专业用户提供
 · 多版本开发板、库共存管理  
 · 硬件仿真  
 
+## 文档
+[使用文档](https://aily.pro/doc)
+[库适配文档](https://github.com/ailyProject/aily-blockly-libraries/blob/main/%E5%BA%93%E8%A7%84%E8%8C%83.md)
+[软件开发文档](./develop.md)
+
 ## 相关仓库
 [开发板](https://github.com/ailyProject/aily-blockly-boards)  
 [block库](https://github.com/ailyProject/aily-blockly-libraries)  
 [编译器](https://github.com/ailyProject/aily-blockly-compilers)  
 [相关工具](https://github.com/ailyProject/aily-project-tools)  
-
-## 开发&&打包  
-
-**库安装**
-```
-npm i
-cd electron
-npm i
-```  
-
-**electron运行**
-```
-npm run electron
-```
-
-**electron打包**
-```
-npm run build
-```
-打包需要开启windows的开发者模式
-打包后生成的安装包在路径为dist\aily-blockly
-
 
 ## 项目赞助
 本项目由以下企业和个人赞助
