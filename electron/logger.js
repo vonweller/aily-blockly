@@ -1,10 +1,15 @@
 const path = require('path');
 const electronLog = require('electron-log');
+const fs = require('fs');
 
 // 初始化日志系统
 function initLogger(appDataPath) {
     // 配置日志文件路径
     const logDir = path.join(appDataPath, 'logs');
+    // 检查目录是否存在，如果不存在则创建
+    if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+    }
     electronLog.transports.file.resolvePathFn = () => path.join(logDir, 'app.log');
     
     // 配置日志格式
