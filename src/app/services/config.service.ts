@@ -18,6 +18,8 @@ export class ConfigService {
   async load() {
     let configFilePath = window['path'].getElectronPath();
     this.data = await JSON.parse(window['fs'].readFileSync(`${configFilePath}/config.json`));
+    // 添加当前系统类型到data中
+    this.data["platform"] = window['platform'].type;
   }
 
   async save() {
@@ -55,6 +57,16 @@ interface AppConfig {
 
   /** 字体设置 */
   font: string;
+
+  /** 系统类型 */
+  platform: string;
+
+  /** 项目数据默认路径 */
+  appdata_path: {
+    win32: string;
+    darwin: string;
+    linux: string;
+  }
 
   /** 项目默认路径 */
   project_path: string;

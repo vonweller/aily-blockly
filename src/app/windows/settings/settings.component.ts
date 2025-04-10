@@ -93,6 +93,9 @@ https://registry.npm.taobao.org/`;
     return this.configService.data;
   }
 
+  appdata_path: string
+  
+
   constructor(
     private uiService: UiService,
     private settingsService: SettingsService,
@@ -103,6 +106,12 @@ https://registry.npm.taobao.org/`;
 
   async ngOnInit() {
     await this.configService.init()
+  }
+
+  async ngAfterViewInit() {
+    const platform = this.configService.data.platform;
+    this.appdata_path = this.configService.data.appdata_path[platform].replace('%HOMEPATH%', window['path'].getUserHome());
+    this.settingsService.getBoardList(this.appdata_path, this.configService.data.npm_registry[0]);
   }
 
   selectLang(lang) {

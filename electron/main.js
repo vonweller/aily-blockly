@@ -24,21 +24,21 @@ const { initLogger } = require("./logger");
 let mainWindow;
 
 // 获取系统默认的应用数据目录
-function getAppDataPath() {
-  let home = os.homedir();
-  let path;
-  if (isWin32) {
-    path = home + "\\AppData\\Local\\aily-project";
-  } else if (isDarwin) {
-    path = home + "/Library/Application Support/aily-project";
-  } else {
-    path = home + "/.config/aily-project";
-  }
-  if (!require("fs").existsSync(path)) {
-    require("fs").mkdirSync(path, { recursive: true });
-  }
-  return path;
-}
+// function getAppDataPath() {
+//   let home = os.homedir();
+//   let path;
+//   if (isWin32) {
+//     path = home + "\\AppData\\Local\\aily-project";
+//   } else if (isDarwin) {
+//     path = home + "/Library/Application Support/aily-project";
+//   } else {
+//     path = home + "/.config/aily-project";
+//   }
+//   if (!require("fs").existsSync(path)) {
+//     require("fs").mkdirSync(path, { recursive: true });
+//   }
+//   return path;
+// }
 
 // 检查Node
 // async function checkNodePath(childPath) {
@@ -100,10 +100,18 @@ function loadEnv() {
   );
   const conf = JSON.parse(confContent);
 
-  console.log("conf: ", conf);
+  // 设置系统默认的应用数据目录
+  if (isWin32) {
+    // 设置Windows的环境变量
+    process.env.AILY_APPDATA_PATH = conf["appdata_path"]["win32"].replace('%HOMEPATH%', os.homedir());
+  } else if (isDarwin) {
+    // 设置macOS的环境变量
+    process.env.AILY_APPDATA_PATH = conf["appdata_path"]["darwin"];
+  } else {
+    // 设置Linux的环境变量
+    process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
+  }
 
-  // app data path
-  process.env.AILY_APPDATA_PATH = getAppDataPath();
   // npm registry
   process.env.AILY_NPM_REGISTRY = conf["npm_registry"][0];
   // 7za path

@@ -2,6 +2,11 @@
   "lang": "zh_CN",
   "theme": "default",
   "font": "default",
+  "appdata_path": {
+    "win32": "%HOMEPATH%\\AppData\\Local\\aily-project",
+    "linux": "~/.config/aily-project",
+    "darwin": "~/Library/Application Support/aily-project"
+  },
   "project_path": "%HOMEPATH%\\Documents\\aily-project",
   "npm_registry": [
     "https://registry.diandeng.tech"
