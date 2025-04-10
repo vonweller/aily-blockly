@@ -1,6 +1,6 @@
 {
   "/api": {
-    "target": "https://api.openjumper.cn",
+    "target": "https://blockly-api.diandeng.tech",
     "changeOrigin": true,
     "secure": false,
     "logLevel": "debug"
