@@ -3,9 +3,15 @@
   "theme": "default",
   "font": "default",
   "project_path": "%HOMEPATH%\\Documents\\aily-project",
-  "npm_registry": ["https://registry.openjumper.cn"],
-  "board_list":["https://blockly.openjumper.cn/boards.json"],
-  "lib_list":["https://blockly.openjumper.cn/libraries.json"],
+  "npm_registry": [
+    "https://registry.diandeng.tech"
+  ],
+  "resource": [
+    "https://blockly.diandeng.tech"
+  ],
+  "updater": [
+    "https://dl.diandeng.tech/blockly"
+  ],
   "compile": {
     "verbose": true,
     "warnings": "error"

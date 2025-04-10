@@ -42,7 +42,7 @@
             <div class="board ccenter btn" [ngClass]="{ selected: currentBoard == board, disabled: board.disabled }"
               (click)="selectBoard(board)">
               <div class="img-box">
-                <img [src]="'http://blockly.openjumper.cn/img/'+board.img" />
+                <img [src]="resourceUrl+'/img/'+board.img" />
               </div>
               <div class="name">{{ board.nickname }}
                 @if(board.disabled){

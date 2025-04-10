@@ -112,3 +112,40 @@ textarea {
     }
   }
 }
+
+.right {
+  height: 100%; // 确保占满整个高度
+}
+
+ngx-simplebar {
+  height: 100%;
+  width: 100%;
+
+  ::ng-deep {
+    .simplebar-content-wrapper {
+      height: 100%;
+    }
+
+    .simplebar-content {
+      height: 100%;
+    }
+  }
+}
+
+.section {
+  padding-bottom: 30px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #43494b;
+
+  &:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+  }
+}
+
+.section-title {
+  font-size: 18px;
+  margin-bottom: 20px;
+  font-weight: 500;
+  color: #fff;
+}

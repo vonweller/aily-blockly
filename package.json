@@ -8,7 +8,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://dl.aily.pro/blockly"
+        "url": "https://dl.diandeng.tech/blockly"
       }
     ],
     "appId": "blockly.aily.pro",
