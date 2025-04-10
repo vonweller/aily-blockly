@@ -28,7 +28,7 @@ export class ConfigService {
   boardList;
   async loadBoardList() {
     this.boardList = await lastValueFrom(
-      this.http.get('https://blockly.openjumper.cn/boards.json', {
+      this.http.get(this.data.resource[0] + '/boards.json', {
         responseType: 'json',
       }),
     );
@@ -38,7 +38,7 @@ export class ConfigService {
   libraryList;
   async loadLibraryList() {
     this.libraryList = await lastValueFrom(
-      this.http.get('https://blockly.openjumper.cn/libraries.json', {
+      this.http.get(this.data.resource[0] + '/libraries.json', {
         responseType: 'json',
       }),
     );
@@ -47,19 +47,40 @@ export class ConfigService {
 }
 
 interface AppConfig {
-  "lang": "zh_CN" | "en_US",
-  "theme": "default" | "dark" | "light",
-  // "font": "default",
-  "project_path": "%HOMEPATH%\\Documents\\aily-project",
-  "npm_registry": string[],
-  "board_list": string[],
-  "lib_list": string[],
-  "compile": {
-    "verbose": boolean,
-    "warnings": "error" | "warning" | "none"
-  },
-  "upload": {
-    "verbose": true,
-    "warnings": "error" | "warning" | "none"
-  }
+  /** 语言设置，例如 "zh_CN" */
+  lang: string;
+
+  /** UI主题 */
+  theme: string;
+
+  /** 字体设置 */
+  font: string;
+
+  /** 项目默认路径 */
+  project_path: string;
+
+  /** NPM 镜像源列表 */
+  npm_registry: string[];
+
+  /** 资源文件服务器列表 */
+  resource: string[];
+
+  /** 更新服务器列表 */
+  updater: string[];
+
+  /** 编译选项 */
+  compile: {
+    /** 是否显示详细日志 */
+    verbose: boolean;
+    /** 警告处理方式，如 "error" 表示将警告视为错误 */
+    warnings: string;
+  };
+
+  /** 上传选项 */
+  upload: {
+    /** 是否显示详细日志 */
+    verbose: boolean;
+    /** 警告处理方式 */
+    warnings: string;
+  };
 }

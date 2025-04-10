@@ -1,6 +1,6 @@
 // const SERVER_URL: string = "http://localhost:8000";
-const SERVER_URL: string = 'https://registry.openjumper.cn';
-const SERVER_API_URL: string = 'https://api.openjumper.cn';
+const SERVER_URL: string = '';
+const SERVER_API_URL: string = '';
 
 export const API = {
   projectList: `${SERVER_URL}/-/verdaccio/data/packages`,

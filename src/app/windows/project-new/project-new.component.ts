@@ -55,6 +55,10 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   tagListRandom;
 
+  get resourceUrl(){
+    return this.configService.data.resource[0];
+  }
+
   constructor(
     private electronService: ElectronService,
     private projectService: ProjectService,
@@ -68,6 +72,7 @@ export class ProjectNewComponent {
     if (this.electronService.isElectron) {
       this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
+    await this.configService.init();
     this._boardList = this.process(await this.configService.loadBoardList());
     this.boardList = JSON.parse(JSON.stringify(this._boardList));
     this.currentBoard = this.boardList[0];
