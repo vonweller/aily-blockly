@@ -15,14 +15,14 @@
       <ngx-simplebar class="right" #scrollContainer [options]="options" (scroll)="onScroll()">
         <div class="right-inner-container">
           <!-- 基础设置 -->
-          <div id="section-基础设置" class="section">
+          <div id="section-基础设置" class="section" style="padding-bottom: 100px;">
             <h2 class="section-title">基础设置</h2>
             <div class="right-inner">
               <div class="item">
                 <div>项目文件夹:</div>
                 <input nz-input [(ngModel)]="data.project_path" />
               </div>
-              <div class="item" style="align-items: flex-start;">
+              <div class="item">
                 <div>语言:</div>
                 <div class="langs">
                   @for(lang of langList; track lang) {
