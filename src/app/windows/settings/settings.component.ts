@@ -10,6 +10,7 @@ import { SettingsService } from '../../services/settings.service';
 import { TranslationService } from '../../services/translation.service';
 import { ConfigService } from '../../services/config.service';
 import { SimplebarAngularModule } from 'simplebar-angular';
+import { TranslateModule } from '@ngx-translate/core';
 @Component({
   selector: 'app-settings',
   imports: [
@@ -19,15 +20,16 @@ import { SimplebarAngularModule } from 'simplebar-angular';
     NzButtonModule,
     NzInputModule,
     NzRadioModule,
-    SimplebarAngularModule
+    SimplebarAngularModule,
+    TranslateModule
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
 export class SettingsComponent {
   @ViewChild('scrollContainer', { static: false }) scrollContainer: ElementRef;
-  
-  activeSection = '基础设置'; // 当前活动的部分
+
+  activeSection = 'SETTINGS.SECTIONS.BASIC'; // 当前活动的部分
 
   // simplebar 配置选项
   options = {
@@ -37,37 +39,35 @@ export class SettingsComponent {
 
   items = [
     {
-      name: '基础设置',
+      name: 'SETTINGS.SECTIONS.BASIC',
       icon: 'fa-light fa-gear',
       content: [
-        { name: '默认项目文件夹', key: 'fa-light fa-gear' },
-        { name: '语言', key: 'base.lang' },
+        { name: 'SETTINGS.FIELDS.PROJECT_FOLDER', key: 'fa-light fa-gear' },
+        { name: 'SETTINGS.FIELDS.LANGUAGE', key: 'base.lang' },
       ],
     },
     {
-      name: '主题设置',
+      name: 'SETTINGS.SECTIONS.THEME',
       icon: 'fa-light fa-gift',
       content: [
-        { name: '主题', key: 'theme.theme' },
-        { name: '字体', key: 'theme.font' },
+        { name: 'SETTINGS.FIELDS.UI_THEME', key: 'theme.theme' },
+        { name: 'SETTINGS.FIELDS.BLOCKLY_THEME', key: 'theme.font' },
       ],
     },
     {
-      name: '编译设置',
+      name: 'SETTINGS.SECTIONS.COMPILATION',
       icon: 'fa-light fa-screwdriver-wrench',
-      content: [
-
-      ],
+      content: [],
     },
     {
-      name: '仓库设置',
+      name: 'SETTINGS.SECTIONS.REPOSITORY',
       icon: 'fa-light fa-book-bookmark',
-      content: [{ name: '仓库地址', type: 'registry-manager' }],
+      content: [{ name: 'SETTINGS.FIELDS.REPOSITORY_URLS', type: 'registry-manager' }],
     },
     {
-      name: '开发板管理',
+      name: 'SETTINGS.SECTIONS.BOARD_MANAGEMENT',
       icon: 'fa-light fa-layer-group',
-      content: [{ name: '开发板', type: 'board-manager' }],
+      content: [{ name: 'SETTINGS.FIELDS.BOARD_LIST', type: 'board-manager' }],
     },
   ];
 
@@ -94,7 +94,7 @@ https://registry.npm.taobao.org/`;
   }
 
   appdata_path: string
-  
+
 
   constructor(
     private uiService: UiService,
@@ -128,7 +128,7 @@ https://registry.npm.taobao.org/`;
       const simplebarInstance = this.scrollContainer['SimpleBar'];
       if (simplebarInstance) {
         simplebarInstance.getScrollElement().scrollTo({
-          top: element.offsetTop,
+          top: element.offsetTop - 12,
           behavior: 'smooth'
         });
       }
@@ -139,7 +139,7 @@ https://registry.npm.taobao.org/`;
   onScroll() {
     const sections = document.querySelectorAll('.section');
     let scrollElement;
-    
+
     // 获取simplebar的滚动元素
     const simplebarInstance = this.scrollContainer['SimpleBar'];
     if (simplebarInstance) {
@@ -147,15 +147,15 @@ https://registry.npm.taobao.org/`;
     } else {
       return;
     }
-    
+
     const scrollPosition = scrollElement.scrollTop;
-    
+
     sections.forEach((section: HTMLElement) => {
       const sectionTop = section.offsetTop;
       const sectionHeight = section.offsetHeight;
-      
-      if (scrollPosition >= sectionTop - 50 && 
-          scrollPosition < sectionTop + sectionHeight - 50) {
+
+      if (scrollPosition >= sectionTop - 50 &&
+        scrollPosition < sectionTop + sectionHeight - 50) {
         this.activeSection = section.id.replace('section-', '');
       }
     });

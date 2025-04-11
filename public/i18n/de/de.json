@@ -3,12 +3,12 @@
         "PROJECT_NEW": "Neues Projekt",
         "PROJECT_OPEN": "Projekt öffnen",
         "PROJECT_SAVE": "Projekt speichern",
-        "PROJECT_SAVE_AS": "Projekt speichern unter",
+        "PROJECT_SAVE_AS": "Speichern unter",
         "PROJECT_CLOSE": "Projekt schließen",
         "OPEN_IN_EXPLORER": "Im Explorer öffnen",
-        "BUILD": "Erstellen",
+        "BUILD": "Kompilieren",
         "RUN": "Ausführen",
-        "STOP": "Stopp",
+        "STOP": "Stoppen",
         "CODE": "Code anzeigen",
         "CODE_EXPORT": "Code exportieren",
         "DEBUG": "Debuggen",
@@ -26,5 +26,57 @@
     "GUIDE": {
         "START": "Start",
         "RECENTLY": "Kürzlich"
+    },
+    "SETTINGS": {
+        "TITLE": "Einstellungen",
+        "SECTIONS": {
+            "BASIC": "Grundeinstellungen",
+            "THEME": "Thema-Einstellungen",
+            "COMPILATION": "Kompilierungseinstellungen",
+            "REPOSITORY": "Repository-Einstellungen",
+            "BOARD_MANAGEMENT": "Board-Verwaltung"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "Projektordner",
+            "LANGUAGE": "Sprache",
+            "UI_THEME": "UI-Thema",
+            "BLOCKLY_THEME": "Blockly-Thema",
+            "COMPILATION_OPTIONS": "Kompilierungsoptionen",
+            "REPOSITORY_URLS": "Repository-URLs",
+            "BOARD_LIST": "Board-Liste",
+            "LIBRARY_LIST": "Bibliotheksliste",
+            "SEARCH_BOARD": "Board suchen",
+            "INSTALL": "Installieren",
+            "UNINSTALL": "Deinstallieren"
+        },
+        "BUTTONS": {
+            "CANCEL": "Abbrechen",
+            "APPLY": "Anwenden"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "Neues Projekt",
+        "STEPS": {
+            "SELECT_BOARD": "Board auswählen",
+            "BASIC_SETTINGS": "Grundeinstellungen",
+            "CREATE_PROJECT": "Projekt erstellen"
+        },
+        "BOARD": {
+            "SEARCH": "Board suchen",
+            "READ_DOC": "Dokumentation lesen",
+            "DEV": "Entwicklung"
+        },
+        "FORM": {
+            "BOARD": "Board",
+            "PROJECT_NAME": "Projektname",
+            "SAVE_PATH": "Speicherpfad",
+            "NAME_EXISTS": "Projektname existiert bereits, bitte ändern"
+        },
+        "BUTTONS": {
+            "NEXT": "Weiter",
+            "PREV": "Zurück",
+            "CREATE": "Projekt erstellen",
+            "CREATING": "Wird erstellt"
+        }
     }
 }

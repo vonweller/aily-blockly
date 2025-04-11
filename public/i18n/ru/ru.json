@@ -3,17 +3,17 @@
         "PROJECT_NEW": "Новый проект",
         "PROJECT_OPEN": "Открыть проект",
         "PROJECT_SAVE": "Сохранить проект",
-        "PROJECT_SAVE_AS": "Сохранить проект как",
+        "PROJECT_SAVE_AS": "Сохранить как",
         "PROJECT_CLOSE": "Закрыть проект",
         "OPEN_IN_EXPLORER": "Открыть в проводнике",
-        "BUILD": "Собрать",
-        "RUN": "Запустить",
+        "BUILD": "Компилировать",
+        "RUN": "Загрузить",
         "STOP": "Остановить",
-        "CODE": "Просмотреть код",
-        "CODE_EXPORT": "Экспортировать код",
-        "DEBUG": "Отладить",
+        "CODE": "Просмотр кода",
+        "CODE_EXPORT": "Экспорт кода",
+        "DEBUG": "Отладка",
         "TERMINAL": "Терминал",
-        "TOOL_SERIAL": "Последовательный инструмент",
+        "TOOL_SERIAL": "Инструмент последовательного порта",
         "AI": "ИИ",
         "APP_STORE": "Магазин приложений",
         "SETTINGS": "Настройки",
@@ -21,10 +21,62 @@
         "GITHUB": "Github",
         "EXIT": "Выход",
         "USER_MANUAL": "Руководство пользователя",
-        "EXAMPLES": "Примеры"
+        "EXAMPLES": "Примеры программ"
     },
     "GUIDE": {
         "START": "Начать",
-        "RECENTLY": "Недавно"
+        "RECENTLY": "Недавние"
+    },
+    "SETTINGS": {
+        "TITLE": "Настройки",
+        "SECTIONS": {
+            "BASIC": "Основные настройки",
+            "THEME": "Настройки темы",
+            "COMPILATION": "Настройки компиляции",
+            "REPOSITORY": "Настройки репозитория",
+            "BOARD_MANAGEMENT": "Управление платами"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "Папка проекта",
+            "LANGUAGE": "Язык",
+            "UI_THEME": "Тема интерфейса",
+            "BLOCKLY_THEME": "Тема Blockly",
+            "COMPILATION_OPTIONS": "Параметры компиляции",
+            "REPOSITORY_URLS": "Адреса репозиториев",
+            "BOARD_LIST": "Список плат",
+            "LIBRARY_LIST": "Список библиотек",
+            "SEARCH_BOARD": "Поиск платы",
+            "INSTALL": "Установить",
+            "UNINSTALL": "Удалить"
+        },
+        "BUTTONS": {
+            "CANCEL": "Отмена",
+            "APPLY": "Применить"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "Новый проект",
+        "STEPS": {
+            "SELECT_BOARD": "Выбрать плату",
+            "BASIC_SETTINGS": "Основные настройки",
+            "CREATE_PROJECT": "Создать проект"
+        },
+        "BOARD": {
+            "SEARCH": "Поиск платы",
+            "READ_DOC": "Читать документацию",
+            "DEV": "Разработка"
+        },
+        "FORM": {
+            "BOARD": "Плата",
+            "PROJECT_NAME": "Название проекта",
+            "SAVE_PATH": "Путь сохранения",
+            "NAME_EXISTS": "Имя проекта уже существует, пожалуйста, измените его"
+        },
+        "BUTTONS": {
+            "NEXT": "Следующий",
+            "PREV": "Предыдущий",
+            "CREATE": "Создать проект",
+            "CREATING": "Создание"
+        }
     }
 }

@@ -2,29 +2,81 @@
     "MENU": {
         "PROJECT_NEW": "Nouveau Projet",
         "PROJECT_OPEN": "Ouvrir Projet",
-        "PROJECT_SAVE": "Enregistrer Projet",
-        "PROJECT_SAVE_AS": "Enregistrer Projet Sous",
+        "PROJECT_SAVE": "Sauvegarder Projet",
+        "PROJECT_SAVE_AS": "Enregistrer Sous",
         "PROJECT_CLOSE": "Fermer Projet",
         "OPEN_IN_EXPLORER": "Ouvrir dans l'Explorateur",
         "BUILD": "Compiler",
-        "RUN": "Exécuter",
+        "RUN": "Téléverser",
         "STOP": "Arrêter",
-        "CODE": "Voir le Code",
-        "CODE_EXPORT": "Exporter le Code",
+        "CODE": "Voir Code",
+        "CODE_EXPORT": "Exporter Code",
         "DEBUG": "Déboguer",
         "TERMINAL": "Terminal",
         "TOOL_SERIAL": "Outil Série",
         "AI": "IA",
-        "APP_STORE": "App Store",
+        "APP_STORE": "Magasin d'Applications",
         "SETTINGS": "Paramètres",
-        "ABOUT": "À propos",
+        "ABOUT": "À Propos",
         "GITHUB": "Github",
         "EXIT": "Quitter",
-        "USER_MANUAL": "Manuel de l'Utilisateur",
+        "USER_MANUAL": "Manuel Utilisateur",
         "EXAMPLES": "Exemples"
     },
     "GUIDE": {
         "START": "Démarrer",
-        "RECENTLY": "Récemment"
+        "RECENTLY": "Récent"
+    },
+    "SETTINGS": {
+        "TITLE": "Paramètres",
+        "SECTIONS": {
+            "BASIC": "Paramètres de Base",
+            "THEME": "Paramètres de Thème",
+            "COMPILATION": "Paramètres de Compilation",
+            "REPOSITORY": "Paramètres de Dépôt",
+            "BOARD_MANAGEMENT": "Gestion des Cartes"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "Dossier du Projet",
+            "LANGUAGE": "Langue",
+            "UI_THEME": "Thème d'Interface",
+            "BLOCKLY_THEME": "Thème Blockly",
+            "COMPILATION_OPTIONS": "Options de Compilation",
+            "REPOSITORY_URLS": "URLs des Dépôts",
+            "BOARD_LIST": "Liste des Cartes",
+            "LIBRARY_LIST": "Liste des Bibliothèques",
+            "SEARCH_BOARD": "Rechercher une Carte",
+            "INSTALL": "Installer",
+            "UNINSTALL": "Désinstaller"
+        },
+        "BUTTONS": {
+            "CANCEL": "Annuler",
+            "APPLY": "Appliquer"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "Nouveau Projet",
+        "STEPS": {
+            "SELECT_BOARD": "Sélectionner une Carte",
+            "BASIC_SETTINGS": "Paramètres de Base",
+            "CREATE_PROJECT": "Créer Projet"
+        },
+        "BOARD": {
+            "SEARCH": "Rechercher une Carte",
+            "READ_DOC": "Lire la Documentation",
+            "DEV": "dev"
+        },
+        "FORM": {
+            "BOARD": "Carte",
+            "PROJECT_NAME": "Nom du Projet",
+            "SAVE_PATH": "Chemin de Sauvegarde",
+            "NAME_EXISTS": "Le nom du projet existe déjà, veuillez le modifier"
+        },
+        "BUTTONS": {
+            "NEXT": "Suivant",
+            "PREV": "Précédent",
+            "CREATE": "Créer Projet",
+            "CREATING": "Création en cours"
+        }
     }
 }

@@ -2,29 +2,81 @@
     "MENU": {
         "PROJECT_NEW": "مشروع جديد",
         "PROJECT_OPEN": "فتح مشروع",
-        "PROJECT_SAVE": "حفظ مشروع",
-        "PROJECT_SAVE_AS": "حفظ المشروع باسم",
+        "PROJECT_SAVE": "حفظ المشروع",
+        "PROJECT_SAVE_AS": "حفظ باسم",
         "PROJECT_CLOSE": "إغلاق المشروع",
-        "OPEN_IN_EXPLORER": "فتح في مستكشف الملفات",
+        "OPEN_IN_EXPLORER": "فتح في المستكشف",
         "BUILD": "بناء",
         "RUN": "تشغيل",
         "STOP": "إيقاف",
         "CODE": "عرض الكود",
         "CODE_EXPORT": "تصدير الكود",
         "DEBUG": "تصحيح الأخطاء",
-        "TERMINAL": "طرفية",
-        "TOOL_SERIAL": "أداة تسلسلية",
+        "TERMINAL": "الطرفية",
+        "TOOL_SERIAL": "أداة المنفذ التسلسلي",
         "AI": "الذكاء الاصطناعي",
         "APP_STORE": "متجر التطبيقات",
-        "SETTINGS": "إعدادات",
-        "ABOUT": "حول",
+        "SETTINGS": "الإعدادات",
+        "ABOUT": "حول البرنامج",
         "GITHUB": "Github",
         "EXIT": "خروج",
         "USER_MANUAL": "دليل المستخدم",
         "EXAMPLES": "أمثلة"
     },
     "GUIDE": {
-        "START": "ابدأ",
-        "RECENTLY": "الأخيرة"
+        "START": "البدء",
+        "RECENTLY": "مؤخرًا"
+    },
+    "SETTINGS": {
+        "TITLE": "الإعدادات",
+        "SECTIONS": {
+            "BASIC": "الإعدادات الأساسية",
+            "THEME": "إعدادات المظهر",
+            "COMPILATION": "إعدادات التجميع",
+            "REPOSITORY": "إعدادات المستودع",
+            "BOARD_MANAGEMENT": "إدارة اللوحات"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "مجلد المشروع",
+            "LANGUAGE": "اللغة",
+            "UI_THEME": "مظهر واجهة المستخدم",
+            "BLOCKLY_THEME": "مظهر Blockly",
+            "COMPILATION_OPTIONS": "خيارات التجميع",
+            "REPOSITORY_URLS": "عناوين المستودع",
+            "BOARD_LIST": "قائمة اللوحات",
+            "LIBRARY_LIST": "قائمة المكتبات",
+            "SEARCH_BOARD": "بحث عن لوحة",
+            "INSTALL": "تثبيت",
+            "UNINSTALL": "إلغاء التثبيت"
+        },
+        "BUTTONS": {
+            "CANCEL": "إلغاء",
+            "APPLY": "تطبيق"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "مشروع جديد",
+        "STEPS": {
+            "SELECT_BOARD": "اختيار اللوحة",
+            "BASIC_SETTINGS": "الإعدادات الأساسية",
+            "CREATE_PROJECT": "إنشاء المشروع"
+        },
+        "BOARD": {
+            "SEARCH": "بحث عن لوحة",
+            "READ_DOC": "قراءة الوثائق",
+            "DEV": "تطوير"
+        },
+        "FORM": {
+            "BOARD": "اللوحة",
+            "PROJECT_NAME": "اسم المشروع",
+            "SAVE_PATH": "مسار الحفظ",
+            "NAME_EXISTS": "اسم المشروع موجود بالفعل، يرجى التعديل"
+        },
+        "BUTTONS": {
+            "NEXT": "التالي",
+            "PREV": "السابق",
+            "CREATE": "إنشاء المشروع",
+            "CREATING": "جاري الإنشاء"
+        }
     }
 }

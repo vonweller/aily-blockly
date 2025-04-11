@@ -1,15 +1,15 @@
 {
     "MENU": {
-        "PROJECT_NEW": "新しいプロジェクト",
+        "PROJECT_NEW": "新規プロジェクト",
         "PROJECT_OPEN": "プロジェクトを開く",
         "PROJECT_SAVE": "プロジェクトを保存",
-        "PROJECT_SAVE_AS": "プロジェクトを名前を付けて保存",
+        "PROJECT_SAVE_AS": "名前を付けて保存",
         "PROJECT_CLOSE": "プロジェクトを閉じる",
         "OPEN_IN_EXPLORER": "エクスプローラーで開く",
-        "BUILD": "ビルド",
-        "RUN": "実行",
+        "BUILD": "コンパイル",
+        "RUN": "書き込み",
         "STOP": "停止",
-        "CODE": "コードを見る",
+        "CODE": "コードを表示",
         "CODE_EXPORT": "コードをエクスポート",
         "DEBUG": "デバッグ",
         "TERMINAL": "ターミナル",
@@ -17,14 +17,66 @@
         "AI": "AI",
         "APP_STORE": "アプリストア",
         "SETTINGS": "設定",
-        "ABOUT": "バージョン情報",
+        "ABOUT": "このソフトウェアについて",
         "GITHUB": "Github",
         "EXIT": "終了",
         "USER_MANUAL": "ユーザーマニュアル",
-        "EXAMPLES": "サンプル"
+        "EXAMPLES": "サンプルプログラム"
     },
     "GUIDE": {
-        "START": "開始",
+        "START": "スタート",
         "RECENTLY": "最近"
+    },
+    "SETTINGS": {
+        "TITLE": "設定",
+        "SECTIONS": {
+            "BASIC": "基本設定",
+            "THEME": "テーマ設定",
+            "COMPILATION": "コンパイル設定",
+            "REPOSITORY": "リポジトリ設定",
+            "BOARD_MANAGEMENT": "ボード管理"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "プロジェクトフォルダ",
+            "LANGUAGE": "言語",
+            "UI_THEME": "UIテーマ",
+            "BLOCKLY_THEME": "Blocklyテーマ",
+            "COMPILATION_OPTIONS": "コンパイルオプション",
+            "REPOSITORY_URLS": "リポジトリアドレス",
+            "BOARD_LIST": "ボードリスト",
+            "LIBRARY_LIST": "ライブラリリスト",
+            "SEARCH_BOARD": "ボードを検索",
+            "INSTALL": "インストール",
+            "UNINSTALL": "アンインストール"
+        },
+        "BUTTONS": {
+            "CANCEL": "キャンセル",
+            "APPLY": "適用"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "新規プロジェクト",
+        "STEPS": {
+            "SELECT_BOARD": "ボードを選択",
+            "BASIC_SETTINGS": "基本設定",
+            "CREATE_PROJECT": "プロジェクトを作成"
+        },
+        "BOARD": {
+            "SEARCH": "ボードを検索",
+            "READ_DOC": "ドキュメントを読む",
+            "DEV": "開発"
+        },
+        "FORM": {
+            "BOARD": "ボード",
+            "PROJECT_NAME": "プロジェクト名",
+            "SAVE_PATH": "保存パス",
+            "NAME_EXISTS": "プロジェクト名は既に存在します。変更してください"
+        },
+        "BUTTONS": {
+            "NEXT": "次へ",
+            "PREV": "前へ",
+            "CREATE": "プロジェクトを作成",
+            "CREATING": "作成中"
+        }
     }
 }

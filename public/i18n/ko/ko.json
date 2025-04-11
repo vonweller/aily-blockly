@@ -3,11 +3,11 @@
         "PROJECT_NEW": "새 프로젝트",
         "PROJECT_OPEN": "프로젝트 열기",
         "PROJECT_SAVE": "프로젝트 저장",
-        "PROJECT_SAVE_AS": "프로젝트 다른 이름으로 저장",
+        "PROJECT_SAVE_AS": "다른 이름으로 저장",
         "PROJECT_CLOSE": "프로젝트 닫기",
         "OPEN_IN_EXPLORER": "탐색기에서 열기",
-        "BUILD": "빌드",
-        "RUN": "실행",
+        "BUILD": "컴파일",
+        "RUN": "업로드",
         "STOP": "중지",
         "CODE": "코드 보기",
         "CODE_EXPORT": "코드 내보내기",
@@ -17,14 +17,37 @@
         "AI": "AI",
         "APP_STORE": "앱 스토어",
         "SETTINGS": "설정",
-        "ABOUT": "정보",
+        "ABOUT": "소프트웨어 정보",
         "GITHUB": "Github",
         "EXIT": "종료",
-        "USER_MANUAL": "사용자 설명서",
-        "EXAMPLES": "예제"
+        "USER_MANUAL": "사용자 매뉴얼",
+        "EXAMPLES": "예제 프로그램"
     },
     "GUIDE": {
         "START": "시작",
         "RECENTLY": "최근"
+    },
+    "SETTINGS": {
+        "TITLE": "설정",
+        "SECTIONS": {
+            "BASIC": "기본 설정",
+            "THEME": "테마 설정",
+            "COMPILATION": "컴파일 설정",
+            "REPOSITORY": "저장소 설정",
+            "BOARD_MANAGEMENT": "개발 보드 관리"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "프로젝트 폴더",
+            "LANGUAGE": "언어",
+            "UI_THEME": "인터페이스 테마",
+            "BLOCKLY_THEME": "Blockly 테마",
+            "COMPILATION_OPTIONS": "컴파일 옵션",
+            "REPOSITORY_URLS": "저장소 주소",
+            "BOARD_LIST": "개발 보드 목록",
+            "LIBRARY_LIST": "라이브러리 목록",
+            "SEARCH_BOARD": "개발 보드 검색",
+            "INSTALL": "설치",
+            "UNINSTALL": "제거"
+        }
     }
 }

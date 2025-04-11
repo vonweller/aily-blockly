@@ -3,11 +3,11 @@
         "PROJECT_NEW": "Nuevo Proyecto",
         "PROJECT_OPEN": "Abrir Proyecto",
         "PROJECT_SAVE": "Guardar Proyecto",
-        "PROJECT_SAVE_AS": "Guardar Proyecto Como",
+        "PROJECT_SAVE_AS": "Guardar Como",
         "PROJECT_CLOSE": "Cerrar Proyecto",
-        "OPEN_IN_EXPLORER": "Abrir en el Explorador",
+        "OPEN_IN_EXPLORER": "Abrir en Explorador",
         "BUILD": "Compilar",
-        "RUN": "Ejecutar",
+        "RUN": "Cargar",
         "STOP": "Detener",
         "CODE": "Ver Código",
         "CODE_EXPORT": "Exportar Código",
@@ -16,7 +16,7 @@
         "TOOL_SERIAL": "Herramienta Serial",
         "AI": "IA",
         "APP_STORE": "Tienda de Aplicaciones",
-        "SETTINGS": "Ajustes",
+        "SETTINGS": "Configuración",
         "ABOUT": "Acerca de",
         "GITHUB": "Github",
         "EXIT": "Salir",
@@ -24,7 +24,59 @@
         "EXAMPLES": "Ejemplos"
     },
     "GUIDE": {
-        "START": "Comenzar",
-        "RECENTLY": "Recientemente"
+        "START": "Inicio",
+        "RECENTLY": "Reciente"
+    },
+    "SETTINGS": {
+        "TITLE": "Configuración",
+        "SECTIONS": {
+            "BASIC": "Configuración Básica",
+            "THEME": "Configuración de Tema",
+            "COMPILATION": "Configuración de Compilación",
+            "REPOSITORY": "Configuración de Repositorio",
+            "BOARD_MANAGEMENT": "Gestión de Placas"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "Carpeta de Proyecto",
+            "LANGUAGE": "Idioma",
+            "UI_THEME": "Tema de Interfaz",
+            "BLOCKLY_THEME": "Tema de Blockly",
+            "COMPILATION_OPTIONS": "Opciones de Compilación",
+            "REPOSITORY_URLS": "URLs de Repositorio",
+            "BOARD_LIST": "Lista de Placas",
+            "LIBRARY_LIST": "Lista de Bibliotecas",
+            "SEARCH_BOARD": "Buscar Placa",
+            "INSTALL": "Instalar",
+            "UNINSTALL": "Desinstalar"
+        },
+        "BUTTONS": {
+            "CANCEL": "Cancelar",
+            "APPLY": "Aplicar"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "Nuevo Proyecto",
+        "STEPS": {
+            "SELECT_BOARD": "Seleccionar Placa",
+            "BASIC_SETTINGS": "Configuración Básica",
+            "CREATE_PROJECT": "Crear Proyecto"
+        },
+        "BOARD": {
+            "SEARCH": "Buscar Placa",
+            "READ_DOC": "Leer Documentación",
+            "DEV": "dev"
+        },
+        "FORM": {
+            "BOARD": "Placa",
+            "PROJECT_NAME": "Nombre del Proyecto",
+            "SAVE_PATH": "Ruta de Guardado",
+            "NAME_EXISTS": "El nombre del proyecto ya existe, por favor modifíquelo"
+        },
+        "BUTTONS": {
+            "NEXT": "Siguiente",
+            "PREV": "Anterior",
+            "CREATE": "Crear Proyecto",
+            "CREATING": "Creando"
+        }
     }
 }

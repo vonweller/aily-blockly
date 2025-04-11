@@ -14,6 +14,7 @@ import { TerminalService } from '../../tools/terminal/terminal.service';
 import { UiService } from '../../services/ui.service';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { TranslateModule } from '@ngx-translate/core';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -27,7 +28,8 @@ const { pt } = (window as any)['electronAPI'].platform;
     NzInputModule,
     NzStepsModule,
     NzSelectModule,
-    NzTagModule
+    NzTagModule,
+    TranslateModule
   ],
   templateUrl: './project-new.component.html',
   styleUrl: './project-new.component.scss',

@@ -1,30 +1,82 @@
 {
     "MENU": {
-        "PROJECT_NEW": "Novo Projeto",
-        "PROJECT_OPEN": "Abrir Projeto",
-        "PROJECT_SAVE": "Salvar Projeto",
-        "PROJECT_SAVE_AS": "Salvar Projeto Como",
-        "PROJECT_CLOSE": "Fechar Projeto",
-        "OPEN_IN_EXPLORER": "Abrir no Explorador",
-        "BUILD": "Construir",
+        "PROJECT_NEW": "Novo projeto",
+        "PROJECT_OPEN": "Abrir projeto",
+        "PROJECT_SAVE": "Salvar projeto",
+        "PROJECT_SAVE_AS": "Salvar como",
+        "PROJECT_CLOSE": "Fechar projeto",
+        "OPEN_IN_EXPLORER": "Abrir no explorador",
+        "BUILD": "Compilar",
         "RUN": "Executar",
         "STOP": "Parar",
-        "CODE": "Ver Código",
-        "CODE_EXPORT": "Exportar Código",
+        "CODE": "Ver código",
+        "CODE_EXPORT": "Exportar código",
         "DEBUG": "Depurar",
         "TERMINAL": "Terminal",
-        "TOOL_SERIAL": "Ferramenta Serial",
+        "TOOL_SERIAL": "Ferramenta serial",
         "AI": "IA",
-        "APP_STORE": "Loja de Aplicativos",
+        "APP_STORE": "Loja de aplicativos",
         "SETTINGS": "Configurações",
-        "ABOUT": "Sobre",
+        "ABOUT": "Sobre o software",
         "GITHUB": "Github",
         "EXIT": "Sair",
-        "USER_MANUAL": "Manual do Usuário",
-        "EXAMPLES": "Exemplos"
+        "USER_MANUAL": "Manual do usuário",
+        "EXAMPLES": "Programas de exemplo"
     },
     "GUIDE": {
-        "START": "Começar",
-        "RECENTLY": "Recente"
+        "START": "Iniciar",
+        "RECENTLY": "Recentes"
+    },
+    "SETTINGS": {
+        "TITLE": "Configurações",
+        "SECTIONS": {
+            "BASIC": "Configurações básicas",
+            "THEME": "Configurações de tema",
+            "COMPILATION": "Configurações de compilação",
+            "REPOSITORY": "Configurações de repositório",
+            "BOARD_MANAGEMENT": "Gerenciamento de placas"
+        },
+        "FIELDS": {
+            "PROJECT_FOLDER": "Pasta do projeto",
+            "LANGUAGE": "Idioma",
+            "UI_THEME": "Tema da interface",
+            "BLOCKLY_THEME": "Tema do Blockly",
+            "COMPILATION_OPTIONS": "Opções de compilação",
+            "REPOSITORY_URLS": "URLs de repositório",
+            "BOARD_LIST": "Lista de placas",
+            "LIBRARY_LIST": "Lista de bibliotecas",
+            "SEARCH_BOARD": "Pesquisar placas",
+            "INSTALL": "Instalar",
+            "UNINSTALL": "Desinstalar"
+        },
+        "BUTTONS": {
+            "CANCEL": "Cancelar",
+            "APPLY": "Aplicar"
+        }
+    },
+    "PROJECT_NEW": {
+        "TITLE": "Novo projeto",
+        "STEPS": {
+            "SELECT_BOARD": "Selecionar placa",
+            "BASIC_SETTINGS": "Configurações básicas",
+            "CREATE_PROJECT": "Criar projeto"
+        },
+        "BOARD": {
+            "SEARCH": "Pesquisar placas",
+            "READ_DOC": "Ler documentação",
+            "DEV": "dev"
+        },
+        "FORM": {
+            "BOARD": "Placa",
+            "PROJECT_NAME": "Nome do projeto",
+            "SAVE_PATH": "Caminho de salvamento",
+            "NAME_EXISTS": "Nome do projeto já existe, por favor modifique"
+        },
+        "BUTTONS": {
+            "NEXT": "Próximo",
+            "PREV": "Anterior",
+            "CREATE": "Criar projeto",
+            "CREATING": "Criando"
+        }
     }
 }
