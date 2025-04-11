@@ -13,9 +13,9 @@ aily Blockly是aily Project下的blockly IDE，前期面向非专业用户提供
 · 硬件仿真  
 
 ## 文档
-[使用文档](https://aily.pro/doc)
-[库适配文档](https://github.com/ailyProject/aily-blockly-libraries/blob/main/%E5%BA%93%E8%A7%84%E8%8C%83.md)
-[软件开发文档](./develop.md)
+[使用文档](https://aily.pro/doc)  
+[库适配文档](https://github.com/ailyProject/aily-blockly-libraries/blob/main/%E5%BA%93%E8%A7%84%E8%8C%83.md)  
+[软件开发文档](./develop.md)  
 
 ## 相关仓库
 [开发板](https://github.com/ailyProject/aily-blockly-boards)  
@@ -27,29 +27,28 @@ aily Blockly是aily Project下的blockly IDE，前期面向非专业用户提供
 本项目由以下企业和个人赞助
 
 ### 企业赞助  
-<div>
 <a target="_blank" href="https://www.seekfree.cn/" >
     <img src=".\brand\seekfree\logo.png" alt="seekfree" width=200 />
-</a>
+</a>  
 <a target="_blank" href="https://www.seeedstudio.com/" >
     <img src=".\brand\seeedstudio\logo.png" alt="seeedstudio" width=200 />
-</a>
+</a>  
 <a target="_blank" href="https://www.diandeng.tech/" >
     <img src=".\brand\diandeng\logo.png" alt="diandeng" width=200 />
-</a>
+</a>  
 <a target="_blank" href="https://www.openjumper.com/" >
     <img src=".\brand\openjumper\logo.png" alt="openjumper" width=200 />
-</a>
+</a>  
 <a target="_blank" href="https://www.titlab.cn/" >
     <img src=".\brand\titlab\logo.png" alt="titlab" width=200 />
-</a>
+</a>  
 <a target="_blank" href="https://www.emakefun.com" >
     <img src=".\brand\emakefun\logo.png" alt="emakefun" width=200 />
-</a>
+</a>  
 <a target="_blank" href="http://www.keyes-robot.com/" >
     <img src=".\brand\keyes\logo.png" alt="keyes" width=200 />
-</a>
-</div>
+</a>  
+
 
 ### 个人赞助   
 

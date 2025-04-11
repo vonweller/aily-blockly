@@ -44,14 +44,14 @@
                 <div>{{ 'SETTINGS.FIELDS.UI_THEME' | translate }}:</div>
                 <nz-radio-group [(ngModel)]="UiThemeValue" nzButtonStyle="solid">
                   <label nz-radio-button nzValue="dark">Dark</label>
-                  <label nz-radio-button nzValue="light">Light</label>
+                  <label nz-radio-button nzValue="light" [nzDisabled]="true">Light</label>
                 </nz-radio-group>
               </div>
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.BLOCKLY_THEME' | translate }}:</div>
                 <nz-radio-group [(ngModel)]="blocklyThemeValue" nzButtonStyle="solid">
                   <label nz-radio-button nzValue="default">{{ '现代' | translate }}</label>
-                  <label nz-radio-button nzValue="classics">{{ '经典' | translate }}</label>
+                  <label nz-radio-button nzValue="classics" [nzDisabled]="true">{{ '经典' | translate }}</label>
                 </nz-radio-group>
               </div>
             </div>
@@ -70,12 +70,16 @@
           <div id="section-SETTINGS.SECTIONS.REPOSITORY" class="section">
             <h2 class="section-title">{{ 'SETTINGS.SECTIONS.REPOSITORY' | translate }}</h2>
             <div class="right-inner">
-              <div class="instructions">{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}</div>
+              <div class="item">
+                <div>{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}:</div>
+                <input nz-input [(ngModel)]="data.npm_registry[0]" />
+              </div>
+              <!-- <div class="instructions">{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}</div>
               <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea>
               <div class="instructions">{{ 'SETTINGS.FIELDS.BOARD_LIST' | translate }}</div>
               <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea>
               <div class="instructions">{{ 'SETTINGS.FIELDS.LIBRARY_LIST' | translate }}</div>
-              <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea>
+              <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea> -->
             </div>
           </div>
 
@@ -83,14 +87,14 @@
           <div id="section-SETTINGS.SECTIONS.BOARD_MANAGEMENT" class="section">
             <h2 class="section-title">{{ 'SETTINGS.SECTIONS.BOARD_MANAGEMENT' | translate }}</h2>
             <div class="right-inner">
-              <div class="serach-box">
+              <!-- <div class="serach-box">
                 <nz-input-group [nzSuffix]="suffixIconSearch">
                   <input type="text" nz-input placeholder="{{ 'SETTINGS.FIELDS.SEARCH_BOARD' | translate }}" />
                 </nz-input-group>
                 <ng-template #suffixIconSearch>
                   <i class="fa-regular fa-magnifying-glass"></i>
                 </ng-template>
-              </div>
+              </div> -->
               <div class="board-list sscroll bborder">
                 @for (board of boardList; track $index) {
                 <div class="board-item">
