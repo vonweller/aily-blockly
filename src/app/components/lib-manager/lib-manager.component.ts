@@ -160,6 +160,7 @@ interface PackageInfo {
   "author"?: {
     "name"?: string
   },
+  icon?: string,
   "publisher"?: any,
   "maintainers"?: any[],
   "links"?: any,

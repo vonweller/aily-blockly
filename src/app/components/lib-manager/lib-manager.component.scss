@@ -76,6 +76,17 @@
                 font-size: 12px;
                 white-space: normal;
                 margin-top: 5px;
+
+                .icon {
+                    float: left;
+                    height: 36px;
+                    width: 36px;
+                    margin-right: 10px;
+
+                    i {
+                        font-size: 24px;
+                    }
+                }
             }
 
             .footer {

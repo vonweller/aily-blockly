@@ -29,7 +29,16 @@
             <div class="state"></div>
             }
             <div class="name ellipsis">{{lib.nickname}}<span>{{lib.author}}</span></div>
-            <div class="desc ellipsis">{{lib.description}}</div>
+            <div class="desc ellipsis">
+                <div class="icon ccenter">
+                    @if(lib.icon==''){
+                    <i class="fa-light fa-cube"></i>
+                    }@else{
+                    <i class="{{lib.icon}}"></i>
+                    }
+                </div>
+                {{lib.description}}
+            </div>
             <div class="footer">
                 <div class="version">
                     <nz-select [(ngModel)]="lib.version" [nzSize]="'small'" (nzOnSearch)="getVerisons(lib)">
