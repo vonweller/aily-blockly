@@ -5,10 +5,7 @@ import { Injectable } from '@angular/core';
 })
 export class SettingsService {
 
-  boardList: any[] = [{
-    "name": "test",
-    "version": "1.0.0",
-  }];
+  boardList: any[] = [];
 
   constructor() { }
 
@@ -27,11 +24,11 @@ export class SettingsService {
 
     // console.log('boardList: ', this.boardList);
   }
-  
+
   async getAllBoardList(registry) {
     // 执行搜索时，配置的scope registry使用不到，需要在命令行中指定registry
     const cmd = `npm search @aily-project/board- --json=true --registry=${registry}`
-    const result = await window['npm'].run({cmd});
+    const result = await window['npm'].run({ cmd });
     const allBoardList = JSON.parse(result);
     // const allBoardList = await window['dependencies'].boardList();
     // console.log('allBoardList: ', allBoardList);

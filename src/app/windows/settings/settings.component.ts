@@ -74,9 +74,6 @@ export class SettingsComponent {
   UiThemeValue = 'dark';
   blocklyThemeValue = 'default';
 
-  npmRegistryListStr = `https://registry.npmjs.org/
-https://registry.npm.taobao.org/`;
-
   get boardList() {
     return this.settingsService.boardList;
   }
@@ -167,7 +164,7 @@ https://registry.npm.taobao.org/`;
 
   apply() {
     // 保存到config.json，如有需要立即加载的，再加载
-
+    this.configService.save();
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
   }
