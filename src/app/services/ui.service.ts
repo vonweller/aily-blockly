@@ -100,6 +100,13 @@ export class UiService {
     this.actionSubject.next({ action: 'close', type: 'tool', data: name });
   }
 
+  closeToolAll() {
+    this.openToolList.forEach((name) => {
+      this.closeTool(name);
+    });
+    this.openToolList = [];
+  }
+
   turnTerminal(data) {
     if (this.terminalIsOpen) {
       this.closeTerminal();

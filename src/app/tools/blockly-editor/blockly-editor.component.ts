@@ -3,6 +3,7 @@ import { BlocklyComponent } from '../../blockly/blockly.component';
 import { LibManagerComponent } from '../../components/lib-manager/lib-manager.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { ProjectService } from '../../services/project.service';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -20,9 +21,11 @@ export class BlocklyEditorComponent {
   constructor(
     private cd: ChangeDetectorRef,
     private projectService: ProjectService,
+    private uiService: UiService
   ) { }
 
   openProjectManager() {
+    this.uiService.closeToolAll();
     this.showProjectManager = !this.showProjectManager;
     this.cd.detectChanges();
   }
