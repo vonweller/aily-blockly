@@ -21,7 +21,7 @@ import { TranslateModule } from '@ngx-translate/core';
     NzInputModule,
     NzRadioModule,
     SimplebarAngularModule,
-    TranslateModule
+    TranslateModule,
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
@@ -74,6 +74,9 @@ export class SettingsComponent {
   UiThemeValue = 'dark';
   blocklyThemeValue = 'default';
 
+  // 用于跟踪安装/卸载状态
+  boardOperations = {};
+
   get boardList() {
     return this.settingsService.boardList;
   }
@@ -97,7 +100,7 @@ export class SettingsComponent {
     private uiService: UiService,
     private settingsService: SettingsService,
     private translationService: TranslationService,
-    private configService: ConfigService
+    private configService: ConfigService,
   ) {
   }
 
@@ -106,6 +109,10 @@ export class SettingsComponent {
   }
 
   async ngAfterViewInit() {
+    await this.updateBoardList();
+  }
+
+  async updateBoardList() {
     const platform = this.configService.data.platform;
     this.appdata_path = this.configService.data.appdata_path[platform].replace('%HOMEPATH%', window['path'].getUserHome());
     this.settingsService.getBoardList(this.appdata_path, this.configService.data.npm_registry[0]);
@@ -167,5 +174,27 @@ export class SettingsComponent {
     this.configService.save();
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
+  } 
+
+  async uninstall(board) {
+    this.boardOperations[board.name] = { status: 'loading' };
+    const result = await this.settingsService.uninstall(board)
+    if (result === 'success') {
+      this.updateBoardList();
+    }
+    else if (result === 'failed') {
+      this.boardOperations[board.name] = { status: 'failed' };
+    }
+  }
+
+  async install(board) {
+    this.boardOperations[board.name] = { status: 'loading' };
+    const result = await this.settingsService.install(board)
+    if (result === 'success') {
+      this.updateBoardList();
+    }
+    else if (result === 'failed') {
+      this.boardOperations[board.name] = { status: 'failed' };
+    }
   }
 }

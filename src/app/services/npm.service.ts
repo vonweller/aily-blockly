@@ -1,5 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
+import { ElectronService } from './electron.service';
+import { ConfigService } from './config.service';
+import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
 
 @Injectable({
@@ -7,8 +10,217 @@ import { API } from '../configs/api.config';
 })
 export class NpmService {
   constructor(
-    private http: HttpClient
+    private http: HttpClient,
+    private electronService: ElectronService,
+    private configService: ConfigService,
+    private uiService: UiService,
   ) { }
+
+  async init() {
+    if (this.electronService.isElectron) {
+      window['ipcRenderer'].on('window-receive', async (event, message) => {
+        console.log("npm-exec: ", message);
+        const action = message.data.action;
+        console.log("action: ", action);
+        if (action !== "npm-exec") {
+          return;
+        }
+
+        const subAction = message.data.detail.action;
+        const subData = message.data.detail.data;
+
+        if (subAction === 'install-board-dependencies') {
+          const packageJson = JSON.parse(window['fs'].readFileSync(subData));
+          await this.installBoardDependencies(packageJson)
+        } else if (subAction === 'install-board') {
+          const packagePath = await this.installBoard(subData)
+          console.log("packagePath: ", packagePath);
+          const packageJson = JSON.parse(window['fs'].readFileSync(packagePath));
+          await this.installBoardDependencies(packageJson)
+        } else if (subAction === 'uninstall-board') {
+          let board = subData;
+          if (typeof (board) === 'string') {
+            board = JSON.parse(board);
+          }
+          const packageJson = await this.uninstallBoard(board);
+          // 卸载依赖
+          await this.uninstallBoardDependencies(board.name, packageJson);
+        }
+
+        console.log("messageId: ", message.messageId);
+        if (message.messageId) {
+          console.log("发送消息: ", message.messageId);
+          window['ipcRenderer'].send('main-window-response', {
+            messageId: message.messageId,
+            result: 'success'
+          })
+        }
+      });
+    }
+  }
+
+  // 安装开发板
+  async installBoard(board: any) {
+    if (typeof(board) === 'string') {
+      board = JSON.parse(board);
+    }
+    const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+    const cmd = `npm install ${board.name}@${board.version} --prefix "${appDataPath}"`;
+    this.uiService.updateState({ state: 'loading', text: `正在安装${board.name}...`, timeout: 300000 });
+    // 添加超时保护和正确的参数名
+    await Promise.race([
+      window['npm'].run({ cmd: cmd }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
+      )
+    ]);
+
+    this.uiService.updateState({ state: 'done', text: '开发板安装完成' });
+
+    // return template/package.json
+    return `${appDataPath}/node_modules/${board.name}/template/package.json`;
+  }
+
+  // 安装开发板依赖
+  async installBoardDependencies(packageJson: any) {
+    try {
+      const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+      const boardDependencies = packageJson.boardDependencies || {};
+
+      for (const [key, version] of Object.entries(boardDependencies)) {
+        const depPath = `${appDataPath}/node_modules/${key}`;
+
+        if (window['path'].isExists(depPath)) {
+          console.log(`依赖 ${key} 已安装`);
+          continue;
+        }
+
+        this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
+
+        try {
+          // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
+          const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
+          console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
+
+          // 添加超时保护和正确的参数名
+          await Promise.race([
+            window['npm'].run({ cmd: npmCmd }),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
+            )
+          ]);
+
+          console.log(`依赖 ${key} 安装成功, 时间: ${new Date().toISOString()}`);
+        } catch (error) {
+          console.error(`依赖 ${key} 安装失败:`, error);
+        }
+      }
+
+      this.uiService.updateState({ state: 'done', text: '开发板依赖安装完成' });
+    } catch (error) {
+      console.error('安装开发板依赖时出错:', error);
+      this.uiService.updateState({ state: 'error', text: '开发板依赖安装失败' });
+    }
+  }
+
+  // 卸载开发板依赖
+  async uninstallBoardDependencies(depName, packageJson: any) {
+    try {
+      const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+      const boardDependenciesToUninstall = packageJson.boardDependencies || {};
+      
+      // 获取所有已安装的包
+      const installedPackagesList = await this.getInstalledPackageList(appDataPath);
+      const installedBoards = [];
+      
+      // 从已安装的包中找出开发板（具有template/package.json的包且包名以@aily-project/board-开头）
+      for (const packageItem of installedPackagesList) {
+        const packageName = '@' + packageItem.split('@')[1];
+
+        // 排除掉被卸载包本身
+        if (packageName === depName) {
+          continue;
+        }
+
+        // 检查包名是否以board-开头
+        if (packageName.startsWith('@aily-project/board-')) {
+          const boardPath = `${appDataPath}/node_modules/${packageName}`;
+          const packageJsonPath = `${boardPath}/template/package.json`;
+
+          if (window['path'].isExists(packageJsonPath)) {
+            try {
+              const boardPackageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath));
+              // 排除当前正在卸载的开发板
+              if (packageName !== packageJson.name) {
+                installedBoards.push({
+                  name: packageName,
+                  dependencies: boardPackageJson.boardDependencies || {}
+                });
+              }
+            } catch (error) {
+              console.error(`无法读取开发板 ${packageName} 的package.json:`, error);
+            }
+          }
+        }
+      }
+      
+      this.uiService.updateState({ state: 'loading', text: '正在卸载不再需要的依赖...', timeout: 300000 });
+      
+      // 检查每个依赖是否被其他开发板使用
+      console.log("installedBoards: ", installedBoards);
+      for (const [depName, depVersion] of Object.entries(boardDependenciesToUninstall)) {
+        const isUsedByOtherBoards = installedBoards.some(board => 
+            board.dependencies && board.dependencies[depName] !== undefined
+        );
+        
+        if (!isUsedByOtherBoards) {
+          // 如果不被其他开发板使用，则卸载它
+          try {
+            const depPath = `${appDataPath}/node_modules/${depName}`;
+            if (!window['path'].isExists(depPath)) {
+              console.log(`依赖 ${depName} 未安装，跳过卸载`);
+              continue;
+            }
+            
+            const npmCmd = `npm uninstall ${depName} --prefix "${appDataPath}"`;
+            console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
+            
+            await Promise.race([
+              window['npm'].run({ cmd: npmCmd }),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('卸载超时')), 300000)
+              )
+            ]);
+            
+            console.log(`依赖 ${depName} 卸载成功, 时间: ${new Date().toISOString()}`);
+          } catch (error) {
+            console.error(`依赖 ${depName} 卸载失败:`, error);
+          }
+        } else {
+          console.log(`依赖 ${depName} 被其他开发板使用，跳过卸载`);
+        }
+      }
+      
+      this.uiService.updateState({ state: 'done', text: '依赖卸载完成' });
+    } catch (error) {
+      console.error('卸载开发板依赖时出错:', error);
+      this.uiService.updateState({ state: 'error', text: '依赖卸载失败' });
+    }
+  }
+
+  // 卸载开发板
+  async uninstallBoard(board: any) {
+    const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${appDataPath}/node_modules/${board.name}/template/package.json`));
+    // 卸载开发板
+    const cmd = `npm uninstall ${board.name} --prefix "${appDataPath}"`;
+    this.uiService.updateState({ state: 'loading', text: `正在卸载${board.name}...`, timeout: 300000 });
+    // 添加超时保护和正确的参数名
+    window['npm'].run({ cmd: cmd });
+    this.uiService.updateState({ state: 'done', text: '开发板卸载完成' });
+
+    return packageJson;
+  }
 
 
   // 指定获取packageName的可用版本列表
