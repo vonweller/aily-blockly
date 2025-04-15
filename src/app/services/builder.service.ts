@@ -136,7 +136,7 @@ export class BuilderService {
     for (let lib of libsPath) {
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
-      
+
       if (!window['path'].isExists(targetPath)) {
         let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
         if (!window['path'].isExists(sourcePath)) continue;
@@ -215,7 +215,7 @@ export class BuilderService {
             // 检查错误信息
             else if (trimmedLine.toLowerCase().includes('error:') ||
               trimmedLine.toLowerCase().includes('error during build:') ||
-              trimmedLine.toLowerCase().includes('failed') || 
+              trimmedLine.toLowerCase().includes('failed') ||
               trimmedLine.toLowerCase().includes('fatal')) {
               console.error("检测到编译错误:", trimmedLine);
               errorText = trimmedLine;
@@ -249,7 +249,10 @@ export class BuilderService {
               // 更新状态
               if (!buildCompleted) {
                 this.noticeService.update({
-                  title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
+                  title: title,
+                  text: lastBuildText, 
+                  state: 'doing', 
+                  progress: lastProgress, setTimeout: 0, stop: () => {
                     this.cancelBuild();
                   }
                 });

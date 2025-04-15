@@ -18,8 +18,9 @@ export class NoticeService {
     opts['timestamp'] = Date.now();
     opts['showDetail'] = false;
     this.stateSubject.next(opts);
-    this.noticeList.push(opts);
-    // console.log(opts);
+    if (opts.state === 'error') {
+      this.noticeList.push(opts)
+    }
   }
 
   clear() {
