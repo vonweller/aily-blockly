@@ -70,7 +70,7 @@ export class UploaderService {
 
     // 对比代码是否有变化
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    if (code !== this.builderService.lastCode) {
+    if (!this.builderService.passed || code !== this.builderService.lastCode) {
       // 编译
       await this.builderService.build();
     }

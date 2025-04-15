@@ -26,6 +26,7 @@ export class BuilderService {
   private buildResolver: ((value: ActionState) => void) | null = null;
 
   lastCode = "";
+  passed = false;
 
   async build(): Promise<ActionState> {
     this.notice.update(null);
@@ -215,6 +216,7 @@ export class BuilderService {
                 this.buildInProgress = false;
                 this.buildResolver = null;
                 await this.terminalService.stopStream(streamId);
+                this.passed = true;
                 resolve({ state: 'done', text: '编译完成' });
               }
             }
@@ -226,6 +228,7 @@ export class BuilderService {
           this.buildInProgress = false;
           this.buildResolver = null;
           this.terminalService.stopStream(streamId);
+          this.passed = false;
           resolve({ state: 'error', text: error.message });
         });
       })
