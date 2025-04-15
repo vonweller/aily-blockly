@@ -84,11 +84,11 @@ function registerWindowHandlers(mainWindow) {
                     data: data.data,
                     messageId: messageId
                 });
-                // 设置9秒超时
+                // 自定义超时或默认9秒超时
                 setTimeout(() => {
                     ipcMain.removeListener('main-window-response', responseListener);
                     resolve("timeout");
-                }, 9000);
+                }, data?.timeout || 9000);
             });
         }
         return true;

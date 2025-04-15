@@ -246,6 +246,7 @@ export class ProjectService {
 
     await window['iWindow'].send({
       to: "main",
+      timeout: 1000 * 60 * 5,
       data: {
         action: 'npm-exec',
         detail: {

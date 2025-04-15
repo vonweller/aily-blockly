@@ -52,6 +52,7 @@ export class SettingsService {
   async install(board) {
     const result = await window['iWindow'].send({
       to: "main",
+      timeout: 1000 * 60 * 5,
       data: {
         action: 'npm-exec',
         detail: {
@@ -68,6 +69,7 @@ export class SettingsService {
   async uninstall(board) {
     const result = await window['iWindow'].send({
       to: "main",
+      timeout: 1000 * 60 * 5,
       data: {
         action: 'npm-exec',
         detail: {
