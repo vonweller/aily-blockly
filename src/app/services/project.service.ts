@@ -242,77 +242,88 @@ export class ProjectService {
     this.uiService.updateState({ state: 'done', text: '项目加载成功' });
     this.stateSubject.next('loaded');
     // 7. 后台安装开发板依赖
-    this.installBoardDependencies();
+    // this.installBoardDependencies();
+
+    await window['iWindow'].send({
+      to: "main",
+      timeout: 1000 * 60 * 5,
+      data: {
+        action: 'npm-exec',
+        detail: {
+          action: 'install-board-dependencies',
+          data: `${this.currentProjectPath}/package.json`
+        }
+      }
+    })
   }
 
-  async installBoardDependencies() {
-    if (this.isInstalling) {
-      console.log('依赖安装已在进行中，跳过');
-      return;
-    }
+  // async installBoardDependencies() {
+  //   if (this.isInstalling) {
+  //     console.log('依赖安装已在进行中，跳过');
+  //     return;
+  //   }
 
-    this.isInstalling = true;
+  //   this.isInstalling = true;
 
-    try {
-      const appDataPath = await window['env'].get("AILY_APPDATA_PATH");
-      console.log('appDataPath: ', appDataPath);
+  //   try {
+  //     const appDataPath = await window['env'].get("AILY_APPDATA_PATH");
+  //     console.log('appDataPath: ', appDataPath);
 
-      if (!appDataPath) {
-        console.error('无法获取应用数据路径');
-        return;
-      }
+  //     if (!appDataPath) {
+  //       console.error('无法获取应用数据路径');
+  //       return;
+  //     }
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+  //     await new Promise(resolve => setTimeout(resolve, 2000));
 
-      try {
-        const packageJsonPath = `${this.currentProjectPath}/package.json`;
-        if (!window['path'].isExists(packageJsonPath)) {
-          console.error('项目配置文件不存在:', packageJsonPath);
-          return;
-        }
+  //     try {
+  //       const packageJsonPath = `${this.currentProjectPath}/package.json`;
+  //       if (!window['path'].isExists(packageJsonPath)) {
+  //         console.error('项目配置文件不存在:', packageJsonPath);
+  //         return;
+  //       }
 
-        const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath));
-        const boardDependencies = packageJson.boardDependencies || {};
+  //       const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath));
+  //       const boardDependencies = packageJson.boardDependencies || {};
 
-        for (const [key, version] of Object.entries(boardDependencies)) {
-          const depPath = `${appDataPath}/node_modules/${key}`;
+  //       for (const [key, version] of Object.entries(boardDependencies)) {
+  //         const depPath = `${appDataPath}/node_modules/${key}`;
 
-          if (window['path'].isExists(depPath)) {
-            console.log(`依赖 ${key} 已安装`);
-            continue;
-          }
+  //         if (window['path'].isExists(depPath)) {
+  //           console.log(`依赖 ${key} 已安装`);
+  //           continue;
+  //         }
 
-          this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
+  //         this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
 
-          try {
-            // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
+  //         try {
+  //           // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
+  //           const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
+  //           console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
 
-            const npmCmd = `npm install ${key}@${version} --prefix "${appDataPath}"`;
-            console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
+  //           // 添加超时保护和正确的参数名
+  //           await Promise.race([
+  //             window['npm'].run({ cmd: npmCmd }),
+  //             new Promise((_, reject) =>
+  //               setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
+  //             )
+  //           ]);
 
-            // 添加超时保护和正确的参数名
-            await Promise.race([
-              window['npm'].run({ cmd: npmCmd }),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
-              )
-            ]);
+  //           console.log(`依赖 ${key} 安装成功, 时间: ${new Date().toISOString()}`);
+  //         } catch (error) {
+  //           console.error(`依赖 ${key} 安装失败:`, error);
+  //         }
+  //       }
 
-            console.log(`依赖 ${key} 安装成功, 时间: ${new Date().toISOString()}`);
-          } catch (error) {
-            console.error(`依赖 ${key} 安装失败:`, error);
-          }
-        }
-
-        this.uiService.updateState({ state: 'done', text: '开发板依赖安装完成' });
-      } catch (error) {
-        console.error('安装开发板依赖时出错:', error);
-        this.uiService.updateState({ state: 'error', text: '开发板依赖安装失败' });
-      }
-    } finally {
-      this.isInstalling = false;
-    }
-  }
+  //       this.uiService.updateState({ state: 'done', text: '开发板依赖安装完成' });
+  //     } catch (error) {
+  //       console.error('安装开发板依赖时出错:', error);
+  //       this.uiService.updateState({ state: 'error', text: '开发板依赖安装失败' });
+  //     }
+  //   } finally {
+  //     this.isInstalling = false;
+  //   }
+  // }
 
   // 保存项目
   save(path = this.currentProjectPath) {

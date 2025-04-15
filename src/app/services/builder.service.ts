@@ -26,6 +26,47 @@ export class BuilderService {
   private buildResolver: ((value: ActionState) => void) | null = null;
 
   lastCode = "";
+  passed = false;
+
+  /**
+ * 等待指定目录创建完成
+ * @param dirPath 需要检查的目录路径
+ * @param timeout 超时时间，默认5000毫秒
+ * @param interval 检查间隔，默认100毫秒
+ * @returns 返回Promise，目录存在时resolve，超时时reject
+ */
+  private async waitForDirectoryExists(dirPath: string, timeout = 1000 * 60 * 1, interval = 100): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      const startTime = Date.now();
+
+      const checkDirectory = () => {
+        // 检查是否超时
+        if (Date.now() - startTime > timeout) {
+          console.error(`等待目录创建超时: ${dirPath}`);
+          reject(new Error(`等待目录创建超时: ${dirPath}`));
+          return;
+        }
+
+        // 检查目录是否存在
+        try {
+          const exists = window['fs'].existsSync(dirPath);
+          if (exists) {
+            console.log(`目录已创建: ${dirPath}`);
+            resolve(true);
+            return;
+          }
+        } catch (error) {
+          console.warn(`检查目录时出错: ${error.message}`);
+        }
+
+        // 目录不存在，继续等待
+        setTimeout(checkDirectory, interval);
+      };
+
+      // 开始检查
+      checkDirectory();
+    });
+  }
 
   async build(): Promise<ActionState> {
     this.notice.update(null);
@@ -46,13 +87,15 @@ export class BuilderService {
     // 创建临时文件夹
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
+    await this.waitForDirectoryExists(tempPath, 5000, 100);
     await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
+    await this.waitForDirectoryExists(sketchPath, 5000, 100);
     await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-
-    await this.terminalService.sendCmd(`cd "${tempPath}"`);
+    await this.waitForDirectoryExists(librariesPath, 5000, 100);
 
     // 生成sketch文件
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    console.info("code: ", code);
     this.lastCode = code;
     await window['fs'].writeFileSync(sketchFilePath, code);
 
@@ -62,7 +105,6 @@ export class BuilderService {
     const boardDependencies = packageJson.boardDependencies || {};
 
     // 从dependencies中查找以@aily-project/board-开头的依赖
-    
     let board = ""
     const libsPath = []
     Object.entries(dependencies).forEach(([key, version]) => {
@@ -92,11 +134,14 @@ export class BuilderService {
     // 解压libraries到临时文件夹
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
-      let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
-      if (!window['path'].isExists(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
-      await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
+      
+      if (!window['path'].isExists(targetPath)) {
+        let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
+        if (!window['path'].isExists(sourcePath)) continue;
+        await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
+      }
     }
 
     // 获取编译命令
@@ -215,6 +260,7 @@ export class BuilderService {
                 this.buildInProgress = false;
                 this.buildResolver = null;
                 await this.terminalService.stopStream(streamId);
+                this.passed = true;
                 resolve({ state: 'done', text: '编译完成' });
               }
             }
@@ -226,6 +272,7 @@ export class BuilderService {
           this.buildInProgress = false;
           this.buildResolver = null;
           this.terminalService.stopStream(streamId);
+          this.passed = false;
           resolve({ state: 'error', text: error.message });
         });
       })

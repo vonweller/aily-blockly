@@ -18,6 +18,7 @@ import { CodeEditorComponent } from '../tools/code-editor/code-editor.component'
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
 import { NzModalModule } from 'ng-zorro-antd/modal';
+import { NpmService } from '../services/npm.service';
 
 @Component({
   selector: 'app-main-window',
@@ -66,12 +67,14 @@ export class MainWindowComponent {
     private message: NzMessageService,
     private cd: ChangeDetectorRef,
     private updateService: UpdateService,
+    private npmService: NpmService,
   ) { }
 
   ngOnInit(): void {
     this.uiService.init();
     this.projectService.init();
     this.updateService.init();
+    this.npmService.init();
     // 语言设置变化后，重新加载项目
     window['ipcRenderer'].on('setting-changed', (event, data) => {
       console.log('ipcRenderer setLanguage', data);

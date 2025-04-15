@@ -70,7 +70,7 @@ export class UploaderService {
 
     // 对比代码是否有变化
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    if (code !== this.builderService.lastCode) {
+    if (!this.builderService.passed || code !== this.builderService.lastCode) {
       // 编译
       await this.builderService.build();
     }
@@ -148,6 +148,9 @@ export class UploaderService {
     this.uiService.updateState({ state: 'doing', text: '准备完成，开始上传...' });
 
     return new Promise<ActionState>((resolve, reject) => {
+      // 将resolve函数保存，以便在取消时使用
+      this.uploadResolver = resolve;
+
       const title = '上传中';
       const completeTitle = '上传完成';
       const errorTitle = '上传失败';

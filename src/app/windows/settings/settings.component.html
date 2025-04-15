@@ -102,9 +102,9 @@
                   <div class="version">&#64;{{ board.version }}</div>
                   <div class="btns">
                     @if (board.installed) {
-                    <div class="btn link">{{ 'SETTINGS.FIELDS.UNINSTALL' | translate }}</div>
+                    <div class="btn link" (click)="uninstall(board)">{{ 'SETTINGS.FIELDS.UNINSTALL' | translate }}</div>
                     } @else {
-                    <div class="btn link">{{ 'SETTINGS.FIELDS.INSTALL' | translate }}</div>
+                    <div class="btn link" (click)="install(board)">{{ 'SETTINGS.FIELDS.INSTALL' | translate }}</div>
                     }
                   </div>
                 </div>

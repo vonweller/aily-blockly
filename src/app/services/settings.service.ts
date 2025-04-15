@@ -48,4 +48,38 @@ export class SettingsService {
       return {};
     }
   }
+
+  async install(board) {
+    const result = await window['iWindow'].send({
+      to: "main",
+      timeout: 1000 * 60 * 5,
+      data: {
+        action: 'npm-exec',
+        detail: {
+          action: 'install-board',
+          data: JSON.stringify(board)
+        }
+      }
+    })
+
+    console.log("install result: ", result);
+    return result;
+  }
+
+  async uninstall(board) {
+    const result = await window['iWindow'].send({
+      to: "main",
+      timeout: 1000 * 60 * 5,
+      data: {
+        action: 'npm-exec',
+        detail: {
+          action: 'uninstall-board',
+          data: JSON.stringify(board)
+        }
+      }
+    })
+
+    console.log("uninstall result: ", result);
+    return result;
+  }
 }
