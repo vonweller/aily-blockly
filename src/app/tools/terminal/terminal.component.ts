@@ -1,4 +1,4 @@
-import { Component, ElementRef, Input, ViewChild } from '@angular/core';
+import { Component, ElementRef, Input, SimpleChanges, ViewChild } from '@angular/core';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -7,15 +7,17 @@ import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalService } from './terminal.service';
+import { NoticeService } from '../../services/notice.service';
+import { CommonModule } from '@angular/common';
 
 @Component({
   selector: 'app-terminal',
-  imports: [NzTabsModule],
+  imports: [CommonModule, NzTabsModule],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
 export class TerminalComponent {
-  @Input() tab = 'default';
+  @Input() tab = 'default'; //error,info,log
   selectedTabIndex = 0;
 
   @ViewChild('terminal') terminalEl: ElementRef;
@@ -24,11 +26,16 @@ export class TerminalComponent {
   fitAddon;
   clipboardAddon;
 
+  get noticeList() {
+    return this.noticeService.noticeList;
+  }
+
   constructor(
     private electronService: ElectronService,
     private uiService: UiService,
     private projectService: ProjectService,
-    private terminalService: TerminalService
+    private terminalService: TerminalService,
+    private noticeService: NoticeService
   ) { }
 
   close() {
@@ -39,6 +46,21 @@ export class TerminalComponent {
     this.terminal.write('\x1bc');
     if (this.electronService.isElectron) {
       this.terminalService.send('clear\r');
+    }
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['tab']) {
+      switch (this.tab) {
+        case 'default':
+          this.selectedTabIndex = 0;
+          break;
+        case 'error':
+          this.selectedTabIndex = 1;
+          break;
+        default:
+          break;
+      }
     }
   }
 
@@ -153,5 +175,9 @@ export class TerminalComponent {
 
   closeNodePty() {
     this.terminalService.close();
+  }
+
+  view(item) {
+
   }
 }

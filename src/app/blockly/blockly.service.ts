@@ -141,13 +141,13 @@ export class BlocklyService {
         }
       }
     } catch (error) {
-      console.error(error);
-      this.notice.update({
-        title: '加载库失败',
-        text: `失败项目: ${libPackageName}`,
-        state: 'error',
-        detail: error,
-      })
+      console.error(error);      
+      // this.notice.update({
+      //   title: '加载库失败',
+      //   text: `失败项目: ${libPackageName}`,
+      //   state: 'error',
+      //   detail: JSON.stringify(error)
+      // })
     }
   }
 

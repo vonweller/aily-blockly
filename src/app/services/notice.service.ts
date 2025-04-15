@@ -10,10 +10,16 @@ export class NoticeService {
 
   stateSubject = new Subject<NoticeOptions>();
 
+  noticeList: NoticeOptions[] = [];
+
   constructor() { }
 
   update(opts: NoticeOptions | null) {
+    opts['timestamp'] = Date.now();
+    opts['showDetail'] = false;
     this.stateSubject.next(opts);
+    this.noticeList.push(opts);
+    console.log(opts);
   }
 }
 
@@ -25,4 +31,6 @@ export interface NoticeOptions {
   setTimeout?: number,
   stop?: Function,
   detail?: string,
+  showDetail?: boolean,
+  timestamp?: number,
 }

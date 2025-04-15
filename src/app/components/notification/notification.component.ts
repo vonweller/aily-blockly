@@ -2,6 +2,7 @@ import { ChangeDetectorRef, Component, ElementRef, Renderer2 } from '@angular/co
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { CommonModule } from '@angular/common';
 import { NoticeOptions, NoticeService } from '../../services/notice.service';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-notification',
@@ -29,7 +30,8 @@ export class NotificationComponent {
     private noticeService: NoticeService,
     private cd: ChangeDetectorRef,
     private elementRef: ElementRef,
-    private renderer: Renderer2
+    private renderer: Renderer2,
+    private uiService: UiService
   ) { }
 
   timer;
@@ -138,6 +140,8 @@ export class NotificationComponent {
 
   view() {
     console.log('viewDetail');
+    console.log(this.data);
+    this.uiService.openTerminal('error');
   }
 
   askAI() {

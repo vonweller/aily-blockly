@@ -20,6 +20,7 @@ import './custom-field/field-multilineinput.js';
 import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
+import { NoticeService } from '../services/notice.service.js';
 
 @Component({
   selector: 'blockly-main',
@@ -99,16 +100,15 @@ export class BlocklyComponent {
     },
     multiSelectKeys: ['Shift'],
     multiselectCopyPaste: {
-      // Enable the copy/paste accross tabs feature (true by default).
       crossTab: true,
-      // Show the copy/paste menu entries (true by default).
       menu: true,
     },
   }
 
   constructor(
     private blocklyService: BlocklyService,
-    private modal: NzModalService
+    private modal: NzModalService,
+    private noticeService: NoticeService,
   ) { }
 
   ngOnInit(): void {
@@ -129,6 +129,28 @@ export class BlocklyComponent {
           originalWarn.apply(console, arguments);
         };
       })(console.warn);
+      console.error = (message, ...args) => {
+        let errorMessage = message + '   ' + args.join('\n');
+        console.log('Blockly错误：', errorMessage);
+        if (/block/i.test(errorMessage)) {
+          // 常见错误1：Invalid block definition
+          let title = message;
+          let text = args.join('\n');
+          if (errorMessage.includes('Invalid block definition')) {
+            title = '无效的块定义';
+          }
+          if (text.startsWith("TypeError: ")) {
+            text = text.substring("TypeError: ".length);
+          }
+          this.noticeService.update({
+            title,
+            text,
+            detail: errorMessage,
+            state: 'error',
+            setTimeout: 99000,
+          });
+        }
+      };
 
       Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', this.options);

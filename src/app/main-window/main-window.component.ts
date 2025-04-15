@@ -44,7 +44,7 @@ import { NzModalModule } from 'ng-zorro-antd/modal';
 export class MainWindowComponent {
   showRbox = false;
   showBbox = false;
-  terminalTab = 'default';
+  terminalTab = 'default';  // error,info,log
 
   loaded = false;
   mode;

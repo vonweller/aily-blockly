@@ -2,9 +2,9 @@
   <div class="header">
     <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedTabIndex">
       <nz-tab nzTitle="终端"></nz-tab>
-      <nz-tab nzTitle="编译"></nz-tab>
       <nz-tab nzTitle="错误"></nz-tab>
-      <nz-tab nzTitle="日志"></nz-tab>
+      <!-- <nz-tab nzTitle="编译"></nz-tab> -->
+      <!-- <nz-tab nzTitle="日志"></nz-tab> -->
     </nz-tabset>
     <div class="tool-btns">
       <div class="btn ccenter" (click)="trash()">
@@ -17,7 +17,19 @@
   </div>
   <div class="content">
     <div class="terminal-box" #terminal></div>
+    <div class="error-box" [ngStyle]="{'z-index': selectedTabIndex==1 ? 100 : -1}">
+      @for(item of noticeList;track item.timestamp) {
+      <div class="item" (click)="item.showDetail=!item.showDetail"
+        [ngClass]="{'error':item.state=='error','warn':item.state=='warn'}">
+        <div class="title">{{item.title}}</div>
+        <!-- <div class="text">{{item.text}}</div> -->
+        <!-- @if(item.showDetail){ -->
+        <div class="text">{{item.detail}}</div>
+        <!-- } -->
+      </div>
+      }
+    </div>
+
     <div class="compile"></div>
-    <div class="error"></div>
   </div>
 </div>

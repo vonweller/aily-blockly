@@ -38,8 +38,12 @@ export class ToolboxSearchCategory extends Blockly.ToolboxCategory {
     opt_parent?: Blockly.ICollapsibleToolboxItem,
   ) {
     super(categoryDef, parentToolbox, opt_parent);
-    this.initBlockSearcher();
-    this.registerShortcut();
+    try {
+      this.initBlockSearcher();
+      this.registerShortcut();
+    } catch (error) {
+      console.error('Error initializing ToolboxSearchCategory:', error);
+    }
   }
 
   /**
