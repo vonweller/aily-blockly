@@ -93,11 +93,14 @@ export class BuilderService {
     // 解压libraries到临时文件夹
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
-      let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
-      if (!window['path'].isExists(sourcePath)) continue;
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
-      await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
+      
+      if (!window['path'].isExists(targetPath)) {
+        let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
+        if (!window['path'].isExists(sourcePath)) continue;
+        await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
+      }
     }
 
     // 获取编译命令
