@@ -260,6 +260,9 @@ export class BlocklyComponent {
         },
         nzOnCancel: () => {
           console.log('cancel');
+        },
+        nzData: {
+          title: message
         }
       });
     });
