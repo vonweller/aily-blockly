@@ -142,7 +142,7 @@ export class BlocklyService {
       }
     } catch (error) {
       console.error(error);      
-      // this.notice.update({
+      // this.noticeService.update({
       //   title: '加载库失败',
       //   text: `失败项目: ${libPackageName}`,
       //   state: 'error',

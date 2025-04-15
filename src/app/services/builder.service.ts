@@ -18,7 +18,7 @@ export class BuilderService {
     private projectService: ProjectService,
     private terminalService: TerminalService,
     private message: NzMessageService,
-    private notice: NoticeService
+    private noticeService: NoticeService
   ) { }
 
   private buildInProgress = false;
@@ -69,7 +69,7 @@ export class BuilderService {
   }
 
   async build(): Promise<ActionState> {
-    this.notice.update(null);
+    this.noticeService.clear();
 
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
@@ -240,7 +240,7 @@ export class BuilderService {
             }
 
             if (isErrored) {
-              this.notice.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
+              this.noticeService.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
               this.buildInProgress = false;
               await this.terminalService.stopStream(streamId);
               this.uiService.updateState({ state: 'error', text: errorText });
@@ -248,13 +248,13 @@ export class BuilderService {
             } else {
               // 更新状态
               if (!buildCompleted) {
-                this.notice.update({
+                this.noticeService.update({
                   title: title, text: lastBuildText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
                     this.cancelBuild();
                   }
                 });
               } else {
-                this.notice.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
+                this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
                 this.uiService.updateState({ state: 'done', text: '编译完成' });
 
                 this.buildInProgress = false;
@@ -300,7 +300,7 @@ export class BuilderService {
             this.currentBuildStreamId
           ).then(() => {
             console.log('编译流已停止');
-            this.notice.update(null);
+            this.noticeService.clear();
             this.terminalService.stopStream(this.currentBuildStreamId);
             this.currentBuildStreamId = null;
             this.message.success('编译已中断');
@@ -310,7 +310,7 @@ export class BuilderService {
       })
       .catch(error => {
         console.error('取消编译失败:', error);
-        this.notice.update(null)
+        this.noticeService.clear()
         this.message.warning('取消编译失败: ' + error.message);
         return false;
       });

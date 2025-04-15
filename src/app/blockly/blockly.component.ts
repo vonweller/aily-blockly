@@ -129,28 +129,34 @@ export class BlocklyComponent {
           originalWarn.apply(console, arguments);
         };
       })(console.warn);
-      console.error = (message, ...args) => {
-        let errorMessage = message + '   ' + args.join('\n');
-        console.log('Blockly错误：', errorMessage);
-        if (/block/i.test(errorMessage)) {
-          // 常见错误1：Invalid block definition
-          let title = message;
-          let text = args.join('\n');
-          if (errorMessage.includes('Invalid block definition')) {
-            title = '无效的块定义';
+      console.error = ((originalError) => {
+        return (message, ...args) => {
+          // 保留原始错误输出功能
+          originalError.apply(console, arguments);
+
+          // 处理特定错误
+          let errorMessage = message + '   ' + args.join('\n');
+          console.log('Blockly错误：', errorMessage);
+          if (/block/i.test(errorMessage)) {
+            // 常见错误1：Invalid block definition
+            let title = message;
+            let text = args.join('\n');
+            if (errorMessage.includes('Invalid block definition')) {
+              title = '无效的块定义';
+            }
+            if (text.startsWith("TypeError: ")) {
+              text = text.substring("TypeError: ".length);
+            }
+            this.noticeService.update({
+              title,
+              text,
+              detail: errorMessage,
+              state: 'error',
+              setTimeout: 99000,
+            });
           }
-          if (text.startsWith("TypeError: ")) {
-            text = text.substring("TypeError: ".length);
-          }
-          this.noticeService.update({
-            title,
-            text,
-            detail: errorMessage,
-            state: 'error',
-            setTimeout: 99000,
-          });
-        }
-      };
+        };
+      })(console.error);
 
       Blockly.setLocale(<any>zhHans);
       this.workspace = Blockly.inject('blocklyDiv', this.options);

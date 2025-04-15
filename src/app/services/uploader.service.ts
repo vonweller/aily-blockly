@@ -22,7 +22,7 @@ export class UploaderService {
     private message: NzMessageService,
     private blocklyService: BlocklyService,
     private builderService: BuilderService,
-    private notice: NoticeService
+    private noticeService: NoticeService
   ) { }
 
   uploadInProgress = false;
@@ -66,7 +66,7 @@ export class UploaderService {
     let isErrored = false;
     let uploadCompleted = false;
 
-    this.notice.update(null)
+    this.noticeService.clear()
 
     // 对比代码是否有变化
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
@@ -114,7 +114,7 @@ export class UploaderService {
       return ({ state: 'error', text: '缺少板子信息' });
     }
 
-    this.notice.update(null)
+    this.noticeService.clear()
 
     let lastUploadText = `正在上传${boardJson.name}`;
 
@@ -162,7 +162,7 @@ export class UploaderService {
 
       console.log("start progress: ", lastProgress);
       this.uploadInProgress = true;
-      this.notice.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
+      this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
     
       this.terminalService.startStream().then(streamId => {
         this.currentUploadStreamId = streamId;
@@ -225,7 +225,7 @@ export class UploaderService {
             }
 
             if (isErrored) {
-              this.notice.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
+              this.noticeService.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
               this.uploadInProgress = false;
               await this.terminalService.stopStream(streamId);
               this.uiService.updateState({ state: 'error', text: errorText });
@@ -233,10 +233,10 @@ export class UploaderService {
             } else {
               // 上传
               if (!uploadCompleted) {
-                this.notice.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
+                this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
                   this.cancelBuild()}});
               } else {
-                this.notice.update({ title: completeTitle, text: completeText, state: 'done', setTimeout: 55000 });
+                this.noticeService.update({ title: completeTitle, text: completeText, state: 'done', setTimeout: 55000 });
                 this.uiService.updateState({ state: 'done', text: completeText });
 
                 this.uploadInProgress = false;
@@ -280,7 +280,7 @@ export class UploaderService {
             this.currentUploadStreamId
           ).then(() => {
             console.log('上传已停止');
-            this.notice.update(null);
+            this.noticeService.clear();
             this.terminalService.stopStream(this.currentUploadStreamId);
             this.currentUploadStreamId = null;
             this.message.success('上传已中断');
@@ -290,7 +290,7 @@ export class UploaderService {
       })
       .catch(error => {
         console.error('取消上传失败:', error);
-        this.notice.update(null)
+        this.noticeService.clear()
         this.message.warning('取消上传失败: ' + error.message);
         return false;
       });

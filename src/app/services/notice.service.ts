@@ -14,12 +14,16 @@ export class NoticeService {
 
   constructor() { }
 
-  update(opts: NoticeOptions | null) {
+  update(opts: NoticeOptions) {
     opts['timestamp'] = Date.now();
     opts['showDetail'] = false;
     this.stateSubject.next(opts);
     this.noticeList.push(opts);
-    console.log(opts);
+    // console.log(opts);
+  }
+
+  clear() {
+    this.stateSubject.next(null);
   }
 }
 
