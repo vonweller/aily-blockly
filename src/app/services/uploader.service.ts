@@ -145,7 +145,7 @@ export class UploaderService {
     // 上传
     await this.uiService.openTerminal();
 
-    this.uiService.updateState({ state: 'doing', text: '准备完成，开始上传...' });
+    this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
 
     return new Promise<ActionState>((resolve, reject) => {
       // 将resolve函数保存，以便在取消时使用

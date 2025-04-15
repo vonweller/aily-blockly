@@ -186,7 +186,7 @@ export class SerialMonitorComponent {
       setTimeout(() => {
         this.cd.detectChanges();
         if (this.autoScroll) {
-          if(this.simplebar.SimpleBar){
+          if (this.simplebar.SimpleBar) {
             this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
           }
         }
@@ -199,6 +199,14 @@ export class SerialMonitorComponent {
         this.simplebar.SimpleBar.getScrollElement().addEventListener('scroll', this.handleScroll.bind(this));
       }
     }, 100);
+
+    // 上传过程中断开串口连接
+    this.uiService.stateSubject.subscribe((state) => {
+      if (state.state == 'doing' && state.text == '固件上传中...' && this.switchValue) {
+        this.switchValue = false;
+        this.serialMonitorService.disconnect();
+      }
+    })
   }
 
   // 处理滚动事件
