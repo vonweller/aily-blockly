@@ -50,7 +50,7 @@ export class BuilderService {
     await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
     await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
 
-    await this.terminalService.sendCmd(`cd "${tempPath}"`);
+    // await this.terminalService.sendCmd(`cd "${tempPath}"`);
 
     // 生成sketch文件
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
