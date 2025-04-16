@@ -114,6 +114,12 @@ export class BlocklyService {
       // 加载block
       const blockFileIsExist = window['path'].isExists(libPackagePath + '/block.json');
       if (blockFileIsExist) {
+        // 加载generator
+        const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
+        if (generatorFileIsExist) {
+          await this.loadLibGenerator(libPackagePath + '/generator.js');
+        }
+
         let blocks = JSON.parse(window['fs'].readFileSync(libPackagePath + '/block.json'));
         let i18nData = null;
         // 检查多语言文件是否存在
@@ -133,11 +139,6 @@ export class BlocklyService {
           let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
           if (i18nData) toolbox.name = i18nData.toolbox_name;
           this.loadLibToolbox(toolbox);
-        }
-        // 加载generator
-        const generatorFileIsExist = window['path'].isExists(libPackagePath + '/generator.js');
-        if (generatorFileIsExist) {
-          await this.loadLibGenerator(libPackagePath + '/generator.js');
         }
       }
     } catch (error) {
@@ -288,14 +289,6 @@ export class BlocklyService {
   }
 
   reset() {
-    // 清理所有注册的自定义块
-    // for (const blockType in Blockly.Blocks) {
-    //   // 只清理自定义块，保留内置块
-    //   if (Blockly.Blocks.hasOwnProperty(blockType) && !blockType.startsWith('builtin_')) {
-    //     delete Blockly.Blocks[blockType];
-    //   }
-    // }
-
     // 移除所有加载的脚本标签（block.js 和 generator.js）
     const scripts = document.getElementsByTagName('script');
     const scriptSrcsToRemove = [];
