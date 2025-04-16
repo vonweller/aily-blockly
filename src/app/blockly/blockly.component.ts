@@ -13,10 +13,11 @@ import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
 // import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
 import './custom-category';
-import './custom-field/field-bitmap.js';
-import './custom-field/field-image.js';
+import './custom-field/field-bitmap';
+import './custom-field/field-bitmap-u8g2';
+import './custom-field/field-image';
 import './custom-field/field-tone';
-import './custom-field/field-multilineinput.js';
+import './custom-field/field-multilineinput';
 import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
@@ -131,12 +132,12 @@ export class BlocklyComponent {
       })(console.warn);
       console.error = ((originalError) => {
         return (message, ...args) => {
+          console.log('Blockly错误：', message, ...args);
           // 保留原始错误输出功能
           originalError.apply(console, arguments);
 
           // 处理特定错误
           let errorMessage = message + '   ' + args.join('\n');
-          console.log('Blockly错误：', errorMessage);
           if (/block/i.test(errorMessage)) {
             // 常见错误1：Invalid block definition
             let title = message;
