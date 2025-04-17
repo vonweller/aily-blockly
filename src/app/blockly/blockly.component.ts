@@ -1,17 +1,17 @@
 import { Component, ElementRef, ViewChild } from '@angular/core';
 import * as Blockly from 'blockly';
 import * as zhHans from 'blockly/msg/zh-hans';
-import {
-  ContinuousToolbox,
-  ContinuousFlyout,
-  ContinuousMetrics,
-} from './plugins/continuous-toolbox/src/index.js';
+// import {
+//   ContinuousToolbox,
+//   ContinuousFlyout,
+//   ContinuousMetrics,
+// } from './plugins/continuous-toolbox/src/index.js';
 import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
 import { DEV_THEME } from './theme.config.js';
-// import { NewVarModalComponent } from '../components/new-var-modal/new-var-modal.component';
+
 import './custom-category';
 import './custom-field/field-bitmap';
 import './custom-field/field-bitmap-u8g2';
@@ -20,6 +20,8 @@ import './custom-field/field-tone';
 import './custom-field/field-multilineinput';
 import './custom-field/field-slider';
 import './custom-field/field-angle';
+import '@blockly/field-colour-hsv-sliders';
+
 import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';

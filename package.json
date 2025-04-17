@@ -78,6 +78,7 @@
     "@angular/platform-browser": "^19.0.0",
     "@angular/platform-browser-dynamic": "^19.0.0",
     "@angular/router": "^19.0.0",
+    "@blockly/field-colour-hsv-sliders": "^5.0.12",
     "@ctrl/tinycolor": "^4.1.0",
     "@lydell/node-pty": "^1.1.0",
     "@microsoft/fetch-event-source": "^2.0.1",
