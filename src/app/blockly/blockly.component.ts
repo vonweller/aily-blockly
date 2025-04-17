@@ -18,6 +18,8 @@ import './custom-field/field-bitmap-u8g2';
 import './custom-field/field-image';
 import './custom-field/field-tone';
 import './custom-field/field-multilineinput';
+import './custom-field/field-slider';
+import './custom-field/field-angle';
 import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
