@@ -69,6 +69,11 @@ export class SettingsComponent {
       icon: 'fa-light fa-layer-group',
       content: [{ name: 'SETTINGS.FIELDS.BOARD_LIST', type: 'board-manager' }],
     },
+    {
+      name: 'MCP',
+      icon: 'fa-light fa-webhook',
+      content: [{ name: 'SETTINGS.FIELDS.MCP', type: 'mcp-manager' }],
+    },
   ];
 
   UiThemeValue = 'dark';
