@@ -30,11 +30,11 @@
     "SETTINGS": {
         "TITLE": "Settings",
         "SECTIONS": {
-            "BASIC": "Basic Settings",
-            "THEME": "Theme Settings",
-            "COMPILATION": "Compilation Settings",
-            "REPOSITORY": "Repository Settings",
-            "BOARD_MANAGEMENT": "Board Management"
+            "BASIC": "Basic",
+            "THEME": "Theme",
+            "COMPILATION": "Compilation",
+            "REPOSITORY": "Repository",
+            "BOARD_MANAGEMENT": "Boards"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Project Folder",

@@ -11,6 +11,8 @@ import { TranslationService } from '../../services/translation.service';
 import { ConfigService } from '../../services/config.service';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { TranslateModule } from '@ngx-translate/core';
+import { NzSwitchModule } from 'ng-zorro-antd/switch';
+
 @Component({
   selector: 'app-settings',
   imports: [
@@ -22,6 +24,7 @@ import { TranslateModule } from '@ngx-translate/core';
     NzRadioModule,
     SimplebarAngularModule,
     TranslateModule,
+    NzSwitchModule
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
@@ -40,39 +43,27 @@ export class SettingsComponent {
   items = [
     {
       name: 'SETTINGS.SECTIONS.BASIC',
-      icon: 'fa-light fa-gear',
-      content: [
-        { name: 'SETTINGS.FIELDS.PROJECT_FOLDER', key: 'fa-light fa-gear' },
-        { name: 'SETTINGS.FIELDS.LANGUAGE', key: 'base.lang' },
-      ],
+      icon: 'fa-light fa-gear'
     },
     {
       name: 'SETTINGS.SECTIONS.THEME',
-      icon: 'fa-light fa-gift',
-      content: [
-        { name: 'SETTINGS.FIELDS.UI_THEME', key: 'theme.theme' },
-        { name: 'SETTINGS.FIELDS.BLOCKLY_THEME', key: 'theme.font' },
-      ],
+      icon: 'fa-light fa-gift'
     },
     {
       name: 'SETTINGS.SECTIONS.COMPILATION',
-      icon: 'fa-light fa-screwdriver-wrench',
-      content: [],
+      icon: 'fa-light fa-screwdriver-wrench'
     },
     {
       name: 'SETTINGS.SECTIONS.REPOSITORY',
-      icon: 'fa-light fa-book-bookmark',
-      content: [{ name: 'SETTINGS.FIELDS.REPOSITORY_URLS', type: 'registry-manager' }],
+      icon: 'fa-light fa-book-bookmark'
     },
     {
       name: 'SETTINGS.SECTIONS.BOARD_MANAGEMENT',
-      icon: 'fa-light fa-layer-group',
-      content: [{ name: 'SETTINGS.FIELDS.BOARD_LIST', type: 'board-manager' }],
+      icon: 'fa-light fa-layer-group'
     },
     {
       name: 'MCP',
-      icon: 'fa-light fa-webhook',
-      content: [{ name: 'SETTINGS.FIELDS.MCP', type: 'mcp-manager' }],
+      icon: 'fa-light fa-webhook'
     },
   ];
 
@@ -99,6 +90,8 @@ export class SettingsComponent {
   }
 
   appdata_path: string
+
+  mcpServiceList = []
 
 
   constructor(
@@ -131,7 +124,7 @@ export class SettingsComponent {
   // 使用锚点滚动到指定部分
   scrollToSection(item) {
     this.activeSection = item.name;
-    const element = document.getElementById(`section-${item.name}`);
+    const element = document.getElementById(item.name);
     if (element && this.scrollContainer) {
       // 针对simplebar调整滚动方法
       const simplebarInstance = this.scrollContainer['SimpleBar'];
@@ -179,7 +172,7 @@ export class SettingsComponent {
     this.configService.save();
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
-  } 
+  }
 
   async uninstall(board) {
     this.boardOperations[board.name] = { status: 'loading' };

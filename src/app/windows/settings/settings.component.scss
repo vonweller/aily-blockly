@@ -90,16 +90,23 @@ textarea {
 
 .board-list {
   height: 100%;
-  border-radius: 5px;
+  border-radius: 2px;
   padding: 0 5px 0 10px;
   position: relative;
   overflow: auto;
+  background: #363636;
+  border: 1px solid #434343;
+  margin-bottom: 19px;
 
   .board-item {
     border-bottom: 1px solid #43494b;
     display: flex;
     align-items: center;
-    padding: 3px 0;
+    padding: 4px 0;
+
+    &:last-child {
+      border-bottom: none;
+    }
 
     .version {
       margin-left: 5px;
@@ -152,4 +159,25 @@ ngx-simplebar {
   margin-bottom: 20px;
   font-weight: 500;
   color: #fff;
+}
+
+.item {
+  .item-inner {
+    background: #363636;
+    border: 1px solid #434343;
+    flex-grow: 1;
+    display: flex;
+    height: 32px;
+    border-radius: 2px;
+    padding: 4px 11px;
+    .w50 {
+      width: 50%;
+      display: flex;
+      justify-content: flex-start;
+
+      nz-switch {
+        margin-left: 15px;
+      }
+    }
+  }
 }
