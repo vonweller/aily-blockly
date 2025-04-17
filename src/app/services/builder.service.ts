@@ -97,7 +97,6 @@ export class BuilderService {
 
     // 生成sketch文件
     const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    console.info("code: ", code);
     this.lastCode = code;
     await window['fs'].writeFileSync(sketchFilePath, code);
 
@@ -112,7 +111,7 @@ export class BuilderService {
     Object.entries(dependencies).forEach(([key, version]) => {
       if (key.startsWith('@aily-project/board-')) {
         board = key
-      } else if (key.startsWith('@aily-project/lib-')) {
+      } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
         libsPath.push(key)
       }
     });
@@ -139,11 +138,22 @@ export class BuilderService {
       let targetName = lib.split('@aily-project/')[1];
       let targetPath = `${librariesPath}/${targetName}`;
 
-      if (!window['path'].isExists(targetPath)) {
-        let sourcePath = `${projectPath}/node_modules/${lib}/src.7z`;
-        if (!window['path'].isExists(sourcePath)) continue;
-        await this.terminalService.sendCmd(`7za x "${sourcePath}" -o"${targetPath}" -y`);
+      if (window['path'].isExists(targetPath)) {
+        await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
       }
+
+      let sourceZipPath = `${projectPath}/node_modules/${lib}/src.7z`;
+      if (!window['path'].isExists(sourceZipPath)) continue;
+
+      let sourcePath = `${projectPath}/node_modules/${lib}/src`;
+      if (window['path'].isExists(sourcePath)) {
+        // 直接复制src到targetPath
+        await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+      } else {
+        await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${targetPath}" -y`);
+      }
+
+      await this.waitForDirectoryExists(targetPath, 5000, 100);
     }
 
     // 获取编译命令
@@ -243,21 +253,22 @@ export class BuilderService {
 
             // 提取进度信息
             const progressInfo = trimmedLine.trim();
+            let progressValue = 0;
 
             // Match patterns like [========================================          ] 80%
             const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
             if (barProgressMatch) {
-              const progressValue = parseInt(barProgressMatch[1], 10);
-              lastProgress = progressValue;
-
-              // 进度为100%时标记完成
-              if (progressValue === 100 && !buildCompleted) {
-                buildCompleted = true;
+              try {
+                progressValue = parseInt(barProgressMatch[1], 10);
+              } catch (error) {
+                progressValue = 0;
+                console.warn('进度解析错误:', error);
               }
             }
 
-            // 更新状态
-            if (!buildCompleted) {
+            if (progressValue > lastProgress) {
+              console.log("progress: ", lastProgress);
+              lastProgress = progressValue;
               this.noticeService.update({
                 title: title,
                 text: lastBuildText,
@@ -266,7 +277,15 @@ export class BuilderService {
                   this.cancelBuild();
                 }
               });
-            } else {
+            }
+
+            // 进度为100%时标记完成
+            if (lastProgress === 100 && !buildCompleted) {
+              buildCompleted = true;
+            }
+
+            // 更新状态
+            if (buildCompleted) {
               this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
               // this.uiService.updateState({ state: 'done', text: '编译完成' });
 
