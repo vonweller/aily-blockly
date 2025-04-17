@@ -189,7 +189,7 @@ export class BuilderService {
     return new Promise<ActionState>((resolve, reject) => {
       this.buildResolver = resolve;
 
-      const compileCommand = `arduino-cli.exe ${compilerParam} --libraries '${librariesPath}' --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
+      const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
 
       const title = `编译 ${boardJson.name}`;
       const completeTitle = `编译完成`;
