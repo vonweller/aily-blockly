@@ -57,6 +57,8 @@ export class BuilderService {
           }
         } catch (error) {
           console.warn(`检查目录时出错: ${error.message}`);
+          reject(error);
+          return;
         }
 
         // 目录不存在，继续等待
@@ -171,7 +173,7 @@ export class BuilderService {
     const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
     const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
-    this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
+    // this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
 
     // 创建返回的 Promise
     return new Promise<ActionState>((resolve, reject) => {
@@ -179,7 +181,7 @@ export class BuilderService {
 
       const compileCommand = `arduino-cli.exe ${compilerParam} --libraries '${librariesPath}' --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
 
-      const title = `正在编译 ${boardJson.name}`;
+      const title = `编译 ${boardJson.name}`;
       const completeTitle = `编译完成`;
 
       // 用于跟踪编译状态
@@ -201,82 +203,89 @@ export class BuilderService {
             if (!this.buildInProgress) {
               resolve({ state: 'canceled', text: '编译已取消' });
             }
-
             // 处理每一行输出
             const trimmedLine = line.trim();
 
+            if (isErrored) return; // 如果已发生错误，则不再处理输出
+
+            // 检查是否有错误信息
+            if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
+              console.error("检测到编译错误:", trimmedLine);
+              // 提取更有用的错误信息，避免过长
+              const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
+              errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
+
+              // 错误时立即返回，避免继续处理
+              isErrored = true;
+              this.buildInProgress = false;
+              // this.uiService.updateState({ state: 'error', text: errorText });
+              this.noticeService.update({
+                title: title,
+                text: errorText,
+                detail: errorText,
+                state: 'error',
+                setTimeout: 55000
+              });
+
+              // 清理资源后再拒绝Promise
+              this.buildInProgress = false;
+              this.buildResolver = null;
+              this.passed = false;
+              await this.terminalService.stopStream(streamId);
+              return reject({ state: 'error', text: errorText });
+            }
             // 提取构建文本
             if (trimmedLine.startsWith('BuildText:')) {
               const buildText = trimmedLine.replace('BuildText:', '').trim();
-              console.log("Build text:", buildText);
               lastBuildText = buildText;
               // this.uiService.updateState({ state: 'doing', text: buildText });
             }
-            // 检查错误信息
-            else if (trimmedLine.toLowerCase().includes('error:') ||
-              trimmedLine.toLowerCase().includes('error during build:') ||
-              trimmedLine.toLowerCase().includes('failed') ||
-              trimmedLine.toLowerCase().includes('fatal')) {
-              console.error("检测到编译错误:", trimmedLine);
-              errorText = trimmedLine;
-              isErrored = true;
+
+            // 提取进度信息
+            const progressInfo = trimmedLine.trim();
+
+            // Match patterns like [========================================          ] 80%
+            const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
+            if (barProgressMatch) {
+              const progressValue = parseInt(barProgressMatch[1], 10);
+              lastProgress = progressValue;
+
+              // 进度为100%时标记完成
+              if (progressValue === 100 && !buildCompleted) {
+                buildCompleted = true;
+              }
             }
-            else {
-              // 提取进度信息
-              console.log(trimmedLine);
-              const progressInfo = trimmedLine.trim();
 
-              // Match patterns like [========================================          ] 80%
-              const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
-              if (barProgressMatch) {
-                const progressValue = parseInt(barProgressMatch[1], 10);
-                lastProgress = progressValue;
-
-                // 进度为100%时标记完成
-                if (progressValue === 100 && !buildCompleted) {
-                  buildCompleted = true;
+            // 更新状态
+            if (!buildCompleted) {
+              this.noticeService.update({
+                title: title,
+                text: lastBuildText,
+                state: 'doing',
+                progress: lastProgress, setTimeout: 0, stop: () => {
+                  this.cancelBuild();
                 }
-              }
-            }
-
-            if (isErrored) {
-              this.noticeService.update({ title: title, text: errorText, state: 'error', setTimeout: 55000 });
-              this.buildInProgress = false;
-              await this.terminalService.stopStream(streamId);
-              this.uiService.updateState({ state: 'error', text: errorText });
-              reject({ state: 'error', text: errorText });
+              });
             } else {
-              // 更新状态
-              if (!buildCompleted) {
-                this.noticeService.update({
-                  title: title,
-                  text: lastBuildText, 
-                  state: 'doing', 
-                  progress: lastProgress, setTimeout: 0, stop: () => {
-                    this.cancelBuild();
-                  }
-                });
-              } else {
-                this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
-                this.uiService.updateState({ state: 'done', text: '编译完成' });
+              this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
+              // this.uiService.updateState({ state: 'done', text: '编译完成' });
 
-                this.buildInProgress = false;
-                this.buildResolver = null;
-                await this.terminalService.stopStream(streamId);
-                this.passed = true;
-                resolve({ state: 'done', text: '编译完成' });
-              }
+              this.buildInProgress = false;
+              this.buildResolver = null;
+              await this.terminalService.stopStream(streamId);
+              this.passed = true;
+              return resolve({ state: 'done', text: '编译完成' });
             }
-          }
+          },
         ).catch(error => {
-          console.error("编译命令执行失败:", error);
-          this.uiService.updateState({ state: 'error', text: '编译失败' });
+          // this.uiService.updateState({ state: 'error', text: '编译失败' });
           this.message.error('编译失败: ' + error.message);
+          this.noticeService.update({ title: title, text: '编译失败', detail: error, state: 'error', setTimeout: 55000 });
           this.buildInProgress = false;
           this.buildResolver = null;
           this.terminalService.stopStream(streamId);
           this.passed = false;
-          resolve({ state: 'error', text: error.message });
+          reject({ state: 'error', text: error.message });
         });
       })
     });
@@ -307,13 +316,13 @@ export class BuilderService {
             this.terminalService.stopStream(this.currentBuildStreamId);
             this.currentBuildStreamId = null;
             this.message.success('编译已中断');
-            this.uiService.updateState({ state: 'done', text: '编译已取消' });
+            // this.uiService.updateState({ state: 'done', text: '编译已取消' });
           });
         }
       })
       .catch(error => {
         console.error('取消编译失败:', error);
-        this.noticeService.clear()
+        this.noticeService.update({ title: '取消编译失败', text: error.message, state: 'error', setTimeout: 55000 });
         this.message.warning('取消编译失败: ' + error.message);
         return false;
       });
