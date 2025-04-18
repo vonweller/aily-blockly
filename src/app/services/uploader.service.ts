@@ -75,6 +75,12 @@ export class UploaderService {
       await this.builderService.build();
     }
 
+    if (!this.builderService.passed) {
+      // this.message.error('编译失败，请检查代码');
+      this.uploadInProgress = false;
+      return { state: 'error', text: '编译失败，请检查代码' };
+    }
+
     const projectPath = this.projectService.currentProjectPath;
     const tempPath = projectPath + '/.temp';
     const buildPath = tempPath + '/build';
