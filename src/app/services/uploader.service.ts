@@ -64,6 +64,7 @@ export class UploaderService {
 
     this.uploadInProgress = true;
     let isErrored = false;
+    let isStopped = false;
     let uploadCompleted = false;
 
     this.noticeService.clear()
@@ -151,7 +152,7 @@ export class UploaderService {
     // 上传
     await this.uiService.openTerminal();
 
-    this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
+    // this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
 
     return new Promise<ActionState>((resolve, reject) => {
       // 将resolve函数保存，以便在取消时使用
@@ -188,6 +189,46 @@ export class UploaderService {
             // 尝试使用所有模式匹配进度
             let progressValue = null;
 
+            if (isErrored) {
+              if (isStopped) {
+                return;
+              }
+
+              this.noticeService.update({ 
+                title: "上传失败", 
+                text: errorText,
+                detail: ">> " + trimmedLine,
+                state: 'error', 
+                setTimeout: 55000 
+              });
+            };
+
+            // 检查是否有错误信息
+            if (trimmedLine.toLowerCase().includes('error:') ||
+              trimmedLine.toLowerCase().includes('failed')) {
+              console.error("检测到上传错误:", trimmedLine);
+              errorText = trimmedLine;
+              isErrored = true;
+
+              this.noticeService.update({
+                title: errorTitle,
+                text: errorText,
+                state: 'error',
+                setTimeout: 55000
+              });
+
+              this.uploadInProgress = false;
+              this.uploadResolver = null;
+
+              setTimeout(async () => {
+                await this.terminalService.stopStream(streamId);
+                return reject({ state: 'error', text: errorText });
+              }, 1000);
+
+              return;
+            }
+
+
             // 使用通用提取方法获取进度
             // const progressValue = this.extractProgressFromLine(trimmedLine);
             // console.log("trimmedLine: ", trimmedLine);
@@ -211,54 +252,48 @@ export class UploaderService {
               }
             }
 
-            // 如果找到有效的进度值
-            if (progressValue !== null) {
-              console.log(`检测到上传进度: ${progressValue}%`);
+            if (progressValue && progressValue > lastProgress) {
+              console.log("progress: ", lastProgress);
               lastProgress = progressValue;
-
-              // 进度为100%时标记完成
-              if (progressValue === 100 && !uploadCompleted) {
-                uploadCompleted = true;
-                console.log("上传完成: 100%");
-              }
-            }
-            // 检查错误信息
-            else if (trimmedLine.toLowerCase().includes('error:') ||
-              trimmedLine.toLowerCase().includes('failed')) {
-              console.error("检测到上传错误:", trimmedLine);
-              errorText = trimmedLine;
-              isErrored = true;
+              this.noticeService.update({
+                title: title, 
+                text: lastUploadText, 
+                state: 'doing',
+                 progress: lastProgress, 
+                 setTimeout: 0, 
+                 stop: () => {
+                  this.cancelBuild()
+                }
+              });
             }
 
-            if (isErrored) {
-              this.noticeService.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
+            // 进度为100%时标记完成
+            if (progressValue === 100 && !uploadCompleted) {
+              uploadCompleted = true;
+              console.log("上传完成: 100%");
+            }
+            // 上传
+            if (uploadCompleted) {
+              this.noticeService.update({ 
+                title: completeTitle, 
+                text: completeText, 
+                state: 'done', 
+                setTimeout: 55000 
+              });
+
               this.uploadInProgress = false;
+              this.uploadResolver = null;
               await this.terminalService.stopStream(streamId);
-              this.uiService.updateState({ state: 'error', text: errorText });
-              reject({ state: 'error', text: errorText });
-            } else {
-              // 上传
-              if (!uploadCompleted) {
-                this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
-                  this.cancelBuild()}});
-              } else {
-                this.noticeService.update({ title: completeTitle, text: completeText, state: 'done', setTimeout: 55000 });
-                this.uiService.updateState({ state: 'done', text: completeText });
-
-                this.uploadInProgress = false;
-                this.uploadResolver = null;
-                await this.terminalService.stopStream(streamId);
-                resolve({ state: 'done', text: '上传完成' });
-              }
+              return resolve({ state: 'done', text: '上传完成' });
             }
           },
         ).catch(error => {
-          console.error("上传执行失败:", error);
-          this.uiService.updateState({ state: 'error', text: '上传失败' });
-          this.message.error('上传失败: ' + error.message);
+          // console.error("上传执行失败:", error);
+          // this.uiService.updateState({ state: 'error', text: '上传失败' });
+          // this.message.error('上传失败: ' + error.message);
           this.uploadInProgress = false;
           this.uploadResolver = null;
-          reject({ state: 'error', text: error.message });
+          return reject({ state: 'error', text: error.message });
         });
 
       });
@@ -285,12 +320,12 @@ export class UploaderService {
             this.terminalService.currentPid,
             this.currentUploadStreamId
           ).then(() => {
-            console.log('上传已停止');
+            // console.log('上传已停止');
             this.noticeService.clear();
             this.terminalService.stopStream(this.currentUploadStreamId);
             this.currentUploadStreamId = null;
             this.message.success('上传已中断');
-            this.uiService.updateState({ state: 'done', text: '上传已中断' });
+            // this.uiService.updateState({ state: 'done', text: '上传已中断' });
           });
         }
       })

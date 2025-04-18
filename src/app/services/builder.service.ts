@@ -243,7 +243,6 @@ export class BuilderService {
 
               // 错误时立即返回，避免继续处理
               isErrored = true;
-              this.buildInProgress = false;
               // this.uiService.updateState({ state: 'error', text: errorText });
               this.noticeService.update({
                 title: "编译错误",
@@ -262,6 +261,8 @@ export class BuilderService {
                 await this.terminalService.stopStream(streamId);
                 return reject({ state: 'error', text: errorText });
               }, 1000);
+
+              return;
             }
             // 提取构建文本
             if (trimmedLine.startsWith('BuildText:')) {
