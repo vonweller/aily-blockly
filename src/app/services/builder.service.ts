@@ -216,7 +216,15 @@ export class BuilderService {
             // 处理每一行输出
             const trimmedLine = line.trim();
 
-            if (isErrored) return; // 如果已发生错误，则不再处理输出
+            if (isErrored) {
+              this.noticeService.update({
+                title: title,
+                text: errorText,
+                detail: trimmedLine,
+                state: 'error',
+                setTimeout: 55000
+              });
+            };
 
             // 检查是否有错误信息
             if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
