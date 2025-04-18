@@ -19,6 +19,7 @@ import './custom-field/field-image';
 import './custom-field/field-tone';
 import './custom-field/field-multilineinput';
 import './custom-field/field-slider';
+import './custom-field/field-angle180';
 import './custom-field/field-angle';
 import '@blockly/field-colour-hsv-sliders';
 
