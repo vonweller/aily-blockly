@@ -199,6 +199,7 @@ export class BuilderService {
       let lastProgress = 0;
       let lastBuildText = '';
       let isErrored = false;
+      let isStopped = false;
       let errorText = '编译失败';
 
       this.terminalService.startStream().then(streamId => {
@@ -217,10 +218,17 @@ export class BuilderService {
             const trimmedLine = line.trim();
 
             if (isErrored) {
+              if (isStopped) {
+                return; // 如果已经停止，则不处理后续行
+              }
+              if (/Error during build/i.test(trimmedLine) || /Used platform/i.test(trimmedLine) || /Used library Version/i.test(trimmedLine)) {
+                isStopped = true;
+                return; // Stop processing this line
+              }
               this.noticeService.update({
-                title: title,
+                title: "编译错误",
                 text: errorText,
-                detail: trimmedLine,
+                detail: ">> " + trimmedLine,
                 state: 'error',
                 setTimeout: 55000
               });
@@ -238,9 +246,9 @@ export class BuilderService {
               this.buildInProgress = false;
               // this.uiService.updateState({ state: 'error', text: errorText });
               this.noticeService.update({
-                title: title,
+                title: "编译错误",
                 text: errorText,
-                detail: errorText,
+                detail: "> " + errorText,
                 state: 'error',
                 setTimeout: 55000
               });
@@ -249,8 +257,11 @@ export class BuilderService {
               this.buildInProgress = false;
               this.buildResolver = null;
               this.passed = false;
-              await this.terminalService.stopStream(streamId);
-              return reject({ state: 'error', text: errorText });
+
+              setTimeout(async () => {
+                await this.terminalService.stopStream(streamId);
+                return reject({ state: 'error', text: errorText });
+              }, 1000);
             }
             // 提取构建文本
             if (trimmedLine.startsWith('BuildText:')) {
