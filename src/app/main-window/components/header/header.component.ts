@@ -202,7 +202,7 @@ export class HeaderComponent {
         window['other'].openByExplorer(this.projectService.currentProjectPath);
         break;
       case 'tool-open':
-        if (['MENU.AI', 'MENU.APP_STORE'].includes(item.name)) {
+        if (['MENU.APP_STORE'].includes(item.name)) {
           this.message.warning('功能暂未开放');
           break;
         }

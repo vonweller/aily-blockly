@@ -37,5 +37,9 @@ export const routes: Routes = [
     {
         path: "code-viewer",
         loadComponent: () => import('./tools/code-viewer/code-viewer.component').then(m => m.CodeViewerComponent)
+    },
+    {
+        path: "simulator",
+        loadComponent: () => import('./tools/simulator/simulator.component').then(m => m.SimulatorComponent)
     }
 ];
