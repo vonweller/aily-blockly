@@ -17,6 +17,6 @@ export class SimulatorEditorComponent {
 
   private registerWokwiElements() {
     customElements.define('simulator-led', LEDElement);
-    customElements.define('simulator-ssd1306', SSD1306Element);
+    // customElements.define('simulator-ssd1306', SSD1306Element);
   }
 }
