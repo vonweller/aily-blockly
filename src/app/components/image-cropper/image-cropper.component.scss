@@ -4,7 +4,6 @@
   background-color: #1e1e1e;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  user-select: none;
 }
 
 .image-preview {
@@ -34,7 +33,6 @@
     top: 0;
     transform-origin: center;
     cursor: move;
-    user-select: none;
     max-width: none; // 避免图片被容器限制
   }
 
