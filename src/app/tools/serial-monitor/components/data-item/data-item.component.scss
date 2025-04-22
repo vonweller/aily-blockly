@@ -5,6 +5,7 @@
   padding: 1px 3px;
   border-radius: 5px;
   margin-bottom: 1px;
+  user-select: text;
 
   &.highlight {
     background: rgba(57, 135, 252, 0.5);
