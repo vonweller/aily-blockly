@@ -1,0 +1,16 @@
+/* 允许用户在自定义元素内选择文本 */
+g[data-type="example.ArduinoElement"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+g[data-type="example.ArduinoElement"] div {
+  cursor: auto;
+}
+
+/* 确保元素显示占满容器 */
+:host {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
