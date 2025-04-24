@@ -2,8 +2,8 @@ import { Component, CUSTOM_ELEMENTS_SCHEMA, ElementRef, ViewChild } from '@angul
 import "@wokwi/elements";
 import { dia, shapes, util } from '@joint/core';
 import { ELEMENTS_CONFIG } from './elements.config';
-
 import { v4 as uuidv4 } from 'uuid'; // 需要添加uuid依赖包
+import { SimulatorService } from './simulator.service';
 
 @Component({
   selector: 'app-simulator-editor',
@@ -16,12 +16,13 @@ export class SimulatorEditorComponent {
   @ViewChild('paper', { static: true }) paperContainer!: ElementRef<HTMLDivElement>;
   private graph!: dia.Graph;
   private paper!: dia.Paper;
-  
+
   // 元素ID到JointJS元素的映射
   private elementMap: Map<string, dia.Element> = new Map();
 
   constructor(
-  ) {}
+    private simulatorService: SimulatorService
+  ) { }
 
   ngOnInit() {
     this.loadJoint();
@@ -34,11 +35,11 @@ export class SimulatorEditorComponent {
       // 更新所有使用该引脚的元素
       this.elementMap.forEach((element, id) => {
         const elementType = element.get('type').split('.')[1].replace('Element', '').toLowerCase();
-        
+
         // 获取组件ID属性
         const componentId = element.prop('componentId');
         if (!componentId) return;
-        
+
         // 更新Wokwi元素属性
         // 这里需要根据不同元素类型进行自定义处理
         if (elementType === 'wokwi-led') {
@@ -59,14 +60,14 @@ export class SimulatorEditorComponent {
     const elementId = element.id;
     const elementView = this.paper.findViewByModel(elementId);
     if (!elementView) return;
-    
+
     // 获取foreignObject中的Wokwi元素
     const wokwiElement = elementView.el.querySelector('foreignObject > *') as any;
     if (!wokwiElement) return;
-    
+
     // 根据元素类型来设置属性
     const elementType = element.get('type').split('.')[1].replace('Element', '').toLowerCase();
-    
+
     if (elementType === 'wokwi-led') {
       // LED亮灭取决于引脚状态
       if (wokwiElement.getAttribute('pin') === pinState.pin) {
@@ -104,7 +105,7 @@ export class SimulatorEditorComponent {
     const led = this.loadWokwiElement('wokwi-led', { x: 25, y: 25 }, { color: 'red', pin: '13' });
     const buzzer = this.loadWokwiElement('wokwi-buzzer', { x: 125, y: 25 }, { pin: '8' });
     const button = this.loadWokwiElement('wokwi-pushbutton', { x: 225, y: 25 }, { pin: '2' });
-    
+
     // 这里可以添加连线逻辑，连接元素
   }
 
@@ -129,7 +130,7 @@ export class SimulatorEditorComponent {
   ): dia.Element {
     // 生成组件唯一ID
     const componentId = uuidv4();
-    
+
     // 默认选项
     const defaultOptions = {
       autoResize: true,
@@ -174,7 +175,7 @@ export class SimulatorEditorComponent {
     // 创建元素实例
     const element = new CustomElement();
     element.position(position.x, position.y);
-    
+
     // 获取元素配置尺寸
     const p = ELEMENTS_CONFIG[elementType.toLowerCase()];
     if (p) {
@@ -183,25 +184,25 @@ export class SimulatorEditorComponent {
     } else {
       console.warn(`未找到元素配置: ${elementType}`);
     }
-    
+
     // 添加到图表
     element.addTo(this.graph);
-    
+
     // 保存元素到映射表
     this.elementMap.set(componentId, element);
-    
+
     // 向模拟器服务注册组件
     if (elementType !== 'wokwi-arduino-uno') { // 开发板本身不需要注册
       // 提取引脚配置
       const pinConfig: Record<string, string> = {};
-      if (props.pin) {
-        pinConfig['pin'] = props.pin;
+      if (props['pin']) {
+        pinConfig['pin'] = props['pin'];
       }
-      
+
       // 注册组件
       this.simulatorService.registerComponent(componentId, elementType, pinConfig);
     }
-    
+
     // 添加事件监听
     this.setupElementEventListeners(element, elementType, componentId, props);
 
@@ -212,7 +213,7 @@ export class SimulatorEditorComponent {
   private setupElementEventListeners(element: dia.Element, elementType: string, componentId: string, props: any) {
     // 这里添加针对不同元素类型的事件监听
     // 例如按钮的点击、开关的切换等
-    
+
     // 为按钮元素添加点击事件
     if (elementType === 'wokwi-pushbutton') {
       const pin = props.pin;
@@ -223,7 +224,7 @@ export class SimulatorEditorComponent {
             // 按钮按下，设置引脚为高电平
             this.simulatorService.setPinState(pin, true);
           });
-          
+
           buttonView.el.addEventListener('mouseup', () => {
             // 按钮释放，设置引脚为低电平
             this.simulatorService.setPinState(pin, false);
@@ -231,7 +232,7 @@ export class SimulatorEditorComponent {
         }
       }
     }
-    
+
     // 可添加其他元素类型的事件处理...
   }
 

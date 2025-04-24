@@ -1,199 +1,161 @@
 import { Injectable } from '@angular/core';
-import {
-  avrInstruction,
-  AVRTimer,
-  CPU,
-  timer0Config,
-  AVRUSART,
-  usart0Config,
-  AVRIOPort,
-  portBConfig,
-  portCConfig,
-  portDConfig
-} from "avr8js";
-import { AVRRunner } from './avrruner';
-import { BoardConfig, PinMapping, BOARD_MAPPINGS } from './/pin-mapping.config';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { Subject } from 'rxjs';
+import * as AVR8js from 'avr8js';
+import { BoardConfig, BOARD_MAPPINGS, PinMapping } from './pinmap.config';
 
 export interface PinState {
   pin: string;
   value: boolean;
-  isInput: boolean;
-  isOutput: boolean;
 }
 
-export interface ComponentState {
+export interface ComponentConfig {
   id: string;
-  elementType: string;
-  pins: Record<string, boolean>;
+  type: string;
+  pins: Record<string, string>;
 }
 
 @Injectable({
   providedIn: 'root'
 })
 export class SimulatorService {
-  runner: AVRRunner;
-  
-  // 当前选择的开发板类型
-  private currentBoard: string = 'wokwi-arduino-uno';
-  private boardConfig: BoardConfig = BOARD_MAPPINGS[this.currentBoard];
-  
-  // 所有已加载的组件
-  private components: Map<string, ComponentState> = new Map();
-  
-  // 引脚状态更新流
-  public pinStateChange = new Subject<PinState>();
-  
-  // AVR端口映射
-  private portMap: Record<string, AVRIOPort> = {};
+  // 引脚状态变化的可观察对象
+  pinStateChange = new Subject<PinState>();
 
-  constructor() {}
+  // 模拟器状态
+  private isRunning = false;
+  private boardType = '';
+  private boardConfig: BoardConfig | null = null;
+  private components: Map<string, ComponentConfig> = new Map();
+  
+  // AVR8js 相关
+  private cpu: AVR8js.CPU | null = null;
+  private ports: Map<string, AVR8js.AVRIOPort> = new Map();
+  
+  constructor() { }
 
-  // 设置当前开发板
-  setBoard(boardType: string) {
-    if (BOARD_MAPPINGS[boardType]) {
-      this.currentBoard = boardType;
-      this.boardConfig = BOARD_MAPPINGS[boardType];
+  /**
+   * 设置模拟器使用的开发板类型
+   * @param boardType 开发板类型，如'wokwi-arduino-uno'
+   */
+  setBoard(boardType: string): void {
+    this.boardType = boardType;
+    // 从配置中加载对应开发板的映射
+    this.boardConfig = BOARD_MAPPINGS[boardType] || null;
+    if (!this.boardConfig) {
+      console.error(`未找到开发板 ${boardType} 的配置`);
     } else {
-      console.error(`不支持的开发板类型: ${boardType}`);
-    }
-  }
-
-  // 加载二进制文件并初始化模拟器
-  loadBinary(hex: string) {
-    this.runner = new AVRRunner(hex);
-    
-    // 初始化端口映射
-    this.portMap = {
-      'B': this.runner.portB,
-      'C': this.runner.portC,
-      'D': this.runner.portD
-      // MEGA有更多端口需要映射
-    };
-    
-    // 监听AVR端口状态变化
-    this.setupPortListeners();
-  }
-
-  // 开始运行模拟器
-  run() {
-    if (!this.runner) {
-      console.error('请先加载程序');
-      return;
+      console.log(`已加载 ${this.boardConfig.name} 引脚映射配置`);
     }
     
-    this.runner.execute((cpu) => {
-      // 模拟器运行回调
-      // 这里可以更新UI或收集性能数据
-    });
+    // 初始化AVR8js的CPU和端口
+    this.initializeAVR();
   }
 
-  // 停止运行
-  stop() {
-    if (this.runner) {
-      this.runner.stop();
-    }
-  }
-
-  // 注册组件
-  registerComponent(id: string, elementType: string, pinConfig: Record<string, string>) {
-    const componentState: ComponentState = {
-      id,
-      elementType,
-      pins: {}
-    };
+  /**
+   * 向模拟器注册组件
+   * @param id 组件唯一ID
+   * @param type 组件类型，如'wokwi-led'
+   * @param pins 引脚配置，如 { pin: '13' }
+   */
+  registerComponent(id: string, type: string, pins: Record<string, string>): void {
+    this.components.set(id, { id, type, pins });
     
-    // 初始化组件的引脚状态
-    Object.keys(pinConfig).forEach(pinKey => {
-      const arduinoPin = pinConfig[pinKey];
-      componentState.pins[pinKey] = false;
+    // 可以在这里做一些初始化工作
+    console.log(`组件已注册: ${type}, ID: ${id}, 引脚:`, pins);
+  }
+
+  /**
+   * 设置引脚状态
+   * @param pin 引脚编号或名称
+   * @param value 引脚状态 (true=高电平, false=低电平)
+   */
+  setPinState(pin: string, value: boolean): void {
+    // 将Arduino引脚编号转换为AVR端口和引脚
+    const portPin = this.mapArduinoToAVRPin(pin);
+    if (portPin) {
+      const { port, pinIndex } = portPin;
       
-      // 设置组件引脚的初始状态
-      this.updateComponentPinState(id, pinKey, false);
-    });
-    
-    this.components.set(id, componentState);
-    return componentState;
-  }
-
-  // 获取Arduino引脚到AVR端口的映射
-  getPinMapping(pin: string): PinMapping | null {
-    return this.boardConfig.pinMappings[pin] || null;
-  }
-
-  // 设置Arduino引脚状态
-  setPinState(pin: string, value: boolean) {
-    const mapping = this.getPinMapping(pin);
-    if (!mapping || !this.portMap[mapping.port]) {
-      console.warn(`无法设置引脚 ${pin} 的状态，映射不存在`);
-      return;
+      // 如果能找到对应端口，设置引脚状态
+      const avrPort = this.ports.get(port);
+      if (avrPort) {
+        avrPort.setPin(pinIndex, value);
+      }
     }
     
-    const port = this.portMap[mapping.port];
-    // 设置引脚方向为输出
-    port.setDDR(1 << mapping.bit);
-    // 设置引脚值
-    if (value) {
-      port.setPort(port.port | (1 << mapping.bit));
-    } else {
-      port.setPort(port.port & ~(1 << mapping.bit));
-    }
-    
-    // 通知引脚状态变化
-    this.pinStateChange.next({
-      pin,
-      value,
-      isInput: false,
-      isOutput: true
-    });
+    // 发出引脚状态变化通知
+    this.pinStateChange.next({ pin, value });
   }
 
-  // 获取Arduino引脚状态
-  getPinState(pin: string): boolean | null {
-    const mapping = this.getPinMapping(pin);
-    if (!mapping || !this.portMap[mapping.port]) {
-      console.warn(`无法获取引脚 ${pin} 的状态，映射不存在`);
+  /**
+   * 启动模拟器
+   */
+  start(): void {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    
+    // 这里添加启动模拟器的代码
+    console.log('模拟器已启动');
+  }
+
+  /**
+   * 停止模拟器
+   */
+  stop(): void {
+    if (!this.isRunning) return;
+    this.isRunning = false;
+    
+    // 这里添加停止模拟器的代码
+    console.log('模拟器已停止');
+  }
+
+  /**
+   * 初始化AVR8js仿真环境
+   * 这是一个简化版实现，实际使用时需要根据AVR8js API进行完整实现
+   */
+  private initializeAVR(): void {
+    try {
+      // 创建一个AVR CPU实例
+      // 这里根据实际情况配置CPU型号、时钟频率等
+      const program = new Uint16Array(0x4000); // 16KB程序空间
+      const cpu = new AVR8js.CPU(program);
+      this.cpu = cpu;
+      
+      // 初始化IO端口
+      const portB = new AVR8js.AVRIOPort(cpu, AVR8js.portBConfig);
+      const portC = new AVR8js.AVRIOPort(cpu, AVR8js.portCConfig);
+      const portD = new AVR8js.AVRIOPort(cpu, AVR8js.portDConfig);
+      
+      // 保存端口引用
+      this.ports.set('B', portB);
+      this.ports.set('C', portC);
+      this.ports.set('D', portD);
+      
+      console.log('AVR8js环境初始化完成');
+    } catch (e) {
+      console.error('初始化AVR8js失败:', e);
+    }
+  }
+
+  /**
+   * 将Arduino引脚编号映射到AVR端口和引脚
+   * @param pin Arduino引脚编号
+   * @returns 对应的AVR端口和引脚索引
+   */
+  private mapArduinoToAVRPin(pin: string): { port: string, pinIndex: number } | null {
+    if (!this.boardConfig) {
+      console.error('未设置开发板配置，无法映射引脚');
       return null;
     }
     
-    const port = this.portMap[mapping.port];
-    return !!(port.port & (1 << mapping.bit));
-  }
-
-  // 更新组件引脚状态
-  updateComponentPinState(componentId: string, pinKey: string, value: boolean) {
-    const component = this.components.get(componentId);
-    if (component) {
-      component.pins[pinKey] = value;
+    const pinMapping = this.boardConfig.pinMappings[pin];
+    if (!pinMapping) {
+      console.error(`未找到引脚 ${pin} 的映射配置`);
+      return null;
     }
-  }
-
-  // 设置组件监听
-  private setupPortListeners() {
-    // 这里需要监听AVR端口状态变化，并更新组件状态
-    // 由于AVR8JS没有直接的端口状态变化事件，需要在execute循环中定期检查
     
-    // 简单实现：在每个执行周期检查所有组件的引脚状态
-    setInterval(() => {
-      this.components.forEach((component, id) => {
-        // 假设组件的第一个引脚配置是Arduino引脚号
-        const pinKey = Object.keys(component.pins)[0]; 
-        if (pinKey) {
-          const arduinoPin = pinKey; // 简化，实际可能需要从组件中获取配置
-          const currentState = this.getPinState(arduinoPin);
-          
-          if (currentState !== null && currentState !== component.pins[pinKey]) {
-            this.updateComponentPinState(id, pinKey, currentState);
-            // 触发组件状态更新
-            this.pinStateChange.next({
-              pin: arduinoPin,
-              value: currentState,
-              isInput: false,
-              isOutput: true
-            });
-          }
-        }
-      });
-    }, 50); // 每50ms检查一次
+    return {
+      port: pinMapping.port,
+      pinIndex: pinMapping.bit
+    };
   }
 }
