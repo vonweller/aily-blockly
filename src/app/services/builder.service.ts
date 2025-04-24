@@ -25,6 +25,7 @@ export class BuilderService {
   private currentBuildStreamId: string | null = null;
   private buildResolver: ((value: ActionState) => void) | null = null;
 
+  currentProjectPath = "";
   lastCode = "";
   passed = false;
   boardType = "";
@@ -79,8 +80,8 @@ export class BuilderService {
   async build(): Promise<ActionState> {
     this.noticeService.clear();
 
-    const projectPath = this.projectService.currentProjectPath;
-    const tempPath = projectPath + '/.temp';
+    this.currentProjectPath = this.projectService.currentProjectPath;
+    const tempPath = this.currentProjectPath + '/.temp';
     const sketchPath = tempPath + '/sketch';
     const sketchFilePath = sketchPath + '/sketch.ino';
     const librariesPath = tempPath + '/libraries';
@@ -108,7 +109,7 @@ export class BuilderService {
     await window['fs'].writeFileSync(sketchFilePath, code);
 
     // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
     const dependencies = packageJson.dependencies || {};
     const boardDependencies = packageJson.boardDependencies || {};
 
@@ -130,7 +131,7 @@ export class BuilderService {
     }
 
     // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
+    const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
     console.log("boardJson: ", boardJson);
 
     if (!boardJson) {
@@ -153,10 +154,10 @@ export class BuilderService {
         await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
       }
 
-      let sourceZipPath = `${projectPath}/node_modules/${lib}/src.7z`;
+      let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
       if (!window['path'].isExists(sourceZipPath)) continue;
 
-      let sourcePath = `${projectPath}/node_modules/${lib}/src`;
+      let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
       if (window['path'].isExists(sourcePath)) {
         // 直接复制src到targetPath
         await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
@@ -178,6 +179,8 @@ export class BuilderService {
         sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
       }
     });
+
+    console.log("sdk: ", sdk)
 
     if (!compiler || !sdk) {
       console.error('缺少编译器或sdk');
