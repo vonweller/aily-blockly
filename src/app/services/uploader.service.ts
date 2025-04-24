@@ -64,6 +64,7 @@ export class UploaderService {
 
     this.uploadInProgress = true;
     let isErrored = false;
+    let isStopped = false;
     let uploadCompleted = false;
 
     this.noticeService.clear()
@@ -80,10 +81,7 @@ export class UploaderService {
       this.uploadInProgress = false;
       return { state: 'error', text: '编译失败，请检查代码' };
     }
-
-    const projectPath = this.projectService.currentProjectPath;
-    const tempPath = projectPath + '/.temp';
-    const buildPath = tempPath + '/build';
+    const buildPath = this.builderService.buildPath;
 
     // 判断buildPath是否存在
     if (!window['path'].isExists(buildPath)) {
@@ -91,67 +89,38 @@ export class UploaderService {
       await this.builderService.build();
     }
 
-    // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-    const dependencies = packageJson.dependencies || {};
-    const boardDependencies = packageJson.boardDependencies || {};
-
-    // 从dependencies中查找以@aily-project/board-开头的依赖
-    let board = ""
-    Object.entries(dependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/board-')) {
-        board = key
-      }
-    });
-
-    if (!board) {
-      this.message.error('缺少板子信息');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少板子信息' });
-    }
-
-    // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
-    console.log("boardJson: ", boardJson);
-
-    if (!boardJson) {
-      this.message.error('缺少板子信息');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少板子信息' });
-    }
-
+    const boardJson = this.builderService.boardJson;
     this.noticeService.clear()
 
     let lastUploadText = `正在上传${boardJson.name}`;
 
     // 获取上传参数
     let uploadParam = boardJson.uploadParam;
-    // 替换uploadParam中的${serial}为当前串口
-    uploadParam = uploadParam.replace('${serial}', this.serialService.currentPort);
-
-    // 获取sdk、上传工具的名称和版本
-    let sdk = ""
-
-    Object.entries(boardDependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/sdk-')) {
-        sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
-      }
-    });
-
-    if (!sdk) {
-      this.message.error('缺少sdk信息');
+    if (!uploadParam) {
+      this.message.error('缺少上传参数');
       this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少sdk信息' });
+      return ({ state: 'error', text: '缺少上传参数' });
     }
 
-    // 组合sdk、上传工具的路径
-    const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`; 
-    const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+    let uploadParamList = uploadParam.split(' ');
+    uploadParamList = uploadParamList.map(param => {
+      // 替换${serial}为当前串口号
+      if (param.includes('${serial}')) {
+        return param.replace('${serial}', this.serialService.currentPort);
+      } else if (param.startsWith('aily:')) {
+        return this.builderService.boardType;
+      }
+      return param;
+    });
+
+    uploadParam = uploadParamList.join(' ');
+    const sdkPath = this.builderService.sdkPath;
+    const toolsPath = this.builderService.toolsPath;
 
     // 上传
     await this.uiService.openTerminal();
 
-    this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
+    // this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
 
     return new Promise<ActionState>((resolve, reject) => {
       // 将resolve函数保存，以便在取消时使用
@@ -188,6 +157,46 @@ export class UploaderService {
             // 尝试使用所有模式匹配进度
             let progressValue = null;
 
+            if (isErrored) {
+              if (isStopped) {
+                return;
+              }
+
+              this.noticeService.update({ 
+                title: "上传失败", 
+                text: errorText,
+                detail: ">> " + trimmedLine,
+                state: 'error', 
+                setTimeout: 55000 
+              });
+            };
+
+            // 检查是否有错误信息
+            if (trimmedLine.toLowerCase().includes('error:') ||
+              trimmedLine.toLowerCase().includes('failed')) {
+              console.error("检测到上传错误:", trimmedLine);
+              errorText = trimmedLine;
+              isErrored = true;
+
+              this.noticeService.update({
+                title: errorTitle,
+                text: errorText,
+                state: 'error',
+                setTimeout: 55000
+              });
+
+              this.uploadInProgress = false;
+              this.uploadResolver = null;
+
+              setTimeout(async () => {
+                await this.terminalService.stopStream(streamId);
+                return reject({ state: 'error', text: errorText });
+              }, 1000);
+
+              return;
+            }
+
+
             // 使用通用提取方法获取进度
             // const progressValue = this.extractProgressFromLine(trimmedLine);
             // console.log("trimmedLine: ", trimmedLine);
@@ -211,54 +220,48 @@ export class UploaderService {
               }
             }
 
-            // 如果找到有效的进度值
-            if (progressValue !== null) {
-              console.log(`检测到上传进度: ${progressValue}%`);
+            if (progressValue && progressValue > lastProgress) {
+              console.log("progress: ", lastProgress);
               lastProgress = progressValue;
-
-              // 进度为100%时标记完成
-              if (progressValue === 100 && !uploadCompleted) {
-                uploadCompleted = true;
-                console.log("上传完成: 100%");
-              }
-            }
-            // 检查错误信息
-            else if (trimmedLine.toLowerCase().includes('error:') ||
-              trimmedLine.toLowerCase().includes('failed')) {
-              console.error("检测到上传错误:", trimmedLine);
-              errorText = trimmedLine;
-              isErrored = true;
+              this.noticeService.update({
+                title: title, 
+                text: lastUploadText, 
+                state: 'doing',
+                 progress: lastProgress, 
+                 setTimeout: 0, 
+                 stop: () => {
+                  this.cancelBuild()
+                }
+              });
             }
 
-            if (isErrored) {
-              this.noticeService.update({ title: errorTitle, text: errorText, state: 'error', setTimeout: 55000 });
+            // 进度为100%时标记完成
+            if (progressValue === 100 && !uploadCompleted) {
+              uploadCompleted = true;
+              console.log("上传完成: 100%");
+            }
+            // 上传
+            if (uploadCompleted) {
+              this.noticeService.update({ 
+                title: completeTitle, 
+                text: completeText, 
+                state: 'done', 
+                setTimeout: 55000 
+              });
+
               this.uploadInProgress = false;
+              this.uploadResolver = null;
               await this.terminalService.stopStream(streamId);
-              this.uiService.updateState({ state: 'error', text: errorText });
-              reject({ state: 'error', text: errorText });
-            } else {
-              // 上传
-              if (!uploadCompleted) {
-                this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: lastProgress, setTimeout: 0, stop: () => {
-                  this.cancelBuild()}});
-              } else {
-                this.noticeService.update({ title: completeTitle, text: completeText, state: 'done', setTimeout: 55000 });
-                this.uiService.updateState({ state: 'done', text: completeText });
-
-                this.uploadInProgress = false;
-                this.uploadResolver = null;
-                await this.terminalService.stopStream(streamId);
-                resolve({ state: 'done', text: '上传完成' });
-              }
+              return resolve({ state: 'done', text: '上传完成' });
             }
           },
         ).catch(error => {
-          console.error("上传执行失败:", error);
-          this.uiService.updateState({ state: 'error', text: '上传失败' });
-          this.message.error('上传失败: ' + error.message);
+          // console.error("上传执行失败:", error);
+          // this.uiService.updateState({ state: 'error', text: '上传失败' });
+          // this.message.error('上传失败: ' + error.message);
           this.uploadInProgress = false;
           this.uploadResolver = null;
-          reject({ state: 'error', text: error.message });
+          return reject({ state: 'error', text: error.message });
         });
 
       });
@@ -285,12 +288,12 @@ export class UploaderService {
             this.terminalService.currentPid,
             this.currentUploadStreamId
           ).then(() => {
-            console.log('上传已停止');
+            // console.log('上传已停止');
             this.noticeService.clear();
             this.terminalService.stopStream(this.currentUploadStreamId);
             this.currentUploadStreamId = null;
             this.message.success('上传已中断');
-            this.uiService.updateState({ state: 'done', text: '上传已中断' });
+            // this.uiService.updateState({ state: 'done', text: '上传已中断' });
           });
         }
       })
