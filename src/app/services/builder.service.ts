@@ -27,6 +27,12 @@ export class BuilderService {
 
   lastCode = "";
   passed = false;
+  boardType = "";
+  sdkPath = "";
+  toolsPath = "";
+  compilerPath = "";
+  boardJson: any = null;
+  buildPath = "";
 
   /**
  * 等待指定目录创建完成
@@ -78,7 +84,8 @@ export class BuilderService {
     const sketchPath = tempPath + '/sketch';
     const sketchFilePath = sketchPath + '/sketch.ino';
     const librariesPath = tempPath + '/libraries';
-    const buildPath = tempPath + '/build';
+    
+    this.buildPath = tempPath + '/build';
 
     this.buildInProgress = true;
     this.currentBuildStreamId = null;
@@ -132,6 +139,10 @@ export class BuilderService {
       return { state: 'error', text: '缺少板子信息' };
     }
 
+    this.boardJson = boardJson;
+
+    // 获取板子
+
     // 解压libraries到临时文件夹
     console.log("libsPath: ", libsPath);
     for (let lib of libsPath) {
@@ -156,10 +167,6 @@ export class BuilderService {
       await this.waitForDirectoryExists(targetPath, 5000, 100);
     }
 
-    // 获取编译命令
-    let compilerParam = boardJson.compilerParam;
-
-
     // 获取编译器、sdk、tool的名称和版本
     let compiler = ""
     let sdk = ""
@@ -179,9 +186,37 @@ export class BuilderService {
     }
 
     // 组合编译器、sdk、tools的路径
-    const compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
-    const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
-    const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+    this.compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
+    this.sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
+    this.toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+
+    // 获取编译命令
+    let compilerParam = boardJson.compilerParam;
+    if (!compilerParam) {
+      console.error('缺少编译参数');
+      this.buildInProgress = false;
+      return { state: 'error', text: '缺少编译参数' };
+    }
+
+    let compilerParamList = compilerParam.split(' ');
+    compilerParamList = compilerParamList.map(param => {
+      if (param.startsWith('aily:')) {
+        let res;
+        const parts = param.split(':');
+        if (parts.length > 2) { // Ensure we have at least 3 parts (aily:avr:mega)
+          parts[1] = sdk;
+          res = parts.join(':');
+        } else {
+          res = param
+        }
+        this.boardType = res
+        return res; // Return unchanged if format doesn't match
+      } else {
+        return param;
+      }
+    });
+
+    compilerParam = compilerParamList.join(' ');
 
     // this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
 
@@ -189,7 +224,7 @@ export class BuilderService {
     return new Promise<ActionState>((resolve, reject) => {
       this.buildResolver = resolve;
 
-      const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${sdkPath}' --compile-path '${compilerPath}' --tools-path '${toolsPath}' --output-dir '${buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
+      const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
 
       const title = `编译 ${boardJson.name}`;
       const completeTitle = `编译完成`;

@@ -81,10 +81,7 @@ export class UploaderService {
       this.uploadInProgress = false;
       return { state: 'error', text: '编译失败，请检查代码' };
     }
-
-    const projectPath = this.projectService.currentProjectPath;
-    const tempPath = projectPath + '/.temp';
-    const buildPath = tempPath + '/build';
+    const buildPath = this.builderService.buildPath;
 
     // 判断buildPath是否存在
     if (!window['path'].isExists(buildPath)) {
@@ -92,62 +89,33 @@ export class UploaderService {
       await this.builderService.build();
     }
 
-    // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-    const dependencies = packageJson.dependencies || {};
-    const boardDependencies = packageJson.boardDependencies || {};
-
-    // 从dependencies中查找以@aily-project/board-开头的依赖
-    let board = ""
-    Object.entries(dependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/board-')) {
-        board = key
-      }
-    });
-
-    if (!board) {
-      this.message.error('缺少板子信息');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少板子信息' });
-    }
-
-    // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/node_modules/${board}/board.json`));
-    console.log("boardJson: ", boardJson);
-
-    if (!boardJson) {
-      this.message.error('缺少板子信息');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少板子信息' });
-    }
-
+    const boardJson = this.builderService.boardJson;
     this.noticeService.clear()
 
     let lastUploadText = `正在上传${boardJson.name}`;
 
     // 获取上传参数
     let uploadParam = boardJson.uploadParam;
-    // 替换uploadParam中的${serial}为当前串口
-    uploadParam = uploadParam.replace('${serial}', this.serialService.currentPort);
-
-    // 获取sdk、上传工具的名称和版本
-    let sdk = ""
-
-    Object.entries(boardDependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/sdk-')) {
-        sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
-      }
-    });
-
-    if (!sdk) {
-      this.message.error('缺少sdk信息');
+    if (!uploadParam) {
+      this.message.error('缺少上传参数');
       this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少sdk信息' });
+      return ({ state: 'error', text: '缺少上传参数' });
     }
 
-    // 组合sdk、上传工具的路径
-    const sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`; 
-    const toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+    let uploadParamList = uploadParam.split(' ');
+    uploadParamList = uploadParamList.map(param => {
+      // 替换${serial}为当前串口号
+      if (param.includes('${serial}')) {
+        return param.replace('${serial}', this.serialService.currentPort);
+      } else if (param.startsWith('aily:')) {
+        return this.builderService.boardType;
+      }
+      return param;
+    });
+
+    uploadParam = uploadParamList.join(' ');
+    const sdkPath = this.builderService.sdkPath;
+    const toolsPath = this.builderService.toolsPath;
 
     // 上传
     await this.uiService.openTerminal();
