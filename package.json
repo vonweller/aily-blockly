@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
