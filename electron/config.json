@@ -24,5 +24,6 @@
   "upload": {
     "verbose": true,
     "warnings": "error"
-  }
+  },
+  "platform": "win32"
 }

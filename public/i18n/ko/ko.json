@@ -49,5 +49,28 @@
             "INSTALL": "설치",
             "UNINSTALL": "제거"
         }
+    },
+    "LIB_MANAGER": {
+        "TITLE": "라이브러리 관리자",
+        "BACK": "뒤로",
+        "SEARCH_LIBRARY": "라이브러리 검색",
+        "INSTALLED": "설치됨",
+        "CORE_LIBRARY": "코어 라이브러리",
+        "INSTALL": "설치",
+        "INSTALLED_TEXT": "설치됨",
+        "REMOVE": "제거",
+        "INSTALLING": "설치 중",
+        "UNINSTALLING": "제거 중",
+        "UNINSTALLED": "제거됨",
+        "SENSORS": "센서",
+        "ACTUATORS": "액추에이터",
+        "COMMUNICATION": "통신",
+        "DISPLAY": "디스플레이",
+        "SOUND": "소리",
+        "STORAGE": "저장소",
+        "ROBOT": "로봇",
+        "AI": "AI",
+        "IOT": "사물인터넷",
+        "OTHERS": "기타"
     }
 }

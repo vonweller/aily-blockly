@@ -7,6 +7,7 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NpmService } from '../../services/npm.service';
 import { ConfigService } from '../../services/config.service';
 import { ProjectService } from '../../services/project.service';
@@ -23,7 +24,8 @@ import { UiService } from '../../services/ui.service';
     NzButtonModule,
     NzToolTipModule,
     NzSelectModule,
-    NzTagModule
+    NzTagModule,
+    TranslateModule
   ],
   templateUrl: './lib-manager.component.html',
   styleUrl: './lib-manager.component.scss'
@@ -32,9 +34,8 @@ export class LibManagerComponent {
 
   @Output() close = new EventEmitter();
 
-
   keyword: string = '';
-  tagList = ['传感器', '执行器', '通信', '显示', '声音', '存储', '机器人', 'AI', '物联网', '其他'];
+  tagList: string[] = [];
   libraryList: PackageInfo[] = [];
   _libraryList: PackageInfo[] = [];
   installedPackageList: string[] = [];
@@ -50,10 +51,25 @@ export class LibManagerComponent {
     private terminalService: TerminalService,
     private uiService: UiService,
     private message: NzMessageService,
-    private cd: ChangeDetectorRef
+    private cd: ChangeDetectorRef,
+    private translate: TranslateService
   ) { }
 
   ngOnInit() {
+    // 使用翻译初始化标签列表
+    this.tagList = [
+      this.translate.instant('LIB_MANAGER.SENSORS'),
+      this.translate.instant('LIB_MANAGER.ACTUATORS'),
+      this.translate.instant('LIB_MANAGER.COMMUNICATION'),
+      this.translate.instant('LIB_MANAGER.DISPLAY'),
+      this.translate.instant('LIB_MANAGER.SOUND'),
+      this.translate.instant('LIB_MANAGER.STORAGE'),
+      this.translate.instant('LIB_MANAGER.ROBOT'),
+      this.translate.instant('LIB_MANAGER.AI'),
+      this.translate.instant('LIB_MANAGER.IOT'),
+      this.translate.instant('LIB_MANAGER.OTHERS')
+    ];
+
     this.configService.loadLibraryList().then(async (data: any) => {
       this._libraryList = this.process(data);
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
@@ -98,6 +114,17 @@ export class LibManagerComponent {
   search(keyword = this.keyword) {
     if (keyword) {
       keyword = keyword.replace(/\s/g, '').toLowerCase();
+      
+      // 处理翻译后的特殊关键词
+      const installedKey = this.translate.instant('LIB_MANAGER.INSTALLED').toLowerCase();
+      const coreLibKey = this.translate.instant('LIB_MANAGER.CORE_LIBRARY').toLowerCase();
+      
+      if (keyword === installedKey) {
+        keyword = '已安装';
+      } else if (keyword === coreLibKey) {
+        keyword = '核心库';
+      }
+      
       this.libraryList = this._libraryList.filter((item) => item.fulltext.includes(keyword));
     } else {
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
@@ -118,32 +145,28 @@ export class LibManagerComponent {
 
   async installLib(lib) {
     lib.state = 'installing';
-    this.message.loading(`${lib.nickname} Installing...`);
+    this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
     this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`).then(async () => {
       await this.checkInstalled();
       lib.state = 'default';
-      this.message.success(`${lib.nickname} Installed`);
-      // 通知blockly加载新库
-      // const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
+      this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
       this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
     });
   }
 
   async removeLib(lib) {
     // 移除库前，应先检查项目代码是否使用了该库，如果使用了，应提示用户
-    // 这个比较复杂没想好怎么写（陈吕洲 2025.3.6）
     lib.state = 'uninstalling';
-    this.message.loading(`${lib.nickname} Uninstalling...`);
-    // 通知blockly移除库
+    this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLING')}...`);
     const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
     this.blocklyService.removeLibrary(libPackagePath);
     await this.uiService.openTerminal();
     this.terminalService.sendCmd(`npm uninstall ${lib.name}`).then(async () => {
       this.checkInstalled();
       lib.state = 'default';
-      this.message.success(`${lib.nickname} Uninstalled`);
+      this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
     });
   }
 }

@@ -78,5 +78,28 @@
             "CREATE": "Créer Projet",
             "CREATING": "Création en cours"
         }
+    },
+    "LIB_MANAGER": {
+        "TITLE": "Gestionnaire de Bibliothèques",
+        "BACK": "Retour",
+        "SEARCH_LIBRARY": "Rechercher une bibliothèque",
+        "INSTALLED": "Installé",
+        "CORE_LIBRARY": "Bibliothèque centrale",
+        "INSTALL": "Installer",
+        "INSTALLED_TEXT": "Installé",
+        "REMOVE": "Supprimer",
+        "INSTALLING": "Installation en cours",
+        "UNINSTALLING": "Désinstallation en cours",
+        "UNINSTALLED": "Désinstallé",
+        "SENSORS": "Capteurs",
+        "ACTUATORS": "Actionneurs",
+        "COMMUNICATION": "Communication",
+        "DISPLAY": "Affichage",
+        "SOUND": "Son",
+        "STORAGE": "Stockage",
+        "ROBOT": "Robot",
+        "AI": "IA",
+        "IOT": "IoT",
+        "OTHERS": "Autres"
     }
 }
