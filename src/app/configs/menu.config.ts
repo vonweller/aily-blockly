@@ -144,6 +144,11 @@ export let HEADER_MENU: IMenuItem[] = [
     icon: 'fa-light fa-gear',
   },
   {
+    name: 'MENU.UPDATE',
+    action: 'check-update',
+    icon: 'fa-light fa-gear',
+  },
+  {
     sep: true,
   },
   {

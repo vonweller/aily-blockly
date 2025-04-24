@@ -15,10 +15,11 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 import { TranslateModule } from '@ngx-translate/core';
+import { UpdateService } from '../../../services/update.service';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, FormsModule, NzToolTipModule, MenuComponent, ActBtnComponent, TranslateModule],
+  imports: [CommonModule, NzToolTipModule, MenuComponent, ActBtnComponent, TranslateModule],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -62,7 +63,8 @@ export class HeaderComponent {
     private serialService: SerialService,
     private cd: ChangeDetectorRef,
     private message: NzMessageService,
-    private modal: NzModalService
+    private modal: NzModalService,
+    private updateService: UpdateService
   ) { }
 
   ngAfterViewInit(): void {
@@ -166,6 +168,8 @@ export class HeaderComponent {
     }
   }
 
+  updateSubscription: any = null;
+
   async process(item: IMenuItem) {
     switch (item.action) {
       case 'project-new':
@@ -232,6 +236,18 @@ export class HeaderComponent {
         break;
       case 'settings-open':
         this.uiService.openWindow(item.data);
+        break;
+      case 'check-update':
+        this.updateService.clearSkipVersions();
+        if (!this.updateSubscription) {
+          this.updateSubscription = this.updateService.updateStatus.subscribe((status) => {
+            console.log('更新状态:', status);
+            if (status === 'not-available') {
+              this.message.info('当前已是最新版本');
+            }
+          });
+        }
+        this.updateService.checkForUpdates();
         break;
       case 'browser-open':
         window['other'].openByBrowser(item.data.url);

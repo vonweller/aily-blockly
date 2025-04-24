@@ -9,20 +9,18 @@ import { UpdateDialogComponent } from '../main-window/components/update-dialog/u
   providedIn: 'root',
 })
 export class UpdateService {
-  updateAvailable = new BehaviorSubject<boolean>(false);
 
   updateProgress = new BehaviorSubject<number>(0);
 
-  updateStatus = new BehaviorSubject<string>('');
+  updateStatus = new Subject<string>();
 
   dialogAction = new Subject();
 
-  private updateInfo: any = null;
-  private isDownloading = false;
+  // private updateInfo: any = null;
 
   constructor(
     private electronService: ElectronService,
-    private message: NzMessageService,
+    // private message: NzMessageService,
     private modal: NzModalService
   ) { }
 
@@ -34,17 +32,14 @@ export class UpdateService {
     // 监听更新状态
     window['updater'].onUpdateStatus((status) => {
       console.log('更新状态:', status);
-
       switch (status.status) {
         case 'checking':
           this.updateStatus.next('checking');
           break;
 
         case 'available':
-          this.updateAvailable.next(true);
           this.updateStatus.next('available');
-          this.updateInfo = status.info;
-
+          // this.updateInfo = status.info;
           // 检查是否已经跳过此版本
           const skippedVersions = this.getSkippedVersions();
           if (skippedVersions.includes(status.info.version)) {
@@ -60,14 +55,12 @@ export class UpdateService {
           break;
 
         case 'not-available':
-          this.updateAvailable.next(false);
           this.updateStatus.next('not-available');
           break;
 
         case 'error':
           this.updateStatus.next('error');
           console.error('更新错误:', status.error);
-          this.isDownloading = false;
           break;
 
         case 'progress':
@@ -77,12 +70,14 @@ export class UpdateService {
 
         case 'downloaded':
           this.updateStatus.next('downloaded');
-          this.isDownloading = false;
           break;
       }
     });
     // 应用启动时检查更新
-    this.checkForUpdates();
+    setTimeout(() => {
+      this.checkForUpdates();
+    }, 3000);
+
   }
 
   checkForUpdates() {
@@ -92,12 +87,10 @@ export class UpdateService {
   }
 
   downloadUpdate() {
-    this.isDownloading = true;
     window['updater'].downloadUpdate();
   }
 
   cancelDownload() {
-    this.isDownloading = false;
     if (window['updater'].cancelDownload) {
       window['updater'].cancelDownload();
     }
@@ -120,6 +113,10 @@ export class UpdateService {
   private getSkippedVersions(): string[] {
     const stored = localStorage.getItem('skippedVersions');
     return stored ? JSON.parse(stored) : [];
+  }
+
+  clearSkipVersions() {
+    localStorage.removeItem('skippedVersions');
   }
 
   dialogActionSubscription;
