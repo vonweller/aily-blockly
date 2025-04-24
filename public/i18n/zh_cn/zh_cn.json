@@ -78,5 +78,28 @@
             "CREATE": "创建项目",
             "CREATING": "正在创建"
         }
+    },
+    "LIB_MANAGER": {
+        "TITLE": "库管理",
+        "BACK": "返回",
+        "SEARCH_LIBRARY": "搜索库",
+        "INSTALLED": "已安装",
+        "CORE_LIBRARY": "核心库",
+        "INSTALL": "安装",
+        "INSTALLED_TEXT": "已安装",
+        "REMOVE": "移除",
+        "INSTALLING": "正在安装",
+        "UNINSTALLING": "正在卸载",
+        "UNINSTALLED": "已卸载",
+        "SENSORS": "传感器",
+        "ACTUATORS": "执行器",
+        "COMMUNICATION": "通信",
+        "DISPLAY": "显示",
+        "SOUND": "声音",
+        "STORAGE": "存储",
+        "ROBOT": "机器人",
+        "AI": "AI",
+        "IOT": "物联网",
+        "OTHERS": "其他"
     }
 }

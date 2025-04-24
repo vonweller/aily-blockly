@@ -19,6 +19,7 @@ import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
+import { SimulatorComponent } from '../tools/simulator/simulator.component';
 
 @Component({
   selector: 'app-main-window',
@@ -37,7 +38,8 @@ import { NpmService } from '../services/npm.service';
     SimplebarAngularModule,
     CodeEditorComponent,
     AppStoreComponent,
-    NzModalModule
+    NzModalModule,
+    SimulatorComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

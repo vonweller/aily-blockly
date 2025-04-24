@@ -54,6 +54,29 @@
             "APPLY": "適用"
         }
     },
+    "LIB_MANAGER": {
+        "TITLE": "ライブラリマネージャー",
+        "BACK": "戻る",
+        "SEARCH_LIBRARY": "ライブラリを検索",
+        "INSTALLED": "インストール済み",
+        "CORE_LIBRARY": "コアライブラリ",
+        "INSTALL": "インストール",
+        "INSTALLED_TEXT": "インストール済み",
+        "REMOVE": "削除",
+        "INSTALLING": "インストール中",
+        "UNINSTALLING": "アンインストール中",
+        "UNINSTALLED": "アンインストール済み",
+        "SENSORS": "センサー",
+        "ACTUATORS": "アクチュエーター",
+        "COMMUNICATION": "通信",
+        "DISPLAY": "ディスプレイ",
+        "SOUND": "サウンド",
+        "STORAGE": "ストレージ",
+        "ROBOT": "ロボット",
+        "AI": "AI",
+        "IOT": "IoT",
+        "OTHERS": "その他"
+    },
     "PROJECT_NEW": {
         "TITLE": "新規プロジェクト",
         "STEPS": {
