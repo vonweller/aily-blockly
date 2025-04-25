@@ -21,11 +21,12 @@
         "GITHUB": "Github",
         "EXIT": "退出",
         "USER_MANUAL": "用户手册",
-        "EXAMPLES": "示例程序"
+        "EXAMPLES": "示例程序",
+        "UPDATE": "检查更新"
     },
     "GUIDE": {
         "START": "开始",
-        "RECENTLY":"最近"
+        "RECENTLY": "最近"
     },
     "SETTINGS": {
         "TITLE": "设置",

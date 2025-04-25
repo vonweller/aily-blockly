@@ -21,7 +21,8 @@
         "GITHUB": "Github",
         "EXIT": "Exit",
         "USER_MANUAL": "User Manual",
-        "EXAMPLES": "Examples"
+        "EXAMPLES": "Examples",
+        "UPDATE": "Check for updates"
     },
     "GUIDE": {
         "START": "Start",
