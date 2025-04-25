@@ -9,6 +9,7 @@ const promptRegexMap = {
   "darwin": /(\x1B\[[0-9;]*[A-Za-z])*[^#%>]*[#%>]\s*$/,
   "linux": /(\x1B\[[0-9;]*[A-Za-z])*[^#%>]*[#%>]\s*$/
 }
+
 const shellMap = {
   "win32": "powershell.exe",
   "darwin": "zsh",
@@ -18,17 +19,11 @@ const shellMap = {
 const promptRegex = promptRegexMap[process.platform]
 const terminals = new Map();
 
-// 清除ANSI转义序列的函数
-function stripAnsiEscapeCodes(text) {
-  // 匹配所有ANSI转义序列
-  return text.replace(/\x1B\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?[m|K|h|l|H|A-Z]/g, '')
-}
-
 function registerTerminalHandlers(mainWindow) {
   ipcMain.handle("terminal-create", (event, args) => {
     console.log("terminal-create args ", args);
     return new Promise((resolve, reject) => {
-      const shell = shellMap[process.platform] ;
+      const shell = shellMap[process.platform];
 
       // 确定工作目录
       let cwd = args.cwd;
@@ -116,48 +111,37 @@ function registerTerminalHandlers(mainWindow) {
 
   // 异步输入，可以获取到数据
   ipcMain.handle('terminal-to-pty-async', async (event, { pid, input }) => {
-    // const ptyProcess = terminals.get(parseInt(pid, 10));
-    const ptyProcess = terminals.get("currentPid");
-    console.log('terminal-to-pty-async pid ', pid, ' input ', input);
     return new Promise((resolve, reject) => {
-      try {
-        let commandOutput = '';
-        let commandTimeout = null;
-        // 临时数据处理函数
-        const dataHandler = (e) => {
-          // 累积所有输出
-          commandOutput += e;
+      const ptyProcess = terminals.get("currentPid");
+      console.log('terminal-to-pty-async pid ', pid, ' input ', input);
+      let output = '';
+      let dataHandler;
+      let timeoutId;
 
-          // 检查是否检测到命令提示符，表示命令已完成
-          commandOutput = stripAnsiEscapeCodes(commandOutput.trim())
-          if (promptRegex.test(commandOutput)) {
-            clearTimeout(commandTimeout);
-            ptyProcess.removeListener('data', dataHandler);
-            // 移除命令提示符部分，只保留命令输出
-            // 从最后一次出现提示符的位置开始截取
-            const lastPromptIndex = commandOutput.search(promptRegex);
-            if (lastPromptIndex > 0) {
-              commandOutput = commandOutput.substring(0, lastPromptIndex);
-            }
-            resolve(commandOutput);
-          }
-        };
+      // 创建超时处理
+      timeoutId = setTimeout(() => {
+        ptyProcess.removeListener('data', dataHandler);
+        reject(new Error('Command execution timed out'));
+      }, 60000);
 
-        // 添加临时监听器
-        ptyProcess.addListener('data', dataHandler);
+      // 收集输出数据
+      dataHandler = (data) => {
+        output += data;
 
-        // 发送命令
-        ptyProcess.write(input);
+        // 可以根据特定标记判断命令是否完成（如提示符出现）
+        // 这里使用简单的延迟检测方式，适合大多数命令
+        clearTimeout(timeoutId);
 
-        // 设置超时保护
-        commandTimeout = setTimeout(() => {
+        timeoutId = setTimeout(() => {
           ptyProcess.removeListener('data', dataHandler);
-          resolve(stripAnsiEscapeCodes(commandOutput));
-        }, 120000); // 默认120秒超时
-      } catch (error) {
-        reject(error.message || '执行命令失败');
-      }
-    });
+          resolve(output);
+        }, 500); // 等待500ms无数据后认为命令执行完毕
+      };
+
+      ptyProcess.on('data', dataHandler);
+      // 发送命令
+      ptyProcess.write(input);
+    })
   });
 
   // 存储流式输出回调
