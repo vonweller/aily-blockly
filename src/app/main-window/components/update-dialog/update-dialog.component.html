@@ -9,7 +9,7 @@
   </div>
   <div class="content">
     @if(mode === 'available'){
-    <div class="text">{{text}}</div>
+    <div class="text" [innerHTML]="text"></div>
     }
     <!-- 进度条 - 仅在下载时显示 -->
     @if(mode === 'downloading' || mode === 'downloaded'){

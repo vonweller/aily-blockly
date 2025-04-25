@@ -241,7 +241,7 @@ export class HeaderComponent {
         this.updateService.clearSkipVersions();
         if (!this.updateSubscription) {
           this.updateSubscription = this.updateService.updateStatus.subscribe((status) => {
-            console.log('更新状态:', status);
+            // console.log('更新状态:', status);
             if (status === 'not-available') {
               this.message.info('当前已是最新版本');
             }

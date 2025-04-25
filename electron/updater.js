@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 // 添加autoUpdater引入
-const { autoUpdater } = require('electron-updater');
+const { autoUpdater, CancellationToken } = require('electron-updater');
 
+let cancellationToken = null;
 // 添加自动更新处理函数
 function registerUpdaterHandlers(mainWindow) {
 
@@ -31,8 +32,39 @@ function registerUpdaterHandlers(mainWindow) {
   });
 
   // 添加IPC处理程序，手动下载更新
-  ipcMain.handle('download-update', () => {
-    return autoUpdater.downloadUpdate();
+  ipcMain.handle('start-download', () => {
+    if (!cancellationToken) { // 防止重复下载
+      cancellationToken = new CancellationToken();
+      autoUpdater.downloadUpdate(cancellationToken)
+        .then(result => {
+          console.log('Download finished:', result);
+          // 下载完成后也需要重置 token
+          cancellationToken = null;
+        })
+        .catch(error => {
+          // 检查错误是否是取消操作引起的
+          // CancellationToken.cancel() 会抛出一个带有 "cancelled" 消息的错误
+          if (error && error.message === "cancelled") {
+            console.log('Download cancelled by user.');
+            mainWindow?.webContents.send('download-cancelled'); // 发送取消事件
+          } else {
+            // 其他下载错误
+            console.error('Download error:', error);
+            mainWindow?.webContents.send('update-status', { // 使用 update-status 通道报告错误
+              status: 'error',
+              error: error.toString()
+            });
+          }
+          cancellationToken = null; // 出错或取消后重置
+        });
+    }
+  });
+
+  // 添加IPC处理程序，取消下载更新
+  ipcMain.handle('cancel-download', () => {
+    if (cancellationToken) {
+      cancellationToken.cancel();
+    }
   });
 
   // 日志设置
@@ -59,10 +91,19 @@ function registerUpdaterHandlers(mainWindow) {
   });
 
   autoUpdater.on('error', (err) => {
-    mainWindow.webContents.send('update-status', {
-      status: 'error',
-      error: err.toString()
-    });
+    // 这个监听器主要处理检查更新阶段或非下载过程中的错误
+    // 下载过程中的错误（包括取消）在 downloadUpdate 的 catch 中处理
+    console.error('Updater error:', err);
+    // 如果下载正在进行中被取消，这里的错误可能也会触发，但我们已经在 catch 中处理了
+    // 避免重复发送错误状态，除非 token 已经是 null (表示非下载错误)
+    if (!cancellationToken) {
+        mainWindow.webContents.send('update-status', {
+          status: 'error',
+          error: err.toString()
+        });
+    }
+    // 确保 token 在任何错误后都被重置
+    cancellationToken = null;
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -73,6 +114,7 @@ function registerUpdaterHandlers(mainWindow) {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    cancellationToken = null; // 确保下载成功后也重置 token
     mainWindow.webContents.send('update-status', {
       status: 'downloaded',
       info: info

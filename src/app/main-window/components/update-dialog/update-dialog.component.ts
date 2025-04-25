@@ -53,7 +53,6 @@ export class UpdateDialogComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    // 取消订阅
     this.updateStatusSubscription?.unsubscribe();
     this.updateProgressSubscription?.unsubscribe();
   }
@@ -64,5 +63,7 @@ export class UpdateDialogComponent implements OnInit, OnDestroy {
 
   download() {
     this.updateService.dialogAction.next('download');
+    this.mode = 'downloading';
+    this.cd.detectChanges();
   }
 }

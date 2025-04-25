@@ -1,18 +1,21 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { ElectronService } from './electron.service';
-import { NzMessageService } from 'ng-zorro-antd/message';
+// import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UpdateDialogComponent } from '../main-window/components/update-dialog/update-dialog.component';
+import { version } from '../../../package.json';
 
 @Injectable({
   providedIn: 'root',
 })
 export class UpdateService {
 
+  currentVersion = version;
+
   updateProgress = new BehaviorSubject<number>(0);
 
-  updateStatus = new Subject<string>();
+  updateStatus = new BehaviorSubject<string>('');
 
   dialogAction = new Subject();
 
@@ -31,7 +34,7 @@ export class UpdateService {
 
     // 监听更新状态
     window['updater'].onUpdateStatus((status) => {
-      console.log('更新状态:', status);
+      // console.log('更新状态:', status);
       switch (status.status) {
         case 'checking':
           this.updateStatus.next('checking');
@@ -45,7 +48,7 @@ export class UpdateService {
           if (skippedVersions.includes(status.info.version)) {
             // console.log(`已跳过版本 ${status.info.version}，不再提示`);
             break;
-          }
+          }          
           // 判断是否已下载，如果已下载则直接显示安装对话框
           if (status.info.isDownloaded) {
             this.showUpdateDialog(status.info, true);
@@ -127,8 +130,8 @@ export class UpdateService {
       `更新已准备就绪` :
       `发现新版本 ${info.version}`;
     const text = isDownloaded ?
-      `新版本 ${info.version} 已下载完成，是否立即安装？` :
-      `是否要下载并安装此更新？`;
+      `新版本 ${info.version} 已下载完成，是否立即安装？<br>` :
+      `当前版本 ${this.currentVersion} 新版本 ${info.version}<br>是否要下载并安装此更新？`;
 
     const modalRef = this.modal.create({
       nzTitle: null,
