@@ -107,7 +107,7 @@ export class BlocklyComponent {
     multiSelectKeys: ['Shift'],
     multiselectCopyPaste: {
       crossTab: true,
-      menu: true,
+      menu: false,
     },
   }
 
