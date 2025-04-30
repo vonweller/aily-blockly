@@ -1,1 +1,31 @@
-<p>examples works!</p>
+<div class="lib-manager-box">
+    <div class="header">
+        <div class="btn ccenter" (click)="back()" nz-tooltip [nzTooltipTitle]="'LIB_MANAGER.BACK' | translate">
+            <i class="fa-regular fa-chevron-left"></i>
+        </div>
+        <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
+            <input type="text" nz-input [placeholder]="'LIB_MANAGER.SEARCH_LIBRARY' | translate" [(ngModel)]="keyword"
+                (ngModelChange)="search()" />
+        </nz-input-group>
+        <ng-template #suffixIconSearch>
+            @if(keyword.length > 0){
+            <i class="fa-light fa-xmark" (click)="keyword='';search()"></i>
+            } @else {
+            <i class="fa-light fa-search"></i>
+            }
+        </ng-template>
+        <div class="tag-list">
+            @for (tag of tagList; track tag) {
+            <nz-tag (click)="keyword=tag;search()">{{ tag }}</nz-tag>
+            }
+            <span style="position: absolute;top: 10px;color: #444;">|</span>
+        </div>
+    </div>
+    <div class="example-list">
+        @for( example of exampleList;track $index) {
+        <div class="example-item">
+
+        </div>
+        }
+    </div>
+</div>

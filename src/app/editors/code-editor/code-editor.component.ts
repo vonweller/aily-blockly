@@ -7,6 +7,7 @@ import { ProjectService } from '../../services/project.service';
 import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-editor.component';
 import { NoticeService } from '../../services/notice.service';
 import { NotificationComponent } from '../../components/notification/notification.component';
+import { ActivatedRoute } from '@angular/router';
 
 export interface OpenedFile {
   path: string;      // 文件路径
@@ -48,10 +49,18 @@ export class CodeEditorComponent {
   constructor(
     private modal: NzModalService,
     private projectService: ProjectService,
-    private notice: NoticeService
+    private notice: NoticeService,
+    private activatedRoute: ActivatedRoute
   ) { }
 
   async ngOnInit() {
+    this.activatedRoute.queryParams.subscribe(params => {
+      if (params['path']) {
+        // this.projectService.projectOpen(params['path']);
+        console.log('path', params['path']);
+
+      }
+    });
   }
 
   ngAfterViewInit(): void {

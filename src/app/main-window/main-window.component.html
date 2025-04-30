@@ -5,7 +5,8 @@
       <nz-content>
         <div class="middle-box">
           <ngx-simplebar [options]="options">
-            @if (loaded) {
+            <router-outlet></router-outlet>
+            <!-- @if (loaded) {
             @if(mode === 'blockly') {
             <app-blockly-editor></app-blockly-editor>
             } @else {
@@ -13,7 +14,7 @@
             }
             }@else{
             <app-guide></app-guide>
-            }
+            } -->
           </ngx-simplebar>
         </div>
         @if (showBbox) {

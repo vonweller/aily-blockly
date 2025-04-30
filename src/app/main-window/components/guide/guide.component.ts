@@ -4,6 +4,7 @@ import { UiService } from '../../../services/ui.service';
 import { ProjectService } from '../../../services/project.service';
 import { version } from '../../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-guide',
@@ -23,7 +24,8 @@ export class GuideComponent {
 
   constructor(
     private uiService: UiService,
-    private projectService: ProjectService
+    private projectService: ProjectService,
+    private router: Router
   ) { }
 
   onMenuClick(e: any) {
@@ -59,6 +61,9 @@ export class GuideComponent {
         break;
       case 'browser-open':
         window['other'].openByBrowser(item.data.url);
+        break;
+      case 'playground-open':
+        this.router.navigate(['/main/examples']);
         break;
       default:
         break;

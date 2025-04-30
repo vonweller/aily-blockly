@@ -51,13 +51,13 @@ export let HEADER_BTNS: IMenuItem[][] = [
     //   data: { type: 'tool', data: "simulator" },
     //   icon: 'fa-light fa-atom'
     // },
-    {
-      name: 'MENU.AI',
-      action: 'tool-open',
-      data: { type: 'tool', data: "aily-chat" },
-      icon: 'fa-light fa-star-christmas',
-      more: 'AI',
-    },
+    // {
+    //   name: 'MENU.AI',
+    //   action: 'tool-open',
+    //   data: { type: 'tool', data: "aily-chat" },
+    //   icon: 'fa-light fa-star-christmas',
+    //   more: 'AI',
+    // },
     // {
     //   name: 'MENU.APP_STORE',
     //   action: 'tool-open',
@@ -194,8 +194,8 @@ export let GUIDE_MENU: IMenuItem[] = [
     icon: 'fa-light fa-book-open-cover',
   },
   {
-    action: 'browser-open',
     name: 'MENU.EXAMPLES',
+    action: 'playground-open',
     data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },
     icon: 'fa-light fa-books',
   }

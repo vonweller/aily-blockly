@@ -7,12 +7,12 @@ let cancellationToken = null;
 function registerUpdaterHandlers(mainWindow) {
 
   // 强制使用开发环境配置
-  if (process.env.DEV === 'true' || process.env.DEV === true) {
-    autoUpdater.forceDevUpdateConfig = true;
-    autoUpdater.allowDowngrade = true;
-    autoUpdater.logger = require("electron-log");
-    autoUpdater.logger.transports.file.level = "debug";
-  }
+  // if (process.env.DEV === 'true' || process.env.DEV === true) {
+  //   autoUpdater.forceDevUpdateConfig = true;
+  //   autoUpdater.allowDowngrade = true;
+  //   autoUpdater.logger = require("electron-log");
+  //   autoUpdater.logger.transports.file.level = "debug";
+  // }
 
   autoUpdater.autoDownload = false;  // 禁用自动下载
   // autoUpdater.allowDowngrade = true; // 允许版本降级

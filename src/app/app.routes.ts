@@ -8,7 +8,30 @@ export const routes: Routes = [
     },
     {
         path: 'main',
-        loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent)
+        loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
+        children: [
+            {
+                path: '',
+                redirectTo: 'guide',
+                pathMatch: 'full'
+            },
+            {
+                path: 'guide',
+                loadComponent: () => import('./main-window/components/guide/guide.component').then(m => m.GuideComponent)
+            },
+            {
+                path: 'examples',
+                loadComponent: () => import('./main-window/components/examples/examples.component').then(m => m.ExamplesComponent)
+            },
+            {
+                path: 'blockly-editor',
+                loadComponent: () => import('./editors/blockly-editor/blockly-editor.component').then(m => m.BlocklyEditorComponent)
+            },
+            {
+                path: 'code-editor',
+                loadComponent: () => import('./editors/code-editor/code-editor.component').then(m => m.CodeEditorComponent)
+            }
+        ]
     },
     // {
     //     path:"sub",

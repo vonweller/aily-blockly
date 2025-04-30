@@ -1,5 +1,4 @@
 import { Component, ChangeDetectorRef } from '@angular/core';
-import { BlocklyEditorComponent } from '../tools/blockly-editor/blockly-editor.component';
 import { FooterComponent } from './components/footer/footer.component';
 import { HeaderComponent } from './components/header/header.component';
 import { CommonModule } from '@angular/common';
@@ -14,12 +13,12 @@ import { ProjectService } from '../services/project.service';
 import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { CodeEditorComponent } from '../tools/code-editor/code-editor.component';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
+import { RouterModule } from '@angular/router';
 
 @Component({
   selector: 'app-main-window',
@@ -27,19 +26,17 @@ import { SimulatorComponent } from '../tools/simulator/simulator.component';
     CommonModule,
     HeaderComponent,
     FooterComponent,
-    BlocklyEditorComponent,
     NzLayoutModule,
     NzResizableModule,
     AilyChatComponent,
     TerminalComponent,
-    GuideComponent,
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
-    CodeEditorComponent,
     AppStoreComponent,
     NzModalModule,
-    SimulatorComponent
+    SimulatorComponent,
+    RouterModule
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -48,10 +45,6 @@ export class MainWindowComponent {
   showRbox = false;
   showBbox = false;
   terminalTab = 'default';  // error,info,log
-
-  loaded = false;
-  mode;
-  showLibManager = false;
 
   get topTool() {
     return this.uiService.topTool;
@@ -80,7 +73,7 @@ export class MainWindowComponent {
     // 语言设置变化后，重新加载项目
     window['ipcRenderer'].on('setting-changed', (event, data) => {
       console.log('ipcRenderer setLanguage', data);
-      if (this.mode != 'blockly') return;
+      // if (this.mode != 'blockly') return;
       if (data.action == 'language-changed') {
         this.projectService.save();
         setTimeout(() => {
@@ -120,10 +113,10 @@ export class MainWindowComponent {
     this.projectService.stateSubject.subscribe((state) => {
       switch (state) {
         case 'loading':
-          this.loaded = false;
+          // this.loaded = false;
           setTimeout(() => {
             this.message.loading('Project Loading...');
-            this.loaded = true;
+            // this.loaded = true;
           }, 20);
           break;
         case 'loaded':
@@ -139,16 +132,11 @@ export class MainWindowComponent {
           break;
         case 'default':
           // this.message.success('Project Closed');
-          this.loaded = false;
+          // this.loaded = false;
           break;
         default:
           break;
       }
-      this.cd.detectChanges();
-    });
-
-    this.projectService.modeSubject.subscribe((mode) => {
-      this.mode = mode;
       this.cd.detectChanges();
     });
   }

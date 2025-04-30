@@ -7,6 +7,7 @@ import { BlocklyService } from '../blockly/blockly.service';
 import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { pinyin } from "pinyin-pro";
+import { Router } from '@angular/router';
 
 const { isMacOS } = (window as any)['electronAPI'].platform;
 
@@ -27,9 +28,6 @@ interface ProjectPackageData {
 export class ProjectService {
 
   stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved' | 'error'>('default');
-
-  modeSubject = new BehaviorSubject<'blockly' | 'code' | 'default'>('default');
-
   currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
   };
@@ -45,6 +43,7 @@ export class ProjectService {
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private message: NzMessageService,
+    private router: Router
   ) {
     // window['ipcRenderer'].on('project-update', (event, data) => {
     //   console.log('收到更新的: ', data);
@@ -171,90 +170,92 @@ export class ProjectService {
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath) {
     this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
+    this.stateSubject.next('loading');
     // this.uiService.
     // 0. 判断路径是否存在
     this.currentProjectPath = projectPath;
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
-    if (!abiIsExist) {
-      const pathIsExist = window['path'].isExists(projectPath + '/');
-      if (pathIsExist) {
-        // 打开代码编辑器
-        this.stateSubject.next('loading');
-        this.modeSubject.next('code');
-        this.uiService.updateState({ state: 'done', text: '项目加载成功' });
-        this.stateSubject.next('loaded');
-        return true
-      }
-      console.log('path not exist: ', projectPath);
-      this.message.warning('该项目路径不存在');
-      this.removeRecentlyProject({ path: projectPath })
-      return false;
+    if (abiIsExist) {
+      // 打开blockly编辑器
+      this.router.navigate(['/main/blockly-editor'], {
+        queryParams: {
+          path: projectPath
+        },
+        replaceUrl: true
+      });
+    } else {
+      // 打开代码编辑器
+      this.router.navigate(['/main/code-editor'], {
+        queryParams: {
+          path: projectPath
+        },
+        replaceUrl: true
+      });
     }
-    this.stateSubject.next('loading');
-    this.modeSubject.next('blockly');
     // 延迟50ms，为了等待blockly实例初始化完成
-    await new Promise(resolve => setTimeout(resolve, 120));
-    // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-    // 添加到最近打开的项目
-    this.addRecentlyProject({ name: packageJson.name, path: projectPath });
-    this.currentPackageData = packageJson;
+    // await new Promise(resolve => setTimeout(resolve, 120));
+    // // 加载项目package.json
+    // const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
+    // // 添加到最近打开的项目
+    // this.addRecentlyProject({ name: packageJson.name, path: projectPath });
+    // this.currentPackageData = packageJson;
 
-    // 1. 终端进入项目目录
-    // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
-    const nodeModulesExist = window['path'].isExists(projectPath + '/node_modules');
-    if (!nodeModulesExist) {
-      this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
-      await this.uiService.openTerminal();
-      await this.terminalService.sendCmd(`cd "${projectPath}"`);
-      await this.terminalService.sendCmd(`npm install`);
-    }
-    // 3. 加载开发板module中的board.json
-    this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
-    const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
-    console.log('boardModule: ', boardModule);
-    // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
-    // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
-    let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
-    console.log('boardJsonPath: ', boardJsonPath);
+    // // 1. 终端进入项目目录
+    // // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
+    // const nodeModulesExist = window['path'].isExists(projectPath + '/node_modules');
+    // if (!nodeModulesExist) {
+    //   this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
+    //   await this.uiService.openTerminal();
+    //   await this.terminalService.sendCmd(`cd "${projectPath}"`);
+    //   await this.terminalService.sendCmd(`npm install`);
+    // }
+    // // 3. 加载开发板module中的board.json
+    // this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
+    // const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
+    // console.log('boardModule: ', boardModule);
+    // // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
+    // // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
+    // let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
+    // console.log('boardJsonPath: ', boardJsonPath);
 
-    // 判断board.json是否存在
-    if (!await this.checkIsExisits(boardJsonPath)) {
-      return;
-    }
+    // // 判断board.json是否存在
+    // if (!await this.checkIsExisits(boardJsonPath)) {
+    //   return;
+    // }
 
-    const boardJson = JSON.parse(window['fs'].readFileSync(boardJsonPath));
-    this.blocklyService.loadBoardConfig(boardJson);
-    // 4. 加载blockly library
-    const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
-    // console.log('libraryModuleList: ', libraryModuleList);
-    for (let index = 0; index < libraryModuleList.length; index++) {
-      const libPackageName = libraryModuleList[index];
-      this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
-      await this.blocklyService.loadLibrary(libPackageName, projectPath);
-    }
-    // 5. 加载project.abi数据
-    this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
-    let jsonData = JSON.parse(window['fs'].readFileSync(`${projectPath}/project.abi`));
-    this.blocklyService.loadAbiJson(jsonData);
+    // const boardJson = JSON.parse(window['fs'].readFileSync(boardJsonPath));
+    // this.blocklyService.loadBoardConfig(boardJson);
+    // // 4. 加载blockly library
+    // const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
+    // // console.log('libraryModuleList: ', libraryModuleList);
+    // for (let index = 0; index < libraryModuleList.length; index++) {
+    //   const libPackageName = libraryModuleList[index];
+    //   this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
+    //   await this.blocklyService.loadLibrary(libPackageName, projectPath);
+    // }
+    // // 5. 加载project.abi数据
+    // this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
+    // let jsonData = JSON.parse(window['fs'].readFileSync(`${projectPath}/project.abi`));
+    // this.blocklyService.loadAbiJson(jsonData);
 
-    // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
-    this.uiService.updateState({ state: 'done', text: '项目加载成功' });
-    this.stateSubject.next('loaded');
-    // 7. 后台安装开发板依赖
-    // this.installBoardDependencies();
+    // // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
+    // this.uiService.updateState({ state: 'done', text: '项目加载成功' });
+    // this.stateSubject.next('loaded');
 
-    await window['iWindow'].send({
-      to: "main",
-      timeout: 1000 * 60 * 5,
-      data: {
-        action: 'npm-exec',
-        detail: {
-          action: 'install-board-dependencies',
-          data: `${this.currentProjectPath}/package.json`
-        }
-      }
-    })
+    // // 7. 后台安装开发板依赖
+    // // this.installBoardDependencies();
+
+    // await window['iWindow'].send({
+    //   to: "main",
+    //   timeout: 1000 * 60 * 5,
+    //   data: {
+    //     action: 'npm-exec',
+    //     detail: {
+    //       action: 'install-board-dependencies',
+    //       data: `${this.currentProjectPath}/package.json`
+    //     }
+    //   }
+    // })
   }
 
   // async installBoardDependencies() {
@@ -361,6 +362,7 @@ export class ProjectService {
     this.stateSubject.next('default');
     this.uiService.closeTerminal();
     this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
+    this.router.navigate(['/main/guide'], { replaceUrl: true });
   }
 
   // 通过localStorage存储最近打开的项目
