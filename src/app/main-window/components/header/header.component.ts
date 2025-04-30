@@ -88,6 +88,9 @@ export class HeaderComponent {
       }
       this.cd.detectChanges();
     });
+this.av
+
+
     this.listenShortcutKeys();
   }
 

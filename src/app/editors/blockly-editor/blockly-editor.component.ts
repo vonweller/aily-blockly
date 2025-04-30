@@ -46,9 +46,9 @@ export class BlocklyEditorComponent {
   }
 
   async loadProject(projectPath) {
-    // await new Promise(resolve => setTimeout(resolve, 120));
+    await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
+    const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
     // 添加到最近打开的项目
     this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
     this.currentPackageData = packageJson;
@@ -68,7 +68,7 @@ export class BlocklyEditorComponent {
     // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
     // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
     let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
-    const boardJson = JSON.parse(window['fs'].readFileSync(boardJsonPath));
+    const boardJson = JSON.parse(this.electronService.readFile(boardJsonPath));
     this.blocklyService.loadBoardConfig(boardJson);
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
@@ -80,7 +80,7 @@ export class BlocklyEditorComponent {
     }
     // 5. 加载project.abi数据
     this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
-    let jsonData = JSON.parse(window['fs'].readFileSync(`${projectPath}/project.abi`));
+    let jsonData = JSON.parse(this.electronService.readFile(`${projectPath}/project.abi`));
     this.blocklyService.loadAbiJson(jsonData);
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
