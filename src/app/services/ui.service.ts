@@ -1,9 +1,10 @@
 /* 这个服务用来控制窗口、工具的显示和隐藏，通过 Subject 来实现组件之间的通信。
  */
 import { Injectable } from '@angular/core';
-import { Subject } from 'rxjs';
+import { filter, Subject } from 'rxjs';
 import { ElectronService } from './electron.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
+import { NavigationEnd, Router } from '@angular/router';
 
 @Injectable({
   providedIn: 'root',
@@ -31,7 +32,8 @@ export class UiService {
 
   constructor(
     private electronService: ElectronService,
-    private terminalService: TerminalService
+    private terminalService: TerminalService,
+    private router: Router
   ) { }
 
 
@@ -64,6 +66,14 @@ export class UiService {
         }
       });
     }
+
+    // this.router.events.pipe(
+    //   filter(event => event instanceof NavigationEnd)
+    // ).subscribe(() => {
+    //   const fullUrl = this.router.url;
+    //   console.log('当前完整路径:', fullUrl);
+    // });
+
   }
 
   openWindow(opt: WindowOpts) {

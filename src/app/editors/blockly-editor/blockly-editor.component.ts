@@ -85,7 +85,7 @@ export class BlocklyEditorComponent {
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
     this.uiService.updateState({ state: 'done', text: '项目加载成功' });
-    // this.stateSubject.next('loaded');
+    this.projectService.stateSubject.next('loaded');
 
     // 7. 后台安装开发板依赖
     // this.installBoardDependencies();

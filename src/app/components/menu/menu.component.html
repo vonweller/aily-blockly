@@ -4,6 +4,7 @@
   @if (item.sep) {
   <div class="sep"></div>
   } @else {
+  @if(!item.disabled){
   <div class="menu-item ccenter" (click)="itemClick(item)"
     [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled}">
     @if(item.icon){
@@ -12,6 +13,7 @@
     <div class="name">{{ item.name | translate }}</div>
     <div class="text ellipsis">{{ item.text }}</div>
   </div>
+  }
   }
   }
 </div>

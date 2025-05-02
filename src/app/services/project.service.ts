@@ -169,7 +169,8 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath) {
-    this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
+    await this.close();
+    // this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
     this.stateSubject.next('loading');
     // this.uiService.
     // 0. 判断路径是否存在

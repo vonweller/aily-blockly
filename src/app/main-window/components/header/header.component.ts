@@ -16,6 +16,8 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
+import { NavigationEnd, Router } from '@angular/router';
+import { filter } from 'rxjs/operators';
 
 @Component({
   selector: 'app-header',
@@ -26,8 +28,6 @@ import { UpdateService } from '../../../services/update.service';
 export class HeaderComponent {
   headerBtns = HEADER_BTNS;
   headerMenu = HEADER_MENU;
-
-  // @ViewChild('menuBox') menuBox: ElementRef;
 
   get projectData() {
     return this.projectService.currentPackageData;
@@ -55,6 +55,8 @@ export class HeaderComponent {
 
   loaded = false;
 
+  currentUrl = null;
+
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
@@ -64,10 +66,11 @@ export class HeaderComponent {
     private cd: ChangeDetectorRef,
     private message: NzMessageService,
     private modal: NzModalService,
-    private updateService: UpdateService
+    private updateService: UpdateService,
+    private router: Router
   ) { }
 
-  ngAfterViewInit(): void {
+  ngAfterViewInit() {
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
         this.loaded = true;
@@ -88,10 +91,50 @@ export class HeaderComponent {
       }
       this.cd.detectChanges();
     });
-this.av
 
+
+    // 监听项目状态变化，更新菜单按钮状态
+    this.listenRouterChange();
 
     this.listenShortcutKeys();
+  }
+
+  listenRouterChange() {
+    this.currentUrl = this.router.url;
+    console.log('当前路径:', this.currentUrl);
+    if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
+      this.headerMenu.forEach((menu) => {
+        if (menu.disabled) {
+          menu.disabled = false;
+        }
+      });
+    } else {
+      this.headerMenu.forEach((menu) => {
+        if (menu.disabled === false) {
+          menu.disabled = true;
+        }
+      });
+    }
+
+    this.router.events.pipe(
+      filter(event => event instanceof NavigationEnd)
+    ).subscribe(() => {
+      this.currentUrl = this.router.url;
+      console.log('当前路径:', this.currentUrl);
+      if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled) {
+            menu.disabled = false;
+          }
+        });
+      } else {
+        this.headerMenu.forEach((menu) => {
+          if (menu.disabled === false) {
+            menu.disabled = true;
+          }
+        });
+      }
+    });
   }
 
   showMenu = false;
@@ -328,7 +371,8 @@ this.av
     return parts.join('+');
   }
 
-  // 监听快捷键
+  /* 监听快捷键
+  */
   listenShortcutKeys() {
     this.initShortcutMap();
     window.addEventListener('keydown', (event: KeyboardEvent) => {

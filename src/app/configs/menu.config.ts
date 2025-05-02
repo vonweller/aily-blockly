@@ -113,9 +113,6 @@ export let HEADER_MENU: IMenuItem[] = [
     disabled: true,
   },
   {
-    sep: true,
-  },
-  {
     name: 'MENU.OPEN_IN_EXPLORER',
     action: 'project-open-by-explorer',
     data: { type: 'other', action: 'openByExplorer', data: 'project' },
