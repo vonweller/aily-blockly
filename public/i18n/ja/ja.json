@@ -76,7 +76,8 @@
         "ROBOT": "ロボット",
         "AI": "AI",
         "IOT": "IoT",
-        "OTHERS": "その他"
+        "OTHERS": "その他",
+        "ALL": "すべてのライブラリ"
     },
     "PROJECT_NEW": {
         "TITLE": "新規プロジェクト",

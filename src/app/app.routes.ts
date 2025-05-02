@@ -17,11 +17,11 @@ export const routes: Routes = [
             },
             {
                 path: 'guide',
-                loadComponent: () => import('./main-window/components/guide/guide.component').then(m => m.GuideComponent)
+                loadComponent: () => import('./pages/guide/guide.component').then(m => m.GuideComponent)
             },
             {
                 path: 'examples',
-                loadComponent: () => import('./main-window/components/examples/examples.component').then(m => m.ExamplesComponent)
+                loadComponent: () => import('./pages/examples/examples.component').then(m => m.ExamplesComponent)
             },
             {
                 path: 'blockly-editor',

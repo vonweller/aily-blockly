@@ -1,10 +1,10 @@
 import { ChangeDetectorRef, Component } from '@angular/core';
 import { BlocklyComponent } from '../../blockly/blockly.component';
-import { LibManagerComponent } from '../../components/lib-manager/lib-manager.component';
+import { LibManagerComponent } from '../../pages/lib-manager/lib-manager.component';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { ProjectService } from '../../services/project.service';
 import { UiService } from '../../services/ui.service';
-import { TranslateModule, TranslateService } from '@ngx-translate/core';
+import { TranslateModule } from '@ngx-translate/core';
 import { ActivatedRoute } from '@angular/router';
 import { TerminalService } from '../../tools/terminal/terminal.service';
 import { BlocklyService } from '../../blockly/blockly.service';

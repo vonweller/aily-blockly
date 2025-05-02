@@ -101,6 +101,7 @@
         "ROBOT": "Roboter",
         "AI": "KI",
         "IOT": "IoT",
-        "OTHERS": "Andere"
+        "OTHERS": "Andere",
+        "ALL": "Alle Bibliotheken"
     }
 }

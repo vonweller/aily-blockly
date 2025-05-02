@@ -10,7 +10,6 @@ import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
 import { ProjectService } from '../services/project.service';
-import { GuideComponent } from './components/guide/guide.component';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
