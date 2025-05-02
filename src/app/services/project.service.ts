@@ -170,6 +170,7 @@ export class ProjectService {
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath) {
     await this.close();
+    await new Promise(resolve => setTimeout(resolve, 100));
     // this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
     this.stateSubject.next('loading');
     // this.uiService.

@@ -245,10 +245,6 @@ export class BlocklyComponent {
     }, 50);
   }
 
-  ngOnDestroy(): void {
-    this.blocklyService.reset();
-  }
-
   setPrompt() {
     Blockly.dialog.setPrompt((message, defaultValue, callback) => {
       // console.log('对话框初始化，消息:', message, '默认值:', defaultValue);

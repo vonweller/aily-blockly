@@ -24,8 +24,6 @@ import { ElectronService } from '../../services/electron.service';
 export class BlocklyEditorComponent {
   showProjectManager = false;
 
-  currentPackageData: any = null;
-
   constructor(
     private cd: ChangeDetectorRef,
     private projectService: ProjectService,
@@ -45,13 +43,17 @@ export class BlocklyEditorComponent {
     });
   }
 
+  ngOnDestroy(): void {
+    this.blocklyService.reset();
+  }
+
   async loadProject(projectPath) {
     await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
     // 添加到最近打开的项目
     this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
-    this.currentPackageData = packageJson;
+    this.projectService.currentPackageData = packageJson;
     // 1. 终端进入项目目录
     // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
     const nodeModulesExist = this.electronService.exists(projectPath + '/node_modules');
