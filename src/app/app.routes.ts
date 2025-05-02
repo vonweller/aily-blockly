@@ -20,8 +20,23 @@ export const routes: Routes = [
                 loadComponent: () => import('./pages/guide/guide.component').then(m => m.GuideComponent)
             },
             {
-                path: 'examples',
-                loadComponent: () => import('./pages/examples/examples.component').then(m => m.ExamplesComponent)
+                path: 'playground',
+                loadComponent: () => import('./pages/playground/playground.component').then(m => m.PlaygroundComponent),
+                children: [
+                    {
+                        path: '',
+                        redirectTo: 'list',
+                        pathMatch: 'full'
+                    },
+                    {
+                        path: 'list',
+                        loadComponent: () => import('./pages/playground/subject-list/subject-list.component').then(m => m.SubjectListComponent)
+                    },
+                    {
+                        path: 's',
+                        loadComponent: () => import('./pages/playground/subject-item/subject-item.component').then(m => m.SubjectItemComponent)
+                    }
+                ]
             },
             {
                 path: 'blockly-editor',

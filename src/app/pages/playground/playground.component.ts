@@ -6,25 +6,27 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Location } from '@angular/common';
+import { SUBJECT_LIST } from './data';
+import { RouterModule } from '@angular/router';
 
 @Component({
-  selector: 'app-examples',
+  selector: 'app-playground',
   imports: [
     FormsModule,
     NzButtonModule,
     NzTagModule,
     NzInputModule,
     NzToolTipModule,
-    TranslateModule
+    TranslateModule,
+    RouterModule
   ],
-  templateUrl: './examples.component.html',
-  styleUrl: './examples.component.scss'
+  templateUrl: './playground.component.html',
+  styleUrl: './playground.component.scss'
 })
-export class ExamplesComponent {
+export class PlaygroundComponent {
   @Output() close = new EventEmitter();
   tagList: string[] = [];
-
-  exampleList = [, , , , , , , , , ,]
+  // exampleList = []
 
   constructor(
     // private router: Router,
@@ -36,7 +38,6 @@ export class ExamplesComponent {
 
   ngOnInit() {
     // 使用翻译初始化标签列表
-    // 使用翻译初始化标签列表
     this.tagList = [
       this.translate.instant('显示全部'),
       this.translate.instant('入门课程'),
@@ -45,6 +46,8 @@ export class ExamplesComponent {
       this.translate.instant('物联网'),
       this.translate.instant('机器人'),
     ];
+
+    // this.exampleList = SUBJECT_LIST
   }
 
   keyword: string = '';

@@ -63,7 +63,7 @@ export class GuideComponent {
         window['other'].openByBrowser(item.data.url);
         break;
       case 'playground-open':
-        this.router.navigate(['/main/examples']);
+        this.router.navigate(['/main/playground']);
         break;
       default:
         break;

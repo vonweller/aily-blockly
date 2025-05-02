@@ -15,6 +15,10 @@
     cursor: pointer;
     color: #ddd;
 
+    .name{
+      white-space: nowrap;
+    }
+
     .icon {
       width: 20px;
       margin-right: 10px;

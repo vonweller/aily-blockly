@@ -7,12 +7,6 @@
     left: 0;
     z-index: 99;
 
-    .btn {
-        height: 40px;
-        width: 40px;
-        font-size: 19px;
-    }
-
     .header {
         height: 40px;
         display: flex;
@@ -23,8 +17,16 @@
         z-index: 99;
         background: #222;
 
+        .btn {
+            height: 40px;
+            width: 40px;
+            font-size: 19px;
+            flex-shrink: 0;
+        }
+
         nz-input-group {
-            width: 200px;
+            width: 160px;
+            flex-shrink: 0;
             margin: 0 15px 0 10px;
         }
     }
@@ -114,6 +116,7 @@
 }
 
 .tag-list {
+    white-space: nowrap;
     nz-tag {
         cursor: pointer;
     }
