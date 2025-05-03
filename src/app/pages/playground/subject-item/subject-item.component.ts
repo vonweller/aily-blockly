@@ -18,4 +18,13 @@ export class SubjectItemComponent {
     clickOnTrack: true,
     scrollbarMinSize: 50,
   };
+
+
+  loadExample() {
+
+  }
+
+  openUrl(url='https://arduino.me') {
+    
+  }
 }
