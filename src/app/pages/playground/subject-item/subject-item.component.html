@@ -1,16 +1,44 @@
 <div class="subject-page">
-    <div class="title">Arduino程序设计基础</div>
-    <div>更新时间：2024/6/16</div>
-    <div class="description">
-        Arduino是一个开源的电子原型平台，基于易于使用的硬件和软件。Arduino板子可以读取输入（例如传感器的光线、温度或湿度）并将其转换为输出（例如打开一个LED灯、启动马达或发布消息）。
-    </div>
-    <div class="content">
-        @for( item of itemList;track $index) {
-        <div class="item">
-            <div class="name">{{item.name}}</div>
-            <div class="text">{{item.description}}</div>
+    <ngx-simplebar [options]="options">
+        <div class="title-box">
+            <div class="title">Arduino程序设计基础</div>
+            <div class="date">更新时间：2024/6/16</div>
         </div>
-        }
+        <div class="content">
+            <div class="left">
+                <div class="description">
+                    Arduino是一个开源的电子原型平台，基于易于使用的硬件和软件。Arduino板子可以读取输入（例如传感器的光线、温度或湿度）并将其转换为输出（例如打开一个LED灯、启动马达或发布消息）。
+                </div>
+                <div class="itemList">
+                    @for( item of itemList;track $index) {
+                    <div class="item">
+                        <div class="name">{{item.name}}</div>
+                        <div class="text">{{item.description}}</div>
 
-    </div>
+                        <nz-button-group [nzSize]="'small'">
+                            <button nz-button nzType="primary" [nzSize]="'small'">
+                                加载程序
+                            </button>
+                            <button nz-button [nzSize]="'small'">
+                                查看教程
+                            </button>
+                        </nz-button-group>
+                    </div>
+                    }
+                </div>
+            </div>
+            <div class="right">
+                <div class="author-box">
+                    <div class="author">
+                        <div class="avatar">
+                            <img src="https://arduino.me/storage/v1/object/public/avatar/3.webp">
+                        </div>
+                        奈何col
+                    </div>
+                    <div class="text">软件作者，《Arduino程序设计基础作者》</div>
+                    <div> 6 个项目</div>
+                </div>
+            </div>
+        </div>
+    </ngx-simplebar>
 </div>

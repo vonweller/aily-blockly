@@ -1,3 +1,125 @@
-.subject-page{
+.subject-page {
     padding: 15px;
+
+    .title-box {
+        width: 100%;
+        margin-bottom: 15px;
+
+        .title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #fff;
+            margin: 7px 0 7px 0;
+        }
+
+        .date {
+            color: #aaa;
+            font-size: 12px;
+        }
+    }
+
+
+}
+
+.content {
+    display: flex;
+    gap: 15px;
+
+    .left {
+        flex-grow: 1;
+    }
+
+    .right {
+        width: 300px;
+    }
+}
+
+.description {
+    width: 100%;
+    background: #2b2b2b;
+    border-radius: 5px;
+    padding: 10px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin-bottom: 15px;
+}
+
+.itemList {
+    width: 100%;
+    background: #2b2b2b;
+    border-radius: 5px;
+    padding: 0 10px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    .item {
+        border-bottom: 1px solid #444;
+        padding: 10px 0;
+        position: relative;
+        cursor: pointer;
+
+        .text {
+            color: #aaa;
+            font-size: 12px;
+        }
+
+        nz-button-group {
+            position: absolute;
+            right: 10px;
+            bottom: 13px;
+        }
+
+        &:last-child {
+            border-bottom: none;
+        }
+
+        &:hover{
+            .name{
+                color: #fff;
+            }
+        }
+    }
+}
+
+.author-box {
+    width: 280px;
+    height: 200px;
+    background: #2b2b2b;
+    border-radius: 5px;
+    padding: 10px;
+
+    .author {
+        display: flex;
+        align-items: center;
+
+        .avatar {
+            margin-right: 10px;
+            display: flex;
+
+            img {
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+            }
+        }
+    }
+}
+
+ngx-simplebar {
+    height: 100%;
+    width: 100%;
+
+    ::ng-deep {
+        .simplebar-content-wrapper {
+            height: 100%;
+        }
+
+        .simplebar-content {
+            height: 100%;
+        }
+    }
 }
