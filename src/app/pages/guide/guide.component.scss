@@ -19,6 +19,8 @@
     width: 680px;
     height: 560px;
     position: relative;
+    display: flex;
+    flex-direction: column;
   }
 
   .stitle {
@@ -55,7 +57,7 @@
       max-width: 100%;
     }
 
-    .icon{
+    .icon {
       width: 25px;
       // height: 20px;
     }
@@ -87,4 +89,26 @@
   background: transparent !important;
   position: absolute;
   right: 0;
+}
+
+.item {
+  width: 400px;
+  height: 50px;
+  margin-bottom: 15px;
+  display: flex;
+  flex-direction: column;
+  background: #262626;
+  border-radius: 5px;
+  padding: 5px 10px;
+  border-left: 5px solid #4d4d4d;
+  cursor: pointer;
+
+  >div:last-child {
+    color: #999;
+    font-size: 12px;
+  }
+
+  &:hover {
+    border-left: 5px solid #2658ce;
+  }
 }
