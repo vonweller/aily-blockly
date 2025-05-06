@@ -38,7 +38,6 @@ export class TranslationService {
     await this.setLanguage(currentLang);
 
     window['ipcRenderer'].on('setting-changed', (event, data) => {
-      console.log('ipcRenderer setLanguage', data);
       if (data.action == 'language-changed') {
         this.setLanguage(data.data);
       }

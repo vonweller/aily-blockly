@@ -103,7 +103,6 @@ export class HeaderComponent {
 
   listenRouterChange() {
     this.currentUrl = this.router.url;
-    console.log('当前路径:', this.currentUrl);
     if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
       this.headerMenu.forEach((menu) => {
         if (menu.disabled) {
@@ -122,7 +121,6 @@ export class HeaderComponent {
       filter(event => event instanceof NavigationEnd)
     ).subscribe(() => {
       this.currentUrl = this.router.url;
-      console.log('当前路径:', this.currentUrl);
       if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
         this.headerMenu.forEach((menu) => {
           if (menu.disabled) {

@@ -170,6 +170,7 @@ ngx-simplebar {
     height: 32px;
     border-radius: 2px;
     padding: 4px 11px;
+
     .w50 {
       width: 50%;
       display: flex;
@@ -180,4 +181,8 @@ ngx-simplebar {
       }
     }
   }
+}
+
+[disabled] {
+  opacity: 0.6;
 }
