@@ -103,7 +103,15 @@
   border-left: 5px solid #4d4d4d;
   cursor: pointer;
 
-  >div:last-child {
+  >div:nth-child(1) {
+    span {
+      color: #999;
+      font-size: 12px;
+      margin-left: 5px;
+    }
+  }
+
+  >div:nth-child(2) {
     color: #999;
     font-size: 12px;
   }
@@ -111,4 +119,11 @@
   &:hover {
     border-left: 5px solid #2658ce;
   }
+}
+
+img.qrcode {
+  margin-top: 6px;
+  width: 100px;
+  height: 100px;
+
 }

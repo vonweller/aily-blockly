@@ -63,4 +63,8 @@ export class ElectronService {
     return window['fs'].isFile(path);
   }
 
+  openUrl(url) {
+    window['other'].openByBrowser(url);
+  }
+
 }

@@ -5,6 +5,7 @@ import { ProjectService } from '../../services/project.service';
 import { version } from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
 import { Router } from '@angular/router';
+import { ElectronService } from '../../services/electron.service';
 
 @Component({
   selector: 'app-guide',
@@ -25,7 +26,8 @@ export class GuideComponent {
   constructor(
     private uiService: UiService,
     private projectService: ProjectService,
-    private router: Router
+    private router: Router,
+    private electronService: ElectronService
   ) { }
 
   onMenuClick(e: any) {
@@ -60,7 +62,7 @@ export class GuideComponent {
         this.openProject(item.data);
         break;
       case 'browser-open':
-        window['other'].openByBrowser(item.data.url);
+        this.electronService.openUrl(item.data.url);
         break;
       case 'playground-open':
         this.router.navigate(['/main/playground']);
@@ -68,5 +70,13 @@ export class GuideComponent {
       default:
         break;
     }
+  }
+
+  openUrl(url: string) {
+    this.electronService.openUrl(url);
+  }
+
+  gotoPlayground() {
+    this.router.navigate(['/main/playground']);
   }
 }

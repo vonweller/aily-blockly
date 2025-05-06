@@ -20,7 +20,7 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
-                <input nz-input [(ngModel)]="data.project_path" />
+                <input nz-input [(ngModel)]="data.project_path" [disabled]="true"/>
               </div>
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
@@ -85,7 +85,7 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}:</div>
-                <input nz-input [(ngModel)]="data.npm_registry[0]" />
+                <input nz-input [(ngModel)]="data.npm_registry[0]" [disabled]="true"/>
               </div>
               <!-- <div class="instructions">{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}</div>
               <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea>

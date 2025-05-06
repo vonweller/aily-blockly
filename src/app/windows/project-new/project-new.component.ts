@@ -57,7 +57,7 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   tagListRandom;
 
-  get resourceUrl(){
+  get resourceUrl() {
     return this.configService.data.resource[0];
   }
 
@@ -168,9 +168,7 @@ export class ProjectNewComponent {
   }
 
   openUrl(url) {
-    if (this.electronService.isElectron) {
-      window['other'].openByBrowser(url);
-    }
+    this.electronService.openUrl(url);
   }
 
   generateUniqueProjectName(prefix = 'project_'): string {

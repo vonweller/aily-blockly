@@ -18,6 +18,7 @@ import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
 import { NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs/operators';
+import { ElectronService } from '../../../services/electron.service';
 
 @Component({
   selector: 'app-header',
@@ -67,7 +68,8 @@ export class HeaderComponent {
     private message: NzMessageService,
     private modal: NzModalService,
     private updateService: UpdateService,
-    private router: Router
+    private router: Router,
+    private electronService: ElectronService
   ) { }
 
   ngAfterViewInit() {
@@ -296,7 +298,7 @@ export class HeaderComponent {
         this.updateService.checkForUpdates();
         break;
       case 'browser-open':
-        window['other'].openByBrowser(item.data.url);
+        this.electronService.openUrl(item.data.url);
         break;
       case 'app-exit':
         this.close();
