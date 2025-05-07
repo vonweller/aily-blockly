@@ -41,5 +41,6 @@ export interface PortItem {
   name?: string,
   text?: string,
   type?: string,
-  icon?: string
+  icon?: string,
+  disabled?: boolean
 }

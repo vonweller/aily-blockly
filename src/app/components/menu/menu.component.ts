@@ -43,6 +43,7 @@ export class MenuComponent {
   }
 
   itemClick(item) {
+    if (item.disabled) return;
     this.itemClickEvent.emit(item);
   }
 

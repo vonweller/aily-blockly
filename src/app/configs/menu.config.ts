@@ -79,6 +79,7 @@ export interface IMenuItem {
   sep?: boolean;
   state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
   disabled?: boolean;
+  hide?: boolean;
 }
 
 export let HEADER_MENU: IMenuItem[] = [
@@ -102,7 +103,7 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save',
     data: { type: 'cmd', data: 'save' },
     icon: 'fa-light fa-file-circle-check',
-    disabled: true,
+    hide: true,
   },
   {
     name: 'MENU.PROJECT_SAVE_AS',
@@ -110,21 +111,21 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save-as',
     data: { type: 'cmd', data: 'save-as' },
     icon: 'fa-light fa-copy',
-    disabled: true,
+    hide: true,
   },
   {
     name: 'MENU.OPEN_IN_EXPLORER',
     action: 'project-open-by-explorer',
     data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
-    disabled: true,
+    hide: true,
   },
   {
     name: 'MENU.PROJECT_CLOSE',
     action: 'project-close',
     data: { type: 'cmd', data: 'close' },
     icon: 'fa-light fa-folder-closed',
-    disabled: true,
+    hide: true,
   },
   // {
   //   name: 'MENU.CODE_EXPORT',
