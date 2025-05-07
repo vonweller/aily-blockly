@@ -1,0 +1,27 @@
+<div class="prompt-box bborder">
+    <div class="header">
+        <div class="title"><i class="fa-solid fa-triangle-exclamation"></i>库兼容性提示</div>
+        <div class="win-btns">
+            <div class="btn ccenter close" (click)="cancel()">
+                <i class="fa-light fa-xmark"></i>
+            </div>
+        </div>
+    </div>
+    <div class="content">
+        <div class="text">
+            <div class="t1">该库可能无法在当前开发板上使用，是否继续安装？</div>
+            <div class="t2">
+                当前库支持内核：<span>
+                    @for(tag of libCompatibility; track $index) {
+                    <nz-tag>{{tag}}</nz-tag>
+                    }
+                </span>
+            </div>
+            <div class="t2">当前开发版内核：<nz-tag nzColor="#0f6cb3">{{boardCore}}</nz-tag></div>
+        </div>
+        <div class="footer">
+            <button nz-button [nzSize]="'small'" nzType="default" (click)="cancel()">取消</button>
+            <button nz-button [nzSize]="'small'" nzType="primary" nzDanger (click)="continue()">继续安装</button>
+        </div>
+    </div>
+</div>

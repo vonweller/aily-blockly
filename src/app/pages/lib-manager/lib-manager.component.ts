@@ -14,6 +14,8 @@ import { ProjectService } from '../../services/project.service';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { TerminalService } from '../../tools/terminal/terminal.service';
 import { UiService } from '../../services/ui.service';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { CompatibleDialogComponent } from './components/compatible-dialog/compatible-dialog.component';
 
 @Component({
   selector: 'app-lib-manager',
@@ -52,7 +54,8 @@ export class LibManagerComponent {
     private uiService: UiService,
     private message: NzMessageService,
     private cd: ChangeDetectorRef,
-    private translate: TranslateService
+    private translate: TranslateService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit() {
@@ -114,17 +117,17 @@ export class LibManagerComponent {
   search(keyword = this.keyword) {
     if (keyword) {
       keyword = keyword.replace(/\s/g, '').toLowerCase();
-      
+
       // 处理翻译后的特殊关键词
       const installedKey = this.translate.instant('LIB_MANAGER.INSTALLED').toLowerCase();
       const coreLibKey = this.translate.instant('LIB_MANAGER.CORE_LIBRARY').toLowerCase();
-      
+
       if (keyword === installedKey) {
         keyword = '已安装';
       } else if (keyword === coreLibKey) {
         keyword = '核心库';
       }
-      
+
       this.libraryList = this._libraryList.filter((item) => item.fulltext.includes(keyword));
     } else {
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
@@ -144,6 +147,13 @@ export class LibManagerComponent {
   }
 
   async installLib(lib) {
+    // 检查库兼容性
+    console.log('当前开发板内核：', this.projectService.currentBoardConfig.core.replace('aily:', ''));
+    console.log('当前库兼容内核：', lib.compatibility.core);
+    if (!await this.checkCompatibility(lib.compatibility.core, this.projectService.currentBoardConfig.core.replace('aily:', ''))) {
+      return;
+    }
+
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
     await this.uiService.openTerminal();
@@ -167,6 +177,54 @@ export class LibManagerComponent {
       this.checkInstalled();
       lib.state = 'default';
       this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
+    });
+  }
+
+  async checkCompatibility(libCompatibility, boardCore): Promise<boolean> {
+    // 检查项目是否有未保存的更改
+    if (!libCompatibility || libCompatibility.length == 0 || libCompatibility.includes(boardCore)) {
+      return true;
+    }
+    // 遍历libCompatibility，判断每个元素是否包含boardCore
+    for (let i = 0; i < libCompatibility.length; i++) {
+      const element = libCompatibility[i];
+      if (element.includes(boardCore)) {
+        return true;
+      }
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzWidth: '360px',
+        nzContent: CompatibleDialogComponent,
+        nzData: { libCompatibility, boardCore },
+        // nzDraggable: true,
+      });
+
+      modalRef.afterClose.subscribe(async result => {
+        if (!result) {
+          // 用户直接关闭对话框，视为取消操作
+          resolve(false);
+          return;
+        }
+        switch (result.result) {
+          case 'continue':
+            resolve(true);
+            break;
+          case 'cancel':
+            resolve(false);
+            break;
+          default:
+            resolve(false);
+            break;
+        }
+      });
     });
   }
 }

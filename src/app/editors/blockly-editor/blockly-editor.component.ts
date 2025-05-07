@@ -71,7 +71,8 @@ export class BlocklyEditorComponent {
     // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
     let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
     const boardJson = JSON.parse(this.electronService.readFile(boardJsonPath));
-    this.blocklyService.loadBoardConfig(boardJson);
+    this.blocklyService.boardConfig = boardJson;
+    this.projectService.currentBoardConfig = boardJson;
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
     // console.log('libraryModuleList: ', libraryModuleList);

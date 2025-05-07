@@ -39,14 +39,6 @@ export class BlocklyService {
     private electronService: ElectronService
   ) { }
 
-  // async init() {
-  //   this.workspace = null;
-  // }
-
-  loadBoardConfig(boardConfig) {
-    this.boardConfig = boardConfig
-  }
-
   // 加载blockly的json数据
   loadAbiJson(jsonData) {
     Blockly.serialization.workspaces.load(jsonData, this.workspace);

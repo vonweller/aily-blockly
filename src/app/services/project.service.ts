@@ -33,6 +33,7 @@ export class ProjectService {
   };
 
   currentProjectPath: string;
+  currentBoardConfig: any;
 
   isMainWindow = false;
   isInstalling = false;
