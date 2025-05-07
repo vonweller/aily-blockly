@@ -134,7 +134,7 @@ function registerTerminalHandlers(mainWindow) {
 
         timeoutId = setTimeout(() => {
           ptyProcess.removeListener('data', dataHandler);
-          resolve(output);
+          resolve(output + "<<EOF");
         }, 500); // 等待500ms无数据后认为命令执行完毕
       };
 
