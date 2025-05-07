@@ -35,7 +35,8 @@
             "THEME": "主题设置",
             "COMPILATION": "编译设置",
             "REPOSITORY": "仓库设置",
-            "BOARD_MANAGEMENT": "开发板管理"
+            "BOARD_MANAGEMENT": "开发板管理",
+            "DEVMODE": "开发者模式"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "项目文件夹",

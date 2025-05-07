@@ -20,7 +20,7 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
-                <input nz-input [(ngModel)]="data.project_path" [disabled]="true"/>
+                <input nz-input [(ngModel)]="data.project_path" [disabled]="true" />
               </div>
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
@@ -85,7 +85,7 @@
             <div class="right-inner">
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}:</div>
-                <input nz-input [(ngModel)]="data.npm_registry[0]" [disabled]="true"/>
+                <input nz-input [(ngModel)]="data.npm_registry[0]" [disabled]="true" />
               </div>
               <!-- <div class="instructions">{{ 'SETTINGS.FIELDS.REPOSITORY_URLS' | translate }}</div>
               <textarea class="registry" nz-input [(ngModel)]="npmRegistryListStr"></textarea>
@@ -147,6 +147,16 @@
                 }
                 }
 
+              </div>
+            </div>
+          </div>
+          <!-- 开发者设置 -->
+          <div id="DEVMODE" class="section">
+            <h2 class="section-title">{{ 'SETTINGS.SECTIONS.DEVMODE' | translate }}</h2>
+            <div class="right-inner">
+              <div class="item">
+                <div>{{ 'SETTINGS.SECTIONS.DEVMODE' | translate }}:</div>
+                <nz-switch [ngModel]="true"></nz-switch>
               </div>
             </div>
           </div>

@@ -65,6 +65,10 @@ export class SettingsComponent {
       name: 'MCP',
       icon: 'fa-light fa-webhook'
     },
+    {
+      name: 'SETTINGS.SECTIONS.DEVMODE',
+      icon: 'fa-light fa-gear-code'
+    },
   ];
 
   UiThemeValue = 'dark';

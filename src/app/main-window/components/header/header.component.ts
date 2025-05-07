@@ -105,14 +105,14 @@ export class HeaderComponent {
     this.currentUrl = this.router.url;
     if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
       this.headerMenu.forEach((menu) => {
-        if (menu.disabled) {
-          menu.disabled = false;
+        if (menu.hide) {
+          menu.hide = false;
         }
       });
     } else {
       this.headerMenu.forEach((menu) => {
-        if (menu.disabled === false) {
-          menu.disabled = true;
+        if (menu.hide === false) {
+          menu.hide = true;
         }
       });
     }
@@ -123,14 +123,14 @@ export class HeaderComponent {
       this.currentUrl = this.router.url;
       if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
         this.headerMenu.forEach((menu) => {
-          if (menu.disabled) {
-            menu.disabled = false;
+          if (menu.hide) {
+            menu.hide = false;
           }
         });
       } else {
         this.headerMenu.forEach((menu) => {
-          if (menu.disabled === false) {
-            menu.disabled = true;
+          if (menu.hide === false) {
+            menu.hide = true;
           }
         });
       }
@@ -167,7 +167,22 @@ export class HeaderComponent {
   }
 
   async getDevicePortList() {
-    this.portList = await this.serialService.getSerialPorts();
+
+    let portList0 = await this.serialService.getSerialPorts();
+    if (portList0.length == 0) {
+      // this.message.warning('没有找到可用的设备，请检查连接');
+      this.portList = [
+        {
+          name: 'Device not found',
+          text: '',
+          type: 'serial',
+          icon: 'fa-light fa-triangle-exclamation',
+          disabled: true,
+        }
+      ];
+    } else {
+      this.portList = portList0;
+    }
     this.cd.detectChanges();
   }
 
