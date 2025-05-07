@@ -3,8 +3,27 @@ const { ipcMain, BrowserWindow } = require("electron");
 const path = require('path');
 
 function registerWindowHandlers(mainWindow) {
+    // 添加一个映射来存储已打开的窗口
+    const openWindows = new Map();
 
     ipcMain.on("window-open", (event, data) => {
+        const windowUrl = data.path;
+        
+        // 检查是否已存在该URL的窗口
+        if (openWindows.has(windowUrl)) {
+            const existingWindow = openWindows.get(windowUrl);
+            // 确保窗口仍然有效
+            if (existingWindow && !existingWindow.isDestroyed()) {
+                // 激活已存在的窗口
+                existingWindow.focus();
+                return;
+            } else {
+                // 如果窗口已被销毁，从映射中移除
+                openWindows.delete(windowUrl);
+            }
+        }
+        
+        // 创建新窗口
         const subWindow = new BrowserWindow({
             frame: false,
             autoHideMenuBar: true,
@@ -17,6 +36,14 @@ function registerWindowHandlers(mainWindow) {
                 webSecurity: false,
                 preload: path.join(__dirname, "preload.js"),
             },
+        });
+
+        // 将新窗口添加到映射
+        openWindows.set(windowUrl, subWindow);
+
+        // 当窗口关闭时，从映射中移除
+        subWindow.on('closed', () => {
+            openWindows.delete(windowUrl);
         });
 
         if (process.env.DEV === 'true' || process.env.DEV === true) {
