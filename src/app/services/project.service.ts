@@ -176,7 +176,6 @@ export class ProjectService {
     this.stateSubject.next('loading');
     // this.uiService.
     // 0. 判断路径是否存在
-    this.currentProjectPath = projectPath;
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
       // 打开blockly编辑器

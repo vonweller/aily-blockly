@@ -11,13 +11,16 @@
         <div class="text">
             <div class="t1">该库可能无法在当前开发板上使用，是否继续安装？</div>
             <div class="t2">
-                当前库支持内核：<span>
+                <div class="t2-text">
+                    当前库支持内核：
+                </div>
+                <div>
                     @for(tag of libCompatibility; track $index) {
                     <nz-tag>{{tag}}</nz-tag>
                     }
-                </span>
+                </div>
             </div>
-            <div class="t2">当前开发版内核：<nz-tag nzColor="#0f6cb3">{{boardCore}}</nz-tag></div>
+            <div class="t2">当前开发版内核：<nz-tag nzColor="processing">{{boardCore}}</nz-tag></div>
         </div>
         <div class="footer">
             <button nz-button [nzSize]="'small'" nzType="default" (click)="cancel()">取消</button>

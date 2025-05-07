@@ -87,8 +87,14 @@
     .t2 {
         color: #afafaf;
         margin-bottom: 5px;
+        line-height: 24px;
+        display: flex;
 
-        &:last-child{
+        .t2-text {
+            flex-shrink: 0;
+        }
+
+        &:last-child {
             margin-bottom: 0;
         }
     }

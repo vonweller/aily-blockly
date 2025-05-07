@@ -9,6 +9,7 @@ import { ActivatedRoute } from '@angular/router';
 import { TerminalService } from '../../tools/terminal/terminal.service';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { ElectronService } from '../../services/electron.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -31,7 +32,8 @@ export class BlocklyEditorComponent {
     private activatedRoute: ActivatedRoute,
     private terminalService: TerminalService,
     private blocklyService: BlocklyService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private message: NzMessageService
   ) { }
 
   ngOnInit(): void {
@@ -39,6 +41,8 @@ export class BlocklyEditorComponent {
       if (params['path']) {
         console.log('project path', params['path']);
         this.loadProject(params['path']);
+      } else {
+        this.message.error('没有找到项目路径');
       }
     });
   }
@@ -53,11 +57,13 @@ export class BlocklyEditorComponent {
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
     // 添加到最近打开的项目
     this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
+    // 设置当前项目路径和package.json数据
     this.projectService.currentPackageData = packageJson;
-    // 1. 终端进入项目目录
-    // 2. 安装项目依赖。检查是否有node_modules目录，没有则安装依赖，有则跳过
+    this.projectService.currentProjectPath = projectPath;
+    // 检查是否有node_modules目录，没有则安装依赖，有则跳过
     const nodeModulesExist = this.electronService.exists(projectPath + '/node_modules');
     if (!nodeModulesExist) {
+      // 终端进入项目目录，安装项目依赖
       this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
       await this.uiService.openTerminal();
       await this.terminalService.sendCmd(`cd "${projectPath}"`);
