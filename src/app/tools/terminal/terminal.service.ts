@@ -45,12 +45,7 @@ export class TerminalService {
       window['terminal'].sendInputAsync({ pid: this.currentPid, input: input + '\r' })
         .then(output => {
           console.log('执行结果:', output);
-          // Check if output contains '<<EOF' string
-          const containsEndMarker = typeof output === 'string' && output.includes('<<EOF');
-          if (containsEndMarker) {
-            output = output.replace('<<EOF', '');
-            resolve(output);
-          }
+          resolve(output);
         })
         .catch(err => {
           console.error('执行错误:', err);

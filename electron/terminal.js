@@ -132,10 +132,34 @@ function registerTerminalHandlers(mainWindow) {
         // 这里使用简单的延迟检测方式，适合大多数命令
         clearTimeout(timeoutId);
 
-        timeoutId = setTimeout(() => {
-          ptyProcess.removeListener('data', dataHandler);
-          resolve(output + "<<EOF");
-        }, 500); // 等待500ms无数据后认为命令执行完毕
+        // 判断是否是npm install命令
+        if (input.includes('npm install')) {
+          // 判断data是否类似于：added 9 packages in 0.697s
+          if ((output.includes('added') || output.includes('updated')) && output.includes('packages')) {
+            // 如果检测到提示符，表示命令执行完成
+            console.log('npm install command completed');
+            ptyProcess.removeListener('data', dataHandler);
+            resolve(output);
+          } else {
+            // 继续等待数
+            timeoutId = setTimeout(() => {
+              ptyProcess.removeListener('data', dataHandler);
+              console.log('npm install command timed out');
+              resolve(output);
+            }, 1000); // 等待1秒无数据后认为命令执行完毕
+          }
+        } else {
+          timeoutId = setTimeout(() => {
+            ptyProcess.removeListener('data', dataHandler);
+            resolve(output);
+          }, 500); // 等待500ms无数据后认为命令执行完毕
+        }
+
+
+        // timeoutId = setTimeout(() => {
+        //   ptyProcess.removeListener('data', dataHandler);
+        //   resolve(output);
+        // }, 500); // 等待500ms无数据后认为命令执行完毕
       };
 
       ptyProcess.on('data', dataHandler);
