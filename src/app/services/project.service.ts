@@ -172,10 +172,12 @@ export class ProjectService {
   async projectOpen(projectPath = this.currentProjectPath) {
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
-    // this.uiService.updateState({ state: 'doing', text: '正在打开项目...' });
+    // 判断路径是否存在
+    if (!window['path'].isExists(projectPath)) {
+      this.removeRecentlyProject({ path: projectPath })
+      return this.message.error('项目路径不存在，请重新选择项目');
+    }
     this.stateSubject.next('loading');
-    // this.uiService.
-    // 0. 判断路径是否存在
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
       // 打开blockly编辑器
