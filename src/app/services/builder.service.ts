@@ -158,12 +158,12 @@ export class BuilderService {
       if (!window['path'].isExists(sourceZipPath)) continue;
 
       let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
-      if (window['path'].isExists(sourcePath)) {
-        // 直接复制src到targetPath
-        await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-      } else {
-        await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${targetPath}" -y`);
+      if (!window['path'].isExists(sourcePath)) {
+        // 如果没有src文件夹，则使用src.7z解压到临时文件夹
+        await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
       }
+      // 直接复制src到targetPath
+      await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
 
       await this.waitForDirectoryExists(targetPath, 5000, 100);
     }
