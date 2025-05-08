@@ -10,6 +10,7 @@ import { TerminalService } from '../../tools/terminal/terminal.service';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { ConfigService } from '../../services/config.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -25,6 +26,10 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 export class BlocklyEditorComponent {
   showProjectManager = false;
 
+  get devmode() {
+    return this.configService.data.devmode;
+  }
+
   constructor(
     private cd: ChangeDetectorRef,
     private projectService: ProjectService,
@@ -33,7 +38,8 @@ export class BlocklyEditorComponent {
     private terminalService: TerminalService,
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private configService: ConfigService
   ) { }
 
   ngOnInit(): void {

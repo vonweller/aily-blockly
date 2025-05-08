@@ -62,7 +62,7 @@ export class SettingsComponent {
       icon: 'fa-light fa-layer-group'
     },
     {
-      name: 'MCP',
+      name: 'SETTINGS.SECTIONS.MCP',
       icon: 'fa-light fa-webhook'
     },
     {
@@ -89,7 +89,7 @@ export class SettingsComponent {
     return this.translationService.getSelectedLanguage();
   }
 
-  get data() {
+  get configData() {
     return this.configService.data;
   }
 
@@ -174,6 +174,7 @@ export class SettingsComponent {
   apply() {
     // 保存到config.json，如有需要立即加载的，再加载
     this.configService.save();
+     window['ipcRenderer'].send('setting-changed', { action: 'devmode-changed', data: this.configData.devmode });
     // 保存完毕后关闭窗口
     this.uiService.closeWindow();
   }
@@ -198,5 +199,9 @@ export class SettingsComponent {
     else if (result === 'failed') {
       this.boardOperations[board.name] = { status: 'failed' };
     }
+  }
+
+  onDevModeChange() {
+    this.configData.devmode = !this.configData.devmode;
   }
 }

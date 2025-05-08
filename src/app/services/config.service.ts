@@ -95,4 +95,6 @@ interface AppConfig {
     /** 警告处理方式 */
     warnings: string;
   };
+
+  devmode: boolean;
 }

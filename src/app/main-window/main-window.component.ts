@@ -18,6 +18,7 @@ import { NzModalModule } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { Router, RouterModule } from '@angular/router';
+import { ConfigService } from '../services/config.service';
 
 @Component({
   selector: 'app-main-window',
@@ -63,6 +64,7 @@ export class MainWindowComponent {
     private updateService: UpdateService,
     private npmService: NpmService,
     private router: Router,
+    private configService: ConfigService,
   ) { }
 
   ngOnInit(): void {
@@ -72,8 +74,8 @@ export class MainWindowComponent {
     this.npmService.init();
 
     // 语言设置变化后，重新加载项目
-    window['ipcRenderer'].on('setting-changed', (event, data) => {
-      // console.log(this.router.url);
+    window['ipcRenderer'].on('setting-changed', async (event, data) => {
+      await this.configService.load();
       if (data.action == 'language-changed' && this.router.url.includes('/main/blockly-editor')) {
         console.log('mainwindow setLanguage', data);
         this.projectService.save();

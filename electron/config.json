@@ -25,5 +25,6 @@
     "verbose": true,
     "warnings": "error"
   },
-  "platform": "win32"
+  "platform": "win32",
+  "devmode": false
 }
