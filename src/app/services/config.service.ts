@@ -1,7 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { lastValueFrom } from 'rxjs';
-
 import { ElectronService } from './electron.service';
 
 @Injectable({
@@ -13,14 +12,14 @@ export class ConfigService {
 
   constructor(
     private http: HttpClient,
-    private electronService: ElectronService,
+    private electronService: ElectronService
   ) { }
 
   init() {
     this.load();
   }
 
-  async load() { 
+  async load() {
     let defaultConfigFilePath = window['path'].getElectronPath();
     let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config.json`);
     this.data = await JSON.parse(defaultConfigFile);
@@ -31,7 +30,7 @@ export class ConfigService {
     if (this.electronService.exists(`${configFilePath}/config.json`)) {
        userConfData = JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`)); 
     } else {
-       userConfData = {};
+      userConfData = {};
     }
 
     // 合并用户配置和默认配置

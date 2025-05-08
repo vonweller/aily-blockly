@@ -202,6 +202,6 @@ export class SettingsComponent {
   }
 
   onDevModeChange() {
-    this.configData.devmode = !this.configData.devmode;
+    // this.configData.devmode = this.configData.devmode;
   }
 }
