@@ -7,7 +7,7 @@
         "PROJECT_CLOSE": "Projekt schließen",
         "OPEN_IN_EXPLORER": "Im Explorer öffnen",
         "BUILD": "Kompilieren",
-        "RUN": "Ausführen",
+        "RUN": "Hochladen",
         "STOP": "Stoppen",
         "CODE": "Code anzeigen",
         "CODE_EXPORT": "Code exportieren",
@@ -26,22 +26,36 @@
     },
     "GUIDE": {
         "START": "Start",
-        "RECENTLY": "Kürzlich"
+        "RECENTLY": "Zuletzt",
+        "TITLE": "aily blockly IDE",
+        "TUTORIAL": "Tutorials & Beispiele",
+        "TUTORIAL_DESC": "Tutorials und Beispielprogramme ansehen",
+        "COMING_SOON": "Demnächst verfügbar",
+        "VERSION_INFO": "Versionsinformationen",
+        "VERSION_INFO_DESC": "Klicken Sie, um die Versionshinweise zu lesen",
+        "GITHUB": "Github",
+        "GITHUB_DESC": "Hier erhalten Sie den Quellcode dieser Software",
+        "FEEDBACK": "Feedback",
+        "FEEDBACK_DESC": "Teilen Sie uns Ihre Erfahrungen mit",
+        "WECHAT_GROUP": "WeChat-Benutzergruppe",
+        "WECHAT_GROUP_DESC": "Treten Sie der WeChat-Benutzergruppe bei, um sich mit anderen Benutzern auszutauschen"
     },
     "SETTINGS": {
         "TITLE": "Einstellungen",
         "SECTIONS": {
             "BASIC": "Grundeinstellungen",
-            "THEME": "Thema-Einstellungen",
+            "THEME": "Themeneinstellungen",
             "COMPILATION": "Kompilierungseinstellungen",
             "REPOSITORY": "Repository-Einstellungen",
-            "BOARD_MANAGEMENT": "Board-Verwaltung"
+            "BOARD_MANAGEMENT": "Board-Verwaltung",
+            "MCP": "MCP",
+            "DEVMODE": "Entwicklermodus"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Projektordner",
             "LANGUAGE": "Sprache",
-            "UI_THEME": "UI-Thema",
-            "BLOCKLY_THEME": "Blockly-Thema",
+            "UI_THEME": "UI-Theme",
+            "BLOCKLY_THEME": "Blockly-Theme",
             "COMPILATION_OPTIONS": "Kompilierungsoptionen",
             "REPOSITORY_URLS": "Repository-URLs",
             "BOARD_LIST": "Board-Liste",
@@ -77,20 +91,21 @@
             "NEXT": "Weiter",
             "PREV": "Zurück",
             "CREATE": "Projekt erstellen",
-            "CREATING": "Wird erstellt"
+            "CREATING": "Erstellen"
         }
     },
     "LIB_MANAGER": {
         "TITLE": "Bibliotheksverwaltung",
         "BACK": "Zurück",
         "SEARCH_LIBRARY": "Bibliothek suchen",
+        "ALL": "Alle Bibliotheken",
         "INSTALLED": "Installiert",
         "CORE_LIBRARY": "Kernbibliothek",
         "INSTALL": "Installieren",
         "INSTALLED_TEXT": "Installiert",
         "REMOVE": "Entfernen",
-        "INSTALLING": "Wird installiert",
-        "UNINSTALLING": "Wird deinstalliert",
+        "INSTALLING": "Installiere",
+        "UNINSTALLING": "Deinstalliere",
         "UNINSTALLED": "Deinstalliert",
         "SENSORS": "Sensoren",
         "ACTUATORS": "Aktoren",
@@ -101,7 +116,6 @@
         "ROBOT": "Roboter",
         "AI": "KI",
         "IOT": "IoT",
-        "OTHERS": "Andere",
-        "ALL": "Alle Bibliotheken"
+        "OTHERS": "Andere"
     }
 }

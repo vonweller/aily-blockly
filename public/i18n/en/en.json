@@ -5,7 +5,7 @@
         "PROJECT_SAVE": "Save Project",
         "PROJECT_SAVE_AS": "Save As",
         "PROJECT_CLOSE": "Close Project",
-        "OPEN_IN_EXPLORER": "Open in File Explorer",
+        "OPEN_IN_EXPLORER": "Open in Explorer",
         "BUILD": "Build",
         "RUN": "Upload",
         "STOP": "Stop",
@@ -22,20 +22,34 @@
         "EXIT": "Exit",
         "USER_MANUAL": "User Manual",
         "EXAMPLES": "Examples",
-        "UPDATE": "Check for updates"
+        "UPDATE": "Check for Updates"
     },
     "GUIDE": {
         "START": "Start",
-        "RECENTLY": "Recent"
+        "RECENTLY": "Recent",
+        "TITLE": "aily blockly IDE",
+        "TUTORIAL": "Tutorials & Examples",
+        "TUTORIAL_DESC": "View tutorials and example programs",
+        "COMING_SOON": "coming soon",
+        "VERSION_INFO": "Version Info",
+        "VERSION_INFO_DESC": "Click to read the version notes",
+        "GITHUB": "Github",
+        "GITHUB_DESC": "Get the source code of this software here",
+        "FEEDBACK": "Feedback",
+        "FEEDBACK_DESC": "Send feedback about your experience",
+        "WECHAT_GROUP": "WeChat User Group",
+        "WECHAT_GROUP_DESC": "Join the WeChat user group to communicate with other users"
     },
     "SETTINGS": {
         "TITLE": "Settings",
         "SECTIONS": {
-            "BASIC": "Basic",
-            "THEME": "Theme",
-            "COMPILATION": "Compilation",
-            "REPOSITORY": "Repository",
-            "BOARD_MANAGEMENT": "Boards"
+            "BASIC": "Basic Settings",
+            "THEME": "Theme Settings",
+            "COMPILATION": "Compilation Settings",
+            "REPOSITORY": "Repository Settings",
+            "BOARD_MANAGEMENT": "Board Management",
+            "MCP": "MCP",
+            "DEVMODE": "Developer Mode"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Project Folder",
@@ -83,9 +97,10 @@
     "LIB_MANAGER": {
         "TITLE": "Library Manager",
         "BACK": "Back",
-        "SEARCH_LIBRARY": "Search library",
+        "SEARCH_LIBRARY": "Search Library",
+        "ALL": "All Libraries",
         "INSTALLED": "Installed",
-        "CORE_LIBRARY": "Core library",
+        "CORE_LIBRARY": "Core Library",
         "INSTALL": "Install",
         "INSTALLED_TEXT": "Installed",
         "REMOVE": "Remove",
@@ -101,7 +116,6 @@
         "ROBOT": "Robot",
         "AI": "AI",
         "IOT": "IoT",
-        "OTHERS": "Others",
-        "ALL": "All Libraries"
+        "OTHERS": "Others"
     }
 }

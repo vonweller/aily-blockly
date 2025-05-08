@@ -35,7 +35,9 @@
             "THEME": "主題設定",
             "COMPILATION": "編譯設定",
             "REPOSITORY": "倉庫設定",
-            "BOARD_MANAGEMENT": "開發板管理"
+            "BOARD_MANAGEMENT": "開發板管理",
+            "MCP": "MCP",
+            "DEVMODE": "開發者模式"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "專案資料夾",
@@ -84,6 +86,7 @@
         "TITLE": "函式庫管理",
         "BACK": "返回",
         "SEARCH_LIBRARY": "搜尋函式庫",
+        "ALL": "所有庫",
         "INSTALLED": "已安裝",
         "CORE_LIBRARY": "核心函式庫",
         "INSTALL": "安裝",
@@ -101,7 +104,6 @@
         "ROBOT": "機器人",
         "AI": "AI",
         "IOT": "物聯網",
-        "OTHERS": "其他",
-        "ALL": "所有庫"
+        "OTHERS": "其他"
     }
 }
