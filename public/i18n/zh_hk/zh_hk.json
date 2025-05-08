@@ -26,7 +26,19 @@
     },
     "GUIDE": {
         "START": "開始",
-        "RECENTLY": "最近"
+        "RECENTLY": "最近",
+        "TITLE": "aily blockly IDE",
+        "TUTORIAL": "教程與示例",
+        "TUTORIAL_DESC": "查看教程與示例程式",
+        "COMING_SOON": "coming soon",
+        "VERSION_INFO": "版本說明",
+        "VERSION_INFO_DESC": "點擊閱讀該版本說明",
+        "GITHUB": "Github",
+        "GITHUB_DESC": "可以透過這裡獲取到本軟件源碼",
+        "FEEDBACK": "問題反饋",
+        "FEEDBACK_DESC": "可以透過這裡告知使用反饋",
+        "WECHAT_GROUP": "用戶微信群",
+        "WECHAT_GROUP_DESC": "加入用戶微信群，與其他用戶交流"
     },
     "SETTINGS": {
         "TITLE": "設定",
