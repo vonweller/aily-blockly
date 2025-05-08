@@ -120,10 +120,10 @@ function createWindow() {
   });
 
   try {
-    loadEnv();
+    // loadEnv();
     initLogger(process.env.AILY_APPDATA_PATH);
   } catch (error) {
-    console.error("loadEnv error: ", error);
+    console.error("initLogger error: ", error);
   }
 
   // 注册ipc handlers
@@ -136,6 +136,13 @@ function createWindow() {
 }
 
 app.on("ready", () => {
+  // 先加载环境变量
+  try {
+    loadEnv();
+  } catch (error) {
+    console.error("loadEnv error: ", error);
+  }
+  // 创建主窗口
   createWindow();
 
   // 这个用于双击实现窗口最大化，之后调
@@ -160,6 +167,13 @@ app.on("window-all-closed", () => {
 // 在 macOS 上，当应用被激活时（如点击 Dock 图标），重新创建窗口
 app.on("activate", () => {
   if (mainWindow === null) {
+    // 先加载环境变量
+    try {
+      loadEnv();
+    } catch (error) {
+      console.error("loadEnv error: ", error);
+    }
+    // 创建主窗口
     createWindow();
   }
 });
