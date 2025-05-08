@@ -54,6 +54,15 @@ function loadEnv() {
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
   }
 
+  // 检测并读取appdata_path目录下是否有config.json文件
+  const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
+  if (fs.existsSync(userConfigPath)) {
+    const userConfContent = fs.readFileSync(userConfigPath);
+    const userConf = JSON.parse(userConfContent);
+    // 合并配置文件
+    Object.assign(conf, userConf);
+  }
+
   // npm registry
   process.env.AILY_NPM_REGISTRY = conf["npm_registry"][0];
   // 7za path

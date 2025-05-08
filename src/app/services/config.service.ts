@@ -15,15 +15,29 @@ export class ConfigService {
     this.load();
   }
 
-  async load() {
-    let configFilePath = window['path'].getElectronPath();
-    this.data = await JSON.parse(window['fs'].readFileSync(`${configFilePath}/config.json`));
+  async load() { 
+    let defaultConfigFilePath = window['path'].getElectronPath();
+    let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config.json`);
+    this.data = await JSON.parse(defaultConfigFile);
+
+    let userConfData;
+    let configFilePath = window['path'].getAppData();
+    // 检查配置文件是否存在，如果不存在则创建一个默认的配置文件
+    if (window['fs'].existsSync(`${configFilePath}/config.json`)) {
+       userConfData = await JSON.parse(window['fs'].readFileSync(`${configFilePath}/config.json`)); 
+    } else {
+       userConfData = {};
+    }
+
+    // 合并用户配置和默认配置
+    this.data = { ...this.data, ...userConfData };
+
     // 添加当前系统类型到data中
     this.data["platform"] = window['platform'].type;
   }
 
   async save() {
-    let configFilePath = window['path'].getElectronPath();
+    let configFilePath = window['path'].getAppData();
     window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 
