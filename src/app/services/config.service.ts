@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { lastValueFrom } from 'rxjs';
+import { ElectronService } from './electron.service';
 
 @Injectable({
   providedIn: 'root',
@@ -9,13 +10,16 @@ export class ConfigService {
 
   data: AppConfig;
 
-  constructor(private http: HttpClient) { }
+  constructor(
+    private http: HttpClient,
+    private electronService: ElectronService
+  ) { }
 
   init() {
     this.load();
   }
 
-  async load() { 
+  async load() {
     let defaultConfigFilePath = window['path'].getElectronPath();
     let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config.json`);
     this.data = await JSON.parse(defaultConfigFile);
@@ -23,10 +27,10 @@ export class ConfigService {
     let userConfData;
     let configFilePath = window['path'].getAppData();
     // 检查配置文件是否存在，如果不存在则创建一个默认的配置文件
-    if (window['fs'].existsSync(`${configFilePath}/config.json`)) {
-       userConfData = await JSON.parse(window['fs'].readFileSync(`${configFilePath}/config.json`)); 
+    if (this.electronService.exists(`${configFilePath}/config.json`)) {
+      userConfData = await JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`));
     } else {
-       userConfData = {};
+      userConfData = {};
     }
 
     // 合并用户配置和默认配置
