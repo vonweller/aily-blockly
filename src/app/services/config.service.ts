@@ -64,6 +64,16 @@ export class ConfigService {
     );
     return this.libraryList;
   }
+
+  examplesList;
+  async loadExamplesList() {
+    this.examplesList = await lastValueFrom(
+      this.http.get(this.data.resource[0] + '/examples.json', {
+        responseType: 'json',
+      }),
+    );
+    return this.examplesList;
+  }
 }
 
 interface AppConfig {

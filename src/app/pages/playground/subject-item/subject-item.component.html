@@ -1,29 +1,29 @@
 <div class="subject-page">
     <ngx-simplebar [options]="options">
         <div class="title-box">
-            <div class="title">Arduino程序设计基础</div>
+            <div class="title">{{ exampleItem?.nickname }}</div>
             <div class="date">
                 <span>更新时间：2024/6/16</span>
-                <span>作者：奈何col</span>
+                <span>{{ exampleItem?.author }}</span>
                 <!-- <span>源地址</span> -->
             </div>
         </div>
         <div class="content">
             <div class="left">
                 <div class="description">
-                    Arduino是一个开源的电子原型平台，基于易于使用的硬件和软件。Arduino板子可以读取输入（例如传感器的光线、温度或湿度）并将其转换为输出（例如打开一个LED灯、启动马达或发布消息）。
+                    {{ exampleItem?.description }}
                 </div>
                 <div class="itemList">
-                    @for( item of itemList;track $index) {
+                    @for( item of exampleItem?.examples;track $index) {
                     <div class="item">
-                        <div class="name">{{item.name}}</div>
-                        <div class="text">{{item.description}}</div>
+                        <div class="name">{{item?.nickname}}</div>
+                        <div class="text">{{item?.description}}</div>
 
                         <nz-button-group [nzSize]="'small'">
-                            <button nz-button nzType="primary" [nzSize]="'small'">
+                            <button nz-button nzType="primary" [nzSize]="'small'" (click)="loadExample(item?.path)">
                                 加载程序
                             </button>
-                            <button nz-button [nzSize]="'small'">
+                            <button nz-button [nzSize]="'small'" (click)="openUrl(item?.url)">
                                 查看教程
                             </button>
                         </nz-button-group>

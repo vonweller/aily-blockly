@@ -1,15 +1,15 @@
 <div class="example-list">
     @for( subject of subjectList;track $index) {
-    <div class="example-item" [routerLink]="['/main/playground/s']">
+    <div class="example-item" [routerLink]="['/main/playground/s' + '/' + subject.nickname]">
         <div class="img-box">
-            <img src="imgs\subject.webp" alt="">
+            <img [src]="resourceUrl + subject.img" alt="" (error)="onImgError($event)" />
         </div>
         <div>
-            <div class="name ellipsis">{{ subject.name }}</div>
+            <div class="name ellipsis">{{ subject.nickname }}</div>
             <div class="text ellipsis">{{ subject.description }}</div>
         </div>
         <div class="footer">
-            <div class="author">奈何col</div>
+            <div class="author">{{ subject.author }}</div>
             <div class="state">
                 <div>
                     <i class="fa-light fa-arrow-down-to-line"></i>

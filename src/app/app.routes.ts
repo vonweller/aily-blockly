@@ -33,7 +33,7 @@ export const routes: Routes = [
                         loadComponent: () => import('./pages/playground/subject-list/subject-list.component').then(m => m.SubjectListComponent)
                     },
                     {
-                        path: 's',
+                        path: 's/:name',
                         loadComponent: () => import('./pages/playground/subject-item/subject-item.component').then(m => m.SubjectItemComponent)
                     }
                 ]

@@ -32,6 +32,7 @@ export class ProjectService {
     name: 'aily blockly',
   };
 
+  projectRootPath: string;
   currentProjectPath: string;
   currentBoardConfig: any;
 
@@ -72,7 +73,8 @@ export class ProjectService {
           });
         }
       });
-      this.currentProjectPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
+      this.projectRootPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
+      this.currentProjectPath = this.projectRootPath;
     }
   }
 
