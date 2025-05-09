@@ -7,7 +7,7 @@ import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Location } from '@angular/common';
 import { SUBJECT_LIST } from './data';
-import { RouterModule } from '@angular/router';
+import { Router, RouterModule } from '@angular/router';
 
 @Component({
   selector: 'app-playground',
@@ -29,7 +29,7 @@ export class PlaygroundComponent {
   // exampleList = []
 
   constructor(
-    // private router: Router,
+    private router: Router,
     private location: Location,
     private translate: TranslateService
   ) {
@@ -54,7 +54,9 @@ export class PlaygroundComponent {
   search(keyword = this.keyword) {
     if (keyword) {
       keyword = keyword.replace(/\s/g, '').toLowerCase();
-
+      this.router.navigate(['/main/playground/list'], {
+        queryParams: { keyword }
+      });
     } else {
 
     }
