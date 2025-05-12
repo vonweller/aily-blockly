@@ -292,7 +292,8 @@ export class HeaderComponent {
         this.uploaderService.upload().then(result => {
           item.state = 'done';
         }).catch(err => {
-          item.state = 'error';
+          console.log("上传失败: ", err);
+          if (err.state) item.state = err.state;
         });
         break;
       case 'settings-open':

@@ -20,9 +20,9 @@
     @case('done'){
     <div class="ccenter">
         @if (toWink) {
-        <i class="fa-regular fa-face-smile-wink"  [ngStyle]="{'color': color}"></i>
+        <i class="fa-regular fa-face-smile-wink" [ngStyle]="{'color': color}"></i>
         }@else{
-        <i class="fa-regular fa-face-smile"  [ngStyle]="{'color': color}"></i>
+        <i class="fa-regular fa-face-smile" [ngStyle]="{'color': color}"></i>
         }
     </div>
     }
@@ -35,7 +35,9 @@
     }
     @case('warn'){
     <div class="ccenter">
-        <i class="fa-light fa-triangle-exclamation"></i>
+        <div class="qq ccenter" [ngStyle]="{'border-color': '#f0b506'}">
+            <i class="fa-regular fa-exclamation"></i>
+        </div>
     </div>
     }
     }

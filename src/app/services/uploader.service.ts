@@ -58,13 +58,13 @@ export class UploaderService {
     return new Promise<ActionState>(async (resolve, reject) => {
       if (this.uploadInProgress) {
         this.message.warning('上传中，请稍后');
-        reject({ state: 'error', text: '上传中，请稍后' });
+        reject({ state: 'warn', text: '上传中，请稍后' });
         return;
       }
       if (!this.serialService.currentPort) {
         this.message.warning('请先选择串口');
         this.uploadInProgress = false;
-        reject({ state: 'error', text: '请先选择串口' });
+        reject({ state: 'warn', text: '请先选择串口' });
         this.modal.create({
           nzTitle: null,
           nzFooter: null,
