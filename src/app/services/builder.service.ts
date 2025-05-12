@@ -78,153 +78,157 @@ export class BuilderService {
   }
 
   async build(): Promise<ActionState> {
-    this.noticeService.clear();
+    return new Promise<ActionState>(async (resolve, reject) => {
+      this.noticeService.clear();
 
-    this.currentProjectPath = this.projectService.currentProjectPath;
-    const tempPath = this.currentProjectPath + '/.temp';
-    const sketchPath = tempPath + '/sketch';
-    const sketchFilePath = sketchPath + '/sketch.ino';
-    const librariesPath = tempPath + '/libraries';
-    
-    this.buildPath = tempPath + '/build';
+      this.currentProjectPath = this.projectService.currentProjectPath;
+      const tempPath = this.currentProjectPath + '/.temp';
+      const sketchPath = tempPath + '/sketch';
+      const sketchFilePath = sketchPath + '/sketch.ino';
+      const librariesPath = tempPath + '/libraries';
 
-    this.buildInProgress = true;
-    this.currentBuildStreamId = null;
-    this.buildResolver = null;
+      this.buildPath = tempPath + '/build';
 
-    // this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
+      this.buildInProgress = true;
+      this.currentBuildStreamId = null;
+      this.buildResolver = null;
 
-    // 创建临时文件夹
-    await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
-    await this.waitForDirectoryExists(tempPath, 5000, 100);
-    await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
-    await this.waitForDirectoryExists(sketchPath, 5000, 100);
-    await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-    await this.waitForDirectoryExists(librariesPath, 5000, 100);
+      // this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
 
-    // 生成sketch文件
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    this.lastCode = code;
-    await window['fs'].writeFileSync(sketchFilePath, code);
+      // 创建临时文件夹
+      await this.uiService.openTerminal();
+      await this.terminalService.sendCmd(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
+      await this.waitForDirectoryExists(tempPath, 5000, 100);
+      await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
+      await this.waitForDirectoryExists(sketchPath, 5000, 100);
+      await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
+      await this.waitForDirectoryExists(librariesPath, 5000, 100);
 
-    // 加载项目package.json
-    const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
-    const dependencies = packageJson.dependencies || {};
-    const boardDependencies = packageJson.boardDependencies || {};
+      // 生成sketch文件
+      const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+      this.lastCode = code;
+      await window['fs'].writeFileSync(sketchFilePath, code);
 
-    // 从dependencies中查找以@aily-project/board-开头的依赖
-    let board = ""
-    const libsPath = []
-    Object.entries(dependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/board-')) {
-        board = key
-      } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
-        libsPath.push(key)
-      }
-    });
+      // 加载项目package.json
+      const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
+      const dependencies = packageJson.dependencies || {};
+      const boardDependencies = packageJson.boardDependencies || {};
 
-    if (!board) {
-      console.error('缺少板子信息');
-      this.buildInProgress = false;
-      return { state: 'error', text: '缺少板子信息' };
-    }
-
-    // 获取板子信息(board.json)
-    const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
-    console.log("boardJson: ", boardJson);
-
-    if (!boardJson) {
-      console.error('缺少板子信息');
-      this.buildInProgress = false;
-      return { state: 'error', text: '缺少板子信息' };
-    }
-
-    this.boardJson = boardJson;
-
-    // 获取板子
-
-    // 解压libraries到临时文件夹
-    console.log("libsPath: ", libsPath);
-    for (let lib of libsPath) {
-      let targetName = lib.split('@aily-project/')[1];
-      let targetPath = `${librariesPath}/${targetName}`;
-
-      if (window['path'].isExists(targetPath)) {
-        await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
-      }
-
-      let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
-      if (!window['path'].isExists(sourceZipPath)) continue;
-
-      let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
-      if (!window['path'].isExists(sourcePath)) {
-        // 如果没有src文件夹，则使用src.7z解压到临时文件夹
-        await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
-      }
-      // 直接复制src到targetPath
-      await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-
-      await this.waitForDirectoryExists(targetPath, 5000, 100);
-    }
-
-    // 获取编译器、sdk、tool的名称和版本
-    let compiler = ""
-    let sdk = ""
-
-    Object.entries(boardDependencies).forEach(([key, version]) => {
-      if (key.startsWith('@aily-project/compiler-')) {
-        compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
-      } else if (key.startsWith('@aily-project/sdk-')) {
-        sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
-      }
-    });
-
-    console.log("sdk: ", sdk)
-
-    if (!compiler || !sdk) {
-      console.error('缺少编译器或sdk');
-      this.buildInProgress = false;
-      return { state: 'error', text: '缺少编译器或sdk' };
-    }
-
-    // 组合编译器、sdk、tools的路径
-    this.compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
-    this.sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
-    this.toolsPath = await window["env"].get('AILY_TOOLS_PATH');
-
-    // 获取编译命令
-    let compilerParam = boardJson.compilerParam;
-    if (!compilerParam) {
-      console.error('缺少编译参数');
-      this.buildInProgress = false;
-      return { state: 'error', text: '缺少编译参数' };
-    }
-
-    let compilerParamList = compilerParam.split(' ');
-    compilerParamList = compilerParamList.map(param => {
-      if (param.startsWith('aily:')) {
-        let res;
-        const parts = param.split(':');
-        if (parts.length > 2) { // Ensure we have at least 3 parts (aily:avr:mega)
-          parts[1] = sdk;
-          res = parts.join(':');
-        } else {
-          res = param
+      // 从dependencies中查找以@aily-project/board-开头的依赖
+      let board = ""
+      const libsPath = []
+      Object.entries(dependencies).forEach(([key, version]) => {
+        if (key.startsWith('@aily-project/board-')) {
+          board = key
+        } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
+          libsPath.push(key)
         }
-        this.boardType = res
-        return res; // Return unchanged if format doesn't match
-      } else {
-        return param;
+      });
+
+      if (!board) {
+        console.error('缺少板子信息');
+        this.buildInProgress = false;
+        reject({ state: 'error', text: '缺少板子信息' });
+        return;
       }
-    });
 
-    compilerParam = compilerParamList.join(' ');
+      // 获取板子信息(board.json)
+      const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
+      console.log("boardJson: ", boardJson);
 
-    // this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
+      if (!boardJson) {
+        console.error('缺少板子信息');
+        this.buildInProgress = false;
+        reject({ state: 'error', text: '缺少板子信息' });
+        return;
+      }
 
-    // 创建返回的 Promise
-    return new Promise<ActionState>((resolve, reject) => {
+      this.boardJson = boardJson;
+
+      // 获取板子
+
+      // 解压libraries到临时文件夹
+      console.log("libsPath: ", libsPath);
+      for (let lib of libsPath) {
+        let targetName = lib.split('@aily-project/')[1];
+        let targetPath = `${librariesPath}/${targetName}`;
+
+        if (window['path'].isExists(targetPath)) {
+          await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+        }
+
+        let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
+        if (!window['path'].isExists(sourceZipPath)) continue;
+
+        let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
+        if (!window['path'].isExists(sourcePath)) {
+          // 如果没有src文件夹，则使用src.7z解压到临时文件夹
+          await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
+        }
+        // 直接复制src到targetPath
+        await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+
+        await this.waitForDirectoryExists(targetPath, 5000, 100);
+      }
+
+      // 获取编译器、sdk、tool的名称和版本
+      let compiler = ""
+      let sdk = ""
+
+      Object.entries(boardDependencies).forEach(([key, version]) => {
+        if (key.startsWith('@aily-project/compiler-')) {
+          compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
+        } else if (key.startsWith('@aily-project/sdk-')) {
+          sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
+        }
+      });
+
+      console.log("sdk: ", sdk)
+
+      if (!compiler || !sdk) {
+        console.error('缺少编译器或sdk');
+        this.buildInProgress = false;
+        reject({ state: 'warn', text: '缺少编译器或sdk' });
+        return;
+      }
+
+      // 组合编译器、sdk、tools的路径
+      this.compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
+      this.sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
+      this.toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+
+      // 获取编译命令
+      let compilerParam = boardJson.compilerParam;
+      if (!compilerParam) {
+        console.error('缺少编译参数');
+        this.buildInProgress = false;
+        reject({ state: 'error', text: '缺少编译参数' });
+        return;
+      }
+
+      let compilerParamList = compilerParam.split(' ');
+      compilerParamList = compilerParamList.map(param => {
+        if (param.startsWith('aily:')) {
+          let res;
+          const parts = param.split(':');
+          if (parts.length > 2) { // Ensure we have at least 3 parts (aily:avr:mega)
+            parts[1] = sdk;
+            res = parts.join(':');
+          } else {
+            res = param
+          }
+          this.boardType = res
+          return res; // Return unchanged if format doesn't match
+        } else {
+          return param;
+        }
+      });
+
+      compilerParam = compilerParamList.join(' ');
+
+      // this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
+
+      // 创建返回的 Promise
       this.buildResolver = resolve;
 
       const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
@@ -270,6 +274,7 @@ export class BuilderService {
                 state: 'error',
                 setTimeout: 55000
               });
+              reject({ state: 'error', text: errorText });
             };
 
             // 检查是否有错误信息
@@ -297,7 +302,7 @@ export class BuilderService {
 
               setTimeout(async () => {
                 await this.terminalService.stopStream(streamId);
-                return reject({ state: 'error', text: errorText });
+                reject({ state: 'error', text: errorText });
               }, 1000);
 
               return;
@@ -351,7 +356,8 @@ export class BuilderService {
               this.buildResolver = null;
               await this.terminalService.stopStream(streamId);
               this.passed = true;
-              return resolve({ state: 'done', text: '编译完成' });
+              resolve({ state: 'done', text: '编译完成' });
+              return;
             }
           },
         ).catch(error => {

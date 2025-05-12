@@ -283,7 +283,8 @@ export class HeaderComponent {
           item.state = 'done';
         }).catch(err => {
           console.error("编译失败: ", err);
-          item.state = 'error';
+          // item.state = 'error';
+          if (err.state) item.state = err.state;
         })
         break;
       case 'upload':
