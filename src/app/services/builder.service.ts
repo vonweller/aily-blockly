@@ -157,12 +157,11 @@ export class BuilderService {
           await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
         }
 
-        let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
-        if (!window['path'].isExists(sourceZipPath)) continue;
-
         let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
         if (!window['path'].isExists(sourcePath)) {
           // 如果没有src文件夹，则使用src.7z解压到临时文件夹
+          let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
+          if (!window['path'].isExists(sourceZipPath)) continue;
           await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
         }
         // 直接复制src到targetPath
@@ -182,8 +181,6 @@ export class BuilderService {
           sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
         }
       });
-
-      console.log("sdk: ", sdk)
 
       if (!compiler || !sdk) {
         console.error('缺少编译器或sdk');
@@ -244,24 +241,26 @@ export class BuilderService {
       let isStopped = false;
       let errorText = '编译失败';
 
-      this.terminalService.startStream().then(streamId => {
+      this.terminalService.startStream().then( async (streamId) => {
         this.currentBuildStreamId = streamId;
 
         // 使用流式输出执行命令
-        this.terminalService.executeWithStream(
+        await this.terminalService.executeWithStream(
           compileCommand,
           streamId,
           async (line) => {
             // 判断是否已取消，如果已取消则不在处理输出
             if (!this.buildInProgress) {
-              resolve({ state: 'canceled', text: '编译已取消' });
+              reject({ state: 'warn', text: '编译已取消' });
+              return;
             }
+
             // 处理每一行输出
             const trimmedLine = line.trim();
 
             if (isErrored) {
-              if (isStopped) {
-                return; // 如果已经停止，则不处理后续行
+              if (!isStopped) {
+                return;
               }
               if (/Error during build/i.test(trimmedLine) || /Used platform/i.test(trimmedLine) || /Used library Version/i.test(trimmedLine)) {
                 isStopped = true;
@@ -275,6 +274,7 @@ export class BuilderService {
                 setTimeout: 55000
               });
               reject({ state: 'error', text: errorText });
+              return;
             };
 
             // 检查是否有错误信息
@@ -296,16 +296,14 @@ export class BuilderService {
               });
 
               // 清理资源后再拒绝Promise
-              this.buildInProgress = false;
               this.buildResolver = null;
               this.passed = false;
 
               setTimeout(async () => {
                 await this.terminalService.stopStream(streamId);
-                reject({ state: 'error', text: errorText });
+                reject({ "state": "error", "text": errorText })
+                return;
               }, 1000);
-
-              return;
             }
             // 提取构建文本
             if (trimmedLine.startsWith('BuildText:')) {
@@ -350,7 +348,6 @@ export class BuilderService {
             // 更新状态
             if (buildCompleted) {
               this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
-              // this.uiService.updateState({ state: 'done', text: '编译完成' });
 
               this.buildInProgress = false;
               this.buildResolver = null;
@@ -361,14 +358,20 @@ export class BuilderService {
             }
           },
         ).catch(error => {
-          // this.uiService.updateState({ state: 'error', text: '编译失败' });
-          this.message.error('编译失败: ' + error.message);
-          this.noticeService.update({ title: title, text: '编译失败', detail: error, state: 'error', setTimeout: 55000 });
+          this.noticeService.update({
+             title: title, 
+             text: '编译失败', 
+             detail: error, state: 
+             'error', 
+             setTimeout: 55000 
+          });
           this.buildInProgress = false;
           this.buildResolver = null;
           this.terminalService.stopStream(streamId);
           this.passed = false;
+          this.message.error('异常编译失败: ' + error.message);
           reject({ state: 'error', text: error.message });
+          return;
         });
       })
     });
@@ -394,7 +397,6 @@ export class BuilderService {
             this.terminalService.currentPid,
             this.currentBuildStreamId
           ).then(() => {
-            console.log('编译流已停止');
             this.noticeService.clear();
             this.terminalService.stopStream(this.currentBuildStreamId);
             this.currentBuildStreamId = null;
