@@ -8,6 +8,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
       type: 'act-btn',
       color: '#006adc',
       state: 'default',
+      router: ['/main/blockly-editor', '/main/code-editor']
     },
     {
       name: 'MENU.RUN',
@@ -17,6 +18,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
       type: 'act-btn',
       color: '#009600',
       state: 'default',
+      router: ['/main/blockly-editor', '/main/code-editor']
     },
     // {
     //   name: 'MENU.DEBUG',
@@ -38,6 +40,7 @@ export let HEADER_BTNS: IMenuItem[][] = [
       action: 'tool-open',
       data: { type: 'tool', data: "code-viewer" },
       icon: 'fa-light fa-rectangle-code',
+      router: ['/main/blockly-editor']
     },
     {
       name: 'MENU.TOOL_SERIAL',
@@ -50,7 +53,8 @@ export let HEADER_BTNS: IMenuItem[][] = [
       action: 'tool-open',
       data: { type: 'tool', data: "simulator" },
       icon: 'fa-light fa-atom',
-      dev: true
+      dev: true,
+      router: ['/main/blockly-editor']
     },
     {
       name: 'MENU.AI',
@@ -84,6 +88,7 @@ export interface IMenuItem {
   disabled?: boolean;
   hide?: boolean;
   dev?: boolean;
+  router?: string[]; // 在指定路由中显示
 }
 
 export let HEADER_MENU: IMenuItem[] = [

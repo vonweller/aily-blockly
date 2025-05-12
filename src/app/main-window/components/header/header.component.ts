@@ -271,10 +271,6 @@ export class HeaderComponent {
         window['other'].openByExplorer(this.projectService.currentProjectPath);
         break;
       case 'tool-open':
-        if (['MENU.APP_STORE'].includes(item.name)) {
-          this.message.warning('功能暂未开放');
-          break;
-        }
         this.uiService.turnTool(item.data);
         break;
       case 'terminal':
@@ -475,8 +471,20 @@ export class HeaderComponent {
       });
     });
   }
-}
 
+
+  showInRouter(menuItem: IMenuItem) {
+    if (!menuItem.router) {
+      return true;
+    } else {
+      for (const router of menuItem.router) {
+        if (this.router.url.indexOf(router) > -1) {
+          return true;
+        }
+      }
+    }
+  }
+}
 
 export interface RunState {
   state: 'default' | 'doing' | 'done' | 'error' | 'warn';
