@@ -82,14 +82,14 @@ export class BlocklyComponent {
     //   flyoutsVerticalToolbox: ContinuousFlyout,
     //   metricsManager: ContinuousMetrics,
     // },
-    theme: Blockly.Theme.defineTheme('zelos', DEV_THEME),
-    // theme: 'zelos',
+    // theme: Blockly.Theme.defineTheme('zelos', DEV_THEME),
+    theme: darkTheme,
     renderer: 'thrasos',
     trashcan: true,
     grid: {
       spacing: 20, // 网格间距为20像素
-      length: 3, // 网格点的大小
-      colour: '#ccc',
+      length: 2, // 网格点的大小
+      colour: '#393939',
       snap: true,
     },
     media: 'blockly/media',
@@ -279,3 +279,27 @@ export class BlocklyComponent {
   // }
 
 }
+
+
+const darkTheme = Blockly.Theme.defineTheme('dark', {
+  name: 'dark',
+  base: Blockly.Themes.Classic,
+  componentStyles: {
+    workspaceBackgroundColour: '#262626',
+    // toolboxBackgroundColour: 'blackBackground',
+    // toolboxForegroundColour: '#fff',
+    flyoutBackgroundColour: '#333',
+    // flyoutForegroundColour: '#ccc',
+    // flyoutOpacity: 1,
+    // scrollbarColour: '#fff',
+    scrollbarOpacity: 0.1,
+    // insertionMarkerColour: '#fff',
+    // insertionMarkerOpacity: 0.3,
+    // markerColour: '#d0d0d0',
+    // cursorColour: '#d0d0d0'
+    // selectedGlowColour?: string;
+    // selectedGlowOpacity?: number;
+    // replacementGlowColour?: string;
+    // replacementGlowOpacity?: number;
+  },
+});

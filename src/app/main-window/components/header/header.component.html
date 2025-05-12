@@ -7,7 +7,7 @@
   </div>
 
   @if(loaded){
-  <div class="board ccenter" nz-tooltip nzTooltipTitle="端口选择" (click)="openPortList()">
+  <div class="board ccenter" (click)="openPortList()">
     {{currentBoard}}
     @if(currentPort){
     ({{currentPort}})
