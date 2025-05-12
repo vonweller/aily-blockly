@@ -8,6 +8,8 @@ import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { BlocklyService } from '../blockly/blockly.service';
 import { NoticeService } from '../services/notice.service';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { SerialDialogComponent } from '../main-window/components/serial-dialog/serial-dialog.component';
 
 @Injectable({
   providedIn: 'root'
@@ -22,7 +24,8 @@ export class UploaderService {
     private message: NzMessageService,
     private blocklyService: BlocklyService,
     private builderService: BuilderService,
-    private noticeService: NoticeService
+    private noticeService: NoticeService,
+    private modal: NzModalService
   ) { }
 
   uploadInProgress = false;
@@ -52,96 +55,106 @@ export class UploaderService {
   ];
 
   async upload(): Promise<ActionState> {
-    if (this.uploadInProgress) {
-      this.message.warning('上传中，请稍后');
-      return ({ state: 'error', text: '上传中，请稍后' });
-    }
-    if (!this.serialService.currentPort) {
-      this.message.warning('请先选择串口');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '请先选择串口' });
-    }
-
-    // 重置ESP32上传状态，防止进度累加
-    this['esp32UploadState'] = {
-      currentRegion: 0,
-      totalRegions: 0,
-      detectedRegions: false,
-      completedRegions: 0
-    };
-
-    this.uploadInProgress = true;
-    let isErrored = false;
-    let isStopped = false;
-    let uploadCompleted = false;
-
-    this.noticeService.clear()
-
-    // 对比代码是否有变化
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-    if (!this.builderService.passed || code !== this.builderService.lastCode || this.projectService.currentProjectPath !== this.builderService.currentProjectPath) {
-      // 编译
-      await this.builderService.build();
-    }
-
-    console.log("passed1")
-
-    if (!this.builderService.passed) {
-      // this.message.error('编译失败，请检查代码');
-      this.uploadInProgress = false;
-      return { state: 'error', text: '编译失败，请检查代码' };
-    }
-
-    const buildPath = this.builderService.buildPath;
-
-    console.log("passed2")
-
-    // 判断buildPath是否存在
-    if (!window['path'].isExists(buildPath)) {
-      // 编译
-      await this.builderService.build();
-    }
-
-    const boardJson = this.builderService.boardJson;
-    this.noticeService.clear()
-
-    let lastUploadText = `正在上传${boardJson.name}`;
-
-    console.log("passed3");
-
-    // 获取上传参数
-    let uploadParam = boardJson.uploadParam;
-    if (!uploadParam) {
-      this.message.error('缺少上传参数');
-      this.uploadInProgress = false;
-      return ({ state: 'error', text: '缺少上传参数' });
-    }
-
-    console.log("passed4")
-
-    let uploadParamList = uploadParam.split(' ');
-    uploadParamList = uploadParamList.map(param => {
-      // 替换${serial}为当前串口号
-      if (param.includes('${serial}')) {
-        return param.replace('${serial}', this.serialService.currentPort);
-      } else if (param.startsWith('aily:')) {
-        return this.builderService.boardType;
+    return new Promise<ActionState>(async (resolve, reject) => {
+      if (this.uploadInProgress) {
+        this.message.warning('上传中，请稍后');
+        reject({ state: 'error', text: '上传中，请稍后' });
+        return;
       }
-      return param;
-    });
+      if (!this.serialService.currentPort) {
+        this.message.warning('请先选择串口');
+        this.uploadInProgress = false;
+        reject({ state: 'error', text: '请先选择串口' });
+        this.modal.create({
+          nzTitle: null,
+          nzFooter: null,
+          nzClosable: false,
+          nzBodyStyle: {
+            padding: '0',
+          },
+          nzWidth: '320px',
+          nzContent: SerialDialogComponent,
+        });
+        return;
+      }
 
-    uploadParam = uploadParamList.join(' ');
-    const sdkPath = this.builderService.sdkPath;
-    const toolsPath = this.builderService.toolsPath;
+      // 重置ESP32上传状态，防止进度累加
+      this['esp32UploadState'] = {
+        currentRegion: 0,
+        totalRegions: 0,
+        detectedRegions: false,
+        completedRegions: 0
+      };
 
-    console.log("passed5")
+      this.uploadInProgress = true;
+      let isErrored = false;
+      let isStopped = false;
+      let uploadCompleted = false;
 
-    // 上传
-    await this.uiService.openTerminal();
+      this.noticeService.clear()
 
-    // this.uiService.updateState({ state: 'doing', text: '固件上传中...' });
+      // 对比代码是否有变化
+      const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+      if (!this.builderService.passed || code !== this.builderService.lastCode || this.projectService.currentProjectPath !== this.builderService.currentProjectPath) {
+        // 编译
+        await this.builderService.build();
+      }
 
-    return new Promise<ActionState>((resolve, reject) => {
+      console.log("passed1")
+
+      if (!this.builderService.passed) {
+        // this.message.error('编译失败，请检查代码');
+        this.uploadInProgress = false;
+        reject({ state: 'error', text: '编译失败，请检查代码' });
+      }
+
+      const buildPath = this.builderService.buildPath;
+
+      console.log("passed2")
+
+      // 判断buildPath是否存在
+      if (!window['path'].isExists(buildPath)) {
+        // 编译
+        await this.builderService.build();
+      }
+
+      const boardJson = this.builderService.boardJson;
+      this.noticeService.clear()
+
+      let lastUploadText = `正在上传${boardJson.name}`;
+
+      console.log("passed3");
+
+      // 获取上传参数
+      let uploadParam = boardJson.uploadParam;
+      if (!uploadParam) {
+        this.message.error('缺少上传参数');
+        this.uploadInProgress = false;
+        reject({ state: 'error', text: '缺少上传参数' });
+      }
+
+      console.log("passed4")
+
+      let uploadParamList = uploadParam.split(' ');
+      uploadParamList = uploadParamList.map(param => {
+        // 替换${serial}为当前串口号
+        if (param.includes('${serial}')) {
+          return param.replace('${serial}', this.serialService.currentPort);
+        } else if (param.startsWith('aily:')) {
+          return this.builderService.boardType;
+        }
+        return param;
+      });
+
+      uploadParam = uploadParamList.join(' ');
+      const sdkPath = this.builderService.sdkPath;
+      const toolsPath = this.builderService.toolsPath;
+
+      console.log("passed5")
+
+      // 上传
+      await this.uiService.openTerminal();
+
       // 将resolve函数保存，以便在取消时使用
       this.uploadResolver = resolve;
 
@@ -157,7 +170,7 @@ export class UploaderService {
       console.log("start progress: ", lastProgress);
       this.uploadInProgress = true;
       this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
-    
+
       this.terminalService.startStream().then(streamId => {
         this.currentUploadStreamId = streamId;
 
@@ -181,12 +194,12 @@ export class UploaderService {
                 return;
               }
 
-              this.noticeService.update({ 
-                title: "上传失败", 
+              this.noticeService.update({
+                title: "上传失败",
                 text: errorText,
                 detail: ">> " + trimmedLine,
-                state: 'error', 
-                setTimeout: 55000 
+                state: 'error',
+                setTimeout: 55000
               });
             };
 
@@ -209,7 +222,7 @@ export class UploaderService {
 
               setTimeout(async () => {
                 await this.terminalService.stopStream(streamId);
-                return reject({ state: 'error', text: errorText });
+                reject({ state: 'error', text: errorText });
               }, 1000);
 
               return;
@@ -297,12 +310,12 @@ export class UploaderService {
               console.log("progress: ", lastProgress);
               lastProgress = progressValue;
               this.noticeService.update({
-                title: title, 
-                text: lastUploadText, 
+                title: title,
+                text: lastUploadText,
                 state: 'doing',
-                 progress: lastProgress, 
-                 setTimeout: 0, 
-                 stop: () => {
+                progress: lastProgress,
+                setTimeout: 0,
+                stop: () => {
                   this.cancelBuild()
                 }
               });
@@ -320,11 +333,11 @@ export class UploaderService {
 
             // 上传
             if (uploadCompleted) {
-              this.noticeService.update({ 
-                title: completeTitle, 
-                text: completeText, 
-                state: 'done', 
-                setTimeout: 55000 
+              this.noticeService.update({
+                title: completeTitle,
+                text: completeText,
+                state: 'done',
+                setTimeout: 55000
               });
 
               this.uploadInProgress = false;
