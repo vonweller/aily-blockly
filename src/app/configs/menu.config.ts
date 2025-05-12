@@ -45,25 +45,28 @@ export let HEADER_BTNS: IMenuItem[][] = [
       data: { type: 'tool', data: "serial-monitor" },
       icon: 'fa-light fa-monitor-waveform',
     },
-    // {
-    //   name: 'MENU.SIMULATOR',
-    //   action: 'tool-open',
-    //   data: { type: 'tool', data: "simulator" },
-    //   icon: 'fa-light fa-atom'
-    // },
-    // {
-    //   name: 'MENU.AI',
-    //   action: 'tool-open',
-    //   data: { type: 'tool', data: "aily-chat" },
-    //   icon: 'fa-light fa-star-christmas',
-    //   more: 'AI',
-    // },
-    // {
-    //   name: 'MENU.APP_STORE',
-    //   action: 'tool-open',
-    //   data: { type: 'tool', data: "app-store" },
-    //   icon: 'fa-light fa-store',
-    // },
+    {
+      name: 'MENU.SIMULATOR',
+      action: 'tool-open',
+      data: { type: 'tool', data: "simulator" },
+      icon: 'fa-light fa-atom',
+      dev: true
+    },
+    {
+      name: 'MENU.AI',
+      action: 'tool-open',
+      data: { type: 'tool', data: "aily-chat" },
+      icon: 'fa-light fa-star-christmas',
+      more: 'AI',
+      dev: true
+    },
+    {
+      name: 'MENU.APP_STORE',
+      action: 'tool-open',
+      data: { type: 'tool', data: "app-store" },
+      icon: 'fa-light fa-store',
+      dev: true
+    },
   ],
 ];
 
@@ -80,6 +83,7 @@ export interface IMenuItem {
   state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
   disabled?: boolean;
   hide?: boolean;
+  dev?: boolean;
 }
 
 export let HEADER_MENU: IMenuItem[] = [

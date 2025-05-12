@@ -30,6 +30,7 @@
         nzTooltipTitle="{{ btn.name | translate}}" (click)="onClick(btn)"></app-act-btn>
       }
       }@else{
+      @if(!btn.dev||isDevMode){
       <div class="btn ccenter" nz-tooltip nzTooltipTitle="{{ btn.name | translate}}" (click)="onClick(btn)"
         [ngStyle]="{ color: btn.color ? btn.color : '' }" [ngClass]="{ selected: isOpenTool(btn) }">
         <i class="{{ btn.icon }}"></i>
@@ -37,6 +38,8 @@
         <div class="more ccenter">{{ btn.more }}</div>
         }
       </div>
+      }
+
       } }
     </div>
     }
