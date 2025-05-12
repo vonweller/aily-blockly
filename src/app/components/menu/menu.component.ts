@@ -8,6 +8,8 @@ import {
   ViewChild,
 } from '@angular/core';
 import { TranslateModule } from '@ngx-translate/core';
+import { IMenuItem } from '../../configs/menu.config';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-menu',
@@ -31,6 +33,10 @@ export class MenuComponent {
   @Output() closeEvent = new EventEmitter();
 
   @Input() keywords = [];
+
+  constructor(
+    private router: Router
+  ) { }
 
   ngAfterViewInit(): void {
     document.addEventListener('click', this.handleDocumentClick);
@@ -67,5 +73,17 @@ export class MenuComponent {
     return this.keywords.some((keyword) =>
       keyword && lowerText.includes(keyword.toLowerCase())
     );
+  }
+
+  showInRouter(menuItem: IMenuItem) {
+    if (!menuItem.router) {
+      return true;
+    } else {
+      for (const router of menuItem.router) {
+        if (this.router.url.indexOf(router) > -1) {
+          return true;
+        }
+      }
+    }
   }
 }

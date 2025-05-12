@@ -8,6 +8,28 @@ body {
   user-select: none;
 }
 
+.loading-box {
+  width: 100vw;
+  height: 100vh;
+  background: #2b2d30;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 99;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  border-radius: 5px;
+
+  .text {
+    color: #fff;
+    margin-left: 12px;
+    margin-top: 5px;
+    font-size: 18px;
+  }
+}
+
 .ccenter {
   display: flex;
   justify-content: center;

@@ -6,7 +6,7 @@
     </div>
   </div>
 
-  @if(loaded){
+  @if(isLoaded()){
   <div class="board ccenter" (click)="openPortList()">
     {{currentBoard}}
     @if(currentPort){

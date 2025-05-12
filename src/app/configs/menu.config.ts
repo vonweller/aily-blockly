@@ -1,3 +1,19 @@
+export interface IMenuItem {
+  name?: string;
+  text?: string;
+  action?: string;
+  type?: string;
+  data?: any;
+  icon?: string;
+  color?: string;
+  more?: string;
+  sep?: boolean;
+  state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
+  disabled?: boolean;
+  dev?: boolean;
+  router?: string[]; // 在指定路由中显示
+}
+
 export let HEADER_BTNS: IMenuItem[][] = [
   [
     {
@@ -74,22 +90,6 @@ export let HEADER_BTNS: IMenuItem[][] = [
   ],
 ];
 
-export interface IMenuItem {
-  name?: string;
-  text?: string;
-  action?: string;
-  type?: string;
-  data?: any;
-  icon?: string;
-  color?: string;
-  more?: string;
-  sep?: boolean;
-  state?: 'default' | 'doing' | 'done' | 'error' | 'warn';
-  disabled?: boolean;
-  hide?: boolean;
-  dev?: boolean;
-  router?: string[]; // 在指定路由中显示
-}
 
 export let HEADER_MENU: IMenuItem[] = [
   {
@@ -112,7 +112,7 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save',
     data: { type: 'cmd', data: 'save' },
     icon: 'fa-light fa-file-circle-check',
-    hide: true,
+    router: ['/main/blockly-editor', '/main/code-editor']
   },
   {
     name: 'MENU.PROJECT_SAVE_AS',
@@ -120,21 +120,21 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'project-save-as',
     data: { type: 'cmd', data: 'save-as' },
     icon: 'fa-light fa-copy',
-    hide: true,
+    router: ['/main/blockly-editor', '/main/code-editor']
   },
   {
     name: 'MENU.OPEN_IN_EXPLORER',
     action: 'project-open-by-explorer',
     data: { type: 'other', action: 'openByExplorer', data: 'project' },
     icon: 'fa-light fa-browser',
-    hide: true,
+    router: ['/main/blockly-editor', '/main/code-editor']
   },
   {
     name: 'MENU.PROJECT_CLOSE',
     action: 'project-close',
     data: { type: 'cmd', data: 'close' },
     icon: 'fa-light fa-folder-closed',
-    hide: true,
+    router: ['/main/blockly-editor', '/main/code-editor']
   },
   // {
   //   name: 'MENU.CODE_EXPORT',

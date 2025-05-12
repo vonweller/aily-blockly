@@ -54,8 +54,6 @@ export class HeaderComponent {
     return this.projectData.board;
   }
 
-  loaded = false;
-
   currentUrl = null;
 
   get isDevMode() {
@@ -79,7 +77,6 @@ export class HeaderComponent {
   ngAfterViewInit() {
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
-        this.loaded = true;
         // 将headerMenu中有disabled的按钮置为可用
         this.headerMenu.forEach((menu) => {
           if (menu.disabled) {
@@ -87,7 +84,6 @@ export class HeaderComponent {
           }
         });
       } else {
-        this.loaded = false;
         // 将headerMenu中有disabled的按钮置禁用
         this.headerMenu.forEach((menu) => {
           if (menu.disabled === false) {
@@ -98,47 +94,7 @@ export class HeaderComponent {
       this.cd.detectChanges();
     });
 
-
-    // 监听项目状态变化，更新菜单按钮状态
-    this.listenRouterChange();
-
     this.listenShortcutKeys();
-  }
-
-  listenRouterChange() {
-    this.currentUrl = this.router.url;
-    if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
-      this.headerMenu.forEach((menu) => {
-        if (menu.hide) {
-          menu.hide = false;
-        }
-      });
-    } else {
-      this.headerMenu.forEach((menu) => {
-        if (menu.hide === false) {
-          menu.hide = true;
-        }
-      });
-    }
-
-    this.router.events.pipe(
-      filter(event => event instanceof NavigationEnd)
-    ).subscribe(() => {
-      this.currentUrl = this.router.url;
-      if (this.currentUrl.indexOf('blockly-editor?path=') > -1 || this.currentUrl.indexOf('code-editor?path=') > -1) {
-        this.headerMenu.forEach((menu) => {
-          if (menu.hide) {
-            menu.hide = false;
-          }
-        });
-      } else {
-        this.headerMenu.forEach((menu) => {
-          if (menu.hide === false) {
-            menu.hide = true;
-          }
-        });
-      }
-    });
   }
 
   showMenu = false;
@@ -238,14 +194,14 @@ export class HeaderComponent {
   async process(item: IMenuItem) {
     switch (item.action) {
       case 'project-new':
-        if (this.loaded) { // 只在已加载项目时检查
+        if (this.isLoaded()) { // 只在已加载项目时检查
           const canContinue = await this.checkUnsavedChanges('new');
           if (!canContinue) return;
         }
         this.uiService.openWindow(item.data);
         break;
       case 'project-open':
-        if (this.loaded) { // 只在已加载项目时检查
+        if (this.isLoaded()) { // 只在已加载项目时检查
           const canContinue = await this.checkUnsavedChanges('open');
           if (!canContinue) return;
         }
@@ -261,7 +217,7 @@ export class HeaderComponent {
         }
         break;
       case 'project-close':
-        if (this.loaded) { // 只在已加载项目时检查
+        if (this.isLoaded()) { // 只在已加载项目时检查
           const canContinue = await this.checkUnsavedChanges('close');
           if (!canContinue) return;
         }
@@ -481,6 +437,15 @@ export class HeaderComponent {
         if (this.router.url.indexOf(router) > -1) {
           return true;
         }
+      }
+    }
+  }
+
+  // 判断路由是否为 ['/main/blockly-editor', '/main/code-editor']中的一个，如果是返回true
+  isLoaded() {
+    for (const router of ['/main/blockly-editor', '/main/code-editor']) {
+      if (this.router.url.indexOf(router) > -1) {
+        return true;
       }
     }
   }

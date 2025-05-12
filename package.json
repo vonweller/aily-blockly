@@ -97,6 +97,7 @@
     "buffer": "^6.0.3",
     "install": "^0.13.0",
     "lightweight-charts": "^4.2.3",
+    "loaders.css": "^0.1.2",
     "marked": "^15.0.7",
     "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
