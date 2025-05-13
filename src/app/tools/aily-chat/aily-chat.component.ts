@@ -7,12 +7,17 @@ import { NzButtonModule } from 'ng-zorro-antd/button';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
+import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
+import { CommonModule } from '@angular/common';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-aily-chat',
   imports: [
+    SubWindowComponent,
     NzInputModule,
     FormsModule,
+    CommonModule,
     DialogComponent,
     NzButtonModule,
     ToolContainerComponent,
@@ -51,7 +56,7 @@ export class AilyChatComponent {
     {
       content:
         'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },    {
+    }, {
       content:
         'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
     },
@@ -62,7 +67,7 @@ export class AilyChatComponent {
     {
       content:
         'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },    {
+    }, {
       content:
         'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
     },
@@ -78,11 +83,22 @@ export class AilyChatComponent {
   inputValue =
     '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
 
-  constructor(
-    private uiService: UiService
-  ) {}
+  currentUrl;
 
-  ngOnInit() {}
+  windowInfo = 'AI助手';
+
+  constructor(
+    private uiService: UiService,
+    private router: Router,
+  ) { }
+
+  ngOnInit() {
+    this.currentUrl = this.router.url;
+  }
+
+  close() {
+    this.uiService.closeTool('aily-chat');
+  }
 
   ngAfterViewInit(): void {
     // console.log(this.dragHandle);
@@ -100,10 +116,6 @@ export class AilyChatComponent {
   bottomHeight = 180;
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
-  }
-
-  close() {
-    this.uiService.closeTool('aily-chat');
   }
 
   // private handleMouseMove = (e: MouseEvent) => {
@@ -186,7 +198,7 @@ export class AilyChatComponent {
         try {
           const data = JSON.parse(exec[1]);
           exec.push(data);
-        } catch (err) {}
+        } catch (err) { }
         contentList.push(exec);
       } else {
         contentList.push(match);

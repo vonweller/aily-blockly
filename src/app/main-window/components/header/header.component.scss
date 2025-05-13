@@ -99,7 +99,7 @@ $header-inner-height: 38px;
 .more {
   position: absolute;
   top: 3px;
-  right: 0;
+  right: -3px;
   font-size: 10px;
   color: #fff;
   background: red;
@@ -138,9 +138,9 @@ $header-inner-height: 38px;
   }
 }
 
-.ports{
-  ::ng-deep{
-    .name{
+.ports {
+  ::ng-deep {
+    .name {
       width: 55px;
       flex-shrink: 0;
     }

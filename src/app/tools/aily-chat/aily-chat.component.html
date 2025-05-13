@@ -1,20 +1,23 @@
-<app-tool-container [title]="'AI助手'" (closeEvent)="close()">
+@if (currentUrl == "/aily-chat") {
+<app-sub-window [title]="windowInfo" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
+  <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+</app-sub-window>
+} @else {
+<app-tool-container [title]="windowInfo" (closeEvent)="close()">
+  <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
+</app-tool-container>
+}
+<ng-template #windowBoxTemplate>
   <div class="window-box">
     <div class="dialog-list sscroll" #chatContainer>
       <div #chatList>
         @for (item of list; track item) {
-          <aily-dialog [data]="item"></aily-dialog>
+        <aily-dialog [data]="item"></aily-dialog>
         }
       </div>
     </div>
-    <div
-      class="sender"
-      nz-resizable
-      [style.height.px]="bottomHeight"
-      [nzMaxHeight]="500"
-      [nzMinHeight]="180"
-      (nzResize)="onContentResize($event)"
-    >
+    <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="500" [nzMinHeight]="180"
+      (nzResize)="onContentResize($event)">
       <nz-resize-handle nzDirection="top">
         <div class="line"></div>
       </nz-resize-handle>
@@ -29,4 +32,4 @@
       </div>
     </div>
   </div>
-</app-tool-container>
+</ng-template>

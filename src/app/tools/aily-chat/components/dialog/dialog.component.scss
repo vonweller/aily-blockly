@@ -1,97 +1,10 @@
 .dialog-box {
     display: flex;
-}
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 
-nz-avatar {
-    flex-shrink: 0;
-}
-
-.bubble {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    margin: 5px 10px 5px 10px;
-    background: #555;
-    width: 100%;
-    min-height: 44px;
-    border-radius: 0 10px 10px 10px;
-    position: relative;
-
-    .tail {
-        width: 0;
-        height: 0;
-        border-bottom: 10px solid transparent;
-        border-right: 10px solid #555;
-        position: absolute;
-        top: 0px;
-        left: -9px;
+    &.user{
+        background: #343434;
     }
-
-    .user-info {
-        position: absolute;
-        top: -25px;
-        left: -7px;
-
-        .name {
-            display: flex;
-
-            .prompt-setting {
-                margin-left: 15px;
-            }
-        }
-    }
-
-    .content {
-        padding: 5px 15px;
-        min-height: 45px;
-    }
-
-    .state {
-        position: absolute;
-        bottom: 0;
-        right: 0;
-        height: 25px;
-        display: flex;
-        align-items: center;
-        padding: 15px;
-        color: #1283d4;
-        cursor: pointer;
-
-        i {
-            font-size: 16px;
-            animation: rrotate 2s linear infinite;
-        }
-
-        div {
-            margin-left: 5px;
-            font-size: 10px;
-        }
-
-        &:hover {
-            color: #389fff;
-        }
-    }
-}
-
-.mine {
-    flex-direction: row-reverse;
-
-    .bubble {
-        margin: 5px 10px 5px 10px;
-        background: #365f7e;
-        border-radius: 10px 0 10px 10px;
-
-        .tail {
-            border-bottom: none;
-            border-right: none;
-            border-bottom: 10px solid transparent;
-            border-left: 10px solid #365f7e;
-            left: auto;
-            right: -9px !important;
-        }
-    }
-
-
 }
 
 .content {

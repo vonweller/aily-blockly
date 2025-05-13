@@ -300,28 +300,12 @@ export class DialogComponent implements OnInit {
     this.playOneByOne();
   }
 
-  playAll() {
-    // this.speechService.play(this.data.content).then(() => {
-    //   this.isPlaying = false;
-    // });
-    this.isPlaying = true;
-  }
-
-  stopPlay() {
-    // this.speechService.stopPlay();
-    this.isPlaying = false;
-  }
-
   login() {
     // this.gptService.openAuthModel()
   }
 
   subService() {
     // this.gptService.openSubModel()
-  }
-
-  debug() {
-    // console.log(this.data, this.data.user.id == 'c11083ae-53f0-49a7-a162-6742756181e3');
   }
 
   stop() {
