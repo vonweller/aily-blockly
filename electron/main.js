@@ -1,7 +1,7 @@
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
-
+const _ = require("lodash");
 const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron");
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
@@ -22,6 +22,7 @@ const { registerUpdaterHandlers } = require("./updater");
 const { initLogger } = require("./logger");
 
 let mainWindow;
+let userConf;
 
 // 环境变量加载
 function loadEnv() {
@@ -58,7 +59,7 @@ function loadEnv() {
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
   if (fs.existsSync(userConfigPath)) {
     const userConfContent = fs.readFileSync(userConfigPath);
-    const userConf = JSON.parse(userConfContent);
+    userConf = JSON.parse(userConfContent);
     // 合并配置文件
     Object.assign(conf, userConf);
   }
@@ -86,14 +87,14 @@ function loadEnv() {
 
 
 function createWindow() {
+  let windowBounds = getConfWindowBounds();
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 780,
+    ...windowBounds,
+    minWidth: 800,
+    minHeight: 600,
     frame: false,
-    minWidth: 1200,
-    minHeight: 780,
-    autoHideMenuBar: true,
-    transparent: true,
+    titleBarStyle: 'default',
     alwaysOnTop: false,
     webPreferences: {
       nodeIntegration: true,
@@ -104,14 +105,9 @@ function createWindow() {
 
   if (serve) {
     mainWindow.loadURL("http://localhost:4200");
-    // mainWindow.loadURL("http://127.0.0.1:4200");
-    // mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(`renderer/index.html`);
-    // mainWindow.webContents.openDevTools();
   }
-
-  // registerShortcuts(mainWindow);
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
@@ -120,7 +116,6 @@ function createWindow() {
   });
 
   try {
-    // loadEnv();
     initLogger(process.env.AILY_APPDATA_PATH);
   } catch (error) {
     console.error("initLogger error: ", error);
@@ -133,6 +128,7 @@ function createWindow() {
     registerNpmHandlers(mainWindow);
     registerUpdaterHandlers(mainWindow);
   }, 500);
+
 }
 
 app.on("ready", () => {
@@ -144,17 +140,7 @@ app.on("ready", () => {
   }
   // 创建主窗口
   createWindow();
-
-  // 这个用于双击实现窗口最大化，之后调
-  // setInterval(() => {
-  //   const cursorPos = screen.getCursorScreenPoint(); // 全局鼠标坐标
-  //   const winPos = mainWindow.getBounds();             // 窗口在屏幕中的位置和大小
-
-  //   // 计算鼠标在窗口中的位置
-  //   const relativeX = cursorPos.x - winPos.x;
-  //   const relativeY = cursorPos.y - winPos.y;
-  //   // console.log('鼠标在窗口中的位置：', relativeX, relativeY);
-  // }, 1000);
+  listenMoveResize();
 });
 
 // 当所有窗口都被关闭时退出应用（macOS 除外）
@@ -246,3 +232,48 @@ ipcMain.on("setting-changed", (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   mainWindow.webContents.send("setting-changed", data);
 });
+
+
+// 记录窗口大小和位置，用于下次打开时恢复
+function windowMoveResizeListener() {
+  const bounds = mainWindow.getBounds();
+  // console.log("窗口位置和大小：", bounds);
+  // 读取配置文件, 将窗口位置和大小保存到配置文件中
+  const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
+  let userConf = JSON.parse(fs.readFileSync(userConfigPath));
+  userConf["window"] = {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
+  fs.writeFileSync(userConfigPath, JSON.stringify(userConf));
+}
+
+function listenMoveResize() {
+  const listener = _.debounce(windowMoveResizeListener.bind(this), 1000)
+  mainWindow.on('resize', listener)
+  mainWindow.on('move', listener)
+}
+
+function getConfWindowBounds() {
+  let bounds = userConf.window || {
+    width: 1200,
+    height: 780,
+  };
+  // 确保窗口位置在屏幕范围内
+  const screenBounds = screen.getPrimaryDisplay().bounds;
+  if (bounds.x < screenBounds.x) {
+    bounds.x = screenBounds.x;
+  }
+  if (bounds.y < screenBounds.y) {
+    bounds.y = screenBounds.y;
+  }
+  if (bounds.width > screenBounds.width) {
+    bounds.width = screenBounds.width;
+  }
+  if (bounds.height > screenBounds.height) {
+    bounds.height = screenBounds.height;
+  }
+  return bounds;
+}

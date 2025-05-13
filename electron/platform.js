@@ -4,6 +4,6 @@ const platform = {
   isLinux: process.platform === "linux",
 }
 
-console.log("platform", process.platform, platform);
+// console.log("platform", process.platform, platform);
 
 module.exports = platform;
