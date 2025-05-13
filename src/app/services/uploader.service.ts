@@ -9,6 +9,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { BlocklyService } from '../blockly/blockly.service';
 import { NoticeService } from '../services/notice.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
+import { NpmService } from './npm.service';
 import { SerialDialogComponent } from '../main-window/components/serial-dialog/serial-dialog.component';
 
 @Injectable({
@@ -25,7 +26,8 @@ export class UploaderService {
     private blocklyService: BlocklyService,
     private builderService: BuilderService,
     private noticeService: NoticeService,
-    private modal: NzModalService
+    private modal: NzModalService,
+    private npmService: NpmService
   ) { }
 
   uploadInProgress = false;
@@ -59,6 +61,11 @@ export class UploaderService {
       if (this.uploadInProgress) {
         this.message.warning('上传中，请稍后');
         reject({ state: 'warn', text: '上传中，请稍后' });
+        return;
+      }
+      if (this.npmService.isInstalling) {
+        this.message.warning('正在安装依赖，请稍后再试');
+        reject({ state: 'warn', text: '正在安装依赖，请稍后再试' });
         return;
       }
       if (!this.serialService.currentPort) {

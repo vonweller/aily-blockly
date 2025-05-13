@@ -6,6 +6,7 @@ import { ActionState, UiService } from './ui.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NoticeService } from '../services/notice.service';
+import { NpmService } from './npm.service';
 
 @Injectable({
   providedIn: 'root'
@@ -18,7 +19,8 @@ export class BuilderService {
     private projectService: ProjectService,
     private terminalService: TerminalService,
     private message: NzMessageService,
-    private noticeService: NoticeService
+    private noticeService: NoticeService,
+    private npmService: NpmService
   ) { }
 
   private buildInProgress = false;
@@ -80,6 +82,12 @@ export class BuilderService {
   async build(): Promise<ActionState> {
     return new Promise<ActionState>(async (resolve, reject) => {
       this.noticeService.clear();
+
+      if (this.npmService.isInstalling) {
+        this.message.warning('正在安装依赖，请稍后再试');
+        reject({ state: 'warn', text: '正在安装依赖，请稍后再试' });
+        return;
+      }
 
       this.currentProjectPath = this.projectService.currentProjectPath;
       const tempPath = this.currentProjectPath + '/.temp';
@@ -400,7 +408,7 @@ export class BuilderService {
             this.noticeService.clear();
             this.terminalService.stopStream(this.currentBuildStreamId);
             this.currentBuildStreamId = null;
-            this.message.success('编译已中断');
+            this.message.warning('编译已中断');
             // this.uiService.updateState({ state: 'done', text: '编译已取消' });
           });
         }

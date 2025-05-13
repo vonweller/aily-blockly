@@ -16,6 +16,8 @@ export class NpmService {
     private uiService: UiService,
   ) { }
 
+  isInstalling = false;
+
   async init() {
     if (this.electronService.isElectron) {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
@@ -64,6 +66,7 @@ export class NpmService {
     if (typeof(board) === 'string') {
       board = JSON.parse(board);
     }
+    this.isInstalling = true;
     const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
     const cmd = `npm install ${board.name}@${board.version} --prefix "${appDataPath}"`;
     this.uiService.updateState({ state: 'loading', text: `正在安装${board.name}...`, timeout: 300000 });
@@ -76,7 +79,7 @@ export class NpmService {
     ]);
 
     this.uiService.updateState({ state: 'done', text: '开发板安装完成' });
-
+    this.isInstalling = false;
     // return template/package.json
     return `${appDataPath}/node_modules/${board.name}/template/package.json`;
   }
@@ -84,6 +87,7 @@ export class NpmService {
   // 安装开发板依赖
   async installBoardDependencies(packageJson: any) {
     try {
+      this.isInstalling = true;
       const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
       const boardDependencies = packageJson.boardDependencies || {};
 
@@ -134,6 +138,8 @@ export class NpmService {
     } catch (error) {
       console.error('安装开发板依赖时出错:', error);
       this.uiService.updateState({ state: 'error', text: '开发板依赖安装失败' });
+    } finally {
+      this.isInstalling = false;
     }
   }
 
