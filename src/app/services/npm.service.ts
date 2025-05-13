@@ -89,11 +89,25 @@ export class NpmService {
 
       for (const [key, version] of Object.entries(boardDependencies)) {
         const depPath = `${appDataPath}/node_modules/${key}`;
-
-        if (window['path'].isExists(depPath)) {
-          console.log(`依赖 ${key} 已安装`);
-          continue;
+        const depPathPackageJson = `${depPath}/package.json`;
+        // 检查依赖是否已经安装
+        if (window['path'].isExists(depPathPackageJson)) {
+          const depPackageJson = JSON.parse(window['fs'].readFileSync(depPathPackageJson));
+          // 检查版本是否一致
+          if (depPackageJson.version === version) {
+            console.log(`依赖 ${key} 已安装，版本一致`);
+            continue;
+          } else {
+            console.log(`依赖 ${key} 已安装，但版本不一致，当前版本: ${depPackageJson.version}, 需要版本: ${version}`);
+          }
+        } else {
+          console.log(`依赖 ${key} 未安装`);
         }
+
+        // if (window['path'].isExists(depPath)) {
+        //   console.log(`依赖 ${key} 已安装`);
+        //   continue;
+        // }
 
         this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
 
