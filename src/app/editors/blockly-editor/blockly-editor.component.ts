@@ -11,6 +11,7 @@ import { BlocklyService } from '../../blockly/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ConfigService } from '../../services/config.service';
+import { NpmService } from '../../services/npm.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -39,7 +40,8 @@ export class BlocklyEditorComponent {
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private message: NzMessageService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private npmService: NpmService
   ) { }
 
   ngOnInit(): void {
@@ -104,18 +106,25 @@ export class BlocklyEditorComponent {
 
     // 7. 后台安装开发板依赖
     // this.installBoardDependencies();
+    this.npmService.installBoardDependencies(packageJson)
+      .then(() => {
+        console.log('install board dependencies success');
+      })
+      .catch(err => {
+        console.error('install board dependencies error', err);
+      });
 
-    await window['iWindow'].send({
-      to: "main",
-      timeout: 1000 * 60 * 5,
-      data: {
-        action: 'npm-exec',
-        detail: {
-          action: 'install-board-dependencies',
-          data: `${projectPath}/package.json`
-        }
-      }
-    })
+    // await window['iWindow'].send({
+    //   to: "main",
+    //   timeout: 1000 * 60 * 5,
+    //   data: {
+    //     action: 'npm-exec',
+    //     detail: {
+    //       action: 'install-board-dependencies',
+    //       data: `${projectPath}/package.json`
+    //     }
+    //   }
+    // })
   }
 
   openProjectManager() {
