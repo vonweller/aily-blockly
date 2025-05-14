@@ -11,6 +11,8 @@ import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { ChatService } from './services/chat.service';
+import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { SimplebarAngularModule } from 'simplebar-angular';
 
 @Component({
   selector: 'app-aily-chat',
@@ -22,16 +24,60 @@ import { ChatService } from './services/chat.service';
     DialogComponent,
     NzButtonModule,
     ToolContainerComponent,
-    NzResizableModule
+    NzResizableModule,
+    NzToolTipModule,
+    SimplebarAngularModule
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
 })
 export class AilyChatComponent {
+  options = {
+    autoHide: true,
+    clickOnTrack: true,
+    scrollbarMinSize: 50,
+  };
+
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatList') chatList: ElementRef;
 
   list: any = [];
+  // inputValue =
+  //   '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
+  // list: any = [
+  //   {
+  //     content: 'Hello, how can I help you?',
+  //   },
+  //   {
+  //     content: 'I want to know the weather today.',
+  //     role: 'user',
+  //   },
+  //   {
+  //     content: 'Where are you now?',
+  //   },
+  //   {
+  //     content: 'I am in Beijing.',
+  //     role: 'user',
+  //   },
+  //   {
+  //     content:
+  //       'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
+  //   },
+  //   {
+  //     content: 'Thank you!',
+  //     role: 'user',
+  //   },
+  //   {
+  //     content: 'You are welcome.',
+  //   },
+  //   {
+  //     content: 'Have a nice day!',
+  //   },
+  //   {
+  //     content: 'You too!'
+  //   },
+  // ];
+
   // inputValue =
   //   '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
 
@@ -61,15 +107,6 @@ export class AilyChatComponent {
   }
 
   ngAfterViewInit(): void {
-    // console.log(this.dragHandle);
-    // this.dragHandle.nativeElement.addEventListener('mousedown', (e: MouseEvent) => {
-    //   console.log('mousedown');
-    //   this.isDragging = true;
-    //   this.startX = e.clientX;
-    //   this.startWidth = this.resizableDiv.nativeElement.getBoundingClientRect().width;
-    //   this.dragHandle.nativeElement.addEventListener('mousemove', this.handleMouseMove);
-    //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
-    // });
     this.scrollToBottom(true);
 
     this.startSession();
@@ -162,6 +199,20 @@ export class AilyChatComponent {
   bottomHeight = 180;
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
+  }
+
+  onKeyDown(event: KeyboardEvent) {
+    // if (this.serialMonitorService.inputMode.sendByEnter) {
+    //   if (event.key === 'Enter') {
+    //     this.send();
+    //     event.preventDefault();
+    //   }
+    //   return;
+    // }
+    // if (event.ctrlKey && event.key === 'Enter') {
+    //   this.send();
+    //   event.preventDefault();
+    // }
   }
 
   // private handleMouseMove = (e: MouseEvent) => {
