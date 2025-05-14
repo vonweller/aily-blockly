@@ -1,11 +1,7 @@
 .dialog-box {
     background: #2d2d2d;
     border-radius: 5px;
-    margin-top: 5px;
-
-    &:last-child {
-        margin-bottom: 10px;
-    }
+    margin: 5px 0;
 
     &.user {
         background: none;
