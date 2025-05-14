@@ -1,3 +1,5 @@
+@use "../serial-monitor/serial-monitor.component.scss";
+
 .window-box {
   position: relative;
   display: flex;
@@ -6,47 +8,29 @@
 }
 
 .dialog-list {
-  padding: 0 5px 0 10px;
+  padding-left: 10px;
   height: calc(100% - 180px);
   overflow-y: auto;
+
+  .dialogs{
+    padding:0 10px 10px 0;
+  }
 }
 
 .sender {
   position: relative;
   flex-shrink: 0;
 
-  .s-box {
-    width: 100%;
-    height: 100%;
-    padding: 10px 10px 5px 10px;
+  .settings {
+    height: 40px;
     position: relative;
+  }
 
-    textarea {
-      background: #292929;
-      border-radius: 5px;
-      height: calc(100% - 40px);
-      resize: none;
-    }
-
-    .btns {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 5px;
-    }
-
-    .btn {
-      width: 32px;
-      height: 32px;
-      font-size: 18px;
-      color: #eee;
-
-      &:hover {
-        color: #fff;
-      }
-    }
-
-    button {
-      margin-left: 10px;
+  .input-box{
+    margin-top: 10px;
+    height: calc(100% - 48px) !important;
+    textarea{
+      font-size: 13px;
     }
   }
 }
@@ -55,6 +39,6 @@ nz-resize-handle {
   .line {
     margin-top: 5px;
     height: 1px;
-    background: #555;
+    background: rgba(255, 255, 255, 0.1);
   }
 }

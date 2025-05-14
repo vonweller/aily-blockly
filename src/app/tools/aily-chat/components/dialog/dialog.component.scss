@@ -4,7 +4,7 @@
     margin-top: 5px;
 
     &:last-child {
-        margin-bottom: 5px;
+        margin-bottom: 10px;
     }
 
     &.user {
@@ -21,6 +21,7 @@
 
 .content {
     padding: 3px 6px;
+    user-select:text;
 
     ::ng-deep {
 
