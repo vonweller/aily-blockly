@@ -17,7 +17,7 @@
 
 .content {
     padding: 3px 6px;
-    user-select:text;
+    user-select: text;
 
     ::ng-deep {
 
@@ -28,7 +28,7 @@
         h5,
         h6 {
             font-weight: bold;
-            color: #222;
+            // color: #222;
             margin-top: 0;
         }
 
@@ -71,6 +71,10 @@
             margin-top: 1em;
             margin-bottom: 1em;
             font-size: 14px;
+
+            img {
+                max-width: 100%;
+            }
         }
 
         ul,
@@ -96,9 +100,8 @@
         table {
             border-collapse: collapse;
             width: 100%;
-            background: #eee;
             position: relative;
-            margin-top: 30px;
+            margin-top: 20px;
 
             &:hover {
                 .export-btn {
@@ -115,7 +118,7 @@
 
         th,
         td {
-            padding: 0.5em;
+            padding: 0.3em;
             text-align: left;
         }
 
@@ -129,7 +132,7 @@
         pre {
             display: grid;
             position: relative;
-            margin-top: 30px;
+            margin-top: 20px;
             overflow: visible;
 
             code {

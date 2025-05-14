@@ -64,7 +64,42 @@ export class AilyChatComponent {
       role: 'user',
     },
     {
-      content: 'You are welcome.',
+      content: `Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚，如图2-21。使用这些引脚具有输入输出数字信号的功能。
+
+![](https://arduino.me/storage/v1/object/public/image/909ac2e69d622745529282522809c0c1.webp)
+
+图 2‑21 可以进行数字输入输出的引脚
+
+**数字信号**
+
+数字信号是以0、1表示的电平不连续变化的信号，也就是以二进制的形式表示的信号。 在Arduino中数字信号通过高低电平来表示，高电平则为数字信号1，低电平则为数字信号0 （如图2-22）。
+
+图2-18 数字信号
+
+![](https://arduino.me/storage/v1/object/public/image/dfc9651d61b02a5edb08bb1128cba4ee.webp)
+
+图 2‑22 数字信号
+
+Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚。使用这些引脚，可以完成输入输出数字信号的功能。
+
+在使用输入或输出功能前，需要先通过pinMode() 函数配置引脚的模式为输入模式或输出模式。
+
+\`\`\`c
+pinMode(pin, mode);
+\`\`\`
+
+参数pin为指定配置的引脚编号；参数mode为指定的配置模式。
+
+可使用的三种模式，如表2-3所示：
+
+表 2‑3 Arduino引脚可配置状态
+
+| 模式宏名称 | 说明 |
+| ----- | --- |
+| INPUT | 输入模式 |
+| OUTPUT | 输出模式 |
+| INPUT\_PULLUP | 输入上拉模式 |
+`,
     },
     {
       content: 'Have a nice day!',
@@ -149,8 +184,8 @@ export class AilyChatComponent {
 
     // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
     const content = `
-#### 这是一个测试标题
-
+## 这是一个测试标题  
+testttttt
 \`\`\`blockly
 {
   "kind": "flyoutToolbox",

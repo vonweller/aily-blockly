@@ -59,14 +59,14 @@ export class MarkdownPipe implements PipeTransform {
           if (lang === 'blockly') {
             return codeToHtml(code, {
               lang: 'javascript', // TODO json 格式转 blockly 动态创建 toolbox 块
-              theme: 'github-light',
+              theme: 'github-dark',
             }).then((html) => {
               return html;
             });
           }
           return codeToHtml(code, {
             lang: lang,
-            theme: 'github-light',
+            theme: 'github-dark',
           }).then((html) => {
             return html;
           });
