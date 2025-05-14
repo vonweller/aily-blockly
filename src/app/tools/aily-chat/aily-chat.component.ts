@@ -2,7 +2,6 @@ import { Component, ElementRef, ViewChild } from '@angular/core';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { DialogComponent } from './components/dialog/dialog.component';
-import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
@@ -10,6 +9,8 @@ import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
+import { Observable, tap } from 'rxjs';
+import { ChatService } from './services/chat.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -30,66 +31,23 @@ export class AilyChatComponent {
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatList') chatList: ElementRef;
 
-  list: any = [
-    {
-      content: 'Hello, how can I help you?',
-    },
-    {
-      content: 'I want to know the weather today.',
-      role: 'user',
-    },
-    {
-      content: 'Where are you now?',
-    },
-    {
-      content: 'I am in Beijing.',
-      role: 'user',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    }, {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    }, {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-    {
-      content:
-        'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    },
-  ];
-  inputValue =
-    '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
+  list: any = [];
+  // inputValue =
+  //   '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
 
   currentUrl;
+  inputValue = '';
 
   windowInfo = 'AI助手';
+
+  get sessionId() {
+    return this.chatService.currentSessionId;
+  } 
 
   constructor(
     private uiService: UiService,
     private router: Router,
+    private chatService: ChatService,
   ) { }
 
   ngOnInit() {
@@ -97,6 +55,8 @@ export class AilyChatComponent {
   }
 
   close() {
+    // 关闭stream连接
+    this.closeSession();
     this.uiService.closeTool('aily-chat');
   }
 
@@ -111,6 +71,92 @@ export class AilyChatComponent {
     //   this.dragHandle.nativeElement.addEventListener('mouseup', this.handleMouseUp);
     // });
     this.scrollToBottom(true);
+
+    this.startSession();
+  }
+
+  appendMessage(role, text) {
+    this.list.push({
+      "role": role,
+      "content": text
+    })
+  }
+
+  startSession(): void {
+    this.chatService.startSession().subscribe( (res: any) => {
+      if (res.status === 'success') {
+        this.chatService.currentSessionId = res.data;
+        this.streamConnect();
+        this.getHistory();
+      }
+    });
+  }
+
+  closeSession(): void {
+    if (!this.sessionId) return;
+
+    this.chatService.closeSession(this.sessionId).subscribe((res: any) => {
+      console.log('close session', res);
+    });
+  }
+
+  send(): void {
+    if (!this.sessionId || !this.inputValue.trim()) return;
+
+    const text = this.inputValue.trim();
+    this.appendMessage('我', text);
+    this.inputValue = '';
+
+    this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
+      console.log('send message', res);
+      if (res.status === 'success') {
+        this.appendMessage('助手', res.data);
+      } else {
+        this.appendMessage('错误', res.message);
+      }
+    });
+  }
+
+  streamConnect(): void {
+    console.log("streeam connect sessionId: ", this.sessionId);
+    if (!this.sessionId) return;
+
+    this.chatService.streamConnect(this.sessionId).subscribe({
+      next: (data: any) => {
+        console.log("收到消息: ", data);
+
+        try {
+          if (data.type === 'agent_response') {
+            this.appendMessage('助手', data.data);
+          } else if (data.type === 'processing_started') {
+            this.appendMessage('系统', data.message);
+          } else if (data.type === 'error') {
+            this.appendMessage('错误', data.message);
+          }
+          this.scrollToBottom();
+        } catch (e) {
+          console.error('解析消息出错:', e);
+        }
+      },
+      error: (err) => {
+        console.error('流连接出错:', err);
+        this.appendMessage('错误', '连接中断，请刷新页面重试');
+      }
+    });
+  }
+
+  getHistory(): void {
+    if (!this.sessionId) return;
+
+    this.chatService.getHistory(this.sessionId).subscribe((res: any) => {
+      console.log('get history', res);
+      if (res.status === 'success') {
+        this.list = res.data;
+        this.scrollToBottom();
+      } else {
+        this.appendMessage('错误', res.message);
+      }
+    });
   }
 
   bottomHeight = 180;
@@ -137,113 +183,113 @@ export class AilyChatComponent {
     );
   }
 
-  send() {
-    console.log(this.inputValue);
-    const msg = {
-      content: this.inputValue,
-      session_id: '',
-      role: 'user',
-    };
-    this.list.push(msg);
+//   send() {
+//     console.log(this.inputValue);
+//     const msg = {
+//       content: this.inputValue,
+//       session_id: '',
+//       role: 'user',
+//     };
+//     this.list.push(msg);
 
-    const uuid = this.getRandomString();
+//     const uuid = this.getRandomString();
 
-    // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
-    const content = `
-#### 这是一个测试标题
+//     // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
+//     const content = `
+// #### 这是一个测试标题
 
-\`\`\`blockly
-{
-  "kind": "flyoutToolbox",
-  "contents": [
-    {
-      "kind": "block",
-      "type": "controls_if"
-    },
-    {
-      "kind": "block",
-      "type": "controls_whileUntil"
-    }
-  ]
-}
-\`\`\`
+// \`\`\`blockly
+// {
+//   "kind": "flyoutToolbox",
+//   "contents": [
+//     {
+//       "kind": "block",
+//       "type": "controls_if"
+//     },
+//     {
+//       "kind": "block",
+//       "type": "controls_whileUntil"
+//     }
+//   ]
+// }
+// \`\`\`
 
-# 好嘛
+// # 好嘛
 
-| 什么
+// | 什么
 
-\`\`\`blockly
-{
-  "kind": "flyoutToolbox",
-  "contents": [
-    {
-      "kind": "block",
-      "type": "controls_if"
-    }
-  ]
-}
-\`\`\`
+// \`\`\`blockly
+// {
+//   "kind": "flyoutToolbox",
+//   "contents": [
+//     {
+//       "kind": "block",
+//       "type": "controls_if"
+//     }
+//   ]
+// }
+// \`\`\`
 
-## 这个是二级标题
-`;
+// ## 这个是二级标题
+// `;
 
-    const segments = this.splitContent(content);
+//     const segments = this.splitContent(content);
 
-    const contentList: any = [];
+//     const contentList: any = [];
 
-    const ruleView = /```blockly\s([\s\S]*?)\s```/;
-    segments.forEach((match, index) => {
-      const exec: any = ruleView.exec(match);
-      if (exec) {
-        try {
-          const data = JSON.parse(exec[1]);
-          exec.push(data);
-        } catch (err) { }
-        contentList.push(exec);
-      } else {
-        contentList.push(match);
-      }
-    });
+//     const ruleView = /```blockly\s([\s\S]*?)\s```/;
+//     segments.forEach((match, index) => {
+//       const exec: any = ruleView.exec(match);
+//       if (exec) {
+//         try {
+//           const data = JSON.parse(exec[1]);
+//           exec.push(data);
+//         } catch (err) { }
+//         contentList.push(exec);
+//       } else {
+//         contentList.push(match);
+//       }
+//     });
 
-    this.list.push({
-      uuid,
-      content,
-      contentList,
-      role: 'system',
-    });
+//     this.list.push({
+//       uuid,
+//       content,
+//       contentList,
+//       role: 'system',
+//     });
 
-    this.scrollToBottom();
+//     this.scrollToBottom();
 
-    return;
+//     return;
 
-    // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
-    fetchEventSource('/api/v1/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(msg),
-      onmessage: (event) => {
-        const obj = this.list.find((v: any) => v.uuid === uuid);
-        if (obj.isDone) return;
-        obj.content += event.data;
-        // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
-        if (event.data.includes('[DONE]')) {
-          obj.role = 'system';
-          obj.isDone = true;
-          console.log(obj.content);
-        }
+//     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
+//     fetchEventSource('/api/v1/chat', {
+//       method: 'POST',
+//       headers: {
+//         'Content-Type': 'application/json',
+//       },
+//       body: JSON.stringify(msg),
+//       onmessage: (event) => {
+//         const obj = this.list.find((v: any) => v.uuid === uuid);
+//         if (obj.isDone) return;
+//         obj.content += event.data;
+//         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
+//         if (event.data.includes('[DONE]')) {
+//           obj.role = 'system';
+//           obj.isDone = true;
+//           console.log(obj.content);
+//         }
 
-        this.scrollToBottom();
-      },
-      onerror(event) {
-        console.log('服务异常', event);
-      },
-      onclose() {
-        console.log('服务关闭');
-      },
-    }).then();
-  }
+//         this.scrollToBottom();
+//       },
+//       onerror(event) {
+//         console.log('服务异常', event);
+//       },
+//       onclose() {
+//         console.log('服务关闭');
+//       },
+//     }).then();
+//   }
 
   splitContent(content: any) {
     // 正则表达式，匹配```blockly到下一个```之间的内容

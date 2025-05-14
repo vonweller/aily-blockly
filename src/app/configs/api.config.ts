@@ -1,9 +1,14 @@
 // const SERVER_URL: string = "http://localhost:8000";
 const SERVER_URL: string = '';
-const SERVER_API_URL: string = '';
+const SERVER_API_URL: string = 'http://127.0.0.1:8000';
 
 export const API = {
   projectList: `${SERVER_URL}/-/verdaccio/data/packages`,
   projectSearch: `${SERVER_URL}/-/v1/search`,
-  chatSSE: `${SERVER_API_URL}/api/v1/chat`,
+  // ai
+  startSession: `${SERVER_API_URL}/api/v1/start_session`,
+  closeSession: `${SERVER_API_URL}/api/v1/close_session`,
+  streamConnect: `${SERVER_API_URL}/api/v1/stream`,
+  sendMessage: `${SERVER_API_URL}/api/v1/send_message`,
+  getHistory: `${SERVER_API_URL}/api/v1/conversation_history`,
 };
