@@ -1,3 +1,10 @@
-<div class="dialog-box" [ngClass]="{ 'user': true }">
+<div class="dialog-box" [ngClass]="{ 'user': data.role=='user' }">
+  <div class="username">
+    @if(data.role=='user'){
+    奈何col
+    }@else {
+    aily
+    }
+  </div>
   <div class="content" [innerHTML]="data.content | markdown | async" #mdContent></div>
 </div>

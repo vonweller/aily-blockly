@@ -1,13 +1,23 @@
 .dialog-box {
-    display: flex;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: #2d2d2d;
+    border-radius: 5px;
+    margin-top: 5px;
 
-    &.user{
-        background: #343434;
+    &.user {
+        background: none;
     }
 }
 
+.username {
+    padding: 3px 6px;
+    border-bottom: 1px solid #444;
+    font-size: 12px;
+    color: #888;
+}
+
 .content {
+    padding: 3px 6px;
+
     ::ng-deep {
 
         h1,
