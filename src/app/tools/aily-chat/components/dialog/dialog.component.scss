@@ -274,3 +274,21 @@
         }
     }
 }
+
+.dialog-box {
+    ::ng-deep {
+
+        .blockly-container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 1rem 0;
+            background-color: #f5f5f5;
+        }
+
+        .blockly-preview {
+            width: 100%;
+            height: 300px;
+            overflow: auto;
+        }
+    }
+}
