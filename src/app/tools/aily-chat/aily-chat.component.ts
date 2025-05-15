@@ -166,9 +166,9 @@ export class AilyChatComponent {
           if (data.type === 'agent_response') {
             this.appendMessage('助手', data.data);
           } else if (data.type === 'processing_started') {
-            this.appendMessage('系统', data.message);
+            console.log('助手正在思考...');
           } else if (data.type === 'error') {
-            this.appendMessage('错误', data.message);
+            console.error('助手出错:', data.data);
           }
           this.scrollToBottom();
         } catch (e) {
