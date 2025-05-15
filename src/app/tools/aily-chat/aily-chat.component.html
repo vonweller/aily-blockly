@@ -4,6 +4,14 @@
 </app-sub-window>
 } @else {
 <app-tool-container [title]="windowInfo" (closeEvent)="close()">
+  <ng-container header-btns>
+    <div class="btn ccenter" (click)="newChat()">
+      <i class="fa-light fa-message-plus"></i>
+    </div>
+    <div class="btn ccenter" (click)="openHistoryChat($event)">
+      <i class="fa-light fa-clock-rotate-left"></i>
+    </div>
+  </ng-container>
   <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
 </app-tool-container>
 }
@@ -54,20 +62,10 @@
         </div>
       </div>
     </div>
-    <!-- <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="500" [nzMinHeight]="180"
-      (nzResize)="onContentResize($event)">
-      <nz-resize-handle nzDirection="top">
-        <div class="line"></div>
-      </nz-resize-handle>
-      <div class="s-box">
-        <textarea class="sscroll" [(ngModel)]="inputValue"></textarea>
-        <div class="btns">
-          <div class="btn ccenter">
-            <i class="fa-light fa-microphone"></i>
-          </div>
-          <button nz-button nzType="primary" (click)="send()">发送</button>
-        </div>
-      </div>
-    </div> -->
   </div>
 </ng-template>
+
+@if (showHistoryList) {
+<app-menu [menuList]="HistoryList" [position]="historyListPosition" [width]="300" (closeEvent)="closeMenu()"
+  (itemClickEvent)="menuClick($event)"></app-menu>
+}

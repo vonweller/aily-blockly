@@ -12,8 +12,8 @@
   height: calc(100% - 180px);
   overflow-y: auto;
 
-  .dialogs{
-    padding:0 10px 10px 0;
+  .dialogs {
+    padding: 0 10px 10px 0;
   }
 }
 
@@ -26,10 +26,11 @@
     position: relative;
   }
 
-  .input-box{
+  .input-box {
     margin-top: 10px;
     height: calc(100% - 48px) !important;
-    textarea{
+
+    textarea {
       font-size: 13px;
     }
   }
@@ -41,4 +42,11 @@ nz-resize-handle {
     height: 1px;
     background: rgba(255, 255, 255, 0.1);
   }
+}
+
+.historyList {
+  background: #555;
+  position: absolute;
+  top: 40px;
+  right: 0;
 }
