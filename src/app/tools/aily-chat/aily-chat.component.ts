@@ -145,6 +145,7 @@ pinMode(pin, mode);
   }
 
   appendMessage(role, text) {
+    console.log('append message', role, text);
     this.list.push({
       "role": role,
       "content": text
@@ -173,15 +174,13 @@ pinMode(pin, mode);
     if (!this.sessionId || !this.inputValue.trim()) return;
 
     const text = this.inputValue.trim();
-    this.appendMessage('我', text);
+    this.appendMessage('user', text);
     this.inputValue = '';
 
     this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
       console.log('send message', res);
       if (res.status === 'success') {
-        this.appendMessage('助手', res.data);
-      } else {
-        this.appendMessage('错误', res.message);
+        this.appendMessage('aily', res.data);
       }
     });
   }
