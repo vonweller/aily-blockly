@@ -13,6 +13,8 @@ import { Observable, tap } from 'rxjs';
 import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
+import { MenuComponent } from '../../components/menu/menu.component';
+import { IMenuItem } from '../../configs/menu.config';
 
 @Component({
   selector: 'app-aily-chat',
@@ -26,7 +28,8 @@ import { SimplebarAngularModule } from 'simplebar-angular';
     ToolContainerComponent,
     NzResizableModule,
     NzToolTipModule,
-    SimplebarAngularModule
+    SimplebarAngularModule,
+    MenuComponent
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
@@ -120,7 +123,7 @@ pinMode(pin, mode);
 
   get sessionId() {
     return this.chatService.currentSessionId;
-  } 
+  }
 
   constructor(
     private uiService: UiService,
@@ -153,7 +156,7 @@ pinMode(pin, mode);
   }
 
   startSession(): void {
-    this.chatService.startSession().subscribe( (res: any) => {
+    this.chatService.startSession().subscribe((res: any) => {
       if (res.status === 'success') {
         this.chatService.currentSessionId = res.data;
         this.streamConnect();
@@ -265,113 +268,113 @@ pinMode(pin, mode);
     );
   }
 
-//   send() {
-//     console.log(this.inputValue);
-//     const msg = {
-//       content: this.inputValue,
-//       session_id: '',
-//       role: 'user',
-//     };
-//     this.list.push(msg);
+  //   send() {
+  //     console.log(this.inputValue);
+  //     const msg = {
+  //       content: this.inputValue,
+  //       session_id: '',
+  //       role: 'user',
+  //     };
+  //     this.list.push(msg);
 
-//     const uuid = this.getRandomString();
+  //     const uuid = this.getRandomString();
 
-    // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
-//     const content = `
-// ## 这是一个测试标题  
-// testttttt
-// \`\`\`blockly
-// {
-//   "kind": "flyoutToolbox",
-//   "contents": [
-//     {
-//       "kind": "block",
-//       "type": "controls_if"
-//     },
-//     {
-//       "kind": "block",
-//       "type": "controls_whileUntil"
-//     }
-//   ]
-// }
-// \`\`\`
+  // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
+  //     const content = `
+  // ## 这是一个测试标题  
+  // testttttt
+  // \`\`\`blockly
+  // {
+  //   "kind": "flyoutToolbox",
+  //   "contents": [
+  //     {
+  //       "kind": "block",
+  //       "type": "controls_if"
+  //     },
+  //     {
+  //       "kind": "block",
+  //       "type": "controls_whileUntil"
+  //     }
+  //   ]
+  // }
+  // \`\`\`
 
-// // # 好嘛
+  // // # 好嘛
 
-// // | 什么
+  // // | 什么
 
-// // \`\`\`blockly
-// // {
-// //   "kind": "flyoutToolbox",
-// //   "contents": [
-// //     {
-// //       "kind": "block",
-// //       "type": "controls_if"
-// //     }
-// //   ]
-// // }
-// // \`\`\`
+  // // \`\`\`blockly
+  // // {
+  // //   "kind": "flyoutToolbox",
+  // //   "contents": [
+  // //     {
+  // //       "kind": "block",
+  // //       "type": "controls_if"
+  // //     }
+  // //   ]
+  // // }
+  // // \`\`\`
 
-// // ## 这个是二级标题
-// // `;
+  // // ## 这个是二级标题
+  // // `;
 
-//     const segments = this.splitContent(content);
+  //     const segments = this.splitContent(content);
 
-//     const contentList: any = [];
+  //     const contentList: any = [];
 
-//     const ruleView = /```blockly\s([\s\S]*?)\s```/;
-//     segments.forEach((match, index) => {
-//       const exec: any = ruleView.exec(match);
-//       if (exec) {
-//         try {
-//           const data = JSON.parse(exec[1]);
-//           exec.push(data);
-//         } catch (err) { }
-//         contentList.push(exec);
-//       } else {
-//         contentList.push(match);
-//       }
-//     });
+  //     const ruleView = /```blockly\s([\s\S]*?)\s```/;
+  //     segments.forEach((match, index) => {
+  //       const exec: any = ruleView.exec(match);
+  //       if (exec) {
+  //         try {
+  //           const data = JSON.parse(exec[1]);
+  //           exec.push(data);
+  //         } catch (err) { }
+  //         contentList.push(exec);
+  //       } else {
+  //         contentList.push(match);
+  //       }
+  //     });
 
-//     this.list.push({
-//       uuid,
-//       content,
-//       contentList,
-//       role: 'system',
-//     });
+  //     this.list.push({
+  //       uuid,
+  //       content,
+  //       contentList,
+  //       role: 'system',
+  //     });
 
-//     this.scrollToBottom();
+  //     this.scrollToBottom();
 
-//     return;
+  //     return;
 
-//     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
-//     fetchEventSource('/api/v1/chat', {
-//       method: 'POST',
-//       headers: {
-//         'Content-Type': 'application/json',
-//       },
-//       body: JSON.stringify(msg),
-//       onmessage: (event) => {
-//         const obj = this.list.find((v: any) => v.uuid === uuid);
-//         if (obj.isDone) return;
-//         obj.content += event.data;
-//         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
-//         if (event.data.includes('[DONE]')) {
-//           obj.role = 'system';
-//           obj.isDone = true;
-//           console.log(obj.content);
-//         }
+  //     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
+  //     fetchEventSource('/api/v1/chat', {
+  //       method: 'POST',
+  //       headers: {
+  //         'Content-Type': 'application/json',
+  //       },
+  //       body: JSON.stringify(msg),
+  //       onmessage: (event) => {
+  //         const obj = this.list.find((v: any) => v.uuid === uuid);
+  //         if (obj.isDone) return;
+  //         obj.content += event.data;
+  //         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
+  //         if (event.data.includes('[DONE]')) {
+  //           obj.role = 'system';
+  //           obj.isDone = true;
+  //           console.log(obj.content);
+  //         }
 
-//         this.scrollToBottom();
-//       },
-//       onerror(event) {
-//         console.log('服务异常', event);
-//       },
-//       onclose() {
-//         console.log('服务关闭');
-//       },
-//     }).then();
-//   }
+  //         this.scrollToBottom();
+  //       },
+  //       onerror(event) {
+  //         console.log('服务异常', event);
+  //       },
+  //       onclose() {
+  //         console.log('服务关闭');
+  //       },
+  //     }).then();
+  //   }
 
   splitContent(content: any) {
     // 正则表达式，匹配```blockly到下一个```之间的内容
@@ -428,5 +431,54 @@ pinMode(pin, mode);
           this.chatList.nativeElement.scrollHeight;
       }, 20);
     }
+  }
+
+  HistoryList: IMenuItem[] = [
+    {
+      name: '如何学习arduino如何学习arduino如何学习arduino'
+    },
+    {
+      name: '制作一个ros小车'
+    },
+    {
+      name: '历史记录3',
+    },
+    {
+      name: '历史记录4',
+    },
+    {
+      name: '历史记录5',
+    },
+    {
+      name: '历史记录6',
+    },
+    {
+      name: '历史记录7',
+    },
+    {
+      name: '历史记录8',
+    }
+  ]
+
+  newChat() {
+
+  }
+
+  showHistoryList = false;
+  historyListPosition = { x: 0, y: 0 };
+  openHistoryChat(e) {
+    // 设置菜单的位置
+    this.historyListPosition = { x: window.innerWidth - 302, y: 72 };
+    console.log(this.historyListPosition);
+
+    this.showHistoryList = !this.showHistoryList;
+  }
+
+  closeMenu() {
+    this.showHistoryList = false;
+  }
+
+  menuClick(e) {
+
   }
 }

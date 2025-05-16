@@ -14,14 +14,18 @@
 
   .tool-btns {
     display: flex;
-    .btn {
-      width: 30px;
-      height: 30px;
 
-      &:hover {
-        background: #3a3c3f;
+    ::ng-deep {
+      .btn {
+        width: 30px;
+        height: 30px;
+
+        &:hover {
+          background: #3a3c3f;
+        }
       }
     }
+
 
     .fa-arrow-up-right-from-square {
       font-size: 12px;
