@@ -38,10 +38,8 @@ function loadEnv() {
   process.env.PATH = nodePath + path.delimiter + process.env.PATH;
 
   // 读取同级目录下的config.json文件
-  const confContent = require("fs").readFileSync(
-    path.join(__dirname, "config.json"),
-  );
-  const conf = JSON.parse(confContent);
+  const configPath = path.join(__dirname, "config.json");
+  const conf = JSON.parse(fs.readFileSync(configPath));
 
   // 设置系统默认的应用数据目录
   if (isWin32) {
@@ -55,13 +53,37 @@ function loadEnv() {
     process.env.AILY_APPDATA_PATH = conf["appdata_path"]["linux"];
   }
 
+  // 确保应用数据目录存在
+  if (!fs.existsSync(process.env.AILY_APPDATA_PATH)) {
+    try {
+      fs.mkdirSync(process.env.AILY_APPDATA_PATH, { recursive: true });
+    } catch (error) {
+      console.error("创建应用数据目录失败:", error);
+    }
+  }
+
   // 检测并读取appdata_path目录下是否有config.json文件
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
-  if (fs.existsSync(userConfigPath)) {
+  
+  // 如果用户配置文件不存在，则复制默认配置文件
+  if (!fs.existsSync(userConfigPath)) {
+    try {
+      fs.copyFileSync(configPath, userConfigPath);
+      console.log("已将默认配置文件复制到用户目录:", userConfigPath);
+    } catch (error) {
+      console.error("复制配置文件失败:", error);
+    }
+  }
+
+  // 读取用户配置文件
+  try {
     const userConfContent = fs.readFileSync(userConfigPath);
     userConf = JSON.parse(userConfContent);
     // 合并配置文件
     Object.assign(conf, userConf);
+  } catch (error) {
+    console.error("读取用户配置文件失败:", error);
+    userConf = {}; // 确保userConf是一个对象
   }
 
   // npm registry
