@@ -118,5 +118,13 @@
         "AI": "AI",
         "IOT": "物联网",
         "OTHERS": "其他"
+    },
+    "COMPATIBILITY_DIALOG": {
+        "TITLE": "库兼容性提示",
+        "WARNING_MESSAGE": "该库可能无法在当前开发板上使用，是否继续安装？",
+        "SUPPORTED_CORES": "当前库支持内核：",
+        "CURRENT_BOARD_CORE": "当前开发板内核：",
+        "CANCEL": "取消",
+        "CONTINUE_INSTALL": "继续安装"
     }
 }

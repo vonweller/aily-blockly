@@ -3,10 +3,11 @@ import { NZ_MODAL_DATA, NzModalRef } from 'ng-zorro-antd/modal';
 import { CommonModule } from '@angular/common';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { TranslateModule } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-compatible-dialog',
-  imports: [NzButtonModule, NzTagModule, CommonModule],
+  imports: [NzButtonModule, NzTagModule, CommonModule, TranslateModule],
   templateUrl: './compatible-dialog.component.html',
   styleUrl: './compatible-dialog.component.scss'
 })

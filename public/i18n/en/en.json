@@ -117,5 +117,13 @@
         "AI": "AI",
         "IOT": "IoT",
         "OTHERS": "Others"
+    },
+    "COMPATIBILITY_DIALOG": {
+        "TITLE": "Library Compatibility Notice",
+        "WARNING_MESSAGE": "This library may not work on the current board. Do you want to continue with installation?",
+        "SUPPORTED_CORES": "Library supported cores:",
+        "CURRENT_BOARD_CORE": "Current board core:",
+        "CANCEL": "Cancel",
+        "CONTINUE_INSTALL": "Continue Install"
     }
 }
