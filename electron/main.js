@@ -64,7 +64,7 @@ function loadEnv() {
 
   // 检测并读取appdata_path目录下是否有config.json文件
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
-  
+
   // 如果用户配置文件不存在，则复制默认配置文件
   if (!fs.existsSync(userConfigPath)) {
     try {
@@ -77,8 +77,7 @@ function loadEnv() {
 
   // 读取用户配置文件
   try {
-    const userConfContent = fs.readFileSync(userConfigPath);
-    userConf = JSON.parse(userConfContent);
+    userConf = JSON.parse(fs.readFileSync(userConfigPath));
     // 合并配置文件
     Object.assign(conf, userConf);
   } catch (error) {
