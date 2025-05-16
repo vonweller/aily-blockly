@@ -104,15 +104,22 @@ export class UploaderService {
       const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
       if (!this.builderService.passed || code !== this.builderService.lastCode || this.projectService.currentProjectPath !== this.builderService.currentProjectPath) {
         // 编译
-        await this.builderService.build();
+        try {
+          const buildResult = await this.builderService.build();
+          console.log("build result:", buildResult);
+          // 编译成功，继续上传流程
+        } catch (error) {
+          // 编译失败，处理错误
+          console.error("编译失败:", error);
+          // reject(error || { state: 'error', text: '编译失败，请检查代码' });
+        }
       }
-
-      console.log("passed1")
 
       if (!this.builderService.passed) {
         // this.message.error('编译失败，请检查代码');
         this.uploadInProgress = false;
         reject({ state: 'error', text: '编译失败，请检查代码' });
+        return;
       }
 
       const buildPath = this.builderService.buildPath;
