@@ -19,6 +19,7 @@
   <div class="window-box">
     <!-- 对话内容 -->
     <div class="dialog-list" #chatContainer>
+      @if(list.length > 0){
       <ngx-simplebar [options]="options">
         <div class="dialogs" #chatList>
           @for (item of list; track item) {
@@ -26,8 +27,15 @@
           }
         </div>
       </ngx-simplebar>
+      }@else{
+      <div class="guide-box ccenter">
+        <i class="fa-light fa-star-christmas"></i>
+        <div class="title">aily assistant service</div>
+        <div class="text">AI的回复仅能作为参考，不一定正确，也不代表本软件开发者的意见，使用者需自行辨别</div>
+        <div></div>
+      </div>
+      }
     </div>
-
     <!-- 发送部分 -->
     <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="600" [nzMinHeight]="180"
       (nzResize)="onContentResize($event)">
@@ -49,12 +57,12 @@
             (keydown)="onKeyDown($event)"></textarea>
         </div>
         <div class="btns">
-          <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件">
+          <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件" (click)="addFile()">
             <i class="fa-light fa-file-plus"></i>
           </div>
-          <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
+          <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
-          </div>
+          </div> -->
           <button class="right ccenter" nz-button nzType="primary" nz-tooltip nzTooltipTitle="true?'Enter':'Ctrl+Enter'"
             (click)="send()">
             发送

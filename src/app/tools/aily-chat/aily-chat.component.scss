@@ -50,3 +50,22 @@ nz-resize-handle {
   top: 40px;
   right: 0;
 }
+
+.guide-box {
+  height: 100%;
+  flex-direction: column;
+
+  i {
+    font-size: 60px;
+    margin-bottom: 6px;
+  }
+
+  .title {
+    font-size: 20px;
+  }
+
+  .text {
+    color: #999;
+    text-align: center;
+  }
+}
