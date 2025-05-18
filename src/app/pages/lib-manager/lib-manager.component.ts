@@ -159,14 +159,11 @@ export class LibManagerComponent {
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
     await this.uiService.openTerminal();
     await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
-    setTimeout(() => {
-      this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`).then(async () => {
-        await this.checkInstalled();
-        lib.state = 'default';
-        this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
-        this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
-      });
-    }, 500);
+    await this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`)
+    await this.checkInstalled();
+    lib.state = 'default';
+    this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
+    this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
   }
 
   async removeLib(lib) {
