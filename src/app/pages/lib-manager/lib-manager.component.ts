@@ -173,11 +173,10 @@ export class LibManagerComponent {
     const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
     this.blocklyService.removeLibrary(libPackagePath);
     await this.uiService.openTerminal();
-    this.terminalService.sendCmd(`npm uninstall ${lib.name}`).then(async () => {
-      this.checkInstalled();
-      lib.state = 'default';
-      this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
-    });
+    await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
+    this.checkInstalled();
+    lib.state = 'default';
+    this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
   }
 
   async checkCompatibility(libCompatibility, boardCore): Promise<boolean> {
