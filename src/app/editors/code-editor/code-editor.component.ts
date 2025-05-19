@@ -58,7 +58,7 @@ export class CodeEditorComponent {
       if (params['path']) {
         // this.projectService.projectOpen(params['path']);
         console.log('path', params['path']);
-
+        this.loadProject(params['path']);
       }
     });
   }
@@ -68,6 +68,16 @@ export class CodeEditorComponent {
       this.sdkPath = "D:\\Git\\aily-project-lod\\packages\\sdk\\avr\\avr@1.8.6";
       this.librariesPath = "C:\\Users\\coloz\\Documents\\Arduino\\sketch_mar16a\\libraries";
     }, 2000);
+  }
+
+  async loadProject(projectPath) {
+    // 加载项目package.json
+    // const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
+    // 添加到最近打开的项目
+    // this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
+    // 设置当前项目路径和package.json数据
+    // this.projectService.currentPackageData = packageJson;
+    this.projectService.currentProjectPath = projectPath;
   }
 
   // 从文件树选择文件时触发
