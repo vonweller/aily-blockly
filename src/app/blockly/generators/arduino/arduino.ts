@@ -130,10 +130,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     this.codeDict['setups'] = Object.create(null);
     // 用户自定义setup
     this.codeDict['userSetups'] = Object.create(null);
+    // 用户自定义setup1
+    this.codeDict['userSetups1'] = Object.create(null);
     // loop
     this.codeDict['loops'] = Object.create(null);
     // 用户自定义loop
     this.codeDict['userLoops'] = Object.create(null);
+    // 用户自定义loop1
+    this.codeDict['userLoops1'] = Object.create(null);
 
     this.isInitialized = true;
   }
@@ -157,8 +161,10 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     let functions = [];
     let setups = [];
     let userSetups = [];
+    let userSetups1 = [];
     let loops = [];
     let userLoops = [];
+    let userLoops1 = [];
 
     for (const key in this.codeDict['macros']) {
       macros.push(this.codeDict['macros'][key]);
@@ -175,17 +181,23 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     for (const key in this.codeDict['functions']) {
       functions.push(this.codeDict['functions'][key]);
     }
+    for (const key in this.codeDict['userSetups']) {
+      userSetups.push(this.codeDict['userSetups'][key]);
+    }
     for (const key in this.codeDict['setups']) {
       setups.push(this.codeDict['setups'][key]);
     }
-    for (const key in this.codeDict['userSetups']) {
-      userSetups.push(this.codeDict['userSetups'][key]);
+    for (const key in this.codeDict['userSetups1']) {
+      userSetups1.push(this.codeDict['userSetups1'][key]);
     }
     for (const key in this.codeDict['userLoops']) {
       userLoops.push(this.codeDict['userLoops'][key]);
     }
     for (const key in this.codeDict['loops']) {
       loops.push(this.codeDict['loops'][key]);
+    }
+    for (const key in this.codeDict['userLoops1']) {
+      userLoops1.push(this.codeDict['userLoops1'][key]);
     }
 
     this.isInitialized = false;
@@ -197,12 +209,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
       (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
       `void setup() {\n` +
-      (setups.length > 0 ? `  ${setups.join('\n  ')}\n` : '') +
-      (userSetups.length > 0 ? `${userSetups.join('\n  ')}\n` : '') +
+      (userSetups.length > 0 ? `  ${userSetups.join('\n  ')}\n` : '') + '\n' +
+      (setups.length > 0 ? `${setups.join('\n  ')}\n` : '') +
+      (userSetups1.length > 0 ? `    ${userSetups1.join('\n  ')}\n` : '') +
       `}\n\n` +
       `void loop() {\n` +
-      (userLoops.length > 0 ? `${userLoops.join('\n  ')}\n` : '') +
-      (loops.length > 0 ? `  ${loops.join('\n  ')}\n` : '') +
+      (userLoops.length > 0 ? `  ${userLoops.join('\n  ')}\n` : '') + '\n' +
+      (loops.length > 0 ? `${loops.join('\n  ')}\n` : '') +
+      (userLoops1.length > 0 ? `  ${userLoops1.join('\n  ')}\n` : '') +
       `}`;
     return newcode;
   }
@@ -396,6 +410,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
+  addUserSetup1(tag, code) {
+    if (this.codeDict['userSetups1'][tag] === undefined) {
+      this.codeDict['userSetups1'][tag] = code;
+    }
+  }
+
   addLoop(tag, code) {
     if (this.codeDict['loops'][tag] === undefined) {
       this.codeDict['loops'][tag] = code;
@@ -405,6 +425,12 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
   addUserLoop(tag, code) {
     if (this.codeDict['userLoops'][tag] === undefined) {
       this.codeDict['userLoops'][tag] = code;
+    }
+  }
+
+  addUserLoop1(tag, code) {
+    if (this.codeDict['userLoops1'][tag] === undefined) {
+      this.codeDict['userLoops1'][tag] = code;
     }
   }
 
