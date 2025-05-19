@@ -6,5 +6,11 @@
     aily
     }
   </div>
+  @if(data.state=='thinking'){
+  <div class="content">Thinking...</div>
+  }@else if(data.state=='retrieving'){
+  <div class="content">Retrieving...</div>
+  }@else{
   <div class="content" [innerHTML]="data.content | markdown | async" #mdContent></div>
+  }
 </div>
