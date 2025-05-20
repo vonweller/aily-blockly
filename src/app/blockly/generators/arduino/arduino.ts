@@ -129,15 +129,15 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     // setup
     this.codeDict['setups'] = Object.create(null);
     // 用户自定义setup
-    this.codeDict['userSetups'] = Object.create(null);
+    this.codeDict['setups_begin'] = Object.create(null);
     // 用户自定义setup1
-    this.codeDict['userSetups1'] = Object.create(null);
+    this.codeDict['setups_end'] = Object.create(null);
     // loop
     this.codeDict['loops'] = Object.create(null);
     // 用户自定义loop
-    this.codeDict['userLoops'] = Object.create(null);
+    this.codeDict['loops_begin'] = Object.create(null);
     // 用户自定义loop1
-    this.codeDict['userLoops1'] = Object.create(null);
+    this.codeDict['loops_end'] = Object.create(null);
 
     this.isInitialized = true;
   }
@@ -160,11 +160,11 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     let objects = [];
     let functions = [];
     let setups = [];
-    let userSetups = [];
-    let userSetups1 = [];
+    let setups_begin = [];
+    let setups_end = [];
     let loops = [];
-    let userLoops = [];
-    let userLoops1 = [];
+    let loops_begin = [];
+    let loops_end = [];
 
     for (const key in this.codeDict['macros']) {
       macros.push(this.codeDict['macros'][key]);
@@ -181,23 +181,23 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     for (const key in this.codeDict['functions']) {
       functions.push(this.codeDict['functions'][key]);
     }
-    for (const key in this.codeDict['userSetups']) {
-      userSetups.push(this.codeDict['userSetups'][key]);
+    for (const key in this.codeDict['setups_begin']) {
+      setups_begin.push(this.codeDict['setups_begin'][key]);
+    }
+    for (const key in this.codeDict['setups_end']) {
+      setups_end.push(this.codeDict['setups_end'][key]);
     }
     for (const key in this.codeDict['setups']) {
       setups.push(this.codeDict['setups'][key]);
     }
-    for (const key in this.codeDict['userSetups1']) {
-      userSetups1.push(this.codeDict['userSetups1'][key]);
+    for (const key in this.codeDict['loops_begin']) {
+      loops_begin.push(this.codeDict['loops_begin'][key]);
     }
-    for (const key in this.codeDict['userLoops']) {
-      userLoops.push(this.codeDict['userLoops'][key]);
+    for (const key in this.codeDict['loops_end']) {
+      loops_end.push(this.codeDict['loops_end'][key]);
     }
     for (const key in this.codeDict['loops']) {
       loops.push(this.codeDict['loops'][key]);
-    }
-    for (const key in this.codeDict['userLoops1']) {
-      userLoops1.push(this.codeDict['userLoops1'][key]);
     }
 
     this.isInitialized = false;
@@ -209,14 +209,14 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
       (objects.length > 0 ? `${objects.join('\n')}\n\n` : '') +
       (functions.length > 0 ? `${functions.join('\n')}\n\n` : '') +
       `void setup() {\n` +
-      (userSetups.length > 0 ? `  ${userSetups.join('\n  ')}\n` : '') + '\n' +
+      (setups_begin.length > 0 ? `  ${setups_begin.join('\n  ')}\n` : '') + '\n' +
       (setups.length > 0 ? `${setups.join('\n  ')}\n` : '') +
-      (userSetups1.length > 0 ? `    ${userSetups1.join('\n  ')}\n` : '') +
+      (setups_end.length > 0 ? `    ${setups_end.join('\n  ')}\n` : '') +
       `}\n\n` +
       `void loop() {\n` +
-      (userLoops.length > 0 ? `  ${userLoops.join('\n  ')}\n` : '') + '\n' +
+      (loops_begin.length > 0 ? `  ${loops_begin.join('\n  ')}\n` : '') + '\n' +
       (loops.length > 0 ? `${loops.join('\n  ')}\n` : '') +
-      (userLoops1.length > 0 ? `  ${userLoops1.join('\n  ')}\n` : '') +
+      (loops_end.length > 0 ? `  ${loops_end.join('\n  ')}\n` : '') +
       `}`;
     return newcode;
   }
@@ -398,21 +398,27 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
+  addSetupBegin(tag, code) {
+    if (this.codeDict['setups_begin'][tag] === undefined) {
+      this.codeDict['setups_begin'][tag] = code;
+    }
+  }
+
   addSetup(tag, code) {
     if (this.codeDict['setups'][tag] === undefined) {
       this.codeDict['setups'][tag] = code;
     }
   }
 
-  addUserSetup(tag, code) {
-    if (this.codeDict['userSetups'][tag] === undefined) {
-      this.codeDict['userSetups'][tag] = code;
+  addSetupEnd(tag, code) {
+    if (this.codeDict['setups_end'][tag] === undefined) {
+      this.codeDict['setups_end'][tag] = code;
     }
   }
 
-  addUserSetup1(tag, code) {
-    if (this.codeDict['userSetups1'][tag] === undefined) {
-      this.codeDict['userSetups1'][tag] = code;
+  addLoopBegin(tag, code) {
+    if (this.codeDict['loops_begin'][tag] === undefined) {
+      this.codeDict['loops_begin'][tag] = code;
     }
   }
 
@@ -422,15 +428,9 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     }
   }
 
-  addUserLoop(tag, code) {
-    if (this.codeDict['userLoops'][tag] === undefined) {
-      this.codeDict['userLoops'][tag] = code;
-    }
-  }
-
-  addUserLoop1(tag, code) {
-    if (this.codeDict['userLoops1'][tag] === undefined) {
-      this.codeDict['userLoops1'][tag] = code;
+  addLoopEnd(tag, code) {
+    if (this.codeDict['loops_end'][tag] === undefined) {
+      this.codeDict['loops_end'][tag] = code;
     }
   }
 
