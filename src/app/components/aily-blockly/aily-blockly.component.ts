@@ -15,19 +15,6 @@ export class AilyBlocklyComponent implements OnInit {
   @ViewChild('blocklyDiv', { static: true }) blocklyDiv!: ElementRef;
 
   @Input() data: any = {};
-  // data: any = {
-  //   kind: 'flyoutToolbox',
-  //   contents: [
-  //     {
-  //       kind: 'block',
-  //       type: 'controls_if',
-  //     },
-  //     {
-  //       kind: 'block',
-  //       type: 'controls_whileUntil',
-  //     },
-  //   ],
-  // };
 
   get draggingBlock() {
     return this.blocklyService.draggingBlock;
