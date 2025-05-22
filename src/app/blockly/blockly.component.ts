@@ -10,7 +10,6 @@ import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
-import { DEV_THEME } from './theme.config.js';
 
 import './custom-category';
 import './custom-field/field-bitmap';

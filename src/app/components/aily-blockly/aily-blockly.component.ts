@@ -1,7 +1,6 @@
 import { Component, ElementRef, Input, OnInit, ViewChild } from '@angular/core';
 import * as Blockly from 'blockly';
 import * as zhHans from 'blockly/msg/zh-hans';
-import { DEV_THEME } from '../../blockly/theme.config';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { browserEvents } from 'blockly';
 
@@ -97,7 +96,7 @@ export class AilyBlocklyComponent implements OnInit {
       media: 'blockly/media/',
       renderer: 'thrasos',
       trashcan: true,
-      theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
+      // theme: Blockly.Theme.defineTheme('modest', DEV_THEME),
     });
 
     // Blockly.serialization.workspaces.load(
