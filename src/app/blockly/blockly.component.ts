@@ -268,15 +268,6 @@ export class BlocklyComponent {
       });
     });
   }
-
-  // closePromptDialog() {
-  //   this.showPromptDialog = false;
-  // }
-
-  // varNameChange(e) {
-  //   console.log('varNameChange', e);
-  // }
-
 }
 
 
