@@ -43,8 +43,8 @@
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.UI_THEME' | translate }}:</div>
                 <!-- <div class="item-inner"> -->
-                <nz-radio-group [(ngModel)]="UiThemeValue" [nzSize]="'small'" nzButtonStyle="solid">
-                  <label nz-radio-button nzValue="dark">Dark</label>
+                <nz-radio-group [(ngModel)]="configData.theme" [nzSize]="'small'" nzButtonStyle="solid">
+                  <label nz-radio-button nzValue="default">Dark</label>
                   <label nz-radio-button nzValue="light" [nzDisabled]="true">Light</label>
                 </nz-radio-group>
                 <!-- </div> -->
@@ -52,9 +52,9 @@
               <div class="item">
                 <div>{{ 'SETTINGS.FIELDS.BLOCKLY_THEME' | translate }}:</div>
                 <!-- <div class="item-inner"> -->
-                <nz-radio-group [(ngModel)]="blocklyThemeValue" [nzSize]="'small'" nzButtonStyle="solid">
-                  <label nz-radio-button nzValue="default">{{ '现代' | translate }}</label>
-                  <label nz-radio-button nzValue="classics" [nzDisabled]="true">{{ '经典' | translate }}</label>
+                <nz-radio-group [(ngModel)]="configData.blockly.renderer" [nzSize]="'small'" nzButtonStyle="solid">
+                  <label nz-radio-button nzValue="thrasos">Thrasos</label>
+                  <label nz-radio-button nzValue="zelos">Zelos</label>
                 </nz-radio-group>
                 <!-- </div> -->
               </div>

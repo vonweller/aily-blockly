@@ -26,6 +26,7 @@ import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multisel
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NoticeService } from '../services/notice.service.js';
+import { ConfigService } from '../services/config.service';
 
 @Component({
   selector: 'blockly-main',
@@ -110,10 +111,15 @@ export class BlocklyComponent {
     },
   }
 
+  get configData() {
+    return this.configService.data;
+  }
+
   constructor(
     private blocklyService: BlocklyService,
     private modal: NzModalService,
     private noticeService: NoticeService,
+    private configService: ConfigService
   ) { }
 
   ngOnInit(): void {
@@ -164,6 +170,9 @@ export class BlocklyComponent {
       })(console.error);
 
       Blockly.setLocale(<any>zhHans);
+      // 获取当前blockly渲染器
+      this.options.renderer = this.configData.blockly.renderer || 'thrasos';
+
       this.workspace = Blockly.inject('blocklyDiv', this.options);
 
       const multiselectPlugin = new Multiselect(this.workspace);
