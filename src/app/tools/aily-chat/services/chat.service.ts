@@ -1,6 +1,5 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { Observable, Subject } from 'rxjs';
 
 import { API } from "../../../configs/api.config";

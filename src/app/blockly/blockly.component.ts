@@ -22,16 +22,17 @@ import './custom-field/field-angle180';
 import './custom-field/field-angle';
 import '@blockly/field-colour-hsv-sliders';
 
-import { Multiselect } from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
+// import { Multiselect } from './plugins/workspace-multiselect/index.js';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NoticeService } from '../services/notice.service.js';
 import { ConfigService } from '../services/config.service';
+import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
 
 @Component({
   selector: 'blockly-main',
   imports: [
-    PromptDialogComponent,
+    // PromptDialogComponent,
     NzModalModule
   ],
   templateUrl: './blockly.component.html',
@@ -109,6 +110,12 @@ export class BlocklyComponent {
       crossTab: true,
       menu: false,
     },
+    plugins: {
+      connectionPreviewer:
+        BlockDynamicConnection.decoratePreviewer(
+          Blockly.InsertionMarkerPreviewer,
+        ),
+    },
   }
 
   get configData() {
@@ -175,8 +182,11 @@ export class BlocklyComponent {
 
       this.workspace = Blockly.inject('blocklyDiv', this.options);
 
-      const multiselectPlugin = new Multiselect(this.workspace);
-      multiselectPlugin.init(this.options);
+      // const multiselectPlugin = new Multiselect(this.workspace);
+      // multiselectPlugin.init(this.options);
+
+      // 动态连接块监听
+      this.workspace.addChangeListener(BlockDynamicConnection.finalizeConnections);
 
       // 监听容器尺寸变化，刷新Blockly工作区
       const resizeObserver = new ResizeObserver(() => {
