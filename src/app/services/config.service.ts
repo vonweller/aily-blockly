@@ -28,7 +28,7 @@ export class ConfigService {
     let configFilePath = window['path'].getAppData();
     // 检查配置文件是否存在，如果不存在则创建一个默认的配置文件
     if (this.electronService.exists(`${configFilePath}/config.json`)) {
-       userConfData = JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`)); 
+      userConfData = JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`));
     } else {
       userConfData = {};
     }
@@ -125,4 +125,8 @@ interface AppConfig {
   };
 
   devmode: boolean;
+
+  blockly: {
+    renderer: string; // Blockly渲染器
+  }
 }

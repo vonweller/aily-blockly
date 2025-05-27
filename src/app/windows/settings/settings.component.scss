@@ -159,6 +159,12 @@ ngx-simplebar {
   margin-bottom: 20px;
   font-weight: 500;
   color: #fff;
+
+  span {
+    margin-left: 5px;
+    color: #999;
+    font-size: 12px;
+  }
 }
 
 .item {

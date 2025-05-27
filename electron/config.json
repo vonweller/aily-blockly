@@ -26,5 +26,8 @@
     "warnings": "error"
   },
   "platform": "win32",
-  "devmode": false
+  "devmode": false,
+  "blockly": {
+    "renderer": "thrasos"
+  }
 }

@@ -71,9 +71,6 @@ export class SettingsComponent {
     },
   ];
 
-  UiThemeValue = 'dark';
-  blocklyThemeValue = 'default';
-
   // 用于跟踪安装/卸载状态
   boardOperations = {};
 
@@ -107,7 +104,7 @@ export class SettingsComponent {
   }
 
   async ngOnInit() {
-    await this.configService.init()
+    await this.configService.init();
   }
 
   async ngAfterViewInit() {
