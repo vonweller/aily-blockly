@@ -158,13 +158,6 @@ export class BuilderService {
       // 解压libraries到临时文件夹
       console.log("libsPath: ", libsPath);
       for (let lib of libsPath) {
-        let targetName = lib.split('@aily-project/')[1];
-        let targetPath = `${librariesPath}/${targetName}`;
-
-        if (window['path'].isExists(targetPath)) {
-          await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
-        }
-
         let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
         if (!window['path'].isExists(sourcePath)) {
           // 如果没有src文件夹，则使用src.7z解压到临时文件夹
@@ -172,10 +165,68 @@ export class BuilderService {
           if (!window['path'].isExists(sourceZipPath)) continue;
           await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
         }
-        // 直接复制src到targetPath
-        await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
 
-        await this.waitForDirectoryExists(targetPath, 5000, 100);
+        // 判断src目录下是否有且仅有一个src目录，没有别的文件或文件夹
+        if (window['fs'].existsSync(sourcePath)) {
+          const srcContents = window['fs'].readDirSync(sourcePath);
+          if (srcContents.length === 1 && 
+              srcContents[0] === 'src' && 
+              window['fs'].statSync(`${sourcePath}/${srcContents[0]}`).isDirectory()) {
+            // 如果有且仅有一个src目录，则将复制源路径定位到src/src
+            console.log(`库 ${lib} 检测到嵌套src目录，使用 ${sourcePath}/src 作为源路径`);
+            sourcePath = `${sourcePath}/src`;
+          }
+        }
+
+        // 判断src目录下是否包含.h文件
+        let hasHeaderFiles = false;
+        if (window['fs'].existsSync(sourcePath)) {
+          const files = window['fs'].readDirSync(sourcePath);
+          const stringFiles = files.filter(file => typeof file === 'string');
+          hasHeaderFiles = stringFiles.some((file: string) => file.endsWith('.h'));
+          if (hasHeaderFiles) {
+            console.log(`库 ${lib} 包含头文件`);
+            let targetName = lib.split('@aily-project/')[1];
+            let targetPath = `${librariesPath}/${targetName}`;
+
+            if (window['path'].isExists(targetPath)) {
+              await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+            }
+            // 直接复制src到targetPath
+            await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+            await this.waitForDirectoryExists(targetPath, 5000, 100);
+          } else {
+            // For libraries without header files, copy each directory individually
+            console.log(`库 ${lib} 不包含头文件，逐个复制目录`);
+            // Get all directories in the source path
+            if (window['fs'].existsSync(sourcePath)) {
+              const items = window['fs'].readDirSync(sourcePath);
+              
+              // Process each directory
+              for (const item of items) {
+                console.log("item: ", item);
+                const fullSourcePath = `${sourcePath}/${item.name}`;
+                
+                // Check if it's a directory
+                if (window['fs'].isDirectory(fullSourcePath)) {
+                  const targetPath = `${librariesPath}/${item.name}`;
+                  
+                  // Delete target directory if it exists
+                  if (window['path'].isExists(targetPath)) {
+                    await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                  }
+                  
+                  // Copy directory
+                  await this.terminalService.sendCmd(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+                  
+                  // Wait for copy to complete
+                  await this.waitForDirectoryExists(targetPath, 5000, 100);
+                  console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
+                }
+              }
+            }
+          }
+        }
       }
 
       // 获取编译器、sdk、tool的名称和版本
