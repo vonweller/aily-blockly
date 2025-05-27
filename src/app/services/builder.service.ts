@@ -170,20 +170,34 @@ export class BuilderService {
         if (window['fs'].existsSync(sourcePath)) {
           const srcContents = window['fs'].readDirSync(sourcePath);
           if (srcContents.length === 1 &&
-            srcContents[0] === 'src' &&
-            window['fs'].statSync(`${sourcePath}/${srcContents[0]}`).isDirectory()) {
+            srcContents[0].name === 'src' &&
+            window['fs'].isDirectory(`${sourcePath}/${srcContents[0].name}`)) {
             // 如果有且仅有一个src目录，则将复制源路径定位到src/src
             console.log(`库 ${lib} 检测到嵌套src目录，使用 ${sourcePath}/src 作为源路径`);
             sourcePath = `${sourcePath}/src`;
           }
         }
 
+        console.log("Source path for library:", sourcePath);
+
         // 判断src目录下是否包含.h文件
         let hasHeaderFiles = false;
         if (window['fs'].existsSync(sourcePath)) {
-          const files = window['fs'].readDirSync(sourcePath);
-          const stringFiles = files.filter(file => typeof file === 'string');
-          hasHeaderFiles = stringFiles.some((file: string) => file.endsWith('.h'));
+          // 获取sourcePath下的所有文件，排除文件夹
+          const files = window['fs'].readDirSync(sourcePath, { withFileTypes: true });
+          console.log("Files in source path:", files);
+          // 检查文件是否是对象数组或字符串数组
+          hasHeaderFiles = Array.isArray(files) && files.some(file => {
+            // 如果是文件对象数组
+            if (typeof file === 'object' && file !== null && file.name) {
+              return file.name.toString().endsWith('.h');
+            }
+            // 如果是字符串数组
+            else if (typeof file === 'string') {
+              return file.endsWith('.h');
+            }
+            return false;
+          });
           if (hasHeaderFiles) {
             console.log(`库 ${lib} 包含头文件`);
             let targetName = lib.split('@aily-project/')[1];
