@@ -24,22 +24,17 @@ export class BlockSearcher {
    * @param blockTypes A list of block types to index.
    */
   indexBlocks(blockTypes: string[]) {
-    try {
-      const blockCreationWorkspace = new Blockly.Workspace();
-      blockTypes.forEach((blockType) => {
-        const block = blockCreationWorkspace.newBlock(blockType);
-        this.indexBlockText(blockType.replaceAll('_', ' '), blockType);
-        block.inputList.forEach((input) => {
-          input.fieldRow.forEach((field) => {
-            this.indexDropdownOption(field, blockType);
-            this.indexBlockText(field.getText(), blockType);
-          });
+    const blockCreationWorkspace = new Blockly.Workspace();
+    blockTypes.forEach((blockType) => {
+      const block = blockCreationWorkspace.newBlock(blockType);
+      this.indexBlockText(blockType.replaceAll('_', ' '), blockType);
+      block.inputList.forEach((input) => {
+        input.fieldRow.forEach((field) => {
+          this.indexDropdownOption(field, blockType);
+          this.indexBlockText(field.getText(), blockType);
         });
       });
-    }
-    catch (e) {
-      console.error(e);
-    }
+    });
   }
 
   /**

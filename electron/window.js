@@ -8,7 +8,7 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-open", (event, data) => {
         const windowUrl = data.path;
-        
+
         // 检查是否已存在该URL的窗口
         if (openWindows.has(windowUrl)) {
             const existingWindow = openWindows.get(windowUrl);
@@ -22,7 +22,7 @@ function registerWindowHandlers(mainWindow) {
                 openWindows.delete(windowUrl);
             }
         }
-        
+
         // 创建新窗口
         const subWindow = new BrowserWindow({
             frame: false,
@@ -64,9 +64,7 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-maximize", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
-        if (senderWindow.isMaximized()) {
-            senderWindow.unmaximize();
-        } else {
+        if (senderWindow && !senderWindow.isMaximized()) {
             senderWindow.maximize();
         }
     });
@@ -74,6 +72,21 @@ function registerWindowHandlers(mainWindow) {
     ipcMain.on("window-close", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         senderWindow.close();
+    });
+
+    // 修改为同步处理程序
+    ipcMain.on("window-is-maximized", (event) => {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const isMaximized = senderWindow ? senderWindow.isMaximized() : false;
+        event.returnValue = isMaximized;
+    });
+
+    // 添加 unmaximize 处理程序
+    ipcMain.on("window-unmaximize", (event) => {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        if (senderWindow && senderWindow.isMaximized()) {
+            senderWindow.unmaximize();
+        }
     });
 
     ipcMain.on("window-go-main", (event, data) => {

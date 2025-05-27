@@ -285,7 +285,11 @@ export class HeaderComponent {
   }
 
   maximize() {
-    window['iWindow'].maximize();
+    if (window['iWindow'].isMaximized()) {
+      window['iWindow'].unmaximize();
+    } else {
+      window['iWindow'].maximize();
+    }
   }
 
   async close() {

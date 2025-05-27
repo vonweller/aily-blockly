@@ -59,7 +59,7 @@ export class FieldBitmap extends Blockly.Field<number[][]> {
         super(value, validator, config);
 
         this.SERIALIZABLE = true;
-        this.CURSOR = 'default';
+        // this.CURSOR = 'default';
         this.buttonOptions = { ...DEFAULT_BUTTONS, ...config?.buttons };
         this.pixelColours = { ...DEFAULT_PIXEL_COLOURS, ...config?.colours };
 
