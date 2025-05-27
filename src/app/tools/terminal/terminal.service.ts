@@ -83,6 +83,13 @@ export class TerminalService {
 
     // 处理原始数据的函数
     const processRawData = (data: string) => {
+      // 检测 Ctrl+C (ASCII 3)
+      if (data.includes('\u0003')) {
+        console.log('检测到 Ctrl+C 命令');
+        // 将 Ctrl+C 信号直接传递给回调函数
+        lineCallback('\u0003');
+      }
+  
       // 处理包含回车符的数据
       if (data.includes('\r')) {
         // 分割回车符
@@ -166,12 +173,13 @@ export class TerminalService {
     try {
       await window['terminal'].sendInput({ pid: this.currentPid, input: input + '\r' });
 
-      // 在固定时间后停止流（如果未正常结束）
-      setTimeout(() => {
-        window['terminal'].stopStream(this.currentPid, streamId);
-        removeListener();
-        if (completeCallback) completeCallback();
-      }, 300000); // 5分钟超时
+      // // 在固定时间后停止流（如果未正常结束）
+      // setTimeout(() => {
+      //   console.log('执行超时，停止流');
+      //   window['terminal'].stopStream(this.currentPid, streamId);
+      //   removeListener();
+      //   if (completeCallback) completeCallback();
+      // }, 600000); // 10分钟超时
     } catch (error) {
       // 出错时清理资源
       window['terminal'].stopStream(this.currentPid, streamId);

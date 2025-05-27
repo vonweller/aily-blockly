@@ -169,9 +169,9 @@ export class BuilderService {
         // 判断src目录下是否有且仅有一个src目录，没有别的文件或文件夹
         if (window['fs'].existsSync(sourcePath)) {
           const srcContents = window['fs'].readDirSync(sourcePath);
-          if (srcContents.length === 1 && 
-              srcContents[0] === 'src' && 
-              window['fs'].statSync(`${sourcePath}/${srcContents[0]}`).isDirectory()) {
+          if (srcContents.length === 1 &&
+            srcContents[0] === 'src' &&
+            window['fs'].statSync(`${sourcePath}/${srcContents[0]}`).isDirectory()) {
             // 如果有且仅有一个src目录，则将复制源路径定位到src/src
             console.log(`库 ${lib} 检测到嵌套src目录，使用 ${sourcePath}/src 作为源路径`);
             sourcePath = `${sourcePath}/src`;
@@ -201,24 +201,24 @@ export class BuilderService {
             // Get all directories in the source path
             if (window['fs'].existsSync(sourcePath)) {
               const items = window['fs'].readDirSync(sourcePath);
-              
+
               // Process each directory
               for (const item of items) {
                 console.log("item: ", item);
                 const fullSourcePath = `${sourcePath}/${item.name}`;
-                
+
                 // Check if it's a directory
                 if (window['fs'].isDirectory(fullSourcePath)) {
                   const targetPath = `${librariesPath}/${item.name}`;
-                  
+
                   // Delete target directory if it exists
                   if (window['path'].isExists(targetPath)) {
                     await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
                   }
-                  
+
                   // Copy directory
                   await this.terminalService.sendCmd(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-                  
+
                   // Wait for copy to complete
                   await this.waitForDirectoryExists(targetPath, 5000, 100);
                   console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
@@ -300,14 +300,46 @@ export class BuilderService {
       let isStopped = false;
       let errorText = '编译失败';
 
-      this.terminalService.startStream().then( async (streamId) => {
+      this.terminalService.startStream().then(async (streamId) => {
         this.currentBuildStreamId = streamId;
+
+        // 添加超时检测变量
+        let lastActivityTime = Date.now();
+        const timeoutMs = 15000; // 15秒超时
+        let timeoutChecker: any = null;
+
+        // 创建超时检测函数
+        const checkTimeout = () => {
+          const now = Date.now();
+          if (now - lastActivityTime > timeoutMs) {
+            this.noticeService.update({
+              title: '编译超时',
+              text: '15秒内未收到任何消息，编译已取消',
+              state: 'warn',
+              setTimeout: 10000
+            });
+            this.cancelBuild();
+            clearInterval(timeoutChecker);
+          }
+        };
+
+        // 启动超时检测定时器
+        timeoutChecker = setInterval(checkTimeout, 5000); // 每5秒检查一次
 
         // 使用流式输出执行命令
         await this.terminalService.executeWithStream(
           compileCommand,
           streamId,
           async (line) => {
+            // 每次收到消息都更新最后活动时间
+            lastActivityTime = Date.now();
+
+            // 检测 Ctrl+C（ASCII 字符 \u0003）
+            if (line.includes('\u0003')) {
+              console.log('检测到 Ctrl+C 命令，正在取消编译...');
+              this.cancelBuild();
+              return;
+            }
             // 判断是否已取消，如果已取消则不在处理输出
             if (!this.buildInProgress) {
               reject({ state: 'warn', text: '编译已取消' });
@@ -416,13 +448,25 @@ export class BuilderService {
               return;
             }
           },
+          // 完成回调
+          () => {
+            // 编译完成时清除超时检测器
+            if (timeoutChecker) {
+              clearInterval(timeoutChecker);
+            }
+          }
         ).catch(error => {
+          // 出错时也清除超时检测器
+          if (timeoutChecker) {
+            clearInterval(timeoutChecker);
+          }
+
           this.noticeService.update({
-             title: title, 
-             text: '编译失败', 
-             detail: error, state: 
-             'error', 
-             setTimeout: 55000 
+            title: title,
+            text: '编译失败',
+            detail: error, state:
+              'error',
+            setTimeout: 55000
           });
           this.buildInProgress = false;
           this.buildResolver = null;
