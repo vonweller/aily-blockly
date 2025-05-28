@@ -13,18 +13,7 @@
         </div>
     </div>
     <div class="content">
-        <app-lib-content></app-lib-content>
-        <!-- <div class="block-list">
-            <h3>Block 预览画廊</h3>
-            <div class="block-grid">
-                <div class="block-item" *ngFor="let block of blocks">
-                    <h4>{{ block.name }}</h4>
-                    <app-block-item [blockDefinition]="block.definition" [readOnly]="true"
-                        (blockClicked)="onBlockClicked(block)">
-                    </app-block-item>
-                </div>
-            </div>
-        </div> -->
+        <app-lib-content [path]="currentLib?.path"></app-lib-content>
     </div>
 </div>
 

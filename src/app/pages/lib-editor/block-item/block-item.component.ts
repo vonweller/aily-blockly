@@ -1,6 +1,7 @@
 import { Component, ElementRef, EventEmitter, Input, OnInit, Output, SimpleChanges, ViewChild, AfterViewInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import * as Blockly from 'blockly';
+import { ConfigService } from '../../../services/config.service';
 
 @Component({
   selector: 'app-block-item',
@@ -13,17 +14,21 @@ export class BlockItemComponent implements AfterViewInit, OnDestroy {
   @ViewChild('blockPreview', { static: true }) blockPreview!: ElementRef;
 
   @Input() blockDefinition: any; // 单个 block 的定义 JSON
-  @Input() readOnly: boolean = true; // 默认只读模式
-  @Input() theme: string = 'zelos'; // 主题
-  @Input() renderer: string = 'zelos'; // 渲染器
   @Input() showError: boolean = false; // 是否显示错误信息
 
-  @Output() blockClicked = new EventEmitter<any>(); // 点击 block 时触发
+  @Output() clicked = new EventEmitter<any>(); // 点击 block 时触发
   @Output() blockError = new EventEmitter<string>(); // block 创建错误时触发
 
   private workspace: Blockly.WorkspaceSvg | null = null;
   private block: Blockly.Block | null = null;
   private errorMessage: string = '';
+
+  constructor(
+    private configService: ConfigService,
+    private elementRef: ElementRef
+  ) {
+
+  }
 
   ngAfterViewInit(): void {
     if (this.blockDefinition) {
@@ -56,35 +61,20 @@ export class BlockItemComponent implements AfterViewInit, OnDestroy {
 
     // 创建工作区配置
     const workspaceConfig = {
-      readOnly: this.readOnly,
-      media: 'assets/blockly/media/', // 根据你的项目结构调整路径
-      theme: this.theme,
-      renderer: this.renderer,
+      readOnly: true,
+      renderer: this.configService.data.blockly.renderer || 'thrasos',
       toolbox: null, // 不需要工具箱
       scrollbars: false,
       trashcan: false,
-      zoom: {
-        controls: false,
-        wheel: false,
-        startScale: 1.0,
-        maxScale: 1.0,
-        minScale: 1.0
-      },
-      move: {
-        scrollbars: false,
-        drag: false,
-        wheel: false
+      theme: {
+        'name': 'transparent',
+        'base': Blockly.Themes.Classic,
+        'componentStyles': {
+          'workspaceBackgroundColour': 'transparent'
+        }
       }
     };
-
-    this.workspace = Blockly.inject(blockPreview, workspaceConfig);    // 添加点击事件监听
-    if (!this.readOnly) {
-      this.workspace.addChangeListener((event: any) => {
-        if (event.type === 'click' && event.blockId) {
-          this.blockClicked.emit(this.block);
-        }
-      });
-    }
+    this.workspace = Blockly.inject(blockPreview, workspaceConfig);
   }
 
   // 添加错误消息的 getter
@@ -104,37 +94,56 @@ export class BlockItemComponent implements AfterViewInit, OnDestroy {
 
     try {
       this.clearError();
-      
       // 验证 block 定义
       if (!this.blockDefinition.type) {
         throw new Error('Block 定义缺少 type 属性');
       }
-
       // 定义 block
       if (!Blockly.Blocks[this.blockDefinition.type]) {
         Blockly.defineBlocksWithJsonArray([this.blockDefinition]);
       }
-
       // 创建 block 实例
       this.block = this.workspace.newBlock(this.blockDefinition.type);
       (this.block as any).initSvg();
       (this.block as any).render();
-
-      // 居中显示 block
-      this.centerBlock();
-
-      // 如果是只读模式，禁用拖拽
-      if (this.readOnly) {
-        this.block.setMovable(false);
-        this.block.setDeletable(false);
-        this.block.setEditable(false);
-      }
-
+      // 调整工作区和组件高度
+      this.adjustHeights();
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '创建 block 时出现未知错误';
       this.setError(errorMsg);
       console.error('创建 block 时出错:', error);
     }
+  }
+
+  private adjustHeights(): void {
+    if (!this.block || !this.workspace || !this.blockPreview?.nativeElement) {
+      return;
+    }
+
+    // 获取 block 的边界框
+    const blockBBox = (this.block as any).getBoundingRectangle();
+    console.log(blockBBox);
+
+
+    // 计算新高度（添加一些边距）
+    const padding = 2;
+    const newHeight = blockBBox.bottom + padding;
+    console.log(this.blockDefinition.type, newHeight);
+
+
+    // 调整工作区容器高度
+    const workspaceContainer = this.blockPreview.nativeElement;
+    workspaceContainer.style.height = `${newHeight}px`;
+
+    // 调整组件根元素高度
+    this.elementRef.nativeElement.style.height = `${newHeight}px`;
+
+    // 触发工作区重新调整大小
+    setTimeout(() => {
+      if (this.workspace) {
+        this.workspace.resizeContents();
+      }
+    }, 0);
   }
 
   private setError(message: string): void {
@@ -144,23 +153,6 @@ export class BlockItemComponent implements AfterViewInit, OnDestroy {
 
   private clearError(): void {
     this.errorMessage = '';
-  }
-
-  private centerBlock(): void {
-    if (!this.block || !this.workspace) {
-      return;
-    }
-
-    // 获取 block 的边界框
-    const blockBBox = (this.block as any).getBoundingRectangle();
-    const workspaceMetrics = this.workspace.getMetrics();
-
-    // 计算居中位置
-    const centerX = (workspaceMetrics.viewWidth - blockBBox.width) / 2;
-    const centerY = (workspaceMetrics.viewHeight - blockBBox.height) / 2;
-
-    // 移动 block 到中心位置
-    this.block.moveBy(centerX - blockBBox.left, centerY - blockBBox.top);
   }
 
   // 公共方法：刷新显示

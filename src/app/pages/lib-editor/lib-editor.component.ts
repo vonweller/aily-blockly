@@ -14,7 +14,6 @@ import { LibContentComponent } from './lib-content/lib-content.component';
     CommonModule,
     TranslateModule,
     NzToolTipModule,
-    BlockItemComponent,
     MenuComponent,
     LibContentComponent
   ],
@@ -43,6 +42,7 @@ export class LibEditorComponent {
     this.showLibList = !this.showLibList;
     const nodeModulesPath = this.projectService.currentProjectPath + '\\node_modules\\@aily-project';
     let libList0 = this.electronService.readDir(nodeModulesPath);
+    // console.log('libList0', libList0);
     this.libList = libList0.filter((item: any) => {
       if (item.name.includes('lib-')) {
         const toolboxPath = `${nodeModulesPath}\\${item.name}\\toolbox.json`;
@@ -53,8 +53,8 @@ export class LibEditorComponent {
             // 将icon内容添加到item中
             item.icon = toolboxData.icon || '';
             item.text = item.name;
+            item.path = `${nodeModulesPath}\\${item.name}`;
             item.name = toolboxData.name || item.name.replace('lib-', '');
-
           }
         } catch (error) {
           console.warn(`Failed to read toolbox.json for ${item.name}:`, error);
@@ -63,7 +63,7 @@ export class LibEditorComponent {
         return item;
       }
     });
-    console.log('libList', this.libList);
+    // console.log('libList', this.libList);
     this.showLibList = true;
   }
 
@@ -74,9 +74,5 @@ export class LibEditorComponent {
   selectLib(item) {
     console.log('selectLib', item);
     this.currentLib = item;
-  }
-
-  onBlockClicked(block: any) {
-
   }
 }

@@ -1,33 +1,19 @@
 .block-item-container {
     width: 100%;
-    
+
     .blockPreview {
-        height: 60px;
+        height: 200px;
+        padding-left: 10px;
         width: 100%;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        background-color: #f9f9f9;
-        overflow: hidden;
         position: relative;
-        transition: all 0.2s ease;
-        
-        &:hover {
-            border-color: #ccc;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        
-        &.error {
-            border-color: #ff4444;
-            background-color: #fff5f5;
-        }
-        
-        // 确保 Blockly SVG 正确填充容器
-        svg {
-            width: 100% !important;
-            height: 100% !important;
+
+        ::ng-deep {
+            .blocklyMainBackground {
+                stroke: none;
+            }
         }
     }
-    
+
     .error-message {
         display: flex;
         align-items: center;
@@ -39,11 +25,11 @@
         border-radius: 4px;
         color: #d63384;
         font-size: 12px;
-        
+
         .error-icon {
             font-size: 14px;
         }
-        
+
         span {
             flex: 1;
         }
