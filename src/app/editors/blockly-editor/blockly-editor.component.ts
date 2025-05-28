@@ -12,12 +12,14 @@ import { ElectronService } from '../../services/electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ConfigService } from '../../services/config.service';
 import { NpmService } from '../../services/npm.service';
+import { LibEditorComponent } from '../../pages/lib-editor/lib-editor.component';
 
 @Component({
   selector: 'app-blockly-editor',
   imports: [
     BlocklyComponent,
     LibManagerComponent,
+    LibEditorComponent,
     NotificationComponent,
     TranslateModule
   ],
@@ -26,6 +28,7 @@ import { NpmService } from '../../services/npm.service';
 })
 export class BlocklyEditorComponent {
   showProjectManager = false;
+  showLibEditor = false;
 
   get devmode() {
     return this.configService.data.devmode;
@@ -136,5 +139,10 @@ export class BlocklyEditorComponent {
   // 测试用
   reload() {
     this.projectService.projectOpen(this.projectService.currentProjectPath);
+  }
+
+  edit() {
+    this.showLibEditor = !this.showLibEditor;
+    this.cd.detectChanges();
   }
 }
