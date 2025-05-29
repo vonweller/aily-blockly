@@ -9,7 +9,7 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalService } from './terminal.service';
 import { CommonModule } from '@angular/common';
 import { LogService } from '../../services/log.service';
-import { SimplebarAngularModule } from 'simplebar-angular';
+import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 
 @Component({
   selector: 'app-terminal',
@@ -22,6 +22,7 @@ export class TerminalComponent {
   selectedTabIndex = 0;
 
   @ViewChild('terminal') terminalEl: ElementRef;
+  @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
 
   terminal;
   fitAddon;
@@ -101,6 +102,10 @@ export class TerminalComponent {
 
     window['terminal'].onData((data) => {
       this.terminal.write(data);
+    })
+
+    this.logService.stateSubject.subscribe((opts) => {
+      setTimeout(() => this.scrollToBottom(), 0);
     })
   }
 
@@ -191,5 +196,11 @@ export class TerminalComponent {
 
   view(item) {
 
+  }
+
+  private scrollToBottom(): void {
+    if (this.simplebar.SimpleBar) {
+      this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+    }
   }
 }
