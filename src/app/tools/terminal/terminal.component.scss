@@ -25,7 +25,7 @@
   }
 }
 
-.error-box {
+.log-box {
   position: absolute;
   top: 0;
   left: 0;
@@ -60,6 +60,11 @@
       background-color: rgba(255, 255, 255, 0.2);
     }
 
+    .date {
+      margin-right: 10px;
+      color: #3f8839;
+    }
+
     .title {
       margin-right: 10px;
     }
@@ -70,8 +75,8 @@
     }
 
     .text {
-      font-size: 14px;
-      // color: #fff;
+      user-select: text;
+      color: #eee;
     }
 
     .btns {
@@ -129,6 +134,21 @@ nz-tabset {
         margin-right: -2px;
         margin-left: 4px;
       }
+    }
+  }
+}
+
+ngx-simplebar {
+  height: 100%;
+  width: 100%;
+
+  ::ng-deep {
+    .simplebar-content-wrapper {
+      height: 100%;
+    }
+
+    .simplebar-content {
+      height: 100%;
     }
   }
 }

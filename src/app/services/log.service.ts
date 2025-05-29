@@ -16,13 +16,11 @@ export class LogService {
     opts['timestamp'] = Date.now();
     opts['showDetail'] = false;
     this.stateSubject.next(opts);
-    if (opts.state === 'error') {
-      this.list.push(opts)
-    }
+    this.list.push(opts)
   }
 
   clear() {
-    this.stateSubject.next(null);
+    this.list = [];
   }
 }
 

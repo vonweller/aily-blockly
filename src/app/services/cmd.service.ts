@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
+import { LogService } from './log.service';
 
 declare const electronAPI: any;
 
@@ -26,7 +27,9 @@ export interface CmdOptions {
 export class CmdService {
   private subjects = new Map<string, Subject<CmdOutput>>();
 
-  constructor() { }
+  constructor(
+    private logService: LogService
+  ) { }
 
   /**
    * 执行命令并返回Observable
@@ -79,6 +82,11 @@ export class CmdService {
    */
   run(command: string, cwd?: string): Observable<CmdOutput> {
     console.log(`run command: ${command}`);
+    this.logService.update({
+      title: '执行命令',
+      detail: command,
+      state: 'info'
+    });
     const parts = parseCommand(command);
     const cmd = parts[0];
     const args = parts.slice(1);
