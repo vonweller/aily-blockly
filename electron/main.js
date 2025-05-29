@@ -18,6 +18,7 @@ const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
+const { registerCmdHandlers } = require("./cmd");
 // debug模块
 const { initLogger } = require("./logger");
 
@@ -148,6 +149,7 @@ function createWindow() {
     registerWindowHandlers(mainWindow);
     registerNpmHandlers(mainWindow);
     registerUpdaterHandlers(mainWindow);
+    registerCmdHandlers(mainWindow); // 添加这行
   }, 500);
 
 }

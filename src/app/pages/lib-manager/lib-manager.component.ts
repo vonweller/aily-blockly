@@ -16,6 +16,7 @@ import { TerminalService } from '../../tools/terminal/terminal.service';
 import { UiService } from '../../services/ui.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { CompatibleDialogComponent } from './components/compatible-dialog/compatible-dialog.component';
+import { CmdOutput, CmdService } from '../../services/cmd.service';
 
 @Component({
   selector: 'app-lib-manager',
@@ -50,12 +51,13 @@ export class LibManagerComponent {
     private configService: ConfigService,
     private projectService: ProjectService,
     private blocklyService: BlocklyService,
-    private terminalService: TerminalService,
-    private uiService: UiService,
+    // private terminalService: TerminalService,
+    // private uiService: UiService,
     private message: NzMessageService,
     private cd: ChangeDetectorRef,
     private translate: TranslateService,
-    private modal: NzModalService
+    private modal: NzModalService,
+    private cmdService: CmdService
   ) { }
 
   ngOnInit() {
@@ -146,6 +148,8 @@ export class LibManagerComponent {
     })
   }
 
+  currentStreamId;
+  output = '';
   async installLib(lib) {
     // 检查库兼容性
     console.log('当前开发板内核：', this.projectService.currentBoardConfig.core.replace('aily:', ''));
@@ -157,13 +161,44 @@ export class LibManagerComponent {
 
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
-    await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
-    await this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`)
-    await this.checkInstalled();
-    lib.state = 'default';
-    this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
-    this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
+    // await this.uiService.openTerminal();
+    // await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
+    // await this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`)
+    this.output = '';
+    this.cmdService.run(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath).subscribe({
+      // next: (data: CmdOutput) => {
+      //   this.currentStreamId = data.streamId;
+      //   switch (data.type) {
+      //     case 'stdout':
+      //       this.output += data.data;
+      //       break;
+      //     case 'stderr':
+      //       this.output += `ERROR: ${data.data}`;
+      //       break;
+      //     case 'close':
+      //       this.output += `\n命令执行完成，退出码: ${data.code}`;
+      //       this.currentStreamId = undefined;
+      //       break;
+      //     case 'error':
+      //       this.output += `\n执行错误: ${data.error}`;
+      //       this.currentStreamId = undefined;
+      //       break;
+      //   }
+      // },
+      // error: (error) => {
+      //   this.output += `\n发生错误: ${error.message}`;
+      //   this.currentStreamId = undefined;
+      // },
+      complete: async () => {
+        this.output += '\n命令执行结束';
+        this.currentStreamId = undefined;
+        // 安装完成检查
+        await this.checkInstalled();
+        lib.state = 'default';
+        this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
+        this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
+      }
+    });
   }
 
   async removeLib(lib) {
@@ -172,11 +207,19 @@ export class LibManagerComponent {
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLING')}...`);
     const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
     this.blocklyService.removeLibrary(libPackagePath);
-    await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
-    this.checkInstalled();
-    lib.state = 'default';
-    this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
+    // await this.uiService.openTerminal();
+    // await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
+    this.output = '';
+    this.cmdService.run(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath).subscribe({
+      complete: async () => {
+        this.output += '\n命令执行结束';
+        console.log(this.output);
+        // 卸载完检查
+        this.checkInstalled();
+        lib.state = 'default';
+        this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
+      }
+    })
   }
 
   async checkCompatibility(libCompatibility, boardCore): Promise<boolean> {

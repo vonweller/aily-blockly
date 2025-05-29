@@ -182,8 +182,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
       });
     },
   },
+  // 这个计划移除，替换成cmd.run
   npm: {
     run: (data) => ipcRenderer.invoke("npm-run", data),
+  },
+  // 执行命令行命令
+  cmd: {
+    run: (options) => ipcRenderer.invoke('cmd-run', options),
+    kill: (streamId) => ipcRenderer.invoke('cmd-kill', { streamId }),
+    input: (streamId, input) => ipcRenderer.invoke('cmd-input', { streamId, input }),
+    onData: (streamId, callback) => {
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on(`cmd-data-${streamId}`, listener);
+      // 返回解除监听函数
+      return () => {
+        ipcRenderer.removeListener(`cmd-data-${streamId}`, listener);
+      };
+    }
   },
   updater: {
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

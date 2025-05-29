@@ -147,34 +147,34 @@ export class BlocklyComponent {
           originalWarn.apply(console, arguments);
         };
       })(console.warn);
-      console.error = ((originalError) => {
-        return (message, ...args) => {
-          console.log('Blockly错误：', message, ...args);
-          // 保留原始错误输出功能
-          originalError.apply(console, arguments);
+      // console.error = ((originalError) => {
+      //   return (message, ...args) => {
+      //     console.log('Blockly错误：', message, ...args);
+      //     // 保留原始错误输出功能
+      //     originalError.apply(console, arguments);
 
-          // 处理特定错误
-          let errorMessage = message + '   ' + args.join('\n');
-          if (/block/i.test(errorMessage)) {
-            // 常见错误1：Invalid block definition
-            let title = message;
-            let text = args.join('\n');
-            if (errorMessage.includes('Invalid block definition')) {
-              title = '无效的块定义';
-            }
-            if (text.startsWith("TypeError: ")) {
-              text = text.substring("TypeError: ".length);
-            }
-            this.noticeService.update({
-              title,
-              text,
-              detail: errorMessage,
-              state: 'error',
-              setTimeout: 99000,
-            });
-          }
-        };
-      })(console.error);
+      //     // 处理特定错误
+      //     let errorMessage = message + '   ' + args.join('\n');
+      //     if (/block/i.test(errorMessage)) {
+      //       // 常见错误1：Invalid block definition
+      //       let title = message;
+      //       let text = args.join('\n');
+      //       if (errorMessage.includes('Invalid block definition')) {
+      //         title = '无效的块定义';
+      //       }
+      //       if (text.startsWith("TypeError: ")) {
+      //         text = text.substring("TypeError: ".length);
+      //       }
+      //       this.noticeService.update({
+      //         title,
+      //         text,
+      //         detail: errorMessage,
+      //         state: 'error',
+      //         setTimeout: 99000,
+      //       });
+      //     }
+      //   };
+      // })(console.error);
 
       Blockly.setLocale(<any>zhHans);
       // 获取当前blockly渲染器
@@ -260,7 +260,7 @@ export class BlocklyComponent {
           // 错误发生时不更新代码
         }
       });
-    }, 50);
+    }, 100);
   }
 
   setPrompt() {
