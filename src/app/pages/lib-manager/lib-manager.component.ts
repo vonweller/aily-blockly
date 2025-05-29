@@ -210,7 +210,7 @@ export class LibManagerComponent {
     // await this.uiService.openTerminal();
     // await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
     this.output = '';
-    this.cmdService.run(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath).subscribe({
+    this.cmdService.run(`npm uninstall ${lib.name}`, this.projectService.currentProjectPath).subscribe({
       complete: async () => {
         this.output += '\n命令执行结束';
         console.log(this.output);
