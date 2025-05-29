@@ -134,7 +134,7 @@ export class BlocklyService {
         }
       }
     } catch (error) {
-      console.error(error);      
+      console.error(error);
       // this.noticeService.update({
       //   title: '加载库失败',
       //   text: `失败项目: ${libPackageName}`,
@@ -211,6 +211,13 @@ export class BlocklyService {
     const toolboxFileIsExist = window['path'].isExists(libPackagePath + '/toolbox.json');
     if (toolboxFileIsExist) {
       let toolbox = JSON.parse(window['fs'].readFileSync(libPackagePath + '/toolbox.json'));
+      // 检查多语言文件是否存在，（2025.5.29 修复因为多语言造成的移除不了toolbox的问题）
+      let i18nData = null;
+      const i18nFilePath = libPackagePath + '/i18n/' + this.translateService.currentLang + '.json';
+      if (this.electronService.exists(i18nFilePath)) {
+        i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
+        if (i18nData) toolbox.name = i18nData.toolbox_name;
+      }
       this.removeLibToolbox(toolbox);
     }
 

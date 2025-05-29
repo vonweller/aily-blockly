@@ -152,12 +152,12 @@ export class LibManagerComponent {
   output = '';
   async installLib(lib) {
     // 检查库兼容性
-    console.log('当前开发板内核：', this.projectService.currentBoardConfig.core.replace('aily:', ''));
-    console.log('当前库兼容内核：', JSON.stringify(lib.compatibility.core));
+    // console.log('当前开发板内核：', this.projectService.currentBoardConfig.core.replace('aily:', ''));
+    // console.log('当前库兼容内核：', JSON.stringify(lib.compatibility.core));
     if (!await this.checkCompatibility(lib.compatibility.core, this.projectService.currentBoardConfig.core.replace('aily:', ''))) {
       return;
     }
-    console.log('当前项目路径：', this.projectService.currentProjectPath);
+    // console.log('当前项目路径：', this.projectService.currentProjectPath);
 
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
@@ -166,29 +166,29 @@ export class LibManagerComponent {
     // await this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`)
     this.output = '';
     this.cmdService.run(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath).subscribe({
-      // next: (data: CmdOutput) => {
-      //   this.currentStreamId = data.streamId;
-      //   switch (data.type) {
-      //     case 'stdout':
-      //       this.output += data.data;
-      //       break;
-      //     case 'stderr':
-      //       this.output += `ERROR: ${data.data}`;
-      //       break;
-      //     case 'close':
-      //       this.output += `\n命令执行完成，退出码: ${data.code}`;
-      //       this.currentStreamId = undefined;
-      //       break;
-      //     case 'error':
-      //       this.output += `\n执行错误: ${data.error}`;
-      //       this.currentStreamId = undefined;
-      //       break;
-      //   }
-      // },
-      // error: (error) => {
-      //   this.output += `\n发生错误: ${error.message}`;
-      //   this.currentStreamId = undefined;
-      // },
+      next: (data: CmdOutput) => {
+        this.currentStreamId = data.streamId;
+        switch (data.type) {
+          case 'stdout':
+            this.output += data.data;
+            break;
+          case 'stderr':
+            this.output += `ERROR: ${data.data}`;
+            break;
+          case 'close':
+            this.output += `\n命令执行完成，退出码: ${data.code}`;
+            this.currentStreamId = undefined;
+            break;
+          case 'error':
+            this.output += `\n执行错误: ${data.error}`;
+            this.currentStreamId = undefined;
+            break;
+        }
+      },
+      error: (error) => {
+        this.output += `\n发生错误: ${error.message}`;
+        this.currentStreamId = undefined;
+      },
       complete: async () => {
         this.output += '\n命令执行结束';
         this.currentStreamId = undefined;
@@ -211,6 +211,29 @@ export class LibManagerComponent {
     // await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
     this.output = '';
     this.cmdService.run(`npm uninstall ${lib.name}`, this.projectService.currentProjectPath).subscribe({
+      next: (data: CmdOutput) => {
+        this.currentStreamId = data.streamId;
+        switch (data.type) {
+          case 'stdout':
+            this.output += data.data;
+            break;
+          case 'stderr':
+            this.output += `ERROR: ${data.data}`;
+            break;
+          case 'close':
+            this.output += `\n命令执行完成，退出码: ${data.code}`;
+            this.currentStreamId = undefined;
+            break;
+          case 'error':
+            this.output += `\n执行错误: ${data.error}`;
+            this.currentStreamId = undefined;
+            break;
+        }
+      },
+      error: (error) => {
+        this.output += `\n发生错误: ${error.message}`;
+        this.currentStreamId = undefined;
+      },
       complete: async () => {
         this.output += '\n命令执行结束';
         console.log(this.output);

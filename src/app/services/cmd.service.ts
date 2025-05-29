@@ -36,12 +36,7 @@ export class CmdService {
   spawn(command: string, args?: string[], options?: Partial<CmdOptions>): Observable<CmdOutput> {
     const streamId = `cmd_${Date.now()}_${Math.random()}`;
     const subject = new Subject<CmdOutput>();
-
     this.subjects.set(streamId, subject);
-
-    console.log(command, args, options);
-
-
     const cmdOptions: CmdOptions = {
       command,
       args: args || [],
@@ -83,6 +78,7 @@ export class CmdService {
    * @param cwd 工作目录
    */
   run(command: string, cwd?: string): Observable<CmdOutput> {
+    console.log(`run command: ${command}`);
     const parts = parseCommand(command);
     const cmd = parts[0];
     const args = parts.slice(1);
