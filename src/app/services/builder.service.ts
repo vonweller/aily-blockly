@@ -319,7 +319,7 @@ export class BuilderService {
 
         // 添加超时检测变量
         let lastActivityTime = Date.now();
-        const timeoutMs = 15000; // 15秒超时
+        const timeoutMs = 60000; // 60秒超时
         let timeoutChecker: any = null;
 
         // 创建超时检测函数
@@ -328,7 +328,7 @@ export class BuilderService {
           if (now - lastActivityTime > timeoutMs) {
             this.noticeService.update({
               title: '编译超时',
-              text: '15秒内未收到任何消息，编译已取消',
+              text: '60秒内未收到任何消息，编译已取消',
               state: 'warn',
               setTimeout: 10000
             });
