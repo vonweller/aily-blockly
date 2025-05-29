@@ -1,16 +1,38 @@
-<!-- <p>{{path}}</p> -->
 <div class="content-box">
     <div class="block-list">
-        <div class="block-grid">
-            @for(block of blocks; track block.type) {
-            <div class="block-item">
-                <app-block-item [blockDefinition]="block">
-                </app-block-item>
+        <ngx-simplebar [options]="options">
+            <div class="block-grid">
+                @for(block of blocks; track block.type) {
+                <div class="block-item" (click)="onBlockClick(block)"
+                    [ngClass]="{'active': block === selectedBlock}">
+                    <app-block-item [blockDefinition]="block">
+                    </app-block-item>
+                </div>
+                }
             </div>
-            }
-        </div>
+        </ngx-simplebar>
     </div>
-    <div>
+    <div class="mid-box">
 
+    </div>
+    <div class="right-box">
+        <div class="test-box">
+            <app-block-test [blockDefinition]="selectedBlock"></app-block-test>
+        </div>
+        <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)"
+            nzType="editable-card" [nzHideAdd]="true">
+            @for (file of openedFiles; track file.path) {
+            <nz-tab [nzTitle]="titleTemplate">
+                <ng-template #titleTemplate>
+                    <span class="tab-inner">
+                        {{ file.title }} <span class="blue-point" *ngIf="file.isDirty"></span>
+                    </span>
+                </ng-template>
+            </nz-tab>
+            }
+        </nz-tabset>
+        @if(openedFiles.length > 0) {
+        <app-monaco-editor [code]="code" (codeChange)="onCodeChange($event)"></app-monaco-editor>
+        }
     </div>
 </div>

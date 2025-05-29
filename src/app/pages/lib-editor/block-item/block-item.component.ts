@@ -122,13 +122,11 @@ export class BlockItemComponent implements AfterViewInit, OnDestroy {
 
     // 获取 block 的边界框
     const blockBBox = (this.block as any).getBoundingRectangle();
-    console.log(blockBBox);
-
 
     // 计算新高度（添加一些边距）
     const padding = 2;
     const newHeight = blockBBox.bottom + padding;
-    console.log(this.blockDefinition.type, newHeight);
+    // console.log(this.blockDefinition.type, newHeight);
 
 
     // 调整工作区容器高度

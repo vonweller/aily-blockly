@@ -74,5 +74,6 @@ export class LibEditorComponent {
   selectLib(item) {
     console.log('selectLib', item);
     this.currentLib = item;
+    this.closeLibList();
   }
 }
