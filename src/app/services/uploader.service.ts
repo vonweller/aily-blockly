@@ -123,6 +123,18 @@ export class UploaderService {
           }
         }
 
+        if (this.builderService.cancelled) {
+          this.uploadInProgress = false;
+          this.noticeService.update({
+            title: "上传已取消",
+            text: '编译已取消',
+            state: 'warn',
+            setTimeout: 55000
+          });
+          reject({ state: 'warn', text: '编译已取消' });
+          return;
+        }
+
         if (!this.builderService.passed) {
           this.handleUploadError('编译失败，请检查代码');
           reject({ state: 'error', text: '编译失败，请检查代码' });
@@ -337,7 +349,7 @@ export class UploaderService {
             } else {
               console.warn("上传中断");
               this.noticeService.update({
-                title: "上传",
+                title: "上传已取消",
                 text: '上传已取消',
                 state: 'warn',
                 setTimeout: 55000

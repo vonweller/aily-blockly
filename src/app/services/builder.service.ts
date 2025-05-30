@@ -29,6 +29,7 @@ export class BuilderService {
   currentProjectPath = "";
   lastCode = "";
   passed = false;
+  cancelled = false;
   boardType = "";
   sdkPath = "";
   toolsPath = "";
@@ -75,6 +76,7 @@ export class BuilderService {
         this.buildInProgress = true;
         this.streamId = "";
         this.isErrored = false; // 重置错误状态
+        this.cancelled = false; // 重置取消状态
 
         // 创建临时文件夹
         // await this.uiService.openTerminal();
@@ -354,13 +356,14 @@ export class BuilderService {
             } else {
               console.warn("编译中断")
               this.noticeService.update({
-                title: "编译",
+                title: "编译已取消",
                 text: '编译已取消',
                 state: 'warn',
                 setTimeout: 55000
               });
               this.buildInProgress = false;
               this.passed = false;
+              this.cancelled = true;
               reject({ state: 'warn', text: '编译已取消' });
             }
           }
