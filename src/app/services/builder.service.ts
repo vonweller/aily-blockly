@@ -71,21 +71,16 @@ export class BuilderService {
 
         this.buildPath = tempPath + '/build';
 
+        this.buildCompleted = false;
         this.buildInProgress = true;
         this.streamId = "";
         this.isErrored = false; // 重置错误状态
 
         // 创建临时文件夹
         // await this.uiService.openTerminal();
-        // await this.cmdService.run(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
-        window['fs'].mkdirSync(tempPath, { recursive: true });
-        // await this.waitForDirectoryExists(tempPath, 5000, 100);
-        // await this.cmdService.run(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
-        window['fs'].mkdirSync(sketchPath, { recursive: true });
-        // await this.waitForDirectoryExists(sketchPath, 5000, 100);
-        // await this.cmdService.run(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-        window['fs'].mkdirSync(librariesPath, { recursive: true });
-        // await this.waitForDirectoryExists(librariesPath, 5000, 100);
+        await this.cmdService.runAsync(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
+        await this.cmdService.runAsync(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
+        await this.cmdService.runAsync(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
 
         console.log("临时文件夹已创建:", tempPath);
 
@@ -126,7 +121,7 @@ export class BuilderService {
             // 如果没有src文件夹，则使用src.7z解压到临时文件夹
             let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
             if (!window['path'].isExists(sourceZipPath)) continue;
-            await this.cmdService.run(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
+            await this.cmdService.runAsync(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
           }
 
           // 判断src目录下是否有且仅有一个src目录，没有别的文件或文件夹
@@ -148,18 +143,14 @@ export class BuilderService {
           if (window['fs'].existsSync(sourcePath)) {
             // 获取sourcePath下的所有文件，排除文件夹
             const files = window['fs'].readDirSync(sourcePath, { withFileTypes: true });
-            console.log("Files in source path:", files);
             // 检查文件是否是对象数组或字符串数组
             hasHeaderFiles = Array.isArray(files) && files.some(file => {
-              // 如果是文件对象数组
+              // 如果是文件对象
               if (typeof file === 'object' && file !== null && file.name) {
                 return file.name.toString().endsWith('.h');
               }
-              // 如果是字符串数组
-              else if (typeof file === 'string') {
-                return file.endsWith('.h');
-              }
-              return false;
+              // 如果是字符串
+              return typeof file === 'string' && file.endsWith('.h');
             });
             if (hasHeaderFiles) {
               console.log(`库 ${lib} 包含头文件`);
@@ -167,16 +158,10 @@ export class BuilderService {
               let targetPath = `${librariesPath}/${targetName}`;
 
               if (window['path'].isExists(targetPath)) {
-                // await this.cmdService.run(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
-                // 删除目标目录
-                window['fs'].rmSync(targetPath);
+                await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
               }
               // 直接复制src到targetPath
-              // await this.cmdService.run(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-              // await this.waitForDirectoryExists(targetPath, 5000, 100);
-
-              window['fs'].copySync(sourcePath, targetPath);
-
+              await this.cmdService.runAsync(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
             } else {
               // For libraries without header files, copy each directory individually
               console.log(`库 ${lib} 不包含头文件，逐个复制目录`);
@@ -195,15 +180,11 @@ export class BuilderService {
 
                     // Delete target directory if it exists
                     if (window['path'].isExists(targetPath)) {
-                      // await this.cmdService.run(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
-                      window['fs'].rmSync(targetPath);
+                      await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
                     }
 
                     // Copy directory
-                    // await this.cmdService.run(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-                    window['fs'].copySync(fullSourcePath, targetPath);
-                    // Wait for copy to complete
-                    // await this.waitForDirectoryExists(targetPath, 5000, 100);
+                    await this.cmdService.runAsync(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
                     // console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
                   }
                 }
@@ -266,69 +247,87 @@ export class BuilderService {
 
         let lastProgress = 0;
         let lastBuildText = '';
+        let bufferData = '';
 
         this.cmdService.run(compileCommand).subscribe({
           next: (output: CmdOutput) => {
-            console.log('编译命令输出:', output);
+            // console.log('编译命令输出:', output);
             this.streamId = output.streamId;
 
-            // 处理每一行输出
-            const line = output?.data || '';
-            const trimmedLine = line.trim();
+            if (output.data) {
+              const data = output.data;
+              if (data.includes('\r\n') || data.includes('\n') || data.includes('\r')) {
+                // 分割成行，同时处理所有三种换行符情况
+                const lines = (bufferData + data).split(/\r\n|\n|\r/);
+                // 最后一个可能不完整的行保留为新的bufferData
+                bufferData = lines.pop() || '';
+                // 处理完整的行
+                // const completeLines = lines.join('\n');
 
-            if (!trimmedLine) return; // 如果行为空，则跳过处理
+                lines.forEach((line: string) => {
+                  // 处理每一行输出
+                  const trimmedLine = line.trim();
 
-            // 检查是否有错误信息
-            if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
-              console.error("检测到编译错误:", trimmedLine);
-              // 提取更有用的错误信息，避免过长
-              const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
-              const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
-              this.handleCompileError(errorText);
-              return;
-            }
-            // 提取构建文本
-            if (trimmedLine.startsWith('BuildText:')) {
-              const lineContent = trimmedLine.replace('BuildText:', '').trim();
-              const buildText = lineContent.split(/[\n\r]/)[0];
-              lastBuildText = buildText;
-            }
+                  if (!trimmedLine) return; // 如果行为空，则跳过处理
 
-            // 提取进度信息
-            const progressInfo = trimmedLine.trim();
-            let progressValue = 0;
+                  // 检查是否有错误信息
+                  if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
+                    console.error("检测到编译错误:", trimmedLine);
+                    // 提取更有用的错误信息，避免过长
+                    const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
+                    const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
+                    this.handleCompileError(errorText);
+                    return;
+                  }
+                  // 提取构建文本
+                  if (trimmedLine.startsWith('BuildText:')) {
+                    const lineContent = trimmedLine.replace('BuildText:', '').trim();
+                    const buildText = lineContent.split(/[\n\r]/)[0];
+                    lastBuildText = buildText;
+                  }
 
-            // Match patterns like [========================================          ] 80%
-            const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
-            if (barProgressMatch) {
-              try {
-                progressValue = parseInt(barProgressMatch[1], 10);
-              } catch (error) {
-                progressValue = 0;
-                console.warn('进度解析错误:', error);
+                  // 提取进度信息
+                  const progressInfo = trimmedLine.trim();
+                  let progressValue = 0;
+
+                  // Match patterns like [========================================          ] 80%
+                  const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
+                  if (barProgressMatch) {
+                    try {
+                      progressValue = parseInt(barProgressMatch[1], 10);
+                    } catch (error) {
+                      progressValue = 0;
+                      console.warn('进度解析错误:', error);
+                    }
+                  }
+
+                  if (progressValue > lastProgress) {
+                    console.log("progress: ", lastProgress);
+                    lastProgress = progressValue;
+                    this.noticeService.update({
+                      title: title,
+                      text: lastBuildText,
+                      state: 'doing',
+                      progress: lastProgress,
+                      setTimeout: 0,
+                      stop: () => {
+                        this.cancelBuild();
+                      }
+                    });
+                  }
+
+                  // 进度为100%时标记完成
+                  if (lastProgress === 100) {
+                    this.buildCompleted = true;
+                  }
+                });
+              } else {
+                // 没有换行符，直接追加
+                bufferData += data;
               }
+            } else {
+              bufferData += '';
             }
-
-            if (progressValue > lastProgress) {
-              console.log("progress: ", lastProgress);
-              lastProgress = progressValue;
-              this.noticeService.update({
-                title: title,
-                text: lastBuildText,
-                state: 'doing',
-                progress: lastProgress, 
-                setTimeout: 0, 
-                stop: () => {
-                  this.cancelBuild();
-                }
-              });
-            }
-
-            // 进度为100%时标记完成
-            if (lastProgress === 100) {
-              this.buildCompleted = true;
-            }
-
           },
           error: (error: any) => {
             console.error('编译过程中发生错误:', error);
