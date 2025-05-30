@@ -3,10 +3,9 @@ import { arduinoGenerator } from '../blockly/generators/arduino/arduino';
 import { BlocklyService } from '../blockly/blockly.service';
 import { ProjectService } from './project.service';
 import { ActionState, UiService } from './ui.service';
-import { TerminalService } from '../tools/terminal/terminal.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NoticeService } from '../services/notice.service';
-import { NpmService } from './npm.service';
+import { CmdOutput, CmdService } from './cmd.service';
 
 @Injectable({
   providedIn: 'root'
@@ -14,18 +13,18 @@ import { NpmService } from './npm.service';
 export class BuilderService {
 
   constructor(
-    private uiService: UiService,
     private blocklyService: BlocklyService,
     private projectService: ProjectService,
-    private terminalService: TerminalService,
+    private cmdService: CmdService,
     private message: NzMessageService,
     private noticeService: NoticeService,
-    private npmService: NpmService
   ) { }
 
   private buildInProgress = false;
-  private currentBuildStreamId: string | null = null;
-  private buildResolver: ((value: ActionState) => void) | null = null;
+  private streamId: string | null = null;
+  private buildCompleted = false;
+  private isErrored = false; // 标识是否为错误状态
+
 
   currentProjectPath = "";
   lastCode = "";
@@ -37,384 +36,262 @@ export class BuilderService {
   boardJson: any = null;
   buildPath = "";
 
-  /**
- * 等待指定目录创建完成
- * @param dirPath 需要检查的目录路径
- * @param timeout 超时时间，默认5000毫秒
- * @param interval 检查间隔，默认100毫秒
- * @returns 返回Promise，目录存在时resolve，超时时reject
- */
-  private async waitForDirectoryExists(dirPath: string, timeout = 1000 * 60 * 1, interval = 100): Promise<boolean> {
-    return new Promise<boolean>((resolve, reject) => {
-      const startTime = Date.now();
-
-      const checkDirectory = () => {
-        // 检查是否超时
-        if (Date.now() - startTime > timeout) {
-          console.error(`等待目录创建超时: ${dirPath}`);
-          reject(new Error(`等待目录创建超时: ${dirPath}`));
-          return;
-        }
-
-        // 检查目录是否存在
-        try {
-          const exists = window['fs'].existsSync(dirPath);
-          if (exists) {
-            console.log(`目录已创建: ${dirPath}`);
-            resolve(true);
-            return;
-          }
-        } catch (error) {
-          console.warn(`检查目录时出错: ${error.message}`);
-          reject(error);
-          return;
-        }
-
-        // 目录不存在，继续等待
-        setTimeout(checkDirectory, interval);
-      };
-
-      // 开始检查
-      checkDirectory();
+  // 添加这个错误处理方法
+  private handleCompileError(errorMessage: string) {
+    console.error("handle errror: ", errorMessage);
+    this.noticeService.update({
+      title: "编译失败",
+      text: errorMessage,
+      detail: errorMessage,
+      state: 'error',
+      setTimeout: 55000
     });
+
+    this.cmdService.kill(this.streamId || '');
+    this.passed = false;
+    this.isErrored = true;
+    this.buildInProgress = false;
   }
 
   async build(): Promise<ActionState> {
     return new Promise<ActionState>(async (resolve, reject) => {
-      this.noticeService.clear();
-
-      if (this.npmService.isInstalling) {
-        this.message.warning('正在安装依赖，请稍后再试');
-        reject({ state: 'warn', text: '正在安装依赖，请稍后再试' });
-        return;
-      }
-
-      this.currentProjectPath = this.projectService.currentProjectPath;
-      const tempPath = this.currentProjectPath + '/.temp';
-      const sketchPath = tempPath + '/sketch';
-      const sketchFilePath = sketchPath + '/sketch.ino';
-      const librariesPath = tempPath + '/libraries';
-
-      this.buildPath = tempPath + '/build';
-
-      this.buildInProgress = true;
-      this.currentBuildStreamId = null;
-      this.buildResolver = null;
-
-      // this.uiService.updateState({ state: 'doing', text: '编译准备中...' });
-
-      // 创建临时文件夹
-      await this.uiService.openTerminal();
-      await this.terminalService.sendCmd(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
-      await this.waitForDirectoryExists(tempPath, 5000, 100);
-      await this.terminalService.sendCmd(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
-      await this.waitForDirectoryExists(sketchPath, 5000, 100);
-      await this.terminalService.sendCmd(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-      await this.waitForDirectoryExists(librariesPath, 5000, 100);
-
-      // 生成sketch文件
-      const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-      this.lastCode = code;
-      await window['fs'].writeFileSync(sketchFilePath, code);
-
-      // 加载项目package.json
-      const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
-      const dependencies = packageJson.dependencies || {};
-      const boardDependencies = packageJson.boardDependencies || {};
-
-      // 从dependencies中查找以@aily-project/board-开头的依赖
-      let board = ""
-      const libsPath = []
-      Object.entries(dependencies).forEach(([key, version]) => {
-        if (key.startsWith('@aily-project/board-')) {
-          board = key
-        } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
-          libsPath.push(key)
-        }
-      });
-
-      if (!board) {
-        console.error('缺少板子信息');
-        this.buildInProgress = false;
-        reject({ state: 'error', text: '缺少板子信息' });
-        return;
-      }
-
-      // 获取板子信息(board.json)
-      const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
-      console.log("boardJson: ", boardJson);
-
-      if (!boardJson) {
-        console.error('缺少板子信息');
-        this.buildInProgress = false;
-        reject({ state: 'error', text: '缺少板子信息' });
-        return;
-      }
-
-      this.boardJson = boardJson;
-
-      // 获取板子
-
-      // 解压libraries到临时文件夹
-      console.log("libsPath: ", libsPath);
-      for (let lib of libsPath) {
-        let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
-        if (!window['path'].isExists(sourcePath)) {
-          // 如果没有src文件夹，则使用src.7z解压到临时文件夹
-          let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
-          if (!window['path'].isExists(sourceZipPath)) continue;
-          await this.terminalService.sendCmd(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
+      try {
+        if (this.buildInProgress) {
+          this.message.warning("编译正在进行中，请稍后再试");
+          reject({ state: 'warn', text: '编译中，请稍后' });
+          return;
         }
 
-        // 判断src目录下是否有且仅有一个src目录，没有别的文件或文件夹
-        if (window['fs'].existsSync(sourcePath)) {
-          const srcContents = window['fs'].readDirSync(sourcePath);
-          if (srcContents.length === 1 &&
-            srcContents[0].name === 'src' &&
-            window['fs'].isDirectory(`${sourcePath}/${srcContents[0].name}`)) {
-            // 如果有且仅有一个src目录，则将复制源路径定位到src/src
-            console.log(`库 ${lib} 检测到嵌套src目录，使用 ${sourcePath}/src 作为源路径`);
-            sourcePath = `${sourcePath}/src`;
+        // this.noticeService.clear();
+        this.currentProjectPath = this.projectService.currentProjectPath;
+        const tempPath = this.currentProjectPath + '/.temp';
+        const sketchPath = tempPath + '/sketch';
+        const sketchFilePath = sketchPath + '/sketch.ino';
+        const librariesPath = tempPath + '/libraries';
+
+        this.buildPath = tempPath + '/build';
+
+        this.buildInProgress = true;
+        this.streamId = "";
+        this.isErrored = false; // 重置错误状态
+
+        // 创建临时文件夹
+        // await this.uiService.openTerminal();
+        // await this.cmdService.run(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
+        window['fs'].mkdirSync(tempPath, { recursive: true });
+        // await this.waitForDirectoryExists(tempPath, 5000, 100);
+        // await this.cmdService.run(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
+        window['fs'].mkdirSync(sketchPath, { recursive: true });
+        // await this.waitForDirectoryExists(sketchPath, 5000, 100);
+        // await this.cmdService.run(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
+        window['fs'].mkdirSync(librariesPath, { recursive: true });
+        // await this.waitForDirectoryExists(librariesPath, 5000, 100);
+
+        console.log("临时文件夹已创建:", tempPath);
+
+        // 生成sketch文件
+        const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+        this.lastCode = code;
+        await window['fs'].writeFileSync(sketchFilePath, code);
+
+        // 加载项目package.json
+        const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
+        const dependencies = packageJson.dependencies || {};
+        const boardDependencies = packageJson.boardDependencies || {};
+
+        // 从dependencies中查找以@aily-project/board-开头的依赖
+        let board = ""
+        const libsPath = []
+        Object.entries(dependencies).forEach(([key, version]) => {
+          if (key.startsWith('@aily-project/board-')) {
+            board = key
+          } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
+            libsPath.push(key)
           }
+        });
+
+        // 获取板子信息(board.json)
+        const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
+
+        if (!boardJson) {
+          throw new Error('未找到板子信息(board.json)');
         }
 
-        console.log("Source path for library:", sourcePath);
+        this.boardJson = boardJson;
 
-        // 判断src目录下是否包含.h文件
-        let hasHeaderFiles = false;
-        if (window['fs'].existsSync(sourcePath)) {
-          // 获取sourcePath下的所有文件，排除文件夹
-          const files = window['fs'].readDirSync(sourcePath, { withFileTypes: true });
-          console.log("Files in source path:", files);
-          // 检查文件是否是对象数组或字符串数组
-          hasHeaderFiles = Array.isArray(files) && files.some(file => {
-            // 如果是文件对象数组
-            if (typeof file === 'object' && file !== null && file.name) {
-              return file.name.toString().endsWith('.h');
+        // 解压libraries到临时文件夹
+        for (let lib of libsPath) {
+          let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
+          if (!window['path'].isExists(sourcePath)) {
+            // 如果没有src文件夹，则使用src.7z解压到临时文件夹
+            let sourceZipPath = `${this.currentProjectPath}/node_modules/${lib}/src.7z`;
+            if (!window['path'].isExists(sourceZipPath)) continue;
+            await this.cmdService.run(`7za x "${sourceZipPath}" -o"${sourcePath}" -y`);
+          }
+
+          // 判断src目录下是否有且仅有一个src目录，没有别的文件或文件夹
+          if (window['fs'].existsSync(sourcePath)) {
+            const srcContents = window['fs'].readDirSync(sourcePath);
+            if (srcContents.length === 1 &&
+              srcContents[0].name === 'src' &&
+              window['fs'].isDirectory(`${sourcePath}/${srcContents[0].name}`)) {
+              // 如果有且仅有一个src目录，则将复制源路径定位到src/src
+              console.log(`库 ${lib} 检测到嵌套src目录，使用 ${sourcePath}/src 作为源路径`);
+              sourcePath = `${sourcePath}/src`;
             }
-            // 如果是字符串数组
-            else if (typeof file === 'string') {
-              return file.endsWith('.h');
-            }
-            return false;
-          });
-          if (hasHeaderFiles) {
-            console.log(`库 ${lib} 包含头文件`);
-            let targetName = lib.split('@aily-project/')[1];
-            let targetPath = `${librariesPath}/${targetName}`;
+          }
 
-            if (window['path'].isExists(targetPath)) {
-              await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
-            }
-            // 直接复制src到targetPath
-            await this.terminalService.sendCmd(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-            await this.waitForDirectoryExists(targetPath, 5000, 100);
-          } else {
-            // For libraries without header files, copy each directory individually
-            console.log(`库 ${lib} 不包含头文件，逐个复制目录`);
-            // Get all directories in the source path
-            if (window['fs'].existsSync(sourcePath)) {
-              const items = window['fs'].readDirSync(sourcePath);
+          console.log("Source path for library:", sourcePath);
 
-              // Process each directory
-              for (const item of items) {
-                console.log("item: ", item);
-                const fullSourcePath = `${sourcePath}/${item.name}`;
+          // 判断src目录下是否包含.h文件
+          let hasHeaderFiles = false;
+          if (window['fs'].existsSync(sourcePath)) {
+            // 获取sourcePath下的所有文件，排除文件夹
+            const files = window['fs'].readDirSync(sourcePath, { withFileTypes: true });
+            console.log("Files in source path:", files);
+            // 检查文件是否是对象数组或字符串数组
+            hasHeaderFiles = Array.isArray(files) && files.some(file => {
+              // 如果是文件对象数组
+              if (typeof file === 'object' && file !== null && file.name) {
+                return file.name.toString().endsWith('.h');
+              }
+              // 如果是字符串数组
+              else if (typeof file === 'string') {
+                return file.endsWith('.h');
+              }
+              return false;
+            });
+            if (hasHeaderFiles) {
+              console.log(`库 ${lib} 包含头文件`);
+              let targetName = lib.split('@aily-project/')[1];
+              let targetPath = `${librariesPath}/${targetName}`;
 
-                // Check if it's a directory
-                if (window['fs'].isDirectory(fullSourcePath)) {
-                  const targetPath = `${librariesPath}/${item.name}`;
+              if (window['path'].isExists(targetPath)) {
+                // await this.cmdService.run(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                // 删除目标目录
+                window['fs'].rmSync(targetPath);
+              }
+              // 直接复制src到targetPath
+              // await this.cmdService.run(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+              // await this.waitForDirectoryExists(targetPath, 5000, 100);
 
-                  // Delete target directory if it exists
-                  if (window['path'].isExists(targetPath)) {
-                    await this.terminalService.sendCmd(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+              window['fs'].copySync(sourcePath, targetPath);
+
+            } else {
+              // For libraries without header files, copy each directory individually
+              console.log(`库 ${lib} 不包含头文件，逐个复制目录`);
+              // Get all directories in the source path
+              if (window['fs'].existsSync(sourcePath)) {
+                const items = window['fs'].readDirSync(sourcePath);
+
+                // Process each directory
+                for (const item of items) {
+                  console.log("item: ", item);
+                  const fullSourcePath = `${sourcePath}/${item.name}`;
+
+                  // Check if it's a directory
+                  if (window['fs'].isDirectory(fullSourcePath)) {
+                    const targetPath = `${librariesPath}/${item.name}`;
+
+                    // Delete target directory if it exists
+                    if (window['path'].isExists(targetPath)) {
+                      // await this.cmdService.run(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                      window['fs'].rmSync(targetPath);
+                    }
+
+                    // Copy directory
+                    // await this.cmdService.run(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+                    window['fs'].copySync(fullSourcePath, targetPath);
+                    // Wait for copy to complete
+                    // await this.waitForDirectoryExists(targetPath, 5000, 100);
+                    // console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
                   }
-
-                  // Copy directory
-                  await this.terminalService.sendCmd(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
-
-                  // Wait for copy to complete
-                  await this.waitForDirectoryExists(targetPath, 5000, 100);
-                  console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
                 }
               }
             }
           }
         }
-      }
 
-      // 获取编译器、sdk、tool的名称和版本
-      let compiler = ""
-      let sdk = ""
+        // 获取编译器、sdk、tool的名称和版本
+        let compiler = ""
+        let sdk = ""
 
-      Object.entries(boardDependencies).forEach(([key, version]) => {
-        if (key.startsWith('@aily-project/compiler-')) {
-          compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
-        } else if (key.startsWith('@aily-project/sdk-')) {
-          sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
+        Object.entries(boardDependencies).forEach(([key, version]) => {
+          if (key.startsWith('@aily-project/compiler-')) {
+            compiler = key.replace(/^@aily-project\/compiler-/, '') + '@' + version;
+          } else if (key.startsWith('@aily-project/sdk-')) {
+            sdk = key.replace(/^@aily-project\/sdk-/, '') + '_' + version;
+          }
+        });
+
+        if (!compiler || !sdk) {
+          throw new Error('未找到编译器或SDK信息');
         }
-      });
 
-      if (!compiler || !sdk) {
-        console.error('缺少编译器或sdk');
-        this.buildInProgress = false;
-        reject({ state: 'warn', text: '缺少编译器或sdk' });
-        return;
-      }
+        // 组合编译器、sdk、tools的路径
+        this.compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
+        this.sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
+        this.toolsPath = await window["env"].get('AILY_TOOLS_PATH');
 
-      // 组合编译器、sdk、tools的路径
-      this.compilerPath = await window["env"].get('AILY_COMPILERS_PATH') + `/${compiler}`;
-      this.sdkPath = await window["env"].get('AILY_SDK_PATH') + `/${sdk}`;
-      this.toolsPath = await window["env"].get('AILY_TOOLS_PATH');
+        // 获取编译命令
+        let compilerParam = boardJson.compilerParam;
+        if (!compilerParam) {
+          throw new Error('未找到编译命令(compilerParam)');
+        }
 
-      // 获取编译命令
-      let compilerParam = boardJson.compilerParam;
-      if (!compilerParam) {
-        console.error('缺少编译参数');
-        this.buildInProgress = false;
-        reject({ state: 'error', text: '缺少编译参数' });
-        return;
-      }
-
-      let compilerParamList = compilerParam.split(' ');
-      compilerParamList = compilerParamList.map(param => {
-        if (param.startsWith('aily:')) {
-          let res;
-          const parts = param.split(':');
-          if (parts.length > 2) { // Ensure we have at least 3 parts (aily:avr:mega)
-            parts[1] = sdk;
-            res = parts.join(':');
+        let compilerParamList = compilerParam.split(' ');
+        compilerParamList = compilerParamList.map(param => {
+          if (param.startsWith('aily:')) {
+            let res;
+            const parts = param.split(':');
+            if (parts.length > 2) { // Ensure we have at least 3 parts (aily:avr:mega)
+              parts[1] = sdk;
+              res = parts.join(':');
+            } else {
+              res = param
+            }
+            this.boardType = res
+            return res; // Return unchanged if format doesn't match
           } else {
-            res = param
+            return param;
           }
-          this.boardType = res
-          return res; // Return unchanged if format doesn't match
-        } else {
-          return param;
-        }
-      });
+        });
 
-      compilerParam = compilerParamList.join(' ');
+        compilerParam = compilerParamList.join(' ');
 
-      // this.uiService.updateState({ state: 'doing', text: '准备完成，开始编译中...' });
+        const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
+        
+        const title = `编译 ${boardJson.name}`;
+        const completeTitle = `编译完成`;
 
-      // 创建返回的 Promise
-      this.buildResolver = resolve;
+        let lastProgress = 0;
+        let lastBuildText = '';
 
-      const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
-
-      const title = `编译 ${boardJson.name}`;
-      const completeTitle = `编译完成`;
-
-      // 用于跟踪编译状态
-      let buildCompleted = false;
-      let lastProgress = 0;
-      let lastBuildText = '';
-      let isErrored = false;
-      let isStopped = false;
-      let errorText = '编译失败';
-
-      this.terminalService.startStream().then(async (streamId) => {
-        this.currentBuildStreamId = streamId;
-
-        // 添加超时检测变量
-        let lastActivityTime = Date.now();
-        const timeoutMs = 60000; // 60秒超时
-        let timeoutChecker: any = null;
-
-        // 创建超时检测函数
-        const checkTimeout = () => {
-          const now = Date.now();
-          if (now - lastActivityTime > timeoutMs) {
-            this.noticeService.update({
-              title: '编译超时',
-              text: '60秒内未收到任何消息，编译已取消',
-              state: 'warn',
-              setTimeout: 10000
-            });
-            this.cancelBuild();
-            clearInterval(timeoutChecker);
-          }
-        };
-
-        // 启动超时检测定时器
-        timeoutChecker = setInterval(checkTimeout, 5000); // 每5秒检查一次
-
-        // 使用流式输出执行命令
-        await this.terminalService.executeWithStream(
-          compileCommand,
-          streamId,
-          async (line) => {
-            // 每次收到消息都更新最后活动时间
-            lastActivityTime = Date.now();
-
-            // 检测 Ctrl+C（ASCII 字符 \u0003）
-            if (line.includes('\u0003')) {
-              console.log('检测到 Ctrl+C 命令，正在取消编译...');
-              this.cancelBuild();
-              return;
-            }
-            // 判断是否已取消，如果已取消则不在处理输出
-            if (!this.buildInProgress) {
-              reject({ state: 'warn', text: '编译已取消' });
-              return;
-            }
+        this.cmdService.run(compileCommand).subscribe({
+          next: (output: CmdOutput) => {
+            console.log('编译命令输出:', output);
+            this.streamId = output.streamId;
 
             // 处理每一行输出
+            const line = output?.data || '';
             const trimmedLine = line.trim();
 
-            if (isErrored) {
-              if (!isStopped) {
-                return;
-              }
-              if (/Error during build/i.test(trimmedLine) || /Used platform/i.test(trimmedLine) || /Used library Version/i.test(trimmedLine)) {
-                isStopped = true;
-                return; // Stop processing this line
-              }
-              this.noticeService.update({
-                title: "编译错误",
-                text: errorText,
-                detail: ">> " + trimmedLine,
-                state: 'error',
-                setTimeout: 55000
-              });
-              reject({ state: 'error', text: errorText });
-              return;
-            };
+            if (!trimmedLine) return; // 如果行为空，则跳过处理
 
             // 检查是否有错误信息
             if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
               console.error("检测到编译错误:", trimmedLine);
               // 提取更有用的错误信息，避免过长
               const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
-              errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
-
-              // 错误时立即返回，避免继续处理
-              isErrored = true;
-              // this.uiService.updateState({ state: 'error', text: errorText });
-              this.noticeService.update({
-                title: "编译错误",
-                text: errorText,
-                detail: "> " + errorText,
-                state: 'error',
-                setTimeout: 55000
-              });
-
-              // 清理资源后再拒绝Promise
-              this.buildResolver = null;
-              this.passed = false;
-
-              setTimeout(async () => {
-                await this.terminalService.stopStream(streamId);
-                reject({ "state": "error", "text": errorText })
-                return;
-              }, 1000);
+              const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
+              this.handleCompileError(errorText);
+              return;
             }
             // 提取构建文本
             if (trimmedLine.startsWith('BuildText:')) {
-              const buildText = trimmedLine.replace('BuildText:', '').trim();
+              const lineContent = trimmedLine.replace('BuildText:', '').trim();
+              const buildText = lineContent.split(/[\n\r]/)[0];
               lastBuildText = buildText;
-              // this.uiService.updateState({ state: 'doing', text: buildText });
             }
 
             // 提取进度信息
@@ -439,58 +316,61 @@ export class BuilderService {
                 title: title,
                 text: lastBuildText,
                 state: 'doing',
-                progress: lastProgress, setTimeout: 0, stop: () => {
+                progress: lastProgress, 
+                setTimeout: 0, 
+                stop: () => {
                   this.cancelBuild();
                 }
               });
             }
 
             // 进度为100%时标记完成
-            if (lastProgress === 100 && !buildCompleted) {
-              buildCompleted = true;
+            if (lastProgress === 100) {
+              this.buildCompleted = true;
             }
 
-            // 更新状态
-            if (buildCompleted) {
+          },
+          error: (error: any) => {
+            console.error('编译过程中发生错误:', error);
+            this.handleCompileError(error.message);
+            reject({ state: 'error', text: error.message });
+          },
+          complete: () => {
+            if (this.buildCompleted) {
+              console.log('编译命令执行完成');
               this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
-
               this.buildInProgress = false;
-              this.buildResolver = null;
-              await this.terminalService.stopStream(streamId);
               this.passed = true;
               resolve({ state: 'done', text: '编译完成' });
-              return;
-            }
-          },
-          // 完成回调
-          () => {
-            // 编译完成时清除超时检测器
-            if (timeoutChecker) {
-              clearInterval(timeoutChecker);
+            } else if (this.isErrored) {
+              console.error('编译过程中发生错误，编译未完成');
+              this.noticeService.update({
+                title: "编译",
+                text: '编译失败',
+                detail: '编译过程中发生错误，请查看日志',
+                state: 'error',
+                setTimeout: 55000
+              });
+              reject({ state: 'error', text: '编译失败' });
+            } else {
+              console.warn("编译中断")
+              this.noticeService.update({
+                title: "编译",
+                text: '编译已取消',
+                state: 'warn',
+                setTimeout: 55000
+              });
+              this.buildInProgress = false;
+              this.passed = false;
+              reject({ state: 'warn', text: '编译已取消' });
             }
           }
-        ).catch(error => {
-          // 出错时也清除超时检测器
-          if (timeoutChecker) {
-            clearInterval(timeoutChecker);
-          }
-
-          this.noticeService.update({
-            title: title,
-            text: '编译失败',
-            detail: error, state:
-              'error',
-            setTimeout: 55000
-          });
-          this.buildInProgress = false;
-          this.buildResolver = null;
-          this.terminalService.stopStream(streamId);
-          this.passed = false;
-          this.message.error('异常编译失败: ' + error.message);
-          reject({ state: 'error', text: error.message });
-          return;
-        });
-      })
+        })
+      } catch (error) {
+        console.error('编译过程中发生错误:', error);
+        this.handleCompileError(error.message);
+        reject({ state: 'error', text: error.message });
+      }
     });
   }
 
@@ -498,35 +378,6 @@ export class BuilderService {
  * 取消当前编译过程
  */
   cancelBuild() {
-    this.buildInProgress = false;
-
-    if (this.buildResolver) {
-      this.buildResolver({ state: 'canceled', text: '编译已取消' });
-      this.buildResolver = null;
-    }
-
-    // 中断终端
-    this.terminalService.interrupt()
-      .then(() => {
-        // 如果当前有流ID，尝试停止流
-        if (this.currentBuildStreamId) {
-          window['terminal'].stopStream(
-            this.terminalService.currentPid,
-            this.currentBuildStreamId
-          ).then(() => {
-            this.noticeService.clear();
-            this.terminalService.stopStream(this.currentBuildStreamId);
-            this.currentBuildStreamId = null;
-            this.message.warning('编译已中断');
-            // this.uiService.updateState({ state: 'done', text: '编译已取消' });
-          });
-        }
-      })
-      .catch(error => {
-        console.error('取消编译失败:', error);
-        this.noticeService.update({ title: '取消编译失败', text: error.message, state: 'error', setTimeout: 55000 });
-        this.message.warning('取消编译失败: ' + error.message);
-        return false;
-      });
+    this.cmdService.kill(this.streamId || '');
   }
 }
