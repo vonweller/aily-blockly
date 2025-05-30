@@ -13,7 +13,7 @@ class CommandManager {
     const child = spawn(command, args, {
       cwd: cwd || process.cwd(),
       env: { ...process.env, ...env },
-      shell: true,
+      shell: 'powershell',
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
