@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Observable, Subject } from 'rxjs';
+import { lastValueFrom, Observable, Subject } from 'rxjs';
 import { LogService } from './log.service';
 
 declare const electronAPI: any;
@@ -18,7 +18,7 @@ export interface CmdOptions {
   args?: string[];
   cwd?: string;
   env?: { [key: string]: string };
-  streamId?
+  streamId?: string;
 }
 
 @Injectable({
@@ -46,7 +46,6 @@ export class CmdService {
       ...options,
       streamId
     };
-
     // 注册数据监听器
     const removeListener = window['cmd'].onData(streamId, (data: CmdOutput) => {
       subject.next(data);
@@ -91,6 +90,16 @@ export class CmdService {
     const cmd = parts[0];
     const args = parts.slice(1);
     return this.spawn(cmd, args, { cwd });
+  }
+
+  /**
+   * 异步执行命令并等待完成
+   * @param command 命令字符串
+   * @param cwd 工作目录
+   * @returns Promise<{success: boolean, output: string, error?: string}>
+   */
+  async runAsync(command: string, cwd?: string): Promise<CmdOutput> {
+    return lastValueFrom(this.run(command, cwd))
   }
 
   /**

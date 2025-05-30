@@ -238,7 +238,7 @@ export class LibManagerComponent {
         this.output += '\n命令执行结束';
         console.log(this.output);
         // 卸载完检查
-        this.checkInstalled();
+        await this.checkInstalled();
         lib.state = 'default';
         this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
       }

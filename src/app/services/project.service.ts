@@ -8,6 +8,7 @@ import { ElectronService } from './electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
+import { CmdService } from './cmd.service';
 
 const { isMacOS } = (window as any)['electronAPI'].platform;
 
@@ -41,11 +42,12 @@ export class ProjectService {
 
   constructor(
     private uiService: UiService,
-    private terminalService: TerminalService,
+    // private terminalService: TerminalService,
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private message: NzMessageService,
-    private router: Router
+    private router: Router,
+    private cmdService: CmdService
   ) {
     // window['ipcRenderer'].on('project-update', (event, data) => {
     //   console.log('收到更新的: ', data);
@@ -127,27 +129,32 @@ export class ProjectService {
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
-    // 1. 检查开发板module是否存在, 不存在则安装
-    await this.uiService.openTerminal();
-    await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix "${appDataPath}"`);
-    // 2. 创建项目目录，复制开发板module中的template到项目目录
-    const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
-    // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
-    if (isMacOS) {
-      // TODO 此命令应该是各系统通用的，可进行验证无问题均换成此命令 @downey @coloz
-      await this.terminalService.sendCmd(`mkdir -p "${projectPath}"`);
-      await this.terminalService.sendCmd(`cp -r "${templatePath}/" "${projectPath}"`);
-    } else {
-      await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
-      await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
-    }
-    // node命令创建目录并复制文件
-    // window['fs'].mkdirSync(projectPath);
-    // window['fs'].copySync(templatePath, projectPath);
 
+    // 1. 检查开发板module是否存在, 不存在则安装
+    // await this.uiService.openTerminal();
+    // await this.terminalService.sendCmd(`npm install ${boardPackage} --prefix "${appDataPath}"`);
+    // // 2. 创建项目目录，复制开发板module中的template到项目目录
+    // const templatePath = `${appDataPath}/node_modules/${newProjectData.board.name}/template`;
+    // // powsershell命令创建目录并复制文件（好处是可以在终端显示出过程，以后需要匹配mac os和linux的命令（陈吕洲 2025.3.4））
+    // if (isMacOS) {
+    //   // TODO 此命令应该是各系统通用的，可进行验证无问题均换成此命令 @downey @coloz
+    //   await this.terminalService.sendCmd(`mkdir -p "${projectPath}"`);
+    //   await this.terminalService.sendCmd(`cp -r "${templatePath}/" "${projectPath}"`);
+    // } else {
+    //   await this.terminalService.sendCmd(`New-Item -Path "${projectPath}" -ItemType Directory -Force`);
+    //   await this.terminalService.sendCmd(`Copy-Item -Path "${templatePath}\\*" -Destination "${projectPath}" -Recurse -Force`);
+    // }
+
+    let result = await this.cmdService.runAsync(`npm install ${boardPackage} --prefix "${appDataPath}"`);
+    console.log(result);
+
+    const templatePath = `${appDataPath}\\node_modules\\${newProjectData.board.name}\\template`.replace(/\//g, '\\');;
+    // 创建项目目录
+    await this.cmdService.runAsync(`mkdir -p "${projectPath}"`);
+    // 复制模板文件到项目目录
+    await this.cmdService.runAsync(`xcopy "${templatePath}\\*" "${projectPath}" /E /I /Y`);
     // 判断复制是否成功
-    const packageJsonPath = window['path'].join(projectPath, 'package.json');
-    if (!await this.checkIsExisits(packageJsonPath)) {
+    if (!await this.checkIsExisits(projectPath + '/project.abi')) {
       return;
     }
 
