@@ -88,10 +88,10 @@ export class ProjectNewComponent {
     this.newProjectData.name = this.generateUniqueProjectName();
 
     // 终端操作
-    let { pid } = await this.uiService.openTerminal();
-    console.log('终端pid：', pid);
+    // let { pid } = await this.uiService.openTerminal();
+    // console.log('终端pid：', pid);
 
-    this.terminalService.currentPid = pid;
+    // this.terminalService.currentPid = pid;
   }
 
   process(array) {

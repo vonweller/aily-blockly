@@ -149,7 +149,7 @@ function createWindow() {
     registerWindowHandlers(mainWindow);
     registerNpmHandlers(mainWindow);
     registerUpdaterHandlers(mainWindow);
-    registerCmdHandlers(mainWindow); // 添加这行
+    registerCmdHandlers(mainWindow);
   }, 500);
 
 }

@@ -49,14 +49,15 @@ function registerCmdHandlers(mainWindow) {
   // 执行命令
   ipcMain.handle('cmd-run', async (event, options) => {
     const streamId = options.streamId || `cmd_${Date.now()}_${Math.random()}`;
+    const senderWindow = event.sender; // 获取发送请求的窗口
 
     try {
       const result = commandManager.executeCommand({ ...options, streamId });
       const process = result.process;
-
+      // console.log(options);
       // 监听标准输出
       process.stdout.on('data', (data) => {
-        mainWindow.webContents.send(`cmd-data-${streamId}`, {
+        senderWindow.send(`cmd-data-${streamId}`, {
           type: 'stdout',
           data: data.toString(),
           streamId
@@ -65,7 +66,7 @@ function registerCmdHandlers(mainWindow) {
 
       // 监听错误输出
       process.stderr.on('data', (data) => {
-        mainWindow.webContents.send(`cmd-data-${streamId}`, {
+        senderWindow.send(`cmd-data-${streamId}`, {
           type: 'stderr',
           data: data.toString(),
           streamId
@@ -74,7 +75,7 @@ function registerCmdHandlers(mainWindow) {
 
       // 监听进程关闭
       process.on('close', (code, signal) => {
-        mainWindow.webContents.send(`cmd-data-${streamId}`, {
+        senderWindow.send(`cmd-data-${streamId}`, {
           type: 'close',
           code,
           signal,
@@ -85,7 +86,7 @@ function registerCmdHandlers(mainWindow) {
 
       // 监听进程错误
       process.on('error', (error) => {
-        mainWindow.webContents.send(`cmd-data-${streamId}`, {
+        senderWindow.send(`cmd-data-${streamId}`, {
           type: 'error',
           error: error.message,
           streamId
