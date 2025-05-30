@@ -1,13 +1,9 @@
 import { Component } from '@angular/core';
-import { ITEM_LIST } from '../data';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { ActivatedRoute } from '@angular/router';
-import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { NzModalService } from 'ng-zorro-antd/modal';
+import { TranslateModule } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { UiService } from '../../../services/ui.service';
-import { TerminalService } from '../../../tools/terminal/terminal.service';
 import { ProjectService } from '../../../services/project.service';
 import { ConfigService } from '../../../services/config.service';
 import { ElectronService } from '../../../services/electron.service';
@@ -40,10 +36,7 @@ export class SubjectItemComponent {
   constructor(
     private route: ActivatedRoute,
     private configService: ConfigService,
-    private uiService: UiService,
-    // private terminalService: TerminalService,
     private projectService: ProjectService,
-    // private translate: TranslateService,
     private message: NzMessageService,
     private electronService: ElectronService,
     private cmdService: CmdService
