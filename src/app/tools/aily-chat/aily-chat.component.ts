@@ -183,7 +183,9 @@ export class AilyChatComponent {
     this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
       console.log('send message', res);
       if (res.status === 'success') {
-        this.appendMessage('aily', res.data);
+        if (res.data) {
+          this.appendMessage('aily', res.data);
+        }
       }
     });
   }
@@ -203,6 +205,18 @@ export class AilyChatComponent {
             console.log('助手正在思考...');
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
+          } else if (data.type === 'tool_call_request') {
+            console.log("助手请求调用工具:", data.data);
+            // 模拟暂停10秒
+            setTimeout(() => {
+              this.inputValue = JSON.stringify({
+                "type": "tool_result",
+                "tool_id": data.data.id,
+                "content": "工具调用成功",
+                "is_error": false
+              }, null, 2);
+              this.send()
+            }, 10000);
           }
           this.scrollToBottom();
         } catch (e) {
@@ -462,6 +476,8 @@ export class AilyChatComponent {
 
   newChat() {
     this.list = [];
+    this.chatService.currentSessionId = '';
+    this.startSession();
   }
 
   addFile(){
