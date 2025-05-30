@@ -12,8 +12,6 @@ import { NpmService } from '../../services/npm.service';
 import { ConfigService } from '../../services/config.service';
 import { ProjectService } from '../../services/project.service';
 import { BlocklyService } from '../../blockly/blockly.service';
-import { TerminalService } from '../../tools/terminal/terminal.service';
-import { UiService } from '../../services/ui.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { CompatibleDialogComponent } from './components/compatible-dialog/compatible-dialog.component';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
@@ -51,8 +49,6 @@ export class LibManagerComponent {
     private configService: ConfigService,
     private projectService: ProjectService,
     private blocklyService: BlocklyService,
-    // private terminalService: TerminalService,
-    // private uiService: UiService,
     private message: NzMessageService,
     private cd: ChangeDetectorRef,
     private translate: TranslateService,
@@ -161,9 +157,6 @@ export class LibManagerComponent {
 
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
-    // await this.uiService.openTerminal();
-    // await this.terminalService.sendCmd(`cd "${this.projectService.currentProjectPath}"`);
-    // await this.terminalService.sendCmd(`npm install ${lib.name}@${lib.version}`)
     this.output = '';
     this.cmdService.run(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath).subscribe({
       next: (data: CmdOutput) => {
@@ -207,8 +200,6 @@ export class LibManagerComponent {
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLING')}...`);
     const libPackagePath = this.projectService.currentProjectPath + '\\node_modules\\' + lib.name;
     this.blocklyService.removeLibrary(libPackagePath);
-    // await this.uiService.openTerminal();
-    // await this.terminalService.sendCmd(`npm uninstall ${lib.name}`)
     this.output = '';
     this.cmdService.run(`npm uninstall ${lib.name}`, this.projectService.currentProjectPath).subscribe({
       next: (data: CmdOutput) => {

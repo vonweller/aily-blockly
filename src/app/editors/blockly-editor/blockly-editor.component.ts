@@ -6,13 +6,13 @@ import { ProjectService } from '../../services/project.service';
 import { UiService } from '../../services/ui.service';
 import { TranslateModule } from '@ngx-translate/core';
 import { ActivatedRoute } from '@angular/router';
-import { TerminalService } from '../../tools/terminal/terminal.service';
 import { BlocklyService } from '../../blockly/blockly.service';
 import { ElectronService } from '../../services/electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ConfigService } from '../../services/config.service';
 import { NpmService } from '../../services/npm.service';
 import { LibEditorComponent } from '../../pages/lib-editor/lib-editor.component';
+import { CmdService } from '../../services/cmd.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -39,12 +39,13 @@ export class BlocklyEditorComponent {
     private projectService: ProjectService,
     private uiService: UiService,
     private activatedRoute: ActivatedRoute,
-    private terminalService: TerminalService,
+    // private terminalService: TerminalService,
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private message: NzMessageService,
     private configService: ConfigService,
-    private npmService: NpmService
+    private npmService: NpmService,
+    private cmdService: CmdService
   ) { }
 
   ngOnInit(): void {
@@ -76,9 +77,7 @@ export class BlocklyEditorComponent {
     if (!nodeModulesExist) {
       // 终端进入项目目录，安装项目依赖
       this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
-      await this.uiService.openTerminal();
-      await this.terminalService.sendCmd(`cd "${projectPath}"`);
-      await this.terminalService.sendCmd(`npm install`);
+      await this.cmdService.runAsync(`npm install`, projectPath)
     }
     // 3. 加载开发板module中的board.json
     this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
@@ -116,18 +115,6 @@ export class BlocklyEditorComponent {
       .catch(err => {
         console.error('install board dependencies error', err);
       });
-
-    // await window['iWindow'].send({
-    //   to: "main",
-    //   timeout: 1000 * 60 * 5,
-    //   data: {
-    //     action: 'npm-exec',
-    //     detail: {
-    //       action: 'install-board-dependencies',
-    //       data: `${projectPath}/package.json`
-    //     }
-    //   }
-    // })
   }
 
   openProjectManager() {
