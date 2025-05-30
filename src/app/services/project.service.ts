@@ -121,11 +121,11 @@ export class ProjectService {
 
     this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
     await this.cmdService.runAsync(`npm install ${boardPackage} --prefix "${appDataPath}"`);
-    const templatePath = `${appDataPath}\\node_modules\\${newProjectData.board.name}\\template`.replace(/\//g, '\\');;
+    const templatePath = `${appDataPath}\\node_modules\\${newProjectData.board.name}\\template`;
     // 创建项目目录
     await this.cmdService.runAsync(`mkdir -p "${projectPath}"`);
     // 复制模板文件到项目目录
-    await this.cmdService.runAsync(`xcopy "${templatePath}\\*" "${projectPath}" /E /I /Y`);
+    await this.cmdService.runAsync(`cp -r "${templatePath}\\*" "${projectPath}"`);
     // 判断复制是否成功
     if (!await this.checkIsExisits(projectPath + '/project.abi')) {
       return;
