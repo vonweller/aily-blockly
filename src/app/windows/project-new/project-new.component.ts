@@ -10,8 +10,6 @@ import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
 import { generateDateString } from '../../func/func';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { TerminalService } from '../../tools/terminal/terminal.service';
-import { UiService } from '../../services/ui.service';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { TranslateModule } from '@ngx-translate/core';
@@ -65,8 +63,6 @@ export class ProjectNewComponent {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private configService: ConfigService,
-    private terminalService: TerminalService,
-    private uiService: UiService,
     private npmService: NpmService
   ) { }
 
@@ -86,12 +82,6 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.version = this.currentBoard.version;
     this.newProjectData.name = this.generateUniqueProjectName();
-
-    // 终端操作
-    // let { pid } = await this.uiService.openTerminal();
-    // console.log('终端pid：', pid);
-
-    // this.terminalService.currentPid = pid;
   }
 
   process(array) {
