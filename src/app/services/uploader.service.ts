@@ -10,6 +10,7 @@ import { NoticeService } from '../services/notice.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { SerialDialogComponent } from '../main-window/components/serial-dialog/serial-dialog.component';
 import { CmdOutput, CmdService } from './cmd.service';
+import { LogService } from './log.service';
 
 @Injectable({
   providedIn: 'root'
@@ -25,7 +26,8 @@ export class UploaderService {
     private builderService: BuilderService,
     private noticeService: NoticeService,
     private modal: NzModalService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private logService: LogService
   ) { }
 
   private uploadInProgress = false;
@@ -210,6 +212,8 @@ export class UploaderService {
                 lines.forEach((line: string) => {
                   const trimmedLine = line.trim();
                   if (trimmedLine) {
+                    this.logService.update({ "detail": line });
+
                     // 检查是否有错误信息
                     if (trimmedLine.toLowerCase().includes('error:') ||
                       trimmedLine.toLowerCase().includes('failed')) {
