@@ -268,7 +268,7 @@ export class BuilderService {
         let bufferData = '';
         let completeLines = '';
 
-        this.cmdService.run(compileCommand).subscribe({
+        this.cmdService.run(compileCommand, null, false).subscribe({
           next: (output: CmdOutput) => {
             console.log('编译命令输出:', output);
             this.streamId = output.streamId;
@@ -360,6 +360,7 @@ export class BuilderService {
             reject({ state: 'error', text: error.message });
           },
           complete: () => {
+            console.log('编译命令执行完成');
             if (this.buildCompleted) {
               console.log('编译命令执行完成');
               this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });

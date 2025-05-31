@@ -194,7 +194,7 @@ export class UploaderService {
         this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
 
         let bufferData = '';
-        this.cmdService.run(uploadCmd).subscribe({
+        this.cmdService.run(uploadCmd, null, false).subscribe({
           next: (output: CmdOutput) => {
             // console.log('编译命令输出:', output);
             this.streamId = output.streamId;
