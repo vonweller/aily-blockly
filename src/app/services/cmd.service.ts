@@ -97,7 +97,7 @@ export class CmdService {
 
     // 使用队列机制
     const subject = new Subject<CmdOutput>();
-    
+
     return new Observable<CmdOutput>((observer) => {
       const task: QueuedTask = {
         command,
@@ -150,13 +150,13 @@ export class CmdService {
     try {
       while (this.taskQueue.length > 0) {
         const task = this.taskQueue.shift()!;
-        
+
         try {
           console.log(`Processing queued command: ${task.command}`);
-          
+
           // 执行命令并等待完成
           const observable = this.executeCommand(task.command, task.cwd);
-          
+
           await new Promise<void>((resolve, reject) => {
             observable.subscribe({
               next: (output) => {
@@ -171,7 +171,7 @@ export class CmdService {
               }
             });
           });
-          
+
         } catch (error) {
           console.error(`Error processing queued command: ${task.command}`, error);
           task.reject(error);
@@ -188,8 +188,8 @@ export class CmdService {
    * @param cwd 工作目录
    * @returns Promise<{success: boolean, output: string, error?: string}>
    */
-  async runAsync(command: string, cwd?: string): Promise<CmdOutput> {
-    return lastValueFrom(this.run(command, cwd))
+  async runAsync(command: string, cwd?: string, useQueue: boolean = true): Promise<CmdOutput> {
+    return lastValueFrom(this.run(command, cwd, useQueue))
   }
 
   /**

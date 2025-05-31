@@ -17,7 +17,7 @@
     </div>
     <div class="right-box">
         <div class="test-box">
-            <app-block-test [blockDefinition]="selectedBlock"></app-block-test>
+            <app-block-test [blockDefinition]="currentBlockJson"></app-block-test>
         </div>
         <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)"
             nzType="editable-card" [nzHideAdd]="true">
