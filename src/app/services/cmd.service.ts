@@ -186,6 +186,7 @@ export class CmdService {
    * 异步执行命令并等待完成
    * @param command 命令字符串
    * @param cwd 工作目录
+   * @param useQueue 是否使用队列（默认为true）
    * @returns Promise<{success: boolean, output: string, error?: string}>
    */
   async runAsync(command: string, cwd?: string, useQueue: boolean = true): Promise<CmdOutput> {
