@@ -12,6 +12,10 @@ export class LogService {
 
   constructor() { }
 
+  /**
+   * 使用提供的选项更新日志状态。
+   * @param opts - 要更新和发送的日志选项。
+   */
   update(opts: LogOptions) {
     opts['timestamp'] = Date.now();
     opts['showDetail'] = false;
@@ -27,12 +31,6 @@ export class LogService {
 
 export interface LogOptions {
   title?: string,
-  text?: string,
-  state?: string,
-  progress?: number,
-  setTimeout?: number,
-  stop?: Function,
   detail?: string,
-  showDetail?: boolean,
-  timestamp?: number,
+  state?: string,
 }
