@@ -33,4 +33,5 @@ export interface LogOptions {
   title?: string,
   detail?: string,
   state?: string,
+  timestamp?: number,
 }
