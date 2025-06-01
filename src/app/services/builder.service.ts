@@ -6,6 +6,7 @@ import { ActionState, UiService } from './ui.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NoticeService } from '../services/notice.service';
 import { CmdOutput, CmdService } from './cmd.service';
+import { LogService } from './log.service';
 
 @Injectable({
   providedIn: 'root'
@@ -18,12 +19,15 @@ export class BuilderService {
     private cmdService: CmdService,
     private message: NzMessageService,
     private noticeService: NoticeService,
+    private logService: LogService
   ) { }
 
   private buildInProgress = false;
   private streamId: string | null = null;
   private buildCompleted = false;
   private isErrored = false; // 标识是否为错误状态
+
+  debug = false;
 
 
   currentProjectPath = "";
@@ -79,12 +83,15 @@ export class BuilderService {
         this.cancelled = false; // 重置取消状态
 
         // 创建临时文件夹
-        // await this.uiService.openTerminal();
-        await this.cmdService.runAsync(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
-        await this.cmdService.runAsync(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
-        await this.cmdService.runAsync(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
-
-        console.log("临时文件夹已创建:", tempPath);
+        if (!window['path'].isExists(tempPath)) {
+          await this.cmdService.runAsync(`New-Item -Path "${tempPath}" -ItemType Directory -Force`);
+        }
+        if (!window['path'].isExists(sketchPath)) {
+          await this.cmdService.runAsync(`New-Item -Path "${sketchPath}" -ItemType Directory -Force`);
+        }
+        if (!window['path'].isExists(librariesPath)) {
+          await this.cmdService.runAsync(`New-Item -Path "${librariesPath}" -ItemType Directory -Force`);
+        }
 
         // 生成sketch文件
         const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
@@ -160,7 +167,11 @@ export class BuilderService {
               let targetPath = `${librariesPath}/${targetName}`;
 
               if (window['path'].isExists(targetPath)) {
-                await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                if (this.debug) {
+                  await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                } else {
+                  continue
+                }
               }
               // 直接复制src到targetPath
               await this.cmdService.runAsync(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
@@ -182,7 +193,12 @@ export class BuilderService {
 
                     // Delete target directory if it exists
                     if (window['path'].isExists(targetPath)) {
-                      await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                      if (this.debug) {
+                        await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
+                      } else {
+                        // 如果不是debug模式，则跳过删除
+                        continue;
+                      }
                     }
 
                     // Copy directory
@@ -250,10 +266,11 @@ export class BuilderService {
         let lastProgress = 0;
         let lastBuildText = '';
         let bufferData = '';
+        let completeLines = '';
 
-        this.cmdService.run(compileCommand).subscribe({
+        this.cmdService.run(compileCommand, null, false).subscribe({
           next: (output: CmdOutput) => {
-            // console.log('编译命令输出:', output);
+            console.log('编译命令输出:', output);
             this.streamId = output.streamId;
 
             if (output.data) {
@@ -264,13 +281,19 @@ export class BuilderService {
                 // 最后一个可能不完整的行保留为新的bufferData
                 bufferData = lines.pop() || '';
                 // 处理完整的行
-                // const completeLines = lines.join('\n');
+                // completeLines = lines.join('\n');
+                // this.logService.update({"detail": completeLines});
 
                 lines.forEach((line: string) => {
                   // 处理每一行输出
                   const trimmedLine = line.trim();
 
                   if (!trimmedLine) return; // 如果行为空，则跳过处理
+
+                  this.logService.update({ "detail": line });
+
+                  // const cleanLine = line.replace(/\[\d+(;\d+)*m/g, '');
+                  // this.logService.update({ "detail": line });
 
                   // 检查是否有错误信息
                   if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
@@ -337,6 +360,7 @@ export class BuilderService {
             reject({ state: 'error', text: error.message });
           },
           complete: () => {
+            console.log('编译命令执行完成');
             if (this.buildCompleted) {
               console.log('编译命令执行完成');
               this.noticeService.update({ title: completeTitle, text: "编译完成", state: 'done', setTimeout: 55000 });
