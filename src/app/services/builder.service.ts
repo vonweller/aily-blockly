@@ -290,20 +290,22 @@ export class BuilderService {
 
                   if (!trimmedLine) return; // 如果行为空，则跳过处理
 
-                  this.logService.update({ "detail": line });
-
                   // const cleanLine = line.replace(/\[\d+(;\d+)*m/g, '');
                   // this.logService.update({ "detail": line });
 
                   // 检查是否有错误信息
                   if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
                     console.error("检测到编译错误:", trimmedLine);
+                    this.logService.update({ "detail": line, "state": "error" });
+
                     // 提取更有用的错误信息，避免过长
                     const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
                     const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
                     this.handleCompileError(errorText);
                     return;
                   }
+
+                  this.logService.update({ "detail": line });
                   // 提取构建文本
                   if (trimmedLine.startsWith('BuildText:')) {
                     const lineContent = trimmedLine.replace('BuildText:', '').trim();
