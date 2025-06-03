@@ -91,7 +91,16 @@ export class BlocklyEditorComponent {
     this.projectService.currentBoardConfig = boardJson;
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
-    // console.log('libraryModuleList: ', libraryModuleList);
+    // 遍历libraryModuleList，让包含@aily-project/lib-core-的模块在最前面
+    libraryModuleList.sort((a, b) => {
+      if (a.startsWith('@aily-project/lib-core-') && !b.startsWith('@aily-project/lib-core-')) {
+        return -1;
+      } else if (!a.startsWith('@aily-project/lib-core-') && b.startsWith('@aily-project/lib-core-')) {
+        return 1;
+      } else {
+        return 0;
+      }
+    });
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
       this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
