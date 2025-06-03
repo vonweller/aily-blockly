@@ -300,11 +300,12 @@ export class BuilderService {
                     const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
                     const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
                     this.handleCompileError(errorText);
-                    return;
+                    // return;
                   }
 
                   if (this.isErrored) {
                     this.logService.update({ "detail": line, "state": "error" });
+                    return;
                   } else {
                     this.logService.update({ "detail": line });
                   }
