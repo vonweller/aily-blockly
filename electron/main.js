@@ -29,15 +29,31 @@ let userConf;
 function loadEnv() {
   // 将child目录添加到环境变量PATH中
   const childPath = path.join(__dirname, "..", "child")
-  process.env.PATH = childPath + path.delimiter + process.env.PATH;
-
-  // node环境加载
-  // checkNodePath(childPath)
-
   const nodePath = path.join(childPath, "node")
-  // 将node环境的路径配置在系统PATH环境的最前面，以实现优先调用内置的node环境
-  process.env.PATH = nodePath + path.delimiter + process.env.PATH;
-
+  
+  // 只保留PowerShell路径，移除其他系统PATH
+  let customPath = nodePath + path.delimiter + childPath;
+  
+  if (isWin32) {
+    // 添加必要的系统路径
+    const systemPaths = [
+      'C:\\Windows\\System32',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+      'C:\\Program Files\\PowerShell\\7', // PowerShell 7 (如果存在)
+      'C:\\Windows'
+    ];
+    
+    // 检查路径是否存在，只添加存在的路径
+    systemPaths.forEach(sysPath => {
+      if (fs.existsSync(sysPath)) {
+        customPath += path.delimiter + sysPath;
+      }
+    });
+  }
+  
+  // 完全替换PATH
+  process.env.PATH = customPath;
+  
   // 读取同级目录下的config.json文件
   const configPath = path.join(__dirname, "config.json");
   const conf = JSON.parse(fs.readFileSync(configPath));
