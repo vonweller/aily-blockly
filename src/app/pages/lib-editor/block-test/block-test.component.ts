@@ -23,6 +23,7 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
   private workspace: Blockly.WorkspaceSvg | null = null;
   private block: Blockly.Block | null = null;
   private errorMessage: string = '';
+  private previousBlockType: string | null = null; // 记录上一次的 block 类型
 
   // 工具箱配置
   private toolboxConfig = {
@@ -56,21 +57,26 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
       this.createBlock();
     }
   }
-
   ngOnDestroy(): void {
+    // 清理 block 定义
+    if (this.previousBlockType && Blockly.Blocks[this.previousBlockType]) {
+      delete Blockly.Blocks[this.previousBlockType];
+      if (Blockly.JavaScript && Blockly.JavaScript[this.previousBlockType]) {
+        delete Blockly.JavaScript[this.previousBlockType];
+      }
+    }
+    
     if (this.workspace) {
       this.workspace.dispose();
     }
   }
-
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['blockDefinition'] && !changes['blockDefinition'].firstChange) {
+    if (changes['blockDefinition']) {
       if (this.workspace) {
-        this.workspace.clear();
-        this.createBlock();
+        this.redefineAndCreateBlock();
       }
     }
-    
+
     if (changes['showToolbox'] && !changes['showToolbox'].firstChange) {
       // 重新创建工作区以应用工具箱变化
       this.recreateWorkspace();
@@ -136,19 +142,61 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
     if (this.workspace) {
       // 保存当前工作区状态
       const workspaceXml = Blockly.Xml.workspaceToDom(this.workspace);
-      
+
       // 销毁旧工作区
       this.workspace.dispose();
-      
+
       // 创建新工作区
       this.createWorkspace();
-      
+
       // 恢复工作区状态
       if (this.workspace) {
         Blockly.Xml.domToWorkspace(workspaceXml, this.workspace);
       }
     } else {
       this.createWorkspace();
+    }
+  }
+  private redefineAndCreateBlock(): void {
+    if (!this.workspace || !this.blockDefinition) {
+      this.setError('工作区或 block 定义无效');
+      return;
+    }
+
+    try {
+      this.clearError();
+      
+      // 清空工作区
+      this.workspace.clear();
+      
+      // 如果有之前的 block 类型，清除它的定义
+      if (this.previousBlockType && Blockly.Blocks[this.previousBlockType]) {
+        delete Blockly.Blocks[this.previousBlockType];
+        // 如果有对应的代码生成器，也删除
+        if (Blockly.JavaScript && Blockly.JavaScript[this.previousBlockType]) {
+          delete Blockly.JavaScript[this.previousBlockType];
+        }
+      }
+      
+      // 如果当前 blockDefinition 有 type，也清除它的定义（防止缓存）
+      if (this.blockDefinition.type && Blockly.Blocks[this.blockDefinition.type]) {
+        delete Blockly.Blocks[this.blockDefinition.type];
+        // 如果有对应的代码生成器，也删除
+        if (Blockly.JavaScript && Blockly.JavaScript[this.blockDefinition.type]) {
+          delete Blockly.JavaScript[this.blockDefinition.type];
+        }
+      }
+      
+      // 重新创建 block
+      this.createBlock();
+      
+      // 更新 previousBlockType
+      this.previousBlockType = this.blockDefinition.type;
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : '重新定义 block 时出现未知错误';
+      this.setError(errorMsg);
+      console.error('重新定义 block 时出错:', error);
     }
   }
 
@@ -160,7 +208,6 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
   get error(): string {
     return this.errorMessage;
   }
-
   private createBlock(): void {
     if (!this.workspace || !this.blockDefinition) {
       this.setError('工作区或 block 定义无效');
@@ -173,20 +220,18 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
       if (!this.blockDefinition.type) {
         throw new Error('Block 定义缺少 type 属性');
       }
-      
-      // 定义 block
-      if (!Blockly.Blocks[this.blockDefinition.type]) {
-        Blockly.defineBlocksWithJsonArray([this.blockDefinition]);
-      }
-      
+
+      // 总是重新定义 block，确保最新的定义被使用
+      Blockly.defineBlocksWithJsonArray([this.blockDefinition]);
+
       // 创建 block 实例
       this.block = this.workspace.newBlock(this.blockDefinition.type);
       (this.block as any).initSvg();
       (this.block as any).render();
-      
+
       // 将 block 移动到工作区中心
       this.centerBlock();
-      
+
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '创建 block 时出现未知错误';
       this.setError(errorMsg);
@@ -199,11 +244,11 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
 
     // 获取工作区的可见区域
     const metrics = this.workspace.getMetrics();
-    
+
     // 计算中心位置
     const centerX = metrics.viewWidth / 2 - metrics.viewLeft;
     const centerY = metrics.viewHeight / 2 - metrics.viewTop;
-    
+
     // 移动 block 到中心
     this.block.moveBy(centerX - 50, centerY - 50); // 减去一些偏移量使其更居中
   }
@@ -216,12 +261,10 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
   private clearError(): void {
     this.errorMessage = '';
   }
-
   // 公共方法：刷新显示
   public refresh(): void {
     if (this.workspace && this.blockDefinition) {
-      this.workspace.clear();
-      this.createBlock();
+      this.redefineAndCreateBlock();
     }
   }
 
@@ -245,7 +288,7 @@ export class BlockTestComponent implements AfterViewInit, OnDestroy {
   // // 公共方法：从 XML 加载工作区
   // public loadWorkspaceFromXml(xmlText: string): void {
   //   if (!this.workspace) return;
-    
+
   //   try {
   //     this.workspace.clear();
   //     const xml = Blockly.Xml.textToDom(xmlText);

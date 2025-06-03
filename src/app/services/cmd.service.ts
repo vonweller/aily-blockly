@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
-import { Observable, Subject } from 'rxjs';
+import { lastValueFrom, Observable, Subject } from 'rxjs';
+import { LogService } from './log.service';
 
 declare const electronAPI: any;
 
@@ -17,7 +18,15 @@ export interface CmdOptions {
   args?: string[];
   cwd?: string;
   env?: { [key: string]: string };
-  streamId?
+  streamId?: string;
+}
+
+interface QueuedTask {
+  command: string;
+  cwd?: string;
+  resolve: (value: CmdOutput) => void;
+  reject: (reason?: any) => void;
+  subject: Subject<CmdOutput>;
 }
 
 @Injectable({
@@ -25,8 +34,12 @@ export interface CmdOptions {
 })
 export class CmdService {
   private subjects = new Map<string, Subject<CmdOutput>>();
+  private taskQueue: QueuedTask[] = [];
+  private isProcessingQueue = false;
 
-  constructor() { }
+  constructor(
+    private logService: LogService
+  ) { }
 
   /**
    * 执行命令并返回Observable
@@ -36,19 +49,13 @@ export class CmdService {
   spawn(command: string, args?: string[], options?: Partial<CmdOptions>): Observable<CmdOutput> {
     const streamId = `cmd_${Date.now()}_${Math.random()}`;
     const subject = new Subject<CmdOutput>();
-
     this.subjects.set(streamId, subject);
-
-    console.log(command, args, options);
-
-
     const cmdOptions: CmdOptions = {
       command,
       args: args || [],
       ...options,
       streamId
     };
-
     // 注册数据监听器
     const removeListener = window['cmd'].onData(streamId, (data: CmdOutput) => {
       subject.next(data);
@@ -76,17 +83,114 @@ export class CmdService {
 
     return subject.asObservable();
   }
+  /**
+   * 快速执行命令（支持队列顺序执行）
+   * @param command 命令字符串
+   * @param cwd 工作目录
+   * @param useQueue 是否使用队列（默认为true）
+   */
+  run(command: string, cwd?: string, useQueue: boolean = true): Observable<CmdOutput> {
+    if (!useQueue) {
+      // 直接执行，不使用队列
+      return this.executeCommand(command, cwd);
+    }
+
+    // 使用队列机制
+    const subject = new Subject<CmdOutput>();
+
+    return new Observable<CmdOutput>((observer) => {
+      const task: QueuedTask = {
+        command,
+        cwd,
+        resolve: (value: CmdOutput) => {
+          observer.next(value);
+          if (value.type === 'close' || value.type === 'error') {
+            observer.complete();
+          }
+        },
+        reject: (reason: any) => {
+          observer.error(reason);
+        },
+        subject
+      };
+
+      this.taskQueue.push(task);
+      this.processQueue();
+    });
+  }
 
   /**
-   * 快速执行命令
-   * @param npmCommand 命令字符串
+   * 直接执行命令（不使用队列）
+   * @param command 命令字符串
    * @param cwd 工作目录
    */
-  run(command: string, cwd?: string): Observable<CmdOutput> {
+  private executeCommand(command: string, cwd?: string): Observable<CmdOutput> {
+    console.log(`run command: ${command}`);
+    this.logService.update({
+      title: '执行命令',
+      detail: command,
+      state: 'info'
+    });
     const parts = parseCommand(command);
     const cmd = parts[0];
     const args = parts.slice(1);
     return this.spawn(cmd, args, { cwd });
+  }
+
+  /**
+   * 处理队列中的任务
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue || this.taskQueue.length === 0) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+
+    try {
+      while (this.taskQueue.length > 0) {
+        const task = this.taskQueue.shift()!;
+
+        try {
+          console.log(`Processing queued command: ${task.command}`);
+
+          // 执行命令并等待完成
+          const observable = this.executeCommand(task.command, task.cwd);
+
+          await new Promise<void>((resolve, reject) => {
+            observable.subscribe({
+              next: (output) => {
+                task.resolve(output);
+              },
+              error: (error) => {
+                task.reject(error);
+                reject(error);
+              },
+              complete: () => {
+                resolve();
+              }
+            });
+          });
+
+        } catch (error) {
+          console.error(`Error processing queued command: ${task.command}`, error);
+          task.reject(error);
+        }
+      }
+    } finally {
+      this.isProcessingQueue = false;
+    }
+  }
+
+  /**
+   * 异步执行命令并等待完成
+   * @param command 命令字符串
+   * @param cwd 工作目录
+   * @param useQueue 是否使用队列（默认为true）
+   * @returns Promise<{success: boolean, output: string, error?: string}>
+   */
+  async runAsync(command: string, cwd?: string, useQueue: boolean = true): Promise<CmdOutput> {
+    return lastValueFrom(this.run(command, cwd, useQueue))
   }
 
   /**
@@ -104,6 +208,30 @@ export class CmdService {
       return result.success;
     }
     return false;
+  }
+
+  /**
+   * 清空队列
+   */
+  clearQueue(): void {
+    this.taskQueue.forEach(task => {
+      task.reject(new Error('Queue cleared'));
+    });
+    this.taskQueue = [];
+  }
+
+  /**
+   * 获取队列长度
+   */
+  getQueueLength(): number {
+    return this.taskQueue.length;
+  }
+
+  /**
+   * 检查是否正在处理队列
+   */
+  isProcessing(): boolean {
+    return this.isProcessingQueue;
   }
 
   /**

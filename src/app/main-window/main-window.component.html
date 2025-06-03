@@ -6,15 +6,6 @@
         <div class="middle-box">
           <ngx-simplebar [options]="options">
             <router-outlet></router-outlet>
-            <!-- @if (loaded) {
-            @if(mode === 'blockly') {
-            <app-blockly-editor></app-blockly-editor>
-            } @else {
-            <app-code-editor></app-code-editor>
-            }
-            }@else{
-            <app-guide></app-guide>
-            } -->
           </ngx-simplebar>
         </div>
         @if (showBbox) {

@@ -1,7 +1,6 @@
 // 这个函数用于通过electron端控制终端
 
 import { Injectable } from '@angular/core';
-import { UiService } from '../../services/ui.service';
 
 @Injectable({
   providedIn: 'root'

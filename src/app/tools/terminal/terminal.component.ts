@@ -7,12 +7,13 @@ import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { TerminalService } from './terminal.service';
-import { NoticeService } from '../../services/notice.service';
 import { CommonModule } from '@angular/common';
+import { LogService } from '../../services/log.service';
+import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 
 @Component({
   selector: 'app-terminal',
-  imports: [CommonModule, NzTabsModule],
+  imports: [CommonModule, NzTabsModule, SimplebarAngularModule],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
@@ -21,21 +22,29 @@ export class TerminalComponent {
   selectedTabIndex = 0;
 
   @ViewChild('terminal') terminalEl: ElementRef;
+  @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
 
   terminal;
   fitAddon;
   clipboardAddon;
 
-  get noticeList() {
-    return this.noticeService.noticeList;
+  get logList() {
+    return this.logService.list;
   }
+
+  options = {
+    autoHide: true,
+    clickOnTrack: true,
+    scrollbarMinSize: 50,
+  };
+
 
   constructor(
     private electronService: ElectronService,
     private uiService: UiService,
     private projectService: ProjectService,
     private terminalService: TerminalService,
-    private noticeService: NoticeService
+    private logService: LogService
   ) { }
 
   close() {
@@ -43,6 +52,10 @@ export class TerminalComponent {
   }
 
   trash() {
+    if (this.selectedTabIndex == 1) {
+      this.logService.clear();
+      return
+    }
     this.terminal.write('\x1bc');
     if (this.electronService.isElectron) {
       this.terminalService.send('clear\r');
@@ -89,6 +102,10 @@ export class TerminalComponent {
 
     window['terminal'].onData((data) => {
       this.terminal.write(data);
+    })
+
+    this.logService.stateSubject.subscribe((opts) => {
+      setTimeout(() => this.scrollToBottom(), 0);
     })
   }
 
@@ -179,5 +196,11 @@ export class TerminalComponent {
 
   view(item) {
 
+  }
+
+  private scrollToBottom(): void {
+    if (this.simplebar.SimpleBar) {
+      this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+    }
   }
 }
