@@ -10,10 +10,11 @@ import { TerminalService } from './terminal.service';
 import { CommonModule } from '@angular/common';
 import { LogService } from '../../services/log.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
+import { AnsiPipe } from './ansi.pipe';
 
 @Component({
   selector: 'app-terminal',
-  imports: [CommonModule, NzTabsModule, SimplebarAngularModule],
+  imports: [CommonModule, NzTabsModule, SimplebarAngularModule, AnsiPipe],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })

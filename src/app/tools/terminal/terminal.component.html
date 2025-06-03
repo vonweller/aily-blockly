@@ -23,7 +23,7 @@
         <div class="item" [ngClass]="{'error':item.state=='error','warn':item.state=='warn','info':item.state=='info'}">
           <div class="date">{{item.timestamp | date:'yyyy-MM-dd HH:mm:ss'}}</div>
           <div class="title">{{item.title}}</div>
-          <div class="text">{{item.detail}}</div>
+          <div class="text" [innerHTML]="item.detail | ansi"></div>
         </div>
         }
       </ngx-simplebar>
