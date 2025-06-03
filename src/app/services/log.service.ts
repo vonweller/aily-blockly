@@ -18,16 +18,15 @@ export class LogService {
    */
   update(opts: LogOptions) {
     opts['timestamp'] = Date.now();
-    opts['showDetail'] = false;
+    // opts['showDetail'] = false;
+    this.list.push(opts);
     this.stateSubject.next(opts);
-    this.list.push(opts)
   }
 
   clear() {
     this.list = [];
   }
 }
-
 
 export interface LogOptions {
   title?: string,

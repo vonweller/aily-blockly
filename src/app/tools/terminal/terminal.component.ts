@@ -10,10 +10,11 @@ import { TerminalService } from './terminal.service';
 import { CommonModule } from '@angular/common';
 import { LogService } from '../../services/log.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
+import { AnsiPipe } from './ansi.pipe';
 
 @Component({
   selector: 'app-terminal',
-  imports: [CommonModule, NzTabsModule, SimplebarAngularModule],
+  imports: [CommonModule, NzTabsModule, SimplebarAngularModule, AnsiPipe],
   templateUrl: './terminal.component.html',
   styleUrl: './terminal.component.scss',
 })
@@ -104,8 +105,13 @@ export class TerminalComponent {
       this.terminal.write(data);
     })
 
+    setTimeout(() => this.scrollToBottom(), 100);
     this.logService.stateSubject.subscribe((opts) => {
-      setTimeout(() => this.scrollToBottom(), 0);
+      console.log('logService stateSubject', opts);
+      
+      console.log(opts.timestamp);
+      
+      setTimeout(() => this.scrollToBottom(), 100);
     })
   }
 
