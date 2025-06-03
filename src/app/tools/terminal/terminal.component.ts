@@ -105,8 +105,13 @@ export class TerminalComponent {
       this.terminal.write(data);
     })
 
+    setTimeout(() => this.scrollToBottom(), 100);
     this.logService.stateSubject.subscribe((opts) => {
-      setTimeout(() => this.scrollToBottom(), 0);
+      console.log('logService stateSubject', opts);
+      
+      console.log(opts.timestamp);
+      
+      setTimeout(() => this.scrollToBottom(), 100);
     })
   }
 

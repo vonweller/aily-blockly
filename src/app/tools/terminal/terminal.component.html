@@ -19,7 +19,7 @@
     <div class="terminal-box" #terminal></div>
     <div class="log-box" [ngStyle]="{'z-index': selectedTabIndex==1 ? 100 : -1}">
       <ngx-simplebar [options]="options">
-        @for(item of logList;track item.timestamp) {
+        @for(item of logList;track $index) {
         <div class="item" [ngClass]="{'error':item.state=='error','warn':item.state=='warn','info':item.state=='info'}">
           <div class="date">{{item.timestamp | date:'yyyy-MM-dd HH:mm:ss'}}</div>
           <div class="title">{{item.title}}</div>
