@@ -99,6 +99,8 @@ export class UploaderService {
           return;
         }
 
+        this.isErrored = false;
+
         // 重置ESP32上传状态，防止进度累加
         this['esp32UploadState'] = {
           currentRegion: 0,
@@ -212,13 +214,19 @@ export class UploaderService {
                 lines.forEach((line: string) => {
                   const trimmedLine = line.trim();
                   if (trimmedLine) {
-                    this.logService.update({ "detail": line });
-
                     // 检查是否有错误信息
                     if (trimmedLine.toLowerCase().includes('error:') ||
-                      trimmedLine.toLowerCase().includes('failed')) {
+                      trimmedLine.toLowerCase().includes('failed') ||
+                      trimmedLine.toLowerCase().includes("can't open device")) {
                       this.handleUploadError(trimmedLine);
+                      // return;
+                    }
+
+                    if (this.isErrored) {
+                      this.logService.update({ "detail": line, "state": "error" });
                       return;
+                    } else {
+                      this.logService.update({ "detail": line });
                     }
 
                     // 使用通用提取方法获取进度

@@ -306,8 +306,6 @@ export class BuilderService {
                   if (this.isErrored) {
                     this.logService.update({ "detail": line, "state": "error" });
                     return;
-                  } else {
-                    this.logService.update({ "detail": line });
                   }
 
                   // 提取构建文本
@@ -320,6 +318,7 @@ export class BuilderService {
                   // 提取进度信息
                   const progressInfo = trimmedLine.trim();
                   let progressValue = 0;
+                  let isProgress = false;
 
                   // Match patterns like [========================================          ] 80%
                   const barProgressMatch = progressInfo.match(/\[.*?\]\s*(\d+)%/);
@@ -329,6 +328,8 @@ export class BuilderService {
                     } catch (error) {
                       progressValue = 0;
                       console.warn('进度解析错误:', error);
+                    } finally {
+                      isProgress = true;
                     }
                   }
 
@@ -350,6 +351,11 @@ export class BuilderService {
                   // 进度为100%时标记完成
                   if (lastProgress === 100) {
                     this.buildCompleted = true;
+                  }
+
+                  if (!isProgress) {
+                    // 如果不是进度信息，则直接更新日志
+                    this.logService.update({ "detail": trimmedLine, "state": "doing" });
                   }
                 });
               } else {

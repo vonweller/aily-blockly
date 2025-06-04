@@ -3,8 +3,7 @@
         <ngx-simplebar [options]="options">
             <div class="block-grid">
                 @for(block of blocks; track block.type) {
-                <div class="block-item" (click)="onBlockClick(block)"
-                    [ngClass]="{'active': block === selectedBlock}">
+                <div class="block-item" (click)="onBlockClick(block)" [ngClass]="{'active': block === selectedBlock}">
                     <app-block-item [blockDefinition]="block">
                     </app-block-item>
                 </div>
@@ -17,7 +16,12 @@
     </div>
     <div class="right-box">
         <div class="test-box">
-            <app-block-test [blockDefinition]="currentBlockJson"></app-block-test>
+            <div>
+                <app-block-test [blockDefinition]="currentBlockJson"></app-block-test>
+            </div>
+            <div>
+                <app-monaco-editor [code]="testcode"></app-monaco-editor>
+            </div>
         </div>
         <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)"
             nzType="editable-card" [nzHideAdd]="true">

@@ -70,6 +70,15 @@ export class LibContentComponent {
     }
   }
 
+  testcode;
+  ngAfterViewInit(): void {
+    this.blocklyService.codeSubject.subscribe((code) => {
+      setTimeout(() => {
+        this.testcode = code;
+      }, 100);
+    });
+  }
+
   loadFiles(files): OpenedFile[] {
 
     return files.map(file => {
