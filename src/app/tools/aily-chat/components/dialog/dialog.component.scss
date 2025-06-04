@@ -128,6 +128,22 @@
             margin: 2em 0;
         }
 
+        // Shiki 代码高亮样式
+        .shiki {
+            background-color: #0d1117 !important;
+            color: #e6edf3;
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-x: auto;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 13px;
+            line-height: 1.45;
+            
+            .line {
+                min-height: 1em;
+            }
+        }
+
         // 代码显示
         pre {
             display: grid;
