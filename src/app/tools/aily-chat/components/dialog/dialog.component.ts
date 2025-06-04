@@ -16,19 +16,20 @@ import { DomSanitizer } from '@angular/platform-browser';
 import { NzImageModule } from 'ng-zorro-antd/image';
 import { FormsModule } from '@angular/forms';
 import { MarkdownPipe } from '../../pipes/markdown.pipe';
+import { AilyDynamicComponentDirective } from '../../directives/aily-dynamic-component.directive';
 // import { AilyCodingComponent } from '../../../../components/aily-coding/aily-coding.component';
 
 @Component({
   selector: 'aily-dialog',
   templateUrl: './dialog.component.html',
   styleUrls: ['./dialog.component.scss'],
-  standalone: true,
-  imports: [
+  standalone: true,  imports: [
     CommonModule,
     FormsModule,
     NzAvatarModule,
     NzButtonModule,
     MarkdownPipe,
+    AilyDynamicComponentDirective,
     NzImageModule,
     // AilyCodingComponent,
   ],

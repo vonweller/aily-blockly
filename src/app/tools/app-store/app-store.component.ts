@@ -1,5 +1,5 @@
 import { Component } from '@angular/core';
-import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
+// import { InnerWindowComponent } from '../../components/inner-window/inner-window.component';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
@@ -9,7 +9,7 @@ import { Router } from '@angular/router';
 @Component({
   selector: 'app-app-store',
   imports: [
-    InnerWindowComponent,
+    // InnerWindowComponent,
     ToolContainerComponent,
     SubWindowComponent,
     CommonModule

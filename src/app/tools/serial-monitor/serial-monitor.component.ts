@@ -47,8 +47,6 @@ import { Buffer } from 'buffer';
     HistoryMessageListComponent,
     QuickSendListComponent,
     SettingMoreComponent,
-    GridsterComponent,
-    GridsterItemComponent,
     QuickSendEditorComponent,
     SearchBoxComponent
   ],
