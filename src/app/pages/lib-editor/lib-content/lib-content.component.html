@@ -25,7 +25,7 @@
         </div>
         <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedIndex" (nzSelectedIndexChange)="onTabChange($event)"
             nzType="editable-card" [nzHideAdd]="true">
-            @for (file of openedFiles; track file.path) {
+            @for (file of openedFiles; track $index) {
             <nz-tab [nzTitle]="titleTemplate">
                 <ng-template #titleTemplate>
                     <span class="tab-inner">
