@@ -209,4 +209,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on('update-status', (_, data) => callback(data));
     }
   },
+  mcp: {
+    connect: (command, args) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:connect', command, args)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    },
+    useTool: (toolName, args) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:use-tool', toolName, args)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    }
+  }
 });

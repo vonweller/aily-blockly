@@ -15,6 +15,7 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
+import { McpService } from '../../services/mcp.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -129,6 +130,7 @@ export class AilyChatComponent {
     private uiService: UiService,
     private router: Router,
     private chatService: ChatService,
+    private mcpService: McpService
   ) { }
 
   ngOnInit() {
@@ -143,8 +145,8 @@ export class AilyChatComponent {
 
   ngAfterViewInit(): void {
     this.scrollToBottom(true);
-
     this.startSession();
+    this.mcpService.init();
   }
 
   appendMessage(role, text) {
@@ -173,11 +175,11 @@ export class AilyChatComponent {
     });
   }
 
-  send(): void {
+  send(show: boolean = true): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
 
     const text = this.inputValue.trim();
-    this.appendMessage('user', text);
+    if (show) this.appendMessage('user', text);
     this.inputValue = '';
 
     this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
@@ -195,7 +197,7 @@ export class AilyChatComponent {
     if (!this.sessionId) return;
 
     this.chatService.streamConnect(this.sessionId).subscribe({
-      next: (data: any) => {
+      next: async (data: any) => {
         console.log("收到消息: ", data);
 
         try {
@@ -206,17 +208,29 @@ export class AilyChatComponent {
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
           } else if (data.type === 'tool_call_request') {
-            console.log("助手请求调用工具:", data.data);
+            // TODO 处理工具调用请求
+            // type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
+
             // 模拟暂停10秒
-            setTimeout(() => {
-              this.inputValue = JSON.stringify({
-                "type": "tool_result",
-                "tool_id": data.data.id,
-                "content": "工具调用成功",
-                "is_error": false
-              }, null, 2);
-              this.send()
-            }, 10000);
+            // setTimeout(() => {
+            //   this.inputValue = JSON.stringify({
+            //     "type": "tool_result",
+            //     "tool_id": data.tool_id,
+            //     "content": "工具调用成功",
+            //     "is_error": false
+            //   }, null, 2);
+            //   this.send(false)
+            // }, 10000);
+
+            const result = await this.mcpService.use_tool("fetch", { "url": "https://www.baidu.com", "raw": false });
+            console.log('工具调用结果:', result);
+            this.inputValue = JSON.stringify({
+              "type": "tool_result",
+              "tool_id": data.tool_id,
+              "content": result,
+              "is_error": false
+            }, null, 2);
+            this.send(false);
           }
           this.scrollToBottom();
         } catch (e) {
@@ -263,132 +277,12 @@ export class AilyChatComponent {
     // }
   }
 
-  // private handleMouseMove = (e: MouseEvent) => {
-  //   if (!this.isDragging) return;
-  //   const width = this.startWidth - (e.clientX - this.startX);
-  //   this.resizableDiv.nativeElement['style'].width = `${width}px`;
-  // }
-
-  // private handleMouseUp = () => {
-  //   this.isDragging = false;
-  //   this.dragHandle.nativeElement.removeEventListener('mousemove', this.handleMouseMove);
-  //   this.dragHandle.nativeElement.removeEventListener('mouseup', this.handleMouseUp);
-  // }
-
   getRandomString() {
     return (
       Math.random().toString(36).substring(2, 15) +
       Math.random().toString(36).substring(2, 15)
     );
   }
-
-  //   send() {
-  //     console.log(this.inputValue);
-  //     const msg = {
-  //       content: this.inputValue,
-  //       session_id: '',
-  //       role: 'user',
-  //     };
-  //     this.list.push(msg);
-
-  //     const uuid = this.getRandomString();
-
-  // TODO 内容暂时须返回 toolbox 格式的json字符串方可解析，待沟通交流 解析的blockly格式
-  //     const content = `
-  // ## 这是一个测试标题  
-  // testttttt
-  // \`\`\`blockly
-  // {
-  //   "kind": "flyoutToolbox",
-  //   "contents": [
-  //     {
-  //       "kind": "block",
-  //       "type": "controls_if"
-  //     },
-  //     {
-  //       "kind": "block",
-  //       "type": "controls_whileUntil"
-  //     }
-  //   ]
-  // }
-  // \`\`\`
-
-  // // # 好嘛
-
-  // // | 什么
-
-  // // \`\`\`blockly
-  // // {
-  // //   "kind": "flyoutToolbox",
-  // //   "contents": [
-  // //     {
-  // //       "kind": "block",
-  // //       "type": "controls_if"
-  // //     }
-  // //   ]
-  // // }
-  // // \`\`\`
-
-  // // ## 这个是二级标题
-  // // `;
-
-  //     const segments = this.splitContent(content);
-
-  //     const contentList: any = [];
-
-  //     const ruleView = /```blockly\s([\s\S]*?)\s```/;
-  //     segments.forEach((match, index) => {
-  //       const exec: any = ruleView.exec(match);
-  //       if (exec) {
-  //         try {
-  //           const data = JSON.parse(exec[1]);
-  //           exec.push(data);
-  //         } catch (err) { }
-  //         contentList.push(exec);
-  //       } else {
-  //         contentList.push(match);
-  //       }
-  //     });
-
-  //     this.list.push({
-  //       uuid,
-  //       content,
-  //       contentList,
-  //       role: 'system',
-  //     });
-
-  //     this.scrollToBottom();
-
-  //     return;
-
-  //     // TODO 临时走本地代理，需要后端处理跨域问题后更改为完整域名 @stao
-  //     fetchEventSource('/api/v1/chat', {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json',
-  //       },
-  //       body: JSON.stringify(msg),
-  //       onmessage: (event) => {
-  //         const obj = this.list.find((v: any) => v.uuid === uuid);
-  //         if (obj.isDone) return;
-  //         obj.content += event.data;
-  //         // TODO 生成内容块类型异常 @stao，需要处理后继续完善 @downey
-  //         if (event.data.includes('[DONE]')) {
-  //           obj.role = 'system';
-  //           obj.isDone = true;
-  //           console.log(obj.content);
-  //         }
-
-  //         this.scrollToBottom();
-  //       },
-  //       onerror(event) {
-  //         console.log('服务异常', event);
-  //       },
-  //       onclose() {
-  //         console.log('服务关闭');
-  //       },
-  //     }).then();
-  //   }
 
   splitContent(content: any) {
     // 正则表达式，匹配```blockly到下一个```之间的内容
