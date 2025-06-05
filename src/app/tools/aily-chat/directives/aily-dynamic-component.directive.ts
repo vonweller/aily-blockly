@@ -13,6 +13,8 @@ import { AilyBlocklyViewerComponent } from '../components/aily-blockly-viewer/ai
 import { AilyBoardViewerComponent } from '../components/aily-board-viewer/aily-board-viewer.component';
 import { AilyLibraryViewerComponent } from '../components/aily-library-viewer/aily-library-viewer.component';
 import { AilyStateViewerComponent } from '../components/aily-state-viewer/aily-state-viewer.component';
+import { AilyButtonViewerComponent } from '../components/aily-button-viewer/aily-button-viewer.component';
+import { safeBase64Decode } from '../pipes/markdown.pipe';
 
 /**
  * 动态组件指令 - 用于在 DOM 中查找 Aily 组件占位符并替换为真正的 Angular 组件
@@ -91,7 +93,6 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
       }
     });
   }
-
   /**
    * 替换占位符为真正的组件
    */
@@ -100,14 +101,16 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
     const encodedData = placeholder.getAttribute('data-aily-data');
     const componentId = placeholder.getAttribute('data-component-id');
 
-    if (!ailyType || !encodedData) {
-      throw new Error('Missing required attributes');
+    if (!ailyType) {
+      throw new Error('Missing aily-type attribute');
     }
 
-    // 解码数据
+    if (!encodedData) {
+      throw new Error('Missing aily-data attribute');
+    }    // 解码数据
     let componentData;
     try {
-      const decodedData = atob(encodedData);
+      const decodedData = safeBase64Decode(encodedData);
       componentData = JSON.parse(decodedData);
     } catch (error) {
       throw new Error(`Failed to decode component data: ${error.message}`);
@@ -147,8 +150,7 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
     this.componentRefs.push(componentRef);
 
     console.log(`Successfully created ${ailyType} component:`, componentData);
-  }
-  /**
+  }  /**
    * 获取组件类型
    */
   private getComponentType(ailyType: string): Type<any> | null {
@@ -161,6 +163,8 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
         return AilyLibraryViewerComponent;
       case 'aily-state':
         return AilyStateViewerComponent;
+      case 'aily-button':
+        return AilyButtonViewerComponent;
       default:
         return null;
     }

@@ -1,0 +1,10 @@
+<div class="aily-button-viewer">
+    <nz-button-group [nzSize]="'small'">
+        @for (button of buttons; track button.action || $index) {
+        <button nz-button [nzType]="button.type" [nzSize]="'small'"
+            class="aily-button" (click)="onButtonClick(button)">
+            {{ button.text }}
+        </button>
+        }
+    </nz-button-group>
+</div>

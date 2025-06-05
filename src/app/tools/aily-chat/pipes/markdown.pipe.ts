@@ -83,16 +83,13 @@ export class MarkdownPipe implements PipeTransform {
     };
 
     this.marked.use({ renderer });
-  }
-  /**
+  }  /**
    * 检查是否为特殊的 Aily 代码块类型
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button'];
     return ailyTypes.includes(lang);
-  }
-
-  /**
+  }/**
    * 渲染 Aily 特殊代码块为组件占位符
    */
   private renderAilyCodeBlockWithComponent(code: string, type: string): string {
@@ -101,16 +98,14 @@ export class MarkdownPipe implements PipeTransform {
       const parsedContent = this.parseAilyContent(code, type);
 
       // 生成唯一的组件 ID
-      const componentId = `aily-component-${++MarkdownPipe.componentCounter}`;
-
-      // 将数据编码为 Base64 以避免 HTML 转义问题
-      // const encodedData = btoa(JSON.stringify(parsedContent));
+      const componentId = `aily-component-${++MarkdownPipe.componentCounter}`;      // 使用安全的 Base64 编码以避免 UTF-8 字符问题
+      const encodedData = safeBase64Encode(JSON.stringify(parsedContent));
 
       // 返回包含组件占位符的 HTML
       // 这个占位符将在后续的指令处理中被替换为真正的 Angular 组件
       return `<div class="aily-code-block-placeholder" 
                    data-aily-type="${type}" 
-                   data-aily-data="${'encodedData'}" 
+                   data-aily-data="${encodedData}" 
                    data-component-id="${componentId}"
                    style="
                      border: 1px solid #d9d9d9;
@@ -168,14 +163,16 @@ export class MarkdownPipe implements PipeTransform {
       </div>
     </div>`;
   }
-
   /**
    * 解析 Aily 代码内容
    */
   private parseAilyContent(code: string, type: string): any {
     try {
+      // 清理代码内容 - 移除多余的空白字符和换行
+      const cleanedCode = code.trim();
+      
       // 尝试解析为 JSON
-      const jsonData = JSON.parse(code);
+      const jsonData = JSON.parse(cleanedCode);
 
       // 根据类型验证和规范化数据
       switch (type) {
@@ -184,11 +181,14 @@ export class MarkdownPipe implements PipeTransform {
             type: 'aily-blockly',
             blocks: jsonData.blocks || jsonData,
             workspace: jsonData.workspace || {},
-            metadata: jsonData.metadata || {}
-          };        case 'aily-board':
+            metadata: jsonData.metadata || {},
+            config: jsonData.config || {}
+          };
+
+        case 'aily-board':
           return {
             type: 'aily-board',
-            board: jsonData.board || jsonData,
+            board: this.validateBoardData(jsonData.board || jsonData),
             config: jsonData.config || {},
             metadata: jsonData.metadata || {}
           };
@@ -196,32 +196,94 @@ export class MarkdownPipe implements PipeTransform {
         case 'aily-library':
           return {
             type: 'aily-library',
-            library: jsonData.library || jsonData,
+            library: this.validateLibraryData(jsonData.library || jsonData),
             dependencies: jsonData.dependencies || [],
+            metadata: jsonData.metadata || {}
+          };        case 'aily-state':
+          return {
+            type: 'aily-state',
+            state: jsonData.state || jsonData.status || 'info',
+            id: jsonData.id || `state-${Date.now()}`,
+            text: jsonData.text || jsonData.message || jsonData.content || '',
+            progress: jsonData.progress,
             metadata: jsonData.metadata || {}
           };
 
-        case 'aily-state':
+        case 'aily-button':
           return {
-            type: 'aily-state',
-            state: jsonData.state || jsonData,
-            id: jsonData.id || `state-${Date.now()}`,
-            text: jsonData.text || jsonData.message || '',
+            type: 'aily-button',
+            buttons: Array.isArray(jsonData) ? jsonData : (jsonData.buttons || [jsonData]),
+            config: jsonData.config || {},
             metadata: jsonData.metadata || {}
           };
 
         default:
-          throw new Error(`Unknown type: ${type}`);
+          console.warn(`Unknown aily type: ${type}, using raw data`);
+          return {
+            type: type,
+            raw: cleanedCode,
+            content: jsonData,
+            metadata: { isUnknownType: true }
+          };
       }
-    } catch {
+    } catch (parseError) {
+      console.warn(`Failed to parse JSON for ${type}:`, parseError);
       // 如果不是 JSON，返回原始字符串格式的数据
       return {
         type: type,
         raw: code,
         content: code.trim(),
-        metadata: { isRawText: true }
-      } as any;
+        metadata: { 
+          isRawText: true,
+          parseError: parseError.message 
+        }
+      };
     }
+  }
+
+  /**
+   * 验证开发板数据
+   */
+  private validateBoardData(boardData: any): any {
+    if (!boardData || typeof boardData !== 'object') {
+      throw new Error('Invalid board data: must be an object');
+    }
+
+    return {
+      name: boardData.name || 'Unknown Board',
+      nickname: boardData.nickname || boardData.name || 'Unknown Board',
+      version: boardData.version || '1.0.0',
+      description: boardData.description || '',
+      author: boardData.author || '',
+      brand: boardData.brand || '',
+      url: boardData.url || '',
+      compatibility: boardData.compatibility || '',
+      img: boardData.img || '',
+      disabled: Boolean(boardData.disabled),
+      ...boardData
+    };
+  }
+
+  /**
+   * 验证库数据
+   */
+  private validateLibraryData(libraryData: any): any {
+    if (!libraryData || typeof libraryData !== 'object') {
+      throw new Error('Invalid library data: must be an object');
+    }
+
+    return {
+      name: libraryData.name || 'Unknown Library',
+      nickname: libraryData.nickname || libraryData.name || 'Unknown Library',
+      version: libraryData.version || '1.0.0',
+      description: libraryData.description || '',
+      author: libraryData.author || '',
+      compatibility: libraryData.compatibility || {},
+      keywords: Array.isArray(libraryData.keywords) ? libraryData.keywords : [],
+      tested: Boolean(libraryData.tested),
+      icon: libraryData.icon || 'fa-light fa-cube',
+      ...libraryData
+    };
   }
 
   transform(value: any, ...args: any[]): Observable<SafeHtml> {
@@ -243,5 +305,57 @@ export class MarkdownPipe implements PipeTransform {
         return of(this.sanitizer.bypassSecurityTrustHtml(markdownText));
       })
     );
+  }
+}
+
+/**
+ * 安全的 Base64 编码工具函数，支持 UTF-8 字符
+ */
+export function safeBase64Encode(str: string): string {
+  try {
+    // 使用 TextEncoder 将字符串转换为 UTF-8 字节数组
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(str);
+    
+    // 将字节数组转换为二进制字符串
+    let binaryString = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binaryString += String.fromCharCode(bytes[i]);
+    }
+    
+    // 使用 btoa 对二进制字符串进行 Base64 编码
+    return btoa(binaryString);
+  } catch (error) {
+    console.warn('Base64 encoding failed, using fallback:', error);
+    // 降级方案：使用 encodeURIComponent
+    return encodeURIComponent(str);
+  }
+}
+
+/**
+ * 安全的 Base64 解码工具函数，支持 UTF-8 字符
+ */
+export function safeBase64Decode(encodedStr: string): string {
+  try {
+    // 尝试 Base64 解码
+    const binaryString = atob(encodedStr);
+    
+    // 将二进制字符串转换为字节数组
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // 使用 TextDecoder 将字节数组转换为 UTF-8 字符串
+    const decoder = new TextDecoder();
+    return decoder.decode(bytes);
+  } catch (error) {
+    console.warn('Base64 decoding failed, using fallback:', error);
+    // 降级方案：尝试 decodeURIComponent
+    try {
+      return decodeURIComponent(encodedStr);
+    } catch {
+      return encodedStr; // 如果都失败，返回原始字符串
+    }
   }
 }

@@ -1,162 +1,378 @@
-import { Component, Input, OnInit, ViewChild, ElementRef, OnDestroy } from '@angular/core';
+import { Component, Input, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { AilyBlocklyComponent } from '../../../../components/aily-blockly/aily-blockly.component';
-import { NzButtonModule } from 'ng-zorro-antd/button';
-import { NzIconModule } from 'ng-zorro-antd/icon';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 
-export interface AilyBlocklyData {
-  type: 'aily-blockly';
-  blocks?: any;
-  workspace?: any;
-  metadata?: any;
-  raw?: string;
-  content?: string;
-}
-
+/**
+ * Aily Blockly 查看器组件
+ * 用于显示 Blockly 积木代码和相关信息
+ */
 @Component({
   selector: 'app-aily-blockly-viewer',
   standalone: true,
-  imports: [
-    CommonModule,
-    AilyBlocklyComponent,
-    NzButtonModule,
-    NzIconModule,
-    NzToolTipModule
-  ],
+  imports: [CommonModule],
   templateUrl: './aily-blockly-viewer.component.html',
   styleUrls: ['./aily-blockly-viewer.component.scss']
 })
-export class AilyBlocklyViewerComponent implements OnInit, OnDestroy {
-  @Input() data: AilyBlocklyData | null = null;
-  @ViewChild('blocklyComponent') blocklyComponent?: AilyBlocklyComponent;
+export class AilyBlocklyViewerComponent implements OnInit, OnChanges {
+  @Input() data: any;
 
-  showRaw = false;
-  errorMessage = '';
   blocklyData: any = null;
-  canImport = false; // 可以根据实际情况判断是否支持导入
+  showRawData = false;
+  errorMessage = '';
+  rawDataString = '';
 
   ngOnInit() {
     this.processData();
-    // 检查是否在主编辑器环境中，如果是则显示导入按钮
-    this.canImport = this.checkCanImport();
   }
 
-  ngOnDestroy() {
-    // 清理资源
-  }
-
-  /**
-   * 设置组件数据（由指令调用）
-   */
-  setData(data: AilyBlocklyData): void {
-    this.data = data;
-    this.processData();
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['data']) {
+      this.processData();
+    }
   }
 
   /**
-   * 处理数据
+   * 处理输入数据
    */
-  private processData(): void {
+  processData() {
+    this.errorMessage = '';
+    this.blocklyData = null;
+    this.rawDataString = '';
+
     if (!this.data) {
-      this.errorMessage = '没有可显示的数据';
+      this.errorMessage = '没有提供数据';
       return;
     }
 
     try {
-      if (this.data.metadata?.isRawText) {
-        // 如果是原始文本，尝试解析
-        this.parseRawContent();
+      // 如果data已经是对象，直接使用
+      if (typeof this.data === 'object') {
+        this.blocklyData = this.data;
+      } else if (typeof this.data === 'string') {
+        // 尝试解析JSON字符串
+        this.blocklyData = JSON.parse(this.data);
+      }
+
+      // 存储原始数据字符串用于显示
+      this.rawDataString = typeof this.data === 'string' ? 
+        this.data : 
+        JSON.stringify(this.data, null, 2);
+
+      // 验证数据结构
+      if (!this.isValidBlocklyData(this.blocklyData)) {
+        this.errorMessage = '数据格式不正确，缺少必要的 Blockly 字段';
+      }
+    } catch (error) {
+      this.errorMessage = '数据解析失败: ' + (error as Error).message;
+      this.rawDataString = String(this.data);
+    }
+  }
+
+  /**
+   * 验证是否为有效的 Blockly 数据
+   */
+  isValidBlocklyData(data: any): boolean {
+    if (!data || typeof data !== 'object') {
+      return false;
+    }
+
+    // 检查必要字段
+    return data.hasOwnProperty('blocks') || 
+           data.hasOwnProperty('xml') || 
+           data.hasOwnProperty('workspace') ||
+           data.hasOwnProperty('code') ||
+           data.hasOwnProperty('title');
+  }
+
+  /**
+   * 切换原始数据显示
+   */
+  toggleRawData() {
+    this.showRawData = !this.showRawData;
+  }
+
+  /**
+   * 导入 Blockly 代码
+   */
+  importBlockly() {
+    if (!this.blocklyData) {
+      alert('没有可导入的数据');
+      return;
+    }
+
+    try {
+      // 这里应该调用实际的 Blockly 导入服务
+      // 暂时使用 alert 提示
+      alert('Blockly 代码导入功能需要集成到具体的 Blockly 服务中');
+      console.log('导入 Blockly 数据:', this.blocklyData);
+    } catch (error) {
+      alert('导入失败: ' + (error as Error).message);
+    }
+  }
+
+  /**
+   * 复制数据到剪贴板
+   */
+  async copyToClipboard() {
+    try {
+      const textToCopy = this.showRawData ? 
+        this.rawDataString : 
+        JSON.stringify(this.blocklyData, null, 2);
+
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(textToCopy);
       } else {
-        // 处理 JSON 数据
-        this.blocklyData = this.data.blocks || this.data.workspace || {};
+        // 降级方案
+        const textArea = document.createElement('textarea');
+        textArea.value = textToCopy;
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
       }
-      this.errorMessage = '';
-    } catch (error) {
-      console.error('Error processing blockly data:', error);
-      this.errorMessage = `数据处理失败: ${error.message}`;
-    }
-  }
-
-  /**
-   * 解析原始内容
-   */
-  private parseRawContent(): void {
-    try {
-      const content = this.data?.content || this.data?.raw || '';
-      if (content.trim().startsWith('{') || content.trim().startsWith('[')) {
-        this.blocklyData = JSON.parse(content);
-      } else {
-        throw new Error('无法解析的内容格式');
-      }
-    } catch (error) {
-      // 如果解析失败，显示原始内容
-      this.showRaw = true;
-      this.errorMessage = '无法解析 Blockly 数据，显示原始内容';
-    }
-  }
-
-  /**
-   * 切换显示模式
-   */
-  toggleView(): void {
-    this.showRaw = !this.showRaw;
-  }
-
-  /**
-   * 格式化显示数据
-   */
-  formatData(): string {
-    if (this.data?.content || this.data?.raw) {
-      return this.data.content || this.data.raw || '';
-    }
-    return JSON.stringify(this.data, null, 2);
-  }
-
-  /**
-   * 复制到剪贴板
-   */
-  async copyToClipboard(): Promise<void> {
-    try {
-      const content = this.showRaw ? this.formatData() : JSON.stringify(this.blocklyData, null, 2);
-      await navigator.clipboard.writeText(content);
-      // 这里可以添加成功提示
-      console.log('内容已复制到剪贴板');
-    } catch (error) {
-      console.error('复制失败:', error);
-      // 这里可以添加错误提示
-    }
-  }
-
-  /**
-   * 导入到工作区
-   */
-  importToWorkspace(): void {
-    try {
-      if (!this.blocklyData) {
-        throw new Error('没有可导入的数据');
-      }
-
-      // 这里需要根据实际的应用架构来实现
-      // 可能需要通过服务或事件来通知主工作区
       
-      // 示例实现：
-      // this.blocklyService.importWorkspace(this.blocklyData);
-      
-      console.log('导入到工作区:', this.blocklyData);
-      // 可以添加成功提示
+      alert('已复制到剪贴板');
     } catch (error) {
-      console.error('导入失败:', error);
-      this.errorMessage = `导入失败: ${error.message}`;
+      alert('复制失败: ' + (error as Error).message);
     }
   }
 
   /**
-   * 检查是否可以导入
+   * 获取 Blockly 标题
    */
-  private checkCanImport(): boolean {
-    // 这里可以根据实际情况判断
-    // 例如检查是否在编辑器环境中，是否有权限等
-    return typeof window !== 'undefined' && window.location?.pathname.includes('blockly');
+  getBlocklyTitle(): string {
+    if (!this.blocklyData) return '未知项目';
+    
+    return this.blocklyData.title || 
+           this.blocklyData.name || 
+           this.blocklyData.projectName || 
+           '未命名 Blockly 项目';
+  }
+
+  /**
+   * 获取 Blockly 描述
+   */
+  getBlocklyDescription(): string {
+    if (!this.blocklyData) return '无数据';
+
+    if (this.blocklyData.description) {
+      return this.blocklyData.description;
+    }
+
+    const blockCount = this.getBlockCount();
+    const workspaceInfo = this.getWorkspaceSummary();
+
+    return `包含 ${blockCount} 个积木块${workspaceInfo !== '无工作区信息' ? '，' + workspaceInfo : ''}`;
+  }
+
+  /**
+   * 获取积木块数量
+   */
+  getBlockCount(): number {
+    if (!this.blocklyData) return 0;
+
+    // 从不同可能的字段中获取积木块数量
+    if (this.blocklyData.blockCount !== undefined) {
+      return this.blocklyData.blockCount;
+    }
+
+    if (this.blocklyData.blocks && Array.isArray(this.blocklyData.blocks)) {
+      return this.blocklyData.blocks.length;
+    }
+
+    if (this.blocklyData.xml && typeof this.blocklyData.xml === 'string') {
+      // 简单统计XML中的block标签数量
+      const matches = this.blocklyData.xml.match(/<block/g);
+      return matches ? matches.length : 0;
+    }
+
+    return 0;
+  }
+
+  /**
+   * 获取工作区摘要信息
+   */
+  getWorkspaceSummary(): string {
+    if (!this.blocklyData) return '无工作区信息';
+
+    const info: string[] = [];
+
+    if (this.blocklyData.workspace) {
+      const workspace = this.blocklyData.workspace;
+      
+      if (workspace.variables && workspace.variables.length > 0) {
+        info.push(`${workspace.variables.length} 个变量`);
+      }
+      
+      if (workspace.procedures && workspace.procedures.length > 0) {
+        info.push(`${workspace.procedures.length} 个函数`);
+      }
+    }
+
+    if (this.blocklyData.variables && Array.isArray(this.blocklyData.variables)) {
+      info.push(`${this.blocklyData.variables.length} 个变量`);
+    }
+
+    if (this.blocklyData.functions && Array.isArray(this.blocklyData.functions)) {
+      info.push(`${this.blocklyData.functions.length} 个函数`);
+    }
+
+    return info.length > 0 ? info.join('，') : '无工作区信息';
+  }
+
+  /**
+   * 获取项目类型
+   */
+  getProjectType(): string {
+    if (!this.blocklyData) return '未知';
+
+    return this.blocklyData.type || 
+           this.blocklyData.projectType || 
+           this.blocklyData.category || 
+           'Blockly 项目';
+  }
+
+  /**
+   * 获取难度级别
+   */
+  getDifficulty(): string {
+    if (!this.blocklyData) return '';
+
+    return this.blocklyData.difficulty || 
+           this.blocklyData.level || 
+           '';
+  }
+
+  /**
+   * 获取难度颜色
+   */
+  getDifficultyColor(difficulty: string): string {
+    const colorMap: Record<string, string> = {
+      简单: 'green',
+      中等: 'orange',
+      困难: 'red',
+      初级: 'green',
+      中级: 'orange',
+      高级: 'red',
+      easy: 'green',
+      medium: 'orange',
+      hard: 'red',
+      beginner: 'green',
+      intermediate: 'orange',
+      advanced: 'red',
+    };
+
+    return colorMap[difficulty.toLowerCase()] || 'blue';
+  }
+
+  /**
+   * 获取标签列表
+   */
+  getTags(): string[] {
+    if (!this.blocklyData) return [];
+
+    if (Array.isArray(this.blocklyData.tags)) {
+      return this.blocklyData.tags;
+    }
+
+    if (typeof this.blocklyData.tags === 'string') {
+      return this.blocklyData.tags.split(',').map(tag => tag.trim());
+    }
+
+    if (Array.isArray(this.blocklyData.keywords)) {
+      return this.blocklyData.keywords;
+    }
+
+    return [];
+  }
+
+  /**
+   * 获取作者信息
+   */
+  getAuthor(): string {
+    if (!this.blocklyData) return '';
+
+    return this.blocklyData.author || 
+           this.blocklyData.creator || 
+           this.blocklyData.by || 
+           '';
+  }
+
+  /**
+   * 获取创建时间
+   */
+  getCreatedTime(): string {
+    if (!this.blocklyData) return '';
+
+    const timeField = this.blocklyData.createdAt || 
+                     this.blocklyData.createTime || 
+                     this.blocklyData.timestamp ||
+                     this.blocklyData.date;
+
+    if (!timeField) return '';
+
+    try {
+      const date = new Date(timeField);
+      return date.toLocaleString('zh-CN');
+    } catch {
+      return String(timeField);
+    }
+  }
+
+  /**
+   * 检查是否有预览图
+   */
+  hasPreview(): boolean {
+    return !!(this.blocklyData && (
+      this.blocklyData.preview || 
+      this.blocklyData.image || 
+      this.blocklyData.thumbnail ||
+      this.blocklyData.screenshot
+    ));
+  }
+
+  /**
+   * 获取预览图URL
+   */
+  getPreviewUrl(): string {
+    if (!this.blocklyData) return '';
+
+    return this.blocklyData.preview || 
+           this.blocklyData.image || 
+           this.blocklyData.thumbnail ||
+           this.blocklyData.screenshot ||
+           '';
+  }
+
+  /**
+   * 检查是否有代码
+   */
+  hasCode(): boolean {
+    return !!(this.blocklyData && (
+      this.blocklyData.code || 
+      this.blocklyData.generatedCode ||
+      this.blocklyData.xml
+    ));
+  }
+
+  /**
+   * 获取生成的代码
+   */
+  getGeneratedCode(): string {
+    if (!this.blocklyData) return '';
+
+    return this.blocklyData.code || 
+           this.blocklyData.generatedCode ||
+           this.blocklyData.sourceCode ||
+           '';
+  }
+
+  /**
+   * 获取XML代码
+   */
+  getXmlCode(): string {
+    if (!this.blocklyData) return '';
+
+    return this.blocklyData.xml || '';
   }
 }

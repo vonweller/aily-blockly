@@ -46,7 +46,26 @@ export class AilyChatComponent {
 
   list: any = [
     {
-      content: 'Hello, how can I help you?',
+      content: `以下为可用的系统提示信息：
+\`\`\`aily-state
+{"state":"doing","text":"正在查询开发板文档"}
+\`\`\`
+\`\`\`aily-state
+{"state":"done","text":"开发板文档查阅完成"}
+\`\`\`
+\`\`\`aily-state
+{"state":"warn","text":"没有找到相关的开发板文档"}
+\`\`\`
+\`\`\`aily-state
+{"state":"error","text":"发生错误，请稍后再试"}
+\`\`\`
+\`\`\`aily-button
+[
+{"text":"创建项目","action":"create_project"},
+{"text":"补充说明","action":"more_info","type":"default"}
+]
+\`\`\`
+`,
     },
     {
       content: 'I want to know the weather today.',
@@ -162,21 +181,13 @@ export class AilyChatComponent {
     {
       content: `Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚，如图2-21。使用这些引脚具有输入输出数字信号的功能。
 
-图 2‑21 可以进行数字输入输出的引脚
+\`\`\`aily-state
+{"state":"doing","text":"正在查询开发板文档"}
+\`\`\`
 
-**数字信号**
-
-数字信号是以0、1表示的电平不连续变化的信号，也就是以二进制的形式表示的信号。 在Arduino中数字信号通过高低电平来表示，高电平则为数字信号1，低电平则为数字信号0 （如图2-22）。
-
-图2-18 数字信号
-
-![](https://arduino.me/storage/v1/object/public/image/dfc9651d61b02a5edb08bb1128cba4ee.webp)
-
-图 2‑22 数字信号
-
-Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚。使用这些引脚，可以完成输入输出数字信号的功能。
-
-在使用输入或输出功能前，需要先通过pinMode() 函数配置引脚的模式为输入模式或输出模式。
+\`\`\`aily-state
+{"state":"done","text":"开发板文档查阅完成"}
+\`\`\`
 
 \`\`\`c
 pinMode(pin, mode);

@@ -138,7 +138,7 @@
             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
             font-size: 13px;
             line-height: 1.45;
-            
+
             .line {
                 min-height: 1em;
             }
@@ -148,13 +148,37 @@
         pre {
             display: grid;
             position: relative;
-            margin-top: 20px;
+            margin-top: 10px;
             overflow: visible;
 
             code {
                 display: block;
                 overflow-x: auto;
-                padding: 0.5em 1em;
+                padding: 0.5em;
+            }
+
+            .language-aily-state {
+                height: 40px;
+                overflow: hidden;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+            }
+
+            .language-aily-board {
+                height: 70px;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                overflow: hidden;
+            }
+
+            .language-aily-library {
+                height: 70px;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                overflow: hidden;
+            }
+
+            .language-aily-button {
+                height: 70px;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                overflow: hidden;
             }
         }
 

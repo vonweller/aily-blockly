@@ -21,12 +21,7 @@ export interface AilyLibraryData {
   standalone: true,
   imports: [
     CommonModule,
-    NzButtonModule,
-    NzIconModule,
     NzToolTipModule,
-    NzTagModule,
-    NzCardModule,
-    NzListModule
   ],
   templateUrl: './aily-library-viewer.component.html',
   styleUrls: ['./aily-library-viewer.component.scss']
