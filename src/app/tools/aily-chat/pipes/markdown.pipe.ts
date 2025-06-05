@@ -104,13 +104,13 @@ export class MarkdownPipe implements PipeTransform {
       const componentId = `aily-component-${++MarkdownPipe.componentCounter}`;
 
       // 将数据编码为 Base64 以避免 HTML 转义问题
-      const encodedData = btoa(JSON.stringify(parsedContent));
+      // const encodedData = btoa(JSON.stringify(parsedContent));
 
       // 返回包含组件占位符的 HTML
       // 这个占位符将在后续的指令处理中被替换为真正的 Angular 组件
       return `<div class="aily-code-block-placeholder" 
                    data-aily-type="${type}" 
-                   data-aily-data="${encodedData}" 
+                   data-aily-data="${'encodedData'}" 
                    data-component-id="${componentId}"
                    style="
                      border: 1px solid #d9d9d9;
