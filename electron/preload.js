@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, shell } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
+const { get } = require("lodash");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -210,10 +211,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   mcp: {
-    connect: (command, args) => {
+    connect: (name, command, args) => {
       return new Promise((resolve, reject) => {
         ipcRenderer
-          .invoke('mcp:connect', command, args)
+          .invoke('mcp:connect', name, command, args)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    },
+    getTools: (name) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:get-tools', name)
           .then((result) => resolve(result))
           .catch((error) => reject(error));
       })

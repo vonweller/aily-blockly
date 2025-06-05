@@ -145,9 +145,10 @@ export class AilyChatComponent {
 
   ngAfterViewInit(): void {
     this.scrollToBottom(true);
+
     this.mcpService.init().then(() => {
       this.startSession();
-    });
+    })
   }
 
   appendMessage(role, text) {
