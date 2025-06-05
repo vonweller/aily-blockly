@@ -46,72 +46,173 @@ export class AilyChatComponent {
   @ViewChild('chatList') chatList: ElementRef;
 
   list: any = [
-    //     {
-    //       content: 'Hello, how can I help you?',
-    //     },
-    //     {
-    //       content: 'I want to know the weather today.',
-    //       role: 'user',
-    //     },
-    //     {
-    //       content: 'Where are you now?',
-    //     },
-    //     {
-    //       content: 'I am in Beijing.',
-    //       role: 'user',
-    //     },
-    //     {
-    //       content:
-    //         'The weather in Beijing today is sunny, with a maximum temperature of 30 degrees and a minimum temperature of 20 degrees.',
-    //     },
-    //     {
-    //       content: 'Thank you!',
-    //       role: 'user',
-    //     },
-    //     {
-    //       content: `Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚，如图2-21。使用这些引脚具有输入输出数字信号的功能。
+    {
+      content: `以下为可用的系统提示信息：
+\`\`\`aily-state
+{"state":"doing","text":"正在查询开发板文档"}
+\`\`\`
+\`\`\`aily-state
+{"state":"done","text":"开发板文档查阅完成"}
+\`\`\`
+\`\`\`aily-state
+{"state":"warn","text":"没有找到相关的开发板文档"}
+\`\`\`
+\`\`\`aily-state
+{"state":"error","text":"发生错误，请稍后再试"}
+\`\`\`
+\`\`\`aily-button
+[
+{"text":"创建项目","action":"create_project"},
+{"text":"补充说明","action":"more_info","type":"default"}
+]
+\`\`\`
+`,
+    },
+    {
+      content: 'I want to know the weather today.',
+      role: 'user',
+    }, {
+      content: `推荐使用如下控制器：  
+\`\`\`aily-board
+{
+    "name": "@aily-project/board-jinniu_board",
+    "nickname": "金牛创翼板",
+    "version": "0.0.1",
+    "description": "金牛创翼板是一款集成多种常用传感器的开发板，包括电机、WS2812灯、LED灯、超声波、DHT11、自锁和按键开关、电位器、无源蜂鸣器和电机驱动",
+    "author": "",
+    "brand": "OpenJumper",
+    "url": "",
+    "compatibility": "",
+    "img": "jinniu_board.png",
+    "disabled": false
+}
+\`\`\``,
+    },
+    {
+      content: 'I am in Beijing.',
+      role: 'user',
+    }, {
+      content: `推荐使用如下扩展库
+\`\`\`aily-library
+{
+    "name": "@aily-project/lib-servo360",
+    "nickname": "360舵机驱动",
+    "version": "1.0.0",
+    "description": "360舵机控制支持库，支持Arduino UNO、MEGA、ESP32等开发板",
+    "author": "aily Project",
+    "compatibility": {
+      "core": [
+        "arduino:avr",
+        "esp32:esp32"
+      ],
+      "voltage": [
+        3.3,
+        5
+      ]
+    },
+    "keywords": [
+      "aily",
+      "blockly",
+      "servo",
+      "servo_attach",
+      "servo_write",
+      "执行器"
+    ],
+    "tested": true,
+    "icon": "iconfont icon-servo"
+}
+\`\`\`
+\`\`\`aily-library
+{
+    "name": "@aily-project/lib-sht3x",
+    "nickname": "SHT3x温湿度传感器库",
+    "version": "0.0.1",
+    "description": "支持Arduino SHT30、SHT31和SHT35温湿度传感器的控制库",
+    "author": "Danil",
+    "compatibility": {
+      "core": [
+        "arduino:avr",
+        "esp32:esp32"
+      ],
+      "voltage": [
+        3.3,
+        5
+      ]
+    },
+    "keywords": [
+      "aily",
+      "blockly",
+      "sht3x",
+      "温湿度传感器",
+      "sensor",
+      "humidity",
+      "temperature"
+    ],
+    "tested": false,
+    "icon": "iconfont icon-dht22"
+}
+\`\`\`
+\`\`\`aily-library
+{
+    "name": "@aily-project/lib-core-custom",
+    "nickname": "自定义代码",
+    "version": "1.0.0",
+    "description": "允许在Blockly中插入自定义Arduino代码、宏定义、函数等的库",
+    "author": "aily Project",
+    "compatibility": {
+      "core": []
+    },
+    "keywords": [
+      "aily",
+      "blockly",
+      "lib",
+      "custom",
+      "code"
+    ],
+    "tested": true,
+    "icon": "fa-light fa-code"
+}
+\`\`\`
+`
+    },
+    {
+      content: 'Thank you!',
+      role: 'user',
+    },
+    {
+      content: `Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚，如图2-21。使用这些引脚具有输入输出数字信号的功能。
 
-    // ![](https://arduino.me/storage/v1/object/public/image/909ac2e69d622745529282522809c0c1.webp)
+\`\`\`aily-state
+{"state":"doing","text":"正在查询开发板文档"}
+\`\`\`
 
-    // 图 2‑21 可以进行数字输入输出的引脚
+\`\`\`aily-state
+{"state":"done","text":"开发板文档查阅完成"}
+\`\`\`
 
-    // **数字信号**
+\`\`\`c
+pinMode(pin, mode);
+\`\`\`
 
-    // 数字信号是以0、1表示的电平不连续变化的信号，也就是以二进制的形式表示的信号。 在Arduino中数字信号通过高低电平来表示，高电平则为数字信号1，低电平则为数字信号0 （如图2-22）。
+参数pin为指定配置的引脚编号；参数mode为指定的配置模式。
 
-    // 图2-18 数字信号
+可使用的三种模式，如表2-3所示：
 
-    // ![](https://arduino.me/storage/v1/object/public/image/dfc9651d61b02a5edb08bb1128cba4ee.webp)
+表 2‑3 Arduino引脚可配置状态
 
-    // 图 2‑22 数字信号
-
-    // Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚。使用这些引脚，可以完成输入输出数字信号的功能。
-
-    // 在使用输入或输出功能前，需要先通过pinMode() 函数配置引脚的模式为输入模式或输出模式。
-
-    // \`\`\`c
-    // pinMode(pin, mode);
-    // \`\`\`
-
-    // 参数pin为指定配置的引脚编号；参数mode为指定的配置模式。
-
-    // 可使用的三种模式，如表2-3所示：
-
-    // 表 2‑3 Arduino引脚可配置状态
-
-    // | 模式宏名称 | 说明 |
-    // | ----- | --- |
-    // | INPUT | 输入模式 |
-    // | OUTPUT | 输出模式 |
-    // | INPUT\_PULLUP | 输入上拉模式 |
-    // `,
-    //     },
-    //     {
-    //       content: 'Have a nice day!',
-    //     },
-    //     {
-    //       content: 'You too!'
-    //     },
+| 模式宏名称 | 说明 |
+| ----- | --- |
+| INPUT | 输入模式 |
+| OUTPUT | 输出模式 |
+| INPUT\_PULLUP | 输入上拉模式 |
+`
+    },
+    {
+      content: 'Have a nice day!',
+    },
+    {
+      content: 'You too!'
+    },
   ];
 
   // inputValue =
@@ -388,7 +489,7 @@ export class AilyChatComponent {
     this.startSession();
   }
 
-  addFile(){
+  addFile() {
     // 添加参考文件
   }
 

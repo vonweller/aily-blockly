@@ -1,0 +1,110 @@
+<div class="aily-library-viewer">
+  <div class="board-card">
+    <div class="img-box ccenter">
+      <i class="{{libraryInfo.icon}}"></i>
+    </div>
+    <div class="text-box">
+      <div class="title">{{libraryInfo.nickname}}</div>
+      <div class="text ellipsis">{{libraryInfo.description}}</div>
+    </div>
+    <div class="action-btns ccenter">
+      <div class="btn ccenter"><i class="fa-regular fa-book"></i></div>
+      <div class="btn ccenter"><i class="fa-regular fa-plus"></i></div>
+    </div>
+  </div>
+  <!-- @if (errorMessage) {
+  <nz-card class="error-card">
+    <div class="error-content">
+      <span nz-icon nzType="exclamation-circle" class="error-icon"></span>
+      <span class="error-text">{{ errorMessage }}</span>
+    </div>
+  </nz-card>
+  } @else if (libraryInfo) {
+  <nz-card class="library-card">
+    <nz-card-meta [nzTitle]="libraryInfo.nickname || libraryInfo.name" [nzDescription]="libraryInfo.description">
+      <ng-template #nzAvatar>
+        @if (libraryInfo.icon) {
+        @if (libraryInfo.icon.includes('fa-')) {
+        <span class="icon-avatar" [class]="libraryInfo.icon"></span>
+        } @else {
+        <img [src]="libraryInfo.icon" class="icon-avatar" [alt]="libraryInfo.name">
+        }
+        } @else {
+        <span nz-icon nzType="api" class="icon-avatar"></span>
+        }
+      </ng-template>
+    </nz-card-meta>
+
+    <div class="library-details">
+      <div class="detail-row">
+        <span class="detail-label">版本:</span>
+        <nz-tag nzColor="blue">{{ libraryInfo.version }}</nz-tag>
+      </div>
+
+      @if (libraryInfo.author) {
+      <div class="detail-row">
+        <span class="detail-label">作者:</span>
+        <span class="detail-value">{{ libraryInfo.author }}</span>
+      </div>
+      }
+
+      @if (libraryInfo.compatibility?.core?.length) {
+      <div class="detail-row">
+        <span class="detail-label">兼容核心:</span>
+        <div class="tag-group">
+          @for (core of libraryInfo.compatibility.core; track core) {
+          <nz-tag nzColor="green" nzSize="small">{{ core }}</nz-tag>
+          }
+        </div>
+      </div>
+      }
+
+      @if (libraryInfo.compatibility?.voltage?.length) {
+      <div class="detail-row">
+        <span class="detail-label">工作电压:</span>
+        <div class="tag-group">
+          @for (voltage of libraryInfo.compatibility.voltage; track voltage) {
+          <nz-tag nzColor="orange" nzSize="small">{{ voltage }}V</nz-tag>
+          }
+        </div>
+      </div>
+      }
+
+      @if (libraryInfo.keywords?.length) {
+      <div class="detail-row">
+        <span class="detail-label">关键词:</span>
+        <div class="tag-group">
+          @for (keyword of libraryInfo.keywords.slice(0, 5); track keyword) {
+          <nz-tag nzColor="purple" nzSize="small">{{ keyword }}</nz-tag>
+          }
+          @if (libraryInfo.keywords.length > 5) {
+          <nz-tag nzSize="small">+{{ libraryInfo.keywords.length - 5 }}</nz-tag>
+          }
+        </div>
+      </div>
+      }
+
+      <div class="detail-row">
+        <span class="detail-label">状态:</span>
+        <nz-tag [nzColor]="libraryInfo.tested ? 'green' : 'orange'">
+          {{ libraryInfo.tested ? '已测试' : '未测试' }}
+        </nz-tag>
+      </div>
+    </div>
+
+    @if (showRaw) {
+    <div class="raw-data">
+      <pre>{{ libraryInfo | json }}</pre>
+    </div>
+    }
+  </nz-card>
+
+  } @else {
+  <nz-card class="loading-card">
+    <div class="loading-content">
+      <span nz-icon nzType="loading" nzSpin></span>
+      <span>加载扩展库信息中...</span>
+    </div>
+  </nz-card>
+  } -->
+</div>

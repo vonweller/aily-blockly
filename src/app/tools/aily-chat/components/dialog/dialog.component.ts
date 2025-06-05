@@ -1,5 +1,4 @@
 import {
-  ChangeDetectorRef,
   Component,
   ElementRef,
   Input,
@@ -14,25 +13,25 @@ import { CommonModule } from '@angular/common';
 import { NzAvatarModule } from 'ng-zorro-antd/avatar';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { DomSanitizer } from '@angular/platform-browser';
-import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzImageModule } from 'ng-zorro-antd/image';
 import { FormsModule } from '@angular/forms';
-import { MarkdownPipe } from '../../../../pipes/markdown.pipe';
-import { AilyCodingComponent } from '../../../../components/aily-coding/aily-coding.component';
+import { MarkdownPipe } from '../../pipes/markdown.pipe';
+import { AilyDynamicComponentDirective } from '../../directives/aily-dynamic-component.directive';
+// import { AilyCodingComponent } from '../../../../components/aily-coding/aily-coding.component';
 
 @Component({
   selector: 'aily-dialog',
   templateUrl: './dialog.component.html',
   styleUrls: ['./dialog.component.scss'],
-  standalone: true,
-  imports: [
+  standalone: true,  imports: [
     CommonModule,
     FormsModule,
     NzAvatarModule,
     NzButtonModule,
     MarkdownPipe,
+    AilyDynamicComponentDirective,
     NzImageModule,
-    AilyCodingComponent,
+    // AilyCodingComponent,
   ],
 })
 export class DialogComponent implements OnInit {
@@ -76,40 +75,7 @@ export class DialogComponent implements OnInit {
   }
 
   ngAfterViewInit(): void {
-    setTimeout(async () => {
-      this.showCopyBtn();
-    }, 500);
-  }
 
-  // 在pre标签的右上角显示复制按钮
-  @ViewChild('mdContent')
-  mdContent: ElementRef;
-  showCopyBtn() {
-    const pres = this.mdContent.nativeElement.querySelectorAll('pre');
-    for (let index = 0; index < pres.length; index++) {
-      const pre = pres[index];
-      if (pre) {
-        const copyBtn = document.createElement('button');
-        copyBtn.innerText = '复制';
-        copyBtn.className = 'copy-btn';
-        copyBtn.onclick = () => this.copyCode(pre);
-        pre.appendChild(copyBtn);
-      }
-    }
-  }
-
-  //将code标签中的内容复制到剪贴板
-  copyCode(pre) {
-    const code = pre.querySelector('code');
-    if (code) {
-      const range = document.createRange();
-      range.selectNode(code);
-      window.getSelection().removeAllRanges();
-      window.getSelection().addRange(range);
-      document.execCommand('copy');
-      window.getSelection().removeAllRanges();
-      this.message.success('已复制代码到剪贴板');
-    }
   }
 
   login() {
