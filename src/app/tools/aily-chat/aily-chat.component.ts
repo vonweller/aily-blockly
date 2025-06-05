@@ -145,8 +145,9 @@ export class AilyChatComponent {
 
   ngAfterViewInit(): void {
     this.scrollToBottom(true);
-    this.startSession();
-    this.mcpService.init();
+    this.mcpService.init().then(() => {
+      this.startSession();
+    });
   }
 
   appendMessage(role, text) {
@@ -158,7 +159,7 @@ export class AilyChatComponent {
   }
 
   startSession(): void {
-    this.chatService.startSession().subscribe((res: any) => {
+    this.chatService.startSession(this.mcpService.tools).subscribe((res: any) => {
       if (res.status === 'success') {
         this.chatService.currentSessionId = res.data;
         this.streamConnect();
@@ -222,7 +223,19 @@ export class AilyChatComponent {
             //   this.send(false)
             // }, 10000);
 
-            const result = await this.mcpService.use_tool("fetch", { "url": "https://www.baidu.com", "raw": false });
+            // Check if tool_args is already a JSON object or needs to be parsed
+            let toolArgs = data.tool_args;
+            if (typeof toolArgs === 'string') {
+              try {
+                toolArgs = JSON.parse(toolArgs);
+                data.tool_args = toolArgs;
+              } catch (e) {
+                console.error('Failed to parse tool_args as JSON:', e);
+                // Keep original value if parsing fails
+              }
+            }
+
+            const result = await this.mcpService.use_tool(data.tool_name, data.tool_args);
             console.log('工具调用结果:', result);
             this.inputValue = JSON.stringify({
               "type": "tool_result",

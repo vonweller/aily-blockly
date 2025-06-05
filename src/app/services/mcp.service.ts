@@ -9,7 +9,7 @@ export class McpService {
 
   mcp: Client;
   transport: StdioClientTransport | null = null;
-  tools: Tool[] = [];
+  tools: MCPTool[] = [];
 
   constructor() {}
 
@@ -63,7 +63,7 @@ export class McpService {
   }
 }
 
-export interface Tool {
+export interface MCPTool {
   name: string;
   description: string;
   input_schema: { [key: string]: any };
