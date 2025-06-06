@@ -170,6 +170,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // 通过浏览器打开
     openByBrowser: (url) => shell.openExternal(url),
     exitApp: () => ipcRenderer.send("window-close"),
+    // 打开新的程序实例
+    openNewInstance: (options = {}) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("open-new-instance", options)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    },
   },
   env: {
     set: (data) => ipcRenderer.invoke("env-set", data),
