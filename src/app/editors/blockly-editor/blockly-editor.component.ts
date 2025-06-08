@@ -76,11 +76,11 @@ export class BlocklyEditorComponent {
     const nodeModulesExist = this.electronService.exists(projectPath + '/node_modules');
     if (!nodeModulesExist) {
       // 终端进入项目目录，安装项目依赖
-      this.uiService.updateState({ state: 'doing', text: '正在安装依赖' });
+      this.uiService.updateFooterState({ state: 'doing', text: '正在安装依赖' });
       await this.cmdService.runAsync(`npm install`, projectPath)
     }
     // 3. 加载开发板module中的board.json
-    this.uiService.updateState({ state: 'doing', text: '正在加载开发板配置' });
+    this.uiService.updateFooterState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
     console.log('boardModule: ', boardModule);
     // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
@@ -103,16 +103,16 @@ export class BlocklyEditorComponent {
     });
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
-      this.uiService.updateState({ state: 'doing', text: '正在加载' + libPackageName });
+      this.uiService.updateFooterState({ state: 'doing', text: '正在加载' + libPackageName });
       await this.blocklyService.loadLibrary(libPackageName, projectPath);
     }
     // 5. 加载project.abi数据
-    this.uiService.updateState({ state: 'doing', text: '正在加载blockly程序' });
+    this.uiService.updateFooterState({ state: 'doing', text: '正在加载blockly程序' });
     let jsonData = JSON.parse(this.electronService.readFile(`${projectPath}/project.abi`));
     this.blocklyService.loadAbiJson(jsonData);
 
     // 6. 加载项目目录中project.abi（这是blockly格式的json文本必须要先安装库才能加载这个json，因为其中可能会用到一些库）
-    this.uiService.updateState({ state: 'done', text: '项目加载成功' });
+    this.uiService.updateFooterState({ state: 'done', text: '项目加载成功' });
     this.projectService.stateSubject.next('loaded');
 
     // 7. 后台安装开发板依赖

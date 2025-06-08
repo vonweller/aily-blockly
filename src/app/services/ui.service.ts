@@ -160,7 +160,7 @@ export class UiService {
   }
 
   // 更新footer右下角的状态
-  updateState(state: ActionState) {
+  updateFooterState(state: ActionState) {
     // 判断当前url是否是main-window
     if (this.isMainWindow) {
       this.stateSubject.next(state);

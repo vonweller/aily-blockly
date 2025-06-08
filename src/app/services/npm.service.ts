@@ -69,7 +69,7 @@ export class NpmService {
     this.isInstalling = true;
     const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
     const cmd = `npm install ${board.name}@${board.version} --prefix "${appDataPath}"`;
-    this.uiService.updateState({ state: 'loading', text: `正在安装${board.name}...`, timeout: 300000 });
+    this.uiService.updateFooterState({ state: 'doing', text: `正在安装${board.name}...`, timeout: 300000 });
     // 添加超时保护和正确的参数名
     await Promise.race([
       window['npm'].run({ cmd: cmd }),
@@ -78,7 +78,7 @@ export class NpmService {
       )
     ]);
 
-    this.uiService.updateState({ state: 'done', text: '开发板安装完成' });
+    this.uiService.updateFooterState({ state: 'done', text: '开发板安装完成' });
     this.isInstalling = false;
     // return template/package.json
     return `${appDataPath}/node_modules/${board.name}/template/package.json`;
@@ -113,7 +113,7 @@ export class NpmService {
         //   continue;
         // }
 
-        this.uiService.updateState({ state: 'loading', text: `正在安装${key}依赖...`, timeout: 300000 });
+        this.uiService.updateFooterState({ state: 'doing', text: `正在安装${key}依赖...`, timeout: 300000 });
 
         try {
           // 安装成功的条件是需要安装目录指私有源或者全局已经设置私有源
@@ -134,10 +134,10 @@ export class NpmService {
         }
       }
 
-      this.uiService.updateState({ state: 'done', text: '开发板依赖安装完成' });
+      this.uiService.updateFooterState({ state: 'done', text: '开发板依赖安装完成' });
     } catch (error) {
       console.error('安装开发板依赖时出错:', error);
-      this.uiService.updateState({ state: 'error', text: '开发板依赖安装失败' });
+      this.uiService.updateFooterState({ state: 'error', text: '开发板依赖安装失败' });
     } finally {
       this.isInstalling = false;
     }
@@ -184,7 +184,7 @@ export class NpmService {
         }
       }
       
-      this.uiService.updateState({ state: 'loading', text: '正在卸载不再需要的依赖...', timeout: 300000 });
+      this.uiService.updateFooterState({ state: 'doing', text: '正在卸载不再需要的依赖...', timeout: 300000 });
       
       // 检查每个依赖是否被其他开发板使用
       console.log("installedBoards: ", installedBoards);
@@ -221,10 +221,10 @@ export class NpmService {
         }
       }
       
-      this.uiService.updateState({ state: 'done', text: '依赖卸载完成' });
+      this.uiService.updateFooterState({ state: 'done', text: '依赖卸载完成' });
     } catch (error) {
       console.error('卸载开发板依赖时出错:', error);
-      this.uiService.updateState({ state: 'error', text: '依赖卸载失败' });
+      this.uiService.updateFooterState({ state: 'error', text: '依赖卸载失败' });
     }
   }
 
@@ -234,10 +234,10 @@ export class NpmService {
     const packageJson = JSON.parse(window['fs'].readFileSync(`${appDataPath}/node_modules/${board.name}/template/package.json`));
     // 卸载开发板
     const cmd = `npm uninstall ${board.name} --prefix "${appDataPath}"`;
-    this.uiService.updateState({ state: 'loading', text: `正在卸载${board.name}...`, timeout: 300000 });
+    this.uiService.updateFooterState({ state: 'doing', text: `正在卸载${board.name}...`, timeout: 300000 });
     // 添加超时保护和正确的参数名
     window['npm'].run({ cmd: cmd });
-    this.uiService.updateState({ state: 'done', text: '开发板卸载完成' });
+    this.uiService.updateFooterState({ state: 'done', text: '开发板卸载完成' });
 
     return packageJson;
   }
