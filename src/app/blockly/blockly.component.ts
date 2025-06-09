@@ -22,7 +22,7 @@ import './custom-field/field-angle180';
 import './custom-field/field-angle';
 import '@blockly/field-colour-hsv-sliders';
 
-// import { Multiselect } from './plugins/workspace-multiselect/index.js';
+import { Multiselect } from './plugins/workspace-multiselect/index.js';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NoticeService } from '../services/notice.service.js';
@@ -106,10 +106,10 @@ export class BlocklyComponent {
       hideIcon: true
     },
     multiSelectKeys: ['Shift'],
-    multiselectCopyPaste: {
-      crossTab: true,
-      menu: false,
-    },
+    // multiselectCopyPaste: {
+    //   crossTab: true,
+    //   menu: false,
+    // },
     plugins: {
       connectionPreviewer:
         BlockDynamicConnection.decoratePreviewer(
