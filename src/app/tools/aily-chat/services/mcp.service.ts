@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ConfigService } from './config.service';
+import { ConfigService } from '../../../services/config.service.js';
 
 interface McpServerStdioConfig {
   command: string;

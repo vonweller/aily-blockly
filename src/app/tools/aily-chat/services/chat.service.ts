@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, Subject } from 'rxjs';
-import { MCPTool } from '../../../services/mcp.service';
+import { MCPTool } from './mcp.service';
 
 import { API } from "../../../configs/api.config";
 

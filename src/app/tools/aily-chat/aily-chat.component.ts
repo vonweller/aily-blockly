@@ -15,7 +15,7 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
-import { McpService } from '../../services/mcp.service';
+import { McpService } from './services/mcp.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -310,22 +310,18 @@ pinMode(pin, mode);
             console.log('助手正在思考...');
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
+          } else if (data.type === 'user_input_required') {
+            // TODO：提示用户进行输入
+            // 模拟用户输入
+            this.inputValue = JSON.stringify({
+              "type": "user_input",
+              "content": "这是用于测试的.APPROVE"
+            })
+            this.send();
           } else if (data.type === 'tool_call_request') {
-            // TODO 处理工具调用请求
-            // type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
+            // 处理工具调用请求
+            // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
 
-            // 模拟暂停10秒
-            // setTimeout(() => {
-            //   this.inputValue = JSON.stringify({
-            //     "type": "tool_result",
-            //     "tool_id": data.tool_id,
-            //     "content": "工具调用成功",
-            //     "is_error": false
-            //   }, null, 2);
-            //   this.send(false)
-            // }, 10000);
-
-            // Check if tool_args is already a JSON object or needs to be parsed
             let toolArgs = data.tool_args;
             if (typeof toolArgs === 'string') {
               try {
