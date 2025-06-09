@@ -5,19 +5,21 @@
  */
 
 import * as Blockly from 'blockly/core';
+import { BitmapUploadRequest } from '../bitmap-upload.service';
+import { GlobalServiceManager } from '../global-service-manager';
 
-Blockly.Msg['BUTTON_LABEL_RANDOMIZE'] = 'Randomize';
 Blockly.Msg['BUTTON_LABEL_CLEAR'] = 'Clear';
+Blockly.Msg['BUTTON_LABEL_UPLOAD'] = 'Upload';
 
-export const DEFAULT_HEIGHT = 5;
-export const DEFAULT_WIDTH = 5;
-const DEFAULT_PIXEL_SIZE = 10;
+export const DEFAULT_HEIGHT = 128;
+export const DEFAULT_WIDTH = 64;
+const DEFAULT_PIXEL_SIZE = 1.5;
 const DEFAULT_PIXEL_COLOURS: PixelColours = {
     empty: '#fff',
     filled: '#363d80',
 };
 const DEFAULT_BUTTONS: Buttons = {
-    randomize: false,
+    upload: true,
     clear: true,
 };
 /**
@@ -28,6 +30,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private initialValue: number[][] | null = null;
     private imgHeight: number;
     private imgWidth: number;
+    private globalServiceManager: GlobalServiceManager;
     /**
      * Array holding info needed to unbind events.
      * Used for disposing.
@@ -50,18 +53,20 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * @param value 2D rectangular array of 1s and 0s.
      * @param validator A function that is called to validate.
      * @param config Config A map of options used to configure the field.
-     */
-    constructor(
+     */    constructor(
         value: number[][] | typeof Blockly.Field.SKIP_SETUP,
         validator?: Blockly.FieldValidator<number[][]>,
         config?: FieldBitmapFromJsonConfig,
     ) {
-        super(value, validator, config);
-
-        this.SERIALIZABLE = true;
+        super(value, validator, config);        this.SERIALIZABLE = true;
         // this.CURSOR = 'default';
         this.buttonOptions = { ...DEFAULT_BUTTONS, ...config?.buttons };
         this.pixelColours = { ...DEFAULT_PIXEL_COLOURS, ...config?.colours };
+          // Initialize global service manager
+        this.globalServiceManager = GlobalServiceManager.getInstance();
+        
+        // Subscribe to upload responses
+        this.setupUploadResponseHandler();
 
         // Configure value, height, and width
         const currentValue = this.getValue();
@@ -274,23 +279,20 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * Creates the bitmap editor and add event listeners.
      *
      * @returns The newly created dropdown menu.
-     */
-    private dropdownCreate() {
+     */    private dropdownCreate() {
         const dropdownEditor = this.createElementWithClassname(
             'div',
-            'dropdownEditor',
-        );
-        if (this.buttonOptions.randomize || this.buttonOptions.clear) {
-            dropdownEditor.classList.add('has-buttons');
+            'dropdownEditor-u8g2',        );        if (this.buttonOptions.clear || this.buttonOptions.upload) {
+            dropdownEditor.classList.add('has-buttons-u8g2');
         }
         const pixelContainer = this.createElementWithClassname(
             'div',
-            'pixelContainer',
+            'pixelContainer-u8g2',
         );
         dropdownEditor.appendChild(pixelContainer);
 
         // This prevents the normal max-height from adding a scroll bar for large images.
-        Blockly.DropDownDiv.getContentDiv().classList.add('contains-bitmap-editor');
+        Blockly.DropDownDiv.getContentDiv().classList.add('contains-bitmap-editor-u8g2');
 
         this.bindEvent(dropdownEditor, 'pointermove', this.onPointerMove);
         this.bindEvent(dropdownEditor, 'pointerup', this.onPointerEnd);
@@ -300,15 +302,13 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         // Stop the browser from handling touch events and cancelling the event.
         this.bindEvent(dropdownEditor, 'touchmove', (e: Event) => {
             e.preventDefault();
-        });
-
-        this.editorPixels = [];
+        });        this.editorPixels = [];
         for (let r = 0; r < this.imgHeight; r++) {
             this.editorPixels.push([]);
-            const rowDiv = this.createElementWithClassname('div', 'pixelRow');
+            const rowDiv = this.createElementWithClassname('div', 'pixelRow-u8g2');
             for (let c = 0; c < this.imgWidth; c++) {
                 // Add the button to the UI and save a reference to it
-                const button = this.createElementWithClassname('div', 'pixelButton');
+                const button = this.createElementWithClassname('div', 'pixelButton-u8g2');
                 this.editorPixels[r].push(button);
                 rowDiv.appendChild(button);
 
@@ -322,23 +322,27 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
                 button.setAttribute('data-row', r.toString());
                 button.setAttribute('data-col', c.toString());
             }
-            pixelContainer.appendChild(rowDiv);
-        }
+            pixelContainer.appendChild(rowDiv);        }        // Add control buttons below the pixel grid
+        if (this.buttonOptions.clear || this.buttonOptions.upload) {
+            const buttonContainer = this.createElementWithClassname('div', 'buttonContainer-u8g2');
+            
+            if (this.buttonOptions.clear) {
+                this.addControlButton(
+                    buttonContainer,
+                    Blockly.Msg['BUTTON_LABEL_CLEAR'],
+                    this.clearPixels,
+                );
+            }
 
-        // Add control buttons below the pixel grid
-        if (this.buttonOptions.randomize) {
-            this.addControlButton(
-                dropdownEditor,
-                Blockly.Msg['BUTTON_LABEL_RANDOMIZE'],
-                this.randomizePixels,
-            );
-        }
-        if (this.buttonOptions.clear) {
-            this.addControlButton(
-                dropdownEditor,
-                Blockly.Msg['BUTTON_LABEL_CLEAR'],
-                this.clearPixels,
-            );
+            if (this.buttonOptions.upload) {
+                this.addControlButton(
+                    buttonContainer,
+                    Blockly.Msg['BUTTON_LABEL_UPLOAD'],
+                    this.uploadBitmap,
+                );
+            }
+            
+            dropdownEditor.appendChild(buttonContainer);
         }
 
         if (this.blockDisplayPixels) {
@@ -412,9 +416,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private addControlButton(
         parent: HTMLElement,
         buttonText: string,
-        onClick: () => void,
-    ) {
-        const button = this.createElementWithClassname('button', 'controlButton');
+        onClick: () => void,    ) {
+        const button = this.createElementWithClassname('button', 'controlButton-u8g2');
         button.innerText = buttonText;
         parent.appendChild(button);
         this.bindEvent(button, 'click', onClick);
@@ -446,10 +449,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.boundEvents.length = 0;
         this.editorPixels = null;
         // Set this.initialValue back to null.
-        this.initialValue = null;
-
-        Blockly.DropDownDiv.getContentDiv().classList.remove(
-            'contains-bitmap-editor',
+        this.initialValue = null;        Blockly.DropDownDiv.getContentDiv().classList.remove(
+            'contains-bitmap-editor-u8g2',
         );
     }
 
@@ -542,25 +543,56 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private onPointerEnd() {
         this.pointerIsDown = false;
         this.valToPaintWith = undefined;
-    }
-
-    /**
-     * Sets all the pixels in the image to a random value.
-     */
-    private randomizePixels() {
-        const getRandBinary = () => Math.floor(Math.random() * 2);
-        this.forAllCells((r, c) => {
-            this.setPixel(r, c, getRandBinary());
-        });
-    }
-
-    /**
+    }    /**
      * Sets all the pixels to 0.
      */
     private clearPixels() {
         const cleared = this.getEmptyArray();
         this.fireIntermediateChangeEvent(cleared);
         this.setValue(cleared, false);
+    }    /**
+     * Upload current bitmap to Angular main program for processing.
+     */
+    private uploadBitmap() {
+        const currentBitmap = this.getValue();
+        if (!currentBitmap) {
+            console.error('No bitmap data to upload');
+            return;
+        }
+
+        const uploadRequest: BitmapUploadRequest = {
+            currentBitmap: currentBitmap,
+            width: this.imgWidth,
+            height: this.imgHeight,
+            timestamp: Date.now()
+        };
+
+        // Get upload service through global service manager
+        const uploadService = this.globalServiceManager.getBitmapUploadService();
+        if (uploadService) {
+            uploadService.sendUploadRequest(uploadRequest);
+            console.log('Bitmap upload request sent:', uploadRequest);
+        } else {
+            console.error('BitmapUploadService not available');
+        }
+    }    /**
+     * Setup upload response handler
+     */
+    private setupUploadResponseHandler() {
+        const uploadService = this.globalServiceManager.getBitmapUploadService();
+        if (uploadService) {
+            uploadService.uploadResponse$.subscribe(response => {
+                if (response.success && response.processedBitmap) {
+                    console.log('Received processed bitmap:', response);
+                    // Update the bitmap with processed data
+                    this.setValue(response.processedBitmap);
+                } else {
+                    console.error('Upload processing failed:', response.message);
+                }
+            });
+        } else {
+            console.warn('BitmapUploadService not available for response handling');
+        }
     }
 
     /**
@@ -644,7 +676,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 }
 
 interface Buttons {
-    readonly randomize: boolean;
+    readonly upload: boolean;
     readonly clear: boolean;
 }
 interface PixelColours {
@@ -667,35 +699,54 @@ Blockly.fieldRegistry.register('field_bitmap_u8g2', FieldBitmapU8g2);
  * CSS for bitmap field.
  */
 Blockly.Css.register(`
-.dropdownEditor {
+.dropdownEditor-u8g2 {
   align-items: center;
   flex-direction: column;
   display: flex;
   justify-content: center;
 }
-.pixelContainer {
-  margin: 20px;
+.dropdownEditor-u8g2.has-buttons-u8g2 {
+  padding-bottom: 10px;
 }
-.pixelRow {
+.pixelContainer-u8g2 {
+  border: 2px solid #333;
+  margin: 10px;
+}
+.pixelRow-u8g2 {
   display: flex;
   flex-direction: row;
   padding: 0;
   margin: 0;
   height: ${DEFAULT_PIXEL_SIZE}
 }
-.pixelButton {
+.pixelButton-u8g2 {
   width: ${DEFAULT_PIXEL_SIZE}px;
   height: ${DEFAULT_PIXEL_SIZE}px;
-  border: 0.5px solid #000;
 }
-.pixelDisplay {
+.pixelDisplay-u8g2 {
   white-space:pre-wrap;
 }
-.controlButton {
-  margin: 5px 0;
-  color: #333;
+.buttonContainer-u8g2 {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  margin-top: 10px;
 }
-.blocklyDropDownContent.contains-bitmap-editor {
+.controlButton-u8g2 {
+  margin: 0;
+  color: #333;
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+.controlButton-u8g2:hover {
+  background: #f5f5f5;
+  border-color: #999;
+}
+.blocklyDropDownContent.contains-bitmap-editor-u8g2 {
   max-height: none;
 }
 `);

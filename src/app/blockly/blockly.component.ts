@@ -27,17 +27,25 @@ import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../services/config.service';
 import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
+import { CommonModule } from '@angular/common';
+import { BitmapUploadService } from './bitmap-upload.service';
+import { GlobalServiceManager } from './global-service-manager';
+import { ImageUploadDialogComponent } from './components/image-upload-dialog/image-upload-dialog.component';
 
 @Component({
   selector: 'blockly-main',
   imports: [
-    NzModalModule
+    NzModalModule,
+    CommonModule
   ],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
 })
 export class BlocklyComponent {
   @ViewChild('blocklyDiv', { static: true }) blocklyDiv!: ElementRef;
+
+  // Control bitmap upload handler visibility
+  showBitmapUploadHandler = true;
 
   get workspace() {
     return this.blocklyService.workspace;
@@ -119,15 +127,39 @@ export class BlocklyComponent {
   get configData() {
     return this.configService.data;
   }
-
   constructor(
     private blocklyService: BlocklyService,
     private modal: NzModalService,
-    private configService: ConfigService
-  ) { }
+    private configService: ConfigService,
+    private bitmapUploadService: BitmapUploadService
+  ) {
+    // Initialize GlobalServiceManager with BitmapUploadService
+    const globalServiceManager = GlobalServiceManager.getInstance();
+    globalServiceManager.setBitmapUploadService(this.bitmapUploadService);
+  }
 
   ngOnInit(): void {
     this.setPrompt();
+    this.bitmapUploadService.uploadRequestSubject.subscribe((request) => {
+      console.log('接收到位图上传请求:', request);
+      this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzContent: ImageUploadDialogComponent,
+        nzData: {
+          request: request
+        },
+        nzWidth: '500px',
+        nzOnOk: () => {
+          // 处理上传逻辑
+          console.log('位图上传处理完成');
+        },
+      });
+    });
   }
 
   ngAfterViewInit(): void {

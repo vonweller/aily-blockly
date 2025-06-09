@@ -1,7 +1,6 @@
 .blocklyBox {
     width: 100%;
-    height: 100%;
-
+    flex: 1;
 
     ::ng-deep {
 
@@ -90,4 +89,23 @@
     &:hover {
         background: rgb(212, 48, 48);
     }
+}
+
+.bitmap-upload-panel {
+    height: 300px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    overflow-y: auto;
+    
+    // Ensure the panel is visible when needed
+    &:not(:empty) {
+        min-height: 200px;
+    }
+}
+
+.blockly-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 }
