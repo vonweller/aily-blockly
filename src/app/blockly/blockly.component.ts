@@ -22,17 +22,15 @@ import './custom-field/field-angle180';
 import './custom-field/field-angle';
 import '@blockly/field-colour-hsv-sliders';
 
-import { Multiselect } from './plugins/workspace-multiselect/index.js';
+// import { Multiselect } from './plugins/workspace-multiselect/index.js';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
-import { NoticeService } from '../services/notice.service.js';
 import { ConfigService } from '../services/config.service';
 import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
 
 @Component({
   selector: 'blockly-main',
   imports: [
-    // PromptDialogComponent,
     NzModalModule
   ],
   templateUrl: './blockly.component.html',
@@ -125,7 +123,6 @@ export class BlocklyComponent {
   constructor(
     private blocklyService: BlocklyService,
     private modal: NzModalService,
-    private noticeService: NoticeService,
     private configService: ConfigService
   ) { }
 
