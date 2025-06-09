@@ -159,6 +159,11 @@ export let HEADER_MENU: IMenuItem[] = [
     sep: true,
   },
   {
+    name: 'MENU.EXAMPLES',
+    action: 'example-open',
+    icon: 'fa-light fa-books',
+  },
+  {
     name: 'MENU.ABOUT',
     action: 'browser-open',
     data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },

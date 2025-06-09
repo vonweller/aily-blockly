@@ -274,6 +274,15 @@ export class HeaderComponent {
       case 'app-exit':
         this.close();
         break;
+      case 'example-open':
+        if (this.router.url.indexOf('/main/blockly-editor') > -1) {
+          await window['other'].openNewInstance({
+            url: "http://localhost:4200/"
+          });
+        } else {
+          this.router.navigate(['/main/playground']);
+        }
+        break;
       default:
         console.log('未处理的操作:', item.action);
         break;

@@ -87,7 +87,7 @@ export class ProjectService {
             } else if (checkCount >= maxChecks) {
               clearInterval(timer);
               this.message.error('无法找到项目文件: ' + filePath);
-              this.uiService.updateState({ state: 'error', text: '无法找到项目文件: ' + filePath });
+              this.uiService.updateFooterState({ state: 'error', text: '无法找到项目文件: ' + filePath });
               reject(new Error('无法找到项目文件: ' + filePath));
             }
           }, 500);
@@ -119,7 +119,7 @@ export class ProjectService {
     const projectPath = window['path'].join(newProjectData.path, newProjectData.name.replace(/\s/g, '_'));
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
-    this.uiService.updateState({ state: 'doing', text: '正在创建项目...' });
+    this.uiService.updateFooterState({ state: 'doing', text: '正在创建项目...' });
     await this.cmdService.runAsync(`npm install ${boardPackage} --prefix "${appDataPath}"`);
     const templatePath = `${appDataPath}\\node_modules\\${newProjectData.board.name}\\template`;
     // 创建项目目录
@@ -144,7 +144,7 @@ export class ProjectService {
 
     window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
 
-    this.uiService.updateState({ state: 'done', text: '项目创建成功' });
+    this.uiService.updateFooterState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
     await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
     this.uiService.closeWindow();
