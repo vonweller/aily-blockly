@@ -14,7 +14,8 @@
       <div class="loading" *ngIf="isLoading">
         <i class="fa-light fa-spinner"></i>
         正在处理图片...
-      </div> <!-- 图片显示区域 -->
+      </div>
+      <!-- 图片显示区域 -->
       <img #cropperImage [src]="imageUrl" [style.display]="imageUrl && !isLoading ? 'none' : 'none'">
 
       <!-- 空状态提示 -->

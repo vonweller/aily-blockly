@@ -123,15 +123,7 @@
   }
 
   .cropper-canvas {
-    position: absolute !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-  }
-
-  .cropper-modal {
-    background: rgba(0, 0, 0, 0.5) !important;
-    opacity: 0.8 !important;
+    position: absolute;
   }
 
   .cropper-crop-box {

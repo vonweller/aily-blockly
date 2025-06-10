@@ -143,9 +143,13 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     // 销毁已存在的cropper
     this.destroyCropper();
 
-    const image = this.cropperImage.nativeElement;    // 清除之前的事件监听器，避免事件处理器冲突
+    const image = this.cropperImage.nativeElement;
+
+    // 清除之前的事件监听器，避免事件处理器冲突
     image.onload = null;
-    image.onerror = null;    // 设置图片样式 - 确保初始状态就是隐藏的
+    image.onerror = null;
+
+    // 设置图片样式 - 确保初始状态就是隐藏的
     image.style.display = 'none';
     image.style.width = 'auto';
     image.style.height = 'auto';
@@ -158,31 +162,33 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     image.onload = () => {
       console.log('Image loaded, creating cropper');
       console.log('Image natural size:', image.naturalWidth, 'x', image.naturalHeight);
-      console.log('Image display size:', image.offsetWidth, 'x', image.offsetHeight);      try {
+      console.log('Image display size:', image.offsetWidth, 'x', image.offsetHeight);
+
+      try {
         // 图片已经在初始化时设置为隐藏，现在直接创建cropper
         this.cropper = new Cropper(image, {
           aspectRatio: this.outputWidth / this.outputHeight,
-          viewMode: 1, // 改回 1，限制在容器内
-          dragMode: 'move',
+          viewMode: 1,
+          dragMode: 'move', // 设置为移动模式，允许拖拽图片
           autoCrop: true,
           autoCropArea: 0.8,
-          movable: true,
-          zoomable: true,
-          zoomOnWheel: true,
-          cropBoxMovable: false,
-          cropBoxResizable: false,
+          movable: true, // 允许移动图片
+          zoomable: true, // 允许缩放图片
+          zoomOnWheel: true, // 允许鼠标滚轮缩放
+          cropBoxMovable: false, // 裁剪框不可移动
+          cropBoxResizable: false, // 裁剪框不可调整大小
           guides: true,
           center: true,
           highlight: true,
           background: true,
           modal: true,
-          responsive: true,          ready: () => {
-            console.log('Cropper ready');
-            console.log('Cropper data:', this.cropper?.getData());
-
+          responsive: true,
+          restore: false, // 不恢复裁剪状态
+          checkCrossOrigin: false, // 不检查跨域
+          checkOrientation: false, // 不检查图片方向
+          ready: () => {
             // Cropper准备就绪后立即停止加载状态
             this.isLoading = false;
-            
             // 确保裁剪框正确显示和居中
             if (this.cropper) {
               this.cropper.crop();
