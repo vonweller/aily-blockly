@@ -1,52 +1,36 @@
 <div class="prompt-box bborder">
-    <div class="header">
-        <div class="title">{{ title }}</div>
-        <div class="win-btns">
-            <div class="btn ccenter close" (click)="onClose()">
-                <i class="fa-light fa-xmark"></i>
-            </div>
-        </div>
-    </div>    <div class="content">
-        <div class="image-cropper-container">            <!-- 上传区域 -->
-            <div class="upload-area" *ngIf="!imageUrl">
-                <input 
-                    #fileInput 
-                    type="file" 
-                    accept="image/*" 
-                    (change)="onFileSelected($event)"
-                    style="display: none;"
-                />
-                <button nz-button (click)="fileInput.click()">
-                    <span nz-icon nzType="upload"></span>
-                    选择图片
-                </button>
-                <p class="hint-text">支持JPG、PNG格式，将自动裁剪为128x128像素</p>
-            </div>            <!-- 裁剪区域 -->
-            <div class="crop-container" *ngIf="imageUrl">
-                <img #cropperImage [src]="imageUrl" alt="待裁剪图片" style="max-width: 100%; display: block;" />
-                  <!-- 操作提示 -->
-                <div class="crop-hints">
-                    <small>拖拽选择区域 • 拖拽角落调整大小 • 方向键微调位置 • Ctrl+Enter确认</small>
-                </div>
-                
-                <div class="crop-controls">
-                    <button nz-button nzType="default" (click)="resetCropper()">重置</button>
-                    <input 
-                        #reSelectInput 
-                        type="file" 
-                        accept="image/*" 
-                        (change)="onFileSelected($event)"
-                        style="display: none;"
-                    />
-                    <button nz-button nzType="default" (click)="reSelectInput.click()">重选</button>
-                    <button nz-button nzType="primary" (click)="cropImage()">确认裁剪</button>
-                </div>
-            </div>
-        </div>
-        
-        <div class="footer">
-            <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button>
-            <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!croppedImageData" (click)="onConfirm()">确定</button>
-        </div>
+  <div class="header">
+    <div class="title">{{ title }}</div>
+    <div class="win-btns">
+      <div class="btn ccenter close" (click)="onClose()">
+        <i class="fa-light fa-xmark"></i>
+      </div>
     </div>
+  </div>
+  <div class="content">
+    <div class="image-cropper-container">
+      <!-- 上传区域 -->
+      <div class="upload-area" *ngIf="!imageUrl">
+        <input #fileInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
+        <button nz-button (click)="fileInput.click()">
+          <span nz-icon nzType="upload"></span>
+          选择图片
+        </button>
+      </div>
+      <!-- 裁剪区域 -->
+      <div class="crop-container" *ngIf="imageUrl">
+        <img #cropperImage [src]="imageUrl" alt="待裁剪图片" style="max-width: 100%; display: none;" />
+      </div>
+    </div>
+
+    <div class="footer">
+      <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button>
+      @if(imageUrl){
+      <input #reSelectInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
+      <button nz-button [nzSize]="'small'" nzType="default" (click)="reSelectInput.click()">重选图片</button>
+      }
+      <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!croppedImageData"
+        (click)="onConfirm()">确定</button>
+    </div>
+  </div>
 </div>

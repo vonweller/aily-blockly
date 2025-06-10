@@ -55,6 +55,10 @@ body {
   background: transparent !important;
 }
 
+.cdk-overlay-container{
+  z-index: 10000;
+}
+
 .btn {
   cursor: pointer;
 

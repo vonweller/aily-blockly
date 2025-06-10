@@ -7,8 +7,7 @@ import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { FormsModule } from '@angular/forms';
 import { NzModalRef } from 'ng-zorro-antd/modal';
-
-declare const Cropper: any;
+import Cropper from 'cropperjs';
 
 @Component({
   selector: 'app-image-upload-dialog',
@@ -46,6 +45,7 @@ export class ImageUploadDialogComponent implements OnInit, OnDestroy, AfterViewI
   ngAfterViewInit() {
     // cropper will be initialized after image loads
   }
+
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
@@ -60,48 +60,58 @@ export class ImageUploadDialogComponent implements OnInit, OnDestroy, AfterViewI
       return;
     }
 
+    // 销毁之前的cropper实例
+    this.destroyCropper();
+
     const reader = new FileReader();
     reader.onload = (e: any) => {
       this.imageUrl = e.target.result;
       this.croppedImageData = null;
       
-      // Initialize cropper after image loads
+      // 等待Angular更新DOM，然后等待图片加载完成
       setTimeout(() => {
-        this.initCropper();
-      }, 100);
+        if (this.cropperImage?.nativeElement) {
+          const img = this.cropperImage.nativeElement;
+          if (img.complete) {
+            // 图片已经加载完成
+            this.initCropper();
+          } else {
+            // 等待图片加载完成
+            img.onload = () => {
+              this.initCropper();
+            };
+          }
+        }
+      }, 50);
     };
 
     reader.readAsDataURL(file);
-  }
-  initCropper() {
+  }initCropper() {
     if (this.cropperImage?.nativeElement) {
       this.destroyCropper();
       
-      this.cropper = new Cropper(this.cropperImage.nativeElement, {
-        aspectRatio: 1, // 1:1 比例，用于128x128像素
-        viewMode: 1,
-        dragMode: 'move',
-        autoCropArea: 0.8,
-        responsive: true,
-        restore: false,
-        guides: true,
-        center: true,
-        highlight: false,
-        cropBoxMovable: true,
-        cropBoxResizable: true, // 允许调整裁剪框大小
-        minCropBoxWidth: 50,    // 最小裁剪框宽度
-        minCropBoxHeight: 50,   // 最小裁剪框高度
-        toggleDragModeOnDblclick: false,
-        ready: () => {
-          // 设置初始裁剪框大小
-          const containerData = this.cropper.getContainerData();
-          const minSize = Math.min(containerData.width, containerData.height) * 0.6;
-          this.cropper?.setCropBoxData({
-            width: minSize,
-            height: minSize
-          });
-        }
-      });
+      try {
+        // 配置 Cropper 以填充满容器
+        this.cropper = new Cropper(this.cropperImage.nativeElement, {
+          autoCropArea: 1, // 自动裁剪区域占图像的比例（1 = 100%）
+          ready: () => {
+            console.log('Cropper ready');
+            // 设置裁剪框填充满可视区域
+            setTimeout(() => {
+              if (this.cropper) {
+                this.cropper.crop();
+              }
+            }, 100);
+          },
+          crop: (event: any) => {
+            // 裁剪时自动更新裁剪数据
+            this.cropImage();
+          }
+        } as any);
+      } catch (error) {
+        console.error('初始化Cropper失败:', error);
+        this.message.error('初始化裁剪功能失败');
+      }
     }
   }
 
@@ -117,24 +127,24 @@ export class ImageUploadDialogComponent implements OnInit, OnDestroy, AfterViewI
       this.cropper.reset();
     }
   }
-
   cropImage() {
     if (!this.cropper) {
       this.message.error('请先选择图片');
       return;
     }
 
-    const canvas = this.cropper.getCroppedCanvas({
-      width: 128,
-      height: 128,
-      imageSmoothingEnabled: true,
-      imageSmoothingQuality: 'high'
-    });
+    try {
+      // 获取裁剪后的canvas
+      const canvas = this.cropper.getCroppedCanvas();
 
-    if (canvas) {
-      this.croppedImageData = canvas.toDataURL('image/png');
-      this.message.success('图片裁剪成功!');
-    } else {
+      if (canvas) {
+        this.croppedImageData = canvas.toDataURL('image/png');
+        this.message.success('图片裁剪成功!');
+      } else {
+        this.message.error('图片裁剪失败');
+      }
+    } catch (error) {
+      console.error('裁剪图片失败:', error);
       this.message.error('图片裁剪失败');
     }
   }
@@ -142,28 +152,11 @@ export class ImageUploadDialogComponent implements OnInit, OnDestroy, AfterViewI
   onImageCropped(imageData: string) {
     this.croppedImageData = imageData;
   }
-
   @HostListener('document:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent): void {
     if (!this.cropper || !this.imageUrl) return;
 
     switch (event.key) {
-      case 'ArrowUp':
-        event.preventDefault();
-        this.moveCropBox(0, -5);
-        break;
-      case 'ArrowDown':
-        event.preventDefault();
-        this.moveCropBox(0, 5);
-        break;
-      case 'ArrowLeft':
-        event.preventDefault();
-        this.moveCropBox(-5, 0);
-        break;
-      case 'ArrowRight':
-        event.preventDefault();
-        this.moveCropBox(5, 0);
-        break;
       case 'Escape':
         event.preventDefault();
         this.onClose();
@@ -175,16 +168,6 @@ export class ImageUploadDialogComponent implements OnInit, OnDestroy, AfterViewI
         }
         break;
     }
-  }
-
-  moveCropBox(deltaX: number, deltaY: number): void {
-    if (!this.cropper) return;
-    
-    const cropBoxData = this.cropper.getCropBoxData();
-    this.cropper.setCropBoxData({
-      left: cropBoxData.left + deltaX,
-      top: cropBoxData.top + deltaY
-    });
   }
 
   private uploadSubscription: Subscription = new Subscription();
