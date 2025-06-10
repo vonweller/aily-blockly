@@ -29,9 +29,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   @Input() outputWidth = 128;  // 可配置输出宽度
   @Input() outputHeight = 64;  // 可配置输出高度
   @Input() maxFileSize = 10 * 1024 * 1024; // 10MB
-  @Input() acceptedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  @Input() acceptedTypes = ['image/jpeg', 'image/png', 'image/webp'];
 
   @ViewChild('cropperImage') cropperImage!: ElementRef<HTMLImageElement>;
+  @ViewChild("myCanvas") myCanvas;
 
   imageUrl: string | null = null;
   cropper: Cropper | null = null;
@@ -116,7 +117,9 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     if (input.files && input.files[0]) {
       this.handleFileSelect(input.files[0]);
     }
-  } handleFileSelect(file: File): void {
+  }
+
+  handleFileSelect(file: File): void {
     // 验证文件类型
     if (!this.acceptedTypes.includes(file.type)) {
       this.message.error('请选择支持的图片格式 (JPEG, PNG, GIF, WebP)');
@@ -152,7 +155,9 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     };
 
     reader.readAsDataURL(file);
-  } initCropper(): void {
+  }
+
+  initCropper(): void {
     if (!this.cropperImage?.nativeElement || !this.imageUrl) {
       console.warn('Cropper initialization failed: missing image element or imageUrl');
       return;
@@ -304,7 +309,6 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
   // 测试 Cropper 状态的方法
   testCropper(): void {
-    console.log('=== Cropper Debug Info ===');
     console.log('imageUrl:', this.imageUrl);
     console.log('isLoading:', this.isLoading);
     console.log('cropper instance:', this.cropper);
@@ -321,7 +325,6 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     if (this.cropper) {
       console.log('Cropper data:', this.cropper.getData());
     }
-    console.log('========================');
   }
 
   ngOnInit(): void {
@@ -333,5 +336,32 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   }
   ngOnDestroy(): void {
     this.releaseImageResources();
+  }
+
+  timer;
+  convert2bitmap() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      console.log(this.options);
+      let canvas: HTMLCanvasElement = this.myCanvas.nativeElement;
+      let context = canvas.getContext("2d");
+      let image = new Image();
+      image.src = window.URL.createObjectURL(this.file);
+      image.onload = () => {
+        this.size = `// width: ${image.width.toString()}, height: ${image.height.toString()}\n`
+        this.result = this.size + `const unsigned char col[] U8X8_PROGMEM = { `;
+        this.renderer.setAttribute(canvas, "width", image.width.toString() + 'px')
+        this.renderer.setAttribute(canvas, "height", image.height.toString() + 'px')
+        context.clearRect(0, 0, this.width, this.height);
+        context.drawImage(image, 0, 0);
+        let imageData = context.getImageData(0, 0, image.width, image.height);
+        this.width = image.width;
+        this.height = image.height;
+
+        this.converterService.convert(context, imageData, this.options).then((result) => {
+          this.result += result + ' };';
+        });
+      }
+    }, 500);
   }
 }

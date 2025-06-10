@@ -79,7 +79,7 @@
       margin-left: 5px;
     }
 
-    nz-input-number{
+    nz-input-number {
       margin-left: 5px;
       width: 56px;
     }
@@ -225,5 +225,18 @@
 
   to {
     transform: rotate(360deg);
+  }
+}
+
+.inner {
+  position: relative;
+  display: flex;
+
+  .left {
+    width: 65%;
+  }
+
+  .right {
+    width: 35%;
   }
 }

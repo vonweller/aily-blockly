@@ -8,29 +8,30 @@
     </div>
   </div>
   <div class="content">
-    <!-- 图片容器或拖拽区域 -->
-    <div class="image-container" [class.drag-over]="isDragOver" (click)="!imageUrl && reSelectInput.click()">
-      <!-- 加载状态 -->
-      @if (isLoading) {
-      <div class="loading">
-        <i class="fa-light fa-spinner"></i>
-        正在处理图片...
-      </div>
-      }
-      <!-- 图片显示区域 -->
-      <img #cropperImage [src]="imageUrl" [style.display]="imageUrl && !isLoading ? 'none' : 'none'">
-      <!-- 空状态提示 -->
-      @if (!imageUrl && !isLoading) {
-      <div class="empty-tip">
-        <i class="fa-light fa-image"></i>
-        <p>点击选择图片或拖拽图片到此处</p>
-        <p class="sub-text">支持 JPEG、PNG、GIF、WebP 格式，最大 {{ maxFileSize / 1024 / 1024 }}MB</p>
-      </div>
-      }
-      <!-- 操作提示 -->
-      @if (imageUrl && !isLoading) {
-      <div class="operation-tips">
-        <!-- <div class="tip-item">
+    <div class="inner">
+      <!-- 图片容器或拖拽区域 -->
+      <div class="image-container left" [class.drag-over]="isDragOver" (click)="!imageUrl && reSelectInput.click()">
+        <!-- 加载状态 -->
+        @if (isLoading) {
+        <div class="loading">
+          <i class="fa-light fa-spinner"></i>
+          正在处理图片...
+        </div>
+        }
+        <!-- 图片显示区域 -->
+        <img #cropperImage [src]="imageUrl" [style.display]="imageUrl && !isLoading ? 'none' : 'none'">
+        <!-- 空状态提示 -->
+        @if (!imageUrl && !isLoading) {
+        <div class="empty-tip">
+          <i class="fa-light fa-image"></i>
+          <p>点击选择图片或拖拽图片到此处</p>
+          <p class="sub-text">支持 JPEG、PNG、WebP 格式，最大 {{ maxFileSize / 1024 / 1024 }}MB</p>
+        </div>
+        }
+        <!-- 操作提示 -->
+        @if (imageUrl && !isLoading) {
+        <div class="operation-tips">
+          <!-- <div class="tip-item">
           <i class="fa-light fa-up-down-left-right"></i>
           拖拽移动图片位置
         </div>
@@ -38,20 +39,24 @@
           <i class="fa-light fa-magnifying-glass-plus"></i>
           滚轮缩放图片大小
         </div> -->
-        <div class="tip-item">切换大小端
-          <nz-switch nzSize="small" [(ngModel)]="options.endian"></nz-switch>
+          <div class="tip-item">切换大小端
+            <nz-switch nzSize="small" [(ngModel)]="options.endian"></nz-switch>
+          </div>
+          <div class="tip-item">颜色反转
+            <nz-switch nzSize="small" [(ngModel)]="options.invert"></nz-switch>
+          </div>
+          <div class="tip-item">使能抖动
+            <nz-switch nzSize="small" [(ngModel)]="options.dither"></nz-switch>
+          </div>
+          <div class="tip-item">取色阀值
+            <nz-input-number [(ngModel)]="options.threshold" nzSize="small" nzMin="1" nzMax="255" />
+          </div>
         </div>
-        <div class="tip-item">颜色反转
-          <nz-switch nzSize="small" [(ngModel)]="options.invert"></nz-switch>
-        </div>
-        <div class="tip-item">使能抖动
-          <nz-switch nzSize="small" [(ngModel)]="options.dither"></nz-switch>
-        </div>
-        <div class="tip-item">取色阀值
-          <nz-input-number [(ngModel)]="options.threshold" nzSize="small" nzMin="1" nzMax="255" />
+        }
+        <div class="right">
+          <canvas #myCanvas result></canvas>
         </div>
       </div>
-      }
     </div>
 
     <div class="footer">
