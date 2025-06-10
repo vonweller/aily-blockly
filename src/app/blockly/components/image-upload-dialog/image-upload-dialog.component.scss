@@ -59,20 +59,20 @@
 // 操作提示样式
 .operation-tips {
   background: rgba(43, 45, 48, 0.5);
+  height: 35px;
   padding: 6px;
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: center;
   position: absolute;
   bottom: 0;
-  gap: 20px;
 
   .tip-item {
     display: flex;
     align-items: center;
     color: #ccc;
     font-size: 12px;
+    margin-right: 6px;
 
     nz-switch {
       margin-top: -3px;

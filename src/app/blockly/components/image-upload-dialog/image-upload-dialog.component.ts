@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, Input, ViewChild, ElementRef, AfterViewInit, HostListener } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, ViewChild, ElementRef, AfterViewInit, HostListener, Renderer2 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { BitmapUploadService } from '../../bitmap-upload.service';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -9,6 +9,7 @@ import { NzModalRef } from 'ng-zorro-antd/modal';
 import Cropper from 'cropperjs';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
+import { ConverterService } from './converter.service';
 
 @Component({
   selector: 'app-image-upload-dialog',
@@ -38,6 +39,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   cropper: Cropper | null = null;
   isLoading = false;
   isDragOver = false;
+  private cropChangeTimer: any = null; // 添加防抖定时器
 
   options = {
     endian: false,
@@ -49,7 +51,9 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   constructor(
     private bitmapUploadService: BitmapUploadService,
     private modal: NzModalRef,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private renderer: Renderer2,
+    private converterService: ConverterService
   ) { }
 
   // 拖拽事件处理
@@ -80,6 +84,23 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   } onClose(): void {
     this.releaseImageResources();
     this.modal.triggerCancel();
+  }
+
+  ngOnInit(): void {
+    // Component initialization
+  }
+
+  ngAfterViewInit(): void {
+    // console.log('ImageUploadDialog AfterViewInit');
+    // console.log('cropperImage element:', this.cropperImage?.nativeElement);
+  }
+
+  ngOnDestroy(): void {
+    // 清除防抖定时器
+    if (this.cropChangeTimer) {
+      clearTimeout(this.cropChangeTimer);
+    }
+    this.releaseImageResources();
   }
 
   onConfirm(): void {
@@ -183,38 +204,43 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 设置新的事件处理器
     image.onload = () => {
-      // console.log('Image loaded, creating cropper');
-      // console.log('Image natural size:', image.naturalWidth, 'x', image.naturalHeight);
-      // console.log('Image display size:', image.offsetWidth, 'x', image.offsetHeight);
       try {
         // 图片已经在初始化时设置为隐藏，现在直接创建cropper
         this.cropper = new Cropper(image, {
           aspectRatio: this.outputWidth / this.outputHeight,
           viewMode: 1,
-          dragMode: 'move', // 设置为移动模式，允许拖拽图片
+          dragMode: 'move',
           autoCrop: true,
           autoCropArea: 0.8,
-          movable: true, // 允许移动图片
-          zoomable: true, // 允许缩放图片
-          zoomOnWheel: true, // 允许鼠标滚轮缩放
-          cropBoxMovable: false, // 裁剪框不可移动
-          cropBoxResizable: false, // 裁剪框不可调整大小
+          movable: true,
+          zoomable: true,
+          zoomOnWheel: true,
+          cropBoxMovable: false,
+          cropBoxResizable: false,
           guides: true,
           center: true,
           highlight: true,
           background: true,
           modal: true,
           responsive: true,
-          restore: false, // 不恢复裁剪状态
-          checkCrossOrigin: false, // 不检查跨域
-          checkOrientation: false, // 不检查图片方向
+          restore: false,
+          checkCrossOrigin: false,
+          checkOrientation: false,
           ready: () => {
-            // Cropper准备就绪后立即停止加载状态
             this.isLoading = false;
-            // 确保裁剪框正确显示和居中
             if (this.cropper) {
               this.cropper.crop();
             }
+          },
+          // 添加裁剪内容变化事件监听器
+          cropend: () => {
+            this.onCropChange();
+          },
+          cropmove: () => {
+            this.onCropChange();
+          },
+          zoom: () => {
+            this.onCropChange();
           }
         });
       } catch (error) {
@@ -233,7 +259,49 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     // 最后设置图片源，触发加载
     image.src = this.imageUrl;
   }
+
+  // 添加裁剪内容变化处理方法（带防抖）
+  onCropChange(): void {
+    // 清除之前的定时器
+    if (this.cropChangeTimer) {
+      clearTimeout(this.cropChangeTimer);
+    }
+
+    // 设置新的定时器，2秒后执行
+    this.cropChangeTimer = setTimeout(() => {
+      this.handleCropChange();
+    }, 2000);
+  }
+
+  // 实际处理裁剪变化的方法
+  async handleCropChange() {
+    if (!this.cropper) {
+      return;
+    }
+
+    try {
+      // 获取当前裁剪数据
+      // const cropData = this.cropper.getData();
+      // console.log('裁剪内容已变化:', cropData);
+
+      // 在这里添加您需要的处理逻辑
+      // 例如：自动转换为bitmap、更新预览等
+
+      let image = await this.cropDataToImage()
+      this.convert2bitmap(image);
+
+    } catch (error) {
+      console.error('处理裁剪变化失败:', error);
+    }
+  }
+
   destroyCropper(): void {
+    // 清除防抖定时器
+    if (this.cropChangeTimer) {
+      clearTimeout(this.cropChangeTimer);
+      this.cropChangeTimer = null;
+    }
+
     if (this.cropper) {
       this.cropper.destroy();
       this.cropper = null;
@@ -327,41 +395,57 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     }
   }
 
-  ngOnInit(): void {
-    // Component initialization
-  }
-  ngAfterViewInit(): void {
-    console.log('ImageUploadDialog AfterViewInit');
-    console.log('cropperImage element:', this.cropperImage?.nativeElement);
-  }
-  ngOnDestroy(): void {
-    this.releaseImageResources();
+  result;
+  convert2bitmap(image: HTMLImageElement) {
+    console.log(this.options);
+    let canvas: HTMLCanvasElement = this.myCanvas.nativeElement;
+    let context = canvas.getContext("2d");
+    this.renderer.setAttribute(canvas, "width", image.width.toString() + 'px')
+    this.renderer.setAttribute(canvas, "height", image.height.toString() + 'px')
+    context.clearRect(0, 0, this.outputWidth, this.outputHeight);
+    context.drawImage(image, 0, 0);
+    let imageData = context.getImageData(0, 0, image.width, image.height);
+    this.converterService.convert(context, imageData, this.options);
   }
 
-  timer;
-  convert2bitmap() {
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      console.log(this.options);
-      let canvas: HTMLCanvasElement = this.myCanvas.nativeElement;
-      let context = canvas.getContext("2d");
-      let image = new Image();
-      image.src = window.URL.createObjectURL(this.file);
-      image.onload = () => {
-        this.size = `// width: ${image.width.toString()}, height: ${image.height.toString()}\n`
-        this.result = this.size + `const unsigned char col[] U8X8_PROGMEM = { `;
-        this.renderer.setAttribute(canvas, "width", image.width.toString() + 'px')
-        this.renderer.setAttribute(canvas, "height", image.height.toString() + 'px')
-        context.clearRect(0, 0, this.width, this.height);
-        context.drawImage(image, 0, 0);
-        let imageData = context.getImageData(0, 0, image.width, image.height);
-        this.width = image.width;
-        this.height = image.height;
-
-        this.converterService.convert(context, imageData, this.options).then((result) => {
-          this.result += result + ' };';
-        });
+  private cropDataToImage(): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      if (!this.cropper) {
+        reject(new Error('Cropper实例不存在'));
+        return;
       }
-    }, 500);
+
+      try {
+        // 获取裁剪后的画布
+        const canvas = this.cropper.getCroppedCanvas({
+          width: this.outputWidth,
+          height: this.outputHeight,
+          imageSmoothingEnabled: true,
+          imageSmoothingQuality: 'high'
+        });
+
+        // 将画布转换为data URL
+        const dataURL = canvas.toDataURL('image/png');
+
+        // 创建新的Image对象
+        const image = new Image();
+
+        // 设置图片加载完成的回调
+        image.onload = () => {
+          resolve(image);
+        };
+
+        // 设置图片加载失败的回调
+        image.onerror = () => {
+          reject(new Error('图片加载失败'));
+        };
+
+        // 设置图片源，触发加载
+        image.src = dataURL;
+
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 }

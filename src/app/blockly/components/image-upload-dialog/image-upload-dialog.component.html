@@ -40,27 +40,31 @@
           滚轮缩放图片大小
         </div> -->
           <div class="tip-item">切换大小端
-            <nz-switch nzSize="small" [(ngModel)]="options.endian"></nz-switch>
+            <nz-switch nzSize="small" [(ngModel)]="options.endian" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
           <div class="tip-item">颜色反转
-            <nz-switch nzSize="small" [(ngModel)]="options.invert"></nz-switch>
+            <nz-switch nzSize="small" [(ngModel)]="options.invert" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
           <div class="tip-item">使能抖动
-            <nz-switch nzSize="small" [(ngModel)]="options.dither"></nz-switch>
+            <nz-switch nzSize="small" [(ngModel)]="options.dither" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
+          @if(!options.dither) {
           <div class="tip-item">取色阀值
-            <nz-input-number [(ngModel)]="options.threshold" nzSize="small" nzMin="1" nzMax="255" />
+            <nz-input-number [(ngModel)]="options.threshold" (ngModelChange)="onCropChange()" nzSize="small" nzMin="1"
+              nzMax="255" />
           </div>
+          }
         </div>
         }
-        <div class="right">
-          <canvas #myCanvas result></canvas>
-        </div>
+      </div>
+      <div class="right">
+        <canvas #myCanvas result></canvas>
       </div>
     </div>
 
     <div class="footer">
-      <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button> <!-- 重选图片按钮 -->
+      <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button>
+      <!-- 重选图片按钮 -->
       <input #reSelectInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
       @if (imageUrl && !isLoading) {
       <button nz-button [nzSize]="'small'" nzType="default" (click)="reSelectInput.click()">
@@ -73,7 +77,8 @@
         <i class="fa-light fa-arrows-rotate"></i>
         重置
       </button>
-      } <!-- 调试按钮 -->
+      }
+      <!-- 调试按钮 -->
       @if (imageUrl && !isLoading) {
       <button nz-button [nzSize]="'small'" nzType="default" (click)="testCropper()" title="查看调试信息">
         调试
