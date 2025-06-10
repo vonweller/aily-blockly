@@ -8,29 +8,61 @@
     </div>
   </div>
   <div class="content">
-    <!-- Wrap the image or canvas element with a block element (container) -->
-    <div class="image-container">
-      <img #cropperImage>
-    </div>
+    <!-- 图片容器或拖拽区域 -->
+    <div class="image-container" [class.drag-over]="isDragOver" (click)="!imageUrl && reSelectInput.click()">
+      <!-- 加载状态 -->
+      <div class="loading" *ngIf="isLoading">
+        <i class="fa-light fa-spinner"></i>
+        正在处理图片...
+      </div> <!-- 图片显示区域 -->
+      <img #cropperImage [src]="imageUrl" [style.display]="imageUrl && !isLoading ? 'none' : 'none'">
 
-    <!-- 操作提示 -->
-    <div class="operation-tips" *ngIf="imageUrl">
-      <div class="tip-item">
-        <i class="fa-light fa-up-down-left-right"></i>
-        拖拽移动图片位置
+      <!-- 空状态提示 -->
+      <div class="empty-tip" *ngIf="!imageUrl && !isLoading">
+        <i class="fa-light fa-image"></i>
+        <p>点击选择图片或拖拽图片到此处</p>
+        <p class="sub-text">支持 JPEG、PNG、GIF、WebP 格式，最大 {{ maxFileSize / 1024 / 1024 }}MB</p>
       </div>
-      <div class="tip-item">
-        <i class="fa-light fa-magnifying-glass-plus"></i>
-        滚轮缩放图片大小
+      <!-- 操作提示 -->
+      <div class="operation-tips" *ngIf="imageUrl && !isLoading">
+        <div class="tip-item">
+          <i class="fa-light fa-up-down-left-right"></i>
+          拖拽移动图片位置
+        </div>
+        <div class="tip-item">
+          <i class="fa-light fa-magnifying-glass-plus"></i>
+          滚轮缩放图片大小
+        </div>
       </div>
     </div>
 
     <div class="footer">
       <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button>
-      @if(imageUrl){
+
+      <!-- 重选图片按钮 -->
       <input #reSelectInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
-      <button nz-button [nzSize]="'small'" nzType="default" (click)="reSelectInput.click()">重选图片</button>
-      } <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!imageUrl" (click)="onConfirm()">确定</button>
+      <button nz-button [nzSize]="'small'" nzType="default" *ngIf="imageUrl && !isLoading"
+        (click)="reSelectInput.click()">
+        重选图片
+      </button>
+      <!-- 重置位置按钮 -->
+      <button nz-button [nzSize]="'small'" nzType="default" *ngIf="imageUrl && !isLoading && cropper"
+        (click)="centerCropBox()" title="重置图片位置和缩放">
+        <i class="fa-light fa-arrows-rotate"></i>
+        重置
+      </button>
+
+      <!-- 调试按钮 -->
+      <button nz-button [nzSize]="'small'" nzType="default" *ngIf="imageUrl && !isLoading" (click)="testCropper()"
+        title="查看调试信息">
+        调试
+      </button>
+
+      <!-- 确定按钮 -->
+      <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!imageUrl || isLoading" [nzLoading]="isLoading"
+        (click)="onConfirm()">
+        确定
+      </button>
     </div>
   </div>
 </div>
