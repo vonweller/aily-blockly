@@ -571,7 +571,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
             uploadService.sendUploadRequest(uploadRequest);
-            console.log('Bitmap upload request sent:', uploadRequest);
+            // console.log('Bitmap upload request sent:', uploadRequest);
         } else {
             console.error('BitmapUploadService not available');
         }

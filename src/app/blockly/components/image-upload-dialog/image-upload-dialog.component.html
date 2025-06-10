@@ -8,18 +8,20 @@
     </div>
   </div>
   <div class="content">
-    <div class="image-cropper-container">
-      <!-- 上传区域 -->
-      <div class="upload-area" *ngIf="!imageUrl">
-        <input #fileInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
-        <button nz-button (click)="fileInput.click()">
-          <span nz-icon nzType="upload"></span>
-          选择图片
-        </button>
+    <!-- Wrap the image or canvas element with a block element (container) -->
+    <div class="image-container">
+      <img #cropperImage>
+    </div>
+
+    <!-- 操作提示 -->
+    <div class="operation-tips" *ngIf="imageUrl">
+      <div class="tip-item">
+        <i class="fa-light fa-up-down-left-right"></i>
+        拖拽移动图片位置
       </div>
-      <!-- 裁剪区域 -->
-      <div class="crop-container" *ngIf="imageUrl">
-        <img #cropperImage [src]="imageUrl" alt="待裁剪图片" style="max-width: 100%; display: none;" />
+      <div class="tip-item">
+        <i class="fa-light fa-magnifying-glass-plus"></i>
+        滚轮缩放图片大小
       </div>
     </div>
 
@@ -28,9 +30,7 @@
       @if(imageUrl){
       <input #reSelectInput type="file" accept="image/*" (change)="onFileSelected($event)" style="display: none;" />
       <button nz-button [nzSize]="'small'" nzType="default" (click)="reSelectInput.click()">重选图片</button>
-      }
-      <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!croppedImageData"
-        (click)="onConfirm()">确定</button>
+      } <button nz-button [nzSize]="'small'" nzType="primary" [disabled]="!imageUrl" (click)="onConfirm()">确定</button>
     </div>
   </div>
 </div>

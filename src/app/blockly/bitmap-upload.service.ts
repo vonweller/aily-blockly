@@ -42,7 +42,7 @@ export class BitmapUploadService {
    * @param request 上传请求数据
    */
   sendUploadRequest(request: BitmapUploadRequest): void {
-    console.log('Bitmap upload request sent:', request);
+    // console.log('Bitmap upload request sent:', request);
     this.uploadRequestSubject.next(request);
   }
 
