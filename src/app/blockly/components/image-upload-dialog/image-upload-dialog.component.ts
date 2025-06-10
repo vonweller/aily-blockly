@@ -160,10 +160,9 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 设置新的事件处理器
     image.onload = () => {
-      console.log('Image loaded, creating cropper');
-      console.log('Image natural size:', image.naturalWidth, 'x', image.naturalHeight);
-      console.log('Image display size:', image.offsetWidth, 'x', image.offsetHeight);
-
+      // console.log('Image loaded, creating cropper');
+      // console.log('Image natural size:', image.naturalWidth, 'x', image.naturalHeight);
+      // console.log('Image display size:', image.offsetWidth, 'x', image.offsetHeight);
       try {
         // 图片已经在初始化时设置为隐藏，现在直接创建cropper
         this.cropper = new Cropper(image, {
