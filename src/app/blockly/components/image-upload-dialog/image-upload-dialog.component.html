@@ -30,13 +30,25 @@
       <!-- 操作提示 -->
       @if (imageUrl && !isLoading) {
       <div class="operation-tips">
-        <div class="tip-item">
+        <!-- <div class="tip-item">
           <i class="fa-light fa-up-down-left-right"></i>
           拖拽移动图片位置
         </div>
         <div class="tip-item">
           <i class="fa-light fa-magnifying-glass-plus"></i>
           滚轮缩放图片大小
+        </div> -->
+        <div class="tip-item">切换大小端
+          <nz-switch nzSize="small" [(ngModel)]="options.endian"></nz-switch>
+        </div>
+        <div class="tip-item">颜色反转
+          <nz-switch nzSize="small" [(ngModel)]="options.invert"></nz-switch>
+        </div>
+        <div class="tip-item">使能抖动
+          <nz-switch nzSize="small" [(ngModel)]="options.dither"></nz-switch>
+        </div>
+        <div class="tip-item">取色阀值
+          <nz-input-number [(ngModel)]="options.threshold" nzSize="small" nzMin="1" nzMax="255" />
         </div>
       </div>
       }

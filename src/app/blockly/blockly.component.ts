@@ -153,7 +153,7 @@ export class BlocklyComponent {
         nzData: {
           request: request
         },
-        nzWidth: '500px',
+        nzWidth: '650px',
         nzOnOk: () => {
           // 处理上传逻辑
           console.log('位图上传处理完成');

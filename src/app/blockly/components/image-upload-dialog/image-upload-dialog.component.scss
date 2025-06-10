@@ -4,12 +4,11 @@
 .image-container {
   width: 100%;
   height: 300px;
-  margin: 10px 0;
   border: 2px dashed #4a4c4f;
   border-radius: 4px;
   background: #3a3c3f;
   position: relative;
-  overflow: visible; // 改为 visible，避免裁剪 cropper 界面
+  overflow: visible;
   cursor: pointer;
   transition: all 0.3s ease;
   display: flex;
@@ -26,13 +25,6 @@
   &.drag-over {
     border-color: #66b2ff;
     background: rgba(102, 178, 255, 0.1);
-  }
-
-  // 有图片时的状态
-  &:has(img[src]) {
-    cursor: default;
-    border: 1px solid #4a4c4f; // 改为实线边框
-    overflow: visible; // 确保 cropper 界面可见
   }
 }
 
@@ -67,7 +59,7 @@
 // 操作提示样式
 .operation-tips {
   background: rgba(43, 45, 48, 0.5);
-  padding: 10px;
+  padding: 6px;
   display: flex;
   width: 100%;
   align-items: center;
@@ -81,6 +73,16 @@
     align-items: center;
     color: #ccc;
     font-size: 12px;
+
+    nz-switch {
+      margin-top: -3px;
+      margin-left: 5px;
+    }
+
+    nz-input-number{
+      margin-left: 5px;
+      width: 56px;
+    }
 
     i {
       margin-right: 6px;

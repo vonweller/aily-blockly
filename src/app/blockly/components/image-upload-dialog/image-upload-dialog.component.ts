@@ -7,11 +7,20 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { FormsModule } from '@angular/forms';
 import { NzModalRef } from 'ng-zorro-antd/modal';
 import Cropper from 'cropperjs';
+import { NzSwitchModule } from 'ng-zorro-antd/switch';
+import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
 
 @Component({
   selector: 'app-image-upload-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, NzButtonModule, NzIconModule],
+  imports: [
+    CommonModule,
+    FormsModule,
+    NzButtonModule,
+    NzIconModule,
+    NzSwitchModule,
+    NzInputNumberModule
+  ],
   templateUrl: './image-upload-dialog.component.html',
   styleUrls: ['./image-upload-dialog.component.scss']
 })
@@ -28,6 +37,14 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   cropper: Cropper | null = null;
   isLoading = false;
   isDragOver = false;
+
+  options = {
+    endian: false,
+    invert: false,
+    dither: false,
+    threshold: 127,
+  }
+
   constructor(
     private bitmapUploadService: BitmapUploadService,
     private modal: NzModalRef,
@@ -59,7 +76,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     if (files && files.length > 0) {
       this.handleFileSelect(files[0]);
     }
-  }  onClose(): void {
+  } onClose(): void {
     this.releaseImageResources();
     this.modal.triggerCancel();
   }
@@ -99,7 +116,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     if (input.files && input.files[0]) {
       this.handleFileSelect(input.files[0]);
     }
-  }  handleFileSelect(file: File): void {
+  } handleFileSelect(file: File): void {
     // 验证文件类型
     if (!this.acceptedTypes.includes(file.type)) {
       this.message.error('请选择支持的图片格式 (JPEG, PNG, GIF, WebP)');
@@ -118,7 +135,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     this.isLoading = true;
     console.log('Starting file processing...');
 
-    const reader = new FileReader();    reader.onload = (e) => {
+    const reader = new FileReader(); reader.onload = (e) => {
       this.imageUrl = e.target?.result as string;
       console.log('File read complete, imageUrl set');
 
@@ -134,7 +151,8 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
       this.isLoading = false;
     };
 
-    reader.readAsDataURL(file);  }initCropper(): void {
+    reader.readAsDataURL(file);
+  } initCropper(): void {
     if (!this.cropperImage?.nativeElement || !this.imageUrl) {
       console.warn('Cropper initialization failed: missing image element or imageUrl');
       return;
@@ -220,14 +238,14 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   releaseImageResources(): void {
     // 销毁现有的cropper
     this.destroyCropper();
-    
+
     // 清除图片元素的事件监听器
     if (this.cropperImage?.nativeElement) {
       const image = this.cropperImage.nativeElement;
       image.onload = null;
       image.onerror = null;
     }
-    
+
     // 如果当前的imageUrl是blob URL，需要释放它
     if (this.imageUrl && this.imageUrl.startsWith('data:')) {
       // data URL不需要特殊释放，但我们仍然清空引用
