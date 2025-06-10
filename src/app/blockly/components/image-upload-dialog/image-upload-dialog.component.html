@@ -7,14 +7,42 @@
             </div>
         </div>
     </div>    <div class="content">
-        <app-image-cropper
-            [containerWidth]="500"
-            [containerHeight]="400"
-            [cropWidth]="128"
-            [cropHeight]="128"
-            [controls]="{zoom: true, rotate: true}"
-            (croppedImage)="onImageCropped($event)">
-        </app-image-cropper>
+        <div class="image-cropper-container">            <!-- 上传区域 -->
+            <div class="upload-area" *ngIf="!imageUrl">
+                <input 
+                    #fileInput 
+                    type="file" 
+                    accept="image/*" 
+                    (change)="onFileSelected($event)"
+                    style="display: none;"
+                />
+                <button nz-button (click)="fileInput.click()">
+                    <span nz-icon nzType="upload"></span>
+                    选择图片
+                </button>
+                <p class="hint-text">支持JPG、PNG格式，将自动裁剪为128x128像素</p>
+            </div>            <!-- 裁剪区域 -->
+            <div class="crop-container" *ngIf="imageUrl">
+                <img #cropperImage [src]="imageUrl" alt="待裁剪图片" style="max-width: 100%; display: block;" />
+                  <!-- 操作提示 -->
+                <div class="crop-hints">
+                    <small>拖拽选择区域 • 拖拽角落调整大小 • 方向键微调位置 • Ctrl+Enter确认</small>
+                </div>
+                
+                <div class="crop-controls">
+                    <button nz-button nzType="default" (click)="resetCropper()">重置</button>
+                    <input 
+                        #reSelectInput 
+                        type="file" 
+                        accept="image/*" 
+                        (change)="onFileSelected($event)"
+                        style="display: none;"
+                    />
+                    <button nz-button nzType="default" (click)="reSelectInput.click()">重选</button>
+                    <button nz-button nzType="primary" (click)="cropImage()">确认裁剪</button>
+                </div>
+            </div>
+        </div>
         
         <div class="footer">
             <button nz-button [nzSize]="'small'" nzType="default" (click)="onClose()">取消</button>
@@ -22,42 +50,3 @@
         </div>
     </div>
 </div>
-<!-- <div class="bitmap-upload-handler">
-  <h3>Bitmap Upload Handler</h3>
-  
-  <div class="status" *ngIf="lastRequest">
-    <h4>Last Upload Request:</h4>
-    <p>Size: {{lastRequest.width}} x {{lastRequest.height}}</p>
-    <p>Timestamp: {{lastRequest.timestamp | date:'medium'}}</p>
-    <p>Status: {{isProcessing ? 'Processing...' : 'Complete'}}</p>
-  </div>
-
-  <div class="controls">
-    <button 
-      (click)="processLastRequest()" 
-      class="btn btn-primary">
-      Process Bitmap
-    </button>
-    
-    <button 
-      (click)="simulateProcessedResponse()" 
-      class="btn btn-secondary">
-      Simulate Processing (Invert)
-    </button>
-  </div>
-
-  <div class="bitmap-preview" *ngIf="lastRequest">
-    <h4>Current Bitmap Preview:</h4>
-    <div class="pixel-grid">
-      <div 
-        *ngFor="let row of lastRequest.currentBitmap; let r = index"
-        class="pixel-row">
-        <div 
-          *ngFor="let pixel of row; let c = index"
-          class="pixel"
-          [class.filled]="pixel === 1">
-        </div>
-      </div>
-    </div>
-  </div>
-</div> -->

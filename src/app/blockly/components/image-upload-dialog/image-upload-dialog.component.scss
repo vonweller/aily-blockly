@@ -1,64 +1,131 @@
 @use "../prompt-dialog/prompt-dialog.component.scss";
 
-.bitmap-upload-handler {
-  padding: 20px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  margin: 10px;
-}
+.image-cropper-container {
+  width: 100%;
+  height: 450px;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
 
-.status {
-  background-color: #f5f5f5;
-  padding: 10px;
-  border-radius: 4px;
-  margin-bottom: 10px;
-}
-
-.controls {
-  margin: 10px 0;
-}
-
-.btn {
-  padding: 8px 16px;
-  margin-right: 10px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-
-  &-primary {
-    background-color: #007bff;
-    color: white;
+  .upload-area {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    
+    .hint-text {
+      margin-top: 12px;
+      color: #666;
+      font-size: 12px;
+    }
   }
 
-  &-secondary {
-    background-color: #6c757d;
-    color: white;
+  .crop-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+      img {
+      max-width: 100%;
+      max-height: calc(100% - 100px); // 为提示文字和控制按钮留出更多空间
+      display: block;
+    }
+
+    .crop-hints {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 16px;
+      font-size: 12px;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    .crop-controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background-color: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 0 20px;
+
+      button {
+        color: white;
+        border-color: rgba(255, 255, 255, 0.3);
+        
+        &:hover {
+          color: #1890ff;
+          border-color: #1890ff;
+        }
+      }
+
+      :host ::ng-deep .ant-btn-primary {
+        background-color: #1890ff;
+        border-color: #1890ff;
+      }
+    }
+  }
+}
+
+// Cropper.js 自定义样式
+:host ::ng-deep {
+  // 裁剪框样式
+  .cropper-crop-box {
+    border-color: #1890ff !important;
+    box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.8) !important;
   }
 
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+  // 调整手柄样式
+  .cropper-point {
+    background-color: #1890ff !important;
+    width: 8px !important;
+    height: 8px !important;
+    border-radius: 50% !important;
+    opacity: 0.8 !important;
+    
+    &:hover {
+      opacity: 1 !important;
+      transform: scale(1.2) !important;
+    }
   }
-}
 
-.pixel-grid {
-  max-width: 400px;
-  overflow: auto;
-  border: 1px solid #333;
-}
+  // 裁剪框边线
+  .cropper-line {
+    background-color: #1890ff !important;
+    opacity: 0.6 !important;
+    
+    &:hover {
+      opacity: 1 !important;
+    }
+  }
 
-.pixel-row {
-  display: flex;
-}
+  // 遮罩层
+  .cropper-modal {
+    background-color: rgba(0, 0, 0, 0.6) !important;
+  }
 
-.pixel {
-  width: 4px;
-  height: 4px;
-  background-color: white;
-  border: 0.1px solid #ccc;
+  // 网格线
+  .cropper-dashed {
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    opacity: 0.5 !important;
+  }
 
-  &.filled {
-    background-color: #333;
+  // 中心点
+  .cropper-center {
+    background-color: rgba(24, 144, 255, 0.8) !important;
+    width: 6px !important;
+    height: 6px !important;
+    border-radius: 50% !important;
   }
 }
 
@@ -68,16 +135,8 @@
   padding: 20px;
   min-height: 500px;
 
-  app-image-cropper {
+  .image-cropper-container {
     flex: 1;
     margin-bottom: 20px;
   }
-}
-
-.footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e8e8e8;
 }
