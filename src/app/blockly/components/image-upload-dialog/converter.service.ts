@@ -6,7 +6,6 @@ import { Injectable } from '@angular/core';
 export class ConverterService {
   context: CanvasRenderingContext2D;
   image: ImageData;
-
   convert(context: CanvasRenderingContext2D, image: ImageData, options: convertOptions) {
     return new Promise<string>((resolve, reject) => {
       this.context = context;
@@ -19,10 +18,33 @@ export class ConverterService {
       if (options.invert) {
         this.invertColor()
       }
-      resolve('')
-      // return this.getBitmapArray()
-      // return result
+      const bitmapArray = this.getBitmapArray(options);
+      resolve(bitmapArray)
     })
+  }
+
+  /**
+   * 将当前图像转换为二维bitmap数组
+   * @returns 二维数组，0表示空白，1表示填充
+   */
+  getBitmap2DArray(): number[][] {
+    const bitmap: number[][] = [];
+    
+    for (let y = 0; y < this.image.height; y++) {
+      const row: number[] = [];
+      for (let x = 0; x < this.image.width; x++) {
+        const index = (y * this.image.width + x) * 4;
+        // 获取像素的灰度值
+        const gray = (this.image.data[index] * 0.299 + 
+                     this.image.data[index + 1] * 0.587 + 
+                     this.image.data[index + 2] * 0.114);
+        // 根据灰度值决定是0还是1
+        row.push(gray > 127 ? 0 : 1); // 白色为0，黑色为1
+      }
+      bitmap.push(row);
+    }
+    
+    return bitmap;
   }
 
   dither() {

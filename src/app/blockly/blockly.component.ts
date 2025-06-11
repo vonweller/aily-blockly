@@ -10,6 +10,7 @@ import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
+import { BitmapUploadResponse } from './bitmap-upload.service';
 
 import './custom-category';
 import './custom-field/field-bitmap';
@@ -137,12 +138,11 @@ export class BlocklyComponent {
     const globalServiceManager = GlobalServiceManager.getInstance();
     globalServiceManager.setBitmapUploadService(this.bitmapUploadService);
   }
-
   ngOnInit(): void {
     this.setPrompt();
     this.bitmapUploadService.uploadRequestSubject.subscribe((request) => {
       console.log('接收到位图上传请求:', request);
-      this.modal.create({
+      const modalRef = this.modal.create({
         nzTitle: null,
         nzFooter: null,
         nzClosable: false,
@@ -154,10 +154,33 @@ export class BlocklyComponent {
           request: request
         },
         nzWidth: '650px',
-        nzOnOk: () => {
-          // 处理上传逻辑
-          console.log('位图上传处理完成');
-        },
+      });
+
+      // 处理弹窗关闭事件
+      modalRef.afterClose.subscribe((result) => {
+        if (result && result.bitmapArray) {
+          console.log('接收到处理后的bitmap数据:', result);
+          
+          // 发送处理结果回field
+          const response: BitmapUploadResponse = {
+            processedBitmap: result.bitmapArray,
+            success: true,
+            message: '图片处理成功',
+            timestamp: Date.now()
+          };
+          
+          this.bitmapUploadService.sendUploadResponse(response);
+        } else {
+          // 用户取消或出错
+          const response: BitmapUploadResponse = {
+            processedBitmap: request.currentBitmap, // 返回原始数据
+            success: false,
+            message: '图片处理已取消',
+            timestamp: Date.now()
+          };
+          
+          this.bitmapUploadService.sendUploadResponse(response);
+        }
       });
     });
   }

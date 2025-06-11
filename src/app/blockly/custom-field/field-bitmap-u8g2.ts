@@ -584,14 +584,55 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             uploadService.uploadResponse$.subscribe(response => {
                 if (response.success && response.processedBitmap) {
                     console.log('Received processed bitmap:', response);
-                    // Update the bitmap with processed data
-                    this.setValue(response.processedBitmap);
+                    
+                    // 验证处理后的bitmap数据尺寸是否正确
+                    if (response.processedBitmap.length === this.imgHeight &&
+                        response.processedBitmap[0] && 
+                        response.processedBitmap[0].length === this.imgWidth) {
+                        
+                        // 更新字段值
+                        this.setValue(response.processedBitmap);
+                        
+                        // 触发中间变化事件
+                        this.fireIntermediateChangeEvent(response.processedBitmap);
+                        
+                        // 如果编辑器已打开，更新编辑器显示
+                        if (this.editorPixels) {
+                            this.updateEditorPixels(response.processedBitmap);
+                        }
+                        
+                        // 更新块显示
+                        this.render_();
+                        
+                        console.log('Bitmap field updated successfully');
+                    } else {
+                        console.error('Processed bitmap dimensions do not match field dimensions');
+                    }
                 } else {
                     console.error('Upload processing failed:', response.message);
                 }
             });
         } else {
             console.warn('BitmapUploadService not available for response handling');
+        }
+    }
+
+    /**
+     * 更新编辑器中的像素显示
+     * @param bitmapData 新的bitmap数据
+     */
+    private updateEditorPixels(bitmapData: number[][]) {
+        if (!this.editorPixels) return;
+        
+        for (let r = 0; r < this.imgHeight; r++) {
+            for (let c = 0; c < this.imgWidth; c++) {
+                if (this.editorPixels[r] && this.editorPixels[r][c]) {
+                    const pixel = this.editorPixels[r][c];
+                    const value = bitmapData[r][c];
+                    pixel.style.backgroundColor = value ? 
+                        this.pixelColours.filled : this.pixelColours.empty;
+                }
+            }
         }
     }
 

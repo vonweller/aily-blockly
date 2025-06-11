@@ -47,14 +47,22 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     dither: false,
     threshold: 127,
   }
-
   constructor(
     private bitmapUploadService: BitmapUploadService,
     private modal: NzModalRef,
     private message: NzMessageService,
     private renderer: Renderer2,
     private converterService: ConverterService
-  ) { }
+  ) { 
+    // 从modal数据中获取请求信息
+    const modalData = this.modal.getConfig().nzData;
+    if (modalData && modalData.request) {
+      const request = modalData.request;
+      this.outputWidth = request.width;
+      this.outputHeight = request.height;
+      console.log('图片上传对话框初始化，目标尺寸:', this.outputWidth, 'x', this.outputHeight);
+    }
+  }
 
   // 拖拽事件处理
   @HostListener('dragover', ['$event'])
@@ -102,7 +110,6 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     }
     this.releaseImageResources();
   }
-
   onConfirm(): void {
     if (!this.cropper) {
       this.message.error('请先选择图片');
@@ -120,15 +127,26 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
         imageSmoothingQuality: 'high'
       });
 
-      // 转换为 base64
-      const croppedImageData = canvas.toDataURL('image/png');
+      // 获取canvas的ImageData
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
+      
+      // 使用converter服务转换为bitmap
+      this.converterService.convert(ctx, imageData, this.options).then(() => {
+        // 获取二维bitmap数组
+        const bitmapArray = this.converterService.getBitmap2DArray();
+        
+        // 返回bitmap数组而不是base64图片数据
+        this.modal.close({
+          bitmapArray: bitmapArray,
+          width: this.outputWidth,
+          height: this.outputHeight
+        });
+      });
 
-      // 返回结果并关闭弹窗
-      this.modal.close(croppedImageData);
     } catch (error) {
       console.error('图片处理失败:', error);
       this.message.error('图片处理失败，请重试');
-    } finally {
       this.isLoading = false;
     }
   }
