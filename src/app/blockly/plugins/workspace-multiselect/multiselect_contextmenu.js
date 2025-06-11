@@ -210,7 +210,7 @@ const registerDuplicate = function() {
         });
         dragSelection.clear();
         multiDraggable.clearAll_();
-        Blockly.common.setSelected(null);
+        Blockly.common.setSelected(workspace);
       } else {
         apply(scope.block);
       }
@@ -609,8 +609,8 @@ const registerDelete = function() {
       let descendantCount = 0;
       const workspace = scope.block.workspace;
       const dragSelection = dragSelectionWeakMap.get(workspace);
-      dragSelection.forEach(function(id) {
-        const block = workspace.getBlockById(id);
+
+      const countDescendants = function(block) {
         if (block && !hasSelectedParent(block)) {
           // Count the number of blocks that are nested in this block.
           descendantCount += block.getDescendants(false).length;
@@ -625,7 +625,19 @@ const registerDelete = function() {
             descendantCount -= nextBlock.getDescendants(false).length;
           }
         }
-      });
+      };
+
+      if (!dragSelection.size) {
+        // Handle single block selection
+        countDescendants(scope.block);
+      } else {
+        // Handle multiple block selection
+        dragSelection.forEach(function(id) {
+          const block = workspace.getBlockById(id);
+          countDescendants(block);
+        });
+      }
+
       return (descendantCount <= 1) ?
         Blockly.Msg['DELETE_BLOCK'] :
         Blockly.Msg['DELETE_X_BLOCKS'].replace('%1', String(descendantCount));
@@ -821,7 +833,7 @@ const registerSelectAll = function() {
         } else {
           Blockly.getSelected().unselect();
         }
-        Blockly.common.setSelected(null);
+        Blockly.common.setSelected(scope.workspace);
         multiDraggable.clearAll_();
         dragSelectionWeakMap.get(scope.workspace).clear();
       }
@@ -1103,7 +1115,7 @@ const registerCommentDuplicate = function() {
         });
         dragSelection.clear();
         multiDraggable.clearAll_();
-        Blockly.common.setSelected(null);
+        Blockly.common.setSelected(workspace);
       } else {
         apply(scope.comment);
       }
