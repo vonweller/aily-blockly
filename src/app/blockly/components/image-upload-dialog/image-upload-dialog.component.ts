@@ -230,6 +230,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
             this.isLoading = false;
             if (this.cropper) {
               this.cropper.crop();
+              setTimeout(() => {
+                // 确保裁剪框居中
+                this.onCropChange();
+              }, 200);
             }
           },
           // 添加裁剪内容变化事件监听器
