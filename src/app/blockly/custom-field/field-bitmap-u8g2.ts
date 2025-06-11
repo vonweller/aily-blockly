@@ -38,10 +38,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private boundEvents: Blockly.browserEvents.Data[] = [];    /** References to UI elements */
     private editorCanvas: HTMLCanvasElement | null = null;
     private editorContext: CanvasRenderingContext2D | null = null;
-    private blockDisplayImage: SVGImageElement | null = null;
-    /** Stateful variables */
-    private pointerIsDown = false;
-    private valToPaintWith?: number;
+    private blockDisplayImage: SVGImageElement | null = null;    /** Stateful variables */
+    private pointerIsDown = false;    private valToPaintWith?: number;
+    private lastPaintedRow: number = -1;
+    private lastPaintedCol: number = -1;
+    private pendingUpdates: Set<string> = new Set();
+    private updateTimer: number | null = null;
     buttonOptions: Buttons;
     pixelSize: number;
     pixelColours: { empty: string; filled: string };
@@ -386,6 +388,15 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * Disposes of events belonging to the bitmap editor.
      */
     private dropdownDispose() {
+        // 清理定时器
+        if (this.updateTimer !== null) {
+            clearTimeout(this.updateTimer);
+            this.updateTimer = null;
+        }
+        
+        // 确保所有待更新的内容都被应用
+        this.flushPendingUpdates();
+        
         if (
             this.getSourceBlock() &&
             this.initialValue !== null &&
@@ -408,6 +419,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.boundEvents.length = 0;
         this.editorCanvas = null;
         this.editorContext = null;
+        this.pendingUpdates.clear();
         // Set this.initialValue back to null.
         this.initialValue = null;        Blockly.DropDownDiv.getContentDiv().classList.remove(
             'contains-bitmap-editor-u8g2',
@@ -445,6 +457,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         
         if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
             this.onPointerDownInPixel(row, col);
+            this.lastPaintedRow = row;
+            this.lastPaintedCol = col;
             this.pointerIsDown = true;
             e.preventDefault();
         }
@@ -468,12 +482,15 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         const row = Math.floor(y / this.pixelSize);
         
         if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
-            this.updatePixelValue(row, col);
+            // 如果当前位置与上次绘制位置不同，绘制连续线条
+            if (this.lastPaintedRow !== row || this.lastPaintedCol !== col) {
+                this.drawLine(this.lastPaintedRow, this.lastPaintedCol, row, col);
+                this.lastPaintedRow = row;
+                this.lastPaintedCol = col;
+            }
         }
         e.preventDefault();
-    }
-
-    /**
+    }    /**
      * Starts an interaction with the bitmap dropdown when there's a pointerdown
      * within one of the pixels in the editor.
      *
@@ -483,9 +500,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private onPointerDownInPixel(r: number, c: number) {
         // Toggle that pixel to the opposite of its value
         const newPixelValue = 1 - this.getPixel(r, c);
-        this.setPixel(r, c, newPixelValue);
+        this.setPixelBatch(r, c, newPixelValue);
         this.pointerIsDown = true;
         this.valToPaintWith = newPixelValue;
+        
+        // 立即刷新第一个点的更新
+        this.flushPendingUpdates();
     }
 
     /**
@@ -501,15 +521,18 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         ) {
             this.setPixel(r, c, this.valToPaintWith);
         }
-    }
-
-    /**
+    }    /**
      * Resets pointer state (e.g. After either a pointerup event or if the
      * gesture is canceled).
      */
     private onPointerEnd() {
+        // 确保所有待更新的内容都被应用
+        this.flushPendingUpdates();
+        
         this.pointerIsDown = false;
         this.valToPaintWith = undefined;
+        this.lastPaintedRow = -1;
+        this.lastPaintedCol = -1;
     }    /**
      * Sets all the pixels to 0.
      */
@@ -517,7 +540,15 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         const cleared = this.getEmptyArray();
         this.fireIntermediateChangeEvent(cleared);
         this.setValue(cleared, false);
-    }    /**
+        
+        // 更新canvas显示
+        if (this.editorCanvas && this.editorContext) {
+            this.renderCanvasEditor();
+        }
+        
+        // 更新block上的图片显示
+        this.updateBlockDisplayImage();
+    }/**
      * Upload current bitmap to Angular main program for processing.
      */
     private uploadBitmap() {
@@ -754,8 +785,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             e.preventDefault();
         });
     }
-    
-    /**
+      /**
      * 将十六进制颜色转换为RGB
      */
     private hexToRgb(hex: string): {r: number, g: number, b: number} {
@@ -765,6 +795,104 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             g: parseInt(result[2], 16),
             b: parseInt(result[3], 16)
         } : {r: 0, g: 0, b: 0};
+    }    /**
+     * 使用布雷森汉姆直线算法在两个点之间绘制连续线条
+     * @param r0 起始行
+     * @param c0 起始列
+     * @param r1 结束行
+     * @param c1 结束列
+     */
+    private drawLine(r0: number, c0: number, r1: number, c1: number) {
+        if (this.valToPaintWith === undefined) return;
+
+        const dx = Math.abs(c1 - c0);
+        const dy = Math.abs(r1 - r0);
+        const sx = c0 < c1 ? 1 : -1;
+        const sy = r0 < r1 ? 1 : -1;
+        let err = dx - dy;
+
+        let r = r0;
+        let c = c0;
+
+        while (true) {
+            // 绘制当前点
+            if (r >= 0 && r < this.imgHeight && c >= 0 && c < this.imgWidth) {
+                if (this.getPixel(r, c) !== this.valToPaintWith) {
+                    this.setPixelBatch(r, c, this.valToPaintWith);
+                }
+            }
+
+            // 如果到达终点，退出循环
+            if (r === r1 && c === c1) break;
+
+            const e2 = 2 * err;
+            if (e2 > -dy) {
+                err -= dy;
+                c += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                r += sy;
+            }
+        }
+        
+        // 批量应用更新
+        this.flushPendingUpdates();
+    }
+
+    /**
+     * 批量设置像素值，提高性能
+     * @param r Row number
+     * @param c Column number  
+     * @param newValue New pixel value
+     */
+    private setPixelBatch(r: number, c: number, newValue: number) {
+        const currentValue = this.getValue();
+        if (!currentValue) return;
+        
+        // 如果值没有改变，跳过
+        if (currentValue[r][c] === newValue) return;
+        
+        // 记录待更新的像素
+        const key = `${r},${c}`;
+        this.pendingUpdates.add(key);
+        
+        // 立即更新数据
+        currentValue[r][c] = newValue;
+    }
+
+    /**
+     * 批量应用所有待更新的像素
+     */
+    private flushPendingUpdates() {
+        if (this.pendingUpdates.size === 0) return;
+        
+        // 清除之前的定时器
+        if (this.updateTimer !== null) {
+            clearTimeout(this.updateTimer);
+        }
+          // 设置新的定时器，延迟更新以提高性能
+        this.updateTimer = window.setTimeout(() => {
+            const currentValue = this.getValue();
+            if (currentValue) {
+                // 触发中间变化事件
+                this.fireIntermediateChangeEvent(currentValue);
+                
+                // 更新字段值
+                this.setValue(currentValue, false);
+                
+                // 立即更新canvas显示
+                if (this.editorCanvas && this.editorContext) {
+                    this.renderCanvasEditor();
+                }
+                
+                // 更新block上的图片显示
+                this.updateBlockDisplayImage();
+            }
+            
+            this.pendingUpdates.clear();
+            this.updateTimer = null;
+        }, 16); // 约60fps的更新频率
     }
 }
 
