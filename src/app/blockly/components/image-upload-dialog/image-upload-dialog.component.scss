@@ -231,12 +231,16 @@
 .inner {
   position: relative;
   display: flex;
+  gap: 10px;
 
   .left {
     width: 65%;
   }
 
   .right {
-    width: 35%;
+    width: calc(35% - 10px);
+    border: 2px dashed #4a4c4f;
+    border-radius: 4px;
+    position: relative;
   }
 }

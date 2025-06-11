@@ -26,7 +26,7 @@ import { ConverterService } from './converter.service';
   styleUrls: ['./image-upload-dialog.component.scss']
 })
 export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDestroy {
-  @Input() title = '上传图片';
+  @Input() title = '图片取模';
   @Input() outputWidth = 128;  // 可配置输出宽度
   @Input() outputHeight = 64;  // 可配置输出高度
   @Input() maxFileSize = 10 * 1024 * 1024; // 10MB
@@ -270,7 +270,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     // 设置新的定时器，2秒后执行
     this.cropChangeTimer = setTimeout(() => {
       this.handleCropChange();
-    }, 2000);
+    }, 1000);
   }
 
   // 实际处理裁剪变化的方法
@@ -402,6 +402,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     let context = canvas.getContext("2d");
     this.renderer.setAttribute(canvas, "width", image.width.toString() + 'px')
     this.renderer.setAttribute(canvas, "height", image.height.toString() + 'px')
+    this.renderer.setStyle(canvas, "transform", 'scale(1.5)')
     context.clearRect(0, 0, this.outputWidth, this.outputHeight);
     context.drawImage(image, 0, 0);
     let imageData = context.getImageData(0, 0, image.width, image.height);
