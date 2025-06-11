@@ -1,6 +1,4 @@
 import { Injectable } from '@angular/core';
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ConfigService } from '../../../services/config.service.js';
 
 interface McpServerStdioConfig {
@@ -35,12 +33,26 @@ export class McpService {
 
   async init() {
     await this.connectToServer();
+
+    // 使用Map基于name属性进行去重
+    const toolMap = new Map<string, MCPTool>();
+
+    // 先添加已有工具
+    this.tools.forEach(tool => {
+      toolMap.set(tool.name, tool);
+    });
+
     // 获取所有工具
     for (const serverName of this.clients) {
       const tempTools = await this.getTools(serverName);
-      // 合并工具列表, 避免重复
-      this.tools = [...new Set([...this.tools, ...tempTools])];
+      // 添加新工具，同名工具会被覆盖
+      tempTools.forEach(tool => {
+        toolMap.set(tool.name, tool);
+      });
     }
+
+    // 转换回数组
+    this.tools = Array.from(toolMap.values());
   }
 
   // 读取mcp.json配置文件
@@ -52,6 +64,7 @@ export class McpService {
       // 判断是否存在
       const fileExists = await window['path'].isExists(configFilePath);
       if (!fileExists) {
+        console.warn(`MCP配置文件 ${configFilePath} 不存在，使用默认配置`);
         return { mcpServers: {} };
       }
       const configContent = await window['fs'].readFileSync(configFilePath, 'utf-8');

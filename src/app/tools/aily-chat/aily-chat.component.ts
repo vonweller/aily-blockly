@@ -45,6 +45,8 @@ export class AilyChatComponent {
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatList') chatList: ElementRef;
 
+  isUserInputRequired = false;
+
   list: any = [
     {
       content: `以下为可用的系统提示信息：
@@ -254,6 +256,17 @@ pinMode(pin, mode);
 
   appendMessage(role, text) {
     console.log('append message', role, text);
+    // 判断是否是JSON格式的字符串
+    try {
+      const parsedText = JSON.parse(text);
+      if (typeof parsedText === 'object') {
+        text = parsedText.content || JSON.stringify(parsedText, null, 2);
+      }
+    } catch (e) {
+      // 如果解析失败，说明不是JSON格式的字符串
+      // 保持原样
+    }
+
     this.list.push({
       "role": role,
       "content": text
@@ -281,9 +294,17 @@ pinMode(pin, mode);
   send(show: boolean = true): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
 
-    const text = this.inputValue.trim();
+    let text = this.inputValue.trim();
     if (show) this.appendMessage('user', text);
     this.inputValue = '';
+
+    if (this.isUserInputRequired) {
+      this.isUserInputRequired = false;
+      text = JSON.stringify({
+        "type": "user_input",
+        "content": text
+      }, null, 2);
+    }
 
     this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
       console.log('send message', res);
@@ -313,11 +334,12 @@ pinMode(pin, mode);
           } else if (data.type === 'user_input_required') {
             // TODO：提示用户进行输入
             // 模拟用户输入
-            this.inputValue = JSON.stringify({
-              "type": "user_input",
-              "content": "这是用于测试的.APPROVE"
-            })
-            this.send();
+            // this.inputValue = JSON.stringify({
+            //   "type": "user_input",
+            //   "content": "这是用于测试的用户输入"
+            // })
+            // this.send();
+            this.isUserInputRequired = true;
           } else if (data.type === 'tool_call_request') {
             // 处理工具调用请求
             // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
@@ -331,6 +353,11 @@ pinMode(pin, mode);
                 console.error('Failed to parse tool_args as JSON:', e);
                 // Keep original value if parsing fails
               }
+            }
+
+            // 需要先去除工具name中的mcp_前缀
+            if (data.tool_name.startsWith('mcp_')) {
+              data.tool_name = data.tool_name.substring(4);
             }
 
             const result = await this.mcpService.use_tool(data.tool_name, data.tool_args);
