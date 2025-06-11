@@ -22,7 +22,6 @@ export class ConverterService {
       resolve(bitmapArray)
     })
   }
-
   /**
    * 将当前图像转换为二维bitmap数组
    * @returns 二维数组，0表示空白，1表示填充
@@ -34,6 +33,15 @@ export class ConverterService {
       const row: number[] = [];
       for (let x = 0; x < this.image.width; x++) {
         const index = (y * this.image.width + x) * 4;
+        // 获取像素的alpha值
+        const alpha = this.image.data[index + 3];
+        
+        // 如果像素是透明的，直接设为0（空白）
+        if (alpha === 0) {
+          row.push(0);
+          continue;
+        }
+        
         // 获取像素的灰度值
         const gray = (this.image.data[index] * 0.299 + 
                      this.image.data[index + 1] * 0.587 + 

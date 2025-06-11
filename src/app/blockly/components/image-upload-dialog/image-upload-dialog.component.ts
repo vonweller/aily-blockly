@@ -1,6 +1,5 @@
 import { Component, OnInit, OnDestroy, Input, ViewChild, ElementRef, AfterViewInit, HostListener, Renderer2 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { BitmapUploadService } from '../../bitmap-upload.service';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -48,12 +47,11 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     threshold: 127,
   }
   constructor(
-    private bitmapUploadService: BitmapUploadService,
     private modal: NzModalRef,
     private message: NzMessageService,
     private renderer: Renderer2,
     private converterService: ConverterService
-  ) { 
+  ) {
     // 从modal数据中获取请求信息
     const modalData = this.modal.getConfig().nzData;
     if (modalData && modalData.request) {
@@ -117,25 +115,35 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     }
 
     try {
-      this.isLoading = true;
-
-      // 获取裁剪后的画布
-      const canvas = this.cropper.getCroppedCanvas({
+      this.isLoading = true;      // 创建一个透明背景的canvas
+      const canvas = document.createElement('canvas');
+      canvas.width = this.outputWidth;
+      canvas.height = this.outputHeight;
+      const ctx = canvas.getContext('2d');
+      
+      // 设置透明背景（不填充任何颜色，保持透明）
+      ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
+      
+      // 获取裁剪后的图片数据（带透明背景）
+      const croppedCanvas = this.cropper.getCroppedCanvas({
         width: this.outputWidth,
         height: this.outputHeight,
         imageSmoothingEnabled: true,
-        imageSmoothingQuality: 'high'
+        imageSmoothingQuality: 'high',
+        fillColor: 'transparent' // 设置填充色为透明
       });
-
-      // 获取canvas的ImageData
-      const ctx = canvas.getContext('2d');
-      const imageData = ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
       
+      // 将裁剪后的图片绘制到透明背景的canvas上
+      ctx.drawImage(croppedCanvas, 0, 0);
+      
+      // 获取canvas的ImageData
+      const imageData = ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
+
       // 使用converter服务转换为bitmap
       this.converterService.convert(ctx, imageData, this.options).then(() => {
         // 获取二维bitmap数组
         const bitmapArray = this.converterService.getBitmap2DArray();
-        
+
         // 返回bitmap数组而不是base64图片数据
         this.modal.close({
           bitmapArray: bitmapArray,
@@ -222,11 +230,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 设置新的事件处理器
     image.onload = () => {
-      try {
-        // 图片已经在初始化时设置为隐藏，现在直接创建cropper
+      try {        // 图片已经在初始化时设置为隐藏，现在直接创建cropper
         this.cropper = new Cropper(image, {
           aspectRatio: this.outputWidth / this.outputHeight,
-          viewMode: 1,
+          viewMode: 0,
           dragMode: 'move',
           autoCrop: true,
           autoCropArea: 0.8,
@@ -238,8 +245,8 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
           guides: true,
           center: true,
           highlight: true,
-          background: true,
-          modal: true,
+          background: false,
+          modal: false,
           responsive: true,
           restore: false,
           checkCrossOrigin: false,
@@ -430,7 +437,6 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     let imageData = context.getImageData(0, 0, image.width, image.height);
     this.converterService.convert(context, imageData, this.options);
   }
-
   private cropDataToImage(): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
       if (!this.cropper) {
@@ -439,13 +445,26 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
       }
 
       try {
-        // 获取裁剪后的画布
-        const canvas = this.cropper.getCroppedCanvas({
+        // 创建一个透明背景的canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = this.outputWidth;
+        canvas.height = this.outputHeight;
+        const ctx = canvas.getContext('2d');
+        
+        // 设置透明背景
+        ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
+        
+        // 获取裁剪后的画布（带透明背景）
+        const croppedCanvas = this.cropper.getCroppedCanvas({
           width: this.outputWidth,
           height: this.outputHeight,
           imageSmoothingEnabled: true,
-          imageSmoothingQuality: 'high'
+          imageSmoothingQuality: 'high',
+          fillColor: 'transparent' // 设置填充色为透明
         });
+        
+        // 将裁剪后的图片绘制到透明背景的canvas上
+        ctx.drawImage(croppedCanvas, 0, 0);
 
         // 将画布转换为data URL
         const dataURL = canvas.toDataURL('image/png');
