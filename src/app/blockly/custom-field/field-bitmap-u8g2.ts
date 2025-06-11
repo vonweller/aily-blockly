@@ -13,7 +13,7 @@ Blockly.Msg['BUTTON_LABEL_UPLOAD'] = 'Upload';
 
 export const DEFAULT_HEIGHT = 128;
 export const DEFAULT_WIDTH = 64;
-const DEFAULT_PIXEL_SIZE = 1.5;
+const DEFAULT_PIXEL_SIZE = 2;
 const DEFAULT_PIXEL_COLOURS: PixelColours = {
     empty: '#fff',
     filled: '#363d80',
@@ -42,7 +42,6 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     /** Stateful variables */
     private pointerIsDown = false;
     private valToPaintWith?: number;
-    private canvasPixelSize = 8; // Canvas中每个像素的显示大小
     buttonOptions: Buttons;
     pixelSize: number;
     pixelColours: { empty: string; filled: string };
@@ -281,11 +280,10 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             'div',
             'canvasContainer-u8g2',
         );
-        
-        this.editorCanvas = document.createElement('canvas');
+          this.editorCanvas = document.createElement('canvas');
         this.editorCanvas.className = 'bitmapCanvas-u8g2';
-        this.editorCanvas.width = this.imgWidth * this.canvasPixelSize;
-        this.editorCanvas.height = this.imgHeight * this.canvasPixelSize;
+        this.editorCanvas.width = this.imgWidth * this.pixelSize;
+        this.editorCanvas.height = this.imgHeight * this.pixelSize;
         
         this.editorContext = this.editorCanvas.getContext('2d');
         if (!this.editorContext) {
@@ -435,16 +433,15 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * edit gesture.
      *
      * @param e The down event.
-     */
-    private onPointerStart(e: PointerEvent) {
+     */    private onPointerStart(e: PointerEvent) {
         if (!this.editorCanvas) return;
         
         const rect = this.editorCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        const col = Math.floor(x / this.canvasPixelSize);
-        const row = Math.floor(y / this.canvasPixelSize);
+        const col = Math.floor(x / this.pixelSize);
+        const row = Math.floor(y / this.pixelSize);
         
         if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
             this.onPointerDownInPixel(row, col);
@@ -458,8 +455,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * pixel.
      *
      * @param e The move event.
-     */
-    private onPointerMove(e: PointerEvent) {
+     */    private onPointerMove(e: PointerEvent) {
         if (!this.pointerIsDown || !this.editorCanvas) {
             return;
         }
@@ -468,8 +464,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        const col = Math.floor(x / this.canvasPixelSize);
-        const row = Math.floor(y / this.canvasPixelSize);
+        const col = Math.floor(x / this.pixelSize);
+        const row = Math.floor(y / this.pixelSize);
         
         if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
             this.updatePixelValue(row, col);
@@ -722,22 +718,21 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         
         // 清除canvas
         this.editorContext.clearRect(0, 0, this.editorCanvas.width, this.editorCanvas.height);
-        
-        // 绘制网格和像素
+          // 绘制网格和像素
         for (let r = 0; r < this.imgHeight; r++) {
             for (let c = 0; c < this.imgWidth; c++) {
-                const x = c * this.canvasPixelSize;
-                const y = r * this.canvasPixelSize;
+                const x = c * this.pixelSize;
+                const y = r * this.pixelSize;
                 
                 // 绘制像素
                 this.editorContext.fillStyle = bitmap[r][c] ? 
                     this.pixelColours.filled : this.pixelColours.empty;
-                this.editorContext.fillRect(x, y, this.canvasPixelSize, this.canvasPixelSize);
+                this.editorContext.fillRect(x, y, this.pixelSize, this.pixelSize);
                 
                 // 绘制网格线
                 this.editorContext.strokeStyle = '#ccc';
                 this.editorContext.lineWidth = 1;
-                this.editorContext.strokeRect(x, y, this.canvasPixelSize, this.canvasPixelSize);
+                this.editorContext.strokeRect(x, y, this.pixelSize, this.pixelSize);
             }
         }
     }
