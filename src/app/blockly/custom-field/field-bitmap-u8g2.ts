@@ -35,13 +35,14 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * Array holding info needed to unbind events.
      * Used for disposing.
      */
-    private boundEvents: Blockly.browserEvents.Data[] = [];
-    /** References to UI elements */
-    private editorPixels: HTMLElement[][] | null = null;
-    private blockDisplayPixels: SVGElement[][] | null = null;
+    private boundEvents: Blockly.browserEvents.Data[] = [];    /** References to UI elements */
+    private editorCanvas: HTMLCanvasElement | null = null;
+    private editorContext: CanvasRenderingContext2D | null = null;
+    private blockDisplayImage: SVGImageElement | null = null;
     /** Stateful variables */
     private pointerIsDown = false;
     private valToPaintWith?: number;
+    private canvasPixelSize = 8; // Canvas中每个像素的显示大小
     buttonOptions: Buttons;
     pixelSize: number;
     pixelColours: { empty: string; filled: string };
@@ -208,9 +209,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             this,
             this.dropdownDispose.bind(this),
         );
-    }
-
-    /**
+    }    /**
      * Updates the block display and editor dropdown when the field re-renders.
      */
     // eslint-disable-next-line
@@ -221,21 +220,14 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             return;
         }
 
-        if (this.blockDisplayPixels) {
-            this.forAllCells((r, c) => {
-                const pixel = this.getPixel(r, c);
+        // 更新block显示的图片
+        if (this.blockDisplayImage) {
+            this.updateBlockDisplayImage();
+        }
 
-                if (this.blockDisplayPixels) {
-                    this.blockDisplayPixels[r][c].style.fill = pixel
-                        ? this.pixelColours.filled
-                        : this.pixelColours.empty;
-                }
-                if (this.editorPixels) {
-                    this.editorPixels[r][c].style.background = pixel
-                        ? this.pixelColours.filled
-                        : this.pixelColours.empty;
-                }
-            });
+        // 更新canvas编辑器（如果存在）
+        if (this.editorCanvas && this.editorContext) {
+            this.renderCanvasEditor();
         }
     }
 
@@ -273,9 +265,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             boundingBox.left,
             boundingBox.right,
         );
-    }
-
-    /**
+    }    /**
      * Creates the bitmap editor and add event listeners.
      *
      * @returns The newly created dropdown menu.
@@ -285,44 +275,36 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             'dropdownEditor-u8g2',        );        if (this.buttonOptions.clear || this.buttonOptions.upload) {
             dropdownEditor.classList.add('has-buttons-u8g2');
         }
-        const pixelContainer = this.createElementWithClassname(
+
+        // 创建Canvas编辑器
+        const canvasContainer = this.createElementWithClassname(
             'div',
-            'pixelContainer-u8g2',
+            'canvasContainer-u8g2',
         );
-        dropdownEditor.appendChild(pixelContainer);
+        
+        this.editorCanvas = document.createElement('canvas');
+        this.editorCanvas.className = 'bitmapCanvas-u8g2';
+        this.editorCanvas.width = this.imgWidth * this.canvasPixelSize;
+        this.editorCanvas.height = this.imgHeight * this.canvasPixelSize;
+        
+        this.editorContext = this.editorCanvas.getContext('2d');
+        if (!this.editorContext) {
+            throw new Error('无法获取canvas 2d context');
+        }
+
+        canvasContainer.appendChild(this.editorCanvas);
+        dropdownEditor.appendChild(canvasContainer);
 
         // This prevents the normal max-height from adding a scroll bar for large images.
         Blockly.DropDownDiv.getContentDiv().classList.add('contains-bitmap-editor-u8g2');
 
-        this.bindEvent(dropdownEditor, 'pointermove', this.onPointerMove);
-        this.bindEvent(dropdownEditor, 'pointerup', this.onPointerEnd);
-        this.bindEvent(dropdownEditor, 'pointerleave', this.onPointerEnd);
-        this.bindEvent(dropdownEditor, 'pointerdown', this.onPointerStart);
-        this.bindEvent(dropdownEditor, 'pointercancel', this.onPointerEnd);
-        // Stop the browser from handling touch events and cancelling the event.
-        this.bindEvent(dropdownEditor, 'touchmove', (e: Event) => {
-            e.preventDefault();
-        });        this.editorPixels = [];
-        for (let r = 0; r < this.imgHeight; r++) {
-            this.editorPixels.push([]);
-            const rowDiv = this.createElementWithClassname('div', 'pixelRow-u8g2');
-            for (let c = 0; c < this.imgWidth; c++) {
-                // Add the button to the UI and save a reference to it
-                const button = this.createElementWithClassname('div', 'pixelButton-u8g2');
-                this.editorPixels[r].push(button);
-                rowDiv.appendChild(button);
+        // 绑定canvas事件
+        this.bindCanvasEvents();
 
-                // Load the current pixel colour
-                const isOn = this.getPixel(r, c);
-                button.style.background = isOn
-                    ? this.pixelColours.filled
-                    : this.pixelColours.empty;
+        // 渲染初始canvas内容
+        this.renderCanvasEditor();
 
-                // Set the custom data attributes for row and column indices
-                button.setAttribute('data-row', r.toString());
-                button.setAttribute('data-col', c.toString());
-            }
-            pixelContainer.appendChild(rowDiv);        }        // Add control buttons below the pixel grid
+        // Add control buttons below the canvas
         if (this.buttonOptions.clear || this.buttonOptions.upload) {
             const buttonContainer = this.createElementWithClassname('div', 'buttonContainer-u8g2');
             
@@ -345,47 +327,28 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             dropdownEditor.appendChild(buttonContainer);
         }
 
-        if (this.blockDisplayPixels) {
-            this.forAllCells((r, c) => {
-                const pixel = this.getPixel(r, c);
-                if (this.editorPixels) {
-                    this.editorPixels[r][c].style.background = pixel
-                        ? this.pixelColours.filled
-                        : this.pixelColours.empty;
-                }
-            });
-        }
-
         // Store the initial value at the start of the edit.
         this.initialValue = this.getValue();
 
         return dropdownEditor;
-    }
-
-    /**
+    }    /**
      * Initializes the on-block display.
      */
     override initView() {
-        this.blockDisplayPixels = [];
-        for (let r = 0; r < this.imgHeight; r++) {
-            const row = [];
-            for (let c = 0; c < this.imgWidth; c++) {
-                const square = Blockly.utils.dom.createSvgElement(
-                    'rect',
-                    {
-                        x: c * this.pixelSize,
-                        y: r * this.pixelSize,
-                        width: this.pixelSize,
-                        height: this.pixelSize,
-                        fill: this.pixelColours.empty,
-                        fill_opacity: 1, // eslint-disable-line
-                    },
-                    this.getSvgRoot(),
-                );
-                row.push(square);
-            }
-            this.blockDisplayPixels.push(row);
-        }
+        // 创建SVG图片元素来显示bitmap
+        this.blockDisplayImage = Blockly.utils.dom.createSvgElement(
+            'image',
+            {
+                x: 0,
+                y: 0,
+                width: this.pixelSize * this.imgWidth,
+                height: this.pixelSize * this.imgHeight,
+            },
+            this.getSvgRoot(),
+        ) as SVGImageElement;
+
+        // 初始渲染
+        this.updateBlockDisplayImage();
     }
 
     /**
@@ -421,9 +384,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         button.innerText = buttonText;
         parent.appendChild(button);
         this.bindEvent(button, 'click', onClick);
-    }
-
-    /**
+    }    /**
      * Disposes of events belonging to the bitmap editor.
      */
     private dropdownDispose() {
@@ -447,7 +408,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             Blockly.browserEvents.unbind(event);
         }
         this.boundEvents.length = 0;
-        this.editorPixels = null;
+        this.editorCanvas = null;
+        this.editorContext = null;
         // Set this.initialValue back to null.
         this.initialValue = null;        Blockly.DropDownDiv.getContentDiv().classList.remove(
             'contains-bitmap-editor-u8g2',
@@ -468,20 +430,24 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             }
         }
         return newVal;
-    }
-
-    /**
+    }    /**
      * Checks if a down event is on a pixel in this editor and if it is starts an
      * edit gesture.
      *
      * @param e The down event.
      */
     private onPointerStart(e: PointerEvent) {
-        const currentElement = document.elementFromPoint(e.clientX, e.clientY);
-        const rowIndex = currentElement?.getAttribute('data-row');
-        const colIndex = currentElement?.getAttribute('data-col');
-        if (rowIndex && colIndex) {
-            this.onPointerDownInPixel(parseInt(rowIndex), parseInt(colIndex));
+        if (!this.editorCanvas) return;
+        
+        const rect = this.editorCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        const col = Math.floor(x / this.canvasPixelSize);
+        const row = Math.floor(y / this.canvasPixelSize);
+        
+        if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
+            this.onPointerDownInPixel(row, col);
             this.pointerIsDown = true;
             e.preventDefault();
         }
@@ -494,14 +460,19 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * @param e The move event.
      */
     private onPointerMove(e: PointerEvent) {
-        if (!this.pointerIsDown) {
+        if (!this.pointerIsDown || !this.editorCanvas) {
             return;
         }
-        const currentElement = document.elementFromPoint(e.clientX, e.clientY);
-        const rowIndex = currentElement?.getAttribute('data-row');
-        const colIndex = currentElement?.getAttribute('data-col');
-        if (rowIndex && colIndex) {
-            this.updatePixelValue(parseInt(rowIndex), parseInt(colIndex));
+        
+        const rect = this.editorCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        const col = Math.floor(x / this.canvasPixelSize);
+        const row = Math.floor(y / this.canvasPixelSize);
+        
+        if (row >= 0 && row < this.imgHeight && col >= 0 && col < this.imgWidth) {
+            this.updatePixelValue(row, col);
         }
         e.preventDefault();
     }
@@ -595,10 +566,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
                         
                         // 触发中间变化事件
                         this.fireIntermediateChangeEvent(response.processedBitmap);
-                        
-                        // 如果编辑器已打开，更新编辑器显示
-                        if (this.editorPixels) {
-                            this.updateEditorPixels(response.processedBitmap);
+                          // 如果编辑器已打开，更新编辑器显示
+                        if (this.editorCanvas && this.editorContext) {
+                            this.renderCanvasEditor();
                         }
                         
                         // 更新块显示
@@ -614,25 +584,6 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             });
         } else {
             console.warn('BitmapUploadService not available for response handling');
-        }
-    }
-
-    /**
-     * 更新编辑器中的像素显示
-     * @param bitmapData 新的bitmap数据
-     */
-    private updateEditorPixels(bitmapData: number[][]) {
-        if (!this.editorPixels) return;
-        
-        for (let r = 0; r < this.imgHeight; r++) {
-            for (let c = 0; c < this.imgWidth; c++) {
-                if (this.editorPixels[r] && this.editorPixels[r][c]) {
-                    const pixel = this.editorPixels[r][c];
-                    const value = bitmapData[r][c];
-                    pixel.style.backgroundColor = value ? 
-                        this.pixelColours.filled : this.pixelColours.empty;
-                }
-            }
         }
     }
 
@@ -714,6 +665,112 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             );
         }
     }
+
+    /**
+     * 更新block显示的图片
+     */
+    private updateBlockDisplayImage() {
+        if (!this.blockDisplayImage) return;
+        
+        const bitmap = this.getValue();
+        if (!bitmap) return;
+        
+        // 创建canvas来生成图片数据
+        const canvas = document.createElement('canvas');
+        canvas.width = this.imgWidth;
+        canvas.height = this.imgHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        
+        // 绘制bitmap到canvas
+        const imageData = ctx.createImageData(this.imgWidth, this.imgHeight);
+        for (let r = 0; r < this.imgHeight; r++) {
+            for (let c = 0; c < this.imgWidth; c++) {
+                const pixelIndex = (r * this.imgWidth + c) * 4;
+                const isOn = bitmap[r][c];
+                if (isOn) {
+                    // 转换颜色字符串为RGB值
+                    const color = this.hexToRgb(this.pixelColours.filled);
+                    imageData.data[pixelIndex] = color.r;     // R
+                    imageData.data[pixelIndex + 1] = color.g; // G
+                    imageData.data[pixelIndex + 2] = color.b; // B
+                } else {
+                    const color = this.hexToRgb(this.pixelColours.empty);
+                    imageData.data[pixelIndex] = color.r;     // R
+                    imageData.data[pixelIndex + 1] = color.g; // G
+                    imageData.data[pixelIndex + 2] = color.b; // B
+                }
+                imageData.data[pixelIndex + 3] = 255; // A
+            }
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        
+        // 将canvas转换为data URL并设置到SVG image元素
+        const dataUrl = canvas.toDataURL();
+        this.blockDisplayImage.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
+    }
+    
+    /**
+     * 渲染canvas编辑器
+     */
+    private renderCanvasEditor() {
+        if (!this.editorContext || !this.editorCanvas) return;
+        
+        const bitmap = this.getValue();
+        if (!bitmap) return;
+        
+        // 清除canvas
+        this.editorContext.clearRect(0, 0, this.editorCanvas.width, this.editorCanvas.height);
+        
+        // 绘制网格和像素
+        for (let r = 0; r < this.imgHeight; r++) {
+            for (let c = 0; c < this.imgWidth; c++) {
+                const x = c * this.canvasPixelSize;
+                const y = r * this.canvasPixelSize;
+                
+                // 绘制像素
+                this.editorContext.fillStyle = bitmap[r][c] ? 
+                    this.pixelColours.filled : this.pixelColours.empty;
+                this.editorContext.fillRect(x, y, this.canvasPixelSize, this.canvasPixelSize);
+                
+                // 绘制网格线
+                this.editorContext.strokeStyle = '#ccc';
+                this.editorContext.lineWidth = 1;
+                this.editorContext.strokeRect(x, y, this.canvasPixelSize, this.canvasPixelSize);
+            }
+        }
+    }
+    
+    /**
+     * 绑定canvas事件
+     */
+    private bindCanvasEvents() {
+        if (!this.editorCanvas) return;
+        
+        this.bindEvent(this.editorCanvas, 'pointermove', this.onPointerMove);
+        this.bindEvent(this.editorCanvas, 'pointerup', this.onPointerEnd);
+        this.bindEvent(this.editorCanvas, 'pointerleave', this.onPointerEnd);
+        this.bindEvent(this.editorCanvas, 'pointerdown', this.onPointerStart);
+        this.bindEvent(this.editorCanvas, 'pointercancel', this.onPointerEnd);
+        
+        // 防止触摸事件的默认行为
+        this.bindEvent(this.editorCanvas, 'touchmove', (e: Event) => {
+            e.preventDefault();
+        });
+    }
+    
+    /**
+     * 将十六进制颜色转换为RGB
+     */
+    private hexToRgb(hex: string): {r: number, g: number, b: number} {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : {r: 0, g: 0, b: 0};
+    }
 }
 
 interface Buttons {
@@ -749,20 +806,14 @@ Blockly.Css.register(`
 .dropdownEditor-u8g2.has-buttons-u8g2 {
   padding-bottom: 10px;
 }
-.pixelContainer-u8g2 {
+.canvasContainer-u8g2 {
   border: 2px solid #333;
   margin: 10px;
+  display: inline-block;
 }
-.pixelRow-u8g2 {
-  display: flex;
-  flex-direction: row;
-  padding: 0;
-  margin: 0;
-  height: ${DEFAULT_PIXEL_SIZE}
-}
-.pixelButton-u8g2 {
-  width: ${DEFAULT_PIXEL_SIZE}px;
-  height: ${DEFAULT_PIXEL_SIZE}px;
+.bitmapCanvas-u8g2 {
+  display: block;
+  cursor: crosshair;
 }
 .pixelDisplay-u8g2 {
   white-space:pre-wrap;
