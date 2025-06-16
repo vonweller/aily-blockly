@@ -349,9 +349,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // 初始渲染
         this.updateBlockDisplayImage();
-    }
-
-    /**
+    }    /**
      * Updates the size of the block based on the size of the underlying image.
      */
     // eslint-disable-next-line
@@ -362,6 +360,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             if (this.borderRect_) {
                 this.borderRect_.setAttribute('width', String(newWidth));
                 this.borderRect_.setAttribute('height', String(newHeight));
+            }
+
+            // Update the block display image size
+            if (this.blockDisplayImage) {
+                this.blockDisplayImage.setAttribute('width', String(newWidth));
+                this.blockDisplayImage.setAttribute('height', String(newHeight));
             }
 
             this.size_.width = newWidth;
@@ -476,9 +480,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         if (this.editorCanvas) {
             this.editorCanvas.width = this.imgWidth * this.pixelSize;
             this.editorCanvas.height = this.imgHeight * this.pixelSize;
-        }
-
-        // Set new value
+        }        // Set new value
         this.setValue(newBitmap);
         this.fireIntermediateChangeEvent(newBitmap);
 
@@ -488,6 +490,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         }
         this.updateBlockDisplayImage();
         this.updateSize_();
+        
+        // Force a complete re-render of the field
+        this.render_();
     }/**
      * Disposes of events belonging to the bitmap editor.
      */
