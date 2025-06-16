@@ -120,10 +120,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
       canvas.width = this.outputWidth;
       canvas.height = this.outputHeight;
       const ctx = canvas.getContext('2d');
-      
+
       // 设置透明背景（不填充任何颜色，保持透明）
       ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
-      
+
       // 获取裁剪后的图片数据（带透明背景）
       const croppedCanvas = this.cropper.getCroppedCanvas({
         width: this.outputWidth,
@@ -132,10 +132,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
         imageSmoothingQuality: 'high',
         fillColor: 'transparent' // 设置填充色为透明
       });
-      
+
       // 将裁剪后的图片绘制到透明背景的canvas上
       ctx.drawImage(croppedCanvas, 0, 0);
-      
+
       // 获取canvas的ImageData
       const imageData = ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
 
@@ -230,9 +230,9 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 设置新的事件处理器
     image.onload = () => {
-      try {        // 图片已经在初始化时设置为隐藏，现在直接创建cropper
+      try {
         this.cropper = new Cropper(image, {
-          aspectRatio: this.outputWidth / this.outputHeight,
+          aspectRatio: NaN,
           viewMode: 0,
           dragMode: 'move',
           autoCrop: true,
@@ -240,8 +240,8 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
           movable: true,
           zoomable: true,
           zoomOnWheel: true,
-          cropBoxMovable: false,
-          cropBoxResizable: false,
+          cropBoxMovable: true,
+          cropBoxResizable: true,
           guides: true,
           center: true,
           highlight: true,
@@ -450,10 +450,10 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
         canvas.width = this.outputWidth;
         canvas.height = this.outputHeight;
         const ctx = canvas.getContext('2d');
-        
+
         // 设置透明背景
         ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
-        
+
         // 获取裁剪后的画布（带透明背景）
         const croppedCanvas = this.cropper.getCroppedCanvas({
           width: this.outputWidth,
@@ -462,7 +462,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
           imageSmoothingQuality: 'high',
           fillColor: 'transparent' // 设置填充色为透明
         });
-        
+
         // 将裁剪后的图片绘制到透明背景的canvas上
         ctx.drawImage(croppedCanvas, 0, 0);
 
