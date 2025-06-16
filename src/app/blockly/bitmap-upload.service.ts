@@ -11,10 +11,11 @@ export interface BitmapUploadRequest {
 
 /** 位图上传响应接口 */
 export interface BitmapUploadResponse {
-  processedBitmap: number[][]; // 处理后的位图数据
+  data?: any,
+  processedBitmap?: number[][]; // 处理后的位图数据
   success: boolean;            // 是否成功
   message?: string;            // 消息（可选）
-  timestamp: number;           // 时间戳
+  timestamp?: number;           // 时间戳
 }
 
 /**

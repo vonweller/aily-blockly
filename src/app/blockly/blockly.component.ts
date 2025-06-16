@@ -143,7 +143,6 @@ export class BlocklyComponent {
   ngOnInit(): void {
     this.setPrompt();
     this.bitmapUploadService.uploadRequestSubject.subscribe((request) => {
-      console.log('接收到位图上传请求:', request);
       const modalRef = this.modal.create({
         nzTitle: null,
         nzFooter: null,
@@ -162,23 +161,22 @@ export class BlocklyComponent {
       modalRef.afterClose.subscribe((result) => {
         if (result && result.bitmapArray) {
           console.log('接收到处理后的bitmap数据:', result);
-
           // 发送处理结果回field
           const response: BitmapUploadResponse = {
-            processedBitmap: result.bitmapArray,
+            data: result,
             success: true,
-            message: '图片处理成功',
-            timestamp: Date.now()
+            // message: '图片处理成功',
+            // timestamp: Date.now()
           };
 
           this.bitmapUploadService.sendUploadResponse(response);
         } else {
           // 用户取消或出错
           const response: BitmapUploadResponse = {
-            processedBitmap: request.currentBitmap, // 返回原始数据
+            data: request.currentBitmap, // 返回原始数据
             success: false,
-            message: '图片处理已取消',
-            timestamp: Date.now()
+            // message: '图片处理已取消',
+            // timestamp: Date.now()
           };
 
           this.bitmapUploadService.sendUploadResponse(response);
