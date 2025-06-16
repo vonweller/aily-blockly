@@ -33,12 +33,17 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
   @ViewChild('cropperImage') cropperImage!: ElementRef<HTMLImageElement>;
   @ViewChild("myCanvas") myCanvas;
-
   imageUrl: string | null = null;
   cropper: Cropper | null = null;
   isLoading = false;
   isDragOver = false;
   private cropChangeTimer: any = null; // 添加防抖定时器
+
+  // 当前裁剪区域尺寸
+  currentCropSize = {
+    width: 0,
+    height: 0
+  };
 
   options = {
     endian: false,
@@ -232,16 +237,16 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     image.onload = () => {
       try {
         this.cropper = new Cropper(image, {
-          aspectRatio: NaN,
-          viewMode: 0,
+          aspectRatio: NaN, // 保持输出比例
+          viewMode: 0, // 限制裁剪框在图片内
           dragMode: 'move',
           autoCrop: true,
-          autoCropArea: 0.8,
+          autoCropArea: 0.6, // 初始裁剪区域占比
           movable: true,
           zoomable: true,
           zoomOnWheel: true,
           cropBoxMovable: true,
-          cropBoxResizable: true,
+          cropBoxResizable: true, // 允许调整裁剪框大小
           guides: true,
           center: true,
           highlight: true,
@@ -250,25 +255,28 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
           responsive: true,
           restore: false,
           checkCrossOrigin: false,
-          checkOrientation: false,
-          ready: () => {
+          checkOrientation: false, ready: () => {
             this.isLoading = false;
             if (this.cropper) {
               this.cropper.crop();
+              // 设置默认裁剪框大小
               setTimeout(() => {
-                // 确保裁剪框居中
+                this.setDefaultCropBoxSize();
+                this.updateCropSize(); // 立即更新尺寸显示
                 this.onCropChange();
-              }, 200);
+              }, 100);
             }
-          },
-          // 添加裁剪内容变化事件监听器
+          },// 添加裁剪内容变化事件监听器
           cropend: () => {
+            this.updateCropSize(); // 立即更新尺寸显示
             this.onCropChange();
           },
           cropmove: () => {
+            this.updateCropSize(); // 立即更新尺寸显示
             this.onCropChange();
           },
           zoom: () => {
+            this.updateCropSize(); // 立即更新尺寸显示
             this.onCropChange();
           }
         });
@@ -287,6 +295,41 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 最后设置图片源，触发加载
     image.src = this.imageUrl;
+  }
+  // 设置默认裁剪框大小
+  CropRatio = 2;
+  setDefaultCropBoxSize(): void {
+    if (!this.cropper) {
+      return;
+    }
+
+    try {
+      // 获取容器尺寸
+      const containerData = this.cropper.getContainerData();
+
+      // 根据输出尺寸的宽高比计算合适的裁剪框尺寸
+      // const outputRatio = this.outputWidth / this.outputHeight;
+      // const containerRatio = containerData.width / containerData.height;
+
+      let cropBoxWidth, cropBoxHeight;
+
+      cropBoxWidth = 128 * this.CropRatio;
+      cropBoxHeight = 64 * this.CropRatio;
+
+      // 计算居中位置（相对于容器）
+      const left = (containerData.width - cropBoxWidth) / 2;
+      const top = (containerData.height - cropBoxHeight) / 2;
+
+      // 设置裁剪框数据
+      this.cropper.setCropBoxData({
+        left: left,
+        top: top,
+        width: cropBoxWidth,
+        height: cropBoxHeight
+      });
+    } catch (error) {
+      console.error('设置默认裁剪框大小失败:', error);
+    }
   }
 
   // 添加裁剪内容变化处理方法（带防抖）
@@ -309,9 +352,16 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     }
 
     try {
-      // 获取当前裁剪数据
-      // const cropData = this.cropper.getData();
-      // console.log('裁剪内容已变化:', cropData);
+      // 获取当前裁剪框数据
+      const cropBoxData = this.cropper.getCropBoxData();
+
+      // 更新当前裁剪框尺寸
+      this.currentCropSize = {
+        width: Math.round(cropBoxData.width / this.CropRatio),
+        height: Math.round(cropBoxData.height / this.CropRatio)
+      };
+
+      console.log('裁剪框已变化:', cropBoxData);
 
       // 在这里添加您需要的处理逻辑
       // 例如：自动转换为bitmap、更新预览等
@@ -321,6 +371,24 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     } catch (error) {
       console.error('处理裁剪变化失败:', error);
+    }
+  }
+  // 更新当前裁剪框尺寸显示
+  updateCropSize(): void {
+    if (!this.cropper) {
+      this.currentCropSize = { width: 0, height: 0 };
+      return;
+    }
+
+    try {
+      const cropBoxData = this.cropper.getCropBoxData();
+      this.currentCropSize = {
+        width: Math.round(cropBoxData.width / this.CropRatio),
+        height: Math.round(cropBoxData.height / this.CropRatio)
+      };
+    } catch (error) {
+      console.error('更新裁剪尺寸失败:', error);
+      this.currentCropSize = { width: 0, height: 0 };
     }
   }
 
@@ -336,6 +404,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
       this.cropper = null;
     }
   }
+
   // 释放图片资源，避免内存泄漏
   releaseImageResources(): void {
     // 销毁现有的cropper
@@ -429,14 +498,25 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     console.log(this.options);
     let canvas: HTMLCanvasElement = this.myCanvas.nativeElement;
     let context = canvas.getContext("2d");
-    this.renderer.setAttribute(canvas, "width", image.width.toString() + 'px')
-    this.renderer.setAttribute(canvas, "height", image.height.toString() + 'px')
-    this.renderer.setStyle(canvas, "transform", 'scale(1.5)')
-    context.clearRect(0, 0, this.outputWidth, this.outputHeight);
-    context.drawImage(image, 0, 0);
-    let imageData = context.getImageData(0, 0, image.width, image.height);
+    
+    // 使用实际的裁剪尺寸作为canvas尺寸
+    const canvasWidth = this.currentCropSize.width / this.CropRatio;
+    const canvasHeight = this.currentCropSize.height / this.CropRatio;
+    
+    this.renderer.setAttribute(canvas, "width", canvasWidth.toString());
+    this.renderer.setAttribute(canvas, "height", canvasHeight.toString());
+    this.renderer.setStyle(canvas, "transform", `scale(${this.CropRatio})`);
+    
+    context.clearRect(0, 0, canvasWidth, canvasHeight);
+    
+    // 将图像缩放填满整个canvas
+    context.drawImage(image, 0, 0, canvasWidth, canvasHeight);
+    
+    // 获取imageData时使用正确的canvas尺寸
+    let imageData = context.getImageData(0, 0, canvasWidth, canvasHeight);
     this.converterService.convert(context, imageData, this.options);
   }
+
   private cropDataToImage(): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
       if (!this.cropper) {

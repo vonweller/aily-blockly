@@ -29,8 +29,7 @@
 
         <img #cropperImage [src]="imageUrl" [style.display]="imageUrl && !isLoading ? 'none' : 'none'">
         <!-- 操作提示 -->
-        @if (imageUrl && !isLoading) {
-        <!-- 图片显示区域 -->
+        @if (imageUrl && !isLoading) { <!-- 图片显示区域 -->
         <div class="operation-tips">
           <!-- <div class="tip-item">
           <i class="fa-light fa-up-down-left-right"></i>
@@ -40,19 +39,19 @@
           <i class="fa-light fa-magnifying-glass-plus"></i>
           滚轮缩放图片大小
         </div> -->
-          <div class="tip-item">切换大小端
+          <div class="tip-item ccenter">切换大小端
             <nz-switch nzSize="small" [(ngModel)]="options.endian" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
-          <div class="tip-item">颜色反转
+          <div class="tip-item ccenter">颜色反转
             <nz-switch nzSize="small" [(ngModel)]="options.invert" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
-          <div class="tip-item">使能抖动
+          <div class="tip-item ccenter">使能抖动
             <nz-switch nzSize="small" [(ngModel)]="options.dither" (ngModelChange)="onCropChange()"></nz-switch>
           </div>
           @if(!options.dither) {
-          <div class="tip-item">取色阀值
-            <nz-input-number [(ngModel)]="options.threshold" (ngModelChange)="onCropChange()" nzSize="small" nzMin="1"
-              nzMax="255" />
+          <div class="tip-item ccenter">取色阀值
+            <nz-input-number [(ngModel)]="options.threshold" (ngModelChange)="onCropChange()" [nzControls]="false"
+              nzSize="small" nzMin="1" nzMax="255" />
           </div>
           }
         </div>
@@ -60,7 +59,7 @@
       </div>
       <div class="right ccenter">
         <canvas #myCanvas result></canvas>
-        <div class="operation-tips ccenter">效果预览</div>
+        <div class="right-text ccenter">{{ currentCropSize.width }} × {{ currentCropSize.height }}</div>
       </div>
     </div>
 

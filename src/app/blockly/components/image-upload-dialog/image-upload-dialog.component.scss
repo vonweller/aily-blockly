@@ -58,37 +58,39 @@
 
 // 操作提示样式
 .operation-tips {
-  background: rgba(43, 45, 48, 0.5);
-  height: 35px;
-  padding: 6px;
-  display: flex;
-  width: 100%;
-  align-items: center;
   position: absolute;
   bottom: 0;
+  left: 0;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 8px;
 
   .tip-item {
     display: flex;
     align-items: center;
-    color: #ccc;
+    justify-content: space-between;
+    color: #fff;
     font-size: 12px;
-    margin-right: 6px;
+    margin-right: 16px;
+
+    &:last-child {
+      margin-right: 0;
+    }
 
     nz-switch {
-      margin-top: -3px;
-      margin-left: 5px;
+      margin-left: 4px;
+      margin-top: -1px;
     }
 
     nz-input-number {
-      margin-left: 5px;
-      width: 56px;
-    }
-
-    i {
-      margin-right: 6px;
-      color: #66b2ff;
-      width: 16px;
-      text-align: center;
+      width: 35px;
+      height: 20px;
+      font-size: 12px;
+      margin-left: 3px;
     }
   }
 }
@@ -160,7 +162,28 @@
   }
 
   .cropper-point {
-    display: none !important; // 隐藏调整点，因为不可调整大小
+    width: 8px !important;
+    height: 8px !important;
+    background: #66b2ff !important;
+    border: 2px solid #fff !important;
+    border-radius: 50% !important;
+    opacity: 1 !important;
+
+    // 显示角落的调整点
+    &.point-se,
+    &.point-ne,
+    &.point-nw,
+    &.point-sw {
+      display: block !important;
+    }
+
+    // 隐藏边缘的调整点，只保留角落的
+    &.point-n,
+    &.point-s,
+    &.point-e,
+    &.point-w {
+      display: none !important;
+    }
   }
 
   .cropper-dashed {
@@ -242,5 +265,17 @@
     border: 2px dashed #4a4c4f;
     border-radius: 4px;
     position: relative;
+
+    .right-text {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      border-radius: 4px;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px;
+      font-size: 12px;
+      height: 40px;
+    }
   }
 }
