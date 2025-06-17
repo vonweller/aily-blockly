@@ -75,14 +75,15 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.buttonOptions = { ...DEFAULT_BUTTONS, ...config?.buttons };
         this.pixelColours = { ...DEFAULT_PIXEL_COLOURS, ...config?.colours };
         
-        // 生成唯一ID
-        this.fieldId = 'field_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        
-        // Initialize global service manager
+        // 生成更加唯一的ID，包含更多随机性和时间戳
+        this.fieldId = 'field_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9) + '_' + Math.floor(Math.random() * 1000000);
+          // Initialize global service manager
         this.globalServiceManager = GlobalServiceManager.getInstance();
 
-        // Subscribe to upload responses
-        this.setupUploadResponseHandler();
+        // 延迟设置上传响应处理器，确保字段完全初始化
+        setTimeout(() => {
+            this.setupUploadResponseHandler();
+        }, 0);
 
         // Configure value, height, and width
         const currentValue = this.getValue();
@@ -517,11 +518,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // Force a complete re-render of the field
         this.render_();
-    }
-      /**
+    }      /**
      * Disposes of events belonging to the bitmap editor.
      */
     private dropdownDispose() {
+        console.log('Disposing dropdown for field', this.fieldId);
+        
         // 清理定时器
         if (this.updateTimer !== null) {
             clearTimeout(this.updateTimer);
@@ -551,9 +553,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             Blockly.browserEvents.unbind(event);
         }
         this.boundEvents.length = 0;
+        
+        // 清理编辑器相关的引用，但不清理字段本身的引用
         this.editorCanvas = null;
         this.editorContext = null;
         this.pendingUpdates.clear();
+        
         // Set this.initialValue back to null.
         this.initialValue = null;
 
@@ -564,17 +569,33 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         Blockly.DropDownDiv.getContentDiv().classList.remove(
             'contains-bitmap-editor-u8g2',
         );
-    }
-
-    /**
+    }/**
      * Dispose of this field and clean up subscriptions
      */
     override dispose() {
+        console.log('Disposing field', this.fieldId);
+        
         // 清理上传响应订阅
         if (this.uploadResponseSubscription) {
             this.uploadResponseSubscription.unsubscribe();
             this.uploadResponseSubscription = null;
         }
+        
+        // 清理定时器
+        if (this.updateTimer !== null) {
+            clearTimeout(this.updateTimer);
+            this.updateTimer = null;
+        }
+
+        // 清理待更新的内容
+        this.pendingUpdates.clear();
+        
+        // 清理DOM引用
+        this.editorCanvas = null;
+        this.editorContext = null;
+        this.blockDisplayImage = null;
+        this.widthInput = null;
+        this.heightInput = null;
         
         // 调用父类的dispose方法
         super.dispose();
@@ -695,62 +716,94 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // 更新block上的图片显示
         this.updateBlockDisplayImage();
-    }/**
+    }    /**
      * Upload current bitmap to Angular main program for processing.
      */    private uploadBitmap() {
         const currentBitmap = this.getValue();
         if (!currentBitmap) {
-            console.error('No bitmap data to upload');
+            console.error('No bitmap data to upload for field', this.fieldId);
+            return;
+        }
+
+        // 确保字段仍然有效
+        if (!this.getSourceBlock() || this.getSourceBlock()?.isDisposed()) {
+            console.error('Field is disposed, cannot upload bitmap for field', this.fieldId);
             return;
         }
 
         const uploadRequest: BitmapUploadRequest = {
-            fieldId: this.fieldId,  // 添加字段ID
+            fieldId: this.fieldId,  // 使用当前字段的唯一ID
             currentBitmap: currentBitmap,
             width: this.imgWidth,
             height: this.imgHeight,
             timestamp: Date.now()
         };
 
+        console.log('Uploading bitmap from field', this.fieldId, ':', uploadRequest);
+
         // Get upload service through global service manager
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
             uploadService.sendUploadRequest(uploadRequest);
         } else {
-            console.error('BitmapUploadService not available');
+            console.error('BitmapUploadService not available for field', this.fieldId);
         }
-    }    /**
+    }/**
      * Setup upload response handler
      */
     private setupUploadResponseHandler() {
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
+            // 确保之前的订阅已经清理
+            if (this.uploadResponseSubscription) {
+                this.uploadResponseSubscription.unsubscribe();
+                this.uploadResponseSubscription = null;
+            }
+            
             // 存储订阅以便后续清理
             this.uploadResponseSubscription = uploadService.uploadResponse$.subscribe(response => {
-                // 只处理属于当前字段的响应
+                // 严格匹配字段ID - 只处理属于当前字段的响应
                 if (response.fieldId !== this.fieldId) {
                     return;
                 }
                 
-                console.log('field received:', response);
+                console.log('Field', this.fieldId, 'received response:', response);
+                
                 if (response.success && response.data) {
                     let data = response.data;
+                    
+                    // 处理位图数据
                     if (data.bitmapArray) {
-                        this.setValue(data.bitmapArray);
+                        // 确保当前字段仍然存在且可编辑
+                        if (this.getSourceBlock() && !this.getSourceBlock()?.isDisposed()) {
+                            this.setValue(data.bitmapArray);
+                        }
                     }
-                    if (this.widthInput) {
+                    
+                    // 更新输入框值（如果编辑器当前打开）
+                    if (this.widthInput && this.widthInput.parentNode) {
                         this.widthInput.value = data.width.toString();
                     }
-                    if (this.heightInput) {
+                    if (this.heightInput && this.heightInput.parentNode) {
                         this.heightInput.value = data.height.toString();
                     }
 
-                    if (this.editorCanvas && this.editorContext) {
-                        this.renderCanvasEditor();
+                    // 调整画布大小并重新渲染（如果编辑器当前打开）
+                    if (this.editorCanvas && this.editorContext && this.editorCanvas.parentNode) {
                         this.resizeBitmap(data.width, data.height);
+                    } else {
+                        // 如果编辑器未打开，只更新数据和显示
+                        this.imgWidth = data.width;
+                        this.imgHeight = data.height;
+                        if (this.fieldHeight) {
+                            this.pixelSize = this.fieldHeight / this.imgHeight;
+                        }
+                        this.updateBlockDisplayImage();
+                        this.updateSize_();
+                        this.render_();
                     }
                 } else {
-                    console.error('Upload processing failed');
+                    console.error('Upload processing failed for field', this.fieldId, ':', response.message);
                 }
             });
         } else {

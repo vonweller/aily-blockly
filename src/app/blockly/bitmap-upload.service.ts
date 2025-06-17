@@ -14,7 +14,7 @@ export interface BitmapUploadRequest {
 export interface BitmapUploadResponse {
   fieldId?: string;           // 字段唯一ID（用于匹配请求）
   data?: {
-    "bitmapArray": string,
+    "bitmapArray": number[][],  // 改为number[][]类型以保持一致性
     "width": number,
     "height": number,
     "option": {
