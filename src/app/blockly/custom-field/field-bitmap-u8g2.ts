@@ -509,7 +509,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // Force a complete re-render of the field
         this.render_();
-    }/**
+    }
+    
+    /**
      * Disposes of events belonging to the bitmap editor.
      */
     private dropdownDispose() {
@@ -576,7 +578,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * edit gesture.
      *
      * @param e The down event.
-     */    private onPointerStart(e: PointerEvent) {
+     */    
+    private onPointerStart(e: PointerEvent) {
         if (!this.editorCanvas) return;
 
         const rect = this.editorCanvas.getBoundingClientRect();
@@ -600,7 +603,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * pixel.
      *
      * @param e The move event.
-     */    private onPointerMove(e: PointerEvent) {
+     */
+    private onPointerMove(e: PointerEvent) {
         if (!this.pointerIsDown || !this.editorCanvas) {
             return;
         }
@@ -621,7 +625,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             }
         }
         e.preventDefault();
-    }    /**
+    }
+
+    /**
      * Starts an interaction with the bitmap dropdown when there's a pointerdown
      * within one of the pixels in the editor.
      *
@@ -640,19 +646,6 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     }
 
     /**
-     * Sets the specified pixel in the editor to the current value being painted.
-     *
-     * @param r Row number of grid.
-     * @param c Column number of grid.
-     */
-    private updatePixelValue(r: number, c: number) {
-        if (
-            this.valToPaintWith !== undefined &&
-            this.getPixel(r, c) !== this.valToPaintWith
-        ) {
-            this.setPixel(r, c, this.valToPaintWith);
-        }
-    }    /**
      * Resets pointer state (e.g. After either a pointerup event or if the
      * gesture is canceled).
      */
@@ -664,7 +657,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.valToPaintWith = undefined;
         this.lastPaintedRow = -1;
         this.lastPaintedCol = -1;
-    }    /**
+    }
+
+    /**
      * Sets all the pixels to 0.
      */
     private clearPixels() {
@@ -765,20 +760,6 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     }
 
     /**
-     * Calls a given function for all cells in the image, with the cell
-     * coordinates as the arguments.
-     *
-     * @param func A function to be applied.
-     */
-    private forAllCells(func: (row: number, col: number) => void) {
-        for (let r = 0; r < this.imgHeight; r++) {
-            for (let c = 0; c < this.imgWidth; c++) {
-                func(r, c);
-            }
-        }
-    }
-
-    /**
      * Creates a new element with the specified type and class.
      *
      * @param elementType Type of html element.
@@ -869,10 +850,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private renderCanvasEditor() {
         if (!this.editorContext || !this.editorCanvas) return;
         const bitmap = this.getValue();
-        console.log('Rendering canvas editor with bitmap:', bitmap);
-
         if (!bitmap) return;
-
         // 清除canvas
         this.editorContext.clearRect(0, 0, this.editorCanvas.width, this.editorCanvas.height);
         // 绘制网格和像素
@@ -880,16 +858,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             for (let c = 0; c < this.imgWidth; c++) {
                 const x = c * this.pixelSize;
                 const y = r * this.pixelSize;
-
                 // 绘制像素
-                this.editorContext.fillStyle = bitmap[r][c] ?
-                    this.pixelColours.filled : this.pixelColours.empty;
+                this.editorContext.fillStyle = bitmap[r][c] ? this.pixelColours.filled : this.pixelColours.empty;
                 this.editorContext.fillRect(x, y, this.pixelSize, this.pixelSize);
-
-                // 绘制网格线
-                this.editorContext.strokeStyle = '#ccc';
-                this.editorContext.lineWidth = 1;
-                this.editorContext.strokeRect(x, y, this.pixelSize, this.pixelSize);
             }
         }
     }
