@@ -9,13 +9,20 @@ import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
 import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
 import { McpService } from './services/mcp.service';
+import { ProjectService } from '../../services/project.service';
+import { CmdOutput, CmdService } from '../../services/cmd.service';
+
+export interface Tool {
+  name: string;
+  description: string;
+  input_schema: { [key: string]: any };
+}
 
 @Component({
   selector: 'app-aily-chat',
@@ -229,15 +236,109 @@ pinMode(pin, mode);
     return this.chatService.currentSessionId;
   }
 
+  // 内置工具
+  tools: Tool[] = [
+    {
+      name: 'create_project',
+      description: `
+        ## create_project
+### Description
+创建一个新项目，返回项目路径。
+
+### Parameters
+- board: (required) 开发板信息，包含名称、昵称和版本号
+    - name: 开发板名称
+    - nickname: 开发板信息
+    - version: 开发板版本号
+
+### Usage
+<create_project>
+<board>
+    <name>Board name</name>
+    <nickname>Board nickname</nickname>
+    <version>Board version</version>
+</board>
+</create_project>
+
+### Example
+<create_project>
+<board>
+    <name>@aily-project/board-jinniu_board</name>
+    <nickname>金牛创翼板</nickname>
+    <version>0.0.1</version>
+</board>
+</create_project>
+
+      `,
+      input_schema: {
+        type: 'object',
+        properties: {
+          board: { 
+            type: 'object', 
+            properties: {
+              name: { type: 'string', description: '板子名称' },
+              nickname: { type: 'string', description: '板子昵称' },
+              version: { type: 'string', description: '版本号' }
+            },
+            description: '开发板信息'
+          },
+        }
+      }
+    },
+    {
+      name: 'execute_command',
+      description: `
+      ## execute_command
+### Description
+Request to execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does. For command chaining, use the appropriate chaining syntax for the user's shell. Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Prefer relative commands and paths that avoid location sensitivity for terminal consistency, e.g: \`touch ./testdata/example.file\`, \`dir ./examples/model1/data/yaml\`, or \`go test ./cmd/front --config ./cmd/front/config.yml\`. If directed by the user, you may open a terminal in a different directory by using the \`cwd\` parameter.
+### Parameters
+- command: (required) The CLI command to execute. This should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.
+- cwd: (optional) The working directory to execute the command in.
+### Usage
+<execute_command>
+<command>Your command here</command>
+<cwd>Working directory path (optional)</cwd>
+</execute_command>
+
+### Examples
+#### Example: Requesting to execute npm install
+<execute_command>
+<command>npm i @aily-project/board-jinniu_board<command>
+</execute_command>
+
+#### Example: Requesting to execute ls in a specific directory if directed
+<execute_command>
+<command>ls -la</command>
+<cwd>/home/user/projects</cwd>
+</execute_command>
+      `,
+      input_schema: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: '执行的命令' },
+          cwd: { type: 'string', description: '工作目录，可选' }
+        }
+      }
+    }
+  ]
+
+
   constructor(
     private uiService: UiService,
     private router: Router,
     private chatService: ChatService,
-    private mcpService: McpService
+    private mcpService: McpService,
+    private projectService: ProjectService,
+    private cmdService: CmdService
   ) { }
 
   ngOnInit() {
     this.currentUrl = this.router.url;
+    // this.testNew().then(() => {
+    //   console.log('测试项目创建完成');
+    // }).catch(err => {
+    //   console.error('测试项目创建失败', err);
+    // });
   }
 
   close() {
@@ -274,7 +375,17 @@ pinMode(pin, mode);
   }
 
   startSession(): void {
-    this.chatService.startSession(this.mcpService.tools).subscribe((res: any) => {
+    // tools + mcp tools
+    let tools = this.tools;
+    let mcpTools = this.mcpService.tools.map(tool => {
+      tool.name = "mcp_" + tool.name;
+      return tool;
+    });
+    if (mcpTools && mcpTools.length > 0) {
+      tools = tools.concat(mcpTools);
+    }
+
+    this.chatService.startSession(tools).subscribe((res: any) => {
       if (res.status === 'success') {
         this.chatService.currentSessionId = res.data;
         this.streamConnect();
@@ -323,7 +434,6 @@ pinMode(pin, mode);
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
         console.log("收到消息: ", data);
-
         try {
           if (data.type === 'agent_response') {
             this.appendMessage('助手', data.data);
@@ -355,20 +465,50 @@ pinMode(pin, mode);
               }
             }
 
+            let toolResult = null;
             // 需要先去除工具name中的mcp_前缀
             if (data.tool_name.startsWith('mcp_')) {
               data.tool_name = data.tool_name.substring(4);
+              toolResult = await this.mcpService.use_tool(data.tool_name, data.tool_args);
+              console.log('工具调用结果:', toolResult);
+              this.inputValue = JSON.stringify({
+                "type": "tool_result",
+                "tool_id": data.tool_id,
+                "content": toolResult,
+                "is_error": false
+              }, null, 2);
+            } else {
+              switch (data.tool_name) {
+                case 'create_project':
+                  console.log('创建项目工具被调用', data.tool_args);
+                  const testName = "test_project_" + this.getRandomString();
+                  const testPath = "C:\\Users\\stao\\Documents\\aily-project";
+                  await this.projectService.projectNew({
+                    name: testName,
+                    path: testPath,
+                    board: JSON.parse(data.tool_args.board)
+                  })
+                  toolResult = `项目 "${testName}" 创建成功！项目路径为${testPath}\\${testName}`;
+                  this.inputValue = JSON.stringify({
+                    "type": "tool_result",
+                    "tool_id": data.tool_id,
+                    "content": toolResult,
+                    "is_error": false
+                  }, null, 2);
+                  break;
+                case 'execute_command':
+                  console.log('执行command命令工具被调用', data.tool_args);
+                  await this.cmdService.runAsync(data.tool_args.command, data.tool_args.cwd)
+                  toolResult = `执行command命令 "${data.tool_args.command}" 成功！`
+                  this.inputValue = JSON.stringify({
+                    "type": "tool_result",
+                    "tool_id": data.tool_id,
+                    "content": toolResult,
+                    "is_error": false
+                  }, null, 2);
+              }
             }
-
-            const result = await this.mcpService.use_tool(data.tool_name, data.tool_args);
-            console.log('工具调用结果:', result);
-            this.inputValue = JSON.stringify({
-              "type": "tool_result",
-              "tool_id": data.tool_id,
-              "content": result,
-              "is_error": false
-            }, null, 2);
-            this.send(false);
+            this.send();
           }
           this.scrollToBottom();
         } catch (e) {
@@ -399,6 +539,20 @@ pinMode(pin, mode);
   bottomHeight = 180;
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
+  }
+
+  async testNew() {
+    const testName = 'test';
+    const testPath = 'C:\\Users\\stao\\Documents\\aily-project';
+    await this.projectService.projectNew({
+      name: testName,
+      path: testPath,
+      board: {
+        name: '@aily-project/board-arduino_uno',
+        nickname: 'arduino uno',
+        version: '0.0.1'
+      }
+    });
   }
 
   onKeyDown(event: KeyboardEvent) {
@@ -532,5 +686,52 @@ pinMode(pin, mode);
 
   menuClick(e) {
 
+  }
+
+  /**
+   * 通用XML工具调用解析器
+   * 解析各种工具调用的XML格式，返回工具名称和参数对象
+   */
+  parseToolCallXml(xml: string): { toolName: string, params: any } {
+    const result: { toolName: string, params: any } = { toolName: '', params: {} };
+    
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xml, 'application/xml');
+      
+      // 获取根元素作为工具名称
+      const rootElement = doc.documentElement;
+      if (rootElement && rootElement.tagName !== 'parsererror') {
+        result.toolName = rootElement.tagName;
+        result.params = this.xmlNodeToObject(rootElement);
+      }
+    } catch (e) {
+      console.error('XML工具调用解析失败:', e);
+    }
+    
+    return result;
+  }
+
+  /**
+   * 递归将XML节点转换为JavaScript对象
+   */
+  private xmlNodeToObject(node: Element): any {
+    const result: any = {};
+    
+    // 处理子节点
+    Array.from(node.children).forEach(child => {
+      const tagName = child.tagName;
+      
+      // 如果子节点还有子节点，递归处理
+      if (child.children.length > 0) {
+        result[tagName] = this.xmlNodeToObject(child);
+      } else {
+        // 叶子节点，直接获取文本内容
+        const textContent = child.textContent?.trim() || '';
+        result[tagName] = textContent;
+      }
+    });
+    
+    return result;
   }
 }
