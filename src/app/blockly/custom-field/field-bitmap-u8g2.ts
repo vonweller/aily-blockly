@@ -411,7 +411,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // Width input
         const widthLabel = document.createElement('label');
-        widthLabel.textContent = 'Width:';
+        widthLabel.textContent = 'W';
         widthLabel.className = 'dimensionLabel-u8g2';
         dimensionContainer.appendChild(widthLabel);
 
@@ -426,7 +426,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // Height input
         const heightLabel = document.createElement('label');
-        heightLabel.textContent = 'Height:';
+        heightLabel.textContent = 'H';
         heightLabel.className = 'dimensionLabel-u8g2';
         dimensionContainer.appendChild(heightLabel);
 
