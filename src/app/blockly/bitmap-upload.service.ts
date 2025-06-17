@@ -3,6 +3,7 @@ import { Subject, Observable } from 'rxjs';
 
 /** 位图上传请求接口 */
 export interface BitmapUploadRequest {
+  fieldId: string;            // 字段唯一ID
   currentBitmap: number[][];  // 当前位图数据
   width: number;              // 宽度
   height: number;             // 高度
@@ -11,6 +12,7 @@ export interface BitmapUploadRequest {
 
 /** 位图上传响应接口 */
 export interface BitmapUploadResponse {
+  fieldId?: string;           // 字段唯一ID（用于匹配请求）
   data?: {
     "bitmapArray": string,
     "width": number,

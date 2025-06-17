@@ -155,14 +155,13 @@ export class BlocklyComponent {
           request: request
         },
         nzWidth: '650px',
-      });
-
-      // 处理弹窗关闭事件
+      });      // 处理弹窗关闭事件
       modalRef.afterClose.subscribe((result) => {
         if (result && result.bitmapArray) {
           console.log('接收到处理后的bitmap数据:', result);
           // 发送处理结果回field
           const response: BitmapUploadResponse = {
+            fieldId: request.fieldId,  // 添加字段ID
             data: result,
             success: true,
             // message: '图片处理成功',
@@ -173,6 +172,7 @@ export class BlocklyComponent {
         } else {
           // 用户取消或出错
           // const response: BitmapUploadResponse = {
+          //   fieldId: request.fieldId,  // 添加字段ID
           //   data: request.currentBitmap, // 返回原始数据
           //   success: false,
           //   // message: '图片处理已取消',

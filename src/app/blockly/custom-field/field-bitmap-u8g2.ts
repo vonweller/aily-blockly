@@ -31,6 +31,11 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private imgHeight: number;
     private imgWidth: number;
     private globalServiceManager: GlobalServiceManager;
+      // 为每个字段实例生成唯一ID
+    private fieldId: string;
+    
+    // 存储订阅以便清理
+    private uploadResponseSubscription: any = null;
 
     // 添加输入框的引用作为类属性
     private widthInput: HTMLInputElement | null = null;
@@ -60,8 +65,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * @param value 2D rectangular array of 1s and 0s.
      * @param validator A function that is called to validate.
      * @param config Config A map of options used to configure the field.
-     */
-    constructor(
+     */    constructor(
         value: number[][] | typeof Blockly.Field.SKIP_SETUP,
         validator?: Blockly.FieldValidator<number[][]>,
         config?: FieldBitmapFromJsonConfig,
@@ -70,6 +74,10 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         // this.CURSOR = 'default';
         this.buttonOptions = { ...DEFAULT_BUTTONS, ...config?.buttons };
         this.pixelColours = { ...DEFAULT_PIXEL_COLOURS, ...config?.colours };
+        
+        // 生成唯一ID
+        this.fieldId = 'field_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        
         // Initialize global service manager
         this.globalServiceManager = GlobalServiceManager.getInstance();
 
@@ -510,8 +518,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         // Force a complete re-render of the field
         this.render_();
     }
-    
-    /**
+      /**
      * Disposes of events belonging to the bitmap editor.
      */
     private dropdownDispose() {
@@ -557,6 +564,20 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         Blockly.DropDownDiv.getContentDiv().classList.remove(
             'contains-bitmap-editor-u8g2',
         );
+    }
+
+    /**
+     * Dispose of this field and clean up subscriptions
+     */
+    override dispose() {
+        // 清理上传响应订阅
+        if (this.uploadResponseSubscription) {
+            this.uploadResponseSubscription.unsubscribe();
+            this.uploadResponseSubscription = null;
+        }
+        
+        // 调用父类的dispose方法
+        super.dispose();
     }
 
     /**
@@ -676,8 +697,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.updateBlockDisplayImage();
     }/**
      * Upload current bitmap to Angular main program for processing.
-     */
-    private uploadBitmap() {
+     */    private uploadBitmap() {
         const currentBitmap = this.getValue();
         if (!currentBitmap) {
             console.error('No bitmap data to upload');
@@ -685,6 +705,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         }
 
         const uploadRequest: BitmapUploadRequest = {
+            fieldId: this.fieldId,  // 添加字段ID
             currentBitmap: currentBitmap,
             width: this.imgWidth,
             height: this.imgHeight,
@@ -695,19 +716,22 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
             uploadService.sendUploadRequest(uploadRequest);
-            // console.log('Bitmap upload request sent:', uploadRequest);
         } else {
             console.error('BitmapUploadService not available');
         }
-    }
-
-    /**
+    }    /**
      * Setup upload response handler
      */
     private setupUploadResponseHandler() {
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
-            uploadService.uploadResponse$.subscribe(response => {
+            // 存储订阅以便后续清理
+            this.uploadResponseSubscription = uploadService.uploadResponse$.subscribe(response => {
+                // 只处理属于当前字段的响应
+                if (response.fieldId !== this.fieldId) {
+                    return;
+                }
+                
                 console.log('field received:', response);
                 if (response.success && response.data) {
                     let data = response.data;
