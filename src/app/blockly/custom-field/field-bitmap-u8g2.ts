@@ -55,7 +55,8 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      * @param value 2D rectangular array of 1s and 0s.
      * @param validator A function that is called to validate.
      * @param config Config A map of options used to configure the field.
-     */    constructor(
+     */
+    constructor(
         value: number[][] | typeof Blockly.Field.SKIP_SETUP,
         validator?: Blockly.FieldValidator<number[][]>,
         config?: FieldBitmapFromJsonConfig,
@@ -210,7 +211,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             this,
             this.dropdownDispose.bind(this),
         );
-    }    /**
+    }
+
+    /**
      * Updates the block display and editor dropdown when the field re-renders.
      */
     // eslint-disable-next-line
@@ -331,7 +334,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.initialValue = this.getValue();
 
         return dropdownEditor;
-    }    /**
+    }
+
+    /**
      * Initializes the on-block display.
      */
     override initView() {
@@ -349,7 +354,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
 
         // 初始渲染
         this.updateBlockDisplayImage();
-    }    /**
+    }
+
+    /**
      * Updates the size of the block based on the size of the underlying image.
      */
     // eslint-disable-next-line
@@ -390,9 +397,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     }
 
     /**
-     * Add dimension control inputs for width and height.
+     * 添加宽度和高度的尺寸控制输入框。
      *
-     * @param parent Parent HTML element to which dimension controls will be added.
+     * @param parent 将添加尺寸控制的父HTML元素。
      */
     private addDimensionControls(parent: HTMLElement) {
         const dimensionContainer = this.createElementWithClassname('div', 'dimensionContainer-u8g2');
@@ -435,7 +442,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             const newWidth = parseInt(widthInput.value, 10);
             const newHeight = parseInt(heightInput.value, 10);
 
-            if (newWidth > 0 && newHeight > 0 && newWidth <= 256 && newHeight <= 256) {
+            if (newWidth > 0 && newHeight > 0 && newWidth <= 128 && newHeight <= 128) {
                 this.resizeBitmap(newWidth, newHeight);
             }
         });
@@ -490,7 +497,7 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         }
         this.updateBlockDisplayImage();
         this.updateSize_();
-        
+
         // Force a complete re-render of the field
         this.render_();
     }/**
@@ -682,37 +689,44 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         } else {
             console.error('BitmapUploadService not available');
         }
-    }    /**
+    }
+
+    /**
      * Setup upload response handler
      */
     private setupUploadResponseHandler() {
         const uploadService = this.globalServiceManager.getBitmapUploadService();
         if (uploadService) {
             uploadService.uploadResponse$.subscribe(response => {
-                if (response.success && response.processedBitmap) {
-                    console.log('Received processed bitmap:', response);
+                console.log('field received:', response);
+                if (response.success && response.data) {
 
-                    // 验证处理后的bitmap数据尺寸是否正确
-                    if (response.processedBitmap.length === this.imgHeight &&
-                        response.processedBitmap[0] &&
-                        response.processedBitmap[0].length === this.imgWidth) {
+                    // // 验证处理后的bitmap数据尺寸是否正确
+                    // if (response.processedBitmap.length === this.imgHeight &&
+                    //     response.processedBitmap[0] &&
+                    //     response.processedBitmap[0].length === this.imgWidth) {
 
-                        // 更新字段值
-                        this.setValue(response.processedBitmap);
+                    //     // 更新字段值
+                    //     // this.setValue(response.data.bitmapArray);
 
-                        // 触发中间变化事件
-                        this.fireIntermediateChangeEvent(response.processedBitmap);
-                        // 如果编辑器已打开，更新编辑器显示
-                        if (this.editorCanvas && this.editorContext) {
-                            this.renderCanvasEditor();
-                        }
+                    //     // 触发中间变化事件
+                    //     // this.fireIntermediateChangeEvent(response.data.bitmapArray);
+                    //     // 如果编辑器已打开，更新编辑器显示
+                    //     // if (this.editorCanvas && this.editorContext) {
+                    //     //     this.renderCanvasEditor();
+                    //     // }
 
-                        // 更新块显示
-                        this.render_();
+                    //     // 更新块显示
+                    //     this.render_();
 
-                        console.log('Bitmap field updated successfully');
-                    } else {
-                        console.error('Processed bitmap dimensions do not match field dimensions');
+                    //     console.log('Bitmap field updated successfully');
+                    // } else {
+                    //     console.error('Processed bitmap dimensions do not match field dimensions');
+                    // }
+
+                    if (this.editorCanvas && this.editorContext) {
+                        this.renderCanvasEditor();
+                        this.resizeBitmap(response.data.width, response.data.height);
                     }
                 } else {
                     console.error('Upload processing failed:', response.message);

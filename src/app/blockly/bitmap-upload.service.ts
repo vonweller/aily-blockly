@@ -11,7 +11,17 @@ export interface BitmapUploadRequest {
 
 /** 位图上传响应接口 */
 export interface BitmapUploadResponse {
-  data?: any,
+  data?: {
+    "bitmapArray": string,
+    "width": number,
+    "height": number,
+    "option": {
+      "endian": boolean,
+      "invert": boolean,
+      "dither": boolean,
+      "threshold": number
+    }
+  },
   processedBitmap?: number[][]; // 处理后的位图数据
   success: boolean;            // 是否成功
   message?: string;            // 消息（可选）
