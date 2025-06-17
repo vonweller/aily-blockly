@@ -31,6 +31,11 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
     private imgHeight: number;
     private imgWidth: number;
     private globalServiceManager: GlobalServiceManager;
+
+    // 添加输入框的引用作为类属性
+    private widthInput: HTMLInputElement | null = null;
+    private heightInput: HTMLInputElement | null = null;
+
     /**
      * Array holding info needed to unbind events.
      * Used for disposing.
@@ -410,13 +415,14 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         widthLabel.className = 'dimensionLabel-u8g2';
         dimensionContainer.appendChild(widthLabel);
 
-        const widthInput = document.createElement('input');
-        widthInput.type = 'number';
-        widthInput.min = '1';
-        widthInput.max = '256';
-        widthInput.value = this.imgWidth.toString();
-        widthInput.className = 'dimensionInput-u8g2';
-        dimensionContainer.appendChild(widthInput);
+        // 将局部变量改为类属性
+        this.widthInput = document.createElement('input');
+        this.widthInput.type = 'number';
+        this.widthInput.min = '1';
+        this.widthInput.max = '256';
+        this.widthInput.value = this.imgWidth.toString();
+        this.widthInput.className = 'dimensionInput-u8g2';
+        dimensionContainer.appendChild(this.widthInput);
 
         // Height input
         const heightLabel = document.createElement('label');
@@ -424,26 +430,29 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         heightLabel.className = 'dimensionLabel-u8g2';
         dimensionContainer.appendChild(heightLabel);
 
-        const heightInput = document.createElement('input');
-        heightInput.type = 'number';
-        heightInput.min = '1';
-        heightInput.max = '128';
-        heightInput.value = this.imgHeight.toString();
-        heightInput.className = 'dimensionInput-u8g2';
-        dimensionContainer.appendChild(heightInput);
+        // 将局部变量改为类属性
+        this.heightInput = document.createElement('input');
+        this.heightInput.type = 'number';
+        this.heightInput.min = '1';
+        this.heightInput.max = '128';
+        this.heightInput.value = this.imgHeight.toString();
+        this.heightInput.className = 'dimensionInput-u8g2';
+        dimensionContainer.appendChild(this.heightInput);
 
         // Apply button
         const applyButton = this.createElementWithClassname('button', 'controlButton-u8g2');
         applyButton.innerText = 'Apply';
         dimensionContainer.appendChild(applyButton);
 
-        // Event handlers
+        // Event handlers - 使用类属性
         this.bindEvent(applyButton, 'click', () => {
-            const newWidth = parseInt(widthInput.value, 10);
-            const newHeight = parseInt(heightInput.value, 10);
+            if (this.widthInput && this.heightInput) {
+                const newWidth = parseInt(this.widthInput.value, 10);
+                const newHeight = parseInt(this.heightInput.value, 10);
 
-            if (newWidth > 0 && newHeight > 0 && newWidth <= 128 && newHeight <= 128) {
-                this.resizeBitmap(newWidth, newHeight);
+                if (newWidth > 0 && newHeight > 0 && newWidth <= 128 && newHeight <= 128) {
+                    this.resizeBitmap(newWidth, newHeight);
+                }
             }
         });
 
@@ -537,7 +546,13 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
         this.editorContext = null;
         this.pendingUpdates.clear();
         // Set this.initialValue back to null.
-        this.initialValue = null; Blockly.DropDownDiv.getContentDiv().classList.remove(
+        this.initialValue = null;
+
+        // 清理输入框引用
+        this.widthInput = null;
+        this.heightInput = null;
+
+        Blockly.DropDownDiv.getContentDiv().classList.remove(
             'contains-bitmap-editor-u8g2',
         );
     }
@@ -700,29 +715,12 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             uploadService.uploadResponse$.subscribe(response => {
                 console.log('field received:', response);
                 if (response.success && response.data) {
-
-                    // // 验证处理后的bitmap数据尺寸是否正确
-                    // if (response.processedBitmap.length === this.imgHeight &&
-                    //     response.processedBitmap[0] &&
-                    //     response.processedBitmap[0].length === this.imgWidth) {
-
-                    //     // 更新字段值
-                    //     // this.setValue(response.data.bitmapArray);
-
-                    //     // 触发中间变化事件
-                    //     // this.fireIntermediateChangeEvent(response.data.bitmapArray);
-                    //     // 如果编辑器已打开，更新编辑器显示
-                    //     // if (this.editorCanvas && this.editorContext) {
-                    //     //     this.renderCanvasEditor();
-                    //     // }
-
-                    //     // 更新块显示
-                    //     this.render_();
-
-                    //     console.log('Bitmap field updated successfully');
-                    // } else {
-                    //     console.error('Processed bitmap dimensions do not match field dimensions');
-                    // }
+                    if (this.widthInput) {
+                        this.widthInput.value = response.data.width.toString();
+                    }
+                    if (this.heightInput) {
+                        this.heightInput.value = response.data.height.toString();
+                    }
 
                     if (this.editorCanvas && this.editorContext) {
                         this.renderCanvasEditor();
