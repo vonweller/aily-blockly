@@ -10,6 +10,7 @@ import './plugins/toolbox-search/src/index';
 import './plugins/block-plus-minus/src/index.js';
 import { arduinoGenerator } from './generators/arduino/arduino';
 import { BlocklyService } from './blockly.service';
+import { BitmapUploadResponse } from './bitmap-upload.service';
 
 import './custom-category';
 import './custom-field/field-bitmap';
@@ -27,17 +28,26 @@ import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../services/config.service';
 import * as BlockDynamicConnection from '@blockly/block-dynamic-connection';
+import { CommonModule } from '@angular/common';
+import { BitmapUploadService } from './bitmap-upload.service';
+import { GlobalServiceManager } from './global-service-manager';
+import { ImageUploadDialogComponent } from './components/image-upload-dialog/image-upload-dialog.component';
+import { NoticeService } from '../services/notice.service';
 
 @Component({
   selector: 'blockly-main',
   imports: [
-    NzModalModule
+    NzModalModule,
+    CommonModule
   ],
   templateUrl: './blockly.component.html',
   styleUrl: './blockly.component.scss',
 })
 export class BlocklyComponent {
   @ViewChild('blocklyDiv', { static: true }) blocklyDiv!: ElementRef;
+
+  // Control bitmap upload handler visibility
+  showBitmapUploadHandler = true;
 
   get workspace() {
     return this.blocklyService.workspace;
@@ -119,15 +129,60 @@ export class BlocklyComponent {
   get configData() {
     return this.configService.data;
   }
-
   constructor(
     private blocklyService: BlocklyService,
     private modal: NzModalService,
-    private configService: ConfigService
-  ) { }
-
+    private configService: ConfigService,
+    private bitmapUploadService: BitmapUploadService,
+    private noticeService: NoticeService
+  ) {
+    // Initialize GlobalServiceManager with BitmapUploadService
+    const globalServiceManager = GlobalServiceManager.getInstance();
+    globalServiceManager.setBitmapUploadService(this.bitmapUploadService);
+  }
   ngOnInit(): void {
     this.setPrompt();
+    this.bitmapUploadService.uploadRequestSubject.subscribe((request) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzContent: ImageUploadDialogComponent,
+        nzData: {
+          request: request
+        },
+        nzWidth: '650px',
+      });      // 处理弹窗关闭事件
+      modalRef.afterClose.subscribe((result) => {
+        if (result && result.bitmapArray) {
+          console.log('接收到处理后的bitmap数据:', result);
+          // 发送处理结果回field
+          const response: BitmapUploadResponse = {
+            fieldId: request.fieldId,  // 添加字段ID
+            data: result,
+            success: true,
+            // message: '图片处理成功',
+            // timestamp: Date.now()
+          };
+
+          this.bitmapUploadService.sendUploadResponse(response);
+        } else {
+          // 用户取消或出错
+          // const response: BitmapUploadResponse = {
+          //   fieldId: request.fieldId,  // 添加字段ID
+          //   data: request.currentBitmap, // 返回原始数据
+          //   success: false,
+          //   // message: '图片处理已取消',
+          //   // timestamp: Date.now()
+          // };
+
+          // this.bitmapUploadService.sendUploadResponse(response);
+        }
+      });
+    });
   }
 
   ngAfterViewInit(): void {
@@ -144,34 +199,34 @@ export class BlocklyComponent {
           originalWarn.apply(console, arguments);
         };
       })(console.warn);
-      // console.error = ((originalError) => {
-      //   return (message, ...args) => {
-      //     console.log('Blockly错误：', message, ...args);
-      //     // 保留原始错误输出功能
-      //     originalError.apply(console, arguments);
+      console.error = ((originalError) => {
+        return (message, ...args) => {
+          console.log(message, ...args);
+          // 保留原始错误输出功能
+          originalError.apply(console, arguments);
 
-      //     // 处理特定错误
-      //     let errorMessage = message + '   ' + args.join('\n');
-      //     if (/block/i.test(errorMessage)) {
-      //       // 常见错误1：Invalid block definition
-      //       let title = message;
-      //       let text = args.join('\n');
-      //       if (errorMessage.includes('Invalid block definition')) {
-      //         title = '无效的块定义';
-      //       }
-      //       if (text.startsWith("TypeError: ")) {
-      //         text = text.substring("TypeError: ".length);
-      //       }
-      //       this.noticeService.update({
-      //         title,
-      //         text,
-      //         detail: errorMessage,
-      //         state: 'error',
-      //         setTimeout: 99000,
-      //       });
-      //     }
-      //   };
-      // })(console.error);
+          // 处理特定错误
+          let errorMessage = message + '   ' + args.join('\n');
+          if (/block/i.test(errorMessage)) {
+            // 常见错误1：Invalid block definition
+            let title = message;
+            let text = args.join('\n');
+            if (errorMessage.includes('Invalid block definition')) {
+              title = '无效的块定义';
+            }
+            if (text.startsWith("TypeError: ")) {
+              text = text.substring("TypeError: ".length);
+            }
+            this.noticeService.update({
+              title,
+              text,
+              detail: errorMessage,
+              state: 'error',
+              setTimeout: 99000,
+            });
+          }
+        };
+      })(console.error);
 
       Blockly.setLocale(<any>zhHans);
       // 获取当前blockly渲染器

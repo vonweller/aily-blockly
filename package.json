@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -94,6 +94,7 @@
     "avr8js": "^0.20.1",
     "blockly": "^12.1.0",
     "buffer": "^6.0.3",
+    "cropperjs": "^1.6.2",
     "dragselect": "^2.7.4",
     "fancy-ansi": "^0.1.3",
     "install": "^0.13.0",

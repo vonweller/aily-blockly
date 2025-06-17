@@ -57,9 +57,9 @@
               "node_modules/ng-zorro-antd/resizable/style/index.less",
               "node_modules/ng-zorro-antd/code-editor/style/index.css",
               "node_modules/angular2-draggable/css/resizable.min.css",
-              "node_modules/@xterm/xterm/css/xterm.css"
-            ],
-            "scripts": []
+              "node_modules/@xterm/xterm/css/xterm.css",
+              "node_modules/cropperjs/dist/cropper.css"
+            ]
           },
           "configurations": {
             "production": {

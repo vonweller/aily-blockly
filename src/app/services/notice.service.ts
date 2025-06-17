@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
+import { LogService } from './log.service';
 
 @Injectable({
   providedIn: 'root'
@@ -10,17 +11,23 @@ export class NoticeService {
 
   stateSubject = new Subject<NoticeOptions>();
 
-  noticeList: NoticeOptions[] = [];
+  // noticeList: NoticeOptions[] = [];
 
-  constructor() { }
+  constructor(
+    private logService: LogService
+  ) { }
 
   update(opts: NoticeOptions) {
-    opts['timestamp'] = Date.now();
     opts['showDetail'] = false;
     this.stateSubject.next(opts);
-    if (opts.state === 'error') {
-      this.noticeList.push(opts)
-    }
+    // if (opts.state === 'error') {
+    //   // this.noticeList.push(opts)
+    this.logService.update({
+      title: opts.title,
+      detail: opts.detail,
+      state: opts.state,
+    })
+    // }
   }
 
   clear() {
