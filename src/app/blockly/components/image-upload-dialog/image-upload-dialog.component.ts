@@ -60,7 +60,8 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
     threshold: 127,
   }
 
-  bitmapArray;
+  bitmapString;
+  bitmapArray: number[][] = []; // 二维数组，0表示空白，1表示填充
 
   constructor(
     private modal: NzModalRef,
@@ -126,12 +127,17 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
   }
 
   // 确认按钮处理
-  onConfirm(): void {
+  async onConfirm() {
     if (!this.cropper) {
       this.message.error('请先选择图片');
       return;
     }
+    // const blob = await new Promise<Blob>((resolve) => {
+    //   this.myCanvas.nativeElement.toBlob(resolve, 'image/png');
+    // });
     this.modal.close({
+      // blob: blob,
+      // bitmapString: this.bitmapString,
       bitmapArray: this.bitmapArray,
       width: this.currentCropSize.width,
       height: this.currentCropSize.height,
@@ -437,6 +443,7 @@ export class ImageUploadDialogComponent implements OnInit, AfterViewInit, OnDest
 
     // 获取imageData时使用正确的canvas尺寸
     let imageData = context.getImageData(0, 0, this.currentCropSize.width, this.currentCropSize.height);
-    this.bitmapArray = await this.converterService.convert(context, imageData, this.options);
+    await this.converterService.convert(context, imageData, this.options);
+    this.bitmapArray = this.converterService.getBitmap2DArray();
   }
 }

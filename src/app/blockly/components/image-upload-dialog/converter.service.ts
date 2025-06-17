@@ -18,8 +18,8 @@ export class ConverterService {
       if (options.invert) {
         this.invertColor()
       }
-      const bitmapArray = this.getBitmapArray(options);
-      resolve(bitmapArray)
+      // const bitmapArray = this.getBitmapArray(options);
+      resolve('')
     })
   }
   /**
@@ -28,30 +28,30 @@ export class ConverterService {
    */
   getBitmap2DArray(): number[][] {
     const bitmap: number[][] = [];
-    
+
     for (let y = 0; y < this.image.height; y++) {
       const row: number[] = [];
       for (let x = 0; x < this.image.width; x++) {
         const index = (y * this.image.width + x) * 4;
         // 获取像素的alpha值
         const alpha = this.image.data[index + 3];
-        
+
         // 如果像素是透明的，直接设为0（空白）
         if (alpha === 0) {
           row.push(0);
           continue;
         }
-        
+
         // 获取像素的灰度值
-        const gray = (this.image.data[index] * 0.299 + 
-                     this.image.data[index + 1] * 0.587 + 
-                     this.image.data[index + 2] * 0.114);
+        const gray = (this.image.data[index] * 0.299 +
+          this.image.data[index + 1] * 0.587 +
+          this.image.data[index + 2] * 0.114);
         // 根据灰度值决定是0还是1
         row.push(gray > 127 ? 0 : 1); // 白色为0，黑色为1
       }
       bitmap.push(row);
     }
-    
+
     return bitmap;
   }
 
@@ -120,7 +120,7 @@ export class ConverterService {
     this.image = newImageData;
   }
 
-  getBitmapArray(options) {
+  getBitmapArray(options: convertOptions) {
     let result = '';
     for (var y = 0; y < this.image.height; y++) {
       let next_value = 0

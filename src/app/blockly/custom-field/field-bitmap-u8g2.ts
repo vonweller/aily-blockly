@@ -715,19 +715,23 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
             uploadService.uploadResponse$.subscribe(response => {
                 console.log('field received:', response);
                 if (response.success && response.data) {
+                    let data = response.data;
+                    if (data.bitmapArray) {
+                        this.setValue(data.bitmapArray);
+                    }
                     if (this.widthInput) {
-                        this.widthInput.value = response.data.width.toString();
+                        this.widthInput.value = data.width.toString();
                     }
                     if (this.heightInput) {
-                        this.heightInput.value = response.data.height.toString();
+                        this.heightInput.value = data.height.toString();
                     }
 
                     if (this.editorCanvas && this.editorContext) {
                         this.renderCanvasEditor();
-                        this.resizeBitmap(response.data.width, response.data.height);
+                        this.resizeBitmap(data.width, data.height);
                     }
                 } else {
-                    console.error('Upload processing failed:', response.message);
+                    console.error('Upload processing failed');
                 }
             });
         } else {
@@ -864,8 +868,9 @@ export class FieldBitmapU8g2 extends Blockly.Field<number[][]> {
      */
     private renderCanvasEditor() {
         if (!this.editorContext || !this.editorCanvas) return;
-
         const bitmap = this.getValue();
+        console.log('Rendering canvas editor with bitmap:', bitmap);
+
         if (!bitmap) return;
 
         // 清除canvas
@@ -1086,8 +1091,8 @@ Blockly.Css.register(`
 }
 .dimensionInput-u8g2 {
   height: 25px;
-  width: 50px;
-  padding: 4px 6px;
+  width: 45px;
+  padding: 4px 0px;
   border: 1px solid #ccc;
   border-radius: 3px;
   font-size: 12px;
