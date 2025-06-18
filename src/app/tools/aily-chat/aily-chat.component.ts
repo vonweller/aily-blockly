@@ -436,19 +436,14 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         console.log("收到消息: ", data);
         try {
           if (data.type === 'agent_response') {
-            this.appendMessage('助手', data.data);
+            if (data.data) {
+              this.appendMessage('助手', data.data);
+            }
           } else if (data.type === 'processing_started') {
             console.log('助手正在思考...');
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
           } else if (data.type === 'user_input_required') {
-            // TODO：提示用户进行输入
-            // 模拟用户输入
-            // this.inputValue = JSON.stringify({
-            //   "type": "user_input",
-            //   "content": "这是用于测试的用户输入"
-            // })
-            // this.send();
             this.isUserInputRequired = true;
           } else if (data.type === 'tool_call_request') {
             // 处理工具调用请求
