@@ -345,6 +345,7 @@ export class BlocklyComponent {
 const darkTheme = Blockly.Theme.defineTheme('dark', {
   name: 'dark',
   base: Blockly.Themes.Classic,
+  startHats: true,
   componentStyles: {
     workspaceBackgroundColour: '#262626',
     // toolboxBackgroundColour: 'blackBackground',
