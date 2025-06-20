@@ -23,7 +23,7 @@ import './custom-field/field-angle180';
 import './custom-field/field-angle';
 import '@blockly/field-colour-hsv-sliders';
 
-// import { Multiselect } from './plugins/workspace-multiselect/index.js';
+import {Multiselect} from '@mit-app-inventor/blockly-plugin-workspace-multiselect';
 import { PromptDialogComponent } from './components/prompt-dialog/prompt-dialog.component.js';
 import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../services/config.service';
@@ -114,10 +114,6 @@ export class BlocklyComponent {
       hideIcon: true
     },
     multiSelectKeys: ['Shift'],
-    // multiselectCopyPaste: {
-    //   crossTab: true,
-    //   menu: false,
-    // },
     plugins: {
       connectionPreviewer:
         BlockDynamicConnection.decoratePreviewer(
@@ -234,8 +230,8 @@ export class BlocklyComponent {
 
       this.workspace = Blockly.inject('blocklyDiv', this.options);
 
-      // const multiselectPlugin = new Multiselect(this.workspace);
-      // multiselectPlugin.init(this.options);
+      const multiselectPlugin = new Multiselect(this.workspace);
+      multiselectPlugin.init(this.options);
 
       // 动态连接块监听
       this.workspace.addChangeListener(BlockDynamicConnection.finalizeConnections);
