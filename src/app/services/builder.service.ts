@@ -67,6 +67,17 @@ export class BuilderService {
           return;
         }
 
+        this.noticeService.update({
+          title: "编译准备中",
+          text: "首次编译可能会等待较长时间",
+          state: 'doing',
+          progress: 0,
+          setTimeout: 0,
+          stop: () => {
+            this.cancelBuild();
+          }
+        });
+
         // this.noticeService.clear();
         this.currentProjectPath = this.projectService.currentProjectPath;
         const tempPath = this.currentProjectPath + '/.temp';
@@ -118,6 +129,7 @@ export class BuilderService {
         const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
 
         if (!boardJson) {
+          this.handleCompileError('未找到板子信息(board.json)');
           throw new Error('未找到板子信息(board.json)');
         }
 
@@ -144,8 +156,6 @@ export class BuilderService {
               sourcePath = `${sourcePath}/src`;
             }
           }
-
-          console.log("Source path for library:", sourcePath);
 
           // 判断src目录下是否包含.h文件
           let hasHeaderFiles = false;
@@ -224,6 +234,7 @@ export class BuilderService {
         });
 
         if (!compiler || !sdk) {
+          this.handleCompileError('未找到编译器或SDK信息');
           throw new Error('未找到编译器或SDK信息');
         }
 
@@ -235,6 +246,7 @@ export class BuilderService {
         // 获取编译命令
         let compilerParam = boardJson.compilerParam;
         if (!compilerParam) {
+          this.handleCompileError('未找到编译命令(compilerParam)');
           throw new Error('未找到编译命令(compilerParam)');
         }
 
