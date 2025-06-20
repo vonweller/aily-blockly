@@ -122,13 +122,14 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
       console.log('查找现有的 aily-state 组件:', componentData.id);
       const existingComponent = this.findExistingStateComponent(componentData.id);
       if (existingComponent) {
-        console.log('组件已存在, 更新数据:', componentData.id);
-        // 更新现有组件数据
+        console.log('组件已存在, 更新数据:', componentData.id);        // 更新现有组件数据
         this.updateExistingComponent(existingComponent, componentData);
-        // 移除占位符
-        console.log(placeholder);
-        placeholder.remove();
-        // console.log(`Updated existing aily-state component with ID: ${componentData.id}`, componentData);
+        // 移除占位符的父级元素
+        try {
+          placeholder.parentElement?.parentElement?.remove();
+        } catch (e) {
+          console.error('Error removing placeholder parent element:', e);
+        }
         return;
       }
     }
