@@ -268,6 +268,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         }
       }
     });
+    this.scrollToBottom();
   }
 
   streamConnect(): void {
