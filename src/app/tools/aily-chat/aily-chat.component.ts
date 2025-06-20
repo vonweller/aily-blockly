@@ -197,10 +197,14 @@ Request to execute a CLI command on the system. Use this when you need to perfor
       this.startSession();
     })
   }
-
   appendMessage(role, text) {
-    console.log('append message', role, text);
     // 判断是否是JSON格式的字符串
+    if (role != 'user') {
+      console.log('收到数据:');
+      console.log(text);
+    }
+
+
     try {
       const parsedText = JSON.parse(text);
       if (typeof parsedText === 'object') {
@@ -211,10 +215,17 @@ Request to execute a CLI command on the system. Use this when you need to perfor
       // 保持原样
     }
 
-    this.list.push({
-      "role": role,
-      "content": text
-    })
+    // 检查是否存在消息列表，且最后一条消息的role与当前role相同
+    if (this.list.length > 0 && this.list[this.list.length - 1].role === role) {
+      // 如果是同一个role，追加内容到最后一条消息
+      this.list[this.list.length - 1].content += text;
+    } else {
+      // 如果是不同的role或列表为空，创建新的消息
+      this.list.push({
+        "role": role,
+        "content": text
+      });
+    }
   }
 
   startSession(): void {
