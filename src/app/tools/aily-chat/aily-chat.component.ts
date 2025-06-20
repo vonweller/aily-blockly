@@ -17,6 +17,9 @@ import { IMenuItem } from '../../configs/menu.config';
 import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
+import { ElectronService } from '../../services/electron.service';
+
+const { pt } = (window as any)['electronAPI'].platform;
 
 export interface Tool {
   name: string;
@@ -229,6 +232,7 @@ pinMode(pin, mode);
 
   currentUrl;
   inputValue = '';
+  prjPath = '';
 
   windowInfo = 'AI助手';
 
@@ -282,7 +286,8 @@ pinMode(pin, mode);
             },
             description: '开发板信息'
           },
-        }
+        },
+        required: ['board']
       }
     },
     {
@@ -317,7 +322,8 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         properties: {
           command: { type: 'string', description: '执行的命令' },
           cwd: { type: 'string', description: '工作目录，可选' }
-        }
+        },
+        required: ['command']
       }
     }
   ]
@@ -329,11 +335,15 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     private chatService: ChatService,
     private mcpService: McpService,
     private projectService: ProjectService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private electronService: ElectronService
   ) { }
 
   ngOnInit() {
     this.currentUrl = this.router.url;
+    if (this.electronService.isElectron) {
+      this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
+    }
     // this.testNew().then(() => {
     //   console.log('测试项目创建完成');
     // }).catch(err => {
@@ -476,31 +486,54 @@ Request to execute a CLI command on the system. Use this when you need to perfor
               switch (data.tool_name) {
                 case 'create_project':
                   console.log('创建项目工具被调用', data.tool_args);
-                  const testName = "test_project_" + this.getRandomString();
-                  const testPath = "C:\\Users\\stao\\Documents\\aily-project";
-                  await this.projectService.projectNew({
-                    name: testName,
-                    path: testPath,
-                    board: JSON.parse(data.tool_args.board)
-                  })
-                  toolResult = `项目 "${testName}" 创建成功！项目路径为${testPath}\\${testName}`;
-                  this.inputValue = JSON.stringify({
-                    "type": "tool_result",
-                    "tool_id": data.tool_id,
-                    "content": toolResult,
-                    "is_error": false
-                  }, null, 2);
+                  try {
+                    const prjName = this.projectService.generateUniqueProjectName(this.prjPath)
+                    await this.projectService.projectNew({
+                      name: prjName,
+                      path: this.prjPath,
+                      board: JSON.parse(data.tool_args.board)
+                    })
+                    toolResult = `项目 "${prjName}" 创建成功！项目路径为${this.prjPath}\\${prjName}`;
+                    this.inputValue = JSON.stringify({
+                      "type": "tool_result",
+                      "tool_id": data.tool_id,
+                      "content": toolResult,
+                      "is_error": false
+                    }, null, 2);
+                  } catch (e) {
+                    console.error('创建项目失败:', e);
+                    toolResult = `创建项目失败: ${e.message}`;
+                    this.inputValue = JSON.stringify({
+                      "type": "tool_result",
+                      "tool_id": data.tool_id,
+                      "content": toolResult,
+                      "is_error": true
+                    }, null, 2);
+                  }
+                  
                   break;
                 case 'execute_command':
                   console.log('执行command命令工具被调用', data.tool_args);
-                  await this.cmdService.runAsync(data.tool_args.command, data.tool_args.cwd)
-                  toolResult = `执行command命令 "${data.tool_args.command}" 成功！`
-                  this.inputValue = JSON.stringify({
-                    "type": "tool_result",
-                    "tool_id": data.tool_id,
-                    "content": toolResult,
-                    "is_error": false
-                  }, null, 2);
+                  try {
+                    await this.cmdService.runAsync(data.tool_args.command, data.tool_args.cwd)
+                    toolResult = `执行command命令 "${data.tool_args.command}" 成功！`
+                    this.inputValue = JSON.stringify({
+                      "type": "tool_result",
+                      "tool_id": data.tool_id,
+                      "content": toolResult,
+                      "is_error": false
+                    }, null, 2);
+                  } catch (e) {
+                    console.error('执行command命令失败:', e);
+                    toolResult = `执行command命令失败: ${e.message}`;
+                    this.inputValue = JSON.stringify({
+                      "type": "tool_result",
+                      "tool_id": data.tool_id,
+                      "content": toolResult,
+                      "is_error": true
+                    }, null, 2);
+                  }
+                  break;
               }
             }
             this.send();
