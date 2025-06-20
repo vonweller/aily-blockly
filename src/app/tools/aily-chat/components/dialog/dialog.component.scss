@@ -11,8 +11,12 @@
 .username {
     padding: 3px 6px;
     border-bottom: 1px solid #444;
-    font-size: 12px;
+    font-size: 14px;
     color: #888;
+
+    i {
+        font-size: 16px;
+    }
 }
 
 .content {
