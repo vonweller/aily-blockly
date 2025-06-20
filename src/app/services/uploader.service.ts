@@ -217,6 +217,7 @@ export class UploaderService {
                     // 检查是否有错误信息
                     if (trimmedLine.toLowerCase().includes('error:') ||
                       trimmedLine.toLowerCase().includes('failed') ||
+                      trimmedLine.toLowerCase().includes('a fatal error occurred') ||
                       trimmedLine.toLowerCase().includes("can't open device")) {
                       this.handleUploadError(trimmedLine);
                       // return;
@@ -344,7 +345,11 @@ export class UploaderService {
           },
           complete: () => {
             console.log("bufferData: ", bufferData);
-            if (this.uploadCompleted) {
+            if(this.isErrored) {
+              console.error("上传过程中发生错误，已取消");
+              this.handleUploadError('上传过程中发生错误');
+              reject({ state: 'error', text: errorText });
+            } else if (this.uploadCompleted) {
               console.log("上传完成");
               this.noticeService.update({
                 title: completeTitle,
@@ -354,10 +359,6 @@ export class UploaderService {
               });
               this.uploadInProgress = false;
               resolve({ state: 'done', text: '上传完成' });
-            } else if (this.isErrored) {
-              console.error("上传过程中发生错误，已取消");
-              this.handleUploadError('上传过程中发生错误');
-              reject({ state: 'error', text: errorText });
             } else {
               console.warn("上传中断");
               this.noticeService.update({

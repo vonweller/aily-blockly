@@ -39,7 +39,6 @@ export class BlocklyEditorComponent {
     private projectService: ProjectService,
     private uiService: UiService,
     private activatedRoute: ActivatedRoute,
-    // private terminalService: TerminalService,
     private blocklyService: BlocklyService,
     private electronService: ElectronService,
     private message: NzMessageService,
@@ -83,12 +82,11 @@ export class BlocklyEditorComponent {
     this.uiService.updateFooterState({ state: 'doing', text: '正在加载开发板配置' });
     const boardModule = Object.keys(packageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
     console.log('boardModule: ', boardModule);
-    // let boardJsonPath = projectPath + '\\node_modules\\' + boardModule + '\\board.json';
-    // TODO 兼容mac arm改为了单杠，按理win也是可以的，如果不行则还原或者使用环境变量判断使用路径 @coloz
     let boardJsonPath = projectPath + '/node_modules/' + boardModule + '/board.json';
     const boardJson = JSON.parse(this.electronService.readFile(boardJsonPath));
     this.blocklyService.boardConfig = boardJson;
     this.projectService.currentBoardConfig = boardJson;
+    window['boardConfig'] = boardJson;
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));
     // 遍历libraryModuleList，让包含@aily-project/lib-core-的模块在最前面

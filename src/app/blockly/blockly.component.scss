@@ -3,109 +3,80 @@
     flex: 1;
 
     ::ng-deep {
-
         .blocklyMainBackground {
             stroke-width: 0 !important;
         }
 
-        .blocklyToolbox {
+        .blocklyToolboxDiv {
             width: 180px;
             background: #323232;
+            // border-right: 1px solid #E0E0E0;
             padding: 0;
             scrollbar-width: thin !important;
             scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
-            .blocklyToolboxCategoryContainer {
-                width: 180px;
-            }
-
-            .blocklyToolboxCategoryGroup {
+            .blocklyToolboxContents {
                 padding-bottom: 30px;
             }
 
             .blocklyToolboxCategory {
-                height: 40px;
-                display: flex;
-                align-items: center;
-                cursor: pointer;
-                transition: all 0.3s;
-                margin-bottom: 0;
-                border: none !important;
-            }
-
-            .blocklyToolboxSelected {
-                background: #929292 !important;
-            }
-
-            .blocklyTreeRowContentContainer {
-                display: flex;
-                align-items: center;
-
-                .tbc-icon-box {
-                    margin-top: 3px;
-                    font-size: 16px;
-                    width: 40px;
+                .blocklyTreeRow {
+                    height: 40px;
                     display: flex;
                     align-items: center;
-                    justify-content: center;
+                    cursor: pointer;
+                    width: 100%;
+                    transition: all 0.3s;
+                    margin-bottom: 0;
+                    border: none !important;
+                }
+
+                .blocklyTreeSelected {
+                    background: #929292 !important;
+                }
+
+                .blocklyTreeRowContentContainer {
+                    display: flex;
+                    align-items: center;
+
+                    .tbc-icon-box {
+                        margin-top: 3px;
+                        font-size: 16px;
+                        width: 40px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    }
+
+                }
+
+                // 搜索框例外
+                &:first-child {
+                    .blocklyTreeSelected {
+                        background: transparent !important;
+
+                        &:hover {
+                            background: transparent !important;
+                        }
+                    }
                 }
 
             }
-
-            // 搜索框例外
-            &:first-child {
-                input {
-                    border-radius: 14px;
-                    margin-left: 12px !important;
-                    padding: 0 10px;
-                    width: 158px;
-                    height: 30px;
-                    background: #444;
-                    border: none;
-                    outline: none;
-                }
-            }
-
         }
 
         .blocklyFlyoutLabelText {
             fill: #ccc;
         }
+
+        .search-box {
+            border-radius: 14px;
+            margin: 0 10px;
+            padding: 0 10px;
+            width: 158px;
+            height: 30px;
+            background: #444;
+            border: none;
+            outline: none;
+        }
     }
-}
-
-.testbtn {
-    position: absolute;
-    top: 100px;
-    right: 100px;
-    z-index: 999;
-    width: 80px;
-    height: 80px;
-    background: rgb(177, 8, 8);
-    color: #fff;
-    border-radius: 50%;
-    cursor: pointer;
-
-    &:hover {
-        background: rgb(212, 48, 48);
-    }
-}
-
-.bitmap-upload-panel {
-    height: 300px;
-    background-color: #f8f9fa;
-    border-top: 1px solid #dee2e6;
-    overflow-y: auto;
-    
-    // Ensure the panel is visible when needed
-    &:not(:empty) {
-        min-height: 200px;
-    }
-}
-
-.blockly-container {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
 }
