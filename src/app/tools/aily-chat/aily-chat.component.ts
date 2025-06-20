@@ -11,13 +11,14 @@ import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
-import { SimplebarAngularModule } from 'simplebar-angular';
+import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
 import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
+// import { ChatListExamples } from './chat.example';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -53,179 +54,12 @@ export class AilyChatComponent {
   };
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('chatList') chatList: ElementRef;
+  @ViewChild('simplebarRef') simplebarRef: SimplebarAngularComponent;
 
   isUserInputRequired = false;
 
-  list: any = [
-    {
-      content: `以下为可用的系统提示信息：
-\`\`\`aily-state
-{"state":"doing","text":"正在查询开发板文档"}
-\`\`\`
-\`\`\`aily-state
-{"state":"done","text":"开发板文档查阅完成"}
-\`\`\`
-\`\`\`aily-state
-{"state":"warn","text":"没有找到相关的开发板文档"}
-\`\`\`
-\`\`\`aily-state
-{"state":"error","text":"发生错误，请稍后再试"}
-\`\`\`
-\`\`\`aily-button
-[
-{"text":"创建项目","action":"create_project"},
-{"text":"补充说明","action":"more_info","type":"default"}
-]
-\`\`\`
-`,
-    },
-    {
-      content: 'I want to know the weather today.',
-      role: 'user',
-    }, {
-      content: `推荐使用如下控制器：  
-\`\`\`aily-board
-{
-    "name": "@aily-project/board-jinniu_board",
-    "nickname": "金牛创翼板",
-    "version": "0.0.1",
-    "description": "金牛创翼板是一款集成多种常用传感器的开发板，包括电机、WS2812灯、LED灯、超声波、DHT11、自锁和按键开关、电位器、无源蜂鸣器和电机驱动",
-    "author": "",
-    "brand": "OpenJumper",
-    "url": "",
-    "compatibility": "",
-    "img": "jinniu_board.png",
-    "disabled": false
-}
-\`\`\``,
-    },
-    {
-      content: 'I am in Beijing.',
-      role: 'user',
-    }, {
-      content: `推荐使用如下扩展库
-\`\`\`aily-library
-{
-    "name": "@aily-project/lib-servo360",
-    "nickname": "360舵机驱动",
-    "version": "1.0.0",
-    "description": "360舵机控制支持库，支持Arduino UNO、MEGA、ESP32等开发板",
-    "author": "aily Project",
-    "compatibility": {
-      "core": [
-        "arduino:avr",
-        "esp32:esp32"
-      ],
-      "voltage": [
-        3.3,
-        5
-      ]
-    },
-    "keywords": [
-      "aily",
-      "blockly",
-      "servo",
-      "servo_attach",
-      "servo_write",
-      "执行器"
-    ],
-    "tested": true,
-    "icon": "iconfont icon-servo"
-}
-\`\`\`
-\`\`\`aily-library
-{
-    "name": "@aily-project/lib-sht3x",
-    "nickname": "SHT3x温湿度传感器库",
-    "version": "0.0.1",
-    "description": "支持Arduino SHT30、SHT31和SHT35温湿度传感器的控制库",
-    "author": "Danil",
-    "compatibility": {
-      "core": [
-        "arduino:avr",
-        "esp32:esp32"
-      ],
-      "voltage": [
-        3.3,
-        5
-      ]
-    },
-    "keywords": [
-      "aily",
-      "blockly",
-      "sht3x",
-      "温湿度传感器",
-      "sensor",
-      "humidity",
-      "temperature"
-    ],
-    "tested": false,
-    "icon": "iconfont icon-dht22"
-}
-\`\`\`
-\`\`\`aily-library
-{
-    "name": "@aily-project/lib-core-custom",
-    "nickname": "自定义代码",
-    "version": "1.0.0",
-    "description": "允许在Blockly中插入自定义Arduino代码、宏定义、函数等的库",
-    "author": "aily Project",
-    "compatibility": {
-      "core": []
-    },
-    "keywords": [
-      "aily",
-      "blockly",
-      "lib",
-      "custom",
-      "code"
-    ],
-    "tested": true,
-    "icon": "fa-light fa-code"
-}
-\`\`\`
-`
-    },
-    {
-      content: 'Thank you!',
-      role: 'user',
-    },
-    {
-      content: `Arduino Uno上每一个带有数字编号的引脚，都是数字引脚，包括写有"A"编号的模拟输入引脚，如图2-21。使用这些引脚具有输入输出数字信号的功能。
-
-\`\`\`aily-state
-{"state":"doing","text":"正在查询开发板文档"}
-\`\`\`
-
-\`\`\`aily-state
-{"state":"done","text":"开发板文档查阅完成"}
-\`\`\`
-
-\`\`\`c
-pinMode(pin, mode);
-\`\`\`
-
-参数pin为指定配置的引脚编号；参数mode为指定的配置模式。
-
-可使用的三种模式，如表2-3所示：
-
-表 2‑3 Arduino引脚可配置状态
-
-| 模式宏名称 | 说明 |
-| ----- | --- |
-| INPUT | 输入模式 |
-| OUTPUT | 输出模式 |
-| INPUT\_PULLUP | 输入上拉模式 |
-`
-    },
-    {
-      content: 'Have a nice day!',
-    },
-    {
-      content: 'You too!'
-    },
-  ];
+  list: any = [];
+  // list = ChatListExamples  // 示例数据
 
   // inputValue =
   //   '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
@@ -277,8 +111,8 @@ pinMode(pin, mode);
       input_schema: {
         type: 'object',
         properties: {
-          board: { 
-            type: 'object', 
+          board: {
+            type: 'object',
             properties: {
               name: { type: 'string', description: '板子名称' },
               nickname: { type: 'string', description: '板子昵称' },
@@ -358,8 +192,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
   }
 
   ngAfterViewInit(): void {
-    this.scrollToBottom(true);
-
+    this.scrollToBottom();
     this.mcpService.init().then(() => {
       this.startSession();
     })
@@ -510,7 +343,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                       "is_error": true
                     }, null, 2);
                   }
-                  
+
                   break;
                 case 'execute_command':
                   console.log('执行command命令工具被调用', data.tool_args);
@@ -583,18 +416,12 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     });
   }
 
+  // 当使用ctrl+enter时发送消息
   onKeyDown(event: KeyboardEvent) {
-    // if (this.serialMonitorService.inputMode.sendByEnter) {
-    //   if (event.key === 'Enter') {
-    //     this.send();
-    //     event.preventDefault();
-    //   }
-    //   return;
-    // }
-    // if (event.ctrlKey && event.key === 'Enter') {
-    //   this.send();
-    //   event.preventDefault();
-    // }
+    if (event.ctrlKey && event.key === 'Enter') {
+      this.send();
+      event.preventDefault();
+    }
   }
 
   getRandomString() {
@@ -643,22 +470,15 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     return segments;
   }
 
-  scrollToBottom(offset: any = -30) {
-    if (this.chatList?.nativeElement && this.chatContainer?.nativeElement) {
-      setTimeout(() => {
-        // if (
-        //   offset != true &&
-        //   this.chatContainer.nativeElement.scrollTop +
-        //     this.chatContainer.nativeElement.clientHeight -
-        //     this.chatContainer.nativeElement.scrollHeight <
-        //     offset
-        // ) {
-        //   return;
-        // }
-        this.chatContainer.nativeElement.scrollTop =
-          this.chatList.nativeElement.scrollHeight;
-      }, 20);
-    }
+  scrollToBottom() {
+    setTimeout(() => {
+      if (this.simplebarRef) {
+        const scrollElement = this.simplebarRef.SimpleBar?.getScrollElement();
+        if (scrollElement) {
+          scrollElement.scrollTop = scrollElement.scrollHeight;
+        }
+      }
+    }, 50); // 增加延迟时间
   }
 
   HistoryList: IMenuItem[] = [
@@ -722,11 +542,11 @@ Request to execute a CLI command on the system. Use this when you need to perfor
    */
   parseToolCallXml(xml: string): { toolName: string, params: any } {
     const result: { toolName: string, params: any } = { toolName: '', params: {} };
-    
+
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(xml, 'application/xml');
-      
+
       // 获取根元素作为工具名称
       const rootElement = doc.documentElement;
       if (rootElement && rootElement.tagName !== 'parsererror') {
@@ -736,7 +556,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     } catch (e) {
       console.error('XML工具调用解析失败:', e);
     }
-    
+
     return result;
   }
 
@@ -745,11 +565,11 @@ Request to execute a CLI command on the system. Use this when you need to perfor
    */
   private xmlNodeToObject(node: Element): any {
     const result: any = {};
-    
+
     // 处理子节点
     Array.from(node.children).forEach(child => {
       const tagName = child.tagName;
-      
+
       // 如果子节点还有子节点，递归处理
       if (child.children.length > 0) {
         result[tagName] = this.xmlNodeToObject(child);
@@ -759,7 +579,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         result[tagName] = textContent;
       }
     });
-    
+
     return result;
   }
 }
