@@ -76,7 +76,7 @@ export class SimulatorEditorComponent {
       model: this.graph,
       width: '100%',
       height: '100%',
-      background: { color: '#f9f9f9' },
+      // background: { color: '#f9f9f9' },
       cellViewNamespace: namespace,
       preventDefaultViewAction: false,
       gridSize: 10,
