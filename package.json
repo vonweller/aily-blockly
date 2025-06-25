@@ -44,7 +44,38 @@
       "sign": false,
       "signAndEditExecutable": true,
       "artifactName": "aily-blockly-${version}.${ext}",
-      "icon": "public/icon.ico"
+      "icon": "public/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "abi",
+          "name": "Aily Blockly Project",
+          "description": "Aily Blockly Project File",
+          "icon": "public/icon.ico",
+          "role": "Editor"
+        }
+      ]
+    },
+    "mac": {
+      "icon": "public/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "abi",
+          "name": "Aily Blockly Project",
+          "description": "Aily Blockly Project File",
+          "role": "Editor"
+        }
+      ]
+    },
+    "linux": {
+      "icon": "public/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "abi",
+          "name": "Aily Blockly Project",
+          "description": "Aily Blockly Project File",
+          "mimeType": "application/x-aily-blockly-project"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

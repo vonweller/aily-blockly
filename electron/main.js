@@ -13,6 +13,69 @@ const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
 
+// 文件关联处理
+let pendingFileToOpen = null;
+
+// 处理命令行参数中的 .abi 文件
+function handleCommandLineArgs(argv) {
+  const abiFile = argv.find(arg => arg.endsWith('.abi') && fs.existsSync(arg));
+  if (abiFile) {
+    const resolvedPath = path.resolve(abiFile);
+    pendingFileToOpen = path.dirname(resolvedPath);
+    console.log('Found .abi file to open:', resolvedPath);
+    console.log('Project directory:', pendingFileToOpen);
+    return true;
+  }
+  return false;
+}
+
+// 在应用启动时处理命令行参数
+handleCommandLineArgs(process.argv);
+
+// 确保应用只有一个实例
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  // 处理第二个实例的启动参数
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Windows下处理文件关联
+    handleCommandLineArgs(commandLine);
+    
+    // 如果主窗口存在，聚焦并处理文件
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+          // 如果有待打开的文件，发送给渲染进程
+    if (pendingFileToOpen) {
+      setTimeout(() => {
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('open-project-from-file', pendingFileToOpen);
+          pendingFileToOpen = null;
+        }
+      }, 1000);
+    }
+    }
+  });
+}
+
+// macOS下处理文件打开
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (filePath.endsWith('.abi') && fs.existsSync(filePath)) {
+    const projectDir = path.dirname(path.resolve(filePath));
+    console.log('macOS open-file:', filePath);
+    console.log('Project directory:', projectDir);
+    
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('open-project-from-file', projectDir);
+    } else {
+      pendingFileToOpen = projectDir;
+    }
+  }
+});
+
 // ipc handlers模块
 const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
@@ -147,6 +210,21 @@ function createWindow() {
     mainWindow.loadFile(`renderer/index.html`);
   }
 
+  // 确保页面加载完成后再处理文件关联
+  mainWindow.webContents.once('dom-ready', () => {
+    console.log('DOM ready');
+    // 如果有待打开的文件，发送给渲染进程
+    if (pendingFileToOpen) {
+      setTimeout(() => {
+        if (mainWindow && mainWindow.webContents) {
+          console.log('Sending open-project-from-file event:', pendingFileToOpen);
+          mainWindow.webContents.send('open-project-from-file', pendingFileToOpen);
+          pendingFileToOpen = null;
+        }
+      }, 3000); // 给Angular更多时间初始化
+    }
+  });
+
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -166,7 +244,7 @@ function createWindow() {
     registerNpmHandlers(mainWindow);
     registerUpdaterHandlers(mainWindow);
     registerCmdHandlers(mainWindow);
-  }, 500);
+  }, 1000);
 
 }
 
