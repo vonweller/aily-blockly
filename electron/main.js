@@ -221,7 +221,7 @@ function createWindow() {
           mainWindow.webContents.send('open-project-from-file', pendingFileToOpen);
           pendingFileToOpen = null;
         }
-      }, 3000); // 给Angular更多时间初始化
+      }, 1000); // 给Angular更多时间初始化
     }
   });
 
@@ -244,7 +244,7 @@ function createWindow() {
     registerNpmHandlers(mainWindow);
     registerUpdaterHandlers(mainWindow);
     registerCmdHandlers(mainWindow);
-  }, 1000);
+  }, 500);
 
 }
 
