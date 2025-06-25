@@ -161,14 +161,21 @@ export class McpService {
       */
 
       if (result.success && result.isError !== true) {
-        return result.result.content.map((item: any) => item.text).join("\n");
+        return {
+          "content": result.result.content.map((item: any) => item.text).join("\n"),
+          "is_error": false
+        }
       } else {
-        console.error("Tool usage failed:", result.error);
-        return "Tool usage failed: " + result.error;
+        return {
+          "content": "Tool usage failed: " + result.error,
+          "is_error": true
+        }
       }
     } catch (e) {
-      console.error("Error using tool:", e);
-      return "Error using tool: " + e;
+      return {
+        "content": "Error using tool: " + e,
+        "is_error": true
+      }
     }
   }
 }

@@ -18,7 +18,12 @@ import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
+import { MessageSubscriptionService, ChatMessage, MessageSubscriptionOptions } from './services/message-subscription.service';
 // import { ChatListExamples } from './chat.example';
+
+import { newProjectTool } from './tools/createProjectTool';
+import { executeCommandTool } from './tools/executeCommandTool';
+import { askApprovalTool } from './tools/askApprovalTool';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -159,6 +164,63 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         },
         required: ['command']
       }
+    },
+//     {
+//       name: "ask_approval",
+//       description: `
+//         ## ask_approval
+// ### Description
+// 向用户请求确认或批准某个操作。此工具用于在执行可能影响用户的操作之前，确保用户明确同意。
+// ### Parameters
+// - message: (required) 需要用户确认的消息内容。
+// ### Usage
+// <ask_approval>
+// <message>需要用户确认的消息</message>
+// </ask_approval>`,
+//       input_schema: {
+//         type: 'object',
+//         properties: {
+//           message: { type: 'string', description: '需要用户确认的消息' }
+//         },
+//         required: ['message']
+//       }
+//     },
+    {
+      name: "get_context",
+      description: `
+        ## get_context
+### Description
+获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。
+
+### Parameters
+- info_type: (optional) 指定要获取的上下文信息类型，可选值有：'all', 'project', 'platform', 'system'。默认为'all'。
+
+### Usage
+<get_context>
+<info_type>需要获取的信息类型</info_type>
+</get_context>
+
+### Example
+#### 获取所有上下文信息
+<get_context>
+<info_type>all</info_type>
+</get_context>
+
+#### 仅获取项目相关信息
+<get_context>
+<info_type>project</info_type>
+</get_context>`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          info_type: { 
+            type: 'string', 
+            description: '要获取的上下文信息类型',
+            enum: ['all', 'project', 'platform', 'system'],
+            default: 'all'
+          }
+        }
+      }
     }
   ]
 
@@ -170,7 +232,8 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     private mcpService: McpService,
     private projectService: ProjectService,
     private cmdService: CmdService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private messageSubscriptionService: MessageSubscriptionService
   ) { }
 
   ngOnInit() {
@@ -178,6 +241,10 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     if (this.electronService.isElectron) {
       this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
+    
+    // 订阅消息
+    this.subscribeToMessages();
+    
     // this.testNew().then(() => {
     //   console.log('测试项目创建完成');
     // }).catch(err => {
@@ -272,7 +339,6 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     }
 
     this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
-      console.log('send message', res);
       if (res.status === 'success') {
         if (res.data) {
           this.appendMessage('aily', res.data);
@@ -312,75 +378,44 @@ Request to execute a CLI command on the system. Use this when you need to perfor
               } catch (e) {
                 console.error('Failed to parse tool_args as JSON:', e);
                 // Keep original value if parsing fails
+                this.inputValue = JSON.stringify({
+                  "type": "tool_result",
+                  "tool_id": data.tool_id,
+                  "content": `工具调用参数解析失败: ${e.message}`,
+                  "is_error": true
+                }, null, 2);
+                this.send();
+                return;
               }
             }
 
             let toolResult = null;
-            // 需要先去除工具name中的mcp_前缀
             if (data.tool_name.startsWith('mcp_')) {
               data.tool_name = data.tool_name.substring(4);
               toolResult = await this.mcpService.use_tool(data.tool_name, data.tool_args);
-              console.log('工具调用结果:', toolResult);
-              this.inputValue = JSON.stringify({
-                "type": "tool_result",
-                "tool_id": data.tool_id,
-                "content": toolResult,
-                "is_error": false
-              }, null, 2);
             } else {
               switch (data.tool_name) {
                 case 'create_project':
                   console.log('创建项目工具被调用', data.tool_args);
-                  try {
-                    const prjName = this.projectService.generateUniqueProjectName(this.prjPath)
-                    await this.projectService.projectNew({
-                      name: prjName,
-                      path: this.prjPath,
-                      board: JSON.parse(data.tool_args.board)
-                    })
-                    toolResult = `项目 "${prjName}" 创建成功！项目路径为${this.prjPath}\\${prjName}`;
-                    this.inputValue = JSON.stringify({
-                      "type": "tool_result",
-                      "tool_id": data.tool_id,
-                      "content": toolResult,
-                      "is_error": false
-                    }, null, 2);
-                  } catch (e) {
-                    console.error('创建项目失败:', e);
-                    toolResult = `创建项目失败: ${e.message}`;
-                    this.inputValue = JSON.stringify({
-                      "type": "tool_result",
-                      "tool_id": data.tool_id,
-                      "content": toolResult,
-                      "is_error": true
-                    }, null, 2);
-                  }
-
+                  toolResult = await newProjectTool(this.projectService, this.prjPath, data.tool_args);
                   break;
                 case 'execute_command':
                   console.log('执行command命令工具被调用', data.tool_args);
-                  try {
-                    await this.cmdService.runAsync(data.tool_args.command, data.tool_args.cwd)
-                    toolResult = `执行command命令 "${data.tool_args.command}" 成功！`
-                    this.inputValue = JSON.stringify({
-                      "type": "tool_result",
-                      "tool_id": data.tool_id,
-                      "content": toolResult,
-                      "is_error": false
-                    }, null, 2);
-                  } catch (e) {
-                    console.error('执行command命令失败:', e);
-                    toolResult = `执行command命令失败: ${e.message}`;
-                    this.inputValue = JSON.stringify({
-                      "type": "tool_result",
-                      "tool_id": data.tool_id,
-                      "content": toolResult,
-                      "is_error": true
-                    }, null, 2);
-                  }
+                  toolResult = await executeCommandTool(this.cmdService, data);
+                  break;
+                case 'ask_approval':
+                  console.log('请求用户确认工具被调用', data.tool_args);
+                  toolResult = await askApprovalTool(data.tool_args);
                   break;
               }
             }
+
+            this.inputValue = JSON.stringify({
+              "type": "tool_result",
+              "tool_id": data.tool_id,
+              "content": toolResult.content,
+              "is_error": toolResult.is_error
+            }, null, 2);
             this.send();
           }
           this.scrollToBottom();
@@ -549,49 +584,84 @@ Request to execute a CLI command on the system. Use this when you need to perfor
   }
 
   /**
-   * 通用XML工具调用解析器
-   * 解析各种工具调用的XML格式，返回工具名称和参数对象
+   * 订阅来自其他组件的消息
    */
-  parseToolCallXml(xml: string): { toolName: string, params: any } {
-    const result: { toolName: string, params: any } = { toolName: '', params: {} };
-
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xml, 'application/xml');
-
-      // 获取根元素作为工具名称
-      const rootElement = doc.documentElement;
-      if (rootElement && rootElement.tagName !== 'parsererror') {
-        result.toolName = rootElement.tagName;
-        result.params = this.xmlNodeToObject(rootElement);
+  private subscribeToMessages(): void {
+    this.messageSubscription = this.messageSubscriptionService.getMessageObservable().subscribe({
+      next: ({ message, options }) => {
+        console.log('收到订阅消息:', message, options);
+        this.handleSubscribedMessage(message, options);
+      },
+      error: (err) => {
+        console.error('消息订阅出错:', err);
       }
-    } catch (e) {
-      console.error('XML工具调用解析失败:', e);
-    }
-
-    return result;
+    });
   }
 
   /**
-   * 递归将XML节点转换为JavaScript对象
+   * 处理订阅的消息
    */
-  private xmlNodeToObject(node: Element): any {
-    const result: any = {};
-
-    // 处理子节点
-    Array.from(node.children).forEach(child => {
-      const tagName = child.tagName;
-
-      // 如果子节点还有子节点，递归处理
-      if (child.children.length > 0) {
-        result[tagName] = this.xmlNodeToObject(child);
-      } else {
-        // 叶子节点，直接获取文本内容
-        const textContent = child.textContent?.trim() || '';
-        result[tagName] = textContent;
-      }
-    });
-
-    return result;
+  private handleSubscribedMessage(message: ChatMessage, options?: MessageSubscriptionOptions): void {
+    // 如果需要创建新会话
+    if (options?.createNewSession) {
+      this.newChat();
+      // 等待新会话创建完成后再发送消息
+      setTimeout(() => {
+        this.processMessage(message, options);
+      }, 1000);
+    } else {
+      this.processMessage(message, options);
+    }
   }
+
+  /**
+   * 处理消息内容
+   */
+  private processMessage(message: ChatMessage, options?: MessageSubscriptionOptions): void {
+    // 构建最终的消息内容
+    let finalContent = message.content;
+    
+    // 如果有上下文信息，添加到消息中
+    if (message.metadata?.context) {
+      finalContent = `上下文信息：\n${JSON.stringify(message.metadata.context, null, 2)}\n\n用户消息：\n${message.content}`;
+    }
+    
+    // 如果指定显示在聊天界面
+    if (options?.showInChat !== false) {
+      this.appendMessage(message.role || 'user', message.content);
+    }
+    
+    // 如果指定自动发送
+    if (options?.autoSend !== false) {
+      this.inputValue = finalContent;
+      this.send(false); // 不重复显示在聊天界面
+    } else {
+      // 不自动发送，只填充到输入框
+      this.inputValue = finalContent;
+    }
+  }
+
+  /**
+   * 获取消息订阅服务的实例
+   * 提供给其他组件使用的便捷方法
+   */
+  static getMessageSubscriptionService(): MessageSubscriptionService {
+    // 这是一个静态方法，可以在没有组件实例的情况下使用
+    // 但在实际使用中，建议直接注入服务
+    console.warn('建议直接在组件中注入 MessageSubscriptionService 而不是使用静态方法');
+    return new MessageSubscriptionService();
+  }
+
+  /**
+   * 清理订阅
+   */
+  ngOnDestroy() {
+    // 清理消息订阅
+    if (this.messageSubscription) {
+      this.messageSubscription.unsubscribe();
+    }
+  }
+
+  // 添加订阅管理
+  private messageSubscription: any;
 }

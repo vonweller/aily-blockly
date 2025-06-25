@@ -4,7 +4,12 @@ export const toolParamNames = [
 
 export type ToolParamName = (typeof toolParamNames)[number];
 
-export interface ToolUse {
-    type: "tool_use"
-    name: ToolName
+// export interface ToolUse {
+//     type: "tool_use"
+//     name: ToolName
+// }
+
+export interface ToolUseResult {
+    is_error: boolean;
+    content: string;
 }
