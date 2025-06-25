@@ -47,15 +47,19 @@ if (!gotTheLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-          // 如果有待打开的文件，发送给渲染进程
-    if (pendingFileToOpen) {
-      setTimeout(() => {
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send('open-project-from-file', pendingFileToOpen);
-          pendingFileToOpen = null;
+      
+      // 如果有待打开的文件，直接导航到对应路由
+      if (pendingFileToOpen) {
+        const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
+        console.log('Navigating to route:', routePath);
+        
+        if (serve) {
+          mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
+        } else {
+          mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
         }
-      }, 1000);
-    }
+        pendingFileToOpen = null;
+      }
     }
   });
 }
@@ -69,7 +73,15 @@ app.on('open-file', (event, filePath) => {
     console.log('Project directory:', projectDir);
     
     if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('open-project-from-file', projectDir);
+      // 直接导航到对应路由
+      const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
+      console.log('Navigating to route:', routePath);
+      
+      if (serve) {
+        mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
+      } else {
+        mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
+      }
     } else {
       pendingFileToOpen = projectDir;
     }
@@ -204,26 +216,24 @@ function createWindow() {
     },
   });
 
-  if (serve) {
-    mainWindow.loadURL("http://localhost:4200");
-  } else {
-    mainWindow.loadFile(`renderer/index.html`);
-  }
-
-  // 确保页面加载完成后再处理文件关联
-  mainWindow.webContents.once('dom-ready', () => {
-    console.log('DOM ready');
-    // 如果有待打开的文件，发送给渲染进程
-    if (pendingFileToOpen) {
-      setTimeout(() => {
-        if (mainWindow && mainWindow.webContents) {
-          console.log('Sending open-project-from-file event:', pendingFileToOpen);
-          mainWindow.webContents.send('open-project-from-file', pendingFileToOpen);
-          pendingFileToOpen = null;
-        }
-      }, 1000); // 给Angular更多时间初始化
+  // 根据是否有待打开的项目路径来决定加载的页面
+  if (pendingFileToOpen) {
+    const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
+    console.log('Loading with project path:', routePath);
+    
+    if (serve) {
+      mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
+    } else {
+      mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
     }
-  });
+    pendingFileToOpen = null;
+  } else {
+    if (serve) {
+      mainWindow.loadURL("http://localhost:4200");
+    } else {
+      mainWindow.loadFile(`renderer/index.html`);
+    }
+  }
 
   // 当主窗口被关闭时，进行相应的处理
   mainWindow.on("closed", () => {
