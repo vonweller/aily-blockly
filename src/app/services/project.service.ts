@@ -69,6 +69,19 @@ export class ProjectService {
           });
         }
       });
+
+      // 监听来自文件关联的打开请求
+      window['ipcRenderer'].on('open-project-from-file', async (event, projectPath) => {
+        console.log('Received open-project-from-file event:', projectPath);
+        try {
+          await this.projectOpen(projectPath);
+          console.log('Successfully opened project from file association');
+        } catch (error) {
+          console.error('Error opening project from file association:', error);
+          this.message.error('无法打开项目: ' + error.message);
+        }
+      });
+
       this.projectRootPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
       this.currentProjectPath = this.projectRootPath;
     }
@@ -123,11 +136,15 @@ export class ProjectService {
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
-    if (!window['path'].isExists(projectPath)) {
+    if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
       return this.message.error('项目路径不存在，请重新选择项目');
     }
     this.stateSubject.next('loading');
+
+    // 更新当前项目路径和包数据
+    this.currentProjectPath = projectPath;
+
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
       // 打开blockly编辑器

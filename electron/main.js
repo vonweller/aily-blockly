@@ -13,6 +13,49 @@ const args = process.argv.slice(1);
 const serve = args.some((val) => val === "--serve");
 process.env.DEV = serve;
 
+// 文件关联处理
+let pendingFileToOpen = null;
+
+// 处理命令行参数中的 .abi 文件
+function handleCommandLineArgs(argv) {
+  const abiFile = argv.find(arg => arg.endsWith('.abi') && fs.existsSync(arg));
+  if (abiFile) {
+    const resolvedPath = path.resolve(abiFile);
+    pendingFileToOpen = path.dirname(resolvedPath);
+    console.log('Found .abi file to open:', resolvedPath);
+    console.log('Project directory:', pendingFileToOpen);
+    return true;
+  }
+  return false;
+}
+
+// 在应用启动时处理命令行参数
+handleCommandLineArgs(process.argv);
+
+// macOS下处理文件打开
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (filePath.endsWith('.abi') && fs.existsSync(filePath)) {
+    const projectDir = path.dirname(path.resolve(filePath));
+    console.log('macOS open-file:', filePath);
+    console.log('Project directory:', projectDir);
+
+    if (mainWindow && mainWindow.webContents) {
+      // 直接导航到对应路由
+      const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
+      console.log('Navigating to route:', routePath);
+
+      if (serve) {
+        mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
+      } else {
+        mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
+      }
+    } else {
+      pendingFileToOpen = projectDir;
+    }
+  }
+});
+
 // ipc handlers模块
 const { registerTerminalHandlers } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
@@ -31,10 +74,10 @@ function loadEnv() {
   // 将child目录添加到环境变量PATH中
   const childPath = path.join(__dirname, "..", "child")
   const nodePath = path.join(childPath, "node")
-  
+
   // 只保留PowerShell路径，移除其他系统PATH
   let customPath = nodePath + path.delimiter + childPath;
-  
+
   if (isWin32) {
     // 添加必要的系统路径
     const systemPaths = [
@@ -43,7 +86,7 @@ function loadEnv() {
       'C:\\Program Files\\PowerShell\\7', // PowerShell 7 (如果存在)
       'C:\\Windows'
     ];
-    
+
     // 检查路径是否存在，只添加存在的路径
     systemPaths.forEach(sysPath => {
       if (fs.existsSync(sysPath)) {
@@ -51,10 +94,10 @@ function loadEnv() {
       }
     });
   }
-  
+
   // 完全替换PATH
   process.env.PATH = customPath;
-  
+
   // 读取同级目录下的config.json文件
   const configPath = path.join(__dirname, "config.json");
   const conf = JSON.parse(fs.readFileSync(configPath));
@@ -130,6 +173,7 @@ function createWindow() {
 
   mainWindow = new BrowserWindow({
     ...windowBounds,
+    show: false,
     minWidth: 800,
     minHeight: 600,
     frame: false,
@@ -142,10 +186,28 @@ function createWindow() {
     },
   });
 
-  if (serve) {
-    mainWindow.loadURL("http://localhost:4200");
+  // 当页面准备好显示时，再显示窗口
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
+  // 根据是否有待打开的项目路径来决定加载的页面
+  if (pendingFileToOpen) {
+    const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
+    console.log('Loading with project path:', routePath);
+
+    if (serve) {
+      mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
+    } else {
+      mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
+    }
+    pendingFileToOpen = null;
   } else {
-    mainWindow.loadFile(`renderer/index.html`);
+    if (serve) {
+      mainWindow.loadURL("http://localhost:4200");
+    } else {
+      mainWindow.loadFile(`renderer/index.html`);
+    }
   }
 
   // 当主窗口被关闭时，进行相应的处理
@@ -273,7 +335,6 @@ ipcMain.on("setting-changed", (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   mainWindow.webContents.send("setting-changed", data);
 });
-
 
 // 记录窗口大小和位置，用于下次打开时恢复
 function windowMoveResizeListener() {
