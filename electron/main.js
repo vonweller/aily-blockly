@@ -39,12 +39,12 @@ app.on('open-file', (event, filePath) => {
     const projectDir = path.dirname(path.resolve(filePath));
     console.log('macOS open-file:', filePath);
     console.log('Project directory:', projectDir);
-    
-    if (mainWindow && mainWindow.webContents) {   
+
+    if (mainWindow && mainWindow.webContents) {
       // 直接导航到对应路由
       const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
       console.log('Navigating to route:', routePath);
-      
+
       if (serve) {
         mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
       } else {
@@ -73,10 +73,10 @@ function loadEnv() {
   // 将child目录添加到环境变量PATH中
   const childPath = path.join(__dirname, "..", "child")
   const nodePath = path.join(childPath, "node")
-  
+
   // 只保留PowerShell路径，移除其他系统PATH
   let customPath = nodePath + path.delimiter + childPath;
-  
+
   if (isWin32) {
     // 添加必要的系统路径
     const systemPaths = [
@@ -85,7 +85,7 @@ function loadEnv() {
       'C:\\Program Files\\PowerShell\\7', // PowerShell 7 (如果存在)
       'C:\\Windows'
     ];
-    
+
     // 检查路径是否存在，只添加存在的路径
     systemPaths.forEach(sysPath => {
       if (fs.existsSync(sysPath)) {
@@ -93,10 +93,10 @@ function loadEnv() {
       }
     });
   }
-  
+
   // 完全替换PATH
   process.env.PATH = customPath;
-  
+
   // 读取同级目录下的config.json文件
   const configPath = path.join(__dirname, "config.json");
   const conf = JSON.parse(fs.readFileSync(configPath));
@@ -172,6 +172,7 @@ function createWindow() {
 
   mainWindow = new BrowserWindow({
     ...windowBounds,
+    show: false,
     minWidth: 800,
     minHeight: 600,
     frame: false,
@@ -184,11 +185,16 @@ function createWindow() {
     },
   });
 
+  // 当页面准备好显示时，再显示窗口
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
   // 根据是否有待打开的项目路径来决定加载的页面
   if (pendingFileToOpen) {
     const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
     console.log('Loading with project path:', routePath);
-    
+
     if (serve) {
       mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
     } else {
@@ -216,13 +222,13 @@ function createWindow() {
   }
 
   // 注册ipc handlers
-  setTimeout(() => {
-    registerTerminalHandlers(mainWindow);
-    registerWindowHandlers(mainWindow);
-    registerNpmHandlers(mainWindow);
-    registerUpdaterHandlers(mainWindow);
-    registerCmdHandlers(mainWindow);
-  }, 500);
+  // setTimeout(() => {
+  registerTerminalHandlers(mainWindow);
+  registerWindowHandlers(mainWindow);
+  registerNpmHandlers(mainWindow);
+  registerUpdaterHandlers(mainWindow);
+  registerCmdHandlers(mainWindow);
+  // }, 500);
 
 }
 
