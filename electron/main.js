@@ -6,6 +6,29 @@ const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require("electron
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 
+// 隔离用户数据目录：为每个实例生成唯一的用户数据目录。如果此处不隔离，会导致启动第二个实例时，要等待几秒才会出现窗口
+function setupUniqueUserDataPath() {
+  const timestamp = Date.now();
+  const randomId = Math.random().toString(36).substring(2, 8);
+  const instanceId = `${timestamp}-${randomId}`;
+
+  const originalUserDataPath = app.getPath('userData');
+  const uniqueUserDataPath = path.join(originalUserDataPath, 'instances', instanceId);
+
+  // 设置唯一的用户数据目录
+  app.setPath('userData', uniqueUserDataPath);
+  console.log('启用实例隔离，设置实例用户数据目录:', uniqueUserDataPath);
+
+  // 确保目录存在
+  if (!fs.existsSync(uniqueUserDataPath)) {
+    fs.mkdirSync(uniqueUserDataPath, { recursive: true });
+  }
+  return uniqueUserDataPath;
+}
+
+// 在应用初始化之前设置独立的用户数据目录
+setupUniqueUserDataPath();
+
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('enable-features', 'V8LazyCodeGeneration,V8CacheOptions');
 
@@ -240,7 +263,6 @@ function createWindow() {
 }
 
 app.on("ready", () => {
-  // 先加载环境变量
   try {
     loadEnv();
   } catch (error) {
@@ -384,3 +406,33 @@ function getConfWindowBounds() {
   }
   return bounds;
 }
+
+// 清理过期的实例目录（可选功能）
+function cleanupOldInstances() {
+  try {
+    const originalUserDataPath = app.getPath('userData').replace(/[/\\]instances[/\\][^/\\]+$/, '');
+    const instancesDir = path.join(originalUserDataPath, 'instances');
+
+    if (!fs.existsSync(instancesDir)) {
+      return;
+    }
+
+    const now = Date.now();
+    const maxAge = 24 * 60 * 60 * 1000; // 24小时
+
+    fs.readdirSync(instancesDir).forEach(instanceId => {
+      const instancePath = path.join(instancesDir, instanceId);
+      const stats = fs.statSync(instancePath);
+
+      // 如果实例目录超过24小时未使用，则删除
+      if (now - stats.mtime.getTime() > maxAge) {
+        fs.rmSync(instancePath, { recursive: true, force: true });
+        console.log('已清理过期实例目录:', instancePath);
+      }
+    });
+  } catch (error) {
+    console.error('清理实例目录时出错:', error);
+  }
+}
+
+cleanupOldInstances();
