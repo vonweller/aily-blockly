@@ -300,11 +300,25 @@ Request to execute a CLI command on the system. Use this when you need to perfor
       tools = tools.concat(mcpTools);
     }
 
-    this.chatService.startSession(tools).subscribe((res: any) => {
-      if (res.status === 'success') {
-        this.chatService.currentSessionId = res.data;
-        this.streamConnect();
-        this.getHistory();
+    this.chatService.startSession(tools).subscribe({
+      next: (res: any) => {
+        if (res.status === 'success') {
+          this.chatService.currentSessionId = res.data;
+          this.streamConnect();
+          this.getHistory();
+        } else {
+          this.appendMessage('错误', '启动会话失败: ' + (res.message || '未知错误'));
+        }
+      },
+      error: (err) => {
+        console.error('启动会话失败:', err);
+        if (err.status === 0) {
+          this.appendMessage('错误', '网络连接失败，请检查您的网络连接后重试。');
+        } else if (err.status === 408 || err.statusText === 'timeout') {
+          this.appendMessage('错误', '连接超时，服务器可能暂时不可用，请稍后重试。');
+        } else {
+          this.appendMessage('错误', '启动会话失败: ' + (err.message || '网络错误，请检查连接后重试。'));
+        }
       }
     });
   }
