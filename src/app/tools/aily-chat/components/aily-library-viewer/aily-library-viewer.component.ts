@@ -6,6 +6,8 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzCardModule } from 'ng-zorro-antd/card';
 import { NzListModule } from 'ng-zorro-antd/list';
+import { MessageSubscriptionService } from '../../services/message-subscription.service';
+
 
 export interface AilyLibraryData {
   type: 'aily-library';
@@ -43,6 +45,10 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     // 清理资源
   }
+
+  constructor(
+    private messageSubscriptionService: MessageSubscriptionService
+  ) { }
 
   /**
    * 设置组件数据（由指令调用）
@@ -129,15 +135,18 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
    */
   installLibrary(): void {
     try {
-      if (!this.libraryInfo?.package) {
+      if (!this.libraryInfo?.name) {
         throw new Error('没有可安装的包信息');
       }
 
       // 这里需要根据实际的应用架构来实现
       // 可能需要通过服务来调用安装功能
       
-      console.log('安装库包:', this.libraryInfo.package);
+      console.log('安装库包:', this.libraryInfo.name);
       // 可以添加成功提示
+      this.messageSubscriptionService.sendTextMessage(
+        `请帮我安装 ${this.libraryInfo.name}。`
+      );
     } catch (error) {
       console.error('安装失败:', error);
       this.errorMessage = `安装失败: ${error.message}`;

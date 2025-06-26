@@ -3,6 +3,7 @@ const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
 const { get } = require("lodash");
+const { basename } = require("path");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -21,6 +22,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
     join: (...args) => require("path").join(...args),
+    basename: (path) => basename(path),
   },
   versions: () => process.versions,
   SerialPort: {

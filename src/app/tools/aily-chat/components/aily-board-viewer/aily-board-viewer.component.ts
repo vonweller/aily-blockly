@@ -132,10 +132,10 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
   installBoard(): void {
     if (!this.boardInfo?.name) return;
     
-    // TODO: 实现开发板安装逻辑
+    // 实现开发板安装逻辑
     console.log('Installing board:', this.boardInfo.name);
     this.messageSubscriptionService.sendTextMessage(
-      `请帮我创建一个新的项目，使用 ${this.boardInfo.name} 开发板。`
+      `请帮我安装开发板 ${this.boardInfo.nickname} 。`
     );
   }
 

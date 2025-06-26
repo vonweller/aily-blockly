@@ -8,7 +8,6 @@ import { UiService } from '../../services/ui.service';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
 import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
@@ -20,10 +19,12 @@ import { CmdOutput, CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
 import { MessageSubscriptionService, ChatMessage, MessageSubscriptionOptions } from './services/message-subscription.service';
 // import { ChatListExamples } from './chat.example';
+import { BlocklyService } from '../../blockly/blockly.service';
 
 import { newProjectTool } from './tools/createProjectTool';
 import { executeCommandTool } from './tools/executeCommandTool';
 import { askApprovalTool } from './tools/askApprovalTool';
+import { getContextTool } from './tools/getContextTool';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -193,7 +194,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
 获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。
 
 ### Parameters
-- info_type: (optional) 指定要获取的上下文信息类型，可选值有：'all', 'project', 'platform', 'system'。默认为'all'。
+- info_type: (optional) 指定要获取的上下文信息类型，可选值有：'all', 'project', 'editingMode'。默认为'all'。
 
 ### Usage
 <get_context>
@@ -227,29 +228,22 @@ Request to execute a CLI command on the system. Use this when you need to perfor
 
   constructor(
     private uiService: UiService,
-    private router: Router,
     private chatService: ChatService,
     private mcpService: McpService,
     private projectService: ProjectService,
     private cmdService: CmdService,
     private electronService: ElectronService,
-    private messageSubscriptionService: MessageSubscriptionService
+    private messageSubscriptionService: MessageSubscriptionService,
+    private blocklyService: BlocklyService
   ) { }
 
   ngOnInit() {
-    this.currentUrl = this.router.url;
     if (this.electronService.isElectron) {
       this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
     
     // 订阅消息
     this.subscribeToMessages();
-    
-    // this.testNew().then(() => {
-    //   console.log('测试项目创建完成');
-    // }).catch(err => {
-    //   console.error('测试项目创建失败', err);
-    // });
   }
 
   close() {
@@ -355,6 +349,10 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
         console.log("收到消息: ", data);
+        // Replace "/toUser" with empty string in data.data if it exists
+        if (data.data && typeof data.data === 'string') {
+          data.data = data.data.replace(/\/toUser/g, '');
+        }
         try {
           if (data.type === 'agent_response') {
             if (data.data) {
@@ -402,10 +400,34 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                 case 'execute_command':
                   console.log('执行command命令工具被调用', data.tool_args);
                   toolResult = await executeCommandTool(this.cmdService, data);
+                  if (!toolResult.is_error) {
+                    // Check if this is an npm install command
+                    const command = data.tool_args.command;
+                    if (command.includes('npm i') || command.includes('npm install')) {
+                      // Extract the package name
+                      const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
+                      const match = command.match(npmRegex);
+                      
+                      if (match && match[2]) {
+                        const libPackageName = match[2];
+                        console.log('Installing library:', libPackageName);
+                        
+                        // Get project path from command args or default
+                        const projectPath = data.tool_args.cwd || this.prjPath;
+                        
+                        // Load the library into blockly
+                        await this.blocklyService.loadLibrary(libPackageName, projectPath);
+                      }
+                    }
+                  }
                   break;
                 case 'ask_approval':
                   console.log('请求用户确认工具被调用', data.tool_args);
                   toolResult = await askApprovalTool(data.tool_args);
+                  break;
+                case 'get_context':
+                  console.log('获取上下文信息工具被调用', data.tool_args);
+                  toolResult = await getContextTool(this.projectService, data.tool_args);
                   break;
               }
             }
@@ -416,7 +438,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
               "content": toolResult.content,
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send();
+            this.send(false);
           }
           this.scrollToBottom();
         } catch (e) {
