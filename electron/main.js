@@ -196,6 +196,7 @@ function createWindow() {
     registerWindowHandlers(mainWindow);
     registerNpmHandlers(mainWindow);
     registerCmdHandlers(mainWindow);
+    registerMCPHandlers(mainWindow);
   });
 
   // 根据是否有待打开的项目路径来决定加载的页面
@@ -230,14 +231,14 @@ function createWindow() {
   }
 
   // 注册ipc handlers
-  setTimeout(() => {
-    registerTerminalHandlers(mainWindow);
-    registerWindowHandlers(mainWindow);
-    registerNpmHandlers(mainWindow);
-    registerUpdaterHandlers(mainWindow);
-    registerCmdHandlers(mainWindow);
-    registerMCPHandlers(mainWindow);
-  }, 500);
+  // setTimeout(() => {
+  //   registerTerminalHandlers(mainWindow);
+  //   registerWindowHandlers(mainWindow);
+  //   registerNpmHandlers(mainWindow);
+  //   registerUpdaterHandlers(mainWindow);
+  //   registerCmdHandlers(mainWindow);
+  //   registerMCPHandlers(mainWindow);
+  // }, 500);
 
 }
 
