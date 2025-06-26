@@ -51,7 +51,12 @@ export class BlocklyEditorComponent {
     this.activatedRoute.queryParams.subscribe(params => {
       if (params['path']) {
         console.log('project path', params['path']);
-        this.loadProject(params['path']);
+        try {
+          this.loadProject(params['path']);
+        } catch (error) {
+          console.error('加载项目失败', error);
+          this.message.error('加载项目失败，请检查项目文件是否完整');
+        }
       } else {
         this.message.error('没有找到项目路径');
       }
@@ -59,6 +64,7 @@ export class BlocklyEditorComponent {
   }
 
   ngOnDestroy(): void {
+    this.electronService.setTitle('aily blockly');
     this.blocklyService.reset();
   }
 
@@ -66,6 +72,8 @@ export class BlocklyEditorComponent {
     await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
+    this.electronService.setTitle(`aily blockly - ${packageJson.name}`);
+    this.projectService.currentPackageData = packageJson;
     // 添加到最近打开的项目
     this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
     // 设置当前项目路径和package.json数据

@@ -67,4 +67,8 @@ export class ElectronService {
     window['other'].openByBrowser(url);
   }
 
+  setTitle(title: string) {
+    document.title = title;
+  }
+
 }

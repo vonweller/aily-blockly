@@ -66,7 +66,7 @@ export class ProjectService {
           });
         }
       });
-      
+
       // 监听来自文件关联的打开请求
       window['ipcRenderer'].on('open-project-from-file', async (event, projectPath) => {
         console.log('Received open-project-from-file event:', projectPath);
@@ -78,7 +78,7 @@ export class ProjectService {
           this.message.error('无法打开项目: ' + error.message);
         }
       });
-      
+
       this.projectRootPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents', window['path'].getUserDocuments());
       this.currentProjectPath = this.projectRootPath;
     }
@@ -168,31 +168,15 @@ export class ProjectService {
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
-    if (!window['path'].isExists(projectPath)) {
+    if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
       return this.message.error('项目路径不存在，请重新选择项目');
     }
     this.stateSubject.next('loading');
-    
+
     // 更新当前项目路径和包数据
     this.currentProjectPath = projectPath;
-    
-    // 读取package.json文件获取项目信息
-    try {
-      const packageJsonPath = window['path'].join(projectPath, 'package.json');
-      if (window['path'].isExists(packageJsonPath)) {
-        const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
-        this.currentPackageData = packageJson;
-        // 添加到最近打开的项目列表
-        this.addRecentlyProject({ 
-          name: packageJson.name || window['path'].basename(projectPath), 
-          path: projectPath 
-        });
-      }
-    } catch (error) {
-      console.error('读取package.json失败:', error);
-    }
-    
+
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
       // 打开blockly编辑器

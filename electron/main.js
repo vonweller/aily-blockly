@@ -32,38 +32,6 @@ function handleCommandLineArgs(argv) {
 // 在应用启动时处理命令行参数
 handleCommandLineArgs(process.argv);
 
-// 确保应用只有一个实例
-const gotTheLock = app.requestSingleInstanceLock();
-
-if (!gotTheLock) {
-  app.quit();
-} else {
-  // 处理第二个实例的启动参数
-  app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // Windows下处理文件关联
-    handleCommandLineArgs(commandLine);
-    
-    // 如果主窗口存在，聚焦并处理文件
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-      
-      // 如果有待打开的文件，直接导航到对应路由
-      if (pendingFileToOpen) {
-        const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
-        console.log('Navigating to route:', routePath);
-        
-        if (serve) {
-          mainWindow.loadURL(`http://localhost:4200/#/${routePath}`);
-        } else {
-          mainWindow.loadFile(`renderer/index.html`, { hash: `#/${routePath}` });
-        }
-        pendingFileToOpen = null;
-      }
-    }
-  });
-}
-
 // macOS下处理文件打开
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
@@ -72,7 +40,7 @@ app.on('open-file', (event, filePath) => {
     console.log('macOS open-file:', filePath);
     console.log('Project directory:', projectDir);
     
-    if (mainWindow && mainWindow.webContents) {
+    if (mainWindow && mainWindow.webContents) {   
       // 直接导航到对应路由
       const routePath = `main/blockly-editor?path=${encodeURIComponent(projectDir)}`;
       console.log('Navigating to route:', routePath);
@@ -359,7 +327,6 @@ ipcMain.on("setting-changed", (event, data) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   mainWindow.webContents.send("setting-changed", data);
 });
-
 
 // 记录窗口大小和位置，用于下次打开时恢复
 function windowMoveResizeListener() {
