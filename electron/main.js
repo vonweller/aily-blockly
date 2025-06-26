@@ -189,6 +189,13 @@ function createWindow() {
   // 当页面准备好显示时，再显示窗口
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+
+    // 注册ipc handlers
+    registerUpdaterHandlers(mainWindow);
+    registerTerminalHandlers(mainWindow);
+    registerWindowHandlers(mainWindow);
+    registerNpmHandlers(mainWindow);
+    registerCmdHandlers(mainWindow);
   });
 
   // 根据是否有待打开的项目路径来决定加载的页面
