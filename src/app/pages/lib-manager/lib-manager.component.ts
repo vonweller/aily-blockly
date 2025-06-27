@@ -15,6 +15,7 @@ import { BlocklyService } from '../../blockly/blockly.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { CompatibleDialogComponent } from './components/compatible-dialog/compatible-dialog.component';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
+import { ElectronService } from '../../services/electron.service';
 
 @Component({
   selector: 'app-lib-manager',
@@ -53,7 +54,8 @@ export class LibManagerComponent {
     private cd: ChangeDetectorRef,
     private translate: TranslateService,
     private modal: NzModalService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private electronService: ElectronService
   ) { }
 
   ngOnInit() {
@@ -223,6 +225,10 @@ export class LibManagerComponent {
       });
     });
   }
+
+  openExample(packageName) {
+    this.electronService.openNewInStance('/main/playground/s/' + packageName.replace('@aily-project/',''))
+  }
 }
 
 interface PackageInfo {
@@ -244,5 +250,6 @@ interface PackageInfo {
   "brand"?: string,
   "fulltext"?: string,
   tested: boolean,
-  state: 'default' | 'installed' | 'installing' | 'uninstalling'
+  state: 'default' | 'installed' | 'installing' | 'uninstalling',
+  example?: string
 }

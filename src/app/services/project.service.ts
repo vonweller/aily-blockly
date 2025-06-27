@@ -8,6 +8,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
 import { CmdService } from './cmd.service';
+import { ConfigService } from './config.service';
 
 interface ProjectPackageData {
   name: string;
@@ -43,7 +44,8 @@ export class ProjectService {
     private electronService: ElectronService,
     private message: NzMessageService,
     private router: Router,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private configService: ConfigService
   ) {
   }
 
@@ -236,20 +238,14 @@ export class ProjectService {
     this.router.navigate(['/main/guide'], { replaceUrl: true });
   }
 
-  // 通过localStorage存储最近打开的项目
+  // 通过ConfigService存储最近打开的项目
   get recentlyProjects(): any[] {
-    let data;
-    let dataStr = localStorage.getItem('recentlyProjects')
-    if (dataStr) {
-      data = JSON.parse(dataStr);
-    } else {
-      data = [];
-    }
-    return data
+    return this.configService.data?.recentlyProjects || [];
   }
 
   set recentlyProjects(data) {
-    localStorage.setItem('recentlyProjects', JSON.stringify(data));
+    this.configService.data.recentlyProjects = data;
+    this.configService.save();
   }
 
   addRecentlyProject(data: { name: string, path: string }) {
