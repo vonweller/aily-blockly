@@ -240,6 +240,112 @@ Request to execute a CLI command on the system. Use this when you need to perfor
           }
         }
       }
+    },
+    {
+      name: "file_operations",
+      description: `
+        ## file_operations
+    ### Description
+    执行文件和文件夹操作，包括创建、读取、编辑、删除文件或文件夹，以及检查文件是否存在。
+
+    ### Parameters
+    - operation: (required) 要执行的操作类型，可选值为：'list', 'read', 'create', 'edit', 'delete', 'exists'
+    - path: (required) 文件或文件夹的路径
+    - content: (可选) 当操作为'create'或'edit'时，需提供文件内容
+    - is_folder: (可选) 当操作为'create'、'delete'或'exists'时，指定目标是否为文件夹，默认为false
+
+    ### Usage
+    <file_operations>
+    <operation>操作类型</operation>
+    <path>文件或文件夹路径</path>
+    <content>文件内容(可选)</content>
+    <is_folder>是否为文件夹(可选，布尔值)</is_folder>
+    </file_operations>
+
+    ### Examples
+    #### 检查文件是否存在
+    <file_operations>
+    <operation>exists</operation>
+    <path>./package.json</path>
+    </file_operations>
+    
+    #### 检查文件夹是否存在
+    <file_operations>
+    <operation>exists</operation>
+    <path>./src</path>
+    <is_folder>true</is_folder>
+    </file_operations>
+
+    #### 列出文件夹内容
+    <file_operations>
+    <operation>list</operation>
+    <path>./src</path>
+    </file_operations>
+
+    #### 读取文件内容
+    <file_operations>
+    <operation>read</operation>
+    <path>./package.json</path>
+    </file_operations>
+
+    #### 创建文件
+    <file_operations>
+    <operation>create</operation>
+    <path>./src/example.ts</path>
+    <content>console.log('Hello, World!');</content>
+    </file_operations>
+
+    #### 创建文件夹
+    <file_operations>
+    <operation>create</operation>
+    <path>./new-folder</path>
+    <is_folder>true</is_folder>
+    </file_operations>
+
+    #### 编辑文件
+    <file_operations>
+    <operation>edit</operation>
+    <path>./src/example.ts</path>
+    <content>console.log('Updated content');</content>
+    </file_operations>
+
+    #### 删除文件
+    <file_operations>
+    <operation>delete</operation>
+    <path>./src/example.ts</path>
+    </file_operations>
+
+    #### 删除文件夹
+    <file_operations>
+    <operation>delete</operation>
+    <path>./old-folder</path>
+    <is_folder>true</is_folder>
+    </file_operations>
+      `,
+      input_schema: {
+        type: 'object',
+        properties: {
+          operation: { 
+            type: 'string', 
+            description: '要执行的操作类型',
+            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists']
+          },
+          path: { 
+            type: 'string', 
+            description: '文件或文件夹的路径'
+          },
+          content: { 
+            type: 'string', 
+            description: '文件内容（用于创建或编辑操作）'
+          },
+          is_folder: { 
+            type: 'boolean', 
+            description: '指定目标是否为文件夹',
+            default: false
+          }
+        },
+        required: ['operation', 'path']
+      }
     }
   ]
 
