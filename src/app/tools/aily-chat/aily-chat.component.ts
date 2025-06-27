@@ -207,6 +207,24 @@ Request to execute a CLI command on the system. Use this when you need to perfor
 <info_type>all</info_type>
 </get_context>
 
+#### 结果示例
+{
+  "project": {
+    "name": "My Project",
+    "path": "/path/to/root/project",
+    "rootFolder": "/path/to/root"
+    "dependencies": {
+      "@aily-project/board-jinniu_board": "0.0.1",
+      "@aily-project/lib-core-io": "1.0.0",
+      "@aily-project/lib-core-logic": "0.0.1",
+      "@aily-project/lib-core-loop": "0.0.1",
+    }
+  },
+  "editingMode": {
+    "mode": "blockly"
+  },
+}
+
 #### 仅获取项目相关信息
 <get_context>
 <info_type>project</info_type>

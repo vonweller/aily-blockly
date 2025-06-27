@@ -69,22 +69,36 @@ export async function getContextTool(prjService: ProjectService, input: GetConte
 
 async function getProjectInfo(projectService): Promise<ProjectInfo> {
     try {
-        const currentDir = projectService.currentProjectPath;
-        const packageJsonPath = window["path"].join(currentDir, 'package.json');
+        const prjRootPath = projectService.projectRootPath;
+        const currentProjectPath = projectService.currentProjectPath;
         
-        let name = undefined;
-        let rootFolder = window["path"].basename(currentDir);
+        // Basic result with path
+        const result: ProjectInfo = {
+            path: currentProjectPath || '',
+            rootFolder: prjRootPath || ''
+        };
+        
+        // If current project path is empty, return early
+        if (!currentProjectPath) {
+            return result;
+        }
+        
+        // Set root folder
+        result.rootFolder = window["path"].basename(currentProjectPath);
+        
+        // Try to read package.json for name and dependencies
+        const packageJsonPath = window["path"].join(currentProjectPath, 'package.json');
         
         if (window['fs'].existsSync(packageJsonPath)) {
             const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
-            name = packageJson.name;
+            result.name = packageJson.name;
+            
+            // Add dependencies information
+            // Note: You might want to update the ProjectInfo interface to include dependencies
+            (result as any).dependencies = packageJson.dependencies;
         }
         
-        return {
-            path: currentDir,
-            name,
-            rootFolder
-        };
+        return result;
     } catch (error) {
         console.error('Error getting project info:', error);
         return { path: process.cwd() };
