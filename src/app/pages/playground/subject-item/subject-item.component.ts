@@ -46,7 +46,7 @@ export class SubjectItemComponent {
     this.route.paramMap.subscribe(params => {
       const name = params.get('name');
       if (name) {
-        this.exampleItem = this.examplesList.find(item => item.nickname === name);
+        this.exampleItem = this.examplesList.find(item => item.name.replace('@aily-project/','') === name);
       }
     });
   }

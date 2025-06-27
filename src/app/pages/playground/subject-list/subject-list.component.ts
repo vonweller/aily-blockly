@@ -39,6 +39,7 @@ export class SubjectListComponent {
     this.configService.loadExamplesList().then(async (data: any) => {
       this._subjectList = this.process(data);
       this.subjectList = JSON.parse(JSON.stringify(this._subjectList));
+      console.log(this.subjectList);
       
       // 如果URL中有关键词，执行搜索
       if (this.keyword) {

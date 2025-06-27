@@ -74,10 +74,14 @@ export class ElectronService {
   }
 
   // 打开一个新的实例窗口
-  openNewInStance(route) {
-    window['ipcRenderer'].invoke('open-new-instance', {
-      route: route
-    });
+  openNewInStance(route, queryParams = null) {
+    let target = {
+      route
+    }
+    if (queryParams) {
+      target['queryParams'] = queryParams
+    }
+    window['ipcRenderer'].invoke('open-new-instance', target);
     // 基本用法 - 只传递路由
     // await window.electronAPI.ipcRenderer.invoke('open-new-instance', {
     //   route: 'main/blockly-editor'
