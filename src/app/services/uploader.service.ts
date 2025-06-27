@@ -11,6 +11,7 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { SerialDialogComponent } from '../main-window/components/serial-dialog/serial-dialog.component';
 import { CmdOutput, CmdService } from './cmd.service';
 import { LogService } from './log.service';
+import { NpmService } from './npm.service';
 
 @Injectable({
   providedIn: 'root'
@@ -19,7 +20,6 @@ export class UploaderService {
 
   constructor(
     private projectService: ProjectService,
-    private uiService: UiService,
     private serialService: SerialService,
     private message: NzMessageService,
     private blocklyService: BlocklyService,
@@ -27,7 +27,8 @@ export class UploaderService {
     private noticeService: NoticeService,
     private modal: NzModalService,
     private cmdService: CmdService,
-    private logService: LogService
+    private logService: LogService,
+    private npmService: NpmService,
   ) { }
 
   private uploadInProgress = false;
@@ -79,6 +80,12 @@ export class UploaderService {
         if (this.uploadInProgress) {
           this.message.warning('上传中，请稍后');
           reject({ state: 'warn', text: '上传中，请稍后' });
+          return;
+        }
+
+        if (this.npmService.isInstalling) {
+          this.message.warning('相关依赖正在安装中，请稍后再试');
+          reject({ state: 'warn', text: '依赖安装中，请稍后' });
           return;
         }
 

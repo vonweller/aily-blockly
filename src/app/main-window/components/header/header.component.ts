@@ -276,10 +276,10 @@ export class HeaderComponent {
         break;
       case 'example-open':
         if (this.isLoaded()) { // 只在已加载项目时检查
-          const canContinue = await this.checkUnsavedChanges('new');
-          if (!canContinue) return;
+          this.electronService.openNewInStance('/main/playground')
+        } else {
+          this.router.navigate(['/main/playground']);
         }
-        this.router.navigate(['/main/playground']);
         break;
       default:
         console.log('未处理的操作:', item.action);

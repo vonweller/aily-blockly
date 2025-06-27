@@ -65,6 +65,9 @@
                     </nz-select>
                 </div>
                 <div class="btns">
+                    @if (lib.example) {
+                    <button nz-button nzSize="small" style="margin-right: 5px;" (click)="openExample(lib.example)">示例</button>
+                    }
                     @if(isInstalled(lib)) {
                     <button nz-button nzType="default" nzSize="small" [disabled]="true">{{ 'LIB_MANAGER.INSTALLED_TEXT'
                         | translate }}</button>
