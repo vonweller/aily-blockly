@@ -8,6 +8,7 @@ import { ProjectService } from '../../../services/project.service';
 import { ConfigService } from '../../../services/config.service';
 import { ElectronService } from '../../../services/electron.service';
 import { CmdService } from '../../../services/cmd.service';
+import { PlaygroundService } from '../playground.service';
 
 @Component({
   selector: 'app-subject-item',
@@ -18,13 +19,13 @@ import { CmdService } from '../../../services/cmd.service';
 })
 export class SubjectItemComponent {
 
-  exampleItem;
+  exampleItem: any;
 
   // example存放路径
-  examplesRoot;
+  examplesRoot: string = '';
 
   get examplesList() {
-    return this.configService.examplesList;
+    return this.playgroundService.processedExamplesList;
   }
 
   options = {
@@ -39,14 +40,23 @@ export class SubjectItemComponent {
     private projectService: ProjectService,
     private message: NzMessageService,
     private electronService: ElectronService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private playgroundService: PlaygroundService
   ) { }
 
   ngOnInit() {
     this.route.paramMap.subscribe(params => {
       const name = params.get('name');
       if (name) {
-        this.exampleItem = this.examplesList.find(item => item.name.replace('@aily-project/','') === name);
+        // 如果数据已经加载，直接查找
+        if (this.playgroundService.isLoaded) {
+          this.exampleItem = this.playgroundService.findExampleByName(name);
+        } else {
+          // 如果数据未加载，等待加载完成后查找
+          this.playgroundService.loadExamplesList().then(() => {
+            this.exampleItem = this.playgroundService.findExampleByName(name);
+          });
+        }
       }
     });
   }
