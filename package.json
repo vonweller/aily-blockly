@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -114,8 +114,6 @@
     "@ctrl/tinycolor": "^4.1.0",
     "@joint/core": "^4.1.3",
     "@lydell/node-pty": "^1.1.0",
-    "@mit-app-inventor/blockly-plugin-workspace-multiselect": "^1.0.1",
-    "@modelcontextprotocol/sdk": "^1.12.1",
     "@ngx-translate/core": "^16.0.3",
     "@types/uuid": "^10.0.0",
     "@wokwi/elements": "^1.7.0",
