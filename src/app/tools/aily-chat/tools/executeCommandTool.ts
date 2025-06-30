@@ -12,9 +12,6 @@ export async function executeCommandTool(cmdService: CmdService, data: any): Pro
             console.error(toolResult);
             return;
         }
-        if (!data.tool_args.cwd) {
-            data.tool_args.cwd = process.cwd();
-        }
 
         await cmdService.runAsync(data.tool_args.command, data.tool_args.cwd)
         toolResult = `执行command命令 "${data.tool_args.command}" 成功！`

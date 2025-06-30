@@ -95,7 +95,8 @@ async function getProjectInfo(projectService): Promise<ProjectInfo> {
             
             // Add dependencies information
             // Note: You might want to update the ProjectInfo interface to include dependencies
-            (result as any).dependencies = packageJson.dependencies;
+            (result as any).dependencies = packageJson.dependencies || {};
+            (result as any).boardDependencies = packageJson.boardDependencies || {};
         }
         
         return result;

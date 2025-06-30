@@ -1,8 +1,9 @@
+import { connectionStrategies } from "@joint/core";
 import { ToolUseResult } from "./tools";
 
 export async function fileOperationsTool(
     params: {
-        operation: 'list' | 'read' | 'create' | 'edit' | 'delete' | 'exists';
+        operation: 'list' | 'read' | 'create' | 'edit' | 'delete' | 'exists' | 'rename';
         path: string;
         content?: string;
         is_folder?: boolean;
@@ -15,14 +16,14 @@ export async function fileOperationsTool(
         
         switch (operation) {
             case 'list':
-                const files = await window['fs'].readdir(filePath);
+                const files = await window['fs'].readDirSync(filePath);
                 const fileDetails = await Promise.all(
                     files.map(async (file) => {
-                        const fullPath = window['path'].join(filePath, file);
-                        const stats = await window['fs'].stat(fullPath);
+                        const fullPath = window['path'].join(filePath, file.name);
+                        const stats = await window['fs'].statSync(fullPath);
                         return {
                             name: file,
-                            isDirectory: stats.isDirectory(),
+                            isDirectory: await window['fs'].isDirectory(fullPath),
                             size: stats.size,
                             modifiedTime: stats.mtime,
                         };
@@ -31,40 +32,89 @@ export async function fileOperationsTool(
                 return { is_error, content: JSON.stringify(fileDetails, null, 2) };
                 
             case 'read':
-                const fileContent = await window['fs'].readFile(filePath, 'utf-8');
+                const fileContent = await window['fs'].readFileSync(filePath, 'utf-8');
                 return { is_error, content: fileContent };
                 
             case 'create':
                 if (is_folder) {
-                    await window['fs'].mkdir(filePath, { recursive: true });
+                    await window['fs'].mkdirSync(filePath, { recursive: true });
                     return { is_error, content: `Folder created at: ${filePath}` };
                 } else {
-                    const dir = window['path'].dirname(filePath);
+                    const dir = window['path'].basename(filePath);
                     if (!window['fs'].existsSync(dir)) {
-                        await window['fs'].mkdir(dir, { recursive: true });
+                        await window['fs'].mkdirSync(dir, { recursive: true });
                     }
-                    await window['fs'].writeFile(filePath, content || '');
+                    await window['fs'].writeFileSync(filePath, content || '');
                     return { is_error, content: `File created at: ${filePath}` };
                 }
                 
             case 'edit':
-                await window['fs'].writeFile(filePath, content || '');
+                await window['fs'].writeFileSync(filePath, content || '');
                 return { is_error, content: `File updated at: ${filePath}` };
                 
-            case 'delete':
+            case 'rename':
+                let backupPath;
+
                 if (is_folder) {
-                    await window['fs'].rm(filePath, { recursive: true, force: true });
-                    return { is_error, content: `Folder deleted: ${filePath}` };
+                    // Create backup folder with timestamp
+                    const dirName = window['path'].basename(filePath);
+                    const parentDir = window['path'].dirname(filePath);
+                    backupPath = window['path'].join(parentDir, `ZBAK_${dirName}`);
+                    
+                    await window['fs'].mkdirSync(backupPath, { recursive: true });
+                    
+                    // Copy directory contents recursively
+                    async function copyDirRecursive(src, dest) {
+                        const entries = await window['fs'].readDirSync(src);
+                        for (const entry of entries) {
+                            const srcPath = window['path'].join(src, entry.name);
+                            const destPath = window['path'].join(dest, entry.name);
+                            
+                            if (await window['fs'].isDirectory(srcPath)) {
+                                await window['fs'].mkdirSync(destPath, { recursive: true });
+                                await copyDirRecursive(srcPath, destPath);
+                            } else {
+                                const content = await window['fs'].readFileSync(srcPath, 'utf-8');
+                                await window['fs'].writeFileSync(destPath, content);
+                            }
+                        }
+                    }
+                    
+                    await copyDirRecursive(filePath, backupPath);
+                    await window['fs'].rmdirSync(filePath, { recursive: true });
                 } else {
-                    await window['fs'].unlink(filePath);
-                    return { is_error, content: `File deleted: ${filePath}` };
+                    // Create backup file
+                    const dir = window['path'].dirname(filePath);
+                    const filename = window['path'].basename(filePath);
+                    const ext = window['path'].extname(filePath);
+                    const baseFilename = filename.replace(ext, '');
+                    backupPath = window['path'].join(dir, `ZBAK_${baseFilename}${ext}`);
+                    
+                    const fileContent = await window['fs'].readFileSync(filePath, 'utf-8');
+                    await window['fs'].writeFileSync(backupPath, fileContent);
+                    await window['fs'].unlinkSync(filePath);
                 }
-                
+
+                return { is_error, content: `Deleted ${is_folder ? 'folder' : 'file'} at: ${filePath} (backup at: ${backupPath})` };
+            
+            case 'delete':
+                console.log(`Deleting ${is_folder ? 'folder' : 'file'} at: ${filePath}`);
+                if (is_folder) {
+                    await window['fs'].rmdirSync(filePath, { recursive: true, force: true });
+                    return { is_error, content: `Folder deleted at: ${filePath}` };
+                }
+                try {
+                    await window['fs'].unlinkSync(filePath, null);
+                    return { is_error, content: `File deleted at: ${filePath}` };
+                } catch (err) {
+                    is_error = true;
+                    return { is_error, content: `File deletion failed: ${filePath}` };
+                }
+
             case 'exists':
                 const exists = window['fs'].existsSync(filePath);
                 if (exists && is_folder !== undefined) {
-                    const stats = window['fs'].statSync(filePath);
-                    const isDir = stats.isDirectory();
+                    const isDir = window['fs'].isDirectory(filePath);
                     if (is_folder !== isDir) {
                         return {
                             is_error,

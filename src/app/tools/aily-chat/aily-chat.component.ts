@@ -25,6 +25,7 @@ import { newProjectTool } from './tools/createProjectTool';
 import { executeCommandTool } from './tools/executeCommandTool';
 import { askApprovalTool } from './tools/askApprovalTool';
 import { getContextTool } from './tools/getContextTool';
+import { fileOperationsTool } from './tools/fileOperationsTool';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -382,6 +383,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
       this.startSession();
     })
   }
+
   appendMessage(role, text) {
     // 判断是否是JSON格式的字符串
     if (role != 'user') {
@@ -537,6 +539,10 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                   break;
                 case 'execute_command':
                   console.log('执行command命令工具被调用', data.tool_args);
+                  // Check if cwd is specified, otherwise use project paths
+                  if (!data.tool_args.cwd) {
+                    data.tool_args.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
+                  }
                   toolResult = await executeCommandTool(this.cmdService, data);
                   if (!toolResult.is_error) {
                     // Check if this is an npm install command
@@ -566,6 +572,10 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                 case 'get_context':
                   console.log('获取上下文信息工具被调用', data.tool_args);
                   toolResult = await getContextTool(this.projectService, data.tool_args);
+                  break;
+                case 'file_operations':
+                  console.log('文件操作工具被调用', data.tool_args);
+                  toolResult = await fileOperationsTool(data.tool_args);
                   break;
               }
             }
@@ -607,20 +617,6 @@ Request to execute a CLI command on the system. Use this when you need to perfor
   bottomHeight = 180;
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
-  }
-
-  async testNew() {
-    const testName = 'test';
-    const testPath = 'C:\\Users\\stao\\Documents\\aily-project';
-    await this.projectService.projectNew({
-      name: testName,
-      path: testPath,
-      board: {
-        name: '@aily-project/board-arduino_uno',
-        nickname: 'arduino uno',
-        version: '0.0.1'
-      }
-    });
   }
 
   // 当使用ctrl+enter时发送消息
