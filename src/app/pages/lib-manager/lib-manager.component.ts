@@ -87,7 +87,7 @@ export class LibManagerComponent {
       const item = this._libraryList[index];
       if (this.isInstalled(item)) {
         item['state'] = 'installed';
-        item['fulltext'] = `已安装${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
+        item['fulltext'] = `已安装${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
       } else {
         item['state'] = 'default';
         item['fulltext'] = item.fulltext.replace('已安装', '');
@@ -109,7 +109,7 @@ export class LibManagerComponent {
       // 为状态做准备
       item['state'] = 'default'; // default, installed, installing, uninstalling
       // 为全文搜索做准备
-      item['fulltext'] = `${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.description}${item.keywords}${item.brand}${item.author}`.replace(/\s/g, '').toLowerCase();
+      item['fulltext'] = `${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
     }
     return array;
   }
@@ -127,8 +127,18 @@ export class LibManagerComponent {
       } else if (keyword === coreLibKey) {
         keyword = '核心库';
       }
-
-      this.libraryList = this._libraryList.filter((item) => item.fulltext.includes(keyword));
+      
+      // 使用indexOf过滤并记录关键词位置，然后按位置排序
+      const matchedItems = this._libraryList
+        .map(item => {
+          const index = item.fulltext.indexOf(keyword);
+          return { item, index };
+        })
+        .filter(({ index }) => index !== -1)
+        .sort((a, b) => a.index - b.index)
+        .map(({ item }) => item);
+      
+      this.libraryList = matchedItems;
     } else {
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
     }
