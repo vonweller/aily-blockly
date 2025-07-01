@@ -20,8 +20,6 @@
             }
 
             .blocklyToolboxContents {
-                padding-bottom: 5px;
-
                 .blocklyTreeSeparator {
                     display: none;
                 }
@@ -69,6 +67,9 @@
                     }
                 }
 
+                &:last-child {
+                    padding-bottom: 70px;
+                }
             }
         }
 
