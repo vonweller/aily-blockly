@@ -15,8 +15,16 @@
             scrollbar-width: thin !important;
             scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
+            .blocklyTreeIcon {
+                width: 40px;
+            }
+
             .blocklyToolboxContents {
-                padding-bottom: 30px;
+                padding-bottom: 5px;
+
+                .blocklyTreeSeparator {
+                    display: none;
+                }
             }
 
             .blocklyToolboxCategory {
