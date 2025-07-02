@@ -19,6 +19,7 @@ import { UpdateService } from '../../../services/update.service';
 import { NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs/operators';
 import { ElectronService } from '../../../services/electron.service';
+import { ESP32_CONFIG_MENU } from '../../../configs/esp32.config';
 
 @Component({
   selector: 'app-header',
@@ -128,7 +129,7 @@ export class HeaderComponent {
 
   async getDevicePortList() {
 
-    let portList0 = await this.serialService.getSerialPorts();
+    let portList0: IMenuItem[] = await this.serialService.getSerialPorts();
     if (portList0.length == 0) {
       // this.message.warning('没有找到可用的设备，请检查连接');
       portList0 = [
@@ -142,7 +143,9 @@ export class HeaderComponent {
       ];
     }
     // 待添加ESP32相关配置
-
+    // if(){
+    portList0 = portList0.concat(ESP32_CONFIG_MENU)
+    // }
     this.portList = portList0;
     this.cd.detectChanges();
   }
