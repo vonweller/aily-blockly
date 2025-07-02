@@ -25,6 +25,12 @@
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "烧录速度",
+        "FLASH_MODE": "闪存模式",
+        "FLASH_SIZE": "闪存大小",
+        "PARTITION_SCHEME": "分区方案"
+    },
     "GUIDE": {
         "START": "开始",
         "RECENTLY": "最近",

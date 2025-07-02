@@ -24,6 +24,12 @@
         "EXAMPLES": "Exemples",
         "UPDATE": "Vérifier les mises à jour"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "Vitesse de téléchargement",
+        "FLASH_MODE": "Mode Flash",
+        "FLASH_SIZE": "Taille Flash",
+        "PARTITION_SCHEME": "Schéma de partition"
+    },
     "GUIDE": {
         "START": "Démarrer",
         "RECENTLY": "Récent"

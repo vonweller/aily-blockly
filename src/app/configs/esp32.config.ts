@@ -48,10 +48,10 @@ export let ESP32_CONFIG_MENU: IMenuItem[] = [
         // data: { type: 'cmd', data: 'save' },
         icon: "fa-light fa-hard-drive",
         children: [
-            { name: '115200', data: '', check: false },
-            { name: '256000', data: '', check: false },
-            { name: '512000', data: '', check: false },
-            { name: '921600', data: '', check: false }
+            { name: 'Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)', data: '', check: true },
+            { name: 'Default 4MB with ffat (1.2MB APP/1.5MB FATFS)', data: '', check: false },
+            { name: 'Default 4MB with OTA (2MB APP/2MB OTA)', data: '', check: false },
+            { name: 'Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)', data: '', check: false }
         ]
     },
 ]

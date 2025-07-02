@@ -24,6 +24,12 @@
         "EXAMPLES": "Programas de exemplo",
         "UPDATE": "Verificar atualizações"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "Velocidade de Upload",
+        "FLASH_MODE": "Modo Flash",
+        "FLASH_SIZE": "Tamanho Flash",
+        "PARTITION_SCHEME": "Esquema de Partição"
+    },
     "GUIDE": {
         "START": "Iniciar",
         "RECENTLY": "Recentes"

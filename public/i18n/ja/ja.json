@@ -24,6 +24,12 @@
         "EXAMPLES": "サンプルプログラム",
         "UPDATE": "アップデートを確認"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "書き込み速度",
+        "FLASH_MODE": "フラッシュモード",
+        "FLASH_SIZE": "フラッシュサイズ",
+        "PARTITION_SCHEME": "パーティション方式"
+    },
     "GUIDE": {
         "START": "スタート",
         "RECENTLY": "最近"

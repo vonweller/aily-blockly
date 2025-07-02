@@ -24,6 +24,12 @@
         "EXAMPLES": "예제 프로그램",
         "UPDATE": "업데이트 확인"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "업로드 속도",
+        "FLASH_MODE": "플래시 모드",
+        "FLASH_SIZE": "플래시 크기",
+        "PARTITION_SCHEME": "파티션 스킴"
+    },
     "GUIDE": {
         "START": "시작",
         "RECENTLY": "최근"

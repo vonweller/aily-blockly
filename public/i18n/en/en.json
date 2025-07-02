@@ -24,6 +24,12 @@
         "EXAMPLES": "Examples",
         "UPDATE": "Check for Updates"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "Upload Speed",
+        "FLASH_MODE": "Flash Mode",
+        "FLASH_SIZE": "Flash Size",
+        "PARTITION_SCHEME": "Partition Scheme"
+    },
     "GUIDE": {
         "START": "Start",
         "RECENTLY": "Recent",

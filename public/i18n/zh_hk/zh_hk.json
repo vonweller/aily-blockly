@@ -24,6 +24,12 @@
         "EXAMPLES": "範例程式",
         "UPDATE": "檢查更新"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "燒錄速度",
+        "FLASH_MODE": "閃存模式",
+        "FLASH_SIZE": "閃存大小",
+        "PARTITION_SCHEME": "分區方案"
+    },
     "GUIDE": {
         "START": "開始",
         "RECENTLY": "最近",
