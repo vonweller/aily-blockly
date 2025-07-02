@@ -6,9 +6,7 @@ export let ESP32_CONFIG_MENU: IMenuItem[] = [
     },
     {
         name: 'ESP32.UPLOAD_SPEED',
-        // text: 'Ctrl + Shift + S',
-        // action: 'project-save-as',
-        // data: { type: 'cmd', data: 'save-as' },
+        data: {},
         icon: "fa-light fa-up-from-line",
         children: [
             { name: '115200', data: '', check: false },
@@ -19,9 +17,7 @@ export let ESP32_CONFIG_MENU: IMenuItem[] = [
     },
     {
         name: 'ESP32.FLASH_MODE',
-        // text: 'Ctrl + O',
-        // action: 'project-open',
-        // data: { type: 'project-open', data: 'project-open' },
+        data: {},
         icon: 'fa-light fa-tablet-rugged',
         children: [
             { name: 'QIO', data: '', check: false },
@@ -30,9 +26,7 @@ export let ESP32_CONFIG_MENU: IMenuItem[] = [
     },
     {
         name: 'ESP32.FLASH_SIZE',
-        // text: 'Ctrl + N',
-        // action: 'project-new',
-        // data: { type: 'project-new', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
+        data: {},
         icon: "fa-light fa-database",
         children: [
             { name: '2MB', data: '', check: false },
@@ -43,9 +37,7 @@ export let ESP32_CONFIG_MENU: IMenuItem[] = [
     },
     {
         name: 'ESP32.PARTITION_SCHEME',
-        // text: 'Ctrl + S',
-        // action: 'project-save',
-        // data: { type: 'cmd', data: 'save' },
+        data: {},
         icon: "fa-light fa-hard-drive",
         children: [
             { name: 'Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)', data: '', check: true },

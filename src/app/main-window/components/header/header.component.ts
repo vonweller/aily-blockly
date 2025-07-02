@@ -131,7 +131,6 @@ export class HeaderComponent {
 
     let portList0: IMenuItem[] = await this.serialService.getSerialPorts();
     if (portList0.length == 0) {
-      // this.message.warning('没有找到可用的设备，请检查连接');
       portList0 = [
         {
           name: 'Device not found',
@@ -142,10 +141,10 @@ export class HeaderComponent {
         }
       ];
     }
-    // 待添加ESP32相关配置
-    // if(){
-    portList0 = portList0.concat(ESP32_CONFIG_MENU)
-    // }
+    // 待添加ESP32相关配置选项
+    if (this.projectService.currentBoardConfig['core'].indexOf('esp32') > -1) {
+      portList0 = portList0.concat(ESP32_CONFIG_MENU)
+    }
     this.portList = portList0;
     this.cd.detectChanges();
   }
