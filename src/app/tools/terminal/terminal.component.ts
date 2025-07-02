@@ -11,6 +11,7 @@ import { CommonModule } from '@angular/common';
 import { LogService } from '../../services/log.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { AnsiPipe } from './ansi.pipe';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-terminal',
@@ -45,7 +46,8 @@ export class TerminalComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private terminalService: TerminalService,
-    private logService: LogService
+    private logService: LogService,
+    private message: NzMessageService
   ) { }
 
   close() {
@@ -108,9 +110,9 @@ export class TerminalComponent {
     setTimeout(() => this.scrollToBottom(), 100);
     this.logService.stateSubject.subscribe((opts) => {
       console.log('logService stateSubject', opts);
-      
+
       console.log(opts.timestamp);
-      
+
       setTimeout(() => this.scrollToBottom(), 100);
     })
   }
@@ -209,52 +211,10 @@ export class TerminalComponent {
     try {
       const logContent = `${item.detail}`;
       await navigator.clipboard.writeText(logContent);
-      
-      // 添加视觉反馈
-      if (event && event.target) {
-        const element = (event.target as HTMLElement).closest('.item');
-        if (element) {
-          element.classList.add('copying');
-          setTimeout(() => {
-            element.classList.remove('copying');
-          }, 300);
-        }
-      }
-      
-      console.log('日志内容已复制到剪切板');
+      this.message.success('日志内容已复制到剪切板');
     } catch (err) {
       console.error('复制到剪切板失败:', err);
-      // 降级方案：使用传统的复制方法
-      this.fallbackCopyToClipboard(item, event);
     }
-  }
-
-  // 降级方案：当现代API不可用时使用
-  private fallbackCopyToClipboard(item: any, event?: Event) {
-    const logContent = `[${new Date(item.timestamp).toLocaleString()}] ${item.title}\n${item.detail}`;
-    const textArea = document.createElement('textarea');
-    textArea.value = logContent;
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      
-      // 添加视觉反馈
-      if (event && event.target) {
-        const element = (event.target as HTMLElement).closest('.item');
-        if (element) {
-          element.classList.add('copying');
-          setTimeout(() => {
-            element.classList.remove('copying');
-          }, 300);
-        }
-      }
-      
-      console.log('日志内容已复制到剪切板（降级方案）');
-    } catch (err) {
-      console.error('降级复制方案也失败了:', err);
-    }
-    document.body.removeChild(textArea);
   }
 
   private scrollToBottom(): void {

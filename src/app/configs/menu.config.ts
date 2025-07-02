@@ -12,6 +12,8 @@ export interface IMenuItem {
   disabled?: boolean;
   dev?: boolean;
   router?: string[]; // 在指定路由中显示
+  children?: IMenuItem[],
+  check?:boolean
 }
 
 export let HEADER_BTNS: IMenuItem[][] = [
