@@ -131,7 +131,7 @@ export class HeaderComponent {
     let portList0 = await this.serialService.getSerialPorts();
     if (portList0.length == 0) {
       // this.message.warning('没有找到可用的设备，请检查连接');
-      this.portList = [
+      portList0 = [
         {
           name: 'Device not found',
           text: '',
@@ -140,9 +140,10 @@ export class HeaderComponent {
           disabled: true,
         }
       ];
-    } else {
-      this.portList = portList0;
     }
+    // 待添加ESP32相关配置
+
+    this.portList = portList0;
     this.cd.detectChanges();
   }
 
