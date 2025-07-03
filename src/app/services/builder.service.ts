@@ -6,6 +6,7 @@ import { ActionState, UiService } from './ui.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NoticeService } from '../services/notice.service';
 import { CmdOutput, CmdService } from './cmd.service';
+import { NpmService } from './npm.service';
 import { LogService } from './log.service';
 
 @Injectable({
@@ -19,7 +20,8 @@ export class BuilderService {
     private cmdService: CmdService,
     private message: NzMessageService,
     private noticeService: NoticeService,
-    private logService: LogService
+    private logService: LogService,
+    private npmService: NpmService,
   ) { }
 
   private buildInProgress = false;
@@ -64,6 +66,12 @@ export class BuilderService {
         if (this.buildInProgress) {
           this.message.warning("编译正在进行中，请稍后再试");
           reject({ state: 'warn', text: '编译中，请稍后' });
+          return;
+        }
+
+        if (this.npmService.isInstalling) {
+          this.message.warning("相关依赖正在安装中，请稍后再试");
+          reject({ state: 'warn', text: '依赖安装中，请稍后' });
           return;
         }
 
