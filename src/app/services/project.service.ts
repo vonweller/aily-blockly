@@ -296,6 +296,7 @@ export class ProjectService {
     }
   }
 
+  // 获取当前项目的package.json
   async getPackageJson() {
     if (!this.currentProjectPath) {
       throw new Error('当前项目路径未设置');
@@ -304,18 +305,20 @@ export class ProjectService {
     return JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
   }
 
+  // 获取开发板名称
   async getBoardModule() {
     const prjPackageJson = await this.getPackageJson();
     return Object.keys(prjPackageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
   }
 
+  // 获取开发板模块的package.json
   async getBoardPackageJson() {
     const boardModule = await this.getBoardModule();
-    const appDataPath = window['path'].getAppData();
     const boardPackageJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/package.json`;
     return JSON.parse(this.electronService.readFile(boardPackageJsonPath));
   }
 
+  // 获取开发板配置文件board.json
   async getBoardJson() {
     const boardModule = await this.getBoardModule();
     if (!boardModule) {
@@ -326,5 +329,48 @@ export class ProjectService {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
     }
     return JSON.parse(this.electronService.readFile(boardJsonPath));
+  }
+
+  // 获取开发板 SDK 路径
+  async getSdkPath() {
+    try {
+      const boardPackageJson = await this.getBoardPackageJson();
+      if (!boardPackageJson || !boardPackageJson.boardDependencies) {
+        throw new Error('未找到开发板 SDK 路径');
+      }
+
+      const sdkModule = Object.keys(boardPackageJson.boardDependencies).find(dep => dep.startsWith('@aily-project/sdk-'));
+      if (!sdkModule) {
+        throw new Error('未找到开发板 SDK 模块');
+      }
+
+      const appDataPath = window['path'].getAppData()
+
+      const sdkLibPath = `${appDataPath}/node_modules/${sdkModule}`;
+      if (!window['fs'].existsSync(sdkLibPath)) {
+        throw new Error('SDK 库路径不存在: ' + sdkLibPath);
+      }
+
+      // Get all files in the SDK library path
+      const sdkFiles = window['fs'].readDirSync(sdkLibPath);
+
+      // Filter for .7z files
+      const sdkZipFiles = sdkFiles.filter(file => file.name.endsWith('.7z'));
+
+      // If there are no .7z files, throw an error
+      if (sdkZipFiles.length === 0) {
+        throw new Error('未找到 SDK 压缩包文件');
+      }
+
+      // Replace '@' with '_' in the filename
+      const sdkZipFileName = sdkZipFiles[0].name;
+      const formattedSdkZipFileName = sdkZipFileName.replace(/@/g, '_').replace(/\.7z$/i, '');
+
+      // sdk path
+      return `${await window["env"].get('AILY_SDK_PATH')}/${formattedSdkZipFileName}`;
+    } catch (error) {
+      console.error('获取 SDK 路径失败:', error);
+      return "";
+    }
   }
 }
