@@ -714,6 +714,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
   newChat() {
     this.list = [];
     this.chatService.currentSessionId = '';
+    this.closeSession();
     this.startSession();
   }
 

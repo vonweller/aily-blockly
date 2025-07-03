@@ -10,7 +10,10 @@ export async function fileOperationsTool(
     }
 ): Promise<ToolUseResult> {
     try {
-        const { operation, path: filePath, content, is_folder = false } = params;
+        let { operation, path: filePath, content, is_folder = false } = params;
+
+        // 处理路径转义和规范化
+        filePath = window['path'].normalize(window['path'].resolve(filePath));
 
         let is_error = false;
         
@@ -128,6 +131,7 @@ export async function fileOperationsTool(
                 return { is_error: true, content: `Invalid operation: ${operation}` };
         }
     } catch (error: any) {
+        console.log("File operation error:", error);
         return { is_error: true, content: `File operation failed: ${error.message}` };
     }
 }

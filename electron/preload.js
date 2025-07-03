@@ -3,7 +3,7 @@ const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
 const { get } = require("lodash");
-const { basename, dirname, extname } = require("path");
+const { basename, dirname, extname, resolve, normalize } = require("path");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     basename: (path) => basename(path),
     dirname: (path) => dirname(path),
     extname: (path) => require("path").extname(path),
+    normalize: (path) => require("path").normalize(path),
+    resolve: (path) => require("path").resolve(path)
   },
   versions: () => process.versions,
   SerialPort: {
