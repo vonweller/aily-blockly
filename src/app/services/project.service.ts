@@ -296,5 +296,35 @@ export class ProjectService {
     }
   }
 
+  async getPackageJson() {
+    if (!this.currentProjectPath) {
+      throw new Error('当前项目路径未设置');
+    }
+    const packageJsonPath = `${this.currentProjectPath}/package.json`;
+    return JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
+  }
 
+  async getBoardModule() {
+    const prjPackageJson = await this.getPackageJson();
+    return Object.keys(prjPackageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
+  }
+
+  async getBoardPackageJson() {
+    const boardModule = await this.getBoardModule();
+    const appDataPath = window['path'].getAppData();
+    const boardPackageJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/package.json`;
+    return JSON.parse(this.electronService.readFile(boardPackageJsonPath));
+  }
+
+  async getBoardJson() {
+    const boardModule = await this.getBoardModule();
+    if (!boardModule) {
+      throw new Error('未找到开发板模块');
+    }
+    const boardJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/board.json`;
+    if (!window['fs'].existsSync(boardJsonPath)) {
+      throw new Error('开发板配置文件不存在: ' + boardJsonPath);
+    }
+    return JSON.parse(this.electronService.readFile(boardJsonPath));
+  }
 }
