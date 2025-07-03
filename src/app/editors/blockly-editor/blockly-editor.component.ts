@@ -88,9 +88,10 @@ export class BlocklyEditorComponent {
     }
     // 3. 加载开发板module中的board.json
     this.uiService.updateFooterState({ state: 'doing', text: '正在加载开发板配置' });
-    const boardJson = this.projectService.getBoardJson();
+    const boardJson = await this.projectService.getBoardJson();
     this.blocklyService.boardConfig = boardJson;
     this.projectService.currentBoardConfig = boardJson;
+    // console.log('boardConfig', boardJson);
     window['boardConfig'] = boardJson;
     // 4. 加载blockly library
     const libraryModuleList = Object.keys(packageJson.dependencies).filter(dep => dep.startsWith('@aily-project/lib-'));

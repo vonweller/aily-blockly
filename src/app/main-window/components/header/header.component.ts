@@ -143,6 +143,9 @@ export class HeaderComponent {
     }
     // 待添加ESP32相关配置选项
     if (this.projectService.currentBoardConfig['core'].indexOf('esp32') > -1) {
+      let sdkPath = await this.projectService.getSdkPath()
+      console.log(sdkPath);
+
       portList0 = portList0.concat(ESP32_CONFIG_MENU)
     }
     this.portList = portList0;
