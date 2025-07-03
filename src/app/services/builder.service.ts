@@ -118,23 +118,18 @@ export class BuilderService {
         await window['fs'].writeFileSync(sketchFilePath, code);
 
         // 加载项目package.json
-        const packageJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/package.json`));
+        const packageJson = await this.projectService.getPackageJson();
         const dependencies = packageJson.dependencies || {};
-        const boardDependencies = packageJson.boardDependencies || {};
 
-        // 从dependencies中查找以@aily-project/board-开头的依赖
-        let board = ""
         const libsPath = []
         Object.entries(dependencies).forEach(([key, version]) => {
-          if (key.startsWith('@aily-project/board-')) {
-            board = key
-          } else if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
+          if (key.startsWith('@aily-project/lib-') && !key.startsWith('@aily-project/lib-core')) {
             libsPath.push(key)
           }
         });
 
         // 获取板子信息(board.json)
-        const boardJson = JSON.parse(window['fs'].readFileSync(`${this.currentProjectPath}/node_modules/${board}/board.json`));
+        const boardJson = await this.projectService.getBoardJson();
 
         if (!boardJson) {
           this.handleCompileError('未找到板子信息(board.json)');
@@ -232,6 +227,8 @@ export class BuilderService {
         // 获取编译器、sdk、tool的名称和版本
         let compiler = ""
         let sdk = ""
+
+        const boardDependencies = (await this.projectService.getBoardPackageJson()).boardDependencies || {};
 
         Object.entries(boardDependencies).forEach(([key, version]) => {
           if (key.startsWith('@aily-project/compiler-')) {

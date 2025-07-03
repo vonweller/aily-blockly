@@ -4,6 +4,7 @@ import { ElectronService } from './electron.service';
 import { ConfigService } from './config.service';
 import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
+import { ProjectService } from './project.service';
 
 @Injectable({
   providedIn: 'root'
@@ -14,6 +15,7 @@ export class NpmService {
     private electronService: ElectronService,
     private configService: ConfigService,
     private uiService: UiService,
+    private prjService: ProjectService
   ) { }
 
   isInstalling = false;
@@ -84,12 +86,20 @@ export class NpmService {
     return `${appDataPath}/node_modules/${board.name}/template/package.json`;
   }
 
+  async installBoardDeps() {
+    const boardPackageJson = await this.prjService.getBoardPackageJson() || {};
+    console.log("boardPackageJson: ", boardPackageJson);
+    await this.installBoardDependencies(boardPackageJson);
+  }
+
   // 安装开发板依赖
   async installBoardDependencies(packageJson: any) {
     try {
       this.isInstalling = true;
       const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
       const boardDependencies = packageJson.boardDependencies || {};
+
+      console.log("boardDependencies: ", boardDependencies);
 
       for (const [key, version] of Object.entries(boardDependencies)) {
         const depPath = `${appDataPath}/node_modules/${key}`;
