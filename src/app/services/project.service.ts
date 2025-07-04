@@ -545,6 +545,15 @@ export class ProjectService {
         return null;
       }
 
+      // 读取当前项目的package.json配置
+      let currentProjectConfig: any = {};
+      try {
+        const packageJson = await this.getPackageJson();
+        currentProjectConfig = packageJson.projectConfig || {};
+      } catch (error) {
+        console.warn('无法读取项目配置:', error);
+      }
+
       // 导入ESP32_CONFIG_MENU，需要动态导入以避免循环依赖
       const { ESP32_CONFIG_MENU } = await import('../configs/esp32.config');
 
@@ -552,12 +561,57 @@ export class ProjectService {
       ESP32_CONFIG_MENU.forEach(menuItem => {
         if (menuItem.name === 'ESP32.UPLOAD_SPEED' && boardConfig.uploadSpeed) {
           menuItem.children = boardConfig.uploadSpeed;
+          // 根据当前项目配置设置check状态
+          if (currentProjectConfig.UploadSpeed) {
+            menuItem.children.forEach((child: any) => {
+              child.check = false; // 先清空所有选中状态
+              // 检查当前配置是否匹配
+              if (child.data && child.data.upload && 
+                  currentProjectConfig.UploadSpeed.upload && 
+                  child.data.upload.speed === currentProjectConfig.UploadSpeed.upload.speed) {
+                child.check = true;
+              }
+            });
+          }
         } else if (menuItem.name === 'ESP32.FLASH_MODE' && boardConfig.flashMode) {
           menuItem.children = boardConfig.flashMode;
+          // 根据当前项目配置设置check状态
+          if (currentProjectConfig.FlashMode) {
+            menuItem.children.forEach((child: any) => {
+              child.check = false;
+              if (child.data && child.data.build && 
+                  currentProjectConfig.FlashMode.build && 
+                  child.data.build.flash_mode === currentProjectConfig.FlashMode.build.flash_mode) {
+                child.check = true;
+              }
+            });
+          }
         } else if (menuItem.name === 'ESP32.FLASH_SIZE' && boardConfig.flashSize) {
           menuItem.children = boardConfig.flashSize;
+          // 根据当前项目配置设置check状态
+          if (currentProjectConfig.FlashSize) {
+            menuItem.children.forEach((child: any) => {
+              child.check = false;
+              if (child.data && child.data.build && 
+                  currentProjectConfig.FlashSize.build && 
+                  child.data.build.flash_size === currentProjectConfig.FlashSize.build.flash_size) {
+                child.check = true;
+              }
+            });
+          }
         } else if (menuItem.name === 'ESP32.PARTITION_SCHEME' && boardConfig.partitionScheme) {
           menuItem.children = boardConfig.partitionScheme;
+          // 根据当前项目配置设置check状态
+          if (currentProjectConfig.PartitionScheme) {
+            menuItem.children.forEach((child: any) => {
+              child.check = false;
+              if (child.data && child.data.build && 
+                  currentProjectConfig.PartitionScheme.build && 
+                  child.data.build.partitions === currentProjectConfig.PartitionScheme.build.partitions) {
+                child.check = true;
+              }
+            });
+          }
         }
       });
 
