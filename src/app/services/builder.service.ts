@@ -275,7 +275,43 @@ export class BuilderService {
 
         compilerParam = compilerParamList.join(' ');
 
-        const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'  --verbose`;
+        // 获取和解析项目编译参数
+        let buildProperties = '';
+        try {
+          const projectConfig = await this.projectService.getProjectConfig();
+          if (projectConfig) {
+            const buildPropertyParams: string[] = [];
+            
+            // 遍历配置对象，解析编译参数
+            Object.values(projectConfig).forEach((configSection: any) => {
+              if (configSection && typeof configSection === 'object') {
+                // 遍历每个配置段（如 build、upload 等）
+                Object.entries(configSection).forEach(([sectionKey, sectionValue]: [string, any]) => {
+                  // 排除upload等非编译相关的配置段
+                  if (sectionKey == 'upload') return;
+                  if (sectionValue && typeof sectionValue === 'object') {
+                    // 遍历具体的配置项
+                    Object.entries(sectionValue).forEach(([key, value]: [string, any]) => {
+                      buildPropertyParams.push(`--build-property ${sectionKey}.${key}=${value}`);
+                    });
+                  }
+                });
+              }
+            });
+            
+            buildProperties = buildPropertyParams.join(' ');
+            if (buildProperties) {
+              buildProperties = ' ' + buildProperties; // 在前面添加空格
+            }
+          }
+        } catch (error) {
+          console.warn('获取项目配置失败:', error);
+        }
+
+        // 将buildProperties添加到compilerParam中
+        compilerParam += buildProperties;
+
+        const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'${buildProperties} --verbose`;
         
         const title = `编译 ${boardJson.name}`;
         const completeTitle = `编译完成`;

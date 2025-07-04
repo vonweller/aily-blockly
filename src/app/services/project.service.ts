@@ -567,4 +567,19 @@ export class ProjectService {
       return null;
     }
   }
+
+  // 获取项目配置
+  async getProjectConfig() {
+    try {
+      const packageJson = await this.getPackageJson();
+      if (!packageJson || !packageJson.projectConfig) {
+        throw new Error('项目配置未找到或格式不正确');
+      }
+
+      return packageJson.projectConfig;
+    } catch (error) {
+      console.info('获取项目配置失败:', error);
+      return {}
+    }
+  }
 }
