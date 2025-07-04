@@ -20,8 +20,6 @@ export class NoticeService {
   update(opts: NoticeOptions) {
     opts['showDetail'] = false;
     this.stateSubject.next(opts);
-    // if (opts.state === 'error') {
-    //   // this.noticeList.push(opts)
     if (opts.detail) {
       this.logService.update({
         title: opts.title,
@@ -29,7 +27,6 @@ export class NoticeService {
         state: opts.state,
       })
     }
-    // }
   }
 
   clear() {
