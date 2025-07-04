@@ -41,7 +41,7 @@
             "THEME": "テーマ設定",
             "COMPILATION": "コンパイル設定",
             "REPOSITORY": "リポジトリ設定",
-            "BOARD_MANAGEMENT": "ボード管理"
+            "DEPENDENCIES": "グローバル依存関係"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "プロジェクトフォルダ",

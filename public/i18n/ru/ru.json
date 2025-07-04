@@ -41,7 +41,7 @@
             "THEME": "Настройки темы",
             "COMPILATION": "Настройки компиляции",
             "REPOSITORY": "Настройки репозитория",
-            "BOARD_MANAGEMENT": "Управление платами"
+            "DEPENDENCIES": "Глобальные зависимости"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Папка проекта",

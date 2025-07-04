@@ -53,7 +53,7 @@
             "THEME": "Theme Settings",
             "COMPILATION": "Compilation Settings",
             "REPOSITORY": "Repository Settings",
-            "BOARD_MANAGEMENT": "Board Management",
+            "DEPENDENCIES": "Global Dependencies",
             "MCP": "MCP",
             "DEVMODE": "Developer Mode"
         },

@@ -41,7 +41,7 @@
             "THEME": "Configurações de tema",
             "COMPILATION": "Configurações de compilação",
             "REPOSITORY": "Configurações de repositório",
-            "BOARD_MANAGEMENT": "Gerenciamento de placas"
+            "DEPENDENCIES": "Dependências Globais"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Pasta do projeto",

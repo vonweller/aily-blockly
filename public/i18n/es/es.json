@@ -41,7 +41,7 @@
             "THEME": "Configuración de Tema",
             "COMPILATION": "Configuración de Compilación",
             "REPOSITORY": "Configuración de Repositorio",
-            "BOARD_MANAGEMENT": "Gestión de Placas"
+            "DEPENDENCIES": "Dependencias Globales"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Carpeta de Proyecto",

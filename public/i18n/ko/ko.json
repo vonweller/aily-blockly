@@ -41,7 +41,7 @@
             "THEME": "테마 설정",
             "COMPILATION": "컴파일 설정",
             "REPOSITORY": "저장소 설정",
-            "BOARD_MANAGEMENT": "개발 보드 관리"
+            "DEPENDENCIES": "글로벌 종속성"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "프로젝트 폴더",

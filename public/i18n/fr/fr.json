@@ -41,7 +41,7 @@
             "THEME": "Paramètres de Thème",
             "COMPILATION": "Paramètres de Compilation",
             "REPOSITORY": "Paramètres de Dépôt",
-            "BOARD_MANAGEMENT": "Gestion des Cartes"
+            "DEPENDENCIES": "Dépendances Globales"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "Dossier du Projet",

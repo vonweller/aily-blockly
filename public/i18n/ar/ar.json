@@ -41,7 +41,7 @@
             "THEME": "إعدادات المظهر",
             "COMPILATION": "إعدادات التجميع",
             "REPOSITORY": "إعدادات المستودع",
-            "BOARD_MANAGEMENT": "إدارة اللوحات"
+            "DEPENDENCIES": "التبعيات العامة"
         },
         "FIELDS": {
             "PROJECT_FOLDER": "مجلد المشروع",

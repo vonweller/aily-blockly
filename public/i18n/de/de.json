@@ -53,7 +53,7 @@
             "THEME": "Themeneinstellungen",
             "COMPILATION": "Kompilierungseinstellungen",
             "REPOSITORY": "Repository-Einstellungen",
-            "BOARD_MANAGEMENT": "Board-Verwaltung",
+            "DEPENDENCIES": "Globale Abhängigkeiten",
             "MCP": "MCP",
             "DEVMODE": "Entwicklermodus"
         },

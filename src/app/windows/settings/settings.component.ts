@@ -58,7 +58,7 @@ export class SettingsComponent {
       icon: 'fa-light fa-book-bookmark'
     },
     {
-      name: 'SETTINGS.SECTIONS.BOARD_MANAGEMENT',
+      name: 'SETTINGS.SECTIONS.DEPENDENCIES',
       icon: 'fa-light fa-layer-group'
     },
     {
