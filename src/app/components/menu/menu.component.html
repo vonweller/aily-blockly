@@ -5,7 +5,7 @@
     @if (item.sep) {
     <div class="sep"></div>
     } @else {
-    @if(showInRouter(item)){
+    @if((item.children && item.children.length > 0)||(!item.children&&showInRouter(item))){
     <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, $index)"
       (mouseleave)="hideSubMenu($event, $index)"
       [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled ,'active':activeSubmenuIndex == $index}">

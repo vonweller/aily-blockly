@@ -34,6 +34,7 @@ export class ProjectService {
   projectRootPath: string;
   currentProjectPath: string;
   currentBoardConfig: any;
+  // currentProjectConfig: any[]; // 编译和上传配置
 
   isMainWindow = false;
   isInstalling = false;
@@ -305,6 +306,15 @@ export class ProjectService {
     return JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf8'));
   }
 
+  async setPackageJson(data: any) {
+    if (!this.currentProjectPath) {
+      throw new Error('当前项目路径未设置');
+    }
+    const packageJsonPath = `${this.currentProjectPath}/package.json`;
+    // 写入新的package.json
+    window['fs'].writeFileSync(packageJsonPath, JSON.stringify(data, null, 2));
+  }
+
   // 获取开发板名称
   async getBoardModule() {
     const prjPackageJson = await this.getPackageJson();
@@ -371,6 +381,190 @@ export class ProjectService {
     } catch (error) {
       console.error('获取 SDK 路径失败:', error);
       return "";
+    }
+  }
+
+  // 解析boards.txt并获取ESP32配置信息
+  async getEsp32BoardConfig(boardName: string) {
+    try {
+      const sdkPath = await this.getSdkPath();
+      if (!sdkPath) {
+        throw new Error('未找到 SDK 路径');
+      }
+
+      const boardsFilePath = `${sdkPath}/boards.txt`;
+      if (!window['fs'].existsSync(boardsFilePath)) {
+        throw new Error('boards.txt 文件不存在: ' + boardsFilePath);
+      }
+
+      const boardsContent = window['fs'].readFileSync(boardsFilePath, 'utf8');
+      const lines = boardsContent.split('\n');
+
+      // 查找指定开发板的配置
+      const boardConfig = this.parseBoardsConfig(lines, boardName);
+
+      if (!boardConfig) {
+        throw new Error(`未找到开发板 "${boardName}" 的配置`);
+      }
+
+      // 提取需要的配置项
+      const esp32Config = {
+        uploadSpeed: this.extractMenuOptions(boardConfig, 'UploadSpeed'),
+        flashMode: this.extractMenuOptions(boardConfig, 'FlashMode'),
+        flashSize: this.extractMenuOptions(boardConfig, 'FlashSize'),
+        partitionScheme: this.extractMenuOptions(boardConfig, 'PartitionScheme')
+      };
+
+      return esp32Config;
+    } catch (error) {
+      console.error('获取ESP32开发板配置失败:', error);
+      return null;
+    }
+  }
+
+  // 解析boards.txt文件内容，提取指定开发板的配置
+  private parseBoardsConfig(lines: string[], boardName: string): { [key: string]: string } | null {
+    const config: { [key: string]: string } = {};
+    let foundBoard = false;
+    let currentBoard = '';
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      // 跳过空行和注释
+      if (!trimmedLine || trimmedLine.startsWith('#')) {
+        continue;
+      }
+
+      // 检查是否是开发板名称定义
+      const nameMatch = trimmedLine.match(/^(\w+)\.name=(.+)$/);
+      if (nameMatch) {
+        currentBoard = nameMatch[1];
+        foundBoard = (currentBoard === boardName);
+        if (foundBoard) {
+          config[`${currentBoard}.name`] = nameMatch[2];
+        }
+        continue;
+      }
+
+      // 如果找到了目标开发板，继续收集配置
+      if (foundBoard && trimmedLine.startsWith(`${boardName}.`)) {
+        const configMatch = trimmedLine.match(/^([^=]+)=(.*)$/);
+        if (configMatch) {
+          config[configMatch[1]] = configMatch[2];
+        }
+      }
+
+      // 如果遇到了新的开发板定义且不是目标开发板，停止收集
+      if (foundBoard && nameMatch && nameMatch[1] !== boardName) {
+        break;
+      }
+    }
+
+    return Object.keys(config).length > 0 ? config : null;
+  }
+
+  // 提取菜单选项
+  private extractMenuOptions(boardConfig: { [key: string]: string }, menuType: string): any[] {
+    const options: any[] = [];
+    const boardName = Object.keys(boardConfig)[0].split('.')[0];
+    const menuPrefix = `${boardName}.menu.${menuType}.`;
+
+    // 首先收集所有选项的基本信息
+    const optionKeys = new Set<string>();
+
+    for (const key in boardConfig) {
+      if (key.startsWith(menuPrefix)) {
+        const remainingPath = key.replace(menuPrefix, '');
+        const optionKey = remainingPath.split('.')[0];
+
+        // 只处理主选项，不处理子属性
+        if (!remainingPath.includes('.') || remainingPath.split('.').length === 2) {
+          optionKeys.add(optionKey);
+        }
+      }
+    }
+
+    // 为每个选项构建完整的配置对象
+    optionKeys.forEach(optionKey => {
+      const mainKey = `${menuPrefix}${optionKey}`;
+      const optionName = boardConfig[mainKey];
+
+      if (optionName) {
+        const option = {
+          name: optionName,
+          key: menuType,
+          data: {
+            build: {},
+            upload: {}
+          },
+          check: false
+        };
+
+        // 收集该选项的所有相关配置
+        for (const key in boardConfig) {
+          if (key.startsWith(`${menuPrefix}${optionKey}.`)) {
+            const configPath = key.replace(`${menuPrefix}${optionKey}.`, '');
+            const pathParts = configPath.split('.');
+
+            if (pathParts.length === 2) {
+              const category = pathParts[0]; // build 或 upload
+              const property = pathParts[1]; // partitions, maximum_size 等
+
+              if (category === 'build' || category === 'upload') {
+                option.data[category][property] = boardConfig[key];
+              }
+            }
+          }
+        }
+
+        // 清理空的配置对象
+        if (Object.keys(option.data.build).length === 0) {
+          delete option.data.build;
+        }
+        if (Object.keys(option.data.upload).length === 0) {
+          delete option.data.upload;
+        }
+        if (Object.keys(option.data).length === 0) {
+          delete option.data;
+        }
+
+        options.push(option);
+      }
+    });
+
+    return options;
+  }
+
+  // 更新ESP32配置菜单项
+  async updateEsp32ConfigMenu(boardName: string) {
+    try {
+      const boardConfig = await this.getEsp32BoardConfig(boardName);
+      if (!boardConfig) {
+        console.warn(`无法获取开发板 "${boardName}" 的配置`);
+        return null;
+      }
+
+      // 导入ESP32_CONFIG_MENU，需要动态导入以避免循环依赖
+      const { ESP32_CONFIG_MENU } = await import('../configs/esp32.config');
+
+      // 更新菜单项
+      ESP32_CONFIG_MENU.forEach(menuItem => {
+        if (menuItem.name === 'ESP32.UPLOAD_SPEED' && boardConfig.uploadSpeed) {
+          menuItem.children = boardConfig.uploadSpeed;
+        } else if (menuItem.name === 'ESP32.FLASH_MODE' && boardConfig.flashMode) {
+          menuItem.children = boardConfig.flashMode;
+        } else if (menuItem.name === 'ESP32.FLASH_SIZE' && boardConfig.flashSize) {
+          menuItem.children = boardConfig.flashSize;
+        } else if (menuItem.name === 'ESP32.PARTITION_SCHEME' && boardConfig.partitionScheme) {
+          menuItem.children = boardConfig.partitionScheme;
+        }
+      });
+
+      return ESP32_CONFIG_MENU;
+    } catch (error) {
+      console.error('更新ESP32配置菜单失败:', error);
+      return null;
     }
   }
 }

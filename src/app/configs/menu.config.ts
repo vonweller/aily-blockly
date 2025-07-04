@@ -13,7 +13,8 @@ export interface IMenuItem {
   dev?: boolean;
   router?: string[]; // 在指定路由中显示
   children?: IMenuItem[],
-  check?:boolean
+  check?: boolean,
+  key?: string; // 用于标识编译和上传配置
 }
 
 export let HEADER_BTNS: IMenuItem[][] = [

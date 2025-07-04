@@ -35,6 +35,8 @@ export class MenuComponent {
 
   @Output() itemClickEvent = new EventEmitter();
 
+  @Output() subItemClickEvent = new EventEmitter();
+
   @Output() closeEvent = new EventEmitter();
 
   @Input() keywords = [];
@@ -168,5 +170,6 @@ export class MenuComponent {
       item['check'] = false
     });
     subItem['check'] = true
+    this.subItemClickEvent.emit(subItem);
   }
 }
