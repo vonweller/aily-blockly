@@ -144,8 +144,6 @@ export class HeaderComponent {
       let temp = this.projectService.currentBoardConfig['type'].split(':');
       let board = temp[temp.length - 1];
       let esp32config = await this.projectService.updateEsp32ConfigMenu(board);
-
-      
       portList0 = portList0.concat(esp32config)
       console.log('ESP32配置菜单:', esp32config);
     }
