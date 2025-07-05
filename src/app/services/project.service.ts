@@ -622,8 +622,7 @@ export class ProjectService {
             });
           }
         } else if (menuItem.name === 'ESP32.FLASH_MODE' && boardConfig.flashMode) {
-          console.log('boardConfig.flashMode:', boardConfig.flashMode);
-          
+          // console.log('boardConfig.flashMode:', boardConfig.flashMode);
           menuItem.children = boardConfig.flashMode;
           // 根据当前项目配置设置check状态
           if (currentProjectConfig.FlashMode) {
