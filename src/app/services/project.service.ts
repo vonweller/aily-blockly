@@ -9,6 +9,7 @@ import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
 import { CmdService } from './cmd.service';
 import { ConfigService } from './config.service';
+import { ESP32_CONFIG_MENU } from '../configs/esp32.config';
 
 interface ProjectPackageData {
   name: string;
@@ -464,6 +465,53 @@ export class ProjectService {
     return Object.keys(config).length > 0 ? config : null;
   }
 
+  // 比较FlashMode配置是否完全匹配
+  private compareFlashModeConfig(childBuild: any, currentBuild: any): boolean {
+    // FlashMode相关的配置项
+    const flashModeKeys = ['flash_mode', 'boot', 'boot_freq', 'flash_freq'];
+    
+    for (const key of flashModeKeys) {
+      // 如果子配置中有这个键，那么必须与当前配置匹配
+      if (childBuild.hasOwnProperty(key)) {
+        if (childBuild[key] !== currentBuild[key]) {
+          return false;
+        }
+      }
+    }
+    
+    return true;
+  }
+
+  // 通用的配置比较方法
+  private compareConfigs(childData: any, currentData: any, configKeys: string[]): boolean {
+    if (!childData || !currentData) {
+      return false;
+    }
+
+    // 检查build配置
+    if (childData.build && currentData.build) {
+      for (const key of configKeys) {
+        if (childData.build.hasOwnProperty(key)) {
+          if (childData.build[key] !== currentData.build[key]) {
+            return false;
+          }
+        }
+      }
+    }
+
+    // 检查upload配置
+    if (childData.upload && currentData.upload) {
+      const uploadKeys = Object.keys(childData.upload);
+      for (const key of uploadKeys) {
+        if (childData.upload[key] !== currentData.upload[key]) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   // 提取菜单选项
   private extractMenuOptions(boardConfig: { [key: string]: string }, menuType: string): any[] {
     const options: any[] = [];
@@ -532,7 +580,6 @@ export class ProjectService {
         options.push(option);
       }
     });
-
     return options;
   }
 
@@ -540,6 +587,8 @@ export class ProjectService {
   async updateEsp32ConfigMenu(boardName: string) {
     try {
       const boardConfig = await this.getEsp32BoardConfig(boardName);
+      console.log('获取到的ESP32开发板配置:', boardConfig);
+      
       if (!boardConfig) {
         console.warn(`无法获取开发板 "${boardName}" 的配置`);
         return null;
@@ -555,34 +604,40 @@ export class ProjectService {
       }
 
       // 导入ESP32_CONFIG_MENU，需要动态导入以避免循环依赖
-      const { ESP32_CONFIG_MENU } = await import('../configs/esp32.config');
+      // const { ESP32_CONFIG_MENU } = await import('../configs/esp32.config');
+      let ESP32_CONFIG_MENU_TEMP= JSON.parse(JSON.stringify(ESP32_CONFIG_MENU));
 
       // 更新菜单项
-      ESP32_CONFIG_MENU.forEach(menuItem => {
+      ESP32_CONFIG_MENU_TEMP.forEach(menuItem => {
         if (menuItem.name === 'ESP32.UPLOAD_SPEED' && boardConfig.uploadSpeed) {
           menuItem.children = boardConfig.uploadSpeed;
           // 根据当前项目配置设置check状态
           if (currentProjectConfig.UploadSpeed) {
             menuItem.children.forEach((child: any) => {
               child.check = false; // 先清空所有选中状态
-              // 检查当前配置是否匹配
-              if (child.data && child.data.upload && 
-                  currentProjectConfig.UploadSpeed.upload && 
-                  child.data.upload.speed === currentProjectConfig.UploadSpeed.upload.speed) {
+              // 使用通用比较方法检查当前配置是否匹配
+              if (this.compareConfigs(child.data, currentProjectConfig.UploadSpeed, ['speed'])) {
                 child.check = true;
               }
             });
           }
         } else if (menuItem.name === 'ESP32.FLASH_MODE' && boardConfig.flashMode) {
+          console.log('boardConfig.flashMode:', boardConfig.flashMode);
+          
           menuItem.children = boardConfig.flashMode;
           // 根据当前项目配置设置check状态
           if (currentProjectConfig.FlashMode) {
             menuItem.children.forEach((child: any) => {
               child.check = false;
-              if (child.data && child.data.build && 
-                  currentProjectConfig.FlashMode.build && 
-                  child.data.build.flash_mode === currentProjectConfig.FlashMode.build.flash_mode) {
-                child.check = true;
+              if (child.data && child.data.build && currentProjectConfig.FlashMode.build) {
+                // 检查FlashMode的所有相关配置项是否完全匹配
+                const childBuild = child.data.build;
+                const currentBuild = currentProjectConfig.FlashMode.build;
+                
+                const isMatched = this.compareFlashModeConfig(childBuild, currentBuild);
+                if (isMatched) {
+                  child.check = true;
+                }
               }
             });
           }
@@ -592,9 +647,7 @@ export class ProjectService {
           if (currentProjectConfig.FlashSize) {
             menuItem.children.forEach((child: any) => {
               child.check = false;
-              if (child.data && child.data.build && 
-                  currentProjectConfig.FlashSize.build && 
-                  child.data.build.flash_size === currentProjectConfig.FlashSize.build.flash_size) {
+              if (this.compareConfigs(child.data, currentProjectConfig.FlashSize, ['flash_size'])) {
                 child.check = true;
               }
             });
@@ -605,17 +658,14 @@ export class ProjectService {
           if (currentProjectConfig.PartitionScheme) {
             menuItem.children.forEach((child: any) => {
               child.check = false;
-              if (child.data && child.data.build && 
-                  currentProjectConfig.PartitionScheme.build && 
-                  child.data.build.partitions === currentProjectConfig.PartitionScheme.build.partitions) {
+              if (this.compareConfigs(child.data, currentProjectConfig.PartitionScheme, ['partitions', 'maximum_size'])) {
                 child.check = true;
               }
             });
           }
         }
       });
-
-      return ESP32_CONFIG_MENU;
+      return ESP32_CONFIG_MENU_TEMP;
     } catch (error) {
       console.error('更新ESP32配置菜单失败:', error);
       return null;
