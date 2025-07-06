@@ -169,13 +169,13 @@ export let HEADER_MENU: IMenuItem[] = [
   {
     name: 'MENU.ABOUT',
     action: 'browser-open',
-    data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },
+    data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6' },
     icon: 'fa-light fa-globe-pointer',
   },
   {
     name: 'MENU.GITHUB',
     action: 'browser-open',
-    data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/ailyProject/aily-blockly' },
+    data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6' },
     icon: 'fa-brands fa-github-alt',
   },
   {
