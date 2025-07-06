@@ -49,8 +49,11 @@ $header-inner-height: 38px;
 
   .project-box {
     position: absolute;
-    width: 10vw;
-    left: 45vw;
+    width: 20vw;
+    left: 40vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .toolbox {

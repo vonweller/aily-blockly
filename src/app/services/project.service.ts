@@ -29,7 +29,7 @@ export class ProjectService {
 
   stateSubject = new BehaviorSubject<'default' | 'loading' | 'loaded' | 'saving' | 'saved' | 'error'>('default');
   currentPackageData: ProjectPackageData = {
-    name: 'aily blockly',
+    name: 'AI-Blockly-QQ529538187',
   };
 
   projectRootPath: string;
@@ -232,7 +232,7 @@ export class ProjectService {
   async close() {
     this.currentProjectPath = '';
     this.currentPackageData = {
-      name: 'aily blockly',
+      name: 'AIBlockly-QQ529538187',
     };
     this.stateSubject.next('default');
     this.uiService.closeTerminal();

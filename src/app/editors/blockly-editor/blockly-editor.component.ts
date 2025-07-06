@@ -64,7 +64,7 @@ export class BlocklyEditorComponent {
   }
 
   ngOnDestroy(): void {
-    this.electronService.setTitle('aily blockly');
+    this.electronService.setTitle('AI-Blockly-QQ529538187');
     this.blocklyService.reset();
   }
 
@@ -72,7 +72,7 @@ export class BlocklyEditorComponent {
     await new Promise(resolve => setTimeout(resolve, 100));
     // 加载项目package.json
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
-    this.electronService.setTitle(`aily blockly - ${packageJson.name}`);
+    this.electronService.setTitle(`AI-Blockly-QQ529538187 - ${packageJson.name}`);
     this.projectService.currentPackageData = packageJson;
     // 添加到最近打开的项目
     this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
