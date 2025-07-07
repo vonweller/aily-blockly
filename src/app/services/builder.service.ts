@@ -319,11 +319,17 @@ export class BuilderService {
         let lastBuildText = '';
         let bufferData = '';
         let completeLines = '';
+        let lastStdErr = '';
+        let isBuildText = false;
 
         this.cmdService.run(compileCommand, null, false).subscribe({
           next: (output: CmdOutput) => {
             console.log('编译命令输出:', output);
             this.streamId = output.streamId;
+
+            if (!this.isErrored && output.type == 'stderr') {
+              lastStdErr = output.data || ""
+            }
 
             if (output.data) {
               const data = output.data;
@@ -349,22 +355,30 @@ export class BuilderService {
                   if (/error:|error during build:|failed|fatal/i.test(trimmedLine)) {
                     console.error("检测到编译错误:", trimmedLine);
                     // 提取更有用的错误信息，避免过长
-                    const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
-                    const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
-                    this.handleCompileError(errorText);
-                    // return;
-                  }
-
-                  if (this.isErrored) {
-                    this.logService.update({ "detail": line, "state": "error" });
+                    // const errorMatch = trimmedLine.match(/error:(.+?)($|(\s+at\s+))/i);
+                    // const errorText = errorMatch ? errorMatch[1].trim() : trimmedLine;
+                    // this.handleCompileError(errorText);
+                    this.isErrored = true;
                     return;
                   }
+
+                  if (output.type === 'stderr') {
+                    return; // 如果是stderr输出，则不处理
+                  }
+
+                  // if (this.isErrored) {
+                  //   // this.logService.update({ "detail": line, "state": "error" });
+                  //   return;
+                  // }
 
                   // 提取构建文本
                   if (trimmedLine.startsWith('BuildText:')) {
                     const lineContent = trimmedLine.replace('BuildText:', '').trim();
                     const buildText = lineContent.split(/[\n\r]/)[0];
                     lastBuildText = buildText;
+                    isBuildText = true;
+                  } else {
+                    isBuildText = false;
                   }
 
                   // 提取进度信息
@@ -405,7 +419,7 @@ export class BuilderService {
                     this.buildCompleted = true;
                   }
 
-                  if (!isProgress) {
+                  if (!isProgress && !isBuildText) {
                     // 如果不是进度信息，则直接更新日志
                     this.logService.update({ "detail": trimmedLine, "state": "doing" });
                   }
@@ -428,12 +442,13 @@ export class BuilderService {
             if (this.isErrored) {
               console.error('编译过程中发生错误，编译未完成');
               this.noticeService.update({
-                title: "编译",
+                title: "编译失败",
                 text: '编译失败',
-                detail: '编译过程中发生错误，请查看日志',
+                detail: lastStdErr,
                 state: 'error',
                 setTimeout: 55000
               });
+              // this.logService.update({ title: "编译失败", detail: lastStdErr, state: 'error' });
               reject({ state: 'error', text: '编译失败' });
             } else if (this.buildCompleted) {
               console.log('编译命令执行完成');
