@@ -8,6 +8,7 @@ import { NoticeService } from '../services/notice.service';
 import { CmdOutput, CmdService } from './cmd.service';
 import { NpmService } from './npm.service';
 import { LogService } from './log.service';
+import { ConfigService } from './config.service';
 
 @Injectable({
   providedIn: 'root'
@@ -22,15 +23,13 @@ export class BuilderService {
     private noticeService: NoticeService,
     private logService: LogService,
     private npmService: NpmService,
+    private configService: ConfigService,
   ) { }
 
   private buildInProgress = false;
   private streamId: string | null = null;
   private buildCompleted = false;
   private isErrored = false; // 标识是否为错误状态
-
-  debug = false;
-
 
   currentProjectPath = "";
   lastCode = "";
@@ -180,7 +179,7 @@ export class BuilderService {
               let targetPath = `${librariesPath}/${targetName}`;
 
               if (window['path'].isExists(targetPath)) {
-                if (this.debug) {
+                if (this.configService.data.devmode || false) {
                   await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
                 } else {
                   continue
@@ -206,7 +205,7 @@ export class BuilderService {
 
                     // Delete target directory if it exists
                     if (window['path'].isExists(targetPath)) {
-                      if (this.debug) {
+                      if (this.configService.data.devmode || false) {
                         await this.cmdService.runAsync(`Remove-Item -Path "${targetPath}" -Recurse -Force`);
                       } else {
                         // 如果不是debug模式，则跳过删除
