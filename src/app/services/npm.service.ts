@@ -4,6 +4,8 @@ import { ElectronService } from './electron.service';
 import { ConfigService } from './config.service';
 import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
+import { ProjectService } from './project.service';
+import { CmdService } from './cmd.service';
 
 @Injectable({
   providedIn: 'root'
@@ -14,6 +16,8 @@ export class NpmService {
     private electronService: ElectronService,
     private configService: ConfigService,
     private uiService: UiService,
+    private prjService: ProjectService,
+    private cmdService: CmdService
   ) { }
 
   isInstalling = false;
@@ -39,14 +43,49 @@ export class NpmService {
           console.log("packagePath: ", packagePath);
           const packageJson = JSON.parse(window['fs'].readFileSync(packagePath));
           await this.installBoardDependencies(packageJson)
+        } else if (subAction === 'install-tool') {
+          let tool = subData;
+          if (typeof (tool) === 'string') {
+            tool = JSON.parse(tool);
+          }
+          await this.installTool(tool);
+        } else if (subAction === 'install-sdk') {
+          let sdk = subData;
+          if (typeof (sdk) === 'string') {
+            sdk = JSON.parse(sdk);
+          }
+          await this.installSDK(sdk);
+        } else if (subAction === 'install-compiler') {
+          let compiler = subData;
+          if (typeof (compiler) === 'string') {
+            compiler = JSON.parse(compiler);
+          }
+          await this.installCompiler(compiler);
         } else if (subAction === 'uninstall-board') {
           let board = subData;
           if (typeof (board) === 'string') {
             board = JSON.parse(board);
           }
-          const packageJson = await this.uninstallBoard(board);
-          // 卸载依赖
-          await this.uninstallBoardDependencies(board.name, packageJson);
+          await this.uninstallBoard(board);
+        } else if (subAction === 'uninstall-tool') {
+          let tool = subData;
+          if (typeof (tool) === 'string') {
+            tool = JSON.parse(tool);
+          }
+
+          await this.uninstallTool(tool);
+        } else if (subAction === 'uninstall-sdk') {
+          let sdk = subData;
+          if (typeof (sdk) === 'string') {
+            sdk = JSON.parse(sdk);
+          }
+          await this.uninstallSDK(sdk);
+        } else if (subAction === 'uninstall-compiler') {
+          let compiler = subData;
+          if (typeof (compiler) === 'string') {
+            compiler = JSON.parse(compiler);
+          }
+          await this.uninstallCompiler(compiler);
         }
 
         console.log("messageId: ", message.messageId);
@@ -84,12 +123,20 @@ export class NpmService {
     return `${appDataPath}/node_modules/${board.name}/template/package.json`;
   }
 
+  async installBoardDeps() {
+    const boardPackageJson = await this.prjService.getBoardPackageJson() || {};
+    console.log("boardPackageJson: ", boardPackageJson);
+    await this.installBoardDependencies(boardPackageJson);
+  }
+
   // 安装开发板依赖
   async installBoardDependencies(packageJson: any) {
     try {
       this.isInstalling = true;
       const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
       const boardDependencies = packageJson.boardDependencies || {};
+
+      console.log("boardDependencies: ", boardDependencies);
 
       for (const [key, version] of Object.entries(boardDependencies)) {
         const depPath = `${appDataPath}/node_modules/${key}`;
@@ -242,6 +289,101 @@ export class NpmService {
     return packageJson;
   }
 
+  // 通用安装方法
+  private async installPackage(packageInfo: any, type: string, version?: string) {
+    const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+
+    if (!packageInfo || !packageInfo.name) {
+      throw new Error(`${type}名称不能为空`);
+    }
+
+    const packageName = version ? `${packageInfo.name}@${version}` : packageInfo.name;
+    const cmd = `npm install ${packageName} --prefix "${appDataPath}"`;
+
+    this.uiService.updateFooterState({ state: 'doing', text: `正在安装${packageInfo.name}...`, timeout: 300000 });
+
+    try {
+      // // 添加超时保护
+      // await Promise.race([
+      //   window['npm'].run({ cmd: cmd }),
+      //   new Promise((_, reject) =>
+      //     setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
+      //   )
+      // ]);
+
+      await this.cmdService.runAsync(cmd, appDataPath);
+
+      this.uiService.updateFooterState({ state: 'done', text: `${packageInfo.name}安装完成` });
+    } catch (error) {
+      this.uiService.updateFooterState({ state: 'error', text: `${packageInfo.name}安装失败` });
+      throw error;
+    }
+  }
+
+  // 安装工具
+  async installTool(tool: any) {
+    await this.installPackage(tool, '工具');
+  }
+
+  // 安装SDK
+  async installSDK(sdk: any) {
+    await this.installPackage(sdk, 'SDK');
+  }
+
+  // 安装编译器
+  async installCompiler(compiler: any) {
+    await this.installPackage(compiler, '编译器');
+  }
+
+  // 通用卸载方法
+  private async uninstallPackage(packageInfo: any, type: string) {
+    const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+
+    if (!packageInfo || !packageInfo.name) {
+      throw new Error(`${type}名称不能为空`);
+    }
+
+    const packageNodeModulesPath = `${appDataPath}/node_modules/${packageInfo.name}`;
+    if (!window['path'].isExists(packageNodeModulesPath)) {
+      console.log(`${type} ${packageInfo.name} 未安装，跳过卸载`);
+      return;
+    }
+
+    // 尝试执行包的清理脚本
+    // let cmd = `cd /d "${packageNodeModulesPath}" && npm run uninstall`;
+    // try {
+    //   await window['npm'].run({ cmd: cmd });
+    // } catch (error) {
+    //   console.log(`${type}执行清理失败:`, error);
+    // }
+
+    this.uiService.updateFooterState({ state: 'doing', text: `正在卸载${packageInfo.name}...`, timeout: 300000 });
+
+    let cmd = `npm run uninstall`
+    console.log("PackageNodeModulesPath: ", packageNodeModulesPath);
+    await this.cmdService.runAsync(cmd, packageNodeModulesPath)
+
+    // 卸载包
+    cmd = `npm uninstall ${packageInfo.name} --prefix "${appDataPath}"`;
+    // await window['npm'].run({ cmd: cmd });
+    await this.cmdService.runAsync(cmd, appDataPath);
+    this.uiService.updateFooterState({ state: 'done', text: `${packageInfo.name}卸载完成` });
+  }
+
+  // 卸载SDK
+  async uninstallSDK(sdk: any) {
+    await this.uninstallPackage(sdk, 'SDK');
+  }
+
+  // 卸载工具
+  async uninstallTool(tool: any) {
+    await this.uninstallPackage(tool, '工具');
+  }
+
+  // 卸载编译器
+  async uninstallCompiler(compiler: any) {
+    await this.uninstallPackage(compiler, '编译器');
+  }
 
   // 指定获取packageName的可用版本列表
   async getPackageVersionList(packageName: string): Promise<string[]> {

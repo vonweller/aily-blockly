@@ -383,7 +383,7 @@ export class BlocklyComponent {
         this.blocklyService.codeSubject.next(code);
       } catch (error) {
         // 仅在开发环境下打印错误，避免用户看到错误
-        console.debug('代码生成时出现错误，可能是某些块尚未注册：', error);
+        console.error('代码生成时出现错误，可能是某些块尚未注册：', error);
         // 错误发生时不更新代码
       }
     }, 500); // 500毫秒防抖延迟

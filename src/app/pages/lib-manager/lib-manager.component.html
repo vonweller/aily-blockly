@@ -33,7 +33,7 @@
             }
             <div class="name ellipsis">{{lib.nickname}}
                 @if(!lib.tested){
-                <span class="error">(未测试通过)</span>
+                <span class="error">(未测试)</span>
                 }@else{
                 <span>{{lib.author}}</span>
                 }
@@ -50,7 +50,8 @@
             </div>
             <div class="footer">
                 <div class="version">
-                    <nz-select [(ngModel)]="lib.version" [nzSize]="'small'" (nzOnSearch)="getVerisons(lib)">
+                    {{'version: '+lib.version}}
+                    <!-- <nz-select [(ngModel)]="lib.version" [nzSize]="'small'" (nzOnSearch)="getVerisons(lib)">
                         @if (!loading) {
                         @for (version of lib.versionList; track version) {
                         <nz-option [nzValue]="version" [nzLabel]="version"></nz-option>
@@ -62,7 +63,7 @@
                             </div>
                         </nz-option>
                         }
-                    </nz-select>
+                    </nz-select> -->
                 </div>
                 <div class="btns">
                     @if (lib.example) {

@@ -11,6 +11,7 @@ import { CommonModule } from '@angular/common';
 import { LogService } from '../../services/log.service';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { AnsiPipe } from './ansi.pipe';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-terminal',
@@ -45,7 +46,8 @@ export class TerminalComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private terminalService: TerminalService,
-    private logService: LogService
+    private logService: LogService,
+    private message: NzMessageService
   ) { }
 
   close() {
@@ -108,9 +110,9 @@ export class TerminalComponent {
     setTimeout(() => this.scrollToBottom(), 100);
     this.logService.stateSubject.subscribe((opts) => {
       console.log('logService stateSubject', opts);
-      
+
       console.log(opts.timestamp);
-      
+
       setTimeout(() => this.scrollToBottom(), 100);
     })
   }
@@ -202,6 +204,17 @@ export class TerminalComponent {
 
   view(item) {
 
+  }
+
+  // 双击复制日志内容到剪切板
+  async copyLogItemToClipboard(item: any, event?: Event) {
+    try {
+      const logContent = `${item.detail}`;
+      await navigator.clipboard.writeText(logContent);
+      this.message.success('日志内容已复制到剪切板');
+    } catch (err) {
+      console.error('复制到剪切板失败:', err);
+    }
   }
 
   private scrollToBottom(): void {

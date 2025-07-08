@@ -235,19 +235,11 @@ function createWindow() {
   // 当页面准备好显示时，再显示窗口
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-
-    // 注册ipc handlers
-    registerUpdaterHandlers(mainWindow);
-    registerTerminalHandlers(mainWindow);
-    registerWindowHandlers(mainWindow);
-    registerNpmHandlers(mainWindow);
-    registerCmdHandlers(mainWindow);
-    registerMCPHandlers(mainWindow);
   });
 
   // 根据是否有待打开的项目路径或路由参数来决定加载的页面
   let targetUrl = null;
-  
+
   if (pendingFileToOpen) {
     const routePath = `main/blockly-editor?path=${encodeURIComponent(pendingFileToOpen)}`;
     console.log('Loading with project path:', routePath);
@@ -256,7 +248,7 @@ function createWindow() {
   } else if (pendingRoute) {
     // 构建路由URL
     let routePath = pendingRoute;
-    
+
     // 如果有查询参数，添加到路由中
     if (pendingQueryParams) {
       const queryString = new URLSearchParams();
@@ -265,7 +257,7 @@ function createWindow() {
       });
       routePath += (routePath.includes('?') ? '&' : '?') + queryString.toString();
     }
-    
+
     console.log('Loading with custom route:', routePath);
     targetUrl = `#/${routePath}`;
     pendingRoute = null;
@@ -300,15 +292,12 @@ function createWindow() {
   }
 
   // 注册ipc handlers
-  // setTimeout(() => {
-  //   registerTerminalHandlers(mainWindow);
-  //   registerWindowHandlers(mainWindow);
-  //   registerNpmHandlers(mainWindow);
-  //   registerUpdaterHandlers(mainWindow);
-  //   registerCmdHandlers(mainWindow);
-  //   registerMCPHandlers(mainWindow);
-  // }, 500);
-
+  registerUpdaterHandlers(mainWindow);
+  registerTerminalHandlers(mainWindow);
+  registerWindowHandlers(mainWindow);
+  registerNpmHandlers(mainWindow);
+  registerCmdHandlers(mainWindow);
+  registerMCPHandlers(mainWindow);
 }
 
 app.on("ready", () => {
@@ -401,44 +390,44 @@ ipcMain.handle("env-get", (event, key) => {
 ipcMain.handle("open-new-instance", async (event, data) => {
   try {
     const { route, queryParams } = data || {};
-    
+
     // 构建命令行参数
     const args = [];
-    
+
     // 如果有路由参数，将其作为环境变量传递
     if (route) {
       args.push(`--route=${route}`);
     }
-    
+
     // 如果有查询参数，将其序列化后传递
     if (queryParams) {
       args.push(`--query=${encodeURIComponent(JSON.stringify(queryParams))}`);
     }
-    
+
     // 启动新实例
     const { spawn } = require('child_process');
     const execPath = process.execPath;
     const appPath = __dirname;
-    
+
     // 构建完整的启动参数
     const spawnArgs = [appPath, ...args];
-    
+
     console.log('启动新实例:', execPath, spawnArgs);
-    
+
     const child = spawn(execPath, spawnArgs, {
       detached: true,
       stdio: 'ignore'
     });
-    
+
     // 分离子进程，使其独立运行
     child.unref();
-    
+
     return {
       success: true,
       pid: child.pid,
       message: '新实例已启动'
     };
-    
+
   } catch (error) {
     console.error('启动新实例失败:', error);
     return {

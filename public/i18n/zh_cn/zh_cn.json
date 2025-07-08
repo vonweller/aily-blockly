@@ -25,6 +25,12 @@
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新"
     },
+    "ESP32": {
+        "UPLOAD_SPEED": "烧录速度",
+        "FLASH_MODE": "闪存模式",
+        "FLASH_SIZE": "闪存大小",
+        "PARTITION_SCHEME": "分区方案"
+    },
     "GUIDE": {
         "START": "开始",
         "RECENTLY": "最近",
@@ -48,7 +54,7 @@
             "THEME": "主题设置",
             "COMPILATION": "编译设置",
             "REPOSITORY": "仓库设置",
-            "BOARD_MANAGEMENT": "开发板管理",
+            "DEPENDENCIES": "全局依赖",
             "MCP": "MCP",
             "DEVMODE": "开发者模式"
         },

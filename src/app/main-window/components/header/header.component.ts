@@ -16,8 +16,7 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
 import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
-import { NavigationEnd, Router } from '@angular/router';
-import { filter } from 'rxjs/operators';
+import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 
 @Component({
@@ -107,7 +106,7 @@ export class HeaderComponent {
   }
 
   showPortList = false;
-  portList: PortItem[] = []
+  configList: PortItem[] = []
   boardKeywords = []; // 这个用来高亮显示正确开发板，如['arduino uno']，则端口菜单中如有包含'arduino uno'的串口则高亮显示
   openPortList() {
     let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3', '');
@@ -128,10 +127,9 @@ export class HeaderComponent {
 
   async getDevicePortList() {
 
-    let portList0 = await this.serialService.getSerialPorts();
+    let portList0: IMenuItem[] = await this.serialService.getSerialPorts();
     if (portList0.length == 0) {
-      // this.message.warning('没有找到可用的设备，请检查连接');
-      this.portList = [
+      portList0 = [
         {
           name: 'Device not found',
           text: '',
@@ -140,9 +138,17 @@ export class HeaderComponent {
           disabled: true,
         }
       ];
-    } else {
-      this.portList = portList0;
     }
+    // 添加ESP32相关配置选项
+    if (this.projectService.currentBoardConfig['core'].indexOf('esp32') > -1) {
+      let temp = this.projectService.currentBoardConfig['type'].split(':');
+      let board = temp[temp.length - 1];
+      let esp32config = await this.projectService.updateEsp32ConfigMenu(board);
+      if (esp32config) {
+        portList0 = portList0.concat(esp32config)
+      }
+    }
+    this.configList = portList0;
     this.cd.detectChanges();
   }
 
@@ -459,6 +465,16 @@ export class HeaderComponent {
         return true;
       }
     }
+  }
+
+  // 选择子菜单项-修改编译上传配置
+  async selectSubItem(subItem: IMenuItem) {
+    console.log('选择子菜单项:', subItem);
+    let packageJson = await this.projectService.getPackageJson();
+    packageJson['projectConfig'] = packageJson['projectConfig'] || {};
+    packageJson['projectConfig'][subItem.key] = subItem.data;
+    // 更新项目配置
+    this.projectService.setPackageJson(packageJson);
   }
 }
 

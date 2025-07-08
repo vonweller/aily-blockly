@@ -197,6 +197,43 @@ export class UploaderService {
         let lastProgress = 0;
 
         let errorText = '';
+
+        // 获取和解析项目编译参数
+        let buildProperties = '';
+        try {
+          const projectConfig = await this.projectService.getProjectConfig();
+          if (projectConfig) {
+            const buildPropertyParams: string[] = [];
+
+            // 遍历配置对象，解析编译参数
+            Object.values(projectConfig).forEach((configSection: any) => {
+              if (configSection && typeof configSection === 'object') {
+                // 遍历每个配置段（如 build、upload 等）
+                Object.entries(configSection).forEach(([sectionKey, sectionValue]: [string, any]) => {
+                  // 排除upload等非编译相关的配置段
+                  if (sectionKey == 'build') return;
+                  if (sectionValue && typeof sectionValue === 'object') {
+                    // 遍历具体的配置项
+                    Object.entries(sectionValue).forEach(([key, value]: [string, any]) => {
+                      buildPropertyParams.push(`--upload-property ${sectionKey}.${key}=${value}`);
+                    });
+                  }
+                });
+              }
+            });
+
+            buildProperties = buildPropertyParams.join(' ');
+            if (buildProperties) {
+              buildProperties = ' ' + buildProperties; // 在前面添加空格
+            }
+          }
+        } catch (error) {
+          console.warn('获取项目配置失败:', error);
+        }
+
+        // 将buildProperties添加到compilerParam中
+        uploadParam += buildProperties;
+
         const uploadCmd = `arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --tools-path ${toolsPath} --verbose`;
 
         this.uploadInProgress = true;
