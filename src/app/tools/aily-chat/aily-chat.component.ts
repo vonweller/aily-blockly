@@ -247,18 +247,20 @@ Request to execute a CLI command on the system. Use this when you need to perfor
       description: `
         ## file_operations
     ### Description
-    执行文件和文件夹操作，包括创建、读取、编辑、删除文件或文件夹，以及检查文件是否存在。
+    执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，以及检查文件是否存在。
 
     ### Parameters
-    - operation: (required) 要执行的操作类型，可选值为：'list', 'read', 'create', 'edit', 'delete', 'exists'
-    - path: (required) 文件或文件夹的路径
+    - operation: (required) 要执行的操作类型，可选值为：'list', 'read', 'create', 'edit', 'delete', 'exists', 'rename'
+    - path: (required) 文件或文件夹的基础路径
+    - name: (可选) 文件或文件夹的名称，会与path结合构成完整路径
     - content: (可选) 当操作为'create'或'edit'时，需提供文件内容
-    - is_folder: (可选) 当操作为'create'、'delete'或'exists'时，指定目标是否为文件夹，默认为false
+    - is_folder: (可选) 当操作为'create'、'delete'、'exists'或'rename'时，指定目标是否为文件夹，默认为false
 
     ### Usage
     <file_operations>
     <operation>操作类型</operation>
     <path>文件或文件夹路径</path>
+    <name>文件或文件夹名称(可选)</name>
     <content>文件内容(可选)</content>
     <is_folder>是否为文件夹(可选，布尔值)</is_folder>
     </file_operations>
@@ -289,7 +291,15 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     <path>./package.json</path>
     </file_operations>
 
-    #### 创建文件
+    #### 使用路径和名称创建文件
+    <file_operations>
+    <operation>create</operation>
+    <path>./src</path>
+    <name>example.ts</name>
+    <content>console.log('Hello, World!');</content>
+    </file_operations>
+
+    #### 直接使用完整路径创建文件
     <file_operations>
     <operation>create</operation>
     <path>./src/example.ts</path>
@@ -300,6 +310,14 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     <file_operations>
     <operation>create</operation>
     <path>./new-folder</path>
+    <is_folder>true</is_folder>
+    </file_operations>
+
+    #### 使用路径和名称创建文件夹
+    <file_operations>
+    <operation>create</operation>
+    <path>./src</path>
+    <name>components</name>
     <is_folder>true</is_folder>
     </file_operations>
 
@@ -322,6 +340,19 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     <path>./old-folder</path>
     <is_folder>true</is_folder>
     </file_operations>
+
+    #### 重命名文件（实际是删除并创建备份）
+    <file_operations>
+    <operation>rename</operation>
+    <path>./src/old-file.ts</path>
+    </file_operations>
+
+    #### 重命名文件夹（实际是删除并创建备份）
+    <file_operations>
+    <operation>rename</operation>
+    <path>./old-folder</path>
+    <is_folder>true</is_folder>
+    </file_operations>
       `,
       input_schema: {
         type: 'object',
@@ -329,11 +360,15 @@ Request to execute a CLI command on the system. Use this when you need to perfor
           operation: { 
             type: 'string', 
             description: '要执行的操作类型',
-            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists']
+            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists', 'rename']
           },
           path: { 
             type: 'string', 
-            description: '文件或文件夹的路径'
+            description: '文件或文件夹的基础路径'
+          },
+          name: { 
+            type: 'string', 
+            description: '文件或文件夹的名称，会与path结合构成完整路径'
           },
           content: { 
             type: 'string', 
@@ -560,7 +595,15 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                         const projectPath = data.tool_args.cwd || this.prjPath;
                         
                         // Load the library into blockly
-                        await this.blocklyService.loadLibrary(libPackageName, projectPath);
+                        try {
+                          await this.blocklyService.loadLibrary(libPackageName, projectPath);
+                        } catch (e) {
+                          console.error('加载库失败:', e);
+                          toolResult = {
+                            is_error: true,
+                            content: `加载库失败: ${e.message}`
+                          };
+                        }
                       }
                     }
                   }

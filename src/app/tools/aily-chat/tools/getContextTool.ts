@@ -10,6 +10,7 @@ interface ProjectInfo {
     path: string;
     name?: string;
     rootFolder?: string;
+    opened?: boolean;
 }
 
 interface PlatformInfo {
@@ -75,7 +76,8 @@ async function getProjectInfo(projectService): Promise<ProjectInfo> {
         // Basic result with path
         const result: ProjectInfo = {
             path: currentProjectPath || '',
-            rootFolder: prjRootPath || ''
+            rootFolder: prjRootPath || '',
+            opened: !!currentProjectPath
         };
         
         // If current project path is empty, return early

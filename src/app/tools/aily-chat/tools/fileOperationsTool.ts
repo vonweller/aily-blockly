@@ -1,22 +1,42 @@
 import { connectionStrategies } from "@joint/core";
 import { ToolUseResult } from "./tools";
 
+
+// 路径处理示例
+function normalizePath(inputPath) {
+    // 将反斜杠转换为正斜杠，处理各种转义情况
+    return inputPath
+        .replace(/\\\\/g, '/')  // 处理双反斜杠
+        .replace(/\\/g, '/')   // 处理单反斜杠
+        .replace(/\/+/g, '/')  // 合并多个斜杠
+        .replace(/\/$/, '');   // 移除尾部斜杠
+}
+
+
 export async function fileOperationsTool(
     params: {
         operation: 'list' | 'read' | 'create' | 'edit' | 'delete' | 'exists' | 'rename';
         path: string;
+        name?: string;
         content?: string;
         is_folder?: boolean;
     }
 ): Promise<ToolUseResult> {
     try {
-        let { operation, path: filePath, content, is_folder = false } = params;
+        let { operation, path: basePath, name, content, is_folder = false } = params;
 
         // 处理路径转义和规范化
-        filePath = window['path'].normalize(window['path'].resolve(filePath));
+        basePath = normalizePath(basePath);
+
+        // 构建完整文件路径
+        let filePath = basePath;
+        if (name) {
+            filePath = window['path'].join(basePath, name);
+        }
+        console.log("Final filePath: ", filePath);
 
         let is_error = false;
-        
+
         switch (operation) {
             case 'list':
                 const files = await window['fs'].readDirSync(filePath);
@@ -33,28 +53,28 @@ export async function fileOperationsTool(
                     })
                 );
                 return { is_error, content: JSON.stringify(fileDetails, null, 2) };
-                
+
             case 'read':
                 const fileContent = await window['fs'].readFileSync(filePath, 'utf-8');
                 return { is_error, content: fileContent };
-                
+
             case 'create':
                 if (is_folder) {
                     await window['fs'].mkdirSync(filePath, { recursive: true });
                     return { is_error, content: `Folder created at: ${filePath}` };
                 } else {
-                    const dir = window['path'].basename(filePath);
+                    const dir = window['path'].dirname(filePath);
                     if (!window['fs'].existsSync(dir)) {
                         await window['fs'].mkdirSync(dir, { recursive: true });
                     }
                     await window['fs'].writeFileSync(filePath, content || '');
                     return { is_error, content: `File created at: ${filePath}` };
                 }
-                
+
             case 'edit':
                 await window['fs'].writeFileSync(filePath, content || '');
                 return { is_error, content: `File updated at: ${filePath}` };
-                
+
             case 'rename':
                 let backupPath;
 
@@ -63,16 +83,16 @@ export async function fileOperationsTool(
                     const dirName = window['path'].basename(filePath);
                     const parentDir = window['path'].dirname(filePath);
                     backupPath = window['path'].join(parentDir, `ZBAK_${dirName}`);
-                    
+
                     await window['fs'].mkdirSync(backupPath, { recursive: true });
-                    
+
                     // Copy directory contents recursively
                     async function copyDirRecursive(src, dest) {
                         const entries = await window['fs'].readDirSync(src);
                         for (const entry of entries) {
                             const srcPath = window['path'].join(src, entry.name);
                             const destPath = window['path'].join(dest, entry.name);
-                            
+
                             if (await window['fs'].isDirectory(srcPath)) {
                                 await window['fs'].mkdirSync(destPath, { recursive: true });
                                 await copyDirRecursive(srcPath, destPath);
@@ -82,7 +102,7 @@ export async function fileOperationsTool(
                             }
                         }
                     }
-                    
+
                     await copyDirRecursive(filePath, backupPath);
                     await window['fs'].rmdirSync(filePath, { recursive: true });
                 } else {
@@ -92,14 +112,14 @@ export async function fileOperationsTool(
                     const ext = window['path'].extname(filePath);
                     const baseFilename = filename.replace(ext, '');
                     backupPath = window['path'].join(dir, `ZBAK_${baseFilename}${ext}`);
-                    
+
                     const fileContent = await window['fs'].readFileSync(filePath, 'utf-8');
                     await window['fs'].writeFileSync(backupPath, fileContent);
                     await window['fs'].unlinkSync(filePath);
                 }
 
                 return { is_error, content: `Deleted ${is_folder ? 'folder' : 'file'} at: ${filePath} (backup at: ${backupPath})` };
-            
+
             case 'delete':
                 console.log(`Deleting ${is_folder ? 'folder' : 'file'} at: ${filePath}`);
                 if (is_folder) {
@@ -126,7 +146,7 @@ export async function fileOperationsTool(
                     }
                 }
                 return { is_error, content: exists.toString() };
-                
+
             default:
                 return { is_error: true, content: `Invalid operation: ${operation}` };
         }
