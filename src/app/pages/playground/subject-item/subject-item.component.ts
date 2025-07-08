@@ -51,14 +51,26 @@ export class SubjectItemComponent {
         // 如果数据已经加载，直接查找
         if (this.playgroundService.isLoaded) {
           this.exampleItem = this.playgroundService.findExampleByName(name);
+          this.initializeItemsLoadingState();
         } else {
           // 如果数据未加载，等待加载完成后查找
           this.playgroundService.loadExamplesList().then(() => {
             this.exampleItem = this.playgroundService.findExampleByName(name);
+            this.initializeItemsLoadingState();
           });
         }
       }
     });
+  }
+
+  private initializeItemsLoadingState() {
+    if (this.exampleItem && this.exampleItem.examples) {
+      this.exampleItem.examples.forEach(item => {
+        if (!item.hasOwnProperty('loading')) {
+          item.loading = false;
+        }
+      });
+    }
   }
 
   async installLib(lib, prefix) {
@@ -67,17 +79,34 @@ export class SubjectItemComponent {
 
 
   async loadExample(path) {
-    const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
-    const examplePath = `${appDataPath}/node_modules/${this.exampleItem.name}/${path}`;
-    const abiFilePath = `${examplePath}/project.abi`;
+    // 找到当前item
+    const currentItem = this.exampleItem?.examples?.find(item => item.path === path);
+    if (!currentItem) return;
 
-    if (!this.electronService.exists(examplePath) || !this.electronService.exists(abiFilePath)) {
-      await this.cmdService.runAsync(`npm install ${this.exampleItem.name} --prefix "${appDataPath}"`)
+    this.message.loading('正在加载示例');
+    currentItem.loading = true;
+    
+    try {
+      const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
+      const examplePath = `${appDataPath}/node_modules/${this.exampleItem.name}/${path}`;
+      const abiFilePath = `${examplePath}/project.abi`;
+
+      if (!this.electronService.exists(examplePath) || !this.electronService.exists(abiFilePath)) {
+        await this.cmdService.runAsync(`npm install ${this.exampleItem.name} --prefix "${appDataPath}"`)
+      }
+
+      const targetPath = `${this.projectService.projectRootPath}\\${path}`;
+      await this.cmdService.runAsync(`cp -r "${examplePath}" "${targetPath}"`);
+      this.projectService.projectOpen(targetPath);
+    } catch (error) {
+      this.message.error('示例加载失败');
+    } finally {
+      currentItem.loading = false;
     }
+  }
 
-    const targetPath = `${this.projectService.projectRootPath}\\${path}`;
-    await this.cmdService.runAsync(`cp -r "${examplePath}" "${targetPath}"`);
-    this.projectService.projectOpen(targetPath);
+  get hasAnyItemLoading() {
+    return this.exampleItem?.examples?.some(item => item.loading) || false;
   }
 
   openUrl(url = 'https://arduino.me') {
