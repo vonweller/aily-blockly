@@ -19,6 +19,7 @@ import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { Router, RouterModule } from '@angular/router';
 import { ConfigService } from '../services/config.service';
+import { UserComponent } from './components/user/user.component';
 
 @Component({
   selector: 'app-main-window',

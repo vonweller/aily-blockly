@@ -14,15 +14,22 @@ import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
-import { AuthDialogComponent } from '../auth-dialog/auth-dialog.component';
 import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
+import { UserComponent } from '../user/user.component';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, NzToolTipModule, MenuComponent, ActBtnComponent, TranslateModule],
+  imports: [
+    CommonModule,
+    NzToolTipModule,
+    MenuComponent,
+    ActBtnComponent,
+    UserComponent,
+    TranslateModule
+  ],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -289,17 +296,7 @@ export class HeaderComponent {
         }
         break;
       case 'user-auth':
-        this.modal.create({
-          nzTitle: null,
-          nzFooter: null,
-          nzClosable: null,
-          nzBodyStyle: {
-            padding: '0',
-          },
-          nzWidth: '400px',
-          nzContent: AuthDialogComponent,
-          nzData: {},
-        });
+
         break;
       default:
         console.log('未处理的操作:', item.action);
@@ -490,6 +487,9 @@ export class HeaderComponent {
     // 更新项目配置
     this.projectService.setPackageJson(packageJson);
   }
+
+  showUser = true;
+  
 }
 
 export interface RunState {
