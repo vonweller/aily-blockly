@@ -1,0 +1,113 @@
+<div class="prompt-box bborder">
+    <div class="header">
+        <div class="title">{{ isLogin ? '用户登录' : '用户注册' }}</div>
+        <div class="win-btns">
+            <div class="btn ccenter close" (click)="cancel()">
+                <i class="fa-light fa-xmark"></i>
+            </div>
+        </div>
+    </div>
+    <div class="content">
+        <!-- 登录状态显示 -->
+        <div *ngIf="isLoggedIn" class="user-info">
+            <div class="avatar">
+                <i class="fa-solid fa-user"></i>
+            </div>
+            <div class="user-details">
+                <div class="username">{{ currentUser?.username }}</div>
+                <div class="email">{{ currentUser?.email }}</div>
+            </div>
+            <div class="logout-btn">
+                <button nz-button [nzSize]="'small'" nzType="default" (click)="logout()">退出登录</button>
+            </div>
+        </div>
+
+        <!-- 登录/注册表单 -->
+        <div *ngIf="!isLoggedIn" class="auth-form">
+            <form [formGroup]="authForm" (ngSubmit)="onSubmit()">
+                <!-- 用户名输入 -->
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input 
+                        nz-input 
+                        type="text" 
+                        formControlName="username" 
+                        placeholder="请输入用户名"
+                        [class.error]="authForm.get('username')?.invalid && authForm.get('username')?.touched">
+                    <div *ngIf="authForm.get('username')?.invalid && authForm.get('username')?.touched" class="error-message">
+                        用户名不能为空
+                    </div>
+                </div>
+
+                <!-- 邮箱输入（注册时显示） -->
+                <div *ngIf="!isLogin" class="form-group">
+                    <label>邮箱</label>
+                    <input 
+                        nz-input 
+                        type="email" 
+                        formControlName="email" 
+                        placeholder="请输入邮箱"
+                        [class.error]="authForm.get('email')?.invalid && authForm.get('email')?.touched">
+                    <div *ngIf="authForm.get('email')?.invalid && authForm.get('email')?.touched" class="error-message">
+                        请输入有效的邮箱地址
+                    </div>
+                </div>
+
+                <!-- 密码输入 -->
+                <div class="form-group">
+                    <label>密码</label>
+                    <input 
+                        nz-input 
+                        [type]="showPassword ? 'text' : 'password'" 
+                        formControlName="password" 
+                        placeholder="请输入密码"
+                        [class.error]="authForm.get('password')?.invalid && authForm.get('password')?.touched">
+                    <div class="password-toggle" (click)="togglePassword()">
+                        <i [class]="showPassword ? 'fa-light fa-eye-slash' : 'fa-light fa-eye'"></i>
+                    </div>
+                    <div *ngIf="authForm.get('password')?.invalid && authForm.get('password')?.touched" class="error-message">
+                        密码长度至少6位
+                    </div>
+                </div>
+
+                <!-- 确认密码（注册时显示） -->
+                <div *ngIf="!isLogin" class="form-group">
+                    <label>确认密码</label>
+                    <input 
+                        nz-input 
+                        type="password" 
+                        formControlName="confirmPassword" 
+                        placeholder="请再次输入密码"
+                        [class.error]="authForm.get('confirmPassword')?.invalid && authForm.get('confirmPassword')?.touched">
+                    <div *ngIf="authForm.get('confirmPassword')?.invalid && authForm.get('confirmPassword')?.touched" class="error-message">
+                        两次密码输入不一致
+                    </div>
+                </div>
+
+                <!-- 错误信息显示 -->
+                <div *ngIf="errorMessage" class="error-banner">
+                    {{ errorMessage }}
+                </div>
+
+                <!-- 切换登录/注册 -->
+                <div class="switch-mode">
+                    <span *ngIf="isLogin">还没有账号？</span>
+                    <span *ngIf="!isLogin">已有账号？</span>
+                    <a (click)="toggleMode()">{{ isLogin ? '立即注册' : '立即登录' }}</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="footer">
+            <button *ngIf="!isLoggedIn" 
+                    nz-button 
+                    [nzSize]="'small'" 
+                    nzType="primary" 
+                    [nzLoading]="isLoading"
+                    [disabled]="authForm.invalid"
+                    (click)="onSubmit()">
+                {{ isLogin ? '登录' : '注册' }}
+            </button>
+        </div>
+    </div>
+</div>

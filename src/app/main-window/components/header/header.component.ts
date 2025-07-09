@@ -14,6 +14,7 @@ import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
+import { AuthDialogComponent } from '../auth-dialog/auth-dialog.component';
 import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
@@ -286,6 +287,19 @@ export class HeaderComponent {
         } else {
           this.router.navigate(['/main/playground']);
         }
+        break;
+      case 'user-auth':
+        this.modal.create({
+          nzTitle: null,
+          nzFooter: null,
+          nzClosable: null,
+          nzBodyStyle: {
+            padding: '0',
+          },
+          nzWidth: '400px',
+          nzContent: AuthDialogComponent,
+          nzData: {},
+        });
         break;
       default:
         console.log('未处理的操作:', item.action);

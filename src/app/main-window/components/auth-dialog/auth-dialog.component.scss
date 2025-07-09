@@ -1,0 +1,183 @@
+@use "../update-dialog/update-dialog.component.scss";
+
+.content {
+  padding: 20px;
+  min-height: 200px;
+}
+
+// 用户信息显示区域
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 20px 0;
+  border-bottom: 1px solid #3c3c3c;
+  margin-bottom: 20px;
+
+  .avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #404040;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 24px;
+  }
+
+  .user-details {
+    flex: 1;
+
+    .username {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+
+    .email {
+      font-size: 14px;
+      color: #999;
+    }
+  }
+
+  .logout-btn {
+    button {
+      background: #404040;
+      border-color: #404040;
+      color: #fff;
+
+      &:hover {
+        background: #4a4a4a;
+        border-color: #4a4a4a;
+      }
+    }
+  }
+}
+
+// 表单样式
+.auth-form {
+  .form-group {
+    margin-bottom: 20px;
+    position: relative;
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    input {
+      width: 100%;
+      padding: 5px 10px;
+      background: #3a3c3f;
+      border: 1px solid #4a4a4a;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 14px;
+
+      &::placeholder {
+        color: #999;
+      }
+
+      &:focus {
+        border-color: #1890ff;
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+      }
+
+      &.error {
+        border-color: #ff4d4f;
+      }
+    }
+
+    .password-toggle {
+      position: absolute;
+      right: 12px;
+      top: 37px;
+      cursor: pointer;
+      color: #999;
+      font-size: 14px;
+
+      &:hover {
+        color: #fff;
+      }
+    }
+
+    .error-message {
+      margin-top: 6px;
+      color: #ff4d4f;
+      font-size: 12px;
+    }
+  }
+
+  .error-banner {
+    background: #ff4d4f;
+    color: #fff;
+    padding: 10px 12px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    font-size: 14px;
+  }
+
+  .switch-mode {
+    text-align: center;
+    margin-top: 20px;
+    color: #999;
+    font-size: 14px;
+
+    a {
+      color: #1890ff;
+      cursor: pointer;
+      margin-left: 5px;
+
+      &:hover {
+        color: #40a9ff;
+      }
+    }
+  }
+}
+
+// 底部按钮区域
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #3c3c3c;
+
+  button {
+    min-width: 80px;
+
+    &.ant-btn-default {
+      background: #404040;
+      border-color: #404040;
+      color: #fff;
+
+      &:hover {
+        background: #4a4a4a;
+        border-color: #4a4a4a;
+      }
+    }
+
+    &.ant-btn-primary {
+      background: #1890ff;
+      border-color: #1890ff;
+
+      &:hover {
+        background: #40a9ff;
+        border-color: #40a9ff;
+      }
+
+      &:disabled {
+        background: #404040;
+        border-color: #404040;
+        color: #666;
+      }
+    }
+  }
+}
