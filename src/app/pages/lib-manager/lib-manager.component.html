@@ -27,16 +27,17 @@
     </div>
     <div class="lib-list">
         @for( lib of libraryList;track lib.name ) {
-        <div class="lib-item">
-            @if(lib.tested){
+        <div class="lib-item" [nz-tooltip] [nzTooltipTitle]="lib.tested?'':'该库未通过测试，可能存在问题'">
+            <!-- @if(lib.tested){
             <div class="state"></div>
-            }
+            } -->
             <div class="name ellipsis">{{lib.nickname}}
-                @if(!lib.tested){
-                <span class="error">(未测试)</span>
-                }@else{
-                <span>{{lib.author}}</span>
+                @if(lib.tested){
+                <i class="fa-regular fa-badge-check"></i>
+                }@else {
+                <i class="fa-regular fa-circle-exclamation"></i>
                 }
+                <span>{{lib.author}}</span>
             </div>
             <div class="desc ellipsis">
                 <div class="icon ccenter">
