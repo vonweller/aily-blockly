@@ -82,12 +82,14 @@ export class LibManagerComponent {
 
   async checkInstalled() {
     // 获取已经安装的包，用于在界面上显示"移除"按钮
-    this.installedPackageList = await this.npmService.getInstalledPackageList(this.projectService.currentProjectPath);
+    this.installedPackageList = (await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath)).map(item => item.name + '@' + item.version);
     for (let index = 0; index < this._libraryList.length; index++) {
       const item = this._libraryList[index];
       if (this.isInstalled(item)) {
-        item['state'] = 'installed';
-        item['fulltext'] = `已安装${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
+        setTimeout(() => {
+          item['state'] = 'installed';
+          item['fulltext'] = `已安装${item.name.includes('lib-core-') ? '核心库' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
+        }, 0);
       } else {
         item['state'] = 'default';
         item['fulltext'] = item.fulltext.replace('已安装', '');
@@ -127,7 +129,7 @@ export class LibManagerComponent {
       } else if (keyword === coreLibKey) {
         keyword = '核心库';
       }
-      
+
       // 使用indexOf过滤并记录关键词位置，然后按位置排序
       const matchedItems = this._libraryList
         .map(item => {
@@ -137,7 +139,7 @@ export class LibManagerComponent {
         .filter(({ index }) => index !== -1)
         .sort((a, b) => a.index - b.index)
         .map(({ item }) => item);
-      
+
       this.libraryList = matchedItems;
     } else {
       this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
@@ -237,7 +239,7 @@ export class LibManagerComponent {
   }
 
   openExample(packageName) {
-    this.electronService.openNewInStance('/main/playground/s/' + packageName.replace('@aily-project/',''))
+    this.electronService.openNewInStance('/main/playground/s/' + packageName.replace('@aily-project/', ''))
   }
 }
 

@@ -223,6 +223,56 @@ export class BuilderService {
           }
         }
 
+        // 检查和清理libraries文件夹
+        // 1. 获取libsPath的个数
+        const libsPathCount = libsPath.length;
+        
+        // 2. 获取librariesPath下文件夹的个数
+        let librariesFolderCount = 0;
+        let existingFolders: string[] = [];
+        
+        if (window['fs'].existsSync(librariesPath)) {
+          const librariesItems = window['fs'].readDirSync(librariesPath);
+          existingFolders = librariesItems
+            .filter(item => window['fs'].isDirectory(`${librariesPath}/${item.name || item}`))
+            .map(item => item.name || item);
+          librariesFolderCount = existingFolders.length;
+        }
+        
+        console.log(`libsPath数量: ${libsPathCount}, libraries文件夹数量: ${librariesFolderCount}`);
+        
+        // 3. 比较判断个数是否相同，且librariesPath下文件夹的个数不为0
+        if (librariesFolderCount > 0 && libsPathCount !== librariesFolderCount) {
+          console.log('检测到libraries文件夹数量与libsPath不一致，开始清理多余文件夹');
+          
+          // 4. 如果不相同则删除掉librariesPath下多余的那个文件夹
+          // 获取当前项目应该有的库名称
+          const expectedLibNames = libsPath.map(lib => {
+            if (lib.startsWith('@aily-project/lib-') && !lib.startsWith('@aily-project/lib-core')) {
+              return lib.split('@aily-project/')[1];
+            }
+            return null;
+          }).filter(name => name !== null);
+          
+          // 找出多余的文件夹并删除
+          for (const folder of existingFolders) {
+            const shouldKeep = expectedLibNames.some(expectedName => {
+              // 检查是否匹配预期的库名称
+              return folder === expectedName || folder.startsWith(expectedName);
+            });
+            
+            if (!shouldKeep) {
+              const folderToDelete = `${librariesPath}/${folder}`;
+              console.log(`删除多余的库文件夹: ${folder}`);
+              try {
+                await this.cmdService.runAsync(`Remove-Item -Path "${folderToDelete}" -Recurse -Force`);
+              } catch (error) {
+                console.warn(`删除文件夹 ${folder} 失败:`, error);
+              }
+            }
+          }
+        }
+
         // 获取编译器、sdk、tool的名称和版本
         let compiler = ""
         let sdk = ""
