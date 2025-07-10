@@ -128,8 +128,12 @@ export class HeaderComponent {
     this.cd.detectChanges();
   }
 
-  selectPort(portItem) {
-    this.currentPort = portItem.name;
+  selectPort(item) {
+    if (item.action) {
+      this.process(item)
+      return
+    }
+    this.currentPort = item.name;
     this.closePortList();
   }
 
@@ -156,6 +160,12 @@ export class HeaderComponent {
         portList0 = portList0.concat(esp32config)
       }
     }
+    // 添加切换开发板功能
+    portList0.push({
+      name: '切换开发板',
+      icon: 'fa-light fa-layer-group',
+      action: 'board-select'
+    })
     this.configList = portList0;
     this.cd.detectChanges();
   }
@@ -299,6 +309,9 @@ export class HeaderComponent {
           this.calculateUserPosition(event);
         }
         this.showUser = !this.showUser;
+        break;
+      case 'board-select':
+        console.log('board-select');
         break;
       default:
         console.log('未处理的操作:', item.action);
