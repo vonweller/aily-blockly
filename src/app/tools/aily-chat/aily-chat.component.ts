@@ -26,6 +26,7 @@ import { executeCommandTool } from './tools/executeCommandTool';
 import { askApprovalTool } from './tools/askApprovalTool';
 import { getContextTool } from './tools/getContextTool';
 import { fileOperationsTool } from './tools/fileOperationsTool';
+import { fetchTool, FetchToolService } from './tools/fetchTool';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -85,36 +86,7 @@ export class AilyChatComponent {
   tools: Tool[] = [
     {
       name: 'create_project',
-      description: `
-        ## create_project
-### Description
-创建一个新项目，返回项目路径。
-
-### Parameters
-- board: (required) 开发板信息，包含名称、昵称和版本号
-    - name: 开发板名称
-    - nickname: 开发板信息
-    - version: 开发板版本号
-
-### Usage
-<create_project>
-<board>
-    <name>Board name</name>
-    <nickname>Board nickname</nickname>
-    <version>Board version</version>
-</board>
-</create_project>
-
-### Example
-<create_project>
-<board>
-    <name>@aily-project/board-jinniu_board</name>
-    <nickname>金牛创翼板</nickname>
-    <version>0.0.1</version>
-</board>
-</create_project>
-
-      `,
+      description: `创建一个新项目，返回项目路径。需要提供开发板信息，包含名称、昵称和版本号。`,
       input_schema: {
         type: 'object',
         properties: {
@@ -133,31 +105,7 @@ export class AilyChatComponent {
     },
     {
       name: 'execute_command',
-      description: `
-      ## execute_command
-### Description
-Request to execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does. For command chaining, use the appropriate chaining syntax for the user's shell. Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Prefer relative commands and paths that avoid location sensitivity for terminal consistency, e.g: \`touch ./testdata/example.file\`, \`dir ./examples/model1/data/yaml\`, or \`go test ./cmd/front --config ./cmd/front/config.yml\`. If directed by the user, you may open a terminal in a different directory by using the \`cwd\` parameter.
-### Parameters
-- command: (required) The CLI command to execute. This should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.
-- cwd: (optional) The working directory to execute the command in.
-### Usage
-<execute_command>
-<command>Your command here</command>
-<cwd>Working directory path (optional)</cwd>
-</execute_command>
-
-### Examples
-#### Example: Requesting to execute npm install
-<execute_command>
-<command>npm i @aily-project/board-jinniu_board<command>
-</execute_command>
-
-#### Example: Requesting to execute ls in a specific directory if directed
-<execute_command>
-<command>ls -la</command>
-<cwd>/home/user/projects</cwd>
-</execute_command>
-      `,
+      description: `执行系统CLI命令。用于执行系统操作或运行特定命令来完成用户任务中的任何步骤。支持命令链，优先使用相对命令和路径以保持终端一致性。`,
       input_schema: {
         type: 'object',
         properties: {
@@ -189,47 +137,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
 //     },
     {
       name: "get_context",
-      description: `
-        ## get_context
-### Description
-获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。
-
-### Parameters
-- info_type: (optional) 指定要获取的上下文信息类型，可选值有：'all', 'project', 'editingMode'。默认为'all'。
-
-### Usage
-<get_context>
-<info_type>需要获取的信息类型</info_type>
-</get_context>
-
-### Example
-#### 获取所有上下文信息
-<get_context>
-<info_type>all</info_type>
-</get_context>
-
-#### 结果示例
-{
-  "project": {
-    "name": "My Project",
-    "path": "/path/to/root/project",
-    "rootFolder": "/path/to/root"
-    "dependencies": {
-      "@aily-project/board-jinniu_board": "0.0.1",
-      "@aily-project/lib-core-io": "1.0.0",
-      "@aily-project/lib-core-logic": "0.0.1",
-      "@aily-project/lib-core-loop": "0.0.1",
-    }
-  },
-  "editingMode": {
-    "mode": "blockly"
-  },
-}
-
-#### 仅获取项目相关信息
-<get_context>
-<info_type>project</info_type>
-</get_context>`,
+      description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
       input_schema: {
         type: 'object',
         properties: {
@@ -244,116 +152,7 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     },
     {
       name: "file_operations",
-      description: `
-        ## file_operations
-    ### Description
-    执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，以及检查文件是否存在。
-
-    ### Parameters
-    - operation: (required) 要执行的操作类型，可选值为：'list', 'read', 'create', 'edit', 'delete', 'exists', 'rename'
-    - path: (required) 文件或文件夹的基础路径
-    - name: (可选) 文件或文件夹的名称，会与path结合构成完整路径
-    - content: (可选) 当操作为'create'或'edit'时，需提供文件内容
-    - is_folder: (可选) 当操作为'create'、'delete'、'exists'或'rename'时，指定目标是否为文件夹，默认为false
-
-    ### Usage
-    <file_operations>
-    <operation>操作类型</operation>
-    <path>文件或文件夹路径</path>
-    <name>文件或文件夹名称(可选)</name>
-    <content>文件内容(可选)</content>
-    <is_folder>是否为文件夹(可选，布尔值)</is_folder>
-    </file_operations>
-
-    ### Examples
-    #### 检查文件是否存在
-    <file_operations>
-    <operation>exists</operation>
-    <path>./package.json</path>
-    </file_operations>
-    
-    #### 检查文件夹是否存在
-    <file_operations>
-    <operation>exists</operation>
-    <path>./src</path>
-    <is_folder>true</is_folder>
-    </file_operations>
-
-    #### 列出文件夹内容
-    <file_operations>
-    <operation>list</operation>
-    <path>./src</path>
-    </file_operations>
-
-    #### 读取文件内容
-    <file_operations>
-    <operation>read</operation>
-    <path>./package.json</path>
-    </file_operations>
-
-    #### 使用路径和名称创建文件
-    <file_operations>
-    <operation>create</operation>
-    <path>./src</path>
-    <name>example.ts</name>
-    <content>console.log('Hello, World!');</content>
-    </file_operations>
-
-    #### 直接使用完整路径创建文件
-    <file_operations>
-    <operation>create</operation>
-    <path>./src/example.ts</path>
-    <content>console.log('Hello, World!');</content>
-    </file_operations>
-
-    #### 创建文件夹
-    <file_operations>
-    <operation>create</operation>
-    <path>./new-folder</path>
-    <is_folder>true</is_folder>
-    </file_operations>
-
-    #### 使用路径和名称创建文件夹
-    <file_operations>
-    <operation>create</operation>
-    <path>./src</path>
-    <name>components</name>
-    <is_folder>true</is_folder>
-    </file_operations>
-
-    #### 编辑文件
-    <file_operations>
-    <operation>edit</operation>
-    <path>./src/example.ts</path>
-    <content>console.log('Updated content');</content>
-    </file_operations>
-
-    #### 删除文件
-    <file_operations>
-    <operation>delete</operation>
-    <path>./src/example.ts</path>
-    </file_operations>
-
-    #### 删除文件夹
-    <file_operations>
-    <operation>delete</operation>
-    <path>./old-folder</path>
-    <is_folder>true</is_folder>
-    </file_operations>
-
-    #### 重命名文件（实际是删除并创建备份）
-    <file_operations>
-    <operation>rename</operation>
-    <path>./src/old-file.ts</path>
-    </file_operations>
-
-    #### 重命名文件夹（实际是删除并创建备份）
-    <file_operations>
-    <operation>rename</operation>
-    <path>./old-folder</path>
-    <is_folder>true</is_folder>
-    </file_operations>
-      `,
+      description: `执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，以及检查文件是否存在。支持相对路径和绝对路径。`,
       input_schema: {
         type: 'object',
         properties: {
@@ -382,6 +181,49 @@ Request to execute a CLI command on the system. Use this when you need to perfor
         },
         required: ['operation', 'path']
       }
+    },
+    {
+      name: "fetch",
+      description: `获取网络上的信息和资源，支持HTTP/HTTPS请求，能够处理大文件下载。支持多种请求方法和响应类型。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          url: { 
+            type: 'string', 
+            description: '要请求的URL地址'
+          },
+          method: { 
+            type: 'string', 
+            description: 'HTTP请求方法',
+            enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+            default: 'GET'
+          },
+          headers: { 
+            type: 'object', 
+            description: '请求头（键值对）'
+          },
+          body: { 
+            description: '请求体'
+          },
+          timeout: { 
+            type: 'number', 
+            description: '请求超时时间（毫秒）',
+            default: 30000
+          },
+          maxSize: { 
+            type: 'number', 
+            description: '最大文件大小（字节）',
+            default: 52428800
+          },
+          responseType: { 
+            type: 'string', 
+            description: '响应类型',
+            enum: ['text', 'json', 'blob', 'arraybuffer'],
+            default: 'text'
+          }
+        },
+        required: ['url']
+      }
     }
   ]
 
@@ -394,7 +236,8 @@ Request to execute a CLI command on the system. Use this when you need to perfor
     private cmdService: CmdService,
     private electronService: ElectronService,
     private messageSubscriptionService: MessageSubscriptionService,
-    private blocklyService: BlocklyService
+    private blocklyService: BlocklyService,
+    private fetchToolService: FetchToolService
   ) { }
 
   ngOnInit() {
@@ -619,6 +462,10 @@ Request to execute a CLI command on the system. Use this when you need to perfor
                 case 'file_operations':
                   console.log('文件操作工具被调用', data.tool_args);
                   toolResult = await fileOperationsTool(data.tool_args);
+                  break;
+                case 'fetch':
+                  console.log('网络请求工具被调用', data.tool_args);
+                  toolResult = await fetchTool(this.fetchToolService, data.tool_args);
                   break;
               }
             }
