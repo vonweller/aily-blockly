@@ -5,6 +5,7 @@ import { ConfigService } from './config.service';
 import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
 import { ProjectService } from './project.service';
+import { CmdService } from './cmd.service';
 
 @Injectable({
   providedIn: 'root'
@@ -15,7 +16,8 @@ export class NpmService {
     private electronService: ElectronService,
     private configService: ConfigService,
     private uiService: UiService,
-    private prjService: ProjectService
+    private prjService: ProjectService,
+    private cmdService: CmdService
   ) { }
 
   isInstalling = false;
@@ -301,17 +303,19 @@ export class NpmService {
     this.uiService.updateFooterState({ state: 'doing', text: `正在安装${packageInfo.name}...`, timeout: 300000 });
 
     try {
-      // 添加超时保护
-      await Promise.race([
-        window['npm'].run({ cmd: cmd }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
-        )
-      ]);
+      // // 添加超时保护
+      // await Promise.race([
+      //   window['npm'].run({ cmd: cmd }),
+      //   new Promise((_, reject) =>
+      //     setTimeout(() => reject(new Error('安装超时')), 300000) // 5分钟超时
+      //   )
+      // ]);
 
-      this.uiService.updateFooterState({ state: 'done', text: `${type}安装完成` });
+      await this.cmdService.runAsync(cmd, appDataPath);
+
+      this.uiService.updateFooterState({ state: 'done', text: `${packageInfo.name}安装完成` });
     } catch (error) {
-      this.uiService.updateFooterState({ state: 'error', text: `${type}安装失败` });
+      this.uiService.updateFooterState({ state: 'error', text: `${packageInfo.name}安装失败` });
       throw error;
     }
   }
@@ -346,18 +350,24 @@ export class NpmService {
     }
 
     // 尝试执行包的清理脚本
-    let cmd = `cd /d "${packageNodeModulesPath}" && npm run uninstall`;
-    try {
-      await window['npm'].run({ cmd: cmd });
-    } catch (error) {
-      console.log(`${type}执行清理失败:`, error);
-    }
+    // let cmd = `cd /d "${packageNodeModulesPath}" && npm run uninstall`;
+    // try {
+    //   await window['npm'].run({ cmd: cmd });
+    // } catch (error) {
+    //   console.log(`${type}执行清理失败:`, error);
+    // }
+
+    this.uiService.updateFooterState({ state: 'doing', text: `正在卸载${packageInfo.name}...`, timeout: 300000 });
+
+    let cmd = `npm run uninstall`
+    console.log("PackageNodeModulesPath: ", packageNodeModulesPath);
+    await this.cmdService.runAsync(cmd, packageNodeModulesPath)
 
     // 卸载包
     cmd = `npm uninstall ${packageInfo.name} --prefix "${appDataPath}"`;
-    this.uiService.updateFooterState({ state: 'doing', text: `正在卸载${packageInfo.name}...`, timeout: 300000 });
-    await window['npm'].run({ cmd: cmd });
-    this.uiService.updateFooterState({ state: 'done', text: `${type}卸载完成` });
+    // await window['npm'].run({ cmd: cmd });
+    await this.cmdService.runAsync(cmd, appDataPath);
+    this.uiService.updateFooterState({ state: 'done', text: `${packageInfo.name}卸载完成` });
   }
 
   // 卸载SDK
