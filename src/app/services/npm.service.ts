@@ -102,7 +102,7 @@ export class NpmService {
 
   // 安装开发板
   async installBoard(board: any) {
-    if (typeof(board) === 'string') {
+    if (typeof (board) === 'string') {
       board = JSON.parse(board);
     }
     this.isInstalling = true;
@@ -195,11 +195,11 @@ export class NpmService {
     try {
       const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
       const boardDependenciesToUninstall = packageJson.boardDependencies || {};
-      
+
       // 获取所有已安装的包
       const installedPackagesList = await this.getInstalledPackageList(appDataPath);
       const installedBoards = [];
-      
+
       // 从已安装的包中找出开发板（具有template/package.json的包且包名以@aily-project/board-开头）
       for (const packageItem of installedPackagesList) {
         const packageName = '@' + packageItem.split('@')[1];
@@ -230,16 +230,16 @@ export class NpmService {
           }
         }
       }
-      
+
       this.uiService.updateFooterState({ state: 'doing', text: '正在卸载不再需要的依赖...', timeout: 300000 });
-      
+
       // 检查每个依赖是否被其他开发板使用
       console.log("installedBoards: ", installedBoards);
       for (const [depName, depVersion] of Object.entries(boardDependenciesToUninstall)) {
-        const isUsedByOtherBoards = installedBoards.some(board => 
-            board.dependencies && board.dependencies[depName] !== undefined
+        const isUsedByOtherBoards = installedBoards.some(board =>
+          board.dependencies && board.dependencies[depName] !== undefined
         );
-        
+
         if (!isUsedByOtherBoards) {
           // 如果不被其他开发板使用，则卸载它
           try {
@@ -248,17 +248,17 @@ export class NpmService {
               console.log(`依赖 ${depName} 未安装，跳过卸载`);
               continue;
             }
-            
+
             const npmCmd = `npm uninstall ${depName} --prefix "${appDataPath}"`;
             console.log(`执行命令: ${npmCmd}, 时间: ${new Date().toISOString()}`);
-            
+
             await Promise.race([
               window['npm'].run({ cmd: npmCmd }),
               new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('卸载超时')), 300000)
               )
             ]);
-            
+
             console.log(`依赖 ${depName} 卸载成功, 时间: ${new Date().toISOString()}`);
           } catch (error) {
             console.error(`依赖 ${depName} 卸载失败:`, error);
@@ -267,7 +267,7 @@ export class NpmService {
           console.log(`依赖 ${depName} 被其他开发板使用，跳过卸载`);
         }
       }
-      
+
       this.uiService.updateFooterState({ state: 'done', text: '依赖卸载完成' });
     } catch (error) {
       console.error('卸载开发板依赖时出错:', error);
@@ -431,6 +431,68 @@ export class NpmService {
     return this.http.get<SearchResponseModel>(API.projectSearch, {
       params: data,
     });
+  }
+
+  async getAllInstalledLibraries(path: string) {
+    let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
+    console.log(data);
+
+    // 提取所有依赖项到对象数组
+    const allDependencies = this.extractAllDependencies(data.dependencies || {});
+    
+    // 过滤出以 @aily-project/lib- 开头的库
+    const libraryModules = allDependencies.filter(dep => dep.name.startsWith('@aily-project/lib-'));
+    
+    // 让包含@aily-project/lib-core-的模块在最前面
+    libraryModules.sort((a, b) => {
+      if (a.name.startsWith('@aily-project/lib-core-') && !b.name.startsWith('@aily-project/lib-core-')) {
+        return -1;
+      } else if (!a.name.startsWith('@aily-project/lib-core-') && b.name.startsWith('@aily-project/lib-core-')) {
+        return 1;
+      } else {
+        return a.name.localeCompare(b.name);
+      }
+    });
+    
+    return libraryModules;
+  }
+
+  /**
+   * 递归提取所有依赖项（包括子依赖）到对象数组
+   * @param dependencies 依赖对象
+   * @returns 包含所有依赖项名称和版本的对象数组
+   */
+  private extractAllDependencies(dependencies: any): Array<{name: string, version: string}> {
+    const dependencyMap = new Map<string, string>();
+
+    const extractRecursively = (deps: any) => {
+      if (!deps || typeof deps !== 'object') {
+        return;
+      }
+
+      for (const [packageName, packageInfo] of Object.entries(deps)) {
+        // 获取版本信息
+        let version = 'unknown';
+        if (packageInfo && typeof packageInfo === 'object') {
+          version = packageInfo['version'] || 'unknown';
+        }
+        
+        // 添加当前包名和版本到Map中（避免重复）
+        dependencyMap.set(packageName, version);
+
+        // 如果有子依赖，递归处理
+        if (packageInfo && typeof packageInfo === 'object' && packageInfo['dependencies']) {
+          extractRecursively(packageInfo['dependencies']);
+        }
+      }
+    };
+
+    extractRecursively(dependencies);
+
+    // 转换为对象数组并排序
+    return Array.from(dependencyMap.entries())
+      .map(([name, version]) => ({ name, version }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 }
 
