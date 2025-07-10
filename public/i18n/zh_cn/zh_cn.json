@@ -23,7 +23,8 @@
         "EXIT": "退出",
         "USER_MANUAL": "用户手册",
         "EXAMPLES": "教程与示例",
-        "UPDATE": "检查更新"
+        "UPDATE": "检查更新",
+        "USER":"用户中心"
     },
     "ESP32": {
         "UPLOAD_SPEED": "烧录速度",

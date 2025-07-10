@@ -449,6 +449,8 @@ export class BuilderService {
                 setTimeout: 55000
               });
               // this.logService.update({ title: "编译失败", detail: lastStdErr, state: 'error' });
+              this.buildInProgress = false;
+              this.passed = false;
               reject({ state: 'error', text: '编译失败' });
             } else if (this.buildCompleted) {
               console.log('编译命令执行完成');

@@ -18,10 +18,18 @@ import { TranslateModule } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
+import { UserComponent } from '../user/user.component';
 
 @Component({
   selector: 'app-header',
-  imports: [CommonModule, NzToolTipModule, MenuComponent, ActBtnComponent, TranslateModule],
+  imports: [
+    CommonModule,
+    NzToolTipModule,
+    MenuComponent,
+    ActBtnComponent,
+    UserComponent,
+    TranslateModule
+  ],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -152,8 +160,8 @@ export class HeaderComponent {
     this.cd.detectChanges();
   }
 
-  onClick(item) {
-    this.process(item);
+  onClick(item, event = null) {
+    this.process(item, event);
   }
 
   isOpenTool(btn) {
@@ -197,7 +205,7 @@ export class HeaderComponent {
 
   updateSubscription: any = null;
 
-  async process(item: IMenuItem) {
+  async process(item: IMenuItem, event = null) {
     switch (item.action) {
       case 'project-new':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -245,7 +253,6 @@ export class HeaderComponent {
           item.state = 'done';
         }).catch(err => {
           console.error("编译失败: ", err);
-          // item.state = 'error';
           if (err.state) item.state = err.state;
         })
         break;
@@ -286,6 +293,12 @@ export class HeaderComponent {
         } else {
           this.router.navigate(['/main/playground']);
         }
+        break;
+      case 'user-auth':
+        if (event) {
+          this.calculateUserPosition(event);
+        }
+        this.showUser = !this.showUser;
         break;
       default:
         console.log('未处理的操作:', item.action);
@@ -475,6 +488,37 @@ export class HeaderComponent {
     packageJson['projectConfig'][subItem.key] = subItem.data;
     // 更新项目配置
     this.projectService.setPackageJson(packageJson);
+  }
+
+  showUser = false;
+  userPosition = { x: 0, y: 40 };
+
+  // 计算用户组件的显示位置
+  calculateUserPosition(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const rect = target.getBoundingClientRect();
+
+    // 计算用户组件的位置，使其显示在点击元素的下方
+    this.userPosition = {
+      x: rect.left + 10, // 向左偏移一些，使其更好对齐
+      y: 40
+    };
+
+    // 确保用户组件不会超出窗口边界
+    const windowWidth = window.innerWidth;
+    const userComponentWidth = 260; // 用户组件的宽度
+
+    if (this.userPosition.x + userComponentWidth > windowWidth) {
+      this.userPosition.x = windowWidth - userComponentWidth - 3;
+    }
+
+    if (this.userPosition.x < 0) {
+      this.userPosition.x = 10;
+    }
+  }
+
+  closeUser() {
+    this.showUser = false;
   }
 }
 
