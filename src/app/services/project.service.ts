@@ -469,7 +469,7 @@ export class ProjectService {
   private compareFlashModeConfig(childBuild: any, currentBuild: any): boolean {
     // FlashMode相关的配置项
     const flashModeKeys = ['flash_mode', 'boot', 'boot_freq', 'flash_freq'];
-    
+
     for (const key of flashModeKeys) {
       // 如果子配置中有这个键，那么必须与当前配置匹配
       if (childBuild.hasOwnProperty(key)) {
@@ -478,7 +478,7 @@ export class ProjectService {
         }
       }
     }
-    
+
     return true;
   }
 
@@ -588,7 +588,7 @@ export class ProjectService {
     try {
       const boardConfig = await this.getEsp32BoardConfig(boardName);
       console.log('获取到的ESP32开发板配置:', boardConfig);
-      
+
       if (!boardConfig) {
         console.warn(`无法获取开发板 "${boardName}" 的配置`);
         return null;
@@ -605,7 +605,7 @@ export class ProjectService {
 
       // 导入ESP32_CONFIG_MENU，需要动态导入以避免循环依赖
       // const { ESP32_CONFIG_MENU } = await import('../configs/esp32.config');
-      let ESP32_CONFIG_MENU_TEMP= JSON.parse(JSON.stringify(ESP32_CONFIG_MENU));
+      let ESP32_CONFIG_MENU_TEMP = JSON.parse(JSON.stringify(ESP32_CONFIG_MENU));
 
       // 更新菜单项
       ESP32_CONFIG_MENU_TEMP.forEach(menuItem => {
@@ -632,7 +632,7 @@ export class ProjectService {
                 // 检查FlashMode的所有相关配置项是否完全匹配
                 const childBuild = child.data.build;
                 const currentBuild = currentProjectConfig.FlashMode.build;
-                
+
                 const isMatched = this.compareFlashModeConfig(childBuild, currentBuild);
                 if (isMatched) {
                   child.check = true;
@@ -683,6 +683,35 @@ export class ProjectService {
     } catch (error) {
       console.info('获取项目配置失败:', error);
       return {}
+    }
+  }
+
+  async changeBoard(boardInfo: { "name": string, "version": string }) {
+    try {
+      if (!this.currentProjectPath) {
+        throw new Error('当前项目路径未设置');
+      }
+      // 0. 保存当前项目
+      this.save();
+      this.message.loading('正在切换开发板...');
+      // 1. 先获取项目package.json中的board依赖，如@aily-project/board-xxxx，然后npm uninstall移除这个board依赖
+      const currentBoardModule = await this.getBoardModule();
+      if (currentBoardModule) {
+        console.log('卸载当前开发板模块:', currentBoardModule);
+        await this.cmdService.runAsync(`npm uninstall ${currentBoardModule}`, this.currentProjectPath);
+      }
+      // 2. npm install 安装boardInfo.name@boardInfo.version
+      const newBoardPackage = `${boardInfo.name}@${boardInfo.version}`;
+      console.log('安装新开发板模块:', newBoardPackage);
+      await this.cmdService.runAsync(`npm install ${newBoardPackage}`, this.currentProjectPath);
+      // 3. 重新加载项目
+      console.log('重新加载项目...');
+      await this.projectOpen(this.currentProjectPath);
+      this.message.success('开发板切换成功');
+    } catch (error) {
+      console.error('切换开发板失败:', error);
+      this.uiService.updateFooterState({ state: 'error', text: '开发板切换失败: ' + error.message });
+      this.message.error('开发板切换失败: ' + error.message);
     }
   }
 }

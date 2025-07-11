@@ -19,6 +19,7 @@ import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { UserComponent } from '../user/user.component';
+import { ConfigService } from '../../../services/config.service';
 
 @Component({
   selector: 'app-header',
@@ -58,7 +59,7 @@ export class HeaderComponent {
   }
 
   get currentBoard() {
-    return this.projectData.board;
+    return this.projectService.currentBoardConfig.name;
   }
 
   currentUrl = null;
@@ -66,6 +67,9 @@ export class HeaderComponent {
   get isDevMode() {
     return isDevMode()
   }
+
+  // 可用开发板列表
+  boardList: any[] = [];
 
   constructor(
     private projectService: ProjectService,
@@ -78,10 +82,11 @@ export class HeaderComponent {
     private modal: NzModalService,
     private updateService: UpdateService,
     private router: Router,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private configService: ConfigService
   ) { }
 
-  ngAfterViewInit() {
+  async ngAfterViewInit() {
     this.projectService.stateSubject.subscribe((state) => {
       if (state == 'loaded' || state == 'saved') {
         // 将headerMenu中有disabled的按钮置为可用
@@ -102,6 +107,13 @@ export class HeaderComponent {
     });
 
     this.listenShortcutKeys();
+
+    // 准备可切换的开发板列表
+    await this.configService.loadBoardList().then(boardList => {
+      let convertedBoardList = this.convertBoardListFormat(boardList);
+      console.log('转换后的开发板列表:', convertedBoardList);
+      this.boardList = convertedBoardList;
+    });
   }
 
   showMenu = false;
@@ -138,7 +150,6 @@ export class HeaderComponent {
   }
 
   async getDevicePortList() {
-
     let portList0: IMenuItem[] = await this.serialService.getSerialPorts();
     if (portList0.length == 0) {
       portList0 = [
@@ -159,12 +170,16 @@ export class HeaderComponent {
       if (esp32config) {
         portList0 = portList0.concat(esp32config)
       }
+      // console.log('ESP32配置选项:', esp32config);
     }
+
     // 添加切换开发板功能
+    portList0.push({ sep: true });
     portList0.push({
       name: '切换开发板',
       icon: 'fa-light fa-layer-group',
-      action: 'board-select'
+      action: 'board-select',
+      children: this.boardList
     })
     this.configList = portList0;
     this.cd.detectChanges();
@@ -496,11 +511,17 @@ export class HeaderComponent {
   // 选择子菜单项-修改编译上传配置
   async selectSubItem(subItem: IMenuItem) {
     console.log('选择子菜单项:', subItem);
-    let packageJson = await this.projectService.getPackageJson();
-    packageJson['projectConfig'] = packageJson['projectConfig'] || {};
-    packageJson['projectConfig'][subItem.key] = subItem.data;
-    // 更新项目配置
-    this.projectService.setPackageJson(packageJson);
+    // 切换开发板
+    if (subItem.key === "BoardType") {
+      this.projectService.changeBoard(subItem.data.board);
+      this.showPortList = false;
+    } else {
+      let packageJson = await this.projectService.getPackageJson();
+      packageJson['projectConfig'] = packageJson['projectConfig'] || {};
+      packageJson['projectConfig'][subItem.key] = subItem.data;
+      // 更新项目配置
+      this.projectService.setPackageJson(packageJson);
+    }
   }
 
   showUser = false;
@@ -533,6 +554,36 @@ export class HeaderComponent {
   closeUser() {
     this.showUser = false;
   }
+
+  /**
+   * 将开发板列表转换为菜单格式
+   * @param boardList 原始开发板列表
+   * @returns 转换后的菜单格式列表
+   */
+  convertBoardListFormat(boardList: any[]): any[] {
+    console.log('转换开发板列表格式:', boardList);
+    return boardList
+      // .filter(board => !board.disabled) // 过滤掉被禁用的开发板
+      .map(board => ({
+        name: board.nickname || board.name, // 使用昵称，如果没有则使用name
+        key: "BoardType",
+        data: {
+          board: {
+            name: board.name,
+            nickname: board.nickname,
+            version: board.version,
+            description: board.description,
+            author: board.author,
+            brand: board.brand,
+            url: board.url,
+            compatibility: board.compatibility,
+            img: board.img
+          }
+        },
+        check: false
+      }));
+  }
+
 }
 
 export interface RunState {
