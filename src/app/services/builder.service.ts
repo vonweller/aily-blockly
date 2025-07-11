@@ -138,6 +138,9 @@ export class BuilderService {
         this.boardJson = boardJson;
 
         // 解压libraries到临时文件夹
+        // 用于记录已复制的库文件夹名称
+        const copiedLibraries: string[] = [];
+        
         for (let lib of libsPath) {
           let sourcePath = `${this.currentProjectPath}/node_modules/${lib}/src`;
           if (!window['path'].isExists(sourcePath)) {
@@ -187,6 +190,8 @@ export class BuilderService {
               }
               // 直接复制src到targetPath
               await this.cmdService.runAsync(`Copy-Item -Path "${sourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+              // 记录已复制的文件夹名称
+              copiedLibraries.push(targetName);
             } else {
               // For libraries without header files, copy each directory individually
               console.log(`库 ${lib} 不包含头文件，逐个复制目录`);
@@ -215,6 +220,8 @@ export class BuilderService {
 
                     // Copy directory
                     await this.cmdService.runAsync(`Copy-Item -Path "${fullSourcePath}" -Destination "${targetPath}" -Recurse -Force`);
+                    // 记录已复制的文件夹名称
+                    copiedLibraries.push(item.name);
                     // console.log(`目录 ${item.name} 已复制到 ${targetPath}`);
                   }
                 }
@@ -224,11 +231,10 @@ export class BuilderService {
         }
 
         // 检查和清理libraries文件夹
-        // 1. 获取libsPath的个数
-        const libsPathCount = libsPath.length;
+        // 输出已复制的库文件夹名称
+        console.log(`已复制的库文件夹: ${copiedLibraries.join(', ')}`);
         
-        // 2. 获取librariesPath下文件夹的个数
-        let librariesFolderCount = 0;
+        // 获取libraries文件夹中的所有文件夹
         let existingFolders: string[] = [];
         
         if (window['fs'].existsSync(librariesPath)) {
@@ -236,38 +242,27 @@ export class BuilderService {
           existingFolders = librariesItems
             .filter(item => window['fs'].isDirectory(`${librariesPath}/${item.name || item}`))
             .map(item => item.name || item);
-          librariesFolderCount = existingFolders.length;
-        }
-        
-        console.log(`libsPath数量: ${libsPathCount}, libraries文件夹数量: ${librariesFolderCount}`);
-        
-        // 3. 比较判断个数是否相同，且librariesPath下文件夹的个数不为0
-        if (librariesFolderCount > 0 && libsPathCount !== librariesFolderCount) {
-          console.log('检测到libraries文件夹数量与libsPath不一致，开始清理多余文件夹');
           
-          // 4. 如果不相同则删除掉librariesPath下多余的那个文件夹
-          // 获取当前项目应该有的库名称
-          const expectedLibNames = libsPath.map(lib => {
-            if (lib.startsWith('@aily-project/lib-') && !lib.startsWith('@aily-project/lib-core')) {
-              return lib.split('@aily-project/')[1];
-            }
-            return null;
-          }).filter(name => name !== null);
+          console.log(`libraries文件夹中现有文件夹: ${existingFolders.join(', ')}`);
           
-          // 找出多余的文件夹并删除
-          for (const folder of existingFolders) {
-            const shouldKeep = expectedLibNames.some(expectedName => {
-              // 检查是否匹配预期的库名称
-              return folder === expectedName || folder.startsWith(expectedName);
-            });
+          // 直接清理不在copiedLibraries列表中的文件夹
+          if (existingFolders.length > 0) {
+            console.log('开始清理未使用的库文件夹');
             
-            if (!shouldKeep) {
-              const folderToDelete = `${librariesPath}/${folder}`;
-              console.log(`删除多余的库文件夹: ${folder}`);
-              try {
-                await this.cmdService.runAsync(`Remove-Item -Path "${folderToDelete}" -Recurse -Force`);
-              } catch (error) {
-                console.warn(`删除文件夹 ${folder} 失败:`, error);
+            for (const folder of existingFolders) {
+              // 检查文件夹是否在已复制的列表中
+              const shouldKeep = copiedLibraries.some(copiedLib => {
+                return folder === copiedLib || folder.startsWith(copiedLib);
+              });
+              
+              if (!shouldKeep) {
+                const folderToDelete = `${librariesPath}/${folder}`;
+                console.log(`删除未使用的库文件夹: ${folder}`);
+                try {
+                  await this.cmdService.runAsync(`Remove-Item -Path "${folderToDelete}" -Recurse -Force`);
+                } catch (error) {
+                  console.warn(`删除文件夹 ${folder} 失败:`, error);
+                }
               }
             }
           }
