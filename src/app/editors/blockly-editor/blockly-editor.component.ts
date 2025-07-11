@@ -91,7 +91,7 @@ export class BlocklyEditorComponent {
     const boardJson = await this.projectService.getBoardJson();
     this.blocklyService.boardConfig = boardJson;
     this.projectService.currentBoardConfig = boardJson;
-    // console.log('boardConfig', boardJson);
+    console.log('boardConfig', boardJson);
     window['boardConfig'] = boardJson;
     // 4. 加载blockly library
     this.uiService.updateFooterState({ state: 'doing', text: '正在加载blockly库' });
