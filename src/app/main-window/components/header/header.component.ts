@@ -68,9 +68,6 @@ export class HeaderComponent {
     return isDevMode()
   }
 
-  // 可用开发板列表
-  boardList: any[] = [];
-
   constructor(
     private projectService: ProjectService,
     private uiService: UiService,
@@ -108,12 +105,6 @@ export class HeaderComponent {
 
     this.listenShortcutKeys();
 
-    // 准备可切换的开发板列表
-    await this.configService.loadBoardList().then(boardList => {
-      let convertedBoardList = this.convertBoardListFormat(boardList);
-      console.log('转换后的开发板列表:', convertedBoardList);
-      this.boardList = convertedBoardList;
-    });
   }
 
   showMenu = false;
@@ -174,12 +165,14 @@ export class HeaderComponent {
     }
 
     // 添加切换开发板功能
+    let boardList = await this.configService.loadBoardList();
+    boardList = this.convertBoardListFormat(boardList);
     portList0.push({ sep: true });
     portList0.push({
       name: '切换开发板',
       icon: 'fa-light fa-layer-group',
       action: 'board-select',
-      children: this.boardList
+      children: boardList
     })
     this.configList = portList0;
     this.cd.detectChanges();

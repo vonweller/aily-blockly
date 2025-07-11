@@ -693,7 +693,7 @@ export class ProjectService {
       }
       // 0. 保存当前项目
       this.save();
-      this.message.loading('正在切换开发板...');
+      this.message.loading('正在切换开发板...', { nzDuration: 5000 });
       // 1. 先获取项目package.json中的board依赖，如@aily-project/board-xxxx，然后npm uninstall移除这个board依赖
       const currentBoardModule = await this.getBoardModule();
       if (currentBoardModule) {
@@ -707,7 +707,7 @@ export class ProjectService {
       // 3. 重新加载项目
       console.log('重新加载项目...');
       await this.projectOpen(this.currentProjectPath);
-      this.message.success('开发板切换成功');
+      this.message.success('开发板切换成功', { nzDuration: 3000 });
     } catch (error) {
       console.error('切换开发板失败:', error);
       this.uiService.updateFooterState({ state: 'error', text: '开发板切换失败: ' + error.message });
