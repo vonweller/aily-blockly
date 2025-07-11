@@ -698,19 +698,21 @@ export class ProjectService {
       const currentBoardModule = await this.getBoardModule();
       if (currentBoardModule) {
         console.log('卸载当前开发板模块:', currentBoardModule);
+        this.uiService.updateFooterState({ state: 'doing', text: '正在卸载当前开发板...' });
         await this.cmdService.runAsync(`npm uninstall ${currentBoardModule}`, this.currentProjectPath);
       }
       // 2. npm install 安装boardInfo.name@boardInfo.version
       const newBoardPackage = `${boardInfo.name}@${boardInfo.version}`;
       console.log('安装新开发板模块:', newBoardPackage);
+      this.uiService.updateFooterState({ state: 'doing', text: '正在安装新开发板...' });
       await this.cmdService.runAsync(`npm install ${newBoardPackage}`, this.currentProjectPath);
       // 3. 重新加载项目
       console.log('重新加载项目...');
       await this.projectOpen(this.currentProjectPath);
+      this.uiService.updateFooterState({ state: 'done', text: '开发板切换完成' });
       this.message.success('开发板切换成功', { nzDuration: 3000 });
     } catch (error) {
       console.error('切换开发板失败:', error);
-      this.uiService.updateFooterState({ state: 'error', text: '开发板切换失败: ' + error.message });
       this.message.error('开发板切换失败: ' + error.message);
     }
   }
