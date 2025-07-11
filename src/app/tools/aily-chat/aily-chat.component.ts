@@ -261,11 +261,10 @@ export class AilyChatComponent {
 
   appendMessage(role, text) {
     // 判断是否是JSON格式的字符串
-    if (role != 'user') {
-      console.log('收到数据:');
-      console.log(text);
-    }
-
+    // if (role != 'user') {
+    //   console.log('收到数据:');
+    //   console.log(text);
+    // }
 
     try {
       const parsedText = JSON.parse(text);
@@ -283,6 +282,7 @@ export class AilyChatComponent {
       // 如果是同一个role，追加内容到最后一条消息
       this.list[this.list.length - 1].content += text;
     } else {
+      console.log("添加新消息: ", role);
       // 如果是不同的role或列表为空，创建新的消息
       this.list.push({
         "role": role,
@@ -407,29 +407,28 @@ export class AilyChatComponent {
               // 如果 tool_args 不是字符串，直接使用
               toolArgs = JSON.stringify(data.tool_args);
             }
-
+            
             // 处理toolArgs中路径中的转义字符
             toolArgs = toolArgs.replace(/\\\\/g, '/')  // Replace \\ with /
               .replace(/\\/g, '/');   // Replace \ with /
 
             
             toolArgs = JSON.parse(toolArgs);
-            console.log('工具调用参数:', toolArgs);
             
-            // 生成随机ID用于状态跟踪
-            const toolCallId = `call_${this.getRandomString()}`;
+//             // 生成随机ID用于状态跟踪
+//             const toolCallId = `call_${this.getRandomString()}`;
             
-            // 添加正在处理状态消息
-            const toolDescription = this.getToolDescription(data.tool_name, toolArgs);
-            this.appendMessage('assistant', `
-\`\`\`aily-state
-{
-  "state": "doing",
-  "text": "正在执行: ${toolDescription}",
-  "id": "${toolCallId}"
-}
-\`\`\`
-`);
+//             // 添加正在处理状态消息
+//             const toolDescription = this.getToolDescription(data.tool_name, toolArgs);
+//             this.appendMessage('assistant', `
+// \`\`\`aily-state
+// {
+//   "state": "doing",
+//   "text": "正在执行: ${toolDescription}",
+//   "id": "${toolCallId}"
+// }
+// \`\`\`
+// `);
 
             let toolResult = null;
             let resultState = "done";
@@ -513,16 +512,16 @@ export class AilyChatComponent {
               };
             }
             
-            // 添加完成状态消息
-            this.appendMessage('assistant', `
-\`\`\`aily-state
-{
-  "state": "${resultState}",
-  "text": "执行${resultState === "done" ? "完成" : resultState === "warn" ? "警告" : "失败"}: ${toolDescription}",
-  "id": "${toolCallId}"
-}
-\`\`\`
-`);
+//             // 添加完成状态消息
+//             this.appendMessage('assistant', `
+// \`\`\`aily-state
+// {
+//   "state": "${resultState}",
+//   "text": "执行${resultState === "done" ? "完成" : resultState === "warn" ? "警告" : "失败"}: ${toolDescription}",
+//   "id": "${toolCallId}"
+// }
+// \`\`\`
+// `);
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
