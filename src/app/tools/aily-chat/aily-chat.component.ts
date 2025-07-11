@@ -410,21 +410,26 @@ export class AilyChatComponent {
               data.tool_name = data.tool_name.substring(4);
               toolResult = await this.mcpService.use_tool(data.tool_name, data.tool_args);
             } else {
+              let strToolArgs = JSON.stringify(data.tool_args)
+                .replace(/\\\\/g, '/')  // Replace \\ with /
+                .replace(/\\/g, '/');   // Replace \ with /
+
+              const toolArgs = JSON.parse(strToolArgs)
               switch (data.tool_name) {
                 case 'create_project':
-                  console.log('创建项目工具被调用', data.tool_args);
-                  toolResult = await newProjectTool(this.projectService, this.prjPath, data.tool_args);
+                  console.log('创建项目工具被调用', toolArgs);
+                  toolResult = await newProjectTool(this.projectService, this.prjPath, toolArgs);
                   break;
                 case 'execute_command':
-                  console.log('执行command命令工具被调用', data.tool_args);
+                  console.log('执行command命令工具被调用', toolArgs);
                   // Check if cwd is specified, otherwise use project paths
-                  if (!data.tool_args.cwd) {
-                    data.tool_args.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
+                  if (!toolArgs.cwd) {
+                    toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
                   }
-                  toolResult = await executeCommandTool(this.cmdService, data);
+                  toolResult = await executeCommandTool(this.cmdService, toolArgs);
                   if (!toolResult.is_error) {
                     // Check if this is an npm install command
-                    const command = data.tool_args.command;
+                    const command = toolArgs.command;
                     if (command.includes('npm i') || command.includes('npm install')) {
                       // Extract the package name
                       const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
@@ -435,7 +440,7 @@ export class AilyChatComponent {
                         console.log('Installing library:', libPackageName);
                         
                         // Get project path from command args or default
-                        const projectPath = data.tool_args.cwd || this.prjPath;
+                        const projectPath = toolArgs.cwd || this.prjPath;
                         
                         // Load the library into blockly
                         try {
@@ -452,20 +457,20 @@ export class AilyChatComponent {
                   }
                   break;
                 case 'ask_approval':
-                  console.log('请求用户确认工具被调用', data.tool_args);
-                  toolResult = await askApprovalTool(data.tool_args);
+                  console.log('请求用户确认工具被调用', toolArgs);
+                  toolResult = await askApprovalTool(toolArgs);
                   break;
                 case 'get_context':
-                  console.log('获取上下文信息工具被调用', data.tool_args);
-                  toolResult = await getContextTool(this.projectService, data.tool_args);
+                  console.log('获取上下文信息工具被调用', toolArgs);
+                  toolResult = await getContextTool(this.projectService, toolArgs);
                   break;
                 case 'file_operations':
-                  console.log('文件操作工具被调用', data.tool_args);
-                  toolResult = await fileOperationsTool(data.tool_args);
+                  console.log("toolArgs: ", toolArgs);
+                  toolResult = await fileOperationsTool(toolArgs);
                   break;
                 case 'fetch':
-                  console.log('网络请求工具被调用', data.tool_args);
-                  toolResult = await fetchTool(this.fetchToolService, data.tool_args);
+                  console.log('网络请求工具被调用', toolArgs);
+                  toolResult = await fetchTool(this.fetchToolService, toolArgs);
                   break;
               }
             }
