@@ -69,9 +69,6 @@ export class AilyChatComponent {
   list: any = [];
   // list = ChatListExamples  // 示例数据
 
-  // inputValue =
-  //   '帮我生成一组流水灯功能的代码块，包含开后流水灯、关闭流水灯两个块。在开发板的D2~D13引脚上均连接有LED开后流水灯功能块，可以指定流水灯速度，调用后即开启流水关闭流水灯功能块，调用后即停止流水灯。';
-
   currentUrl;
   inputValue = '';
   prjPath = '';
@@ -281,6 +278,7 @@ export class AilyChatComponent {
     }
 
     // 检查是否存在消息列表，且最后一条消息的role与当前role相同
+    console.log("listRole: ", this.list[this.list.length - 1]?.role, role);
     if (this.list.length > 0 && this.list[this.list.length - 1].role === role) {
       // 如果是同一个role，追加内容到最后一条消息
       this.list[this.list.length - 1].content += text;
@@ -374,7 +372,7 @@ export class AilyChatComponent {
         try {
           if (data.type === 'agent_response') {
             if (data.data) {
-              this.appendMessage('助手', data.data);
+              this.appendMessage('assistant', data.data);
             }
           } else if (data.type === 'processing_started') {
             console.log('助手正在思考...');
@@ -386,11 +384,10 @@ export class AilyChatComponent {
             // 处理工具调用请求
             // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
 
-            let toolArgs = data.tool_args;
-            if (typeof toolArgs === 'string') {
+            let toolArgs;
+            if (typeof data.tool_args === 'string') {
               try {
-                toolArgs = JSON.parse(toolArgs);
-                data.tool_args = toolArgs;
+                JSON.parse(data.tool_args);
               } catch (e) {
                 console.error('Failed to parse tool_args as JSON:', e);
                 // Keep original value if parsing fails
@@ -403,77 +400,129 @@ export class AilyChatComponent {
                 this.send();
                 return;
               }
+
+              toolArgs = data.tool_args;
+
+            } else {
+              // 如果 tool_args 不是字符串，直接使用
+              toolArgs = JSON.stringify(data.tool_args);
             }
 
-            let toolResult = null;
-            if (data.tool_name.startsWith('mcp_')) {
-              data.tool_name = data.tool_name.substring(4);
-              toolResult = await this.mcpService.use_tool(data.tool_name, data.tool_args);
-            } else {
-              let strToolArgs = JSON.stringify(data.tool_args)
-                .replace(/\\\\/g, '/')  // Replace \\ with /
-                .replace(/\\/g, '/');   // Replace \ with /
+            // 处理toolArgs中路径中的转义字符
+            toolArgs = toolArgs.replace(/\\\\/g, '/')  // Replace \\ with /
+              .replace(/\\/g, '/');   // Replace \ with /
 
-              const toolArgs = JSON.parse(strToolArgs)
-              switch (data.tool_name) {
-                case 'create_project':
-                  console.log('创建项目工具被调用', toolArgs);
-                  toolResult = await newProjectTool(this.projectService, this.prjPath, toolArgs);
-                  break;
-                case 'execute_command':
-                  console.log('执行command命令工具被调用', toolArgs);
-                  // Check if cwd is specified, otherwise use project paths
-                  if (!toolArgs.cwd) {
-                    toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
-                  }
-                  toolResult = await executeCommandTool(this.cmdService, toolArgs);
-                  if (!toolResult.is_error) {
-                    // Check if this is an npm install command
-                    const command = toolArgs.command;
-                    if (command.includes('npm i') || command.includes('npm install')) {
-                      // Extract the package name
-                      const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
-                      const match = command.match(npmRegex);
-                      
-                      if (match && match[2]) {
-                        const libPackageName = match[2];
-                        console.log('Installing library:', libPackageName);
+            
+            toolArgs = JSON.parse(toolArgs);
+            console.log('工具调用参数:', toolArgs);
+            
+            // 生成随机ID用于状态跟踪
+            const toolCallId = `call_${this.getRandomString()}`;
+            
+            // 添加正在处理状态消息
+            const toolDescription = this.getToolDescription(data.tool_name, toolArgs);
+            this.appendMessage('assistant', `
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在执行: ${toolDescription}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+`);
+
+            let toolResult = null;
+            let resultState = "done";
+            try {
+              if (data.tool_name.startsWith('mcp_')) {
+                data.tool_name = data.tool_name.substring(4);
+                toolResult = await this.mcpService.use_tool(data.tool_name, toolArgs);
+              } else {
+                switch (data.tool_name) {
+                  case 'create_project':
+                    console.log('创建项目工具被调用', toolArgs);
+                    toolResult = await newProjectTool(this.projectService, this.prjPath, toolArgs);
+                    break;
+                  case 'execute_command':
+                    console.log('执行command命令工具被调用', toolArgs);
+                    // Check if cwd is specified, otherwise use project paths
+                    if (!toolArgs.cwd) {
+                      toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
+                    }
+                    toolResult = await executeCommandTool(this.cmdService, toolArgs);
+                    if (!toolResult.is_error) {
+                      // Check if this is an npm install command
+                      const command = toolArgs.command;
+                      if (command.includes('npm i') || command.includes('npm install')) {
+                        // Extract the package name
+                        const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
+                        const match = command.match(npmRegex);
                         
-                        // Get project path from command args or default
-                        const projectPath = toolArgs.cwd || this.prjPath;
-                        
-                        // Load the library into blockly
-                        try {
-                          await this.blocklyService.loadLibrary(libPackageName, projectPath);
-                        } catch (e) {
-                          console.error('加载库失败:', e);
-                          toolResult = {
-                            is_error: true,
-                            content: `加载库失败: ${e.message}`
-                          };
+                        if (match && match[2]) {
+                          const libPackageName = match[2];
+                          console.log('Installing library:', libPackageName);
+                          
+                          // Get project path from command args or default
+                          const projectPath = toolArgs.cwd || this.prjPath;
+                          
+                          // Load the library into blockly
+                          try {
+                            await this.blocklyService.loadLibrary(libPackageName, projectPath);
+                          } catch (e) {
+                            console.error('加载库失败:', e);
+                            toolResult = {
+                              is_error: true,
+                              content: `加载库失败: ${e.message}`
+                            };
+                          }
                         }
                       }
                     }
-                  }
-                  break;
-                case 'ask_approval':
-                  console.log('请求用户确认工具被调用', toolArgs);
-                  toolResult = await askApprovalTool(toolArgs);
-                  break;
-                case 'get_context':
-                  console.log('获取上下文信息工具被调用', toolArgs);
-                  toolResult = await getContextTool(this.projectService, toolArgs);
-                  break;
-                case 'file_operations':
-                  console.log("toolArgs: ", toolArgs);
-                  toolResult = await fileOperationsTool(toolArgs);
-                  break;
-                case 'fetch':
-                  console.log('网络请求工具被调用', toolArgs);
-                  toolResult = await fetchTool(this.fetchToolService, toolArgs);
-                  break;
+                    break;
+                  case 'ask_approval':
+                    console.log('请求用户确认工具被调用', toolArgs);
+                    toolResult = await askApprovalTool(toolArgs);
+                    break;
+                  case 'get_context':
+                    console.log('获取上下文信息工具被调用', toolArgs);
+                    toolResult = await getContextTool(this.projectService, toolArgs);
+                    break;
+                  case 'file_operations':
+                    console.log("toolArgs: ", toolArgs);
+                    toolResult = await fileOperationsTool(toolArgs);
+                    break;
+                  case 'fetch':
+                    console.log('网络请求工具被调用', toolArgs);
+                    toolResult = await fetchTool(this.fetchToolService, toolArgs);
+                    break;
+                }
               }
+              
+              // 根据执行结果确定状态
+              if (toolResult && toolResult.is_error) {
+                resultState = "error";
+              } else if (toolResult && toolResult.warning) {
+                resultState = "warn";
+              }
+            } catch (error) {
+              console.error('工具执行出错:', error);
+              resultState = "error";
+              toolResult = {
+                is_error: true,
+                content: `工具执行出错: ${error.message || '未知错误'}`
+              };
             }
+            
+            // 添加完成状态消息
+            this.appendMessage('assistant', `
+\`\`\`aily-state
+{
+  "state": "${resultState}",
+  "text": "执行${resultState === "done" ? "完成" : resultState === "warn" ? "警告" : "失败"}: ${toolDescription}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+`);
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
@@ -520,6 +569,45 @@ export class AilyChatComponent {
       this.send();
       event.preventDefault();
     }
+  }
+
+  /**
+   * 根据工具名称和参数生成简短描述
+   * @param toolName 工具名称
+   * @param toolArgs 工具参数
+   * @returns 工具调用的简短描述
+   */
+  getToolDescription(toolName: string, toolArgs: any): string {
+    let description = toolName;
+    
+    try {
+      if (toolName === 'create_project' && toolArgs.board) {
+        description = `创建项目(${toolArgs.board.name || toolArgs.board.nickname || '未知开发板'})`;
+      } else if (toolName === 'execute_command' && toolArgs.command) {
+        // 截取命令前30个字符，避免过长
+        const shortCommand = toolArgs.command.length > 30 
+          ? toolArgs.command.substring(0, 30) + '...' 
+          : toolArgs.command;
+        description = `执行命令: ${shortCommand}`;
+      } else if (toolName === 'ask_approval' && toolArgs.message) {
+        description = `请求确认`;
+      } else if (toolName === 'get_context') {
+        description = `获取上下文信息(${toolArgs.info_type || 'all'})`;
+      } else if (toolName === 'file_operations' && toolArgs.operation) {
+        const path = toolArgs.path + (toolArgs.name ? `/${toolArgs.name}` : '');
+        const shortPath = path.length > 25 ? '...' + path.substring(path.length - 25) : path;
+        description = `文件操作: ${toolArgs.operation} ${shortPath}`;
+      } else if (toolName === 'fetch' && toolArgs.url) {
+        const url = new URL(toolArgs.url);
+        description = `网络请求: ${url.hostname}`;
+      } else if (toolName.startsWith('mcp_')) {
+        description = `MCP工具: ${toolName.substring(4)}`;
+      }
+    } catch (e) {
+      console.error('生成工具描述失败:', e);
+    }
+    
+    return description;
   }
 
   getRandomString() {
