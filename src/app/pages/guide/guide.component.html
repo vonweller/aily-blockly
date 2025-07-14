@@ -1,65 +1,68 @@
-<div class="guide-box ccenter">
-  <div class="left-box">
-    <div class="stitle">
-      AI-Blockly-QQ529538187 IDE
-      <div class="version">ver {{version}}</div>
-    </div>
-    <div class="title">{{'GUIDE.START' | translate}}</div>
-    @if (showMenu) {
-    <div class="menu-box">
-      @for (item of guideMenu; track $index) {
-      @if (item.sep) {
-      <div class="sep"></div>
-      } @else {
-      <div class="btn link" (click)="onMenuClick(item)">
-        <div class="icon ccenter">
-          <i class="{{ item.icon }}"></i>
-        </div>
-        <div class="text">{{ item.name | translate}}</div>
-      </div>
-      }
-      }
-    </div>
-    }
-    <div style="min-height: 150px;">
-      @if(recentlyProjects.length > 0) {
-      <div class="title">{{'GUIDE.RECENTLY' | translate}}</div>
-      <div class="menu-box">
-        @for(project of recentlyProjects; track $index) {
-        <div class="project btn link" (click)="openProjectByPath(project)">
-          {{project.name}}
-          <div class="path ellipsis">{{project.path}}</div>
-        </div>
-        }
-        <!-- <div class="project btn link" (click)="showMore=true">
-        更多...
-      </div> -->
-      </div>
+<div class="guide-container">
+  <!-- 顶部LOGO轮播区域 -->
+  <div class="top-logo-carousel" (mouseenter)="pauseLogoCarousel()" (mouseleave)="resumeLogoCarousel()">
+    <div class="logo-track" [style.transform]="'translateX(' + logoOffset + 'px)'">
+      @for (logo of logos; track $index) {
+      <img [src]="logo.src" [alt]="logo.alt" class="logo-item" />
       }
     </div>
   </div>
-  <div class="right-box ccenter">
-    <!-- <iframe src="https://ide.clz.me/" frameborder="0" allowpopups="true" class="pp"></iframe> -->
-    <div class="item" (click)="gotoPlayground()">
-      <div>{{'GUIDE.TUTORIAL' | translate}}</div>
-      <div>{{'GUIDE.TUTORIAL_DESC' | translate}}</div>
+
+  <!-- 主要内容区域 -->
+  <div class="guide-box ccenter">
+    <div class="left-box">
+      <div class="stitle">
+        AI-Blockly-QQ529538187 IDE
+        <div class="version">ver {{version}}</div>
+      </div>
+      <div class="title">{{'GUIDE.START' | translate}}</div>
+      @if (showMenu) {
+      <div class="menu-box">
+        @for (item of guideMenu; track $index) {
+        @if (item.sep) {
+        <div class="sep"></div>
+        } @else {
+        <div class="btn link" (click)="onMenuClick(item)">
+          <div class="icon ccenter">
+            <i class="{{ item.icon }}"></i>
+          </div>
+          <div class="text">{{ item.name | translate}}</div>
+        </div>
+        }
+        }
+      </div>
+      }
+      <div style="min-height: 150px;">
+        @if(recentlyProjects.length > 0) {
+        <div class="title">{{'GUIDE.RECENTLY' | translate}}</div>
+        <div class="menu-box">
+          @for(project of recentlyProjects; track $index) {
+          <div class="project btn link" (click)="openProjectByPath(project)">
+            {{project.name}}
+            <div class="path ellipsis">{{project.path}}</div>
+          </div>
+          }
+        </div>
+        }
+      </div>
     </div>
-    <div class="item" (click)="openUrl('https://github.com/vonweller/aily-blockly/blob/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6/VERSION.md')">
-      <div>{{'GUIDE.VERSION_INFO' | translate}}</div>
-      <div>{{'GUIDE.VERSION_INFO_DESC' | translate}}</div>
+    <div class="right-box ccenter">
+      <div class="item" (click)="gotoPlayground()">
+        <div>{{'GUIDE.TUTORIAL' | translate}}</div>
+        <div>{{'GUIDE.TUTORIAL_DESC' | translate}}</div>
+      </div>
+      <div class="item" (click)="openUrl('https://github.com/vonweller/aily-blockly/blob/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6/VERSION.md')">
+        <div>{{'GUIDE.VERSION_INFO' | translate}}</div>
+        <div>{{'GUIDE.VERSION_INFO_DESC' | translate}}</div>
+      </div>
+      <div class="item" (click)="openUrl('https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6')">
+        <div>{{'GUIDE.GITHUB' | translate}}</div>
+        <div>{{'GUIDE.GITHUB_DESC' | translate}}</div>
+      </div>
+      <div class="item" (click)="openUrl('https://github.com/ailyProject/aily-blockly/issues')">
+        <div>{{'GUIDE.FEEDBACK' | translate}}</div>
+        <div>{{'GUIDE.FEEDBACK_DESC' | translate}}</div>
+      </div>
     </div>
-    <div class="item" (click)="openUrl('https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6')">
-      <div>{{'GUIDE.GITHUB' | translate}}</div>
-      <div>{{'GUIDE.GITHUB_DESC' | translate}}</div>
-    </div>
-    <div class="item" (click)="openUrl('https://github.com/ailyProject/aily-blockly/issues')">
-      <div>{{'GUIDE.FEEDBACK' | translate}}</div>
-      <div>{{'GUIDE.FEEDBACK_DESC' | translate}}</div>
-    </div>
-    <!-- <div class="item" style="height: 165px;">
-      <div>{{'GUIDE.WECHAT_GROUP' | translate}}</div>
-      <div>{{'GUIDE.WECHAT_GROUP_DESC' | translate}}</div>
-      <img class="qrcode" src="./public/imgs/subject.webp" alt="二维码" srcset="">
-    </div> -->
   </div>
 </div>
