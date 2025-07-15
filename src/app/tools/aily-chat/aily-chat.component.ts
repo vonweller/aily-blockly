@@ -15,7 +15,7 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
-import { ChatCommunicationService } from '../../services/chat-communication.service';
+import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -242,7 +242,7 @@ pinMode(pin, mode);
     // 订阅外部文本消息
     this.textMessageSubscription = this.chatCommunicationService.getTextMessages().subscribe(
       message => {
-        this.receiveTextFromExternal(message.text, message.sender);
+        this.receiveTextFromExternal(message.text, message.options);
       }
     );
   }
@@ -256,14 +256,21 @@ pinMode(pin, mode);
   /**
    * 接收来自外部组件的文本并显示在输入框中
    * @param text 接收到的文本
-   * @param sender 发送者标识（可选）
+   * @param options 发送选项，包含 sender、type、cover 等参数
    */
-  receiveTextFromExternal(text: string, sender?: string): void {
-    if (this.inputValue) {
-      // 如果输入框已有内容，添加到末尾
-      this.inputValue += '\n' + text;
+  receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
+    console.log('接收到外部文本:', text, '选项:', options);
+    
+    // cover 默认为 true，只有明确设置为 false 时才追加
+    if (options?.cover === false) {
+      // 如果明确设置为不覆盖，则追加到末尾
+      if (this.inputValue) {
+        this.inputValue += '\n' + text;
+      } else {
+        this.inputValue = text;
+      }
     } else {
-      // 如果输入框为空，直接设置文本
+      // 默认行为：覆盖输入框内容
       this.inputValue = text;
     }
     

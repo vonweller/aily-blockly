@@ -1,9 +1,15 @@
 import { Injectable } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
 
+export interface ChatTextOptions {
+  sender?: string;
+  type?: string;
+  cover?: boolean;  // 是否覆盖之前的内容
+}
+
 export interface ChatTextMessage {
   text: string;
-  sender?: string;
+  options?: ChatTextOptions;
   timestamp?: number;
 }
 
@@ -22,12 +28,18 @@ export class ChatCommunicationService {
   /**
    * 发送文本到聊天组件
    * @param text 要发送的文本内容
-   * @param sender 发送者标识（可选）
+   * @param options 发送选项，包含 sender、type、cover 等参数
    */
-  sendTextToChat(text: string, sender?: string): void {
+  sendTextToChat(text: string, options?: ChatTextOptions): void {
+    // 设置默认值：cover 默认为 true
+    const finalOptions: ChatTextOptions = {
+      cover: true,  // 默认覆盖模式
+      ...options    // 用户提供的选项会覆盖默认值
+    };
+
     const message: ChatTextMessage = {
       text,
-      sender,
+      options: finalOptions,
       timestamp: Date.now()
     };
     this.textSubject.next(message);
@@ -43,11 +55,11 @@ export class ChatCommunicationService {
   /**
    * 静态方法，提供全局访问
    * @param text 要发送的文本内容
-   * @param sender 发送者标识（可选）
+   * @param options 发送选项，包含 sender、type、cover 等参数
    */
-  static sendToChat(text: string, sender?: string): void {
+  static sendToChat(text: string, options?: ChatTextOptions): void {
     if (ChatCommunicationService.instance) {
-      ChatCommunicationService.instance.sendTextToChat(text, sender);
+      ChatCommunicationService.instance.sendTextToChat(text, options);
     } else {
       console.warn('ChatCommunicationService 尚未初始化');
     }
