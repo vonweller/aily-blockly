@@ -1,9 +1,10 @@
-import { Component, ViewChild } from '@angular/core';
+import { Component, ViewChild, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { LogService } from '../../services/log.service';
 import { AnsiPipe } from './ansi.pipe';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { UiService } from '../../services/ui.service';
 
 @Component({
   selector: 'app-log',
@@ -11,8 +12,10 @@ import { NzMessageService } from 'ng-zorro-antd/message';
   templateUrl: './log.component.html',
   styleUrl: './log.component.scss',
 })
-export class LogComponent {
+export class LogComponent implements OnDestroy {
   @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
+  private clickTimeout: any;
+  private preventSingleClick = false;
 
   get logList() {
     return this.logService.list;
@@ -26,7 +29,8 @@ export class LogComponent {
 
   constructor(
     private logService: LogService,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private uiService: UiService
   ) { }
 
   ngAfterViewInit() {
@@ -42,8 +46,33 @@ export class LogComponent {
     this.logService.clear();
   }
 
-  // 双击复制日志内容到剪切板
-  async copyLogItemToClipboard(item: any, event?: Event) {
+  ngOnDestroy() {
+    if (this.clickTimeout) {
+      clearTimeout(this.clickTimeout);
+    }
+  }
+
+  // 处理点击事件，区分单击和双击
+  handleClick(item: any, event: MouseEvent) {
+    this.clickTimeout = setTimeout(() => {
+      if (!this.preventSingleClick) {
+        this.copyLogItemToClipboard(item);
+      }
+      this.preventSingleClick = false;
+    }, 250);
+  }
+
+  // 处理双击事件
+  handleDoubleClick(item: any, event: MouseEvent) {
+    this.preventSingleClick = true;
+    if (this.clickTimeout) {
+      clearTimeout(this.clickTimeout);
+    }
+    this.copyLogItemToChat(item);
+  }
+
+  // 单击复制日志内容到剪切板
+  async copyLogItemToClipboard(item: any) {
     try {
       const logContent = `${item.detail}`;
       await navigator.clipboard.writeText(logContent);
@@ -51,6 +80,17 @@ export class LogComponent {
     } catch (err) {
       console.error('复制到剪切板失败:', err);
     }
+  }
+
+  // 双击打开AI助手并发送日志内容
+  async copyLogItemToChat(item: any) {
+    // 这里可以实现将日志内容发送到AI助手的逻辑
+    // 例如，调用一个服务方法来处理这个操作
+    this.uiService.openTool("aily-chat");
+    setTimeout(() => {
+      window.sendToAilyChat(`运行日志：\n${item.detail}`, 'LogComponent');
+    }, 100);
+    this.message.info('日志内容已发送到AI助手');
   }
 
   private scrollToBottom(): void {

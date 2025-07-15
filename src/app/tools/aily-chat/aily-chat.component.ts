@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild } from '@angular/core';
+import { Component, ElementRef, ViewChild, OnDestroy } from '@angular/core';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { DialogComponent } from './components/dialog/dialog.component';
@@ -9,12 +9,13 @@ import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
+import { Observable, tap, Subscription } from 'rxjs';
 import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { IMenuItem } from '../../configs/menu.config';
+import { ChatCommunicationService } from '../../services/chat-communication.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -34,7 +35,7 @@ import { IMenuItem } from '../../configs/menu.config';
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
 })
-export class AilyChatComponent {
+export class AilyChatComponent implements OnDestroy {
   options = {
     autoHide: true,
     clickOnTrack: true,
@@ -43,6 +44,7 @@ export class AilyChatComponent {
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatList') chatList: ElementRef;
+  @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
   list: any = [
     {
@@ -222,6 +224,8 @@ pinMode(pin, mode);
 
   windowInfo = 'AI助手';
 
+  private textMessageSubscription: Subscription;
+
   get sessionId() {
     return this.chatService.currentSessionId;
   }
@@ -230,10 +234,47 @@ pinMode(pin, mode);
     private uiService: UiService,
     private router: Router,
     private chatService: ChatService,
+    private chatCommunicationService: ChatCommunicationService
   ) { }
 
   ngOnInit() {
     this.currentUrl = this.router.url;
+    // 订阅外部文本消息
+    this.textMessageSubscription = this.chatCommunicationService.getTextMessages().subscribe(
+      message => {
+        this.receiveTextFromExternal(message.text, message.sender);
+      }
+    );
+  }
+
+  ngOnDestroy() {
+    if (this.textMessageSubscription) {
+      this.textMessageSubscription.unsubscribe();
+    }
+  }
+
+  /**
+   * 接收来自外部组件的文本并显示在输入框中
+   * @param text 接收到的文本
+   * @param sender 发送者标识（可选）
+   */
+  receiveTextFromExternal(text: string, sender?: string): void {
+    if (this.inputValue) {
+      // 如果输入框已有内容，添加到末尾
+      this.inputValue += '\n' + text;
+    } else {
+      // 如果输入框为空，直接设置文本
+      this.inputValue = text;
+    }
+    
+    // 自动聚焦到输入框并将光标移到末尾
+    setTimeout(() => {
+      if (this.chatTextarea?.nativeElement) {
+        const textarea = this.chatTextarea.nativeElement;
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      }
+    }, 100);
   }
 
   close() {
