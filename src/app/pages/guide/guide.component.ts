@@ -24,10 +24,11 @@ export class GuideComponent implements OnInit, OnDestroy {
     { src: 'brand/seekfree/logo.png', alt: 'seekfree' },
     { src: 'brand/seeedstudio/logo.png', alt: 'seeedstudio' },
     { src: 'brand/openjumper/logo.png', alt: 'openjumper' },
-    { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
-    { src: 'brand/titlab/logo.png', alt: 'titlab' },
-    { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
-    { src: 'brand/keyes/logo.png', alt: 'keyes' },
+    // { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
+    // { src: 'brand/titlab/logo.png', alt: 'titlab' },
+    // { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
+    // { src: 'brand/keyes/logo.png', alt: 'keyes' },
+    { src: 'brand/Kwm/logo.png', alt: 'kwm' },
     // 如果要添加新的LOGO，在这里添加，例如：
     // { src: 'brand/newbrand/logo.png', alt: 'newbrand' },
     
@@ -35,10 +36,11 @@ export class GuideComponent implements OnInit, OnDestroy {
     { src: 'brand/seekfree/logo.png', alt: 'seekfree' },
     { src: 'brand/seeedstudio/logo.png', alt: 'seeedstudio' },
     { src: 'brand/openjumper/logo.png', alt: 'openjumper' },
-    { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
-    { src: 'brand/titlab/logo.png', alt: 'titlab' },
-    { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
-    { src: 'brand/keyes/logo.png', alt: 'keyes' },
+    // { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
+    // { src: 'brand/titlab/logo.png', alt: 'titlab' },
+    // { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
+    // { src: 'brand/keyes/logo.png', alt: 'keyes' },
+    { src: 'brand/Kwm/logo.png', alt: 'kwm' },
     // 如果上面添加了新LOGO，这里也要添加一遍，例如：
     // { src: 'brand/newbrand/logo.png', alt: 'newbrand' },
   ];
