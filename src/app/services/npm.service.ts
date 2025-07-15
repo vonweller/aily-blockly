@@ -434,15 +434,15 @@ export class NpmService {
   }
 
   async getAllInstalledLibraries(path: string) {
-    let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
-    console.log(data);
-
+    // let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
+    let data = await getInstalledPackagesByFileRead(path);
+    console.log("data:", data);
     // 提取所有依赖项到对象数组
     const allDependencies = this.extractAllDependencies(data.dependencies || {});
-    
+
     // 过滤出以 @aily-project/lib- 开头的库
     const libraryModules = allDependencies.filter(dep => dep.name.startsWith('@aily-project/lib-'));
-    
+
     // 让包含@aily-project/lib-core-的模块在最前面
     libraryModules.sort((a, b) => {
       if (a.name.startsWith('@aily-project/lib-core-') && !b.name.startsWith('@aily-project/lib-core-')) {
@@ -453,7 +453,7 @@ export class NpmService {
         return a.name.localeCompare(b.name);
       }
     });
-    
+
     return libraryModules;
   }
 
@@ -462,7 +462,7 @@ export class NpmService {
    * @param dependencies 依赖对象
    * @returns 包含所有依赖项名称和版本的对象数组
    */
-  private extractAllDependencies(dependencies: any): Array<{name: string, version: string}> {
+  private extractAllDependencies(dependencies: any): Array<{ name: string, version: string }> {
     const dependencyMap = new Map<string, string>();
 
     const extractRecursively = (deps: any) => {
@@ -476,7 +476,7 @@ export class NpmService {
         if (packageInfo && typeof packageInfo === 'object') {
           version = packageInfo['version'] || 'unknown';
         }
-        
+
         // 添加当前包名和版本到Map中（避免重复）
         dependencyMap.set(packageName, version);
 
@@ -506,5 +506,127 @@ export interface ResponseModel {
   status: number;
   messages: string;
   data: any;
+}
+
+/**
+ * 通过读取文件的方式获取已安装的包信息，模拟 npm ls --all --json 的效果
+ * @param projectPath 项目路径
+ * @returns 类似 npm ls 的数据结构
+ */
+export async function getInstalledPackagesByFileRead(projectPath: string): Promise<any> {
+  const nodeModulesPath = `${projectPath}/node_modules`;
+
+  // 检查 node_modules 目录是否存在
+  if (!window['path'].isExists(nodeModulesPath)) {
+    return { dependencies: {} };
+  }
+
+  const dependencies = {};
+
+  // 递归扫描 node_modules 目录
+  await scanNodeModulesDirectory(nodeModulesPath, dependencies);
+
+  return {
+    name: 'project',
+    version: '1.0.0',
+    dependencies: dependencies
+  };
+}
+
+/**
+ * 递归扫描 node_modules 目录
+ * @param nodeModulesPath node_modules 目录路径
+ * @param dependencies 依赖对象
+ */
+export async function scanNodeModulesDirectory(nodeModulesPath: string, dependencies: any): Promise<void> {
+  try {
+    const dirs = window['fs'].readDirSync(nodeModulesPath);
+
+    for (const dir of dirs) {
+      // 跳过 .bin 等特殊目录
+      if (dir.name && dir.name.startsWith('.')) {
+        continue;
+      }
+
+      const dirName = dir.name || dir; // 兼容不同的 readDirSync 返回格式
+      const packagePath = `${nodeModulesPath}/${dirName}`;
+
+      // 检查是否是目录
+      if (!window['fs'].isDirectory(packagePath)) {
+        continue;
+      }
+
+      if (dirName.startsWith('@')) {
+        // 处理 scoped packages (如 @aily-project/lib-xxx)
+        await scanScopedPackages(packagePath, dependencies);
+      } else {
+        // 处理普通包
+        await scanSinglePackage(packagePath, dirName, dependencies);
+      }
+    }
+  } catch (error) {
+    console.error('扫描 node_modules 目录失败:', error);
+  }
+}
+
+/**
+ * 扫描 scoped packages
+ * @param scopePath scope 目录路径
+ * @param dependencies 依赖对象
+ */
+export async function scanScopedPackages(scopePath: string, dependencies: any): Promise<void> {
+  try {
+    const scopeDirs = window['fs'].readDirSync(scopePath);
+    const scopeName = window['path'].basename(scopePath);
+
+    for (const dir of scopeDirs) {
+      const dirName = dir.name || dir;
+      const packageName = `${scopeName}/${dirName}`;
+      const packagePath = `${scopePath}/${dirName}`;
+
+      if (window['fs'].isDirectory(packagePath)) {
+        await scanSinglePackage(packagePath, packageName, dependencies);
+      }
+    }
+  } catch (error) {
+    console.error('扫描 scoped packages 失败:', error);
+  }
+}
+
+/**
+ * 扫描单个包
+ * @param packagePath 包路径
+ * @param packageName 包名
+ * @param dependencies 依赖对象
+ */
+export async function scanSinglePackage(packagePath: string, packageName: string, dependencies: any): Promise<void> {
+  try {
+    const packageJsonPath = `${packagePath}/package.json`;
+
+    // 检查 package.json 是否存在
+    if (!window['path'].isExists(packageJsonPath)) {
+      return;
+    }
+
+    // 读取 package.json
+    const packageJsonContent = window['fs'].readFileSync(packageJsonPath);
+    const packageJson = JSON.parse(packageJsonContent);
+
+    // 构建包信息
+    const packageInfo: any = {
+      version: packageJson.version || '1.0.0'
+    };
+
+    // 检查是否有子依赖
+    const subNodeModulesPath = `${packagePath}/node_modules`;
+    if (window['path'].isExists(subNodeModulesPath)) {
+      packageInfo.dependencies = {};
+      await scanNodeModulesDirectory(subNodeModulesPath, packageInfo.dependencies);
+    }
+
+    dependencies[packageName] = packageInfo;
+  } catch (error) {
+    console.error(`扫描包 ${packageName} 失败:`, error);
+  }
 }
 

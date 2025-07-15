@@ -59,7 +59,7 @@ export class HeaderComponent {
   }
 
   get currentBoard() {
-    return this.projectService.currentBoardConfig.name;
+    return this.projectService.currentBoardConfig?.name;
   }
 
   currentUrl = null;
