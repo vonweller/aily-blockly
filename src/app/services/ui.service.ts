@@ -119,16 +119,27 @@ export class UiService {
 
   turnBottomSider(data = 'default') {
     if (this.terminalIsOpen) {
-      this.closeTerminal();
+      // 如果底部面板已经打开，则切换到指定的tab
+      this.switchBottomSiderTab(data);
     } else {
+      // 如果底部面板未打开，则打开面板并显示指定的组件
       this.openBottomSider(data);
+    }
+  }
+
+  // 切换底部面板的tab
+  switchBottomSiderTab(data: string) {
+    if (this.isMainWindow) {
+      this.actionSubject.next({ action: 'switch-tab', type: 'bottom-sider', data });
+    } else {
+      window['iWindow'].send({ to: 'main', data: { action: 'switch-terminal-tab', tab: data } });
     }
   }
 
   async openBottomSider(data = 'default'): Promise<{ pid: number }> {
     return new Promise(async (resolve, reject) => {
       if (this.isMainWindow) {
-        this.actionSubject.next({ action: 'open', type: 'terminal', data });
+        this.actionSubject.next({ action: 'open', type: 'bottom-sider', data });
         this.terminalIsOpen = true;
         const intervalId = setInterval(() => {
           if (this.terminalService.currentPid) {
@@ -147,16 +158,11 @@ export class UiService {
 
   closeTerminal() {
     if (this.isMainWindow) {
-      this.actionSubject.next({ action: 'close', type: 'terminal' });
+      this.actionSubject.next({ action: 'close', type: 'bottom-sider' });
       this.terminalIsOpen = false;
     } else {
       window['iWindow'].send({ to: 'main', data: { action: 'close-terminal' } });
     }
-  }
-
-  // 清空终端
-  clearTerminal() {
-    // this.actionSubject.next({ action: 'clear-terminal' });
   }
 
   // 更新footer右下角的状态

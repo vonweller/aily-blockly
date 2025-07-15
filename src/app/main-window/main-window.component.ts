@@ -108,11 +108,19 @@ export class MainWindowComponent {
             }
           }
           break;
-        case 'terminal':
+        case 'bottom-sider':
           if (e.action === 'open') {
             this.showBbox = true;
             this.terminalTab = e.data;
             // 根据数据设置选中的tab
+            if (e.data === 'log') {
+              this.selectedTabIndex = 0;
+            } else if (e.data === 'terminal') {
+              this.selectedTabIndex = 1;
+            }
+          } else if (e.action === 'switch-tab') {
+            // 切换tab，不改变面板的显示状态
+            this.terminalTab = e.data;
             if (e.data === 'log') {
               this.selectedTabIndex = 0;
             } else if (e.data === 'terminal') {
