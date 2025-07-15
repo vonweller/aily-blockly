@@ -1,7 +1,11 @@
 <div class="footer-box">
   <!-- 打开的窗口就显示图标在这里 -->
   @for(item of FOOTER_BTNS; track item.name) {
-  <div class="btn ccenter" nzTooltipTitle="{{item.text}}" nz-tooltip (click)="process(item)">
+  <div class="btn ccenter" 
+       [class.active]="isButtonActive(item)" 
+       nzTooltipTitle="{{item.text}}" 
+       nz-tooltip 
+       (click)="process(item)">
     <i class="{{item.icon}}"></i>
   </div>
   }

@@ -112,6 +112,7 @@ export class MainWindowComponent {
           if (e.action === 'open') {
             this.showBbox = true;
             this.terminalTab = e.data;
+            this.uiService.currentBottomTab = e.data;
             // 根据数据设置选中的tab
             if (e.data === 'log') {
               this.selectedTabIndex = 0;
@@ -121,6 +122,7 @@ export class MainWindowComponent {
           } else if (e.action === 'switch-tab') {
             // 切换tab，不改变面板的显示状态
             this.terminalTab = e.data;
+            this.uiService.currentBottomTab = e.data;
             if (e.data === 'log') {
               this.selectedTabIndex = 0;
             } else if (e.data === 'terminal') {
@@ -128,6 +130,7 @@ export class MainWindowComponent {
             }
           } else {
             this.showBbox = false;
+            this.uiService.currentBottomTab = '';
           }
           break;
         default:
@@ -187,8 +190,10 @@ export class MainWindowComponent {
     this.selectedTabIndex = index;
     if (index === 0) {
       this.terminalTab = 'log';
+      this.uiService.currentBottomTab = 'log';
     } else if (index === 1) {
       this.terminalTab = 'terminal';
+      this.uiService.currentBottomTab = 'terminal';
     }
   }
 
@@ -196,6 +201,7 @@ export class MainWindowComponent {
   closeBottomPanel(): void {
     this.showBbox = false;
     this.uiService.terminalIsOpen = false;
+    this.uiService.currentBottomTab = '';
   }
 
   // 清空当前选中的组件

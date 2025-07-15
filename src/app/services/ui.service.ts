@@ -26,6 +26,8 @@ export class UiService {
 
   // 用来记录terminal是否打开
   terminalIsOpen = false;
+  // 当前选中的底部面板tab
+  currentBottomTab = '';
   theme = 'dark';
   isMainWindow = false;
 
@@ -118,8 +120,11 @@ export class UiService {
   }
 
   turnBottomSider(data = 'default') {
-    if (this.terminalIsOpen) {
-      // 如果底部面板已经打开，则切换到指定的tab
+    if (this.terminalIsOpen && this.currentBottomTab === data) {
+      // 如果底部面板已经打开且当前选中的就是要打开的tab，则关闭面板
+      this.closeTerminal();
+    } else if (this.terminalIsOpen) {
+      // 如果底部面板已经打开但选中的不是要打开的tab，则切换到指定的tab
       this.switchBottomSiderTab(data);
     } else {
       // 如果底部面板未打开，则打开面板并显示指定的组件
@@ -129,6 +134,7 @@ export class UiService {
 
   // 切换底部面板的tab
   switchBottomSiderTab(data: string) {
+    this.currentBottomTab = data;
     if (this.isMainWindow) {
       this.actionSubject.next({ action: 'switch-tab', type: 'bottom-sider', data });
     } else {
@@ -138,6 +144,7 @@ export class UiService {
 
   async openBottomSider(data = 'default'): Promise<{ pid: number }> {
     return new Promise(async (resolve, reject) => {
+      this.currentBottomTab = data;
       if (this.isMainWindow) {
         this.actionSubject.next({ action: 'open', type: 'bottom-sider', data });
         this.terminalIsOpen = true;
@@ -160,6 +167,7 @@ export class UiService {
     if (this.isMainWindow) {
       this.actionSubject.next({ action: 'close', type: 'bottom-sider' });
       this.terminalIsOpen = false;
+      this.currentBottomTab = '';
     } else {
       window['iWindow'].send({ to: 'main', data: { action: 'close-terminal' } });
     }
