@@ -1,11 +1,13 @@
-import { Component, ChangeDetectorRef } from '@angular/core';
+import { Component, ChangeDetectorRef, ViewChild } from '@angular/core';
 import { FooterComponent } from './components/footer/footer.component';
 import { HeaderComponent } from './components/header/header.component';
 import { CommonModule } from '@angular/common';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
+import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
+import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
 import { SerialMonitorComponent } from '../tools/serial-monitor/serial-monitor.component';
 import { CodeViewerComponent } from '../tools/code-viewer/code-viewer.component';
@@ -29,8 +31,10 @@ import { UserComponent } from './components/user/user.component';
     FooterComponent,
     NzLayoutModule,
     NzResizableModule,
+    NzTabsModule,
     AilyChatComponent,
     TerminalComponent,
+    LogComponent,
     SerialMonitorComponent,
     CodeViewerComponent,
     SimplebarAngularModule,
@@ -43,9 +47,13 @@ import { UserComponent } from './components/user/user.component';
   styleUrl: './main-window.component.scss',
 })
 export class MainWindowComponent {
+  @ViewChild('logComponent') logComponent!: LogComponent;
+  @ViewChild('terminalComponent') terminalComponent!: TerminalComponent;
+  
   showRbox = false;
   showBbox = false;
-  terminalTab = 'default';  // error,info,log
+  terminalTab = 'log';  // log, terminal
+  selectedTabIndex = 0;
 
   get topTool() {
     return this.uiService.topTool;
@@ -104,6 +112,12 @@ export class MainWindowComponent {
           if (e.action === 'open') {
             this.showBbox = true;
             this.terminalTab = e.data;
+            // 根据数据设置选中的tab
+            if (e.data === 'log') {
+              this.selectedTabIndex = 0;
+            } else if (e.data === 'terminal') {
+              this.selectedTabIndex = 1;
+            }
           } else {
             this.showBbox = false;
           }
@@ -158,5 +172,32 @@ export class MainWindowComponent {
 
   onContentResize({ height }: NzResizeEvent): void {
     this.bottomHeight = height!;
+  }
+
+  // 处理底部tab的切换
+  onTabChange(index: number): void {
+    this.selectedTabIndex = index;
+    if (index === 0) {
+      this.terminalTab = 'log';
+    } else if (index === 1) {
+      this.terminalTab = 'terminal';
+    }
+  }
+
+  // 关闭底部面板
+  closeBottomPanel(): void {
+    this.showBbox = false;
+    this.uiService.terminalIsOpen = false;
+  }
+
+  // 清空当前选中的组件
+  clearCurrentComponent(): void {
+    if (this.selectedTabIndex === 0) {
+      // 清空日志
+      this.logComponent?.clear();
+    } else if (this.selectedTabIndex === 1) {
+      // 清空终端
+      this.terminalComponent?.clear();
+    }
   }
 }

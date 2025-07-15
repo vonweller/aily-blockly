@@ -6,7 +6,32 @@ import { Subject } from 'rxjs';
 })
 export class LogService {
 
-  list: LogOptions[] = [];
+  list: LogOptions[] = [
+    {
+      title: '连接成功',
+      detail: '设备已成功连接到串口 COM3',
+      state: 'success',
+      timestamp: Date.now() - 60000
+    },
+    {
+      title: '编译中',
+      detail: '正在编译项目代码...',
+      state: 'info',
+      timestamp: Date.now() - 30000
+    },
+    {
+      title: '上传失败',
+      detail: '无法上传代码到设备，请检查连接',
+      state: 'error',
+      timestamp: Date.now() - 15000
+    },
+    {
+      title: '调试信息',
+      detail: '变量 x 的值为 42',
+      state: 'debug',
+      timestamp: Date.now() - 5000
+    }
+  ];
 
   stateSubject = new Subject<LogOptions>();
 
