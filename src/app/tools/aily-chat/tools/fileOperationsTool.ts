@@ -12,18 +12,67 @@ function normalizePath(inputPath) {
         .replace(/\/$/, '');   // 移除尾部斜杠
 }
 
+// 构建目录树的递归函数
+async function buildDirectoryTree(dirPath: string, currentDepth: number = 0, maxDepth: number = 3) {
+    if (currentDepth > maxDepth) {
+        return null;
+    }
+
+    try {
+        const stats = await window['fs'].statSync(dirPath);
+        const isDirectory = await window['fs'].isDirectory(dirPath);
+        const name = window['path'].basename(dirPath);
+
+        const node = {
+            name,
+            path: dirPath,
+            isDirectory,
+            size: stats.size,
+            modifiedTime: stats.mtime,
+            children: [] as any[]
+        };
+
+        if (isDirectory && currentDepth < maxDepth) {
+            try {
+                const files = await window['fs'].readDirSync(dirPath);
+                for (const file of files) {
+                    const childPath = window['path'].join(dirPath, file.name);
+                    const childNode = await buildDirectoryTree(childPath, currentDepth + 1, maxDepth);
+                    if (childNode) {
+                        node.children.push(childNode);
+                    }
+                }
+                // 按名称排序，目录在前
+                node.children.sort((a, b) => {
+                    if (a.isDirectory && !b.isDirectory) return -1;
+                    if (!a.isDirectory && b.isDirectory) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+            } catch (error) {
+                console.warn(`无法读取目录: ${dirPath}`, error);
+            }
+        }
+
+        return node;
+    } catch (error) {
+        console.warn(`无法获取文件信息: ${dirPath}`, error);
+        return null;
+    }
+}
+
 
 export async function fileOperationsTool(
     params: {
-        operation: 'list' | 'read' | 'create' | 'edit' | 'delete' | 'exists' | 'rename';
+        operation: 'list' | 'read' | 'create' | 'edit' | 'delete' | 'exists' | 'rename' | 'tree';
         path: string;
         name?: string;
         content?: string;
         is_folder?: boolean;
+        maxDepth?: number; // 用于控制目录树的最大深度
     }
 ): Promise<ToolUseResult> {
     try {
-        let { operation, path: basePath, name, content, is_folder = false } = params;
+        let { operation, path: basePath, name, content, is_folder = false, maxDepth = 3 } = params;
 
         // 处理路径转义和规范化
         basePath = normalizePath(basePath);
@@ -57,6 +106,13 @@ export async function fileOperationsTool(
             case 'read':
                 const fileContent = await window['fs'].readFileSync(filePath, 'utf-8');
                 return { is_error, content: fileContent };
+
+            case 'tree':
+                const directoryTree = await buildDirectoryTree(filePath, 0, maxDepth);
+                if (!directoryTree) {
+                    return { is_error: true, content: `无法构建目录树: ${filePath}` };
+                }
+                return { is_error, content: JSON.stringify(directoryTree, null, 2) };
 
             case 'create':
                 if (is_folder) {
@@ -146,6 +202,10 @@ export async function fileOperationsTool(
                     }
                 }
                 return { is_error, content: exists.toString() };
+
+            case 'tree':
+                const tree = await buildDirectoryTree(filePath, 0, maxDepth);
+                return { is_error, content: JSON.stringify(tree, null, 2) };
 
             default:
                 return { is_error: true, content: `Invalid operation: ${operation}` };

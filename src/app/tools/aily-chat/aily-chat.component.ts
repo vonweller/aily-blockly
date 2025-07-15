@@ -149,14 +149,14 @@ export class AilyChatComponent {
     },
     {
       name: "file_operations",
-      description: `执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，以及检查文件是否存在。支持相对路径和绝对路径。`,
+      description: `执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，获取目录树，以及检查文件是否存在。支持相对路径和绝对路径。`,
       input_schema: {
         type: 'object',
         properties: {
           operation: { 
             type: 'string', 
             description: '要执行的操作类型',
-            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists', 'rename']
+            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists', 'rename', 'tree']
           },
           path: { 
             type: 'string', 
@@ -174,6 +174,11 @@ export class AilyChatComponent {
             type: 'boolean', 
             description: '指定目标是否为文件夹',
             default: false
+          },
+          maxDepth: { 
+            type: 'number', 
+            description: '目录树的最大深度（仅用于tree操作）',
+            default: 3
           }
         },
         required: ['operation', 'path']
