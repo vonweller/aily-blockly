@@ -261,9 +261,9 @@ export class HeaderComponent {
       case 'tool-open':
         this.uiService.turnTool(item.data);
         break;
-      case 'terminal':
-        this.uiService.turnTerminal(item.data);
-        break;
+      // case 'terminal':
+      //   this.uiService.turnTerminal(item.data);
+      //   break;
       case 'compile':
         if (item.state === 'doing') return;
         item.state = 'doing';

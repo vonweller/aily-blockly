@@ -48,12 +48,12 @@ export let HEADER_BTNS: IMenuItem[][] = [
     // },
   ],
   [
-    {
-      name: 'MENU.TERMINAL',
-      action: 'terminal',
-      data: { type: 'terminal', data: "default" },
-      icon: 'fa-light fa-rectangle-terminal',
-    },
+    // {
+    //   name: 'MENU.TERMINAL',
+    //   action: 'terminal',
+    //   data: { type: 'terminal', data: "default" },
+    //   icon: 'fa-light fa-rectangle-terminal',
+    // },
     {
       name: 'MENU.CODE',
       action: 'tool-open',
@@ -94,7 +94,8 @@ export let HEADER_BTNS: IMenuItem[][] = [
       name: 'MENU.USER',
       action: 'user-auth',
       data: { type: 'tool', data: "app-store" },
-      icon: 'fa-light fa-user'
+      icon: 'fa-light fa-user',
+      dev: true
     },
   ],
 ];
@@ -221,3 +222,19 @@ export let GUIDE_MENU: IMenuItem[] = [
     icon: 'fa-light fa-books',
   }
 ];
+
+
+export let FOOTER_BTNS: IMenuItem[] = [
+  {
+    name: 'MENU.PROJECT_NEW',
+    text: '日志',
+    action: 'log-open',
+    icon: 'fa-light fa-square-list',
+  },
+  {
+    name: 'MENU.TERMINAL',
+    text: '终端',
+    action: 'terminal-open',
+    icon: 'fa-light fa-square-terminal',
+  }
+]
