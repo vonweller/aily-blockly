@@ -48,14 +48,14 @@ export class UiService {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
         console.log('window-receive', message);
         let data;
-        if (message.data.action == 'open-terminal') {
-          data = await this.openTerminal();
-          // console.log('open-terminal', pid);
-        } else if (message.data.action == 'close-terminal') {
-          this.closeTerminal();
-        } else {
-          return;
-        }
+        // if (message.data.action == 'open-terminal') {
+        //   data = await this.openTerminal();
+        //   // console.log('open-terminal', pid);
+        // } else if (message.data.action == 'close-terminal') {
+        //   this.closeTerminal();
+        // } else {
+        //   return;
+        // }
         // 反馈完成结果
         if (message.messageId) {
           window['ipcRenderer'].send('main-window-response', {
@@ -91,10 +91,10 @@ export class UiService {
 
   // 如果其它组件/程序要打开工具，调用这个方法
   openTool(name: string) {
-    if (name == 'terminal') {
-      this.openTerminal();
-      return;
-    }
+    // if (name == 'terminal') {
+    //   this.openTerminal();
+    //   return;
+    // }
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
     this.actionSubject.next({ action: 'open', type: 'tool', data: name });
@@ -117,15 +117,15 @@ export class UiService {
     this.openToolList = [];
   }
 
-  turnTerminal(data) {
+  turnBottomSider(data = 'default') {
     if (this.terminalIsOpen) {
       this.closeTerminal();
     } else {
-      this.openTerminal(data);
+      this.openBottomSider(data);
     }
   }
 
-  async openTerminal(data = 'default'): Promise<{ pid: number }> {
+  async openBottomSider(data = 'default'): Promise<{ pid: number }> {
     return new Promise(async (resolve, reject) => {
       if (this.isMainWindow) {
         this.actionSubject.next({ action: 'open', type: 'terminal', data });
@@ -139,7 +139,7 @@ export class UiService {
       } else {
         // 其它窗口调用
         let { pid } = await window['iWindow'].send({ to: 'main', data: { action: 'open-terminal' } });
-        console.log('open-terminal', pid);
+        // console.log('open-terminal', pid);
         resolve({ pid });
       }
     });
