@@ -260,9 +260,21 @@ export class LibManagerComponent {
       const folderPath = await window['ipcRenderer'].invoke('select-folder', {
         path: this.projectService.currentProjectPath,
       });
-      
+
       // 如果用户取消选择，返回
       if (!folderPath || folderPath === this.projectService.currentProjectPath) {
+        return;
+      }
+
+      // console.log('选择的文件夹路径：', folderPath);
+      
+      // 检查选择的路径下是否有package.json、block.json、generator.js文件
+      const hasPackageJson = await this.electronService.exists(folderPath + '/package.json');
+      const hasBlockJson = await this.electronService.exists(folderPath + '/block.json');
+      const hasGeneratorJs = await this.electronService.exists(folderPath + '/generator.js');
+
+      if (!hasPackageJson || !hasBlockJson || !hasGeneratorJs) {
+        this.message.error(`${this.translate.instant('LIB_MANAGER.IMPORT_FAILED')}: 该路径下不是aily blockly库`);
         return;
       }
 
@@ -274,20 +286,20 @@ export class LibManagerComponent {
 
       // 使用 npm install 安装本地库
       await this.cmdService.runAsync(`npm install "${folderPath}"`, this.projectService.currentProjectPath);
-      
+
       // 重新检查已安装的库
       await this.checkInstalled();
-      
+
       this.message.success(`${this.translate.instant('LIB_MANAGER.IMPORTED')}`);
 
       // 获取安装后的库列表并加载新增的库
       let packageList_new = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
-      console.log('导入后已安装的库列表：', packageList_new);
-      
+      // console.log('导入后已安装的库列表：', packageList_new);
+
       // 比对相较于旧的已安装库列表，找出新增的库
       const newPackages = packageList_new.filter(pkg => !packageList_old.some(oldPkg => oldPkg.name === pkg.name && oldPkg.version === pkg.version));
-      console.log('新导入的库：', newPackages);
-      
+      // console.log('新导入的库：', newPackages);
+
       // 加载新增的库到 Blockly
       for (const pkg of newPackages) {
         this.blocklyService.loadLibrary(pkg.name, this.projectService.currentProjectPath);
