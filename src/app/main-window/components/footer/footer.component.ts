@@ -57,4 +57,15 @@ export class FooterComponent {
         break;
     }
   }
+
+  isButtonActive(item: IMenuItem): boolean {
+    switch (item.action) {
+      case 'log-open':
+        return this.uiService.terminalIsOpen && this.uiService.currentBottomTab === 'log';
+      case 'terminal-open':
+        return this.uiService.terminalIsOpen && this.uiService.currentBottomTab === 'terminal';
+      default:
+        return false;
+    }
+  }
 }

@@ -167,6 +167,9 @@ export class LibManagerComponent {
     }
     // console.log('当前项目路径：', this.projectService.currentProjectPath);
 
+    let packageList_old = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
+    console.log('当前已安装的库列表：', packageList_old);
+
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
     this.output = '';
@@ -174,7 +177,15 @@ export class LibManagerComponent {
     await this.checkInstalled();
     lib.state = 'default';
     this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
-    this.blocklyService.loadLibrary(lib.name, this.projectService.currentProjectPath);
+
+    let packageList_new = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
+    console.log('新的已安装的库列表：', packageList_new);
+    // 比对相较于旧的已安装库列表，找出新增的库
+    const newPackages = packageList_new.filter(pkg => !packageList_old.some(oldPkg => oldPkg.name === pkg.name && oldPkg.version === pkg.version));
+    console.log('新增的库：', newPackages);
+    for (const pkg of newPackages) {
+      this.blocklyService.loadLibrary(pkg.name, this.projectService.currentProjectPath);
+    }
   }
 
   async removeLib(lib) {

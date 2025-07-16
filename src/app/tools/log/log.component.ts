@@ -88,7 +88,11 @@ export class LogComponent implements OnDestroy {
     // 例如，调用一个服务方法来处理这个操作
     this.uiService.openTool("aily-chat");
     setTimeout(() => {
-      window.sendToAilyChat(`运行日志：\n${item.detail}`, 'LogComponent');
+      window.sendToAilyChat(`运行日志：\n${item.detail}`, {
+        sender: 'LogComponent',
+        type: 'log'
+        // cover: true 是默认值，可以省略
+      });
     }, 100);
     this.message.info('日志内容已发送到AI助手');
   }

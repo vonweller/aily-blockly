@@ -22,11 +22,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
     join: (...args) => require("path").join(...args),
-    basename: (path) => basename(path),
-    dirname: (path) => dirname(path),
+    dirname: (path) => require("path").dirname(path),
     extname: (path) => require("path").extname(path),
     normalize: (path) => require("path").normalize(path),
-    resolve: (path) => require("path").resolve(path)
+    resolve: (path) => require("path").resolve(path),
+    basename: (path) => require("path").basename(path)
   },
   versions: () => process.versions,
   SerialPort: {
