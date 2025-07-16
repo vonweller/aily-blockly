@@ -92,6 +92,7 @@
         "SEARCH_LIBRARY": "Поиск библиотек",
         "INSTALLED": "Установлено",
         "CORE_LIBRARY": "Основная библиотека",
+        "IMPORT_LIBRARY": "Импорт локальной библиотеки",
         "INSTALL": "Установить",
         "INSTALLED_TEXT": "Установлено",
         "REMOVE": "Удалить",
