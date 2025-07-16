@@ -24,7 +24,8 @@
         "USER_MANUAL": "用户手册",
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新",
-        "USER":"用户中心"
+        "USER":"用户中心",
+        "INSTALL_PERSONAL_LIB": "安装个人库"
     },
     "ESP32": {
         "UPLOAD_SPEED": "烧录速度",

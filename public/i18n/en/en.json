@@ -22,7 +22,8 @@
         "EXIT": "Exit",
         "USER_MANUAL": "User Manual",
         "EXAMPLES": "Examples",
-        "UPDATE": "Check for Updates"
+        "UPDATE": "Check for Updates",
+        "INSTALL_PERSONAL_LIB": "Install Personal Library"
     },
     "ESP32": {
         "UPLOAD_SPEED": "Upload Speed",

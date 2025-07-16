@@ -20,6 +20,7 @@ import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { UserComponent } from '../user/user.component';
 import { ConfigService } from '../../../services/config.service';
+import { CmdService } from '../../../services/cmd.service';
 
 @Component({
   selector: 'app-header',
@@ -80,7 +81,8 @@ export class HeaderComponent {
     private updateService: UpdateService,
     private router: Router,
     private electronService: ElectronService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private cmdService: CmdService
   ) { }
 
   async ngAfterViewInit() {
@@ -221,6 +223,49 @@ export class HeaderComponent {
     }
   }
 
+  async installPersonalLib() {
+    try {
+      // 检查是否有打开的项目
+      if (!this.projectService.currentProjectPath) {
+        this.message.warning('请先打开一个项目');
+        return;
+      }
+
+      // 选择个人库文件夹
+      const libPath = await this.selectFolder();
+      if (!libPath) {
+        return; // 用户取消选择
+      }
+
+      // 显示加载状态
+      this.uiService.updateFooterState({ 
+        state: 'doing', 
+        text: '正在安装个人库...',
+        timeout: 300000 
+      });
+
+      // 在当前项目根目录下执行 npm install 命令
+      const projectPath = this.projectService.currentProjectPath;
+      await this.cmdService.runAsync(`npm install "${libPath}"`, projectPath);
+
+      // 显示成功状态
+      this.uiService.updateFooterState({ 
+        state: 'done', 
+        text: '个人库安装成功' 
+      });
+
+      this.message.success('个人库安装成功');
+
+    } catch (error) {
+      console.error('安装个人库失败:', error);
+      this.uiService.updateFooterState({ 
+        state: 'error', 
+        text: '个人库安装失败' 
+      });
+      this.message.error('个人库安装失败');
+    }
+  }
+
   updateSubscription: any = null;
 
   async process(item: IMenuItem, event = null) {
@@ -301,6 +346,9 @@ export class HeaderComponent {
         break;
       case 'browser-open':
         this.electronService.openUrl(item.data.url);
+        break;
+      case 'install-personal-lib':
+        this.installPersonalLib();
         break;
       case 'app-exit':
         this.close();
