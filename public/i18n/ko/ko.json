@@ -22,7 +22,9 @@
         "EXIT": "종료",
         "USER_MANUAL": "사용자 매뉴얼",
         "EXAMPLES": "예제 프로그램",
-        "UPDATE": "업데이트 확인"
+        "UPDATE": "업데이트 확인",
+        "INSTALL_PERSONAL_LIB": "개인 라이브러리 설치",
+        "UNINSTALL_PERSONAL_LIB": "개인 라이브러리 제거"
     },
     "ESP32": {
         "UPLOAD_SPEED": "업로드 속도",

@@ -22,7 +22,9 @@
         "EXIT": "Quitter",
         "USER_MANUAL": "Manuel Utilisateur",
         "EXAMPLES": "Exemples",
-        "UPDATE": "Vérifier les mises à jour"
+        "UPDATE": "Vérifier les mises à jour",
+        "INSTALL_PERSONAL_LIB": "Installer Bibliothèque Personnelle",
+        "UNINSTALL_PERSONAL_LIB": "Désinstaller Bibliothèque Personnelle"
     },
     "ESP32": {
         "UPLOAD_SPEED": "Vitesse de téléchargement",

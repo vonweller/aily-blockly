@@ -22,7 +22,9 @@
         "EXIT": "خروج",
         "USER_MANUAL": "دليل المستخدم",
         "EXAMPLES": "أمثلة",
-        "UPDATE": "التحقق من وجود تحديثات"
+        "UPDATE": "التحقق من وجود تحديثات",
+        "INSTALL_PERSONAL_LIB": "تثبيت مكتبة شخصية",
+        "UNINSTALL_PERSONAL_LIB": "إلغاء تثبيت مكتبة شخصية"
     },
     "ESP32": {
         "UPLOAD_SPEED": "سرعة الرفع",

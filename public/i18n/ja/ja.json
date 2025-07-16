@@ -22,7 +22,9 @@
         "EXIT": "終了",
         "USER_MANUAL": "ユーザーマニュアル",
         "EXAMPLES": "サンプルプログラム",
-        "UPDATE": "アップデートを確認"
+        "UPDATE": "アップデートを確認",
+        "INSTALL_PERSONAL_LIB": "個人ライブラリをインストール",
+        "UNINSTALL_PERSONAL_LIB": "個人ライブラリをアンインストール"
     },
     "ESP32": {
         "UPLOAD_SPEED": "書き込み速度",

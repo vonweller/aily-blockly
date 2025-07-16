@@ -21,6 +21,7 @@ import { ElectronService } from '../../../services/electron.service';
 import { UserComponent } from '../user/user.component';
 import { ConfigService } from '../../../services/config.service';
 import { CmdService } from '../../../services/cmd.service';
+import { NzSelectModule } from 'ng-zorro-antd/select';
 
 @Component({
   selector: 'app-header',
@@ -30,7 +31,8 @@ import { CmdService } from '../../../services/cmd.service';
     MenuComponent,
     ActBtnComponent,
     UserComponent,
-    TranslateModule
+    TranslateModule,
+    NzSelectModule
   ],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
@@ -266,6 +268,180 @@ export class HeaderComponent {
     }
   }
 
+  async getInstalledPersonalLibs(): Promise<string[]> {
+    try {
+      const projectPath = this.projectService.currentProjectPath;
+      if (!projectPath) {
+        return [];
+      }
+
+      // 读取 package.json 文件
+      const packageJsonPath = `${projectPath}/package.json`;
+      if (!window['fs'].existsSync(packageJsonPath)) {
+        return [];
+      }
+
+      const packageJson = JSON.parse(window['fs'].readFileSync(packageJsonPath, 'utf-8'));
+      const dependencies = packageJson.dependencies || {};
+      
+      // 过滤出个人库（通常是本地路径或自定义的包）
+      // 这里可以根据实际情况调整过滤条件
+      const personalLibs = Object.keys(dependencies).filter(libName => {
+        const libPath = dependencies[libName];
+        // 假设个人库是以 file: 开头的本地路径，或者不包含版本号的包
+        return libPath.startsWith('file:') || 
+               libPath.includes('\\') || 
+               libPath.includes('/') ||
+               !libPath.match(/^\d+\.\d+\.\d+/); // 不是标准版本号格式
+      });
+
+      return personalLibs;
+    } catch (error) {
+      console.error('获取已安装个人库失败:', error);
+      return [];
+    }
+  }
+
+  async uninstallPersonalLib() {
+    try {
+      // 检查是否有打开的项目
+      if (!this.projectService.currentProjectPath) {
+        this.message.warning('请先打开一个项目');
+        return;
+      }
+
+      // 获取已安装的个人库
+      const personalLibs = await this.getInstalledPersonalLibs();
+      
+      if (personalLibs.length === 0) {
+        this.message.info('当前项目没有安装个人库');
+        return;
+      }
+
+      let selectedLibIndex = -1;
+      
+      // 创建内容HTML
+      const contentHtml = `
+        <div style="padding: 10px 0;">
+          <div style="margin-bottom: 15px; font-weight: bold;">请选择要移除的个人库：</div>
+          <div id="lib-container" style="max-height: 300px; overflow-y: auto;">
+            ${personalLibs.map((lib, index) => 
+              `<div 
+                class="lib-item" 
+                data-index="${index}"
+                style="
+                  margin: 5px 0; 
+                  padding: 12px; 
+                  border: 2px solid var(--ant-primary-color-outline, #d9d9d9); 
+                  border-radius: 6px; 
+                  cursor: pointer;
+                  background: var(--ant-component-background, transparent);
+                  color: var(--ant-text-color, inherit);
+                  transition: all 0.2s;
+                "
+                onmouseover="this.style.backgroundColor='var(--ant-primary-color-hover, rgba(0,0,0,0.06))'"
+                onmouseout="this.style.backgroundColor='var(--ant-component-background, transparent)'"
+              >
+                ${lib}
+              </div>`
+            ).join('')}
+          </div>
+        </div>
+      `;
+
+      // 创建模态对话框
+      const modal = this.modal.create({
+        nzTitle: '选择要移除的个人库',
+        nzContent: contentHtml,
+        nzFooter: [
+          {
+            label: '取消',
+            onClick: () => modal.destroy()
+          },
+          {
+            label: '移除',
+            type: 'primary',
+            danger: true,
+            onClick: async () => {
+              if (selectedLibIndex === -1) {
+                this.message.warning('请选择要移除的个人库');
+                return;
+              }
+
+              const selectedLib = personalLibs[selectedLibIndex];
+              modal.destroy();
+
+              // 确认移除
+              this.modal.confirm({
+                nzTitle: '确认移除',
+                nzContent: `确定要移除个人库 "${selectedLib}" 吗？`,
+                nzOkText: '确定移除',
+                nzOkDanger: true,
+                nzCancelText: '取消',
+                nzOnOk: async () => {
+                  await this.performUninstall(selectedLib);
+                }
+              });
+            }
+          }
+        ]
+      });
+
+      // 添加点击事件监听（稍微延迟以确保DOM渲染完成）
+      setTimeout(() => {
+        const libItems = document.querySelectorAll('.lib-item');
+        libItems.forEach((item, index) => {
+          item.addEventListener('click', () => {
+            // 清除所有选中状态
+            libItems.forEach(i => {
+              (i as HTMLElement).style.borderColor = 'var(--ant-primary-color-outline, #d9d9d9)';
+              (i as HTMLElement).style.backgroundColor = 'var(--ant-component-background, transparent)';
+            });
+            
+            // 设置当前选中状态
+            (item as HTMLElement).style.borderColor = 'var(--ant-primary-color, #1890ff)';
+            (item as HTMLElement).style.backgroundColor = 'var(--ant-primary-color-selected, #e6f7ff)';
+            selectedLibIndex = index;
+          });
+        });
+      }, 100);
+
+    } catch (error) {
+      console.error('移除个人库失败:', error);
+      this.message.error('移除个人库失败');
+    }
+  }
+
+  private async performUninstall(libName: string): Promise<void> {
+    try {
+      // 显示加载状态
+      this.uiService.updateFooterState({ 
+        state: 'doing', 
+        text: '正在移除个人库...',
+        timeout: 300000 
+      });
+
+      // 在当前项目根目录下执行 npm uninstall 命令
+      const projectPath = this.projectService.currentProjectPath;
+      await this.cmdService.runAsync(`npm uninstall "${libName}"`, projectPath);
+
+      // 显示成功状态
+      this.uiService.updateFooterState({ 
+        state: 'done', 
+        text: '个人库移除成功' 
+      });
+
+      this.message.success(`个人库 ${libName} 移除成功`);
+    } catch (error) {
+      console.error('移除个人库失败:', error);
+      this.uiService.updateFooterState({ 
+        state: 'error', 
+        text: '个人库移除失败' 
+      });
+      this.message.error(`个人库 ${libName} 移除失败`);
+    }
+  }
+
   updateSubscription: any = null;
 
   async process(item: IMenuItem, event = null) {
@@ -349,6 +525,9 @@ export class HeaderComponent {
         break;
       case 'install-personal-lib':
         this.installPersonalLib();
+        break;
+      case 'uninstall-personal-lib':
+        this.uninstallPersonalLib();
         break;
       case 'app-exit':
         this.close();

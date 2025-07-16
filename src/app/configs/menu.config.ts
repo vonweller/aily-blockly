@@ -147,6 +147,13 @@ export let HEADER_MENU: IMenuItem[] = [
     router: ['/main/blockly-editor', '/main/code-editor']
   },
   {
+    name: 'MENU.UNINSTALL_PERSONAL_LIB',
+    action: 'uninstall-personal-lib',
+    data: { type: 'uninstall-personal-lib' },
+    icon: 'fa-light fa-trash',
+    router: ['/main/blockly-editor', '/main/code-editor']
+  },
+  {
     name: 'MENU.PROJECT_CLOSE',
     action: 'project-close',
     data: { type: 'cmd', data: 'close' },

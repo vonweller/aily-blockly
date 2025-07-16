@@ -22,7 +22,9 @@
         "EXIT": "Beenden",
         "USER_MANUAL": "Benutzerhandbuch",
         "EXAMPLES": "Beispiele",
-        "UPDATE": "Nach Updates suchen"
+        "UPDATE": "Nach Updates suchen",
+        "INSTALL_PERSONAL_LIB": "Persönliche Bibliothek installieren",
+        "UNINSTALL_PERSONAL_LIB": "Persönliche Bibliothek deinstallieren"
     },
     "ESP32": {
         "UPLOAD_SPEED": "Upload-Geschwindigkeit",
