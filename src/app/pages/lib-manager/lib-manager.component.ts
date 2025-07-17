@@ -103,7 +103,18 @@ export class LibManagerComponent {
         lib.state = 'default'; // 如果没有安装，则设置状态为默认
       }
     });
-    console.log('合并后的库列表：', libraryList);
+
+    // 将只存在于installedLibraries中但不在libraryList中的库添加到libraryList中
+    installedLibraries.forEach(installedLib => {
+      const existsInLibraryList = libraryList.find(lib => lib.name === installedLib.name);
+      if (!existsInLibraryList) {
+        // 为新添加的库设置默认属性
+        installedLib['versionList'] = [installedLib.version];
+        libraryList.push(installedLib);
+      }
+    });
+
+    // console.log('合并后的库列表：', libraryList);
     return libraryList;
   }
 
