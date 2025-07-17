@@ -19,7 +19,6 @@ import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
-import { MessageSubscriptionService, ChatMessage, MessageSubscriptionOptions } from './services/message-subscription.service';
 // import { ChatListExamples } from './chat.example';
 import { BlocklyService } from '../../blockly/blockly.service';
 
@@ -77,6 +76,7 @@ export class AilyChatComponent implements OnDestroy {
 
   currentUrl;
   inputValue = '';
+  prjRootPath = '';
   prjPath = '';
 
   windowInfo = 'AI助手';
@@ -245,7 +245,6 @@ export class AilyChatComponent implements OnDestroy {
     private projectService: ProjectService,
     private cmdService: CmdService,
     private electronService: ElectronService,
-    private messageSubscriptionService: MessageSubscriptionService,
     private blocklyService: BlocklyService,
     private fetchToolService: FetchToolService,
     private chatCommunicationService: ChatCommunicationService,
@@ -253,12 +252,14 @@ export class AilyChatComponent implements OnDestroy {
   ) { }
 
   ngOnInit() {
-    if (this.electronService.isElectron) {
-      this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
-    }
+    // if (this.electronService.isElectron) {
+    //   this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
+    // }
+
+    this.prjPath = this.projectService.currentProjectPath === this.projectService.projectRootPath? "" : this.projectService.currentProjectPath;
+    this.prjRootPath = this.projectService.projectRootPath;
 
     // 订阅消息
-    this.subscribeToMessages();
     this.currentUrl = this.router.url;
     // 订阅外部文本消息
     this.textMessageSubscription = this.chatCommunicationService.getTextMessages().subscribe(
@@ -266,6 +267,11 @@ export class AilyChatComponent implements OnDestroy {
         this.receiveTextFromExternal(message.text, message.options);
       }
     );
+
+    // runCommandTool
+    executeCommandTool(this.cmdService, { command: 'npm i C:\\Users\\stao\\Downloads\\Adafruit_SGP30-master\\Adafruit_SGP30-master\\dist', cwd: this.prjPath }).then(result => {
+      console.log('Command Tool Result:', result);
+    });
   }
 
   /**
@@ -295,6 +301,11 @@ export class AilyChatComponent implements OnDestroy {
         const textarea = this.chatTextarea.nativeElement;
         textarea.focus();
         textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      }
+
+      // 如果设置了自动发送，则立即发送
+      if (options?.autoSend) {
+        this.send();
       }
     }, 100);
   }
@@ -330,12 +341,12 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     // 检查是否存在消息列表，且最后一条消息的role与当前role相同
-    console.log("listRole: ", this.list[this.list.length - 1]?.role, role);
+    // console.log("listRole: ", this.list[this.list.length - 1]?.role, role);
     if (this.list.length > 0 && this.list[this.list.length - 1].role === role) {
       // 如果是同一个role，追加内容到最后一条消息
       this.list[this.list.length - 1].content += text;
     } else {
-      console.log("添加新消息: ", role);
+      // console.log("添加新消息: ", role);
       // 如果是不同的role或列表为空，创建新的消息
       this.list.push({
         "role": role,
@@ -382,7 +393,7 @@ export class AilyChatComponent implements OnDestroy {
     if (!this.sessionId) return;
 
     this.chatService.closeSession(this.sessionId).subscribe((res: any) => {
-      console.log('close session', res);
+      // console.log('close session', res);
     });
   }
 
@@ -438,37 +449,82 @@ export class AilyChatComponent implements OnDestroy {
             // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
 
             let toolArgs;
+            
             if (typeof data.tool_args === 'string') {
               try {
-                JSON.parse(data.tool_args);
+                // 对于字符串类型的参数，尝试解析 JSON
+                toolArgs = JSON.parse(data.tool_args);
+                // console.log('JSON 解析成功:', toolArgs);
               } catch (e) {
-                console.error('Failed to parse tool_args as JSON:', e);
-                // Keep original value if parsing fails
-                this.inputValue = JSON.stringify({
-                  "type": "tool_result",
-                  "tool_id": data.tool_id,
-                  "content": `工具调用参数解析失败: ${e.message}`,
-                  "is_error": true
-                }, null, 2);
-                this.send();
-                return;
+                // console.error('JSON 解析失败:', e);
+                // console.error('原始字符串:', data.tool_args);
+                
+                // 如果 JSON 解析失败，尝试其他方法
+                try {
+                  // 尝试使用 Function 构造器安全地解析（比 eval 更安全）
+                  toolArgs = new Function('return ' + data.tool_args)();
+                  // console.log('Function 构造器解析成功:', toolArgs);
+                } catch (e2) {
+                  console.error('Function 构造器解析也失败:', e2);
+                  
+                  // 最后的备用方案：返回错误信息
+                  this.inputValue = JSON.stringify({
+                    "type": "tool_result",
+                    "tool_id": data.tool_id,
+                    "content": `工具调用参数解析失败:\nJSON解析错误: ${e.message}\n备用解析错误: ${e2.message}\n原始参数: ${data.tool_args}`,
+                    "is_error": true
+                  }, null, 2);
+                  this.send();
+                  return;
+                }
               }
-
+            } else if (typeof data.tool_args === 'object' && data.tool_args !== null) {
+              // 如果已经是对象，直接使用，但进行一些修复
               toolArgs = data.tool_args;
-
+              
+              // 只对路径字段进行修复，避免影响内容中的转义字符
+              if (toolArgs.path && typeof toolArgs.path === 'string') {
+                const originalPath = toolArgs.path;
+                
+                // 修复路径中常见的转义问题（只修复明显的路径转义错误）
+                let fixedPath = originalPath;
+                
+                // 修复特定的已知路径问题
+                if (originalPath.includes('distlock.json')) {
+                  fixedPath = originalPath.replace('distlock.json', 'dist\\block.json');
+                  // console.log('修复了路径中的转义问题:', originalPath, '->', fixedPath);
+                }
+                
+                // 修复路径分隔符的转义问题（只在路径上下文中）
+                // 仅当字符串看起来像是一个路径时才进行修复
+                if (/^[a-zA-Z]:\\|^\\\\|^\//.test(fixedPath) || fixedPath.includes('\\\\')) {
+                  // 这是一个Windows路径或网络路径，修复双反斜杠问题
+                  fixedPath = fixedPath.replace(/\\\\/g, '\\');
+                }
+                
+                toolArgs.path = fixedPath;
+                
+                // 如果路径包含文件名但没有 name 字段，自动分离
+                if (!toolArgs.name && /\.(json|txt|js|ts|html|css|py|cpp|ino|h)$/i.test(toolArgs.path)) {
+                  const lastSeparatorIndex = Math.max(toolArgs.path.lastIndexOf('\\'), toolArgs.path.lastIndexOf('/'));
+                  if (lastSeparatorIndex > 0) {
+                    toolArgs.name = toolArgs.path.substring(lastSeparatorIndex + 1);
+                    toolArgs.path = toolArgs.path.substring(0, lastSeparatorIndex);
+                    // console.log('自动分离路径和文件名 - path:', toolArgs.path, ', name:', toolArgs.name);
+                  }
+                }
+              }
+              
+              // console.log('使用修复后的对象:', toolArgs);
             } else {
-              // 如果 tool_args 不是字符串，直接使用
-              toolArgs = JSON.stringify(data.tool_args);
+              // 处理其他类型（null, undefined, number, boolean 等）
+              console.warn('意外的工具参数类型:', typeof data.tool_args, data.tool_args);
+              toolArgs = data.tool_args;
             }
-            
-            // 处理toolArgs中路径中的转义字符
-            toolArgs = toolArgs.replace(/\\\\/g, '/')  // Replace \\ with /
-              .replace(/\\/g, '/');   // Replace \ with /
 
-            
-            toolArgs = JSON.parse(toolArgs);
-            
-//             // 生成随机ID用于状态跟踪
+            // console.log("toolArgsJson: ", toolArgs);
+
+            // 生成随机ID用于状态跟踪
 //             const toolCallId = `call_${this.getRandomString()}`;
             
 //             // 添加正在处理状态消息
@@ -493,7 +549,7 @@ export class AilyChatComponent implements OnDestroy {
                 switch (data.tool_name) {
                   case 'create_project':
                     console.log('创建项目工具被调用', toolArgs);
-                    toolResult = await newProjectTool(this.projectService, this.prjPath, toolArgs);
+                    toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
                     break;
                   case 'execute_command':
                     console.log('执行command命令工具被调用', toolArgs);
@@ -502,13 +558,17 @@ export class AilyChatComponent implements OnDestroy {
                       toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
                     }
                     toolResult = await executeCommandTool(this.cmdService, toolArgs);
+                    console.log("toolResult: ", toolResult);
                     if (!toolResult.is_error) {
                       // Check if this is an npm install command
                       const command = toolArgs.command;
                       if (command.includes('npm i') || command.includes('npm install')) {
+                        console.log('检测到 npm install 命令，尝试加载库');
                         // Extract the package name
                         const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
                         const match = command.match(npmRegex);
+
+                        console.log('npmRegex match:', match);
                         
                         if (match && match[2]) {
                           const libPackageName = match[2];
@@ -527,6 +587,8 @@ export class AilyChatComponent implements OnDestroy {
                               content: `加载库失败: ${e.message}`
                             };
                           }
+                        } else {
+                          this.projectService.projectOpen(this.prjPath);
                         }
                       }
                     }
@@ -629,38 +691,38 @@ export class AilyChatComponent implements OnDestroy {
    * @param toolArgs 工具参数
    * @returns 工具调用的简短描述
    */
-  getToolDescription(toolName: string, toolArgs: any): string {
-    let description = toolName;
+  // getToolDescription(toolName: string, toolArgs: any): string {
+  //   let description = toolName;
     
-    try {
-      if (toolName === 'create_project' && toolArgs.board) {
-        description = `创建项目(${toolArgs.board.name || toolArgs.board.nickname || '未知开发板'})`;
-      } else if (toolName === 'execute_command' && toolArgs.command) {
-        // 截取命令前30个字符，避免过长
-        const shortCommand = toolArgs.command.length > 30 
-          ? toolArgs.command.substring(0, 30) + '...' 
-          : toolArgs.command;
-        description = `执行命令: ${shortCommand}`;
-      } else if (toolName === 'ask_approval' && toolArgs.message) {
-        description = `请求确认`;
-      } else if (toolName === 'get_context') {
-        description = `获取上下文信息(${toolArgs.info_type || 'all'})`;
-      } else if (toolName === 'file_operations' && toolArgs.operation) {
-        const path = toolArgs.path + (toolArgs.name ? `/${toolArgs.name}` : '');
-        const shortPath = path.length > 25 ? '...' + path.substring(path.length - 25) : path;
-        description = `文件操作: ${toolArgs.operation} ${shortPath}`;
-      } else if (toolName === 'fetch' && toolArgs.url) {
-        const url = new URL(toolArgs.url);
-        description = `网络请求: ${url.hostname}`;
-      } else if (toolName.startsWith('mcp_')) {
-        description = `MCP工具: ${toolName.substring(4)}`;
-      }
-    } catch (e) {
-      console.error('生成工具描述失败:', e);
-    }
+  //   try {
+  //     if (toolName === 'create_project' && toolArgs.board) {
+  //       description = `创建项目(${toolArgs.board.name || toolArgs.board.nickname || '未知开发板'})`;
+  //     } else if (toolName === 'execute_command' && toolArgs.command) {
+  //       // 截取命令前30个字符，避免过长
+  //       const shortCommand = toolArgs.command.length > 30 
+  //         ? toolArgs.command.substring(0, 30) + '...' 
+  //         : toolArgs.command;
+  //       description = `执行命令: ${shortCommand}`;
+  //     } else if (toolName === 'ask_approval' && toolArgs.message) {
+  //       description = `请求确认`;
+  //     } else if (toolName === 'get_context') {
+  //       description = `获取上下文信息(${toolArgs.info_type || 'all'})`;
+  //     } else if (toolName === 'file_operations' && toolArgs.operation) {
+  //       const path = toolArgs.path + (toolArgs.name ? `/${toolArgs.name}` : '');
+  //       const shortPath = path.length > 25 ? '...' + path.substring(path.length - 25) : path;
+  //       description = `文件操作: ${toolArgs.operation} ${shortPath}`;
+  //     } else if (toolName === 'fetch' && toolArgs.url) {
+  //       const url = new URL(toolArgs.url);
+  //       description = `网络请求: ${url.hostname}`;
+  //     } else if (toolName.startsWith('mcp_')) {
+  //       description = `MCP工具: ${toolName.substring(4)}`;
+  //     }
+  //   } catch (e) {
+  //     console.error('生成工具描述失败:', e);
+  //   }
     
-    return description;
-  }
+  //   return description;
+  // }
 
   getRandomString() {
     return (
@@ -773,75 +835,6 @@ export class AilyChatComponent implements OnDestroy {
 
   menuClick(e) {
 
-  }
-
-  /**
-   * 订阅来自其他组件的消息
-   */
-  private subscribeToMessages(): void {
-    this.messageSubscription = this.messageSubscriptionService.getMessageObservable().subscribe({
-      next: ({ message, options }) => {
-        console.log('收到订阅消息:', message, options);
-        this.handleSubscribedMessage(message, options);
-      },
-      error: (err) => {
-        console.error('消息订阅出错:', err);
-      }
-    });
-  }
-
-  /**
-   * 处理订阅的消息
-   */
-  private handleSubscribedMessage(message: ChatMessage, options?: MessageSubscriptionOptions): void {
-    // 如果需要创建新会话
-    if (options?.createNewSession) {
-      this.newChat();
-      // 等待新会话创建完成后再发送消息
-      setTimeout(() => {
-        this.processMessage(message, options);
-      }, 1000);
-    } else {
-      this.processMessage(message, options);
-    }
-  }
-
-  /**
-   * 处理消息内容
-   */
-  private processMessage(message: ChatMessage, options?: MessageSubscriptionOptions): void {
-    // 构建最终的消息内容
-    let finalContent = message.content;
-    
-    // 如果有上下文信息，添加到消息中
-    if (message.metadata?.context) {
-      finalContent = `上下文信息：\n${JSON.stringify(message.metadata.context, null, 2)}\n\n用户消息：\n${message.content}`;
-    }
-    
-    // 如果指定显示在聊天界面
-    if (options?.showInChat !== false) {
-      this.appendMessage(message.role || 'user', message.content);
-    }
-    
-    // 如果指定自动发送
-    if (options?.autoSend !== false) {
-      this.inputValue = finalContent;
-      this.send(false); // 不重复显示在聊天界面
-    } else {
-      // 不自动发送，只填充到输入框
-      this.inputValue = finalContent;
-    }
-  }
-
-  /**
-   * 获取消息订阅服务的实例
-   * 提供给其他组件使用的便捷方法
-   */
-  static getMessageSubscriptionService(): MessageSubscriptionService {
-    // 这是一个静态方法，可以在没有组件实例的情况下使用
-    // 但在实际使用中，建议直接注入服务
-    console.warn('建议直接在组件中注入 MessageSubscriptionService 而不是使用静态方法');
-    return new MessageSubscriptionService();
   }
 
   /**

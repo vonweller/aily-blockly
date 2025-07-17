@@ -72,8 +72,8 @@ export async function getContextTool(prjService: ProjectService, input: GetConte
 async function getProjectInfo(projectService): Promise<ProjectInfo> {
     try {
         const prjRootPath = projectService.projectRootPath;
-        const currentProjectPath = projectService.currentProjectPath;
-        
+        const currentProjectPath = projectService.currentProjectPath === projectService.projectRootPath ? "" : projectService.currentProjectPath;
+
         // Basic result with path
         const result: ProjectInfo = {
             path: currentProjectPath || '',

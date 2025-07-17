@@ -1,18 +1,18 @@
 import { ToolUseResult } from "./tools";
 import { ProjectService } from "../../../services/project.service";
 
-export async function newProjectTool(prjService: ProjectService, prjPath: string, toolArgs: any): Promise<ToolUseResult> {
+export async function newProjectTool(prjService: ProjectService, prjRootPath: string, toolArgs: any): Promise<ToolUseResult> {
     let toolResult = null;
     let is_error = false;
 
     try {
-        const prjName = prjService.generateUniqueProjectName(prjPath)
+        const prjName = prjService.generateUniqueProjectName(prjRootPath)
         await prjService.projectNew({
             name: prjName,
-            path: prjPath,
+            path: prjRootPath,
             board: JSON.parse(toolArgs.board)
         }, false);
-        toolResult = `项目 "${prjName}" 创建成功！项目路径为${prjPath}\\${prjName}`;
+        toolResult = `项目 "${prjName}" 创建成功！项目路径为${prjRootPath}\\${prjName}`;
     } catch (e) {
         console.error('创建项目失败:', e);
         toolResult = `创建项目失败: ${e.message}`;
