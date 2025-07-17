@@ -107,6 +107,7 @@
         "ALL": "所有庫",
         "INSTALLED": "已安裝",
         "CORE_LIBRARY": "核心函式庫",
+        "IMPORT_LIBRARY": "導入本地庫",
         "INSTALL": "安裝",
         "INSTALLED_TEXT": "已安裝",
         "REMOVE": "移除",

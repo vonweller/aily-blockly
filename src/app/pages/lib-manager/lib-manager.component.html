@@ -24,6 +24,11 @@
                 }}</nz-tag>
             <nz-tag (click)="keyword='核心库';search()">{{ 'LIB_MANAGER.CORE_LIBRARY' | translate }}</nz-tag>
         </div>
+        <div class="import">
+            <button nz-button nzType="primary" nzSize="small" (click)="importLib()" [nz-tooltip] [nzTooltipTitle]="'LIB_MANAGER.IMPORT_LIBRARY' | translate">
+                <i class="fa-light fa-plus"></i>
+            </button>
+        </div>
     </div>
     <div class="lib-list">
         @for( lib of libraryList;track lib.name ) {
