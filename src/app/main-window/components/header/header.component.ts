@@ -554,112 +554,33 @@ export class HeaderComponent {
    * @returns 转换后的菜单格式列表
    */
   convertBoardListFormat(boardList: any[]): any[] {
-    // 获取当前选择的开发板信息
+    console.log('转换开发板列表格式:', boardList);
     const currentBoardName = this.projectService.currentBoardConfig?.name;
-    const currentBoardNickname = this.projectService.currentBoardConfig?.nickname;
-    
-    // 临时调试输出
-    console.log('=== 开发板匹配调试信息 ===');
-    console.log('当前开发板配置:', this.projectService.currentBoardConfig);
     console.log('当前开发板名称:', currentBoardName);
-    console.log('当前开发板昵称:', currentBoardNickname);
-    
-    // 第一轮：寻找精确匹配
-    const exactMatches = boardList.filter(board => {
-      return board.name === currentBoardName || 
-             board.nickname === currentBoardName || 
-             board.nickname === currentBoardNickname;
-    });
-    
-    console.log('精确匹配的开发板:', exactMatches);
-    
-    // 如果有精确匹配，只选择第一个精确匹配的
-    let selectedBoardName = null;
-    if (exactMatches.length > 0) {
-      selectedBoardName = exactMatches[0].nickname || exactMatches[0].name;
-      console.log('选择精确匹配的开发板:', selectedBoardName);
-    } else {
-      // 如果没有精确匹配，尝试包名匹配
-      const packageMatches = boardList.filter(board => {
-        if (board.name && currentBoardName) {
-          const boardNameWithoutPrefix = board.name.replace('@aily-project/board-', '').toLowerCase();
-          return boardNameWithoutPrefix === currentBoardName.toLowerCase();
-        }
-        return false;
-      });
-      
-      if (packageMatches.length > 0) {
-        selectedBoardName = packageMatches[0].nickname || packageMatches[0].name;
-        console.log('选择包名匹配的开发板:', selectedBoardName);
-      }
-    }
     
     return boardList
-      .map(board => {
-        const boardDisplayName = board.nickname || board.name;
-        const isCurrentBoard = selectedBoardName === boardDisplayName;
-        
-        // 临时调试输出
-        if (isCurrentBoard) {
-          console.log(`✓ 最终匹配的开发板:`, boardDisplayName, board);
-        }
-        
-        return {
-          name: boardDisplayName,
-          key: "BoardType",
-          data: {
-            board: {
-              name: board.name,
-              nickname: board.nickname,
-              version: board.version,
-              description: board.description,
-              author: board.author,
-              brand: board.brand,
-              url: board.url,
-              compatibility: board.compatibility,
-              img: board.img
-            }
-          },
-          check: isCurrentBoard
-        };
-      });
+      .filter(board => board.nickname !== currentBoardName) // 过滤掉当前已选的开发板
+      // .filter(board => !board.disabled) // 过滤掉被禁用的开发板
+      .map(board => ({
+        name: board.nickname || board.name, // 使用昵称，如果没有则使用name
+        key: "BoardType",
+        data: {
+          board: {
+            name: board.name,
+            nickname: board.nickname,
+            version: board.version,
+            description: board.description,
+            author: board.author,
+            brand: board.brand,
+            url: board.url,
+            compatibility: board.compatibility,
+            img: board.img
+          }
+        },
+        check: false
+      }));
   }
 
-  // 判断是否为当前选择的开发板
-  private isCurrentBoard(board: any, currentBoardName: string, currentBoardNickname: string): boolean {
-    if (!currentBoardName && !currentBoardNickname) return false;
-    
-    // 1. 优先精确匹配 - 这是最可靠的
-    if (board.name === currentBoardName || 
-        board.nickname === currentBoardName || 
-        board.nickname === currentBoardNickname) {
-      return true;
-    }
-    
-    // 2. 包名匹配（去掉@aily-project/board-前缀）
-    if (board.name && currentBoardName) {
-      const boardNameWithoutPrefix = board.name.replace('@aily-project/board-', '').toLowerCase();
-      if (boardNameWithoutPrefix === currentBoardName.toLowerCase()) {
-        return true;
-      }
-    }
-    
-    // 3. 特殊情况：如果当前名称较短，可能是板子类型的简称
-    // 只有当nickname以当前名称开头且紧跟空格或结尾时才匹配
-    if (currentBoardName && board.nickname) {
-      const currentName = currentBoardName.toLowerCase();
-      const nickname = board.nickname.toLowerCase();
-      
-      // 检查是否以当前名称开头，且后面紧跟空格、结尾或特定字符
-      if (nickname === currentName || 
-          nickname.startsWith(currentName + ' ') ||
-          nickname.endsWith(' ' + currentName)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
 }
 
 export interface RunState {

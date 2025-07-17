@@ -120,6 +120,14 @@
 
                 .btns {
                     display: flex;
+
+                    button {
+                        display: flex;
+
+                        i {
+                            margin-right: 5px;
+                        }
+                    }
                 }
             }
 

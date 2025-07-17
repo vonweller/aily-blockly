@@ -436,7 +436,7 @@ export class NpmService {
   async getAllInstalledLibraries(path: string) {
     // let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
     let data = await getInstalledPackagesByFileRead(path);
-    console.log("data:", data);
+    // console.log("getInstalledPackagesByFileRead:", data);
     // 提取所有依赖项到对象数组
     const allDependencies = this.extractAllDependencies(data.dependencies || {});
 
@@ -454,16 +454,18 @@ export class NpmService {
       }
     });
 
+    // console.log('libraryModules:', libraryModules);
+    
     return libraryModules;
   }
 
   /**
    * 递归提取所有依赖项（包括子依赖）到对象数组
    * @param dependencies 依赖对象
-   * @returns 包含所有依赖项名称和版本的对象数组
+   * @returns 包含所有依赖项完整信息的对象数组
    */
-  private extractAllDependencies(dependencies: any): Array<{ name: string, version: string }> {
-    const dependencyMap = new Map<string, string>();
+  private extractAllDependencies(dependencies: any): Array<any> {
+    const dependencyMap = new Map<string, any>();
 
     const extractRecursively = (deps: any) => {
       if (!deps || typeof deps !== 'object') {
@@ -471,18 +473,26 @@ export class NpmService {
       }
 
       for (const [packageName, packageInfo] of Object.entries(deps)) {
-        // 获取版本信息
-        let version = 'unknown';
+        // 保留packageInfo的所有信息，并添加name属性
         if (packageInfo && typeof packageInfo === 'object') {
-          version = packageInfo['version'] || 'unknown';
-        }
+          const fullPackageInfo = {
+            name: packageName,
+            ...packageInfo
+          };
+          
+          // 添加当前包的完整信息到Map中（避免重复）
+          dependencyMap.set(packageName, fullPackageInfo);
 
-        // 添加当前包名和版本到Map中（避免重复）
-        dependencyMap.set(packageName, version);
-
-        // 如果有子依赖，递归处理
-        if (packageInfo && typeof packageInfo === 'object' && packageInfo['dependencies']) {
-          extractRecursively(packageInfo['dependencies']);
+          // 如果有子依赖，递归处理
+          if (packageInfo['dependencies']) {
+            extractRecursively(packageInfo['dependencies']);
+          }
+        } else {
+          // 如果packageInfo不是对象，创建基本信息对象
+          dependencyMap.set(packageName, {
+            name: packageName,
+            version: packageInfo || 'unknown'
+          });
         }
       }
     };
@@ -490,8 +500,7 @@ export class NpmService {
     extractRecursively(dependencies);
 
     // 转换为对象数组并排序
-    return Array.from(dependencyMap.entries())
-      .map(([name, version]) => ({ name, version }))
+    return Array.from(dependencyMap.values())
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 }
@@ -602,24 +611,31 @@ export async function scanScopedPackages(scopePath: string, dependencies: any): 
 export async function scanSinglePackage(packagePath: string, packageName: string, dependencies: any): Promise<void> {
   try {
     const packageJsonPath = `${packagePath}/package.json`;
-
-    // 检查 package.json 是否存在
-    if (!window['path'].isExists(packageJsonPath)) {
+    const toolboxJsonPath = `${packagePath}/toolbox.json`;
+    // 检查 package.json 和 toolbox.json 是否存在
+    if (!window['fs'].existsSync(packageJsonPath) || !window['fs'].existsSync(toolboxJsonPath)) {
       return;
     }
 
     // 读取 package.json
-    const packageJsonContent = window['fs'].readFileSync(packageJsonPath);
+    const packageJsonContent = window['fs'].readFileSync(packageJsonPath, 'utf8');
     const packageJson = JSON.parse(packageJsonContent);
-
+    // 读取 toolbox.json
+    const toolboxJsonContent = window['fs'].readFileSync(toolboxJsonPath, 'utf8');
+    const toolboxJson = JSON.parse(toolboxJsonContent);
     // 构建包信息
     const packageInfo: any = {
-      version: packageJson.version || '1.0.0'
+      version: packageJson.version || '1.0.0',
+      description: packageJson.description || '',
+      author: packageJson.author || 'unknown',
+      nickname: packageJson.nickname || packageJson.name,
+      icon: toolboxJson.icon || 'fa-light fa-cube',
+      keywords: packageJson.keywords || [],
     };
 
     // 检查是否有子依赖
     const subNodeModulesPath = `${packagePath}/node_modules`;
-    if (window['path'].isExists(subNodeModulesPath)) {
+    if (window['fs'].existsSync(subNodeModulesPath)) {
       packageInfo.dependencies = {};
       await scanNodeModulesDirectory(subNodeModulesPath, packageInfo.dependencies);
     }
