@@ -92,6 +92,7 @@
         "SEARCH_LIBRARY": "بحث في المكتبات",
         "INSTALLED": "مثبت",
         "CORE_LIBRARY": "مكتبة أساسية",
+        "IMPORT_LIBRARY": "استيراد مكتبة محلية",
         "INSTALL": "تثبيت",
         "INSTALLED_TEXT": "مثبت",
         "REMOVE": "إزالة",

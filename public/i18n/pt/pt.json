@@ -92,6 +92,7 @@
         "SEARCH_LIBRARY": "Pesquisar biblioteca",
         "INSTALLED": "Instalado",
         "CORE_LIBRARY": "Biblioteca central",
+        "IMPORT_LIBRARY": "Importar biblioteca local",
         "INSTALL": "Instalar",
         "INSTALLED_TEXT": "Instalado",
         "REMOVE": "Remover",
