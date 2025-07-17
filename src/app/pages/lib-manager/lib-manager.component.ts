@@ -80,13 +80,15 @@ export class LibManagerComponent {
     });
   }
 
-  async checkInstalled() {
-    let libraryList = JSON.parse(JSON.stringify(this._libraryList));
+  async checkInstalled(libraryList = null) {
+    if (libraryList === null) {
+      libraryList = JSON.parse(JSON.stringify(this._libraryList));
+    }
     // 获取已经安装的包，用于在界面上显示"移除"按钮
     let installedLibraries = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
     installedLibraries = installedLibraries.map(item => {
       item['state'] = 'installed';
-      item['fulltext'] = `installed${item.name.includes('lib-core-') ? 'core-lib' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
+      item['fulltext'] = `installed${item.name}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
       return item;
     });
 
@@ -97,6 +99,8 @@ export class LibManagerComponent {
       const installedLib = installedLibraries.find(installed => installed.name === lib.name);
       if (installedLib) {
         Object.assign(lib, installedLib);
+      }else {
+        lib.state = 'default'; // 如果没有安装，则设置状态为默认
       }
     });
     console.log('合并后的库列表：', libraryList);
@@ -112,7 +116,7 @@ export class LibManagerComponent {
       // 为状态做准备
       item['state'] = 'default'; // default, installed, installing, uninstalling
       // 为全文搜索做准备
-      item['fulltext'] = `${item.name.includes('lib-core-') ? 'lib-core' : ''}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
+      item['fulltext'] = `${item.name}${item.nickname}${item.keywords}${item.description}${item.brand}`.replace(/\s/g, '').toLowerCase();
     }
     return array;
   }
@@ -128,7 +132,7 @@ export class LibManagerComponent {
       if (keyword === installedKey) {
         keyword = 'installed';
       } else if (keyword === coreLibKey) {
-        keyword = 'core-lib';
+        keyword = 'lib-core-';
       } else if (keyword === 'ai') {
         keyword = 'artificialintelligence';
       }
@@ -178,7 +182,7 @@ export class LibManagerComponent {
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
     this.output = '';
     await this.cmdService.runAsync(`npm install ${lib.name}@${lib.version}`, this.projectService.currentProjectPath)
-    this.libraryList = await this.checkInstalled();
+    this.libraryList = await this.checkInstalled(this.libraryList);
     // lib.state = 'default';
     this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
 
@@ -200,7 +204,7 @@ export class LibManagerComponent {
     this.blocklyService.removeLibrary(libPackagePath);
     this.output = '';
     await this.cmdService.runAsync(`npm uninstall ${lib.name}`, this.projectService.currentProjectPath);
-    this.libraryList = await this.checkInstalled();
+    this.libraryList = await this.checkInstalled(this.libraryList);
     // lib.state = 'default';
     this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.UNINSTALLED')}`);
   }

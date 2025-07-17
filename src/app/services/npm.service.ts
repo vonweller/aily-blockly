@@ -436,7 +436,7 @@ export class NpmService {
   async getAllInstalledLibraries(path: string) {
     // let data = JSON.parse(await window['npm'].run({ cmd: `npm ls --all --json --prefix "${path}"` }));
     let data = await getInstalledPackagesByFileRead(path);
-    console.log("getInstalledPackagesByFileRead:", data);
+    // console.log("getInstalledPackagesByFileRead:", data);
     // 提取所有依赖项到对象数组
     const allDependencies = this.extractAllDependencies(data.dependencies || {});
 
@@ -454,7 +454,7 @@ export class NpmService {
       }
     });
 
-    console.log('libraryModules:', libraryModules);
+    // console.log('libraryModules:', libraryModules);
     
     return libraryModules;
   }
@@ -630,6 +630,7 @@ export async function scanSinglePackage(packagePath: string, packageName: string
       author: packageJson.author || 'unknown',
       nickname: packageJson.nickname || packageJson.name,
       icon: toolboxJson.icon || 'fa-light fa-cube',
+      keywords: packageJson.keywords || [],
     };
 
     // 检查是否有子依赖

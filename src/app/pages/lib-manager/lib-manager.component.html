@@ -85,7 +85,7 @@
                         {{'LIB_MANAGER.REMOVE' | translate }}
                     </button>
                     }@else if(lib.state=='uninstalling'){
-                    <button nz-button nzType="default" nzDanger nzSize="small">
+                    <button nz-button nzType="default" nzDanger nzSize="small" [disabled]="true">
                         <div class="icon lloading ccenter">
                             <i class="fa-duotone fa-solid fa-loader"></i>
                         </div>
