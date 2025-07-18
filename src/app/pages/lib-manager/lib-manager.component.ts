@@ -81,7 +81,9 @@ export class LibManagerComponent {
   }
 
   async checkInstalled(libraryList = null) {
+    let isNull = false;
     if (libraryList === null) {
+      isNull = true;
       libraryList = JSON.parse(JSON.stringify(this._libraryList));
     }
     // 获取已经安装的包，用于在界面上显示"移除"按钮
@@ -105,14 +107,16 @@ export class LibManagerComponent {
     });
 
     // 将只存在于installedLibraries中但不在libraryList中的库添加到libraryList中
-    installedLibraries.forEach(installedLib => {
-      const existsInLibraryList = libraryList.find(lib => lib.name === installedLib.name);
-      if (!existsInLibraryList) {
-        // 为新添加的库设置默认属性
-        installedLib['versionList'] = [installedLib.version];
-        libraryList.push(installedLib);
-      }
-    });
+    if (isNull) {
+      installedLibraries.forEach(installedLib => {
+        const existsInLibraryList = libraryList.find(lib => lib.name === installedLib.name);
+        if (!existsInLibraryList) {
+          // 为新添加的库设置默认属性
+          installedLib['versionList'] = [installedLib.version];
+          libraryList.push(installedLib);
+        }
+      });
+    }
 
     // console.log('合并后的库列表：', libraryList);
     return libraryList;

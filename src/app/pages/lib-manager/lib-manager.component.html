@@ -37,11 +37,8 @@
     </div>
     <div class="lib-list">
         @for( lib of libraryList;track lib.name ) {
-        <div class="lib-item" [nz-tooltip] [nzTooltipTitle]="lib.tested?'':'该库未通过测试，可能存在问题'">
-            <!-- @if(lib.tested){
-            <div class="state"></div>
-            } -->
-            <div class="name ellipsis">{{lib.nickname}}
+        <div class="lib-item">
+            <div class="name ellipsis" [nz-tooltip] [nzTooltipTitle]="lib.tested?'':'该库未通过测试，可能存在问题'">{{lib.nickname}}
                 @if(lib.tested){
                 <i class="fa-regular fa-badge-check"></i>
                 }@else {
