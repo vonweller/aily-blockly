@@ -99,7 +99,7 @@ export class LibManagerComponent {
       const installedLib = installedLibraries.find(installed => installed.name === lib.name);
       if (installedLib) {
         Object.assign(lib, installedLib);
-      }else {
+      } else {
         lib.state = 'default'; // 如果没有安装，则设置状态为默认
       }
     });
@@ -326,6 +326,10 @@ export class LibManagerComponent {
       console.error('导入库失败：', error);
       this.message.error(`${this.translate.instant('LIB_MANAGER.IMPORT_FAILED')}: ${error.message || error}`);
     }
+  }
+
+  help() {
+    this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries/blob/main/readme.md');
   }
 }
 
