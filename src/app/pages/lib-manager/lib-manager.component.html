@@ -1,3 +1,4 @@
+@if (!showGlobalLibraryManager) {
 <div class="lib-manager-box">
     <div class="header">
         <div class="btn ccenter" (click)="back()" nz-tooltip [nzTooltipTitle]="'LIB_MANAGER.BACK' | translate">
@@ -28,6 +29,10 @@
             <button nz-button nzType="default" nzSize="small" style="margin-right: 10px;" (click)="help()" [nz-tooltip]
                 [nzTooltipTitle]="'LIB_MANAGER.HELP' | translate">
                 <i class="fa-light fa-question"></i>
+            </button>
+            <button nz-button nzType="default" nzSize="small" style="margin-right: 10px;" (click)="openGlobalLibraryManager()" [nz-tooltip]
+                [nzTooltipTitle]="'全局库管理'">
+                <i class="fa-light fa-globe"></i>
             </button>
             <button nz-button nzType="primary" nzSize="small" (click)="importLib()" [nz-tooltip]
                 [nzTooltipTitle]="'LIB_MANAGER.IMPORT_LIBRARY' | translate">
@@ -73,6 +78,16 @@
                         }
                     </nz-select> -->
                 </div>
+                <div class="global-mode" style="display: flex; align-items: center; margin-right: 10px;">
+                    <label nz-checkbox
+                           [(ngModel)]="lib.isGlobal"
+                           (ngModelChange)="toggleGlobalMode(lib)"
+                           [nzDisabled]="lib.state !== 'installed'"
+                           nz-tooltip
+                           [nzTooltipTitle]="'设为全局库，新建项目时自动安装'">
+                        全局
+                    </label>
+                </div>
                 <div class="btns">
                     @if (lib.example) {
                     <button nz-button nzSize="small" style="margin-right: 5px;"
@@ -110,3 +125,6 @@
         }
     </div>
 </div>
+} @else {
+<app-global-library-manager (close)="showGlobalLibraryManager = false"></app-global-library-manager>
+}

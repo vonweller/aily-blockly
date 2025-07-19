@@ -9,6 +9,7 @@ import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
 import { CmdService } from './cmd.service';
 import { ConfigService } from './config.service';
+import { GlobalLibraryService } from './global-library.service';
 import { ESP32_CONFIG_MENU } from '../configs/esp32.config';
 
 interface ProjectPackageData {
@@ -47,7 +48,8 @@ export class ProjectService {
     private message: NzMessageService,
     private router: Router,
     private cmdService: CmdService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private globalLibraryService: GlobalLibraryService
   ) {
   }
 
@@ -160,6 +162,9 @@ export class ProjectService {
     }
 
     window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
+
+    // 4. 安装全局库
+    await this.installGlobalLibraries(projectPath);
 
     this.uiService.updateFooterState({ state: 'done', text: '项目创建成功' });
     // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
@@ -714,6 +719,42 @@ export class ProjectService {
     } catch (error) {
       console.error('切换开发板失败:', error);
       this.message.error('开发板切换失败: ' + error.message);
+    }
+  }
+
+  /**
+   * 安装全局库到指定项目
+   */
+  private async installGlobalLibraries(projectPath: string): Promise<void> {
+    const globalLibraries = this.globalLibraryService.getGlobalLibraries();
+
+    if (globalLibraries.length === 0) {
+      console.log('没有配置全局库，跳过安装');
+      return;
+    }
+
+    console.log('开始安装全局库:', globalLibraries);
+    this.uiService.updateFooterState({ state: 'doing', text: '正在安装全局库...' });
+
+    try {
+      for (const lib of globalLibraries) {
+        const packageName = `${lib.name}@${lib.version}`;
+        console.log(`安装全局库: ${packageName}`);
+
+        this.uiService.updateFooterState({
+          state: 'doing',
+          text: `正在安装全局库 ${lib.nickname}...`
+        });
+
+        await this.cmdService.runAsync(`npm install ${packageName}`, projectPath);
+        console.log(`全局库 ${lib.nickname} 安装成功`);
+      }
+
+      console.log('所有全局库安装完成');
+    } catch (error) {
+      console.error('安装全局库失败:', error);
+      // 不抛出错误，避免影响项目创建流程
+      this.message.warning('部分全局库安装失败，请手动安装');
     }
   }
 }

@@ -7,6 +7,7 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzTagModule } from 'ng-zorro-antd/tag';
+import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { NpmService } from '../../services/npm.service';
 import { ConfigService } from '../../services/config.service';
@@ -16,6 +17,8 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { CompatibleDialogComponent } from './components/compatible-dialog/compatible-dialog.component';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
 import { ElectronService } from '../../services/electron.service';
+import { GlobalLibraryService } from '../../services/global-library.service';
+import { GlobalLibraryManagerComponent } from '../global-library-manager/global-library-manager.component';
 
 @Component({
   selector: 'app-lib-manager',
@@ -27,7 +30,9 @@ import { ElectronService } from '../../services/electron.service';
     NzToolTipModule,
     NzSelectModule,
     NzTagModule,
-    TranslateModule
+    NzCheckboxModule,
+    TranslateModule,
+    GlobalLibraryManagerComponent
   ],
   templateUrl: './lib-manager.component.html',
   styleUrl: './lib-manager.component.scss'
@@ -44,6 +49,7 @@ export class LibManagerComponent {
   tagListRandom;
 
   loading = false;
+  showGlobalLibraryManager = false;
 
   constructor(
     private npmService: NpmService,
@@ -55,7 +61,8 @@ export class LibManagerComponent {
     private translate: TranslateService,
     private modal: NzModalService,
     private cmdService: CmdService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private globalLibraryService: GlobalLibraryService
   ) { }
 
   ngOnInit() {
@@ -104,6 +111,8 @@ export class LibManagerComponent {
       } else {
         lib.state = 'default'; // 如果没有安装，则设置状态为默认
       }
+      // 设置全局库标识
+      lib.isGlobal = this.globalLibraryService.isGlobalLibrary(lib.name);
     });
 
     // 将只存在于installedLibraries中但不在libraryList中的库添加到libraryList中
@@ -113,6 +122,7 @@ export class LibManagerComponent {
         if (!existsInLibraryList) {
           // 为新添加的库设置默认属性
           installedLib['versionList'] = [installedLib.version];
+          installedLib['isGlobal'] = this.globalLibraryService.isGlobalLibrary(installedLib.name);
           libraryList.push(installedLib);
         }
       });
@@ -335,6 +345,42 @@ export class LibManagerComponent {
   help() {
     this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries/blob/main/readme.md');
   }
+
+  /**
+   * 打开全局库管理界面
+   */
+  openGlobalLibraryManager(): void {
+    // 这里可以通过路由或者模态框的方式打开全局库管理界面
+    // 暂时使用简单的组件切换方式
+    this.showGlobalLibraryManager = true;
+  }
+
+  /**
+   * 切换全局模式
+   */
+  toggleGlobalMode(lib: PackageInfo): void {
+    try {
+      if (lib.isGlobal) {
+        // 添加到全局库
+        this.globalLibraryService.addGlobalLibrary({
+          name: lib.name,
+          version: lib.version || 'latest',
+          nickname: lib.nickname,
+          description: lib.description
+        });
+        this.message.success(`${lib.nickname} 已设为全局库`);
+      } else {
+        // 从全局库移除
+        this.globalLibraryService.removeGlobalLibrary(lib.name);
+        this.message.success(`${lib.nickname} 已从全局库移除`);
+      }
+    } catch (error) {
+      console.error('切换全局模式失败:', error);
+      this.message.error('操作失败: ' + error.message);
+      // 恢复原状态
+      lib.isGlobal = !lib.isGlobal;
+    }
+  }
 }
 
 interface PackageInfo {
@@ -357,5 +403,6 @@ interface PackageInfo {
   "fulltext"?: string,
   tested: boolean,
   state: 'default' | 'installed' | 'installing' | 'uninstalling',
-  example?: string
+  example?: string,
+  isGlobal?: boolean  // 添加全局库标识
 }
