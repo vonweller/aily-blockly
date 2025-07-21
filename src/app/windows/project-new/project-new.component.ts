@@ -194,6 +194,10 @@ export class ProjectNewComponent {
       }
     }
   }
+
+  help(){
+    this.electronService.openUrl("https://github.com/ailyProject/aily-blockly-boards/blob/main/readme.md");
+  }
 }
 
 
