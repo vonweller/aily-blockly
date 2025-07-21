@@ -26,7 +26,15 @@ import { newProjectTool } from './tools/createProjectTool';
 import { executeCommandTool } from './tools/executeCommandTool';
 import { askApprovalTool } from './tools/askApprovalTool';
 import { getContextTool } from './tools/getContextTool';
-import { fileOperationsTool } from './tools/fileOperationsTool';
+import { listDirectoryTool } from './tools/listDirectoryTool';
+import { readFileTool } from './tools/readFileTool';
+import { createFileTool } from './tools/createFileTool';
+import { createFolderTool } from './tools/createFolderTool';
+import { editFileTool } from './tools/editFileTool';
+import { deleteFileTool } from './tools/deleteFileTool';
+import { deleteFolderTool } from './tools/deleteFolderTool';
+import { checkExistsTool } from './tools/checkExistsTool';
+import { getDirectoryTreeTool } from './tools/getDirectoryTreeTool';
 import { fetchTool, FetchToolService } from './tools/fetchTool';
 
 const { pt } = (window as any)['electronAPI'].platform;
@@ -156,40 +164,199 @@ export class AilyChatComponent implements OnDestroy {
       }
     },
     {
-      name: "file_operations",
-      description: `执行文件和文件夹操作，包括创建、读取、编辑、删除、重命名文件或文件夹，获取目录树，以及检查文件是否存在。支持相对路径和绝对路径。`,
+      name: "list_directory",
+      description: `列出指定目录的内容，包括文件和文件夹信息。返回每个项目的名称、类型、大小和修改时间。`,
       input_schema: {
         type: 'object',
         properties: {
-          operation: { 
-            type: 'string', 
-            description: '要执行的操作类型',
-            enum: ['list', 'read', 'create', 'edit', 'delete', 'exists', 'rename', 'tree']
-          },
           path: { 
             type: 'string', 
-            description: '文件或文件夹的基础路径'
-          },
-          name: { 
+            description: '要列出内容的目录路径'
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "read_file",
+      description: `读取指定文件的内容。支持文本文件的读取，可指定编码格式。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
             type: 'string', 
-            description: '文件或文件夹的名称，会与path结合构成完整路径'
+            description: '要读取的文件路径'
+          },
+          encoding: { 
+            type: 'string', 
+            description: '文件编码格式',
+            default: 'utf-8'
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "create_file",
+      description: `创建新文件并写入内容。如果目录不存在会自动创建。可选择是否覆盖已存在的文件。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要创建的文件路径'
           },
           content: { 
             type: 'string', 
-            description: '文件内容（用于创建或编辑操作）'
+            description: '文件内容',
+            default: ''
           },
-          is_folder: { 
+          encoding: { 
+            type: 'string', 
+            description: '文件编码格式',
+            default: 'utf-8'
+          },
+          overwrite: { 
             type: 'boolean', 
-            description: '指定目标是否为文件夹',
+            description: '是否覆盖已存在的文件',
             default: false
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "create_folder",
+      description: `创建新文件夹。支持递归创建多级目录。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要创建的文件夹路径'
+          },
+          recursive: { 
+            type: 'boolean', 
+            description: '是否递归创建父目录',
+            default: true
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "edit_file",
+      description: `编辑已存在的文件内容。可选择当文件不存在时是否创建新文件。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要编辑的文件路径'
+          },
+          content: { 
+            type: 'string', 
+            description: '新的文件内容'
+          },
+          encoding: { 
+            type: 'string', 
+            description: '文件编码格式',
+            default: 'utf-8'
+          },
+          createIfNotExists: { 
+            type: 'boolean', 
+            description: '如果文件不存在是否创建',
+            default: false
+          }
+        },
+        required: ['path', 'content']
+      }
+    },
+    {
+      name: "delete_file",
+      description: `删除指定文件。可选择是否在删除前创建备份。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要删除的文件路径'
+          },
+          createBackup: { 
+            type: 'boolean', 
+            description: '删除前是否创建备份',
+            default: true
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "delete_folder",
+      description: `删除指定文件夹及其内容。可选择是否在删除前创建备份。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要删除的文件夹路径'
+          },
+          createBackup: { 
+            type: 'boolean', 
+            description: '删除前是否创建备份',
+            default: true
+          },
+          recursive: { 
+            type: 'boolean', 
+            description: '是否递归删除',
+            default: true
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "check_exists",
+      description: `检查指定路径的文件或文件夹是否存在，返回详细信息包括类型、大小、修改时间等。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要检查的路径'
+          },
+          type: { 
+            type: 'string', 
+            description: '期望的类型：file(文件)、folder(文件夹)或any(任意)',
+            enum: ['file', 'folder', 'any'],
+            default: 'any'
+          }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: "get_directory_tree",
+      description: `获取指定目录的树状结构，可控制遍历深度和是否包含文件。适合了解项目结构。`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          path: { 
+            type: 'string', 
+            description: '要获取树状结构的目录路径'
           },
           maxDepth: { 
             type: 'number', 
-            description: '目录树的最大深度（仅用于tree操作）',
+            description: '最大遍历深度',
             default: 3
+          },
+          includeFiles: { 
+            type: 'boolean', 
+            description: '是否包含文件（false时只显示文件夹）',
+            default: true
           }
         },
-        required: ['operation', 'path']
+        required: ['path']
       }
     },
     {
@@ -452,26 +619,32 @@ export class AilyChatComponent implements OnDestroy {
             
             if (typeof data.tool_args === 'string') {
               try {
-                // 对于字符串类型的参数，尝试解析 JSON
-                toolArgs = JSON.parse(data.tool_args);
-                // console.log('JSON 解析成功:', toolArgs);
-              } catch (e) {
-                // console.error('JSON 解析失败:', e);
-                // console.error('原始字符串:', data.tool_args);
+                // 在JSON解析前，先处理Windows路径中的反斜杠问题
+                // 将Windows路径中的单个反斜杠替换为双反斜杠，避免被当作转义字符
+                let processedString = data.tool_args;
                 
-                // 如果 JSON 解析失败，尝试其他方法
+                // 查找所有可能的路径字段，并在它们的值中修复反斜杠
+                processedString = processedString.replace(
+                  /"(path|cwd|directory|folder|filepath|dirpath)"\s*:\s*"([^"]*[\\][^"]*)"/g,
+                  (match, fieldName, pathValue) => {
+                    // 将路径中的单个反斜杠替换为双反斜杠（除非已经是双反斜杠）
+                    const fixedPath = pathValue.replace(/(?<!\\)\\(?!\\)/g, '\\\\');
+                    return `"${fieldName}":"${fixedPath}"`;
+                  }
+                );
+                
+                toolArgs = JSON.parse(processedString);
+              } catch (e) {
+                console.error('JSON解析失败，尝试备用方法:', e);
                 try {
-                  // 尝试使用 Function 构造器安全地解析（比 eval 更安全）
+                  // 备用方案：使用Function构造器
                   toolArgs = new Function('return ' + data.tool_args)();
-                  // console.log('Function 构造器解析成功:', toolArgs);
                 } catch (e2) {
-                  console.error('Function 构造器解析也失败:', e2);
-                  
-                  // 最后的备用方案：返回错误信息
+                  console.error('所有解析方法都失败:', e2);
                   this.inputValue = JSON.stringify({
                     "type": "tool_result",
                     "tool_id": data.tool_id,
-                    "content": `工具调用参数解析失败:\nJSON解析错误: ${e.message}\n备用解析错误: ${e2.message}\n原始参数: ${data.tool_args}`,
+                    "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
                   this.send();
@@ -479,45 +652,8 @@ export class AilyChatComponent implements OnDestroy {
                 }
               }
             } else if (typeof data.tool_args === 'object' && data.tool_args !== null) {
-              // 如果已经是对象，直接使用，但进行一些修复
               toolArgs = data.tool_args;
-              
-              // 只对路径字段进行修复，避免影响内容中的转义字符
-              if (toolArgs.path && typeof toolArgs.path === 'string') {
-                const originalPath = toolArgs.path;
-                
-                // 修复路径中常见的转义问题（只修复明显的路径转义错误）
-                let fixedPath = originalPath;
-                
-                // 修复特定的已知路径问题
-                if (originalPath.includes('distlock.json')) {
-                  fixedPath = originalPath.replace('distlock.json', 'dist\\block.json');
-                  // console.log('修复了路径中的转义问题:', originalPath, '->', fixedPath);
-                }
-                
-                // 修复路径分隔符的转义问题（只在路径上下文中）
-                // 仅当字符串看起来像是一个路径时才进行修复
-                if (/^[a-zA-Z]:\\|^\\\\|^\//.test(fixedPath) || fixedPath.includes('\\\\')) {
-                  // 这是一个Windows路径或网络路径，修复双反斜杠问题
-                  fixedPath = fixedPath.replace(/\\\\/g, '\\');
-                }
-                
-                toolArgs.path = fixedPath;
-                
-                // 如果路径包含文件名但没有 name 字段，自动分离
-                if (!toolArgs.name && /\.(json|txt|js|ts|html|css|py|cpp|ino|h)$/i.test(toolArgs.path)) {
-                  const lastSeparatorIndex = Math.max(toolArgs.path.lastIndexOf('\\'), toolArgs.path.lastIndexOf('/'));
-                  if (lastSeparatorIndex > 0) {
-                    toolArgs.name = toolArgs.path.substring(lastSeparatorIndex + 1);
-                    toolArgs.path = toolArgs.path.substring(0, lastSeparatorIndex);
-                    // console.log('自动分离路径和文件名 - path:', toolArgs.path, ', name:', toolArgs.name);
-                  }
-                }
-              }
-              
-              // console.log('使用修复后的对象:', toolArgs);
             } else {
-              // 处理其他类型（null, undefined, number, boolean 等）
               console.warn('意外的工具参数类型:', typeof data.tool_args, data.tool_args);
               toolArgs = data.tool_args;
             }
@@ -593,17 +729,45 @@ export class AilyChatComponent implements OnDestroy {
                       }
                     }
                     break;
-                  case 'ask_approval':
-                    console.log('请求用户确认工具被调用', toolArgs);
-                    toolResult = await askApprovalTool(toolArgs);
-                    break;
                   case 'get_context':
                     console.log('获取上下文信息工具被调用', toolArgs);
                     toolResult = await getContextTool(this.projectService, toolArgs);
                     break;
-                  case 'file_operations':
-                    console.log("toolArgs: ", toolArgs);
-                    toolResult = await fileOperationsTool(toolArgs);
+                  case 'list_directory':
+                    console.log('列出目录工具被调用', toolArgs);
+                    toolResult = await listDirectoryTool(toolArgs);
+                    break;
+                  case 'read_file':
+                    console.log('读取文件工具被调用', toolArgs);
+                    toolResult = await readFileTool(toolArgs);
+                    break;
+                  case 'create_file':
+                    console.log('创建文件工具被调用', toolArgs);
+                    toolResult = await createFileTool(toolArgs);
+                    break;
+                  case 'create_folder':
+                    console.log('创建文件夹工具被调用', toolArgs);
+                    toolResult = await createFolderTool(toolArgs);
+                    break;
+                  case 'edit_file':
+                    console.log('编辑文件工具被调用', toolArgs);
+                    toolResult = await editFileTool(toolArgs);
+                    break;
+                  case 'delete_file':
+                    console.log('删除文件工具被调用', toolArgs);
+                    toolResult = await deleteFileTool(toolArgs);
+                    break;
+                  case 'delete_folder':
+                    console.log('删除文件夹工具被调用', toolArgs);
+                    toolResult = await deleteFolderTool(toolArgs);
+                    break;
+                  case 'check_exists':
+                    console.log('检查存在性工具被调用', toolArgs);
+                    toolResult = await checkExistsTool(toolArgs);
+                    break;
+                  case 'get_directory_tree':
+                    console.log('获取目录树工具被调用', toolArgs);
+                    toolResult = await getDirectoryTreeTool(toolArgs);
                     break;
                   case 'fetch':
                     console.log('网络请求工具被调用', toolArgs);
