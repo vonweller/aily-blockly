@@ -53,7 +53,6 @@
             "REPOSITORY_URLS": "URLs de repositório",
             "BOARD_LIST": "Lista de placas",
             "LIBRARY_LIST": "Lista de bibliotecas",
-            "SEARCH_BOARD": "Pesquisar placas",
             "INSTALL": "Instalar",
             "UNINSTALL": "Desinstalar"
         },
@@ -72,6 +71,7 @@
         "BOARD": {
             "SEARCH": "Pesquisar placas",
             "READ_DOC": "Ler documentação",
+            "ADD_BOARD": "Adicionar placa",
             "DEV": "dev"
         },
         "FORM": {

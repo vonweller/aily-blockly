@@ -67,7 +67,6 @@
             "REPOSITORY_URLS": "Repository-URLs",
             "BOARD_LIST": "Board-Liste",
             "LIBRARY_LIST": "Bibliotheksliste",
-            "SEARCH_BOARD": "Board suchen",
             "INSTALL": "Installieren",
             "UNINSTALL": "Deinstallieren"
         },
@@ -86,6 +85,7 @@
         "BOARD": {
             "SEARCH": "Board suchen",
             "READ_DOC": "Dokumentation lesen",
+            "ADD_BOARD": "Board hinzufügen",
             "DEV": "Entwicklung"
         },
         "FORM": {
@@ -109,6 +109,8 @@
         "INSTALLED": "Installiert",
         "CORE_LIBRARY": "Kernbibliothek",
         "IMPORT_LIBRARY": "Lokale Bibliothek importieren",
+        "DEV_HELP": "Entwicklungshilfe",
+        "REPORT_ISSUE": "Problem melden",
         "INSTALL": "Installieren",
         "INSTALLED_TEXT": "Installiert",
         "REMOVE": "Entfernen",

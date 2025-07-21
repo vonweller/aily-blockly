@@ -53,7 +53,6 @@
             "REPOSITORY_URLS": "URLs des Dépôts",
             "BOARD_LIST": "Liste des Cartes",
             "LIBRARY_LIST": "Liste des Bibliothèques",
-            "SEARCH_BOARD": "Rechercher une Carte",
             "INSTALL": "Installer",
             "UNINSTALL": "Désinstaller"
         },
@@ -72,6 +71,7 @@
         "BOARD": {
             "SEARCH": "Rechercher une Carte",
             "READ_DOC": "Lire la Documentation",
+            "ADD_BOARD": "Ajouter une Carte",
             "DEV": "dev"
         },
         "FORM": {
@@ -94,6 +94,8 @@
         "INSTALLED": "Installé",
         "CORE_LIBRARY": "Bibliothèque centrale",
         "IMPORT_LIBRARY": "Importer une bibliothèque locale",
+        "DEV_HELP": "Aide développement",
+        "REPORT_ISSUE": "Signaler problème",
         "INSTALL": "Installer",
         "INSTALLED_TEXT": "Installé",
         "REMOVE": "Supprimer",
