@@ -434,11 +434,6 @@ export class AilyChatComponent implements OnDestroy {
         this.receiveTextFromExternal(message.text, message.options);
       }
     );
-
-    // runCommandTool
-    executeCommandTool(this.cmdService, { command: 'npm i C:\\Users\\stao\\Downloads\\Adafruit_SGP30-master\\Adafruit_SGP30-master\\dist', cwd: this.prjPath }).then(result => {
-      console.log('Command Tool Result:', result);
-    });
   }
 
   /**
