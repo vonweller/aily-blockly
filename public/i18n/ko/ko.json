@@ -90,6 +90,8 @@
         "INSTALLED": "설치됨",
         "CORE_LIBRARY": "코어 라이브러리",
         "IMPORT_LIBRARY": "로컬 라이브러리 가져오기",
+        "DEV_HELP": "개발 도움말",
+        "REPORT_ISSUE": "문제 신고",
         "INSTALL": "설치",
         "INSTALLED_TEXT": "설치됨",
         "REMOVE": "제거",

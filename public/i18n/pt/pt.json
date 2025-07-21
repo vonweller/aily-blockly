@@ -94,6 +94,8 @@
         "INSTALLED": "Instalado",
         "CORE_LIBRARY": "Biblioteca central",
         "IMPORT_LIBRARY": "Importar biblioteca local",
+        "DEV_HELP": "Ajuda desenvolvimento",
+        "REPORT_ISSUE": "Relatar problema",
         "INSTALL": "Instalar",
         "INSTALLED_TEXT": "Instalado",
         "REMOVE": "Remover",

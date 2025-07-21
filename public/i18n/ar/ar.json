@@ -94,6 +94,8 @@
         "INSTALLED": "مثبت",
         "CORE_LIBRARY": "مكتبة أساسية",
         "IMPORT_LIBRARY": "استيراد مكتبة محلية",
+        "DEV_HELP": "مساعدة التطوير",
+        "REPORT_ISSUE": "الإبلاغ عن مشكلة",
         "INSTALL": "تثبيت",
         "INSTALLED_TEXT": "مثبت",
         "REMOVE": "إزالة",
