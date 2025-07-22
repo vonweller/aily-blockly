@@ -66,7 +66,7 @@ export class UploaderService {
       text: errorMessage,
       detail: errorMessage,
       state: 'error',
-      setTimeout: 55000
+      setTimeout: 600000
     });
 
     this.cmdService.kill(this.streamId || '');

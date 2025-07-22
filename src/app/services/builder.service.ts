@@ -50,7 +50,7 @@ export class BuilderService {
       text: errorMessage,
       detail: errorMessage,
       state: 'error',
-      setTimeout: 55000
+      setTimeout: 600000
     });
 
     this.cmdService.kill(this.streamId || '');
@@ -502,7 +502,7 @@ export class BuilderService {
                 text: '编译失败',
                 detail: lastStdErr,
                 state: 'error',
-                setTimeout: 55000
+                setTimeout: 600000
               });
               // this.logService.update({ title: "编译失败", detail: lastStdErr, state: 'error' });
               this.buildInProgress = false;
