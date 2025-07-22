@@ -144,17 +144,53 @@ export class SimulatorEditorComponent implements AfterViewInit, OnDestroy {
       type: 'arduino',
       x,
       y,
-      width: 200,
-      height: 150,
+      width: 320,
+      height: 180,
       pins: [
-        { id: 'D2', x: 10, y: 30, type: 'digital', label: 'D2', connected: false },
-        { id: 'D3', x: 10, y: 50, type: 'digital', label: 'D3', connected: false },
-        { id: 'D4', x: 10, y: 70, type: 'digital', label: 'D4', connected: false },
-        { id: 'D5', x: 10, y: 90, type: 'digital', label: 'D5', connected: false },
-        { id: 'A0', x: 190, y: 30, type: 'analog', label: 'A0', connected: false },
-        { id: 'A1', x: 190, y: 50, type: 'analog', label: 'A1', connected: false },
-        { id: 'GND', x: 190, y: 110, type: 'ground', label: 'GND', connected: false },
-        { id: 'VCC', x: 190, y: 130, type: 'power', label: '5V', connected: false }
+        // 左侧引脚排列 (顶部)
+        { id: 'RESET', x: 40, y: 10, type: 'digital', label: 'RESET', connected: false },
+        { id: '3V3', x: 60, y: 10, type: 'power', label: '3.3V', connected: false },
+        { id: '5V', x: 80, y: 10, type: 'power', label: '5V', connected: false },
+        { id: 'GND1', x: 100, y: 10, type: 'ground', label: 'GND', connected: false },
+        { id: 'GND2', x: 120, y: 10, type: 'ground', label: 'GND', connected: false },
+        { id: 'VIN', x: 140, y: 10, type: 'power', label: 'VIN', connected: false },
+        
+        // 右侧引脚排列 (顶部)
+        { id: 'A0', x: 180, y: 10, type: 'analog', label: 'A0', connected: false },
+        { id: 'A1', x: 200, y: 10, type: 'analog', label: 'A1', connected: false },
+        { id: 'A2', x: 220, y: 10, type: 'analog', label: 'A2', connected: false },
+        { id: 'A3', x: 240, y: 10, type: 'analog', label: 'A3', connected: false },
+        { id: 'A4', x: 260, y: 10, type: 'analog', label: 'A4 (SDA)', connected: false },
+        { id: 'A5', x: 280, y: 10, type: 'analog', label: 'A5 (SCL)', connected: false },
+        
+        // 左侧引脚排列 (底部)
+        { id: 'D0', x: 40, y: 170, type: 'digital', label: 'D0 (RX)', connected: false },
+        { id: 'D1', x: 60, y: 170, type: 'digital', label: 'D1 (TX)', connected: false },
+        { id: 'D2', x: 80, y: 170, type: 'digital', label: 'D2', connected: false },
+        { id: 'D3', x: 100, y: 170, type: 'digital', label: 'D3 (PWM)', connected: false },
+        { id: 'D4', x: 120, y: 170, type: 'digital', label: 'D4', connected: false },
+        { id: 'D5', x: 140, y: 170, type: 'digital', label: 'D5 (PWM)', connected: false },
+        { id: 'D6', x: 160, y: 170, type: 'digital', label: 'D6 (PWM)', connected: false },
+        { id: 'D7', x: 180, y: 170, type: 'digital', label: 'D7', connected: false },
+        
+        // 右侧引脚排列 (底部)
+        { id: 'D8', x: 200, y: 170, type: 'digital', label: 'D8', connected: false },
+        { id: 'D9', x: 220, y: 170, type: 'digital', label: 'D9 (PWM)', connected: false },
+        { id: 'D10', x: 240, y: 170, type: 'digital', label: 'D10 (PWM)', connected: false },
+        { id: 'D11', x: 260, y: 170, type: 'digital', label: 'D11 (PWM)', connected: false },
+        { id: 'D12', x: 280, y: 170, type: 'digital', label: 'D12', connected: false },
+        { id: 'D13', x: 300, y: 170, type: 'digital', label: 'D13 (LED)', connected: false },
+        
+        // ICSP引脚 (右上角)
+        { id: 'ICSP_MISO', x: 240, y: 30, type: 'digital', label: 'MISO', connected: false },
+        { id: 'ICSP_VCC', x: 260, y: 30, type: 'power', label: '5V', connected: false },
+        { id: 'ICSP_SCK', x: 240, y: 45, type: 'digital', label: 'SCK', connected: false },
+        { id: 'ICSP_MOSI', x: 260, y: 45, type: 'digital', label: 'MOSI', connected: false },
+        { id: 'ICSP_RESET', x: 280, y: 30, type: 'digital', label: 'RST', connected: false },
+        { id: 'ICSP_GND', x: 280, y: 45, type: 'ground', label: 'GND', connected: false },
+        
+        // AREF引脚 (顶部右侧)
+        { id: 'AREF', x: 160, y: 10, type: 'analog', label: 'AREF', connected: false }
       ]
     };
   }
