@@ -59,14 +59,14 @@ export class UploaderService {
   ];
 
   // 添加这个错误处理方法
-  private handleUploadError(errorMessage: string) {
+  private handleUploadError(errorMessage: string, title="上传失败") {
     console.error("handle errror: ", errorMessage);
     this.noticeService.update({
-      title: "上传失败",
+      title: title,
       text: errorMessage,
       detail: errorMessage,
       state: 'error',
-      setTimeout: 55000
+      setTimeout: 600000
     });
 
     this.cmdService.kill(this.streamId || '');
@@ -147,7 +147,7 @@ export class UploaderService {
         }
 
         if (!this.builderService.passed) {
-          this.handleUploadError('编译失败，请检查代码');
+          this.handleUploadError('编译失败，请检查代码', "编译失败");
           reject({ state: 'error', text: '编译失败，请检查代码' });
           return;
         }

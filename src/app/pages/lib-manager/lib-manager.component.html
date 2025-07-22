@@ -24,14 +24,15 @@
                 }}</nz-tag>
             <nz-tag (click)="keyword='核心库';search()">{{ 'LIB_MANAGER.CORE_LIBRARY' | translate }}</nz-tag>
         </div>
-        <div class="import">
-            <button nz-button nzType="default" nzSize="small" style="margin-right: 10px;" (click)="help()" [nz-tooltip]
-                [nzTooltipTitle]="'LIB_MANAGER.HELP' | translate">
-                <i class="fa-light fa-question"></i>
+        <div class="btns">
+            <button nz-button nzType="primary" nzGhost nzSize="small" style="margin-right: 10px;" (click)="help()">
+                <i class="fa-light fa-question"></i>{{'LIB_MANAGER.DEV_HELP' | translate}}
             </button>
-            <button nz-button nzType="primary" nzSize="small" (click)="importLib()" [nz-tooltip]
-                [nzTooltipTitle]="'LIB_MANAGER.IMPORT_LIBRARY' | translate">
-                <i class="fa-light fa-plus"></i>
+            <button nz-button nzType="default" nzDanger nzSize="small" style="margin-right: 10px;" (click)="report()">
+                <i class="fa-light fa-bug"></i>{{'LIB_MANAGER.REPORT_ISSUE' | translate}}
+            </button>
+            <button nz-button nzType="primary" nzSize="small" (click)="importLib()">
+                <i class="fa-light fa-plus"></i>{{'LIB_MANAGER.IMPORT_LIBRARY' | translate}}
             </button>
         </div>
     </div>
