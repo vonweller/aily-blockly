@@ -363,7 +363,7 @@ export class UploaderService {
                         progress: lastProgress,
                         setTimeout: 0,
                         stop: () => {
-                          this.cancelBuild()
+                          this.cancel()
                         }
                       });
                     }
@@ -427,7 +427,7 @@ export class UploaderService {
   /**
 * 取消当前编译过程
 */
-  cancelBuild() {
+  cancel() {
     this.cmdService.kill(this.streamId || '');
   }
 }
