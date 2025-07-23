@@ -81,7 +81,7 @@ export class BuilderService {
           progress: 0,
           setTimeout: 0,
           stop: () => {
-            this.cancelBuild();
+            this.cancel();
           }
         });
 
@@ -455,7 +455,7 @@ export class BuilderService {
                       progress: lastProgress,
                       setTimeout: 0,
                       stop: () => {
-                        this.cancelBuild();
+                        this.cancel();
                       }
                     });
                   }
@@ -465,7 +465,7 @@ export class BuilderService {
                     this.buildCompleted = true;
                   }
 
-                  if (!isProgress && !isBuildText) {
+                  if (!isProgress && !isBuildText) { 
                     // 如果不是进度信息，则直接更新日志
                     // 判断是否包含:Global variables use 9 bytes (0%) of dynamic memory, leaving 2039 bytes for local variables. Maximum is 2048 bytes.
                     if (trimmedLine.includes('Global variables use')) {
@@ -540,7 +540,7 @@ export class BuilderService {
   /**
  * 取消当前编译过程
  */
-  cancelBuild() {
+  cancel() {
     this.cmdService.kill(this.streamId || '');
   }
 }
