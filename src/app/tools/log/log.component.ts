@@ -20,8 +20,7 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
   // 虚拟滚动数据源
   datasource = new Datasource<LogOptions>({
     get: (index: number, count: number) => {
-      console.log(`Datasource get called: index=${index}, count=${count}, total=${this.logService.list.length}`);
-
+      // console.log(`Datasource get called: index=${index}, count=${count}, total=${this.logService.list.length}`);
       const data: LogOptions[] = [];
       const startIndex = Math.max(0, index);
       const endIndex = Math.min(this.logService.list.length, startIndex + count);
