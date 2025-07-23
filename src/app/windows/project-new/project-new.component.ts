@@ -80,11 +80,7 @@ export class ProjectNewComponent {
     this.newProjectData.board.nickname = this.currentBoard.nickname;
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.version = this.currentBoard.version;
-<<<<<<< HEAD
-    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path)
-=======
     this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
->>>>>>> master
   }
 
   process(array) {
@@ -164,12 +160,9 @@ export class ProjectNewComponent {
     this.electronService.openUrl(url);
   }
 
-<<<<<<< HEAD
-=======
   help(){
     this.electronService.openUrl("https://github.com/ailyProject/aily-blockly-boards/blob/main/readme.md");
   }
->>>>>>> master
 }
 
 
