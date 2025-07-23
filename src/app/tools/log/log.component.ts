@@ -128,6 +128,9 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
 
   clear() {
     this.logService.clear();
+    if (this.datasource.adapter) {
+      this.datasource.adapter.reload(0);
+    }
   }
 
   ngOnDestroy() {
