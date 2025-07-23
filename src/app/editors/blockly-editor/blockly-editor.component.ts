@@ -70,6 +70,7 @@ export class BlocklyEditorComponent {
   ngOnDestroy(): void {
     this.builderService.cancel();
     this.uploadService.cancel();
+    this.cmdService.killArduinoCli();
     this.electronService.setTitle('aily blockly');
     this.blocklyService.reset();
   }

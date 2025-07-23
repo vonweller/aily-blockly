@@ -53,7 +53,6 @@ export class BuilderService {
       setTimeout: 600000
     });
 
-    this.cmdService.kill(this.streamId || '');
     this.passed = false;
     this.isErrored = true;
     this.buildInProgress = false;
@@ -507,6 +506,8 @@ export class BuilderService {
               // this.logService.update({ title: "编译失败", detail: lastStdErr, state: 'error' });
               this.buildInProgress = false;
               this.passed = false;
+              // 终止Arduino CLI进程
+              this.cmdService.killArduinoCli();
               reject({ state: 'error', text: '编译失败' });
             } else if (this.buildCompleted) {
               console.log('编译命令执行完成');
@@ -525,6 +526,8 @@ export class BuilderService {
               this.buildInProgress = false;
               this.passed = false;
               this.cancelled = true;
+              // 终止Arduino CLI进程
+              this.cmdService.killArduinoCli();
               reject({ state: 'warn', text: '编译已取消' });
             }
           }
