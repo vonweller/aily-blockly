@@ -7,8 +7,8 @@ export interface FetchToolArgs {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   headers?: { [key: string]: string };
   body?: any;
-  timeout?: number;
-  maxSize?: number; // 最大文件大小（字节）
+  timeout?: number | string;
+  maxSize?: number | string; // 最大文件大小（字节）
   responseType?: 'text' | 'json' | 'blob' | 'arraybuffer';
 }
 
@@ -42,6 +42,10 @@ export class FetchToolService {
         responseType = 'text'
       } = args;
 
+      // 确保超时值是数字类型
+      const timeoutNumber = typeof timeoutMs === 'string' ? parseInt(timeoutMs, 10) : timeoutMs;
+      const maxSizeNumber = typeof maxSize === 'string' ? parseInt(maxSize, 10) : maxSize;
+
       // 验证URL
       if (!url || !this.isValidUrl(url)) {
         return {
@@ -63,7 +67,7 @@ export class FetchToolService {
               headers: httpHeaders,
               observe: 'response',
               responseType: 'json'
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else if (responseType === 'blob') {
           response = await firstValueFrom(
@@ -71,7 +75,7 @@ export class FetchToolService {
               headers: httpHeaders,
               observe: 'response',
               responseType: 'blob'
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else if (responseType === 'arraybuffer') {
           response = await firstValueFrom(
@@ -79,7 +83,7 @@ export class FetchToolService {
               headers: httpHeaders,
               observe: 'response',
               responseType: 'arraybuffer'
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else {
           response = await firstValueFrom(
@@ -87,7 +91,7 @@ export class FetchToolService {
               headers: httpHeaders,
               observe: 'response',
               responseType: 'text'
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         }
       } else {
@@ -99,7 +103,7 @@ export class FetchToolService {
               observe: 'response',
               responseType: 'json',
               body: body
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else if (responseType === 'blob') {
           response = await firstValueFrom(
@@ -108,7 +112,7 @@ export class FetchToolService {
               observe: 'response',
               responseType: 'blob',
               body: body
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else if (responseType === 'arraybuffer') {
           response = await firstValueFrom(
@@ -117,7 +121,7 @@ export class FetchToolService {
               observe: 'response',
               responseType: 'arraybuffer',
               body: body
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         } else {
           response = await firstValueFrom(
@@ -126,16 +130,16 @@ export class FetchToolService {
               observe: 'response',
               responseType: 'text',
               body: body
-            }).pipe(timeout(timeoutMs))
+            }).pipe(timeout(timeoutNumber))
           );
         }
       }
 
       // 检查响应大小
       const contentLength = response.headers.get('content-length');
-      if (contentLength && parseInt(contentLength) > maxSize) {
+      if (contentLength && parseInt(contentLength) > maxSizeNumber) {
         return {
-          content: `文件大小 (${this.formatFileSize(parseInt(contentLength))}) 超过限制 (${this.formatFileSize(maxSize)})`,
+          content: `文件大小 (${this.formatFileSize(parseInt(contentLength))}) 超过限制 (${this.formatFileSize(maxSizeNumber)})`,
           is_error: true
         };
       }
@@ -148,27 +152,27 @@ export class FetchToolService {
         content = JSON.stringify(responseBody, null, 2);
       } else if (responseType === 'blob') {
         const blob = responseBody as Blob;
-        if (blob.size > maxSize) {
+        if (blob.size > maxSizeNumber) {
           return {
-            content: `文件大小 (${this.formatFileSize(blob.size)}) 超过限制 (${this.formatFileSize(maxSize)})`,
+            content: `文件大小 (${this.formatFileSize(blob.size)}) 超过限制 (${this.formatFileSize(maxSizeNumber)})`,
             is_error: true
           };
         }
         content = await this.blobToText(blob);
       } else if (responseType === 'arraybuffer') {
         const buffer = responseBody as ArrayBuffer;
-        if (buffer.byteLength > maxSize) {
+        if (buffer.byteLength > maxSizeNumber) {
           return {
-            content: `文件大小 (${this.formatFileSize(buffer.byteLength)}) 超过限制 (${this.formatFileSize(maxSize)})`,
+            content: `文件大小 (${this.formatFileSize(buffer.byteLength)}) 超过限制 (${this.formatFileSize(maxSizeNumber)})`,
             is_error: true
           };
         }
         content = this.arrayBufferToString(buffer);
       } else {
         content = responseBody as string;
-        if (content && content.length > maxSize) {
+        if (content && content.length > maxSizeNumber) {
           return {
-            content: `响应内容大小 (${this.formatFileSize(content.length)}) 超过限制 (${this.formatFileSize(maxSize)})`,
+            content: `响应内容大小 (${this.formatFileSize(content.length)}) 超过限制 (${this.formatFileSize(maxSizeNumber)})`,
             is_error: true
           };
         }

@@ -679,11 +679,11 @@ export class AilyChatComponent implements OnDestroy {
               } else {
                 switch (data.tool_name) {
                   case 'create_project':
-                    console.log('创建项目工具被调用', toolArgs);
+                    console.log('[创建项目工具被调用]', toolArgs);
                     toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
                     break;
                   case 'execute_command':
-                    console.log('执行command命令工具被调用', toolArgs);
+                    console.log('[执行command命令工具被调用]', toolArgs);
                     // Check if cwd is specified, otherwise use project paths
                     if (!toolArgs.cwd) {
                       toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
@@ -725,47 +725,47 @@ export class AilyChatComponent implements OnDestroy {
                     }
                     break;
                   case 'get_context':
-                    console.log('获取上下文信息工具被调用', toolArgs);
+                    console.log('[获取上下文信息工具被调用]', toolArgs);
                     toolResult = await getContextTool(this.projectService, toolArgs);
                     break;
                   case 'list_directory':
-                    console.log('列出目录工具被调用', toolArgs);
+                    console.log('[列出目录工具被调用]', toolArgs);
                     toolResult = await listDirectoryTool(toolArgs);
                     break;
                   case 'read_file':
-                    console.log('读取文件工具被调用', toolArgs);
+                    console.log('[读取文件工具被调用]', toolArgs);
                     toolResult = await readFileTool(toolArgs);
                     break;
                   case 'create_file':
-                    console.log('创建文件工具被调用', toolArgs);
+                    console.log('[创建文件工具被调用]', toolArgs);
                     toolResult = await createFileTool(toolArgs);
                     break;
                   case 'create_folder':
-                    console.log('创建文件夹工具被调用', toolArgs);
+                    console.log('[创建文件夹工具被调用]', toolArgs);
                     toolResult = await createFolderTool(toolArgs);
                     break;
                   case 'edit_file':
-                    console.log('编辑文件工具被调用', toolArgs);
+                    console.log('[编辑文件工具被调用]', toolArgs);
                     toolResult = await editFileTool(toolArgs);
                     break;
                   case 'delete_file':
-                    console.log('删除文件工具被调用', toolArgs);
+                    console.log('[删除文件工具被调用]', toolArgs);
                     toolResult = await deleteFileTool(toolArgs);
                     break;
                   case 'delete_folder':
-                    console.log('删除文件夹工具被调用', toolArgs);
+                    console.log('[删除文件夹工具被调用]', toolArgs);
                     toolResult = await deleteFolderTool(toolArgs);
                     break;
                   case 'check_exists':
-                    console.log('检查存在性工具被调用', toolArgs);
+                    console.log('[检查存在性工具被调用]', toolArgs);
                     toolResult = await checkExistsTool(toolArgs);
                     break;
                   case 'get_directory_tree':
-                    console.log('获取目录树工具被调用', toolArgs);
+                    console.log('[获取目录树工具被调用]', toolArgs);
                     toolResult = await getDirectoryTreeTool(toolArgs);
                     break;
                   case 'fetch':
-                    console.log('网络请求工具被调用', toolArgs);
+                    console.log('[网络请求工具被调用]', toolArgs);
                     toolResult = await fetchTool(this.fetchToolService, toolArgs);
                     break;
                 }
