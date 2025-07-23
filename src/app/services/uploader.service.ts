@@ -392,6 +392,8 @@ export class UploaderService {
             if(this.isErrored) {
               console.error("上传过程中发生错误，已取消");
               this.handleUploadError('上传过程中发生错误');
+              // 终止Arduino CLI进程
+              this.cmdService.killArduinoCli();
               reject({ state: 'error', text: errorText });
             } else if (this.uploadCompleted) {
               console.log("上传完成");
@@ -412,6 +414,8 @@ export class UploaderService {
                 setTimeout: 55000
               });
               this.uploadInProgress = false;
+              // 终止Arduino CLI进程
+              this.cmdService.killArduinoCli();
               reject({ state: 'warn', text: '上传已取消' });
             }
           }
