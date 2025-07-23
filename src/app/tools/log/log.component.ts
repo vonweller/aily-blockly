@@ -37,9 +37,9 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
 
     settings: {
       minIndex: 0,
-      startIndex: 0,
-      bufferSize: 10,
-      padding: 0.3,
+      startIndex: 0, // 从0开始，确保稳定性
+      bufferSize: 30, // 增加缓冲区大小，提高滚动性能
+      padding: 0.5, // 增加padding，确保有足够的缓冲
       infinite: false
     }
   });
@@ -57,9 +57,8 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
   ngOnInit() {
     // 监听日志更新
     this.logService.stateSubject.subscribe((opts) => {
-      console.log('logService stateSubject', opts);
-      console.log(opts.timestamp);
-
+      // console.log('logService stateSubject', opts);
+      // console.log(opts.timestamp);
       if (this.isInitialized) {
         // 当有新日志时，重新加载数据源
         this.reloadDatasource();
@@ -68,35 +67,62 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngAfterViewInit() {
-    // 初始化时加载数据并滚动到底部
-    const relaxPromise = this.datasource.adapter.relax();
-    if (relaxPromise && typeof relaxPromise.then === 'function') {
-      relaxPromise.then(() => {
+    this.initializeAndScrollToBottom();
+  }
+
+  private initializeAndScrollToBottom() {
+    if (this.logService.list.length > 0) {
+      // 如果有日志数据，使用更安全的方式加载并滚动
+      // 不要从最后一个索引开始，而是从合理的范围开始
+      const startIndex = Math.max(0, this.logService.list.length - 100); // 显示最后100项，避免空白
+
+      const reloadPromise = this.datasource.adapter.reload(startIndex);
+      if (reloadPromise && typeof reloadPromise.then === 'function') {
+        reloadPromise.then(() => {
+          this.isInitialized = true;
+          // 等待更长时间确保渲染完成
+          setTimeout(() => {
+            this.forceScrollToBottom();
+          }, 100);
+        });
+      } else {
         this.isInitialized = true;
-        setTimeout(() => this.scrollToBottom(), 100);
-      });
+        setTimeout(() => {
+          this.forceScrollToBottom();
+        }, 100);
+      }
     } else {
-      // 如果 relax() 没有返回 Promise，直接设置初始化状态
-      this.isInitialized = true;
-      setTimeout(() => this.scrollToBottom(), 100);
+      // 如果没有数据，仍然需要初始化
+      const relaxPromise = this.datasource.adapter.relax();
+      if (relaxPromise && typeof relaxPromise.then === 'function') {
+        relaxPromise.then(() => {
+          this.isInitialized = true;
+        });
+      } else {
+        this.isInitialized = true;
+      }
     }
   }
 
   reloadDatasource() {
     // 重新加载整个数据源以确保显示最新数据
     if (this.datasource.adapter && this.logService.list.length > 0) {
-      // 计算应该从哪个索引开始显示（显示最后几项）
+      // 从合理的范围开始加载，避免空白屏幕
       const startIndex = Math.max(0, this.logService.list.length - 50); // 显示最后50项
 
       const reloadPromise = this.datasource.adapter.reload(startIndex);
       if (reloadPromise && typeof reloadPromise.then === 'function') {
         reloadPromise.then(() => {
-          // 重新加载后滚动到底部
-          setTimeout(() => this.scrollToBottom(), 100);
+          // 重新加载后直接使用原生滚动
+          setTimeout(() => {
+            this.forceScrollToBottom();
+          }, 100);
         });
       } else {
         // 如果 reload() 没有返回 Promise，直接滚动到底部
-        setTimeout(() => this.scrollToBottom(), 100);
+        setTimeout(() => {
+          this.forceScrollToBottom();
+        }, 100);
       }
     }
   }
@@ -150,23 +176,43 @@ export class LogComponent implements OnInit, OnDestroy, AfterViewInit {
       window.sendToAilyChat(`运行日志：\n${item.detail}`, {
         sender: 'LogComponent',
         type: 'log'
-        // cover: true 是默认值，可以省略
       });
     }, 100);
     this.message.info('日志内容已发送到AI助手');
   }
 
-  private scrollToBottom(): void {
-    // 对于 ngx-ui-scroll，我们需要滚动到最后一个可见的元素
+  private forceScrollToBottom(): void {
+    // 先确保虚拟滚动定位到最后一个元素
     if (this.datasource.adapter && this.logService.list.length > 0) {
-      // 等待 DOM 更新完成后滚动
-      setTimeout(() => {
-        // 使用原生 DOM 滚动到底部
-        const viewport = document.querySelector('.log-box');
-        if (viewport) {
-          viewport.scrollTop = viewport.scrollHeight;
-        }
-      }, 50);
+      const lastIndex = this.logService.list.length - 1;
+
+      // 使用 reload 方法重新加载并定位到最后一个元素
+      const reloadPromise = this.datasource.adapter.reload(lastIndex);
+      if (reloadPromise && typeof reloadPromise.then === 'function') {
+        reloadPromise.then(() => {
+          // 等待虚拟滚动完成后，再进行原生滚动到底部
+          setTimeout(() => {
+            const viewport = document.querySelector('.log-box');
+            if (viewport) {
+              viewport.scrollTop = viewport.scrollHeight;
+            }
+          }, 50);
+        });
+      } else {
+        // 如果 reload() 没有返回 Promise，直接原生滚动
+        setTimeout(() => {
+          const viewport = document.querySelector('.log-box');
+          if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+          }
+        }, 50);
+      }
+    } else {
+      // 如果没有虚拟滚动数据，直接原生滚动
+      const viewport = document.querySelector('.log-box');
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
     }
   }
 }
