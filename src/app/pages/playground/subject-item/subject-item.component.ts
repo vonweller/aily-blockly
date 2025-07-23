@@ -121,7 +121,7 @@ export class SubjectItemComponent {
     if (url) {
       this.electronService.openUrl(url);
     } else {
-      this.message.error("invalid url");
+      this.message.info("库作者未提供教程");
     }
   }
 }

@@ -6,7 +6,6 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { Location } from '@angular/common';
-import { SUBJECT_LIST } from './test-data';
 import { Router, RouterModule } from '@angular/router';
 import { PlaygroundService } from './playground.service';
 
