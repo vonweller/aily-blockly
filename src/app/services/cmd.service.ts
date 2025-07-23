@@ -220,27 +220,14 @@ export class CmdService {
       const result = await this.runAsync('taskkill /f /im arduino-cli.exe', undefined, false);
       
       if (result.type === 'close' && result.code === 0) {
-        this.logService.update({
-          title: '终止进程',
-          detail: '成功终止 arduino-cli.exe 进程',
-          state: 'success'
-        });
+        console.log('终止 arduino-cli.exe 进程成功');
         return true;
       } else {
-        this.logService.update({
-          title: '终止进程',
-          detail: `终止 arduino-cli.exe 进程失败: ${result.data || result.error}`,
-          state: 'error'
-        });
+        console.error('终止 arduino-cli.exe 进程失败', result);
         return false;
       }
     } catch (error) {
       console.error('Error killing arduino-cli.exe:', error);
-      this.logService.update({
-        title: '终止进程',
-        detail: `终止 arduino-cli.exe 进程时发生错误: ${error}`,
-        state: 'error'
-      });
       return false;
     }
   }
