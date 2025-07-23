@@ -174,7 +174,7 @@ export let HEADER_MENU: IMenuItem[] = [
     icon: 'fa-light fa-books',
   },
   {
-    name: 'MENU.ABOUT',
+    name: 'MENU.FEEDBACK',
     action: 'browser-open',
     data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6' },
     icon: 'fa-light fa-globe-pointer',
@@ -184,6 +184,12 @@ export let HEADER_MENU: IMenuItem[] = [
     action: 'browser-open',
     data: { type: 'other', action: 'openByBrowser', url: 'https://github.com/vonweller/aily-blockly/tree/%E8%B5%9B%E4%BA%8B%E5%AE%9A%E5%88%B6' },
     icon: 'fa-brands fa-github-alt',
+  },
+  {
+    name: 'MENU.ABOUT',
+    action: 'browser-open',
+    data: { type: 'other', action: 'openByBrowser', url: 'https://aily.pro' },
+    icon: 'fa-light fa-globe-pointer',
   },
   {
     sep: true,

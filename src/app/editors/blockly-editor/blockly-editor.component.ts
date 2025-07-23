@@ -13,6 +13,8 @@ import { ConfigService } from '../../services/config.service';
 import { NpmService } from '../../services/npm.service';
 import { LibEditorComponent } from '../../pages/lib-editor/lib-editor.component';
 import { CmdService } from '../../services/cmd.service';
+import { UploaderService } from '../../services/uploader.service';
+import { BuilderService } from '../../services/builder.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -44,7 +46,9 @@ export class BlocklyEditorComponent {
     private message: NzMessageService,
     private configService: ConfigService,
     private npmService: NpmService,
-    private cmdService: CmdService
+    private cmdService: CmdService,
+    private builderService: BuilderService,
+    private uploadService: UploaderService
   ) { }
 
   ngOnInit(): void {

@@ -9,6 +9,7 @@ import { ConfigService } from '../../../services/config.service';
 import { ElectronService } from '../../../services/electron.service';
 import { CmdService } from '../../../services/cmd.service';
 import { PlaygroundService } from '../playground.service';
+import { UiService } from '../../../services/ui.service';
 
 @Component({
   selector: 'app-subject-item',
@@ -41,7 +42,8 @@ export class SubjectItemComponent {
     private message: NzMessageService,
     private electronService: ElectronService,
     private cmdService: CmdService,
-    private playgroundService: PlaygroundService
+    private playgroundService: PlaygroundService,
+    private uiService: UiService
   ) { }
 
   ngOnInit() {
@@ -91,12 +93,18 @@ export class SubjectItemComponent {
       const examplePath = `${appDataPath}/node_modules/${this.exampleItem.name}/${path}`;
       const abiFilePath = `${examplePath}/project.abi`;
 
-      if (!this.electronService.exists(examplePath) || !this.electronService.exists(abiFilePath)) {
-        await this.cmdService.runAsync(`npm install ${this.exampleItem.name} --prefix "${appDataPath}"`)
-      }
+      this.uiService.updateFooterState({ state: 'doing', text: `正在加载示例...`, timeout: 300000 });
+      // 避免缓存，一律重新安装加载
+      await this.cmdService.runAsync(`npm cache clean --force`);
+      await this.cmdService.runAsync(`npm install ${this.exampleItem.name} --prefix "${appDataPath}" --force`);
+
+      // if (!this.electronService.exists(examplePath) || !this.electronService.exists(abiFilePath)) {
+      //   await this.cmdService.runAsync(`npm install ${this.exampleItem.name} --prefix "${appDataPath}"`)
+      // }
 
       const targetPath = `${this.projectService.projectRootPath}\\${path}`;
       await this.cmdService.runAsync(`cp -r "${examplePath}" "${targetPath}"`);
+      this.uiService.updateFooterState({ state: 'done', text: `示例加载完成` });
       this.projectService.projectOpen(targetPath);
     } catch (error) {
       this.message.error('示例加载失败');
@@ -113,7 +121,7 @@ export class SubjectItemComponent {
     if (url) {
       this.electronService.openUrl(url);
     } else {
-      this.message.error("invalid url");
+      this.message.info("库作者未提供教程");
     }
   }
 }

@@ -50,7 +50,7 @@ export class BuilderService {
       text: errorMessage,
       detail: errorMessage,
       state: 'error',
-      setTimeout: 55000
+      setTimeout: 600000
     });
 
     this.cmdService.kill(this.streamId || '');
@@ -81,7 +81,7 @@ export class BuilderService {
           progress: 0,
           setTimeout: 0,
           stop: () => {
-            this.cancelBuild();
+            this.cancel();
           }
         });
 
@@ -366,6 +366,7 @@ export class BuilderService {
         let completeLines = '';
         let lastStdErr = '';
         let isBuildText = false;
+        let outputComplete = false;
 
         this.cmdService.run(compileCommand, null, false).subscribe({
           next: (output: CmdOutput) => {
@@ -389,7 +390,7 @@ export class BuilderService {
 
                 lines.forEach((line: string) => {
                   // 处理每一行输出
-                  const trimmedLine = line.trim();
+                  let trimmedLine = line.trim();
 
                   if (!trimmedLine) return; // 如果行为空，则跳过处理
 
@@ -454,7 +455,7 @@ export class BuilderService {
                       progress: lastProgress,
                       setTimeout: 0,
                       stop: () => {
-                        this.cancelBuild();
+                        this.cancel();
                       }
                     });
                   }
@@ -464,9 +465,19 @@ export class BuilderService {
                     this.buildCompleted = true;
                   }
 
-                  if (!isProgress && !isBuildText) {
+                  if (!isProgress && !isBuildText) { 
                     // 如果不是进度信息，则直接更新日志
-                    this.logService.update({ "detail": trimmedLine, "state": "doing" });
+                    // 判断是否包含:Global variables use 9 bytes (0%) of dynamic memory, leaving 2039 bytes for local variables. Maximum is 2048 bytes.
+                    if (trimmedLine.includes('Global variables use')) {
+                      outputComplete = true;
+                      trimmedLine = '编译完成：' + trimmedLine;
+                      this.logService.update({ "detail": trimmedLine, "state": "done" });
+                    } else {
+                      if (!outputComplete) {
+                        this.logService.update({ "detail": trimmedLine, "state": "doing" });
+                      }
+                    }
+                    
                   }
                 });
               } else {
@@ -491,7 +502,7 @@ export class BuilderService {
                 text: '编译失败',
                 detail: lastStdErr,
                 state: 'error',
-                setTimeout: 55000
+                setTimeout: 600000
               });
               // this.logService.update({ title: "编译失败", detail: lastStdErr, state: 'error' });
               this.buildInProgress = false;
@@ -529,7 +540,7 @@ export class BuilderService {
   /**
  * 取消当前编译过程
  */
-  cancelBuild() {
+  cancel() {
     this.cmdService.kill(this.streamId || '');
   }
 }
