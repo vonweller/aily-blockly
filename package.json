@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -136,7 +136,7 @@
     "marked-highlight": "^2.2.1",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.1",
-    "npm": "^11.2.0",
+    "ngx-ui-scroll4": "^4.0.0",
     "pinyin-pro": "^3.26.0",
     "rxjs": "~7.8.0",
     "shiki": "^3.5.0",
