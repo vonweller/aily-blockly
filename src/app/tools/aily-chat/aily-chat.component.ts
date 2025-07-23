@@ -681,6 +681,9 @@ export class AilyChatComponent implements OnDestroy {
                   case 'create_project':
                     console.log('[创建项目工具被调用]', toolArgs);
                     toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
+                    if (toolResult.is_error) {
+                      this.uiService.updateFooterState({ state: 'error', text: '项目创建失败' });
+                    }
                     break;
                   case 'execute_command':
                     console.log('[执行command命令工具被调用]', toolArgs);
