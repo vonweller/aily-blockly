@@ -137,7 +137,7 @@ export class UploaderService {
         if (this.builderService.cancelled) {
           this.uploadInProgress = false;
           this.noticeService.update({
-            title: "上传已取消",
+            title: "编译已取消",
             text: '编译已取消',
             state: 'warn',
             setTimeout: 55000
@@ -234,7 +234,7 @@ export class UploaderService {
         // 将buildProperties添加到compilerParam中
         uploadParam += buildProperties;
 
-        const uploadCmd = `arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --tools-path ${toolsPath} --verbose`;
+        const uploadCmd = `aily-arduino-cli.exe ${uploadParam} --input-dir ${buildPath} --board-path ${sdkPath} --tools-path ${toolsPath} --verbose`;
 
         this.uploadInProgress = true;
         this.noticeService.update({ title: title, text: lastUploadText, state: 'doing', progress: 0, setTimeout: 0 });
