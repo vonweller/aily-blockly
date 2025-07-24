@@ -95,6 +95,14 @@ export class AilyChatComponent implements OnDestroy {
     return this.chatService.currentSessionId;
   }
 
+  /**
+   * 确保字符串在 JSON 中是安全的，转义特殊字符
+   */
+  private makeJsonSafe(str: string): string {
+    if (!str) return str;
+    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  }
+
   // 内置工具
   tools: Tool[] = [
     {
@@ -103,6 +111,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"创建Arduino uno项目"' },
           board: {
             type: 'object',
             properties: {
@@ -113,7 +122,7 @@ export class AilyChatComponent implements OnDestroy {
             description: '开发板信息'
           },
         },
-        required: ['board']
+        required: ['purpose', 'board']
       }
     },
     {
@@ -122,10 +131,11 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"安装BH1750光照传感器库"' },
           command: { type: 'string', description: '执行的命令' },
           cwd: { type: 'string', description: '工作目录，可选' }
         },
-        required: ['command']
+        required: ['purpose', 'command']
       }
     },
 //     {
@@ -154,13 +164,15 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"获取项目配置"' },
           info_type: { 
             type: 'string', 
             description: '要获取的上下文信息类型',
             enum: ['all', 'project', 'platform', 'system'],
             default: 'all'
           }
-        }
+        },
+        required: ['purpose']
       }
     },
     {
@@ -169,12 +181,13 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"查看项目结构"' },
           path: { 
             type: 'string', 
             description: '要列出内容的目录路径'
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -183,6 +196,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"读取board.json文件"' },
           path: { 
             type: 'string', 
             description: '要读取的文件路径'
@@ -193,7 +207,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'utf-8'
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -202,6 +216,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"创建board.json文件"' },
           path: { 
             type: 'string', 
             description: '要创建的文件路径'
@@ -222,7 +237,7 @@ export class AilyChatComponent implements OnDestroy {
             default: false
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -231,6 +246,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"创建dist目录"' },
           path: { 
             type: 'string', 
             description: '要创建的文件夹路径'
@@ -241,7 +257,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -250,6 +266,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"修改generate.js文件"' },
           path: { 
             type: 'string', 
             description: '要编辑的文件路径'
@@ -269,7 +286,7 @@ export class AilyChatComponent implements OnDestroy {
             default: false
           }
         },
-        required: ['path', 'content']
+        required: ['purpose', 'path', 'content']
       }
     },
     {
@@ -278,6 +295,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"删除package.json文件"' },
           path: { 
             type: 'string', 
             description: '要删除的文件路径'
@@ -288,7 +306,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -297,6 +315,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"删除dist目录"' },
           path: { 
             type: 'string', 
             description: '要删除的文件夹路径'
@@ -312,7 +331,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -321,6 +340,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"检查dist目录是否存在"' },
           path: { 
             type: 'string', 
             description: '要检查的路径'
@@ -332,7 +352,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'any'
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -341,6 +361,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的具体操作说明，如"获取目录树"' },
           path: { 
             type: 'string', 
             description: '要获取树状结构的目录路径'
@@ -356,7 +377,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['path']
+        required: ['purpose', 'path']
       }
     },
     {
@@ -365,6 +386,7 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
+          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"拉取库规范文档"' },
           url: { 
             type: 'string', 
             description: '要请求的URL地址'
@@ -399,7 +421,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'text'
           }
         },
-        required: ['url']
+        required: ['purpose', 'url']
       }
     }
   ]
@@ -656,50 +678,65 @@ export class AilyChatComponent implements OnDestroy {
             // console.log("toolArgsJson: ", toolArgs);
 
             // 生成随机ID用于状态跟踪
-//             const toolCallId = `call_${this.getRandomString()}`;
-            
-//             // 添加正在处理状态消息
-//             const toolDescription = this.getToolDescription(data.tool_name, toolArgs);
-//             this.appendMessage('assistant', `
-// \`\`\`aily-state
-// {
-//   "state": "doing",
-//   "text": "正在执行: ${toolDescription}",
-//   "id": "${toolCallId}"
-// }
-// \`\`\`
-// `);
+            const toolCallId = `call_${this.getRandomString()}`;
+            const callPurpose = `${toolArgs.purpose}`
 
             let toolResult = null;
             let resultState = "done";
+            let stateText  = '';
             try {
               if (data.tool_name.startsWith('mcp_')) {
                 data.tool_name = data.tool_name.substring(4);
                 toolResult = await this.mcpService.use_tool(data.tool_name, toolArgs);
               } else {
+
                 switch (data.tool_name) {
                   case 'create_project':
                     console.log('[创建项目工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "创建项目..."}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
                     if (toolResult.is_error) {
                       this.uiService.updateFooterState({ state: 'error', text: '项目创建失败' });
+                      resultState = "error"
                     }
                     break;
                   case 'execute_command':
-                    console.log('[执行command命令工具被调用]', toolArgs);
+                    console.log('[执行命令工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "执行命令"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     // Check if cwd is specified, otherwise use project paths
                     if (!toolArgs.cwd) {
                       toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
                     }
                     toolResult = await executeCommandTool(this.cmdService, toolArgs);
-                    console.log("toolResult: ", toolResult);
                     if (!toolResult.is_error) {
                       // Check if this is an npm install command
                       const command = toolArgs.command;
                       if (command.includes('npm i') || command.includes('npm install')) {
                         console.log('检测到 npm install 命令，尝试加载库');
-                        // Extract the package name
-                        const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
+                        // Extract the package name for @aily-project/ packages only
+                        const npmRegex = /npm (i|install)\s+(@aily-project\/[a-zA-Z0-9-_]+)/;
                         const match = command.match(npmRegex);
 
                         console.log('npmRegex match:', match);
@@ -715,61 +752,224 @@ export class AilyChatComponent implements OnDestroy {
                           try {
                             await this.blocklyService.loadLibrary(libPackageName, projectPath);
                           } catch (e) {
-                            console.error('加载库失败:', e);
-                            toolResult = {
-                              is_error: true,
-                              content: `加载库失败: ${e.message}`
-                            };
+                            //
                           }
                         } else {
                           this.projectService.projectOpen(this.prjPath);
                         }
                       }
+                    } else {
+                      resultState = "error";
                     }
                     break;
                   case 'get_context':
                     console.log('[获取上下文信息工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "获取上下文"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await getContextTool(this.projectService, toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error"
+                    }
                     break;
                   case 'list_directory':
                     console.log('[列出目录工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "列出目录"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await listDirectoryTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'read_file':
                     console.log('[读取文件工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "读取文件"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await readFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'create_file':
                     console.log('[创建文件工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "创建文件"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await createFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'create_folder':
                     console.log('[创建文件夹工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "创建文件夹"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await createFolderTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'edit_file':
                     console.log('[编辑文件工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "编辑文件"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await editFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'delete_file':
                     console.log('[删除文件工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "删除文件"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await deleteFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'delete_folder':
                     console.log('[删除文件夹工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "删除文件夹"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await deleteFolderTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'check_exists':
                     console.log('[检查存在性工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "检查是否存在"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await checkExistsTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'get_directory_tree':
                     console.log('[获取目录树工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "获取目录树"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await getDirectoryTreeTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                   case 'fetch':
                     console.log('[网络请求工具被调用]', toolArgs);
+                    stateText = `${callPurpose || "网络请求"}`
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await fetchTool(this.fetchToolService, toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    }
                     break;
                 }
               }
@@ -789,16 +989,18 @@ export class AilyChatComponent implements OnDestroy {
               };
             }
             
-//             // 添加完成状态消息
-//             this.appendMessage('assistant', `
-// \`\`\`aily-state
-// {
-//   "state": "${resultState}",
-//   "text": "执行${resultState === "done" ? "完成" : resultState === "warn" ? "警告" : "失败"}: ${toolDescription}",
-//   "id": "${toolCallId}"
-// }
-// \`\`\`
-// `);
+            // 添加完成状态消息
+            this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "${resultState}",
+  "text": "${stateText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+            `);
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
@@ -846,45 +1048,6 @@ export class AilyChatComponent implements OnDestroy {
       event.preventDefault();
     }
   }
-
-  /**
-   * 根据工具名称和参数生成简短描述
-   * @param toolName 工具名称
-   * @param toolArgs 工具参数
-   * @returns 工具调用的简短描述
-   */
-  // getToolDescription(toolName: string, toolArgs: any): string {
-  //   let description = toolName;
-    
-  //   try {
-  //     if (toolName === 'create_project' && toolArgs.board) {
-  //       description = `创建项目(${toolArgs.board.name || toolArgs.board.nickname || '未知开发板'})`;
-  //     } else if (toolName === 'execute_command' && toolArgs.command) {
-  //       // 截取命令前30个字符，避免过长
-  //       const shortCommand = toolArgs.command.length > 30 
-  //         ? toolArgs.command.substring(0, 30) + '...' 
-  //         : toolArgs.command;
-  //       description = `执行命令: ${shortCommand}`;
-  //     } else if (toolName === 'ask_approval' && toolArgs.message) {
-  //       description = `请求确认`;
-  //     } else if (toolName === 'get_context') {
-  //       description = `获取上下文信息(${toolArgs.info_type || 'all'})`;
-  //     } else if (toolName === 'file_operations' && toolArgs.operation) {
-  //       const path = toolArgs.path + (toolArgs.name ? `/${toolArgs.name}` : '');
-  //       const shortPath = path.length > 25 ? '...' + path.substring(path.length - 25) : path;
-  //       description = `文件操作: ${toolArgs.operation} ${shortPath}`;
-  //     } else if (toolName === 'fetch' && toolArgs.url) {
-  //       const url = new URL(toolArgs.url);
-  //       description = `网络请求: ${url.hostname}`;
-  //     } else if (toolName.startsWith('mcp_')) {
-  //       description = `MCP工具: ${toolName.substring(4)}`;
-  //     }
-  //   } catch (e) {
-  //     console.error('生成工具描述失败:', e);
-  //   }
-    
-  //   return description;
-  // }
 
   getRandomString() {
     return (
