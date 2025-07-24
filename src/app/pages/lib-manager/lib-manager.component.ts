@@ -76,7 +76,7 @@ export class LibManagerComponent {
       this._libraryList = this.process(data);
       // this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
       this.libraryList = await this.checkInstalled();
-      console.log('初始库列表：', this.libraryList);
+      this.cd.detectChanges();
     });
   }
 
@@ -191,7 +191,7 @@ export class LibManagerComponent {
     // console.log('当前项目路径：', this.projectService.currentProjectPath);
 
     let packageList_old = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
-    console.log('当前已安装的库列表：', packageList_old);
+    // console.log('当前已安装的库列表：', packageList_old);
 
     lib.state = 'installing';
     this.message.loading(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLING')}...`);
@@ -202,10 +202,10 @@ export class LibManagerComponent {
     this.message.success(`${lib.nickname} ${this.translate.instant('LIB_MANAGER.INSTALLED')}`);
 
     let packageList_new = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
-    console.log('新的已安装的库列表：', packageList_new);
+    // console.log('新的已安装的库列表：', packageList_new);
     // 比对相较于旧的已安装库列表，找出新增的库
     const newPackages = packageList_new.filter(pkg => !packageList_old.some(oldPkg => oldPkg.name === pkg.name && oldPkg.version === pkg.version));
-    console.log('新增的库：', newPackages);
+    // console.log('新增的库：', newPackages);
     for (const pkg of newPackages) {
       this.blocklyService.loadLibrary(pkg.name, this.projectService.currentProjectPath);
     }
@@ -304,7 +304,7 @@ export class LibManagerComponent {
 
       // 获取安装前的库列表
       let packageList_old = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
-      console.log('导入前已安装的库列表：', packageList_old);
+      // console.log('导入前已安装的库列表：', packageList_old);
 
       // 使用 npm install 安装本地库
       await this.cmdService.runAsync(`npm install "${folderPath}"`, this.projectService.currentProjectPath);

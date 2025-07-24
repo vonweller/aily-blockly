@@ -354,7 +354,7 @@ export class BuilderService {
         // 将buildProperties添加到compilerParam中
         compilerParam += buildProperties;
 
-        const compileCommand = `arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'${buildProperties} --verbose`;
+        const compileCommand = `aily-arduino-cli.exe ${compilerParam} --jobs 0 --libraries '${librariesPath}' --board-path '${this.sdkPath}' --compile-path '${this.compilerPath}' --tools-path '${this.toolsPath}' --output-dir '${this.buildPath}' --log-level debug '${sketchFilePath}'${buildProperties} --verbose`;
         
         const title = `编译 ${boardJson.name}`;
         const completeTitle = `编译完成`;
@@ -376,7 +376,9 @@ export class BuilderService {
             this.streamId = output.streamId;
 
             if (!this.isErrored && output.type == 'stderr') {
-              lastStdErr = output.data || ""
+              if (output.data) {
+                lastStdErr = output.data.trim();
+              }
             }
 
             if (output.data) {
@@ -524,7 +526,7 @@ export class BuilderService {
               this.buildInProgress = false;
               this.passed = true;
               resolve({ state: 'done', text: '编译完成' });
-            } else {
+            } else if (this.cancelled) {
               console.warn("编译中断")
               this.noticeService.update({
                 title: "编译已取消",
@@ -534,10 +536,23 @@ export class BuilderService {
               });
               this.buildInProgress = false;
               this.passed = false;
-              this.cancelled = true;
               // 终止Arduino CLI进程
               this.cmdService.killArduinoCli();
               reject({ state: 'warn', text: '编译已取消' });
+            } else {
+              console.warn('编译命令未完成，可能是由于超时或其他原因');
+              this.noticeService.update({
+                title: "编译失败",
+                text: lastStdErr.slice(0, 30) + "..." || '编译未完成',
+                detail: lastStdErr,
+                state: 'error',
+                setTimeout: 600000
+              });
+              this.buildInProgress = false;
+              this.passed = false;
+              // 终止Arduino CLI进程
+              this.cmdService.killArduinoCli();
+              reject({ state: 'warn', text: '编译未完成' });
             }
           }
         })
@@ -581,6 +596,7 @@ export class BuilderService {
  * 取消当前编译过程
  */
   cancel() {
+    this.cancelled = true;
     this.cmdService.kill(this.streamId || '');
   }
 }
