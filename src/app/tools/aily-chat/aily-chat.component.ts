@@ -740,12 +740,26 @@ export class AilyChatComponent implements OnDestroy {
                     break;
                   case 'execute_command':
                     console.log('[执行命令工具被调用]', toolArgs);
+                    // Extract the command main body for display
+                    const commandParts = toolArgs.command.split(' ');
+                    let displayCommand = toolArgs.command;
+                    
+                    if (commandParts.length > 1) {
+                      // 对于 npm 命令，显示前两个词（如 "npm install"）
+                      if (commandParts[0].toLowerCase() === 'npm') {
+                        displayCommand = `${commandParts[0]} ${commandParts[1]}`;
+                      } else {
+                        // 其他命令只显示第一个词
+                        displayCommand = `${commandParts[0]}`;
+                      }
+                    }
+                    
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "正在执行: ${toolArgs.command}",
+  "text": "正在执行: ${displayCommand}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -785,10 +799,10 @@ export class AilyChatComponent implements OnDestroy {
                           this.projectService.projectOpen(projectPath);
                         }
                       }
-                      resultText = "命令执行成功"
+                      resultText = `命令${displayCommand}执行成功`
                     } else {
                       resultState = "error";
-                      resultText = '命令执行失败: ' + (toolResult.content || '未知错误');
+                      resultText = `命令${displayCommand}执行失败: ` + (toolResult.content || '未知错误');
                     }
                     break;
                   case 'get_context':
