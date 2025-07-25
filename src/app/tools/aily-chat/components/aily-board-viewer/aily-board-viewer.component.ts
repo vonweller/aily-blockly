@@ -60,6 +60,7 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    * 处理数据
    */
   private processData(): void {
+    console.log('Processing board data:', this.data);
     if (!this.data) {
       this.errorMessage = '没有可显示的开发板数据';
       return;

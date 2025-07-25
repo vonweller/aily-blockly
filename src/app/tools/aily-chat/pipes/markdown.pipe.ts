@@ -228,6 +228,7 @@ export class MarkdownPipe implements PipeTransform {
       }
     } catch (parseError) {
       console.warn(`Failed to parse JSON for ${type}:`, parseError);
+      console.log('Using raw content for rendering:', code);
       // 如果不是 JSON，返回原始字符串格式的数据
       return {
         type: type,
