@@ -103,6 +103,44 @@ export class AilyChatComponent implements OnDestroy {
     return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
   }
 
+  /**
+   * 获取路径中最后一个文件夹的名称
+   * @param path 路径字符串
+   * @returns 最后一个文件夹名称，如果路径无效则返回空字符串
+   */
+  getLastFolderName(path: string): string {
+    if (!path) return '';
+    
+    // 标准化路径分隔符（处理Windows和Unix路径）
+    const normalizedPath = path.replace(/\\/g, '/');
+    
+    // 移除末尾的斜杠
+    const trimmedPath = normalizedPath.endsWith('/') 
+      ? normalizedPath.slice(0, -1) 
+      : normalizedPath;
+    
+    // 分割路径并获取最后一个非空元素
+    const parts = trimmedPath.split('/').filter(Boolean);
+    
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  /**
+   * 获取路径中的文件名（不包含路径）
+   * @param path 文件的完整路径
+   * @returns 文件名，如果路径无效则返回空字符串
+   */
+  getFileName(path: string): string {
+    if (!path) return '';
+    
+    // 标准化路径分隔符（处理Windows和Unix路径）
+    const normalizedPath = path.replace(/\\/g, '/');
+    
+    // 获取路径的最后一部分（文件名）
+    const parts = normalizedPath.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
   // 内置工具
   tools: Tool[] = [
     {
@@ -111,7 +149,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"创建Arduino uno项目"' },
           board: {
             type: 'object',
             properties: {
@@ -122,7 +159,7 @@ export class AilyChatComponent implements OnDestroy {
             description: '开发板信息'
           },
         },
-        required: ['purpose', 'board']
+        required: ['board']
       }
     },
     {
@@ -131,11 +168,10 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"安装BH1750光照传感器库"' },
           command: { type: 'string', description: '执行的命令' },
           cwd: { type: 'string', description: '工作目录，可选' }
         },
-        required: ['purpose', 'command']
+        required: ['command']
       }
     },
 //     {
@@ -164,7 +200,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"获取项目配置"' },
           info_type: { 
             type: 'string', 
             description: '要获取的上下文信息类型',
@@ -172,7 +207,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'all'
           }
         },
-        required: ['purpose']
+        required: ['info_type']
       }
     },
     {
@@ -181,13 +216,12 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"查看项目结构"' },
           path: { 
             type: 'string', 
             description: '要列出内容的目录路径'
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -196,7 +230,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"读取board.json文件"' },
           path: { 
             type: 'string', 
             description: '要读取的文件路径'
@@ -207,7 +240,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'utf-8'
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -216,7 +249,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"创建board.json文件"' },
           path: { 
             type: 'string', 
             description: '要创建的文件路径'
@@ -237,7 +269,7 @@ export class AilyChatComponent implements OnDestroy {
             default: false
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -246,7 +278,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"创建dist目录"' },
           path: { 
             type: 'string', 
             description: '要创建的文件夹路径'
@@ -257,7 +288,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -266,7 +297,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"修改generate.js文件"' },
           path: { 
             type: 'string', 
             description: '要编辑的文件路径'
@@ -286,7 +316,7 @@ export class AilyChatComponent implements OnDestroy {
             default: false
           }
         },
-        required: ['purpose', 'path', 'content']
+        required: ['path', 'content']
       }
     },
     {
@@ -295,7 +325,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"删除package.json文件"' },
           path: { 
             type: 'string', 
             description: '要删除的文件路径'
@@ -306,7 +335,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -315,7 +344,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"删除dist目录"' },
           path: { 
             type: 'string', 
             description: '要删除的文件夹路径'
@@ -331,7 +359,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -340,19 +368,18 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"检查dist目录是否存在"' },
           path: { 
             type: 'string', 
             description: '要检查的路径'
           },
           type: { 
             type: 'string', 
-            description: '期望的类型：file(文件)、folder(文件夹)或any(任意)',
+            description: '期望的类型：file(文件)、folder(文件夹)或any(任意类型)',
             enum: ['file', 'folder', 'any'],
             default: 'any'
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -361,7 +388,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的具体操作说明，如"获取目录树"' },
           path: { 
             type: 'string', 
             description: '要获取树状结构的目录路径'
@@ -377,7 +403,7 @@ export class AilyChatComponent implements OnDestroy {
             default: true
           }
         },
-        required: ['purpose', 'path']
+        required: ['path']
       }
     },
     {
@@ -386,7 +412,6 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          purpose: { type: 'string', description: '10字以内的简洁操作说明，如"拉取库规范文档"' },
           url: { 
             type: 'string', 
             description: '要请求的URL地址'
@@ -421,7 +446,7 @@ export class AilyChatComponent implements OnDestroy {
             default: 'text'
           }
         },
-        required: ['purpose', 'url']
+        required: ['url']
       }
     }
   ]
@@ -679,11 +704,11 @@ export class AilyChatComponent implements OnDestroy {
 
             // 生成随机ID用于状态跟踪
             const toolCallId = `call_${this.getRandomString()}`;
-            const callPurpose = `${toolArgs.purpose}`
 
             let toolResult = null;
             let resultState = "done";
-            let stateText  = '';
+            let resultText  = '';
+
             try {
               if (data.tool_name.startsWith('mcp_')) {
                 data.tool_name = data.tool_name.substring(4);
@@ -693,13 +718,12 @@ export class AilyChatComponent implements OnDestroy {
                 switch (data.tool_name) {
                   case 'create_project':
                     console.log('[创建项目工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "创建项目..."}`
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在创建项目...",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -709,17 +733,19 @@ export class AilyChatComponent implements OnDestroy {
                     if (toolResult.is_error) {
                       this.uiService.updateFooterState({ state: 'error', text: '项目创建失败' });
                       resultState = "error"
+                      resultText = '项目创建失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `项目创建成功`;
                     }
                     break;
                   case 'execute_command':
                     console.log('[执行命令工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "执行命令"}`
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在执行: ${toolArgs.command}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -730,6 +756,8 @@ export class AilyChatComponent implements OnDestroy {
                       toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
                     }
                     toolResult = await executeCommandTool(this.cmdService, toolArgs);
+                    // Get project path from command args or default
+                    const projectPath = toolArgs.cwd || this.prjPath;
                     if (!toolResult.is_error) {
                       // Check if this is an npm install command
                       const command = toolArgs.command;
@@ -745,32 +773,32 @@ export class AilyChatComponent implements OnDestroy {
                           const libPackageName = match[2];
                           console.log('Installing library:', libPackageName);
                           
-                          // Get project path from command args or default
-                          const projectPath = toolArgs.cwd || this.prjPath;
-                          
                           // Load the library into blockly
                           try {
                             await this.blocklyService.loadLibrary(libPackageName, projectPath);
                           } catch (e) {
                             //
+                            console.log("加载库失败:", e);
                           }
                         } else {
-                          this.projectService.projectOpen(this.prjPath);
+                          console.log("projectOpen: ", projectPath);
+                          this.projectService.projectOpen(projectPath);
                         }
                       }
+                      resultText = "命令执行成功"
                     } else {
                       resultState = "error";
+                      resultText = '命令执行失败: ' + (toolResult.content || '未知错误');
                     }
                     break;
                   case 'get_context':
                     console.log('[获取上下文信息工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "获取上下文"}`
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在获取上下文信息...",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -779,17 +807,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await getContextTool(this.projectService, toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error"
+                      resultText = '获取上下文信息失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `上下文信息获取成功`;
                     }
                     break;
                   case 'list_directory':
                     console.log('[列出目录工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "列出目录"}`
+                    const distFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在获取${distFolderName}目录内容",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -798,17 +829,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await listDirectoryTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `获取${distFolderName}目录内容失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `获取${distFolderName}目录内容成功`;
                     }
                     break;
                   case 'read_file':
                     console.log('[读取文件工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "读取文件"}`
+                    let readFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在读取: ${readFileName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -817,17 +851,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await readFileTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `读取${readFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `读取${readFileName}文件成功`;
                     }
                     break;
                   case 'create_file':
                     console.log('[创建文件工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "创建文件"}`
+                    let createFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在创建: ${createFileName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -836,17 +873,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await createFileTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `创建${createFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `创建${createFileName}文件成功`;
                     }
                     break;
                   case 'create_folder':
                     console.log('[创建文件夹工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "创建文件夹"}`
+                    let createFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在创建: ${createFolderName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -855,17 +895,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await createFolderTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `创建${createFolderName}文件夹失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `创建${createFolderName}文件夹成功`;
                     }
                     break;
                   case 'edit_file':
                     console.log('[编辑文件工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "编辑文件"}`
+                    let editFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在编辑: ${editFileName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -874,36 +917,40 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await editFileTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `编辑${editFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `编辑${editFileName}文件成功`;
                     }
                     break;
                   case 'delete_file':
                     console.log('[删除文件工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "删除文件"}`
+                    let deleteFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('assistant', `
-
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在删除: ${deleteFileName}",
   "id": "${toolCallId}"
 }
 \`\`\`
-
                     `);
                     toolResult = await deleteFileTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `删除${deleteFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `删除${deleteFileName}文件成功`;
                     }
                     break;
                   case 'delete_folder':
                     console.log('[删除文件夹工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "删除文件夹"}`
+                    let deleteFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在删除: ${deleteFolderName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -912,17 +959,28 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await deleteFolderTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `删除${deleteFolderName}文件夹失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `删除${deleteFolderName}文件夹成功`;
                     }
                     break;
                   case 'check_exists':
                     console.log('[检查存在性工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "检查是否存在"}`
+                    // Determine if the path is likely a file or folder
+                    let stateText = "正在检查路径是否存在";
+                    let checkFileName = this.getFileName(toolArgs.path);
+                    let checkFolderName = this.getLastFolderName(toolArgs.path);
+
+                    const doingText = checkFileName ? `正在检查文件是否存在: ${checkFileName}` : `正在检查文件夹是否存在: ${checkFolderName}`;
+                    const errText = checkFileName ? `检查文件 ${checkFileName} 是否存在失败: ` : `检查文件夹 ${checkFolderName} 是否存在失败: `;
+                    const successText = checkFileName ? `文件 ${checkFileName} 存在` : `文件夹 ${checkFolderName} 存在`;
+
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "${doingText}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -931,17 +989,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await checkExistsTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = errText + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = successText;
                     }
                     break;
                   case 'get_directory_tree':
                     console.log('[获取目录树工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "获取目录树"}`
+                    let treeFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在获取目录树: ${treeFolderName}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -950,17 +1011,20 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await getDirectoryTreeTool(toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                      resultText = `获取目录树 ${treeFolderName} 失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `获取目录树 ${treeFolderName} 成功`;
                     }
                     break;
                   case 'fetch':
                     console.log('[网络请求工具被调用]', toolArgs);
-                    stateText = `${callPurpose || "网络请求"}`
+                    const fetchUrl = toolArgs.url;
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "${stateText}",
+  "text": "正在进行网络请求: ${fetchUrl}",
   "id": "${toolCallId}"
 }
 \`\`\`
@@ -969,11 +1033,13 @@ export class AilyChatComponent implements OnDestroy {
                     toolResult = await fetchTool(this.fetchToolService, toolArgs);
                     if (toolResult.is_error) {
                       resultState = "error";
+                    } else {
+                      resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
                 }
               }
-              
+
               // 根据执行结果确定状态
               if (toolResult && toolResult.is_error) {
                 resultState = "error";
@@ -988,19 +1054,22 @@ export class AilyChatComponent implements OnDestroy {
                 content: `工具执行出错: ${error.message || '未知错误'}`
               };
             }
-            
+
             // 添加完成状态消息
             this.appendMessage('assistant', `
 
 \`\`\`aily-state
 {
   "state": "${resultState}",
-  "text": "${stateText}",
+  "text": "${resultText}",
   "id": "${toolCallId}"
 }
 \`\`\`
 
             `);
+
+            // 手动添加一个换行进去
+            this.appendMessage('assistant', '\n');
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
