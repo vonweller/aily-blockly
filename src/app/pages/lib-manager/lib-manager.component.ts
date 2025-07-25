@@ -181,6 +181,7 @@ export class LibManagerComponent {
 
   currentStreamId;
   output = '';
+  isInstalling = false;
   async installLib(lib) {
     // 检查库兼容性
     // console.log('当前开发板内核：', this.projectService.currentBoardConfig.core.replace('aily:', ''));
@@ -189,7 +190,7 @@ export class LibManagerComponent {
       return;
     }
     // console.log('当前项目路径：', this.projectService.currentProjectPath);
-
+    this.isInstalling = true;
     let packageList_old = await this.npmService.getAllInstalledLibraries(this.projectService.currentProjectPath);
     // console.log('当前已安装的库列表：', packageList_old);
 
@@ -209,6 +210,7 @@ export class LibManagerComponent {
     for (const pkg of newPackages) {
       this.blocklyService.loadLibrary(pkg.name, this.projectService.currentProjectPath);
     }
+    this.isInstalling = false;
   }
 
   async removeLib(lib) {
@@ -336,7 +338,7 @@ export class LibManagerComponent {
     this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries/blob/main/readme.md');
   }
 
-  report(){
+  report() {
     this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries/issues');
   }
 }
