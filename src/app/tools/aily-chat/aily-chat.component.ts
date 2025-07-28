@@ -988,9 +988,96 @@ export class AilyChatComponent implements OnDestroy {
     this.startSession();
   }
 
- async addFile() {
+  async addFile() {
     // 添加参考文件
-    
+    try {
+      if (this.electronService.isElectron) {
+        // 在 Electron 环境中使用原生文件对话框
+        const result = await (window as any)['electronAPI'].dialog.selectFiles({
+          title: '选择文件或文件夹',
+          properties: ['openFile', 'openDirectory', 'multiSelections'],
+          filters: [
+            { name: '所有文件', extensions: ['*'] },
+            { name: '文本文件', extensions: ['txt', 'md', 'json', 'xml', 'csv'] },
+            { name: '代码文件', extensions: ['js', 'ts', 'html', 'css', 'scss', 'py', 'cpp', 'c', 'h'] },
+            { name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'] },
+            { name: '文档文件', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'] }
+          ]
+        });
+
+        if (!result.canceled && result.filePaths.length > 0) {
+          // 处理选中的文件/文件夹
+          const selectedPaths = result.filePaths;
+          
+          // 将选中的路径添加到输入框中
+          let pathsText = '';
+          if (selectedPaths.length === 1) {
+            pathsText = `参考文件/文件夹: ${selectedPaths[0]}`;
+          } else {
+            pathsText = `参考文件/文件夹:\n${selectedPaths.map(path => `- ${path}`).join('\n')}`;
+          }
+          
+          // 追加到输入框内容
+          if (this.inputValue.trim()) {
+            this.inputValue += '\n\n' + pathsText;
+          } else {
+            this.inputValue = pathsText;
+          }
+          
+          // 聚焦到输入框
+          setTimeout(() => {
+            if (this.chatTextarea?.nativeElement) {
+              const textarea = this.chatTextarea.nativeElement;
+              textarea.focus();
+              textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }
+          }, 100);
+          
+          console.log('选中的文件/文件夹:', selectedPaths);
+        }
+      } else {
+        // 在浏览器环境中使用 HTML input 元素作为备选方案
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.webkitdirectory = false; // 设置为 true 可以选择文件夹
+        
+        input.onchange = (event: any) => {
+          const files = event.target.files;
+          if (files && files.length > 0) {
+            const fileNames = Array.from(files).map((file: any) => file.name);
+            let filesText = '';
+            if (fileNames.length === 1) {
+              filesText = `参考文件: ${fileNames[0]}`;
+            } else {
+              filesText = `参考文件:\n${fileNames.map(name => `- ${name}`).join('\n')}`;
+            }
+            
+            // 追加到输入框内容
+            if (this.inputValue.trim()) {
+              this.inputValue += '\n\n' + filesText;
+            } else {
+              this.inputValue = filesText;
+            }
+            
+            // 聚焦到输入框
+            setTimeout(() => {
+              if (this.chatTextarea?.nativeElement) {
+                const textarea = this.chatTextarea.nativeElement;
+                textarea.focus();
+                textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+              }
+            }, 100);
+          }
+        };
+        
+        input.click();
+      }
+    } catch (error) {
+      console.error('选择文件时出错:', error);
+      // 可以在这里添加错误提示
+      this.appendMessage('错误', '选择文件时出错: ' + error.message);
+    }
   }
 
   showHistoryList = false;

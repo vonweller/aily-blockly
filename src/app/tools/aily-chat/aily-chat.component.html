@@ -63,8 +63,8 @@
             <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
           </div> -->
-            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip [nzTooltipTitle]="isWaiting?'停止':'发送'"
-              (click)="send()">
+            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip
+              [nzTooltipTitle]="isWaiting?'停止':'发送'" (click)="send()">
               @if(isWaiting){
               <i class="fa-light fa-stop"></i>
               <i class="fa-duotone fa-spinner-third"></i>
