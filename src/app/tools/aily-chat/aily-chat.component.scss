@@ -27,11 +27,26 @@
   }
 
   .input-box {
-    margin-top: 10px;
-    height: calc(100% - 48px) !important;
+    // margin-top: 10px;
+    // height: calc(100% - 48px) !important;
 
     textarea {
       font-size: 13px;
+    }
+
+    .btns {
+      .btn {
+        .fa-stop {
+          font-size: 11px;
+          position: absolute;
+          left: 10px;
+          top: 10px;
+        }
+
+        .fa-spinner-third {
+          font-size: 24px;
+        }
+      }
     }
   }
 }

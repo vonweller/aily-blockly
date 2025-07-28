@@ -174,34 +174,34 @@ export class AilyChatComponent implements OnDestroy {
         required: ['command']
       }
     },
-//     {
-//       name: "ask_approval",
-//       description: `
-//         ## ask_approval
-// ### Description
-// 向用户请求确认或批准某个操作。此工具用于在执行可能影响用户的操作之前，确保用户明确同意。
-// ### Parameters
-// - message: (required) 需要用户确认的消息内容。
-// ### Usage
-// <ask_approval>
-// <message>需要用户确认的消息</message>
-// </ask_approval>`,
-//       input_schema: {
-//         type: 'object',
-//         properties: {
-//           message: { type: 'string', description: '需要用户确认的消息' }
-//         },
-//         required: ['message']
-//       }
-//     },
+    //     {
+    //       name: "ask_approval",
+    //       description: `
+    //         ## ask_approval
+    // ### Description
+    // 向用户请求确认或批准某个操作。此工具用于在执行可能影响用户的操作之前，确保用户明确同意。
+    // ### Parameters
+    // - message: (required) 需要用户确认的消息内容。
+    // ### Usage
+    // <ask_approval>
+    // <message>需要用户确认的消息</message>
+    // </ask_approval>`,
+    //       input_schema: {
+    //         type: 'object',
+    //         properties: {
+    //           message: { type: 'string', description: '需要用户确认的消息' }
+    //         },
+    //         required: ['message']
+    //       }
+    //     },
     {
       name: "get_context",
       description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
       input_schema: {
         type: 'object',
         properties: {
-          info_type: { 
-            type: 'string', 
+          info_type: {
+            type: 'string',
             description: '要获取的上下文信息类型',
             enum: ['all', 'project', 'platform', 'system'],
             default: 'all'
@@ -216,8 +216,8 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要列出内容的目录路径'
           }
         },
@@ -230,12 +230,12 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要读取的文件路径'
           },
-          encoding: { 
-            type: 'string', 
+          encoding: {
+            type: 'string',
             description: '文件编码格式',
             default: 'utf-8'
           }
@@ -249,22 +249,22 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要创建的文件路径'
           },
-          content: { 
-            type: 'string', 
+          content: {
+            type: 'string',
             description: '文件内容',
             default: ''
           },
-          encoding: { 
-            type: 'string', 
+          encoding: {
+            type: 'string',
             description: '文件编码格式',
             default: 'utf-8'
           },
-          overwrite: { 
-            type: 'boolean', 
+          overwrite: {
+            type: 'boolean',
             description: '是否覆盖已存在的文件',
             default: false
           }
@@ -278,12 +278,12 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要创建的文件夹路径'
           },
-          recursive: { 
-            type: 'boolean', 
+          recursive: {
+            type: 'boolean',
             description: '是否递归创建父目录',
             default: true
           }
@@ -297,21 +297,21 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要编辑的文件路径'
           },
-          content: { 
-            type: 'string', 
+          content: {
+            type: 'string',
             description: '新的文件内容'
           },
-          encoding: { 
-            type: 'string', 
+          encoding: {
+            type: 'string',
             description: '文件编码格式',
             default: 'utf-8'
           },
-          createIfNotExists: { 
-            type: 'boolean', 
+          createIfNotExists: {
+            type: 'boolean',
             description: '如果文件不存在是否创建',
             default: false
           }
@@ -325,12 +325,12 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要删除的文件路径'
           },
-          createBackup: { 
-            type: 'boolean', 
+          createBackup: {
+            type: 'boolean',
             description: '删除前是否创建备份',
             default: true
           }
@@ -344,17 +344,17 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要删除的文件夹路径'
           },
-          createBackup: { 
-            type: 'boolean', 
+          createBackup: {
+            type: 'boolean',
             description: '删除前是否创建备份',
             default: true
           },
-          recursive: { 
-            type: 'boolean', 
+          recursive: {
+            type: 'boolean',
             description: '是否递归删除',
             default: true
           }
@@ -368,8 +368,8 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要检查的路径'
           },
           type: { 
@@ -388,17 +388,17 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          path: { 
-            type: 'string', 
+          path: {
+            type: 'string',
             description: '要获取树状结构的目录路径'
           },
-          maxDepth: { 
-            type: 'number', 
+          maxDepth: {
+            type: 'number',
             description: '最大遍历深度',
             default: 3
           },
-          includeFiles: { 
-            type: 'boolean', 
+          includeFiles: {
+            type: 'boolean',
             description: '是否包含文件（false时只显示文件夹）',
             default: true
           }
@@ -412,35 +412,35 @@ export class AilyChatComponent implements OnDestroy {
       input_schema: {
         type: 'object',
         properties: {
-          url: { 
-            type: 'string', 
+          url: {
+            type: 'string',
             description: '要请求的URL地址'
           },
-          method: { 
-            type: 'string', 
+          method: {
+            type: 'string',
             description: 'HTTP请求方法',
             enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
             default: 'GET'
           },
-          headers: { 
-            type: 'object', 
+          headers: {
+            type: 'object',
             description: '请求头（键值对）'
           },
-          body: { 
+          body: {
             description: '请求体'
           },
-          timeout: { 
-            type: 'number', 
+          timeout: {
+            type: 'number',
             description: '请求超时时间（毫秒）',
             default: 30000
           },
-          maxSize: { 
-            type: 'number', 
+          maxSize: {
+            type: 'number',
             description: '最大文件大小（字节）',
             default: 52428800
           },
-          responseType: { 
-            type: 'string', 
+          responseType: {
+            type: 'string',
             description: '响应类型',
             enum: ['text', 'json', 'blob', 'arraybuffer'],
             default: 'text'
@@ -470,7 +470,7 @@ export class AilyChatComponent implements OnDestroy {
     //   this.prjPath = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     // }
 
-    this.prjPath = this.projectService.currentProjectPath === this.projectService.projectRootPath? "" : this.projectService.currentProjectPath;
+    this.prjPath = this.projectService.currentProjectPath === this.projectService.projectRootPath ? "" : this.projectService.currentProjectPath;
     this.prjRootPath = this.projectService.projectRootPath;
 
     // 订阅消息
@@ -490,7 +490,7 @@ export class AilyChatComponent implements OnDestroy {
    */
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
-    
+
     // cover 默认为 true，只有明确设置为 false 时才追加
     if (options?.cover === false) {
       // 如果明确设置为不覆盖，则追加到末尾
@@ -503,7 +503,7 @@ export class AilyChatComponent implements OnDestroy {
       // 默认行为：覆盖输入框内容
       this.inputValue = text;
     }
-    
+
     // 自动聚焦到输入框并将光标移到末尾
     setTimeout(() => {
       if (this.chatTextarea?.nativeElement) {
@@ -606,8 +606,17 @@ export class AilyChatComponent implements OnDestroy {
     });
   }
 
+  isWaiting = false;
   send(show: boolean = true): void {
+    if (this.isWaiting) {
+      this.isWaiting = false;
+      this.stop();
+      return;
+    }
+
     if (!this.sessionId || !this.inputValue.trim()) return;
+
+    this.isWaiting = true;
 
     let text = this.inputValue.trim();
     if (show) this.appendMessage('user', text);
@@ -629,6 +638,11 @@ export class AilyChatComponent implements OnDestroy {
       }
     });
     this.scrollToBottom();
+  }
+
+  // 这里写停止发送信号
+  stop() {
+
   }
 
   streamConnect(): void {
@@ -658,13 +672,13 @@ export class AilyChatComponent implements OnDestroy {
             // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
 
             let toolArgs;
-            
+
             if (typeof data.tool_args === 'string') {
               try {
                 // 在JSON解析前，先处理Windows路径中的反斜杠问题
                 // 将Windows路径中的单个反斜杠替换为双反斜杠，避免被当作转义字符
                 let processedString = data.tool_args;
-                
+
                 // 查找所有可能的路径字段，并在它们的值中修复反斜杠
                 processedString = processedString.replace(
                   /"(path|cwd|directory|folder|filepath|dirpath)"\s*:\s*"([^"]*[\\][^"]*)"/g,
@@ -674,7 +688,7 @@ export class AilyChatComponent implements OnDestroy {
                     return `"${fieldName}":"${fixedPath}"`;
                   }
                 );
-                
+
                 toolArgs = JSON.parse(processedString);
               } catch (e) {
                 console.error('JSON解析失败，尝试备用方法:', e);
@@ -782,7 +796,7 @@ export class AilyChatComponent implements OnDestroy {
                         const match = command.match(npmRegex);
 
                         console.log('npmRegex match:', match);
-                        
+
                         if (match && match[2]) {
                           const libPackageName = match[2];
                           console.log('Installing library:', libPackageName);
@@ -1223,8 +1237,9 @@ export class AilyChatComponent implements OnDestroy {
     this.startSession();
   }
 
-  addFile() {
+ async addFile() {
     // 添加参考文件
+    
   }
 
   showHistoryList = false;

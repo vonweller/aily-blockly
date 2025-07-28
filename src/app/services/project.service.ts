@@ -9,10 +9,10 @@ import { pinyin } from "pinyin-pro";
 import { Router } from '@angular/router';
 import { CmdService } from './cmd.service';
 import { generateDateString } from '../func/func';
-
-const { pt } = (window as any)['electronAPI'].platform;
 import { ConfigService } from './config.service';
 import { ESP32_CONFIG_MENU } from '../configs/esp32.config';
+
+const { pt } = (window as any)['electronAPI'].platform;
 
 interface ProjectPackageData {
   name: string;
@@ -266,39 +266,39 @@ export class ProjectService {
     }
   }
 
-  generateUniqueProjectName(prjPath, prefix = 'project_'): string {
-    const baseDateStr = generateDateString();
-    prefix = prefix + baseDateStr;
+  // generateUniqueProjectName(prjPath, prefix = 'project_'): string {
+  //   const baseDateStr = generateDateString();
+  //   prefix = prefix + baseDateStr;
 
-    // 尝试使用字母后缀 a-z
-    for (let charCode = 97; charCode <= 122; charCode++) {
-      const suffix = String.fromCharCode(charCode);
-      const projectName: string = prefix + suffix;
-      const projectPath = prjPath + pt + projectName;
+  //   // 尝试使用字母后缀 a-z
+  //   for (let charCode = 97; charCode <= 122; charCode++) {
+  //     const suffix = String.fromCharCode(charCode);
+  //     const projectName: string = prefix + suffix;
+  //     const projectPath = prjPath + pt + projectName;
 
-      if (!window['path'].isExists(projectPath)) {
-        return projectName;
-      }
-    }
+  //     if (!window['path'].isExists(projectPath)) {
+  //       return projectName;
+  //     }
+  //   }
 
-    // 如果所有字母都已使用，则使用数字后缀
-    let numberSuffix = 0;
-    while (true) {
-      const projectName = prefix + 'a' + numberSuffix;
-      const projectPath = prjPath + pt + projectName;
+  //   // 如果所有字母都已使用，则使用数字后缀
+  //   let numberSuffix = 0;
+  //   while (true) {
+  //     const projectName = prefix + 'a' + numberSuffix;
+  //     const projectPath = prjPath + pt + projectName;
 
-      if (!window['path'].isExists(projectPath)) {
-        return projectName;
-      }
+  //     if (!window['path'].isExists(projectPath)) {
+  //       return projectName;
+  //     }
 
-      numberSuffix++;
+  //     numberSuffix++;
 
-      // 安全检查，防止无限循环
-      if (numberSuffix > 1000) {
-        return prefix + 'a' + Date.now(); // 极端情况下使用时间戳
-      }
-    }
-  }
+  //     // 安全检查，防止无限循环
+  //     if (numberSuffix > 1000) {
+  //       return prefix + 'a' + Date.now(); // 极端情况下使用时间戳
+  //     }
+  //   }
+  // }
 
   // 获取当前项目的package.json
   async getPackageJson() {
@@ -716,6 +716,40 @@ export class ProjectService {
     } catch (error) {
       console.error('切换开发板失败:', error);
       this.message.error('开发板切换失败: ' + error.message);
+    }
+  }
+
+  generateUniqueProjectName(prjPath, prefix = 'project_'): string {
+    const baseDateStr = generateDateString();
+    prefix = prefix + baseDateStr;
+
+    // 尝试使用字母后缀 a-z
+    for (let charCode = 97; charCode <= 122; charCode++) {
+      const suffix = String.fromCharCode(charCode);
+      const projectName: string = prefix + suffix;
+      const projectPath = prjPath + pt + projectName;
+
+      if (!window['path'].isExists(projectPath)) {
+        return projectName;
+      }
+    }
+
+    // 如果所有字母都已使用，则使用数字后缀
+    let numberSuffix = 0;
+    while (true) {
+      const projectName = prefix + 'a' + numberSuffix;
+      const projectPath = prjPath + pt + projectName;
+
+      if (!window['path'].isExists(projectPath)) {
+        return projectName;
+      }
+
+      numberSuffix++;
+
+      // 安全检查，防止无限循环
+      if (numberSuffix > 1000) {
+        return prefix + 'a' + Date.now(); // 极端情况下使用时间戳
+      }
     }
   }
 }

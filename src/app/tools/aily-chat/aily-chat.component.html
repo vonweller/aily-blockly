@@ -53,21 +53,28 @@
           </div>
         </div> -->
         <div class="input-box">
-          <textarea #chatTextarea class="sscroll" spellcheck="false" nz-input [(ngModel)]="inputValue"
-            (keydown)="onKeyDown($event)"></textarea>
-        </div>
-        <div class="btns">
-          <!-- <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件" (click)="addFile()">
-            <i class="fa-light fa-file-plus"></i>
-          </div> -->
-          <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
+          <textarea #chatTextarea class="sscroll" spellcheck="false" [(ngModel)]="inputValue"
+            (keydown)="onKeyDown($event)">
+          </textarea>
+          <div class="btns">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件" (click)="addFile()">
+              <i class="fa-light fa-file-plus"></i>
+            </div>
+            <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
           </div> -->
-          <button class="right ccenter" nz-button nzType="primary" nz-tooltip [nzTooltipTitle]="'Ctrl+Enter'"
-            (click)="send()">
-            发送
-          </button>
+            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip [nzTooltipTitle]="isWaiting?'停止':'发送'"
+              (click)="send()">
+              @if(isWaiting){
+              <i class="fa-light fa-stop"></i>
+              <i class="fa-duotone fa-spinner-third"></i>
+              }@else {
+              <i class="fa-light fa-paper-plane"></i>
+              }
+            </div>
+          </div>
         </div>
+
       </div>
     </div>
   </div>
