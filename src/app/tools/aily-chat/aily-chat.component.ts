@@ -607,17 +607,20 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   isWaiting = false;
-  send(show: boolean = true): void {
+
+  sendButtonClick(): void {
     if (this.isWaiting) {
       this.isWaiting = false;
       this.stop();
       return;
     }
 
-    if (!this.sessionId || !this.inputValue.trim()) return;
-
     this.isWaiting = true;
+    this.send();
+  }
 
+  send(show: boolean = true): void {
+    if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
     if (show) this.appendMessage('user', text);
     this.inputValue = '';
@@ -642,7 +645,14 @@ export class AilyChatComponent implements OnDestroy {
 
   // 这里写停止发送信号
   stop() {
-
+    this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
+      // 处理停止会话的响应
+      if (res.status == 'success') {
+        console.log('会话已停止:', res);
+        this.isWaiting = false;
+        return;
+      }
+    });
   }
 
   streamConnect(): void {
@@ -660,6 +670,12 @@ export class AilyChatComponent implements OnDestroy {
           if (data.type === 'agent_response') {
             if (data.data) {
               this.appendMessage('assistant', data.data);
+
+              // 判断是否包含TERMINATE标记
+              if (data.data.includes('TERMINATE')) {
+                console.log('检测到TERMINATE标记');
+                this.isWaiting = false;
+              }
             }
           } else if (data.type === 'processing_started') {
             console.log('助手正在思考...');

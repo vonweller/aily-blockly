@@ -64,7 +64,7 @@
             <i class="fa-light fa-microphone"></i>
           </div> -->
             <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip [nzTooltipTitle]="isWaiting?'停止':'发送'"
-              (click)="send()">
+              (click)="sendButtonClick()">
               @if(isWaiting){
               <i class="fa-light fa-stop"></i>
               <i class="fa-duotone fa-spinner-third"></i>

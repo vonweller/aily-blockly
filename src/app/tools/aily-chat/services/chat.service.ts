@@ -88,4 +88,8 @@ export class ChatService {
   getHistory(sessionId: string) {
     return this.http.get(`${API.getHistory}/${sessionId}`);
   }
+
+  stopSession(sessionId: string) {
+    return this.http.post(`${API.stopSession}/${sessionId}`, {});
+  }
 }
