@@ -174,26 +174,17 @@ export class AilyChatComponent implements OnDestroy {
         required: ['command']
       }
     },
-    //     {
-    //       name: "ask_approval",
-    //       description: `
-    //         ## ask_approval
-    // ### Description
-    // 向用户请求确认或批准某个操作。此工具用于在执行可能影响用户的操作之前，确保用户明确同意。
-    // ### Parameters
-    // - message: (required) 需要用户确认的消息内容。
-    // ### Usage
-    // <ask_approval>
-    // <message>需要用户确认的消息</message>
-    // </ask_approval>`,
-    //       input_schema: {
-    //         type: 'object',
-    //         properties: {
-    //           message: { type: 'string', description: '需要用户确认的消息' }
-    //         },
-    //         required: ['message']
-    //       }
-    //     },
+    {
+      name: "ask_approval",
+      description: "向用户请求确认或批准某个操作。此工具用于需要用户确认的场景，确保用户明确同意后才进行后续操作。",
+      input_schema: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: '消息描述' }
+        },
+        required: ['message']
+      } 
+    },
     {
       name: "get_context",
       description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
@@ -491,6 +482,33 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
+    if (options?.type === 'button') {
+      // 判断是否是 JSON 格式的字符串
+      try {
+        const parsedText = JSON.parse(text);
+        // 判断是否包含id字段，有则提取id
+        if (parsedText && typeof parsedText === 'object' && parsedText.id) {
+          // 提取id
+          const id = parsedText.id;
+
+          this.inputValue = JSON.stringify({
+            "type": "tool_result",
+            "tool_id": id,
+            "content": parsedText.text,
+            "is_error": false
+          })
+          this.send(false);
+          return;
+        } else {
+          // 否则保持原样
+          text = JSON.stringify(parsedText, null, 2);
+        }
+      } catch (e) {
+        // 如果解析失败，说明不是JSON格式的字符串
+        // 保持原样
+      }
+    }
+
     // cover 默认为 true，只有明确设置为 false 时才追加
     if (options?.cover === false) {
       // 如果明确设置为不覆盖，则追加到末尾
@@ -615,7 +633,6 @@ export class AilyChatComponent implements OnDestroy {
       return;
     }
 
-    this.isWaiting = true;
     this.send();
   }
 
@@ -624,6 +641,11 @@ export class AilyChatComponent implements OnDestroy {
     let text = this.inputValue.trim();
     if (show) this.appendMessage('user', text);
     this.inputValue = '';
+
+    // 发送消息时设置等待状态
+    if (show) {
+      this.isWaiting = true;
+    }
 
     if (this.isUserInputRequired) {
       this.isUserInputRequired = false;
@@ -662,31 +684,58 @@ export class AilyChatComponent implements OnDestroy {
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
         console.log("收到消息: ", data);
-        // Replace "/toUser" with empty string in data.data if it exists
+        // Replace "to_user" with empty string in data.data if it exists
         if (data.data && typeof data.data === 'string') {
-          data.data = data.data.replace(/\/toUser/g, '');
+          data.data = data.data.replace(/to_user/g, '');
         }
-        try {
-          if (data.type === 'agent_response') {
-            if (data.data) {
-              this.appendMessage('assistant', data.data);
 
-              // 判断是否包含TERMINATE标记
-              if (data.data.includes('TERMINATE')) {
-                console.log('检测到TERMINATE标记');
-                this.isWaiting = false;
+        if (!this.isWaiting) {
+          return; // 如果不在等待状态，直接返回
+        }
+
+        try {
+          if (data.type === 'ModelClientStreamingChunkEvent') {
+            // 处理流式数据
+            if (data.content) {
+              this.appendMessage('aily', data.content);
+            }
+          } else if (data.type === 'ToolCallRequestEvent') {
+            // 处理工具调用请求
+          } else if (data.type === 'ToolCallExecutionEvent') {
+            // 处理工具执行完成事件
+            if (data.content && Array.isArray(data.content)) {
+              for (const result of data.content) {
+                if (result.call_id) {
+                  // 根据工具名称和结果状态确定显示文本
+                  const resultState = result.is_error ? "error" : "done";
+                  const resultText = this.toolCallStates[result.call_id];
+                  if (resultText) {
+                    this.appendMessage('assistant', `
+
+  \`\`\`aily-state
+  {
+    "state": "${resultState}",
+    "text": "${this.makeJsonSafe(resultText)}",
+    "id": "${result.call_id}"
+  }
+  \`\`\`
+
+                    `);
+                  }
+
+                  // 清除状态
+                  delete this.toolCallStates[result.call_id];
+                }
               }
             }
-          } else if (data.type === 'processing_started') {
-            console.log('助手正在思考...');
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
-          } else if (data.type === 'user_input_required') {
-            this.isUserInputRequired = true;
+            this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
+            this.isWaiting = false;
+          } else if (data.type === 'TaskCompleted') {
+            console.log("任务已完成: ", data.stop_reason);
+            this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
-            // 处理工具调用请求
-            // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
-
             let toolArgs;
 
             if (typeof data.tool_args === 'string') {
@@ -733,11 +782,11 @@ export class AilyChatComponent implements OnDestroy {
             // console.log("toolArgsJson: ", toolArgs);
 
             // 生成随机ID用于状态跟踪
-            const toolCallId = `call_${this.getRandomString()}`;
+            const toolCallId = `${data.tool_id}`;
 
             let toolResult = null;
             let resultState = "done";
-            let resultText  = '';
+            let resultText = '';
 
             try {
               if (data.tool_name.startsWith('mcp_')) {
@@ -773,7 +822,7 @@ export class AilyChatComponent implements OnDestroy {
                     // Extract the command main body for display
                     const commandParts = toolArgs.command.split(' ');
                     let displayCommand = toolArgs.command;
-                    
+
                     if (commandParts.length > 1) {
                       // 对于 npm 命令，显示前两个词（如 "npm install"）
                       if (commandParts[0].toLowerCase() === 'npm') {
@@ -783,7 +832,7 @@ export class AilyChatComponent implements OnDestroy {
                         displayCommand = `${commandParts[0]}`;
                       }
                     }
-                    
+
                     this.appendMessage('assistant', `
 
 \`\`\`aily-state
@@ -816,7 +865,7 @@ export class AilyChatComponent implements OnDestroy {
                         if (match && match[2]) {
                           const libPackageName = match[2];
                           console.log('Installing library:', libPackageName);
-                          
+
                           // Load the library into blockly
                           try {
                             await this.blocklyService.loadLibrary(libPackageName, projectPath);
@@ -1081,6 +1130,18 @@ export class AilyChatComponent implements OnDestroy {
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
+                  case 'ask_approval':
+                    console.log('[请求确认工具被调用]', toolArgs);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-button
+[
+{"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
+{"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
+]
+\`\`\`
+
+                    `);
                 }
               }
 
@@ -1099,21 +1160,7 @@ export class AilyChatComponent implements OnDestroy {
               };
             }
 
-            // 添加完成状态消息
-            this.appendMessage('assistant', `
-
-\`\`\`aily-state
-{
-  "state": "${resultState}",
-  "text": "${resultText}",
-  "id": "${toolCallId}"
-}
-\`\`\`
-
-            `);
-
-            // 手动添加一个换行进去
-            this.appendMessage('assistant', '\n');
+            this.toolCallStates[data.tool_id] = resultText;
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
@@ -1122,10 +1169,16 @@ export class AilyChatComponent implements OnDestroy {
               "is_error": toolResult.is_error
             }, null, 2);
             this.send(false);
+          } else if (data.type === 'user_input_required') {
+            // 处理用户输入请求 - 需要用户补充消息时停止等待状态
+            this.isUserInputRequired = true;
+            this.isWaiting = false;
           }
           this.scrollToBottom();
+
         } catch (e) {
-          console.error('解析消息出错:', e);
+          this.appendMessage('错误', '助手出错: ' + (e.message || '未知错误'));
+          this.isWaiting = false;
         }
       },
       error: (err) => {
@@ -1157,6 +1210,9 @@ export class AilyChatComponent implements OnDestroy {
   // 当使用ctrl+enter时发送消息
   onKeyDown(event: KeyboardEvent) {
     if (event.ctrlKey && event.key === 'Enter') {
+      if (this.isWaiting) {
+        return;
+      }
       this.send();
       event.preventDefault();
     }
@@ -1291,4 +1347,7 @@ export class AilyChatComponent implements OnDestroy {
 
   // 添加订阅管理
   private messageSubscription: any;
+
+  // 工具调用状态管理
+  toolCallStates: { [key: string]: string } = {};
 }
