@@ -223,6 +223,20 @@ export class MarkdownPipe implements PipeTransform {
             font-size: 10px;
             box-shadow: 0 1px 2px rgba(0,0,0,0.1);
           " title="重置">⌂</button>
+          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-fullscreen'))" style="
+            background: #fff;
+            border: 1px solid #d9d9d9;
+            color: #333;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          " title="全屏查看">⛶</button>
         </div>
         <div class="mermaid-svg-wrapper" style="
           width: 100%;
