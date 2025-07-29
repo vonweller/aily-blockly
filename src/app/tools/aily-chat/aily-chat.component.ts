@@ -1355,34 +1355,19 @@ export class AilyChatComponent implements OnDestroy {
           scrollElement.scrollTop = scrollElement.scrollHeight;
         }
       }
-    }, 50); // 增加延迟时间
+    }, 200); // 增加延迟时间
   }
 
   HistoryList: IMenuItem[] = [
-    {
-      name: '如何学习arduino如何学习arduino如何学习arduino'
-    },
-    {
-      name: '制作一个ros小车'
-    },
-    {
-      name: '历史记录3',
-    },
-    {
-      name: '历史记录4',
-    },
-    {
-      name: '历史记录5',
-    },
-    {
-      name: '历史记录6',
-    },
-    {
-      name: '历史记录7',
-    },
-    {
-      name: '历史记录8',
-    }
+    // {
+    //   name: '如何学习arduino如何学习arduino如何学习arduino'
+    // },
+    // {
+    //   name: '制作一个ros小车'
+    // },
+    // {
+    //   name: '历史记录3',
+    // }
   ]
 
   newChat() {
