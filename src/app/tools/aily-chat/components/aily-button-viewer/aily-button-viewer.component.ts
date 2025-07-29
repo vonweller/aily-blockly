@@ -75,6 +75,7 @@ export class AilyButtonViewerComponent {
             action: buttonData.action || buttonData.command || '',
             type: buttonData.type || 'primary',
             icon: buttonData.icon,
+            id: buttonData.id || '',
             disabled: Boolean(buttonData.disabled),
             loading: Boolean(buttonData.loading)
         };
@@ -99,7 +100,7 @@ export class AilyButtonViewerComponent {
         });
 
         // 直接往大模型发送按钮点击的消息
-        this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'help', cover: false });
+        this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'tool', cover: false });
 
         // // 根据 action 执行相应的操作
         // this.executeAction(button);
