@@ -134,6 +134,7 @@
     "loaders.css": "^0.1.2",
     "marked": "^15.0.12",
     "marked-highlight": "^2.2.1",
+    "mermaid": "^11.9.0",
     "monaco-editor": "^0.52.2",
     "ng-zorro-antd": "^19.0.1",
     "ngx-ui-scroll4": "^4.0.0",
@@ -141,6 +142,7 @@
     "rxjs": "~7.8.0",
     "shiki": "^3.5.0",
     "simplebar-angular": "^3.3.0",
+    "svg-pan-zoom": "^3.6.2",
     "tslib": "^2.3.0",
     "uuid": "^11.1.0",
     "zone.js": "~0.15.0"

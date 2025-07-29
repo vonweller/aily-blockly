@@ -17,13 +17,15 @@ import { NzImageModule } from 'ng-zorro-antd/image';
 import { FormsModule } from '@angular/forms';
 import { MarkdownPipe } from '../../pipes/markdown.pipe';
 import { AilyDynamicComponentDirective } from '../../directives/aily-dynamic-component.directive';
+import mermaid from 'mermaid';
+import svgPanZoom from 'svg-pan-zoom';
 // import { AilyCodingComponent } from '../../../../components/aily-coding/aily-coding.component';
 
 @Component({
   selector: 'aily-dialog',
   templateUrl: './dialog.component.html',
   styleUrls: ['./dialog.component.scss'],
-  standalone: true,  imports: [
+  standalone: true, imports: [
     CommonModule,
     FormsModule,
     NzAvatarModule,
@@ -66,9 +68,10 @@ export class DialogComponent implements OnInit {
     private speechService: SpeechService,
     private sanitizer: DomSanitizer,
     private chatService: ChatService,
-  ) {}
+    private el: ElementRef
+  ) { }
 
-  ngOnInit(): void {}
+  ngOnInit(): void { }
 
   getSafeHTML(html: string) {
     return this.sanitizer.sanitize(SecurityContext.HTML, html);
@@ -84,5 +87,24 @@ export class DialogComponent implements OnInit {
 
   goto(url) {
     window.open(url, '_blank');
+  }
+
+  async initMermaid() {
+    let svgs = this.el.nativeElement.querySelectorAll('.language-mermaid')
+    if (svgs.length == 0) return
+    mermaid.initialize({ startOnLoad: false, });
+    await mermaid.run({
+      querySelector: '.language-mermaid',
+    });
+    let svg: any = this.el.nativeElement.querySelector('.language-mermaid svg');
+    svgPanZoom(svg, {
+      zoomEnabled: true,
+      // controlIconsEnabled: true,
+      fit: true,
+      center: true,
+      minZoom: 1,
+      maxZoom: 10,
+      zoomScaleSensitivity: 1,
+    });
   }
 }
