@@ -45,7 +45,15 @@ export interface Tool {
   input_schema: { [key: string]: any };
 }
 
+export interface ResourceItem {
+  type: 'file' | 'folder' | 'url';
+  path?: string;
+  url?: string;
+  name: string;
+}
+
 import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-aily-chat',
@@ -453,7 +461,8 @@ export class AilyChatComponent implements OnDestroy {
     private blocklyService: BlocklyService,
     private fetchToolService: FetchToolService,
     private chatCommunicationService: ChatCommunicationService,
-    private router: Router
+    private router: Router,
+    private message: NzMessageService
   ) { }
 
   ngOnInit() {
@@ -639,6 +648,13 @@ export class AilyChatComponent implements OnDestroy {
   send(show: boolean = true): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
+    
+    // 如果有资源列表，自动添加到消息前面
+    const resourcesText = this.getResourcesText();
+    if (resourcesText) {
+      text = resourcesText + '\n\n' + text;
+    }
+    
     if (show) this.appendMessage('user', text);
     this.inputValue = '';
 
@@ -1309,9 +1325,162 @@ export class AilyChatComponent implements OnDestroy {
     this.startSession();
   }
 
- async addFile() {
-    // 添加参考文件
-    
+  selectContent: ResourceItem[] = []
+  showAddList = false;
+  openAddList() {
+    this.showAddList = !this.showAddList;
+  }
+
+  async addFile() {
+    const options = {
+      title: '选择文件或文件夹',
+      properties: ['multiSelections'],
+      filters: [
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    };
+    const result = await window['dialog'].selectFiles(options);
+    console.log('文件选择结果:', result);
+    if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+      // 处理选中的文件/文件夹
+      const selectedPaths = result.filePaths;
+
+      // 将选中的文件添加到资源数组中
+      selectedPaths.forEach(path => {
+        // 检查是否已经存在
+        const exists = this.selectContent.some(item => 
+          item.type === 'file' && item.path === path
+        );
+        
+        if (!exists) {
+          const fileName = path.split(/[/\\]/).pop() || path;
+          this.selectContent.push({
+            type: 'file',
+            path: path,
+            name: fileName
+          });
+        }
+      });
+
+      console.log('已添加的文件:', selectedPaths);
+      console.log('当前资源列表:', this.selectContent);
+    } else {
+      console.log('用户取消了文件选择或没有选择文件');
+    }
+  }
+
+  async addFolder() {
+    const options = {
+      title: '选择文件夹',
+      properties: ['openDirectory']
+    };
+    const result = await window['dialog'].selectFiles(options);
+    console.log('文件夹选择结果:', result);
+    if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+      // 处理选中的文件夹
+      const selectedPath = result.filePaths[0];
+
+      // 检查是否已经存在
+      const exists = this.selectContent.some(item => 
+        item.type === 'folder' && item.path === selectedPath
+      );
+      
+      if (!exists) {
+        const folderName = selectedPath.split(/[/\\]/).pop() || selectedPath;
+        this.selectContent.push({
+          type: 'folder',
+          path: selectedPath,
+          name: folderName
+        });
+      }
+
+      console.log('已添加的文件夹:', selectedPath);
+      console.log('当前资源列表:', this.selectContent);
+    } else {
+      console.log('用户取消了文件夹选择或没有选择文件夹');
+    }
+  }
+
+
+  addUrl() {
+    // 可以添加一个对话框让用户输入URL
+    const url = prompt('请输入URL地址:');
+    if (url && url.trim()) {
+      // 检查是否已经存在
+      const exists = this.selectContent.some(item => 
+        item.type === 'url' && item.url === url.trim()
+      );
+      
+      if (!exists) {
+        try {
+          const urlObj = new URL(url.trim());
+          const urlName = urlObj.hostname + urlObj.pathname;
+          this.selectContent.push({
+            type: 'url',
+            url: url.trim(),
+            name: urlName
+          });
+          console.log('已添加的URL:', url.trim());
+          console.log('当前资源列表:', this.selectContent);
+        } catch (error) {
+          this.message.error('无效的URL格式');
+        }
+      } else {
+        this.message.warning('该URL已经存在');
+      }
+    }
+  }
+
+  /**
+   * 移除资源项
+   * @param index 要移除的资源项索引
+   */
+  removeResource(index: number) {
+    if (index >= 0 && index < this.selectContent.length) {
+      this.selectContent.splice(index, 1);
+    }
+  }
+
+  /**
+   * 清空所有资源
+   */
+  clearAllResources() {
+    this.selectContent = [];
+  }
+
+  /**
+   * 获取资源列表的文本描述，用于发送给AI
+   */
+  getResourcesText(): string {
+    if (this.selectContent.length === 0) {
+      return '';
+    }
+
+    const fileItems = this.selectContent.filter(item => item.type === 'file');
+    const folderItems = this.selectContent.filter(item => item.type === 'folder');
+    const urlItems = this.selectContent.filter(item => item.type === 'url');
+
+    let text = '';
+
+    if (fileItems.length > 0) {
+      text += '参考文件:\n';
+      text += fileItems.map(item => `- ${item.path}`).join('\n');
+      text += '\n\n';
+    }
+
+    if (folderItems.length > 0) {
+      text += '参考文件夹:\n';
+      text += folderItems.map(item => `- ${item.path}`).join('\n');
+      text += '\n\n';
+    }
+
+    if (urlItems.length > 0) {
+      text += '参考URL:\n';
+      text += urlItems.map(item => `- ${item.url}`).join('\n');
+      text += '\n\n';
+    }
+
+    return text.trim();
   }
 
   showHistoryList = false;
