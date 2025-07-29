@@ -8,6 +8,7 @@ import { markedHighlight } from 'marked-highlight';
 import { codeToHtml } from 'shiki';
 import { Observable, from, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
+import mermaid from 'mermaid';
 
 /**
  * 扩展的 Markdown 管道，支持动态 Angular 组件渲染
@@ -25,6 +26,9 @@ export class MarkdownPipe implements PipeTransform {
   constructor(
     private sanitizer: DomSanitizer
   ) {
+    // 初始化 Mermaid
+    this.initializeMermaid();
+
     this.marked = new Marked(
       markedHighlight({
         async: true,
@@ -34,6 +38,11 @@ export class MarkdownPipe implements PipeTransform {
             // 检查是否为特殊的 Aily 代码块类型
             if (this.isAilyCodeBlock(lang)) {
               return this.renderAilyCodeBlockWithComponent(code, lang as any);
+            }
+
+            // 检查是否为 Mermaid 图表
+            if (lang?.toLowerCase() === 'mermaid') {
+              return this.renderMermaidDiagram(code);
             }
 
             // 处理语言别名
@@ -83,6 +92,320 @@ export class MarkdownPipe implements PipeTransform {
     };
 
     this.marked.use({ renderer });
+  }
+
+  /**
+   * 初始化 Mermaid
+   */
+  private initializeMermaid(): void {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'default',
+      securityLevel: 'loose',
+      fontFamily: 'MiSans, sans-serif',
+      htmlLabels: true,
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true
+      },
+      sequence: {
+        diagramMarginX: 50,
+        diagramMarginY: 10,
+        actorMargin: 50,
+        width: 150,
+        height: 65,
+        boxMargin: 10,
+        boxTextMargin: 5,
+        noteMargin: 10,
+        messageMargin: 35,
+        mirrorActors: true,
+        bottomMarginAdj: 1,
+        useMaxWidth: true,
+        rightAngles: false,
+        showSequenceNumbers: false
+      },
+      gantt: {
+        useMaxWidth: true
+      }
+    });
+  }
+
+  /**
+   * 渲染 Mermaid 图表
+   */
+  private async renderMermaidDiagram(code: string): Promise<string> {
+    try {
+      // 检查代码是否完整
+      if (!this.isMermaidCodeComplete(code)) {
+        return this.renderMermaidLoading(code);
+      }
+
+      // 生成唯一的图表 ID
+      const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const containerId = `mermaid-container-${diagramId}`;
+
+      // 验证 Mermaid 语法
+      const isValid = await mermaid.parse(code);
+      if (!isValid) {
+        throw new Error('Invalid Mermaid syntax');
+      }
+
+      // 渲染 Mermaid 图表
+      const { svg } = await mermaid.render(diagramId, code);
+
+      // 为 SVG 添加必要的属性以支持 svg-pan-zoom
+      const enhancedSvg = svg.replace(
+        '<svg',
+        `<svg id="${diagramId}" data-mermaid-svg="true"`
+      );
+
+      // 返回包装后的 SVG，包含缩放和拖拽功能
+      const html = `<div class="mermaid-container" id="${containerId}" style="
+        position: relative;
+        margin: 16px 0;
+        padding: 16px;
+        background-color: #fafafa;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        overflow: hidden;
+        min-height: 200px;
+        cursor: grab;
+      " data-svg-id="${diagramId}" data-mermaid-ready="true">
+        <div class="mermaid-controls" style="
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          z-index: 10;
+          display: flex;
+          gap: 4px;
+          opacity: 0.7;
+          transition: opacity 0.3s;
+        ">
+          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-zoom-in'))" style="
+            background: #fff;
+            border: 1px solid #d9d9d9;
+            color: #333;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          " title="放大">+</button>
+          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-zoom-out'))" style="
+            background: #fff;
+            border: 1px solid #d9d9d9;
+            color: #333;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          " title="缩小">-</button>
+          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-reset'))" style="
+            background: #fff;
+            border: 1px solid #d9d9d9;
+            color: #333;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          " title="重置">⌂</button>
+        </div>
+        <div class="mermaid-svg-wrapper" style="
+          width: 100%;
+          height: 100%;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+        ">
+          ${enhancedSvg}
+        </div>
+      </div>`;
+
+      // 延迟发送事件，确保 DOM 已渲染
+      setTimeout(() => {
+        this.notifyMermaidReady(diagramId);
+      }, 100);
+
+      return html;
+    } catch (error) {
+      console.error('Mermaid rendering error:', error);
+
+      // 如果是语法错误且代码可能不完整，显示加载状态
+      if (error.message?.includes('syntax') && this.mightBeIncomplete(code)) {
+        return this.renderMermaidLoading(code);
+      }
+
+      // 渲染失败时显示错误信息和原始代码
+      return `<div class="mermaid-error" style="
+        margin: 16px 0;
+        padding: 16px;
+        background-color: #fff2f0;
+        border: 1px solid #ffccc7;
+        border-radius: 6px;
+        color: #ff4d4f;
+      ">
+        <div style="font-weight: 600; margin-bottom: 8px;">
+          🚫 Mermaid 图表渲染失败
+        </div>
+        <div style="font-size: 12px; margin-bottom: 12px; color: #8c8c8c;">
+          错误信息: ${error.message || '未知错误'}
+        </div>
+        <details style="cursor: pointer;">
+          <summary style="margin-bottom: 8px; color: #595959;">显示原始代码</summary>
+          <pre style="
+            background-color: #f5f5f5;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+          "><code>${this.escapeHtml(code)}</code></pre>
+        </details>
+      </div>`;
+    }
+  }
+
+  /**
+   * 检查 Mermaid 代码是否完整
+   */
+  private isMermaidCodeComplete(code: string): boolean {
+    const trimmedCode = code.trim();
+
+    // 检查基本的图表类型关键字
+    const diagramTypes = [
+      'graph', 'flowchart', 'sequenceDiagram', 'classDiagram',
+      'erDiagram', 'gantt', 'pie', 'gitgraph', 'mindmap',
+      'timeline', 'journey', 'gitgraph:', 'stateDiagram'
+    ];
+
+    const hasValidStart = diagramTypes.some(type => trimmedCode.toLowerCase().startsWith(type.toLowerCase()));
+    if (!hasValidStart) {
+      return false;
+    }
+
+    // 检查是否有基本的语法结构
+    if (trimmedCode.length < 10) {
+      return false;
+    }
+
+    // 检查是否以不完整的语句结尾
+    const incompleteSuffixes = ['->', '-->', '---', '==>', '-.', '=', '-', '|', '[', '(', '{'];
+    const endsIncomplete = incompleteSuffixes.some(suffix =>
+      trimmedCode.endsWith(suffix) || trimmedCode.endsWith(suffix + ' ')
+    );
+
+    if (endsIncomplete) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * 判断代码是否可能不完整（用于错误处理）
+   */
+  private mightBeIncomplete(code: string): boolean {
+    const trimmedCode = code.trim();
+
+    // 如果代码太短，可能不完整
+    if (trimmedCode.length < 20) {
+      return true;
+    }
+
+    // 检查是否以常见的不完整模式结尾
+    const incompletePatterns = [
+      /-->\s*$/, /\|\s*$/, /\[\s*$/, /\(\s*$/, /\{\s*$/,
+      /-\s*$/, /=\s*$/, /:\s*$/, /;\s*$/
+    ];
+
+    return incompletePatterns.some(pattern => pattern.test(trimmedCode));
+  }
+
+  /**
+   * 渲染 Mermaid 加载状态
+   */
+  private renderMermaidLoading(code: string): string {
+    const loadingId = `mermaid-loading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    return `<div class="mermaid-loading" id="${loadingId}" style="
+      margin: 16px 0;
+      padding: 24px;
+      background-color: #fafafa;
+      border: 1px solid #d9d9d9;
+      border-radius: 6px;
+      text-align: center;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      color: #666;
+    ">
+      <div class="mermaid-loading-spinner" style="
+        width: 24px;
+        height: 24px;
+        border: 2px solid #f0f0f0;
+        border-top: 2px solid #1890ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      "></div>
+      <div style="font-size: 14px; font-weight: 500;">
+        📊 图表渲染中...
+      </div>
+      <div style="font-size: 12px; color: #999;">
+        正在等待完整的 Mermaid 代码
+      </div>
+      <style>
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      </style>
+    </div>`;
+  }
+
+  /**
+   * 通知 Mermaid 图表已准备就绪
+   */
+  private notifyMermaidReady(diagramId: string): void {
+    try {
+      // 发送自定义事件到文档，DialogComponent 可以监听此事件
+      const event = new CustomEvent('mermaidDiagramReady', {
+        detail: { diagramId },
+        bubbles: true
+      });
+      document.dispatchEvent(event);
+    } catch (error) {
+      console.warn('Failed to notify mermaid ready:', error);
+    }
+  }
+
+  /**
+   * HTML 转义工具函数
+   */
+  private escapeHtml(unsafe: string): string {
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }  /**
    * 检查是否为特殊的 Aily 代码块类型
    */
@@ -170,7 +493,7 @@ export class MarkdownPipe implements PipeTransform {
     try {
       // 清理代码内容 - 移除多余的空白字符和换行
       const cleanedCode = code.trim();
-      
+
       // 尝试解析为 JSON
       const jsonData = JSON.parse(cleanedCode);
 
@@ -184,7 +507,6 @@ export class MarkdownPipe implements PipeTransform {
             metadata: jsonData.metadata || {},
             config: jsonData.config || {}
           };
-
         case 'aily-board':
           return {
             type: 'aily-board',
@@ -199,7 +521,8 @@ export class MarkdownPipe implements PipeTransform {
             library: this.validateLibraryData(jsonData.library || jsonData),
             dependencies: jsonData.dependencies || [],
             metadata: jsonData.metadata || {}
-          };        case 'aily-state':
+          };
+        case 'aily-state':
           return {
             type: 'aily-state',
             state: jsonData.state || jsonData.status || 'info',
@@ -208,7 +531,6 @@ export class MarkdownPipe implements PipeTransform {
             progress: jsonData.progress,
             metadata: jsonData.metadata || {}
           };
-
         case 'aily-button':
           return {
             type: 'aily-button',
@@ -216,7 +538,6 @@ export class MarkdownPipe implements PipeTransform {
             config: jsonData.config || {},
             metadata: jsonData.metadata || {}
           };
-
         default:
           console.warn(`Unknown aily type: ${type}, using raw data`);
           return {
@@ -234,9 +555,9 @@ export class MarkdownPipe implements PipeTransform {
         type: type,
         raw: code,
         content: code.trim(),
-        metadata: { 
+        metadata: {
           isRawText: true,
-          parseError: parseError.message 
+          parseError: parseError.message
         }
       };
     }
@@ -317,13 +638,13 @@ export function safeBase64Encode(str: string): string {
     // 使用 TextEncoder 将字符串转换为 UTF-8 字节数组
     const encoder = new TextEncoder();
     const bytes = encoder.encode(str);
-    
+
     // 将字节数组转换为二进制字符串
     let binaryString = '';
     for (let i = 0; i < bytes.length; i++) {
       binaryString += String.fromCharCode(bytes[i]);
     }
-    
+
     // 使用 btoa 对二进制字符串进行 Base64 编码
     return btoa(binaryString);
   } catch (error) {
@@ -340,13 +661,13 @@ export function safeBase64Decode(encodedStr: string): string {
   try {
     // 尝试 Base64 解码
     const binaryString = atob(encodedStr);
-    
+
     // 将二进制字符串转换为字节数组
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    
+
     // 使用 TextDecoder 将字节数组转换为 UTF-8 字符串
     const decoder = new TextDecoder();
     return decoder.decode(bytes);
