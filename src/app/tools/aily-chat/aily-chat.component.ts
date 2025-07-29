@@ -103,6 +103,52 @@ export class AilyChatComponent implements OnDestroy {
     return this.chatService.currentSessionId;
   }
 
+  /**
+   * 确保字符串在 JSON 中是安全的，转义特殊字符
+   */
+  private makeJsonSafe(str: string): string {
+    if (!str) return str;
+    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  }
+
+  /**
+   * 获取路径中最后一个文件夹的名称
+   * @param path 路径字符串
+   * @returns 最后一个文件夹名称，如果路径无效则返回空字符串
+   */
+  getLastFolderName(path: string): string {
+    if (!path) return '';
+    
+    // 标准化路径分隔符（处理Windows和Unix路径）
+    const normalizedPath = path.replace(/\\/g, '/');
+    
+    // 移除末尾的斜杠
+    const trimmedPath = normalizedPath.endsWith('/') 
+      ? normalizedPath.slice(0, -1) 
+      : normalizedPath;
+    
+    // 分割路径并获取最后一个非空元素
+    const parts = trimmedPath.split('/').filter(Boolean);
+    
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  /**
+   * 获取路径中的文件名（不包含路径）
+   * @param path 文件的完整路径
+   * @returns 文件名，如果路径无效则返回空字符串
+   */
+  getFileName(path: string): string {
+    if (!path) return '';
+    
+    // 标准化路径分隔符（处理Windows和Unix路径）
+    const normalizedPath = path.replace(/\\/g, '/');
+    
+    // 获取路径的最后一部分（文件名）
+    const parts = normalizedPath.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
   // 内置工具
   tools: Tool[] = [
     {
@@ -168,7 +214,8 @@ export class AilyChatComponent implements OnDestroy {
             enum: ['all', 'project', 'platform', 'system'],
             default: 'all'
           }
-        }
+        },
+        required: ['info_type']
       }
     },
     {
@@ -333,9 +380,9 @@ export class AilyChatComponent implements OnDestroy {
             type: 'string',
             description: '要检查的路径'
           },
-          type: {
-            type: 'string',
-            description: '期望的类型：file(文件)、folder(文件夹)或any(任意)',
+          type: { 
+            type: 'string', 
+            description: '期望的类型：file(文件)、folder(文件夹)或any(任意类型)',
             enum: ['file', 'folder', 'any'],
             default: 'any'
           }
@@ -569,17 +616,20 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   isWaiting = false;
-  send(show: boolean = true): void {
+
+  sendButtonClick(): void {
     if (this.isWaiting) {
       this.isWaiting = false;
       this.stop();
       return;
     }
 
-    if (!this.sessionId || !this.inputValue.trim()) return;
-
     this.isWaiting = true;
+    this.send();
+  }
 
+  send(show: boolean = true): void {
+    if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
     
     // 如果有资源列表，自动添加到消息前面
@@ -611,7 +661,14 @@ export class AilyChatComponent implements OnDestroy {
 
   // 这里写停止发送信号
   stop() {
-
+    this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
+      // 处理停止会话的响应
+      if (res.status == 'success') {
+        console.log('会话已停止:', res);
+        this.isWaiting = false;
+        return;
+      }
+    });
   }
 
   streamConnect(): void {
@@ -629,6 +686,12 @@ export class AilyChatComponent implements OnDestroy {
           if (data.type === 'agent_response') {
             if (data.data) {
               this.appendMessage('assistant', data.data);
+
+              // 判断是否包含TERMINATE标记
+              if (data.data.includes('TERMINATE')) {
+                console.log('检测到TERMINATE标记');
+                this.isWaiting = false;
+              }
             }
           } else if (data.type === 'processing_started') {
             console.log('助手正在思考...');
@@ -686,47 +749,82 @@ export class AilyChatComponent implements OnDestroy {
             // console.log("toolArgsJson: ", toolArgs);
 
             // 生成随机ID用于状态跟踪
-            //             const toolCallId = `call_${this.getRandomString()}`;
-
-            //             // 添加正在处理状态消息
-            //             const toolDescription = this.getToolDescription(data.tool_name, toolArgs);
-            //             this.appendMessage('assistant', `
-            // \`\`\`aily-state
-            // {
-            //   "state": "doing",
-            //   "text": "正在执行: ${toolDescription}",
-            //   "id": "${toolCallId}"
-            // }
-            // \`\`\`
-            // `);
+            const toolCallId = `call_${this.getRandomString()}`;
 
             let toolResult = null;
             let resultState = "done";
+            let resultText  = '';
+
             try {
               if (data.tool_name.startsWith('mcp_')) {
                 data.tool_name = data.tool_name.substring(4);
                 toolResult = await this.mcpService.use_tool(data.tool_name, toolArgs);
               } else {
+
                 switch (data.tool_name) {
                   case 'create_project':
                     console.log('[创建项目工具被调用]', toolArgs);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在创建项目...",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
+                    if (toolResult.is_error) {
+                      this.uiService.updateFooterState({ state: 'error', text: '项目创建失败' });
+                      resultState = "error"
+                      resultText = '项目创建失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `项目创建成功`;
+                    }
                     break;
                   case 'execute_command':
-                    console.log('[执行command命令工具被调用]', toolArgs);
+                    console.log('[执行命令工具被调用]', toolArgs);
+                    // Extract the command main body for display
+                    const commandParts = toolArgs.command.split(' ');
+                    let displayCommand = toolArgs.command;
+                    
+                    if (commandParts.length > 1) {
+                      // 对于 npm 命令，显示前两个词（如 "npm install"）
+                      if (commandParts[0].toLowerCase() === 'npm') {
+                        displayCommand = `${commandParts[0]} ${commandParts[1]}`;
+                      } else {
+                        // 其他命令只显示第一个词
+                        displayCommand = `${commandParts[0]}`;
+                      }
+                    }
+                    
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在执行: ${displayCommand}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     // Check if cwd is specified, otherwise use project paths
                     if (!toolArgs.cwd) {
                       toolArgs.cwd = this.projectService.currentProjectPath || this.projectService.projectRootPath;
                     }
                     toolResult = await executeCommandTool(this.cmdService, toolArgs);
-                    console.log("toolResult: ", toolResult);
+                    // Get project path from command args or default
+                    const projectPath = toolArgs.cwd || this.prjPath;
                     if (!toolResult.is_error) {
                       // Check if this is an npm install command
                       const command = toolArgs.command;
                       if (command.includes('npm i') || command.includes('npm install')) {
                         console.log('检测到 npm install 命令，尝试加载库');
-                        // Extract the package name
-                        const npmRegex = /npm (i|install)\s+(@?[a-zA-Z0-9-_/.]+)/;
+                        // Extract the package name for @aily-project/ packages only
+                        const npmRegex = /npm (i|install)\s+(@aily-project\/[a-zA-Z0-9-_]+)/;
                         const match = command.match(npmRegex);
 
                         console.log('npmRegex match:', match);
@@ -734,69 +832,270 @@ export class AilyChatComponent implements OnDestroy {
                         if (match && match[2]) {
                           const libPackageName = match[2];
                           console.log('Installing library:', libPackageName);
-
-                          // Get project path from command args or default
-                          const projectPath = toolArgs.cwd || this.prjPath;
-
+                          
                           // Load the library into blockly
                           try {
                             await this.blocklyService.loadLibrary(libPackageName, projectPath);
                           } catch (e) {
-                            console.error('加载库失败:', e);
-                            toolResult = {
-                              is_error: true,
-                              content: `加载库失败: ${e.message}`
-                            };
+                            //
+                            console.log("加载库失败:", e);
                           }
                         } else {
-                          this.projectService.projectOpen(this.prjPath);
+                          console.log("projectOpen: ", projectPath);
+                          this.projectService.projectOpen(projectPath);
                         }
                       }
+                      resultText = `命令${displayCommand}执行成功`
+                    } else {
+                      resultState = "error";
+                      resultText = `命令${displayCommand}执行失败: ` + (toolResult.content || '未知错误');
                     }
                     break;
                   case 'get_context':
                     console.log('[获取上下文信息工具被调用]', toolArgs);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在获取上下文信息...",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await getContextTool(this.projectService, toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error"
+                      resultText = '获取上下文信息失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `上下文信息获取成功`;
+                    }
                     break;
                   case 'list_directory':
                     console.log('[列出目录工具被调用]', toolArgs);
+                    const distFolderName = this.getLastFolderName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在获取${distFolderName}目录内容",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await listDirectoryTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `获取${distFolderName}目录内容失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `获取${distFolderName}目录内容成功`;
+                    }
                     break;
                   case 'read_file':
                     console.log('[读取文件工具被调用]', toolArgs);
+                    let readFileName = this.getFileName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在读取: ${readFileName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await readFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `读取${readFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `读取${readFileName}文件成功`;
+                    }
                     break;
                   case 'create_file':
                     console.log('[创建文件工具被调用]', toolArgs);
+                    let createFileName = this.getFileName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在创建: ${createFileName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await createFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `创建${createFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `创建${createFileName}文件成功`;
+                    }
                     break;
                   case 'create_folder':
                     console.log('[创建文件夹工具被调用]', toolArgs);
+                    let createFolderName = this.getLastFolderName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在创建: ${createFolderName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await createFolderTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `创建${createFolderName}文件夹失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `创建${createFolderName}文件夹成功`;
+                    }
                     break;
                   case 'edit_file':
                     console.log('[编辑文件工具被调用]', toolArgs);
+                    let editFileName = this.getFileName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在编辑: ${editFileName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await editFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `编辑${editFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `编辑${editFileName}文件成功`;
+                    }
                     break;
                   case 'delete_file':
                     console.log('[删除文件工具被调用]', toolArgs);
+                    let deleteFileName = this.getFileName(toolArgs.path);
+                    this.appendMessage('assistant', `
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在删除: ${deleteFileName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+                    `);
                     toolResult = await deleteFileTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `删除${deleteFileName}文件失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `删除${deleteFileName}文件成功`;
+                    }
                     break;
                   case 'delete_folder':
                     console.log('[删除文件夹工具被调用]', toolArgs);
+                    let deleteFolderName = this.getLastFolderName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在删除: ${deleteFolderName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await deleteFolderTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `删除${deleteFolderName}文件夹失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `删除${deleteFolderName}文件夹成功`;
+                    }
                     break;
                   case 'check_exists':
                     console.log('[检查存在性工具被调用]', toolArgs);
+                    // Determine if the path is likely a file or folder
+                    let stateText = "正在检查路径是否存在";
+                    let checkFileName = this.getFileName(toolArgs.path);
+                    let checkFolderName = this.getLastFolderName(toolArgs.path);
+
+                    const doingText = checkFileName ? `正在检查文件是否存在: ${checkFileName}` : `正在检查文件夹是否存在: ${checkFolderName}`;
+                    const errText = checkFileName ? `检查文件 ${checkFileName} 是否存在失败: ` : `检查文件夹 ${checkFolderName} 是否存在失败: `;
+                    const successText = checkFileName ? `文件 ${checkFileName} 存在` : `文件夹 ${checkFolderName} 存在`;
+
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${doingText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await checkExistsTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = errText + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = successText;
+                    }
                     break;
                   case 'get_directory_tree':
                     console.log('[获取目录树工具被调用]', toolArgs);
+                    let treeFolderName = this.getLastFolderName(toolArgs.path);
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在获取目录树: ${treeFolderName}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await getDirectoryTreeTool(toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = `获取目录树 ${treeFolderName} 失败: ` + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = `获取目录树 ${treeFolderName} 成功`;
+                    }
                     break;
                   case 'fetch':
                     console.log('[网络请求工具被调用]', toolArgs);
+                    const fetchUrl = toolArgs.url;
+                    this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在进行网络请求: ${fetchUrl}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+                    `);
                     toolResult = await fetchTool(this.fetchToolService, toolArgs);
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                    } else {
+                      resultText = `网络请求 ${fetchUrl} 成功`;
+                    }
                     break;
                 }
               }
@@ -816,16 +1115,21 @@ export class AilyChatComponent implements OnDestroy {
               };
             }
 
-            //             // 添加完成状态消息
-            //             this.appendMessage('assistant', `
-            // \`\`\`aily-state
-            // {
-            //   "state": "${resultState}",
-            //   "text": "执行${resultState === "done" ? "完成" : resultState === "warn" ? "警告" : "失败"}: ${toolDescription}",
-            //   "id": "${toolCallId}"
-            // }
-            // \`\`\`
-            // `);
+            // 添加完成状态消息
+            this.appendMessage('assistant', `
+
+\`\`\`aily-state
+{
+  "state": "${resultState}",
+  "text": "${resultText}",
+  "id": "${toolCallId}"
+}
+\`\`\`
+
+            `);
+
+            // 手动添加一个换行进去
+            this.appendMessage('assistant', '\n');
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
@@ -873,45 +1177,6 @@ export class AilyChatComponent implements OnDestroy {
       event.preventDefault();
     }
   }
-
-  /**
-   * 根据工具名称和参数生成简短描述
-   * @param toolName 工具名称
-   * @param toolArgs 工具参数
-   * @returns 工具调用的简短描述
-   */
-  // getToolDescription(toolName: string, toolArgs: any): string {
-  //   let description = toolName;
-
-  //   try {
-  //     if (toolName === 'create_project' && toolArgs.board) {
-  //       description = `创建项目(${toolArgs.board.name || toolArgs.board.nickname || '未知开发板'})`;
-  //     } else if (toolName === 'execute_command' && toolArgs.command) {
-  //       // 截取命令前30个字符，避免过长
-  //       const shortCommand = toolArgs.command.length > 30 
-  //         ? toolArgs.command.substring(0, 30) + '...' 
-  //         : toolArgs.command;
-  //       description = `执行命令: ${shortCommand}`;
-  //     } else if (toolName === 'ask_approval' && toolArgs.message) {
-  //       description = `请求确认`;
-  //     } else if (toolName === 'get_context') {
-  //       description = `获取上下文信息(${toolArgs.info_type || 'all'})`;
-  //     } else if (toolName === 'file_operations' && toolArgs.operation) {
-  //       const path = toolArgs.path + (toolArgs.name ? `/${toolArgs.name}` : '');
-  //       const shortPath = path.length > 25 ? '...' + path.substring(path.length - 25) : path;
-  //       description = `文件操作: ${toolArgs.operation} ${shortPath}`;
-  //     } else if (toolName === 'fetch' && toolArgs.url) {
-  //       const url = new URL(toolArgs.url);
-  //       description = `网络请求: ${url.hostname}`;
-  //     } else if (toolName.startsWith('mcp_')) {
-  //       description = `MCP工具: ${toolName.substring(4)}`;
-  //     }
-  //   } catch (e) {
-  //     console.error('生成工具描述失败:', e);
-  //   }
-
-  //   return description;
-  // }
 
   getRandomString() {
     return (
