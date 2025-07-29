@@ -726,6 +726,10 @@ export class AilyChatComponent implements OnDestroy {
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
       }
+    } else {
+      if (!this.isWaiting) {
+        return;
+      }
     }
     
     if (show) {
@@ -812,6 +816,8 @@ export class AilyChatComponent implements OnDestroy {
 
                   // 清除状态
                   delete this.toolCallStates[result.call_id];
+                } else {
+                  this.appendMessage('aily', "\n\n");
                 }
               }
             }
@@ -1208,6 +1214,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'ask_approval':
                     console.log('[请求确认工具被调用]', toolArgs);
                     this.appendMessage('aily', `
+\n\n${toolArgs.message}
 
 \`\`\`aily-button
 [
