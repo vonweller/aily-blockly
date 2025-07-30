@@ -44,10 +44,10 @@
       <div>{{'GUIDE.TUTORIAL' | translate}}</div>
       <div>{{'GUIDE.TUTORIAL_DESC' | translate}}</div>
     </div>
-    <div class="item" (click)="openUrl('https://github.com/ailyProject/aily-blockly/blob/master/VERSION.md')">
+    <!-- <div class="item" (click)="openUrl('https://github.com/ailyProject/aily-blockly/blob/master/VERSION.md')">
       <div>{{'GUIDE.VERSION_INFO' | translate}}</div>
       <div>{{'GUIDE.VERSION_INFO_DESC' | translate}}</div>
-    </div>
+    </div> -->
     <div class="item" (click)="openUrl('https://github.com/ailyProject/aily-blockly')">
       <div>{{'GUIDE.GITHUB' | translate}}</div>
       <div>{{'GUIDE.GITHUB_DESC' | translate}}</div>
@@ -60,6 +60,35 @@
       <div>{{'GUIDE.WECHAT_GROUP' | translate}}</div>
       <div>{{'GUIDE.WECHAT_GROUP_DESC' | translate}}</div>
       <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" alt="" srcset="">
+    </div>
+    <div class="item" style="height: 165px;">
+      <div>{{'GUIDE.SPONSORS' | translate}}</div>
+      <div>{{'GUIDE.SPONSORS_DESC' | translate}}</div>
+      @if (sponsors.length > 0) {
+      <div id="sponsor-splide" class="splide sponsor-carousel">
+        <div class="splide__track">
+          <ul class="splide__list">
+            @for (sponsor of sponsors; track $index) {
+            <li class="splide__slide">
+              <div class="sponsor-item" (click)="sponsor.url && openUrl(sponsor.url)">
+                @if (sponsor.img) {
+                <div class="ccenter img-box">
+                  <img [src]="'sponsor/' + sponsor.img" [alt]="sponsor.name" [title]="sponsor.name">
+                </div>
+                <div class="sponsor-name">{{ sponsor.name }}</div>
+                }@else {
+                <div class="ccenter img-box">
+                  <div class="person-name">{{ sponsor.name }}</div>
+                </div>
+                <div class="sponsor-name">{{ sponsor.company }}</div>
+                }
+              </div>
+            </li>
+            }
+          </ul>
+        </div>
+      </div>
+      }
     </div>
   </div>
 </div>

@@ -1,6 +1,6 @@
 {
   "name": "aily-blockly",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -114,6 +114,7 @@
     "@ctrl/tinycolor": "^4.1.0",
     "@lydell/node-pty": "^1.1.0",
     "@ngx-translate/core": "^16.0.3",
+    "@splidejs/splide": "^4.1.4",
     "@types/uuid": "^10.0.0",
     "@wokwi/elements": "^1.7.0",
     "@xterm/addon-clipboard": "^0.1.0",

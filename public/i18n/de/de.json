@@ -45,7 +45,9 @@
         "FEEDBACK": "Feedback",
         "FEEDBACK_DESC": "Teilen Sie uns Ihre Erfahrungen mit",
         "WECHAT_GROUP": "WeChat-Benutzergruppe",
-        "WECHAT_GROUP_DESC": "Treten Sie der WeChat-Benutzergruppe bei, um sich mit anderen Benutzern auszutauschen"
+        "WECHAT_GROUP_DESC": "Treten Sie der WeChat-Benutzergruppe bei, um sich mit anderen Benutzern auszutauschen",
+        "SPONSORS": "Projekt-Sponsoren",
+        "SPONSORS_DESC": "Dieses Projekt wird von den folgenden Unternehmen/Personen gesponsert"
     },
     "SETTINGS": {
         "TITLE": "Einstellungen",
