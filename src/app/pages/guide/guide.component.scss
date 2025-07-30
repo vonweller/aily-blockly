@@ -1,3 +1,5 @@
+@use '@splidejs/splide/css';
+
 .guide-box {
   min-height: 100%;
   min-width: 1197px;
@@ -97,7 +99,7 @@
   margin-bottom: 15px;
   display: flex;
   flex-direction: column;
-  background: #262626;
+  background: #292929;
   border-radius: 5px;
   padding: 5px 10px;
   border-left: 5px solid #4d4d4d;
@@ -125,5 +127,55 @@ img.qrcode {
   margin-top: 6px;
   width: 100px;
   height: 100px;
+}
 
+// 赞助商轮播样式
+.sponsor-carousel {
+  overflow: hidden;
+  .splide__slide {
+    display: flex;
+    justify-content: center;
+  }
+
+  .sponsor-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    padding: 5px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    width: 110px;
+
+    .img-box {
+      height: 80px;
+      margin-bottom: 5px;
+
+      img {
+        max-height: 80px;
+        max-width: 100px;
+        object-fit: contain;
+      }
+    }
+
+
+
+    .sponsor-name {
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #ccc;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .person-name {
+      font-size: 22px;
+      white-space: nowrap;
+    }
+
+    .person-company {
+      font-size: 12px;
+      color: #999;
+    }
+  }
 }
