@@ -59,11 +59,12 @@
     <div class="item" style="height: 165px;">
       <div>{{'GUIDE.WECHAT_GROUP' | translate}}</div>
       <div>{{'GUIDE.WECHAT_GROUP_DESC' | translate}}</div>
-      <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" alt="" srcset="">
+      <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" (error)="retryLoadImage()" alt="微信群二维码"
+        srcset="">
     </div>
     <div class="item" style="height: 165px;">
-      <div>项目赞助者</div>
-      <div>本项目得到了以下企业/个人的赞助</div>
+      <div>{{'GUIDE.SPONSORS' | translate}}</div>
+      <div>{{'GUIDE.SPONSORS_DESC' | translate}}</div>
       @if (sponsors.length > 0) {
       <div id="sponsor-splide" class="splide sponsor-carousel">
         <div class="splide__track">
@@ -73,7 +74,7 @@
               <div class="sponsor-item" (click)="sponsor.url && openUrl(sponsor.url)">
                 @if (sponsor.img) {
                 <div class="ccenter img-box">
-                  <img [src]="'/sponsor/' + sponsor.img" [alt]="sponsor.name" [title]="sponsor.name">
+                  <img [src]="'sponsor/' + sponsor.img" [alt]="sponsor.name" [title]="sponsor.name">
                 </div>
                 <div class="sponsor-name">{{ sponsor.name }}</div>
                 }@else {

@@ -47,7 +47,7 @@ export class GuideComponent implements OnInit, AfterViewInit {
   }
 
   private loadSponsors() {
-    this.http.get<any[]>('/sponsor/sponsor.json').subscribe({
+    this.http.get<any[]>('sponsor/sponsor.json').subscribe({
       next: (data) => {
         // 对获取到的数据进行随机排序
         this.sponsors = this.shuffleArray([...data]);
@@ -144,5 +144,17 @@ export class GuideComponent implements OnInit, AfterViewInit {
 
   gotoPlayground() {
     this.router.navigate(['/main/playground']);
+  }
+
+  // 重新加载微信二维码图片
+  retryLoadImage() {
+    setTimeout(() => {
+      const img = document.querySelector('.qrcode') as HTMLImageElement;
+      if (img) {
+        const originalSrc = 'https://dl.diandeng.tech/blockly/wechat.jpg';
+        img.src = `${originalSrc}?t=${Date.now()}`;
+      }
+    }, 1000);
+
   }
 }
