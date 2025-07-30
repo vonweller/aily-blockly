@@ -62,14 +62,14 @@
       <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" alt="" srcset="">
     </div>
     <div class="item" style="height: 165px;">
-      <div>项目赞助者</div>
-      <div>本项目得到了以下企业/个人的赞助</div>
+      <div>{{'GUIDE.SPONSORS' | translate}}</div>
+      <div>{{'GUIDE.SPONSORS_DESC' | translate}}</div>
       @if (sponsors.length > 0) {
       <div id="sponsor-splide" class="splide sponsor-carousel">
         <div class="splide__track">
           <ul class="splide__list">
             @for (sponsor of sponsors; track $index) {
-            <li class="splide__slide">
+            <li class="splide__slide">·
               <div class="sponsor-item" (click)="sponsor.url && openUrl(sponsor.url)">
                 @if (sponsor.img) {
                 <div class="ccenter img-box">

@@ -47,7 +47,7 @@ export class GuideComponent implements OnInit, AfterViewInit {
   }
 
   private loadSponsors() {
-    this.http.get<any[]>('/sponsor/sponsor.json').subscribe({
+    this.http.get<any[]>('sponsor/sponsor.json').subscribe({
       next: (data) => {
         // 对获取到的数据进行随机排序
         this.sponsors = this.shuffleArray([...data]);
