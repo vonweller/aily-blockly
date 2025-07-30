@@ -23,7 +23,8 @@
         "EXIT": "Salir",
         "USER_MANUAL": "Manual de Usuario",
         "EXAMPLES": "Ejemplos",
-        "UPDATE": "Buscar actualizaciones"
+        "UPDATE": "Buscar actualizaciones",
+        "USER_AUTH": "Servicio de Usuario"
     },
     "ESP32": {
         "UPLOAD_SPEED": "Velocidad de subida",

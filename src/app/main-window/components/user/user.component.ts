@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
@@ -9,7 +10,8 @@ import { NzMessageService } from 'ng-zorro-antd/message';
   imports: [
     CommonModule,
     FormsModule,
-    NzButtonModule
+    NzButtonModule,
+    NzInputModule
   ],
   templateUrl: './user.component.html',
   styleUrl: './user.component.scss'
@@ -25,14 +27,21 @@ export class UserComponent {
 
   @Output() closeEvent = new EventEmitter<void>();
 
+  userInfo = {
+    username: '',
+    password: ''
+  }
+
   constructor(
     private message: NzMessageService
   ) {
   }
 
+  isWaiting = false;
   onLogin() {
     console.log('用户登录');
-    // 这里可以添加登录逻辑
+
+    // 登录成功后，关闭组件
     this.closeEvent.emit();
   }
 
