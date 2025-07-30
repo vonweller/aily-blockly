@@ -17,7 +17,8 @@
           <div class="bottom-box">
             <div class="tool-container">
               <div class="header">
-                <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedTabIndex" (nzSelectChange)="onTabChange($event.index)">
+                <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedTabIndex"
+                  (nzSelectChange)="onTabChange($event.index)">
                   <nz-tab nzTitle="日志"></nz-tab>
                   <nz-tab nzTitle="终端"></nz-tab>
                 </nz-tabset>
@@ -74,6 +75,17 @@
       }
     </nz-layout>
   </div>
-
   <app-footer></app-footer>
+  <!-- 浮动sider -->
+  <!-- <div class="float-sider">
+    <div class="item ccenter" nz-tooltip nzTooltipPlacement="left" nzTooltipTitle="引脚图" (click)="showPinmap()">
+      <i class="fa-light fa-microchip"></i>
+    </div>
+    <div class="item ccenter" nz-tooltip nzTooltipPlacement="left" nzTooltipTitle="文档">
+      <i class="fa-light fa-book"></i>
+    </div>
+    <div class="item ccenter add" nz-tooltip nzTooltipPlacement="left" nzTooltipTitle="添加更多功能">
+      <i class="fa-light fa-plus"></i>
+    </div>
+  </div> -->
 </div>

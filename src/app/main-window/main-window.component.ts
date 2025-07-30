@@ -16,12 +16,14 @@ import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
-import { NzModalModule } from 'ng-zorro-antd/modal';
+import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { Router, RouterModule } from '@angular/router';
 import { ConfigService } from '../services/config.service';
 import { UserComponent } from './components/user/user.component';
+import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { PinmapComponent } from '../app-store/pinmap/pinmap.component';
 
 @Component({
   selector: 'app-main-window',
@@ -41,7 +43,9 @@ import { UserComponent } from './components/user/user.component';
     AppStoreComponent,
     NzModalModule,
     SimulatorComponent,
-    RouterModule
+    RouterModule,
+    NzToolTipModule,
+    NzModalModule
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -49,7 +53,7 @@ import { UserComponent } from './components/user/user.component';
 export class MainWindowComponent {
   @ViewChild('logComponent') logComponent!: LogComponent;
   @ViewChild('terminalComponent') terminalComponent!: TerminalComponent;
-  
+
   showRbox = false;
   showBbox = false;
   terminalTab = 'log';  // log, terminal
@@ -74,6 +78,7 @@ export class MainWindowComponent {
     private npmService: NpmService,
     private router: Router,
     private configService: ConfigService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit(): void {
@@ -213,5 +218,21 @@ export class MainWindowComponent {
       // 清空终端
       this.terminalComponent?.clear();
     }
+  }
+
+  showPinmap() {
+    const modalRef = this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: {
+        padding: '0',
+      },
+      nzContent: PinmapComponent,
+      nzData: {
+        boardPackage: 'arduino_uno'
+      },
+      nzWidth: '650px',
+    });
   }
 }
