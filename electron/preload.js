@@ -168,6 +168,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   wifi: {
 
   },
+  dialog: {
+    selectFiles: (options) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("dialog-select-files", options)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    }
+  },
   other: {
     // 通过资源管理器打开
     openByExplorer: (path) => {

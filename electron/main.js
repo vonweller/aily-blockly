@@ -381,6 +381,17 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
   return result.filePath;
 });
 
+// 通用对话框处理器（用于chat添加文件或文件夹）
+ipcMain.handle("dialog-select-files", async (event, options) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  try {
+    const result = await dialog.showOpenDialog(senderWindow, options);
+    return result;
+  } catch (error) {
+    throw error;
+  }
+});
+
 // 环境变量
 ipcMain.handle("env-set", (event, data) => {
   process.env[data.key] = data.value;

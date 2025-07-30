@@ -286,19 +286,3 @@ nz-resize-handle {
     background: rgba(255, 255, 255, 0.1);
   }
 }
-
-ngx-simplebar {
-  height: 100%;
-  width: 100%;
-
-  ::ng-deep {
-    // .simplebar-content-wrapper {
-    //   height: 100%;
-    //   padding: 10px;
-    // }
-
-    .simplebar-content {
-      height: 100%;
-    }
-  }
-}

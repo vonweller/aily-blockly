@@ -53,13 +53,51 @@
           </div>
         </div> -->
         <div class="input-box">
+          @if( selectContent.length > 0 ) {
+          <div class="resource-list">
+            @for( item of selectContent; track $index) {
+            <div class="resource-item">
+              @if(item.type == 'file') {
+              <i class="fa-light fa-file"></i>
+              }@else if(item.type == 'folder') {
+              <i class="fa-light fa-folder"></i>
+              }@else if(item.type == 'url') {
+              <i class="fa-light fa-link"></i>
+              }
+              <span class="resource-name">{{ item.name }}</span>
+              <div class="btn ccenter" (click)="removeResource($index)">
+                <i class="fa-light fa-xmark"></i>
+              </div>
+            </div>
+            }
+          </div>
+          }
           <textarea #chatTextarea class="sscroll" spellcheck="false" [(ngModel)]="inputValue"
             (keydown)="onKeyDown($event)">
           </textarea>
           <div class="btns">
-            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件" (click)="addFile()">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加上下文" (click)="openAddList()">
+              <i class="fa-light fa-paperclip"></i>
+            </div>
+            @if(showAddList){
+            <div class="list-box animate__animated animate__fadeIn animate__faster">
+              <div class="btn2 ccenter enter" (click)="openAddList()" style="margin-top: -1px;">
+                <i class="fa-light fa-angle-left"></i>
+              </div>
+            </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加文件" (click)="addFile()">
               <i class="fa-light fa-file-plus"></i>
             </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加文件夹" (click)="addFolder()">
+              <i class="fa-light fa-folder-plus"></i>
+            </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加网站" (click)="addUrl()">
+              <i class="fa-light fa-globe-pointer"></i>
+            </div>
+            }
             <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
           </div> -->
