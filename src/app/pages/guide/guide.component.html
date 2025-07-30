@@ -69,11 +69,11 @@
         <div class="splide__track">
           <ul class="splide__list">
             @for (sponsor of sponsors; track $index) {
-            <li class="splide__slide">·
+            <li class="splide__slide">
               <div class="sponsor-item" (click)="sponsor.url && openUrl(sponsor.url)">
                 @if (sponsor.img) {
                 <div class="ccenter img-box">
-                  <img [src]="'/sponsor/' + sponsor.img" [alt]="sponsor.name" [title]="sponsor.name">
+                  <img [src]="'sponsor/' + sponsor.img" [alt]="sponsor.name" [title]="sponsor.name">
                 </div>
                 <div class="sponsor-name">{{ sponsor.name }}</div>
                 }@else {
