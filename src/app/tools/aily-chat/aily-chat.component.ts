@@ -149,6 +149,75 @@ export class AilyChatComponent implements OnDestroy {
     return parts.length > 0 ? parts[parts.length - 1] : '';
   }
 
+  /**
+ * 获取URL中的文件名或有意义的部分
+ * @param url 完整的URL地址
+ * @returns 简化的URL名称，如果无法解析则返回原URL
+ */
+  getUrlDisplayName(url: string): string {
+    if (!url) return '';
+
+    try {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+
+      // 如果路径为空或只是根路径，返回域名
+      if (!pathname || pathname === '/') {
+        return urlObj.hostname;
+      }
+
+      // 获取路径的最后一部分（可能是文件名）
+      const pathParts = pathname.split('/').filter(Boolean);
+      if (pathParts.length > 0) {
+        let lastPart = pathParts[pathParts.length - 1];
+
+        // 对URL编码的字符串进行解码（如 %E5%BA%93%E8%A7%84%E8%8C%83.md -> 库规范.md）
+        try {
+          lastPart = decodeURIComponent(lastPart);
+        } catch (decodeError) {
+          // 如果解码失败，保持原样
+          console.warn('URL解码失败:', decodeError);
+        }
+
+        // 如果最后一部分看起来像文件名（包含扩展名），直接返回
+        if (lastPart.includes('.')) {
+          return lastPart;
+        }
+
+        // 否则返回最后两个路径段（如果存在）
+        if (pathParts.length >= 2) {
+          let secondLastPart = pathParts[pathParts.length - 2];
+          // 同样对倒数第二部分进行解码
+          try {
+            secondLastPart = decodeURIComponent(secondLastPart);
+          } catch (decodeError) {
+            console.warn('URL解码失败:', decodeError);
+          }
+          return `${secondLastPart}/${lastPart}`;
+        }
+
+        return lastPart;
+      }
+
+      // 回退到域名
+      return urlObj.hostname;
+    } catch (error) {
+      // 如果URL解析失败，尝试简单的字符串处理
+      const parts = url.split('/').filter(Boolean);
+      if (parts.length > 0) {
+        let lastPart = parts[parts.length - 1];
+        // 对最后一部分进行URL解码
+        try {
+          lastPart = decodeURIComponent(lastPart);
+        } catch (decodeError) {
+          console.warn('URL解码失败:', decodeError);
+        }
+        return lastPart;
+      }
+      return url;
+    }
+  }
+
   // 内置工具
   tools: Tool[] = [
     {
@@ -182,26 +251,17 @@ export class AilyChatComponent implements OnDestroy {
         required: ['command']
       }
     },
-    //     {
-    //       name: "ask_approval",
-    //       description: `
-    //         ## ask_approval
-    // ### Description
-    // 向用户请求确认或批准某个操作。此工具用于在执行可能影响用户的操作之前，确保用户明确同意。
-    // ### Parameters
-    // - message: (required) 需要用户确认的消息内容。
-    // ### Usage
-    // <ask_approval>
-    // <message>需要用户确认的消息</message>
-    // </ask_approval>`,
-    //       input_schema: {
-    //         type: 'object',
-    //         properties: {
-    //           message: { type: 'string', description: '需要用户确认的消息' }
-    //         },
-    //         required: ['message']
-    //       }
-    //     },
+    {
+      name: "ask_approval",
+      description: "向用户请求确认或批准某个操作。此工具用于需要用户确认的场景，确保用户明确同意后才进行后续操作。",
+      input_schema: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: '消息描述' }
+        },
+        required: ['message']
+      } 
+    },
     {
       name: "get_context",
       description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
@@ -500,6 +560,35 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
+    if (options?.type === 'tool') {
+      // 判断是否是 JSON 格式的字符串
+      try {
+        const parsedText = JSON.parse(text);
+        // 判断是否包含id字段，有则提取id
+        if (parsedText && typeof parsedText === 'object' && parsedText.id) {
+          // 提取id
+          const id = parsedText.id;
+
+          this.inputValue = JSON.stringify({
+            "type": "tool_result",
+            "tool_id": id,
+            "content": parsedText.text,
+            "is_error": false
+          })
+          this.send(false, true);
+          return;
+        } else {
+          // 否则保持原样
+          text = JSON.stringify(parsedText, null, 2);
+        }
+      } catch (e) {
+        // 如果解析失败，说明不是JSON格式的字符串
+        // 保持原样
+        console.warn('接收到的文本不是有效的JSON格式:', text);
+        return;
+      }
+    }
+
     // cover 默认为 true，只有明确设置为 false 时才追加
     if (options?.cover === false) {
       // 如果明确设置为不覆盖，则追加到末尾
@@ -624,21 +713,30 @@ export class AilyChatComponent implements OnDestroy {
       return;
     }
 
-    this.isWaiting = true;
     this.send();
   }
 
-  send(show: boolean = true): void {
+  send(show: boolean = true, toolCallRes: boolean = false): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
-    
-    // 如果有资源列表，自动添加到消息前面
-    const resourcesText = this.getResourcesText();
-    if (resourcesText) {
-      text = resourcesText + '\n\n' + text;
+
+    if (!toolCallRes) {
+      // 如果有资源列表，自动添加到消息前面
+      const resourcesText = this.getResourcesText();
+      if (resourcesText) {
+        text = resourcesText + '\n\n' + text;
+      }
+    } else {
+      if (!this.isWaiting) {
+        return;
+      }
     }
     
-    if (show) this.appendMessage('user', text);
+    if (show) {
+      this.appendMessage('user', text);
+      this.isWaiting = true;
+    }
+    
     this.inputValue = '';
 
     if (this.isUserInputRequired) {
@@ -678,31 +776,59 @@ export class AilyChatComponent implements OnDestroy {
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
         console.log("收到消息: ", data);
-        // Replace "/toUser" with empty string in data.data if it exists
+        // Replace "to_user" with empty string in data.data if it exists
         if (data.data && typeof data.data === 'string') {
-          data.data = data.data.replace(/\/toUser/g, '');
+          data.data = data.data.replace(/to_user/g, '');
         }
-        try {
-          if (data.type === 'agent_response') {
-            if (data.data) {
-              this.appendMessage('assistant', data.data);
 
-              // 判断是否包含TERMINATE标记
-              if (data.data.includes('TERMINATE')) {
-                console.log('检测到TERMINATE标记');
-                this.isWaiting = false;
+        if (!this.isWaiting) {
+          return; // 如果不在等待状态，直接返回
+        }
+
+        try {
+          if (data.type === 'ModelClientStreamingChunkEvent') {
+            // 处理流式数据
+            if (data.content) {
+              this.appendMessage('aily', data.content);
+            }
+          } else if (data.type === 'ToolCallRequestEvent') {
+            // 处理工具调用请求
+          } else if (data.type === 'ToolCallExecutionEvent') {
+            console.log("工具执行事件: ", data);
+            // 处理工具执行完成事件
+            if (data.content && Array.isArray(data.content)) {
+              for (const result of data.content) {
+                if (result.call_id && result?.name !== "ask_approval") {
+                  // 根据工具名称和结果状态确定显示文本
+                  const resultState = result.is_error ? "error" : "done";
+                  const resultText = this.toolCallStates[result.call_id];
+                  if (resultText) {
+                    this.appendMessage('aily', `
+  \`\`\`aily-state
+  {
+    "state": "${resultState}",
+    "text": "${this.makeJsonSafe(resultText)}",
+    "id": "${result.call_id}"
+  }
+  \`\`\`\n\n
+`);
+                  }
+
+                  // 清除状态
+                  delete this.toolCallStates[result.call_id];
+                } else {
+                  this.appendMessage('aily', "\n\n");
+                }
               }
             }
-          } else if (data.type === 'processing_started') {
-            console.log('助手正在思考...');
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
-          } else if (data.type === 'user_input_required') {
-            this.isUserInputRequired = true;
+            this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
+            this.isWaiting = false;
+          } else if (data.type === 'TaskCompleted') {
+            console.log("任务已完成: ", data.stop_reason);
+            this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
-            // 处理工具调用请求
-            // {type: 'tool_call_request', tool_id: 'call_MUkyOCjghtJHq9hvmH37ysrf', tool_name: 'frontend_fetch_library_json', tool_args: {…}}
-
             let toolArgs;
 
             if (typeof data.tool_args === 'string') {
@@ -735,7 +861,7 @@ export class AilyChatComponent implements OnDestroy {
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
-                  this.send();
+                  this.send(false, true);
                   return;
                 }
               }
@@ -749,11 +875,11 @@ export class AilyChatComponent implements OnDestroy {
             // console.log("toolArgsJson: ", toolArgs);
 
             // 生成随机ID用于状态跟踪
-            const toolCallId = `call_${this.getRandomString()}`;
+            const toolCallId = `${data.tool_id}`;
 
             let toolResult = null;
             let resultState = "done";
-            let resultText  = '';
+            let resultText = '';
 
             try {
               if (data.tool_name.startsWith('mcp_')) {
@@ -764,7 +890,7 @@ export class AilyChatComponent implements OnDestroy {
                 switch (data.tool_name) {
                   case 'create_project':
                     console.log('[创建项目工具被调用]', toolArgs);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -772,8 +898,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在创建项目...",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await newProjectTool(this.projectService, this.prjRootPath, toolArgs);
                     if (toolResult.is_error) {
@@ -789,7 +914,7 @@ export class AilyChatComponent implements OnDestroy {
                     // Extract the command main body for display
                     const commandParts = toolArgs.command.split(' ');
                     let displayCommand = toolArgs.command;
-                    
+
                     if (commandParts.length > 1) {
                       // 对于 npm 命令，显示前两个词（如 "npm install"）
                       if (commandParts[0].toLowerCase() === 'npm') {
@@ -799,8 +924,8 @@ export class AilyChatComponent implements OnDestroy {
                         displayCommand = `${commandParts[0]}`;
                       }
                     }
-                    
-                    this.appendMessage('assistant', `
+
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -808,8 +933,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在执行: ${displayCommand}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     // Check if cwd is specified, otherwise use project paths
                     if (!toolArgs.cwd) {
@@ -832,7 +956,7 @@ export class AilyChatComponent implements OnDestroy {
                         if (match && match[2]) {
                           const libPackageName = match[2];
                           console.log('Installing library:', libPackageName);
-                          
+
                           // Load the library into blockly
                           try {
                             await this.blocklyService.loadLibrary(libPackageName, projectPath);
@@ -853,7 +977,7 @@ export class AilyChatComponent implements OnDestroy {
                     break;
                   case 'get_context':
                     console.log('[获取上下文信息工具被调用]', toolArgs);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -861,8 +985,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在获取上下文信息...",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await getContextTool(this.projectService, toolArgs);
                     if (toolResult.is_error) {
@@ -875,7 +998,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'list_directory':
                     console.log('[列出目录工具被调用]', toolArgs);
                     const distFolderName = this.getLastFolderName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -883,8 +1006,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在获取${distFolderName}目录内容",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await listDirectoryTool(toolArgs);
                     if (toolResult.is_error) {
@@ -897,7 +1019,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'read_file':
                     console.log('[读取文件工具被调用]', toolArgs);
                     let readFileName = this.getFileName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -905,8 +1027,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在读取: ${readFileName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await readFileTool(toolArgs);
                     if (toolResult.is_error) {
@@ -919,7 +1040,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'create_file':
                     console.log('[创建文件工具被调用]', toolArgs);
                     let createFileName = this.getFileName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -927,8 +1048,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在创建: ${createFileName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await createFileTool(toolArgs);
                     if (toolResult.is_error) {
@@ -941,7 +1061,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'create_folder':
                     console.log('[创建文件夹工具被调用]', toolArgs);
                     let createFolderName = this.getLastFolderName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -949,8 +1069,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在创建: ${createFolderName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await createFolderTool(toolArgs);
                     if (toolResult.is_error) {
@@ -963,7 +1082,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'edit_file':
                     console.log('[编辑文件工具被调用]', toolArgs);
                     let editFileName = this.getFileName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -971,8 +1090,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在编辑: ${editFileName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await editFileTool(toolArgs);
                     if (toolResult.is_error) {
@@ -985,14 +1103,14 @@ export class AilyChatComponent implements OnDestroy {
                   case 'delete_file':
                     console.log('[删除文件工具被调用]', toolArgs);
                     let deleteFileName = this.getFileName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 \`\`\`aily-state
 {
   "state": "doing",
   "text": "正在删除: ${deleteFileName}",
   "id": "${toolCallId}"
 }
-\`\`\`
+\`\`\`\n\n
                     `);
                     toolResult = await deleteFileTool(toolArgs);
                     if (toolResult.is_error) {
@@ -1005,7 +1123,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'delete_folder':
                     console.log('[删除文件夹工具被调用]', toolArgs);
                     let deleteFolderName = this.getLastFolderName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -1013,8 +1131,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在删除: ${deleteFolderName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await deleteFolderTool(toolArgs);
                     if (toolResult.is_error) {
@@ -1035,7 +1152,7 @@ export class AilyChatComponent implements OnDestroy {
                     const errText = checkFileName ? `检查文件 ${checkFileName} 是否存在失败: ` : `检查文件夹 ${checkFolderName} 是否存在失败: `;
                     const successText = checkFileName ? `文件 ${checkFileName} 存在` : `文件夹 ${checkFolderName} 存在`;
 
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -1043,8 +1160,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "${doingText}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await checkExistsTool(toolArgs);
                     if (toolResult.is_error) {
@@ -1057,7 +1173,7 @@ export class AilyChatComponent implements OnDestroy {
                   case 'get_directory_tree':
                     console.log('[获取目录树工具被调用]', toolArgs);
                     let treeFolderName = this.getLastFolderName(toolArgs.path);
-                    this.appendMessage('assistant', `
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -1065,8 +1181,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在获取目录树: ${treeFolderName}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await getDirectoryTreeTool(toolArgs);
                     if (toolResult.is_error) {
@@ -1078,8 +1193,8 @@ export class AilyChatComponent implements OnDestroy {
                     break;
                   case 'fetch':
                     console.log('[网络请求工具被调用]', toolArgs);
-                    const fetchUrl = toolArgs.url;
-                    this.appendMessage('assistant', `
+                    const fetchUrl = this.getUrlDisplayName(toolArgs.url);
+                    this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
@@ -1087,8 +1202,7 @@ export class AilyChatComponent implements OnDestroy {
   "text": "正在进行网络请求: ${fetchUrl}",
   "id": "${toolCallId}"
 }
-\`\`\`
-
+\`\`\`\n\n
                     `);
                     toolResult = await fetchTool(this.fetchToolService, toolArgs);
                     if (toolResult.is_error) {
@@ -1097,6 +1211,19 @@ export class AilyChatComponent implements OnDestroy {
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
+                  case 'ask_approval':
+                    console.log('[请求确认工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+\n\n${toolArgs.message}
+
+\`\`\`aily-button
+[
+{"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
+{"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
+]
+\`\`\`\n\n
+                    `);
+                    return;
                 }
               }
 
@@ -1115,33 +1242,26 @@ export class AilyChatComponent implements OnDestroy {
               };
             }
 
-            // 添加完成状态消息
-            this.appendMessage('assistant', `
-
-\`\`\`aily-state
-{
-  "state": "${resultState}",
-  "text": "${resultText}",
-  "id": "${toolCallId}"
-}
-\`\`\`
-
-            `);
-
-            // 手动添加一个换行进去
-            this.appendMessage('assistant', '\n');
+            this.toolCallStates[data.tool_id] = resultText;
 
             this.inputValue = JSON.stringify({
               "type": "tool_result",
               "tool_id": data.tool_id,
-              "content": toolResult.content,
+              "content": toolResult?.content || '',
+              "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send(false);
+            this.send(false, true);
+          } else if (data.type === 'user_input_required') {
+            // 处理用户输入请求 - 需要用户补充消息时停止等待状态
+            this.isUserInputRequired = true;
+            this.isWaiting = false;
           }
           this.scrollToBottom();
+
         } catch (e) {
-          console.error('解析消息出错:', e);
+          this.appendMessage('错误', '助手出错: ' + (e.message || '未知错误'));
+          this.isWaiting = false;
         }
       },
       error: (err) => {
@@ -1173,6 +1293,9 @@ export class AilyChatComponent implements OnDestroy {
   // 当使用ctrl+enter时发送消息
   onKeyDown(event: KeyboardEvent) {
     if (event.ctrlKey && event.key === 'Enter') {
+      if (this.isWaiting) {
+        return;
+      }
       this.send();
       event.preventDefault();
     }
@@ -1445,4 +1568,7 @@ export class AilyChatComponent implements OnDestroy {
 
   // 添加订阅管理
   private messageSubscription: any;
+
+  // 工具调用状态管理
+  toolCallStates: { [key: string]: string } = {};
 }
