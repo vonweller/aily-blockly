@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, shell } = require("electron");
+const { contextBridge, ipcRenderer, shell, safeStorage } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
@@ -263,5 +263,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
           .catch((error) => reject(error));
       })
     }
+  },
+  // 安全存储 API
+  safeStorage: {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (plainText) => safeStorage.encryptString(plainText),
+    decryptString: (encrypted) => safeStorage.decryptString(encrypted)
   }
 });
