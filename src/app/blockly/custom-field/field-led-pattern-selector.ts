@@ -67,12 +67,33 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
         this.patternWidth = config?.patternWidth ?? DEFAULT_PATTERN_SIZE;
         this.patternHeight = config?.patternHeight ?? DEFAULT_PATTERN_SIZE;
         
-        // 设置预设图案，支持 data 和 pattern 两种字段名
+        // 设置预设图案，支持 data、pattern 和 hex 三种字段名
         const rawPatterns = config?.patterns ?? this.getDefaultPatterns();
-        this.presetPatterns = rawPatterns.map(preset => ({
-            name: preset.name,
-            pattern: (preset as any).data || preset.pattern || []
-        }));
+        this.presetPatterns = rawPatterns.map(preset => {
+            let pattern: number[][];
+
+            // 检查是否有十六进制格式的数据
+            if ((preset as any).hex && Array.isArray((preset as any).hex)) {
+                try {
+                    pattern = FieldLedPatternSelector.hexArrayToPattern(
+                        (preset as any).hex,
+                        this.patternWidth,
+                        this.patternHeight
+                    );
+                } catch (error) {
+                    console.warn(`Failed to parse hex pattern for "${preset.name}":`, error);
+                    pattern = this.getEmptyPattern();
+                }
+            } else {
+                // 使用原有的 data 或 pattern 字段
+                pattern = (preset as any).data || preset.pattern || [];
+            }
+
+            return {
+                name: preset.name,
+                pattern: pattern
+            };
+        });
         
         // 初始化值
         const currentValue = this.getValue();
@@ -228,26 +249,141 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
     }
 
     /**
+     * 将十六进制数组转换为二维数组格式
+     * 支持格式: [0x7f, 0xed437fe0, 0x0] 或 ["0x7f", "0xed437fe0", "0x0"]
+     *
+     * 基于Arduino R4正确的转换逻辑：
+     * - 每个uint32值从最高位(bit 31)开始提取到最低位(bit 0)
+     * - 按行优先顺序填充矩阵
+     * - 修复了"左移3列"的显示问题
+     */
+    static hexArrayToPattern(hexArray: (number | string)[], width: number, height: number): number[][] {
+        if (!Array.isArray(hexArray) || hexArray.length === 0) {
+            throw new Error('Invalid hex array');
+        }
+
+        const pattern: number[][] = [];
+
+        // 将所有十六进制值转换为位数组（基于Arduino R4正确逻辑）
+        const bits: number[] = [];
+        for (const hex of hexArray) {
+            let hexValue: number;
+            if (typeof hex === 'string') {
+                hexValue = parseInt(hex, 16);
+            } else {
+                hexValue = hex;
+            }
+
+            if (isNaN(hexValue)) {
+                throw new Error(`Invalid hex value: ${hex}`);
+            }
+
+            // 从最高位(bit 31)开始提取到最低位(bit 0)
+            for (let bit = 31; bit >= 0; bit--) {
+                bits.push((hexValue >> bit) & 1);
+            }
+        }
+
+        // 将位数组映射到矩阵 (按行填充)
+        const totalBits = width * height;
+        for (let row = 0; row < height; row++) {
+            pattern[row] = [];
+            for (let col = 0; col < width; col++) {
+                const bitIndex = row * width + col;
+                if (bitIndex < bits.length && bitIndex < totalBits) {
+                    pattern[row][col] = bits[bitIndex];
+                } else {
+                    pattern[row][col] = 0;
+                }
+            }
+        }
+
+        return pattern;
+    }
+
+    /**
+     * 将二维数组格式转换为十六进制数组
+     */
+    static patternToHexArray(pattern: number[][], bitsPerHex: number = 32): (string | number)[] {
+        if (!pattern || !Array.isArray(pattern) || pattern.length === 0) {
+            return [];
+        }
+
+        // 将二维数组转换为一维二进制字符串
+        let binaryString = '';
+        for (let row = 0; row < pattern.length; row++) {
+            if (!pattern[row] || !Array.isArray(pattern[row])) continue;
+            for (let col = 0; col < pattern[row].length; col++) {
+                binaryString += (pattern[row][col] ? '1' : '0');
+            }
+        }
+
+        // 按指定位数分组转换为十六进制
+        const hexArray: string[] = [];
+        for (let i = 0; i < binaryString.length; i += bitsPerHex) {
+            const chunk = binaryString.slice(i, i + bitsPerHex);
+            const paddedChunk = chunk.padEnd(bitsPerHex, '0'); // 右侧补0
+            const hexValue = parseInt(paddedChunk, 2);
+            hexArray.push('0x' + hexValue.toString(16).toUpperCase());
+        }
+
+        return hexArray;
+    }
+
+    /**
      * 验证新值
      */
     protected override doClassValidation_(
-        newValue?: number[][],
+        newValue?: number[][] | (number | string)[],
     ): number[][] | null | undefined {
         if (!newValue) {
             return null;
         }
-        
+
+        // 检查是否为十六进制数组格式
+        if (Array.isArray(newValue) && newValue.length > 0) {
+            const firstElement = newValue[0];
+
+            // 如果第一个元素是数字或十六进制字符串，尝试作为十六进制数组处理
+            if (typeof firstElement === 'number' ||
+                (typeof firstElement === 'string' && firstElement.startsWith('0x'))) {
+                try {
+                    const pattern = FieldLedPatternSelector.hexArrayToPattern(
+                        newValue as (number | string)[],
+                        this.patternWidth,
+                        this.patternHeight
+                    );
+                    return this.validatePattern(pattern);
+                } catch (error) {
+                    console.warn('Failed to parse hex array:', error);
+                    return null;
+                }
+            }
+        }
+
+        // 原有的二维数组验证逻辑
         if (!Array.isArray(newValue)) {
             return null;
         }
-        
-        const newHeight = newValue.length;
+
+        return this.validatePattern(newValue as number[][]);
+    }
+
+    /**
+     * 验证图案格式
+     */
+    private validatePattern(pattern: number[][]): number[][] | null {
+        if (!pattern || !Array.isArray(pattern)) {
+            return null;
+        }
+
+        const newHeight = pattern.length;
         if (newHeight == 0) {
             return null;
         }
 
-        const newWidth = newValue[0].length;
-        for (const row of newValue) {
+        const newWidth = pattern[0]?.length || 0;
+        for (const row of pattern) {
             if (!Array.isArray(row)) {
                 return null;
             }
@@ -256,14 +392,90 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
             }
         }
 
-        for (const row of newValue) {
+        for (const row of pattern) {
             for (const cell of row) {
                 if (cell !== 0 && cell !== 1) {
                     return null;
                 }
             }
         }
-        return newValue;
+        return pattern;
+    }
+
+    /**
+     * 从十六进制数组设置值
+     * 使用示例: field.setValueFromHex([0x7f, 0xed437fe0, 0x0])
+     */
+    setValueFromHex(hexArray: (number | string)[]): void {
+        try {
+            const pattern = FieldLedPatternSelector.hexArrayToPattern(
+                hexArray,
+                this.patternWidth,
+                this.patternHeight
+            );
+            this.setValue(pattern);
+        } catch (error) {
+            console.error('Failed to set value from hex array:', error);
+        }
+    }
+
+    /**
+     * 获取当前值的十六进制数组表示
+     */
+    getValueAsHex(bitsPerHex: number = 32): (string | number)[] {
+        const pattern = this.getValue();
+        if (!pattern) {
+            return [];
+        }
+        return FieldLedPatternSelector.patternToHexArray(pattern, bitsPerHex);
+    }
+
+    /**
+     * 获取当前选中图案的名称
+     */
+    getSelectedPatternName(): string | null {
+        if (this.selectedPatternIndex >= 0 &&
+            this.selectedPatternIndex < this.presetPatterns.length &&
+            this.presetPatterns[this.selectedPatternIndex]) {
+            return this.presetPatterns[this.selectedPatternIndex].name;
+        }
+        return null;
+    }
+
+    /**
+     * 获取当前选中图案的完整信息
+     */
+    getSelectedPatternInfo(): { name: string; pattern: number[][]; index: number } | null {
+        if (this.selectedPatternIndex >= 0 &&
+            this.selectedPatternIndex < this.presetPatterns.length &&
+            this.presetPatterns[this.selectedPatternIndex]) {
+            const preset = this.presetPatterns[this.selectedPatternIndex];
+            return {
+                name: preset.name,
+                pattern: preset.pattern,
+                index: this.selectedPatternIndex
+            };
+        }
+        return null;
+    }
+
+    /**
+     * 根据图案查找对应的名称
+     */
+    getPatternName(pattern?: number[][]): string | null {
+        const targetPattern = pattern || this.getValue();
+        if (!targetPattern) {
+            return null;
+        }
+
+        // 查找匹配的预设图案
+        for (let i = 0; i < this.presetPatterns.length; i++) {
+            if (this.presetPatterns[i] && this.patternsEqual(targetPattern, this.presetPatterns[i].pattern)) {
+                return this.presetPatterns[i].name;
+            }
+        }
+
+        return null; // 没有找到匹配的预设图案
     }
 
     /**
@@ -283,12 +495,14 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
     protected override showEditor_(e?: Event) {
         const editor = this.createPatternSelector();
 
-        // 设置 Blockly 下拉容器的样式，隐藏其滚动条
+        // 让最外层的Blockly下拉容器处理滚动
         const dropdownContent = Blockly.DropDownDiv.getContentDiv() as HTMLElement;
-        dropdownContent.style.overflow = 'hidden';
         dropdownContent.style.padding = '0';
         dropdownContent.style.border = 'none';
         dropdownContent.style.background = 'transparent';
+        dropdownContent.style.maxHeight = '350px';
+        dropdownContent.style.overflowY = 'auto';
+        dropdownContent.style.overflowX = 'hidden';
 
         dropdownContent.appendChild(editor);
         Blockly.DropDownDiv.showPositionedByField(
@@ -314,8 +528,7 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
             padding: 16px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
             max-width: ${maxContainerWidth}px;
-            max-height: 350px;
-            overflow-y: auto;
+            overflow: visible;
             box-sizing: border-box;
         `;
 
@@ -327,7 +540,7 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
             grid-template-columns: repeat(${this.gridCols}, 1fr);
             gap: 12px;
             padding: 0;
-            padding-bottom: 40px;
+            padding-bottom: 0px;
             box-sizing: border-box;
         `;
 
@@ -338,20 +551,6 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
         });
 
         container.appendChild(grid);
-
-        // 确保容器能正确计算内容高度
-        setTimeout(() => {
-            const gridHeight = grid.scrollHeight;
-            const containerPadding = 32; // 16px * 2 (top + bottom padding)
-            const totalHeight = gridHeight + containerPadding;
-
-            if (totalHeight > 350) {
-                container.style.height = '350px';
-            } else {
-                container.style.height = 'auto';
-                container.style.maxHeight = 'none';
-            }
-        }, 0);
 
         return container;
     }
@@ -678,7 +877,8 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
 // 接口定义
 interface PresetPattern {
     name: string;
-    pattern: number[][];
+    pattern?: number[][];
+    hex?: (number | string)[]; // 支持十六进制格式
 }
 
 interface PatternColours {
@@ -707,88 +907,63 @@ Blockly.fieldRegistry.register('field_led_pattern_selector', FieldLedPatternSele
  * 使用示例和预设图案集合
  */
 export const PRESET_PATTERN_COLLECTIONS = {
-    // 基础图案集合
+    // 基础图案集合 - 使用十六进制格式
     basic: [
         {
             name: '空白',
-            pattern: Array(8).fill(null).map(() => Array(8).fill(0))
+            hex: [0x00000000, 0x00000000]
         },
         {
             name: '全亮',
-            pattern: Array(8).fill(null).map(() => Array(8).fill(1))
+            hex: [0xFFFFFFFF, 0xFFFFFFFF]
         },
         {
             name: '边框',
-            pattern: [
-                [1, 1, 1, 1, 1, 1, 1, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 1, 1, 1, 1, 1, 1, 1]
-            ]
+            hex: [0xFF818181, 0x818181FF]
+        },
+        {
+            name: '十字',
+            hex: [0x18181818, 0xFF181818]
         }
     ],
 
-    // 表情图案集合
+    // 表情图案集合 - 使用十六进制格式
     emotions: [
         {
             name: '笑脸',
-            pattern: [
-                [0, 0, 1, 1, 1, 1, 0, 0],
-                [0, 1, 0, 0, 0, 0, 1, 0],
-                [1, 0, 1, 0, 0, 1, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 1, 0, 0, 1, 0, 1],
-                [1, 0, 0, 1, 1, 0, 0, 1],
-                [0, 1, 0, 0, 0, 0, 1, 0],
-                [0, 0, 1, 1, 1, 1, 0, 0]
-            ]
+            hex: [0x3C424299, 0xA5817E3C]
         },
         {
             name: '哭脸',
-            pattern: [
-                [0, 0, 1, 1, 1, 1, 0, 0],
-                [0, 1, 0, 0, 0, 0, 1, 0],
-                [1, 0, 1, 0, 0, 1, 0, 1],
-                [1, 0, 0, 0, 0, 0, 0, 1],
-                [1, 0, 0, 1, 1, 0, 0, 1],
-                [1, 0, 1, 0, 0, 1, 0, 1],
-                [0, 1, 0, 0, 0, 0, 1, 0],
-                [0, 0, 1, 1, 1, 1, 0, 0]
-            ]
+            hex: [0x3C424299, 0x99A5423C]
+        },
+        {
+            name: '眨眼',
+            hex: [0x3C427A99, 0xA5817E3C]
+        },
+        {
+            name: '惊讶',
+            hex: [0x3C424299, 0x81993C3C]
         }
     ],
 
-    // 箭头图案集合
+    // 箭头图案集合 - 使用十六进制格式
     arrows: [
         {
             name: '上箭头',
-            pattern: [
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 1, 1, 1, 1, 0, 0],
-                [0, 1, 1, 1, 1, 1, 1, 0],
-                [1, 1, 1, 1, 1, 1, 1, 1],
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 0, 1, 1, 0, 0, 0]
-            ]
+            hex: [0x18247E18, 0x18181800]
+        },
+        {
+            name: '下箭头',
+            hex: [0x00181818, 0x187E2418]
+        },
+        {
+            name: '左箭头',
+            hex: [0x08183878, 0x18080000]
         },
         {
             name: '右箭头',
-            pattern: [
-                [0, 0, 0, 1, 0, 0, 0, 0],
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 0, 1, 1, 1, 0, 0],
-                [1, 1, 1, 1, 1, 1, 1, 0],
-                [1, 1, 1, 1, 1, 1, 1, 0],
-                [0, 0, 0, 1, 1, 1, 0, 0],
-                [0, 0, 0, 1, 1, 0, 0, 0],
-                [0, 0, 0, 1, 0, 0, 0, 0]
-            ]
+            hex: [0x10181C18, 0x10000000]
         }
     ],
 
@@ -909,6 +1084,98 @@ export const PATTERN_SELECTOR_BLOCK_EXAMPLES = {
         "tooltip": "选择8x12点阵LED图案",
         "helpUrl": ""
     }
+};
+
+/**
+ * 十六进制格式支持工具函数
+ */
+export const HEX_PATTERN_UTILS = {
+    /**
+     * 将十六进制数组转换为LED图案
+     * 示例: hexToPattern([0x7f, 0xed437fe0, 0x0], 8, 8)
+     */
+    hexToPattern: (hexArray: (number | string)[], width: number, height: number): number[][] => {
+        return FieldLedPatternSelector.hexArrayToPattern(hexArray, width, height);
+    },
+
+    /**
+     * 将LED图案转换为十六进制数组
+     * 示例: patternToHex(pattern, 32)
+     */
+    patternToHex: (pattern: number[][], bitsPerHex: number = 32): (string | number)[] => {
+        return FieldLedPatternSelector.patternToHexArray(pattern, bitsPerHex);
+    },
+
+    /**
+     * 常用的十六进制图案示例
+     */
+    examples: {
+        // 8x8 笑脸 (64位，可以用两个32位十六进制数表示)
+        smile8x8: [0x3C424299, 0xA5817E00], // 对应 {0x3C424299, 0xA5817E00}
+
+        // 8x8 心形
+        heart8x8: [0x66FFFF7E, 0x3C180000], // 对应 {0x66FFFF7E, 0x3C180000}
+
+        // 8x8 箭头向上
+        arrowUp8x8: [0x18247E18, 0x18181800], // 对应 {0x18247E18, 0x18181800}
+
+        // 8x8 全亮
+        full8x8: [0xFFFFFFFF, 0xFFFFFFFF], // 对应 {0xFFFFFFFF, 0xFFFFFFFF}
+
+        // 8x8 空白
+        empty8x8: [0x00000000, 0x00000000], // 对应 {0x00000000, 0x00000000}
+    }
+};
+
+/**
+ * 简化的使用示例 - 现在可以直接使用十六进制格式！
+ */
+export const SIMPLE_HEX_EXAMPLES = {
+    /**
+     * 最简单的使用方式 - 直接在patterns中使用hex字段
+     */
+    simpleUsage: `
+// 现在可以直接这样使用，无需调用转换函数！
+{
+    "type": "field_led_pattern_selector",
+    "name": "PATTERN",
+    "patterns": [
+        {
+            "name": "笑脸",
+            "hex": [0x7f, 0xed437fe0, 0x0]  // 直接使用您的格式！
+        },
+        {
+            "name": "心形",
+            "hex": [0x66FFFF7E, 0x3C180000]
+        }
+    ]
+}
+`,
+
+    /**
+     * 支持的所有格式
+     */
+    supportedFormats: `
+// 支持多种十六进制格式：
+patterns: [
+    {
+        "name": "数字格式",
+        "hex": [0x7f, 0xed437fe0, 0x0]
+    },
+    {
+        "name": "字符串格式",
+        "hex": ["0x7f", "0xed437fe0", "0x0"]
+    },
+    {
+        "name": "混合格式",
+        "hex": [0x7f, "0xed437fe0", 0x0]
+    },
+    {
+        "name": "传统格式仍然支持",
+        "pattern": [[1,0,1,0], [0,1,0,1]]
+    }
+]
+`
 };
 
 /**
@@ -1075,45 +1342,10 @@ Blockly.Css.register(`
     transform: scale(1.05);
 }
 
-/* 隐藏 Blockly 默认的下拉容器滚动条 */
-.blocklyDropDownContent {
-    overflow: hidden !important;
-    padding: 0 !important;
-    border: none !important;
-    background: transparent !important;
-}
-
-/* 只在我们的容器上显示自定义滚动条 */
+/* 内部容器不需要滚动条，由外层Blockly容器处理滚动 */
 .pattern-selector-container {
-    max-height: 350px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: #8b5fbf #6a4c93;
+    overflow: visible;
     box-sizing: border-box;
-}
-
-.pattern-selector-container::-webkit-scrollbar {
-    width: 8px;
-}
-
-.pattern-selector-container::-webkit-scrollbar-track {
-    background: #6a4c93;
-    border-radius: 4px;
-}
-
-.pattern-selector-container::-webkit-scrollbar-thumb {
-    background: #8b5fbf;
-    border-radius: 4px;
-    border: 1px solid #6a4c93;
-}
-
-.pattern-selector-container::-webkit-scrollbar-thumb:hover {
-    background: #9d6fd3;
-}
-
-.pattern-selector-container::-webkit-scrollbar-corner {
-    background: #6a4c93;
 }
 
 /* 确保网格内容正确显示 */
@@ -1123,3 +1355,259 @@ Blockly.Css.register(`
     box-sizing: border-box;
 }
 `);
+
+/**
+ * 十六进制格式使用示例
+ */
+export const HEX_FORMAT_EXAMPLES = {
+    /**
+     * 基本使用方法
+     */
+    basicUsage: `
+// 1. 创建支持十六进制输入的LED图案选择器
+const field = new FieldLedPatternSelector(
+    Blockly.Field.SKIP_SETUP,
+    undefined,
+    {
+        patternWidth: 8,
+        patternHeight: 8,
+        patterns: [
+            {
+                name: '笑脸',
+                pattern: FieldLedPatternSelector.hexArrayToPattern([0x3C424299, 0xA5817E00], 8, 8)
+            }
+        ]
+    }
+);
+
+// 2. 从十六进制数组设置值
+field.setValueFromHex([0x7f, 0xed437fe0, 0x0]);
+
+// 3. 获取十六进制格式的值
+const hexValue = field.getValueAsHex(32);
+console.log(hexValue); // ['0x7F000000', '0xED437FE0', '0x00000000']
+`,
+
+    /**
+     * 在块定义中使用十六进制格式
+     */
+    blockDefinition: `
+// 支持十六进制输入的块定义 - 现在可以直接使用hex字段！
+{
+    "type": "led_pattern_hex",
+    "message0": "LED图案(十六进制) %1",
+    "args0": [
+        {
+            "type": "field_led_pattern_selector",
+            "name": "PATTERN",
+            "patternWidth": 8,
+            "patternHeight": 8,
+            "patterns": [
+                {
+                    "name": "笑脸",
+                    "hex": [0x3C424299, 0xA5817E00]
+                },
+                {
+                    "name": "心形",
+                    "hex": [0x66FFFF7E, 0x3C180000]
+                },
+                {
+                    "name": "箭头上",
+                    "hex": [0x18247E18, 0x18181800]
+                },
+                {
+                    "name": "传统格式",
+                    "pattern": [[1,0,1,0],[0,1,0,1],[1,0,1,0],[0,1,0,1]]
+                }
+            ]
+        }
+    ],
+    "output": "Array",
+    "colour": 230
+}
+`,
+
+    /**
+     * 代码生成器示例
+     */
+    codeGenerator: `
+// Arduino 代码生成器 - 现在可以获取图案名称！
+Blockly.Arduino['led_pattern_hex'] = function(block) {
+    const field = block.getField('PATTERN');
+    const hexArray = field.getValueAsHex(8); // 每8位一个十六进制数
+    const patternName = field.getSelectedPatternName(); // 获取图案名称
+
+    const hexString = hexArray.map(hex =>
+        typeof hex === 'string' ? hex : '0x' + hex.toString(16).toUpperCase()
+    ).join(', ');
+
+    // 生成带注释的代码
+    const comment = patternName ? \`// \${patternName} 图案\` : '';
+    const code = \`{\${hexString}} \${comment}\`;
+
+    return [code, Blockly.Arduino.ORDER_ATOMIC];
+};
+
+// 生成的代码示例:
+// {0x7F, 0xED, 0x43, 0x7F, 0xE0, 0x00, 0x00, 0x00} // 蓝牙 图案
+
+// 或者生成常量定义：
+Blockly.Arduino['led_pattern_const'] = function(block) {
+    const field = block.getField('PATTERN');
+    const patternInfo = field.getSelectedPatternInfo();
+
+    if (patternInfo) {
+        const hexArray = field.getValueAsHex(32);
+        const constName = patternInfo.name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+        return \`const uint32_t PATTERN_\${constName}[] = {\${hexArray.join(', ')}};\`;
+    }
+    return '';
+};
+
+// 生成的代码示例:
+// const uint32_t PATTERN_BLUETOOTH[] = {0x10428, 0xA4517FF0, 0x50088104};
+`,
+
+    /**
+     * 常用十六进制图案
+     */
+    commonPatterns: {
+        // 8x8 图案 (64位，分为8个8位十六进制数)
+        patterns8x8: {
+            smile: [0x3C, 0x42, 0x42, 0x99, 0xA5, 0x81, 0x7E, 0x00],
+            heart: [0x66, 0xFF, 0xFF, 0x7E, 0x3C, 0x18, 0x00, 0x00],
+            arrowUp: [0x18, 0x24, 0x7E, 0x18, 0x18, 0x18, 0x18, 0x00],
+            arrowDown: [0x00, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x24, 0x18],
+            arrowLeft: [0x00, 0x08, 0x18, 0x38, 0x18, 0x08, 0x00, 0x00],
+            arrowRight: [0x00, 0x10, 0x18, 0x1C, 0x18, 0x10, 0x00, 0x00],
+            cross: [0x18, 0x18, 0x18, 0xFF, 0xFF, 0x18, 0x18, 0x18],
+            circle: [0x3C, 0x42, 0x81, 0x81, 0x81, 0x81, 0x42, 0x3C],
+            square: [0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF],
+            diamond: [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18]
+        },
+
+        // 8x8 图案 (64位，分为2个32位十六进制数)
+        patterns8x8_32bit: {
+            smile: [0x3C424299, 0xA5817E00],
+            heart: [0x66FFFF7E, 0x3C180000],
+            arrowUp: [0x18247E18, 0x18181800],
+            full: [0xFFFFFFFF, 0xFFFFFFFF],
+            empty: [0x00000000, 0x00000000]
+        }
+    }
+};
+
+/**
+ * 工具函数：验证十六进制数组格式
+ */
+export function validateHexArray(hexArray: any[]): boolean {
+    if (!Array.isArray(hexArray)) return false;
+
+    return hexArray.every(item => {
+        if (typeof item === 'number') {
+            return Number.isInteger(item) && item >= 0;
+        }
+        if (typeof item === 'string') {
+            return /^0x[0-9A-Fa-f]+$/.test(item);
+        }
+        return false;
+    });
+}
+
+/**
+ * 工具函数：格式化十六进制数组为字符串
+ */
+export function formatHexArray(hexArray: (number | string)[]): string {
+    return '{' + hexArray.map(hex => {
+        if (typeof hex === 'string') return hex;
+        return '0x' + hex.toString(16).toUpperCase();
+    }).join(', ') + '}';
+}
+
+/**
+ * 获取图案名称的使用示例
+ */
+export const PATTERN_NAME_EXAMPLES = {
+    /**
+     * 基本使用方法
+     */
+    basicUsage: `
+// 1. 获取当前选中图案的名称
+const field = block.getField('PATTERN');
+const patternName = field.getSelectedPatternName();
+console.log('当前图案:', patternName); // 输出: "蓝牙" 或 "笑脸" 等
+
+// 2. 获取完整的图案信息
+const patternInfo = field.getSelectedPatternInfo();
+if (patternInfo) {
+    console.log('图案名称:', patternInfo.name);
+    console.log('图案数据:', patternInfo.pattern);
+    console.log('图案索引:', patternInfo.index);
+}
+
+// 3. 根据图案数组查找名称
+const customPattern = [[1,0,1], [0,1,0], [1,0,1]];
+const name = field.getPatternName(customPattern);
+console.log('图案名称:', name); // 如果匹配预设图案则返回名称，否则返回null
+`,
+
+    /**
+     * 在代码生成器中使用
+     */
+    codeGeneratorUsage: `
+// 生成带图案名称注释的Arduino代码
+Blockly.Arduino['display_led_pattern'] = function(block) {
+    const field = block.getField('PATTERN');
+    const patternName = field.getSelectedPatternName();
+    const hexArray = field.getValueAsHex(32);
+
+    const arrayStr = hexArray.join(', ');
+    const comment = patternName ? \` // \${patternName}图案\` : '';
+
+    return \`uint32_t pattern[] = {\${arrayStr}};\${comment}\\n\`;
+};
+
+// 生成的代码:
+// uint32_t pattern[] = {0x10428, 0xA4517FF0, 0x50088104}; // 蓝牙图案
+`,
+
+    /**
+     * 在事件处理中使用
+     */
+    eventHandlerUsage: `
+// 监听图案变化事件
+field.setValidator(function(newValue) {
+    const patternName = this.getPatternName(newValue);
+    if (patternName) {
+        console.log('选择了预设图案:', patternName);
+        // 可以根据图案名称执行特定逻辑
+        if (patternName === '蓝牙') {
+            // 蓝牙图案的特殊处理
+        }
+    } else {
+        console.log('选择了自定义图案');
+    }
+    return newValue;
+});
+`,
+
+    /**
+     * 动态更新图案名称显示
+     */
+    dynamicDisplayUsage: `
+// 在UI中显示当前图案名称
+function updatePatternDisplay() {
+    const field = block.getField('PATTERN');
+    const patternName = field.getSelectedPatternName();
+
+    const displayElement = document.getElementById('pattern-name');
+    if (patternName) {
+        displayElement.textContent = \`当前图案: \${patternName}\`;
+        displayElement.className = 'preset-pattern';
+    } else {
+        displayElement.textContent = '自定义图案';
+        displayElement.className = 'custom-pattern';
+    }
+}
+`
+};

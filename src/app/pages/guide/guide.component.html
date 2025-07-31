@@ -59,7 +59,8 @@
     <div class="item" style="height: 165px;">
       <div>{{'GUIDE.WECHAT_GROUP' | translate}}</div>
       <div>{{'GUIDE.WECHAT_GROUP_DESC' | translate}}</div>
-      <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" alt="" srcset="">
+      <img class="qrcode" src="https://dl.diandeng.tech/blockly/wechat.jpg" (error)="retryLoadImage()" alt="微信群二维码"
+        srcset="">
     </div>
     <div class="item" style="height: 165px;">
       <div>{{'GUIDE.SPONSORS' | translate}}</div>

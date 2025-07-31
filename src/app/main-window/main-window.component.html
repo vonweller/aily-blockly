@@ -4,8 +4,9 @@
     <nz-layout>
       <nz-content>
         <div class="middle-box">
-          <ngx-simplebar [options]="options">
+          <ngx-simplebar [options]="options" (mousemove)="onMouseMove($event)" (mouseleave)="onMouseLeave()">
             <router-outlet></router-outlet>
+            <app-float-sider [show]="showFloatSider"></app-float-sider>
           </ngx-simplebar>
         </div>
         @if (showBbox) {
@@ -17,7 +18,8 @@
           <div class="bottom-box">
             <div class="tool-container">
               <div class="header">
-                <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedTabIndex" (nzSelectChange)="onTabChange($event.index)">
+                <nz-tabset [nzSize]="'small'" [(nzSelectedIndex)]="selectedTabIndex"
+                  (nzSelectChange)="onTabChange($event.index)">
                   <nz-tab nzTitle="日志"></nz-tab>
                   <nz-tab nzTitle="终端"></nz-tab>
                 </nz-tabset>
@@ -74,6 +76,5 @@
       }
     </nz-layout>
   </div>
-
   <app-footer></app-footer>
 </div>

@@ -16,12 +16,14 @@ import { SimplebarAngularModule } from 'simplebar-angular';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AppStoreComponent } from '../tools/app-store/app-store.component';
 import { UpdateService } from '../services/update.service';
-import { NzModalModule } from 'ng-zorro-antd/modal';
+import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { Router, RouterModule } from '@angular/router';
 import { ConfigService } from '../services/config.service';
 import { UserComponent } from './components/user/user.component';
+import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { FloatSiderComponent } from '../components/float-sider/float-sider.component';
 
 @Component({
   selector: 'app-main-window',
@@ -41,7 +43,10 @@ import { UserComponent } from './components/user/user.component';
     AppStoreComponent,
     NzModalModule,
     SimulatorComponent,
-    RouterModule
+    RouterModule,
+    NzToolTipModule,
+    NzModalModule,
+    FloatSiderComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -49,7 +54,7 @@ import { UserComponent } from './components/user/user.component';
 export class MainWindowComponent {
   @ViewChild('logComponent') logComponent!: LogComponent;
   @ViewChild('terminalComponent') terminalComponent!: TerminalComponent;
-  
+
   showRbox = false;
   showBbox = false;
   terminalTab = 'log';  // log, terminal
@@ -74,6 +79,7 @@ export class MainWindowComponent {
     private npmService: NpmService,
     private router: Router,
     private configService: ConfigService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit(): void {
@@ -214,4 +220,28 @@ export class MainWindowComponent {
       this.terminalComponent?.clear();
     }
   }
+
+  showFloatSider = false;
+
+  // 监听鼠标位置，当鼠标在右边缘70px范围内时显示浮动侧边栏
+  onMouseMove(event: MouseEvent): void {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const mouseX = event.clientX;
+    const rightEdge = rect.right;
+    const threshold = 70; // 右边缘阈值距离
+
+    // 当鼠标在右边缘70px范围内时显示浮动侧边栏
+    if (rightEdge - mouseX <= threshold) {
+      this.showFloatSider = true;
+    } else {
+      this.showFloatSider = false;
+    }
+  }
+
+  // 鼠标离开时隐藏浮动侧边栏
+  onMouseLeave(): void {
+    this.showFloatSider = false;
+  }
+
 }

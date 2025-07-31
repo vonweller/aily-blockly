@@ -145,4 +145,16 @@ export class GuideComponent implements OnInit, AfterViewInit {
   gotoPlayground() {
     this.router.navigate(['/main/playground']);
   }
+
+  // 重新加载微信二维码图片
+  retryLoadImage() {
+    setTimeout(() => {
+      const img = document.querySelector('.qrcode') as HTMLImageElement;
+      if (img) {
+        const originalSrc = 'https://dl.diandeng.tech/blockly/wechat.jpg';
+        img.src = `${originalSrc}?t=${Date.now()}`;
+      }
+    }, 1000);
+
+  }
 }
