@@ -1,3 +1,19 @@
-<div>
-    <img src="test\pinmap.webp" alt="" srcset="">
+<div class="pinmap-container" 
+     [class.dragging]="isDragging"
+     (wheel)="onWheel($event)"
+     (mousedown)="onMouseDown($event)">
+  <div class="pinmap-content" 
+       [style.transform]="getTransform()"
+       [style.transform-origin]="'0 0'">
+    <img [src]="img" 
+         alt="Pin Map" 
+         class="pinmap-image"
+         draggable="false"
+         (load)="onImageLoad($event)">
+  </div>
+  <!-- <div class="pinmap-controls">
+    <button class="control-btn" (click)="zoomIn()" title="放大">+</button>
+    <button class="control-btn" (click)="zoomOut()" title="缩小">−</button>
+    <button class="control-btn" (click)="resetView()" title="重置">⟲</button>
+  </div> -->
 </div>
