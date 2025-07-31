@@ -52,10 +52,15 @@ body {
 
 .ant-modal-content {
   border-radius: 5px !important;
+  box-shadow: none !important;
   background: transparent !important;
 }
 
-.cdk-overlay-container{
+nz-modal-container {
+  overflow: hidden !important;
+}
+
+.cdk-overlay-container {
   z-index: 10000 !important;
 }
 

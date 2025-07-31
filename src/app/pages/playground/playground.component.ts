@@ -73,6 +73,12 @@ export class PlaygroundComponent {
   }
 
   back() {
-    this.location.back();
+    // 检查是否有历史记录可以返回
+    if (window.history.length > 1) {
+      this.location.back();
+    } else {
+      // 如果没有历史记录，跳转到项目初始默认路径
+      this.router.navigate(['/main/guide']);
+    }
   }
 }

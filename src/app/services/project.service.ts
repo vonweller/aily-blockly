@@ -345,6 +345,16 @@ export class ProjectService {
     return JSON.parse(this.electronService.readFile(boardJsonPath));
   }
 
+  // 获取开发板package路径
+  async getBoardPackagePath() {
+    const boardModule = await this.getBoardModule();
+    if (!boardModule) {
+      throw new Error('未找到开发板模块');
+    }
+    const boardPackagePath = `${this.currentProjectPath}/node_modules/${boardModule}`;
+    return boardPackagePath;
+  }
+
   // 获取开发板 SDK 路径
   async getSdkPath() {
     try {

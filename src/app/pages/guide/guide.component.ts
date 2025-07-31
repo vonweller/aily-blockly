@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, AfterViewInit } from '@angular/core';
 import { GUIDE_MENU } from '../../configs/menu.config';
 import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
@@ -6,46 +6,22 @@ import { version } from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../services/electron.service';
+import Splide from '@splidejs/splide';
+import { HttpClient } from '@angular/common/http';
+import { CommonModule } from '@angular/common';
 
 @Component({
   selector: 'app-guide',
-  imports: [TranslateModule],
+  imports: [TranslateModule, CommonModule],
   templateUrl: './guide.component.html',
   styleUrl: './guide.component.scss'
 })
-export class GuideComponent implements OnInit, OnDestroy {
+export class GuideComponent implements OnInit, AfterViewInit {
   version = version;
   guideMenu = GUIDE_MENU;
   showMenu = true;
   showMore = false;
-
-  // LOGO滚动播放相关属性
-  logos = [
-    { src: 'brand/seekfree/logo.png', alt: 'seekfree' },
-    { src: 'brand/seeedstudio/logo.png', alt: 'seeedstudio' },
-    { src: 'brand/openjumper/logo.png', alt: 'openjumper' },
-    // { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
-    // { src: 'brand/titlab/logo.png', alt: 'titlab' },
-    // { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
-    // { src: 'brand/keyes/logo.png', alt: 'keyes' },
-    { src: 'brand/Kwm/logo.png', alt: 'kwm' },
-    // 如果要添加新的LOGO，在这里添加，例如：
-    // { src: 'brand/newbrand/logo.png', alt: 'newbrand' },
-    
-    // 为了无缝循环，再添加一遍相同的LOGO
-    { src: 'brand/seekfree/logo.png', alt: 'seekfree' },
-    { src: 'brand/seeedstudio/logo.png', alt: 'seeedstudio' },
-    { src: 'brand/openjumper/logo.png', alt: 'openjumper' },
-    // { src: 'brand/diandeng/logo.png', alt: 'diandeng' },
-    // { src: 'brand/titlab/logo.png', alt: 'titlab' },
-    // { src: 'brand/emakefun/logo.png', alt: 'emakefun' },
-    // { src: 'brand/keyes/logo.png', alt: 'keyes' },
-    { src: 'brand/Kwm/logo.png', alt: 'kwm' },
-    // 如果上面添加了新LOGO，这里也要添加一遍，例如：
-    // { src: 'brand/newbrand/logo.png', alt: 'newbrand' },
-  ];
-  logoOffset = 0; // 初始偏移量，会在startLogoCarousel中设置为负值
-  private logoInterval: any;
+  sponsors: any[] = [];
 
   get recentlyProjects() {
     return this.projectService.recentlyProjects
@@ -55,47 +31,68 @@ export class GuideComponent implements OnInit, OnDestroy {
     private uiService: UiService,
     private projectService: ProjectService,
     private router: Router,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private http: HttpClient
   ) { }
 
   ngOnInit() {
-    this.startLogoCarousel();
+    this.loadSponsors();
   }
 
-  ngOnDestroy() {
-    if (this.logoInterval) {
-      clearInterval(this.logoInterval);
-    }
+  ngAfterViewInit() {
+    // 延迟初始化轮播，确保DOM已渲染
+    setTimeout(() => {
+      this.initSplide();
+    }, 100);
   }
 
-  private startLogoCarousel() {
-    const logoWidth = 140; // 每个logo的宽度
-    const spacing = 40; // logo之间的间距
-    const logoCount = this.logos.length / 2; // 实际LOGO数量（因为有重复）
-    const itemWidth = logoWidth + spacing; // 单个LOGO项的总宽度
-    const singleSetWidth = logoCount * itemWidth; // 单组LOGO的总宽度
-    
-    this.logoInterval = setInterval(() => {
-      this.logoOffset -= 1; // 向左滚动
-      
-      // 当第一组LOGO完全滚动出视野时，重置到起始位置
-      // 此时第二组LOGO已经在显示，实现无缝循环
-      if (this.logoOffset <= -singleSetWidth) {
-        this.logoOffset = 0;
+  private loadSponsors() {
+    this.http.get<any[]>('sponsor/sponsor.json').subscribe({
+      next: (data) => {
+        // 对获取到的数据进行随机排序
+        this.sponsors = this.shuffleArray([...data]);
+        // 数据加载完成后重新初始化轮播
+        setTimeout(() => {
+          this.initSplide();
+        }, 100);
+      },
+      error: (error) => {
+        console.error('Failed to load sponsors:', error);
       }
-    }, 30); // 调整到30毫秒，让滚动更平滑
+    });
   }
 
-  pauseLogoCarousel() {
-    if (this.logoInterval) {
-      clearInterval(this.logoInterval);
-      this.logoInterval = null;
+  private shuffleArray(array: any[]): any[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
+    return shuffled;
   }
 
-  resumeLogoCarousel() {
-    if (!this.logoInterval) {
-      this.startLogoCarousel();
+  private initSplide() {
+    const splideElement = document.querySelector('#sponsor-splide');
+    if (splideElement && this.sponsors.length > 0) {
+      const splide = new Splide('#sponsor-splide', {
+        type: 'loop',
+        autoplay: true,
+        interval: 3000,
+        perPage: 3,
+        perMove: 1,
+        gap: '10px',
+        arrows: false,
+        pagination: false,
+        breakpoints: {
+          400: {
+            perPage: 2,
+          },
+          300: {
+            perPage: 1,
+          }
+        }
+      });
+      splide.mount();
     }
   }
 
@@ -147,5 +144,17 @@ export class GuideComponent implements OnInit, OnDestroy {
 
   gotoPlayground() {
     this.router.navigate(['/main/playground']);
+  }
+
+  // 重新加载微信二维码图片
+  retryLoadImage() {
+    setTimeout(() => {
+      const img = document.querySelector('.qrcode') as HTMLImageElement;
+      if (img) {
+        const originalSrc = 'https://dl.diandeng.tech/blockly/wechat.jpg';
+        img.src = `${originalSrc}?t=${Date.now()}`;
+      }
+    }, 1000);
+
   }
 }

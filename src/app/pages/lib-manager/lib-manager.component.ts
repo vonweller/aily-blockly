@@ -341,6 +341,10 @@ export class LibManagerComponent {
   report() {
     this.electronService.openUrl('https://github.com/ailyProject/aily-blockly-libraries/issues');
   }
+
+  openUrl(url: string) {
+    this.electronService.openUrl(url);
+  }
 }
 
 interface PackageInfo {
@@ -361,6 +365,7 @@ interface PackageInfo {
   "links"?: any,
   "brand"?: string,
   "fulltext"?: string,
+  url?: string,
   tested: boolean,
   state: 'default' | 'installed' | 'installing' | 'uninstalling',
   example?: string
