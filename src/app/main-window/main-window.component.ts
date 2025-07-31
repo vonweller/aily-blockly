@@ -23,7 +23,7 @@ import { Router, RouterModule } from '@angular/router';
 import { ConfigService } from '../services/config.service';
 import { UserComponent } from './components/user/user.component';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
-import { PinmapComponent } from '../app-store/pinmap/pinmap.component';
+import { FloatSiderComponent } from '../components/float-sider/float-sider.component';
 
 @Component({
   selector: 'app-main-window',
@@ -45,7 +45,8 @@ import { PinmapComponent } from '../app-store/pinmap/pinmap.component';
     SimulatorComponent,
     RouterModule,
     NzToolTipModule,
-    NzModalModule
+    NzModalModule,
+    FloatSiderComponent
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -220,19 +221,27 @@ export class MainWindowComponent {
     }
   }
 
-  showPinmap() {
-    const modalRef = this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: {
-        padding: '0',
-      },
-      nzContent: PinmapComponent,
-      nzData: {
-        boardPackage: 'arduino_uno'
-      },
-      nzWidth: '650px',
-    });
+  showFloatSider = false;
+
+  // 监听鼠标位置，当鼠标在右边缘70px范围内时显示浮动侧边栏
+  onMouseMove(event: MouseEvent): void {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const mouseX = event.clientX;
+    const rightEdge = rect.right;
+    const threshold = 70; // 右边缘阈值距离
+
+    // 当鼠标在右边缘70px范围内时显示浮动侧边栏
+    if (rightEdge - mouseX <= threshold) {
+      this.showFloatSider = true;
+    } else {
+      this.showFloatSider = false;
+    }
   }
+
+  // 鼠标离开时隐藏浮动侧边栏
+  onMouseLeave(): void {
+    this.showFloatSider = false;
+  }
+
 }

@@ -1,0 +1,53 @@
+.float-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 70px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.float-sider {
+  transform: translate(57px);
+  transition: all 0.3s;
+  background: #3a3c3f;
+  width: 50px;
+  z-index: 99999;
+  border-radius: 5px;
+  padding: 5px 0 0 0;
+  box-shadow: 0 0 5px #333;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  pointer-events: auto;
+
+  &.show {
+    transform: translate(0px);
+  }
+
+  .item {
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+    background: #333;
+    margin-bottom: 5px;
+    border-radius: 5px;
+    font-size: 18px;
+
+    &:hover {
+      background: #555;
+    }
+
+    &:last-child {
+      margin-top: -5px;
+      margin-bottom: 0;
+    }
+
+    &.add {
+      background: transparent;
+    }
+  }
+}
