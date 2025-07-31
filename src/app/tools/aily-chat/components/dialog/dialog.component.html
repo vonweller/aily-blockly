@@ -1,16 +1,10 @@
-<div class="dialog-box" [ngClass]="{ 'user': data.role=='user' }">
+<div class="dialog-box" [ngClass]="{ 'user': role=='user' }">
   <div class="username">
-    @if(data.role=='user'){
+    @if(role=='user'){
     me
     }@else {
     <i class="fa-light fa-user-astronaut"></i>&nbsp;&nbsp;aily
     }
   </div>
-  @if(data.state=='thinking'){
-  <div class="content">Thinking...</div>
-  }@else if(data.state=='retrieving'){
-  <div class="content">Retrieving...</div>
-  }@else{
-  <div class="content" ailyDynamicComponent [innerHTML]="data.content | cachedMarkdown | async"></div>
-  }
+  <div #contentDiv class="content" ailyDynamicComponent [innerHTML]="safeContent"></div>
 </div>
