@@ -75,6 +75,11 @@
                     </nz-select> -->
                 </div>
                 <div class="btns">
+                    @if (lib.url) {
+                    <button nz-button class="ccenter" nzSize="small" style="margin-right: 5px;border: none;" (click)="openUrl(lib.url)">
+                        <i class="fa-regular fa-book"></i>
+                    </button>
+                    }
                     @if (lib.example) {
                     <button nz-button nzSize="small" style="margin-right: 5px;"
                         (click)="openExample(lib.example)">示例</button>
