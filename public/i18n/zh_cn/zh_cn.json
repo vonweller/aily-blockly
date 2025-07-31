@@ -25,7 +25,8 @@
         "USER_MANUAL": "用户手册",
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新",
-        "USER":"用户中心"
+        "USER":"用户中心",
+        "USER_AUTH": "用户服务"
     },
     "ESP32": {
         "UPLOAD_SPEED": "烧录速度",

@@ -6,6 +6,12 @@ const SERVER_API_URL: string = 'http://114.132.150.141:8000';
 export const API = {
   projectList: `${SERVER_URL}/-/verdaccio/data/packages`,
   projectSearch: `${SERVER_URL}/-/v1/search`,
+  // auth
+  login: `${SERVER_API_URL}/api/v1/auth/login`,
+  register: `${SERVER_API_URL}/api/v1/auth/register`,
+  logout: `${SERVER_API_URL}/api/v1/auth/logout`,
+  verifyToken: `${SERVER_API_URL}/api/v1/auth/verify`,
+  refreshToken: `${SERVER_API_URL}/api/v1/auth/refresh`,
   // ai
   startSession: `${SERVER_API_URL}/api/v1/start_session`,
   closeSession: `${SERVER_API_URL}/api/v1/close_session`,

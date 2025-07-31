@@ -23,7 +23,8 @@
         "EXIT": "Quitter",
         "USER_MANUAL": "Manuel Utilisateur",
         "EXAMPLES": "Exemples",
-        "UPDATE": "Vérifier les mises à jour"
+        "UPDATE": "Vérifier les mises à jour",
+        "USER_AUTH": "Service Utilisateur"
     },
     "ESP32": {
         "UPLOAD_SPEED": "Vitesse de téléchargement",

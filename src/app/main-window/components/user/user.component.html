@@ -5,9 +5,28 @@
             <div class="title">aily Blocky Service</div>
             <div class="text">
                 登录后即可使用本软件提供的相关服务
-                <a (click)="more()">了解更多</a>
+                <!-- <a (click)="more()">了解更多</a> -->
             </div>
-            <button nz-button nzType="primary" (click)="more()">登录/注册</button>
+            <!-- <button nz-button nzType="primary" (click)="more()">登录/注册</button> -->
+        </div>
+        <div class="login-box">
+            <div class="item">
+                <div class="ccenter">
+                    <i class="fa-light fa-user"></i>
+                </div>
+                <input nz-input type="text" placeholder="请输入用户名" [(ngModel)]="userInfo.username" />
+            </div>
+            <div class="item">
+                <div class="ccenter">
+                    <i class="fa-light fa-lock"></i>
+                </div>
+                <input nz-input type="password" placeholder="请输入密码" [(ngModel)]="userInfo.password" />
+            </div>
+            <div class="actions">
+                <button nz-button nzType="primary" (click)="onLogin()">
+                    登录
+                </button>
+            </div>
         </div>
 
         <!-- <div class="user-menu">
