@@ -33,7 +33,21 @@
     },
     "GUIDE": {
         "START": "Inicio",
-        "RECENTLY": "Reciente"
+        "RECENTLY": "Reciente",
+        "TITLE": "aily blockly IDE",
+        "TUTORIAL": "Tutoriales y Ejemplos",
+        "TUTORIAL_DESC": "Ver tutoriales y programas de ejemplo",
+        "COMING_SOON": "próximamente",
+        "VERSION_INFO": "Información de Versión",
+        "VERSION_INFO_DESC": "Haga clic para leer las notas de la versión",
+        "GITHUB": "Github",
+        "GITHUB_DESC": "Puede obtener el código fuente de este software aquí",
+        "FEEDBACK": "Comentarios",
+        "FEEDBACK_DESC": "Envíe comentarios sobre su experiencia",
+        "WECHAT_GROUP": "Grupo de Usuarios de WeChat",
+        "WECHAT_GROUP_DESC": "Únase al grupo de usuarios de WeChat para comunicarse con otros usuarios",
+        "SPONSORS": "Patrocinadores del Proyecto",
+        "SPONSORS_DESC": "Este proyecto está patrocinado por las siguientes empresas/individuos"
     },
     "SETTINGS": {
         "TITLE": "Configuración",

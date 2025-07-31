@@ -47,7 +47,9 @@
         "FEEDBACK": "问题反馈",
         "FEEDBACK_DESC": "可以通过这里告知使用反馈",
         "WECHAT_GROUP": "用户微信群",
-        "WECHAT_GROUP_DESC": "加入用户微信群，与其它用户交流"
+        "WECHAT_GROUP_DESC": "加入用户微信群，与其它用户交流",
+        "SPONSORS": "项目赞助者",
+        "SPONSORS_DESC": "本项目得到了以下企业/个人的赞助"
     },
     "SETTINGS": {
         "TITLE": "设置",

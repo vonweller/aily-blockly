@@ -45,7 +45,9 @@
         "FEEDBACK": "Feedback",
         "FEEDBACK_DESC": "Send feedback about your experience",
         "WECHAT_GROUP": "WeChat User Group",
-        "WECHAT_GROUP_DESC": "Join the WeChat user group to communicate with other users"
+        "WECHAT_GROUP_DESC": "Join the WeChat user group to communicate with other users",
+        "SPONSORS": "Project Sponsors",
+        "SPONSORS_DESC": "This project is sponsored by the following companies/individuals"
     },
     "SETTINGS": {
         "TITLE": "Settings",
