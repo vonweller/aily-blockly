@@ -495,12 +495,14 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
     protected override showEditor_(e?: Event) {
         const editor = this.createPatternSelector();
 
-        // 设置 Blockly 下拉容器的样式，隐藏其滚动条
+        // 让最外层的Blockly下拉容器处理滚动
         const dropdownContent = Blockly.DropDownDiv.getContentDiv() as HTMLElement;
-        dropdownContent.style.overflow = 'hidden';
         dropdownContent.style.padding = '0';
         dropdownContent.style.border = 'none';
         dropdownContent.style.background = 'transparent';
+        dropdownContent.style.maxHeight = '350px';
+        dropdownContent.style.overflowY = 'auto';
+        dropdownContent.style.overflowX = 'hidden';
 
         dropdownContent.appendChild(editor);
         Blockly.DropDownDiv.showPositionedByField(
@@ -526,8 +528,7 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
             padding: 16px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
             max-width: ${maxContainerWidth}px;
-            max-height: 350px;
-            overflow-y: auto;
+            overflow: visible;
             box-sizing: border-box;
         `;
 
@@ -539,7 +540,7 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
             grid-template-columns: repeat(${this.gridCols}, 1fr);
             gap: 12px;
             padding: 0;
-            padding-bottom: 40px;
+            padding-bottom: 0px;
             box-sizing: border-box;
         `;
 
@@ -550,20 +551,6 @@ export class FieldLedPatternSelector extends Blockly.Field<number[][]> {
         });
 
         container.appendChild(grid);
-
-        // 确保容器能正确计算内容高度
-        setTimeout(() => {
-            const gridHeight = grid.scrollHeight;
-            const containerPadding = 32; // 16px * 2 (top + bottom padding)
-            const totalHeight = gridHeight + containerPadding;
-
-            if (totalHeight > 350) {
-                container.style.height = '350px';
-            } else {
-                container.style.height = 'auto';
-                container.style.maxHeight = 'none';
-            }
-        }, 0);
 
         return container;
     }
@@ -1355,45 +1342,10 @@ Blockly.Css.register(`
     transform: scale(1.05);
 }
 
-/* 隐藏 Blockly 默认的下拉容器滚动条 */
-.blocklyDropDownContent {
-    overflow: hidden !important;
-    padding: 0 !important;
-    border: none !important;
-    background: transparent !important;
-}
-
-/* 只在我们的容器上显示自定义滚动条 */
+/* 内部容器不需要滚动条，由外层Blockly容器处理滚动 */
 .pattern-selector-container {
-    max-height: 350px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: #8b5fbf #6a4c93;
+    overflow: visible;
     box-sizing: border-box;
-}
-
-.pattern-selector-container::-webkit-scrollbar {
-    width: 8px;
-}
-
-.pattern-selector-container::-webkit-scrollbar-track {
-    background: #6a4c93;
-    border-radius: 4px;
-}
-
-.pattern-selector-container::-webkit-scrollbar-thumb {
-    background: #8b5fbf;
-    border-radius: 4px;
-    border: 1px solid #6a4c93;
-}
-
-.pattern-selector-container::-webkit-scrollbar-thumb:hover {
-    background: #9d6fd3;
-}
-
-.pattern-selector-container::-webkit-scrollbar-corner {
-    background: #6a4c93;
 }
 
 /* 确保网格内容正确显示 */
