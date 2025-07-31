@@ -101,11 +101,15 @@
             <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
           </div> -->
-            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip [nzTooltipTitle]="isWaiting?'停止':'发送'"
-              (click)="sendButtonClick()">
+            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip
+              [nzTooltipTitle]="isWaiting?'停止':'发送'" (click)="sendButtonClick()">
               @if(isWaiting){
-              <i class="fa-light fa-stop"></i>
-              <i class="fa-duotone fa-spinner-third"></i>
+              <div class="stop-box ccenter">
+                <i class="fa-light fa-stop"></i>
+              </div>
+              <div class="spinner-box ccenter">
+                <i class="fa-light fa-spinner-third"></i>
+              </div>
               }@else {
               <i class="fa-light fa-paper-plane"></i>
               }

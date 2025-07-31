@@ -1,0 +1,15 @@
+<div class="aily-board-viewer">
+  <div class="board-card">
+    <div class="img-box">
+      <img [src]="resourceUrl+'/imgs/boards/'+boardInfo?.img" />
+    </div>
+    <div class="text-box">
+      <div class="title">{{boardInfo?.nickname}}</div>
+      <div class="text ellipsis">该开发板带wifi、蓝牙和丰富的接口，适合物联网项目开发</div>
+    </div>
+    <div class="action-btns ccenter">
+      <div class="btn ccenter" (click)="viewBoardDetails()"><i class="fa-regular fa-book"></i></div>
+      <div class="btn ccenter" (click)="installBoard()"><i class="fa-regular fa-plus"></i></div>
+    </div>
+  </div>
+</div>
