@@ -89,9 +89,15 @@
         }
 
         blockquote {
-            padding: 0.5em 1em;
+            padding: 0 1em;
             border-left: 0.25em solid #ccc;
-            color: #666;
+            color: #999;
+
+            code {
+                padding: 0 5px;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                color: #ffbd08;
+            }
         }
 
         a {

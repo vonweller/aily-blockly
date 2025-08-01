@@ -1306,6 +1306,13 @@ ${errMsg}
       console.log('get history', res);
       if (res.status === 'success') {
         this.list = res.data;
+        this.list.unshift({
+          "role": "system",
+          "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦"
+        });
+
+        console.log('历史消息:', this.list);
+        
         this.scrollToBottom();
       } else {
         this.appendMessage('错误', res.message);
