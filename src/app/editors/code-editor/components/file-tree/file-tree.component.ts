@@ -6,6 +6,7 @@ import { FileService } from '../../file.service';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { CommonModule } from '@angular/common';
 import { BehaviorSubject } from 'rxjs';
+import { NzTreeNodeOptions } from 'ng-zorro-antd/tree';
 
 // 原始文件节点接口
 interface FileNode {
@@ -34,7 +35,7 @@ interface FlatFileNode {
 })
 export class FileTreeComponent implements OnInit {
 
-  @Input() rootPath:string;
+  @Input() rootPath: string;
   @Input() selectedFile;
   @Output() selectedFileChange = new EventEmitter();
 
@@ -61,7 +62,12 @@ export class FileTreeComponent implements OnInit {
   // 选择模型 - 用于跟踪选中的节点
   nodeSelection = new SelectionModel<FlatFileNode>();
 
-  // 树控件
+  // 树控件 - 使用 FlatTreeControl
+  // 注意：虽然 FlatTreeControl 在 Angular 19 中被标记为已弃用，
+  // 但 ng-zorro-antd 仍然需要它。我们需要等待 ng-zorro-antd 更新到新的 API。
+  // 这个弃用警告是暂时的，不会影响应用程序的运行。
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore - 已知的弃用警告，等待 ng-zorro-antd 更新
   treeControl = new FlatTreeControl<FlatFileNode>(
     node => node.level,
     node => node.expandable
@@ -80,17 +86,17 @@ export class FileTreeComponent implements OnInit {
 
   constructor(
     private fileService: FileService
-  ) { 
+  ) {
     this.dataChange.subscribe(data => this.dataSource.setData(data));
   }
 
   ngOnInit() {
-    this.loadFiles();
+    this.loadRootPath();
   }
 
-  loadFiles() {
-    // 从文件服务中读取文件
-    const files = this.fileService.readDir(this.rootPath);
+  loadRootPath(path = this.rootPath): void {
+    const files = this.fileService.readDir(path);
+    console.log('Loaded root path files:', files);
     this.dataChange.next(files as FileNode[]);
   }
 
@@ -98,16 +104,11 @@ export class FileTreeComponent implements OnInit {
   hasChild = (_: number, node: FlatFileNode): boolean => node.expandable;
 
   // 当节点被点击时
-  nodeClick(node: FlatFileNode): void {    
+  nodeClick(node: FlatFileNode): void {
     if (node.isLeaf) {
       this.openFile(node);
     } else {
-      // 切换展开状态
-      this.treeControl.toggle(node);
-      // 如果节点展开且没有子节点，则加载子节点
-      if (this.treeControl.isExpanded(node)) {
-        this.loadChildren(node);
-      }
+      this.openFolder(node);
     }
   }
 
@@ -116,30 +117,16 @@ export class FileTreeComponent implements OnInit {
     return this.dataChange.value;
   }
 
-  // 加载子节点
-  loadChildren(node: FlatFileNode): void {
-    // 获取当前原始数据
-    const currentData = [...this.getCurrentData()];
-    
-    // 查找原始数据中的节点
-    const findNode = (nodes: FileNode[], path: string): FileNode | null => {
-      for (const n of nodes) {
-        if (n.path === path) return n;
-        if (n.children) {
-          const found = findNode(n.children, path);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
+  openFolder(folder: FlatFileNode) {
+    // 如果是文件夹，展开或收起
+    if (this.treeControl.isExpanded(folder)) {
+      this.treeControl.collapse(folder);
+    } else {
+      this.treeControl.expand(folder);
+      // 加载子文件夹内容
+      const files = this.fileService.readDir(folder.path);
+      console.log('Loaded folder files:', files);
 
-    const originalNode = findNode(currentData, node.path);
-    
-    if (originalNode && (!originalNode.children || originalNode.children.length === 0)) {
-      // 加载子节点
-      originalNode.children = this.fileService.readDir(node.path) as FileNode[];
-      // 更新数据源
-      this.dataChange.next(currentData);
     }
   }
 
@@ -167,7 +154,7 @@ export class FileTreeComponent implements OnInit {
   refresh() {
     this.isLoading = true;
     setTimeout(() => {
-      this.loadFiles();
+      this.loadRootPath();
       this.isLoading = false;
     }, 1000);
   }
