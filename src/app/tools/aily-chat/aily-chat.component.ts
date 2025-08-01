@@ -680,18 +680,33 @@ export class AilyChatComponent implements OnDestroy {
           this.streamConnect();
           this.getHistory();
         } else {
-          this.appendMessage('错误', '启动会话失败: ' + (res.message || '未知错误'));
+          this.appendMessage('错误', `
+\`\`\`aily - error
+${res.message || '启动会话失败，请稍后重试。'}
+\`\`\`\n\n
+
+            `)
         }
       },
       error: (err) => {
         console.error('启动会话失败:', err);
+        let errMsg = '';
         if (err.status === 0) {
-          this.appendMessage('错误', '网络连接失败，请检查您的网络连接后重试。');
+          errMsg = '网络连接失败，请检查您的网络连接后重试。';
         } else if (err.status === 408 || err.statusText === 'timeout') {
-          this.appendMessage('错误', '连接超时，服务器可能暂时不可用，请稍后重试。');
+          errMsg = '连接超时，服务器可能暂时不可用，请稍后重试。';
+        } else if (err.status === 422) {
+          errMsg = 'Permission denied: 您没有权限执行此操作，请检查您的权限设置。';
         } else {
-          this.appendMessage('错误', '启动会话失败: ' + (err.message || '网络错误，请检查连接后重试。'));
+          errMsg = '启动会话失败: ' + (err.message || '网络错误，请检查连接后重试。');
         }
+
+        this.appendMessage('错误', `
+\`\`\`aily - error
+${errMsg}
+\`\`\`\n\n
+
+            `)
       }
     });
   }
@@ -1260,13 +1275,26 @@ export class AilyChatComponent implements OnDestroy {
           this.scrollToBottom();
 
         } catch (e) {
-          this.appendMessage('错误', '助手出错: ' + (e.message || '未知错误'));
+          console.error('处理流数据时出错:', e);
+          this.appendMessage('错误', `
+
+\`\`\`aily-error
+服务异常，请稍后重试。
+\`\`\`\n\n
+
+          `);
           this.isWaiting = false;
         }
       },
       error: (err) => {
         console.error('流连接出错:', err);
-        this.appendMessage('错误', '连接中断，请刷新页面重试');
+        this.appendMessage('错误', `
+
+\`\`\`aily-error
+连接中断。
+\`\`\`\n\n
+
+`);
       }
     });
   }
