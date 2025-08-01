@@ -623,10 +623,44 @@ export class AilyChatComponent implements OnDestroy {
     }, 100);
   }
 
-  close() {
-    // 关闭stream连接
-    this.closeSession();
-    this.uiService.closeTool('aily-chat');
+  async close() {
+    try {
+      // 先停止会话
+      if (this.sessionId) {
+        await new Promise<void>((resolve) => {
+          this.chatService.stopSession(this.sessionId).subscribe({
+            next: (res: any) => {
+              console.log('关闭时会话已停止:', res);
+              this.isWaiting = false;
+              resolve();
+            },
+            error: (err) => {
+              console.error('关闭时停止会话失败:', err);
+              resolve(); // 即使失败也继续
+            }
+          });
+        });
+        
+        // 然后关闭连接
+        await new Promise<void>((resolve) => {
+          this.chatService.closeSession(this.sessionId).subscribe({
+            next: (res: any) => {
+              console.log('关闭时会话连接已关闭:', res);
+              resolve();
+            },
+            error: (err) => {
+              console.error('关闭时关闭会话失败:', err);
+              resolve(); // 即使失败也继续
+            }
+          });
+        });
+      }
+    } catch (error) {
+      console.error('关闭会话过程中出错:', error);
+    } finally {
+      // 最后关闭工具窗口
+      this.uiService.closeTool('aily-chat');
+    }
   }
 
   ngAfterViewInit(): void {
@@ -787,6 +821,7 @@ ${errMsg}
         this.isWaiting = false;
         return;
       }
+      console.error('停止会话失败:', res);
     });
   }
 
@@ -1411,11 +1446,58 @@ ${errMsg}
     // }
   ]
 
-  newChat() {
+  async newChat() {
+    console.log('启动新会话');
     this.list = [];
-    this.chatService.currentSessionId = '';
-    this.closeSession();
-    this.startSession();
+    
+    try {
+      // 等待停止操作完成
+      await new Promise<void>((resolve) => {
+        if (!this.sessionId) {
+          resolve();
+          return;
+        }
+        
+        this.chatService.stopSession(this.sessionId).subscribe({
+          next: (res: any) => {
+            console.log('会话已停止:', res);
+            this.isWaiting = false;
+            resolve();
+          },
+          error: (err) => {
+            console.error('停止会话失败:', err);
+            resolve(); // 即使失败也继续
+          }
+        });
+      });
+      
+      // 等待关闭会话完成
+      await new Promise<void>((resolve) => {
+        if (!this.sessionId) {
+          resolve();
+          return;
+        }
+        
+        this.chatService.closeSession(this.sessionId).subscribe({
+          next: (res: any) => {
+            console.log('会话已关闭:', res);
+            resolve();
+          },
+          error: (err) => {
+            console.error('关闭会话失败:', err);
+            resolve(); // 即使失败也继续
+          }
+        });
+      });
+      
+      this.chatService.currentSessionId = '';
+      // 最后启动新会话
+      this.startSession();
+    } catch (error) {
+      console.error('重新启动会话失败:', error);
+      // 即使出错也尝试启动新会话
+      this.startSession();
+    }
   }
 
   selectContent: ResourceItem[] = []
@@ -1605,6 +1687,10 @@ ${errMsg}
     if (this.textMessageSubscription) {
       this.textMessageSubscription.unsubscribe();
     }
+
+    this.close().then(() => {
+      // 关闭后执行的逻辑
+    });
   }
 
   // 添加订阅管理
