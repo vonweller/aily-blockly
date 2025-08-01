@@ -47,17 +47,6 @@ export const TOOLS = [
         }
     },
     {
-        name: "ask_approval",
-        description: "向用户请求确认或批准某个操作。此工具用于需要用户确认的场景，确保用户明确同意后才进行后续操作。",
-        input_schema: {
-            type: 'object',
-            properties: {
-                message: { type: 'string', description: '消息描述' }
-            },
-            required: ['message']
-        }
-    },
-    {
         name: "get_context",
         description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
         input_schema: {
