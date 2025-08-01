@@ -1,7 +1,6 @@
 import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
-import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 
 export interface AilyStateData {
@@ -20,7 +19,6 @@ export interface AilyStateData {
   imports: [
     CommonModule,
     NzSpinModule,
-    NzIconModule,
     NzProgressModule
   ],
   templateUrl: './aily-state-viewer.component.html',

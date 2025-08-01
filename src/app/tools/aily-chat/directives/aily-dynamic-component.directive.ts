@@ -14,6 +14,7 @@ import { AilyBoardViewerComponent } from '../components/aily-board-viewer/aily-b
 import { AilyLibraryViewerComponent } from '../components/aily-library-viewer/aily-library-viewer.component';
 import { AilyStateViewerComponent } from '../components/aily-state-viewer/aily-state-viewer.component';
 import { AilyButtonViewerComponent } from '../components/aily-button-viewer/aily-button-viewer.component';
+import { AilyErrorViewerComponent } from '../components/aily-error-viewer/aily-error-viewer.component';
 import { safeBase64Decode } from '../pipes/markdown.pipe';
 
 /**
@@ -92,7 +93,9 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
         this.showErrorPlaceholder(placeholder, error);
       }
     });
-  }  /**
+  }
+
+  /**
    * 替换占位符为真正的组件
    */
   private replacePlaceholderWithComponent(placeholder: HTMLElement): void {
@@ -119,10 +122,9 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
 
     // 对于 aily-state 组件，检查是否已存在相同 ID 的组件
     if (ailyType === 'aily-state' && componentData.id) {
-      // console.log('查找现有的 aily-state 组件:', componentData.id);
       const existingComponent = this.findExistingStateComponent(componentData.id);
       if (existingComponent) {
-        // console.log('组件已存在, 更新数据:', componentData.id);        // 更新现有组件数据
+        // 更新现有组件数据
         this.updateExistingComponent(existingComponent, componentData);
         // 移除占位符的父级元素
         try {
@@ -173,7 +175,9 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
     this.componentRefs.push(componentRef);
 
     console.log(`Successfully created ${ailyType} component:`, componentData);
-  }/**
+  }
+
+  /**
    * 获取组件类型
    */
   private getComponentType(ailyType: string): Type<any> | null {
@@ -188,6 +192,8 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
         return AilyStateViewerComponent;
       case 'aily-button':
         return AilyButtonViewerComponent;
+      case 'aily-error':
+        return AilyErrorViewerComponent;
       default:
         return null;
     }

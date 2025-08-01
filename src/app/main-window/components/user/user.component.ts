@@ -7,7 +7,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { AuthService, LoginRequest, RegisterRequest } from '../../../services/auth.service';
 import { Subject, takeUntil } from 'rxjs';
-import { SHA256 } from 'crypto-js';
+import sha256 from 'crypto-js/sha256';
 
 @Component({
   selector: 'app-user',
@@ -100,7 +100,7 @@ export class UserComponent implements OnInit, OnDestroy, AfterViewInit {
     try {
       const loginData: LoginRequest = {
         username: this.userInfo.username,
-        password: SHA256(this.userInfo.password).toString()
+        password: sha256(this.userInfo.password).toString()
       };
 
       this.authService.login(loginData).subscribe({
