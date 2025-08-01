@@ -50,7 +50,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private mermaidEventListener: (event: CustomEvent) => void;
   private lastContentLength = 0; // 跟踪上次处理的内容长度
   private lastProcessedContent = ''; // 跟踪上次处理的完整内容
-  private lastRenderTime = 0; // 跟踪上次渲染的时间
   private renderTimeout: any; // 渲染超时定时器
 
   @ViewChild('contentDiv', { static: true }) contentDiv!: ElementRef<HTMLDivElement>;
@@ -111,6 +110,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
     // 获取新增的内容
     const newContent = currentContent.slice(this.lastContentLength);
+    console.log('Processing new content:', newContent);
     
     if (newContent.length > 0) {
       try {
@@ -345,7 +345,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private updateRenderState(content: string): void {
     this.lastContentLength = content.length;
     this.lastProcessedContent = content;
-    this.lastRenderTime = Date.now();
     this.loaded = true;
     
     // 触发重新初始化

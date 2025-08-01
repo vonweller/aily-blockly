@@ -443,40 +443,9 @@ export class MarkdownPipe implements PipeTransform {
       return `<div class="aily-code-block-placeholder" 
                    data-aily-type="${type}" 
                    data-aily-data="${encodedData}" 
-                   data-component-id="${componentId}"
-                   style="
-                     border: 1px solid #d9d9d9;
-                     border-radius: 6px;
-                     margin: 12px 0;
-                     background-color: #fafafa;
-                     padding: 16px;
-                     text-align: center;
-                   ">
-        <!-- Aily ${type} Component Placeholder -->
-        <div class="loading-placeholder" style="
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 8px;
-          color: #666;
-        ">
-          <div class="loading-spinner" style="
-            width: 20px;
-            height: 20px;
-            border: 2px solid #f0f0f0;
-            border-top: 2px solid #1890ff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-          "></div>
-          <span style="font-size: 14px;">正在加载 ${type} 组件...</span>
-          <style>
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          </style>
-        </div>
-      </div>`;
+                   data-component-id="${componentId}">
+                  <!-- Aily ${type} Component Placeholder -->
+              </div>`;
     } catch (error) {
       console.error(`Error preparing ${type} component:`, error);
       return this.renderFallbackCodeBlock(code, type, error);

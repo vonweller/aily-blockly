@@ -118,18 +118,18 @@ export class AilyChatComponent implements OnDestroy {
    */
   getLastFolderName(path: string): string {
     if (!path) return '';
-    
+
     // 标准化路径分隔符（处理Windows和Unix路径）
     const normalizedPath = path.replace(/\\/g, '/');
-    
+
     // 移除末尾的斜杠
-    const trimmedPath = normalizedPath.endsWith('/') 
-      ? normalizedPath.slice(0, -1) 
+    const trimmedPath = normalizedPath.endsWith('/')
+      ? normalizedPath.slice(0, -1)
       : normalizedPath;
-    
+
     // 分割路径并获取最后一个非空元素
     const parts = trimmedPath.split('/').filter(Boolean);
-    
+
     return parts.length > 0 ? parts[parts.length - 1] : '';
   }
 
@@ -140,10 +140,10 @@ export class AilyChatComponent implements OnDestroy {
    */
   getFileName(path: string): string {
     if (!path) return '';
-    
+
     // 标准化路径分隔符（处理Windows和Unix路径）
     const normalizedPath = path.replace(/\\/g, '/');
-    
+
     // 获取路径的最后一部分（文件名）
     const parts = normalizedPath.split('/');
     return parts.length > 0 ? parts[parts.length - 1] : '';
@@ -260,7 +260,7 @@ export class AilyChatComponent implements OnDestroy {
           message: { type: 'string', description: '消息描述' }
         },
         required: ['message']
-      } 
+      }
     },
     {
       name: "get_context",
@@ -440,8 +440,8 @@ export class AilyChatComponent implements OnDestroy {
             type: 'string',
             description: '要检查的路径'
           },
-          type: { 
-            type: 'string', 
+          type: {
+            type: 'string',
             description: '期望的类型：file(文件)、folder(文件夹)或any(任意类型)',
             enum: ['file', 'folder', 'any'],
             default: 'any'
@@ -731,12 +731,12 @@ export class AilyChatComponent implements OnDestroy {
         return;
       }
     }
-    
+
     if (show) {
       this.appendMessage('user', text);
       this.isWaiting = true;
     }
-    
+
     this.inputValue = '';
 
     if (this.isUserInputRequired) {
@@ -775,7 +775,7 @@ export class AilyChatComponent implements OnDestroy {
 
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
-        console.log("收到消息: ", data);
+        // console.log("收到消息: ", data);
         // Replace "to_user" with empty string in data.data if it exists
         if (data.data && typeof data.data === 'string') {
           data.data = data.data.replace(/to_user/g, '');
@@ -1400,10 +1400,10 @@ export class AilyChatComponent implements OnDestroy {
       // 将选中的文件添加到资源数组中
       selectedPaths.forEach(path => {
         // 检查是否已经存在
-        const exists = this.selectContent.some(item => 
+        const exists = this.selectContent.some(item =>
           item.type === 'file' && item.path === path
         );
-        
+
         if (!exists) {
           const fileName = path.split(/[/\\]/).pop() || path;
           this.selectContent.push({
@@ -1433,10 +1433,10 @@ export class AilyChatComponent implements OnDestroy {
       const selectedPath = result.filePaths[0];
 
       // 检查是否已经存在
-      const exists = this.selectContent.some(item => 
+      const exists = this.selectContent.some(item =>
         item.type === 'folder' && item.path === selectedPath
       );
-      
+
       if (!exists) {
         const folderName = selectedPath.split(/[/\\]/).pop() || selectedPath;
         this.selectContent.push({
@@ -1459,10 +1459,10 @@ export class AilyChatComponent implements OnDestroy {
     const url = prompt('请输入URL地址:');
     if (url && url.trim()) {
       // 检查是否已经存在
-      const exists = this.selectContent.some(item => 
+      const exists = this.selectContent.some(item =>
         item.type === 'url' && item.url === url.trim()
       );
-      
+
       if (!exists) {
         try {
           const urlObj = new URL(url.trim());
