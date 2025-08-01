@@ -560,33 +560,39 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
-    if (options?.type === 'tool') {
-      // 判断是否是 JSON 格式的字符串
-      try {
-        const parsedText = JSON.parse(text);
-        // 判断是否包含id字段，有则提取id
-        if (parsedText && typeof parsedText === 'object' && parsedText.id) {
-          // 提取id
-          const id = parsedText.id;
+    // if (options?.type === 'tool') {
+    //   // 判断是否是 JSON 格式的字符串
+    //   try {
+    //     const parsedText = JSON.parse(text);
+    //     // 判断是否包含id字段，有则提取id
+    //     if (parsedText && typeof parsedText === 'object' && parsedText.id) {
+    //       // 提取id
+    //       const id = parsedText.id;
 
-          this.inputValue = JSON.stringify({
-            "type": "tool_result",
-            "tool_id": id,
-            "content": parsedText.text,
-            "is_error": false
-          })
-          this.send(false, true);
-          return;
-        } else {
-          // 否则保持原样
-          text = JSON.stringify(parsedText, null, 2);
-        }
-      } catch (e) {
-        // 如果解析失败，说明不是JSON格式的字符串
-        // 保持原样
-        console.warn('接收到的文本不是有效的JSON格式:', text);
-        return;
-      }
+    //       this.inputValue = JSON.stringify({
+    //         "type": "tool_result",
+    //         "tool_id": id,
+    //         "content": parsedText.text,
+    //         "is_error": false
+    //       })
+    //       this.send(false, true);
+    //       return;
+    //     } else {
+    //       // 否则保持原样
+    //       text = JSON.stringify(parsedText, null, 2);
+    //     }
+    //   } catch (e) {
+    //     // 如果解析失败，说明不是JSON格式的字符串
+    //     // 保持原样
+    //     console.warn('接收到的文本不是有效的JSON格式:', text);
+    //     return;
+    //   }
+    // }
+
+    if (options?.type === 'button') {
+      this.inputValue = text;
+      this.send(false);
+      return;
     }
 
     // cover 默认为 true，只有明确设置为 false 时才追加
