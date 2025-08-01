@@ -72,13 +72,13 @@ export class AuthService {
       const token = await this.getToken2();
       // const userInfo = await this.getUserInfo();
 
-      console.log('初始化认证状态:', { token });
+      // console.log('初始化认证状态:', { token });
       
       if (token) {
         // 延迟执行避免循环依赖
         setTimeout(() => {
           this.getMe(token).then(userInfo => {
-            console.log('获取用户信息:', userInfo);
+            // console.log('获取用户信息:', userInfo);
             if (userInfo) {
               this.userInfoSubject.next(userInfo);
               this.isLoggedInSubject.next(true);
@@ -113,9 +113,9 @@ export class AuthService {
   login(loginData: LoginRequest): Observable<LoginResponse> {
     return this.http.post<LoginResponse>(API.login, loginData).pipe(
       map((response) => {
-        console.log("登录响应: ", response);
+        // console.log("登录响应: ", response);
         if (response.status === 200 && response.data) {
-          console.log("登录成功，token: ", response.data.access_token);
+          // console.log("登录成功，token: ", response.data.access_token);
           // 保存 token 和用户信息
           this.saveToken2(response.data.access_token);
           if (response.data.user) {
@@ -291,11 +291,11 @@ export class AuthService {
         
         // 写入文件
         (window as any).electronAPI.fs.writeFileSync(authFilePath, JSON.stringify(authData, null, 2));
-        console.log('Token已保存到:', authFilePath);
+        // console.log('Token已保存到:', authFilePath);
       } else {
         // 降级到localStorage（开发环境或不支持electron）
         localStorage.setItem('aily_auth_token', token);
-        console.log('Token已保存到localStorage（降级方案）');
+        // console.log('Token已保存到localStorage（降级方案）');
       }
     } catch (error) {
       console.error('保存token到.aily文件失败:', error);
@@ -304,24 +304,19 @@ export class AuthService {
   }
 
   async getToken2(): Promise<string | null> {
-    console.log('获取token2');
-    console.log('electronService.isElectron:', this.electronService.isElectron);
-    console.log('window.electronAPI:', (window as any).electronAPI);
-    
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
-        console.log('使用Electron文件系统模式');
         // 获取AppData路径
         const appDataPath = (window as any).electronAPI.path.getAppData();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
         
         // 检查文件是否存在
         if ((window as any).electronAPI.fs.existsSync(authFilePath)) {
-          console.log('认证文件存在，正在读取...');
+          // console.log('认证文件存在，正在读取...');
           const content = (window as any).electronAPI.fs.readFileSync(authFilePath, 'utf8');
           const authData = JSON.parse(content);
 
-          console.log('authData: ', authData);
+          // console.log('authData: ', authData);
 
           return authData.access_token;
 
@@ -345,10 +340,10 @@ export class AuthService {
           return null;
         }
       } else {
-        console.log('使用localStorage降级模式');
-        console.log('electronService.isElectron:', this.electronService.isElectron);
-        console.log('electronAPI.path:', (window as any).electronAPI?.path);
-        console.log('electronAPI.fs:', (window as any).electronAPI?.fs);
+        // console.log('使用localStorage降级模式');
+        // console.log('electronService.isElectron:', this.electronService.isElectron);
+        // console.log('electronAPI.path:', (window as any).electronAPI?.path);
+        // console.log('electronAPI.fs:', (window as any).electronAPI?.fs);
         // 降级到localStorage（开发环境或不支持electron）
         return localStorage.getItem('aily_auth_token');
       }

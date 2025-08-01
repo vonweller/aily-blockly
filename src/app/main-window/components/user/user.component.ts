@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, Input, Output, EventEmitter, inject, OnInit, OnDestroy } from '@angular/core';
+import { Component, Input, Output, EventEmitter, inject, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -21,7 +21,9 @@ import { SHA256 } from 'crypto-js';
   templateUrl: './user.component.html',
   styleUrl: './user.component.scss'
 })
-export class UserComponent implements OnInit, OnDestroy {
+export class UserComponent implements OnInit, OnDestroy, AfterViewInit {
+
+  @ViewChild('menuBox') menuBox: ElementRef;
 
   @Input() position = {
     x: 0,
@@ -63,10 +65,29 @@ export class UserComponent implements OnInit, OnDestroy {
       });
   }
 
+  ngAfterViewInit(): void {
+    document.addEventListener('click', this.handleDocumentClick);
+    document.addEventListener('contextmenu', this.handleDocumentClick);
+  }
+
   ngOnDestroy() {
     this.destroy$.next();
     this.destroy$.complete();
+    document.removeEventListener('click', this.handleDocumentClick);
+    document.removeEventListener('contextmenu', this.handleDocumentClick);
   }
+
+  handleDocumentClick = (event: MouseEvent) => {
+    event.preventDefault();
+    const target = event.target as Node;
+
+    // 检查点击是否在用户组件内
+    const isClickInUserBox = this.menuBox && this.menuBox.nativeElement.contains(target);
+
+    if (!isClickInUserBox) {
+      this.closeEvent.emit();
+    }
+  };
 
   async onLogin() {
     if (!this.userInfo.username || !this.userInfo.password) {
