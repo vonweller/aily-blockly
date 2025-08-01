@@ -12,6 +12,7 @@ interface ProjectInfo {
     rootFolder?: string;
     opened?: boolean;
     appDataPath?: string;
+    blocklylibrariesPath?: string;
 }
 
 interface PlatformInfo {
@@ -39,6 +40,7 @@ interface GetContextResult {
     platform?: PlatformInfo;
     system?: SystemInfo;
     editingMode?: EditingMode;
+    readme?: string;
 }
 
 /**
@@ -59,6 +61,26 @@ export async function getContextTool(prjService: ProjectService, input: GetConte
         if (info_type === 'all' || info_type === 'editingMode') {
             result.editingMode = getEditingMode();
         }
+
+        result.readme = `
+## 上下文信息字段说明
+
+### project (项目信息)
+- **path**: 当前项目的相对路径
+- **name**: 项目名称（从 package.json 读取）
+- **rootFolder**: 项目根文件夹名称
+- **opened**: 是否有项目被打开
+- **appDataPath**: 应用数据存储路径
+- **blocklylibrariesPath**: Blockly 库路径（如果存在）
+- **dependencies**: 项目依赖包（从 package.json 读取）
+- **boardDependencies**: 开发板相关依赖（从 package.json 读取）
+
+### editingMode (编辑模式)
+- **mode**: 当前编辑模式
+  - 'blockly': 积木编程模式
+  - 'code': 代码编程模式
+  - 'unknown': 未知模式
+`;
     } catch (error) {
         console.error('Error getting context information:', error);
     }
@@ -80,6 +102,7 @@ async function getProjectInfo(projectService): Promise<ProjectInfo> {
             rootFolder: prjRootPath || '',
             opened: !!currentProjectPath,
             appDataPath: window['appDataPath'] || '',
+            blocklylibrariesPath: window["path"].join(window['appDataPath'], 'libraries')
         };
         
         // If current project path is empty, return early

@@ -264,14 +264,14 @@ export class AilyChatComponent implements OnDestroy {
     // },
     {
       name: "get_context",
-      description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
+      description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。`,
       input_schema: {
         type: 'object',
         properties: {
           info_type: {
             type: 'string',
             description: '要获取的上下文信息类型',
-            enum: ['all', 'project', 'platform', 'system'],
+            enum: ['all'],
             default: 'all'
           }
         },
