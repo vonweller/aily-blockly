@@ -119,10 +119,10 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
 
     // 对于 aily-state 组件，检查是否已存在相同 ID 的组件
     if (ailyType === 'aily-state' && componentData.id) {
-      console.log('查找现有的 aily-state 组件:', componentData.id);
+      // console.log('查找现有的 aily-state 组件:', componentData.id);
       const existingComponent = this.findExistingStateComponent(componentData.id);
       if (existingComponent) {
-        console.log('组件已存在, 更新数据:', componentData.id);        // 更新现有组件数据
+        // console.log('组件已存在, 更新数据:', componentData.id);        // 更新现有组件数据
         this.updateExistingComponent(existingComponent, componentData);
         // 移除占位符的父级元素
         try {

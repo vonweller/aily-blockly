@@ -488,7 +488,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private scheduleDelayedRender(fullContent: string): void {
     this.renderTimeout = setTimeout(async () => {
       await this.renderContent(fullContent);
-    }, 1000);
+    }, 500);
   }
 
   /**
