@@ -55,6 +55,7 @@ export interface ResourceItem {
 import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
+import { AuthService } from '../../services/auth.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -99,6 +100,7 @@ export class AilyChatComponent implements OnDestroy {
   windowInfo = 'AI助手';
 
   private textMessageSubscription: Subscription;
+  private loginStatusSubscription: Subscription;
 
   get sessionId() {
     return this.chatService.currentSessionId;
@@ -233,7 +235,8 @@ export class AilyChatComponent implements OnDestroy {
     private fetchToolService: FetchToolService,
     private chatCommunicationService: ChatCommunicationService,
     private router: Router,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private authService: AuthService
   ) { }
 
   ngOnInit() {
@@ -253,7 +256,15 @@ export class AilyChatComponent implements OnDestroy {
       }
     );
 
-    
+    // 订阅登录状态变化
+    this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
+      isLoggedIn => {
+        if (isLoggedIn) {
+          // 当用户登录后，自动创建新的聊天会话
+          this.newChat();
+        }
+      }
+    );
   }
 
   /**
@@ -1294,6 +1305,10 @@ ${JSON.stringify(errData)}
     }
     if (this.textMessageSubscription) {
       this.textMessageSubscription.unsubscribe();
+    }
+    // 清理登录状态订阅
+    if (this.loginStatusSubscription) {
+      this.loginStatusSubscription.unsubscribe();
     }
   }
 
