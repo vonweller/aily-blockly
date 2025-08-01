@@ -7,6 +7,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { AuthService, LoginRequest, RegisterRequest } from '../../../services/auth.service';
 import { Subject, takeUntil } from 'rxjs';
+import { SHA256 } from 'crypto-js';
 
 @Component({
   selector: 'app-user',
@@ -78,12 +79,12 @@ export class UserComponent implements OnInit, OnDestroy {
     try {
       const loginData: LoginRequest = {
         username: this.userInfo.username,
-        password: this.userInfo.password
+        password: SHA256(this.userInfo.password).toString()
       };
 
       this.authService.login(loginData).subscribe({
         next: (response) => {
-          if (response.success) {
+          if (response.status === 200 && response.data) {
             this.message.success('登录成功');
             this.closeEvent.emit();
           } else {

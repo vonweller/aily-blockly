@@ -26,7 +26,7 @@ export class AppComponent implements OnInit {
     await this.configService.init();
     await this.translationService.init();
     
-    // 认证服务会自动初始化，无需手动调用
-    console.log('应用初始化完成，认证状态:', this.authService.isAuthenticated);
+    // 在ElectronService初始化完成后再初始化认证服务
+    await this.authService.initializeAuth();
   }
 }
