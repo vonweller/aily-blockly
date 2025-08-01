@@ -51,7 +51,7 @@ export class AuthService {
 
   private http = inject(HttpClient);
   private electronService = inject(ElectronService);
-  
+
   // 用户登录状态
   private isLoggedInSubject = new BehaviorSubject<boolean>(false);
   public isLoggedIn$ = this.isLoggedInSubject.asObservable();
@@ -59,6 +59,9 @@ export class AuthService {
   // 用户信息
   private userInfoSubject = new BehaviorSubject<any>(null);
   public userInfo$ = this.userInfoSubject.asObservable();
+
+  // 登录弹窗显示状态
+  showUser = new BehaviorSubject<any>(null);
 
   constructor() {
     // 不在构造函数中立即初始化，等待ElectronService初始化完成
@@ -73,7 +76,7 @@ export class AuthService {
       // const userInfo = await this.getUserInfo();
 
       // console.log('初始化认证状态:', { token });
-      
+
       if (token) {
         // 延迟执行避免循环依赖
         setTimeout(() => {
@@ -261,7 +264,7 @@ export class AuthService {
         // 获取AppData路径
         const appDataPath = (window as any).electronAPI.path.getAppData();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
-        
+
         // 读取现有文件内容或创建新的
         let authData: any = {};
         if ((window as any).electronAPI.fs.existsSync(authFilePath)) {
@@ -273,7 +276,7 @@ export class AuthService {
             authData = {};
           }
         }
-        
+
         // 加密token（如果支持safeStorage）
         let encryptedToken = token;
         if ((window as any).electronAPI?.safeStorage) {
@@ -284,11 +287,11 @@ export class AuthService {
             console.warn('token加密失败，使用明文存储:', error);
           }
         }
-        
+
         // 更新token
         authData.access_token = encryptedToken;
         authData.updated_at = new Date().toISOString();
-        
+
         // 写入文件
         (window as any).electronAPI.fs.writeFileSync(authFilePath, JSON.stringify(authData, null, 2));
         // console.log('Token已保存到:', authFilePath);
@@ -309,7 +312,7 @@ export class AuthService {
         // 获取AppData路径
         const appDataPath = (window as any).electronAPI.path.getAppData();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
-        
+
         // 检查文件是否存在
         if ((window as any).electronAPI.fs.existsSync(authFilePath)) {
           // console.log('认证文件存在，正在读取...');
@@ -320,21 +323,21 @@ export class AuthService {
 
           return authData.access_token;
 
-        //   // 解密token（如果支持safeStorage）
-        //   if ((window as any).electronAPI?.safeStorage) {
-        //     try {
-        //       console.log('使用safeStorage解密token');
-        //       const buffer = Buffer.from(authData.access_token, 'base64');
-        //       return (window as any).electronAPI.safeStorage.decryptString(buffer);
-        //     } catch (error) {
-        //       console.error('Token解密失败:', error);
-        //       return null;
-        //     }
-        //   } else {
-        //     // 降级到直接返回（开发环境或不支持safeStorage）
-        //     console.log('直接返回未加密的token');
-        //     return authData.access_token;
-        //   }
+          //   // 解密token（如果支持safeStorage）
+          //   if ((window as any).electronAPI?.safeStorage) {
+          //     try {
+          //       console.log('使用safeStorage解密token');
+          //       const buffer = Buffer.from(authData.access_token, 'base64');
+          //       return (window as any).electronAPI.safeStorage.decryptString(buffer);
+          //     } catch (error) {
+          //       console.error('Token解密失败:', error);
+          //       return null;
+          //     }
+          //   } else {
+          //     // 降级到直接返回（开发环境或不支持safeStorage）
+          //     console.log('直接返回未加密的token');
+          //     return authData.access_token;
+          //   }
         } else {
           console.warn('认证文件不存在:', authFilePath);
           return null;
@@ -362,7 +365,7 @@ export class AuthService {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         const appDataPath = (window as any).electronAPI.path.getAppData();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
-        
+
         // 删除.aily文件
         if ((window as any).electronAPI.fs.existsSync(authFilePath)) {
           (window as any).electronAPI.fs.unlinkSync(authFilePath);
@@ -476,7 +479,7 @@ export class AuthService {
       if (!refreshToken) return false;
 
       const response = await this.http.post<CommonResponse>(
-        API.refreshToken, 
+        API.refreshToken,
         { refreshToken }
       ).toPromise();
 

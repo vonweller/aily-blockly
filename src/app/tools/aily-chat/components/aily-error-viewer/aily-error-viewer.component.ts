@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
+import { AuthService } from '../../../../services/auth.service';
+import { Subject, takeUntil } from 'rxjs';
 
 export interface AilyErrorData {
     type: 'aily-error';
@@ -34,12 +36,16 @@ export class AilyErrorViewerComponent implements OnInit, OnDestroy {
     status;
     message;
 
+
+    constructor(
+        private authService: AuthService
+    ) { }
+
     ngOnInit() {
         this.processData();
     }
 
     ngOnDestroy() {
-        // 清理资源
     }
 
     /**
@@ -59,6 +65,10 @@ export class AilyErrorViewerComponent implements OnInit, OnDestroy {
             this.status = this.data.error.status
             this.message = this.data.error.message
         }
+    }
+
+    login() {
+        this.authService.showUser.next(true);
     }
 
 }
