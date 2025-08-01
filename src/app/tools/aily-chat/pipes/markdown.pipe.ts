@@ -352,7 +352,7 @@ export class MarkdownPipe implements PipeTransform {
    * 检查是否为特殊的 Aily 代码块类型
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error'];
     return ailyTypes.includes(lang);
   }/**
    * 渲染 Aily 特殊代码块为组件占位符
@@ -442,6 +442,19 @@ export class MarkdownPipe implements PipeTransform {
             progress: jsonData.progress,
             metadata: jsonData.metadata || {}
           };
+        case 'aily-error':
+          return {
+            type: 'aily-error',
+            error: jsonData.error || jsonData,
+            message: jsonData.message || jsonData.error?.message,
+            code: jsonData.code || jsonData.error?.code,
+            details: jsonData.details || jsonData.error?.details,
+            stack: jsonData.stack || jsonData.error?.stack,
+            timestamp: jsonData.timestamp || new Date().toISOString(),
+            severity: this.validateErrorSeverity(jsonData.severity || jsonData.error?.severity),
+            category: jsonData.category || jsonData.error?.category,
+            metadata: jsonData.metadata || {}
+          };
         case 'aily-button':
           return {
             type: 'aily-button',
@@ -517,6 +530,14 @@ export class MarkdownPipe implements PipeTransform {
       icon: libraryData.icon || 'fa-light fa-cube',
       ...libraryData
     };
+  }
+
+  /**
+   * 验证错误严重程度
+   */
+  private validateErrorSeverity(severity: any): 'error' | 'warning' | 'info' {
+    const validSeverities = ['error', 'warning', 'info'];
+    return validSeverities.includes(severity) ? severity : 'error';
   }
 
   transform(value: any, ...args: any[]): Observable<SafeHtml> {

@@ -681,7 +681,7 @@ export class AilyChatComponent implements OnDestroy {
           this.getHistory();
         } else {
           this.appendMessage('错误', `
-\`\`\`aily - error
+\`\`\`aily-error
 ${res.message || '启动会话失败，请稍后重试。'}
 \`\`\`\n\n
 
@@ -690,22 +690,14 @@ ${res.message || '启动会话失败，请稍后重试。'}
       },
       error: (err) => {
         console.error('启动会话失败:', err);
-        let errMsg = '';
-        if (err.status === 0) {
-          errMsg = '网络连接失败，请检查您的网络连接后重试。';
-        } else if (err.status === 408 || err.statusText === 'timeout') {
-          errMsg = '连接超时，服务器可能暂时不可用，请稍后重试。';
-        } else if (err.status === 422) {
-          errMsg = 'Permission denied: 您没有权限执行此操作，请检查您的权限设置。';
-        } else {
-          errMsg = '启动会话失败: ' + (err.message || '网络错误，请检查连接后重试。');
+        let errData = {
+          status: err.status,
+          message: err.message
         }
-
-        this.appendMessage('错误', `
-\`\`\`aily - error
-${errMsg}
+        this.appendMessage('error', `
+\`\`\`aily-error
+${JSON.stringify(errData)}
 \`\`\`\n\n
-
             `)
       }
     });
@@ -1312,7 +1304,7 @@ ${errMsg}
         });
 
         console.log('历史消息:', this.list);
-        
+
         this.scrollToBottom();
       } else {
         this.appendMessage('错误', res.message);
