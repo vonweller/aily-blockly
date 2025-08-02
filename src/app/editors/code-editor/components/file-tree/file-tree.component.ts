@@ -1,11 +1,13 @@
 import { Component, EventEmitter, Input, Output, OnInit } from '@angular/core';
+import { CollectionViewer, DataSource, SelectionChange } from '@angular/cdk/collections';
 import { FlatTreeControl } from '@angular/cdk/tree';
 import { SelectionModel } from '@angular/cdk/collections';
-import { NzTreeFlatDataSource, NzTreeFlattener, NzTreeViewModule } from 'ng-zorro-antd/tree-view';
+import { NzTreeViewModule } from 'ng-zorro-antd/tree-view';
 import { FileService } from '../../file.service';
 import { SimplebarAngularModule } from 'simplebar-angular';
 import { CommonModule } from '@angular/common';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Observable, merge } from 'rxjs';
+import { map, tap } from 'rxjs/operators';
 
 // 原始文件节点接口
 interface FileNode {
@@ -24,6 +26,101 @@ interface FlatFileNode {
   key: string;
   isLeaf: boolean;
   path: string;
+  loading?: boolean;
+}
+
+// 动态数据源类
+class DynamicFileDataSource implements DataSource<FlatFileNode> {
+  private flattenedData: BehaviorSubject<FlatFileNode[]>;
+  private childrenLoadedSet = new Set<FlatFileNode>();
+
+  constructor(
+    private treeControl: FlatTreeControl<FlatFileNode>,
+    private fileService: FileService,
+    initData: FlatFileNode[]
+  ) {
+    this.flattenedData = new BehaviorSubject<FlatFileNode[]>(initData);
+    treeControl.dataNodes = initData;
+  }
+
+  connect(collectionViewer: CollectionViewer): Observable<FlatFileNode[]> {
+    const changes = [
+      collectionViewer.viewChange,
+      this.treeControl.expansionModel.changed.pipe(tap(change => this.handleExpansionChange(change))),
+      this.flattenedData.asObservable()
+    ];
+    return merge(...changes).pipe(map(() => this.expandFlattenedNodes(this.flattenedData.getValue())));
+  }
+
+  expandFlattenedNodes(nodes: FlatFileNode[]): FlatFileNode[] {
+    const treeControl = this.treeControl;
+    const results: FlatFileNode[] = [];
+    const currentExpand: boolean[] = [];
+    currentExpand[0] = true;
+
+    nodes.forEach(node => {
+      let expand = true;
+      for (let i = 0; i <= treeControl.getLevel(node); i++) {
+        expand = expand && currentExpand[i];
+      }
+      if (expand) {
+        results.push(node);
+      }
+      if (treeControl.isExpandable(node)) {
+        currentExpand[treeControl.getLevel(node) + 1] = treeControl.isExpanded(node);
+      }
+    });
+    return results;
+  }
+
+  handleExpansionChange(change: SelectionChange<FlatFileNode>): void {
+    if (change.added) {
+      change.added.forEach(node => this.loadChildren(node));
+    }
+  }
+
+  loadChildren(node: FlatFileNode): void {
+    if (this.childrenLoadedSet.has(node)) {
+      return;
+    }
+    node.loading = true;
+    
+    // 使用 fileService 加载子文件夹内容
+    const children = this.fileService.readDir(node.path);
+    const flatChildren: FlatFileNode[] = children.map(child => ({
+      expandable: !child.isLeaf,
+      title: child.title,
+      level: node.level + 1,
+      key: child.key,
+      isLeaf: child.isLeaf,
+      path: child['path']
+    }));
+
+    node.loading = false;
+    const flattenedData = this.flattenedData.getValue();
+    const index = flattenedData.indexOf(node);
+    if (index !== -1) {
+      flattenedData.splice(index + 1, 0, ...flatChildren);
+      this.childrenLoadedSet.add(node);
+    }
+    this.flattenedData.next(flattenedData);
+  }
+
+  disconnect(): void {
+    this.flattenedData.complete();
+  }
+
+  // 更新根数据
+  setRootData(data: FlatFileNode[]): void {
+    this.childrenLoadedSet.clear();
+    this.flattenedData.next(data);
+    this.treeControl.dataNodes = data;
+  }
+
+  // 获取当前数据
+  getCurrentData(): FlatFileNode[] {
+    return this.flattenedData.getValue();
+  }
 }
 
 @Component({
@@ -34,13 +131,11 @@ interface FlatFileNode {
 })
 export class FileTreeComponent implements OnInit {
 
-  @Input() rootPath:string;
+  @Input() rootPath: string;
   @Input() selectedFile;
   @Output() selectedFileChange = new EventEmitter();
 
   isLoading = false;
-  // 维护一个数据副本
-  private dataChange = new BehaviorSubject<FileNode[]>([]);
 
   options = {
     autoHide: true,
@@ -48,102 +143,76 @@ export class FileTreeComponent implements OnInit {
     scrollbarMinSize: 50,
   };
 
-  // 转换器 - 将原始节点转换为扁平节点
-  private transformer = (node: FileNode, level: number): FlatFileNode => ({
-    expandable: !node.isLeaf,
-    title: node.title,
-    level,
-    key: node.key,
-    isLeaf: node.isLeaf,
-    path: node.path
-  });
-
   // 选择模型 - 用于跟踪选中的节点
   nodeSelection = new SelectionModel<FlatFileNode>();
 
-  // 树控件
+  // 树控件 - 使用 FlatTreeControl
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore - 已知的弃用警告，等待 ng-zorro-antd 更新
   treeControl = new FlatTreeControl<FlatFileNode>(
     node => node.level,
     node => node.expandable
   );
 
-  // 树扁平化器
-  treeFlattener = new NzTreeFlattener(
-    this.transformer,
-    node => node.level,
-    node => node.expandable,
-    node => node.children
-  );
-
-  // 数据源
-  dataSource = new NzTreeFlatDataSource(this.treeControl, this.treeFlattener);
+  // 动态数据源
+  dataSource: DynamicFileDataSource;
 
   constructor(
     private fileService: FileService
-  ) { 
-    this.dataChange.subscribe(data => this.dataSource.setData(data));
+  ) {
+    // 初始化时创建空的数据源
+    this.dataSource = new DynamicFileDataSource(this.treeControl, this.fileService, []);
   }
 
   ngOnInit() {
-    this.loadFiles();
+    this.loadRootPath();
   }
 
-  loadFiles() {
-    // 从文件服务中读取文件
-    const files = this.fileService.readDir(this.rootPath);
-    this.dataChange.next(files as FileNode[]);
+  loadRootPath(path = this.rootPath): void {
+    const files = this.fileService.readDir(path);
+    console.log('Loaded root path files:', files);
+    
+    // 转换为扁平节点格式
+    const flatFiles: FlatFileNode[] = files.map(file => ({
+      expandable: !file.isLeaf,
+      title: file.title,
+      level: 0,
+      key: file.key,
+      isLeaf: file.isLeaf,
+      path: file['path']
+    }));
+    
+    this.dataSource.setRootData(flatFiles);
   }
 
   // 判断节点是否有子节点
   hasChild = (_: number, node: FlatFileNode): boolean => node.expandable;
 
   // 当节点被点击时
-  nodeClick(node: FlatFileNode): void {    
+  nodeClick(node: FlatFileNode): void {
     if (node.isLeaf) {
       this.openFile(node);
     } else {
-      // 切换展开状态
-      this.treeControl.toggle(node);
-      // 如果节点展开且没有子节点，则加载子节点
-      if (this.treeControl.isExpanded(node)) {
-        this.loadChildren(node);
-      }
+      this.openFolder(node);
     }
   }
 
   // 获取当前数据
-  getCurrentData(): FileNode[] {
-    return this.dataChange.value;
+  getCurrentData(): FlatFileNode[] {
+    return this.dataSource.getCurrentData();
   }
 
-  // 加载子节点
-  loadChildren(node: FlatFileNode): void {
-    // 获取当前原始数据
-    const currentData = [...this.getCurrentData()];
-    
-    // 查找原始数据中的节点
-    const findNode = (nodes: FileNode[], path: string): FileNode | null => {
-      for (const n of nodes) {
-        if (n.path === path) return n;
-        if (n.children) {
-          const found = findNode(n.children, path);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const originalNode = findNode(currentData, node.path);
-    
-    if (originalNode && (!originalNode.children || originalNode.children.length === 0)) {
-      // 加载子节点
-      originalNode.children = this.fileService.readDir(node.path) as FileNode[];
-      // 更新数据源
-      this.dataChange.next(currentData);
+  openFolder(folder: FlatFileNode) {
+    // 如果是文件夹，展开或收起
+    if (this.treeControl.isExpanded(folder)) {
+      this.treeControl.collapse(folder);
+    } else {
+      this.treeControl.expand(folder);
+      // 动态数据源会自动处理子文件夹的加载
     }
   }
 
-  openFile(file) {
+  openFile(file: FlatFileNode) {
     this.selectedFile = file.path;
     this.selectedFileChange.emit(file);
   }
@@ -161,13 +230,13 @@ export class FileTreeComponent implements OnInit {
 
   // 检查文件列表是否为空
   isEmpty(): boolean {
-    return this.dataChange.value.length === 0;
+    return this.dataSource.getCurrentData().length === 0;
   }
 
   refresh() {
     this.isLoading = true;
     setTimeout(() => {
-      this.loadFiles();
+      this.loadRootPath();
       this.isLoading = false;
     }, 1000);
   }
