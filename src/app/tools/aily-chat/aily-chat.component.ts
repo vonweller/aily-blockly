@@ -344,7 +344,6 @@ export class AilyChatComponent implements OnDestroy {
           this.chatService.stopSession(this.sessionId).subscribe({
             next: (res: any) => {
               console.log('关闭时会话已停止:', res);
-              this.isWaiting = false;
               resolve();
             },
             error: (err) => {
@@ -468,7 +467,6 @@ ${JSON.stringify(errData)}
 
   sendButtonClick(): void {
     if (this.isWaiting) {
-      this.isWaiting = false;
       this.stop();
       return;
     }
@@ -494,8 +492,9 @@ ${JSON.stringify(errData)}
 
     if (show) {
       this.appendMessage('user', text);
-      this.isWaiting = true;
     }
+
+    this.isWaiting = true;
 
     this.inputValue = '';
 
