@@ -81,8 +81,8 @@ export class ChatService {
     return messageSubject.asObservable();
   }
 
-  sendMessage(sessionId: string, content: string) {
-    return this.http.post(`${API.sendMessage}/${sessionId}`, { content });
+  sendMessage(sessionId: string, content: string, source: string = 'user') {
+    return this.http.post(`${API.sendMessage}/${sessionId}`, { content, source });
   }
 
   getHistory(sessionId: string) {

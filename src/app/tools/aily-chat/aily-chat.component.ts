@@ -87,8 +87,6 @@ export class AilyChatComponent implements OnDestroy {
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
-  isUserInputRequired = false;
-
   list: any = [];
   // list = ChatListExamples  // 示例数据
 
@@ -306,7 +304,7 @@ export class AilyChatComponent implements OnDestroy {
 
     if (options?.type === 'button') {
       this.inputValue = text;
-      this.send(true, true);
+      this.send("user", true, true);
       return;
     }
 
@@ -333,7 +331,7 @@ export class AilyChatComponent implements OnDestroy {
 
       // 如果设置了自动发送，则立即发送
       if (options?.autoSend) {
-        this.send();
+        this.send("user");
       }
     }, 100);
   }
@@ -475,10 +473,10 @@ ${JSON.stringify(errData)}
       return;
     }
 
-    this.send();
+    this.send('user');
   }
 
-  send(show: boolean = true, toolCallRes: boolean = false): void {
+  send(sender: string, show: boolean = true, toolCallRes: boolean = false): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
 
@@ -501,15 +499,7 @@ ${JSON.stringify(errData)}
 
     this.inputValue = '';
 
-    if (this.isUserInputRequired) {
-      this.isUserInputRequired = false;
-      text = JSON.stringify({
-        "type": "user_input",
-        "content": text
-      }, null, 2);
-    }
-
-    this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
+    this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
         if (res.data) {
           this.appendMessage('aily', res.data);
@@ -525,7 +515,6 @@ ${JSON.stringify(errData)}
       // 处理停止会话的响应
       if (res.status == 'success') {
         console.log('会话已停止:', res);
-        this.isWaiting = false;
         return;
       }
       console.error('停止会话失败:', res);
@@ -557,7 +546,6 @@ ${JSON.stringify(errData)}
           } else if (data.type === 'ToolCallRequestEvent') {
             // 处理工具调用请求
           } else if (data.type === 'ToolCallExecutionEvent') {
-            console.log("工具执行事件: ", data);
             // 处理工具执行完成事件
             if (data.content && Array.isArray(data.content)) {
               for (const result of data.content) {
@@ -624,7 +612,7 @@ ${JSON.stringify(errData)}
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
-                  this.send(false, true);
+                  this.send("tool", false, true);
                   return;
                 }
               }
@@ -1008,20 +996,18 @@ ${JSON.stringify(errData)}
             this.toolCallStates[data.tool_id] = resultText;
 
             this.inputValue = JSON.stringify({
-              "type": "tool_result",
+              "type": "tool",
               "tool_id": data.tool_id,
               "content": toolResult?.content || '',
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send(false, true);
+            this.send("tool",false, true);
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
-            this.isUserInputRequired = true;
             this.isWaiting = false;
           }
           this.scrollToBottom();
-
         } catch (e) {
           console.error('处理流数据时出错:', e);
           this.appendMessage('错误', `
@@ -1079,7 +1065,7 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-      this.send();
+      this.send("user");
       event.preventDefault();
     }
   }
