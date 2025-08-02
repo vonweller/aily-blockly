@@ -306,7 +306,7 @@ export class AilyChatComponent implements OnDestroy {
 
     if (options?.type === 'button') {
       this.inputValue = text;
-      this.send(false);
+      this.send(true, true);
       return;
     }
 
