@@ -485,4 +485,8 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
     // 可以在这里添加缩放、拖拽等交互功能
     console.log('Mermaid diagram clicked:', event);
   }
+
+  logDetail(){
+    console.log('Mermaid Viewer Data:', this.data);
+  }
 }

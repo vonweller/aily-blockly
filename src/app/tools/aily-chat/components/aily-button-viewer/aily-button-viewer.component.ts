@@ -141,4 +141,8 @@ export class AilyButtonViewerComponent {
         // TODO: 实现补充说明的具体逻辑
         // 可能需要显示对话框或展开详细信息
     }
+
+    logDetail(){
+        console.log('Button Viewer Data:', this.data); 
+    }
 }

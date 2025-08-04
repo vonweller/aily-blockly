@@ -1,9 +1,13 @@
 .aily-mermaid-viewer {
   border-radius: 5px;
   margin: 5px 0;
-  background-color: #3d3d3d;
+  background-color: #3a3a3a;
   overflow: hidden;
   height: 260px;
+
+  &:hover {
+    background-color: #3f3f3f;
+  }
 
   // 错误卡片
   .error-card {
@@ -37,7 +41,7 @@
     .raw-data-section {
       details {
         cursor: pointer;
-        
+
         summary {
           margin-bottom: 8px;
           color: #595959;
@@ -126,7 +130,12 @@
   }
 
   @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+      transform: rotate(0deg);
+    }
+
+    100% {
+      transform: rotate(360deg);
+    }
   }
 }

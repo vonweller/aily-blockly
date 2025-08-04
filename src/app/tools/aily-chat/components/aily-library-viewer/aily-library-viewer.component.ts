@@ -141,7 +141,7 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
 
       // 这里需要根据实际的应用架构来实现
       // 可能需要通过服务来调用安装功能
-      
+
       console.log('安装库包:', this.libraryInfo.name);
       // 可以添加成功提示
       this.chatService.sendTextToChat(`安装库包: ${this.libraryInfo.name}`, { sender: 'library', type: 'install', autoSend: true });
@@ -164,8 +164,12 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
    * 检查是否可以安装
    */
   private checkCanInstall(): boolean {
-    return typeof window !== 'undefined' && 
-           this.libraryInfo?.package && 
-           window.location?.pathname.includes('blockly');
+    return typeof window !== 'undefined' &&
+      this.libraryInfo?.package &&
+      window.location?.pathname.includes('blockly');
+  }
+
+  logDetail() {
+    console.log('状态详情:', this.libraryInfo);
   }
 }
