@@ -94,13 +94,10 @@ export class AilyButtonViewerComponent {
         // 发射事件
         this.buttonClick.emit(button);
 
-        const sendData = JSON.stringify({
-            text: button.text,
-            id: button.id
-        });
+        const sendData = button.text
 
         // 直接往大模型发送按钮点击的消息
-        this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'tool', cover: false });
+        this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'button', cover: false });
 
         // // 根据 action 执行相应的操作
         // this.executeAction(button);

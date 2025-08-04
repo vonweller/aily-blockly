@@ -53,6 +53,12 @@ export class ChatService {
               try {
                 const msg = JSON.parse(line);
                 messageSubject.next(msg);
+                console.log(msg);
+                
+                if (msg.type === 'TaskCompleted') {
+                  messageSubject.complete();
+                  return;
+                }
               } catch (error) {
                 console.error('解析JSON失败:', error, line);
               }
@@ -81,8 +87,8 @@ export class ChatService {
     return messageSubject.asObservable();
   }
 
-  sendMessage(sessionId: string, content: string) {
-    return this.http.post(`${API.sendMessage}/${sessionId}`, { content });
+  sendMessage(sessionId: string, content: string, source: string = 'user') {
+    return this.http.post(`${API.sendMessage}/${sessionId}`, { content, source });
   }
 
   getHistory(sessionId: string) {

@@ -54,6 +54,8 @@ export interface ResourceItem {
 
 import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { TOOLS } from './tools/tools';
+import { AuthService } from '../../services/auth.service';
 
 @Component({
   selector: 'app-aily-chat',
@@ -85,8 +87,6 @@ export class AilyChatComponent implements OnDestroy {
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
-  isUserInputRequired = false;
-
   list: any = [];
   // list = ChatListExamples  // 示例数据
 
@@ -98,6 +98,7 @@ export class AilyChatComponent implements OnDestroy {
   windowInfo = 'AI助手';
 
   private textMessageSubscription: Subscription;
+  private loginStatusSubscription: Subscription;
 
   get sessionId() {
     return this.chatService.currentSessionId;
@@ -219,306 +220,7 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   // 内置工具
-  tools: Tool[] = [
-    {
-      name: 'create_project',
-      description: `创建一个新项目，返回项目路径。需要提供开发板信息，包含名称、昵称和版本号。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          board: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '板子名称' },
-              nickname: { type: 'string', description: '板子昵称' },
-              version: { type: 'string', description: '版本号' }
-            },
-            description: '开发板信息'
-          },
-        },
-        required: ['board']
-      }
-    },
-    {
-      name: 'execute_command',
-      description: `执行系统CLI命令。用于执行系统操作或运行特定命令来完成用户任务中的任何步骤。支持命令链，优先使用相对命令和路径以保持终端一致性。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          command: { type: 'string', description: '执行的命令' },
-          cwd: { type: 'string', description: '工作目录，可选' }
-        },
-        required: ['command']
-      }
-    },
-    {
-      name: "ask_approval",
-      description: "向用户请求确认或批准某个操作。此工具用于需要用户确认的场景，确保用户明确同意后才进行后续操作。",
-      input_schema: {
-        type: 'object',
-        properties: {
-          message: { type: 'string', description: '消息描述' }
-        },
-        required: ['message']
-      }
-    },
-    {
-      name: "get_context",
-      description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          info_type: {
-            type: 'string',
-            description: '要获取的上下文信息类型',
-            enum: ['all', 'project', 'platform', 'system'],
-            default: 'all'
-          }
-        },
-        required: ['info_type']
-      }
-    },
-    {
-      name: "list_directory",
-      description: `列出指定目录的内容，包括文件和文件夹信息。返回每个项目的名称、类型、大小和修改时间。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要列出内容的目录路径'
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "read_file",
-      description: `读取指定文件的内容。支持文本文件的读取，可指定编码格式。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要读取的文件路径'
-          },
-          encoding: {
-            type: 'string',
-            description: '文件编码格式',
-            default: 'utf-8'
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "create_file",
-      description: `创建新文件并写入内容。如果目录不存在会自动创建。可选择是否覆盖已存在的文件。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要创建的文件路径'
-          },
-          content: {
-            type: 'string',
-            description: '文件内容',
-            default: ''
-          },
-          encoding: {
-            type: 'string',
-            description: '文件编码格式',
-            default: 'utf-8'
-          },
-          overwrite: {
-            type: 'boolean',
-            description: '是否覆盖已存在的文件',
-            default: false
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "create_folder",
-      description: `创建新文件夹。支持递归创建多级目录。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要创建的文件夹路径'
-          },
-          recursive: {
-            type: 'boolean',
-            description: '是否递归创建父目录',
-            default: true
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "edit_file",
-      description: `编辑已存在的文件内容。可选择当文件不存在时是否创建新文件。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要编辑的文件路径'
-          },
-          content: {
-            type: 'string',
-            description: '新的文件内容'
-          },
-          encoding: {
-            type: 'string',
-            description: '文件编码格式',
-            default: 'utf-8'
-          },
-          createIfNotExists: {
-            type: 'boolean',
-            description: '如果文件不存在是否创建',
-            default: false
-          }
-        },
-        required: ['path', 'content']
-      }
-    },
-    {
-      name: "delete_file",
-      description: `删除指定文件。可选择是否在删除前创建备份。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要删除的文件路径'
-          },
-          createBackup: {
-            type: 'boolean',
-            description: '删除前是否创建备份',
-            default: true
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "delete_folder",
-      description: `删除指定文件夹及其内容。可选择是否在删除前创建备份。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要删除的文件夹路径'
-          },
-          createBackup: {
-            type: 'boolean',
-            description: '删除前是否创建备份',
-            default: true
-          },
-          recursive: {
-            type: 'boolean',
-            description: '是否递归删除',
-            default: true
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "check_exists",
-      description: `检查指定路径的文件或文件夹是否存在，返回详细信息包括类型、大小、修改时间等。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要检查的路径'
-          },
-          type: {
-            type: 'string',
-            description: '期望的类型：file(文件)、folder(文件夹)或any(任意类型)',
-            enum: ['file', 'folder', 'any'],
-            default: 'any'
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "get_directory_tree",
-      description: `获取指定目录的树状结构，可控制遍历深度和是否包含文件。适合了解项目结构。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description: '要获取树状结构的目录路径'
-          },
-          maxDepth: {
-            type: 'number',
-            description: '最大遍历深度',
-            default: 3
-          },
-          includeFiles: {
-            type: 'boolean',
-            description: '是否包含文件（false时只显示文件夹）',
-            default: true
-          }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: "fetch",
-      description: `获取网络上的信息和资源，支持HTTP/HTTPS请求，能够处理大文件下载。支持多种请求方法和响应类型。`,
-      input_schema: {
-        type: 'object',
-        properties: {
-          url: {
-            type: 'string',
-            description: '要请求的URL地址'
-          },
-          method: {
-            type: 'string',
-            description: 'HTTP请求方法',
-            enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-            default: 'GET'
-          },
-          headers: {
-            type: 'object',
-            description: '请求头（键值对）'
-          },
-          body: {
-            description: '请求体'
-          },
-          timeout: {
-            type: 'number',
-            description: '请求超时时间（毫秒）',
-            default: 30000
-          },
-          maxSize: {
-            type: 'number',
-            description: '最大文件大小（字节）',
-            default: 52428800
-          },
-          responseType: {
-            type: 'string',
-            description: '响应类型',
-            enum: ['text', 'json', 'blob', 'arraybuffer'],
-            default: 'text'
-          }
-        },
-        required: ['url']
-      }
-    }
-  ]
-
+  tools: Tool[] = TOOLS;
 
   constructor(
     private uiService: UiService,
@@ -531,7 +233,8 @@ export class AilyChatComponent implements OnDestroy {
     private fetchToolService: FetchToolService,
     private chatCommunicationService: ChatCommunicationService,
     private router: Router,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private authService: AuthService
   ) { }
 
   ngOnInit() {
@@ -550,6 +253,16 @@ export class AilyChatComponent implements OnDestroy {
         this.receiveTextFromExternal(message.text, message.options);
       }
     );
+
+    // 订阅登录状态变化
+    this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
+      isLoggedIn => {
+        if (isLoggedIn) {
+          // 当用户登录后，自动创建新的聊天会话
+          this.newChat();
+        }
+      }
+    );
   }
 
   /**
@@ -560,33 +273,39 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
-    if (options?.type === 'tool') {
-      // 判断是否是 JSON 格式的字符串
-      try {
-        const parsedText = JSON.parse(text);
-        // 判断是否包含id字段，有则提取id
-        if (parsedText && typeof parsedText === 'object' && parsedText.id) {
-          // 提取id
-          const id = parsedText.id;
+    // if (options?.type === 'tool') {
+    //   // 判断是否是 JSON 格式的字符串
+    //   try {
+    //     const parsedText = JSON.parse(text);
+    //     // 判断是否包含id字段，有则提取id
+    //     if (parsedText && typeof parsedText === 'object' && parsedText.id) {
+    //       // 提取id
+    //       const id = parsedText.id;
 
-          this.inputValue = JSON.stringify({
-            "type": "tool_result",
-            "tool_id": id,
-            "content": parsedText.text,
-            "is_error": false
-          })
-          this.send(false, true);
-          return;
-        } else {
-          // 否则保持原样
-          text = JSON.stringify(parsedText, null, 2);
-        }
-      } catch (e) {
-        // 如果解析失败，说明不是JSON格式的字符串
-        // 保持原样
-        console.warn('接收到的文本不是有效的JSON格式:', text);
-        return;
-      }
+    //       this.inputValue = JSON.stringify({
+    //         "type": "tool_result",
+    //         "tool_id": id,
+    //         "content": parsedText.text,
+    //         "is_error": false
+    //       })
+    //       this.send(false, true);
+    //       return;
+    //     } else {
+    //       // 否则保持原样
+    //       text = JSON.stringify(parsedText, null, 2);
+    //     }
+    //   } catch (e) {
+    //     // 如果解析失败，说明不是JSON格式的字符串
+    //     // 保持原样
+    //     console.warn('接收到的文本不是有效的JSON格式:', text);
+    //     return;
+    //   }
+    // }
+
+    if (options?.type === 'button') {
+      this.inputValue = text;
+      this.send("user", true, true);
+      return;
     }
 
     // cover 默认为 true，只有明确设置为 false 时才追加
@@ -612,15 +331,48 @@ export class AilyChatComponent implements OnDestroy {
 
       // 如果设置了自动发送，则立即发送
       if (options?.autoSend) {
-        this.send();
+        this.send("user");
       }
     }, 100);
   }
 
-  close() {
-    // 关闭stream连接
-    this.closeSession();
-    this.uiService.closeTool('aily-chat');
+  async close() {
+    try {
+      // 先停止会话
+      if (this.sessionId) {
+        await new Promise<void>((resolve) => {
+          this.chatService.stopSession(this.sessionId).subscribe({
+            next: (res: any) => {
+              console.log('关闭时会话已停止:', res);
+              resolve();
+            },
+            error: (err) => {
+              console.error('关闭时停止会话失败:', err);
+              resolve(); // 即使失败也继续
+            }
+          });
+        });
+
+        // 然后关闭连接
+        await new Promise<void>((resolve) => {
+          this.chatService.closeSession(this.sessionId).subscribe({
+            next: (res: any) => {
+              console.log('关闭时会话连接已关闭:', res);
+              resolve();
+            },
+            error: (err) => {
+              console.error('关闭时关闭会话失败:', err);
+              resolve(); // 即使失败也继续
+            }
+          });
+        });
+      }
+    } catch (error) {
+      console.error('关闭会话过程中出错:', error);
+    } finally {
+      // 最后关闭工具窗口
+      this.uiService.closeTool('aily-chat');
+    }
   }
 
   ngAfterViewInit(): void {
@@ -681,7 +433,7 @@ export class AilyChatComponent implements OnDestroy {
           this.getHistory();
         } else {
           this.appendMessage('错误', `
-\`\`\`aily - error
+\`\`\`aily-error
 ${res.message || '启动会话失败，请稍后重试。'}
 \`\`\`\n\n
 
@@ -690,22 +442,14 @@ ${res.message || '启动会话失败，请稍后重试。'}
       },
       error: (err) => {
         console.error('启动会话失败:', err);
-        let errMsg = '';
-        if (err.status === 0) {
-          errMsg = '网络连接失败，请检查您的网络连接后重试。';
-        } else if (err.status === 408 || err.statusText === 'timeout') {
-          errMsg = '连接超时，服务器可能暂时不可用，请稍后重试。';
-        } else if (err.status === 422) {
-          errMsg = 'Permission denied: 您没有权限执行此操作，请检查您的权限设置。';
-        } else {
-          errMsg = '启动会话失败: ' + (err.message || '网络错误，请检查连接后重试。');
+        let errData = {
+          status: err.status,
+          message: err.message
         }
-
-        this.appendMessage('错误', `
-\`\`\`aily - error
-${errMsg}
+        this.appendMessage('error', `
+\`\`\`aily-error
+${JSON.stringify(errData)}
 \`\`\`\n\n
-
             `)
       }
     });
@@ -723,15 +467,14 @@ ${errMsg}
 
   sendButtonClick(): void {
     if (this.isWaiting) {
-      this.isWaiting = false;
       this.stop();
       return;
     }
 
-    this.send();
+    this.send('user');
   }
 
-  send(show: boolean = true, toolCallRes: boolean = false): void {
+  send(sender: string, show: boolean = true, toolCallRes: boolean = false): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
 
@@ -749,20 +492,13 @@ ${errMsg}
 
     if (show) {
       this.appendMessage('user', text);
-      this.isWaiting = true;
     }
+
+    this.isWaiting = true;
 
     this.inputValue = '';
 
-    if (this.isUserInputRequired) {
-      this.isUserInputRequired = false;
-      text = JSON.stringify({
-        "type": "user_input",
-        "content": text
-      }, null, 2);
-    }
-
-    this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
+    this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
         if (res.data) {
           this.appendMessage('aily', res.data);
@@ -778,14 +514,14 @@ ${errMsg}
       // 处理停止会话的响应
       if (res.status == 'success') {
         console.log('会话已停止:', res);
-        this.isWaiting = false;
         return;
       }
+      console.error('停止会话失败:', res);
     });
   }
 
   streamConnect(): void {
-    console.log("streeam connect sessionId: ", this.sessionId);
+    console.log("stream connect sessionId: ", this.sessionId);
     if (!this.sessionId) return;
 
     this.chatService.streamConnect(this.sessionId).subscribe({
@@ -809,7 +545,6 @@ ${errMsg}
           } else if (data.type === 'ToolCallRequestEvent') {
             // 处理工具调用请求
           } else if (data.type === 'ToolCallExecutionEvent') {
-            console.log("工具执行事件: ", data);
             // 处理工具执行完成事件
             if (data.content && Array.isArray(data.content)) {
               for (const result of data.content) {
@@ -876,7 +611,7 @@ ${errMsg}
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
-                  this.send(false, true);
+                  this.send("tool", false, true);
                   return;
                 }
               }
@@ -1226,19 +961,19 @@ ${errMsg}
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
-                  case 'ask_approval':
-                    console.log('[请求确认工具被调用]', toolArgs);
-                    this.appendMessage('aily', `
-\n\n${toolArgs.message}
+                  //                   case 'ask_approval':
+                  //                     console.log('[请求确认工具被调用]', toolArgs);
+                  //                     this.appendMessage('aily', `
+                  // \n\n${toolArgs.message}
 
-\`\`\`aily-button
-[
-{"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
-{"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
-]
-\`\`\`\n\n
-                    `);
-                    return;
+                  // \`\`\`aily-button
+                  // [
+                  // {"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
+                  // {"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
+                  // ]
+                  // \`\`\`\n\n
+                  //                     `);
+                  //                     return;
                 }
               }
 
@@ -1260,20 +995,18 @@ ${errMsg}
             this.toolCallStates[data.tool_id] = resultText;
 
             this.inputValue = JSON.stringify({
-              "type": "tool_result",
+              "type": "tool",
               "tool_id": data.tool_id,
               "content": toolResult?.content || '',
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send(false, true);
+            this.send("tool",false, true);
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
-            this.isUserInputRequired = true;
             this.isWaiting = false;
           }
           this.scrollToBottom();
-
         } catch (e) {
           console.error('处理流数据时出错:', e);
           this.appendMessage('错误', `
@@ -1285,6 +1018,9 @@ ${errMsg}
           `);
           this.isWaiting = false;
         }
+      },
+      complete: () => {
+        console.log('streamConnect complete: ', this.list[this.list.length - 1]);
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1312,7 +1048,7 @@ ${errMsg}
         });
 
         console.log('历史消息:', this.list);
-        
+
         this.scrollToBottom();
       } else {
         this.appendMessage('错误', res.message);
@@ -1331,7 +1067,7 @@ ${errMsg}
       if (this.isWaiting) {
         return;
       }
-      this.send();
+      this.send("user");
       event.preventDefault();
     }
   }
@@ -1405,11 +1141,58 @@ ${errMsg}
     // }
   ]
 
-  newChat() {
+  async newChat() {
+    console.log('启动新会话');
     this.list = [];
-    this.chatService.currentSessionId = '';
-    this.closeSession();
-    this.startSession();
+
+    try {
+      // 等待停止操作完成
+      await new Promise<void>((resolve) => {
+        if (!this.sessionId) {
+          resolve();
+          return;
+        }
+
+        this.chatService.stopSession(this.sessionId).subscribe({
+          next: (res: any) => {
+            console.log('会话已停止:', res);
+            this.isWaiting = false;
+            resolve();
+          },
+          error: (err) => {
+            console.error('停止会话失败:', err);
+            resolve(); // 即使失败也继续
+          }
+        });
+      });
+
+      // 等待关闭会话完成
+      await new Promise<void>((resolve) => {
+        if (!this.sessionId) {
+          resolve();
+          return;
+        }
+
+        this.chatService.closeSession(this.sessionId).subscribe({
+          next: (res: any) => {
+            console.log('会话已关闭:', res);
+            resolve();
+          },
+          error: (err) => {
+            console.error('关闭会话失败:', err);
+            resolve(); // 即使失败也继续
+          }
+        });
+      });
+
+      this.chatService.currentSessionId = '';
+      // 最后启动新会话
+      this.startSession();
+    } catch (error) {
+      console.error('重新启动会话失败:', error);
+      // 即使出错也尝试启动新会话
+      this.startSession();
+    }
   }
 
   selectContent: ResourceItem[] = []
@@ -1599,6 +1382,15 @@ ${errMsg}
     if (this.textMessageSubscription) {
       this.textMessageSubscription.unsubscribe();
     }
+
+    // 清理登录状态订阅
+    if (this.loginStatusSubscription) {
+      this.loginStatusSubscription.unsubscribe();
+    }
+
+    this.close().then(() => {
+      // 关闭后执行的逻辑
+    });
   }
 
   // 添加订阅管理

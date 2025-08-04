@@ -162,82 +162,11 @@ export class MarkdownPipe implements PipeTransform {
       // 返回包装后的 SVG，包含缩放和拖拽功能
       const html = `<div class="mermaid-container" id="${containerId}" style="
         position: relative;
-        margin: 16px 0;
-        padding: 16px;
-        background-color: #fafafa;
-        border: 1px solid #d9d9d9;
-        border-radius: 6px;
         overflow: hidden;
         min-height: 200px;
         cursor: grab;
-      " data-svg-id="${diagramId}" data-mermaid-ready="true">
-        <div class="mermaid-controls" style="
-          position: absolute;
-          top: 8px;
-          right: 8px;
-          z-index: 10;
-          display: flex;
-          gap: 4px;
-          opacity: 0.7;
-          transition: opacity 0.3s;
-        ">
-          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-zoom-in'))" style="
-            background: #fff;
-            border: 1px solid #d9d9d9;
-            color: #333;
-            border-radius: 4px;
-            width: 24px;
-            height: 24px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-          " title="放大">+</button>
-          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-zoom-out'))" style="
-            background: #fff;
-            border: 1px solid #d9d9d9;
-            color: #333;
-            border-radius: 4px;
-            width: 24px;
-            height: 24px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-          " title="缩小">-</button>
-          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-reset'))" style="
-            background: #fff;
-            border: 1px solid #d9d9d9;
-            color: #333;
-            border-radius: 4px;
-            width: 24px;
-            height: 24px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-          " title="重置">⌂</button>
-          <button onclick="this.closest('.mermaid-container').dispatchEvent(new CustomEvent('mermaid-fullscreen'))" style="
-            background: #fff;
-            border: 1px solid #d9d9d9;
-            color: #333;
-            border-radius: 4px;
-            width: 24px;
-            height: 24px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-          " title="全屏查看">⛶</button>
-        </div>
+        user-select: none;
+        " data-svg-id="${diagramId}" data-mermaid-ready="true">
         <div class="mermaid-svg-wrapper" style="
           width: 100%;
           height: 100%;
@@ -248,7 +177,6 @@ export class MarkdownPipe implements PipeTransform {
           ${enhancedSvg}
         </div>
       </div>`;
-
       // 延迟发送事件，确保 DOM 已渲染
       setTimeout(() => {
         this.notifyMermaidReady(diagramId);
@@ -424,7 +352,7 @@ export class MarkdownPipe implements PipeTransform {
    * 检查是否为特殊的 Aily 代码块类型
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error'];
     return ailyTypes.includes(lang);
   }/**
    * 渲染 Aily 特殊代码块为组件占位符
@@ -514,6 +442,19 @@ export class MarkdownPipe implements PipeTransform {
             progress: jsonData.progress,
             metadata: jsonData.metadata || {}
           };
+        case 'aily-error':
+          return {
+            type: 'aily-error',
+            error: jsonData.error || jsonData,
+            message: jsonData.message || jsonData.error?.message,
+            code: jsonData.code || jsonData.error?.code,
+            details: jsonData.details || jsonData.error?.details,
+            stack: jsonData.stack || jsonData.error?.stack,
+            timestamp: jsonData.timestamp || new Date().toISOString(),
+            severity: this.validateErrorSeverity(jsonData.severity || jsonData.error?.severity),
+            category: jsonData.category || jsonData.error?.category,
+            metadata: jsonData.metadata || {}
+          };
         case 'aily-button':
           return {
             type: 'aily-button',
@@ -589,6 +530,14 @@ export class MarkdownPipe implements PipeTransform {
       icon: libraryData.icon || 'fa-light fa-cube',
       ...libraryData
     };
+  }
+
+  /**
+   * 验证错误严重程度
+   */
+  private validateErrorSeverity(severity: any): 'error' | 'warning' | 'info' {
+    const validSeverities = ['error', 'warning', 'info'];
+    return validSeverities.includes(severity) ? severity : 'error';
   }
 
   transform(value: any, ...args: any[]): Observable<SafeHtml> {
