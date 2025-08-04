@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import mermaid from 'mermaid';
@@ -32,6 +32,23 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
   rawSvgString = '';  // 保存原始 SVG 字符串用于调试
   containerId = '';
 
+  // 全屏相关属性
+  isFullscreen = false;
+  fullscreenContainerId = '';
+  
+  // 缩放和拖拽相关属性
+  scale = 1;
+  translateX = 0;
+  translateY = 0;
+  isDragging = false;
+  lastMouseX = 0;
+  lastMouseY = 0;
+  
+  // 计算transform样式
+  get transform(): string {
+    return `translate(calc(-50% + ${this.translateX}px), calc(-50% + ${this.translateY}px)) scale(${this.scale})`;
+  }
+
   constructor(private sanitizer: DomSanitizer) { }
 
   ngOnInit() {
@@ -41,6 +58,9 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
 
   ngOnDestroy() {
     // 清理资源
+    if (this.isFullscreen) {
+      document.body.style.overflow = '';
+    }
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -278,6 +298,112 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
         console.log('SVG innerHTML length:', svg?.innerHTML?.length || 0);
       }
     }
+  }
+
+  /**
+   * 键盘事件监听 - ESC键退出全屏
+   */
+  @HostListener('document:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.isFullscreen) {
+      this.exitFullscreen();
+    }
+  }
+
+  /**
+   * 进入全屏模式
+   */
+  enterFullscreen(): void {
+    if (!this.renderedSvg) return;
+    
+    this.isFullscreen = true;
+    this.fullscreenContainerId = `fullscreen-${this.containerId}`;
+    
+    // 重置缩放和位置
+    this.scale = 1;
+    this.translateX = 0;
+    this.translateY = 0;
+    this.isDragging = false;
+    
+    // 防止页面滚动
+    document.body.style.overflow = 'hidden';
+  }
+
+  /**
+   * 退出全屏模式
+   */
+  exitFullscreen(): void {
+    this.isFullscreen = false;
+    this.fullscreenContainerId = '';
+    this.isDragging = false;
+    
+    // 恢复页面滚动
+    document.body.style.overflow = '';
+  }
+
+  /**
+   * 鼠标滚轮事件 - 缩放
+   */
+  onWheel(event: WheelEvent): void {
+    event.preventDefault();
+    
+    // 计算缩放因子，使缩放更平滑
+    const delta = event.deltaY > 0 ? -0.15 : 0.15;
+    const newScale = Math.max(0.2, Math.min(3, this.scale + delta));
+    
+    if (newScale !== this.scale) {
+      // 获取鼠标相对于容器的位置
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const mouseX = event.clientX - rect.left - rect.width / 2;
+      const mouseY = event.clientY - rect.top - rect.height / 2;
+      
+      // 计算缩放前的坐标
+      const oldScale = this.scale;
+      this.scale = newScale;
+      
+      // 调整位置，使缩放以鼠标位置为中心
+      const scaleFactor = this.scale / oldScale;
+      this.translateX = mouseX + (this.translateX - mouseX) * scaleFactor;
+      this.translateY = mouseY + (this.translateY - mouseY) * scaleFactor;
+    }
+  }
+
+  /**
+   * 鼠标按下事件 - 开始拖拽
+   */
+  onMouseDown(event: MouseEvent): void {
+    if (event.button !== 0) return; // 只处理左键
+    
+    this.isDragging = true;
+    this.lastMouseX = event.clientX;
+    this.lastMouseY = event.clientY;
+    
+    event.preventDefault();
+  }
+
+  /**
+   * 鼠标移动事件 - 拖拽
+   */
+  onMouseMove(event: MouseEvent): void {
+    if (!this.isDragging) return;
+    
+    const deltaX = event.clientX - this.lastMouseX;
+    const deltaY = event.clientY - this.lastMouseY;
+    
+    this.translateX += deltaX;
+    this.translateY += deltaY;
+    
+    this.lastMouseX = event.clientX;
+    this.lastMouseY = event.clientY;
+    
+    event.preventDefault();
+  }
+
+  /**
+   * 鼠标抬起事件 - 结束拖拽
+   */
+  onMouseUp(event: MouseEvent): void {
+    this.isDragging = false;
   }
 
 }
