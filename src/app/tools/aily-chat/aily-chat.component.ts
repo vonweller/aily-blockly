@@ -274,39 +274,8 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
-    // if (options?.type === 'tool') {
-    //   // 判断是否是 JSON 格式的字符串
-    //   try {
-    //     const parsedText = JSON.parse(text);
-    //     // 判断是否包含id字段，有则提取id
-    //     if (parsedText && typeof parsedText === 'object' && parsedText.id) {
-    //       // 提取id
-    //       const id = parsedText.id;
-
-    //       this.inputValue = JSON.stringify({
-    //         "type": "tool_result",
-    //         "tool_id": id,
-    //         "content": parsedText.text,
-    //         "is_error": false
-    //       })
-    //       this.send(false, true);
-    //       return;
-    //     } else {
-    //       // 否则保持原样
-    //       text = JSON.stringify(parsedText, null, 2);
-    //     }
-    //   } catch (e) {
-    //     // 如果解析失败，说明不是JSON格式的字符串
-    //     // 保持原样
-    //     console.warn('接收到的文本不是有效的JSON格式:', text);
-    //     return;
-    //   }
-    // }
-
     if (options?.type === 'button') {
-      this.inputValue = text;
-      this.send("user");
-      this.inputValue = "";
+      this.send("user", text, false);
       return;
     }
 
@@ -329,11 +298,6 @@ export class AilyChatComponent implements OnDestroy {
         const textarea = this.chatTextarea.nativeElement;
         textarea.focus();
         textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      }
-
-      // 如果设置了自动发送，则立即发送
-      if (options?.autoSend) {
-        this.send("user");
       }
     }, 100);
   }
@@ -513,12 +477,13 @@ ${JSON.stringify(errData)}
       return;
     }
 
-    this.send('user');
+    this.send('user', this.inputValue.trim(), true);
+    this.inputValue = ''; // 发送后清空输入框
   }
 
-  send(sender: string): void {
-    if (!this.sessionId || !this.inputValue.trim()) return;
-    let text = this.inputValue.trim();
+  send(sender: string, content: string, clear: boolean = true): void {
+    let text = content.trim();
+    if (!this.sessionId || !text) return;
 
     if (sender === 'user') {
       if (this.isWaiting) {
@@ -544,14 +509,19 @@ ${JSON.stringify(errData)}
 
     this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
-        this.inputValue = '';
         if (res.data) {
           this.appendMessage('aily', res.data);
         }
+
+        if (clear) {
+          this.inputValue = ''; // 发送后清空输入框
+        }
       }
     });
-    this.scrollToBottom();
   }
+
+  // 
+
 
   // 这里写停止发送信号
   stop() {
@@ -650,13 +620,12 @@ ${JSON.stringify(errData)}
                   toolArgs = new Function('return ' + data.tool_args)();
                 } catch (e2) {
                   console.error('所有解析方法都失败:', e2);
-                  this.inputValue = JSON.stringify({
+                  this.send("tool", JSON.stringify({
                     "type": "tool_result",
                     "tool_id": data.tool_id,
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
-                  }, null, 2);
-                  this.send("tool");
+                  }, null, 2), false);
                   return;
                 }
               }
@@ -1038,15 +1007,13 @@ ${JSON.stringify(errData)}
             }
 
             this.toolCallStates[data.tool_id] = resultText;
-
-            this.inputValue = JSON.stringify({
+            this.send("tool", JSON.stringify({
               "type": "tool",
               "tool_id": data.tool_id,
               "content": toolResult?.content || '',
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
-            }, null, 2);
-            this.send("tool");
+            }, null, 2), false);
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
             this.isWaiting = false;
@@ -1112,7 +1079,7 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-      this.send("user");
+      this.send("user", this.inputValue.trim(), true);
       event.preventDefault();
     }
   }
