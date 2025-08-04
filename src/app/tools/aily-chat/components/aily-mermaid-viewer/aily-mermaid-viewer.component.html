@@ -17,14 +17,3 @@
   </div>
   }
 </div>
-
-<!-- 全屏模态框 -->
-@if (isFullscreen) {
-<div class="fullscreen-overlay" (click)="exitFullscreen()">
-  <div class="fullscreen-container" [id]="fullscreenContainerId" (click)="$event.stopPropagation()"
-    (wheel)="onWheel($event)" (mousedown)="onMouseDown($event)" (mousemove)="onMouseMove($event)"
-    (mouseup)="onMouseUp($event)" (mouseleave)="onMouseUp($event)">
-    <div class="fullscreen-chart" [style.transform]="transform" [innerHTML]="renderedSvg"></div>
-  </div>
-</div>
-}
