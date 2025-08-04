@@ -101,12 +101,12 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   getBoardImageUrl(): string {
     if (!this.boardInfo?.img) return '';
-    
+
     // 如果是完整URL，直接返回
     if (this.boardInfo.img.startsWith('http')) {
       return this.boardInfo.img;
     }
-    
+
     // 否则拼接资源路径
     return `${this.resourceUrl}/boards/${this.boardInfo.img}`;
   }
@@ -116,7 +116,7 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   getBrandLogoUrl(): string {
     if (!this.boardInfo?.brand) return '';
-    
+
     return `./brand/${this.boardInfo.brand.toLowerCase()}/logo.png`;
   }
 
@@ -132,7 +132,7 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   installBoard(): void {
     if (!this.boardInfo?.name) return;
-    
+
     // 实现开发板安装逻辑
     console.log('Installing board:', this.boardInfo.name);
     this.chatService.sendTextToChat(`安装开发板: ${this.boardInfo.name}`, { sender: 'board', type: 'install', autoSend: true });
@@ -143,7 +143,11 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   viewBoardDetails(): void {
     if (!this.boardInfo?.url) return;
-    
+
     window.open(this.boardInfo.url, '_blank');
+  }
+
+  logDetail() {
+    console.log('状态详情:', this.boardInfo);
   }
 }
