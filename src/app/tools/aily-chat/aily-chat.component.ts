@@ -382,46 +382,46 @@ export class AilyChatComponent implements OnDestroy {
     this.mcpService.init().then(() => {
       this.startSession();
     })
+    // 测试数据
+    //     setTimeout(() => {
+    //       this.list.push({
+    //         role: 'bot',
+    //         content: `\`\`\`aily-mermaid
+    // flowchart TD
+    //     subgraph "桌面时钟摆件"
+    //         direction LR
+    //         subgraph "核心控制"
+    //             MCU[主控芯片 ESP32<br>内置Wi-Fi]
+    //         end
 
-    setTimeout(() => {
-      this.list.push({
-        role: 'bot',
-        content: `\`\`\`aily-mermaid
-flowchart TD
-    subgraph "桌面时钟摆件"
-        direction LR
-        subgraph "核心控制"
-            MCU[主控芯片 ESP32<br>内置Wi-Fi]
-        end
+    //         subgraph "外围设备"
+    //             MATRIX[LED点阵屏<br>MAX7219驱动]
+    //             RTC[实时时钟模块<br>DS3231]
+    //             SENSOR[温湿度传感器<br>DHT22]
+    //             BUTTON[物理按键]
+    //         end
 
-        subgraph "外围设备"
-            MATRIX[LED点阵屏<br>MAX7219驱动]
-            RTC[实时时钟模块<br>DS3231]
-            SENSOR[温湿度传感器<br>DHT22]
-            BUTTON[物理按键]
-        end
+    //         subgraph "网络服务"
+    //             NTP[NTP网络时间服务]
+    //             WEATHER_API[天气信息API]
+    //         end
 
-        subgraph "网络服务"
-            NTP[NTP网络时间服务]
-            WEATHER_API[天气信息API]
-        end
+    //         subgraph "电源"
+    //             POWER[USB 5V供电]
+    //         end
+    //     end
 
-        subgraph "电源"
-            POWER[USB 5V供电]
-        end
-    end
-
-    MCU -- SPI --> MATRIX
-    MCU -- I2C --> RTC
-    MCU -- GPIO --> SENSOR
-    MCU -- GPIO --> BUTTON
-    MCU -- Wi-Fi --> NTP
-    MCU -- Wi-Fi --> WEATHER_API
-    POWER --> MCU
-    POWER --> MATRIX
-\`\`\`\n\n`
-      });
-    }, 2000);
+    //     MCU -- SPI --> MATRIX
+    //     MCU -- I2C --> RTC
+    //     MCU -- GPIO --> SENSOR
+    //     MCU -- GPIO --> BUTTON
+    //     MCU -- Wi-Fi --> NTP
+    //     MCU -- Wi-Fi --> WEATHER_API
+    //     POWER --> MCU
+    //     POWER --> MATRIX
+    // \`\`\`\n\n`
+    //       });
+    //     }, 2000);
   }
 
   appendMessage(role, text) {
