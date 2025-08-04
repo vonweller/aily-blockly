@@ -305,6 +305,7 @@ export class AilyChatComponent implements OnDestroy {
     if (options?.type === 'button') {
       this.inputValue = text;
       this.send("user", true, true);
+      this.inputValue = "";
       return;
     }
 
@@ -475,7 +476,7 @@ ${JSON.stringify(errData)}
   }
 
   send(sender: string, show: boolean = true, toolCallRes: boolean = false): void {
-    if (!this.sessionId || !this.inputValue.trim()) return;
+    if (!this.sessionId || !this.inputValue.trim() || this.isWaiting) return;
     let text = this.inputValue.trim();
 
     if (!toolCallRes) {
@@ -483,10 +484,6 @@ ${JSON.stringify(errData)}
       const resourcesText = this.getResourcesText();
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
-      }
-    } else {
-      if (!this.isWaiting) {
-        return;
       }
     }
 
