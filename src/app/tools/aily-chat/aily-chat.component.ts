@@ -352,7 +352,7 @@ export class AilyChatComponent implements OnDestroy {
             }
           });
         });
-        
+
         // 然后关闭连接
         await new Promise<void>((resolve) => {
           this.chatService.closeSession(this.sessionId).subscribe({
@@ -521,7 +521,7 @@ ${JSON.stringify(errData)}
   }
 
   streamConnect(): void {
-    console.log("streeam connect sessionId: ", this.sessionId);
+    console.log("stream connect sessionId: ", this.sessionId);
     if (!this.sessionId) return;
 
     this.chatService.streamConnect(this.sessionId).subscribe({
@@ -961,19 +961,19 @@ ${JSON.stringify(errData)}
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
-//                   case 'ask_approval':
-//                     console.log('[请求确认工具被调用]', toolArgs);
-//                     this.appendMessage('aily', `
-// \n\n${toolArgs.message}
+                  //                   case 'ask_approval':
+                  //                     console.log('[请求确认工具被调用]', toolArgs);
+                  //                     this.appendMessage('aily', `
+                  // \n\n${toolArgs.message}
 
-// \`\`\`aily-button
-// [
-// {"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
-// {"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
-// ]
-// \`\`\`\n\n
-//                     `);
-//                     return;
+                  // \`\`\`aily-button
+                  // [
+                  // {"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
+                  // {"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
+                  // ]
+                  // \`\`\`\n\n
+                  //                     `);
+                  //                     return;
                 }
               }
 
@@ -1018,6 +1018,9 @@ ${JSON.stringify(errData)}
           `);
           this.isWaiting = false;
         }
+      },
+      complete: () => {
+        console.log('streamConnect complete: ', this.list[this.list.length - 1]);
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1141,7 +1144,7 @@ ${JSON.stringify(errData)}
   async newChat() {
     console.log('启动新会话');
     this.list = [];
-    
+
     try {
       // 等待停止操作完成
       await new Promise<void>((resolve) => {
@@ -1149,7 +1152,7 @@ ${JSON.stringify(errData)}
           resolve();
           return;
         }
-        
+
         this.chatService.stopSession(this.sessionId).subscribe({
           next: (res: any) => {
             console.log('会话已停止:', res);
@@ -1162,14 +1165,14 @@ ${JSON.stringify(errData)}
           }
         });
       });
-      
+
       // 等待关闭会话完成
       await new Promise<void>((resolve) => {
         if (!this.sessionId) {
           resolve();
           return;
         }
-        
+
         this.chatService.closeSession(this.sessionId).subscribe({
           next: (res: any) => {
             console.log('会话已关闭:', res);
@@ -1181,7 +1184,7 @@ ${JSON.stringify(errData)}
           }
         });
       });
-      
+
       this.chatService.currentSessionId = '';
       // 最后启动新会话
       this.startSession();

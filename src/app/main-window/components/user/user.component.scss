@@ -46,6 +46,10 @@ button {
         input {
             background: #363636;
             color: rgba(255, 255, 255, 0.7) !important;
+
+            &[type="password"] {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
         }
     }
 
