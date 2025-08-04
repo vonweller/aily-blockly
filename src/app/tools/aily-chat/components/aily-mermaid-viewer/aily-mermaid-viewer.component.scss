@@ -1,9 +1,7 @@
 .aily-mermaid-viewer {
   border-radius: 5px;
-  margin: 5px 0;
   background-color: #3a3a3a;
-  overflow: hidden;
-  height: 260px;
+  max-height: 500px;
 
   &:hover {
     background-color: #3f3f3f;
@@ -29,7 +27,7 @@
   .mermaid-card {
     padding: 16px;
     border-radius: 8px;
-    height: calc(100% - 32px);
+    height: 100%;
     overflow: auto;
 
     .mermaid-container {
@@ -48,83 +46,20 @@
       }
 
       ::ng-deep {
+
+        // 确保 SVG 正确显示
         svg {
           max-width: 100% !important;
           height: auto !important;
-          display: block;
+          display: block !important;
           margin: 0 auto;
+          background: transparent !important;
         }
 
-        // 确保 Mermaid 生成的文本元素可见
-        text {
-          font-family: 'MiSans', sans-serif !important;
+        .label-container {
           fill: #333 !important;
-        }
-
-        // 确保节点和连接线可见
-        .node rect,
-        .node circle,
-        .node ellipse,
-        .node polygon {
-          fill: #fff !important;
-          stroke: #333 !important;
-          stroke-width: 2px !important;
-        }
-
-        // 确保箭头和连接线可见
-        .edgePath path {
-          stroke: #333 !important;
-          stroke-width: 2px !important;
-          fill: none !important;
-        }
-
-        // 确保箭头标记可见
-        marker path {
-          fill: #333 !important;
-          stroke: #333 !important;
-        }
-
-        // 序列图样式
-        .actor {
-          fill: #fff !important;
-          stroke: #333 !important;
-          stroke-width: 2px !important;
-        }
-
-        .messageLine0,
-        .messageLine1 {
-          stroke: #333 !important;
-          stroke-width: 2px !important;
-        }
-
-        // 甘特图样式
-        .section0, .section1, .section2, .section3 {
-          fill: #8dd3c7 !important;
-        }
-
-        // 状态图样式
-        .state-start circle,
-        .state-end circle {
-          fill: #fff !important;
-          stroke: #333 !important;
-        }
-
-        // 饼图样式
-        .pieCircle {
-          stroke: #fff !important;
-          stroke-width: 2px !important;
         }
       }
-    }
-  }
-
-  @keyframes spin {
-    0% {
-      transform: rotate(0deg);
-    }
-
-    100% {
-      transform: rotate(360deg);
     }
   }
 }

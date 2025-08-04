@@ -1,5 +1,6 @@
 import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import mermaid from 'mermaid';
 
 export interface AilyMermaidData {
@@ -27,10 +28,11 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
   errorMessage = '';
   isLoading = false;
   rawCode = '';
-  renderedSvg = '';
+  renderedSvg: SafeHtml = '';
+  rawSvgString = '';  // 保存原始 SVG 字符串用于调试
   containerId = '';
 
-  constructor() { }
+  constructor(private sanitizer: DomSanitizer) { }
 
   ngOnInit() {
     this.initializeMermaid();
@@ -61,7 +63,7 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
   private initializeMermaid(): void {
     mermaid.initialize({
       startOnLoad: false,
-      theme: 'default',
+      theme: 'dark',
       securityLevel: 'loose',
       fontFamily: 'MiSans, sans-serif',
       htmlLabels: true,
@@ -69,7 +71,9 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       deterministicIDSeed: undefined,
       flowchart: {
         useMaxWidth: true,
-        htmlLabels: true
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 20
       },
       sequence: {
         diagramMarginX: 50,
@@ -89,9 +93,6 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       },
       gantt: {
         useMaxWidth: true
-      },
-      themeVariables: {
-        primaryColor: '#ff0000'
       }
     });
   }
@@ -103,8 +104,13 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
     if (!this.data) {
       this.errorMessage = '没有可显示的 Mermaid 数据';
       this.isLoading = false;
+      this.renderedSvg = '';
+      this.rawSvgString = '';
       return;
     }
+
+    console.log('=== Processing Mermaid Data ===');
+    console.log('Input data:', this.data);
 
     try {
       // 提取 Mermaid 代码
@@ -115,12 +121,16 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
         code = this.data.raw || '';
       }
 
+      console.log('Extracted code:', code);
+
       this.rawCode = code.trim();
       this.errorMessage = '';
 
       if (!this.rawCode) {
         this.errorMessage = '没有找到 Mermaid 代码';
         this.isLoading = false;
+        this.renderedSvg = '';
+        this.rawSvgString = '';
         return;
       }
 
@@ -130,6 +140,8 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       console.error('Error processing mermaid data:', error);
       this.errorMessage = `数据处理失败: ${error.message}`;
       this.isLoading = false;
+      this.renderedSvg = '';
+      this.rawSvgString = '';
     }
   }
 
@@ -140,32 +152,41 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
     try {
       this.isLoading = true;
       this.renderedSvg = '';
+      this.rawSvgString = '';
+
+      console.log('=== Rendering Mermaid Diagram ===');
+      console.log('Code to render:', code);
 
       // 生成唯一的图表 ID
       const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       this.containerId = `mermaid-container-${diagramId}`;
 
-      // 在 Mermaid 11.x 中，parse 方法已经改变
-      let isValid = true;
+      console.log('Diagram ID:', diagramId);
+      console.log('Container ID:', this.containerId);
+
+      // 验证 Mermaid 代码
       try {
         await mermaid.parse(code);
+        console.log('Mermaid parse: SUCCESS');
       } catch (parseError) {
-        console.warn('Mermaid parse validation failed:', parseError);
-        // 即使解析失败，我们仍然尝试渲染，因为有些情况下 parse 可能误报
+        console.warn('Mermaid parse warning:', parseError);
+        // 继续尝试渲染，因为有些情况下 parse 可能误报
       }
 
-      // 渲染 Mermaid 图表
-      // 在 Mermaid 11.x 中，render 方法返回的结构发生了变化
+      // 渲染 Mermaid 图表 - 使用与测试文件相同的方式
+      console.log('Starting mermaid.render...');
       const renderResult = await mermaid.render(diagramId, code);
+      console.log('Render result:', renderResult);
+      console.log('Render result type:', typeof renderResult);
 
-      // 根据 Mermaid 版本获取 SVG
+      // 获取 SVG 内容 - 优先使用 svg 属性
       let svg: string;
-      if (typeof renderResult === 'string') {
-        // 旧版本直接返回 SVG 字符串
+      if (typeof renderResult === 'object' && renderResult.svg) {
+        svg = renderResult.svg;
+        console.log('Using renderResult.svg');
+      } else if (typeof renderResult === 'string') {
         svg = renderResult;
-      } else if (renderResult && typeof renderResult === 'object') {
-        // 新版本返回对象，可能包含 svg 属性
-        svg = renderResult.svg || renderResult.toString();
+        console.log('Using renderResult as string');
       } else {
         throw new Error('Invalid render result from Mermaid');
       }
@@ -174,33 +195,59 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
         throw new Error('Failed to get SVG from Mermaid render result');
       }
 
-      // 为 SVG 添加必要的属性和样式
-      const enhancedSvg = svg
-        .replace('<svg', `<svg id="${diagramId}" data-mermaid-svg="true" style="max-width: 100%; height: auto;"`)
-        .replace(/width="[^"]*"/, 'width="100%"')
-        .replace(/height="[^"]*"/, ''); // 移除固定高度，让它自适应
+      console.log('SVG length:', svg.length);
+      console.log('SVG preview:', svg.substring(0, 200) + '...');
 
-      this.renderedSvg = enhancedSvg;
+      // 清理和增强 SVG
+      const enhancedSvg = this.enhanceSvg(svg, diagramId);
+      this.rawSvgString = enhancedSvg;  // 保存原始字符串
+      this.renderedSvg = this.sanitizer.bypassSecurityTrustHtml(enhancedSvg);  // 安全地绕过清理
       this.isLoading = false;
       this.errorMessage = '';
+
+      console.log('Enhanced SVG length:', enhancedSvg.length);
 
       // 延迟发送事件，确保 DOM 已渲染
       setTimeout(() => {
         this.notifyMermaidReady(diagramId);
+        console.log('Mermaid diagram rendering completed');
+        // 不需要额外的样式应用，因为主题配置已经足够
       }, 100);
 
     } catch (error) {
       console.error('Mermaid rendering error:', error);
       this.isLoading = false;
-      this.errorMessage = error.message || '图表渲染失败';
-
-      // 提供更详细的错误信息
-      if (error.message?.includes('Parse error')) {
-        this.errorMessage = '图表语法错误，请检查代码格式';
-      } else if (error.message?.includes('Cannot read properties')) {
-        this.errorMessage = '图表渲染失败，可能是版本兼容性问题';
-      }
+      this.renderedSvg = '';
+      this.rawSvgString = '';
+      this.errorMessage = this.getErrorMessage(error);
     }
+  }
+
+  /**
+   * 增强 SVG 内容
+   */
+  private enhanceSvg(svg: string, diagramId: string): string {
+    return svg
+      .replace('<svg', `<svg id="${diagramId}" data-mermaid-svg="true"`)
+      .replace(/width="[^"]*"/, 'width="100%"')
+      .replace(/height="[^"]*"/, 'height="auto"')
+      .replace(/<svg([^>]*)>/, (match, attrs) => {
+        return `<svg${attrs} style="max-width: 100%; height: auto; display: block;">`;
+      });
+  }
+
+  /**
+   * 获取错误信息
+   */
+  private getErrorMessage(error: any): string {
+    if (error.message?.includes('Parse error')) {
+      return '图表语法错误，请检查代码格式';
+    } else if (error.message?.includes('Cannot read properties')) {
+      return '图表渲染失败，可能是版本兼容性问题';
+    } else if (error.message?.includes('Invalid render result')) {
+      return '图表渲染失败，无法获取有效的 SVG 内容';
+    }
+    return error.message || '图表渲染失败';
   }
 
   /**
@@ -219,15 +266,18 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
     }
   }
 
-  /**
-   * 处理容器点击事件
-   */
-  onContainerClick(event: Event): void {
-    // 可以在这里添加缩放、拖拽等交互功能
-    console.log('Mermaid diagram clicked:', event);
-  }
-
   logDetail() {
     console.log('Raw Code:', this.rawCode);
+    // 检查 DOM 中的 SVG 元素
+    if (this.containerId) {
+      const container = document.getElementById(this.containerId);
+      console.log('Container element:', container);
+      if (container) {
+        const svg = container.querySelector('svg');
+        console.log('SVG element:', svg);
+        console.log('SVG innerHTML length:', svg?.innerHTML?.length || 0);
+      }
+    }
   }
+
 }

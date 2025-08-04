@@ -1,4 +1,4 @@
-<div class="aily-mermaid-viewer" (dblclick)="logDetail()">
+<div class="aily-mermaid-viewer sscroll" (dblclick)="logDetail()">
   @if (errorMessage) {
   <div class="error-card">
     <div class="error-content">
@@ -13,8 +13,7 @@
   </div>
   } @else if (renderedSvg) {
   <div class="mermaid-card">
-    <div class="mermaid-container" [id]="containerId" [innerHTML]="renderedSvg" (click)="onContainerClick($event)">
-    </div>
+    <div class="mermaid-container" [id]="containerId" [innerHTML]="renderedSvg"></div>
   </div>
   }
 </div>
