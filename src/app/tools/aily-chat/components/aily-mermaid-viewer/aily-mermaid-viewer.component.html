@@ -1,0 +1,36 @@
+<div class="aily-mermaid-viewer">
+  @if (errorMessage) {
+    <div class="error-card">
+      <div class="error-content">
+        <i class="error-icon">🚫</i>
+        <span class="error-text">Mermaid 图表渲染失败</span>
+      </div>
+      <div class="error-details">{{ errorMessage }}</div>
+      
+      @if (rawCode) {
+        <div class="raw-data-section">
+          <details>
+            <summary>显示原始代码</summary>
+            <pre class="raw-code">{{ rawCode }}</pre>
+          </details>
+        </div>
+      }
+    </div>
+  } @else if (isLoading) {
+    <div class="loading-card">
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <span class="loading-text">📊 正在生成中...</span>
+        <div class="loading-hint">等待 Mermaid 图表内容完整生成</div>
+      </div>
+    </div>
+  } @else if (renderedSvg) {
+    <div class="mermaid-card">
+      <div class="mermaid-container" 
+           [id]="containerId" 
+           [innerHTML]="renderedSvg"
+           (click)="onContainerClick($event)">
+      </div>
+    </div>
+  }
+</div>

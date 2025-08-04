@@ -155,8 +155,8 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
    * 查看文档
    */
   viewDocumentation(): void {
-    if (this.libraryInfo?.documentation) {
-      window.open(this.libraryInfo.documentation, '_blank');
+    if (this.libraryInfo?.url) {
+      window.open(this.libraryInfo.url, '_blank');
     }
   }
 

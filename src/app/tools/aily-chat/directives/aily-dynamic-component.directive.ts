@@ -15,6 +15,7 @@ import { AilyLibraryViewerComponent } from '../components/aily-library-viewer/ai
 import { AilyStateViewerComponent } from '../components/aily-state-viewer/aily-state-viewer.component';
 import { AilyButtonViewerComponent } from '../components/aily-button-viewer/aily-button-viewer.component';
 import { AilyErrorViewerComponent } from '../components/aily-error-viewer/aily-error-viewer.component';
+import { AilyMermaidViewerComponent } from '../components/aily-mermaid-viewer/aily-mermaid-viewer.component';
 import { safeBase64Decode } from '../pipes/markdown.pipe';
 
 /**
@@ -311,6 +312,8 @@ export class AilyDynamicComponentDirective implements OnInit, OnDestroy {
         return AilyButtonViewerComponent;
       case 'aily-error':
         return AilyErrorViewerComponent;
+      case 'aily-mermaid':
+        return AilyMermaidViewerComponent;
       default:
         return null;
     }

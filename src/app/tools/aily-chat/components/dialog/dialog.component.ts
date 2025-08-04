@@ -47,7 +47,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   loaded = false;
   safeContent: SafeHtml = '';
   private markdownPipe: MarkdownPipe;
-  private mermaidEventListener: (event: CustomEvent) => void;
   private lastContentLength = 0; // 跟踪上次处理的内容长度
   private lastProcessedContent = ''; // 跟踪上次处理的完整内容
   private renderTimeout: any; // 渲染超时定时器
@@ -148,7 +147,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
     // 处理代理名称替换后再渲染
     const processedContent = this.replaceAgentNamesInContent(currentContent);
-    
+
     // 首次渲染整个内容
     await this.renderContent(processedContent);
   }
@@ -507,11 +506,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
         this.verifyAndRecoverContent(content);
       }, 100);
     }
-
-    // 触发重新初始化
-    setTimeout(() => {
-      this.initializeRenderedContent();
-    }, 50);
   }
 
   /**
@@ -651,48 +645,15 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   /**
-   * 初始化渲染后的内容，如 Mermaid 图表等
-   */
-  private initializeRenderedContent(): void {
-    // 清理失效的段落跟踪
-    const container = this.contentDiv?.nativeElement;
-    if (container) {
-      this.contentSegments = this.contentSegments.filter(segment =>
-        segment.element && container.contains(segment.element)
-      );
-    }
-
-    // 添加调试信息
-    if (console.debug) {
-      console.debug('Content segments after render:', {
-        totalSegments: this.contentSegments.length,
-        contentLength: this.lastProcessedContent.length,
-        validSegments: this.contentSegments.filter(s => s.element && container?.contains(s.element)).length
-      });
-    }
-
-    // 触发自定义事件，通知其他组件内容已更新
-    const event = new CustomEvent('contentRendered', {
-      detail: {
-        element: this.contentDiv?.nativeElement,
-        contentLength: this.lastProcessedContent.length,
-        segmentCount: this.contentSegments.length
-      }
-    });
-    this.el.nativeElement.dispatchEvent(event);
-  }
-
-
-  /**
    * 替换内容中的代理名称为对应的emoji符号
    */
   private replaceAgentNamesInContent(content: string): string {
     let processedContent = content;
-    
+
     // 使用正则表达式匹配 [to_xxx] 形式的内容
     const agentNameRegex = /\[to_[^\]]+\]/g;
     const matches = content.match(agentNameRegex);
-    
+
     if (matches) {
       matches.forEach(match => {
         // 在 agentNameList 中查找对应的emoji
@@ -702,7 +663,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
         }
       });
     }
-    
+
     return processedContent;
   }
 }

@@ -8,7 +8,6 @@ import { markedHighlight } from 'marked-highlight';
 import { codeToHtml } from 'shiki';
 import { Observable, from, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
-import mermaid from 'mermaid';
 
 /**
  * 扩展的 Markdown 管道，支持动态 Angular 组件渲染
@@ -26,9 +25,6 @@ export class MarkdownPipe implements PipeTransform {
   constructor(
     private sanitizer: DomSanitizer
   ) {
-    // 初始化 Mermaid
-    this.initializeMermaid();
-
     this.marked = new Marked(
       markedHighlight({
         async: true,
@@ -40,9 +36,9 @@ export class MarkdownPipe implements PipeTransform {
               return this.renderAilyCodeBlockWithComponent(code, lang as any);
             }
 
-            // 检查是否为 Mermaid 图表
+            // 检查是否为 Mermaid 图表 - 改为 aily-mermaid 类型
             if (lang?.toLowerCase() === 'mermaid') {
-              return this.renderMermaidDiagram(code);
+              return this.renderAilyCodeBlockWithComponent(code, 'aily-mermaid');
             }
 
             // 处理语言别名
@@ -95,264 +91,10 @@ export class MarkdownPipe implements PipeTransform {
   }
 
   /**
-   * 初始化 Mermaid
-   */
-  private initializeMermaid(): void {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'default',
-      securityLevel: 'loose',
-      fontFamily: 'MiSans, sans-serif',
-      htmlLabels: true,
-      flowchart: {
-        useMaxWidth: true,
-        htmlLabels: true
-      },
-      sequence: {
-        diagramMarginX: 50,
-        diagramMarginY: 10,
-        actorMargin: 50,
-        width: 150,
-        height: 65,
-        boxMargin: 10,
-        boxTextMargin: 5,
-        noteMargin: 10,
-        messageMargin: 35,
-        mirrorActors: true,
-        bottomMarginAdj: 1,
-        useMaxWidth: true,
-        rightAngles: false,
-        showSequenceNumbers: false
-      },
-      gantt: {
-        useMaxWidth: true
-      }
-    });
-  }
-
-  /**
-   * 渲染 Mermaid 图表
-   */
-  private async renderMermaidDiagram(code: string): Promise<string> {
-    try {
-      // 检查代码是否完整
-      if (!this.isMermaidCodeComplete(code)) {
-        return this.renderMermaidLoading(code);
-      }
-
-      // 生成唯一的图表 ID
-      const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const containerId = `mermaid-container-${diagramId}`;
-
-      // 验证 Mermaid 语法
-      const isValid = await mermaid.parse(code);
-      if (!isValid) {
-        throw new Error('Invalid Mermaid syntax');
-      }
-
-      // 渲染 Mermaid 图表
-      const { svg } = await mermaid.render(diagramId, code);
-
-      // 为 SVG 添加必要的属性以支持 svg-pan-zoom
-      const enhancedSvg = svg.replace(
-        '<svg',
-        `<svg id="${diagramId}" data-mermaid-svg="true"`
-      );
-
-      // 返回包装后的 SVG，包含缩放和拖拽功能
-      const html = `<div class="mermaid-container" id="${containerId}" style="
-        position: relative;
-        overflow: hidden;
-        min-height: 200px;
-        cursor: grab;
-        user-select: none;
-        " data-svg-id="${diagramId}" data-mermaid-ready="true">
-        <div class="mermaid-svg-wrapper" style="
-          width: 100%;
-          height: 100%;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-        ">
-          ${enhancedSvg}
-        </div>
-      </div>`;
-      // 延迟发送事件，确保 DOM 已渲染
-      setTimeout(() => {
-        this.notifyMermaidReady(diagramId);
-      }, 100);
-
-      return html;
-    } catch (error) {
-      console.error('Mermaid rendering error:', error);
-
-      // 如果是语法错误且代码可能不完整，显示加载状态
-      if (error.message?.includes('syntax') && this.mightBeIncomplete(code)) {
-        return this.renderMermaidLoading(code);
-      }
-
-      // 渲染失败时显示错误信息和原始代码
-      return `<div class="mermaid-error" style="
-        margin: 16px 0;
-        padding: 16px;
-        background-color: #fff2f0;
-        border: 1px solid #ffccc7;
-        border-radius: 6px;
-        color: #ff4d4f;
-      ">
-        <div style="font-weight: 600; margin-bottom: 8px;">
-          🚫 Mermaid 图表渲染失败
-        </div>
-        <div style="font-size: 12px; margin-bottom: 12px; color: #8c8c8c;">
-          错误信息: ${error.message || '未知错误'}
-        </div>
-        <details style="cursor: pointer;">
-          <summary style="margin-bottom: 8px; color: #595959;">显示原始代码</summary>
-          <pre style="
-            background-color: #f5f5f5;
-            padding: 12px;
-            border-radius: 4px;
-            overflow-x: auto;
-            margin: 0;
-            white-space: pre-wrap;
-            word-break: break-word;
-          "><code>${this.escapeHtml(code)}</code></pre>
-        </details>
-      </div>`;
-    }
-  }
-
-  /**
-   * 检查 Mermaid 代码是否完整
-   */
-  private isMermaidCodeComplete(code: string): boolean {
-    const trimmedCode = code.trim();
-
-    // 检查基本的图表类型关键字
-    const diagramTypes = [
-      'graph', 'flowchart', 'sequenceDiagram', 'classDiagram',
-      'erDiagram', 'gantt', 'pie', 'gitgraph', 'mindmap',
-      'timeline', 'journey', 'gitgraph:', 'stateDiagram'
-    ];
-
-    const hasValidStart = diagramTypes.some(type => trimmedCode.toLowerCase().startsWith(type.toLowerCase()));
-    if (!hasValidStart) {
-      return false;
-    }
-
-    // 检查是否有基本的语法结构
-    if (trimmedCode.length < 10) {
-      return false;
-    }
-
-    // 检查是否以不完整的语句结尾
-    const incompleteSuffixes = ['->', '-->', '---', '==>', '-.', '=', '-', '|', '[', '(', '{'];
-    const endsIncomplete = incompleteSuffixes.some(suffix =>
-      trimmedCode.endsWith(suffix) || trimmedCode.endsWith(suffix + ' ')
-    );
-
-    if (endsIncomplete) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * 判断代码是否可能不完整（用于错误处理）
-   */
-  private mightBeIncomplete(code: string): boolean {
-    const trimmedCode = code.trim();
-
-    // 如果代码太短，可能不完整
-    if (trimmedCode.length < 20) {
-      return true;
-    }
-
-    // 检查是否以常见的不完整模式结尾
-    const incompletePatterns = [
-      /-->\s*$/, /\|\s*$/, /\[\s*$/, /\(\s*$/, /\{\s*$/,
-      /-\s*$/, /=\s*$/, /:\s*$/, /;\s*$/
-    ];
-
-    return incompletePatterns.some(pattern => pattern.test(trimmedCode));
-  }
-
-  /**
-   * 渲染 Mermaid 加载状态
-   */
-  private renderMermaidLoading(code: string): string {
-    const loadingId = `mermaid-loading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    return `<div class="mermaid-loading" id="${loadingId}" style="
-      margin: 16px 0;
-      padding: 24px;
-      background-color: #fafafa;
-      border: 1px solid #d9d9d9;
-      border-radius: 6px;
-      text-align: center;
-      min-height: 120px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      gap: 12px;
-      color: #666;
-    ">
-      <div class="mermaid-loading-spinner" style="
-        width: 24px;
-        height: 24px;
-        border: 2px solid #f0f0f0;
-        border-top: 2px solid #1890ff;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-      "></div>
-      <div style="font-size: 14px; font-weight: 500;">
-        📊 图表渲染中...
-      </div>
-      <div style="font-size: 12px; color: #999;">
-        正在等待完整的 Mermaid 代码
-      </div>
-      <style>
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      </style>
-    </div>`;
-  }
-
-  /**
-   * 通知 Mermaid 图表已准备就绪
-   */
-  private notifyMermaidReady(diagramId: string): void {
-    try {
-      // 发送自定义事件到文档，DialogComponent 可以监听此事件
-      const event = new CustomEvent('mermaidDiagramReady', {
-        detail: { diagramId },
-        bubbles: true
-      });
-      document.dispatchEvent(event);
-    } catch (error) {
-      console.warn('Failed to notify mermaid ready:', error);
-    }
-  }
-
-  /**
-   * HTML 转义工具函数
-   */
-  private escapeHtml(unsafe: string): string {
-    return unsafe
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }  /**
    * 检查是否为特殊的 Aily 代码块类型
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid'];
     return ailyTypes.includes(lang);
   }/**
    * 渲染 Aily 特殊代码块为组件占位符
@@ -460,6 +202,13 @@ export class MarkdownPipe implements PipeTransform {
             type: 'aily-button',
             buttons: Array.isArray(jsonData) ? jsonData : (jsonData.buttons || [jsonData]),
             config: jsonData.config || {},
+            metadata: jsonData.metadata || {}
+          };
+        case 'aily-mermaid':
+          return {
+            type: 'aily-mermaid',
+            code: jsonData.code || jsonData.content || cleanedCode,
+            content: jsonData.content || cleanedCode,
             metadata: jsonData.metadata || {}
           };
         default:
