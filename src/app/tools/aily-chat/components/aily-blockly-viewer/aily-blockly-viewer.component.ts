@@ -25,9 +25,9 @@ export class AilyBlocklyViewerComponent implements OnInit, OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['data']) {
-      this.processData();
-    }
+    // if (changes['data']) {
+    //   this.processData();
+    // }
   }
 
   /**
