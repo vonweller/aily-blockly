@@ -67,6 +67,8 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       securityLevel: 'loose',
       fontFamily: 'MiSans, sans-serif',
       htmlLabels: true,
+      deterministicIds: false,
+      deterministicIDSeed: undefined,
       flowchart: {
         useMaxWidth: true,
         htmlLabels: true
@@ -89,6 +91,9 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       },
       gantt: {
         useMaxWidth: true
+      },
+      themeVariables: {
+        primaryColor: '#ff0000'
       }
     });
   }
@@ -207,20 +212,40 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       const diagramId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       this.containerId = `mermaid-container-${diagramId}`;
 
-      // 验证 Mermaid 语法
-      const isValid = await mermaid.parse(code);
-      if (!isValid) {
-        throw new Error('Invalid Mermaid syntax');
+      // 在 Mermaid 11.x 中，parse 方法已经改变
+      let isValid = true;
+      try {
+        await mermaid.parse(code);
+      } catch (parseError) {
+        console.warn('Mermaid parse validation failed:', parseError);
+        // 即使解析失败，我们仍然尝试渲染，因为有些情况下 parse 可能误报
       }
 
       // 渲染 Mermaid 图表
-      const { svg } = await mermaid.render(diagramId, code);
+      // 在 Mermaid 11.x 中，render 方法返回的结构发生了变化
+      const renderResult = await mermaid.render(diagramId, code);
+      
+      // 根据 Mermaid 版本获取 SVG
+      let svg: string;
+      if (typeof renderResult === 'string') {
+        // 旧版本直接返回 SVG 字符串
+        svg = renderResult;
+      } else if (renderResult && typeof renderResult === 'object') {
+        // 新版本返回对象，可能包含 svg 属性
+        svg = renderResult.svg || renderResult.toString();
+      } else {
+        throw new Error('Invalid render result from Mermaid');
+      }
 
-      // 为 SVG 添加必要的属性
-      const enhancedSvg = svg.replace(
-        '<svg',
-        `<svg id="${diagramId}" data-mermaid-svg="true"`
-      );
+      if (!svg || typeof svg !== 'string') {
+        throw new Error('Failed to get SVG from Mermaid render result');
+      }
+
+      // 为 SVG 添加必要的属性和样式
+      const enhancedSvg = svg
+        .replace('<svg', `<svg id="${diagramId}" data-mermaid-svg="true" style="max-width: 100%; height: auto;"`)
+        .replace(/width="[^"]*"/, 'width="100%"')
+        .replace(/height="[^"]*"/, ''); // 移除固定高度，让它自适应
 
       this.renderedSvg = enhancedSvg;
       this.isLoading = false;
@@ -242,6 +267,13 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       }
 
       this.errorMessage = error.message || '图表渲染失败';
+      
+      // 提供更详细的错误信息
+      if (error.message?.includes('Parse error')) {
+        this.errorMessage = '图表语法错误，请检查代码格式';
+      } else if (error.message?.includes('Cannot read properties')) {
+        this.errorMessage = '图表渲染失败，可能是版本兼容性问题';
+      }
     }
   }
 
@@ -488,5 +520,22 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
 
   logDetail(){
     console.log('Mermaid Viewer Data:', this.data);
+    console.log('Raw Code:', this.rawCode);
+  }
+
+  /**
+   * 测试简单图表的渲染
+   */
+  private async testSimpleDiagram(): Promise<void> {
+    const testCode = `graph TD
+    A[开始] --> B[处理]
+    B --> C[结束]`;
+    
+    console.log('Testing simple diagram:', testCode);
+    try {
+      await this.renderMermaidDiagram(testCode);
+    } catch (error) {
+      console.error('Test diagram failed:', error);
+    }
   }
 }

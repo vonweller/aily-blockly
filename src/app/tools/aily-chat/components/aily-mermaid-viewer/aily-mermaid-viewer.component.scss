@@ -12,8 +12,6 @@
   // 错误卡片
   .error-card {
     padding: 16px;
-    background-color: #fff2f0;
-    border-left: 4px solid #ff4d4f;
 
     .error-content {
       display: flex;
@@ -31,90 +29,25 @@
         font-weight: 600;
       }
     }
-
-    .error-details {
-      font-size: 12px;
-      color: #8c8c8c;
-      margin-bottom: 12px;
-    }
-
-    .raw-data-section {
-      details {
-        cursor: pointer;
-
-        summary {
-          margin-bottom: 8px;
-          color: #595959;
-          font-size: 13px;
-        }
-
-        .raw-code {
-          background-color: #f5f5f5;
-          padding: 12px;
-          border-radius: 4px;
-          overflow-x: auto;
-          margin: 0;
-          white-space: pre-wrap;
-          word-break: break-word;
-          font-family: Consolas, "Courier New", monospace;
-          font-size: 12px;
-        }
-      }
-    }
-  }
-
-  // 加载卡片
-  .loading-card {
-    padding: 24px;
-    background-color: #fafafa;
-    border: 1px solid #d9d9d9;
-    text-align: center;
-    min-height: 120px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-
-    .loading-content {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-      color: #666;
-
-      .loading-spinner {
-        width: 24px;
-        height: 24px;
-        border: 2px solid #f0f0f0;
-        border-top: 2px solid #1890ff;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-      }
-
-      .loading-text {
-        font-size: 14px;
-        font-weight: 500;
-      }
-
-      .loading-hint {
-        font-size: 12px;
-        color: #999;
-      }
-    }
   }
 
   // Mermaid 图表卡片
   .mermaid-card {
     padding: 16px;
+    border-radius: 8px;
+    height: calc(100% - 32px);
+    overflow: auto;
 
     .mermaid-container {
       position: relative;
-      overflow: hidden;
       min-height: 200px;
       cursor: grab;
       user-select: none;
       display: flex;
       justify-content: center;
       align-items: center;
+      width: 100%;
+      height: 100%;
 
       &:active {
         cursor: grabbing;
@@ -122,8 +55,70 @@
 
       ::ng-deep {
         svg {
-          max-width: 100%;
-          height: auto;
+          max-width: 100% !important;
+          height: auto !important;
+          display: block;
+          margin: 0 auto;
+        }
+
+        // 确保 Mermaid 生成的文本元素可见
+        text {
+          font-family: 'MiSans', sans-serif !important;
+          fill: #333 !important;
+        }
+
+        // 确保节点和连接线可见
+        .node rect,
+        .node circle,
+        .node ellipse,
+        .node polygon {
+          fill: #fff !important;
+          stroke: #333 !important;
+          stroke-width: 2px !important;
+        }
+
+        // 确保箭头和连接线可见
+        .edgePath path {
+          stroke: #333 !important;
+          stroke-width: 2px !important;
+          fill: none !important;
+        }
+
+        // 确保箭头标记可见
+        marker path {
+          fill: #333 !important;
+          stroke: #333 !important;
+        }
+
+        // 序列图样式
+        .actor {
+          fill: #fff !important;
+          stroke: #333 !important;
+          stroke-width: 2px !important;
+        }
+
+        .messageLine0,
+        .messageLine1 {
+          stroke: #333 !important;
+          stroke-width: 2px !important;
+        }
+
+        // 甘特图样式
+        .section0, .section1, .section2, .section3 {
+          fill: #8dd3c7 !important;
+        }
+
+        // 状态图样式
+        .state-start circle,
+        .state-end circle {
+          fill: #fff !important;
+          stroke: #333 !important;
+        }
+
+        // 饼图样式
+        .pieCircle {
+          stroke: #fff !important;
+          stroke-width: 2px !important;
         }
       }
     }
