@@ -1,4 +1,4 @@
-<div class="aily-library-viewer">
+<div class="aily-library-viewer" (dblclick)="logDetail()">
   <div class="board-card">
     <div class="img-box ccenter">
       <i class="{{libraryInfo?.icon}}"></i>
@@ -8,8 +8,10 @@
       <div class="text ellipsis">{{libraryInfo?.description}}</div>
     </div>
     <div class="action-btns ccenter">
+      @if (libraryInfo?.url) {
       <div class="btn ccenter" (click)="viewDocumentation()"><i class="fa-regular fa-book"></i></div>
-      <div class="btn ccenter" (click)="installLibrary()"><i class="fa-regular fa-plus"></i></div>
+      }
+      <!-- <div class="btn ccenter" (click)="installLibrary()"><i class="fa-regular fa-plus"></i></div> -->
     </div>
   </div>
 </div>

@@ -1,4 +1,4 @@
-<div class="aily-board-viewer">
+<div class="aily-board-viewer" (dblclick)="logDetail()">
   <div class="board-card">
     <div class="img-box">
       <img [src]="resourceUrl+'/imgs/boards/'+boardInfo?.img" />
@@ -8,8 +8,9 @@
       <div class="text ellipsis">{{boardInfo?.description}}</div>
     </div>
     <div class="action-btns ccenter">
+      @if(boardInfo?.url){
       <div class="btn ccenter" (click)="viewBoardDetails()"><i class="fa-regular fa-book"></i></div>
-      <div class="btn ccenter" (click)="installBoard()"><i class="fa-regular fa-plus"></i></div>
+      }
     </div>
   </div>
 </div>

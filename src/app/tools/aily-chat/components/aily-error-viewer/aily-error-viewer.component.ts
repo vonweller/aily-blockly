@@ -71,4 +71,8 @@ export class AilyErrorViewerComponent implements OnInit, OnDestroy {
         this.authService.showUser.next(true);
     }
 
+
+    logDetail() {
+        console.log('Error Viewer Data:', this.data);
+    }
 }

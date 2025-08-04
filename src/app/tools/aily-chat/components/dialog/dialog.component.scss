@@ -25,10 +25,6 @@
 
     ::ng-deep {
 
-        .aily-component-container {
-            font-family: "MiSans Regular", "FiraCode Regular" !important;
-        }
-
         h1,
         h2,
         h3,
@@ -173,28 +169,41 @@
                 padding: 0.5em;
             }
 
+            .aily-component-container {
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                width: 100%;
+            }
+
             .language-aily-state {
                 height: 40px;
                 overflow: hidden;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-board {
                 height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-library {
                 height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-button {
                 height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
         }
 
