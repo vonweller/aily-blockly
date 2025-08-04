@@ -56,6 +56,7 @@ import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-c
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
+import { resolveObjectURL } from 'buffer';
 
 @Component({
   selector: 'app-aily-chat',
@@ -86,8 +87,6 @@ export class AilyChatComponent implements OnDestroy {
   @ViewChild('simplebarRef') simplebarRef: SimplebarAngularComponent;
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
-
-  isUserInputRequired = false;
 
   list: any = [];
   // list = ChatListExamples  // 示例数据
@@ -306,7 +305,8 @@ export class AilyChatComponent implements OnDestroy {
 
     if (options?.type === 'button') {
       this.inputValue = text;
-      this.send(false);
+      this.send("user");
+      this.inputValue = "";
       return;
     }
 
@@ -333,7 +333,7 @@ export class AilyChatComponent implements OnDestroy {
 
       // 如果设置了自动发送，则立即发送
       if (options?.autoSend) {
-        this.send();
+        this.send("user");
       }
     }, 100);
   }
@@ -346,7 +346,6 @@ export class AilyChatComponent implements OnDestroy {
           this.chatService.stopSession(this.sessionId).subscribe({
             next: (res: any) => {
               console.log('关闭时会话已停止:', res);
-              this.isWaiting = false;
               resolve();
             },
             error: (err) => {
@@ -470,47 +469,42 @@ ${JSON.stringify(errData)}
 
   sendButtonClick(): void {
     if (this.isWaiting) {
-      this.isWaiting = false;
       this.stop();
       return;
     }
 
-    this.send();
+    this.send('user');
   }
 
-  send(show: boolean = true, toolCallRes: boolean = false): void {
+  send(sender: string): void {
     if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
 
-    if (!toolCallRes) {
-      // 如果有资源列表，自动添加到消息前面
+    if (sender === 'user') {
+      if (this.isWaiting) {
+        return;
+      }
+
       const resourcesText = this.getResourcesText();
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
       }
-    } else {
+
+      this.appendMessage('user', text);
+    } else if (sender === 'tool') {
       if (!this.isWaiting) {
         return;
       }
+    } else {
+      console.warn('未知发送者类型:', sender);
+      return;
     }
 
-    if (show) {
-      this.appendMessage('user', text);
-      this.isWaiting = true;
-    }
+    this.isWaiting = true;
 
-    this.inputValue = '';
-
-    if (this.isUserInputRequired) {
-      this.isUserInputRequired = false;
-      text = JSON.stringify({
-        "type": "user_input",
-        "content": text
-      }, null, 2);
-    }
-
-    this.chatService.sendMessage(this.sessionId, text).subscribe((res: any) => {
+    this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
+        this.inputValue = '';
         if (res.data) {
           this.appendMessage('aily', res.data);
         }
@@ -525,7 +519,6 @@ ${JSON.stringify(errData)}
       // 处理停止会话的响应
       if (res.status == 'success') {
         console.log('会话已停止:', res);
-        this.isWaiting = false;
         return;
       }
       console.error('停止会话失败:', res);
@@ -557,7 +550,6 @@ ${JSON.stringify(errData)}
           } else if (data.type === 'ToolCallRequestEvent') {
             // 处理工具调用请求
           } else if (data.type === 'ToolCallExecutionEvent') {
-            console.log("工具执行事件: ", data);
             // 处理工具执行完成事件
             if (data.content && Array.isArray(data.content)) {
               for (const result of data.content) {
@@ -624,7 +616,7 @@ ${JSON.stringify(errData)}
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
-                  this.send(false, true);
+                  this.send("tool");
                   return;
                 }
               }
@@ -1008,20 +1000,18 @@ ${JSON.stringify(errData)}
             this.toolCallStates[data.tool_id] = resultText;
 
             this.inputValue = JSON.stringify({
-              "type": "tool_result",
+              "type": "tool",
               "tool_id": data.tool_id,
               "content": toolResult?.content || '',
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send(false, true);
+            this.send("tool");
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
-            this.isUserInputRequired = true;
             this.isWaiting = false;
           }
           this.scrollToBottom();
-
         } catch (e) {
           console.error('处理流数据时出错:', e);
           this.appendMessage('错误', `
@@ -1082,7 +1072,7 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-      this.send();
+      this.send("user");
       event.preventDefault();
     }
   }

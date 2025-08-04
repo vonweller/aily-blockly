@@ -96,13 +96,14 @@ async function getProjectInfo(projectService): Promise<ProjectInfo> {
         const prjRootPath = projectService.projectRootPath;
         const currentProjectPath = projectService.currentProjectPath === projectService.projectRootPath ? "" : projectService.currentProjectPath;
 
+        const appDataPath = window['path'].getAppData() || ''
         // Basic result with path
         const result: ProjectInfo = {
             path: currentProjectPath || '',
             rootFolder: prjRootPath || '',
             opened: !!currentProjectPath,
-            appDataPath: window['appDataPath'] || '',
-            blocklylibrariesPath: window["path"].join(window['appDataPath'], 'libraries')
+            appDataPath: appDataPath,
+            blocklylibrariesPath: appDataPath ? window['path'].join(appDataPath,'libraries') : ''
         };
         
         // If current project path is empty, return early
