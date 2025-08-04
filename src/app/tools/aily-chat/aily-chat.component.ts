@@ -258,10 +258,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
-        if (isLoggedIn) {
-          // 当用户登录后，自动创建新的聊天会话
-          this.newChat();
-        }
+        this.startSession();
       }
     );
   }
@@ -343,9 +340,9 @@ export class AilyChatComponent implements OnDestroy {
 
   ngAfterViewInit(): void {
     this.scrollToBottom();
-    this.mcpService.init().then(() => {
-      this.startSession();
-    })
+    // this.mcpService.init().then(() => {
+    //   this.startSession();
+    // })
   }
 
   appendMessage(role, text) {
@@ -501,12 +498,6 @@ ${JSON.stringify(errData)}
 
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
-        // console.log("收到消息: ", data);
-        // Replace "to_user" with empty string in data.data if it exists
-        if (data.data && typeof data.data === 'string') {
-          data.data = data.data.replace(/to_user/g, '');
-        }
-
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
@@ -549,9 +540,6 @@ ${JSON.stringify(errData)}
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
             this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
-            this.isWaiting = false;
-          } else if (data.type === 'TaskCompleted') {
-            console.log("任务已完成: ", data.stop_reason);
             this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
             let toolArgs;
@@ -993,6 +981,7 @@ ${JSON.stringify(errData)}
       },
       complete: () => {
         console.log('streamConnect complete: ', this.list[this.list.length - 1]);
+        this.isWaiting = false;
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1010,6 +999,7 @@ ${JSON.stringify(errData)}
   getHistory(): void {
     if (!this.sessionId) return;
 
+    console.log('获取历史消息，sessionId:', this.sessionId);
     this.chatService.getHistory(this.sessionId).subscribe((res: any) => {
       console.log('get history', res);
       if (res.status === 'success') {
@@ -1359,10 +1349,6 @@ ${JSON.stringify(errData)}
     if (this.loginStatusSubscription) {
       this.loginStatusSubscription.unsubscribe();
     }
-
-    this.close().then(() => {
-      // 关闭后执行的逻辑
-    });
   }
 
   // 添加订阅管理
