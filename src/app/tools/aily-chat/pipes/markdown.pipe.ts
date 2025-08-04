@@ -143,11 +143,24 @@ export class MarkdownPipe implements PipeTransform {
    * 解析 Aily 代码内容
    */
   private parseAilyContent(code: string, type: string): any {
-    try {
-      // 清理代码内容 - 移除多余的空白字符和换行
-      const cleanedCode = code.trim();
+    // 清理代码内容 - 移除多余的空白字符和换行
+    const cleanedCode = code.trim();
 
-      // 尝试解析为 JSON
+    // 对于 aily-mermaid 类型，直接返回纯文本内容，不尝试解析 JSON
+    if (type === 'aily-mermaid') {
+      return {
+        type: 'aily-mermaid',
+        code: cleanedCode,
+        content: cleanedCode,
+        raw: cleanedCode,
+        metadata: {
+          isRawText: true
+        }
+      };
+    }
+
+    try {
+      // 对于其他类型，尝试解析为 JSON
       const jsonData = JSON.parse(cleanedCode);
 
       // 根据类型验证和规范化数据
@@ -202,13 +215,6 @@ export class MarkdownPipe implements PipeTransform {
             type: 'aily-button',
             buttons: Array.isArray(jsonData) ? jsonData : (jsonData.buttons || [jsonData]),
             config: jsonData.config || {},
-            metadata: jsonData.metadata || {}
-          };
-        case 'aily-mermaid':
-          return {
-            type: 'aily-mermaid',
-            code: jsonData.code || jsonData.content || cleanedCode,
-            content: jsonData.content || cleanedCode,
             metadata: jsonData.metadata || {}
           };
         default:
