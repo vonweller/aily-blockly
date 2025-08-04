@@ -56,6 +56,7 @@ import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-c
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
+import { resolveObjectURL } from 'buffer';
 
 @Component({
   selector: 'app-aily-chat',
@@ -304,7 +305,7 @@ export class AilyChatComponent implements OnDestroy {
 
     if (options?.type === 'button') {
       this.inputValue = text;
-      this.send("user", true, true);
+      this.send("user");
       this.inputValue = "";
       return;
     }
@@ -475,28 +476,35 @@ ${JSON.stringify(errData)}
     this.send('user');
   }
 
-  send(sender: string, show: boolean = true, toolCallRes: boolean = false): void {
-    if (!this.sessionId || !this.inputValue.trim() || this.isWaiting) return;
+  send(sender: string): void {
+    if (!this.sessionId || !this.inputValue.trim()) return;
     let text = this.inputValue.trim();
 
-    if (!toolCallRes) {
-      // 如果有资源列表，自动添加到消息前面
+    if (sender === 'user') {
+      if (this.isWaiting) {
+        return;
+      }
+
       const resourcesText = this.getResourcesText();
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
       }
-    }
 
-    if (show) {
       this.appendMessage('user', text);
+    } else if (sender === 'tool') {
+      if (!this.isWaiting) {
+        return;
+      }
+    } else {
+      console.warn('未知发送者类型:', sender);
+      return;
     }
 
     this.isWaiting = true;
 
-    this.inputValue = '';
-
     this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
+        this.inputValue = '';
         if (res.data) {
           this.appendMessage('aily', res.data);
         }
@@ -608,7 +616,7 @@ ${JSON.stringify(errData)}
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
                   }, null, 2);
-                  this.send("tool", false, true);
+                  this.send("tool");
                   return;
                 }
               }
@@ -998,7 +1006,7 @@ ${JSON.stringify(errData)}
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
             }, null, 2);
-            this.send("tool",false, true);
+            this.send("tool");
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
             this.isWaiting = false;
