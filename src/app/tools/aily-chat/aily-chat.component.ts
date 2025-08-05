@@ -52,7 +52,7 @@ export interface ResourceItem {
   name: string;
 }
 
-import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
+import { ChatCommunicationService, ChatTextOptions } from './services/chat-communication.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';

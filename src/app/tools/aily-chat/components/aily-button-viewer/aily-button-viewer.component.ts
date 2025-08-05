@@ -2,7 +2,7 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
+import { ChatCommunicationService } from '../../services/chat-communication.service';
 
 export interface ButtonData {
     text: string;

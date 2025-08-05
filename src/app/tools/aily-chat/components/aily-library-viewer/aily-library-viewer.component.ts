@@ -6,7 +6,7 @@ import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzCardModule } from 'ng-zorro-antd/card';
 import { NzListModule } from 'ng-zorro-antd/list';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
+import { ChatCommunicationService } from '../../services/chat-communication.service';
 
 
 export interface AilyLibraryData {

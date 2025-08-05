@@ -2,7 +2,7 @@ import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ConfigService } from '../../../../services/config.service';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
+import { ChatCommunicationService } from '../../services/chat-communication.service';
 
 
 export interface AilyBoardData {
