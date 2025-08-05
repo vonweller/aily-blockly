@@ -1,4 +1,4 @@
-import { ChatCommunicationService, ChatTextOptions } from '../tools/aily-chat/services/chat-communication.service';
+import { ChatService, ChatTextOptions } from '../tools/aily-chat/services/chat.service';
 
 /**
  * 全局方法：发送文本到聊天组件
@@ -32,8 +32,8 @@ declare global {
 }
 
 // 全局函数
-window.sendToAilyChat = function(text: string, options?: ChatTextOptions): void {
-  ChatCommunicationService.sendToChat(text, options);
+window.sendToAilyChat = function (text: string, options?: ChatTextOptions): void {
+  ChatService.sendToChat(text, options);
 };
 
 // 导出全局函数，也可以直接导入使用

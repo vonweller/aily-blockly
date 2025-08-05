@@ -2,7 +2,7 @@ import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ConfigService } from '../../../../services/config.service';
-import { ChatCommunicationService } from '../../services/chat-communication.service';
+import { ChatService } from '../../services/chat.service';
 
 
 export interface AilyBoardData {
@@ -37,7 +37,7 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
 
   constructor(
     private configService: ConfigService,
-    private chatService: ChatCommunicationService
+    private chatService: ChatService
   ) { }
 
   ngOnInit() {
