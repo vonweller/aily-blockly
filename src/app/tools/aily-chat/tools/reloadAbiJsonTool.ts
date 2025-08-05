@@ -33,17 +33,43 @@ export class ReloadAbiJsonToolService {
       let dataSource = '';
       let actualProjectPath = '';
 
-      // 如果没有提供 jsonData，从文件加载
-      if (!jsonData) {
-        // 如果没有提供项目路径，使用当前项目路径
+      // 优先级1: 如果提供了 projectPath，从文件加载
+      if (projectPath) {
+        actualProjectPath = projectPath;
+        const abiFilePath = `${projectPath}/project.abi`;
+        
+        // 检查文件是否存在
+        if (!window['fs'].existsSync(abiFilePath)) {
+          return {
+            content: `project.abi 文件不存在: ${abiFilePath}`,
+            is_error: true
+          };
+        }
+
+        try {
+          const fileContent = window['fs'].readFileSync(abiFilePath, 'utf-8');
+          jsonData = JSON.parse(fileContent);
+          dataSource = 'file';
+        } catch (error: any) {
+          return {
+            content: `读取或解析 project.abi 文件失败: ${error.message}`,
+            is_error: true
+          };
+        }
+      }
+      // 优先级2: 如果提供了 jsonData，直接使用
+      else if (jsonData) {
+        dataSource = 'parameter';
+        actualProjectPath = this.projectService.currentProjectPath || '未知';
+      }
+      // 优先级3: 都没有提供，尝试从当前环境路径加载
+      else {
+        projectPath = this.projectService.currentProjectPath;
         if (!projectPath) {
-          projectPath = this.projectService.currentProjectPath;
-          if (!projectPath) {
-            return {
-              content: '未找到当前项目路径，请提供 projectPath 参数或确保已打开项目',
-              is_error: true
-            };
-          }
+          return {
+            content: '未找到当前项目路径，请提供 projectPath 参数或 jsonData 参数',
+            is_error: true
+          };
         }
         
         actualProjectPath = projectPath;
@@ -67,9 +93,6 @@ export class ReloadAbiJsonToolService {
             is_error: true
           };
         }
-      } else {
-        dataSource = 'parameter';
-        actualProjectPath = projectPath || this.projectService.currentProjectPath || '未知';
       }
 
       // 验证 jsonData 是否有效
@@ -158,17 +181,40 @@ export async function reloadAbiJsonToolSimple(
 
     let { projectPath, jsonData } = params;
     
-    // 如果没有提供 jsonData，从文件加载
-    if (!jsonData) {
-      // 如果没有提供项目路径，使用当前项目路径
+    // 优先级1: 如果提供了 projectPath，从文件加载
+    if (projectPath) {
+      const abiFilePath = `${projectPath}/project.abi`;
+      
+      // 检查文件是否存在
+      if (!window['fs'].existsSync(abiFilePath)) {
+        return {
+          content: `project.abi 文件不存在: ${abiFilePath}`,
+          is_error: true
+        };
+      }
+
+      try {
+        const fileContent = window['fs'].readFileSync(abiFilePath, 'utf-8');
+        jsonData = JSON.parse(fileContent);
+      } catch (error: any) {
+        return {
+          content: `读取或解析 project.abi 文件失败: ${error.message}`,
+          is_error: true
+        };
+      }
+    }
+    // 优先级2: 如果提供了 jsonData，直接使用
+    else if (jsonData) {
+      // jsonData 已存在，直接使用
+    }
+    // 优先级3: 都没有提供，尝试从当前环境路径加载
+    else {
+      projectPath = projectService?.currentProjectPath;
       if (!projectPath) {
-        projectPath = projectService?.currentProjectPath;
-        if (!projectPath) {
-          return {
-            content: '未找到当前项目路径，请提供 projectPath 参数或确保已打开项目',
-            is_error: true
-          };
-        }
+        return {
+          content: '未找到当前项目路径，请提供 projectPath 参数或 jsonData 参数',
+          is_error: true
+        };
       }
       
       const abiFilePath = `${projectPath}/project.abi`;

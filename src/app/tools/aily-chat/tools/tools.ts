@@ -313,7 +313,7 @@ export const TOOLS = [
                 },
                 jsonData: {
                     type: 'object',
-                    description: '直接提供的 JSON 数据，如果提供此参数将忽略文件加载'
+                    description: '直接提供.abi文件的内容'
                 }
             },
             required: []
