@@ -96,6 +96,8 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
     this.isProcessing = true;
 
+    this.fixContent(); // 确保内容格式正确
+
     try {
       const currentContent = String(this.content);
 
@@ -665,6 +667,11 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     return processedContent;
+  }
+
+  fixContent() {
+    // 修复mermaid代码块没有语言类型的问题
+    this.content = this.content.replace(/```\nflowchart/g, '```aily-mermaid\nflowchart')
   }
 }
 
