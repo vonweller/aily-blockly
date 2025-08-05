@@ -57,6 +57,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
 import { resolveObjectURL } from 'buffer';
+import { reloadAbiJsonTool, reloadAbiJsonToolSimple } from './tools';
 
 @Component({
   selector: 'app-aily-chat',
@@ -258,10 +259,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
-        if (isLoggedIn) {
-          // 当用户登录后，自动创建新的聊天会话
-          this.newChat();
-        }
+        this.startSession();
       }
     );
   }
@@ -274,39 +272,8 @@ export class AilyChatComponent implements OnDestroy {
   receiveTextFromExternal(text: string, options?: ChatTextOptions): void {
     console.log('接收到外部文本:', text, '选项:', options);
 
-    // if (options?.type === 'tool') {
-    //   // 判断是否是 JSON 格式的字符串
-    //   try {
-    //     const parsedText = JSON.parse(text);
-    //     // 判断是否包含id字段，有则提取id
-    //     if (parsedText && typeof parsedText === 'object' && parsedText.id) {
-    //       // 提取id
-    //       const id = parsedText.id;
-
-    //       this.inputValue = JSON.stringify({
-    //         "type": "tool_result",
-    //         "tool_id": id,
-    //         "content": parsedText.text,
-    //         "is_error": false
-    //       })
-    //       this.send(false, true);
-    //       return;
-    //     } else {
-    //       // 否则保持原样
-    //       text = JSON.stringify(parsedText, null, 2);
-    //     }
-    //   } catch (e) {
-    //     // 如果解析失败，说明不是JSON格式的字符串
-    //     // 保持原样
-    //     console.warn('接收到的文本不是有效的JSON格式:', text);
-    //     return;
-    //   }
-    // }
-
     if (options?.type === 'button') {
-      this.inputValue = text;
-      this.send("user");
-      this.inputValue = "";
+      this.send("user", text, false);
       return;
     }
 
@@ -329,11 +296,6 @@ export class AilyChatComponent implements OnDestroy {
         const textarea = this.chatTextarea.nativeElement;
         textarea.focus();
         textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      }
-
-      // 如果设置了自动发送，则立即发送
-      if (options?.autoSend) {
-        this.send("user");
       }
     }, 100);
   }
@@ -379,49 +341,50 @@ export class AilyChatComponent implements OnDestroy {
 
   ngAfterViewInit(): void {
     this.scrollToBottom();
-    this.mcpService.init().then(() => {
-      this.startSession();
-    })
+    // this.mcpService.init().then(() => {
+    //   this.startSession();
+    // })
 
-    setTimeout(() => {
-      this.list.push({
-        role: 'bot',
-        content: `\`\`\`aily-mermaid
-flowchart TD
-    subgraph "桌面时钟摆件"
-        direction LR
-        subgraph "核心控制"
-            MCU[主控芯片 ESP32<br>内置Wi-Fi]
-        end
+    // 测试数据
+    //     setTimeout(() => {
+    //       this.list.push({
+    //         role: 'bot',
+    //         content: `\`\`\`aily-mermaid
+    // flowchart TD
+    //     subgraph "桌面时钟摆件"
+    //         direction LR
+    //         subgraph "核心控制"
+    //             MCU[主控芯片 ESP32<br>内置Wi-Fi]
+    //         end
 
-        subgraph "外围设备"
-            MATRIX[LED点阵屏<br>MAX7219驱动]
-            RTC[实时时钟模块<br>DS3231]
-            SENSOR[温湿度传感器<br>DHT22]
-            BUTTON[物理按键]
-        end
+    //         subgraph "外围设备"
+    //             MATRIX[LED点阵屏<br>MAX7219驱动]
+    //             RTC[实时时钟模块<br>DS3231]
+    //             SENSOR[温湿度传感器<br>DHT22]
+    //             BUTTON[物理按键]
+    //         end
 
-        subgraph "网络服务"
-            NTP[NTP网络时间服务]
-            WEATHER_API[天气信息API]
-        end
+    //         subgraph "网络服务"
+    //             NTP[NTP网络时间服务]
+    //             WEATHER_API[天气信息API]
+    //         end
 
-        subgraph "电源"
-            POWER[USB 5V供电]
-        end
-    end
+    //         subgraph "电源"
+    //             POWER[USB 5V供电]
+    //         end
+    //     end
 
-    MCU -- SPI --> MATRIX
-    MCU -- I2C --> RTC
-    MCU -- GPIO --> SENSOR
-    MCU -- GPIO --> BUTTON
-    MCU -- Wi-Fi --> NTP
-    MCU -- Wi-Fi --> WEATHER_API
-    POWER --> MCU
-    POWER --> MATRIX
-\`\`\`\n\n`
-      });
-    }, 2000);
+    //     MCU -- SPI --> MATRIX
+    //     MCU -- I2C --> RTC
+    //     MCU -- GPIO --> SENSOR
+    //     MCU -- GPIO --> BUTTON
+    //     MCU -- Wi-Fi --> NTP
+    //     MCU -- Wi-Fi --> WEATHER_API
+    //     POWER --> MCU
+    //     POWER --> MATRIX
+    // \`\`\`\n\n`
+    //       });
+    //     }, 2000);
   }
 
   appendMessage(role, text) {
@@ -513,12 +476,13 @@ ${JSON.stringify(errData)}
       return;
     }
 
-    this.send('user');
+    this.send('user', this.inputValue.trim(), true);
+    this.inputValue = ''; // 发送后清空输入框
   }
 
-  send(sender: string): void {
-    if (!this.sessionId || !this.inputValue.trim()) return;
-    let text = this.inputValue.trim();
+  send(sender: string, content: string, clear: boolean = true): void {
+    let text = content.trim();
+    if (!this.sessionId || !text) return;
 
     if (sender === 'user') {
       if (this.isWaiting) {
@@ -544,14 +508,19 @@ ${JSON.stringify(errData)}
 
     this.chatService.sendMessage(this.sessionId, text, sender).subscribe((res: any) => {
       if (res.status === 'success') {
-        this.inputValue = '';
         if (res.data) {
           this.appendMessage('aily', res.data);
         }
+
+        if (clear) {
+          this.inputValue = ''; // 发送后清空输入框
+        }
       }
     });
-    this.scrollToBottom();
   }
+
+  // 
+
 
   // 这里写停止发送信号
   stop() {
@@ -571,12 +540,6 @@ ${JSON.stringify(errData)}
 
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
-        // console.log("收到消息: ", data);
-        // Replace "to_user" with empty string in data.data if it exists
-        if (data.data && typeof data.data === 'string') {
-          data.data = data.data.replace(/to_user/g, '');
-        }
-
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
@@ -620,9 +583,6 @@ ${JSON.stringify(errData)}
             console.error('助手出错:', data.data);
             this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
             this.isWaiting = false;
-          } else if (data.type === 'TaskCompleted') {
-            console.log("任务已完成: ", data.stop_reason);
-            this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
             let toolArgs;
 
@@ -650,13 +610,12 @@ ${JSON.stringify(errData)}
                   toolArgs = new Function('return ' + data.tool_args)();
                 } catch (e2) {
                   console.error('所有解析方法都失败:', e2);
-                  this.inputValue = JSON.stringify({
+                  this.send("tool", JSON.stringify({
                     "type": "tool_result",
                     "tool_id": data.tool_id,
                     "content": `参数解析失败: ${e.message}`,
                     "is_error": true
-                  }, null, 2);
-                  this.send("tool");
+                  }, null, 2), false);
                   return;
                 }
               }
@@ -1019,6 +978,47 @@ ${JSON.stringify(errData)}
                   // \`\`\`\n\n
                   //                     `);
                   //                     return;
+                  case 'reload_project':
+                    console.log('[重新加载项目工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载项目...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+
+                      `)
+                    break;
+                  case 'reload_abi_json':
+                    console.log('[重新加载ABI JSON工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载Blockly工作区数据...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+                    `);
+                    // 导入工具函数
+                    const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+                    const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+                    const reloadResult = await reloadAbiJsonService.executeReloadAbiJson(toolArgs);
+                    toolResult = {
+                      content: reloadResult.content,
+                      is_error: reloadResult.is_error
+                    };
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = 'ABI数据重新加载失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = 'ABI数据重新加载成功';
+                    }
+                    break;
                 }
               }
 
@@ -1038,15 +1038,13 @@ ${JSON.stringify(errData)}
             }
 
             this.toolCallStates[data.tool_id] = resultText;
-
-            this.inputValue = JSON.stringify({
+            this.send("tool", JSON.stringify({
               "type": "tool",
               "tool_id": data.tool_id,
               "content": toolResult?.content || '',
               "resultText": this.makeJsonSafe(resultText),
               "is_error": toolResult.is_error
-            }, null, 2);
-            this.send("tool");
+            }, null, 2), false);
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
             this.isWaiting = false;
@@ -1066,6 +1064,7 @@ ${JSON.stringify(errData)}
       },
       complete: () => {
         console.log('streamConnect complete: ', this.list[this.list.length - 1]);
+        this.isWaiting = false;
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1083,6 +1082,7 @@ ${JSON.stringify(errData)}
   getHistory(): void {
     if (!this.sessionId) return;
 
+    console.log('获取历史消息，sessionId:', this.sessionId);
     this.chatService.getHistory(this.sessionId).subscribe((res: any) => {
       console.log('get history', res);
       if (res.status === 'success') {
@@ -1112,7 +1112,7 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-      this.send("user");
+      this.send("user", this.inputValue.trim(), true);
       event.preventDefault();
     }
   }
@@ -1432,10 +1432,6 @@ ${JSON.stringify(errData)}
     if (this.loginStatusSubscription) {
       this.loginStatusSubscription.unsubscribe();
     }
-
-    this.close().then(() => {
-      // 关闭后执行的逻辑
-    });
   }
 
   // 添加订阅管理
