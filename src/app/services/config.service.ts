@@ -21,11 +21,11 @@ export class ConfigService {
 
   async load() {
     let defaultConfigFilePath = window['path'].getElectronPath();
-    let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config.json`);
+    let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config/config.json`);
     this.data = await JSON.parse(defaultConfigFile);
 
     let userConfData;
-    let configFilePath = window['path'].getAppData();
+    let configFilePath = window['path'].getAppDataPath();
     // 检查配置文件是否存在，如果不存在则创建一个默认的配置文件
     if (this.electronService.exists(`${configFilePath}/config.json`)) {
       userConfData = JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`));
@@ -38,10 +38,30 @@ export class ConfigService {
 
     // 添加当前系统类型到data中
     this.data["platform"] = window['platform'].type;
+
+    // 加载缓存的boards.json
+    if (this.electronService.exists(`${configFilePath}/boards.json`)) {
+      this.boardList = JSON.parse(this.electronService.readFile(`${configFilePath}/boards.json`));
+      let boardList = await this.loadBoardList();
+      this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(boardList));
+    } else {
+      this.boardList = await this.loadBoardList();
+      this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(this.boardList));
+    }
+
+    // 加载缓存的libraries.json
+    if (this.electronService.exists(`${configFilePath}/libraries.json`)) {
+      this.libraryList = JSON.parse(this.electronService.readFile(`${configFilePath}/libraries.json`));
+      let libraryList = await this.loadLibraryList();
+      this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(libraryList));
+    } else {
+      this.libraryList = await this.loadLibraryList();
+      this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(this.libraryList));
+    }
   }
 
   async save() {
-    let configFilePath = window['path'].getAppData();
+    let configFilePath = window['path'].getAppDataPath();
     window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 

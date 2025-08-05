@@ -118,7 +118,7 @@ export class SettingsComponent {
   async updateBoardList() {
     const platform = this.configService.data.platform;
     // this.appdata_path = this.configService.data.appdata_path[platform].replace('%HOMEPATH%', window['path'].getUserHome());
-    this.appdata_path = window['path'].getAppData();
+    this.appdata_path = window['path'].getAppDataPath();
     // this.settingsService.getBoardList(this.appdata_path, this.configService.data.npm_registry[0]);
     this.settingsService.getToolList(this.appdata_path, this.configService.data.npm_registry[0]);
     this.settingsService.getSdkList(this.appdata_path, this.configService.data.npm_registry[0]);
