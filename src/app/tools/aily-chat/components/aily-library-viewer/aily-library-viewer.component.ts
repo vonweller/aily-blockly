@@ -1,13 +1,7 @@
 import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { NzButtonModule } from 'ng-zorro-antd/button';
-import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
-import { NzTagModule } from 'ng-zorro-antd/tag';
-import { NzCardModule } from 'ng-zorro-antd/card';
-import { NzListModule } from 'ng-zorro-antd/list';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
-
+import { ChatService } from '../../services/chat.service';
 
 export interface AilyLibraryData {
   type: 'aily-library';
@@ -47,7 +41,7 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
   }
 
   constructor(
-    private chatService: ChatCommunicationService
+    private chatService: ChatService
   ) { }
 
   /**

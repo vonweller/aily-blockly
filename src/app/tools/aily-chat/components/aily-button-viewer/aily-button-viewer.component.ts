@@ -2,7 +2,7 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
+import { ChatService } from '../../services/chat.service';
 
 export interface ButtonData {
     text: string;
@@ -29,7 +29,7 @@ export class AilyButtonViewerComponent {
 
     isDisabled = false
 
-    constructor(private chatService: ChatCommunicationService) {
+    constructor(private chatService: ChatService) {
     }
 
     /**
@@ -94,9 +94,6 @@ export class AilyButtonViewerComponent {
 
         // 直接往大模型发送按钮点击的消息
         this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'button', cover: false });
-
-        // // 根据 action 执行相应的操作
-        // this.executeAction(button);
     }
 
     logDetail() {
