@@ -27,7 +27,7 @@
             <nz-tree-node *nzTreeNodeDef="let node" nzTreeNodePadding>
                 <nz-tree-node-toggle nzTreeNodeNoopToggle></nz-tree-node-toggle>
                 <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
-                    (nzClick)="nodeClick(node); nodeSelection.toggle(node)">
+                    (nzClick)="nodeClick(node); nodeSelection.toggle(node)" (contextmenu)="onRightClick($event, node)">
                     <div class="file-item">
                         <div class="icon ccenter">
                             <i [class]="getFileIcon(node.title)"></i>
@@ -46,7 +46,7 @@
                     }
                 </nz-tree-node-toggle>
                 <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
-                    (nzClick)="nodeClick(node);nodeSelection.toggle(node)">
+                    (nzClick)="nodeClick(node);nodeSelection.toggle(node)" (contextmenu)="onRightClick($event, node)">
                     <div class="file-item">
                         <div class="icon ccenter">
                             <i class="fa-light {{treeControl.isExpanded(node) ? 'fa-folder-open' : 'fa-folder'}}"></i>
@@ -59,3 +59,7 @@
         }
     </div>
 </div>
+@if (showRightClickMenu) {
+<app-menu class="ports" [position]="rightClickMenuPosition" [menuList]="configList" [width]="260"
+    (itemClickEvent)="onMenuItemClick($event)" (closeEvent)="showRightClickMenu = false"></app-menu>
+}
