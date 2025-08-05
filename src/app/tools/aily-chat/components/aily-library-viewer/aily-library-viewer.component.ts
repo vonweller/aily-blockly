@@ -2,6 +2,7 @@ import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ChatService } from '../../services/chat.service';
+import { ConfigService } from '../../../../services/config.service';
 
 export interface AilyLibraryData {
   type: 'aily-library';
@@ -27,6 +28,7 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
 
   showRaw = false;
   errorMessage = '';
+  libraryPackageName;
   libraryInfo: any = null;
   dependencies: string[] = [];
   canInstall = false;
@@ -41,7 +43,8 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
   }
 
   constructor(
-    private chatService: ChatService
+    private chatService: ChatService,
+    private configService: ConfigService
   ) { }
 
   /**
@@ -62,65 +65,12 @@ export class AilyLibraryViewerComponent implements OnInit, OnDestroy {
     }
 
     try {
-      if (this.data.metadata?.isRawText) {
-        this.parseRawContent();
-      } else {
-        this.libraryInfo = this.data.library || {};
-        this.dependencies = this.data.dependencies || [];
-      }
+      this.libraryPackageName = this.data.library.name;
+      this.libraryInfo = this.configService.libraryDict[this.libraryPackageName];
       this.errorMessage = '';
     } catch (error) {
       console.error('Error processing library data:', error);
       this.errorMessage = `数据处理失败: ${error.message}`;
-    }
-  }
-
-  /**
-   * 解析原始内容
-   */
-  private parseRawContent(): void {
-    try {
-      const content = this.data?.content || this.data?.raw || '';
-      if (content.trim().startsWith('{') || content.trim().startsWith('[')) {
-        const parsed = JSON.parse(content);
-        this.libraryInfo = parsed.library || parsed;
-        this.dependencies = parsed.dependencies || [];
-      } else {
-        throw new Error('无法解析的内容格式');
-      }
-    } catch (error) {
-      this.showRaw = true;
-      this.errorMessage = '无法解析库数据，显示原始内容';
-    }
-  }
-
-  /**
-   * 切换显示模式
-   */
-  toggleView(): void {
-    this.showRaw = !this.showRaw;
-  }
-
-  /**
-   * 格式化显示数据
-   */
-  formatData(): string {
-    if (this.data?.content || this.data?.raw) {
-      return this.data.content || this.data.raw || '';
-    }
-    return JSON.stringify(this.data, null, 2);
-  }
-
-  /**
-   * 复制到剪贴板
-   */
-  async copyToClipboard(): Promise<void> {
-    try {
-      const content = this.showRaw ? this.formatData() : JSON.stringify(this.libraryInfo, null, 2);
-      await navigator.clipboard.writeText(content);
-      console.log('库配置已复制到剪贴板');
-    } catch (error) {
-      console.error('复制失败:', error);
     }
   }
 

@@ -39,7 +39,14 @@ export class ConfigService {
     // 添加当前系统类型到data中
     this.data["platform"] = window['platform'].type;
 
-    // 加载缓存的boards.json
+    // 并行加载缓存的boards.json和libraries.json
+    // await Promise.all([
+    this.loadAndCacheBoardList(configFilePath);
+    this.loadAndCacheLibraryList(configFilePath);
+    // ]);
+  }
+
+  private async loadAndCacheBoardList(configFilePath: string): Promise<void> {
     if (this.electronService.exists(`${configFilePath}/boards.json`)) {
       this.boardList = JSON.parse(this.electronService.readFile(`${configFilePath}/boards.json`));
       let boardList = await this.loadBoardList();
@@ -52,8 +59,13 @@ export class ConfigService {
       this.boardList = await this.loadBoardList();
       this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(this.boardList));
     }
+    // 创建一个boardDict，方便通过name快速查找board信息
+    this.boardList.forEach(board => {
+      this.boardDict[board.name] = board;
+    });
+  }
 
-    // 加载缓存的libraries.json
+  private async loadAndCacheLibraryList(configFilePath: string): Promise<void> {
     if (this.electronService.exists(`${configFilePath}/libraries.json`)) {
       this.libraryList = JSON.parse(this.electronService.readFile(`${configFilePath}/libraries.json`));
       let libraryList = await this.loadLibraryList();
@@ -66,6 +78,10 @@ export class ConfigService {
       this.libraryList = await this.loadLibraryList();
       this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(this.libraryList));
     }
+    // 创建一个libraryDict，方便通过name快速查找library信息
+    this.libraryList.forEach(library => {
+      this.libraryDict[library.name] = library;
+    });
   }
 
   async save() {
@@ -73,7 +89,8 @@ export class ConfigService {
     window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 
-  boardList;
+  boardList = [];
+  boardDict = {};
   async loadBoardList(): Promise<any[]> {
     try {
       let boardList: any = await lastValueFrom(
@@ -88,7 +105,8 @@ export class ConfigService {
     }
   }
 
-  libraryList;
+  libraryList = [];
+  libraryDict = {};
   async loadLibraryList(): Promise<any[]> {
     try {
       let libraryList: any = await lastValueFrom(
