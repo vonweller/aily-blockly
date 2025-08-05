@@ -479,6 +479,7 @@ ${JSON.stringify(errData)}
 
     this.send('user', this.inputValue.trim(), true);
     this.inputValue = ''; // 发送后清空输入框
+    this.selectContent = [];
   }
 
   send(sender: string, content: string, clear: boolean = true): void {

@@ -143,7 +143,7 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
         code = this.data.raw || '';
       }
 
-      this.rawCode = code.trim();
+      this.rawCode = this.preprocessMermaidCode(code.trim());
       this.errorMessage = '';
 
       if (!this.rawCode) {
@@ -266,17 +266,19 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
   }
 
   logDetail() {
-    console.log('Raw Code:', this.rawCode);
-    // 检查 DOM 中的 SVG 元素
-    if (this.containerId) {
-      const container = document.getElementById(this.containerId);
-      console.log('Container element:', container);
-      if (container) {
-        const svg = container.querySelector('svg');
-        console.log('SVG element:', svg);
-        console.log('SVG innerHTML length:', svg?.innerHTML?.length || 0);
-      }
-    }
+    console.log('mermaid data:');
+    console.log(this.rawCode);
+
+    // // 检查 DOM 中的 SVG 元素
+    // if (this.containerId) {
+    //   const container = document.getElementById(this.containerId);
+    //   console.log('Container element:', container);
+    //   if (container) {
+    //     const svg = container.querySelector('svg');
+    //     console.log('SVG element:', svg);
+    //     console.log('SVG innerHTML length:', svg?.innerHTML?.length || 0);
+    //   }
+    // }
   }
 
   /**
@@ -301,6 +303,26 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
       },
       nzWidth: '500px',
     });
+  }
+
+
+  /**
+   * 预处理 Mermaid 代码，处理特殊字符
+   */
+  private preprocessMermaidCode(code: string): string {
+    // 保护文本节点中的括号
+    return code
+      // 处理节点标签中的括号 - 用引号包裹包含括号的文本
+      .replace(/(\w+)\s*\[\s*([^\]]*\([^\]]*\)[^\]]*)\s*\]/g, '$1["$2"]')
+      // 处理流程图节点中的括号 - 用引号包裹
+      .replace(/(\w+)\s*\(\s*([^)]*\([^)]*\)[^)]*)\s*\)/g, '$1("$2")')
+      // 处理箭头标签中的括号
+      .replace(/-->\s*\|\s*([^|]*\([^|]*\)[^|]*)\s*\|/g, '-->|"$1"|')
+      // 处理序列图中的括号
+      .replace(/Note\s+(left|right|over)\s+([^:]+):\s*([^\n]*\([^\n]*\)[^\n]*)/g, 'Note $1 $2: "$3"')
+      // 处理类图中的方法名括号（这些通常是正常的）
+      // 不需要特殊处理，因为类图的方法声明中的括号是语法的一部分
+      ;
   }
 
 }
