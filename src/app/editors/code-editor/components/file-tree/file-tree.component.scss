@@ -1,6 +1,6 @@
 .file-explorer {
     height: 100%;
-    width: 250px;
+    width: 100%;
     display: flex;
     flex-direction: column;
     background: #2b2d30;
@@ -26,53 +26,22 @@
     }
 
     .file-explorer-content {
-
-        ngx-simplebar {
-            height: 100%;
-            width: 100%;
-
-            ::ng-deep {
-                .simplebar-content-wrapper {
-                    height: 100%;
-                }
-
-                .simplebar-content {
-                    height: 100%;
-                }
-            }
-        }
-
-        // nz-tree {
-        //     ::ng-deep {
-        //         .ant-tree-treenode {
-        //             padding: 0;
-        //             cursor: pointer;
-        //         }
-
-        //         .ant-tree-treenode-selected{
-        //             background: #3a3a3a;
-        //         }
-
-        //         .ant-tree-node-selected{
-        //             background: none;
-        //             &:hover{
-        //                 background: none;
-        //             }
-        //         }
-
-        //         .ant-tree-switcher{
-        //             width: 0;
-        //         }
-        //     }
-        // }
-
+        position: relative;
+        height: calc(100% - 30px);
+        overflow-y: auto;
+        
         nz-tree-node {
             padding: 0;
             height: 24px;
+            overflow: hidden;
 
             &::before {
                 bottom: 0 !important;
             }
+        }
+
+        .ant-tree-node-content-wrapper{
+            padding: 0;
         }
 
         .file-item {
@@ -83,7 +52,6 @@
             .icon {
                 height: 24px;
                 width: 24px;
-                font-size: 10px;
             }
 
             .file-name {
@@ -98,5 +66,19 @@
 
     &.down {
         transform: rotate(90deg);
+    }
+}
+
+.line-box {
+    height: 24px;
+    display: flex;
+    align-items: center;
+    padding-left: 4px;
+    font-size: 12px;
+    color: #999;
+
+    .icon-box {
+        height: 24px;
+        width: 24px;
     }
 }

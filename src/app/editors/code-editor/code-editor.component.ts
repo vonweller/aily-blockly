@@ -8,6 +8,8 @@ import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-edi
 import { NoticeService } from '../../services/notice.service';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { ActivatedRoute } from '@angular/router';
+import { NzLayoutComponent, NzLayoutModule } from "ng-zorro-antd/layout";
+import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 
 export interface OpenedFile {
   path: string;      // 文件路径
@@ -22,7 +24,10 @@ export interface OpenedFile {
     NzTabsModule,
     MonacoEditorComponent,
     CommonModule,
-    NotificationComponent
+    NotificationComponent,
+    NzLayoutComponent,
+    NzLayoutModule,
+    NzResizableModule,
   ],
   templateUrl: './code-editor.component.html',
   styleUrl: './code-editor.component.scss'
@@ -199,5 +204,11 @@ export class CodeEditorComponent {
       // 关闭对应的标签页
       this.doCloseTab(index);
     }
+  }
+
+
+  siderWidth = 250;
+  onSideResize({ width }: NzResizeEvent): void {
+    this.siderWidth = width!;
   }
 }

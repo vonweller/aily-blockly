@@ -84,7 +84,7 @@ class DynamicFileDataSource implements DataSource<FlatFileNode> {
       return;
     }
     node.loading = true;
-    
+
     // 使用 fileService 加载子文件夹内容
     const children = this.fileService.readDir(node.path);
     const flatChildren: FlatFileNode[] = children.map(child => ({
@@ -171,7 +171,7 @@ export class FileTreeComponent implements OnInit {
   loadRootPath(path = this.rootPath): void {
     const files = this.fileService.readDir(path);
     console.log('Loaded root path files:', files);
-    
+
     // 转换为扁平节点格式
     const flatFiles: FlatFileNode[] = files.map(file => ({
       expandable: !file.isLeaf,
@@ -181,7 +181,7 @@ export class FileTreeComponent implements OnInit {
       isLeaf: file.isLeaf,
       path: file['path']
     }));
-    
+
     this.dataSource.setRootData(flatFiles);
   }
 

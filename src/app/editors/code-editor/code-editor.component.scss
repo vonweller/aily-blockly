@@ -1,13 +1,21 @@
 .code-editor {
     display: flex;
     height: 100%;
+    width: 100%;
     position: relative;
+    overflow: hidden;
+}
+
+.left-box {
+    width: 100%;
+    height: 100%;
 }
 
 .right-box {
     display: flex;
-    width: calc(100% - 250px);
-    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    flex-direction: column; 
     position: relative;
 
     app-monaco-editor {
