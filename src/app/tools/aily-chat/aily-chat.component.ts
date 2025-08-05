@@ -57,6 +57,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
 import { resolveObjectURL } from 'buffer';
+import { reloadAbiJsonTool, reloadAbiJsonToolSimple } from './tools';
 
 @Component({
   selector: 'app-aily-chat',
@@ -977,6 +978,47 @@ ${JSON.stringify(errData)}
                   // \`\`\`\n\n
                   //                     `);
                   //                     return;
+                  case 'reload_project':
+                    console.log('[重新加载项目工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载项目...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+
+                      `)
+                    break;
+                  case 'reload_abi_json':
+                    console.log('[重新加载ABI JSON工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载Blockly工作区数据...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+                    `);
+                    // 导入工具函数
+                    const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+                    const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+                    const reloadResult = await reloadAbiJsonService.executeReloadAbiJson(toolArgs);
+                    toolResult = {
+                      content: reloadResult.content,
+                      is_error: reloadResult.is_error
+                    };
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = 'ABI数据重新加载失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = 'ABI数据重新加载成功';
+                    }
+                    break;
                 }
               }
 

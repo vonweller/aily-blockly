@@ -15,3 +15,4 @@ export { executeCommandTool } from './executeCommandTool';
 export { askApprovalTool } from './askApprovalTool';
 export { getContextTool } from './getContextTool';
 export { fetchTool, FetchToolService } from './fetchTool';
+export { reloadAbiJsonTool, reloadAbiJsonToolSimple, reloadAbiJsonToolDirect, ReloadAbiJsonToolService } from './reloadAbiJsonTool';
