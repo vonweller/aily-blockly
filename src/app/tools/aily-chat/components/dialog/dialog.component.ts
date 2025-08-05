@@ -5,7 +5,6 @@ import {
   OnInit,
   OnDestroy,
   OnChanges,
-  SecurityContext,
   ViewChild,
   SimpleChanges,
 } from '@angular/core';
@@ -20,7 +19,6 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NzImageModule } from 'ng-zorro-antd/image';
 import { FormsModule } from '@angular/forms';
 import { AilyDynamicComponentDirective } from '../../directives/aily-dynamic-component.directive';
-import svgPanZoom from 'svg-pan-zoom';
 import { MarkdownPipe } from '../../pipes/markdown.pipe';
 import { firstValueFrom } from 'rxjs';
 
@@ -674,7 +672,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
     this.content = this.content.replace(/```\nflowchart/g, '```aily-mermaid\nflowchart')
   }
 }
-
 
 const agentNameList = [
   ["[to_plannerAgent]", "🤔"],
