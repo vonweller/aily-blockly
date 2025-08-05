@@ -43,8 +43,12 @@ export class ConfigService {
     if (this.electronService.exists(`${configFilePath}/boards.json`)) {
       this.boardList = JSON.parse(this.electronService.readFile(`${configFilePath}/boards.json`));
       let boardList = await this.loadBoardList();
-      this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(boardList));
+      if (boardList.length > 0) {
+        this.boardList = boardList;
+        this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(boardList));
+      }
     } else {
+      // 首次启动软件，创建boards.json
       this.boardList = await this.loadBoardList();
       this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(this.boardList));
     }
@@ -53,8 +57,12 @@ export class ConfigService {
     if (this.electronService.exists(`${configFilePath}/libraries.json`)) {
       this.libraryList = JSON.parse(this.electronService.readFile(`${configFilePath}/libraries.json`));
       let libraryList = await this.loadLibraryList();
-      this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(libraryList));
+      if (libraryList.length > 0) {
+        this.libraryList = libraryList;
+        this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(libraryList));
+      }
     } else {
+      // 首次启动软件，创建libraries.json
       this.libraryList = await this.loadLibraryList();
       this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(this.libraryList));
     }
@@ -66,23 +74,33 @@ export class ConfigService {
   }
 
   boardList;
-  async loadBoardList() {
-    this.boardList = await lastValueFrom(
-      this.http.get(this.data.resource[0] + '/boards.json', {
-        responseType: 'json',
-      }),
-    );
-    return this.boardList;
+  async loadBoardList(): Promise<any[]> {
+    try {
+      let boardList: any = await lastValueFrom(
+        this.http.get(this.data.resource[0] + '/boards.json', {
+          responseType: 'json',
+        }),
+      );
+      return boardList;
+    } catch (error) {
+      console.error('Failed to load board list:', error);
+      return [];
+    }
   }
 
   libraryList;
-  async loadLibraryList() {
-    this.libraryList = await lastValueFrom(
-      this.http.get(this.data.resource[0] + '/libraries.json', {
-        responseType: 'json',
-      }),
-    );
-    return this.libraryList;
+  async loadLibraryList(): Promise<any[]> {
+    try {
+      let libraryList: any = await lastValueFrom(
+        this.http.get(this.data.resource[0] + '/libraries.json', {
+          responseType: 'json',
+        }),
+      );
+      return libraryList;
+    } catch (error) {
+      console.error('Failed to load library list:', error);
+      return [];
+    }
   }
 
   examplesList;
