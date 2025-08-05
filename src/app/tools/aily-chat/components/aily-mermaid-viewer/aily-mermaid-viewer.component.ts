@@ -312,6 +312,8 @@ export class AilyMermaidViewerComponent implements OnInit, OnDestroy, OnChanges 
   private preprocessMermaidCode(code: string): string {
     // 保护文本节点中的括号
     return code
+      // 删除包含 "direction TD" 的行
+      .replace(/^.*direction\s+TD.*$/gm, '')
       // 处理节点标签中的括号 - 用引号包裹包含括号的文本
       .replace(/(\w+)\s*\[\s*([^\]]*\([^\]]*\)[^\]]*)\s*\]/g, '$1["$2"]')
       // 处理流程图节点中的括号 - 用引号包裹
