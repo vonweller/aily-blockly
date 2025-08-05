@@ -53,6 +53,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
 import { resolveObjectURL } from 'buffer';
+import { reloadAbiJsonTool, reloadAbiJsonToolSimple } from './tools';
 
 @Component({
   selector: 'app-aily-chat',
@@ -252,10 +253,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
-        if (isLoggedIn) {
-          // 当用户登录后，自动创建新的聊天会话
-          this.newChat();
-        }
+        this.startSession();
       }
     );
   }
@@ -337,9 +335,10 @@ export class AilyChatComponent implements OnDestroy {
 
   ngAfterViewInit(): void {
     this.scrollToBottom();
-    this.mcpService.init().then(() => {
-      this.startSession();
-    })
+    // this.mcpService.init().then(() => {
+    //   this.startSession();
+    // })
+
     // 测试数据
     //     setTimeout(() => {
     //       this.list.push({
@@ -536,12 +535,6 @@ ${JSON.stringify(errData)}
 
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
-        // console.log("收到消息: ", data);
-        // Replace "to_user" with empty string in data.data if it exists
-        if (data.data && typeof data.data === 'string') {
-          data.data = data.data.replace(/to_user/g, '');
-        }
-
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
@@ -584,9 +577,6 @@ ${JSON.stringify(errData)}
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
             this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
-            this.isWaiting = false;
-          } else if (data.type === 'TaskCompleted') {
-            console.log("任务已完成: ", data.stop_reason);
             this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
             let toolArgs;
@@ -983,6 +973,47 @@ ${JSON.stringify(errData)}
                   // \`\`\`\n\n
                   //                     `);
                   //                     return;
+                  case 'reload_project':
+                    console.log('[重新加载项目工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载项目...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+
+                      `)
+                    break;
+                  case 'reload_abi_json':
+                    console.log('[重新加载ABI JSON工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在重新加载Blockly工作区数据...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+                    `);
+                    // 导入工具函数
+                    const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+                    const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+                    const reloadResult = await reloadAbiJsonService.executeReloadAbiJson(toolArgs);
+                    toolResult = {
+                      content: reloadResult.content,
+                      is_error: reloadResult.is_error
+                    };
+                    if (toolResult.is_error) {
+                      resultState = "error";
+                      resultText = 'ABI数据重新加载失败: ' + (toolResult.content || '未知错误');
+                    } else {
+                      resultText = 'ABI数据重新加载成功';
+                    }
+                    break;
                 }
               }
 
@@ -1028,6 +1059,7 @@ ${JSON.stringify(errData)}
       },
       complete: () => {
         console.log('streamConnect complete: ', this.list[this.list.length - 1]);
+        this.isWaiting = false;
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1045,6 +1077,7 @@ ${JSON.stringify(errData)}
   getHistory(): void {
     if (!this.sessionId) return;
 
+    console.log('获取历史消息，sessionId:', this.sessionId);
     this.chatService.getHistory(this.sessionId).subscribe((res: any) => {
       console.log('get history', res);
       if (res.status === 'success') {
@@ -1394,10 +1427,6 @@ ${JSON.stringify(errData)}
     if (this.loginStatusSubscription) {
       this.loginStatusSubscription.unsubscribe();
     }
-
-    this.close().then(() => {
-      // 关闭后执行的逻辑
-    });
   }
 
   // 添加订阅管理

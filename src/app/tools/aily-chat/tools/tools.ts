@@ -300,5 +300,23 @@ export const TOOLS = [
             },
             required: ['url']
         }
+    },
+    {
+        name: "reload_abi_json",
+        description: `重新加载 project.abi 数据到 Blockly 工作区。可以从文件加载或直接提供 JSON 数据。适用于需要刷新 Blockly 块数据的场景。`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                projectPath: {
+                    type: 'string',
+                    description: '项目路径，如果不提供将使用当前项目路径'
+                },
+                jsonData: {
+                    type: 'object',
+                    description: '直接提供.abi文件的内容'
+                }
+            },
+            required: []
+        }
     }
 ]
