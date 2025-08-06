@@ -2,6 +2,8 @@ import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ConfigService } from '../../../../services/config.service';
+import { ChatService } from '../../services/chat.service';
+
 
 export interface AilyBoardData {
   type: 'aily-board';
@@ -24,7 +26,7 @@ export interface AilyBoardData {
 })
 export class AilyBoardViewerComponent implements OnInit, OnDestroy {
   @Input() data: AilyBoardData | null = null;
-
+  boardPackageName;
   boardInfo: any = null;
   errorMessage = '';
   showRaw = false;
@@ -34,7 +36,8 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
   }
 
   constructor(
-    private configService: ConfigService
+    private configService: ConfigService,
+    private chatService: ChatService
   ) { }
 
   ngOnInit() {
@@ -57,17 +60,15 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    * 处理数据
    */
   private processData(): void {
+    console.log('Processing board data:', this.data);
     if (!this.data) {
       this.errorMessage = '没有可显示的开发板数据';
       return;
     }
 
     try {
-      if (this.data.metadata?.isRawText) {
-        this.parseRawContent();
-      } else {
-        this.boardInfo = this.data.board || this.data.content;
-      }
+      this.boardPackageName = this.data.board.name;
+      this.boardInfo = this.configService.boardDict[this.boardPackageName] || null;
       this.errorMessage = '';
     } catch (error) {
       console.error('Error processing board data:', error);
@@ -75,62 +76,46 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
     }
   }
 
-  /**
-   * 解析原始内容
-   */
-  private parseRawContent(): void {
-    try {
-      const content = this.data?.content || this.data?.raw || '';
-      if (content.trim().startsWith('{')) {
-        this.boardInfo = JSON.parse(content);
-      } else {
-        throw new Error('Invalid JSON format');
-      }
-    } catch (error) {
-      this.errorMessage = `无法解析开发板数据: ${error.message}`;
-      this.boardInfo = null;
-    }
-  }
+  // /**
+  //  * 获取开发板图片URL
+  //  */
+  // getBoardImageUrl(): string {
+  //   if (!this.boardInfo?.img) return '';
 
-  /**
-   * 获取开发板图片URL
-   */
-  getBoardImageUrl(): string {
-    if (!this.boardInfo?.img) return '';
-    
-    // 如果是完整URL，直接返回
-    if (this.boardInfo.img.startsWith('http')) {
-      return this.boardInfo.img;
-    }
-    
-    // 否则拼接资源路径
-    return `${this.resourceUrl}/boards/${this.boardInfo.img}`;
-  }
+  //   // 如果是完整URL，直接返回
+  //   if (this.boardInfo.img.startsWith('http')) {
+  //     return this.boardInfo.img;
+  //   }
 
-  /**
-   * 获取品牌标志URL
-   */
-  getBrandLogoUrl(): string {
-    if (!this.boardInfo?.brand) return '';
-    
-    return `./brand/${this.boardInfo.brand.toLowerCase()}/logo.png`;
-  }
+  //   // 否则拼接资源路径
+  //   return `${this.resourceUrl}/boards/${this.boardInfo.img}`;
+  // }
+
+  // /**
+  //  * 获取品牌标志URL
+  //  */
+  // getBrandLogoUrl(): string {
+  //   if (!this.boardInfo?.brand) return '';
+
+  //   return `./brand/${this.boardInfo.brand.toLowerCase()}/logo.png`;
+  // }
 
   /**
    * 切换显示原始数据
    */
-  toggleRawData(): void {
-    this.showRaw = !this.showRaw;
-  }
+  // toggleRawData(): void {
+  //   this.showRaw = !this.showRaw;
+  // }
 
   /**
    * 安装开发板
    */
   installBoard(): void {
     if (!this.boardInfo?.name) return;
-    
-    // TODO: 实现开发板安装逻辑
+
+    // 实现开发板安装逻辑
     console.log('Installing board:', this.boardInfo.name);
+    this.chatService.sendTextToChat(`安装开发板: ${this.boardInfo.name}`, { sender: 'board', type: 'install', autoSend: true });
   }
 
   /**
@@ -138,7 +123,10 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   viewBoardDetails(): void {
     if (!this.boardInfo?.url) return;
-    
     window.open(this.boardInfo.url, '_blank');
+  }
+
+  logDetail() {
+    console.log('状态详情:', this.boardInfo);
   }
 }

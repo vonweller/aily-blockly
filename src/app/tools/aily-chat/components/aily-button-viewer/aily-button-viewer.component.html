@@ -1,10 +1,10 @@
-<div class="aily-button-viewer">
-    <nz-button-group [nzSize]="'small'">
+<div class="aily-button-viewer" (dblclick)="logDetail()">
+    <div class="btns">
         @for (button of buttons; track button.action || $index) {
         <button nz-button [nzType]="button.type" [nzSize]="'small'"
-            class="aily-button" (click)="onButtonClick(button)">
+            class="aily-button" (click)="onButtonClick(button)" [disabled]="isDisabled">
             {{ button.text }}
         </button>
         }
-    </nz-button-group>
+    <div>
 </div>

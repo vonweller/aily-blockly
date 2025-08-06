@@ -23,7 +23,8 @@
         "EXIT": "終了",
         "USER_MANUAL": "ユーザーマニュアル",
         "EXAMPLES": "サンプルプログラム",
-        "UPDATE": "アップデートを確認"
+        "UPDATE": "アップデートを確認",
+        "USER_AUTH": "ユーザーサービス"
     },
     "ESP32": {
         "UPLOAD_SPEED": "書き込み速度",

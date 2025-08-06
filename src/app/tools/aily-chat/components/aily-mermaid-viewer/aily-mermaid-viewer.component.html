@@ -1,0 +1,19 @@
+<div class="aily-mermaid-viewer sscroll" (dblclick)="logDetail()">
+  @if (errorMessage) {
+  <div class="error-card">
+    <div class="error-content">
+      <span class="error-text">🚫 图表渲染失败</span>
+    </div>
+  </div>
+  } @else if (isLoading) {
+  <div class="error-card">
+    <div class="error-content">
+      <div class="error-text">📊 等待图表生成...</div>
+    </div>
+  </div>
+  } @else if (renderedSvg) {
+  <div class="mermaid-card">
+    <div class="mermaid-container" [id]="containerId" [innerHTML]="renderedSvg" (click)="enterFullscreen()"></div>
+  </div>
+  }
+</div>

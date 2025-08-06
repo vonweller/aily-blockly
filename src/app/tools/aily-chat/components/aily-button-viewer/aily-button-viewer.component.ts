@@ -2,6 +2,7 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
+import { ChatService } from '../../services/chat.service';
 
 export interface ButtonData {
     text: string;
@@ -10,6 +11,7 @@ export interface ButtonData {
     icon?: string;
     disabled?: boolean;
     loading?: boolean;
+    id?: string;
 }
 
 @Component({
@@ -24,6 +26,11 @@ export class AilyButtonViewerComponent {
     @Output() buttonClick = new EventEmitter<ButtonData>();
 
     buttons: ButtonData[] = [];
+
+    isDisabled = false
+
+    constructor(private chatService: ChatService) {
+    }
 
     /**
      * 设置组件数据
@@ -70,8 +77,7 @@ export class AilyButtonViewerComponent {
             action: buttonData.action || buttonData.command || '',
             type: buttonData.type || 'primary',
             icon: buttonData.icon,
-            disabled: Boolean(buttonData.disabled),
-            loading: Boolean(buttonData.loading)
+            id: buttonData.id || ''
         };
     }
 
@@ -79,52 +85,18 @@ export class AilyButtonViewerComponent {
      * 处理按钮点击事件
      */
     onButtonClick(button: ButtonData): void {
-        if (button.disabled || button.loading) {
-            return;
-        }
-
-        console.log('Button clicked:', button);
+        this.isDisabled = true;
 
         // 发射事件
         this.buttonClick.emit(button);
 
-        // 根据 action 执行相应的操作
-        this.executeAction(button);
+        const sendData = button.text
+
+        // 直接往大模型发送按钮点击的消息
+        this.chatService.sendTextToChat(sendData, { sender: 'button', type: 'button', cover: false });
     }
 
-    /**
-     * 执行按钮动作
-     */
-    private executeAction(button: ButtonData): void {
-        switch (button.action) {
-            case 'create_project':
-                this.handleCreateProject();
-                break;
-            case 'more_info':
-                this.handleMoreInfo();
-                break;
-            default:
-                console.warn('Unknown button action:', button.action);
-                // 可以在这里添加通用的处理逻辑
-                break;
-        }
-    }
-
-    /**
-     * 处理创建项目动作
-     */
-    private handleCreateProject(): void {
-        console.log('Executing create project action');
-        // TODO: 实现创建项目的具体逻辑
-        // 可能需要调用服务或路由跳转
-    }
-
-    /**
-   * 处理补充说明动作
-   */
-    private handleMoreInfo(): void {
-        console.log('Executing more info action');
-        // TODO: 实现补充说明的具体逻辑
-        // 可能需要显示对话框或展开详细信息
+    logDetail() {
+        console.log('Button Viewer Data:', this.data);
     }
 }

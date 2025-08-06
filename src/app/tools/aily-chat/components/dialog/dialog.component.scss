@@ -11,8 +11,12 @@
 .username {
     padding: 3px 6px;
     border-bottom: 1px solid #444;
-    font-size: 12px;
+    font-size: 14px;
     color: #888;
+
+    i {
+        font-size: 16px;
+    }
 }
 
 .content {
@@ -28,38 +32,40 @@
         h5,
         h6 {
             font-weight: bold;
-            // color: #222;
             margin-top: 0;
         }
 
         h1 {
-            font-size: 32px;
-            margin-bottom: 1em;
+            font-size: 20px;
+            margin-bottom: 0.5em;
         }
 
         h2 {
-            font-size: 28px;
-            margin-bottom: 1em;
+            font-size: 18px;
+            margin-bottom: 0.5em;
+            border-left: 6px solid #3794ff;
+            line-height: 26px;
+            padding-left: 10px;
         }
 
         h3 {
-            font-size: 24px;
-            margin-bottom: 1em;
+            font-size: 16px;
+            margin-bottom: 0.2em;
         }
 
         h4 {
-            font-size: 20px;
-            margin-bottom: 1em;
+            font-size: 14px;
+            margin-bottom: 0.2em;
         }
 
         h5 {
-            font-size: 16px;
-            margin-bottom: 1em;
+            font-size: 14px;
+            margin-bottom: 0.2em;
         }
 
         h6 {
             font-size: 14px;
-            margin-bottom: 1em;
+            margin-bottom: 0.2em;
         }
 
         p,
@@ -83,9 +89,15 @@
         }
 
         blockquote {
-            padding: 0.5em 1em;
+            padding: 0 1em;
             border-left: 0.25em solid #ccc;
-            color: #666;
+            color: #999;
+
+            code {
+                padding: 0 5px;
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                color: #ffbd08;
+            }
         }
 
         a {
@@ -148,7 +160,7 @@
         pre {
             display: grid;
             position: relative;
-            margin-top: 10px;
+            margin: 0;
             overflow: visible;
 
             code {
@@ -157,28 +169,40 @@
                 padding: 0.5em;
             }
 
+            .aily-component-container {
+                font-family: "MiSans Regular", "FiraCode Regular" !important;
+                width: 100%;
+            }
+
             .language-aily-state {
                 height: 40px;
                 overflow: hidden;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-board {
                 height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-library {
                 height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
 
             .language-aily-button {
-                height: 70px;
                 font-family: "MiSans Regular", "FiraCode Regular" !important;
                 overflow: hidden;
+                display: flex;
+                align-items: center;
             }
         }
 

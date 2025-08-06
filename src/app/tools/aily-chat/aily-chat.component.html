@@ -20,10 +20,10 @@
     <!-- 对话内容 -->
     <div class="dialog-list" #chatContainer>
       @if(list.length > 0){
-      <ngx-simplebar [options]="options">
-        <div class="dialogs" #chatList>
+      <ngx-simplebar #simplebarRef [options]="options">
+        <div class="dialogs">
           @for (item of list; track item) {
-          <aily-dialog [data]="item"></aily-dialog>
+          <aily-dialog [role]="item.role" [content]="item.content"></aily-dialog>
           }
         </div>
       </ngx-simplebar>
@@ -53,21 +53,70 @@
           </div>
         </div> -->
         <div class="input-box">
-          <textarea #chatTextarea class="sscroll" spellcheck="false" nz-input [(ngModel)]="inputValue"
-            (keydown)="onKeyDown($event)"></textarea>
-        </div>
-        <div class="btns">
-          <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加文件" (click)="addFile()">
-            <i class="fa-light fa-file-plus"></i>
+          @if( selectContent.length > 0 ) {
+          <div class="resource-list">
+            @for( item of selectContent; track $index) {
+            <div class="resource-item">
+              @if(item.type == 'file') {
+              <i class="fa-light fa-file"></i>
+              }@else if(item.type == 'folder') {
+              <i class="fa-light fa-folder"></i>
+              }@else if(item.type == 'url') {
+              <i class="fa-light fa-link"></i>
+              }
+              <span class="resource-name">{{ item.name }}</span>
+              <div class="btn ccenter" (click)="removeResource($index)">
+                <i class="fa-light fa-xmark"></i>
+              </div>
+            </div>
+            }
           </div>
-          <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
+          }
+          <textarea #chatTextarea class="sscroll" spellcheck="false" [(ngModel)]="inputValue"
+            (keydown)="onKeyDown($event)">
+          </textarea>
+          <div class="btns">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加上下文" (click)="openAddList()">
+              <i class="fa-light fa-paperclip"></i>
+            </div>
+            @if(showAddList){
+            <div class="list-box animate__animated animate__fadeIn animate__faster">
+              <div class="btn2 ccenter enter" (click)="openAddList()" style="margin-top: -1px;">
+                <i class="fa-light fa-angle-left"></i>
+              </div>
+            </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加文件" (click)="addFile()">
+              <i class="fa-light fa-file-plus"></i>
+            </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加文件夹" (click)="addFolder()">
+              <i class="fa-light fa-folder-plus"></i>
+            </div>
+            <div class="btn2 ccenter enter animate__animated animate__fadeInLeft animate__faster" nz-tooltip
+              nzTooltipTitle="添加网站" (click)="addUrl()">
+              <i class="fa-light fa-globe-pointer"></i>
+            </div>
+            }
+            <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
             <i class="fa-light fa-microphone"></i>
           </div> -->
-          <button class="right ccenter" nz-button nzType="primary" nz-tooltip
-            [nzTooltipTitle]="true?'Enter':'Ctrl+Enter'" (click)="send()">
-            发送
-          </button>
+            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip
+              [nzTooltipTitle]="isWaiting?'停止':'发送'" (click)="sendButtonClick()">
+              @if(isWaiting){
+              <div class="stop-box ccenter">
+                <i class="fa-light fa-stop"></i>
+              </div>
+              <div class="spinner-box ccenter">
+                <i class="fa-light fa-spinner-third"></i>
+              </div>
+              }@else {
+              <i class="fa-light fa-paper-plane"></i>
+              }
+            </div>
+          </div>
         </div>
+
       </div>
     </div>
   </div>

@@ -36,6 +36,11 @@ export class MarkdownPipe implements PipeTransform {
               return this.renderAilyCodeBlockWithComponent(code, lang as any);
             }
 
+            // 检查是否为 Mermaid 图表 - 改为 aily-mermaid 类型
+            if (lang?.toLowerCase() === 'mermaid') {
+              return this.renderAilyCodeBlockWithComponent(code, 'aily-mermaid');
+            }
+
             // 处理语言别名
             const langMap: { [key: string]: string } = {
               'cpp': 'cpp',
@@ -83,11 +88,13 @@ export class MarkdownPipe implements PipeTransform {
     };
 
     this.marked.use({ renderer });
-  }  /**
+  }
+
+  /**
    * 检查是否为特殊的 Aily 代码块类型
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid'];
     return ailyTypes.includes(lang);
   }/**
    * 渲染 Aily 特殊代码块为组件占位符
@@ -106,40 +113,9 @@ export class MarkdownPipe implements PipeTransform {
       return `<div class="aily-code-block-placeholder" 
                    data-aily-type="${type}" 
                    data-aily-data="${encodedData}" 
-                   data-component-id="${componentId}"
-                   style="
-                     border: 1px solid #d9d9d9;
-                     border-radius: 6px;
-                     margin: 12px 0;
-                     background-color: #fafafa;
-                     padding: 16px;
-                     text-align: center;
-                   ">
-        <!-- Aily ${type} Component Placeholder -->
-        <div class="loading-placeholder" style="
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 8px;
-          color: #666;
-        ">
-          <div class="loading-spinner" style="
-            width: 20px;
-            height: 20px;
-            border: 2px solid #f0f0f0;
-            border-top: 2px solid #1890ff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-          "></div>
-          <span style="font-size: 14px;">正在加载 ${type} 组件...</span>
-          <style>
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          </style>
-        </div>
-      </div>`;
+                   data-component-id="${componentId}">
+                  <!-- Aily ${type} Component Placeholder -->
+              </div>`;
     } catch (error) {
       console.error(`Error preparing ${type} component:`, error);
       return this.renderFallbackCodeBlock(code, type, error);
@@ -167,11 +143,24 @@ export class MarkdownPipe implements PipeTransform {
    * 解析 Aily 代码内容
    */
   private parseAilyContent(code: string, type: string): any {
+    // 清理代码内容 - 移除多余的空白字符和换行
+    const cleanedCode = code.trim();
+
+    // 对于 aily-mermaid 类型，直接返回纯文本内容，不尝试解析 JSON
+    if (type === 'aily-mermaid') {
+      return {
+        type: 'aily-mermaid',
+        code: cleanedCode,
+        content: cleanedCode,
+        raw: cleanedCode,
+        metadata: {
+          isRawText: true
+        }
+      };
+    }
+
     try {
-      // 清理代码内容 - 移除多余的空白字符和换行
-      const cleanedCode = code.trim();
-      
-      // 尝试解析为 JSON
+      // 对于其他类型，尝试解析为 JSON
       const jsonData = JSON.parse(cleanedCode);
 
       // 根据类型验证和规范化数据
@@ -184,7 +173,6 @@ export class MarkdownPipe implements PipeTransform {
             metadata: jsonData.metadata || {},
             config: jsonData.config || {}
           };
-
         case 'aily-board':
           return {
             type: 'aily-board',
@@ -199,7 +187,8 @@ export class MarkdownPipe implements PipeTransform {
             library: this.validateLibraryData(jsonData.library || jsonData),
             dependencies: jsonData.dependencies || [],
             metadata: jsonData.metadata || {}
-          };        case 'aily-state':
+          };
+        case 'aily-state':
           return {
             type: 'aily-state',
             state: jsonData.state || jsonData.status || 'info',
@@ -208,7 +197,19 @@ export class MarkdownPipe implements PipeTransform {
             progress: jsonData.progress,
             metadata: jsonData.metadata || {}
           };
-
+        case 'aily-error':
+          return {
+            type: 'aily-error',
+            error: jsonData.error || jsonData,
+            message: jsonData.message || jsonData.error?.message,
+            code: jsonData.code || jsonData.error?.code,
+            details: jsonData.details || jsonData.error?.details,
+            stack: jsonData.stack || jsonData.error?.stack,
+            timestamp: jsonData.timestamp || new Date().toISOString(),
+            severity: this.validateErrorSeverity(jsonData.severity || jsonData.error?.severity),
+            category: jsonData.category || jsonData.error?.category,
+            metadata: jsonData.metadata || {}
+          };
         case 'aily-button':
           return {
             type: 'aily-button',
@@ -216,7 +217,6 @@ export class MarkdownPipe implements PipeTransform {
             config: jsonData.config || {},
             metadata: jsonData.metadata || {}
           };
-
         default:
           console.warn(`Unknown aily type: ${type}, using raw data`);
           return {
@@ -228,14 +228,15 @@ export class MarkdownPipe implements PipeTransform {
       }
     } catch (parseError) {
       console.warn(`Failed to parse JSON for ${type}:`, parseError);
+      console.log('Using raw content for rendering:', code);
       // 如果不是 JSON，返回原始字符串格式的数据
       return {
         type: type,
         raw: code,
         content: code.trim(),
-        metadata: { 
+        metadata: {
           isRawText: true,
-          parseError: parseError.message 
+          parseError: parseError.message
         }
       };
     }
@@ -286,6 +287,14 @@ export class MarkdownPipe implements PipeTransform {
     };
   }
 
+  /**
+   * 验证错误严重程度
+   */
+  private validateErrorSeverity(severity: any): 'error' | 'warning' | 'info' {
+    const validSeverities = ['error', 'warning', 'info'];
+    return validSeverities.includes(severity) ? severity : 'error';
+  }
+
   transform(value: any, ...args: any[]): Observable<SafeHtml> {
     if (!value) {
       return of(this.sanitizer.bypassSecurityTrustHtml(''));
@@ -316,13 +325,13 @@ export function safeBase64Encode(str: string): string {
     // 使用 TextEncoder 将字符串转换为 UTF-8 字节数组
     const encoder = new TextEncoder();
     const bytes = encoder.encode(str);
-    
+
     // 将字节数组转换为二进制字符串
     let binaryString = '';
     for (let i = 0; i < bytes.length; i++) {
       binaryString += String.fromCharCode(bytes[i]);
     }
-    
+
     // 使用 btoa 对二进制字符串进行 Base64 编码
     return btoa(binaryString);
   } catch (error) {
@@ -339,13 +348,13 @@ export function safeBase64Decode(encodedStr: string): string {
   try {
     // 尝试 Base64 解码
     const binaryString = atob(encodedStr);
-    
+
     // 将二进制字符串转换为字节数组
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    
+
     // 使用 TextDecoder 将字节数组转换为 UTF-8 字符串
     const decoder = new TextDecoder();
     return decoder.decode(bytes);

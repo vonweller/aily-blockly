@@ -21,11 +21,11 @@ export class ConfigService {
 
   async load() {
     let defaultConfigFilePath = window['path'].getElectronPath();
-    let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config.json`);
+    let defaultConfigFile = window['fs'].readFileSync(`${defaultConfigFilePath}/config/config.json`);
     this.data = await JSON.parse(defaultConfigFile);
 
     let userConfData;
-    let configFilePath = window['path'].getAppData();
+    let configFilePath = window['path'].getAppDataPath();
     // 检查配置文件是否存在，如果不存在则创建一个默认的配置文件
     if (this.electronService.exists(`${configFilePath}/config.json`)) {
       userConfData = JSON.parse(this.electronService.readFile(`${configFilePath}/config.json`));
@@ -38,31 +38,87 @@ export class ConfigService {
 
     // 添加当前系统类型到data中
     this.data["platform"] = window['platform'].type;
+
+    // 并行加载缓存的boards.json和libraries.json
+    // await Promise.all([
+    this.loadAndCacheBoardList(configFilePath);
+    this.loadAndCacheLibraryList(configFilePath);
+    // ]);
+  }
+
+  private async loadAndCacheBoardList(configFilePath: string): Promise<void> {
+    if (this.electronService.exists(`${configFilePath}/boards.json`)) {
+      this.boardList = JSON.parse(this.electronService.readFile(`${configFilePath}/boards.json`));
+      let boardList = await this.loadBoardList();
+      if (boardList.length > 0) {
+        this.boardList = boardList;
+        this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(boardList));
+      }
+    } else {
+      // 首次启动软件，创建boards.json
+      this.boardList = await this.loadBoardList();
+      this.electronService.writeFile(`${configFilePath}/boards.json`, JSON.stringify(this.boardList));
+    }
+    // 创建一个boardDict，方便通过name快速查找board信息
+    this.boardList.forEach(board => {
+      this.boardDict[board.name] = board;
+    });
+  }
+
+  private async loadAndCacheLibraryList(configFilePath: string): Promise<void> {
+    if (this.electronService.exists(`${configFilePath}/libraries.json`)) {
+      this.libraryList = JSON.parse(this.electronService.readFile(`${configFilePath}/libraries.json`));
+      let libraryList = await this.loadLibraryList();
+      if (libraryList.length > 0) {
+        this.libraryList = libraryList;
+        this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(libraryList));
+      }
+    } else {
+      // 首次启动软件，创建libraries.json
+      this.libraryList = await this.loadLibraryList();
+      this.electronService.writeFile(`${configFilePath}/libraries.json`, JSON.stringify(this.libraryList));
+    }
+    // 创建一个libraryDict，方便通过name快速查找library信息
+    this.libraryList.forEach(library => {
+      this.libraryDict[library.name] = library;
+    });
   }
 
   async save() {
-    let configFilePath = window['path'].getAppData();
+    let configFilePath = window['path'].getAppDataPath();
     window['fs'].writeFileSync(`${configFilePath}/config.json`, JSON.stringify(this.data, null, 2));
   }
 
-  boardList;
-  async loadBoardList() {
-    this.boardList = await lastValueFrom(
-      this.http.get(this.data.resource[0] + '/boards.json', {
-        responseType: 'json',
-      }),
-    );
-    return this.boardList;
+  boardList = [];
+  boardDict = {};
+  async loadBoardList(): Promise<any[]> {
+    try {
+      let boardList: any = await lastValueFrom(
+        this.http.get(this.data.resource[0] + '/boards.json', {
+          responseType: 'json',
+        }),
+      );
+      return boardList;
+    } catch (error) {
+      console.error('Failed to load board list:', error);
+      return [];
+    }
   }
 
-  libraryList;
-  async loadLibraryList() {
-    this.libraryList = await lastValueFrom(
-      this.http.get(this.data.resource[0] + '/libraries.json', {
-        responseType: 'json',
-      }),
-    );
-    return this.libraryList;
+  libraryList = [];
+  libraryDict = {};
+  async loadLibraryList(): Promise<any[]> {
+    try {
+      let libraryList: any = await lastValueFrom(
+        this.http.get(this.data.resource[0] + '/libraries.json', {
+          responseType: 'json',
+        }),
+      );
+      return libraryList;
+    } catch (error) {
+      console.error('Failed to load library list:', error);
+      return [];
+    }
   }
 
   examplesList;

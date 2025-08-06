@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, shell } = require("electron");
+const { contextBridge, ipcRenderer, shell, safeStorage } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
@@ -14,12 +14,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   path: {
     getUserHome: () => require("os").homedir(),
-    getAppData: () => process.env.AILY_APPDATA_PATH,
+    getAppDataPath: () => process.env.AILY_APPDATA_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => __dirname,
     isDir: (path) => statSync(path).isDirectory(),
     join: (...args) => require("path").join(...args),
+    dirname: (path) => require("path").dirname(path),
+    extname: (path) => require("path").extname(path),
+    normalize: (path) => require("path").normalize(path),
+    resolve: (path) => require("path").resolve(path),
     basename: (path) => require("path").basename(path)
   },
   versions: () => process.versions,
@@ -152,12 +156,25 @@ contextBridge.exposeInMainWorld("electronAPI", {
     existsSync: (path) => require("fs").existsSync(path),
     statSync: (path) => require("fs").statSync(path),
     isDirectory: (path) => require("fs").statSync(path).isDirectory(),
+    unlinkSync: (path, cb) => require("fs").unlinkSync(path, cb),
+    rmdirSync: (path) => require("fs").rmdirSync(path, { recursive: true, force: true }),
+    renameSync: (oldPath, newPath) => require("fs").renameSync(oldPath, newPath),
   },
   ble: {
 
   },
   wifi: {
 
+  },
+  dialog: {
+    selectFiles: (options) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke("dialog-select-files", options)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+    }
   },
   other: {
     // 通过资源管理器打开
@@ -219,4 +236,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on('update-status', (_, data) => callback(data));
     }
   },
+  mcp: {
+    connect: (name, command, args) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:connect', name, command, args)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    },
+    getTools: (name) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:get-tools', name)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    },
+    useTool: (toolName, args) => {
+      return new Promise((resolve, reject) => {
+        ipcRenderer
+          .invoke('mcp:use-tool', toolName, args)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      })
+    }
+  },
+  // 安全存储 API
+  safeStorage: {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (plainText) => safeStorage.encryptString(plainText),
+    decryptString: (encrypted) => safeStorage.decryptString(encrypted)
+  }
 });

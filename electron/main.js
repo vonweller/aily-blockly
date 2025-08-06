@@ -108,6 +108,7 @@ const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers } = require("./cmd");
+const { registerMCPHandlers } = require("./mcp");
 // debug模块
 const { initLogger } = require("./logger");
 
@@ -143,8 +144,8 @@ function loadEnv() {
   // 完全替换PATH
   process.env.PATH = customPath;
 
-  // 读取同级目录下的config.json文件
-  const configPath = path.join(__dirname, "config.json");
+  // 读取config.json文件
+  const configPath = path.join(__dirname, 'config', "config.json");
   const conf = JSON.parse(fs.readFileSync(configPath));
 
   // 设置系统默认的应用数据目录
@@ -300,6 +301,7 @@ function createWindow() {
   registerWindowHandlers(mainWindow);
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
+  registerMCPHandlers(mainWindow);
 }
 
 app.on("ready", () => {
@@ -377,6 +379,17 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
   }
   // 直接返回用户选择的完整路径，保留文件名部分
   return result.filePath;
+});
+
+// 通用对话框处理器（用于chat添加文件或文件夹）
+ipcMain.handle("dialog-select-files", async (event, options) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  try {
+    const result = await dialog.showOpenDialog(senderWindow, options);
+    return result;
+  } catch (error) {
+    throw error;
+  }
 });
 
 // 环境变量
@@ -459,16 +472,16 @@ function windowMoveResizeListener() {
   const bounds = mainWindow.getBounds();
   const isMaximized = mainWindow.isMaximized();
   // console.log("窗口位置和大小：", bounds, "最大化状态：", isMaximized);
-  
+
   // 读取配置文件
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");
   let userConf = JSON.parse(fs.readFileSync(userConfigPath));
-  
+
   // 确保window配置存在
   if (!userConf["window"]) {
     userConf["window"] = {};
   }
-  
+
   if (isMaximized) {
     // 如果当前是最大化状态，只更新最大化状态，保留之前的normalBounds
     userConf["window"].isMaximized = true;
@@ -497,7 +510,7 @@ function windowMoveResizeListener() {
       }
     };
   }
-  
+
   fs.writeFileSync(userConfigPath, JSON.stringify(userConf));
 }
 
@@ -505,7 +518,7 @@ function listenMoveResize() {
   const listener = _.debounce(windowMoveResizeListener.bind(this), 1000)
   mainWindow.on('resize', listener)
   mainWindow.on('move', listener)
-  
+
   // 监听窗口最大化事件 - 在最大化前记录当前大小
   mainWindow.on('maximize', () => {
     // 在最大化之前，先记录当前的窗口大小到normalBounds
@@ -515,7 +528,7 @@ function listenMoveResize() {
       if (!userConf["window"]) {
         userConf["window"] = {};
       }
-      
+
       // 只有当窗口当前不是最大化状态时，才记录normalBounds
       if (!mainWindow.isMaximized()) {
         const bounds = mainWindow.getBounds();
@@ -526,14 +539,14 @@ function listenMoveResize() {
           height: bounds.height,
         };
       }
-      
+
       userConf["window"].isMaximized = true;
       fs.writeFileSync(userConfigPath, JSON.stringify(userConf));
     } catch (error) {
       console.error('记录最大化前窗口大小失败:', error);
     }
   });
-  
+
   // 监听窗口还原事件
   mainWindow.on('unmaximize', () => {
     // 还原到之前记录的大小
@@ -564,10 +577,10 @@ function getConfWindowBounds() {
     width: 1200,
     height: 780,
   };
-  
+
   // 保存最大化状态
   const isMaximized = bounds.isMaximized || false;
-  
+
   // 如果有normalBounds且当前不是最大化状态，使用normalBounds
   // 如果是最大化状态，使用normalBounds作为基础窗口大小（用于创建窗口）
   if (bounds.normalBounds) {
@@ -576,7 +589,7 @@ function getConfWindowBounds() {
       isMaximized: isMaximized
     };
   }
-  
+
   // 确保窗口位置在屏幕范围内
   const screenBounds = screen.getPrimaryDisplay().bounds;
   if (bounds.x < screenBounds.x) {
@@ -591,10 +604,10 @@ function getConfWindowBounds() {
   if (bounds.height > screenBounds.height) {
     bounds.height = screenBounds.height;
   }
-  
+
   // 添加最大化状态到返回的bounds中
   bounds.isMaximized = isMaximized;
-  
+
   return bounds;
 }
 

@@ -3,27 +3,52 @@
         (click)="$event.stopPropagation()">
         <div class="content">
             <div class="title">aily Blocky Service</div>
+            @if(isLoggedIn){
+            <div class="text">欢迎参加我们的AI服务测试</div>
+            }@else {
             <div class="text">
                 登录后即可使用本软件提供的相关服务
-                <a (click)="more()">了解更多</a>
+                <!-- <span (click)="more()">了解更多</span> -->
             </div>
-            <button nz-button nzType="primary" (click)="more()">登录/注册</button>
+            }
+
+
         </div>
 
-        <!-- <div class="user-menu">
-            <div class="user-item" (click)="onLogin()">
-                <i class="fa-regular fa-user"></i>
-                <span>登录</span>
+        @if(isLoggedIn){
+        <div class="login-box">
+            <div class="item">
+                <div class="ccenter">
+                    <i class="fa-light fa-user-vneck"></i>
+                </div>
+                <div class="username">内测用户</div>
             </div>
-            <div class="user-item" (click)="onRegister()">
-                <i class="fa-regular fa-user-plus"></i>
-                <span>注册</span>
+            <div class="actions">
+                <button nz-button nzType="primary" (click)="onLogout()">
+                    登出
+                </button>
             </div>
-            <div class="divider"></div>
-            <div class="user-item" (click)="onSettings()">
-                <i class="fa-regular fa-gear"></i>
-                <span>设置</span>
+        </div>
+        }@else {
+        <div class="login-box">
+            <div class="item">
+                <div class="ccenter">
+                    <i class="fa-light fa-user"></i>
+                </div>
+                <input nz-input spellcheck="false" type="text" placeholder="请输入用户名" [(ngModel)]="userInfo.username" />
             </div>
-        </div> -->
+            <div class="item">
+                <div class="ccenter">
+                    <i class="fa-light fa-lock"></i>
+                </div>
+                <input nz-input type="password" placeholder="请输入密码" [(ngModel)]="userInfo.password" />
+            </div>
+            <div class="actions">
+                <button nz-button nzType="primary" (click)="onLogin()">
+                    登录
+                </button>
+            </div>
+        </div>
+        }
     </div>
 </div>

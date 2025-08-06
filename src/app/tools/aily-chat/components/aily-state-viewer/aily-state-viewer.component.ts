@@ -1,7 +1,6 @@
 import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
-import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 
 export interface AilyStateData {
@@ -20,7 +19,6 @@ export interface AilyStateData {
   imports: [
     CommonModule,
     NzSpinModule,
-    NzIconModule,
     NzProgressModule
   ],
   templateUrl: './aily-state-viewer.component.html',
@@ -47,11 +45,10 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
     this.data = data;
     this.processData();
   }
-
   /**
    * 处理数据
    */
-  private processData(): void {
+  processData(): void {
     if (!this.data) {
       this.errorMessage = '没有可显示的数据';
       return;
@@ -114,9 +111,9 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
   getStateClass(): string {
     if (this.errorMessage) return 'error';
     if (!this.stateInfo) return 'info';
-    
+
     const state = this.stateInfo.state || 'info';
-    
+
     // 映射状态
     const stateMap: Record<string, string> = {
       'loading': 'loading',
@@ -133,7 +130,7 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
       'info': 'info',
       'default': 'info'
     };
-    
+
     return stateMap[state.toLowerCase()] || 'info';
   }
 
@@ -143,9 +140,9 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
   getStateIcon(): string | null {
     if (this.errorMessage) return 'exclamation-circle';
     if (!this.stateInfo) return 'info-circle';
-    
+
     const state = this.stateInfo.state || 'info';
-    
+
     const iconMap: Record<string, string> = {
       'loading': 'loading',
       'thinking': 'loading',
@@ -160,7 +157,7 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
       'warn': 'warning',
       'info': 'info-circle'
     };
-    
+
     return iconMap[state.toLowerCase()] || 'info-circle';
   }
 
@@ -169,7 +166,7 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
    */
   isSpinning(): boolean {
     if (!this.stateInfo) return false;
-    
+
     const state = this.stateInfo.state || 'info';
     return ['loading', 'thinking', 'processing'].includes(state.toLowerCase());
   }
@@ -180,7 +177,11 @@ export class AilyStateViewerComponent implements OnInit, OnDestroy {
   getDisplayText(): string {
     if (this.errorMessage) return this.errorMessage;
     if (!this.stateInfo) return '无状态信息';
-    
+
     return this.stateInfo.text || '正在处理...';
+  }
+
+  logDetail() {
+    console.log('状态详情:', this.stateInfo);
   }
 }

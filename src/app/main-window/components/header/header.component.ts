@@ -20,6 +20,7 @@ import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { UserComponent } from '../user/user.component';
 import { ConfigService } from '../../../services/config.service';
+import { AuthService } from '../../../services/auth.service';
 
 @Component({
   selector: 'app-header',
@@ -80,7 +81,8 @@ export class HeaderComponent {
     private updateService: UpdateService,
     private router: Router,
     private electronService: ElectronService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private authService: AuthService
   ) { }
 
   async ngAfterViewInit() {
@@ -105,6 +107,9 @@ export class HeaderComponent {
 
     this.listenShortcutKeys();
 
+    this.authService.showUser.subscribe(state => {
+      this.showUser = state;
+    })
   }
 
   showMenu = false;
@@ -557,7 +562,7 @@ export class HeaderComponent {
     console.log('转换开发板列表格式:', boardList);
     const currentBoardName = this.projectService.currentBoardConfig?.name;
     console.log('当前开发板名称:', currentBoardName);
-    
+
     return boardList
       .filter(board => board.nickname !== currentBoardName) // 过滤掉当前已选的开发板
       // .filter(board => !board.disabled) // 过滤掉被禁用的开发板

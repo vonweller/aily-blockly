@@ -58,7 +58,7 @@ export class LibManagerComponent {
     private electronService: ElectronService
   ) { }
 
-  ngOnInit() {
+  async ngOnInit() {
     // 使用翻译初始化标签列表
     this.tagList = [
       this.translate.instant('LIB_MANAGER.SENSORS'),
@@ -72,12 +72,16 @@ export class LibManagerComponent {
       this.translate.instant('LIB_MANAGER.IOT'),
     ];
 
-    this.configService.loadLibraryList().then(async (data: any) => {
-      this._libraryList = this.process(data);
-      // this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
-      this.libraryList = await this.checkInstalled();
-      this.cd.detectChanges();
-    });
+    // this.configService.loadLibraryList().then(async (data: any) => {
+    //   this._libraryList = this.process(data);
+    //   // this.libraryList = JSON.parse(JSON.stringify(this._libraryList));
+    //   this.libraryList = await this.checkInstalled();
+    //   this.cd.detectChanges();
+    // });
+
+    this._libraryList = this.process(this.configService.libraryList);
+    this.libraryList = await this.checkInstalled();
+    this.cd.detectChanges();
   }
 
   async checkInstalled(libraryList = null) {

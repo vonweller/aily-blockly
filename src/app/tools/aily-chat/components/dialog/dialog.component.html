@@ -1,16 +1,10 @@
-<div class="dialog-box" [ngClass]="{ 'user': data.role=='user' }">
+<div class="dialog-box animate__animated animate__fadeIn animate__faster" [ngClass]="{ 'user': role=='user' }">
   <div class="username">
-    @if(data.role=='user'){
-    奈何col
+    @if(role=='user'){
+    <i class="fa-light fa-user-vneck"></i>&nbsp;&nbsp;me
     }@else {
-    aily
+    <i class="fa-light fa-user-astronaut"></i>&nbsp;&nbsp;aily
     }
   </div>
-  @if(data.state=='thinking'){
-  <div class="content">Thinking...</div>
-  }@else if(data.state=='retrieving'){
-  <div class="content">Retrieving...</div>
-  }@else{
-  <div class="content" ailyDynamicComponent [innerHTML]="data.content | markdown | async"></div>
-  }
+  <div #contentDiv class="content" ailyDynamicComponent></div>
 </div>
