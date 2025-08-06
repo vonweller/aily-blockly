@@ -129,6 +129,10 @@ nz-modal-container {
   }
 }
 
+nz-sider.nz-resizable-resizing {
+  transition: none;
+}
+
 .blocklyWidgetDiv {
   .blocklyHtmlInput {
     color: #333;

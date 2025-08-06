@@ -100,7 +100,7 @@ export class ProjectService {
   // 新建项目
   async projectNew(newProjectData: NewProjectData, closeWindow: boolean = true) {
     console.log('newProjectData: ', newProjectData);
-    const appDataPath = window['path'].getAppData();
+    const appDataPath = window['path'].getAppDataPath();
     // const projectPath = (newProjectData.path + newProjectData.name).replace(/\s/g, '_');
     const projectPath = window['path'].join(newProjectData.path, newProjectData.name.replace(/\s/g, '_'));
     const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
@@ -367,7 +367,7 @@ export class ProjectService {
         throw new Error('未找到开发板 SDK 模块');
       }
 
-      const appDataPath = window['path'].getAppData()
+      const appDataPath = window['path'].getAppDataPath()
 
       const sdkLibPath = `${appDataPath}/node_modules/${sdkModule}`;
       if (!window['fs'].existsSync(sdkLibPath)) {

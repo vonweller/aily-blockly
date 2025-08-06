@@ -70,7 +70,7 @@ export class ProjectNewComponent {
       this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
     await this.configService.init();
-    this._boardList = this.process(await this.configService.loadBoardList());
+    this._boardList = this.process(this.configService.boardList);
     this.boardList = JSON.parse(JSON.stringify(this._boardList));
     this.currentBoard = this.boardList[0];
 
@@ -160,7 +160,7 @@ export class ProjectNewComponent {
     this.electronService.openUrl(url);
   }
 
-  help(){
+  help() {
     this.electronService.openUrl("https://github.com/ailyProject/aily-blockly-boards/blob/main/readme.md");
   }
 }

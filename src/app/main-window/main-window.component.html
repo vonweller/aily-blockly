@@ -10,7 +10,7 @@
           </ngx-simplebar>
         </div>
         @if (showBbox) {
-        <div nz-resizable class="resizable-box" [style.height.px]="bottomHeight" [nzMaxHeight]="500" [nzMinHeight]="50"
+        <div nz-resizable class="resizable-box" [style.height.px]="bottomHeight" [nzMaxHeight]="600" [nzMinHeight]="50"
           (nzResize)="onContentResize($event)">
           <nz-resize-handle nzDirection="top" nzCursorType="grid">
             <div class="content-resize-line"></div>
@@ -46,7 +46,7 @@
         }
       </nz-content>
       @if (showRbox) {
-      <nz-sider [nzWidth]="siderWidth" nz-resizable [nzMinWidth]="400" [nzMaxWidth]="600"
+      <nz-sider [nzWidth]="siderWidth" nz-resizable [nzMinWidth]="400" [nzMaxWidth]="800"
         (nzResize)="onSideResize($event)">
         <nz-resize-handle nzDirection="left" nzCursorType="grid">
           <div class="sider-resize-line"></div>

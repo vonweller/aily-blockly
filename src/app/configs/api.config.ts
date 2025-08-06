@@ -18,5 +18,6 @@ export const API = {
   streamConnect: `${SERVER_API_URL}/api/v1/stream`,
   sendMessage: `${SERVER_API_URL}/api/v1/send_message`,
   getHistory: `${SERVER_API_URL}/api/v1/conversation_history`,
-  stopSession: `${SERVER_API_URL}/api/v1/stop_session`
+  stopSession: `${SERVER_API_URL}/api/v1/stop_session`,
+  cancelTask: `${SERVER_API_URL}/api/v1/cancel_task`,
 };

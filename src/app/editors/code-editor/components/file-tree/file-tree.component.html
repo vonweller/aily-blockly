@@ -5,23 +5,29 @@
             <i class="fa-light fa-sync"></i>
         </button>
     </div>
-    <div class="file-explorer-content">
+    <div class="file-explorer-content sscroll" (contextmenu)="onRightClick($event)">
         @if (isLoading) {
-        <div class="loading">
-            <i class="fa-solid fa-spinner fa-spin"></i> 正在加载...
+        <div class="line-box lloading">
+            <div class="icon-box ccenter">
+                <i class="fa-duotone fa-solid fa-spinner-third"></i>
+            </div>
+            <span>加载中</span>
         </div>
         } @else if (isEmpty()) {
-        <div class="empty-folder">
-            <i class="fa-solid fa-folder-open"></i>
-            <p>文件夹为空</p>
+        <div class="line-box empty-folder">
+            <div class="icon-box ccenter">
+                <i class="fa-duotone fa-solid fa-folder-open"></i>
+            </div>
+            <span>文件夹为空</span>
         </div>
         } @else {
-        <nz-tree-view [nzTreeControl]="treeControl" [nzDataSource]="dataSource" [nzDirectoryTree]="true">
+        <nz-tree-view class="ellipsis" [nzTreeControl]="treeControl" [nzDataSource]="dataSource"
+            [nzDirectoryTree]="true">
             <!-- 叶子节点 (文件) -->
             <nz-tree-node *nzTreeNodeDef="let node" nzTreeNodePadding>
                 <nz-tree-node-toggle nzTreeNodeNoopToggle></nz-tree-node-toggle>
                 <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
-                    (nzClick)="nodeClick(node); nodeSelection.toggle(node)">
+                    (nzClick)="nodeClick(node); nodeSelection.toggle(node)" (contextmenu)="onRightClick($event, node)">
                     <div class="file-item">
                         <div class="icon ccenter">
                             <i [class]="getFileIcon(node.title)"></i>
@@ -31,7 +37,7 @@
                 </nz-tree-node-option>
             </nz-tree-node>
             <!-- 非叶子节点 (文件夹) -->
-            <nz-tree-node *nzTreeNodeDef="let node; when: hasChild" nzTreeNodePadding>
+            <nz-tree-node class="ellipsis" *nzTreeNodeDef="let node; when: hasChild" nzTreeNodePadding>
                 <nz-tree-node-toggle>
                     @if (!node.loading) {
                     <i class="fa-light fa-angle-right arrow" [ngClass]="{'down':treeControl.isExpanded(node)}"></i>
@@ -40,7 +46,7 @@
                     }
                 </nz-tree-node-toggle>
                 <nz-tree-node-option [nzSelected]="nodeSelection.isSelected(node)"
-                    (nzClick)="nodeClick(node);nodeSelection.toggle(node)">
+                    (nzClick)="nodeClick(node);nodeSelection.toggle(node)" (contextmenu)="onRightClick($event, node)">
                     <div class="file-item">
                         <div class="icon ccenter">
                             <i class="fa-light {{treeControl.isExpanded(node) ? 'fa-folder-open' : 'fa-folder'}}"></i>
@@ -53,3 +59,7 @@
         }
     </div>
 </div>
+@if (showRightClickMenu) {
+<app-menu class="ports" [position]="rightClickMenuPosition" [menuList]="menuList" [width]="260"
+    (itemClickEvent)="onMenuItemClick($event)" (closeEvent)="showRightClickMenu = false"></app-menu>
+}

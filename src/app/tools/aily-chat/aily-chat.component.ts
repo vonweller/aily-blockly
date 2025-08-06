@@ -10,7 +10,7 @@ import { SubWindowComponent } from '../../components/sub-window/sub-window.compo
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { Observable, tap, Subscription } from 'rxjs';
-import { ChatService } from './services/chat.service';
+import { ChatService, ChatTextOptions } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { MenuComponent } from '../../components/menu/menu.component';
@@ -18,10 +18,7 @@ import { IMenuItem } from '../../configs/menu.config';
 import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdOutput, CmdService } from '../../services/cmd.service';
-import { ElectronService } from '../../services/electron.service';
-// import { ChatListExamples } from './chat.example';
 import { BlocklyService } from '../../blockly/blockly.service';
-
 import { newProjectTool } from './tools/createProjectTool';
 import { executeCommandTool } from './tools/executeCommandTool';
 import { askApprovalTool } from './tools/askApprovalTool';
@@ -52,7 +49,6 @@ export interface ResourceItem {
   name: string;
 }
 
-import { ChatCommunicationService, ChatTextOptions } from '../../services/chat-communication.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
@@ -230,10 +226,8 @@ export class AilyChatComponent implements OnDestroy {
     private mcpService: McpService,
     private projectService: ProjectService,
     private cmdService: CmdService,
-    private electronService: ElectronService,
     private blocklyService: BlocklyService,
     private fetchToolService: FetchToolService,
-    private chatCommunicationService: ChatCommunicationService,
     private router: Router,
     private message: NzMessageService,
     private authService: AuthService
@@ -250,7 +244,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅消息
     this.currentUrl = this.router.url;
     // 订阅外部文本消息
-    this.textMessageSubscription = this.chatCommunicationService.getTextMessages().subscribe(
+    this.textMessageSubscription = this.chatService.getTextMessages().subscribe(
       message => {
         this.receiveTextFromExternal(message.text, message.options);
       }
@@ -478,6 +472,7 @@ ${JSON.stringify(errData)}
 
     this.send('user', this.inputValue.trim(), true);
     this.inputValue = ''; // 发送后清空输入框
+    this.selectContent = [];
   }
 
   send(sender: string, content: string, clear: boolean = true): void {
@@ -1113,6 +1108,8 @@ ${JSON.stringify(errData)}
         return;
       }
       this.send("user", this.inputValue.trim(), true);
+      this.selectContent = [];
+      this.inputValue = "";
       event.preventDefault();
     }
   }

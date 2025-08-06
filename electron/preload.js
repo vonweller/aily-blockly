@@ -2,8 +2,6 @@ const { contextBridge, ipcRenderer, shell, safeStorage } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
-const { get } = require("lodash");
-const { basename, dirname, extname, resolve, normalize } = require("path");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
@@ -16,7 +14,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   path: {
     getUserHome: () => require("os").homedir(),
-    getAppData: () => process.env.AILY_APPDATA_PATH,
+    getAppDataPath: () => process.env.AILY_APPDATA_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => __dirname,

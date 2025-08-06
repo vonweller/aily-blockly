@@ -262,7 +262,7 @@ export class AuthService {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         // 获取AppData路径
-        const appDataPath = (window as any).electronAPI.path.getAppData();
+        const appDataPath = (window as any).electronAPI.path.getAppDataPath();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
 
         // 读取现有文件内容或创建新的
@@ -310,7 +310,7 @@ export class AuthService {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
         // 获取AppData路径
-        const appDataPath = (window as any).electronAPI.path.getAppData();
+        const appDataPath = (window as any).electronAPI.path.getAppDataPath();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
 
         // 检查文件是否存在
@@ -363,7 +363,7 @@ export class AuthService {
   async clearAuthDataFile(): Promise<void> {
     try {
       if (this.electronService.isElectron && (window as any).electronAPI?.path && (window as any).electronAPI?.fs) {
-        const appDataPath = (window as any).electronAPI.path.getAppData();
+        const appDataPath = (window as any).electronAPI.path.getAppDataPath();
         const authFilePath = (window as any).electronAPI.path.join(appDataPath, '.aily');
 
         // 删除.aily文件

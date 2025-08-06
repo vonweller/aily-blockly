@@ -2,7 +2,7 @@ import { Component, Input, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { ConfigService } from '../../../../services/config.service';
-import { ChatCommunicationService } from '../../../../services/chat-communication.service';
+import { ChatService } from '../../services/chat.service';
 
 
 export interface AilyBoardData {
@@ -26,7 +26,7 @@ export interface AilyBoardData {
 })
 export class AilyBoardViewerComponent implements OnInit, OnDestroy {
   @Input() data: AilyBoardData | null = null;
-
+  boardPackageName;
   boardInfo: any = null;
   errorMessage = '';
   showRaw = false;
@@ -37,7 +37,7 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
 
   constructor(
     private configService: ConfigService,
-    private chatService: ChatCommunicationService
+    private chatService: ChatService
   ) { }
 
   ngOnInit() {
@@ -67,11 +67,8 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
     }
 
     try {
-      if (this.data.metadata?.isRawText) {
-        this.parseRawContent();
-      } else {
-        this.boardInfo = this.data.board || this.data.content;
-      }
+      this.boardPackageName = this.data.board.name;
+      this.boardInfo = this.configService.boardDict[this.boardPackageName] || null;
       this.errorMessage = '';
     } catch (error) {
       console.error('Error processing board data:', error);
@@ -79,53 +76,36 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
     }
   }
 
-  /**
-   * 解析原始内容
-   */
-  private parseRawContent(): void {
-    try {
-      const content = this.data?.content || this.data?.raw || '';
-      if (content.trim().startsWith('{')) {
-        this.boardInfo = JSON.parse(content);
-      } else {
-        throw new Error('Invalid JSON format');
-      }
-    } catch (error) {
-      this.errorMessage = `无法解析开发板数据: ${error.message}`;
-      this.boardInfo = null;
-    }
-  }
+  // /**
+  //  * 获取开发板图片URL
+  //  */
+  // getBoardImageUrl(): string {
+  //   if (!this.boardInfo?.img) return '';
 
-  /**
-   * 获取开发板图片URL
-   */
-  getBoardImageUrl(): string {
-    if (!this.boardInfo?.img) return '';
+  //   // 如果是完整URL，直接返回
+  //   if (this.boardInfo.img.startsWith('http')) {
+  //     return this.boardInfo.img;
+  //   }
 
-    // 如果是完整URL，直接返回
-    if (this.boardInfo.img.startsWith('http')) {
-      return this.boardInfo.img;
-    }
+  //   // 否则拼接资源路径
+  //   return `${this.resourceUrl}/boards/${this.boardInfo.img}`;
+  // }
 
-    // 否则拼接资源路径
-    return `${this.resourceUrl}/boards/${this.boardInfo.img}`;
-  }
+  // /**
+  //  * 获取品牌标志URL
+  //  */
+  // getBrandLogoUrl(): string {
+  //   if (!this.boardInfo?.brand) return '';
 
-  /**
-   * 获取品牌标志URL
-   */
-  getBrandLogoUrl(): string {
-    if (!this.boardInfo?.brand) return '';
-
-    return `./brand/${this.boardInfo.brand.toLowerCase()}/logo.png`;
-  }
+  //   return `./brand/${this.boardInfo.brand.toLowerCase()}/logo.png`;
+  // }
 
   /**
    * 切换显示原始数据
    */
-  toggleRawData(): void {
-    this.showRaw = !this.showRaw;
-  }
+  // toggleRawData(): void {
+  //   this.showRaw = !this.showRaw;
+  // }
 
   /**
    * 安装开发板
@@ -143,7 +123,6 @@ export class AilyBoardViewerComponent implements OnInit, OnDestroy {
    */
   viewBoardDetails(): void {
     if (!this.boardInfo?.url) return;
-
     window.open(this.boardInfo.url, '_blank');
   }
 

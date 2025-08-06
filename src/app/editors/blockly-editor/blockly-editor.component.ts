@@ -119,7 +119,6 @@ export class BlocklyEditorComponent {
     this.projectService.stateSubject.next('loaded');
 
     // 7. 后台安装开发板依赖
-    // this.installBoardDependencies();
     this.npmService.installBoardDeps()
       .then(() => {
         console.log('install board dependencies success');

@@ -96,7 +96,7 @@ async function getProjectInfo(projectService): Promise<ProjectInfo> {
         const prjRootPath = projectService.projectRootPath;
         const currentProjectPath = projectService.currentProjectPath === projectService.projectRootPath ? "" : projectService.currentProjectPath;
 
-        const appDataPath = window['path'].getAppData() || ''
+        const appDataPath = window['path'].getAppDataPath() || ''
         // Basic result with path
         const result: ProjectInfo = {
             path: currentProjectPath || '',
