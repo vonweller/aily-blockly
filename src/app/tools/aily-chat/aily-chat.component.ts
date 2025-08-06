@@ -294,7 +294,7 @@ export class AilyChatComponent implements OnDestroy {
     }, 100);
   }
 
-  async close() {
+  async disconnect() {
     try {
       // 先停止会话
       if (this.sessionId) {
@@ -327,10 +327,12 @@ export class AilyChatComponent implements OnDestroy {
       }
     } catch (error) {
       console.error('关闭会话过程中出错:', error);
-    } finally {
-      // 最后关闭工具窗口
-      this.uiService.closeTool('aily-chat');
     }
+  }
+
+  async close() {
+    // 最后关闭工具窗口
+    this.uiService.closeTool('aily-chat');
   }
 
   ngAfterViewInit(): void {
@@ -1429,6 +1431,8 @@ ${JSON.stringify(errData)}
     if (this.loginStatusSubscription) {
       this.loginStatusSubscription.unsubscribe();
     }
+
+    this.disconnect();
   }
 
   // 添加订阅管理
