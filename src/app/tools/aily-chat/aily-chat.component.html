@@ -18,12 +18,12 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     <!-- 对话内容 -->
-    <div class="dialog-list sscroll" #chatContainer>
+    <div class="dialog-list sscroll" #chatContainer (scroll)="checkUserScroll()">
       @if(list.length > 0){
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs">
         @for (item of list; track item) {
-        <aily-dialog [role]="item.role" [content]="item.content"></aily-dialog>
+        <aily-dialog [role]="item.role" [content]="item.content" [doing]="item.state=='doing'"></aily-dialog>
         }
       </div>
       <!-- </ngx-simplebar> -->

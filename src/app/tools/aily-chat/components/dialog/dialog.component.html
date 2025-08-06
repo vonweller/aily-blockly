@@ -6,5 +6,11 @@
     <i class="fa-light fa-user-astronaut"></i>&nbsp;&nbsp;aily
     }
   </div>
+  @if(content==='[thinking...]'){
+  <div class="content thinking">🤔思考中...</div>
+  }
   <div #contentDiv class="content" ailyDynamicComponent></div>
+  @if(doing){
+  <div class="loader"></div>
+  }
 </div>
