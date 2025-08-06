@@ -148,76 +148,88 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
       return segments;
     }
 
-    // 按照markdown结构切分内容
-    const patterns = [
-      // 代码块（优先级最高）
-      /```[\s\S]*?```/g,
-      // 标题
-      /^#{1,6}\s+.*$/gm,
-      // 表格（多行）
-      /(?:^\|.*\|$\n?)+/gm,
-      // 有序列表
-      /(?:^\d+\.\s+.*$\n?)+/gm,
-      // 无序列表
-      /(?:^[-*+]\s+.*$\n?)+/gm,
-      // 引用块
-      /(?:^>\s*.*$\n?)+/gm,
-      // 分隔线
-      /^---+\s*$/gm,
-      // 段落（双换行分隔）
-      /^.+?(?=\n\n|\n#{1,6}|\n```|\n\||\n\d+\.|\n[-*+]|\n>|\n---+|$)/gms
-    ];
+    // 使用更简单但更可靠的切分方法
+    const lines = content.split('\n');
+    let currentSegment = '';
+    let currentType = '';
 
-    let remainingContent = content;
-    let lastIndex = 0;
+    const isCodeBlockStart = (line: string) => line.trim().startsWith('```');
+    const isHeading = (line: string) => /^#{1,6}\s/.test(line.trim());
+    const isList = (line: string) => /^[ \t]*(?:\d+\.|\*|\+|\-)\s/.test(line);
+    const isQuote = (line: string) => /^>\s*/.test(line);
+    const isTableRow = (line: string) => /^\|.*\|$/.test(line.trim());
+    const isSeparator = (line: string) => /^---+\s*$/.test(line.trim());
+    const isEmptyLine = (line: string) => line.trim() === '';
 
-    // 找到所有匹配的结构
-    const matches: Array<{ start: number, end: number, content: string, type: string }> = [];
+    let inCodeBlock = false;
+    let codeBlockLanguage = '';
 
-    patterns.forEach((pattern, patternIndex) => {
-      const regex = new RegExp(pattern.source, pattern.flags);
-      let match;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
 
-      while ((match = regex.exec(content)) !== null) {
-        matches.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          content: match[0],
-          type: this.getPatternType(patternIndex)
-        });
-      }
-    });
-
-    // 按位置排序并合并重叠的匹配
-    matches.sort((a, b) => a.start - b.start);
-    const mergedMatches = this.mergeOverlappingMatches(matches);
-
-    // 生成切分后的内容
-    let currentIndex = 0;
-
-    for (const match of mergedMatches) {
-      // 添加匹配前的普通文本
-      if (match.start > currentIndex) {
-        const plainText = content.slice(currentIndex, match.start).trim();
-        if (plainText) {
-          segments.push({ content: plainText, html: '' });
+      // 处理代码块
+      if (isCodeBlockStart(line)) {
+        if (!inCodeBlock) {
+          // 代码块开始
+          if (currentSegment.trim()) {
+            segments.push({ content: currentSegment.trim(), html: '' });
+            currentSegment = '';
+          }
+          inCodeBlock = true;
+          codeBlockLanguage = trimmedLine.substring(3);
+          currentSegment = line + '\n';
+          currentType = 'code';
+        } else {
+          // 代码块结束
+          currentSegment += line;
+          if (currentSegment.trim()) {
+            segments.push({ content: currentSegment.trim(), html: '' });
+          }
+          currentSegment = '';
+          inCodeBlock = false;
+          currentType = '';
         }
+        continue;
       }
 
-      // 添加匹配的结构化内容
-      segments.push({ content: match.content, html: '' });
-      currentIndex = match.end;
-    }
-
-    // 添加剩余的普通文本
-    if (currentIndex < content.length) {
-      const remainingText = content.slice(currentIndex).trim();
-      if (remainingText) {
-        segments.push({ content: remainingText, html: '' });
+      // 在代码块内，直接添加行
+      if (inCodeBlock) {
+        currentSegment += line + '\n';
+        continue;
       }
+
+      // 处理其他结构
+      const lineType = this.getLineType(line);
+
+      // 如果类型改变或遇到空行，结束当前段落
+      if (lineType !== currentType || (isEmptyLine(line) && currentType !== '')) {
+        if (currentSegment.trim()) {
+          segments.push({ content: currentSegment.trim(), html: '' });
+        }
+        currentSegment = '';
+        currentType = '';
+      }
+
+      // 跳过纯空行（但保留空行在段落内的情况）
+      if (isEmptyLine(line) && currentSegment.trim() === '') {
+        continue;
+      }
+
+      // 开始新的段落或继续当前段落
+      if (currentSegment === '') {
+        currentType = lineType;
+      }
+
+      currentSegment += (currentSegment ? '\n' : '') + line;
     }
 
-    // 如果没有找到任何结构，将整个内容作为一个段落
+    // 添加最后一个段落
+    if (currentSegment.trim()) {
+      segments.push({ content: currentSegment.trim(), html: '' });
+    }
+
+    // 如果没有分割出任何内容，将整个内容作为一个段落
     if (segments.length === 0) {
       segments.push({ content: content, html: '' });
     }
@@ -226,43 +238,19 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   /**
-   * 获取模式类型
+   * 获取行的类型
    */
-  private getPatternType(patternIndex: number): string {
-    const types = ['code', 'heading', 'table', 'ordered-list', 'unordered-list', 'quote', 'separator', 'paragraph'];
-    return types[patternIndex] || 'paragraph';
-  }
+  private getLineType(line: string): string {
+    const trimmed = line.trim();
 
-  /**
-   * 合并重叠的匹配项
-   */
-  private mergeOverlappingMatches(matches: Array<{ start: number, end: number, content: string, type: string }>): Array<{ start: number, end: number, content: string, type: string }> {
-    if (matches.length === 0) return matches;
+    if (/^#{1,6}\s/.test(trimmed)) return 'heading';
+    if (/^[ \t]*(?:\d+\.|\*|\+|\-)\s/.test(line)) return 'list';
+    if (/^>\s*/.test(line)) return 'quote';
+    if (/^\|.*\|$/.test(trimmed)) return 'table';
+    if (/^---+\s*$/.test(trimmed)) return 'separator';
+    if (trimmed.startsWith('```')) return 'code';
 
-    const merged = [matches[0]];
-
-    for (let i = 1; i < matches.length; i++) {
-      const current = matches[i];
-      const last = merged[merged.length - 1];
-
-      if (current.start <= last.end) {
-        // 重叠，合并或选择优先级更高的
-        if (current.end > last.end) {
-          // 代码块优先级最高
-          if (current.type === 'code' || (last.type !== 'code' && current.start < last.start)) {
-            merged[merged.length - 1] = current;
-          } else {
-            // 扩展现有匹配
-            merged[merged.length - 1].end = Math.max(last.end, current.end);
-            merged[merged.length - 1].content = matches[0].content.slice(last.start, merged[merged.length - 1].end);
-          }
-        }
-      } else {
-        merged.push(current);
-      }
-    }
-
-    return merged;
+    return 'paragraph';
   }
 
   /**
@@ -471,7 +459,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
     // 记录当前最后一个段落的HTML，以便找到对应的DOM元素
     const lastSegment = this.contentList[this.contentList.length - 1];
-    
+
     if (!lastSegment || !lastSegment.html) {
       // 如果没有找到最后一个段落，降级到完全重新渲染
       await this.renderContentList();
@@ -517,18 +505,18 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private async replaceLastTextContent(container: HTMLElement, newHtml: string): Promise<void> {
     // 这是一个简化的处理方式，对于复杂情况可能需要更精确的DOM操作
     // 为了避免复杂的文本节点查找，这里使用相对安全的方式
-    
+
     // 如果新内容包含HTML标签，需要解析
     if (newHtml.includes('<')) {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = newHtml;
-      
+
       // 清除最后的文本节点（如果存在）
       const lastChild = container.lastChild;
       if (lastChild && lastChild.nodeType === Node.TEXT_NODE) {
         container.removeChild(lastChild);
       }
-      
+
       // 添加新内容
       while (tempDiv.firstChild) {
         container.appendChild(tempDiv.firstChild);
@@ -598,7 +586,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private async removeElementsFromIndex(container: HTMLElement, fromIndex: number): Promise<void> {
     // 这是一个简化的实现
     // 更精确的实现需要跟踪每个段落对应的DOM元素
-    
+
     // 计算需要保留的元素数量（近似）
     let elementsToKeep = 0;
     for (let i = 0; i < fromIndex && i < this.contentList.length; i++) {
@@ -623,7 +611,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
       // 保留前面部分的文本内容
       const allText = container.textContent || '';
       let keepText = '';
-      
+
       // 这里简化处理，实际情况下需要更精确的文本分割
       if (fromIndex === 0) {
         container.textContent = '';
@@ -673,7 +661,10 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
   fixContent() {
     // 修复mermaid代码块没有语言类型的问题
-    this.content = this.content.replace(/```\nflowchart/g, '```aily-mermaid\nflowchart')
+    this.content = this.content.replace(/```\n\s*flowchart/g, '```aily-mermaid\nflowchart')
+      .replace(/\s*```aily-board/g, '\n```aily-board\n')
+      .replace(/\s*```aily-library/g, '\n```aily-library\n')
+      .replace(/\s*```aily-state/g, '\n```aily-state\n');
   }
 
   test() {
@@ -682,6 +673,28 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
     console.log('内容列表长度:', this.contentList.length);
     console.log('最后处理长度:', this.lastContentLength);
     console.log('DOM元素数量:', this.contentDiv?.nativeElement?.children.length);
+
+    // 测试分割逻辑
+    const testContent = `> **备选推荐理由**: 如果您想先从一个基础版本开始，暂时不需要远程控制功能，Arduino UNO 也是一个不错的选择。它简单易用，社区资源丰富，可以实现定时的基本功能。后续也可以通过外加WiFi模块进行升级。
+
+**推荐库列表**: 
+\`\`\`aily-library
+{
+  "name": "@aily-project/lib-blinker"
+}
+\`\`\``;
+
+    console.log('测试内容分割:');
+    const testSegments = this.splitMarkdownContent(testContent);
+    testSegments.forEach((segment, index) => {
+      console.log(`段落${index}:`, JSON.stringify(segment.content));
+    });
+
+    // 验证是否包含"**推荐库列表**: "
+    const hasRecommendationTitle = testSegments.some(segment =>
+      segment.content.includes('**推荐库列表**')
+    );
+    console.log('是否包含推荐库列表标题:', hasRecommendationTitle);
   }
 }
 
