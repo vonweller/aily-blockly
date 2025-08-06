@@ -81,7 +81,6 @@ export class AilyChatComponent implements OnDestroy {
   };
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('simplebarRef') simplebarRef: SimplebarAngularComponent;
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
@@ -458,12 +457,16 @@ ${JSON.stringify(errData)}
   }
 
   isWaiting = false;
+  autoScrollEnabled = true; // 控制是否自动滚动到底部
 
   sendButtonClick(): void {
     if (this.isWaiting) {
       this.stop();
       return;
     }
+
+    // 发送消息时重新启用自动滚动
+    this.autoScrollEnabled = true;
 
     this.send('user', this.inputValue.trim(), true);
     this.inputValue = ''; // 发送后清空输入框
@@ -1156,14 +1159,39 @@ ${JSON.stringify(errData)}
   }
 
   scrollToBottom() {
-    // setTimeout(() => {
-    //   if (this.simplebarRef) {
-    //     const scrollElement = this.simplebarRef.SimpleBar?.getScrollElement();
-    //     if (scrollElement) {
-    //       scrollElement.scrollTop = scrollElement.scrollHeight;
-    //     }
-    //   }
-    // }, 200); // 增加延迟时间
+    // 只在自动滚动启用时才滚动到底部
+    if (!this.autoScrollEnabled) {
+      return;
+    }
+
+    setTimeout(() => {
+      try {
+        if (this.chatContainer?.nativeElement) {
+          const element = this.chatContainer.nativeElement;
+          element.scrollTop = element.scrollHeight;
+        }
+      } catch (error) {
+        console.warn('滚动到底部失败:', error);
+      }
+    }, 100);
+  }
+
+  /**
+   * 检查用户是否手动向上滚动，如果是则禁用自动滚动
+   */
+  checkUserScroll() {
+    if (!this.chatContainer?.nativeElement) {
+      return;
+    }
+
+    const element = this.chatContainer.nativeElement;
+    const threshold = 50; // 容差值，避免因为精度问题误判
+    const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
+    
+    // 如果用户不在底部，说明手动向上滚动了，禁用自动滚动
+    if (!isAtBottom) {
+      this.autoScrollEnabled = false;
+    }
   }
 
   HistoryList: IMenuItem[] = [
@@ -1181,6 +1209,8 @@ ${JSON.stringify(errData)}
   async newChat() {
     console.log('启动新会话');
     this.list = [];
+    // 新会话时重新启用自动滚动
+    this.autoScrollEnabled = true;
 
     try {
       // 等待停止操作完成

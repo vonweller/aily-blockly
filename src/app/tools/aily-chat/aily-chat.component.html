@@ -18,7 +18,7 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     <!-- 对话内容 -->
-    <div class="dialog-list sscroll" #chatContainer>
+    <div class="dialog-list sscroll" #chatContainer (scroll)="checkUserScroll()">
       @if(list.length > 0){
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs">
