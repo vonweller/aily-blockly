@@ -42,6 +42,7 @@ import { firstValueFrom } from 'rxjs';
 export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   @Input() role = 'user';
   @Input() content;
+  @Input() doing = false;
 
   loaded = false;
   safeContent: SafeHtml = '';
@@ -78,9 +79,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
   private async processContent() {
     // 对一些常见错误的处理，确保markdown格式正确
-    this.fixContent();
-
-    let currentContent = this.content;
+    let currentContent = this.fixContent(this.content);
 
     // 如果内容没有变化，则跳过处理
     if (currentContent === this.lastProcessedContent) {
@@ -659,12 +658,13 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
     return processedContent;
   }
 
-  fixContent() {
+  fixContent(content: string): string {
     // 修复mermaid代码块没有语言类型的问题
-    this.content = this.content.replace(/```\n\s*flowchart/g, '```aily-mermaid\nflowchart')
+    return content.replace(/```\n\s*flowchart/g, '```aily-mermaid\nflowchart')
       .replace(/\s*```aily-board/g, '\n```aily-board\n')
       .replace(/\s*```aily-library/g, '\n```aily-library\n')
-      .replace(/\s*```aily-state/g, '\n```aily-state\n');
+      .replace(/\s*```aily-state/g, '\n```aily-state\n')
+      .replace(/\[thinking...\]/g, '');
   }
 
   test() {

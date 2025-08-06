@@ -2,6 +2,9 @@
     background: #2d2d2d;
     border-radius: 5px;
     margin: 5px 0;
+    position: relative;
+    overflow: hidden;
+    padding-bottom: 2px;
 
     &.user {
         background: none;
@@ -22,6 +25,10 @@
 .content {
     padding: 3px 6px;
     user-select: text;
+
+    &.thinking {
+        color: #aaa;
+    }
 
     ::ng-deep {
 
@@ -343,6 +350,7 @@
     }
 }
 
+// blockly 相关样式
 .dialog-box {
     ::ng-deep {
 
@@ -358,5 +366,31 @@
             height: 300px;
             overflow: auto;
         }
+    }
+}
+
+
+.loader {
+    position: absolute;
+    bottom: 0;
+    height: 2px;
+    width: 100%;
+    --c: no-repeat linear-gradient(#585858 0 0);
+    background: var(--c), var(--c), #3d3d3d;
+    background-size: 60% 100%;
+    animation: l16 3s infinite;
+}
+
+@keyframes l16 {
+    0% {
+        background-position: -150% 0, -150% 0
+    }
+
+    66% {
+        background-position: 250% 0, -150% 0
+    }
+
+    100% {
+        background-position: 250% 0, 250% 0
     }
 }

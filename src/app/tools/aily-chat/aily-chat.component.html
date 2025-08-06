@@ -23,7 +23,7 @@
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs">
         @for (item of list; track item) {
-        <aily-dialog [role]="item.role" [content]="item.content"></aily-dialog>
+        <aily-dialog [role]="item.role" [content]="item.content" [doing]="item.state=='doing'"></aily-dialog>
         }
       </div>
       <!-- </ngx-simplebar> -->
