@@ -7,6 +7,7 @@ import {
   OnChanges,
   ViewChild,
   SimpleChanges,
+  ChangeDetectorRef,
 } from '@angular/core';
 // import { ChatService } from '../../services/chat.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -47,90 +48,63 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   private markdownPipe: MarkdownPipe;
   private lastContentLength = 0; // 跟踪上次处理的内容长度
   private lastProcessedContent = ''; // 跟踪上次处理的完整内容
-  private renderTimeout: any; // 渲染超时定时器
   private contentSegments: Array<{ content: string, element?: HTMLElement }> = []; // 跟踪内容段落和对应的DOM元素
-  private isProcessing = false; // 防止并发处理
 
   @ViewChild('contentDiv', { static: true }) contentDiv!: ElementRef<HTMLDivElement>;
 
   constructor(
-    private message: NzMessageService,
-    private modal: NzModalService,
     private sanitizer: DomSanitizer,
-    private el: ElementRef
+    private cd: ChangeDetectorRef
   ) {
     this.markdownPipe = new MarkdownPipe(this.sanitizer);
   }
 
   ngOnInit(): void {
-    if (this.content) {
-      this.processContent();
-    }
+    // if (this.content) {
+    //   this.processContent();
+    // }
   }
 
   ngOnDestroy(): void {
-    // 清理渲染超时定时器
-    if (this.renderTimeout) {
-      clearTimeout(this.renderTimeout);
-      this.renderTimeout = null;
-    }
-
     // 清理内容段落跟踪
     this.contentSegments = [];
-    this.isProcessing = false;
   }
 
   ngOnChanges(changes: SimpleChanges) {
     if (changes['content'] && this.content) {
-      // console.log('Dialog content changed:', this.content);
       this.processContent();
     }
   }
 
   private async processContent() {
-    if (!this.content || this.isProcessing) {
+    // 对一些常见错误的处理，确保markdown格式正确
+    this.fixContent();
+
+    let currentContent = this.content;
+
+    // 如果内容没有变化，则跳过处理
+    if (currentContent === this.lastProcessedContent) {
       return;
     }
 
-    this.isProcessing = true;
-
-    this.fixContent(); // 确保内容格式正确
-
-    try {
-      const currentContent = String(this.content);
-
-      // 如果内容没有变化，则跳过处理
-      if (currentContent === this.lastProcessedContent) {
-        return;
-      }
-
-      // 如果是全新的内容或内容长度减少了（可能是重置），则清空并重新渲染
-      if (currentContent.length < this.lastContentLength || this.lastProcessedContent === '') {
-        await this.resetAndRenderAll(currentContent);
-        return;
-      }
-
-      // 获取新增的内容
-      const newContent = currentContent.slice(this.lastContentLength);
-      console.log('Processing new content:', newContent);
-
-      if (newContent.length > 0) {
-        // 清除之前的渲染超时
-        if (this.renderTimeout) {
-          clearTimeout(this.renderTimeout);
-          this.renderTimeout = null;
-        }
-
-        // 分析新增内容的性质，决定如何处理
-        await this.processIncrementalContent(this.lastProcessedContent, newContent, currentContent);
-      }
-    } catch (error) {
-      console.error('Error processing markdown content:', error);
-      // 如果处理失败，回退到完整重新渲染
-      await this.fallbackToFullRender(String(this.content));
-    } finally {
-      this.isProcessing = false;
+    // 如果是全新的内容或内容长度减少了（可能是重置），则清空并重新渲染
+    if (currentContent.length < this.lastContentLength || this.lastProcessedContent === '') {
+      console.log('全新内容渲染');
+      await this.resetAndRenderAll(currentContent);
+      return;
     }
+
+    // 获取新增的内容
+    const newContent = currentContent.slice(this.lastContentLength);
+    console.log('增量渲染');
+    console.log(newContent);
+
+    if (newContent.length > 0) {
+      // 分析新增内容的性质，决定如何处理
+      await this.processIncrementalContent(this.lastProcessedContent, newContent, currentContent);
+    }
+
+    this.cd.detectChanges();
   }
 
   /**
@@ -183,6 +157,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
     // 分析新增内容的类型和应该如何处理
     const incrementalAction = this.analyzeIncrementalContent(previousContent, processedNewContent);
+    console.log('增量处理:', incrementalAction.type);
 
     switch (incrementalAction.type) {
       case 'append_to_last':
@@ -202,7 +177,7 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
 
       case 'wait_for_more':
         // 等待更多内容（比如代码块未完成）
-        this.scheduleDelayedRender(processedFullContent);
+        this.renderContent(processedFullContent);
         break;
     }
   }
@@ -482,15 +457,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   /**
-   * 延迟渲染
-   */
-  private scheduleDelayedRender(fullContent: string): void {
-    this.renderTimeout = setTimeout(async () => {
-      await this.renderContent(fullContent);
-    }, 500);
-  }
-
-  /**
    * 更新渲染状态
    */
   private updateRenderState(content: string): void {
@@ -670,6 +636,11 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   fixContent() {
     // 修复mermaid代码块没有语言类型的问题
     this.content = this.content.replace(/```\nflowchart/g, '```aily-mermaid\nflowchart')
+  }
+
+  test() {
+    console.log(this.content);
+
   }
 }
 

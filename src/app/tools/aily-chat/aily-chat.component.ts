@@ -382,12 +382,8 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   appendMessage(role, text) {
-    // 判断是否是JSON格式的字符串
-    // if (role != 'user') {
-    //   console.log('收到数据:');
-    //   console.log(text);
-    // }
-
+    // console.log("添加消息: ", role, text);
+    
     try {
       const parsedText = JSON.parse(text);
       if (typeof parsedText === 'object') {
@@ -399,7 +395,6 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     // 检查是否存在消息列表，且最后一条消息的role与当前role相同
-    // console.log("listRole: ", this.list[this.list.length - 1]?.role, role);
     if (this.list.length > 0 && this.list[this.list.length - 1].role === role) {
       // 如果是同一个role，追加内容到最后一条消息
       this.list[this.list.length - 1].content += text;
@@ -725,7 +720,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'get_context':
-                    console.log('[获取上下文信息工具被调用]', toolArgs);
+                    // console.log('[获取上下文信息工具被调用]', toolArgs);
                     this.appendMessage('aily', `
 
 \`\`\`aily-state
@@ -745,7 +740,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'list_directory':
-                    console.log('[列出目录工具被调用]', toolArgs);
+                    // console.log('[列出目录工具被调用]', toolArgs);
                     const distFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -766,7 +761,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'read_file':
-                    console.log('[读取文件工具被调用]', toolArgs);
+                    // console.log('[读取文件工具被调用]', toolArgs);
                     let readFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -787,7 +782,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'create_file':
-                    console.log('[创建文件工具被调用]', toolArgs);
+                    // console.log('[创建文件工具被调用]', toolArgs);
                     let createFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -808,7 +803,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'create_folder':
-                    console.log('[创建文件夹工具被调用]', toolArgs);
+                    // console.log('[创建文件夹工具被调用]', toolArgs);
                     let createFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -829,7 +824,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'edit_file':
-                    console.log('[编辑文件工具被调用]', toolArgs);
+                    // console.log('[编辑文件工具被调用]', toolArgs);
                     let editFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -850,7 +845,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'delete_file':
-                    console.log('[删除文件工具被调用]', toolArgs);
+                    // console.log('[删除文件工具被调用]', toolArgs);
                     let deleteFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 \`\`\`aily-state
@@ -870,7 +865,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'delete_folder':
-                    console.log('[删除文件夹工具被调用]', toolArgs);
+                    // console.log('[删除文件夹工具被调用]', toolArgs);
                     let deleteFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -891,7 +886,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'check_exists':
-                    console.log('[检查存在性工具被调用]', toolArgs);
+                    // console.log('[检查存在性工具被调用]', toolArgs);
                     // Determine if the path is likely a file or folder
                     let stateText = "正在检查路径是否存在";
                     let checkFileName = this.getFileName(toolArgs.path);
@@ -920,7 +915,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'get_directory_tree':
-                    console.log('[获取目录树工具被调用]', toolArgs);
+                    // console.log('[获取目录树工具被调用]', toolArgs);
                     let treeFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -941,7 +936,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'fetch':
-                    console.log('[网络请求工具被调用]', toolArgs);
+                    // console.log('[网络请求工具被调用]', toolArgs);
                     const fetchUrl = this.getUrlDisplayName(toolArgs.url);
                     this.appendMessage('aily', `
 
@@ -974,7 +969,7 @@ ${JSON.stringify(errData)}
                   //                     `);
                   //                     return;
                   case 'reload_project':
-                    console.log('[重新加载项目工具被调用]', toolArgs);
+                    // console.log('[重新加载项目工具被调用]', toolArgs);
                     this.appendMessage('aily', `
 
 \`\`\`aily-state
@@ -1087,7 +1082,7 @@ ${JSON.stringify(errData)}
           "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦"
         });
 
-        console.log('历史消息:', this.list);
+        // console.log('历史消息:', this.list);
 
         this.scrollToBottom();
       } else {
@@ -1161,14 +1156,14 @@ ${JSON.stringify(errData)}
   }
 
   scrollToBottom() {
-    setTimeout(() => {
-      if (this.simplebarRef) {
-        const scrollElement = this.simplebarRef.SimpleBar?.getScrollElement();
-        if (scrollElement) {
-          scrollElement.scrollTop = scrollElement.scrollHeight;
-        }
-      }
-    }, 200); // 增加延迟时间
+    // setTimeout(() => {
+    //   if (this.simplebarRef) {
+    //     const scrollElement = this.simplebarRef.SimpleBar?.getScrollElement();
+    //     if (scrollElement) {
+    //       scrollElement.scrollTop = scrollElement.scrollHeight;
+    //     }
+    //   }
+    // }, 200); // 增加延迟时间
   }
 
   HistoryList: IMenuItem[] = [
