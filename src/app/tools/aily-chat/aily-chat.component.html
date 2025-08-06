@@ -18,15 +18,15 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     <!-- 对话内容 -->
-    <div class="dialog-list" #chatContainer>
+    <div class="dialog-list sscroll" #chatContainer>
       @if(list.length > 0){
-      <ngx-simplebar #simplebarRef [options]="options">
-        <div class="dialogs">
-          @for (item of list; track item) {
-          <aily-dialog [role]="item.role" [content]="item.content"></aily-dialog>
-          }
-        </div>
-      </ngx-simplebar>
+      <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
+      <div class="dialogs">
+        @for (item of list; track item) {
+        <aily-dialog [role]="item.role" [content]="item.content"></aily-dialog>
+        }
+      </div>
+      <!-- </ngx-simplebar> -->
       }@else{
       <div class="guide-box ccenter">
         <i class="fa-light fa-star-christmas"></i>
