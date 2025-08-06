@@ -49,6 +49,12 @@ export interface ResourceItem {
   name: string;
 }
 
+export interface ChatMessage {
+  role: string;
+  content: string;
+  state: 'doing' | 'done';
+}
+
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { TOOLS } from './tools/tools';
 import { AuthService } from '../../services/auth.service';
@@ -81,11 +87,10 @@ export class AilyChatComponent implements OnDestroy {
   };
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('simplebarRef') simplebarRef: SimplebarAngularComponent;
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
-  list: any = [];
+  list: ChatMessage[] = [];
   // list = ChatListExamples  // 示例数据
 
   currentUrl;
@@ -382,11 +387,7 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   appendMessage(role, text) {
-    // 判断是否是JSON格式的字符串
-    // if (role != 'user') {
-    //   console.log('收到数据:');
-    //   console.log(text);
-    // }
+    // console.log("添加消息: ", role, text);
 
     try {
       const parsedText = JSON.parse(text);
@@ -399,16 +400,21 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     // 检查是否存在消息列表，且最后一条消息的role与当前role相同
-    // console.log("listRole: ", this.list[this.list.length - 1]?.role, role);
     if (this.list.length > 0 && this.list[this.list.length - 1].role === role) {
       // 如果是同一个role，追加内容到最后一条消息
       this.list[this.list.length - 1].content += text;
+      // 如果是AI角色且正在输出，保持doing状态
+      if (role === 'aily' && this.isWaiting) {
+        this.list[this.list.length - 1].state = 'doing';
+      }
     } else {
       // console.log("添加新消息: ", role);
       // 如果是不同的role或列表为空，创建新的消息
+      const state = (role === 'aily' && this.isWaiting) ? 'doing' : 'done';
       this.list.push({
         "role": role,
-        "content": text
+        "content": text,
+        "state": state
       });
     }
   }
@@ -463,12 +469,16 @@ ${JSON.stringify(errData)}
   }
 
   isWaiting = false;
+  autoScrollEnabled = true; // 控制是否自动滚动到底部
 
   sendButtonClick(): void {
     if (this.isWaiting) {
       this.stop();
       return;
     }
+
+    // 发送消息时重新启用自动滚动
+    this.autoScrollEnabled = true;
 
     this.send('user', this.inputValue.trim(), true);
     this.inputValue = ''; // 发送后清空输入框
@@ -490,6 +500,7 @@ ${JSON.stringify(errData)}
       }
 
       this.appendMessage('user', text);
+      this.appendMessage('aily', '[thinking...]');
     } else if (sender === 'tool') {
       if (!this.isWaiting) {
         return;
@@ -519,6 +530,10 @@ ${JSON.stringify(errData)}
 
   // 这里写停止发送信号
   stop() {
+    // 设置最后一条AI消息状态为done（如果存在）
+    if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
+      this.list[this.list.length - 1].state = 'done';
+    }
     this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
       // 处理停止会话的响应
       if (res.status == 'success') {
@@ -576,6 +591,10 @@ ${JSON.stringify(errData)}
             }
           } else if (data.type === 'error') {
             console.error('助手出错:', data.data);
+            // 设置最后一条AI消息状态为done（如果存在）
+            if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
+              this.list[this.list.length - 1].state = 'done';
+            }
             this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
             this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
@@ -725,7 +744,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'get_context':
-                    console.log('[获取上下文信息工具被调用]', toolArgs);
+                    // console.log('[获取上下文信息工具被调用]', toolArgs);
                     this.appendMessage('aily', `
 
 \`\`\`aily-state
@@ -745,7 +764,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'list_directory':
-                    console.log('[列出目录工具被调用]', toolArgs);
+                    // console.log('[列出目录工具被调用]', toolArgs);
                     const distFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -766,7 +785,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'read_file':
-                    console.log('[读取文件工具被调用]', toolArgs);
+                    // console.log('[读取文件工具被调用]', toolArgs);
                     let readFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -787,7 +806,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'create_file':
-                    console.log('[创建文件工具被调用]', toolArgs);
+                    // console.log('[创建文件工具被调用]', toolArgs);
                     let createFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -808,7 +827,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'create_folder':
-                    console.log('[创建文件夹工具被调用]', toolArgs);
+                    // console.log('[创建文件夹工具被调用]', toolArgs);
                     let createFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -829,7 +848,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'edit_file':
-                    console.log('[编辑文件工具被调用]', toolArgs);
+                    // console.log('[编辑文件工具被调用]', toolArgs);
                     let editFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -850,7 +869,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'delete_file':
-                    console.log('[删除文件工具被调用]', toolArgs);
+                    // console.log('[删除文件工具被调用]', toolArgs);
                     let deleteFileName = this.getFileName(toolArgs.path);
                     this.appendMessage('aily', `
 \`\`\`aily-state
@@ -870,7 +889,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'delete_folder':
-                    console.log('[删除文件夹工具被调用]', toolArgs);
+                    // console.log('[删除文件夹工具被调用]', toolArgs);
                     let deleteFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -891,7 +910,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'check_exists':
-                    console.log('[检查存在性工具被调用]', toolArgs);
+                    // console.log('[检查存在性工具被调用]', toolArgs);
                     // Determine if the path is likely a file or folder
                     let stateText = "正在检查路径是否存在";
                     let checkFileName = this.getFileName(toolArgs.path);
@@ -920,7 +939,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'get_directory_tree':
-                    console.log('[获取目录树工具被调用]', toolArgs);
+                    // console.log('[获取目录树工具被调用]', toolArgs);
                     let treeFolderName = this.getLastFolderName(toolArgs.path);
                     this.appendMessage('aily', `
 
@@ -941,7 +960,7 @@ ${JSON.stringify(errData)}
                     }
                     break;
                   case 'fetch':
-                    console.log('[网络请求工具被调用]', toolArgs);
+                    // console.log('[网络请求工具被调用]', toolArgs);
                     const fetchUrl = this.getUrlDisplayName(toolArgs.url);
                     this.appendMessage('aily', `
 
@@ -974,7 +993,7 @@ ${JSON.stringify(errData)}
                   //                     `);
                   //                     return;
                   case 'reload_project':
-                    console.log('[重新加载项目工具被调用]', toolArgs);
+                    // console.log('[重新加载项目工具被调用]', toolArgs);
                     this.appendMessage('aily', `
 
 \`\`\`aily-state
@@ -1042,6 +1061,10 @@ ${JSON.stringify(errData)}
             }, null, 2), false);
           } else if (data.type === 'user_input_required') {
             // 处理用户输入请求 - 需要用户补充消息时停止等待状态
+            // 设置最后一条消息状态为done
+            if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
+              this.list[this.list.length - 1].state = 'done';
+            }
             this.isWaiting = false;
           }
           this.scrollToBottom();
@@ -1054,15 +1077,27 @@ ${JSON.stringify(errData)}
 \`\`\`\n\n
 
           `);
+          // 设置最后一条AI消息状态为done（如果存在）
+          if (this.list.length > 1 && this.list[this.list.length - 2].role === 'aily') {
+            this.list[this.list.length - 2].state = 'done';
+          }
           this.isWaiting = false;
         }
       },
       complete: () => {
         console.log('streamConnect complete: ', this.list[this.list.length - 1]);
+        // 设置最后一条消息状态为done（输出完成）
+        if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
+          this.list[this.list.length - 1].state = 'done';
+        }
         this.isWaiting = false;
       },
       error: (err) => {
         console.error('流连接出错:', err);
+        // 设置最后一条AI消息状态为done（如果存在）
+        if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
+          this.list[this.list.length - 1].state = 'done';
+        }
         this.appendMessage('错误', `
 
 \`\`\`aily-error
@@ -1070,6 +1105,7 @@ ${JSON.stringify(errData)}
 \`\`\`\n\n
 
 `);
+        this.isWaiting = false;
       }
     });
   }
@@ -1082,12 +1118,20 @@ ${JSON.stringify(errData)}
       console.log('get history', res);
       if (res.status === 'success') {
         this.list = res.data;
-        this.list.unshift({
-          "role": "system",
-          "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦"
+        // 为历史消息添加状态，如果没有state属性则默认为done
+        this.list.forEach(item => {
+          if (!item.hasOwnProperty('state')) {
+            item.state = 'done';
+          }
         });
 
-        console.log('历史消息:', this.list);
+        this.list.unshift({
+          "role": "system",
+          "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦",
+          "state": "done"
+        });
+
+        // console.log('历史消息:', this.list);
 
         this.scrollToBottom();
       } else {
@@ -1161,14 +1205,55 @@ ${JSON.stringify(errData)}
   }
 
   scrollToBottom() {
+    // 只在自动滚动启用时才滚动到底部
+    if (!this.autoScrollEnabled) {
+      return;
+    }
+
     setTimeout(() => {
-      if (this.simplebarRef) {
-        const scrollElement = this.simplebarRef.SimpleBar?.getScrollElement();
-        if (scrollElement) {
-          scrollElement.scrollTop = scrollElement.scrollHeight;
+      try {
+        if (this.chatContainer?.nativeElement) {
+          const element = this.chatContainer.nativeElement;
+          const currentScrollTop = element.scrollTop;
+          const maxScrollTop = element.scrollHeight - element.clientHeight;
+
+          // 只有当不在底部时才滚动，避免不必要的滚动
+          if (currentScrollTop < maxScrollTop - 2) {
+            // 使用 scrollTo 方法实现平滑滚动
+            element.scrollTo({
+              top: element.scrollHeight,
+              behavior: 'smooth'
+            });
+          }
         }
+      } catch (error) {
+        console.warn('滚动到底部失败:', error);
       }
-    }, 200); // 增加延迟时间
+    }, 100);
+  }
+
+  /**
+   * 检查用户是否手动向上滚动，如果是则禁用自动滚动
+   */
+  checkUserScroll() {
+    if (!this.chatContainer?.nativeElement) {
+      return;
+    }
+
+    const element = this.chatContainer.nativeElement;
+    const threshold = 30; // 减小容差值，提高检测精度
+    const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
+
+    // 如果用户不在底部，说明手动向上滚动了，禁用自动滚动
+    if (!isAtBottom && this.autoScrollEnabled) {
+      this.autoScrollEnabled = false;
+      console.log('用户手动滚动，已禁用自动滚动');
+    }
+    // 如果用户滚动到底部附近，重新启用自动滚动
+    else if (isAtBottom && !this.autoScrollEnabled) {
+      this.autoScrollEnabled = true;
+      console.log('用户滚动到底部，已启用自动滚动');
+    }
   }
 
   HistoryList: IMenuItem[] = [
@@ -1186,6 +1271,8 @@ ${JSON.stringify(errData)}
   async newChat() {
     console.log('启动新会话');
     this.list = [];
+    // 新会话时重新启用自动滚动
+    this.autoScrollEnabled = true;
 
     try {
       // 等待停止操作完成
