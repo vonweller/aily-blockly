@@ -48,7 +48,7 @@ export const FILE_RIGHTCLICK_MENU: IMenuItem[] = [
     {
         name: 'MENU.FILE_COPY_RELATIVE_PATH',
         action: 'file-copy-relative-path',
-        icon: 'fa-light fa-route',
+        icon: 'fa-light fa-link-simple',
         type: 'file'
     },
     {
@@ -57,7 +57,7 @@ export const FILE_RIGHTCLICK_MENU: IMenuItem[] = [
     {
         name: 'MENU.REVEAL_IN_EXPLORER',
         action: 'reveal-in-explorer',
-        icon: 'fa-light fa-folder-open',
+        icon: 'fa-light fa-browsers',
         type: 'file'
     },
     {
@@ -84,33 +84,6 @@ export const FOLDER_RIGHTCLICK_MENU: IMenuItem[] = [
         action: 'folder-new-folder',
         icon: 'fa-light fa-folder-plus',
         type: 'folder'
-    },
-    {
-        sep: true
-    },
-    {
-        name: 'MENU.FOLDER_UPLOAD_FILES',
-        action: 'folder-upload-files',
-        icon: 'fa-light fa-cloud-arrow-up',
-        type: 'folder'
-    },
-    {
-        name: 'MENU.FOLDER_IMPORT',
-        action: 'folder-import',
-        icon: 'fa-light fa-file-import',
-        type: 'folder',
-        children: [
-            {
-                name: 'MENU.IMPORT_FROM_ARCHIVE',
-                action: 'import-archive',
-                icon: 'fa-light fa-file-zipper'
-            },
-            {
-                name: 'MENU.IMPORT_FROM_FOLDER',
-                action: 'import-folder',
-                icon: 'fa-light fa-folder-arrow-down'
-            }
-        ]
     },
     {
         sep: true
@@ -161,7 +134,7 @@ export const FOLDER_RIGHTCLICK_MENU: IMenuItem[] = [
     {
         name: 'MENU.FOLDER_COPY_RELATIVE_PATH',
         action: 'folder-copy-relative-path',
-        icon: 'fa-light fa-route',
+        icon: 'fa-light fa-link-simple',
         type: 'folder'
     },
     {
@@ -170,13 +143,13 @@ export const FOLDER_RIGHTCLICK_MENU: IMenuItem[] = [
     {
         name: 'MENU.OPEN_IN_TERMINAL',
         action: 'open-in-terminal',
-        icon: 'fa-light fa-terminal',
+        icon: 'fa-light fa-square-terminal',
         type: 'folder'
     },
     {
         name: 'MENU.REVEAL_IN_EXPLORER',
         action: 'reveal-in-explorer',
-        icon: 'fa-light fa-folder-open',
+        icon: 'fa-light fa-browsers',
         type: 'folder'
     },
     {
@@ -186,12 +159,6 @@ export const FOLDER_RIGHTCLICK_MENU: IMenuItem[] = [
         name: 'MENU.FOLDER_FIND_IN_FILES',
         action: 'find-in-files',
         icon: 'fa-light fa-magnifying-glass',
-        type: 'folder'
-    },
-    {
-        name: 'MENU.FOLDER_REPLACE_IN_FILES',
-        action: 'replace-in-files',
-        icon: 'fa-light fa-find-replace',
         type: 'folder'
     },
     {
@@ -206,25 +173,76 @@ export const FOLDER_RIGHTCLICK_MENU: IMenuItem[] = [
 ];
 
 // 根文件夹（项目根目录）特殊菜单
-export const PROJECT_ROOT_MENU: IMenuItem[] = [
+export const ROOT_RIGHTCLICK_MENU: IMenuItem[] = [
     {
-        name: 'MENU.PROJECT_BUILD',
-        action: 'project-build',
-        icon: 'fa-light fa-hammer',
-        type: 'project'
+        name: 'MENU.FOLDER_NEW_FILE',
+        action: 'folder-new-file',
+        icon: 'fa-light fa-file-plus',
+        type: 'folder'
     },
     {
-        name: 'MENU.PROJECT_CLEAN',
-        action: 'project-clean',
-        icon: 'fa-light fa-broom',
-        type: 'project'
+        name: 'MENU.FOLDER_NEW_FOLDER',
+        action: 'folder-new-folder',
+        icon: 'fa-light fa-folder-plus',
+        type: 'folder'
     },
     {
         sep: true
     },
-    ...FOLDER_RIGHTCLICK_MENU.filter(item =>
-        !['folder-copy', 'folder-cut', 'folder-delete', 'folder-rename'].includes(item.action)
-    )
+    {
+        name: 'MENU.FOLDER_PASTE',
+        action: 'folder-paste',
+        icon: 'fa-light fa-paste',
+        type: 'folder'
+    },
+    {
+        sep: true
+    },
+    {
+        name: 'MENU.FOLDER_COPY_PATH',
+        action: 'folder-copy-path',
+        icon: 'fa-light fa-link',
+        type: 'folder'
+    },
+    {
+        name: 'MENU.FOLDER_COPY_RELATIVE_PATH',
+        action: 'folder-copy-relative-path',
+        icon: 'fa-light fa-link-simple',
+        type: 'folder'
+    },
+    {
+        sep: true
+    },
+    {
+        name: 'MENU.OPEN_IN_TERMINAL',
+        action: 'open-in-terminal',
+        icon: 'fa-light fa-square-terminal',
+        type: 'folder'
+    },
+    {
+        name: 'MENU.REVEAL_IN_EXPLORER',
+        action: 'reveal-in-explorer',
+        icon: 'fa-light fa-browsers',
+        type: 'folder'
+    },
+    {
+        sep: true
+    },
+    {
+        name: 'MENU.FOLDER_FIND_IN_FILES',
+        action: 'find-in-files',
+        icon: 'fa-light fa-magnifying-glass',
+        type: 'folder'
+    },
+    {
+        sep: true
+    },
+    {
+        name: 'MENU.FOLDER_PROPERTIES',
+        action: 'folder-properties',
+        icon: 'fa-light fa-info-circle',
+        type: 'folder'
+    }
 ];
 
 // 多选菜单配置

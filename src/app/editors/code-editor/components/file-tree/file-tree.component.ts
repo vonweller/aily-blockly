@@ -8,11 +8,10 @@ import { CommonModule } from '@angular/common';
 import { BehaviorSubject, Observable, merge } from 'rxjs';
 import { map, tap } from 'rxjs/operators';
 import { MenuComponent } from '../../../../components/menu/menu.component';
-import { 
-  FILE_RIGHTCLICK_MENU, 
-  FOLDER_RIGHTCLICK_MENU, 
-  PROJECT_ROOT_MENU, 
-  MULTI_SELECT_MENU 
+import {
+  FILE_RIGHTCLICK_MENU,
+  FOLDER_RIGHTCLICK_MENU,
+  ROOT_RIGHTCLICK_MENU
 } from './menu.config';
 import { IMenuItem } from '../../../../configs/menu.config';
 
@@ -214,127 +213,122 @@ export class FileTreeComponent implements OnInit {
     }
   }
 
-  onRightClick(event: MouseEvent, node: FlatFileNode) {
+  menuList;
+  onRightClick(event: MouseEvent, node: FlatFileNode = null) {
     event.preventDefault(); // 阻止浏览器默认右键菜单
     
+    // 如果是在文件或文件夹节点上右键，阻止事件冒泡
+    if (node) {
+      event.stopPropagation();
+    }
+
+    if (!node) {
+      const rootNode: FlatFileNode = {
+        expandable: true,
+        title: 'root',
+        level: 0,
+        key: 'root',
+        isLeaf: false,
+        path: this.rootPath
+      };
+      this.currentSelectedNode = rootNode;
+      this.menuList = ROOT_RIGHTCLICK_MENU;
+    } else if (node.isLeaf) {
+      // 如果没有传入节点，则是点击了Root
+      this.menuList = FILE_RIGHTCLICK_MENU;
+    } else {
+      this.menuList = FOLDER_RIGHTCLICK_MENU;
+    }
+
     // 设置当前选中的节点
     this.currentSelectedNode = node;
-    
+
     // 获取当前鼠标点击位置
     this.rightClickMenuPosition.x = event.clientX;
     this.rightClickMenuPosition.y = event.clientY;
-    
-    // 根据节点类型和多选状态设置菜单
-    this.setContextMenu(node);
-    
-    this.showRightClickMenu = true;
-  }
 
-  private setContextMenu(node: FlatFileNode) {
-    const selectedNodes = this.nodeSelection.selected;
-    
-    // 多选情况
-    if (selectedNodes.length > 1) {
-      this.configList = [...MULTI_SELECT_MENU];
-      return;
-    }
-    
-    // 单选情况
-    if (node.isLeaf) {
-      // 文件右键菜单
-      this.configList = [...FILE_RIGHTCLICK_MENU];
-    } else {
-      // 文件夹右键菜单
-      if (node.level === 0) {
-        // 项目根目录特殊菜单
-        this.configList = [...PROJECT_ROOT_MENU];
-      } else {
-        // 普通文件夹菜单
-        this.configList = [...FOLDER_RIGHTCLICK_MENU];
-      }
-    }
+    // 根据节点类型和多选状态设置菜单
+    // this.setContextMenu(node);
+
+    this.showRightClickMenu = true;
   }
 
   onMenuItemClick(menuItem: IMenuItem) {
     console.log('Menu item clicked:', menuItem, 'Node:', this.currentSelectedNode);
-    
+
     // 隐藏菜单
     this.showRightClickMenu = false;
-    
+
     // 处理菜单项点击事件
     this.handleMenuAction(menuItem);
   }
 
   private handleMenuAction(menuItem: IMenuItem) {
     if (!this.currentSelectedNode) return;
-    
+
     const node = this.currentSelectedNode;
     const selectedNodes = this.nodeSelection.selected;
-    
+
     switch (menuItem.action) {
-      case 'file-open':
-        this.openFile(node);
-        break;
-        
       case 'file-copy':
       case 'folder-copy':
       case 'multi-copy':
         this.copyToClipboard(selectedNodes.length > 1 ? selectedNodes : [node]);
         break;
-        
+
       case 'file-cut':
       case 'folder-cut':
       case 'multi-cut':
         this.cutToClipboard(selectedNodes.length > 1 ? selectedNodes : [node]);
         break;
-        
+
       case 'file-paste':
       case 'folder-paste':
         this.pasteFromClipboard(node);
         break;
-        
+
       case 'file-rename':
       case 'folder-rename':
         this.renameNode(node);
         break;
-        
+
       case 'file-delete':
       case 'folder-delete':
       case 'multi-delete':
         this.deleteNodes(selectedNodes.length > 1 ? selectedNodes : [node]);
         break;
-        
+
       case 'folder-new-file':
         this.createNewFile(node);
         break;
-        
+
       case 'folder-new-folder':
         this.createNewFolder(node);
         break;
-        
+
       case 'file-copy-path':
       case 'folder-copy-path':
         this.copyPathToClipboard(node, false);
         break;
-        
+
       case 'file-copy-relative-path':
       case 'folder-copy-relative-path':
         this.copyPathToClipboard(node, true);
         break;
-        
+
       case 'reveal-in-explorer':
         this.revealInExplorer(node);
         break;
-        
+
       case 'open-in-terminal':
         this.openInTerminal(node);
         break;
-        
+
       case 'file-properties':
       case 'folder-properties':
         this.showProperties(node);
         break;
-        
+
       default:
         console.log('Unhandled menu action:', menuItem.action);
     }

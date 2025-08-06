@@ -5,7 +5,7 @@
             <i class="fa-light fa-sync"></i>
         </button>
     </div>
-    <div class="file-explorer-content sscroll">
+    <div class="file-explorer-content sscroll" (contextmenu)="onRightClick($event)">
         @if (isLoading) {
         <div class="line-box lloading">
             <div class="icon-box ccenter">
@@ -60,6 +60,6 @@
     </div>
 </div>
 @if (showRightClickMenu) {
-<app-menu class="ports" [position]="rightClickMenuPosition" [menuList]="configList" [width]="260"
+<app-menu class="ports" [position]="rightClickMenuPosition" [menuList]="menuList" [width]="260"
     (itemClickEvent)="onMenuItemClick($event)" (closeEvent)="showRightClickMenu = false"></app-menu>
 }

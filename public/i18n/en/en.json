@@ -24,7 +24,6 @@
         "USER_MANUAL": "User Manual",
         "EXAMPLES": "Examples",
         "UPDATE": "Check for Updates",
-<<<<<<< HEAD
         "FILE_OPEN": "Open File",
         "FILE_OPEN_WITH": "Open With",
         "OPEN_WITH_SYSTEM_EDITOR": "System Default Editor",
@@ -61,9 +60,6 @@
         "MULTI_CUT": "Cut Selected",
         "MULTI_DELETE": "Delete Selected",
         "MULTI_COMPRESS": "Compress to ZIP"
-=======
-        "USER_AUTH": "User Service"
->>>>>>> ai-coloz
     },
     "ESP32": {
         "UPLOAD_SPEED": "Upload Speed",

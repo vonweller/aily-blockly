@@ -26,7 +26,6 @@
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新",
         "USER":"用户中心",
-<<<<<<< HEAD
         "FILE_OPEN": "打开文件",
         "FILE_OPEN_WITH": "打开方式",
         "OPEN_WITH_SYSTEM_EDITOR": "系统默认编辑器",
@@ -63,9 +62,6 @@
         "MULTI_CUT": "剪切选中项",
         "MULTI_DELETE": "删除选中项",
         "MULTI_COMPRESS": "压缩为zip"
-=======
-        "USER_AUTH": "用户服务"
->>>>>>> ai-coloz
     },
     "ESP32": {
         "UPLOAD_SPEED": "烧录速度",
