@@ -1108,6 +1108,8 @@ ${JSON.stringify(errData)}
         return;
       }
       this.send("user", this.inputValue.trim(), true);
+      this.selectContent = [];
+      this.inputValue = "";
       event.preventDefault();
     }
   }

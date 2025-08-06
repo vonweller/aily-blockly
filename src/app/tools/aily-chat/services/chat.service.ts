@@ -158,4 +158,8 @@ export class ChatService {
   stopSession(sessionId: string) {
     return this.http.post(`${API.stopSession}/${sessionId}`, {});
   }
+
+  cancelTask(sessionId: string) {
+    return this.http.post(`${API.cancelTask}/${sessionId}`,{});
+  }
 }
