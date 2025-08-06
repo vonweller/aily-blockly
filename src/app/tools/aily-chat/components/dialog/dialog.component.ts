@@ -670,31 +670,6 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   test() {
     console.log('原始内容:', this.content);
     console.log('内容列表:', this.contentList);
-    console.log('内容列表长度:', this.contentList.length);
-    console.log('最后处理长度:', this.lastContentLength);
-    console.log('DOM元素数量:', this.contentDiv?.nativeElement?.children.length);
-
-    // 测试分割逻辑
-    const testContent = `> **备选推荐理由**: 如果您想先从一个基础版本开始，暂时不需要远程控制功能，Arduino UNO 也是一个不错的选择。它简单易用，社区资源丰富，可以实现定时的基本功能。后续也可以通过外加WiFi模块进行升级。
-
-**推荐库列表**: 
-\`\`\`aily-library
-{
-  "name": "@aily-project/lib-blinker"
-}
-\`\`\``;
-
-    console.log('测试内容分割:');
-    const testSegments = this.splitMarkdownContent(testContent);
-    testSegments.forEach((segment, index) => {
-      console.log(`段落${index}:`, JSON.stringify(segment.content));
-    });
-
-    // 验证是否包含"**推荐库列表**: "
-    const hasRecommendationTitle = testSegments.some(segment =>
-      segment.content.includes('**推荐库列表**')
-    );
-    console.log('是否包含推荐库列表标题:', hasRecommendationTitle);
   }
 }
 
