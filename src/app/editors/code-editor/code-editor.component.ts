@@ -8,6 +8,13 @@ import { MonacoEditorComponent } from '../../components/monaco-editor/monaco-edi
 import { NoticeService } from '../../services/notice.service';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { ActivatedRoute } from '@angular/router';
+import { NzLayoutComponent, NzLayoutModule } from "ng-zorro-antd/layout";
+import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
+import { NzMessageService } from 'ng-zorro-antd/message';
+import { CmdService } from '../../services/cmd.service';
+import { BuilderService } from '../../services/builder.service';
+import { UploaderService } from '../../services/uploader.service';
+import { ElectronService } from '../../services/electron.service';
 
 export interface OpenedFile {
   path: string;      // 文件路径
@@ -22,7 +29,10 @@ export interface OpenedFile {
     NzTabsModule,
     MonacoEditorComponent,
     CommonModule,
-    NotificationComponent
+    NotificationComponent,
+    NzLayoutComponent,
+    NzLayoutModule,
+    NzResizableModule,
   ],
   templateUrl: './code-editor.component.html',
   styleUrl: './code-editor.component.scss'
@@ -49,18 +59,35 @@ export class CodeEditorComponent {
   constructor(
     private modal: NzModalService,
     private projectService: ProjectService,
-    private notice: NoticeService,
-    private activatedRoute: ActivatedRoute
+    private activatedRoute: ActivatedRoute,
+    private message: NzMessageService,
+    private cmdService: CmdService,
+    private builderService: BuilderService,
+    private uploadService: UploaderService,
+    private electronService: ElectronService,
   ) { }
 
   async ngOnInit() {
     this.activatedRoute.queryParams.subscribe(params => {
       if (params['path']) {
-        // this.projectService.projectOpen(params['path']);
-        console.log('path', params['path']);
-        this.loadProject(params['path']);
+        console.log('project path', params['path']);
+        try {
+          this.loadProject(params['path']);
+        } catch (error) {
+          console.error('加载项目失败', error);
+          this.message.error('加载项目失败，请检查项目文件是否完整');
+        }
+      } else {
+        this.message.error('没有找到项目路径');
       }
     });
+  }
+
+  ngOnDestroy(): void {
+    this.builderService.cancel();
+    this.uploadService.cancel();
+    this.cmdService.killArduinoCli();
+    this.electronService.setTitle('aily blockly');
   }
 
   ngAfterViewInit(): void {
@@ -70,14 +97,39 @@ export class CodeEditorComponent {
     }, 2000);
   }
 
-  async loadProject(projectPath) {
-    // 加载项目package.json
-    // const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
+  async loadProject(projectPath: string) {
+    // 判断当前目录下是否有package.json和ino文件
+    if (!this.electronService.exists(projectPath + '/package.json')) {
+      const fileList = this.electronService.readDir(projectPath);
+      if (this.hasFileWithExtension(fileList, '.ino')) {
+        const projectName = projectPath.split(/[\/\\]/).filter(Boolean).pop() || ''
+        const packageData = {
+          version: '1.0.0',
+          name: projectName,
+          platform: 'arduino'
+        }
+        this.electronService.writeFile(projectPath + '/package.json', JSON.stringify(packageData))
+      }
+    }
+
+    const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
+    this.electronService.setTitle(`aily blockly - ${packageJson.name}`);
+    this.projectService.currentPackageData = packageJson;
     // 添加到最近打开的项目
-    // this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
+    this.projectService.addRecentlyProject({ name: packageJson.name, path: projectPath });
     // 设置当前项目路径和package.json数据
-    // this.projectService.currentPackageData = packageJson;
+    this.projectService.currentPackageData = packageJson;
     this.projectService.currentProjectPath = projectPath;
+
+    this.projectService.stateSubject.next('loaded');
+    // 7. 后台安装开发板依赖
+    // this.npmService.installBoardDeps()
+    //   .then(() => {
+    //     console.log('install board dependencies success');
+    //   })
+    //   .catch(err => {
+    //     console.error('install board dependencies error', err);
+    //   });
   }
 
   // 从文件树选择文件时触发
@@ -199,5 +251,21 @@ export class CodeEditorComponent {
       // 关闭对应的标签页
       this.doCloseTab(index);
     }
+  }
+
+
+  siderWidth = 250;
+  onSideResize({ width }: NzResizeEvent): void {
+    this.siderWidth = width!;
+  }
+
+  /**
+ * 检查文件列表中是否包含指定后缀的文件
+ * @param fileList 文件列表
+ * @param extension 文件后缀（如 '.ino', '.cpp', '.h' 等）
+ * @returns 如果包含指定后缀的文件返回 true，否则返回 false
+ */
+  private hasFileWithExtension(fileList: Array<{ name: string; parentPath: string; path: string }>, extension: string): boolean {
+    return fileList.some(file => file.name.toLowerCase().endsWith(extension.toLowerCase()));
   }
 }
