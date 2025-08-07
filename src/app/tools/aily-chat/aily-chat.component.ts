@@ -1268,6 +1268,25 @@ ${JSON.stringify(errData)}
     // }
   ]
 
+  // AI模式列表
+  ModeList: IMenuItem[] = [
+    {
+      name: '代理模式',
+      action: 'agent-mode',
+      icon: 'fa-light fa-user-astronaut',
+      data: { mode: 'agent' }
+    },
+    {
+      name: '问答模式',
+      action: 'qa-mode',
+      icon: 'fa-light fa-comment-smile',
+      data: { mode: 'qa' }
+    }
+  ]
+
+  // 当前AI模式
+  currentMode = 'agent'; // 默认为代理模式
+
   async newChat() {
     console.log('启动新会话');
     this.list = [];
@@ -1483,7 +1502,10 @@ ${JSON.stringify(errData)}
   }
 
   showHistoryList = false;
+  showMode = false;
   historyListPosition = { x: 0, y: 0 };
+  modeListPosition = { x: 0, y: 0 };
+
   openHistoryChat(e) {
     // 设置菜单的位置
     this.historyListPosition = { x: window.innerWidth - 302, y: 72 };
@@ -1494,10 +1516,62 @@ ${JSON.stringify(errData)}
 
   closeMenu() {
     this.showHistoryList = false;
+    this.showMode = false;
   }
 
   menuClick(e) {
 
+  }
+
+  // 模式选择相关方法
+  switchMode(event: MouseEvent) {
+    // 获取点击的按钮元素
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      // 获取按钮的位置信息
+      const rect = target.getBoundingClientRect();
+
+      // 计算菜单位置：在按钮上方显示，并且考虑右对齐
+      const menuWidth = 130; // 菜单宽度
+      const menuHeight = 68; // 预估菜单高度
+
+      // 计算水平位置：右对齐到按钮右边缘
+      let x = rect.left;
+
+      // 计算垂直位置：在按钮上方显示
+      let y = rect.top - menuHeight -1;
+
+      // 边界检查：如果菜单会超出屏幕左边界，则左对齐到按钮左边缘
+      if (x < 0) {
+        x = rect.left;
+      }
+
+      // 边界检查：如果菜单会超出屏幕上边界，则显示在按钮下方
+      if (y < 0) {
+        y = rect.bottom - 1;
+      }
+
+      // 设置菜单位置
+      this.modeListPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+    } else {
+      // 如果无法获取按钮位置，使用默认位置
+      this.modeListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
+    }
+
+    // 阻止事件冒泡，避免触发其他点击事件
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.showMode = !this.showMode;
+  }
+
+  modeMenuClick(item: IMenuItem) {
+    if (item.data?.mode) {
+      this.currentMode = item.data.mode;
+      console.log('切换AI模式为:', this.currentMode);
+      // 这里可以添加实际的模式切换逻辑
+    }
+    this.showMode = false;
   }
 
   /**
@@ -1523,8 +1597,4 @@ ${JSON.stringify(errData)}
 
   // 工具调用状态管理
   toolCallStates: { [key: string]: string } = {};
-
-  // 修改模式  问答模式/Agent模式
-  showMode = false;
-
 }

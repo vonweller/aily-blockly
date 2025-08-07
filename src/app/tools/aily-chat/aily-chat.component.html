@@ -76,7 +76,7 @@
             (keydown)="onKeyDown($event)">
           </textarea>
           <div class="btns">
-            <div class="btn ccenter enter" nz-tooltip nzTooltipTitle="添加上下文" (click)="openAddList()">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="添加上下文" (click)="openAddList()">
               <i class="fa-light fa-paperclip"></i>
             </div>
             @if(showAddList){
@@ -99,11 +99,14 @@
             </div>
             }
             <!-- 模式选择 -->
-            <div class="btn mode ccenter enter" nz-tooltip nzTooltipTitle="AI模式" (click)="openAddList()">
-              <!-- <i class="fa-light fa-comment-smile"></i>问答 -->
-              <i class="fa-light fa-user-astronaut"></i>代理
+            <div class="btn mode ccenter enter" (click)="switchMode($event)">
+              @if(currentMode === 'agent') {
+                <i class="fa-light fa-user-astronaut"></i><span>代理</span>
+              } @else {
+                <i class="fa-light fa-comment-smile"></i><span>问答</span>
+              }
             </div>
-            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip
+            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="isWaiting?'停止':'发送'" (click)="sendButtonClick()">
               @if(isWaiting){
               <div class="stop-box ccenter">
@@ -130,6 +133,6 @@
 }
 
 @if(showMode){
-<app-menu [menuList]="HistoryList" [position]="historyListPosition" [width]="300" (closeEvent)="closeMenu()"
-  (itemClickEvent)="menuClick($event)"></app-menu>
+<app-menu [menuList]="ModeList" [position]="modeListPosition" [width]="125" (closeEvent)="closeMenu()"
+  (itemClickEvent)="modeMenuClick($event)"></app-menu>
 }
