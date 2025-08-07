@@ -453,7 +453,9 @@ export class AilyChatComponent implements OnDestroy {
           } else {
             this.appendMessage('错误', `
 \`\`\`aily-error
-${res.message || '启动会话失败，请稍后重试。'}
+{
+  "message": ${res.message || '启动会话失败，请稍后重试。'}
+}
 \`\`\`\n\n
 
             `)
@@ -468,7 +470,9 @@ ${res.message || '启动会话失败，请稍后重试。'}
           }
           this.appendMessage('error', `
 \`\`\`aily-error
-${JSON.stringify(errData)}
+{
+  "message": "启动会话失败"
+}
 \`\`\`\n\n
             `)
           reject(err);
@@ -1114,7 +1118,9 @@ ${JSON.stringify(errData)}
           this.appendMessage('错误', `
 
 \`\`\`aily-error
-服务异常，请稍后重试。
+{
+  "message": "服务异常，请稍后重试。"
+}
 \`\`\`\n\n
 
           `);
@@ -1144,7 +1150,9 @@ ${JSON.stringify(errData)}
         this.appendMessage('错误', `
 
 \`\`\`aily-error
-连接中断。
+{
+  "message": "连接中断。"
+}
 \`\`\`\n\n
 
 `);
