@@ -368,68 +368,68 @@ export class ArduinoGenerator extends Blockly.CodeGenerator {
     return at;
   }
 
-  addMacro(tag, code) {
-    if (this.codeDict['macros'][tag] === undefined) {
+  addMacro(tag, code, overwrite = false) {
+    if (this.codeDict['macros'][tag] === undefined || overwrite) {
       this.codeDict['macros'][tag] = code;
     }
   }
 
-  addLibrary(tag, code) {
-    if (this.codeDict['libraries'][tag] === undefined) {
+  addLibrary(tag, code, overwrite = false) {
+    if (this.codeDict['libraries'][tag] === undefined || overwrite) {
       this.codeDict['libraries'][tag] = code;
     }
   }
 
-  addVariable(tag, code) {
-    if (this.codeDict['variables'][tag] === undefined) {
+  addVariable(tag, code, overwrite = false) {
+    if (this.codeDict['variables'][tag] === undefined || overwrite) {
       this.codeDict['variables'][tag] = code;
     }
   }
 
-  addObject(tag, code) {
-    if (this.codeDict['objects'][tag] === undefined) {
+  addObject(tag, code, overwrite = false) {
+    if (this.codeDict['objects'][tag] === undefined || overwrite) {
       this.codeDict['objects'][tag] = code;
     }
   }
 
-  addFunction(tag, code) {
-    if (this.codeDict['functions'][tag] === undefined) {
+  addFunction(tag, code, overwrite = false) {
+    if (this.codeDict['functions'][tag] === undefined || overwrite) {
       this.codeDict['functions'][tag] = code;
     }
   }
 
-  addSetupBegin(tag, code) {
-    if (this.codeDict['setups_begin'][tag] === undefined) {
+  addSetupBegin(tag, code, overwrite = false) {
+    if (this.codeDict['setups_begin'][tag] === undefined || overwrite) {
       this.codeDict['setups_begin'][tag] = code;
     }
   }
 
-  addSetup(tag, code) {
-    if (this.codeDict['setups'][tag] === undefined) {
+  addSetup(tag, code, overwrite = false) {
+    if (this.codeDict['setups'][tag] === undefined || overwrite) {
       this.codeDict['setups'][tag] = code;
     }
   }
 
-  addSetupEnd(tag, code) {
-    if (this.codeDict['setups_end'][tag] === undefined) {
+  addSetupEnd(tag, code, overwrite = false) {
+    if (this.codeDict['setups_end'][tag] === undefined || overwrite) {
       this.codeDict['setups_end'][tag] = code;
     }
   }
 
-  addLoopBegin(tag, code) {
-    if (this.codeDict['loops_begin'][tag] === undefined) {
+  addLoopBegin(tag, code, overwrite = false) {
+    if (this.codeDict['loops_begin'][tag] === undefined || overwrite) {
       this.codeDict['loops_begin'][tag] = code;
     }
   }
 
-  addLoop(tag, code) {
-    if (this.codeDict['loops'][tag] === undefined) {
+  addLoop(tag, code, overwrite = false) {
+    if (this.codeDict['loops'][tag] === undefined || overwrite) {
       this.codeDict['loops'][tag] = code;
     }
   }
 
-  addLoopEnd(tag, code) {
-    if (this.codeDict['loops_end'][tag] === undefined) {
+  addLoopEnd(tag, code, overwrite = false) {
+    if (this.codeDict['loops_end'][tag] === undefined || overwrite) {
       this.codeDict['loops_end'][tag] = code;
     }
   }
