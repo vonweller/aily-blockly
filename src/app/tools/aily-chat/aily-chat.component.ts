@@ -1539,7 +1539,7 @@ ${JSON.stringify(errData)}
       let x = rect.left;
 
       // 计算垂直位置：在按钮上方显示
-      let y = rect.top - menuHeight -1;
+      let y = rect.top - menuHeight - 1;
 
       // 边界检查：如果菜单会超出屏幕左边界，则左对齐到按钮左边缘
       if (x < 0) {
@@ -1597,4 +1597,9 @@ ${JSON.stringify(errData)}
 
   // 工具调用状态管理
   toolCallStates: { [key: string]: string } = {};
+
+
+  demandEdit() {
+
+  }
 }

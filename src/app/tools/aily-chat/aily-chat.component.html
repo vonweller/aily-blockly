@@ -5,12 +5,16 @@
 } @else {
 <app-tool-container [title]="windowInfo" (closeEvent)="close()">
   <ng-container header-btns>
-    <div class="btn ccenter" (click)="newChat()">
+    <div class="btn ccenter" (click)="demandEdit()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="需求管理">
+      <i class="fa-light fa-clipboard-list-check"></i>
+    </div>
+    <div class="btn ccenter" (click)="openHistoryChat($event)" nz-tooltip nzTooltipPlacement="bottom"
+      nzTooltipTitle="历史会话">
+      <i class="fa-light fa-clock-rotate-left"></i>
+    </div>
+    <div class="btn ccenter" (click)="newChat()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="新建会话">
       <i class="fa-light fa-message-plus"></i>
     </div>
-    <!-- <div class="btn ccenter" (click)="openHistoryChat($event)">
-      <i class="fa-light fa-clock-rotate-left"></i>
-    </div> -->
   </ng-container>
   <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
 </app-tool-container>
@@ -76,7 +80,8 @@
             (keydown)="onKeyDown($event)">
           </textarea>
           <div class="btns">
-            <div class="btn ccenter enter" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="添加上下文" (click)="openAddList()">
+            <div class="btn ccenter enter" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="添加上下文"
+              (click)="openAddList()">
               <i class="fa-light fa-paperclip"></i>
             </div>
             @if(showAddList){
@@ -101,9 +106,9 @@
             <!-- 模式选择 -->
             <div class="btn mode ccenter enter" (click)="switchMode($event)">
               @if(currentMode === 'agent') {
-                <i class="fa-light fa-user-astronaut"></i><span>代理</span>
+              <i class="fa-light fa-user-astronaut"></i><span>代理</span>
               } @else {
-                <i class="fa-light fa-comment-smile"></i><span>问答</span>
+              <i class="fa-light fa-comment-smile"></i><span>问答</span>
               }
             </div>
             <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nzTooltipPlacement="bottom" nz-tooltip

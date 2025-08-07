@@ -39,6 +39,10 @@ export const routes: Routes = [
                 ]
             },
             {
+                path: 'demand-editor',
+                loadComponent: () => import('./pages/demand-manager/demand-manager.component').then(m => m.DemandManagerComponent)
+            },
+            {
                 path: 'blockly-editor',
                 loadComponent: () => import('./editors/blockly-editor/blockly-editor.component').then(m => m.BlocklyEditorComponent)
             },
