@@ -98,5 +98,22 @@
             border: none;
             outline: none;
         }
+
+        /* 积木注释深色主题样式 */
+        .blocklyComment {
+            .blocklyTextarea {
+                color: #ffffff !important;
+                background-color: #3c3c3c !important;
+                border: 1px solid #555555 !important;
+            }
+        }
+
+        .blocklyCommentText {
+            fill: #ffffff !important;
+        }
+
+        .blocklyCommentPreview {
+            color: #ffffff !important;
+        }
     }
 }
