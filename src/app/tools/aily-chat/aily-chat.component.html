@@ -98,9 +98,11 @@
               <i class="fa-light fa-globe-pointer"></i>
             </div>
             }
-            <!-- <div class="btn ccenter enter right3" nz-tooltip nzTooltipTitle="语音输入">
-            <i class="fa-light fa-microphone"></i>
-          </div> -->
+            <!-- 模式选择 -->
+            <div class="btn mode ccenter enter" nz-tooltip nzTooltipTitle="AI模式" (click)="openAddList()">
+              <!-- <i class="fa-light fa-comment-smile"></i>问答 -->
+              <i class="fa-light fa-user-astronaut"></i>代理
+            </div>
             <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nz-tooltip
               [nzTooltipTitle]="isWaiting?'停止':'发送'" (click)="sendButtonClick()">
               @if(isWaiting){
@@ -123,6 +125,11 @@
 </ng-template>
 
 @if (showHistoryList) {
+<app-menu [menuList]="HistoryList" [position]="historyListPosition" [width]="300" (closeEvent)="closeMenu()"
+  (itemClickEvent)="menuClick($event)"></app-menu>
+}
+
+@if(showMode){
 <app-menu [menuList]="HistoryList" [position]="historyListPosition" [width]="300" (closeEvent)="closeMenu()"
   (itemClickEvent)="menuClick($event)"></app-menu>
 }
