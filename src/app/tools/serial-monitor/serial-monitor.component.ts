@@ -296,7 +296,7 @@ export class SerialMonitorComponent {
     this.closeBaudList();
   }
 
-  switchPort() {
+  async switchPort() {
     if (!this.switchValue) {
       this.serialMonitorService.disconnect();
       return;
@@ -310,7 +310,7 @@ export class SerialMonitorComponent {
       return;
     }
 
-    this.serialMonitorService.connect({
+    await this.serialMonitorService.connect({
       path: this.currentPort,
       baudRate: parseInt(this.currentBaudRate),
       dataBits: parseInt(this.dataBits),
@@ -318,6 +318,12 @@ export class SerialMonitorComponent {
       parity: this.parity,
       flowControl: this.flowControl
     });
+
+    // 发送DTR信号
+    setTimeout(() => {
+      this.serialMonitorService.sendSignal('DTR');
+    }, 50);
+
   }
 
   changeViewMode(name) {
