@@ -1527,4 +1527,8 @@ ${JSON.stringify(errData)}
 
   // 工具调用状态管理
   toolCallStates: { [key: string]: string } = {};
+
+  // 修改模式  问答模式/Agent模式
+  showMode = false;
+
 }
