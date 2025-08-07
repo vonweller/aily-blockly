@@ -90,7 +90,13 @@ export class AilyChatComponent implements OnDestroy {
   @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
 
-  list: ChatMessage[] = [];
+  defaultList: ChatMessage[] = [{
+    "role": "system",
+    "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦",
+    "state": "done"
+  }];
+
+  list: ChatMessage[] = [...this.defaultList.map(item => ({...item}))];
   // list = ChatListExamples  // 示例数据
 
   currentUrl;
@@ -99,6 +105,8 @@ export class AilyChatComponent implements OnDestroy {
   prjPath = '';
 
   windowInfo = 'AI助手';
+
+  isCanceled = false;
 
   private textMessageSubscription: Subscription;
   private loginStatusSubscription: Subscription;
@@ -258,7 +266,9 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
-        this.startSession();
+        this.startSession().then(() => {
+          this.getHistory();
+        });
       }
     );
   }
@@ -299,7 +309,7 @@ export class AilyChatComponent implements OnDestroy {
     }, 100);
   }
 
-  async close() {
+  async disconnect() {
     try {
       // 先停止会话
       if (this.sessionId) {
@@ -332,10 +342,12 @@ export class AilyChatComponent implements OnDestroy {
       }
     } catch (error) {
       console.error('关闭会话过程中出错:', error);
-    } finally {
-      // 最后关闭工具窗口
-      this.uiService.closeTool('aily-chat');
     }
+  }
+
+  async close() {
+    // 最后关闭工具窗口
+    this.uiService.closeTool('aily-chat');
   }
 
   ngAfterViewInit(): void {
@@ -419,8 +431,9 @@ export class AilyChatComponent implements OnDestroy {
     }
   }
 
-  startSession(): void {
+  startSession(): Promise<void> {
     // tools + mcp tools
+    this.isCanceled = false;
     let tools = this.tools;
     let mcpTools = this.mcpService.tools.map(tool => {
       tool.name = "mcp_" + tool.name;
@@ -430,33 +443,37 @@ export class AilyChatComponent implements OnDestroy {
       tools = tools.concat(mcpTools);
     }
 
-    this.chatService.startSession(tools).subscribe({
-      next: (res: any) => {
-        if (res.status === 'success') {
-          this.chatService.currentSessionId = res.data;
-          this.streamConnect();
-          this.getHistory();
-        } else {
-          this.appendMessage('错误', `
+    return new Promise<void>((resolve, reject) => {
+      this.chatService.startSession(tools).subscribe({
+        next: (res: any) => {
+          if (res.status === 'success') {
+            this.chatService.currentSessionId = res.data;
+            this.streamConnect();
+            resolve();
+          } else {
+            this.appendMessage('错误', `
 \`\`\`aily-error
 ${res.message || '启动会话失败，请稍后重试。'}
 \`\`\`\n\n
 
             `)
-        }
-      },
-      error: (err) => {
-        console.error('启动会话失败:', err);
-        let errData = {
-          status: err.status,
-          message: err.message
-        }
-        this.appendMessage('error', `
+            reject(new Error(res.message || '启动会话失败'));
+          }
+        },
+        error: (err) => {
+          console.error('启动会话失败:', err);
+          let errData = {
+            status: err.status,
+            message: err.message
+          }
+          this.appendMessage('error', `
 \`\`\`aily-error
 ${JSON.stringify(errData)}
 \`\`\`\n\n
             `)
-      }
+          reject(err);
+        }
+      });
     });
   }
 
@@ -471,7 +488,7 @@ ${JSON.stringify(errData)}
   isWaiting = false;
   autoScrollEnabled = true; // 控制是否自动滚动到底部
 
-  sendButtonClick(): void {
+  async sendButtonClick(): Promise<void> {
     if (this.isWaiting) {
       this.stop();
       return;
@@ -480,9 +497,19 @@ ${JSON.stringify(errData)}
     // 发送消息时重新启用自动滚动
     this.autoScrollEnabled = true;
 
+    console.log("canceldState: ", this.isCanceled);
+    if (this.isCanceled) {
+      console.log('上次会话已取消，重新启动新会话');
+      await this.resetChat();
+    }
+
     this.send('user', this.inputValue.trim(), true);
     this.inputValue = ''; // 发送后清空输入框
     this.selectContent = [];
+  }
+
+  resetChat(): Promise<void> {
+    return this.startSession();
   }
 
   send(sender: string, content: string, clear: boolean = true): void {
@@ -525,23 +552,29 @@ ${JSON.stringify(errData)}
     });
   }
 
-  // 
-
-
   // 这里写停止发送信号
   stop() {
     // 设置最后一条AI消息状态为done（如果存在）
     if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
       this.list[this.list.length - 1].state = 'done';
     }
-    this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
-      // 处理停止会话的响应
-      if (res.status == 'success') {
-        console.log('会话已停止:', res);
-        return;
+
+    this.chatService.cancelTask(this.sessionId).subscribe((res: any) => {
+      if (res.status === 'success') {
+        console.log('任务已取消:', res);
+      } else {
+        console.error('取消任务失败:', res);
       }
-      console.error('停止会话失败:', res);
     });
+
+    // this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
+    //   // 处理停止会话的响应
+    //   if (res.status == 'success') {
+    //     console.log('会话已停止:', res);
+    //     return;
+    //   }
+    //   console.error('停止会话失败:', res);
+    // });
   }
 
   streamConnect(): void {
@@ -1066,6 +1099,14 @@ ${JSON.stringify(errData)}
               this.list[this.list.length - 1].state = 'done';
             }
             this.isWaiting = false;
+          } else if (data.type === 'TaskCompleted') {
+            if (data?.stop_reason) {
+              console.log('任务完成，停止原因:', data.stop_reason);
+              // 处理任务完成逻辑
+              if (data.stop_reason === 'CANCELLED') {
+                this.isCanceled = true;
+              }
+            }
           }
           this.scrollToBottom();
         } catch (e) {
@@ -1091,6 +1132,8 @@ ${JSON.stringify(errData)}
           this.list[this.list.length - 1].state = 'done';
         }
         this.isWaiting = false;
+
+        // TODO: 处理停止原因
       },
       error: (err) => {
         console.error('流连接出错:', err);
@@ -1117,19 +1160,15 @@ ${JSON.stringify(errData)}
     this.chatService.getHistory(this.sessionId).subscribe((res: any) => {
       console.log('get history', res);
       if (res.status === 'success') {
-        this.list = res.data;
         // 为历史消息添加状态，如果没有state属性则默认为done
-        this.list.forEach(item => {
+        const historyData = res.data.map(item => {
           if (!item.hasOwnProperty('state')) {
             item.state = 'done';
           }
+          return item;
         });
-
-        this.list.unshift({
-          "role": "system",
-          "content": "欢迎使用AI助手服务，我可以帮助你 分析项目、转换blockly库、修复错误、生成程序，告诉我你需要什么帮助吧~🤓\n\n >当前为测试版本，可能会有不少问题，如遇故障，群里呼叫`奈何col`哦",
-          "state": "done"
-        });
+        // 合并历史消息和当前消息列表
+        this.list = [...this.list, ...historyData];
 
         // console.log('历史消息:', this.list);
 
@@ -1146,11 +1185,18 @@ ${JSON.stringify(errData)}
   }
 
   // 当使用ctrl+enter时发送消息
-  onKeyDown(event: KeyboardEvent) {
+  async onKeyDown(event: KeyboardEvent) {
     if (event.ctrlKey && event.key === 'Enter') {
       if (this.isWaiting) {
         return;
       }
+
+      console.log("canceldState: ", this.isCanceled);
+      if (this.isCanceled) {
+        console.log('上次会话已取消，重新启动新会话');
+        await this.resetChat();
+      }
+
       this.send("user", this.inputValue.trim(), true);
       this.selectContent = [];
       this.inputValue = "";
@@ -1289,9 +1335,12 @@ ${JSON.stringify(errData)}
 
   async newChat() {
     console.log('启动新会话');
-    this.list = [];
+    this.list = [...this.defaultList.map(item => ({...item}))];
+
+    console.log("CurrentList: ", this.list);
     // 新会话时重新启用自动滚动
     this.autoScrollEnabled = true;
+    this.isCanceled = false;
 
     try {
       // 等待停止操作完成
@@ -1335,11 +1384,15 @@ ${JSON.stringify(errData)}
 
       this.chatService.currentSessionId = '';
       // 最后启动新会话
-      this.startSession();
+      await this.startSession();
     } catch (error) {
       console.error('重新启动会话失败:', error);
       // 即使出错也尝试启动新会话
-      this.startSession();
+      try {
+        await this.startSession();
+      } catch (retryError) {
+        console.error('重试启动会话也失败:', retryError);
+      }
     }
   }
 
@@ -1590,6 +1643,8 @@ ${JSON.stringify(errData)}
     if (this.loginStatusSubscription) {
       this.loginStatusSubscription.unsubscribe();
     }
+
+    this.disconnect();
   }
 
   // 添加订阅管理
