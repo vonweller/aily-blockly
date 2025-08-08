@@ -39,10 +39,6 @@ export const routes: Routes = [
                 ]
             },
             {
-                path: 'demand-editor',
-                loadComponent: () => import('./pages/demand-manager/demand-manager.component').then(m => m.DemandManagerComponent)
-            },
-            {
                 path: 'blockly-editor',
                 loadComponent: () => import('./editors/blockly-editor/blockly-editor.component').then(m => m.BlocklyEditorComponent)
             },
@@ -51,6 +47,10 @@ export const routes: Routes = [
                 loadComponent: () => import('./editors/code-editor/code-editor.component').then(m => m.CodeEditorComponent)
             }
         ]
+    },
+    {
+        path: 'ai-manager',
+        loadComponent: () => import('./pages/ai-manager/ai-manager.component').then(m => m.AiManagerComponent)
     },
     // {
     //     path:"sub",
