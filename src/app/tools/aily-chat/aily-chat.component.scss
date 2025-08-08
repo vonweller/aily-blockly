@@ -226,6 +226,11 @@ nz-resize-handle {
 .btn {
   &.mode {
     width: 50px !important;
-    font-size: 10px;
+
+    span {
+      margin-left: 5px;
+      font-size: 12px;
+    }
+
   }
 }

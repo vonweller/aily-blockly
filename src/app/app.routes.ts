@@ -48,6 +48,10 @@ export const routes: Routes = [
             }
         ]
     },
+    {
+        path: 'ai-manager',
+        loadComponent: () => import('./pages/ai-manager/ai-manager.component').then(m => m.AiManagerComponent)
+    },
     // {
     //     path:"sub",
     //     loadComponent: () => import('./sub-window/sub-window.component').then(m => m.SubWindowComponent)
