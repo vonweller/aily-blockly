@@ -23,6 +23,7 @@ export interface ChatTextMessage {
 export class ChatService {
 
   currentSessionId = '';
+  currentMode = 'agent'; // 默认为代理模式
 
   private textSubject = new Subject<ChatTextMessage>();
   private static instance: ChatService;
@@ -77,8 +78,8 @@ export class ChatService {
     }
   }
 
-  startSession(tools: MCPTool[] | null = null): Observable<any> {
-    return this.http.post(API.startSession, { session_id: this.currentSessionId, tools: tools || [] });
+  startSession(mode: string, tools: MCPTool[] | null = null): Observable<any> {
+    return this.http.post(API.startSession, { session_id: this.currentSessionId, tools: tools || [], mode });
   }
 
   closeSession(sessionId: string) {

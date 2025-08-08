@@ -33,6 +33,7 @@ import { deleteFolderTool } from './tools/deleteFolderTool';
 import { checkExistsTool } from './tools/checkExistsTool';
 import { getDirectoryTreeTool } from './tools/getDirectoryTreeTool';
 import { fetchTool, FetchToolService } from './tools/fetchTool';
+import { NzModalService } from 'ng-zorro-antd/modal';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -114,6 +115,11 @@ export class AilyChatComponent implements OnDestroy {
   get sessionId() {
     return this.chatService.currentSessionId;
   }
+
+  get currentMode() {
+    return this.chatService.currentMode;
+  }
+
 
   /**
    * 确保字符串在 JSON 中是安全的，转义特殊字符
@@ -243,7 +249,8 @@ export class AilyChatComponent implements OnDestroy {
     private fetchToolService: FetchToolService,
     private router: Router,
     private message: NzMessageService,
-    private authService: AuthService
+    private authService: AuthService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit() {
@@ -444,7 +451,7 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     return new Promise<void>((resolve, reject) => {
-      this.chatService.startSession(tools).subscribe({
+      this.chatService.startSession(this.currentMode, tools).subscribe({
         next: (res: any) => {
           if (res.status === 'success') {
             this.chatService.currentSessionId = res.data;
@@ -1016,19 +1023,11 @@ export class AilyChatComponent implements OnDestroy {
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
-                  //                   case 'ask_approval':
-                  //                     console.log('[请求确认工具被调用]', toolArgs);
-                  //                     this.appendMessage('aily', `
-                  // \n\n${toolArgs.message}
-
-                  // \`\`\`aily-button
-                  // [
-                  // {"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
-                  // {"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
-                  // ]
-                  // \`\`\`\n\n
-                  //                     `);
-                  //                     return;
+                  case 'ask_approval':
+                    console.log('[请求确认工具被调用]', toolArgs);
+                    toolResult = await askApprovalTool(toolArgs);
+                    // 不显示状态信息，因为这是用户交互操作
+                    break;
                   case 'reload_project':
                     // console.log('[重新加载项目工具被调用]', toolArgs);
                     this.appendMessage('aily', `
@@ -1339,7 +1338,7 @@ export class AilyChatComponent implements OnDestroy {
   ]
 
   // 当前AI模式
-  currentMode = 'agent'; // 默认为代理模式
+  // currentMode = 'agent'; // 默认为代理模式
 
   async newChat() {
     console.log('启动新会话');
@@ -1628,11 +1627,39 @@ export class AilyChatComponent implements OnDestroy {
 
   modeMenuClick(item: IMenuItem) {
     if (item.data?.mode) {
-      this.currentMode = item.data.mode;
-      console.log('切换AI模式为:', this.currentMode);
-      // 这里可以添加实际的模式切换逻辑
+      if (this.currentMode != item.data.mode) {
+        // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
+        if (this.list.length > 1) {
+          // 显示确认弹窗
+          this.modal.confirm({
+            nzTitle: '确认切换模式',
+            nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
+            nzOkText: '确认',
+            nzCancelText: '取消',
+            nzOnOk: () => {
+              this.switchToMode(item.data.mode);
+            },
+            nzOnCancel: () => {
+              console.log('用户取消了模式切换');
+            }
+          });
+          return;
+        }
+
+        this.switchToMode(item.data.mode);
+      }
     }
     this.showMode = false;
+  }
+
+  /**
+   * 切换AI模式并创建新会话
+   * @param mode 要切换到的模式
+   */
+  private switchToMode(mode: string) {
+    this.chatService.currentMode = mode;
+    console.log('切换AI模式为:', this.currentMode);
+    this.newChat();
   }
 
   /**
