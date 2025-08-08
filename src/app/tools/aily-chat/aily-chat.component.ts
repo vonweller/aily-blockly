@@ -107,7 +107,7 @@ export class AilyChatComponent implements OnDestroy {
 
   windowInfo = 'AI助手';
 
-  isCanceled = false;
+  isCompleted = false;
 
   private textMessageSubscription: Subscription;
   private loginStatusSubscription: Subscription;
@@ -440,7 +440,7 @@ export class AilyChatComponent implements OnDestroy {
 
   startSession(): Promise<void> {
     // tools + mcp tools
-    this.isCanceled = false;
+    this.isCompleted = false;
     let tools = this.tools;
     let mcpTools = this.mcpService.tools.map(tool => {
       tool.name = "mcp_" + tool.name;
@@ -508,9 +508,8 @@ export class AilyChatComponent implements OnDestroy {
     // 发送消息时重新启用自动滚动
     this.autoScrollEnabled = true;
 
-    console.log("canceldState: ", this.isCanceled);
-    if (this.isCanceled) {
-      console.log('上次会话已取消，重新启动新会话');
+    if (this.isCompleted) {
+      console.log('上次会话已完成，需要重新启动会话');
       await this.resetChat();
     }
 
@@ -1102,14 +1101,6 @@ export class AilyChatComponent implements OnDestroy {
               this.list[this.list.length - 1].state = 'done';
             }
             this.isWaiting = false;
-          } else if (data.type === 'TaskCompleted') {
-            if (data?.stop_reason) {
-              console.log('任务完成，停止原因:', data.stop_reason);
-              // 处理任务完成逻辑
-              if (data.stop_reason === 'CANCELLED') {
-                this.isCanceled = true;
-              }
-            }
           }
           this.scrollToBottom();
         } catch (e) {
@@ -1137,6 +1128,7 @@ export class AilyChatComponent implements OnDestroy {
           this.list[this.list.length - 1].state = 'done';
         }
         this.isWaiting = false;
+        this.isCompleted = true;
 
         // TODO: 处理停止原因
       },
@@ -1197,10 +1189,9 @@ export class AilyChatComponent implements OnDestroy {
       if (this.isWaiting) {
         return;
       }
-
-      console.log("canceldState: ", this.isCanceled);
-      if (this.isCanceled) {
-        console.log('上次会话已取消，重新启动新会话');
+      
+      if (this.isCompleted) {
+        console.log('上次会话已完成，需要重新启动会话');
         await this.resetChat();
       }
 
@@ -1347,7 +1338,7 @@ export class AilyChatComponent implements OnDestroy {
     console.log("CurrentList: ", this.list);
     // 新会话时重新启用自动滚动
     this.autoScrollEnabled = true;
-    this.isCanceled = false;
+    this.isCompleted = false;
 
     try {
       // 等待停止操作完成
