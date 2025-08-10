@@ -25,7 +25,7 @@
         "USER_MANUAL": "用户手册",
         "EXAMPLES": "教程与示例",
         "UPDATE": "检查更新",
-        "USER":"用户中心",
+        "USER_AUTH":"用户中心",
         "FILE_OPEN": "打开文件",
         "FILE_OPEN_WITH": "打开方式",
         "OPEN_WITH_SYSTEM_EDITOR": "系统默认编辑器",
