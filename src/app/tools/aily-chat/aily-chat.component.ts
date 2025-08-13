@@ -273,6 +273,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
+        this.list = [...this.defaultList.map(item => ({...item}))]; // 重置消息列表
         this.startSession().then(() => {
           this.getHistory();
         });
