@@ -477,9 +477,7 @@ export class AilyChatComponent implements OnDestroy {
           }
           this.appendMessage('error', `
 \`\`\`aily-error
-{
-  "message": "启动会话失败"
-}
+${JSON.stringify(errData)}
 \`\`\`\n\n
             `)
           reject(err);
@@ -596,6 +594,10 @@ export class AilyChatComponent implements OnDestroy {
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
+        
+        console.log("=============== start ==========")
+        console.log("Rev: ", data);
+        console.log("=============== end ==========")
 
         try {
           if (data.type === 'ModelClientStreamingChunkEvent') {
