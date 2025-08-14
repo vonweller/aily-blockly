@@ -78,8 +78,11 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private async processContent() {
+    // 过滤 think 标签内容，支持实时过滤
+    let currentContent = this.filterThinkContent(this.content);
+    
     // 对一些常见错误的处理，确保markdown格式正确
-    let currentContent = this.fixContent(this.content);
+    currentContent = this.fixContent(currentContent);
 
     // 如果内容没有变化，则跳过处理
     if (currentContent === this.lastProcessedContent) {
@@ -656,6 +659,43 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     return processedContent;
+  }
+
+  /**
+   * 过滤 think 标签内容，支持实时过滤
+   * 当遇到 <think> 时开始隐藏内容，直到遇到 </think> 才继续显示
+   */
+  private filterThinkContent(content: string): string {
+    if (!content) return content;
+
+    let result = '';
+    let i = 0;
+    let inThinkBlock = false;
+    
+    while (i < content.length) {
+      // 检查是否遇到 <think> 标签
+      if (!inThinkBlock && content.substring(i, i + 7) === '<think>') {
+        inThinkBlock = true;
+        i += 7; // 跳过 <think>
+        continue;
+      }
+      
+      // 检查是否遇到 </think> 标签
+      if (inThinkBlock && content.substring(i, i + 8) === '</think>') {
+        inThinkBlock = false;
+        i += 8; // 跳过 </think>
+        continue;
+      }
+      
+      // 如果不在 think 块内，添加字符到结果中
+      if (!inThinkBlock) {
+        result += content[i];
+      }
+      
+      i++;
+    }
+    
+    return result;
   }
 
   fixContent(content: string): string {

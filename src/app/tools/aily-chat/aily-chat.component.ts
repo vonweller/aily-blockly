@@ -33,6 +33,7 @@ import { deleteFolderTool } from './tools/deleteFolderTool';
 import { checkExistsTool } from './tools/checkExistsTool';
 import { getDirectoryTreeTool } from './tools/getDirectoryTreeTool';
 import { fetchTool, FetchToolService } from './tools/fetchTool';
+import { NzModalService } from 'ng-zorro-antd/modal';
 
 const { pt } = (window as any)['electronAPI'].platform;
 
@@ -106,7 +107,7 @@ export class AilyChatComponent implements OnDestroy {
 
   windowInfo = 'AI助手';
 
-  isCanceled = false;
+  isCompleted = false;
 
   private textMessageSubscription: Subscription;
   private loginStatusSubscription: Subscription;
@@ -114,6 +115,11 @@ export class AilyChatComponent implements OnDestroy {
   get sessionId() {
     return this.chatService.currentSessionId;
   }
+
+  get currentMode() {
+    return this.chatService.currentMode;
+  }
+
 
   /**
    * 确保字符串在 JSON 中是安全的，转义特殊字符
@@ -243,7 +249,8 @@ export class AilyChatComponent implements OnDestroy {
     private fetchToolService: FetchToolService,
     private router: Router,
     private message: NzMessageService,
-    private authService: AuthService
+    private authService: AuthService,
+    private modal: NzModalService
   ) { }
 
   ngOnInit() {
@@ -433,7 +440,7 @@ export class AilyChatComponent implements OnDestroy {
 
   startSession(): Promise<void> {
     // tools + mcp tools
-    this.isCanceled = false;
+    this.isCompleted = false;
     let tools = this.tools;
     let mcpTools = this.mcpService.tools.map(tool => {
       tool.name = "mcp_" + tool.name;
@@ -444,7 +451,7 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     return new Promise<void>((resolve, reject) => {
-      this.chatService.startSession(tools).subscribe({
+      this.chatService.startSession(this.currentMode, tools).subscribe({
         next: (res: any) => {
           if (res.status === 'success') {
             this.chatService.currentSessionId = res.data;
@@ -453,7 +460,9 @@ export class AilyChatComponent implements OnDestroy {
           } else {
             this.appendMessage('错误', `
 \`\`\`aily-error
-${res.message || '启动会话失败，请稍后重试。'}
+{
+  "message": ${res.message || '启动会话失败，请稍后重试。'}
+}
 \`\`\`\n\n
 
             `)
@@ -497,9 +506,8 @@ ${JSON.stringify(errData)}
     // 发送消息时重新启用自动滚动
     this.autoScrollEnabled = true;
 
-    console.log("canceldState: ", this.isCanceled);
-    if (this.isCanceled) {
-      console.log('上次会话已取消，重新启动新会话');
+    if (this.isCompleted) {
+      console.log('上次会话已完成，需要重新启动会话');
       await this.resetChat();
     }
 
@@ -586,6 +594,10 @@ ${JSON.stringify(errData)}
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
+        
+        console.log("=============== start ==========")
+        console.log("Rev: ", data);
+        console.log("=============== end ==========")
 
         try {
           if (data.type === 'ModelClientStreamingChunkEvent') {
@@ -1012,19 +1024,11 @@ ${JSON.stringify(errData)}
                       resultText = `网络请求 ${fetchUrl} 成功`;
                     }
                     break;
-                  //                   case 'ask_approval':
-                  //                     console.log('[请求确认工具被调用]', toolArgs);
-                  //                     this.appendMessage('aily', `
-                  // \n\n${toolArgs.message}
-
-                  // \`\`\`aily-button
-                  // [
-                  // {"text":"同意","action":"approve","type":"primary", "id": "${toolCallId}"},
-                  // {"text":"拒绝","action":"reject","type":"default", "id": "${toolCallId}"}
-                  // ]
-                  // \`\`\`\n\n
-                  //                     `);
-                  //                     return;
+                  case 'ask_approval':
+                    console.log('[请求确认工具被调用]', toolArgs);
+                    toolResult = await askApprovalTool(toolArgs);
+                    // 不显示状态信息，因为这是用户交互操作
+                    break;
                   case 'reload_project':
                     // console.log('[重新加载项目工具被调用]', toolArgs);
                     this.appendMessage('aily', `
@@ -1099,14 +1103,6 @@ ${JSON.stringify(errData)}
               this.list[this.list.length - 1].state = 'done';
             }
             this.isWaiting = false;
-          } else if (data.type === 'TaskCompleted') {
-            if (data?.stop_reason) {
-              console.log('任务完成，停止原因:', data.stop_reason);
-              // 处理任务完成逻辑
-              if (data.stop_reason === 'CANCELLED') {
-                this.isCanceled = true;
-              }
-            }
           }
           this.scrollToBottom();
         } catch (e) {
@@ -1114,7 +1110,9 @@ ${JSON.stringify(errData)}
           this.appendMessage('错误', `
 
 \`\`\`aily-error
-服务异常，请稍后重试。
+{
+  "message": "服务异常，请稍后重试。"
+}
 \`\`\`\n\n
 
           `);
@@ -1132,6 +1130,7 @@ ${JSON.stringify(errData)}
           this.list[this.list.length - 1].state = 'done';
         }
         this.isWaiting = false;
+        this.isCompleted = true;
 
         // TODO: 处理停止原因
       },
@@ -1144,7 +1143,9 @@ ${JSON.stringify(errData)}
         this.appendMessage('错误', `
 
 \`\`\`aily-error
-连接中断。
+{
+  "message": "连接中断。"
+}
 \`\`\`\n\n
 
 `);
@@ -1190,10 +1191,9 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-
-      console.log("canceldState: ", this.isCanceled);
-      if (this.isCanceled) {
-        console.log('上次会话已取消，重新启动新会话');
+      
+      if (this.isCompleted) {
+        console.log('上次会话已完成，需要重新启动会话');
         await this.resetChat();
       }
 
@@ -1331,7 +1331,7 @@ ${JSON.stringify(errData)}
   ]
 
   // 当前AI模式
-  currentMode = 'agent'; // 默认为代理模式
+  // currentMode = 'agent'; // 默认为代理模式
 
   async newChat() {
     console.log('启动新会话');
@@ -1340,7 +1340,7 @@ ${JSON.stringify(errData)}
     console.log("CurrentList: ", this.list);
     // 新会话时重新启用自动滚动
     this.autoScrollEnabled = true;
-    this.isCanceled = false;
+    this.isCompleted = false;
 
     try {
       // 等待停止操作完成
@@ -1620,11 +1620,39 @@ ${JSON.stringify(errData)}
 
   modeMenuClick(item: IMenuItem) {
     if (item.data?.mode) {
-      this.currentMode = item.data.mode;
-      console.log('切换AI模式为:', this.currentMode);
-      // 这里可以添加实际的模式切换逻辑
+      if (this.currentMode != item.data.mode) {
+        // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
+        if (this.list.length > 1) {
+          // 显示确认弹窗
+          this.modal.confirm({
+            nzTitle: '确认切换模式',
+            nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
+            nzOkText: '确认',
+            nzCancelText: '取消',
+            nzOnOk: () => {
+              this.switchToMode(item.data.mode);
+            },
+            nzOnCancel: () => {
+              console.log('用户取消了模式切换');
+            }
+          });
+          return;
+        }
+
+        this.switchToMode(item.data.mode);
+      }
     }
     this.showMode = false;
+  }
+
+  /**
+   * 切换AI模式并创建新会话
+   * @param mode 要切换到的模式
+   */
+  private switchToMode(mode: string) {
+    this.chatService.currentMode = mode;
+    console.log('切换AI模式为:', this.currentMode);
+    this.newChat();
   }
 
   /**
