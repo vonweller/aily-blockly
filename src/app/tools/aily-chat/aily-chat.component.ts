@@ -28,6 +28,7 @@ import { readFileTool } from './tools/readFileTool';
 import { createFileTool } from './tools/createFileTool';
 import { createFolderTool } from './tools/createFolderTool';
 import { editFileTool } from './tools/editFileTool';
+import { editAbiFileTool } from './tools/editAbiFileTool';
 import { deleteFileTool } from './tools/deleteFileTool';
 import { deleteFolderTool } from './tools/deleteFolderTool';
 import { checkExistsTool } from './tools/checkExistsTool';
@@ -234,6 +235,12 @@ export class AilyChatComponent implements OnDestroy {
       }
       return url;
     }
+  }
+
+  getCurrentProjectPath(): string {
+    return this.projectService.currentProjectPath !== this.projectService.projectRootPath
+      ? this.projectService.currentProjectPath
+      : '';
   }
 
   // 内置工具
@@ -586,19 +593,48 @@ ${JSON.stringify(errData)}
     // });
   }
 
+  async handleEditAbiFile(toolArgs) {
+    // 获取当前项目路径
+    let resultState;
+    let resultText;
+    let toolResult;
+  
+    const currentProjectPath = this.getCurrentProjectPath();
+    if (!currentProjectPath) {
+      console.warn('当前未打开项目');
+      resultState = "error";
+      resultText = "当前未打开项目";
+    } else {
+      const toolResult = await editAbiFileTool({ path: currentProjectPath, content: toolArgs.content });
+      if (toolResult.is_error) {
+        resultState = "error";
+        resultText = 'ABI文件编辑失败: ' + (toolResult.content || '未知错误');
+      } else {
+        resultText = 'ABI文件编辑成功';
+
+        // 导入工具函数
+        const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+        const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+        await reloadAbiJsonService.executeReloadAbiJson(toolArgs).then(() => {
+          console.log('ABI JSON重新加载成功');
+        }).catch((error) => {
+          console.error('ABI JSON重新加载失败:', error);
+        });
+      }
+    }
+
+    return { state: resultState, text: resultText, toolResult: toolResult };
+  }
+
   streamConnect(): void {
     console.log("stream connect sessionId: ", this.sessionId);
     if (!this.sessionId) return;
 
     this.chatService.streamConnect(this.sessionId).subscribe({
       next: async (data: any) => {
-        if (!this.isWaiting) {
-          return; // 如果不在等待状态，直接返回
-        }
-        
-        console.log("=============== start ==========")
-        console.log("Rev: ", data);
-        console.log("=============== end ==========")
+        // if (!this.isWaiting) {
+        //   return; // 如果不在等待状态，直接返回
+        // }
 
         try {
           if (data.type === 'ModelClientStreamingChunkEvent') {
@@ -636,12 +672,19 @@ ${JSON.stringify(errData)}
               }
             }
           } else if (data.type === 'error') {
-            console.error('助手出错:', data.data);
             // 设置最后一条AI消息状态为done（如果存在）
             if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
               this.list[this.list.length - 1].state = 'done';
             }
-            this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
+            this.appendMessage('错误', `
+
+\`\`\`aily-error
+{
+  "message": "${data.message || '未知错误'}"
+}
+\`\`\`\n\n
+
+          `);
             this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
             let toolArgs;
@@ -1043,6 +1086,47 @@ ${JSON.stringify(errData)}
 \`\`\`\n\n
 
                       `)
+                    break;
+                  case 'edit_abi_file':
+                    console.log('[编辑ABI文件工具被调用]', toolArgs);
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "正在编辑ABI文件...",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+                    `);
+
+                    const currentProjectPath = this.getCurrentProjectPath();
+                    if (!currentProjectPath) {
+                      console.warn('当前未打开项目');
+                      resultState = "error";
+                      resultText = "当前未打开项目";
+                    } else {
+                      const editAbiResult = await editAbiFileTool({ path: currentProjectPath, content: toolArgs.content });
+                      toolResult = {
+                        "content": editAbiResult.content,
+                        "is_error": editAbiResult.is_error
+                      }
+                      if (toolResult.is_error) {
+                        resultState = "error";
+                        resultText = 'ABI文件编辑失败: ' + (toolResult.content || '未知错误');
+                      } else {
+                        resultText = 'ABI文件编辑成功';
+
+                        // 导入工具函数
+                        const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+                        const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+                        await reloadAbiJsonService.executeReloadAbiJson(toolArgs).then(() => {
+                          console.log('ABI JSON重新加载成功');
+                        }).catch((error) => {
+                          console.error('ABI JSON重新加载失败:', error);
+                        });
+                      }
+                    }
                     break;
                   case 'reload_abi_json':
                     console.log('[重新加载ABI JSON工具被调用]', toolArgs);
