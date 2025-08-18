@@ -4,6 +4,7 @@ export { readFileTool } from './readFileTool';
 export { createFileTool } from './createFileTool';
 export { createFolderTool } from './createFolderTool';
 export { editFileTool } from './editFileTool';
+export { editAbiFileTool } from './editAbiFileTool';
 export { deleteFileTool } from './deleteFileTool';
 export { deleteFolderTool } from './deleteFolderTool';
 export { checkExistsTool } from './checkExistsTool';

@@ -318,5 +318,19 @@ export const TOOLS = [
             },
             required: []
         }
+    },
+    {
+        name: "edit_abi_file",
+        description: `编辑ABI文件工具。自动查找当前路径下的.abi文件并编辑内容。内容必须是有效的JSON格式。如果找不到.abi文件会自动创建。`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                content: {
+                    type: 'string',
+                    description: 'ABI文件的JSON内容，必须是有效的JSON格式'
+                }
+            },
+            required: ['content']
+        }
     }
 ]
