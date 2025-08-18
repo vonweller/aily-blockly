@@ -138,3 +138,26 @@ nz-sider.nz-resizable-resizing {
     color: #333;
   }
 }
+
+/* 自定义积木注释样式 - 深色主题 */
+.injectionDiv {
+  --commentFillColour: #3c3c3c !important;     /* 深灰色背景 */
+  --commentBorderColour: #555555 !important;   /* 深色边框 */
+}
+
+/* 积木注释文本颜色 */
+.blocklyComment .blocklyTextarea {
+  color: #ffffff !important;                    /* 白色文字 */
+  background-color: var(--commentFillColour) !important;
+  border: 1px solid var(--commentBorderColour) !important;
+}
+
+/* 注释预览文本颜色 */
+.blocklyCommentText {
+  fill: #ffffff !important;                     /* SVG文本白色 */
+}
+
+/* 注释预览文本（HTML元素） */
+.blocklyCommentPreview {
+  color: #ffffff !important;                    /* HTML文本白色 */
+}
