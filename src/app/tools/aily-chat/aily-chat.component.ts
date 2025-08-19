@@ -1089,12 +1089,27 @@ ${JSON.stringify(errData)}
                     break;
                   case 'edit_abi_file':
                     console.log('[编辑ABI文件工具被调用]', toolArgs);
+                    
+                    // 根据操作模式生成不同的状态文本
+                    let abiOperationText = "正在编辑ABI文件...";
+                    if (toolArgs.replaceStartLine !== undefined) {
+                      if (toolArgs.replaceEndLine !== undefined && toolArgs.replaceEndLine !== toolArgs.replaceStartLine) {
+                        abiOperationText = `正在替换ABI文件第 ${toolArgs.replaceStartLine}-${toolArgs.replaceEndLine} 行内容...`;
+                      } else {
+                        abiOperationText = `正在替换ABI文件第 ${toolArgs.replaceStartLine} 行内容...`;
+                      }
+                    } else if (toolArgs.insertLine !== undefined) {
+                      abiOperationText = `正在ABI文件第 ${toolArgs.insertLine} 行插入内容...`;
+                    } else if (toolArgs.replaceMode === false) {
+                      abiOperationText = "正在向ABI文件末尾追加内容...";
+                    }
+                    
                     this.appendMessage('aily', `
 
 \`\`\`aily-state
 {
   "state": "doing",
-  "text": "正在编辑ABI文件...",
+  "text": "${abiOperationText}",
   "id": "${toolCallId}"
 }
 \`\`\`\n\n
@@ -1106,7 +1121,33 @@ ${JSON.stringify(errData)}
                       resultState = "error";
                       resultText = "当前未打开项目";
                     } else {
-                      const editAbiResult = await editAbiFileTool({ path: currentProjectPath, content: toolArgs.content });
+                      // 构建editAbiFileTool的参数，传递所有可能的参数
+                      const editAbiParams: any = {
+                        path: currentProjectPath,
+                        content: toolArgs.content
+                      };
+
+                      // 传递可选参数
+                      if (toolArgs.insertLine !== undefined) {
+                        editAbiParams.insertLine = toolArgs.insertLine;
+                      }
+                      if (toolArgs.replaceStartLine !== undefined) {
+                        editAbiParams.replaceStartLine = toolArgs.replaceStartLine;
+                      }
+                      if (toolArgs.replaceEndLine !== undefined) {
+                        editAbiParams.replaceEndLine = toolArgs.replaceEndLine;
+                      }
+                      if (toolArgs.replaceMode !== undefined) {
+                        editAbiParams.replaceMode = toolArgs.replaceMode;
+                      }
+                      if (toolArgs.encoding !== undefined) {
+                        editAbiParams.encoding = toolArgs.encoding;
+                      }
+                      if (toolArgs.createIfNotExists !== undefined) {
+                        editAbiParams.createIfNotExists = toolArgs.createIfNotExists;
+                      }
+
+                      const editAbiResult = await editAbiFileTool(editAbiParams);
                       toolResult = {
                         "content": editAbiResult.content,
                         "is_error": editAbiResult.is_error
@@ -1115,7 +1156,20 @@ ${JSON.stringify(errData)}
                         resultState = "error";
                         resultText = 'ABI文件编辑失败: ' + (toolResult.content || '未知错误');
                       } else {
-                        resultText = 'ABI文件编辑成功';
+                        // 根据操作模式生成不同的成功文本
+                        if (toolArgs.insertLine !== undefined) {
+                          resultText = `ABI文件第 ${toolArgs.insertLine} 行插入内容成功`;
+                        } else if (toolArgs.replaceStartLine !== undefined) {
+                          if (toolArgs.replaceEndLine !== undefined && toolArgs.replaceEndLine !== toolArgs.replaceStartLine) {
+                            resultText = `ABI文件第 ${toolArgs.replaceStartLine}-${toolArgs.replaceEndLine} 行替换成功`;
+                          } else {
+                            resultText = `ABI文件第 ${toolArgs.replaceStartLine} 行替换成功`;
+                          }
+                        } else if (toolArgs.replaceMode === false) {
+                          resultText = 'ABI文件内容追加成功';
+                        } else {
+                          resultText = 'ABI文件编辑成功';
+                        }
 
                         // 导入工具函数
                         const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');

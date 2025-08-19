@@ -224,28 +224,17 @@ export async function editAbiFileTool(
             };
         }
 
-        // 如果是替换模式或创建新文件，验证ABI内容格式
-        if (replaceMode || !window['fs'].existsSync(filePath)) {
-            try {
-                JSON.parse(content);
-            } catch (jsonError) {
-                return {
-                    is_error: true,
-                    content: `ABI内容不是有效的JSON格式: ${jsonError.message}`
-                };
-            }
-        }
-
-        // 检查参数冲突
-        const hasInsertLine = insertLine !== undefined;
-        const hasReplaceLine = replaceStartLine !== undefined;
-        
-        if (hasInsertLine && hasReplaceLine) {
-            return {
-                is_error: true,
-                content: `不能同时指定 insertLine 和 replaceStartLine 参数`
-            };
-        }
+        // // 如果是替换模式或创建新文件，验证ABI内容格式
+        // if (replaceMode || !window['fs'].existsSync(filePath)) {
+        //     try {
+        //         JSON.parse(content);
+        //     } catch (jsonError) {
+        //         return {
+        //             is_error: true,
+        //             content: `ABI内容不是有效的JSON格式: ${jsonError.message}`
+        //         };
+        //     }
+        // }
 
         // 检查文件是否存在
         let fileExists = window['fs'].existsSync(filePath);
@@ -258,7 +247,7 @@ export async function editAbiFileTool(
                 }
                 
                 // 如果指定了插入行或替换行但文件不存在，创建空文件
-                if ((hasInsertLine || hasReplaceLine) && !replaceMode) {
+                if ((insertLine !== undefined || replaceStartLine !== undefined) && !replaceMode) {
                     await window['fs'].writeFileSync(filePath, '', encoding);
                     fileExists = true;
                 }
@@ -282,45 +271,9 @@ export async function editAbiFileTool(
         let finalContent: string;
         let operationDescription: string;
 
-        // 根据模式处理内容
-        if (replaceMode || (!fileExists && !hasInsertLine && !hasReplaceLine)) {
-            // 替换整个文件内容（默认行为）
-            finalContent = content;
-            operationDescription = "替换整个文件内容";
-            console.log(`替换ABI内容长度: ${content.length}`);
-        } else if (hasInsertLine) {
-            // 在指定行插入内容
-            if (insertLine < 1) {
-                return {
-                    is_error: true,
-                    content: `插入行号必须大于0，当前为: ${insertLine}`
-                };
-            }
-
-            // 读取现有文件内容
-            const existingContent = await window['fs'].readFileSync(filePath, encoding);
-            const lines = existingContent.split('\n');
-            
-            // 验证行号是否有效
-            if (insertLine > lines.length + 1) {
-                return {
-                    is_error: true,
-                    content: `插入行号 ${insertLine} 超出文件行数 ${lines.length}。最大可插入行号为 ${lines.length + 1}`
-                };
-            }
-
-            // 在指定行插入内容
-            const insertIndex = insertLine - 1; // 转换为0基索引
-            const contentLines = content.split('\n');
-            
-            // 插入新内容
-            lines.splice(insertIndex, 0, ...contentLines);
-            finalContent = lines.join('\n');
-            
-            operationDescription = `在第 ${insertLine} 行插入 ${contentLines.length} 行内容`;
-            console.log(`在第 ${insertLine} 行插入内容，新增行数: ${contentLines.length}`);
-        } else if (hasReplaceLine) {
-            // 替换指定行或行范围
+        // 根据模式处理内容，优先使用replaceStartLine
+        if (replaceStartLine !== undefined) {
+            // 替换指定行或行范围（最高优先级）
             if (replaceStartLine < 1) {
                 return {
                     is_error: true,
@@ -374,6 +327,42 @@ export async function editAbiFileTool(
                 operationDescription = `替换第 ${replaceStartLine}-${endLine} 行内容（${deleteCount} 行 → ${contentLines.length} 行）`;
                 console.log(`替换第 ${replaceStartLine}-${endLine} 行，原行数: ${deleteCount}，新行数: ${contentLines.length}`);
             }
+        } else if (replaceMode || (!fileExists && insertLine === undefined)) {
+            // 替换整个文件内容（默认行为）
+            finalContent = content;
+            operationDescription = "替换整个文件内容";
+            console.log(`替换ABI内容长度: ${content.length}`);
+        } else if (insertLine !== undefined) {
+            // 在指定行插入内容
+            if (insertLine < 1) {
+                return {
+                    is_error: true,
+                    content: `插入行号必须大于0，当前为: ${insertLine}`
+                };
+            }
+
+            // 读取现有文件内容
+            const existingContent = await window['fs'].readFileSync(filePath, encoding);
+            const lines = existingContent.split('\n');
+            
+            // 验证行号是否有效
+            if (insertLine > lines.length + 1) {
+                return {
+                    is_error: true,
+                    content: `插入行号 ${insertLine} 超出文件行数 ${lines.length}。最大可插入行号为 ${lines.length + 1}`
+                };
+            }
+
+            // 在指定行插入内容
+            const insertIndex = insertLine - 1; // 转换为0基索引
+            const contentLines = content.split('\n');
+            
+            // 插入新内容
+            lines.splice(insertIndex, 0, ...contentLines);
+            finalContent = lines.join('\n');
+            
+            operationDescription = `在第 ${insertLine} 行插入 ${contentLines.length} 行内容`;
+            console.log(`在第 ${insertLine} 行插入内容，新增行数: ${contentLines.length}`);
         } else {
             // 追加到文件末尾
             const existingContent = await window['fs'].readFileSync(filePath, encoding);
