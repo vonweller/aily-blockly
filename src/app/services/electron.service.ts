@@ -16,7 +16,7 @@ export class ElectronService {
       // 在这里把 相关nodejs内容 挂载到 window 上
       // 调用前先判断isElectron
       for (let key in this.electron) {
-        console.log('load ' + key);
+        // console.log('load ' + key);
         window[key] = this.electron[key];
       }
     } else {

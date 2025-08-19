@@ -223,7 +223,7 @@ export class CmdService {
         console.log('终止 aily-arduino-cli.exe 进程成功');
         return true;
       } else {
-        console.error('终止 aily-arduino-cli.exe 进程失败', result);
+        console.log('终止 aily-arduino-cli.exe 进程失败', result);
         return false;
       }
     } catch (error) {

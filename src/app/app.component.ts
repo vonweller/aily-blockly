@@ -4,7 +4,7 @@ import { CommonModule } from '@angular/common';
 import { ElectronService } from './services/electron.service';
 import { ConfigService } from './services/config.service';
 import { TranslationService } from './services/translation.service';
-import { AuthService } from './services/auth.service';
+// import { AuthService } from './services/auth.service';
 
 @Component({
   selector: 'app-root',
@@ -19,7 +19,7 @@ export class AppComponent implements OnInit {
   private electronService = inject(ElectronService);
   private configService = inject(ConfigService);
   private translationService = inject(TranslationService);
-  private authService = inject(AuthService);
+  // private authService = inject(AuthService);
 
  async ngOnInit() {
     await this.electronService.init();
@@ -27,6 +27,6 @@ export class AppComponent implements OnInit {
     await this.translationService.init();
     
     // 在ElectronService初始化完成后再初始化认证服务
-    await this.authService.initializeAuth();
+    // await this.authService.initializeAuth();
   }
 }

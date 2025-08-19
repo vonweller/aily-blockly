@@ -2,12 +2,26 @@ import { inject } from '@angular/core';
 import { HttpInterceptorFn, HttpRequest, HttpHandlerFn, HttpEvent, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, BehaviorSubject, filter, take, switchMap, catchError, from } from 'rxjs';
 import { AuthService } from '../services/auth.service';
+import { API } from '../configs/api.config';
 
 let isRefreshing = false;
 let refreshTokenSubject: BehaviorSubject<any> = new BehaviorSubject<any>(null);
 
+function shouldInterceptRequest(url: string): boolean {
+  // 获取API配置中的所有URL
+  const apiUrls = Object.values(API);
+  
+  // 检查请求URL是否匹配任何配置的API地址
+  return apiUrls.some(apiUrl => url.startsWith(apiUrl));
+}
+
 export const authInterceptor: HttpInterceptorFn = (req: HttpRequest<any>, next: HttpHandlerFn): Observable<HttpEvent<any>> => {
   const authService = inject(AuthService);
+
+  // 检查是否需要拦截此请求
+  if (!shouldInterceptRequest(req.url)) {
+    return next(req);
+  }
 
   return from(addTokenHeader(req, authService)).pipe(
     switchMap(request => next(request)),

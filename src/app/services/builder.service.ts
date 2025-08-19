@@ -450,7 +450,7 @@ export class BuilderService {
                   }
 
                   if (progressValue > lastProgress) {
-                    console.log("progress: ", lastProgress);
+                    // console.log("progress: ", lastProgress);
                     lastProgress = progressValue;
                     this.noticeService.update({
                       title: title,
