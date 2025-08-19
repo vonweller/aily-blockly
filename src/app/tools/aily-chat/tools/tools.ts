@@ -318,5 +318,36 @@ export const TOOLS = [
             },
             required: []
         }
+    },
+    {
+        name: "edit_abi_file",
+        description: `编辑ABI文件工具。支持多种编辑模式：1) 替换整个文件内容（默认）；2) 在指定行插入内容；3) 替换指定行或行范围；4) 追加到文件末尾。自动查找当前路径下的.abi文件，如果不存在会自动创建。`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                content: {
+                    type: 'string',
+                    description: '要写入的内容。替换模式下必须是有效的JSON格式；插入/替换模式下可以是任意文本内容'
+                },
+                insertLine: {
+                    type: 'number',
+                    description: '插入行号（从1开始）。指定此参数时会在该行插入内容'
+                },
+                replaceStartLine: {
+                    type: 'number',
+                    description: '替换起始行号（从1开始）。指定此参数时会替换指定行的内容'
+                },
+                replaceEndLine: {
+                    type: 'number',
+                    description: '替换结束行号（从1开始）。与replaceStartLine配合使用，可替换多行内容。如不指定则只替换起始行'
+                },
+                replaceMode: {
+                    type: 'boolean',
+                    description: '是否替换整个文件内容。true=替换整个文件（默认），false=执行其他操作（插入、替换行、追加）',
+                    default: true
+                }
+            },
+            required: ['content']
+        }
     }
 ]
