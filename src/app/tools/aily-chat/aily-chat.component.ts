@@ -1418,15 +1418,7 @@ ${JSON.stringify(errData)}
   // 当前AI模式
   // currentMode = 'agent'; // 默认为代理模式
 
-  async newChat() {
-    console.log('启动新会话');
-    this.list = [...this.defaultList.map(item => ({...item}))];
-
-    console.log("CurrentList: ", this.list);
-    // 新会话时重新启用自动滚动
-    this.autoScrollEnabled = true;
-    this.isCompleted = false;
-
+  async stopAndCloseSession() {
     try {
       // 等待停止操作完成
       await new Promise<void>((resolve) => {
@@ -1466,19 +1458,23 @@ ${JSON.stringify(errData)}
           }
         });
       });
-
-      this.chatService.currentSessionId = '';
-      // 最后启动新会话
-      await this.startSession();
     } catch (error) {
-      console.error('重新启动会话失败:', error);
-      // 即使出错也尝试启动新会话
-      try {
-        await this.startSession();
-      } catch (retryError) {
-        console.error('重试启动会话也失败:', retryError);
-      }
+      console.error('停止和关闭会话失败:', error);
     }
+  }
+
+  async newChat() {
+    console.log('启动新会话');
+    this.list = [...this.defaultList.map(item => ({...item}))];
+
+    console.log("CurrentList: ", this.list);
+    // 新会话时重新启用自动滚动
+    this.autoScrollEnabled = true;
+    this.isCompleted = false;
+
+    await this.stopAndCloseSession();
+    this.chatService.currentSessionId = '';
+    await this.startSession();
   }
 
   selectContent: ResourceItem[] = []
@@ -1705,27 +1701,28 @@ ${JSON.stringify(errData)}
 
   modeMenuClick(item: IMenuItem) {
     if (item.data?.mode) {
-      if (this.currentMode != item.data.mode) {
-        // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
-        if (this.list.length > 1) {
-          // 显示确认弹窗
-          this.modal.confirm({
-            nzTitle: '确认切换模式',
-            nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
-            nzOkText: '确认',
-            nzCancelText: '取消',
-            nzOnOk: () => {
-              this.switchToMode(item.data.mode);
-            },
-            nzOnCancel: () => {
-              console.log('用户取消了模式切换');
-            }
-          });
-          return;
-        }
+      this.switchToMode(item.data.mode);
+      // if (this.currentMode != item.data.mode) {
+      //   // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
+      //   if (this.list.length > 1) {
+      //     // 显示确认弹窗
+      //     this.modal.confirm({
+      //       nzTitle: '确认切换模式',
+      //       nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
+      //       nzOkText: '确认',
+      //       nzCancelText: '取消',
+      //       nzOnOk: () => {
+      //         this.switchToMode(item.data.mode);
+      //       },
+      //       nzOnCancel: () => {
+      //         console.log('用户取消了模式切换');
+      //       }
+      //     });
+      //     return;
+      //   }
 
-        this.switchToMode(item.data.mode);
-      }
+      //   this.switchToMode(item.data.mode);
+      // }
     }
     this.showMode = false;
   }
@@ -1734,10 +1731,11 @@ ${JSON.stringify(errData)}
    * 切换AI模式并创建新会话
    * @param mode 要切换到的模式
    */
-  private switchToMode(mode: string) {
+  private async switchToMode(mode: string) {
     this.chatService.currentMode = mode;
     console.log('切换AI模式为:', this.currentMode);
-    this.newChat();
+    await this.stopAndCloseSession();
+    await this.startSession();
   }
 
   /**
