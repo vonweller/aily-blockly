@@ -97,7 +97,7 @@ export class AilyChatComponent implements OnDestroy {
     "state": "done"
   }];
 
-  list: ChatMessage[] = [...this.defaultList.map(item => ({...item}))];
+  list: ChatMessage[] = [...this.defaultList.map(item => ({ ...item }))];
   // list = ChatListExamples  // 示例数据
 
   currentUrl;
@@ -463,14 +463,12 @@ export class AilyChatComponent implements OnDestroy {
 {
   "message": ${res.message || '启动会话失败，请稍后重试。'}
 }
-\`\`\`\n\n
-
-            `)
+\`\`\`\n\n`)
             reject(new Error(res.message || '启动会话失败'));
           }
         },
         error: (err) => {
-          console.error('启动会话失败:', err);
+          console.warn('启动会话失败:', err);
           let errData = {
             status: err.status,
             message: err.message
@@ -478,8 +476,7 @@ export class AilyChatComponent implements OnDestroy {
           this.appendMessage('error', `
 \`\`\`aily-error
 ${JSON.stringify(errData)}
-\`\`\`\n\n
-            `)
+\`\`\`\n\n`)
           reject(err);
         }
       });
@@ -594,7 +591,7 @@ ${JSON.stringify(errData)}
         if (!this.isWaiting) {
           return; // 如果不在等待状态，直接返回
         }
-        
+
         console.log("=============== start ==========")
         console.log("Rev: ", data);
         console.log("=============== end ==========")
@@ -1191,7 +1188,7 @@ ${JSON.stringify(errData)}
       if (this.isWaiting) {
         return;
       }
-      
+
       if (this.isCompleted) {
         console.log('上次会话已完成，需要重新启动会话');
         await this.resetChat();
@@ -1335,7 +1332,7 @@ ${JSON.stringify(errData)}
 
   async newChat() {
     console.log('启动新会话');
-    this.list = [...this.defaultList.map(item => ({...item}))];
+    this.list = [...this.defaultList.map(item => ({ ...item }))];
 
     console.log("CurrentList: ", this.list);
     // 新会话时重新启用自动滚动
