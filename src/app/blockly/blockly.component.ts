@@ -230,6 +230,14 @@ export class BlocklyComponent {
               state: 'error',
               setTimeout: 99000,
             });
+          } else {
+            this.noticeService.update({
+              title: '未知错误',
+              text: errorMessage,
+              detail: errorMessage,
+              state: 'error',
+              setTimeout: 99000,
+            });
           }
         };
       })(console.error);
