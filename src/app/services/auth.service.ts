@@ -437,7 +437,7 @@ export class AuthService {
         localStorage.setItem(this.USER_INFO_KEY, userInfoStr);
       }
     } catch (error) {
-      console.error('保存用户信息失败:', error);
+      console.log('保存用户信息失败:', error);
     }
   }
 
