@@ -32,7 +32,7 @@ export class FetchToolService {
 
   async executeFetch(args: FetchToolArgs): Promise<FetchToolResult> {
     try {
-      const {
+      let {
         url,
         method = 'GET',
         headers = {},
@@ -52,6 +52,16 @@ export class FetchToolService {
           content: '无效的URL地址',
           is_error: true
         };
+      }
+
+      // 如果headers是字符串，尝试解析为JSON对象
+      if (headers && typeof headers === 'string') {
+        try {
+          headers = JSON.parse(headers);
+        } catch (error) {
+          console.warn('Headers字符串解析失败，使用默认空对象:', error);
+          headers = {};
+        }
       }
 
       // 设置请求头

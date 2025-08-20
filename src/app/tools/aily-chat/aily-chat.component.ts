@@ -28,6 +28,7 @@ import { readFileTool } from './tools/readFileTool';
 import { createFileTool } from './tools/createFileTool';
 import { createFolderTool } from './tools/createFolderTool';
 import { editFileTool } from './tools/editFileTool';
+import { editAbiFileTool } from './tools/editAbiFileTool';
 import { deleteFileTool } from './tools/deleteFileTool';
 import { deleteFolderTool } from './tools/deleteFolderTool';
 import { checkExistsTool } from './tools/checkExistsTool';
@@ -236,6 +237,12 @@ export class AilyChatComponent implements OnDestroy {
     }
   }
 
+  getCurrentProjectPath(): string {
+    return this.projectService.currentProjectPath !== this.projectService.projectRootPath
+      ? this.projectService.currentProjectPath
+      : '';
+  }
+
   // 内置工具
   tools: Tool[] = TOOLS;
 
@@ -273,6 +280,7 @@ export class AilyChatComponent implements OnDestroy {
     // 订阅登录状态变化
     this.loginStatusSubscription = this.authService.isLoggedIn$.subscribe(
       isLoggedIn => {
+        this.list = [...this.defaultList.map(item => ({...item}))]; // 重置消息列表
         this.startSession().then(() => {
           this.getHistory();
         });
@@ -318,16 +326,16 @@ export class AilyChatComponent implements OnDestroy {
 
   async disconnect() {
     try {
-      // 先停止会话
+      // 先取消对话
       if (this.sessionId) {
         await new Promise<void>((resolve) => {
-          this.chatService.stopSession(this.sessionId).subscribe({
+          this.chatService.cancelTask(this.sessionId).subscribe({
             next: (res: any) => {
-              console.log('关闭时会话已停止:', res);
+              console.log('取消对话成功:', res);
               resolve();
             },
             error: (err) => {
-              console.error('关闭时停止会话失败:', err);
+              console.error('取消对话失败:', err);
               resolve(); // 即使失败也继续
             }
           });
@@ -526,6 +534,9 @@ ${JSON.stringify(errData)}
         return;
       }
 
+      // 将用户输入的文本包裹在<user-query>标签中
+      text = `<user-query>${text}</user-query>`;
+
       const resourcesText = this.getResourcesText();
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
@@ -571,15 +582,6 @@ ${JSON.stringify(errData)}
         console.error('取消任务失败:', res);
       }
     });
-
-    // this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
-    //   // 处理停止会话的响应
-    //   if (res.status == 'success') {
-    //     console.log('会话已停止:', res);
-    //     return;
-    //   }
-    //   console.error('停止会话失败:', res);
-    // });
   }
 
   streamConnect(): void {
@@ -602,6 +604,8 @@ ${JSON.stringify(errData)}
             if (data.content) {
               this.appendMessage('aily', data.content);
             }
+          } else if (data.type === 'TextMessage') {
+            // 每条完整的对话信息
           } else if (data.type === 'ToolCallRequestEvent') {
             // 处理工具调用请求
           } else if (data.type === 'ToolCallExecutionEvent') {
@@ -632,12 +636,19 @@ ${JSON.stringify(errData)}
               }
             }
           } else if (data.type === 'error') {
-            console.error('助手出错:', data.data);
             // 设置最后一条AI消息状态为done（如果存在）
             if (this.list.length > 0 && this.list[this.list.length - 1].role === 'aily') {
               this.list[this.list.length - 1].state = 'done';
             }
-            this.appendMessage('错误', '助手出错: ' + (data.message || '未知错误'));
+            this.appendMessage('错误', `
+
+\`\`\`aily-error
+{
+  "message": "${data.message || '未知错误'}"
+}
+\`\`\`\n\n
+
+          `);
             this.isWaiting = false;
           } else if (data.type === 'tool_call_request') {
             let toolArgs;
@@ -1040,6 +1051,101 @@ ${JSON.stringify(errData)}
 
                       `)
                     break;
+                  case 'edit_abi_file':
+                    console.log('[编辑ABI文件工具被调用]', toolArgs);
+                    
+                    // 根据操作模式生成不同的状态文本
+                    let abiOperationText = "正在编辑ABI文件...";
+                    if (toolArgs.replaceStartLine !== undefined) {
+                      if (toolArgs.replaceEndLine !== undefined && toolArgs.replaceEndLine !== toolArgs.replaceStartLine) {
+                        abiOperationText = `正在替换ABI文件第 ${toolArgs.replaceStartLine}-${toolArgs.replaceEndLine} 行内容...`;
+                      } else {
+                        abiOperationText = `正在替换ABI文件第 ${toolArgs.replaceStartLine} 行内容...`;
+                      }
+                    } else if (toolArgs.insertLine !== undefined) {
+                      abiOperationText = `正在ABI文件第 ${toolArgs.insertLine} 行插入内容...`;
+                    } else if (toolArgs.replaceMode === false) {
+                      abiOperationText = "正在向ABI文件末尾追加内容...";
+                    }
+                    
+                    this.appendMessage('aily', `
+
+\`\`\`aily-state
+{
+  "state": "doing",
+  "text": "${abiOperationText}",
+  "id": "${toolCallId}"
+}
+\`\`\`\n\n
+                    `);
+
+                    const currentProjectPath = this.getCurrentProjectPath();
+                    if (!currentProjectPath) {
+                      console.warn('当前未打开项目');
+                      resultState = "error";
+                      resultText = "当前未打开项目";
+                    } else {
+                      // 构建editAbiFileTool的参数，传递所有可能的参数
+                      const editAbiParams: any = {
+                        path: currentProjectPath,
+                        content: toolArgs.content
+                      };
+
+                      // 传递可选参数
+                      if (toolArgs.insertLine !== undefined) {
+                        editAbiParams.insertLine = toolArgs.insertLine;
+                      }
+                      if (toolArgs.replaceStartLine !== undefined) {
+                        editAbiParams.replaceStartLine = toolArgs.replaceStartLine;
+                      }
+                      if (toolArgs.replaceEndLine !== undefined) {
+                        editAbiParams.replaceEndLine = toolArgs.replaceEndLine;
+                      }
+                      if (toolArgs.replaceMode !== undefined) {
+                        editAbiParams.replaceMode = toolArgs.replaceMode;
+                      }
+                      if (toolArgs.encoding !== undefined) {
+                        editAbiParams.encoding = toolArgs.encoding;
+                      }
+                      if (toolArgs.createIfNotExists !== undefined) {
+                        editAbiParams.createIfNotExists = toolArgs.createIfNotExists;
+                      }
+
+                      const editAbiResult = await editAbiFileTool(editAbiParams);
+                      toolResult = {
+                        "content": editAbiResult.content,
+                        "is_error": editAbiResult.is_error
+                      }
+                      if (toolResult.is_error) {
+                        resultState = "error";
+                        resultText = 'ABI文件编辑失败: ' + (toolResult.content || '未知错误');
+                      } else {
+                        // 根据操作模式生成不同的成功文本
+                        if (toolArgs.insertLine !== undefined) {
+                          resultText = `ABI文件第 ${toolArgs.insertLine} 行插入内容成功`;
+                        } else if (toolArgs.replaceStartLine !== undefined) {
+                          if (toolArgs.replaceEndLine !== undefined && toolArgs.replaceEndLine !== toolArgs.replaceStartLine) {
+                            resultText = `ABI文件第 ${toolArgs.replaceStartLine}-${toolArgs.replaceEndLine} 行替换成功`;
+                          } else {
+                            resultText = `ABI文件第 ${toolArgs.replaceStartLine} 行替换成功`;
+                          }
+                        } else if (toolArgs.replaceMode === false) {
+                          resultText = 'ABI文件内容追加成功';
+                        } else {
+                          resultText = 'ABI文件编辑成功';
+                        }
+
+                        // 导入工具函数
+                        const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
+                        const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
+                        const reloadResult = await reloadAbiJsonService.executeReloadAbiJson(toolArgs);
+                        toolResult = {
+                          content: reloadResult.content,
+                          is_error: reloadResult.is_error
+                        }
+                      }
+                    }
+                    break;
                   case 'reload_abi_json':
                     console.log('[重新加载ABI JSON工具被调用]', toolArgs);
                     this.appendMessage('aily', `
@@ -1330,15 +1436,7 @@ ${JSON.stringify(errData)}
   // 当前AI模式
   // currentMode = 'agent'; // 默认为代理模式
 
-  async newChat() {
-    console.log('启动新会话');
-    this.list = [...this.defaultList.map(item => ({ ...item }))];
-
-    console.log("CurrentList: ", this.list);
-    // 新会话时重新启用自动滚动
-    this.autoScrollEnabled = true;
-    this.isCompleted = false;
-
+  async stopAndCloseSession() {
     try {
       // 等待停止操作完成
       await new Promise<void>((resolve) => {
@@ -1378,19 +1476,23 @@ ${JSON.stringify(errData)}
           }
         });
       });
-
-      this.chatService.currentSessionId = '';
-      // 最后启动新会话
-      await this.startSession();
     } catch (error) {
-      console.error('重新启动会话失败:', error);
-      // 即使出错也尝试启动新会话
-      try {
-        await this.startSession();
-      } catch (retryError) {
-        console.error('重试启动会话也失败:', retryError);
-      }
+      console.error('停止和关闭会话失败:', error);
     }
+  }
+
+  async newChat() {
+    console.log('启动新会话');
+    this.list = [...this.defaultList.map(item => ({...item}))];
+
+    console.log("CurrentList: ", this.list);
+    // 新会话时重新启用自动滚动
+    this.autoScrollEnabled = true;
+    this.isCompleted = false;
+
+    await this.stopAndCloseSession();
+    this.chatService.currentSessionId = '';
+    await this.startSession();
   }
 
   selectContent: ResourceItem[] = []
@@ -1548,6 +1650,11 @@ ${JSON.stringify(errData)}
       text += '\n\n';
     }
 
+    // 将整个资源描述文本包裹在context标签中
+    if (text) {
+      text = `<context>\n${text}</context>`;
+    }
+
     return text.trim();
   }
 
@@ -1616,28 +1723,29 @@ ${JSON.stringify(errData)}
   }
 
   modeMenuClick(item: IMenuItem) {
-    if (item.data?.mode) {
-      if (this.currentMode != item.data.mode) {
-        // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
-        if (this.list.length > 1) {
-          // 显示确认弹窗
-          this.modal.confirm({
-            nzTitle: '确认切换模式',
-            nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
-            nzOkText: '确认',
-            nzCancelText: '取消',
-            nzOnOk: () => {
-              this.switchToMode(item.data.mode);
-            },
-            nzOnCancel: () => {
-              console.log('用户取消了模式切换');
-            }
-          });
-          return;
-        }
+    if (item.data?.mode && item.data.mode !== this.currentMode) {
+      this.switchToMode(item.data.mode);
+      // if (this.currentMode != item.data.mode) {
+      //   // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
+      //   if (this.list.length > 1) {
+      //     // 显示确认弹窗
+      //     this.modal.confirm({
+      //       nzTitle: '确认切换模式',
+      //       nzContent: '切换AI模式会创建新的对话会话, 是否继续？',
+      //       nzOkText: '确认',
+      //       nzCancelText: '取消',
+      //       nzOnOk: () => {
+      //         this.switchToMode(item.data.mode);
+      //       },
+      //       nzOnCancel: () => {
+      //         console.log('用户取消了模式切换');
+      //       }
+      //     });
+      //     return;
+      //   }
 
-        this.switchToMode(item.data.mode);
-      }
+      //   this.switchToMode(item.data.mode);
+      // }
     }
     this.showMode = false;
   }
@@ -1646,10 +1754,11 @@ ${JSON.stringify(errData)}
    * 切换AI模式并创建新会话
    * @param mode 要切换到的模式
    */
-  private switchToMode(mode: string) {
+  private async switchToMode(mode: string) {
     this.chatService.currentMode = mode;
     console.log('切换AI模式为:', this.currentMode);
-    this.newChat();
+    await this.stopAndCloseSession();
+    await this.startSession();
   }
 
   /**
