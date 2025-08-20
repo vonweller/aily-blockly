@@ -699,12 +699,57 @@ export class DialogComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   fixContent(content: string): string {
+    // 处理大模型发来的数据中的转义字符
+    content = content.replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r');
+
+    // 修复代码块结束符号后缺少换行符的问题
+    content = this.fixCodeBlockEndings(content);
+
     // 修复mermaid代码块没有语言类型的问题
     return content.replace(/```\n\s*flowchart/g, '```aily-mermaid\nflowchart')
       .replace(/\s*```aily-board/g, '\n```aily-board\n')
       .replace(/\s*```aily-library/g, '\n```aily-library\n')
       .replace(/\s*```aily-state/g, '\n```aily-state\n')
+      .replace(/\s*```aily-button/g, '\n```aily-button\n')
       .replace(/\[thinking...\]/g, '');
+  }
+
+  /**
+   * 修复代码块结束符号后缺少换行符的问题
+   */
+  private fixCodeBlockEndings(content: string): string {
+    // 定义 aily 代码块类型
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid'];
+
+    // 只处理代码块结束符号 ``` (不是开始符号)
+    // 查找所有的 ``` 并判断是否为结束符号
+    content = content.replace(/```([^\n`]*)/g, (match, afterBackticks) => {
+      // 如果 ``` 后面跟的是 aily 类型，说明这是开始符号，不需要换行
+      const isAilyStart = ailyTypes.some(type => afterBackticks.startsWith(type));
+
+      if (isAilyStart) {
+        // 这是 aily 代码块的开始，保持原样
+        return match;
+      } else {
+        // 这是代码块的结束或者其他情况，确保后面有换行符
+        if (afterBackticks === '') {
+          // 纯粹的 ``` 结束符号
+          return '```\n';
+        } else {
+          // ``` 后面跟着其他内容，添加换行符分隔
+          return '```\n' + afterBackticks;
+        }
+      }
+    });
+
+    // 确保文本末尾的 ``` 后面有换行符（如果它是结束符号）
+    if (content.endsWith('```')) {
+      content += '\n';
+    }
+
+    return content;
   }
 
   test() {
