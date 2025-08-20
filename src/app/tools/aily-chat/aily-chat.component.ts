@@ -326,16 +326,16 @@ export class AilyChatComponent implements OnDestroy {
 
   async disconnect() {
     try {
-      // 先停止会话
+      // 先取消对话
       if (this.sessionId) {
         await new Promise<void>((resolve) => {
-          this.chatService.stopSession(this.sessionId).subscribe({
+          this.chatService.cancelTask(this.sessionId).subscribe({
             next: (res: any) => {
-              console.log('关闭时会话已停止:', res);
+              console.log('取消对话成功:', res);
               resolve();
             },
             error: (err) => {
-              console.error('关闭时停止会话失败:', err);
+              console.error('取消对话失败:', err);
               resolve(); // 即使失败也继续
             }
           });
@@ -1175,11 +1175,11 @@ ${JSON.stringify(errData)}
                         // 导入工具函数
                         const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
                         const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
-                        await reloadAbiJsonService.executeReloadAbiJson(toolArgs).then(() => {
-                          console.log('ABI JSON重新加载成功');
-                        }).catch((error) => {
-                          console.error('ABI JSON重新加载失败:', error);
-                        });
+                        const reloadResult = await reloadAbiJsonService.executeReloadAbiJson(toolArgs);
+                        toolResult = {
+                          content: reloadResult.content,
+                          is_error: reloadResult.is_error
+                        }
                       }
                     }
                     break;
