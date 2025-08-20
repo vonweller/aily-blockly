@@ -145,7 +145,7 @@ export const TOOLS = [
     },
     {
         name: "edit_file",
-        description: `编辑已存在的文件内容。可选择当文件不存在时是否创建新文件。`,
+        description: `编辑文件工具。支持多种编辑模式：1) 替换整个文件内容（默认）；2) 在指定行插入内容；3) 替换指定行或行范围；4) 追加到文件末尾。可选择当文件不存在时是否创建新文件。`,
         input_schema: {
             type: 'object',
             properties: {
@@ -155,7 +155,7 @@ export const TOOLS = [
                 },
                 content: {
                     type: 'string',
-                    description: '新的文件内容'
+                    description: '要写入的内容。替换模式下是新的文件内容；插入/替换模式下可以是任意文本内容'
                 },
                 encoding: {
                     type: 'string',
@@ -166,6 +166,23 @@ export const TOOLS = [
                     type: 'boolean',
                     description: '如果文件不存在是否创建',
                     default: false
+                },
+                insertLine: {
+                    type: 'number',
+                    description: '插入行号（从1开始）。指定此参数时会在该行插入内容'
+                },
+                replaceStartLine: {
+                    type: 'number',
+                    description: '替换起始行号（从1开始）。指定此参数时会替换指定行的内容'
+                },
+                replaceEndLine: {
+                    type: 'number',
+                    description: '替换结束行号（从1开始）。与replaceStartLine配合使用，可替换多行内容。如不指定则只替换起始行'
+                },
+                replaceMode: {
+                    type: 'boolean',
+                    description: '是否替换整个文件内容。true=替换整个文件（默认），false=执行其他操作（插入、替换行、追加）',
+                    default: true
                 }
             },
             required: ['path', 'content']
