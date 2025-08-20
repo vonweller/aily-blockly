@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ViewChild, ElementRef } from '@angular/core';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { FormsModule } from '@angular/forms';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -16,7 +16,6 @@ import { PortItem, SerialService } from '../../services/serial.service';
 import { ProjectService } from '../../services/project.service';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { SerialMonitorService } from './serial-monitor.service';
-import { SimplebarAngularComponent, SimplebarAngularModule } from 'simplebar-angular';
 import { HistoryMessageListComponent } from './components/history-message-list/history-message-list.component';
 import { QuickSendListComponent } from './components/quick-send-list/quick-send-list.component';
 import { CompactType, GridsterComponent, GridsterItemComponent, GridType } from 'angular-gridster2';
@@ -43,7 +42,6 @@ import { Buffer } from 'buffer';
     DataItemComponent,
     NzSwitchModule,
     MenuComponent,
-    SimplebarAngularModule,
     HistoryMessageListComponent,
     QuickSendListComponent,
     SettingMoreComponent,
@@ -55,17 +53,11 @@ import { Buffer } from 'buffer';
 })
 export class SerialMonitorComponent {
 
-  @ViewChild(SimplebarAngularComponent) simplebar: SimplebarAngularComponent;
+  @ViewChild('scrollContainer') scrollContainer: ElementRef;
 
   get viewMode() {
     return this.serialMonitorService.viewMode;
   }
-
-  options = {
-    autoHide: false,
-    clickOnTrack: true,
-    scrollbarMinSize: 50,
-  };
 
   gridOptions = {
     margin: 10,
@@ -184,8 +176,8 @@ export class SerialMonitorComponent {
       setTimeout(() => {
         this.cd.detectChanges();
         if (this.autoScroll) {
-          if (this.simplebar.SimpleBar) {
-            this.simplebar.SimpleBar.getScrollElement().scrollTop = this.simplebar.SimpleBar.getScrollElement().scrollHeight;
+          if (this.scrollContainer && this.scrollContainer.nativeElement) {
+            this.scrollContainer.nativeElement.scrollTop = this.scrollContainer.nativeElement.scrollHeight;
           }
         }
       }, 10);
@@ -193,8 +185,8 @@ export class SerialMonitorComponent {
 
     // 添加滚动事件监听
     setTimeout(() => {
-      if (this.simplebar && this.simplebar.SimpleBar) {
-        this.simplebar.SimpleBar.getScrollElement().addEventListener('scroll', this.handleScroll.bind(this));
+      if (this.scrollContainer && this.scrollContainer.nativeElement) {
+        this.scrollContainer.nativeElement.addEventListener('scroll', this.handleScroll.bind(this));
       }
     }, 100);
 

@@ -1,10 +1,10 @@
 .search-box {
     position: absolute;
-    bottom: 0;
-    right: 0;
+    bottom: 35px;
+    right: 5px;
     background: #202020;
-    border-radius: 5px 0 5px 0;
-    width: 240px;
+    border-radius: 5px;
+    width: 200px;
 
     nz-input-group {
         border: none;
