@@ -65,7 +65,8 @@
         "UPLOAD_SPEED": "Upload Speed",
         "FLASH_MODE": "Flash Mode",
         "FLASH_SIZE": "Flash Size",
-        "PARTITION_SCHEME": "Partition Scheme"
+        "PARTITION_SCHEME": "Partition Scheme",
+        "CDC_ON_BOOT": "USB CDC on Boot"
     },
     "GUIDE": {
         "START": "Start",

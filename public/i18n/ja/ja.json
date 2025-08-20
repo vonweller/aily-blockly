@@ -30,7 +30,8 @@
         "UPLOAD_SPEED": "書き込み速度",
         "FLASH_MODE": "フラッシュモード",
         "FLASH_SIZE": "フラッシュサイズ",
-        "PARTITION_SCHEME": "パーティション方式"
+        "PARTITION_SCHEME": "パーティション方式",
+        "CDC_ON_BOOT": "USBシリアル通信"
     },
     "GUIDE": {
         "START": "スタート",

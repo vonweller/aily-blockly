@@ -30,7 +30,8 @@
         "UPLOAD_SPEED": "Velocidad de subida",
         "FLASH_MODE": "Modo Flash",
         "FLASH_SIZE": "Tamaño Flash",
-        "PARTITION_SCHEME": "Esquema de partición"
+        "PARTITION_SCHEME": "Esquema de partición",
+        "CDC_ON_BOOT": "USB CDC en arranque"
     },
     "GUIDE": {
         "START": "Inicio",

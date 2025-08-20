@@ -425,7 +425,8 @@ export class ProjectService {
         uploadSpeed: this.extractMenuOptions(boardConfig, 'UploadSpeed'),
         flashMode: this.extractMenuOptions(boardConfig, 'FlashMode'),
         flashSize: this.extractMenuOptions(boardConfig, 'FlashSize'),
-        partitionScheme: this.extractMenuOptions(boardConfig, 'PartitionScheme')
+        partitionScheme: this.extractMenuOptions(boardConfig, 'PartitionScheme'),
+        cdcOnBoot: this.extractMenuOptions(boardConfig, 'CDCOnBoot')
       };
 
       return esp32Config;
@@ -670,6 +671,17 @@ export class ProjectService {
             menuItem.children.forEach((child: any) => {
               child.check = false;
               if (this.compareConfigs(child.data, currentProjectConfig.PartitionScheme, ['partitions', 'maximum_size'])) {
+                child.check = true;
+              }
+            });
+          }
+        } else if (menuItem.name === 'ESP32.CDC_ON_BOOT' && boardConfig.cdcOnBoot) {
+          menuItem.children = boardConfig.cdcOnBoot;
+          // 根据当前项目配置设置check状态
+          if (currentProjectConfig.CDCOnBoot) {
+            menuItem.children.forEach((child: any) => {
+              child.check = false;
+              if (this.compareConfigs(child.data, currentProjectConfig.CDCOnBoot, ['cdc_on_boot'])) {
                 child.check = true;
               }
             });
