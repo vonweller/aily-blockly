@@ -534,6 +534,9 @@ ${JSON.stringify(errData)}
         return;
       }
 
+      // 将用户输入的文本包裹在<user-query>标签中
+      text = `<user-query>${text}</user-query>`;
+
       const resourcesText = this.getResourcesText();
       if (resourcesText) {
         text = resourcesText + '\n\n' + text;
@@ -579,48 +582,6 @@ ${JSON.stringify(errData)}
         console.error('取消任务失败:', res);
       }
     });
-
-    // this.chatService.stopSession(this.sessionId).subscribe((res: any) => {
-    //   // 处理停止会话的响应
-    //   if (res.status == 'success') {
-    //     console.log('会话已停止:', res);
-    //     return;
-    //   }
-    //   console.error('停止会话失败:', res);
-    // });
-  }
-
-  async handleEditAbiFile(toolArgs) {
-    // 获取当前项目路径
-    let resultState;
-    let resultText;
-    let toolResult;
-  
-    const currentProjectPath = this.getCurrentProjectPath();
-    if (!currentProjectPath) {
-      console.warn('当前未打开项目');
-      resultState = "error";
-      resultText = "当前未打开项目";
-    } else {
-      const toolResult = await editAbiFileTool({ path: currentProjectPath, content: toolArgs.content });
-      if (toolResult.is_error) {
-        resultState = "error";
-        resultText = 'ABI文件编辑失败: ' + (toolResult.content || '未知错误');
-      } else {
-        resultText = 'ABI文件编辑成功';
-
-        // 导入工具函数
-        const { ReloadAbiJsonToolService } = await import('./tools/reloadAbiJsonTool');
-        const reloadAbiJsonService = new ReloadAbiJsonToolService(this.blocklyService, this.projectService);
-        await reloadAbiJsonService.executeReloadAbiJson(toolArgs).then(() => {
-          console.log('ABI JSON重新加载成功');
-        }).catch((error) => {
-          console.error('ABI JSON重新加载失败:', error);
-        });
-      }
-    }
-
-    return { state: resultState, text: resultText, toolResult: toolResult };
   }
 
   streamConnect(): void {
@@ -643,6 +604,8 @@ ${JSON.stringify(errData)}
             if (data.content) {
               this.appendMessage('aily', data.content);
             }
+          } else if (data.type === 'TextMessage') {
+            // 每条完整的对话信息
           } else if (data.type === 'ToolCallRequestEvent') {
             // 处理工具调用请求
           } else if (data.type === 'ToolCallExecutionEvent') {
@@ -1687,6 +1650,11 @@ ${JSON.stringify(errData)}
       text += '\n\n';
     }
 
+    // 将整个资源描述文本包裹在context标签中
+    if (text) {
+      text = `<context>\n${text}</context>`;
+    }
+
     return text.trim();
   }
 
@@ -1755,7 +1723,7 @@ ${JSON.stringify(errData)}
   }
 
   modeMenuClick(item: IMenuItem) {
-    if (item.data?.mode) {
+    if (item.data?.mode && item.data.mode !== this.currentMode) {
       this.switchToMode(item.data.mode);
       // if (this.currentMode != item.data.mode) {
       //   // 判断是否已经有对话内容产生，有则提醒切换模式会创建新的session
