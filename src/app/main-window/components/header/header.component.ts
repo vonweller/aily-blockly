@@ -405,6 +405,25 @@ export class HeaderComponent {
   listenShortcutKeys() {
     this.initShortcutMap();
     window.addEventListener('keydown', (event: KeyboardEvent) => {
+      // 处理窗口缩放快捷键
+      if (event.ctrlKey && !event.shiftKey && !event.altKey) {
+        if (event.key === '-' || event.key === '_') {
+          event.preventDefault();
+          this.zoomOut();
+          return;
+        }
+        if (event.key === '=' || event.key === '+') {
+          event.preventDefault();
+          this.zoomIn();
+          return;
+        }
+        if (event.key === '0') {
+          event.preventDefault();
+          this.resetZoom();
+          return;
+        }
+      }
+
       // 只处理包含修饰键的组合键
       if (event.ctrlKey || event.shiftKey || event.altKey) {
         const shortcutKey = this.getShortcutFromEvent(event);
@@ -425,6 +444,43 @@ export class HeaderComponent {
         }
       }
     });
+  }
+
+  // 窗口缩放功能
+  private currentZoomLevel = 0; // 0表示100%缩放
+
+  zoomIn() {
+    this.currentZoomLevel = Math.min(this.currentZoomLevel + 0.5, 3);
+    this.setZoomLevel(this.currentZoomLevel);
+  }
+
+  zoomOut() {
+    this.currentZoomLevel = Math.max(this.currentZoomLevel - 0.5, -3);
+    this.setZoomLevel(this.currentZoomLevel);
+  }
+
+  resetZoom() {
+    this.currentZoomLevel = 0;
+    this.setZoomLevel(this.currentZoomLevel);
+  }
+
+  private setZoomLevel(level: number) {
+    if (this.electronService.isElectron) {
+      // 使用preload中暴露的webFrame API设置缩放级别
+      window['webFrame'].setZoomLevel(level);
+    } else {
+      // 在浏览器中使用CSS transform作为备选方案
+      const zoomFactor = Math.pow(1.2, level);
+      document.body.style.transform = `scale(${zoomFactor})`;
+      document.body.style.transformOrigin = 'top left';
+      if (zoomFactor !== 1) {
+        document.body.style.width = `${100 / zoomFactor}%`;
+        document.body.style.height = `${100 / zoomFactor}%`;
+      } else {
+        document.body.style.width = '';
+        document.body.style.height = '';
+      }
+    }
   }
 
   async checkUnsavedChanges(action: 'close' | 'open' | 'new'): Promise<boolean> {
@@ -483,7 +539,6 @@ export class HeaderComponent {
       });
     });
   }
-
 
   showInRouter(menuItem: IMenuItem) {
     if (!menuItem.router) {

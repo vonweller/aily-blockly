@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, shell, safeStorage } = require("electron");
+const { contextBridge, ipcRenderer, shell, safeStorage, webFrame } = require("electron");
 const { SerialPort } = require("serialport");
 const { exec } = require("child_process");
 const { existsSync, statSync } = require("fs");
@@ -267,5 +267,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
     encryptString: (plainText) => safeStorage.encryptString(plainText),
     decryptString: (encrypted) => safeStorage.decryptString(encrypted)
+  },
+  // 窗口缩放 API
+  webFrame: {
+    setZoomLevel: (level) => webFrame.setZoomLevel(level),
+    getZoomLevel: () => webFrame.getZoomLevel(),
+    setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
+    getZoomFactor: () => webFrame.getZoomFactor()
   }
 });
