@@ -248,11 +248,29 @@ export class RepetitionDetectionService {
     return this._cachedStreamText;
   }
 
-  /** Think 缓冲区最大长度 */
-  private readonly MAX_THINK_TOKENS = 1500;
+  /** Think 缓冲区最大 token 数（元素数量上限，防止数组无限增长） */
+  private readonly MAX_THINK_TOKENS = 12000;
+
+  /**
+   * Think 缓冲区最大字符数。与 MAX_THINK_TOKENS 双重限制，取先到者。
+   * 当 SSE chunk 很小（如 1-3 字符/chunk）时，MAX_THINK_TOKENS 可能只保留很少字符。
+   * 此限制确保无论 chunk 大小，缓冲区至少保留足够的文本用于句子级检测。
+   */
+  private readonly MAX_THINK_CHARS = 12000;
+
+  /** Think 缓冲区当前字符总数（增量跟踪，避免反复 join 计算） */
+  private thinkCharsCount = 0;
 
   /** Think 内检测间隔（每 N 个 token 检测一次） */
   private readonly THINK_CHECK_INTERVAL = 8;
+
+  /**
+   * Think token 推入计数器（独立于 thinkTokens.length，不受 trim 影响）。
+   * 修复：旧方案用 thinkTokens.length % interval 做节流，但当
+   * MAX_THINK_TOKENS % THINK_CHECK_INTERVAL ≠ 0 时，trim 后长度固定
+   * 在非零余数上，导致检测永远不再触发。
+   */
+  private thinkPushCounter = 0;
 
   // ==================== Think 标签检测状态机 ====================
 
@@ -347,6 +365,8 @@ export class RepetitionDetectionService {
         this.insideThink = true;
         this.thinkTokens = [];
         this._cachedThinkText = null;
+        this.thinkCharsCount = 0;
+        this.thinkPushCounter = 0;
         this.lastThinkTransition = 'entered';
       }
 
@@ -380,11 +400,21 @@ export class RepetitionDetectionService {
 
     if (insideThink) {
       this.thinkTokens.push(text);
+      this.thinkCharsCount += text.length;
+      this.thinkPushCounter++;
       if (this._cachedThinkText !== null) {
         this._cachedThinkText += text;
       }
-      if (this.thinkTokens.length > this.MAX_THINK_TOKENS) {
-        this.thinkTokens = this.thinkTokens.slice(-this.MAX_THINK_TOKENS);
+      // 双重限制：token 数量上限 OR 字符数量上限
+      if (this.thinkTokens.length > this.MAX_THINK_TOKENS || this.thinkCharsCount > this.MAX_THINK_CHARS) {
+        // 按字符数裁剪：从头部移除 token 直到字符数和 token 数都在限制内
+        while (
+          this.thinkTokens.length > 0 &&
+          (this.thinkTokens.length > this.MAX_THINK_TOKENS || this.thinkCharsCount > this.MAX_THINK_CHARS)
+        ) {
+          this.thinkCharsCount -= this.thinkTokens[0].length;
+          this.thinkTokens.shift();
+        }
         this._cachedThinkText = null; // trim 后缓存失效
       }
       return;
@@ -447,7 +477,8 @@ export class RepetitionDetectionService {
   }
 
   private checkThinkRepetition(): RepetitionCheckResult {
-    if (this.thinkTokens.length % this.THINK_CHECK_INTERVAL !== 0) {
+    // 使用独立计数器做节流，不依赖 thinkTokens.length（trim 后长度固定会导致检测停滞）
+    if (this.thinkPushCounter % this.THINK_CHECK_INTERVAL !== 0) {
       return { isRepetitive: false };
     }
     if (this.thinkTokens.length < this.MIN_TOKENS_FOR_DETECTION) {
@@ -1593,6 +1624,8 @@ export class RepetitionDetectionService {
       if (chunkResult.thinkClosedInChunk) {
         this.thinkTokens = [];
         this._cachedThinkText = null;
+        this.thinkCharsCount = 0;
+        this.thinkPushCounter = 0;
       }
       if (thinkResult.isRepetitive) {
         return {
@@ -1973,8 +2006,8 @@ export class RepetitionDetectionService {
 
     const normalized = sentences.map(s => this.normalizeSentence(s));
 
-    // 尝试不同的块大小（2~20 句为一个块）
-    const maxBlockSize = Math.min(20, Math.floor(normalized.length / 3));
+    // 尝试不同的块大小（2~40 句为一个块）
+    const maxBlockSize = Math.min(40, Math.floor(normalized.length / 3));
 
     for (let blockSize = 2; blockSize <= maxBlockSize; blockSize++) {
       // 取末尾 blockSize 个句子作为模式块
@@ -2588,6 +2621,8 @@ export class RepetitionDetectionService {
     this._fenceCount = 0;
     this.thinkTokens = [];
     this._cachedThinkText = null;
+    this.thinkCharsCount = 0;
+    this.thinkPushCounter = 0;
     this.contentBlocks = [];
     this.toolCallHistory = [];
     this.tagBuffer = '';
