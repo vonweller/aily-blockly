@@ -943,7 +943,7 @@ export async function validateConnectionGraphTool(
       return { is_error: true, content: '当前项目没有配置开发板，请先选择开发板。' };
     }
 
-    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin } = await import('../../../services/connection-aws');
+    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin, inferDataFlow } = await import('../../../services/connection-aws');
 
     // 1. 获取 AWS 内容
     let awsContent: string;
@@ -1074,11 +1074,15 @@ export async function validateConnectionGraphTool(
       const color = CONNECTION_COLORS[connType] || CONNECTION_COLORS.other;
       const label = conn.note || `${conn.type.toUpperCase()}: ${conn.fromPin} → ${conn.toPin}`;
 
+      // 推断数据流向
+      const flow = inferDataFlow(conn.type, fromResolved.functionName, toResolved.functionName, conn.arrow);
+
       connections.push({
         id: `conn_${connIndex++}`,
         from: { ref: conn.fromRef, pinId: fromResolved.pinId, function: fromResolved.functionName },
         to: { ref: conn.toRef, pinId: toResolved.pinId, function: toResolved.functionName },
         type: conn.type, label, color, bus: conn.bus,
+        direction: flow.direction, half: flow.half, animationPattern: flow.animationPattern,
       });
     }
 
@@ -1634,7 +1638,7 @@ export async function applySchematicTool(
     }
 
     // 5. 解析引脚并构建连线
-    const { resolvePin } = await import('../../../services/connection-aws');
+    const { resolvePin, inferDataFlow: inferDataFlow2 } = await import('../../../services/connection-aws');
     const connections: any[] = [];
     const resolveErrors: Array<{ message: string; line: number; source: string }> = [];
 
@@ -1687,6 +1691,9 @@ export async function applySchematicTool(
       const color = CONNECTION_COLORS[connType] || CONNECTION_COLORS.other;
       const label = conn.note || `${conn.type.toUpperCase()}: ${conn.fromPin} → ${conn.toPin}`;
 
+      // 推断数据流向
+      const flow2 = inferDataFlow2(conn.type, fromResolved.functionName, toResolved.functionName, conn.arrow);
+
       connections.push({
         id: `conn_${connIndex++}`,
         from: {
@@ -1703,6 +1710,9 @@ export async function applySchematicTool(
         label,
         color,
         bus: conn.bus,
+        direction: flow2.direction,
+        half: flow2.half,
+        animationPattern: flow2.animationPattern,
       });
     }
 
