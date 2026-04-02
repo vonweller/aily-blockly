@@ -924,8 +924,9 @@ Do not create non-existent boards and libraries.
   }
 
   /**
-   * Turn 开始前将已有 checkpoint 数据持久化到磁盘。
-   * 确保前一轮的快照不因崩溃而丢失（基线快照策略）。
+   * Turn 开始前提交并持久化前一轮的 checkpoint 数据到磁盘。
+   * 确保前一轮的快照不因崩溃而丢失。
+   * 注：pre-turn 基线快照由 startTurn() 内的 currentTurnBaselines 预捕获承担。
    */
   private saveCheckpointToDisk(): void {
     if (this.editCheckpointService.getTotalEditCount() === 0) return;

@@ -186,6 +186,22 @@ export class EditCheckpointService {
     this.currentTurnTrackedPaths.clear();
     this.currentTurnOperations.clear();
     this.currentTurnBaselines.clear();
+
+    // 预捕获所有已跟踪文件的当前磁盘态作为本轮基线（pre-turn 快照）。
+    // 对标 Copilot handleRequest 中创建 baseline checkpoint：
+    // 确保 turn 中的变更以"变更前"的磁盘状态为基准，
+    // 即使 recordEdit 未被调用也有完整的 pre-turn 状态可用于 diff 和回滚。
+    const fs = AilyHost.get().fs;
+    for (const filePath of this.initialFileContents.keys()) {
+      try {
+        if (fs.existsSync(filePath)) {
+          this.currentTurnBaselines.set(filePath, fs.readFileSync(filePath, 'utf-8'));
+        } else {
+          this.currentTurnBaselines.set(filePath, null);
+        }
+      } catch { /* ignore */ }
+    }
+
     this.isInTurn = true;
   }
 

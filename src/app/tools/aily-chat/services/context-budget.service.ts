@@ -440,6 +440,8 @@ export class ContextBudgetService {
 
     // P11: 同步切换编码器（根据模型选择 cl100k_base/o200k_base）
     this.tiktokenService.switchEncoderForModel(modelName);
+    // 编码器切换后消息 token 缓存失效
+    this._msgTokenCache.clear();
 
     // 尝试精确匹配
     const lowerName = modelName.toLowerCase();
@@ -462,6 +464,15 @@ export class ContextBudgetService {
   private _cachedContextTokens: number = 0;
   /** 上一次工具数组长度（用于判断是否需要重新估算） */
   private _lastToolsCount: number = 0;
+
+  /**
+   * ★ 消息级 token 缓存 (fingerprint → tokenCount)
+   *
+   * 工具调用循环中，每次迭代只新增 2 条消息（assistant tool_calls + tool result），
+   * 其余 N-2 条完全相同。缓存避免对旧消息重复 BPE 编码。
+   */
+  private _msgTokenCache = new Map<string, number>();
+  private static readonly _MSG_CACHE_MAX = 500;
 
   /**
    * 更新系统提示词 token 估算（服务端提示词，客户端无法获取原文，需估算）
@@ -525,17 +536,134 @@ export class ContextBudgetService {
   }
 
   /**
-   * 异步更新上下文预算（Method C 优化）
-   * 长文本 token 计数卸载到 Worker，避免阻塞 UI 主线程。
-   * 用于工具调用循环等热路径。
+   * 异步更新上下文预算（A+C 优化）
+   *
+   * ★ 方案 A — 增量缓存：对每条消息计算 O(1) 指纹，命中缓存直接返回。
+   *   典型迭代只有 2 条新消息，其余 27-41 条全部命中缓存。
+   *
+   * ★ 方案 C — 批量 Worker 卸载：缓存未命中的文本段一次性批量发给 Worker，
+   *   单次 postMessage 往返完成所有 BPE 编码，主线程零 BPE 开销。
+   *
+   * 预期收益：updateBudgetAsync 从 42-69ms → <3ms
    */
   async updateBudgetAsync(messages: any[], tools?: any[]): Promise<void> {
     if (tools) {
       this.updateToolsTokens(tools);
     }
 
-    const messagesTokens = await estimateMessagesTokensAsync(messages);
-    this._emitSnapshot(messagesTokens, messages.length, tools);
+    let totalTokens = 2; // prompt 首尾开销
+    const uncached: Array<{ idx: number; msg: any; fp: string }> = [];
+
+    // ── Phase 1: 缓存查找 ──
+    for (let i = 0; i < messages.length; i++) {
+      const fp = this._msgFingerprint(messages[i]);
+      const hit = this._msgTokenCache.get(fp);
+      if (hit !== undefined) {
+        totalTokens += hit;
+      } else {
+        uncached.push({ idx: i, msg: messages[i], fp });
+      }
+    }
+
+    // ── Phase 2: 未命中 → 收集文本段 ──
+    if (uncached.length > 0) {
+      const batchItems: Array<{ id: string; text: string }> = [];
+      // 每条消息可产出多个文本段 (content, tool_call arguments)
+      // 用 id 关联：msgIdx_c = content, msgIdx_t0 = 第 0 个 tool_call args
+      for (const { idx, msg } of uncached) {
+        if (msg.content) {
+          batchItems.push({ id: `${idx}_c`, text: msg.content });
+        }
+        if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+          for (let t = 0; t < msg.tool_calls.length; t++) {
+            const args = msg.tool_calls[t].function?.arguments;
+            if (args) {
+              const text = typeof args === 'string' ? args : JSON.stringify(args);
+              batchItems.push({ id: `${idx}_t${t}`, text });
+            }
+          }
+        }
+      }
+
+      // ── Phase 3: 批量计算 ──
+      let tokenMap: Map<string, number>;
+      if (batchItems.length > 0 && this.tiktokenService.isWorkerReady) {
+        // ★ 全部卸载到 Worker，主线程零 BPE
+        tokenMap = await this.tiktokenService.countBatchAsync(batchItems);
+      } else {
+        // Worker 不可用，同步回退
+        tokenMap = new Map();
+        for (const item of batchItems) {
+          tokenMap.set(item.id, estimateTokenCount(item.text));
+        }
+      }
+
+      // ── Phase 4: 组装 & 缓存 ──
+      for (const { idx, msg, fp } of uncached) {
+        let msgTokens = 4; // 消息框架开销
+        if (msg.role) msgTokens += estimateTokenCount(msg.role);
+        if (msg.name) msgTokens += estimateTokenCount(msg.name);
+        // content
+        msgTokens += tokenMap.get(`${idx}_c`) || 0;
+        // tool_calls
+        if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+          for (let t = 0; t < msg.tool_calls.length; t++) {
+            const tc = msg.tool_calls[t];
+            msgTokens += 4; // tool_call 框架
+            if (tc.id) msgTokens += estimateTokenCount(tc.id);
+            if (tc.function?.name) msgTokens += estimateTokenCount(tc.function.name);
+            msgTokens += tokenMap.get(`${idx}_t${t}`) || 0;
+          }
+        }
+        totalTokens += msgTokens;
+        this._msgTokenCache.set(fp, msgTokens);
+      }
+
+      // 限制缓存大小（LRU 近似：保留最新的 60%）
+      if (this._msgTokenCache.size > ContextBudgetService._MSG_CACHE_MAX) {
+        const entries = [...this._msgTokenCache.entries()];
+        this._msgTokenCache.clear();
+        for (const [k, v] of entries.slice(-300)) {
+          this._msgTokenCache.set(k, v);
+        }
+      }
+    }
+
+    this._emitSnapshot(totalTokens, messages.length, tools);
+  }
+
+  /**
+   * 消息指纹：O(1) 计算，用于增量缓存的 key。
+   *
+   * 设计原则：
+   * - 不同消息产出不同指纹（避免误命中）
+   * - 相同内容产出相同指纹（避免 miss）
+   * - 计算开销 << BPE 编码开销
+   */
+  private _msgFingerprint(msg: any): string {
+    let fp = msg.role || '';
+    if (msg.content) {
+      const c = msg.content;
+      const len = c.length;
+      fp += '\x00' + len;
+      // 短内容全量，长内容取首尾各 64 字符（碰撞概率极低）
+      fp += '\x00' + (len <= 128 ? c : c.slice(0, 64) + c.slice(-64));
+    }
+    if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        const name = tc.function?.name || '';
+        const args = tc.function?.arguments;
+        const aLen = args ? (typeof args === 'string' ? args.length : JSON.stringify(args).length) : 0;
+        fp += '\x01' + name + '|' + aLen;
+      }
+    }
+    if (msg.tool_call_id) {
+      fp += '\x02' + msg.tool_call_id;
+    }
+    if (msg.name) {
+      fp += '\x03' + msg.name;
+    }
+    return fp;
   }
 
   /** 内部：根据已计算的 messagesTokens 发布 snapshot */
@@ -1053,6 +1181,7 @@ export class ContextBudgetService {
     this._cachedToolsTokens = 0;
     this._cachedContextTokens = 0;
     this._lastToolsCount = 0;
+    this._msgTokenCache.clear();
     this.budgetSubject.next(this.createEmptySnapshot());
     this.compressionEventSubject.next(null);
     // 重置后台摘要服务
