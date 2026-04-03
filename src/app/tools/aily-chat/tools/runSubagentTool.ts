@@ -30,6 +30,16 @@ export interface SubagentDefinition {
   useCases: string[];
   /** 调用前建议获取的上下文（提示 LLM） */
   suggestedContext?: string;
+  /** 工具白名单：仅允许使用的工具列表（优先级高于 disallowedTools） */
+  tools?: string[];
+  /** 工具黑名单：禁止使用的工具列表 */
+  disallowedTools?: string[];
+  /** 最大工具调用轮次（覆盖全局 maxCount） */
+  maxTurns?: number;
+  /** 独立模型标识（子代理可用更小更快的模型，降本增效） */
+  model?: string;
+  /** 独立 API endpoint（覆盖全局 baseUrl） */
+  endpoint?: string;
 }
 
 export interface RunSubagentArgs {

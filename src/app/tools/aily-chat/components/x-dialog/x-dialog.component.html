@@ -5,13 +5,16 @@
     (mouseenter)="onDialogMouseEnter()"
     (mouseleave)="onDialogMouseLeave()"
   >
-    <div class="subagent-fold-header" (click)="subagentExpanded = !subagentExpanded">
+    <div class="subagent-fold-header" (click)="toggleSubagentExpanded()">
       @if (doing) {
         <i class="fa-duotone fa-solid fa-loader subagent-fold-icon loading ac-spin"></i>
       } @else {
         <i class="fa-light fa-circle-check subagent-fold-icon done"></i>
       }
       <span class="subagent-fold-label">{{ doing ? subagentDisplayName + '...' : subagentDisplayName }}</span>
+      @if (!doing && subagentStatsSummary) {
+        <span class="subagent-fold-stats">{{ subagentStatsSummary }}</span>
+      }
       <i class="fa-light fa-chevron-down subagent-fold-arrow" [class.expanded]="subagentExpanded"></i>
     </div>
     @if (subagentExpanded) {

@@ -878,6 +878,141 @@ export class ChatService {
     });
   }
 
+  /**
+   * 真正的无状态聊天请求 — 无需 startSession
+   *
+   * 每次请求携带完整 messages[] + 模型配置，
+   * 后端临时创建 agent → 调用 LLM → 流式返回 → 销毁。
+   * 适用于：subagent 直连、LLM 摘要/压缩、简单 ask 模式。
+   *
+   * @param messages   完整对话历史
+   * @param tools      可用工具列表（可选）
+   * @param mode       模式 'agent' | 'ask'
+   * @param llmConfig  自定义 LLM 配置（可选）
+   * @param selectModel 选择的模型名称（可选）
+   * @param maxCount   最大消息轮数（可选）
+   * @param agent      subAgent 名称（可选）
+   */
+  chatStateless(
+    messages: any[],
+    tools: any[] | null = null,
+    mode: string = 'agent',
+    llmConfig?: any,
+    selectModel?: string,
+    maxCount?: number,
+    agent?: string,
+  ): Observable<any> {
+    return new Observable(observer => {
+      let aborted = false;
+      let workerSub: Subscription | null = null;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+      const abortCtrl = new AbortController();
+
+      const payload: any = { messages, tools: tools || [], mode };
+
+      if (maxCount !== undefined && maxCount > 0) {
+        payload.max_count = maxCount;
+      }
+      if (llmConfig) {
+        payload.llm_config = llmConfig;
+      }
+      if (selectModel) {
+        payload.select_model = selectModel;
+      }
+      if (agent) {
+        payload.agent = agent;
+      }
+
+      AilyHost.get().auth.getToken!().then(async (token) => {
+        if (aborted) return;
+
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const url = ChatAPI.chatStateless;
+
+        // Worker 路径
+        if (this.sseProxy.isReady) {
+          workerSub = this.sseProxy.sseFetch(url, 'POST', headers, payload).subscribe({
+            next: data => { if (!aborted) observer.next(data); },
+            complete: () => { if (!aborted) observer.complete(); },
+            error: err => { if (!aborted) observer.error(err); },
+          });
+          return;
+        }
+
+        // 降级：主线程 fetch
+        try {
+          const requestBody = await asyncJsonStringify(payload);
+          if (aborted) return;
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: requestBody,
+            signal: abortCtrl.signal,
+          });
+          if (aborted) return;
+
+          if (!response.ok) {
+            const errorBody = await this.readHttpErrorBody(response);
+            observer.error(this.createNormalizedHttpError(response, errorBody));
+            return;
+          }
+
+          reader = response.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done || aborted) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const data = JSON.parse(trimmed);
+                if (!aborted) observer.next(data);
+              } catch {
+                // 非 JSON 行，跳过
+              }
+            }
+          }
+
+          // 处理 buffer 中剩余数据
+          if (buffer.trim()) {
+            try {
+              const data = JSON.parse(buffer.trim());
+              if (!aborted) observer.next(data);
+            } catch { /* ignore */ }
+          }
+
+          if (!aborted) observer.complete();
+        } catch (error) {
+          if (!aborted) observer.error(error);
+        }
+      }).catch(error => {
+        if (!aborted) observer.error(error);
+      });
+
+      return () => {
+        aborted = true;
+        workerSub?.unsubscribe();
+        abortCtrl.abort();
+        if (reader) {
+          reader.cancel().catch(() => {});
+        }
+      };
+    });
+  }
+
   getHistory(sessionId: string) {
     return this.http.get(`${ChatAPI.getHistory}/${sessionId}`);
   }

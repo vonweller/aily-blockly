@@ -49,6 +49,7 @@ import { TurnManager } from '../core/turn-manager';
 import { AilyChatHookService } from './chat-hook.service';
 import { ChatViewAdapter } from './chat-view-adapter';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
+import { initBundledAgents } from '../agents/bundled-agents';
 
 @Injectable()
 export class ChatEngineService {
@@ -252,6 +253,9 @@ export class ChatEngineService {
     // 注册工具审批回调：在聊天界面显示确认 UI 并等待用户批准
     registerToolApprovalCallback((request) => this._handleToolApproval(request));
 
+    // 从打包的 .agent.md 加载子代理定义（幂等）
+    initBundledAgents();
+
     this.setupSubscriptions();
   }
 
@@ -351,6 +355,11 @@ export class ChatEngineService {
             break;
           case 'error':
             this.msg.appendMessage('aily', `\n\n> ❌ ${event.content}\n\n`, agentSource);
+            break;
+          case 'completed':
+            if (event.stats) {
+              console.log(`[SubagentStats] ${agentSource} 完成: ${event.stats.iterations} 轮, ${(event.stats.durationMs / 1000).toFixed(1)}s, ${event.stats.resultLength} 字符`);
+            }
             break;
         }
       });

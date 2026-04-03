@@ -35,6 +35,8 @@
     "**/*.spec.ts",
     "**/*.test.ts",
     "src/environments/*.ts",
-    "temp/**/*"
+    "temp/**/*",
+    "src/app/tools/aily-chat/tools/claude_code/**/*",
+    "src/app/tools/aily-chat/tools/vscode_copilot/**/*"
   ]
 }

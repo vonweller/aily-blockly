@@ -82,6 +82,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   /** 子Agent折叠面板展开状态 */
   subagentExpanded = false;
+  /** 子Agent执行统计摘要（完成后从 final_answer 提取） */
+  subagentStatsSummary = '';
   private shouldScrollSubagent = false;
   private prevDoing = false;
   /** 子Agent 正文区：用户未主动上滚时跟随流式到底部 */
@@ -106,6 +108,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   private _fttCacheOutput = '';
   // ★ think 内容外部化：仅存储 ref key 列表，内容在 think-content-store 中
   private _thinkRefKeys: string[] = [];
+  // ★ 折叠态脏标记：子Agent折叠时跳过 preprocess，展开时补执行
+  private _subagentPreprocessDirty = false;
   /** 是否显示操作栏 */
   showActions = false;
   /** 反馈状态 */
@@ -399,17 +403,27 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     if (this.isSubagent && changes['doing']) {
       if (this.doing) {
         this.subagentExpanded = true;
+        this._subagentPreprocessDirty = false; // 展开时清除脏标记，下方会正常 preprocess
         if (changes['doing'].previousValue !== true) {
           this.subagentStickToBottom = true;
         }
       } else if (this.prevDoing && !this.doing) {
-        // 从doing→done：自动折叠
+        // 从doing→done：自动折叠 + 提取执行统计
         this.subagentExpanded = false;
+        this._extractSubagentStats(this.content || '');
       }
       this.prevDoing = this.doing;
     }
     if (this.isSubagent && changes['content']) {
       this.shouldScrollSubagent = true;
+    }
+
+    // ★ 折叠态跳过 preprocess：子Agent折叠时仅标记脏，展开时补执行
+    if (this.isSubagent && !this.subagentExpanded && !changes['doing']) {
+      if (changes['content']) {
+        this._subagentPreprocessDirty = true;
+      }
+      return;
     }
 
     if (changes['doing'] || changes['content']) {
@@ -500,11 +514,30 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
   }
 
+  /** 从 <final_answer> 标签提取执行统计摘要 */
+  private _extractSubagentStats(content: string): void {
+    const match = content.match(/<final_answer[^>]*\biterations="(\d+)"[^>]*\bduration_ms="(\d+)"/);
+    if (match) {
+      const iterations = parseInt(match[1], 10);
+      const durationSec = (parseInt(match[2], 10) / 1000).toFixed(1);
+      this.subagentStatsSummary = `${iterations} 轮 · ${durationSec}s`;
+    }
+  }
+
   onSubagentBodyScroll(event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
     this.subagentStickToBottom = dist <= this.subagentScrollBottomThresholdPx;
+  }
+
+  /** 切换子Agent折叠面板展开/收起，展开时补执行脏 preprocess */
+  toggleSubagentExpanded(): void {
+    this.subagentExpanded = !this.subagentExpanded;
+    if (this.subagentExpanded && this._subagentPreprocessDirty) {
+      this._subagentPreprocessDirty = false;
+      this._doFullPreprocess(this.content || '');
+    }
   }
 
   ngAfterViewChecked(): void {
@@ -533,6 +566,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     if (!content) return '';
     content = this.filterToolCalls(content);
     content = this.filterThinkTags(content);
+    content = this.filterFinalAnswerTags(content);
     content = this.filterContextTags(content);
     content = this.fixContent(content);
     content = this.normalizeAilyMermaid(content);
@@ -710,6 +744,16 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     this._fttCacheInput = content;
     this._fttCacheOutput = result;
     return result;
+  }
+
+  /**
+   * 剥离 <final_answer> 标签，仅保留内部文本
+   * 这些标签由 subagent 结构化结果添加，不应显示在 UI 中
+   */
+  private filterFinalAnswerTags(content: string): string {
+    return content
+      .replace(/<final_answer[^>]*>\n?/g, '')
+      .replace(/\n?<\/final_answer>/g, '');
   }
 
   /**

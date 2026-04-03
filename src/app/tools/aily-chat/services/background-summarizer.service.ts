@@ -666,15 +666,8 @@ export class BackgroundSummarizerService {
       let summaryText = '';
       let resolved = false;
 
-      const fgSessionId = sessionId + '_fg_summary';
-      try {
-        await this.chatService.startSession('ask', null, undefined, llmConfig, selectModel, fgSessionId).toPromise();
-      } catch (e) {
-        // 忽略重复创建错误，继续请求
-      }
-
-      const subscription = this.chatService.chatRequest(
-        fgSessionId,
+      // ★ 真正的无状态：使用 chatStateless()，无需 startSession
+      const subscription = this.chatService.chatStateless(
         messages,
         null,
         'ask',
@@ -736,15 +729,8 @@ export class BackgroundSummarizerService {
       let summaryText = '';
       let resolved = false;
 
-      const bgSessionId = sessionId + '_bg_summary';
-      try {
-        await this.chatService.startSession('ask', null, undefined, llmConfig, selectModel, bgSessionId).toPromise();
-      } catch (e) {
-        // 忽略重复创建错误，继续请求
-      }
-
-      this._activeSubscription = this.chatService.chatRequest(
-        bgSessionId, // 独立 session ID，不干扰主对话
+      // ★ 真正的无状态：使用 chatStateless()，无需 startSession
+      this._activeSubscription = this.chatService.chatStateless(
         messages,
         null,     // 不需要工具
         'ask',    // ask 模式（不执行工具）

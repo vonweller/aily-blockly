@@ -65,7 +65,10 @@
               "node_modules/@xterm/xterm/css/xterm.css",
               "node_modules/cropperjs/dist/cropper.css"
             ],
-            "scripts": []
+            "scripts": [],
+            "loader": {
+              ".md": "text"
+            }
           },
           "configurations": {
             "production": {
