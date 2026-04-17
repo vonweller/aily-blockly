@@ -164,6 +164,18 @@
                 <span>其他设置</span>
             </div>
             <div class="items-list">
+                <div class="setting-block">
+                    <div class="setting-label">用户级 Instruction Folders</div>
+                    <div class="setting-hint">每行一个绝对路径，lex 会递归扫描其中的 *.instructions.md。</div>
+                    <textarea nz-input rows="3" [(ngModel)]="userInstructionFoldersText"
+                        placeholder="例如：D:/rules/user"></textarea>
+                </div>
+                <div class="setting-block">
+                    <div class="setting-label">项目级 Instruction Folders</div>
+                    <div class="setting-hint">每行一个绝对路径，优先级低于用户级，高于仓库自动发现。</div>
+                    <textarea nz-input rows="3" [(ngModel)]="projectInstructionFoldersText"
+                        placeholder="例如：D:/project/.github/instructions"></textarea>
+                </div>
                 <div class="setting-row">
                     <label nz-checkbox [(ngModel)]="autoSaveEdits">默认自动保存变更</label>
                     <span class="setting-hint">AI编辑完成后自动保留变更，不弹出变更面板</span>

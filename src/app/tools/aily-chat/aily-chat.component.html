@@ -1,22 +1,22 @@
-@if (currentUrl == "/aily-chat") {
+@if (vm.isStandaloneWindow) {
 <app-sub-window [title]="'AI ASSISTANT'" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
   <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
 </app-sub-window>
 } @else {
-<app-tool-container [title]="'AI ASSISTANT' | translate" (closeEvent)="close()">
+<app-tool-container [title]="'AI ASSISTANT' | translate" (closeEvent)="surfaceShellCoordinator.close()">
   <ng-container header-btns>
     <!-- <div class="btn ccenter" (click)="demandEdit()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="需求管理">
       <i class="fa-light fa-list-check"></i>
     </div> -->
-    <div class="btn ccenter" [class.active]="showSettings" (click)="openSettings($event)" nz-tooltip nzTooltipPlacement="bottom"
+    <div class="btn ccenter" [class.active]="vm.showSettings" (click)="sessionShellCoordinator.toggleSettings()" nz-tooltip nzTooltipPlacement="bottom"
       [nzTooltipTitle]="'AILY_CHAT.SETTINGS' | translate">
       <i class="fa-light fa-gear"></i>
     </div>
-    <div class="btn ccenter" (click)="openHistoryChat()" nz-tooltip nzTooltipPlacement="bottom"
+    <div class="btn ccenter" (click)="sessionShellCoordinator.openHistoryChat()" nz-tooltip nzTooltipPlacement="bottom"
       [nzTooltipTitle]="'AILY_CHAT.HISTORY' | translate">
       <i class="fa-light fa-clock-rotate-left"></i>
     </div>
-    <div class="btn ccenter" (click)="newChat()" nz-tooltip nzTooltipPlacement="bottom"
+    <div class="btn ccenter" (click)="sessionShellCoordinator.newChat()" nz-tooltip nzTooltipPlacement="bottom"
       [nzTooltipTitle]="'AILY_CHAT.NEW_CHAT' | translate">
       <i class="fa-light fa-message-plus"></i>
     </div>
@@ -25,8 +25,8 @@
   <!-- 整个聊天区域的容器 -->
   <div class="aily-chat-wrapper">
     <div class="todo-panel-container">
-      @if(!showSettings){
-        <app-floating-todo [sessionId]="sessionId"></app-floating-todo>
+      @if(!vm.showSettings){
+        <app-floating-todo [sessionId]="vm.sessionId"></app-floating-todo>
       }
     </div>
     <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
@@ -37,34 +37,28 @@
   <div class="window-box">
     <!-- 对话内容 -->
     <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
-      @if(list.length > 0){
+      @if(vm.list.length > 0){
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs">
-        <!-- @for(item of list; track sessionId + '-' + $index){
-        <aily-dialog
-          [role]="item.role"
-          [content]="item.content"
-          [doing]="item.state === 'doing'">
-        </aily-dialog>
-        } -->
-        @for(item of list; track sessionId + '-' + $index){
+        @for(item of vm.list; track vm.sessionId + '-' + $index){
           <aily-x-dialog
             [role]="item.role"
             [content]="item.content"
             [doing]="item.state === 'doing'"
             [source]="item.source"
             [isLastAily]="$last && item.role === 'aily'"
-            [sessionId]="sessionId"
+            [sessionId]="vm.sessionId"
             [msgIndex]="$index"
-            [currentMode]="currentMode"
-            [currentModelName]="currentModelName"
+            [currentMode]="vm.currentMode"
+            [currentModelName]="vm.currentModelName"
             [turnModelName]="item.modelName || ''"
-            [isWaiting]="isWaiting"
-            (editAndResend)="onEditAndResend($event)"
-            (editModeToggle)="onEditModeToggle($event)"
-            (editModelToggle)="onEditModelToggle($event)"
-            (editAddFile)="onEditAddFile($index)"
-            (editAddFolder)="onEditAddFolder($index)">
+            [isWaiting]="vm.isWaiting"
+            [partStore]="vm.partStore"
+            (editAndResend)="surfaceShellCoordinator.editAndResend($event)"
+            (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event)"
+            (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems.length)"
+            (editAddFile)="editResourceShellCoordinator.addFile($index)"
+            (editAddFolder)="editResourceShellCoordinator.addFolder($index)">
           </aily-x-dialog>
           }
       </div>
@@ -74,15 +68,15 @@
         <i class="fa-light fa-star-christmas"></i>
         <div class="title">{{ 'AILY_CHAT.SERVICE_TITLE' | translate }}</div>
         <div class="text">{{ 'AILY_CHAT.DISCLAIMER' | translate }}</div>
-        <div class="btn link" (click)="openUrl()">{{ 'AILY_CHAT.USAGE_GUIDE' | translate }}</div>
+        <div class="btn link" (click)="surfaceShellCoordinator.openUrl()">{{ 'AILY_CHAT.USAGE_GUIDE' | translate }}</div>
       </div>
       }
     </div>
     <!-- 文件变更面板（sender上方） -->
     <app-aily-edits-viewer></app-aily-edits-viewer>
     <!-- 发送部分 -->
-    <div class="sender" nz-resizable [style.height.px]="bottomHeight" [nzMaxHeight]="600" [nzMinHeight]="180"
-      (nzResize)="onContentResize($event)">
+    <div class="sender" nz-resizable [style.height.px]="vm.bottomHeight" [nzMaxHeight]="vm.senderMaxHeight" [nzMinHeight]="vm.senderMinHeight"
+      (nzResize)="viewportShellCoordinator.resizeContent($event.height)">
       <nz-resize-handle nzDirection="top">
         <div class="line"></div>
       </nz-resize-handle>
@@ -119,18 +113,18 @@
           </div>
           }
           <div class="textarea-wrapper">
-            @if (showAgentSuggestions) {
+            @if (vm.showAgentSuggestions) {
               <div class="agent-suggestions">
-                @for (agent of agentSuggestions; track agent) {
-                  <div class="agent-suggestion-item" (mousedown)="selectAgent(agent)">
+                @for (agent of vm.agentSuggestions; track agent) {
+                  <div class="agent-suggestion-item" (mousedown)="composerShellCoordinator.selectAgent(agent)">
                     <i class="fa-light fa-user-astronaut"></i>
                     <span>{{ agent }}</span>
                   </div>
                 }
               </div>
             }
-            <textarea #chatTextarea class="sscroll" [(ngModel)]="inputValue"
-              (keydown)="onKeyDown($event)" (input)="onInputChange()">
+            <textarea #chatTextarea class="sscroll" [ngModel]="vm.inputValue" (ngModelChange)="composerShellCoordinator.updateInputValue($event)"
+              (keydown)="composerShellCoordinator.handleKeyDown($event)" (input)="composerShellCoordinator.updateSuggestions()">
             </textarea>
           </div>
           <div class="btns">
@@ -158,21 +152,21 @@
             </div> -->
             }
             <!-- 模式选择 -->
-            <div class="btn mode ccenter" (click)="menuManager.toggleModeMenu($event)">
-              @if(currentMode === 'agent') {
+            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModeMenu($event)">
+              @if(vm.currentMode === 'agent') {
               <i class="fa-light fa-user-astronaut"></i><span>{{ 'AILY_CHAT.MODE_AGENT' | translate }}</span>
               } @else {
               <i class="fa-light fa-comment-smile"></i><span>{{ 'AILY_CHAT.MODE_QA' | translate }}</span>
               }
             </div>
             <!-- 模型选择 -->
-            @if(ModelList.length > 0) {
-            <div class="btn mode ccenter" (click)="menuManager.toggleModelMenu($event, ModelList.length)">
-              <i class="fa-light fa-star-christmas"></i><span>{{ currentModelName }}</span>
+            @if(vm.modelMenuItems.length > 0) {
+            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems.length)">
+              <i class="fa-light fa-star-christmas"></i><span>{{ vm.currentModelName }}</span>
             </div>
             }
             <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
-            @if(contextBudgetSnapshot && contextBudgetSnapshot.maxContextTokens > 0) {
+            @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
             <div class="token-budget-indicator ccenter"
               nz-tooltip nzTooltipPlacement="top"
               [nzTooltipTitle]="tokenBudgetTooltip">
@@ -180,17 +174,17 @@
                 <div style="font-size:11px;line-height:1.6;white-space:nowrap">
                   <div style="font-weight:600;margin-bottom:2px">Context Window</div>
                   <div style="margin-bottom:5px">
-                    <div style="margin-bottom:3px">{{ (contextBudgetSnapshot.currentTokens / 1000) | number:'1.1-1' }}K / {{ (contextBudgetSnapshot.maxContextTokens / 1000) | number:'1.1-1' }}K tokens · {{ contextBudgetSnapshot.usagePercent | number:'1.0-0' }}%</div>
+                    <div style="margin-bottom:3px">{{ (vm.contextBudgetSnapshot.currentTokens / 1000) | number:'1.1-1' }}K / {{ (vm.contextBudgetSnapshot.maxContextTokens / 1000) | number:'1.1-1' }}K tokens · {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}%</div>
                     <div style="position:relative;height:3px;background:rgba(255,255,255,0.12);border-radius:2px;overflow:hidden">
-                      <div [style.width.%]="contextBudgetSnapshot.usagePercent"
-                        [style.background]="contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
+                      <div [style.width.%]="vm.contextBudgetSnapshot.usagePercent"
+                        [style.background]="vm.contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : vm.contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
                         style="height:100%;border-radius:2px;transition:width 0.3s ease"></div>
                     </div>
                   </div>
-                  <div><span style="color:#98c379">■</span> System: {{ (contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span style="color:#61afef">■</span> Tools: {{ (contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span style="color:#98c379">■</span> System: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span style="color:#61afef">■</span> Tools: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
                   <!-- <div><span style="color:#e5c07b">■</span> Context: {{ (contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div> -->
-                  <div><span style="color:#c678dd">■</span> Messages: {{ ((contextBudgetSnapshot.messagesTokens + contextBudgetSnapshot.contextTokens) / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ (contextBudgetSnapshot.messagesPercent + contextBudgetSnapshot.contextPercent) | number:'1.1-1' }}%)</span></div>
+                  <div><span style="color:#c678dd">■</span> Messages: {{ ((vm.contextBudgetSnapshot.messagesTokens + vm.contextBudgetSnapshot.contextTokens) / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ (vm.contextBudgetSnapshot.messagesPercent + vm.contextBudgetSnapshot.contextPercent) | number:'1.1-1' }}%)</span></div>
                 </div>
               </ng-template>
               <svg viewBox="0 0 24 24" class="token-ring">
@@ -198,24 +192,24 @@
                 <circle cx="12" cy="12" r="9" fill="none" stroke="#3f3f3f" stroke-width="2.5"/>
                 <!-- 进度环 -->
                 <circle cx="12" cy="12" r="9" fill="none"
-                  [attr.stroke]="contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
+                  [attr.stroke]="vm.contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : vm.contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
                   stroke-width="2.5"
                   stroke-linecap="round"
                   [attr.stroke-dasharray]="56.549"
-                  [attr.stroke-dashoffset]="56.549 * (1 - contextBudgetSnapshot.usagePercent / 100)"
+                  [attr.stroke-dashoffset]="56.549 * (1 - vm.contextBudgetSnapshot.usagePercent / 100)"
                   transform="rotate(-90 12 12)"/>
               </svg>
               <span class="token-percent"
-                [class.warn]="contextBudgetSnapshot.usagePercent >= 50 && contextBudgetSnapshot.usagePercent < 75"
-                [class.danger]="contextBudgetSnapshot.usagePercent >= 75">
-                {{ contextBudgetSnapshot.usagePercent | number:'1.0-0' }}
+                [class.warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
+                [class.danger]="vm.contextBudgetSnapshot.usagePercent >= 75">
+                {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}
               </span>
             </div>
             }
-            <div class="btn right ccenter" [ngClass]="{'lloading':isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
-              [nzTooltipTitle]="isWaiting ? ('AILY_CHAT.STOP' | translate) : ('AILY_CHAT.SEND' | translate)"
-              (click)="sendButtonClick()">
-              @if(isWaiting){
+            <div class="btn right ccenter" [ngClass]="{'lloading':vm.isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
+              [nzTooltipTitle]="vm.isWaiting ? ('AILY_CHAT.STOP' | translate) : ('AILY_CHAT.SEND' | translate)"
+              (click)="submitShellCoordinator.handlePrimaryAction()">
+              @if(vm.isWaiting){
               <div class="stop-box ccenter">
                 <i class="fa-light fa-stop"></i>
               </div>
@@ -230,8 +224,8 @@
         </div>
       </div>
     </div>
-    @if(showSettings){
-    <aily-chat-settings (close)="showSettings = false" (saved)="onSettingsSaved()"></aily-chat-settings>
+    @if(vm.showSettings){
+    <aily-chat-settings (close)="sessionShellCoordinator.closeSettings()" (saved)="sessionShellCoordinator.closeSettings()"></aily-chat-settings>
     }
   </div>
   <app-login></app-login>
@@ -239,17 +233,17 @@
 
 @if (menuManager.showHistoryList) {
 <app-menu [menuList]="menuManager.historyList" [position]="menuManager.historyListPosition" [width]="300" [maxHeight]="360" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="menuClick($event)" (actionClickEvent)="historyActionClick($event)"></app-menu>
+  (itemClickEvent)="sessionShellCoordinator.menuClick($event)" (actionClickEvent)="sessionShellCoordinator.historyActionClick($event)"></app-menu>
 }
 
 @if(menuManager.showMode){
-<app-menu class="mode-menu" [menuList]="ModeList" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="modeMenuClick($event)"></app-menu>
+<app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)"></app-menu>
 }
 
 @if(menuManager.showModelMenu){
-<app-menu class="model-menu" [menuList]="ModelList" [position]="menuManager.modelListPosition" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="modelMenuClick($event)"></app-menu>
+<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)"></app-menu>
 }
 
 

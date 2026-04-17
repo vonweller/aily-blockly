@@ -90,6 +90,10 @@ export interface AilyChatConfig {
     summarizationThresholdRatio?: number;
     /** 默认自动保存变更（AI编辑完成后自动保留，不弹出变更面板） */
     autoSaveEdits?: boolean;
+    /** 用户级 instruction folders，扫描其中的 `*.instructions.md`。 */
+    userInstructionFolders?: string[];
+    /** 项目级 instruction folders，扫描其中的 `*.instructions.md`。 */
+    projectInstructionFolders?: string[];
 }
 
 /**
@@ -98,16 +102,35 @@ export interface AilyChatConfig {
 const DEFAULT_MODELS: ModelConfigOption[] = [];
 
 /**
- * Auto 自动模型选项（由服务端决定使用哪个模型）
+ * 模型梯度选项 — 类似 Claude Code 的 Opus/Sonnet/Haiku 或 Copilot 的模型选择
+ * 对应服务端 model_tiers 配置（high/medium/low）
  */
-const AUTO_MODEL: ModelConfigOption = {
-    model: 'auto',
-    name: 'Auto',
-    family: 'auto',
-    speed: '1x',
-    enabled: true,
-    isCustom: false
-};
+const MODEL_TIER_OPTIONS: ModelConfigOption[] = [
+    {
+        model: 'high',
+        name: 'Auto-Max',
+        family: 'auto',
+        speed: '1x',
+        enabled: true,
+        isCustom: false,
+    },
+    {
+        model: 'medium',
+        name: 'Auto-Balanced',
+        family: 'auto',
+        speed: '2x',
+        enabled: true,
+        isCustom: false,
+    },
+    {
+        model: 'low',
+        name: 'Auto-Fast',
+        family: 'auto',
+        speed: '4x',
+        enabled: true,
+        isCustom: false,
+    },
+];
 
 /**
  * 默认API配置（空列表）
@@ -130,7 +153,9 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     contextWindowSize: 0,
     compressionThresholdRatio: 0.5,
     summarizationThresholdRatio: 0.75,
-    autoSaveEdits: true
+    autoSaveEdits: true,
+    userInstructionFolders: [],
+    projectInstructionFolders: []
 };
 
 /**
@@ -351,6 +376,22 @@ export class AilyChatConfigService {
         this.config.autoSaveEdits = value;
     }
 
+    get userInstructionFolders(): string[] {
+        return normalizeInstructionFolderPaths(this.config.userInstructionFolders);
+    }
+
+    set userInstructionFolders(value: string[]) {
+        this.config.userInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
+    get projectInstructionFolders(): string[] {
+        return normalizeInstructionFolderPaths(this.config.projectInstructionFolders);
+    }
+
+    set projectInstructionFolders(value: string[]) {
+        this.config.projectInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
     /**
      * 获取启用的工具列表
      */
@@ -516,8 +557,8 @@ export class AilyChatConfigService {
             resultModels = enabledModels;
         }
         
-        // 始终在列表最前面添加 Auto 选项
-        return [AUTO_MODEL, ...resultModels];
+        // 在列表最前面添加模型梯度选项（Max / Balanced / Fast）
+        return [...MODEL_TIER_OPTIONS, ...resultModels];
     }
 
     /**
@@ -704,4 +745,15 @@ export class AilyChatConfigService {
             });
         }
     }
+}
+
+function normalizeInstructionFolderPaths(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
 }

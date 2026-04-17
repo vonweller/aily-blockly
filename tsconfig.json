@@ -28,6 +28,7 @@
     "strictTemplates": true
   },
   "exclude": [
+    "archive/**/*",
     "child",
     "electron",
     "dist",

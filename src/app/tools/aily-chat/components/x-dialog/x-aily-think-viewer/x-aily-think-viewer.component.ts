@@ -21,14 +21,16 @@ import { getThinkContent } from '../../../core/think-content-store';
   standalone: true,
   imports: [CommonModule, XMarkdownComponent],
   template: `
-    <div class="ac-think" [class.expanded]="thinkExpanded">
+    <div class="ac-think" [class.expanded]="thinkExpanded" [class.streaming]="data?.isComplete === false">
       <div class="ac-think-header" (click)="thinkExpanded = !thinkExpanded">
         @if (data?.isComplete) {
           <i class="fa-light fa-circle-check ac-think-icon done"></i>
         } @else {
           <i class="fa-duotone fa-solid fa-loader ac-think-icon loading ac-spin"></i>
         }
-        <span>{{ data?.isComplete ? 'Think' : 'Thinking...' }}</span>
+        <span class="ac-think-label" [class.ac-think-shimmer]="data?.isComplete === false && !thinkExpanded">
+          {{ displayLabel }}
+        </span>
         <i class="fa-light fa-chevron-down ac-think-arrow"></i>
       </div>
       @if (thinkExpanded) {
@@ -47,13 +49,30 @@ import { getThinkContent } from '../../../core/think-content-store';
   `,
   styles: [
     `
+      /* ===== Semantic CSS Variables ===== */
+      :host {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        --ac-think-bg: #3a3a3a;
+        --ac-think-fg: #ccc;
+        --ac-think-fg-dim: #999;
+        --ac-think-fg-heading: #bbb;
+        --ac-think-accent: #1890ff;
+        --ac-think-success: #52c41a;
+        --ac-think-border: rgba(255, 255, 255, 0.08);
+        --ac-think-connector: rgba(255, 255, 255, 0.15);
+        --ac-think-shimmer: #4fc3f7;
+        --ac-think-hover: rgba(255, 255, 255, 0.05);
+      }
+
       .ac-think {
         border-radius: 5px;
         padding: 5px 10px;
         margin: 0;
         overflow: hidden;
-        background-color: #3a3a3a;
-        color: #ccc;
+        background-color: var(--ac-think-bg);
+        color: var(--ac-think-fg);
       }
       .ac-think-header {
         display: flex;
@@ -66,13 +85,31 @@ import { getThinkContent } from '../../../core/think-content-store';
         transition: background 0.2s;
       }
       .ac-think-header:hover {
-        background: rgba(255, 255, 255, 0.05);
+        background: var(--ac-think-hover);
         margin: -5px -10px;
         padding: 5px 10px;
       }
       .ac-think-icon { flex-shrink: 0; margin-right: 5px; }
-      .ac-think-icon.loading { color: #1890ff; }
-      .ac-think-icon.done { color: #52c41a; }
+      .ac-think-icon.loading { color: var(--ac-think-accent); }
+      .ac-think-icon.done { color: var(--ac-think-success); }
+
+      /* ===== Shimmer Animation (VS Code style) ===== */
+      @keyframes ac-think-shimmer {
+        0% { background-position: 120% 0; }
+        100% { background-position: -120% 0; }
+      }
+      .ac-think-shimmer {
+        background: linear-gradient(90deg,
+          var(--ac-think-fg) 0%, var(--ac-think-fg) 30%,
+          var(--ac-think-shimmer) 50%,
+          var(--ac-think-fg) 70%, var(--ac-think-fg) 100%);
+        background-size: 400% 100%;
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: ac-think-shimmer 2s linear infinite;
+      }
+
       .ac-think-arrow {
         margin-left: auto;
         font-size: 10px;
@@ -82,8 +119,11 @@ import { getThinkContent } from '../../../core/think-content-store';
       .ac-think.expanded .ac-think-arrow {
         transform: rotate(180deg);
       }
+
+      /* ===== Chain-of-thought Connector Line ===== */
       .ac-think-body {
-        padding: 8px 2px;
+        position: relative;
+        padding: 8px 2px 8px 18px;
         margin: 5px -10px 0 0;
         max-height: 200px;
         overflow-y: auto;
@@ -93,10 +133,37 @@ import { getThinkContent } from '../../../core/think-content-store';
         scrollbar-gutter: stable;
         user-select: text;
       }
+      .ac-think-body::before {
+        content: '';
+        position: absolute;
+        left: 4px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background-color: var(--ac-think-connector);
+        mask-image: linear-gradient(to bottom,
+          transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+        -webkit-mask-image: linear-gradient(to bottom,
+          transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+      }
+
+      /* ===== Curved connector from header to body ===== */
+      .ac-think.expanded.streaming .ac-think-header::after {
+        content: '';
+        position: absolute;
+        left: 13px;
+        top: 22px;
+        height: 12px;
+        width: 5px;
+        border-left: 1px solid var(--ac-think-connector);
+        border-bottom: 1px solid var(--ac-think-connector);
+        border-bottom-left-radius: 5px;
+      }
+
       :host ::ng-deep .ac-think-body .x-markdown-dark {
         font-size: 13px;
         line-height: 1.5;
-        color: #999;
+        color: var(--ac-think-fg-dim);
         word-break: break-word;
         overflow-wrap: anywhere;
         white-space: normal;
@@ -115,7 +182,7 @@ import { getThinkContent } from '../../../core/think-content-store';
       :host ::ng-deep .ac-think-body .x-markdown-dark h4 {
         font-size: 13px;
         font-weight: 600;
-        color: #bbb;
+        color: var(--ac-think-fg-heading);
         margin: 4px 0 2px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark h2 {
@@ -177,6 +244,45 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   private thinkStickToBottom = true;
   private readonly thinkScrollBottomThresholdPx = 48;
 
+  // ===== Title extraction & rotating phrases =====
+  private _extractedTitle = '';
+  private readonly _phrases = ['Thinking...', 'Reasoning...', 'Analyzing...', 'Considering...', 'Evaluating...'];
+  private _phraseIndex = 0;
+  private _phraseTimer: ReturnType<typeof setInterval> | null = null;
+  displayLabel = 'Thinking...';
+
+  /** 从 think 内容开头提取 **粗体标题** */
+  private _extractTitle(content: string): string {
+    if (!content) return '';
+    const match = content.match(/^\s*\*\*([^*]+)\*\*/);
+    return match ? match[1].trim() : '';
+  }
+
+  /** 更新显示标签：完成时显示提取的标题或 "Thought"，流式中显示旋转短语 */
+  private _updateLabel(): void {
+    if (this.data?.isComplete) {
+      this.displayLabel = this._extractedTitle || 'Thought';
+      this._stopPhraseRotation();
+    } else {
+      this.displayLabel = this._phrases[this._phraseIndex];
+    }
+  }
+
+  private _startPhraseRotation(): void {
+    if (this._phraseTimer) return;
+    this._phraseTimer = setInterval(() => {
+      this._phraseIndex = (this._phraseIndex + 1) % this._phrases.length;
+      this.displayLabel = this._phrases[this._phraseIndex];
+    }, 3000);
+  }
+
+  private _stopPhraseRotation(): void {
+    if (this._phraseTimer) {
+      clearInterval(this._phraseTimer);
+      this._phraseTimer = null;
+    }
+  }
+
   // ===== Throttle state =====
   private _pendingRaw: string | null = null;
   private _throttleTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -213,23 +319,35 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
     this.thinkContent = raw;
 
+    // 提取标题（每次内容更新时尝试）
+    if (!this._extractedTitle && raw.length > 10) {
+      this._extractedTitle = this._extractTitle(raw);
+    }
+
     // ★ 关键修复：isComplete 变化时立即渲染（不做节流）
     if (this.data.isComplete === true && prevStreaming) {
       this._stopPolling();
       this._cancelThrottle();
       this._renderNow(raw, true);
       this.thinkExpanded = false;
+      this._updateLabel();
       return;
     }
 
     if (this.data.isComplete === true) {
       this._stopPolling();
+      this._updateLabel();
+      // ★ 修复：首次以 isComplete=true 渲染时（历史/finalize），必须调用 _renderNow
+      // 之前仅在 streaming→done 转换时渲染，直接 isComplete=true 时 raw 被计算但未渲染
+      this._renderNow(raw, true);
+      return;
     }
 
     if (!this.data.isComplete) {
       this.thinkExpanded = true;
       this.shouldScrollThink = true;
       this._scheduleRender(raw);
+      this._startPhraseRotation();
       // 启动轮询：v 字段已移除，x-markdown 不再驱动 ngOnChanges，需自行拉取 store
       this._startPolling();
     }
@@ -343,5 +461,6 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   ngOnDestroy(): void {
     this._cancelThrottle();
     this._stopPolling();
+    this._stopPhraseRotation();
   }
 }

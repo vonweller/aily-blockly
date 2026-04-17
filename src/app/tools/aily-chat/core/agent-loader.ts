@@ -10,7 +10,7 @@
  * 3. 调用 loadAgentDefinitionsFromMarkdown() 解析并注册
  */
 
-import { SubagentDefinition, registerSubagent, getSubagentDefinition } from '../tools/runSubagentTool';
+import { SubagentDefinition, registerSubagent, getSubagentDefinition } from './subagent-registry';
 
 /**
  * 从 YAML frontmatter 文本中解析 SubagentDefinition

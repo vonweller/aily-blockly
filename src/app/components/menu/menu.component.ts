@@ -25,7 +25,7 @@ export class MenuComponent {
   @ViewChild('submenuBox') submenuBox: ElementRef;
   @ViewChildren('menuItem') menuItems: QueryList<ElementRef>;
 
-  @Input() menuList = [];
+  @Input() menuList: readonly any[] = [];
 
   @Input() position = {
     x: 2,
@@ -44,7 +44,7 @@ export class MenuComponent {
 
   @Output() closeEvent = new EventEmitter();
 
-  @Input() keywords = [];
+  @Input() keywords: readonly string[] = [];
 
   // 添加子菜单显示状态管理
   activeSubmenuIndex: number | null = null;

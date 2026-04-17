@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, inject, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { TodoUpdateService } from '../../services/todoUpdate.service';
@@ -20,6 +20,7 @@ export class FloatingTodoComponent implements OnInit, OnDestroy, OnChanges {
   private updateSubscription?: Subscription;
   private backupTimer?: any;
   private todoUpdateService = inject(TodoUpdateService);
+  private cdr = inject(ChangeDetectorRef);
 
   ngOnInit() {
     // console.log('[TODO Panel] 初始化组件, sessionId:', this.sessionId);
@@ -56,7 +57,6 @@ export class FloatingTodoComponent implements OnInit, OnDestroy, OnChanges {
       
       // 订阅TODO更新事件
       this.updateSubscription = this.todoUpdateService.todoUpdated$.subscribe((sessionId: string) => {
-        // console.log('[TODO Panel] 接收到TODO更新事件:', sessionId);
         // 检查更新的sessionId是否与当前sessionId匹配
         if (sessionId === this.sessionId || sessionId === 'default') {
           this.loadTodosFromService();
@@ -65,12 +65,12 @@ export class FloatingTodoComponent implements OnInit, OnDestroy, OnChanges {
 
       // 订阅TODO数据变化
       const dataSubscription = this.todoUpdateService.todoData$.subscribe((todoData: Map<string, TodoItem[]>) => {
-        // console.log('[TODO Panel] 接收到TODO数据变化:', todoData);
         // 动态获取当前sessionId对应的TODO数据
         const currentSessionId = this.sessionId || 'default';
         const sessionTodos = todoData.get(currentSessionId);
         if (sessionTodos) {
           this.todoList = sessionTodos;
+          this.cdr.detectChanges();
         }
       });
 
@@ -91,10 +91,7 @@ export class FloatingTodoComponent implements OnInit, OnDestroy, OnChanges {
     try {
       const sessionId = this.sessionId || 'default';
       this.todoList = this.todoUpdateService.getTodosForSession(sessionId);
-    //   console.log('[TODO Panel] 从服务加载TODO列表:', this.todoList.length, '项');
-    //   console.log('[TODO Panel] ✅ 详细数据:', this.todoList);
-    //   console.log('[TODO Panel] ✅ isCollapsed:', this.isCollapsed);
-    //   console.log('[TODO Panel] ✅ 组件状态检查 - todoList存在:', !!this.todoList, 'length:', this.todoList?.length);
+      this.cdr.detectChanges();
     } catch (error) {
       console.warn('[TODO Panel] 加载TODO列表失败:', error);
     }

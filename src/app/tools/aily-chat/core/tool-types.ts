@@ -1,8 +1,8 @@
 /**
  * Aily Tool System - 核心类型定义
  *
- * 所有工具必须实现 IAilyTool 接口，通过 ToolRegistry 自注册。
- * 每个工具文件自包含：schema + handler + 显示文本逻辑。
+ * 历史工具类仍实现 IAilyTool 接口，并通过副作用模块注册显示文案。
+ * runtime 执行权已迁移到 lex；blockly 侧保留的主要是 schema/文案兼容层。
  */
 
 // ============================

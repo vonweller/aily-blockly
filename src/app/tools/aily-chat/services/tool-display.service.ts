@@ -6,7 +6,7 @@
  * - 格式化命令、搜索模式、文件名、URL 等
  */
 
-import { ToolRegistry } from '../core/tool-registry';
+import { ToolDisplayRegistry } from '../core/tool-display-registry';
 import { AilyHost } from '../core/host';
 
 /**
@@ -17,8 +17,8 @@ export function generateToolStartText(toolName: string, args?: any): string {
 
   const cleanToolName = toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
 
-  if (ToolRegistry.has(cleanToolName)) {
-    return ToolRegistry.getStartText(toolName, args);
+  if (ToolDisplayRegistry.has(cleanToolName)) {
+    return ToolDisplayRegistry.getStartText(toolName, args);
   }
 
   switch (cleanToolName) {
@@ -63,8 +63,8 @@ export function generateToolStartText(toolName: string, args?: any): string {
 export function generateToolResultText(toolName: string, args?: any, result?: any): string {
   const cleanToolName = toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
 
-  if (ToolRegistry.has(cleanToolName)) {
-    return ToolRegistry.getResultText(toolName, args, result);
+  if (ToolDisplayRegistry.has(cleanToolName)) {
+    return ToolDisplayRegistry.getResultText(toolName, args, result);
   }
 
   if (result?.is_error) {

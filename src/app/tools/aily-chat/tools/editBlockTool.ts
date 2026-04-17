@@ -1,5 +1,5 @@
 ﻿import { arduinoGenerator } from "../../../editors/blockly-editor/components/blockly/generators/arduino/arduino";
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 import { jsonrepair } from 'jsonrepair';
 import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';

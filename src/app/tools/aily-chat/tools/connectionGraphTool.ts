@@ -1,4 +1,4 @@
-﻿import { ToolUseResult } from './tools';
+﻿import type { ToolUseResult } from '../core/tool-types';
 import { ProjectService } from '../../../services/project.service';
 import { ConnectionGraphService, PinSummary, PinmapCatalog, ComponentInstanceInput, ComponentConfig, PinmapProtocol } from '../../../services/connection-graph.service';
 import { AilyHost } from '../core/host';
@@ -617,8 +617,9 @@ export async function getPinmapSummaryTool(
 /**
  * get_project_context 工具
  *
- * 合并 get_context + get_component_catalog 的功能，一次返回项目上下文 + 组件目录。
- * 替代原先需要依次调用两个工具的两步操作。
+ * 返回组件目录 + 生成的 C++ 代码（用于推断硬件外设）。
+ * 项目基本信息（path, board, libraries）已注入系统提示词的 environment 段，
+ * 此工具只提供动态数据（pinmap 状态、catalog entries、C++ code）。
  */
 export async function getProjectContextTool(
   connectionGraphService: ConnectionGraphService,
@@ -626,15 +627,14 @@ export async function getProjectContextTool(
   input: { includeNeedsGeneration?: boolean }
 ): Promise<ToolUseResult> {
   try {
-    // === Part 1: 项目上下文（来自 getContextTool 逻辑）===
-    const { getContextTool } = await import('./getContextTool');
-    const contextResult = await getContextTool(projectService, { info_type: 'all' });
-    let contextData: any = {};
+    // === Part 1: 生成的 C++ 代码（用于推断硬件外设需求）===
+    let cppCode = '';
     try {
-      contextData = JSON.parse(contextResult.content);
+      const host = (await import('../core/host')).AilyHost.get();
+      cppCode = host.editor?.getGeneratedCode?.() || '';
     } catch { /* ignore */ }
 
-    // === Part 2: 组件目录（来自 getSensorPinmapCatalogTool 逻辑）===
+    // === Part 2: 组件目录（pinmap 状态是动态数据，需实时获取）===
     const catalogResult = await getSensorPinmapCatalogTool(
       connectionGraphService,
       projectService,
@@ -647,16 +647,11 @@ export async function getProjectContextTool(
 
     // === 合并结果 ===
     const merged: any = {
-      // 项目基本信息
-      project: contextData.project,
-      editingMode: contextData.editingMode,
-      cppCode: contextData.cppCode,
-      // 组件目录信息
       currentBoard: catalogData.currentBoard,
     };
 
-    if (contextData.warn) {
-      merged.warn = contextData.warn;
+    if (cppCode) {
+      merged.cppCode = cppCode;
     }
 
     if (catalogData.catalogs) {

@@ -11,79 +11,137 @@
   }
 }
 
-// ===== 子Agent折叠面板 =====
+// ===== 子Agent — VS Code 风格 =====
+// 参考 VS Code Copilot Chat 的 chatSubagentContent / chatThinkingContent 样式
+// 使用连接线、shimmer 动画、精确间距(4/8/12/16px)
+
 .subagent-fold {
-  border-radius: 5px;
-  margin: 5px 0;
-  padding: 5px 10px;
-  background-color: #2d2d2d;
-  border-left: 3px solid #6366f1;
-  overflow: hidden;
+  position: relative;
+  margin: 4px 0 8px;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .subagent-fold-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0;
+  padding: 4px 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   color: #ccc;
   user-select: none;
-  transition: background 0.2s;
+  border-radius: 4px;
+  transition: background 0.15s;
 
   &:hover {
     background: rgba(255, 255, 255, 0.05);
-    margin: -5px -10px;
-    padding: 5px 10px;
   }
 }
 
 .subagent-fold-icon {
   flex-shrink: 0;
-  margin-right: 2px;
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
 
   &.loading {
-    color: #818cf8;
+    color: #ccc;
   }
 
   &.done {
-    color: #52c41a;
+    color: #89d185;
+  }
+
+  &.error {
+    color: #f48771;
   }
 }
 
 .subagent-fold-label {
-  color: #c4b5fd;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 400;
+  color: #ccc;
+}
+
+// ===== Shimmer — 流式状态下 label 微光扫描 =====
+@keyframes subagent-shimmer {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.subagent-fold-label.shimmer {
+  background: linear-gradient(90deg,
+    #ccc 0%, #ccc 30%,
+    #4fc3f7 50%,
+    #ccc 70%, #ccc 100%);
+  background-size: 400% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: subagent-shimmer 2s linear infinite;
 }
 
 .subagent-fold-stats {
   color: #888;
   font-size: 11px;
-  margin-left: 8px;
+  margin-left: 4px;
   font-weight: 400;
 }
 
 .subagent-fold-arrow {
   margin-left: auto;
   font-size: 10px;
-  color: #888;
-  transition: transform 0.2s;
+  color: #666;
+  transition: transform 0.15s ease;
 
   &.expanded {
     transform: rotate(180deg);
   }
 }
 
+// ===== 展开区 — 左侧连接线 =====
 .subagent-fold-body {
-  padding: 5px 0;
-  margin-top: 5px;
-  max-height: 400px;
+  position: relative;
+  padding: 4px 0 4px 24px;
+  max-height: 500px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-  border-top: 1px solid rgba(99, 102, 241, 0.2);
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
   user-select: text;
+
+  // 垂直连接线（VS Code mask-image 风格）
+  &::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: rgba(255, 255, 255, 0.12);
+    mask-image: linear-gradient(to bottom,
+      transparent 0px, #000 6px, #000 calc(100% - 6px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom,
+      transparent 0px, #000 6px, #000 calc(100% - 6px), transparent 100%);
+  }
+}
+
+// ===== Header → Body 弯曲连接线 =====
+.subagent-fold-header::after {
+  content: none; // 默认不显示
+}
+
+.subagent-fold.expanded .subagent-fold-header::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 24px;
+  height: 10px;
+  width: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom-left-radius: 4px;
 }
 
 @keyframes ac-spin {

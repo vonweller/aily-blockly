@@ -24,6 +24,12 @@ import { safeBase64Decode } from '../pipes/markdown.pipe';
 
 /**
  * 动态组件指令 - 用于在 DOM 中查找 Aily 组件占位符并替换为真正的 Angular 组件
+ *
+ * Active chat rendering no longer mounts this directive. It is retained only for
+ * the archived aily-dialog compatibility chain that still consumes MarkdownPipe
+ * placeholders.
+ *
+ * @deprecated Legacy compatibility only.
  */
 @Directive({
   selector: '[ailyDynamicComponent]',

@@ -46,6 +46,12 @@ function addCorrectionEvent(event: ValidationCorrectionEvent) {
  *
  * 此管道将在检测到特殊的 Aily 代码块时，生成带有特殊标记的 HTML，
  * 然后通过指令系统将这些标记替换为真正的 Angular 组件
+ *
+ * Active chat rendering no longer uses this pipeline. The live path is
+ * x-dialog plus AilyChatCodeComponent and Part-based viewers. This file remains
+ * only for the archived aily-dialog compatibility chain.
+ *
+ * @deprecated Legacy compatibility only.
  */
 @Pipe({
   name: 'markdown',
@@ -128,6 +134,12 @@ export class MarkdownPipe implements PipeTransform {
 
   /**
    * 检查是否为特殊的 Aily 代码块类型
+   *
+   * Active chat rendering no longer mounts this directive. It is retained only for
+   * the archived aily-dialog compatibility chain that still consumes MarkdownPipe
+   * placeholders.
+   *
+   * @deprecated Legacy compatibility only.
    */
   private isAilyCodeBlock(lang: string): boolean {
     const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid', 'mermaid', 'aily-task-action', 'aily-think', 'aily-context', 'aily-approval'];

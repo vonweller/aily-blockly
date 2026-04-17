@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 
 interface SwitchBoardInput {
     /** 开发板包名称，如 "@aily-project/board-esp32_devkitc" */

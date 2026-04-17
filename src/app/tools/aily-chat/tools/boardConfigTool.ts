@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 
 interface GetBoardConfigInput {
     /** 不需要参数，自动获取当前开发板的配置 */

@@ -8,7 +8,7 @@ import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { TOOLS } from '../../tools/tools';
+import { TOOL_SETTINGS_CATALOG } from '../../tools/tool-settings-catalog';
 import { ElectronService } from '../../../../services/electron.service';
 import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig } from '../../services/aily-chat-config.service';
 
@@ -55,6 +55,10 @@ export class AilyChatSettingsComponent implements OnInit {
 
   // 默认自动保存变更
   autoSaveEdits: boolean = false;
+
+  // Instruction folder 设置（每行一个路径）
+  userInstructionFoldersText = '';
+  projectInstructionFoldersText = '';
 
   // Agent 列表配置
   readonly agentConfigs: AgentConfig[] = [
@@ -155,6 +159,19 @@ export class AilyChatSettingsComponent implements OnInit {
     // 加载配置
     this.maxCount = this.ailyChatConfigService.maxCount;
     this.autoSaveEdits = this.ailyChatConfigService.autoSaveEdits;
+    this.userInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.userInstructionFolders);
+    this.projectInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.projectInstructionFolders);
+  }
+
+  private formatFolderPaths(paths: string[]): string {
+    return paths.join('\n');
+  }
+
+  private parseFolderPaths(text: string): string[] {
+    return text
+      .split(/\r?\n/)
+      .map(item => item.trim())
+      .filter(item => item.length > 0);
   }
 
   /**
@@ -179,8 +196,8 @@ export class AilyChatSettingsComponent implements OnInit {
       const savedDisabledTools = agentToolsConfig?.disabledTools || [];
       const hasStoredConfig = savedEnabledTools.length > 0 || savedDisabledTools.length > 0;
       
-      // 从 TOOLS 常量中筛选出属于该 Agent 的工具
-      const agentTools: ToolConfig[] = TOOLS
+      // 从独立 metadata catalog 中筛选出属于该 Agent 的工具
+      const agentTools: ToolConfig[] = TOOL_SETTINGS_CATALOG
         .filter(tool => tool.agents && tool.agents.includes(agentName))
         .map(tool => {
           let enabled: boolean;
@@ -452,6 +469,8 @@ export class AilyChatSettingsComponent implements OnInit {
     // 保存配置
     this.ailyChatConfigService.maxCount = this.maxCount;
     this.ailyChatConfigService.autoSaveEdits = this.autoSaveEdits;
+    this.ailyChatConfigService.userInstructionFolders = this.parseFolderPaths(this.userInstructionFoldersText);
+    this.ailyChatConfigService.projectInstructionFolders = this.parseFolderPaths(this.projectInstructionFoldersText);
 
     // 保存每个Agent的工具配置
     for (const agentConfig of this.agentConfigs) {

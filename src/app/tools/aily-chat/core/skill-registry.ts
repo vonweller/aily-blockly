@@ -404,12 +404,13 @@ class SkillRegistryImpl {
     const listable = skills.filter(s => !s.metadata.autoActivate && !this._activatedSkills.has(s.metadata.name));
     if (listable.length === 0) return '';
 
-    const names = listable.map(s => s.metadata.name);
+    const entries = listable.map(s => `- ${s.metadata.name}: ${s.metadata.description || 'No description'}`);
 
     return [
       '<availableSkills>',
-      `可用技能: ${names.join(', ')}`,
-      '调用 load_skill 加载技能的完整指南。',
+      ...entries,
+      '',
+      'Call load_skill to load a skill\'s full guide before starting the related task.',
       '</availableSkills>',
     ].join('\n');
   }

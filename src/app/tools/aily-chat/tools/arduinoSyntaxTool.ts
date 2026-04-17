@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 import { ArduinoLintService, LintResult, LintError } from "../services/arduino-lint.service";
 
 /**

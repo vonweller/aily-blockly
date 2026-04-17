@@ -1,7 +1,7 @@
 import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { AskUserOption, AskUserQuestion, AskUserAnswer } from '../../../tools/askUserTool';
+import { AskUserOption, AskUserQuestion, AskUserAnswer } from '../../../core/ask-user';
 
 /** 组件内部归一化的问题（所有字段必填） */
 interface NormalizedQuestion {
@@ -360,6 +360,9 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   answers = new Map<number, AnswerRecord>();
   answeredSet = new Set<number>();
 
+  /** ★ 引用守卫：防止 parent CD 导致 processData 反复重置用户选择（参考 VSCode hasSameContent 模式） */
+  private _lastQuestionsRef: any = null;
+
   constructor(private cdr: ChangeDetectorRef) {}
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -439,12 +442,14 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       ans.selected.clear();
       ans.selected.add(index);
     }
-    this.cdr.markForCheck();
+    // ★ detectChanges 替代 markForCheck：仅触发自身 CD，
+    // 阻断脏标记冒泡到 parent 导致 getQuestionData() 创建新对象
+    this.cdr.detectChanges();
   }
 
   onFreeformChange(value: string): void {
     this.currentAnswer.freeform = value;
-    this.cdr.markForCheck();
+    this.cdr.detectChanges();
   }
 
   onConfirm(): void {
@@ -456,7 +461,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     } else {
       this.currentIndex++;
       this.initRecommended(this.currentIndex);
-      this.cdr.markForCheck();
+      this.cdr.detectChanges();
     }
   }
 
@@ -467,7 +472,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     if (!this.isLastQuestion) {
       this.currentIndex++;
       this.initRecommended(this.currentIndex);
-      this.cdr.markForCheck();
+      this.cdr.detectChanges();
     }
   }
 
@@ -475,7 +480,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   goNext(): void {
     if (this.currentIndex < this.questions.length - 1) {
       this.currentIndex++;
-      this.cdr.markForCheck();
+      this.cdr.detectChanges();
     }
   }
 
@@ -490,14 +495,14 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     } else {
       this.currentIndex++;
       this.initRecommended(this.currentIndex);
-      this.cdr.markForCheck();
+      this.cdr.detectChanges();
     }
   }
 
   goPrev(): void {
     if (this.currentIndex > 0) {
       this.currentIndex--;
-      this.cdr.markForCheck();
+      this.cdr.detectChanges();
     }
   }
 
@@ -538,7 +543,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     this.submittedSummary = summaryParts.length > 0
       ? '已提交: ' + summaryParts.join(' | ')
       : '已提交';
-    this.cdr.markForCheck();
+    this.cdr.detectChanges();
 
     // 直接写入 data 对象，确保后续 saveSession 时 JSON.stringify 能序列化出 answers
     if (this.data && typeof this.data === 'object') {
@@ -574,6 +579,14 @@ export class XAilyQuestionViewerComponent implements OnChanges {
         this.questions = [];
         return;
       }
+
+      // ★ 引用相等守卫：同一 questions 数组引用 → 跳过重置
+      // 防止 parent CD 每次创建新 wrapper 对象导致 ngOnChanges 触发 processData，
+      // 清空用户已选择的选项（参考 VSCode chatQuestionCarouselPart.hasSameContent 模式）
+      if (this._lastQuestionsRef === rawQuestions && this.questions.length > 0) {
+        return;
+      }
+      this._lastQuestionsRef = rawQuestions;
 
       this.isHistory = this.data.isHistory === true;
       this.questions = rawQuestions

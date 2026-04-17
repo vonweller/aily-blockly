@@ -70,6 +70,15 @@
             color: rgba(255, 255, 255, 0.7) !important;
         }
 
+        textarea {
+            background: #363636;
+            z-index: 1;
+            margin-bottom: 5px;
+            color: rgba(255, 255, 255, 0.7) !important;
+            min-height: 84px;
+            resize: vertical;
+        }
+
         // 通用的列表样式
         &.items-section {
             flex-direction: column;
@@ -327,5 +336,17 @@
         font-size: 12px;
         color: rgba(255, 255, 255, 0.45);
         padding-left: 24px;
+    }
+}
+
+.setting-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+
+    .setting-label {
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 13px;
     }
 }
