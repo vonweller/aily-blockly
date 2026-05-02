@@ -11,10 +11,11 @@
  * - 工具执行由 lex 核心 + contributed tools (IHostToolProvider) 处理
  */
 
-import type { IChatContext } from '../core/chat-context';
+import type { IChatCoordination } from '../core/chat-context';
 import { PartEventProcessor } from '../core/part-event-processor';
 import {
   bootstrapBlocklyLexAgent,
+  type BootstrapLexAgentContext,
 } from './lex-agent-bootstrap';
 import { LexAgentLifecycleBridge } from './lex-agent-lifecycle-bridge';
 import { LexTurnSessionBridge } from './lex-turn-session-bridge';
@@ -31,66 +32,124 @@ import { LexRuntimeConfigBridge } from './lex-runtime-config-bridge';
 import { LexRenderEventBridge } from './lex-render-event-bridge';
 import { LexSessionRestoreBridge } from './lex-session-restore-bridge';
 import { LexSessionFacade } from './lex-session-facade';
+import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { IHostStreamListener } from './host-turn-response-state';
+
+type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
+  readonly turnResponses: readonly TurnResponseTurn[];
+  finalizeCurrentTurn(fallbackStatus?: TurnResponseStatus): boolean;
+  hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void;
+  setHostStreamListener(listener: IHostStreamListener | null): void;
+  clearSessionState(): void;
+};
+
+type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'loadModule' | 'stop' | 'dispose' | 'getAgent'>;
+type LexOwnerConversationAccess = Pick<LexTurnSessionBridge, 'messages'>;
+type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuestionAnswers' | 'presentConfirmation' | 'resolveConfirmation' | 'presentToolCallApproval' | 'resolveToolCallApproval' | 'processEvent'>;
+type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
+type LexOwnerTurnControlAccess = Pick<
+  LexTurnControlBridge,
+  'currentId' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'complete' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
+>;
+type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
+type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'restore'>;
+type LexOwnerMessageLifecycleAccess = Pick<LexMessageLifecycleBridge, 'resetTurnState' | 'currentMessageHandle'>;
+type LexOwnerExecutionAccess = Pick<LexTurnExecutionBridge, 'flushPendingEvents'>;
+type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendingEvents'>;
 
 // aily-lex 类型按需获取（运行时动态加载，编译期仅用 type import）
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 
+type LexOwnerContext = BootstrapLexAgentContext
+  & Pick<IChatCoordination, 'lexStream' | 'syncRegisteredAgentNames'>
+  & ConstructorParameters<typeof LexHostSyncBridge>[0]
+  & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
+  & ConstructorParameters<typeof LexUiEventBridge>[0]
+  & ConstructorParameters<typeof LexTurnStartupBridge>[0]
+  & ConstructorParameters<typeof LexTurnExecutionBridge>[0]
+  & ConstructorParameters<typeof LexRuntimeConfigBridge>[0]
+  & ConstructorParameters<typeof LexRenderEventBridge>[0];
+
 export class LexOwnerFacade {
   /** lex 模块/agent 生命周期桥 */
-  private readonly _agentLifecycleBridge: LexAgentLifecycleBridge;
+  private readonly _agentLifecycleBridge: LexOwnerAgentAccess;
   /** turn/session 适配桥，封装 lex TurnManager 与 OpenAI 形状转换 */
-  private readonly _turnBridge: LexTurnSessionBridge;
-  /** ask 确认 UI 桥 */
-  private readonly _askConfirmationBridge: LexAskConfirmationBridge;
-  /** 宿主同步桥（文件编辑 + todo 同步） */
-  private readonly _hostSyncBridge: LexHostSyncBridge;
+  private readonly _turnBridge: LexOwnerConversationAccess;
   /** assistant 消息生命周期桥 */
-  private readonly _messageLifecycleBridge: LexMessageLifecycleBridge;
+  private readonly _messageLifecycleBridge: LexOwnerMessageLifecycleAccess;
   /** lex -> UI 统一事件入口 */
-  private readonly _uiEventBridge: LexUiEventBridge;
-  /** 主 agent turn 启动编排桥 */
-  private readonly _turnStartupBridge: LexTurnStartupBridge;
+  private readonly _uiEventBridge: LexOwnerUiAccess;
   /** turn 执行编排桥 */
-  private readonly _turnExecutionBridge: LexTurnExecutionBridge;
+  private readonly _turnExecutionBridge: LexOwnerExecutionAccess;
   /** turn runtime 桥，聚合 startup/execution/ui 生命周期入口 */
-  private readonly _turnRuntimeBridge: LexTurnRuntimeBridge;
+  private readonly _turnRuntimeBridge: LexOwnerTurnAccess;
   /** turn 控制桥，封装 turn 历史的直接修改/完成操作 */
-  private readonly _turnControlBridge: LexTurnControlBridge;
+  private readonly _turnControlBridge: LexOwnerTurnControlAccess;
   /** session 持久化桥，封装 save/restore 与挂起事件冲刷 */
-  private readonly _sessionPersistenceBridge: LexSessionPersistenceBridge;
+  private readonly _sessionPersistenceBridge: LexOwnerPendingEventAccess;
   /** runtime 配置桥，封装 host tools 与 llm config 读取 */
-  private readonly _runtimeConfigBridge: LexRuntimeConfigBridge;
-  /** 持久化会话恢复桥，封装 ensureAgent + snapshot 解析 + restore */
-  private readonly _sessionRestoreBridge: LexSessionRestoreBridge;
+  private readonly _runtimeConfigBridge: LexOwnerRuntimeAccess;
   /** 会话 owner façade，聚合持久化与 persisted restore */
-  private readonly _sessionFacade: LexSessionFacade;
+  private readonly _sessionFacade: LexOwnerSessionAccess;
+  /** live turn-native 响应聚合器 */
+  private readonly _renderEventBridge: LexOwnerRenderBridge;
 
-  get agent(): LexAgentLifecycleBridge {
+  get agent(): LexOwnerAgentAccess {
     return this._agentLifecycleBridge;
   }
 
-  get turns(): LexTurnControlBridge {
+  get turns(): LexOwnerTurnControlAccess {
     return this._turnControlBridge;
   }
 
-  get turn(): LexTurnRuntimeBridge {
+  get turn(): LexOwnerTurnAccess {
     return this._turnRuntimeBridge;
   }
 
-  get conversation(): LexTurnSessionBridge {
+  get conversation(): LexOwnerConversationAccess {
     return this._turnBridge;
   }
 
-  get ui(): LexUiEventBridge {
+  get ui(): LexOwnerUiAccess {
     return this._uiEventBridge;
   }
 
-  get runtime(): LexRuntimeConfigBridge {
+  get runtime(): LexOwnerRuntimeAccess {
     return this._runtimeConfigBridge;
   }
 
-  get session(): LexSessionFacade {
+  get session(): LexOwnerSessionAccess {
     return this._sessionFacade;
+  }
+
+  get turnResponses(): readonly TurnResponseTurn[] {
+    return this._renderEventBridge.turnResponses;
+  }
+
+  hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
+    this._renderEventBridge.hydrateTurnResponses(turnResponses);
+  }
+
+  finalizeCurrentTurnResponse(fallbackStatus: TurnResponseStatus = 'completed'): boolean {
+    return this._renderEventBridge.finalizeCurrentTurn(fallbackStatus);
+  }
+
+  async compactConversation(): Promise<boolean> {
+    const changed = await this._agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.() ?? false;
+    this._flushPendingEvents();
+    return changed;
+  }
+
+  /** H1: wire a host stream listener into the render bridge so host-side consumers
+   *  receive incremental turn events without polling turnResponses on every CD cycle. */
+  setHostStreamListener(listener: IHostStreamListener | null): void {
+    this._renderEventBridge.setHostStreamListener(listener);
+  }
+
+  resetSessionState(): void {
+    this.ctx.invalidateHostRequestGraph();
+    this._messageLifecycleBridge.resetTurnState();
+    this._renderEventBridge.clearSessionState();
   }
 
   /**
@@ -98,24 +157,25 @@ export class LexOwnerFacade {
    *
    * 这样 SessionLifecycleHelper 不再需要理解旧格式 turns 的具体结构。
    */
-  /** Part-based 事件处理器（Phase 1 双轨：同时写入 string + Parts） */
-  private _partProcessor: PartEventProcessor;
-
-  constructor(private ctx: IChatContext) {
-    this._askConfirmationBridge = new LexAskConfirmationBridge(this.ctx);
-    this._hostSyncBridge = new LexHostSyncBridge(this.ctx);
-    this._agentLifecycleBridge = new LexAgentLifecycleBridge({
+  constructor(private ctx: LexOwnerContext) {
+    const askConfirmationBridge = new LexAskConfirmationBridge(this.ctx);
+    const hostSyncBridge = new LexHostSyncBridge(this.ctx);
+    const agentLifecycleBridge = new LexAgentLifecycleBridge({
       getSessionId: () => this.ctx.sessionId,
       loadModule: () => import('aily-lex/browser'),
       createAgent: (lex, sessionId) => bootstrapBlocklyLexAgent({
         ctx: this.ctx,
         lex,
         sessionId,
-        askHandler: (askContext) => this._askConfirmationBridge.handleAskConfirmation(askContext),
+        askHandler: (askContext) => askConfirmationBridge.handleAskConfirmation(askContext),
         onSubagentEvent: (event) => this._uiEventBridge.processEvent(event, 'subagent'),
       }),
       onAgentReady: (agent, _lex, currentTodoUnsubscribe) => {
         this._flushPendingEvents();
+
+        this.ctx.syncRegisteredAgentNames?.(
+          agent.agentModeManager.getAll().map(definition => definition.agentType),
+        );
 
         try {
           this.ctx.editCheckpointService.setFileHistory(agent.getFileHistory());
@@ -127,69 +187,83 @@ export class LexOwnerFacade {
         return null;
       },
     });
-    this._turnBridge = new LexTurnSessionBridge(() => this._agentLifecycleBridge.getAgent());
-    this._turnControlBridge = new LexTurnControlBridge(this._turnBridge);
-    this._runtimeConfigBridge = new LexRuntimeConfigBridge(this.ctx);
-    this._sessionPersistenceBridge = new LexSessionPersistenceBridge({
-      getAgent: () => this._agentLifecycleBridge.getAgent(),
+    this._agentLifecycleBridge = agentLifecycleBridge;
+    const turnBridge = new LexTurnSessionBridge(() => agentLifecycleBridge.getAgent());
+    this._turnBridge = turnBridge;
+    const turnControlBridge = new LexTurnControlBridge(turnBridge);
+    this._turnControlBridge = turnControlBridge;
+    const runtimeConfigBridge = new LexRuntimeConfigBridge(this.ctx);
+    this._runtimeConfigBridge = runtimeConfigBridge;
+    const sessionPersistenceBridge = new LexSessionPersistenceBridge({
+      getAgent: () => agentLifecycleBridge.getAgent(),
       flushPendingEvents: (events) => {
         this._turnExecutionBridge.flushPendingEvents(events);
       },
     });
-    this._sessionRestoreBridge = new LexSessionRestoreBridge({
-      ensureAgent: (sessionId) => this._agentLifecycleBridge.ensureAgent(sessionId),
-      getLex: () => this._agentLifecycleBridge.getLex(),
+    this._sessionPersistenceBridge = sessionPersistenceBridge;
+    const sessionRestoreBridge = new LexSessionRestoreBridge({
+      ensureAgent: (sessionId) => agentLifecycleBridge.ensureAgent(sessionId),
+      getLex: () => agentLifecycleBridge.getLex(),
       getCwd: () => this.ctx.prjPath || this.ctx.prjRootPath || '',
-      restoreSnapshot: (snapshot) => this._sessionPersistenceBridge.restoreSession(snapshot),
+      restoreSnapshot: (snapshot) => sessionPersistenceBridge.restoreSession(snapshot),
     });
     this._sessionFacade = new LexSessionFacade(
-      this._sessionPersistenceBridge,
-      this._sessionRestoreBridge,
+      sessionPersistenceBridge,
+      sessionRestoreBridge,
     );
-    this._partProcessor = new PartEventProcessor(
+    const partProcessor = new PartEventProcessor(
       this.ctx.partStore,
-      () => this._messageLifecycleBridge.currentMsgIndex,
+      () => this._messageLifecycleBridge.currentMessageHandle,
     );
-    this._messageLifecycleBridge = new LexMessageLifecycleBridge(
+    const messageLifecycleBridge = new LexMessageLifecycleBridge(
       this.ctx,
-      this._partProcessor,
+      partProcessor,
       () => {
-        this._agentLifecycleBridge.setAbortController(null);
+        agentLifecycleBridge.setAbortController(null);
       },
+      () => agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.() ?? false,
+      (fallbackStatus) => this._renderEventBridge.finalizeCurrentTurn(fallbackStatus),
     );
-    this._uiEventBridge = new LexUiEventBridge(
-      this.ctx,
-      this._partProcessor,
-      this._hostSyncBridge,
-      this._messageLifecycleBridge,
-      () => this._messageLifecycleBridge.currentMsgIndex,
-    );
-    this._turnStartupBridge = new LexTurnStartupBridge(
-      this.ctx,
-      (userMessage) => this._turnControlBridge.start(userMessage),
-      () => this._uiEventBridge.ensureAilyMessage(),
-      () => this._turnBridge.messages(),
-      () => this._runtimeConfigBridge.tools(),
-    );
-    this._turnExecutionBridge = new LexTurnExecutionBridge(
-      this.ctx,
-      this._uiEventBridge,
-      (controller) => {
-        this._agentLifecycleBridge.setAbortController(controller);
-      },
-    );
-    // Activate the RenderEvent path: wire the render bridge into execution
+    this._messageLifecycleBridge = messageLifecycleBridge;
     const renderEventBridge = new LexRenderEventBridge(
       this.ctx,
-      this._hostSyncBridge,
-      this._messageLifecycleBridge,
+      hostSyncBridge,
+      messageLifecycleBridge,
+      () => turnControlBridge.snapshot(),
     );
-    this._turnExecutionBridge.setRenderEventBridge(renderEventBridge);
+    this._renderEventBridge = renderEventBridge;
+    const uiEventBridge = new LexUiEventBridge(
+      this.ctx,
+      partProcessor,
+      hostSyncBridge,
+      messageLifecycleBridge,
+      renderEventBridge,
+    );
+    this._uiEventBridge = uiEventBridge;
+    const turnStartupBridge = new LexTurnStartupBridge(
+      this.ctx,
+      (userMessage, displayContent, metadata) => turnControlBridge.start(userMessage, displayContent, metadata),
+      (turnId, userMessage, displayContent, metadata) => renderEventBridge.seedPendingTurn(turnId, userMessage, displayContent, metadata),
+      () => uiEventBridge.ensureAilyMessage(),
+      () => turnBridge.messages(),
+      () => runtimeConfigBridge.tools(),
+    );
+    const turnExecutionBridge = new LexTurnExecutionBridge(
+      this.ctx,
+      uiEventBridge,
+      (controller) => {
+        agentLifecycleBridge.setAbortController(controller);
+      },
+      () => turnControlBridge.currentRequestMetadata(),
+    );
+    this._turnExecutionBridge = turnExecutionBridge;
+    // Activate the RenderEvent path: wire the render bridge into execution
+    turnExecutionBridge.setRenderEventBridge(renderEventBridge);
     this._turnRuntimeBridge = new LexTurnRuntimeBridge(
-      this._agentLifecycleBridge,
-      this._turnStartupBridge,
-      this._turnExecutionBridge,
-      this._uiEventBridge,
+      agentLifecycleBridge,
+      turnStartupBridge,
+      turnExecutionBridge,
+      uiEventBridge,
     );
   }
 

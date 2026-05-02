@@ -517,6 +517,16 @@ export class RepetitionDetectionService {
       return exactMatchResult;
     }
 
+    const resultPattern = this.checkResultDrivenRetryPattern(toolName, retryFamilyHash);
+    if (resultPattern.isRepetitive) {
+      return resultPattern;
+    }
+
+    const crossToolResultPattern = this.checkCrossToolResultStagnation();
+    if (crossToolResultPattern.isRepetitive) {
+      return crossToolResultPattern;
+    }
+
     const retryFamilyResult = this.checkRetryFamilyMatch(toolName, retryFamilyHash);
     if (retryFamilyResult.isRepetitive) {
       return retryFamilyResult;
@@ -536,16 +546,6 @@ export class RepetitionDetectionService {
     const looseCycleResult = this.checkLooseCyclePattern();
     if (looseCycleResult.isRepetitive) {
       return looseCycleResult;
-    }
-
-    const resultPattern = this.checkResultDrivenRetryPattern(toolName, retryFamilyHash);
-    if (resultPattern.isRepetitive) {
-      return resultPattern;
-    }
-
-    const crossToolResultPattern = this.checkCrossToolResultStagnation();
-    if (crossToolResultPattern.isRepetitive) {
-      return crossToolResultPattern;
     }
 
     // 记录本次调用
@@ -622,7 +622,8 @@ export class RepetitionDetectionService {
 
     if (
       trailingFamilyCalls.length >= this.SAME_TOOL_FAMILY_THRESHOLD - 1 &&
-      distinctArgs.size >= 2
+      distinctArgs.size >= 2 &&
+      !this.shouldSuppressRetryFamilyWarning(trailingFamilyCalls)
     ) {
       return {
         isRepetitive: true,
@@ -763,7 +764,7 @@ export class RepetitionDetectionService {
       this.CYCLE_PATTERN_LENGTH + this.CYCLE_PATTERN_NOISE_TOLERANCE * 2
     );
 
-    for (let patternLength = 2; patternLength <= 3; patternLength++) {
+    for (let patternLength = 3; patternLength >= 2; patternLength--) {
       const exactRounds = this.findLooseCycleRounds(completedHistory, patternLength, false);
       if (exactRounds) {
         return {
@@ -985,6 +986,27 @@ export class RepetitionDetectionService {
       .filter(record => record.name === toolName && record.retryFamilyHash === retryFamilyHash);
   }
 
+  private shouldSuppressRetryFamilyWarning(records: readonly ToolCallRecord[]): boolean {
+    const successPayloadRecords = records.filter(record => record.resultCategory === 'success_payload');
+    if (successPayloadRecords.length < records.length || successPayloadRecords.length < 3) {
+      return false;
+    }
+
+    const structuredRecords = successPayloadRecords.filter(
+      (record): record is ToolCallRecord & { resultStructuredItems: string[] } =>
+        Array.isArray(record.resultStructuredItems) && record.resultStructuredItems.length > 0
+    );
+    if (structuredRecords.length < 3) {
+      return false;
+    }
+
+    const firstPageItemCount = new Set(structuredRecords[0].resultStructuredItems).size;
+    const totalKnownItems = new Set(structuredRecords.flatMap(record => record.resultStructuredItems)).size;
+    const structuredNoGrowthRun = this.getLongestStructuredNoGrowthRun(structuredRecords);
+
+    return totalKnownItems > firstPageItemCount && structuredNoGrowthRun < 3;
+  }
+
   private evaluateResultRetryRisk(records: readonly ToolCallRecord[]): {
     score: number;
     threshold: number;
@@ -1028,6 +1050,9 @@ export class RepetitionDetectionService {
     const distinctArgs = new Set(categorizedRecords.map(record => record.argsHash)).size;
     const problematicRecords = categorizedRecords.filter(record => this.isProblematicToolOutcome(record.resultCategory!));
     const successPayloadRecords = categorizedRecords.filter(record => record.resultCategory === 'success_payload');
+    const hasStructuredPayloadSignals = successPayloadRecords.some(record =>
+      !!record.resultStructuredSignature || !!record.resultStructuredItems?.length
+    );
     const similarPayloadClusterSize = this.getLargestSimilarSignatureCluster(
       successPayloadRecords
         .map(record => record.resultSignature)
@@ -1041,9 +1066,9 @@ export class RepetitionDetectionService {
     const structuredNoGrowthRun = this.getLongestStructuredNoGrowthRun(successPayloadRecords);
     const structuredNoveltyStats = this.getStructuredNoveltyStats(successPayloadRecords);
     const isStalePayload = strongestCategory === 'success_payload' && (
-      similarPayloadClusterSize >= 3 ||
-      structuredPayloadClusterSize >= 3 ||
-      structuredNoGrowthRun >= 3
+      hasStructuredPayloadSignals
+        ? (structuredPayloadClusterSize >= 3 || structuredNoGrowthRun >= 3)
+        : similarPayloadClusterSize >= 3
     );
     const isLowNoveltyPayload = strongestCategory === 'success_payload' && !isStalePayload && (
       structuredNoveltyStats.longestLowNoveltyRun >= 4 ||

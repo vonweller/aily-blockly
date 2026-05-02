@@ -6,7 +6,13 @@ interface MenuManagerLike {
   showMode: boolean;
   showModelMenu: boolean;
   toggleModeMenu(event: MouseEvent): void;
-  toggleModelMenu(event: MouseEvent, modelCount: number): void;
+  toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void;
+}
+
+function isSameModelSelection(left: ModelConfig | null | undefined, right: ModelConfig | null | undefined): boolean {
+  return left?.model === right?.model
+    && left?.presetId === right?.presetId
+    && left?.reasoningEffort === right?.reasoningEffort;
 }
 
 export class ChatSwitchShellCoordinator {
@@ -19,6 +25,7 @@ export class ChatSwitchShellCoordinator {
     private readonly callbacks: {
       switchToMode: (mode: string) => void | Promise<void>;
       switchToModel: (model: ModelConfig) => void | Promise<void>;
+      switchToReasoningEffort: (reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>) => void | Promise<void>;
     },
   ) {}
 
@@ -26,8 +33,8 @@ export class ChatSwitchShellCoordinator {
     this.deps.menuManager.toggleModeMenu(event);
   }
 
-  toggleModelMenu(event: MouseEvent, modelCount: number): void {
-    this.deps.menuManager.toggleModelMenu(event, modelCount);
+  toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
+    this.deps.menuManager.toggleModelMenu(event, modelItems);
   }
 
   modeMenuClick(item: IMenuItem): void {
@@ -43,8 +50,25 @@ export class ChatSwitchShellCoordinator {
     this.deps.menuManager.showModelMenu = false;
 
     const model = item.data?.model as ModelConfig | undefined;
-    if (model?.model && model.model !== this.deps.getCurrentModel()?.model) {
+    if (model?.model && !isSameModelSelection(model, this.deps.getCurrentModel())) {
       void this.callbacks.switchToModel(model);
     }
+  }
+
+  modelMenuSubItemClick(item: IMenuItem): void {
+    this.deps.menuManager.showModelMenu = false;
+
+    const model = item.data?.model as ModelConfig | undefined;
+    if (model?.model && !isSameModelSelection(model, this.deps.getCurrentModel())) {
+      void this.callbacks.switchToModel(model);
+      return;
+    }
+
+    const reasoningEffort = item.data?.reasoningEffort as ModelConfig['reasoningEffort'] | undefined;
+    if (!reasoningEffort || reasoningEffort === this.deps.getCurrentModel()?.reasoningEffort) {
+      return;
+    }
+
+    void this.callbacks.switchToReasoningEffort(reasoningEffort);
   }
 }

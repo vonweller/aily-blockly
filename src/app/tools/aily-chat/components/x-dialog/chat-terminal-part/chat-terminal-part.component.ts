@@ -1,10 +1,10 @@
 /**
  * ChatTerminalPartComponent — 终端命令输出渲染器
  *
- * VS Code 风格终端输出视图：
- *   - Header: 终端图标 + 命令 + 运行状态
- *   - Output: <pre><code> 滚动输出区域（max-height 200px）
- *   - 顶部/底部渐变遮罩
+ * 使用与 confirmation widget 接近的紧凑卡片样式：
+ *   - 标题行 + 运行状态
+ *   - 命令预览块
+ *   - 可折叠输出区
  */
 import {
   Component,
@@ -18,161 +18,120 @@ import {
   AfterViewChecked,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { ChatCommandPreviewComponent } from '../chat-command-preview/chat-command-preview.component';
+import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.component';
 
 @Component({
   selector: 'aily-chat-terminal-part',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, ChatCommandPreviewComponent, ChatPartHeaderShellComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="term-container" [class.term-running]="isRunning" [class.term-error]="hasError">
-      <!-- Header -->
-      <div class="term-header" (click)="toggleCollapse()">
-        <i class="fa-solid fa-terminal term-icon"></i>
-        <code class="term-cmd">{{ command }}</code>
-        <span class="term-status">
-          @if (isRunning) {
-            <span class="term-spinner"></span>
-            <span>运行中…</span>
-          } @else if (hasError) {
-            <i class="fa-solid fa-circle-xmark term-status-icon term-status-error"></i>
-            <span>退出码 {{ exitCode }}</span>
-          } @else {
-            <i class="fa-solid fa-circle-check term-status-icon term-status-ok"></i>
-            <span>完成</span>
-          }
-        </span>
-        <i class="fa-solid" [class.fa-chevron-down]="!collapsed" [class.fa-chevron-right]="collapsed"
-           style="font-size: 10px; color: #666; margin-left: auto;"></i>
-      </div>
+    <div class="term-container" [class.thinking]="isRunning">
+      <aily-chat-part-header-shell
+        [title]="headerTitle"
+        [meta]="headerMeta"
+        [pill]="headerPill"
+        [tone]="statusTone"
+        [iconClass]="statusIconClass"
+        [iconSpin]="isRunning"
+        [showChevron]="hasDetailContent"
+        [clickable]="hasDetailContent"
+        [expanded]="hasDetailContent && !collapsed"
+        (toggleRequested)="toggleCollapse()"></aily-chat-part-header-shell>
 
-      <!-- Output body -->
-      @if (!collapsed && hasOutput) {
+      @if (hasDetailContent && !collapsed) {
         <div class="term-body">
-          <div class="term-fade-top"></div>
-          <pre class="term-output" #outputEl><code>{{ output }}</code></pre>
-          @if (showFadeBottom) {
-            <div class="term-fade-bottom"></div>
+          @if (command) {
+            <aily-chat-command-preview class="term-command-block" [command]="command" />
           }
-        </div>
-      }
 
-      <!-- Stderr -->
-      @if (!collapsed && stderr) {
-        <div class="term-body term-stderr-body">
-          <pre class="term-output term-stderr"><code>{{ stderr }}</code></pre>
+          @if (hasOutput) {
+            <div class="term-output-block">
+              @if (output) {
+                <pre class="term-output" #outputEl><code>{{ output }}</code></pre>
+              }
+              @if (stderr) {
+                <pre class="term-output term-stderr"><code>{{ stderr }}</code></pre>
+              }
+            </div>
+          }
         </div>
       }
     </div>
   `,
   styles: [`
-    .term-container {
-      border-radius: 8px;
-      background: var(--terminal-bg, #1a1a1a);
-      border: 1px solid #2a2a2a;
-      overflow: hidden;
-      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-      transition: border-color 0.2s;
-    }
-    .term-container:hover { border-color: #3a3a3a; }
-    .term-running { border-color: rgba(24, 144, 255, 0.3); }
-    .term-error { border-color: rgba(255, 77, 79, 0.25); }
-
-    .term-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.15s;
-    }
-    .term-header:hover { background: rgba(255, 255, 255, 0.03); }
-
-    .term-icon {
-      font-size: 12px;
-      color: #888;
-      flex-shrink: 0;
-    }
-    .term-cmd {
-      font-size: 12px;
-      color: #ccc;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
+    :host {
+      display: block;
       min-width: 0;
     }
 
-    .term-status {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 11px;
-      color: #888;
-      flex-shrink: 0;
-    }
-    .term-status-icon { font-size: 12px; }
-    .term-status-ok { color: #52c41a; }
-    .term-status-error { color: #ff4d4f; }
-
-    /* Spinner */
-    .term-spinner {
-      width: 12px;
-      height: 12px;
-      border: 2px solid rgba(24, 144, 255, 0.2);
-      border-top-color: #1890ff;
-      border-radius: 50%;
-      animation: term-spin 0.8s linear infinite;
-    }
-    @keyframes term-spin {
-      to { transform: rotate(360deg); }
+    /*
+     * \u7ec8\u7aef\u5bb9\u5668\u2014\u2014\u5bf9\u9f50 think-viewer / subagent \u65e0\u9762\u677f\u98ce\u683c
+     * \u5916\u5c42\u65e0\u80cc\u666f\u8272\uff0c header \u53ef\u70b9\u51fb\u5e26 hover\uff0c\u5185\u5bb9\u533a\u5e26\u5de6\u4fa7\u8fde\u63a5\u7ebf
+     */
+    .term-container {
+      position: relative;
+      padding: 2px 0;
+      color: var(--chat-fg, #cccccc);
+      min-width: 0;
     }
 
-    /* Output body */
     .term-body {
       position: relative;
-      border-top: 1px solid #2a2a2a;
+      padding: 4px 0 6px 20px;
+      margin-top: 2px;
+      min-width: 0;
     }
+
+    .term-body::before {
+      content: '';
+      position: absolute;
+      left: 9px;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background-color: var(--chat-border, rgba(255,255,255,0.10));
+      mask-image: linear-gradient(to bottom,
+        transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom,
+        transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+    }
+
+    .term-command-block {
+      margin-top: 0;
+    }
+
+    .term-output-block {
+      margin-top: 6px;
+    }
+
     .term-output {
       margin: 0;
-      padding: 8px 12px;
+      padding: 4px 0;
       font-size: 12px;
-      line-height: 1.5;
-      color: #b5b5b5;
+      line-height: 1.6;
+      color: var(--chat-fg-dim, #8e8e8e);
       max-height: 200px;
       overflow-y: auto;
       white-space: pre-wrap;
-      word-break: break-all;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      border: 0;
+      background: transparent;
+      font-family: Consolas, 'Courier New', monospace;
     }
     .term-output::-webkit-scrollbar { width: 6px; }
     .term-output::-webkit-scrollbar-track { background: transparent; }
-    .term-output::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
-
-    /* Stderr */
-    .term-stderr-body { border-top: 1px dashed #3a3a3a; }
-    .term-stderr { color: #ff8080; }
-
-    /* Fade gradients */
-    .term-fade-top {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 6px;
-      height: 12px;
-      background: linear-gradient(to bottom, var(--terminal-bg, #1a1a1a), transparent);
-      pointer-events: none;
-      z-index: 1;
+    .term-output::-webkit-scrollbar-thumb { background: var(--chat-border, rgba(255,255,255,0.10)); border-radius: 3px; }
+    .term-stderr {
+      margin-top: 4px;
+      color: var(--chat-error, #f14c4c);
     }
-    .term-fade-bottom {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 6px;
-      height: 16px;
-      background: linear-gradient(to top, var(--terminal-bg, #1a1a1a), transparent);
-      pointer-events: none;
-      z-index: 1;
+
+    @keyframes term-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
   `],
 })
@@ -186,11 +145,51 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked {
   @ViewChild('outputEl') outputEl?: ElementRef<HTMLPreElement>;
 
   collapsed = false;
-  showFadeBottom = false;
   hasError = false;
   hasOutput = false;
 
   private _shouldAutoScroll = true;
+
+  get headerTitle(): string {
+    return '运行终端命令';
+  }
+
+  get headerMeta(): string | undefined {
+    if (this.hasError) {
+      return `退出码 ${this.exitCode}`;
+    }
+
+    return undefined;
+  }
+
+  get headerPill(): string | undefined {
+    if (this.isRunning) {
+      return '进行中';
+    }
+
+    if (this.hasError) {
+      return '失败';
+    }
+
+    return undefined;
+  }
+
+  get statusTone(): 'info' | 'success' | 'error' {
+    if (this.isRunning) {
+      return 'info';
+    }
+
+    return this.hasError ? 'error' : 'success';
+  }
+
+  get hasDetailContent(): boolean {
+    return !!this.command || this.hasOutput;
+  }
+
+  get statusIconClass(): string {
+    if (this.isRunning) return 'fa-light fa-spinner-third';
+    return this.hasError ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check';
+  }
 
   constructor(private cdr: ChangeDetectorRef) {}
 
@@ -207,10 +206,6 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked {
   ngAfterViewChecked(): void {
     if (this.outputEl && this._shouldAutoScroll) {
       const el = this.outputEl.nativeElement;
-      const isScrollable = el.scrollHeight > el.clientHeight;
-      this.showFadeBottom = isScrollable && !this._isScrolledToBottom(el);
-
-      // 运行中时自动滚到底部
       if (this.isRunning) {
         el.scrollTop = el.scrollHeight;
       }
@@ -220,9 +215,5 @@ export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked {
   toggleCollapse(): void {
     this.collapsed = !this.collapsed;
     this.cdr.markForCheck();
-  }
-
-  private _isScrolledToBottom(el: HTMLElement): boolean {
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 4;
   }
 }

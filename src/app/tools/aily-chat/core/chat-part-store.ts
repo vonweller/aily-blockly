@@ -4,109 +4,495 @@
  * 管理每条消息的 Parts 数组，支持：
  *   - addPart / updatePart / appendToMarkdown — 增量更新
  *   - getParts / getLastPart — 查询
- *   - changes$ — 变更通知（供组件 subscribe 驱动渲染）
+ *   - createChangeTracker — 变更跟踪（供低层 projector / 测试观测变更）
  *
  * 设计：纯 TypeScript class（非 Angular injectable），由 ChatEngineService 持有实例。
  * 与 think-content-store 类似的全局 Map 模式，但结构化。
  */
 
 import { Subject } from 'rxjs';
+import { collectMarkdownPostProcessPatches } from './chat-part-markdown-postprocessor';
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart,
-  mkMarkdown, mkThinking, mkToolCall, mkError,
+  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot,
 } from './chat-parts';
-import type { SubagentPart } from './chat-parts';
-import type { ApprovalPart, QuestionPart } from './chat-parts';
+import type { SubagentChildItem } from './chat-parts';
+import type { ConfirmationPart, QuestionPart } from './chat-parts';
+
+type ChatPartStoreKey = object | symbol | number;
 
 // ==================== 变更事件 ====================
 
 export interface PartChange {
-  /** 消息在 list 中的索引 */
-  msgIndex: number;
   /** Part 在该消息 parts 数组中的索引 */
   partIndex: number;
   /** 变更类型 */
   kind: 'add' | 'update' | 'append';
 }
 
+export interface ChatPartStoreChangeTracker {
+  drainChangesForHandle(handle: ChatPartStoreReadableHandle | null): PartChange[];
+  drainPartIndexChangesForHandle(handle: ChatPartStoreReadableHandle | null): Array<Pick<PartChange, 'partIndex'>>;
+  clear(): void;
+  dispose(): void;
+}
+
+export interface ToolCallPartPatch {
+  state?: ToolCallPart['state'];
+  text?: string;
+  args?: ToolCallPart['args'];
+  metadata?: Record<string, unknown>;
+}
+
+type ChatPartProjectionSourceStore = Pick<ChatPartStore, 'getPartsForHandle'>;
+
+interface ChatPartStoreHandleBase {
+  storeKey?: object | symbol;
+}
+
+export interface ChatPartStoreOpaqueHandle extends ChatPartStoreHandleBase {}
+
+interface ChatPartStoreIndexedHandle extends ChatPartStoreHandleBase {
+  msgIndex: number;
+}
+
+export type ChatPartStoreReadableHandle<TMessage extends object = object> =
+  | ChatPartStoreOpaqueHandle
+  | (ChatPartStoreHandleBase & { msgIndex: number; readonly message: TMessage });
+
+type ChatPartStoreHandle = ChatPartStoreIndexedHandle | ChatPartStoreOpaqueHandle;
+
+interface TrackedPartChange {
+  storeKey: ChatPartStoreKey;
+  change: PartChange;
+}
+
+function getHandleMessageStoreKey(handle: ChatPartStoreHandle | null): object | null {
+  const message = (handle as { message?: unknown } | null)?.message;
+  return message && typeof message === 'object' ? message as object : null;
+}
+
+function getHandleOpaqueStoreKey(handle: ChatPartStoreHandle | null): object | symbol | null {
+  if (!handle) {
+    return null;
+  }
+
+  return handle.storeKey ?? getHandleMessageStoreKey(handle);
+}
+
+function getHandleOrderIndex(handle: ChatPartStoreHandle | null): number | null {
+  if (!handle || !('msgIndex' in handle) || typeof handle.msgIndex !== 'number') {
+    return null;
+  }
+
+  return handle.msgIndex >= 0 ? handle.msgIndex : null;
+}
+
+function isIndexedChatPartStoreHandle(
+  handle: ChatPartStoreHandle | null,
+): handle is ChatPartStoreIndexedHandle {
+  return typeof getHandleOrderIndex(handle) === 'number';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value
+      .map(item => asRecord(item))
+      .filter((item): item is Record<string, unknown> => !!item)
+      .map(item => ({ ...item }))
+    : [];
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function mergeToolCallMetadata(
+  part: ToolCallPart,
+  patch: ToolCallPartPatch,
+): Record<string, unknown> | undefined {
+  if (patch.metadata == null) {
+    return undefined;
+  }
+
+  const currentMetadata = asRecord(part.metadata) ?? {};
+  const nextMetadata: Record<string, unknown> = {
+    ...currentMetadata,
+    ...patch.metadata,
+  };
+
+  const currentApproval = asRecord(currentMetadata['approval']);
+  const nextApprovalPatch = asRecord(patch.metadata['approval']);
+  if (nextApprovalPatch) {
+    const nextApproval: Record<string, unknown> = {
+      ...(currentApproval ?? {}),
+      ...nextApprovalPatch,
+    };
+
+    if (patch.state === 'pending_approval' && typeof nextApproval['previousText'] !== 'string') {
+      const previousText = asString(part.text);
+      if (previousText) {
+        nextApproval['previousText'] = previousText;
+      }
+    }
+
+    nextMetadata['approval'] = nextApproval;
+  }
+
+  return nextMetadata;
+}
+
+function resolvePatchedToolCallText(
+  part: ToolCallPart,
+  patch: ToolCallPartPatch,
+  nextMetadata: Record<string, unknown> | undefined,
+): string {
+  if (patch.text != null) {
+    return patch.text;
+  }
+
+  if (part.state !== 'pending_approval' || patch.state === 'pending_approval') {
+    return part.text;
+  }
+
+  const approval = asRecord(nextMetadata?.['approval'])
+    ?? asRecord(asRecord(part.metadata)?.['approval']);
+  const previousText = asString(approval?.['previousText']);
+  return previousText || part.text;
+}
+
+function buildCompletedSubagentMetadata(
+  part: Pick<SubagentToolCallSnapshot, 'metadata' | 'description' | 'agentName' | 'toolCallId'>,
+  resultText: string,
+): Record<string, unknown> {
+  const existingMetadata = asRecord(part.metadata) ?? {};
+  const existingToolSpecificData = asRecord(existingMetadata['toolSpecificData']) ?? {};
+  const description = part.description?.trim() || part.agentName;
+
+  return {
+    ...existingMetadata,
+    subAgentInvocationId: typeof existingMetadata['subAgentInvocationId'] === 'string'
+      ? existingMetadata['subAgentInvocationId']
+      : part.toolCallId,
+    invocationMessage: typeof existingMetadata['invocationMessage'] === 'string'
+      ? existingMetadata['invocationMessage']
+      : description,
+    pastTenseMessage: typeof existingMetadata['pastTenseMessage'] === 'string'
+      ? existingMetadata['pastTenseMessage']
+      : (description ? `Completed Task: "${description}"` : part.agentName),
+    toolSpecificData: {
+      ...existingToolSpecificData,
+      description: typeof existingToolSpecificData['description'] === 'string'
+        ? existingToolSpecificData['description']
+        : part.description,
+      agentName: typeof existingToolSpecificData['agentName'] === 'string'
+        ? existingToolSpecificData['agentName']
+        : part.agentName,
+      result: resultText,
+    },
+  };
+}
+
+function buildSubagentChildTimelineEntry(child: SubagentChildItem, index: number): Record<string, unknown> {
+  const recordId = `child:${child.toolCallId || index}`;
+
+  if (child.kind === 'tool') {
+    const phase = child.state === 'error'
+      ? 'failed'
+      : child.state === 'done'
+        ? 'completed'
+        : child.content
+          ? 'progress'
+          : 'started';
+
+    return mkSubagentTimelineEntry({
+      recordId,
+      phase,
+      summary: [child.toolName, child.argsSummary].filter(Boolean).join(' · ') || child.content,
+      resultText: child.state === 'done' || child.state === 'error' ? child.content || undefined : undefined,
+      progressDetails: child.content ? { message: child.content } : undefined,
+    });
+  }
+
+  return mkSubagentTimelineEntry({
+    recordId,
+    phase: 'progress',
+    summary: child.kind === 'thinking' ? '子代理思考' : child.kind === 'question' ? '子代理提问' : '子代理输出',
+    resultText: child.content || undefined,
+  });
+}
+
+function mergeSubagentToolChildItem(existing: SubagentChildItem, next: SubagentChildItem): SubagentChildItem {
+  if (existing.kind !== 'tool' || next.kind !== 'tool') {
+    return next;
+  }
+
+  return {
+    ...existing,
+    ...next,
+    toolName: next.toolName ?? existing.toolName,
+    toolCallId: next.toolCallId ?? existing.toolCallId,
+    argsSummary: next.argsSummary ?? existing.argsSummary,
+    content: next.content,
+    state: next.state,
+    duration: next.duration ?? existing.duration,
+  };
+}
+
+function isUsableChatPartStoreHandle(
+  handle: ChatPartStoreHandle | null,
+): handle is ChatPartStoreHandle {
+  return !!handle && (getHandleOpaqueStoreKey(handle) !== null || getHandleOrderIndex(handle) !== null);
+}
+
 // ==================== Store ====================
 
 export class ChatPartStore {
-  /** msgIndex → ChatPart[] */
-  private _store = new Map<number, ChatPart[]>();
+  /** storeKey → ChatPart[] */
+  private _store = new Map<ChatPartStoreKey, ChatPart[]>();
+  private _revision = 0;
 
-  /** 变更通知流 */
-  readonly changes$ = new Subject<PartChange>();
+  /** storeKey → 最新 host list 索引（detached handle 可能不存在） */
+  private readonly orderByKey = new Map<ChatPartStoreKey, number>();
+
+  /** host list 索引 → 当前 storeKey，兼容裸 `{ msgIndex }` 查询 */
+  private readonly keyByMsgIndex = new Map<number, ChatPartStoreKey>();
+
+  /** 变更通知流（仅供 store 内部 tracker 订阅） */
+  private readonly changes$ = new Subject<TrackedPartChange>();
+
+  get revision(): number {
+    return this._revision;
+  }
+
+  createChangeTracker(): ChatPartStoreChangeTracker {
+    return new StoreChangeTracker(this.changes$, handle => this.resolveStoreKey(handle));
+  }
+
+  private rebindStoreKey(
+    fromKey: ChatPartStoreKey,
+    toKey: ChatPartStoreKey,
+    orderIndex: number | null,
+  ): void {
+    if (fromKey === toKey) {
+      return;
+    }
+
+    const fromParts = this._store.get(fromKey);
+    const toParts = this._store.get(toKey);
+    if (fromParts) {
+      this._store.set(toKey, toParts ? [...fromParts, ...toParts] : fromParts);
+      this._store.delete(fromKey);
+    }
+
+    const fallbackOrderIndex = this.orderByKey.get(fromKey);
+    const nextOrderIndex = orderIndex ?? fallbackOrderIndex;
+    if (typeof nextOrderIndex === 'number') {
+      this.orderByKey.set(toKey, nextOrderIndex);
+    }
+    this.orderByKey.delete(fromKey);
+
+    for (const [msgIndex, mappedKey] of [...this.keyByMsgIndex.entries()]) {
+      if (mappedKey === fromKey) {
+        this.keyByMsgIndex.set(msgIndex, toKey);
+      }
+    }
+
+    this.bumpRevision();
+  }
+
+  private bumpRevision(): void {
+    this._revision += 1;
+  }
+
+  private resolveStoreKey(handle: ChatPartStoreHandle | null): ChatPartStoreKey | null {
+    if (!isUsableChatPartStoreHandle(handle)) {
+      return null;
+    }
+
+    const explicitKey = getHandleOpaqueStoreKey(handle);
+    const orderIndex = getHandleOrderIndex(handle);
+    const mappedKey = orderIndex !== null ? this.keyByMsgIndex.get(orderIndex) : undefined;
+    let storeKey = explicitKey
+      ?? (mappedKey ?? (orderIndex !== null ? orderIndex : null));
+
+    if (explicitKey !== null && mappedKey !== undefined && mappedKey !== explicitKey) {
+      this.rebindStoreKey(mappedKey, explicitKey, orderIndex);
+      storeKey = explicitKey;
+    }
+
+    if (storeKey === null) {
+      return null;
+    }
+
+    if (orderIndex !== null) {
+      this.orderByKey.set(storeKey, orderIndex);
+      this.keyByMsgIndex.set(orderIndex, storeKey);
+    }
+
+    return storeKey;
+  }
+
+  private resolveHandleOrderIndex(handle: ChatPartStoreHandle | null): number | null {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey !== null) {
+      const mappedIndex = this.orderByKey.get(storeKey);
+      if (typeof mappedIndex === 'number') {
+        return mappedIndex;
+      }
+
+      if (typeof storeKey === 'number') {
+        return storeKey;
+      }
+    }
+
+    return getHandleOrderIndex(handle);
+  }
+
+  private emitChange(
+    storeKey: ChatPartStoreKey,
+    partIndex: number,
+    kind: PartChange['kind'],
+  ): void {
+    this.bumpRevision();
+    this.changes$.next({
+      storeKey,
+      change: { partIndex, kind },
+    });
+  }
+
+  private deleteStoreKey(storeKey: ChatPartStoreKey): void {
+    const existed = this._store.has(storeKey)
+      || this.orderByKey.has(storeKey)
+      || [...this.keyByMsgIndex.values()].some(mappedKey => mappedKey === storeKey);
+    this._store.delete(storeKey);
+    this.orderByKey.delete(storeKey);
+
+    for (const [msgIndex, mappedKey] of [...this.keyByMsgIndex.entries()]) {
+      if (mappedKey === storeKey) {
+        this.keyByMsgIndex.delete(msgIndex);
+      }
+    }
+
+    if (existed) {
+      this.bumpRevision();
+    }
+  }
+
+  createDetachedHandle(label?: string | number): ChatPartStoreOpaqueHandle {
+    return {
+      storeKey: Symbol(label === undefined ? 'detached' : `detached:${String(label)}`),
+    };
+  }
 
   // ==================== 查询 ====================
 
   /** 获取指定消息的所有 Parts */
-  getParts(msgIndex: number): ChatPart[] {
-    return this._store.get(msgIndex) || [];
+  private getParts(storeKey: ChatPartStoreKey): ChatPart[] {
+    return this._store.get(storeKey) || [];
+  }
+
+  getPartsForIndexedHandle(handle: (ChatPartStoreHandleBase & { msgIndex: number }) | null): ChatPart[] {
+    const storeKey = this.resolveStoreKey(handle);
+    return storeKey !== null ? this.getParts(storeKey) : [];
+  }
+
+  getPartsForHandle(handle: ChatPartStoreReadableHandle | null): ChatPart[] {
+    const storeKey = this.resolveStoreKey(handle);
+    return storeKey !== null ? this.getParts(storeKey) : [];
   }
 
   /** 获取指定消息的最后一个 Part */
-  getLastPart(msgIndex: number): ChatPart | undefined {
-    const parts = this._store.get(msgIndex);
+  private getLastPart(storeKey: ChatPartStoreKey): ChatPart | undefined {
+    const parts = this._store.get(storeKey);
     return parts && parts.length > 0 ? parts[parts.length - 1] : undefined;
   }
 
   /** 获取指定消息的指定 Part */
-  getPart(msgIndex: number, partIndex: number): ChatPart | undefined {
-    const parts = this._store.get(msgIndex);
+  private getPart(storeKey: ChatPartStoreKey, partIndex: number): ChatPart | undefined {
+    const parts = this._store.get(storeKey);
     return parts ? parts[partIndex] : undefined;
   }
 
+  private getPartForHandle(handle: ChatPartStoreReadableHandle | null, partIndex: number): ChatPart | undefined {
+    const storeKey = this.resolveStoreKey(handle);
+    return storeKey !== null ? this.getPart(storeKey, partIndex) : undefined;
+  }
+
   /** 检查消息是否有 Parts */
-  hasParts(msgIndex: number): boolean {
-    const parts = this._store.get(msgIndex);
+  private hasParts(storeKey: ChatPartStoreKey): boolean {
+    const parts = this._store.get(storeKey);
     return !!parts && parts.length > 0;
+  }
+
+  hasPartsForHandle(handle: ChatPartStoreReadableHandle | null): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    return storeKey !== null && this.hasParts(storeKey);
   }
 
   // ==================== 写入 ====================
 
   /** 添加新 Part 到消息末尾 */
-  addPart(msgIndex: number, part: ChatPart): number {
-    let parts = this._store.get(msgIndex);
+  private addPart(storeKey: ChatPartStoreKey, part: ChatPart): number {
+    let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
-      this._store.set(msgIndex, parts);
+      this._store.set(storeKey, parts);
     }
     const partIndex = parts.length;
     parts.push(part);
-    this.changes$.next({ msgIndex, partIndex, kind: 'add' });
+    this.emitChange(storeKey, partIndex, 'add');
     return partIndex;
   }
 
+  addPartToHandle(handle: ChatPartStoreReadableHandle | null, part: ChatPart): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
+    return this.addPart(storeKey, part);
+  }
+
   /** 在指定位置插入 Part。超出范围时追加到末尾。 */
-  insertPart(msgIndex: number, partIndex: number, part: ChatPart): number {
-    let parts = this._store.get(msgIndex);
+  private insertPart(
+    storeKey: ChatPartStoreKey,
+    partIndex: number,
+    part: ChatPart,
+  ): number {
+    let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
-      this._store.set(msgIndex, parts);
+      this._store.set(storeKey, parts);
     }
 
     const nextIndex = Math.max(0, Math.min(partIndex, parts.length));
     parts.splice(nextIndex, 0, part);
-    this.changes$.next({ msgIndex, partIndex: nextIndex, kind: 'add' });
+    this.emitChange(storeKey, nextIndex, 'add');
     return nextIndex;
   }
 
-  /** 更新指定 Part（整体替换） */
-  updatePart(msgIndex: number, partIndex: number, part: ChatPart): void {
-    const parts = this._store.get(msgIndex);
-    if (!parts || partIndex >= parts.length) return;
-    parts[partIndex] = part;
-    this.changes$.next({ msgIndex, partIndex, kind: 'update' });
+  private insertPartForHandle(handle: ChatPartStoreHandle | null, partIndex: number, part: ChatPart): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
+    return this.insertPart(storeKey, partIndex, part);
   }
 
-  /** 移除指定 Part */
-  removePart(msgIndex: number, partIndex: number): void {
-    const parts = this._store.get(msgIndex);
+  /** 更新指定 Part（整体替换） */
+  private updatePart(storeKey: ChatPartStoreKey, partIndex: number, part: ChatPart): void {
+    const parts = this._store.get(storeKey);
     if (!parts || partIndex >= parts.length) return;
-    parts.splice(partIndex, 1);
-    // 通知变更（使用最后一个有效索引）
-    this.changes$.next({ msgIndex, partIndex: Math.max(0, parts.length - 1), kind: 'update' });
+    parts[partIndex] = part;
+    this.emitChange(storeKey, partIndex, 'update');
   }
 
   /**
@@ -114,89 +500,196 @@ export class ChatPartStore {
    * 如果最后一个 Part 不是 MarkdownPart，则创建新的。
    * 返回受影响的 partIndex。
    */
-  appendToMarkdown(msgIndex: number, text: string): number {
-    let parts = this._store.get(msgIndex);
+  appendToMarkdown(storeKey: ChatPartStoreKey, text: string): number {
+    let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
-      this._store.set(msgIndex, parts);
+      this._store.set(storeKey, parts);
     }
 
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
     if (last && last.type === 'markdown') {
       const idx = parts.length - 1;
       (last as MarkdownPart).content += text;
-      this.changes$.next({ msgIndex, partIndex: idx, kind: 'append' });
+      this.emitChange(storeKey, idx, 'append');
       return idx;
     }
 
     // 创建新 MarkdownPart
     const idx = parts.length;
     parts.push(mkMarkdown(text));
-    this.changes$.next({ msgIndex, partIndex: idx, kind: 'add' });
+    this.emitChange(storeKey, idx, 'add');
     return idx;
+  }
+
+  appendToMarkdownHandle(handle: ChatPartStoreReadableHandle | null, text: string): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
+    return this.appendToMarkdown(storeKey, text);
   }
 
   /**
    * 追加文本到最后一个 ThinkingPart。
    * 如果最后一个 Part 不是 ThinkingPart，则创建新的。
    */
-  appendToThinking(msgIndex: number, text: string): number {
-    let parts = this._store.get(msgIndex);
+  appendToThinking(storeKey: ChatPartStoreKey, text: string): number {
+    let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
-      this._store.set(msgIndex, parts);
+      this._store.set(storeKey, parts);
     }
 
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
     if (last && last.type === 'thinking') {
       const idx = parts.length - 1;
       (last as ThinkingPart).content += text;
-      this.changes$.next({ msgIndex, partIndex: idx, kind: 'append' });
+      this.emitChange(storeKey, idx, 'append');
       return idx;
     }
 
     // 创建新 ThinkingPart（streaming，未完成）
     const idx = parts.length;
     parts.push(mkThinking(text, false));
-    this.changes$.next({ msgIndex, partIndex: idx, kind: 'add' });
+    this.emitChange(storeKey, idx, 'add');
     return idx;
+  }
+
+  appendToThinkingHandle(handle: ChatPartStoreReadableHandle | null, text: string): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
+    return this.appendToThinking(storeKey, text);
   }
 
   /**
    * 完成最后一个 ThinkingPart（设 isComplete = true）
    */
-  completeThinking(msgIndex: number): void {
-    const parts = this._store.get(msgIndex);
+  completeThinking(storeKey: ChatPartStoreKey): void {
+    const parts = this._store.get(storeKey);
     if (!parts) return;
     for (let i = parts.length - 1; i >= 0; i--) {
       if (parts[i].type === 'thinking') {
         (parts[i] as ThinkingPart).isComplete = true;
-        this.changes$.next({ msgIndex, partIndex: i, kind: 'update' });
+        this.emitChange(storeKey, i, 'update');
         break;
       }
     }
   }
 
+  completeThinkingHandle(handle: ChatPartStoreReadableHandle | null): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.completeThinking(storeKey);
+  }
+
   /**
    * 更新 ToolCallPart 的状态和文本
    */
-  updateToolCall(msgIndex: number, toolCallId: string, state: ToolCallPart['state'], text: string): void {
-    const parts = this._store.get(msgIndex);
+  private updateToolCall(
+    storeKey: ChatPartStoreKey,
+    toolCallId: string,
+    state: ToolCallPart['state'],
+    text: string,
+  ): void {
+    const parts = this._store.get(storeKey);
     if (!parts) return;
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
       if (p.type === 'tool_call' && p.toolCallId === toolCallId) {
         (p as ToolCallPart).state = state;
         (p as ToolCallPart).text = text;
-        this.changes$.next({ msgIndex, partIndex: i, kind: 'update' });
+        this.emitChange(storeKey, i, 'update');
         return;
       }
     }
   }
 
+  private patchToolCall(
+    storeKey: ChatPartStoreKey,
+    toolCallId: string,
+    patch: ToolCallPartPatch,
+  ): boolean {
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return false;
+    }
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.type !== 'tool_call' || part.toolCallId !== toolCallId) {
+        continue;
+      }
+
+      const nextMetadata = mergeToolCallMetadata(part, patch);
+      const nextText = resolvePatchedToolCallText(part, patch, nextMetadata);
+
+      const nextPart: ToolCallPart = {
+        ...part,
+        ...(patch.state != null ? { state: patch.state } : {}),
+        text: nextText,
+        ...(patch.args !== undefined ? { args: patch.args } : {}),
+        ...(nextMetadata != null ? { metadata: nextMetadata } : {}),
+      };
+
+      this.updatePart(storeKey, i, nextPart);
+      return true;
+    }
+
+    return false;
+  }
+
+  updateToolCallForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    toolCallId: string,
+    state: ToolCallPart['state'],
+    text: string,
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.updateToolCall(storeKey, toolCallId, state, text);
+  }
+
+  patchToolCallForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    toolCallId: string,
+    patch: ToolCallPartPatch,
+  ): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    return this.patchToolCall(storeKey, toolCallId, patch);
+  }
+
   /** 更新 StatePart 的状态/文本 */
-  updateState(
-    msgIndex: number,
+  private findStatePartIndex(storeKey: ChatPartStoreKey, stateId: string): number {
+    const parts = this._store.get(storeKey);
+    if (!parts) return -1;
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (part.type === 'state' && part.stateId === stateId) {
+        return i;
+      }
+    }
+
+    return -1;
+  }
+
+  private updateState(
+    storeKey: ChatPartStoreKey,
     stateId: string,
     next: {
       state: StatePart['state'];
@@ -206,55 +699,376 @@ export class ChatPartStore {
       metadata?: Record<string, unknown>;
     },
   ): void {
-    const parts = this._store.get(msgIndex);
+    const parts = this._store.get(storeKey);
     if (!parts) return;
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const p = parts[i];
-      if (p.type === 'state' && p.stateId === stateId) {
-        (p as StatePart).state = next.state;
-        (p as StatePart).text = next.text;
-        if ('progress' in next) {
-          (p as StatePart).progress = next.progress;
-        }
-        if ('kind' in next) {
-          (p as StatePart).kind = next.kind;
-        }
-        if ('metadata' in next) {
-          (p as StatePart).metadata = next.metadata;
-        }
-        this.changes$.next({ msgIndex, partIndex: i, kind: 'update' });
-        return;
-      }
+    const partIndex = this.findStatePartIndex(storeKey, stateId);
+    if (partIndex < 0) {
+      return;
     }
+
+    const part = parts[partIndex] as StatePart;
+    part.state = next.state;
+    part.text = next.text;
+    if ('progress' in next) {
+      part.progress = next.progress;
+    }
+    if ('kind' in next) {
+      part.kind = next.kind;
+    }
+    if ('metadata' in next) {
+      part.metadata = next.metadata;
+    }
+    this.emitChange(storeKey, partIndex, 'update');
+  }
+
+  private upsertState(
+    storeKey: ChatPartStoreKey,
+    stateId: string,
+    next: {
+      state: StatePart['state'];
+      text: string;
+      progress?: number;
+      kind?: StatePart['kind'];
+      metadata?: Record<string, unknown>;
+    },
+  ): void {
+    const partIndex = this.findStatePartIndex(storeKey, stateId);
+    if (partIndex >= 0) {
+      this.updateState(storeKey, stateId, next);
+      return;
+    }
+
+    this.addPart(storeKey, mkState(
+      stateId,
+      next.text,
+      next.state,
+      next.kind,
+      next.progress,
+      next.metadata,
+    ));
+  }
+
+  updateStateForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    stateId: string,
+    next: {
+      state: StatePart['state'];
+      text: string;
+      progress?: number;
+      kind?: StatePart['kind'];
+      metadata?: Record<string, unknown>;
+    },
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.updateState(storeKey, stateId, next);
+  }
+
+  upsertStateForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    stateId: string,
+    next: {
+      state: StatePart['state'];
+      text: string;
+      progress?: number;
+      kind?: StatePart['kind'];
+      metadata?: Record<string, unknown>;
+    },
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.upsertState(storeKey, stateId, next);
+  }
+
+  finalizeRunningPartsForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return;
+    }
+
+    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      const part = parts[partIndex];
+
+      if (part.type === 'state' && part.state === 'doing') {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          state: 'done',
+        });
+        continue;
+      }
+
+      if (part.type === 'tool_call' && part.state === 'doing') {
+        const compatSubagent = isSubagentToolCallMetadata(part.metadata)
+          ? toolCallPartToSubagentSnapshot(part)
+          : null;
+        this.updatePart(
+          storeKey,
+          partIndex,
+          compatSubagent
+            ? this.rebuildSubagentToolCallPart(part, { ...compatSubagent, state: 'done' }, { appendTerminalEntry: true })
+            : {
+              ...part,
+              state: 'done',
+            },
+        );
+        continue;
+      }
+
+      if (part.type === 'terminal' && part.isRunning) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isRunning: false,
+        });
+        continue;
+      }
+
+    }
+  }
+
+  private updatePartForHandle(handle: ChatPartStoreReadableHandle | null, partIndex: number, part: ChatPart): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.updatePart(storeKey, partIndex, part);
+  }
+
+  private rebuildSubagentToolCallPart(
+    existing: ToolCallPart,
+    compat: SubagentToolCallSnapshot,
+    options: { appendTerminalEntry?: boolean } = {},
+  ): ToolCallPart {
+    const nextPart = subagentSnapshotToToolCall(compat, existing);
+    const metadata = asRecord(nextPart.metadata) ?? {};
+    const baseTimeline = asRecordArray(metadata['timeline'])
+      .filter(entry => !String(entry['recordId'] || '').startsWith('child:'));
+    const childTimeline = compat.childItems?.map((child, index) => buildSubagentChildTimelineEntry(child, index)) || [];
+    const timeline = [...baseTimeline, ...childTimeline];
+
+    if (options.appendTerminalEntry) {
+      timeline.push(mkSubagentTimelineEntry({
+        recordId: `${compat.toolCallId}:${compat.state}`,
+        phase: compat.state === 'error' ? 'failed' : 'completed',
+        summary: compat.description || compat.agentName,
+        resultText: compat.resultText || undefined,
+      }));
+    }
+
+    nextPart.metadata = {
+      ...metadata,
+      phase: compat.state === 'error' ? 'failed' : compat.state === 'done' ? 'completed' : 'started',
+      timeline,
+      toolSpecificData: {
+        ...(asRecord(metadata['toolSpecificData']) ?? {}),
+        kind: 'subagent',
+        agentName: compat.agentName,
+        description: compat.description,
+        result: compat.resultText,
+        childItems: (compat.childItems || []).map(child => ({ ...child })),
+      },
+    };
+    nextPart.text = compat.description || existing.text || compat.agentName;
+
+    return nextPart;
   }
 
   /**
-   * 更新 SubagentPart 的状态和结果
+   * 更新 subagent tool_call metadata 的状态和结果
    */
-  updateSubagent(msgIndex: number, toolCallId: string, state: SubagentPart['state'], resultText: string): void {
-    const parts = this._store.get(msgIndex);
+  private updateSubagent(
+    storeKey: ChatPartStoreKey,
+    toolCallId: string,
+    state: SubagentToolCallSnapshot['state'],
+    resultText: string,
+  ): void {
+    const parts = this._store.get(storeKey);
     if (!parts) return;
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
-      if (p.type === 'subagent' && p.toolCallId === toolCallId) {
-        (p as SubagentPart).state = state;
-        (p as SubagentPart).resultText = resultText;
-        this.changes$.next({ msgIndex, partIndex: i, kind: 'update' });
+      if (p.type === 'tool_call' && p.toolCallId === toolCallId && isSubagentToolCallMetadata(p.metadata)) {
+        const compat = toolCallPartToSubagentSnapshot(p);
+        if (!compat) {
+          return;
+        }
+
+        this.updatePart(
+          storeKey,
+          i,
+          this.rebuildSubagentToolCallPart(p, { ...compat, state, resultText }, { appendTerminalEntry: true }),
+        );
         return;
       }
     }
   }
 
-  updateQuestionAnswers(
-    msgIndex: number,
-    answers: QuestionPart['answers'],
-  ): boolean {
-    const parts = this._store.get(msgIndex);
-    if (!parts) return false;
+  private findSubagentPartIndex(storeKey: ChatPartStoreKey, toolCallId: string): number {
+    const parts = this._store.get(storeKey);
+    if (!parts) return -1;
+
     for (let i = parts.length - 1; i >= 0; i--) {
       const part = parts[i];
-      if (part.type !== 'question') continue;
-      this.updatePart(msgIndex, i, {
+      if (part.type === 'tool_call' && part.toolCallId === toolCallId && isSubagentToolCallMetadata(part.metadata)) {
+        return i;
+      }
+    }
+
+    return -1;
+  }
+
+  private upsertSubagentChildItem(
+    storeKey: ChatPartStoreKey,
+    toolCallId: string,
+    child: SubagentChildItem,
+  ): boolean {
+    const parts = this._store.get(storeKey);
+    if (!parts) return false;
+
+    const partIndex = this.findSubagentPartIndex(storeKey, toolCallId);
+    if (partIndex < 0) {
+      return false;
+    }
+
+    const storePart = parts[partIndex];
+    const compat = storePart.type === 'tool_call' && isSubagentToolCallMetadata(storePart.metadata)
+      ? toolCallPartToSubagentSnapshot(storePart)
+      : null;
+
+    if (!compat) {
+      return false;
+    }
+
+    const childItems = [...(compat.childItems || [])];
+
+    if (child.kind === 'tool' && child.toolCallId) {
+      const existingIndex = childItems.findIndex(
+        item => item.kind === 'tool' && item.toolCallId === child.toolCallId,
+      );
+      if (existingIndex >= 0) {
+        childItems[existingIndex] = mergeSubagentToolChildItem(childItems[existingIndex], child);
+      } else {
+        childItems.push(child);
+      }
+    } else {
+      if (!child.content) {
+        return false;
+      }
+
+      const previousChild = childItems[childItems.length - 1];
+      if (previousChild?.kind === child.kind) {
+        childItems[childItems.length - 1] = {
+          ...previousChild,
+          content: `${previousChild.content}${child.content}`,
+        };
+      } else {
+        childItems.push(child);
+      }
+    }
+
+    this.updatePart(
+      storeKey,
+      partIndex,
+      this.rebuildSubagentToolCallPart(storePart as ToolCallPart, {
+        ...compat,
+        childItems,
+      }),
+    );
+    return true;
+  }
+
+  updateSubagentForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    toolCallId: string,
+    state: SubagentToolCallSnapshot['state'],
+    resultText: string,
+  ): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.updateSubagent(storeKey, toolCallId, state, resultText);
+  }
+
+  upsertSubagentChildItemForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    toolCallId: string,
+    child: SubagentChildItem,
+  ): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    return this.upsertSubagentChildItem(storeKey, toolCallId, child);
+  }
+
+  updateLatestRunningSubagentForHandle<T extends SubagentToolCallSnapshot>(
+    handle: ChatPartStoreReadableHandle | null,
+    update: (part: T) => T,
+  ): T | null {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return null;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return null;
+    }
+
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
+      const part = parts[partIndex];
+      if (part.type !== 'tool_call' || part.state !== 'doing' || !isSubagentToolCallMetadata(part.metadata)) {
+        continue;
+      }
+
+      const compat = toolCallPartToSubagentSnapshot(part);
+      if (!compat) {
+        continue;
+      }
+
+      const nextPart = update({ ...compat } as T);
+      this.updatePart(storeKey, partIndex, this.rebuildSubagentToolCallPart(part, nextPart));
+      return nextPart;
+    }
+
+    return null;
+  }
+
+  updateQuestionAnswersForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    answers: QuestionPart['answers'],
+    partId: string,
+  ): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) return false;
+    if (partId.trim().length === 0) {
+      return false;
+    }
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (part.type !== 'question' || part.partId !== partId) continue;
+      this.updatePart(storeKey, i, {
         ...(part as QuestionPart),
         answers,
       });
@@ -263,22 +1077,30 @@ export class ChatPartStore {
     return false;
   }
 
-  updateApprovalResult(
-    msgIndex: number,
-    askId: string,
+  updateConfirmationResultForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    partId: string,
     next: {
       resolved: boolean;
-      result?: ApprovalPart['result'];
-      scope?: ApprovalPart['scope'];
+      result?: ConfirmationPart['result'];
+      scope?: ConfirmationPart['scope'];
     },
   ): boolean {
-    const parts = this._store.get(msgIndex);
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+    if (partId.trim().length === 0) {
+      return false;
+    }
+
+    const parts = this._store.get(storeKey);
     if (!parts) return false;
     for (let i = parts.length - 1; i >= 0; i--) {
       const part = parts[i];
-      if (part.type !== 'approval' || part.askId !== askId) continue;
-      this.updatePart(msgIndex, i, {
-        ...(part as ApprovalPart),
+      if (part.type !== 'confirmation' || part.partId !== partId) continue;
+      this.updatePart(storeKey, i, {
+        ...(part as ConfirmationPart),
         resolved: next.resolved,
         result: next.result,
         scope: next.scope,
@@ -290,33 +1112,216 @@ export class ChatPartStore {
 
   // ==================== 按 toolCallId 查找 ====================
 
-  /** 查找包含指定 toolCallId 的消息索引（兼容 ToolCallPart 和 SubagentPart） */
-  findToolCallMsgIndex(toolCallId: string): number | undefined {
-    for (const [msgIndex, parts] of this._store) {
+  private findQuestionStoreKey(partId: string): ChatPartStoreKey | undefined {
+    for (const [storeKey, parts] of this._store) {
       for (const p of parts) {
-        if ((p.type === 'tool_call' || p.type === 'subagent') && p.toolCallId === toolCallId) {
-          return msgIndex;
+        if (p.type === 'question' && p.partId === partId) {
+          return storeKey;
         }
       }
     }
     return undefined;
   }
 
+  findQuestionOpaqueHandle(partId: string): ChatPartStoreOpaqueHandle | null {
+    const storeKey = this.findQuestionStoreKey(partId);
+    if (storeKey === undefined || typeof storeKey === 'number') {
+      return null;
+    }
+
+    return { storeKey: storeKey as object | symbol };
+  }
+
+  private findConfirmationStoreKey(partId: string): ChatPartStoreKey | undefined {
+    for (const [storeKey, parts] of this._store) {
+      for (const p of parts) {
+        if (p.type === 'confirmation' && p.partId === partId) {
+          return storeKey;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  findConfirmationOpaqueHandle(partId: string): ChatPartStoreOpaqueHandle | null {
+    const storeKey = this.findConfirmationStoreKey(partId);
+    if (storeKey === undefined || typeof storeKey === 'number') {
+      return null;
+    }
+
+    return { storeKey: storeKey as object | symbol };
+  }
+
+  /** 查找包含指定 toolCallId 的消息句柄 */
+  private findToolCallStoreKey(toolCallId: string): ChatPartStoreKey | undefined {
+    for (const [storeKey, parts] of this._store) {
+      for (const p of parts) {
+        if (p.type === 'tool_call' && p.toolCallId === toolCallId) {
+          return storeKey;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  findToolCallOpaqueHandle(toolCallId: string): ChatPartStoreOpaqueHandle | null {
+    const storeKey = this.findToolCallStoreKey(toolCallId);
+    if (storeKey === undefined || typeof storeKey === 'number') {
+      return null;
+    }
+
+    return { storeKey: storeKey as object | symbol };
+  }
+
   // ==================== 生命周期 ====================
 
   /** 清除指定消息的 Parts */
-  clearMessage(msgIndex: number): void {
-    this._store.delete(msgIndex);
+  private clearMessage(storeKey: ChatPartStoreKey): void {
+    if (this._store.delete(storeKey)) {
+      this.bumpRevision();
+    }
+  }
+
+  private collectStoreKeysAtOrAfter(msgIndex: number): ChatPartStoreKey[] {
+    const keys = new Set<ChatPartStoreKey>();
+
+    for (const [storeKey, orderIndex] of this.orderByKey.entries()) {
+      if (orderIndex >= msgIndex) {
+        keys.add(storeKey);
+      }
+    }
+
+    return [...keys];
+  }
+
+  clearMessageHandle(handle: ChatPartStoreReadableHandle | null): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    this.clearMessage(storeKey);
+  }
+
+  private clearMessagesAtOrAfter(msgIndex: number): number {
+    let clearedCount = 0;
+
+    for (const key of this.collectStoreKeysAtOrAfter(msgIndex)) {
+      this.deleteStoreKey(key);
+      clearedCount++;
+    }
+
+    return clearedCount;
+  }
+
+  shiftMessageIndexes(startIndex: number, delta: number): void {
+    if (delta === 0 || startIndex < 0) {
+      return;
+    }
+
+    const nextEntries = [...this.keyByMsgIndex.entries()]
+      .sort((a, b) => delta > 0 ? b[0] - a[0] : a[0] - b[0]);
+    let changed = false;
+
+    for (const [msgIndex, storeKey] of nextEntries) {
+      if (msgIndex < startIndex) {
+        continue;
+      }
+
+      this.keyByMsgIndex.delete(msgIndex);
+      const nextIndex = msgIndex + delta;
+      if (nextIndex >= 0) {
+        this.keyByMsgIndex.set(nextIndex, storeKey);
+        this.orderByKey.set(storeKey, nextIndex);
+      } else {
+        this.orderByKey.delete(storeKey);
+      }
+      changed = true;
+    }
+
+    if (changed) {
+      this.bumpRevision();
+    }
+  }
+
+  clearMessagesAtOrAfterIndexedHandle(handle: (ChatPartStoreHandleBase & { msgIndex: number }) | null): number {
+    if (!handle || typeof handle.msgIndex !== 'number' || handle.msgIndex < 0) {
+      return 0;
+    }
+
+    return this.clearMessagesAtOrAfter(handle.msgIndex);
+  }
+
+  clearMessagesAtOrAfterHandle(handle: ChatPartStoreReadableHandle | null): number {
+    const msgIndex = this.resolveHandleOrderIndex(handle);
+    if (msgIndex === null) {
+      return 0;
+    }
+
+    return this.clearMessagesAtOrAfter(msgIndex);
+  }
+
+  projectPartChangesFromHandle(
+    sourceStore: ChatPartProjectionSourceStore,
+    sourceHandle: ChatPartStoreOpaqueHandle | null,
+    changes: readonly Pick<PartChange, 'partIndex'>[],
+    targetHandle: ChatPartStoreReadableHandle | null,
+    project: (part: ChatPart, existing?: ChatPart) => ChatPart,
+  ): boolean {
+    let changed = false;
+
+    for (const change of changes) {
+      const sourcePart = sourceStore.getPartsForHandle(sourceHandle)[change.partIndex];
+      if (!sourcePart) {
+        continue;
+      }
+
+      const existing = this.getPartForHandle(targetHandle, change.partIndex);
+      const projected = project(sourcePart, existing);
+      const currentParts = this.getPartsForHandle(targetHandle);
+
+      if (!existing) {
+        if (change.partIndex < currentParts.length) {
+          this.insertPartForHandle(targetHandle, change.partIndex, projected);
+        } else {
+          this.addPartToHandle(targetHandle, projected);
+        }
+        changed = true;
+        continue;
+      }
+
+      this.updatePartForHandle(targetHandle, change.partIndex, projected);
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  postProcessMarkdownForHandle(handle: ChatPartStoreReadableHandle | null): void {
+    if (!isUsableChatPartStoreHandle(handle)) {
+      return;
+    }
+
+    const patches = collectMarkdownPostProcessPatches(this.getPartsForHandle(handle));
+    for (const patch of patches) {
+      this.updatePartForHandle(handle, patch.partIndex, patch.nextPart);
+    }
   }
 
   /** 重置所有数据 */
   reset(): void {
     this._store.clear();
+    this.orderByKey.clear();
+    this.keyByMsgIndex.clear();
+    this.bumpRevision();
   }
 
   /** 销毁（关闭 Subject） */
   destroy(): void {
     this._store.clear();
+    this.orderByKey.clear();
+    this.keyByMsgIndex.clear();
+    this.bumpRevision();
     this.changes$.complete();
   }
 
@@ -326,8 +1331,8 @@ export class ChatPartStore {
    * 将 Parts 序列化为 content string（用于会话持久化）
    * 将 Part 模型转换回现有的 string 格式（<think>、aily-state 代码块等）
    */
-  serializeToContent(msgIndex: number): string {
-    const parts = this._store.get(msgIndex);
+  private serializeToContent(storeKey: ChatPartStoreKey): string {
+    const parts = this._store.get(storeKey);
     if (!parts || parts.length === 0) return '';
 
     const segments: string[] = [];
@@ -359,7 +1364,7 @@ export class ChatPartStore {
         }
         case 'error':
           segments.push(
-            `\n\`\`\`aily-error\n${JSON.stringify({ message: part.message })}\n\`\`\`\n`
+            `\n\`\`\`aily-error\n${JSON.stringify({ message: part.message, ...(part.severity ? { severity: part.severity } : {}) })}\n\`\`\`\n`
           );
           break;
         case 'question':
@@ -367,9 +1372,9 @@ export class ChatPartStore {
             `\n\`\`\`aily-question\n${JSON.stringify({ questions: part.questions, answers: part.answers })}\n\`\`\`\n`
           );
           break;
-        case 'approval':
+        case 'confirmation':
           segments.push(
-            `\n\`\`\`aily-ask-confirm\n${JSON.stringify({ askId: part.askId, message: part.message, toolName: part.toolName, source: part.source, resolved: part.resolved, result: part.result, scope: part.scope })}\n\`\`\`\n`
+            `\n\`\`\`aily-confirmation\n${JSON.stringify({ askId: part.askId, partId: part.partId, title: part.title, subtitle: part.subtitle, message: part.message, description: part.description, args: part.args, toolName: part.toolName, source: part.source, actions: part.actions, primaryScope: part.primaryScope, resolved: part.resolved, result: part.result, scope: part.scope })}\n\`\`\`\n`
           );
           break;
         case 'terminal':
@@ -377,26 +1382,76 @@ export class ChatPartStore {
             `\n\`\`\`aily-terminal\n${JSON.stringify({ command: part.command, output: part.output, stderr: part.stderr, exitCode: part.exitCode, isRunning: false, toolCallId: part.toolCallId })}\n\`\`\`\n`
           );
           break;
-        case 'subagent': {
-          const saData: Record<string, unknown> = {
-            agentName: part.agentName,
-            description: part.description,
-            state: part.state,
-            toolCallId: part.toolCallId,
-          };
-          if (part.childItems && part.childItems.length > 0) {
-            saData['childItems'] = part.childItems;
-          }
-          if (part.resultText) {
-            saData['resultText'] = part.resultText;
-          }
-          segments.push(
-            `\n\`\`\`aily-subagent\n${JSON.stringify(saData)}\n\`\`\`\n`
-          );
-          break;
-        }
       }
     }
     return segments.join('');
+  }
+
+  serializeToContentHandle(handle: ChatPartStoreReadableHandle | null): string {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return '';
+    }
+
+    return this.serializeToContent(storeKey);
+  }
+}
+
+class StoreChangeTracker implements ChatPartStoreChangeTracker {
+  private readonly pendingChanges: TrackedPartChange[] = [];
+  private readonly subscription;
+
+  constructor(
+    changes$: Subject<TrackedPartChange>,
+    private readonly resolveHandleStoreKey: (handle: ChatPartStoreReadableHandle | null) => ChatPartStoreKey | null,
+  ) {
+    this.subscription = changes$.subscribe(change => {
+      this.pendingChanges.push(change);
+    });
+  }
+
+  private drainMatchedChanges(handle: ChatPartStoreReadableHandle | null): PartChange[] {
+    if (!isUsableChatPartStoreHandle(handle)) {
+      return [];
+    }
+
+    const drained: PartChange[] = [];
+    const retained: TrackedPartChange[] = [];
+    const resolvedStoreKey = this.resolveHandleStoreKey(handle);
+    if (resolvedStoreKey === null) {
+      return [];
+    }
+
+    for (const change of this.pendingChanges) {
+      if (change.storeKey === resolvedStoreKey) {
+        drained.push({
+          partIndex: change.change.partIndex,
+          kind: change.change.kind,
+        });
+      } else {
+        retained.push(change);
+      }
+    }
+
+    this.pendingChanges.length = 0;
+    this.pendingChanges.push(...retained);
+    return drained;
+  }
+
+  drainChangesForHandle(handle: ChatPartStoreReadableHandle | null): PartChange[] {
+    return this.drainMatchedChanges(handle);
+  }
+
+  drainPartIndexChangesForHandle(handle: ChatPartStoreReadableHandle | null): Array<Pick<PartChange, 'partIndex'>> {
+    return this.drainMatchedChanges(handle).map(change => ({ partIndex: change.partIndex }));
+  }
+
+  clear(): void {
+    this.pendingChanges.length = 0;
+  }
+
+  dispose(): void {
+    this.subscription.unsubscribe();
+    this.pendingChanges.length = 0;
   }
 }

@@ -110,6 +110,7 @@ export class AilyChatComponent implements OnDestroy {
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
 
   public readonly vm: ChatComponentViewModel;
+  public isManualCompacting = false;
 
   public readonly sessionShellCoordinator: ChatSessionShellCoordinator;
   public readonly switchShellCoordinator: ChatSwitchShellCoordinator;
@@ -132,6 +133,7 @@ export class AilyChatComponent implements OnDestroy {
     private authService: AuthService,
     private modal: NzModalService,
     private configService: ConfigService,
+    private ailyChatConfigService: AilyChatConfigService,
     private todoUpdateService: TodoUpdateService,
     private arduinoLintService: ArduinoLintService,
     private noticeService: NoticeService,
@@ -181,13 +183,16 @@ export class AilyChatComponent implements OnDestroy {
     }, {
       switchToMode: (mode) => this.engine.switchToMode(mode),
       switchToModel: (model) => this.engine.switchToModel(model),
+      switchToReasoningEffort: (reasoningEffort) => this.engine.switchToReasoningEffort(reasoningEffort),
     });
     this.editResourceShellCoordinator = new ChatEditResourceShellCoordinator({
       getDialog: () => AilyHost.get().dialog,
-      resolveTarget: (msgIndex) => this.xDialogComponents?.find((dialog) => dialog.msgIndex === msgIndex),
+      resolveTarget: ({ turnId }) => this.xDialogComponents?.find((dialog) => {
+          return dialog.role === 'user' && dialog.actionTurnId === turnId;
+      }),
     });
     this.surfaceShellCoordinator = new ChatSurfaceShellCoordinator({
-      editAndResendFromTurn: (msgIndex, newText, resources) => this.engine.editAndResendFromTurn(msgIndex, newText, resources),
+      editAndResendFromTurn: (target, newText, resources) => this.engine.editAndResendFromTurn(target, newText, resources),
       closeTool: (toolId) => AilyHost.get().ui?.closeTool(toolId),
       openUrl: (url) => this.electronService.openUrl(url),
     });
@@ -235,6 +240,7 @@ export class AilyChatComponent implements OnDestroy {
           uiService: this.uiService,
           onboardingService: this.onboardingService,
         }));
+        this.ailyChatConfigService.reloadRemoteModelCatalog('host_initialized');
       },
       loadMermaid: () => import('mermaid'),
       setMermaidInstance: (instance) => {
@@ -260,6 +266,34 @@ export class AilyChatComponent implements OnDestroy {
 
   ngAfterViewInit(): void {
     this.viewportShellCoordinator.initialize(this.chatContainer);
+  }
+
+  async handleManualCompaction(event?: MouseEvent): Promise<void> {
+    event?.stopPropagation();
+
+    if (this.isManualCompacting || this.vm.isWaiting) {
+      return;
+    }
+
+    this.isManualCompacting = true;
+    this.cdr.markForCheck();
+
+    try {
+      const changed = await this.engine.compactConversation();
+      if (changed) {
+        this.engine.saveCurrentSession();
+        this.engine.refreshHistoryList();
+        this.message.success('对话已压缩');
+      } else {
+        this.message.info('当前没有可压缩的对话');
+      }
+    } catch (error) {
+      console.error('[AilyChat] 手动压缩对话失败:', error);
+      this.message.error('压缩对话失败');
+    } finally {
+      this.isManualCompacting = false;
+      this.cdr.markForCheck();
+    }
   }
 
   ngOnDestroy() {

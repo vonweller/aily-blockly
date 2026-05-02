@@ -5,7 +5,7 @@
  * TERMINATE 前缀检测、aily-button 截断等逻辑。
  */
 
-import type { IChatContext } from '../core/chat-context';
+import type { IChatViewAccess } from '../core/chat-context';
 import { ChatMessage, ToolCallState, ToolCallInfo } from '../core/chat-types';
 import { ChatViewWriteBridge } from './chat-view-write-bridge';
 import {
@@ -21,11 +21,53 @@ import {
   generateToolResultText as _generateToolResultText,
 } from '../services/tool-display.service';
 
-export class MessageDisplayHelper {
-  private readonly viewWriteBridge: ChatViewWriteBridge;
+type MessageDisplayViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
+type MessageDisplayContext = MessageDisplayViewWriteContext & Pick<IChatViewAccess, 'toolCallStates'>;
+type MessageDisplayViewWriteAccess = Pick<ChatViewWriteBridge, 'appendMarkdownToLatestPartsMessage'>;
 
-  constructor(private ctx: IChatContext) {
-    this.viewWriteBridge = new ChatViewWriteBridge(ctx);
+export class MessageDisplayHelper {
+  private readonly viewWriteBridge: MessageDisplayViewWriteAccess;
+
+  constructor(private ctx: MessageDisplayContext) {
+    const viewWriteContext: MessageDisplayViewWriteContext = {
+      get list() {
+        return ctx.list;
+      },
+      set list(list) {
+        ctx.list = list;
+      },
+      get partStore() {
+        return ctx.partStore;
+      },
+      get viewAdapter() {
+        return ctx.viewAdapter;
+      },
+      get scrollManager() {
+        return ctx.scrollManager;
+      },
+      get invalidateHostRequestGraph() {
+        return ctx.invalidateHostRequestGraph;
+      },
+      get triggerSyncDetectChanges() {
+        return ctx.triggerSyncDetectChanges;
+      },
+      get sessionId() {
+        return ctx.sessionId;
+      },
+      get chatHistoryService() {
+        return ctx.chatHistoryService;
+      },
+      get currentModelName() {
+        return ctx.currentModelName;
+      },
+      get currentMessageSource() {
+        return ctx.currentMessageSource;
+      },
+      get ngZone() {
+        return ctx.ngZone;
+      },
+    };
+    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
   // ==================== 纯函数包装 ====================

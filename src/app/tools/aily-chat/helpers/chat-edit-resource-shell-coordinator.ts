@@ -1,20 +1,23 @@
 import type { IDialog } from '../core/host-api';
 import type { ResourceItem } from '../core/chat-types';
+import type { DialogTurnContext } from '../core/user-turn-action-target';
 import { pickFileResources, pickFolderResource } from './chat-resource-picker';
 
 interface EditResourceTargetLike {
   addEditResource(item: ResourceItem): void;
 }
 
+export type EditResourceTargetRef = DialogTurnContext;
+
 export class ChatEditResourceShellCoordinator {
   constructor(
     private readonly deps: {
       getDialog: () => Pick<IDialog, 'selectFiles'> | null | undefined;
-      resolveTarget: (msgIndex: number) => EditResourceTargetLike | undefined;
+      resolveTarget: (target: EditResourceTargetRef) => EditResourceTargetLike | undefined;
     },
   ) {}
 
-  async addFile(msgIndex: number): Promise<void> {
+  async addFile(targetRef: EditResourceTargetRef): Promise<void> {
     const dialog = this.deps.getDialog();
     if (!dialog) {
       return;
@@ -25,7 +28,7 @@ export class ChatEditResourceShellCoordinator {
       return;
     }
 
-    const target = this.deps.resolveTarget(msgIndex);
+    const target = this.deps.resolveTarget(targetRef);
     if (!target) {
       return;
     }
@@ -35,7 +38,7 @@ export class ChatEditResourceShellCoordinator {
     }
   }
 
-  async addFolder(msgIndex: number): Promise<void> {
+  async addFolder(targetRef: EditResourceTargetRef): Promise<void> {
     const dialog = this.deps.getDialog();
     if (!dialog) {
       return;
@@ -46,7 +49,7 @@ export class ChatEditResourceShellCoordinator {
       return;
     }
 
-    const target = this.deps.resolveTarget(msgIndex);
+    const target = this.deps.resolveTarget(targetRef);
     if (!target) {
       return;
     }

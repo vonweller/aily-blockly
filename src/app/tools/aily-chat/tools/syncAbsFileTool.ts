@@ -7,7 +7,9 @@
 import { convertAbiToAbs, convertAbsToAbi, inferFieldVariableType } from './abiAbsConverter';
 import { getActiveWorkspace, createBlockFromConfig } from './editBlockTool';
 import { AbsAutoSyncService } from '../services/abs-auto-sync.service';
+import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { loadProjectBlockDefinitions, parseAbs, BlocklyAbsParser } from './absParser';
+import { arduinoGenerator } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
 
 declare const Blockly: any;
 
@@ -17,6 +19,32 @@ declare const Blockly: any;
  */
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function writeGeneratedSketchIno(
+  projectPath: string,
+  electronService: any,
+  workspace: any,
+  invocationContext?: SyncAbsInvocationContext,
+): Promise<{ filePath: string; generated: boolean }> {
+  const tempPath = electronService.pathJoin(projectPath, '.temp');
+  const sketchPath = electronService.pathJoin(tempPath, 'sketch');
+  const sketchFilePath = electronService.pathJoin(sketchPath, 'sketch.ino');
+
+  if (!electronService.exists(tempPath)) {
+    window['fs'].mkdirSync(tempPath, { recursive: true });
+  }
+  if (!electronService.exists(sketchPath)) {
+    window['fs'].mkdirSync(sketchPath, { recursive: true });
+  }
+
+  const generatedCode = arduinoGenerator.workspaceToCode(workspace) || '';
+  await writeTimelineAwareTextFile(sketchFilePath, generatedCode, electronService, invocationContext);
+
+  return {
+    filePath: sketchFilePath,
+    generated: generatedCode.length > 0
+  };
 }
 
 // =============================================================================
@@ -38,7 +66,79 @@ interface SyncAbsResult {
     blockCount?: number;
     variableCount?: number;
     versionSaved?: boolean;
+    readBackVerified?: boolean;
+    previewSource?: 'disk-readback';
   };
+}
+
+export interface SyncAbsInvocationContext {
+  turnId?: string;
+  toolCallId?: string;
+  timelineWriter?: EditingTimelineWriter;
+}
+
+export async function writeTimelineAwareTextFile(
+  filePath: string,
+  content: string,
+  electronService: {
+    exists(path: string): Promise<boolean> | boolean;
+    readFile(path: string): Promise<string> | string;
+    writeFile(path: string, data: string): Promise<void> | void;
+  },
+  invocationContext?: SyncAbsInvocationContext,
+): Promise<void> {
+  const timelineWriter = invocationContext?.timelineWriter;
+  const turnId = invocationContext?.turnId;
+  let existedBefore = false;
+  let beforeContent: string | null = null;
+
+  if (timelineWriter?.recordFileWrite && turnId) {
+    existedBefore = await Promise.resolve(electronService.exists(filePath));
+    beforeContent = existedBefore ? await Promise.resolve(electronService.readFile(filePath)) : null;
+  }
+
+  await Promise.resolve(electronService.writeFile(filePath, content));
+
+  if (!timelineWriter?.recordFileWrite || !turnId) {
+    return;
+  }
+
+  try {
+    await timelineWriter.recordFileWrite({
+      turnId,
+      toolCallId: invocationContext?.toolCallId,
+      filePath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
+  } catch (error) {
+    console.warn('[syncAbsFile] editing timeline recording failed:', error);
+  }
+}
+
+export async function backupAbiFileIfPresent(
+  abiFilePath: string,
+  electronService: {
+    exists(path: string): Promise<boolean> | boolean;
+    readFile(path: string): Promise<string> | string;
+    writeFile(path: string, data: string): Promise<void> | void;
+  },
+  projectService?: {
+    currentProjectPath?: string;
+    copyPackageJsonToTemp?(projectPath?: string): void;
+  },
+  invocationContext?: SyncAbsInvocationContext,
+): Promise<string | null> {
+  if (!await Promise.resolve(electronService.exists(abiFilePath))) {
+    return null;
+  }
+
+  const backupPath = `${abiFilePath}.backup`;
+  const currentAbi = await Promise.resolve(electronService.readFile(abiFilePath));
+  await writeTimelineAwareTextFile(backupPath, currentAbi, electronService, invocationContext);
+  projectService?.copyPackageJsonToTemp?.(projectService?.currentProjectPath);
+  return backupPath;
 }
 
 // =============================================================================
@@ -85,7 +185,8 @@ export async function syncAbsFileHandler(
   args: SyncAbsArgs,
   projectService: any,
   electronService: any,
-  absAutoSyncService?: AbsAutoSyncService
+  absAutoSyncService?: AbsAutoSyncService,
+  invocationContext?: SyncAbsInvocationContext,
 ): Promise<SyncAbsResult> {
   const { operation, includeHeader = true } = args;
   
@@ -106,10 +207,10 @@ export async function syncAbsFileHandler(
   
   switch (operation) {
     case 'export':
-      return await exportToAbs(abiFilePath, absFilePath, includeHeader, electronService);
+      return await exportToAbs(abiFilePath, absFilePath, includeHeader, electronService, invocationContext);
     
     case 'import':
-      return await importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService);
+      return await importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService, invocationContext);
     
     case 'status':
       return await getAbsStatus(absFilePath, abiFilePath, electronService);
@@ -129,7 +230,8 @@ async function exportToAbs(
   abiFilePath: string,
   absFilePath: string,
   includeHeader: boolean,
-  electronService: any
+  electronService: any,
+  invocationContext?: SyncAbsInvocationContext,
 ): Promise<SyncAbsResult> {
   try {
     // 方法1：从工作区获取
@@ -154,14 +256,23 @@ async function exportToAbs(
     const absContent = convertAbiToAbs(abiJson, { includeHeader });
     
     // 写入 ABS 文件
-    await electronService.writeFile(absFilePath, absContent);
+    await writeTimelineAwareTextFile(absFilePath, absContent, electronService, invocationContext);
+
+    // 写盘后立即回读，确保返回给模型的是磁盘上可观察到的实际内容
+    const readBackContent = await electronService.readFile(absFilePath);
+    if (readBackContent !== absContent) {
+      return {
+        is_error: true,
+        content: `导出失败: ABS 文件写盘后回读结果与导出内容不一致\n\n文件路径: ${absFilePath}\n这说明导出阶段生成的内存内容与磁盘实际可读取内容未对齐，当前不返回未确认的预览。`
+      };
+    }
     
     // 统计信息
     const blockCount = countBlocks(abiJson);
     const variableCount = abiJson.variables?.length || 0;
     
     // 生成预览（前 30 行）
-    const absLines = absContent.split('\n');
+    const absLines = readBackContent.split('\n');
     const preview = absLines.slice(0, 30).join('\n') + 
       (absLines.length > 30 ? '\n... (more lines)' : '');
     
@@ -171,6 +282,7 @@ async function exportToAbs(
 
 **文件路径:** \`${absFilePath}\`
 **统计:** ${blockCount} 个块, ${variableCount} 个变量
+**写盘确认:** 已通过磁盘回读确认
 
 **ABS 预览:**
 \`\`\`
@@ -180,13 +292,15 @@ ${preview}
 **下一步操作建议:**
 1. 使用 \`read_file\` 读取完整的 ABS 文件
 2. 使用 \`edit_file\` 修改 ABS 内容
-3. 修改完成后使用 \`sync_abs_file(operation: "import")\` 应用更改`,
+3. 修改完成后使用 \`syncAbs action="import"\` 应用更改`,
       metadata: {
         operation: 'export',
         filePath: absFilePath,
         absPreview: preview,
         blockCount,
-        variableCount
+        variableCount,
+        readBackVerified: true,
+        previewSource: 'disk-readback'
       }
     };
   } catch (error) {
@@ -206,14 +320,15 @@ async function importFromAbs(
   abiFilePath: string,
   electronService: any,
   absAutoSyncService?: AbsAutoSyncService,
-  projectService?: any
+  projectService?: any,
+  invocationContext?: SyncAbsInvocationContext,
 ): Promise<SyncAbsResult> {
   try {
     // 检查 ABS 文件是否存在
     if (!await electronService.exists(absFilePath)) {
       return {
         is_error: true,
-        content: `ABS 文件不存在: ${absFilePath}\n\n请先使用 \`sync_abs_file(operation: "export")\` 生成 ABS 文件`
+        content: `ABS 文件不存在: ${absFilePath}\n\n请先使用 \`syncAbs action="export"\` 生成 ABS 文件`
       };
     }
     
@@ -267,12 +382,7 @@ async function importFromAbs(
     }
     
     // 备份当前 ABI 文件
-    if (await electronService.exists(abiFilePath)) {
-      const backupPath = `${abiFilePath}.backup`;
-      const currentAbi = await electronService.readFile(abiFilePath);
-      await electronService.writeFile(backupPath, currentAbi);
-      projectService?.copyPackageJsonToTemp(projectService?.currentProjectPath);
-    }
+    await backupAbiFileIfPresent(abiFilePath, electronService, projectService, invocationContext);
     
     // 收集所有变量：从 @var 声明 + 从 $varName 引用自动推断
     const allVariables = new Map<string, string>(); // name → type
@@ -573,7 +683,17 @@ async function importFromAbs(
     
     // 保存工作区到 ABI 文件
     const abiJson = Blockly.serialization.workspaces.save(workspace);
-    await electronService.writeFile(abiFilePath, JSON.stringify(abiJson, null, 2));
+    await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson, null, 2), electronService, invocationContext);
+
+    // 在 AI 回合中 builder 的自动预处理会因 aiWaiting 被延后。
+    // 这里直接同步刷新 sketch.ino，避免同一 turn 立即读取时仍看到旧代码。
+    let sketchSyncInfo: { filePath: string; generated: boolean } | null = null;
+    let sketchSyncWarning = '';
+    try {
+      sketchSyncInfo = await writeGeneratedSketchIno(projectService?.currentProjectPath || projectService?.projectRootPath, electronService, workspace, invocationContext);
+    } catch (error) {
+      sketchSyncWarning = `\n\n**⚠️ 代码生成告警:** 未能立即刷新 sketch.ino: ${error instanceof Error ? error.message : String(error)}`;
+    }
     
     const variableCount = allVariables.size;  // 使用收集到的所有变量数量
     
@@ -620,9 +740,11 @@ async function importFromAbs(
       content: `✅ 已从 ABS 文件导入
 
 **统计:** ${totalBlocks} 个块, ${variableCount} 个变量${updateModeInfo}
-**备份:** 原 ABI 文件已备份为 \`project.abi.backup\`${versionInfo}${warnings}${failedInfo}
+**备份:** 原 ABI 文件已备份为 \`project.abi.backup\`${versionInfo}${warnings}${failedInfo}${sketchSyncWarning}
 
-工作区已更新，请使用get_workspace_overview_tool检查工作区实际的代码是否符合用户需求。`,
+${sketchSyncInfo ? `**代码同步:** 已刷新 \`${sketchSyncInfo.filePath}\`${sketchSyncInfo.generated ? '' : '（当前生成结果为空）'}
+
+` : ''}工作区已更新，请使用get_workspace_overview_tool检查工作区实际的代码是否符合用户需求。`,
       metadata: {
         operation: 'import',
         filePath: absFilePath,
@@ -876,10 +998,10 @@ async function getAbsStatus(
     
     content += `\n**建议操作:**\n`;
     if (!absExists && abiExists) {
-      content += `- 使用 \`sync_abs_file(operation: "export")\` 生成 ABS 文件\n`;
+      content += `- 使用 \`syncAbs action="export"\` 生成 ABS 文件\n`;
     } else if (absExists) {
       content += `- 使用 \`read_file\` 读取完整 ABS 内容\n`;
-      content += `- 使用 \`edit_file\` 修改后 \`sync_abs_file(operation: "import")\` 应用\n`;
+      content += `- 使用 \`edit_file\` 修改后 \`syncAbs action="import"\` 应用\n`;
     }
     
     return {

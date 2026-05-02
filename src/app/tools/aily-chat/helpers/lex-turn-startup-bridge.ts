@@ -1,4 +1,13 @@
-import type { IChatContext } from '../core/chat-context';
+import type { TurnRequest } from 'aily-lex/browser';
+import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
+import { MAIN_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
+
+type LexTurnStartupContext = Pick<
+  IAgentLifecycle,
+  'isCompleted' | 'isCancelled' | 'isWaiting' | 'currentMessageSource' | 'toolCallingIteration'
+> & Pick<IChatViewAccess, 'list' | 'scrollManager'>
+  & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
+  & Pick<IChatCoordination, 'editActions'>;
 
 /**
  * Handles host-side main-agent turn startup orchestration.
@@ -8,22 +17,64 @@ import type { IChatContext } from '../core/chat-context';
  */
 export class LexTurnStartupBridge {
   constructor(
-    private readonly ctx: IChatContext,
-    private readonly startTurn: (userMessage: string) => string | undefined,
+    private readonly ctx: LexTurnStartupContext,
+    private readonly startTurn: (userMessage: string, displayContent?: string, metadata?: TurnRequest['metadata']) => string | undefined,
+    private readonly seedPendingTurn: (turnId: string, userMessage: string, displayContent?: string, metadata?: TurnRequest['metadata']) => void,
     private readonly ensureAilyMessage: () => void,
     private readonly getConversationMessages: () => any[],
     private readonly getCurrentTools: () => any[],
   ) {}
 
-  beginMainAgentTurn(userMessage: string): string | undefined {
-    const turnId = this.startTurn(userMessage);
+  private createCheckpointId(): string {
+    return `cp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private shouldRefreshLocalEstimate(): boolean {
+    const snapshot = this.ctx.contextBudgetService.getSnapshot();
+    return snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
+  }
+
+  private shouldKeepEmptyBudgetSnapshot(conversationMessages: any[]): boolean {
+    if (!Array.isArray(conversationMessages) || conversationMessages.length !== 1) {
+      return false;
+    }
+
+    const [firstMessage] = conversationMessages;
+    return firstMessage?.role === 'user';
+  }
+
+  private resolveInitialMessageSource(requestMetadata?: TurnRequest['metadata']): string {
+    const agentId = typeof requestMetadata?.['agentId'] === 'string'
+      ? normalizeAgentIdentifier(requestMetadata['agentId'])
+      : '';
+    return agentId || MAIN_AGENT_TYPE;
+  }
+
+  beginMainAgentTurn(
+    userMessage: string,
+    displayContent?: string,
+    requestMetadata?: TurnRequest['metadata'],
+  ): string | undefined {
+    const nextRequestMetadata: TurnRequest['metadata'] = {
+      checkpointId: this.createCheckpointId(),
+      ...(requestMetadata ?? {}),
+    };
+    const turnId = this.startTurn(userMessage, displayContent, nextRequestMetadata);
+
+    if (turnId) {
+      this.attachTurnIdToLatestUserMessage(turnId);
+    }
 
     this.ctx.isCompleted = false;
     this.ctx.isCancelled = false;
     this.ctx.isWaiting = true;
-    this.ctx.currentMessageSource = 'mainAgent';
+    this.ctx.currentMessageSource = this.resolveInitialMessageSource(nextRequestMetadata);
     this.ctx.toolCallingIteration = 0;
     this.ctx.repetitionDetectionService.resetStreamTokens();
+
+    if (turnId) {
+      this.seedPendingTurn(turnId, userMessage, displayContent, nextRequestMetadata);
+    }
 
     this.ensureAilyMessage();
 
@@ -32,18 +83,41 @@ export class LexTurnStartupBridge {
     this.ctx.editActions.saveCheckpointToDisk();
 
     const conversationMessages = this.getConversationMessages();
+    const responseStartListIndex = this.ctx.list.length - 1;
+    const turnStartListIndex = responseStartListIndex > 0
+      ? responseStartListIndex - 1
+      : responseStartListIndex;
     this.ctx.editCheckpointService.startTurn(
       0,
-      conversationMessages.length - 1,
-      this.ctx.list.length - 1,
+      turnStartListIndex,
+      responseStartListIndex,
       turnId,
+      userMessage,
+      displayContent,
+      nextRequestMetadata.checkpointId,
     );
-    this.ctx.contextBudgetService.refreshLocalEstimate(
-      conversationMessages,
-      this.getCurrentTools(),
-    );
+    if (this.shouldRefreshLocalEstimate()) {
+      if (this.shouldKeepEmptyBudgetSnapshot(conversationMessages)) {
+        this.ctx.contextBudgetService.reset();
+      } else {
+        this.ctx.contextBudgetService.refreshLocalEstimate(
+          conversationMessages,
+          this.getCurrentTools(),
+        );
+      }
+    }
     this.ctx.scrollManager.autoScrollEnabled = true;
 
     return turnId;
+  }
+
+  private attachTurnIdToLatestUserMessage(turnId: string): void {
+    for (let index = this.ctx.list.length - 1; index >= 0; index--) {
+      const message = this.ctx.list[index];
+      if (message.role === 'user') {
+        message.turnId = turnId;
+        return;
+      }
+    }
   }
 }

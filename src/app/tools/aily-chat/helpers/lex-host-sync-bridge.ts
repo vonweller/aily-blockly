@@ -1,8 +1,10 @@
-import type { ISessionAccess, IChatServiceAccess } from '../core/chat-context';
+import type { ISessionAccess, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 
 /** Narrow context: editCheckpointService for recording edits, ngZone for UI sync, sessionId for todo keying */
-type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'> & Pick<IChatServiceAccess, 'editCheckpointService' | 'ngZone'>;
+type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatServiceAccess, 'editCheckpointService' | 'ngZone' | 'message'>
+  & Pick<IChatViewAccess, 'inputValue' | 'triggerSyncDetectChanges'>;
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type LexTodoItem = {
@@ -75,6 +77,38 @@ export class LexHostSyncBridge {
     const sessionId = event.sessionId || event.trace?.sessionId || this.ctx.sessionId;
     const lexTodos = event.snapshot?.items ?? [];
     this.applyLexTodos(sessionId, lexTodos);
+  }
+
+  applyHandoffEvent(event: { targetAgent?: string; reason?: string }): void {
+    const targetAgent = typeof event.targetAgent === 'string' ? event.targetAgent.trim() : '';
+    if (!targetAgent) {
+      return;
+    }
+
+    const handoffMessage = event.reason
+      ? `代理请求切换到 ${targetAgent}: ${event.reason}`
+      : `代理请求切换到 ${targetAgent}`;
+    const suggestedInput = `@${targetAgent} `;
+
+    this.ctx.ngZone.run(() => {
+      let prefilled = false;
+
+      if ((this.ctx.inputValue || '').trim().length === 0) {
+        this.ctx.inputValue = suggestedInput;
+        this.ctx.triggerSyncDetectChanges();
+        prefilled = true;
+      }
+
+      try {
+        this.ctx.message.info(
+          prefilled
+            ? `${handoffMessage}。已在输入框中预填 ${suggestedInput.trim()}，等待你确认发送。`
+            : handoffMessage,
+        );
+      } catch {
+        // ignore UI notification failures for host sync bridge
+      }
+    });
   }
 
   subscribeLexTodoChange(lex: AilyLexModule, currentUnsubscribe?: (() => void) | null): (() => void) | null {

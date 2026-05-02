@@ -2,6 +2,7 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
     {
         name: 'ask_user',
         description: `向用户提出一个或多个问题并等待回答。当你需要用户做出决策、提供额外信息或确认操作时使用此工具。
+    当前 lex 路径中的 ask_user 由 lex core 内建实现；这里保留兼容 schema，供旧 blockly catalog / prompt 注入复用。
 工具会暂停对话，在聊天界面显示问题和可选项，等待用户回答后继续。
 
 传入 questions 数组，单问题即长度为 1 的数组。
@@ -52,7 +53,8 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
     },
     {
         name: 'search_available_tools',
-        description: `搜索并加载可用的扩展工具。当你需要使用未在当前工具列表中的工具时，调用此工具按关键词搜索。
+        description: `旧 blockly 聊天链路中的延迟工具搜索入口。当你需要使用未在当前工具列表中的工具时，调用此工具按关键词搜索。
+    此工具仅用于 legacy search_available_tools 路径；lex runtime 使用独立的 deferred listing 与 tool_search。
 成功后工具会被加载，可在后续对话中直接调用。
 
 搜索示例：
@@ -75,6 +77,7 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
     {
         name: 'load_skill',
         description: `激活或卸载领域技能。激活后的技能内容会持久注入到每轮请求中，直到卸载。
+    当前 lex 路径中的 load_skill 由 lex core + blockly skill provider 协同实现；这里保留兼容 schema，供旧 blockly catalog / prompt 注入复用。
 使用示例：
 - load_skill({query: "abs-syntax"}) — 激活 ABS 语法参考技能
 - load_skill({query: "abs-syntax", action: "unload"}) — 卸载技能
@@ -102,7 +105,7 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
     },
     {
         name: 'register_agent',
-        description: '动态注册一个新的子代理（subagent），注册后即可通过 agent 工具调用。用于在运行时创建专用子代理来处理特定领域的任务。已注册的同名代理不会被覆盖。',
+        description: '兼容入口：动态注册一个新的子代理（subagent），注册后即可通过 agent 工具调用。旧前端 catalog 仍保留此定义，但当前 lex 主链路默认不暴露该工具。已注册的同名代理不会被覆盖。',
         input_schema: {
             type: 'object',
             properties: {

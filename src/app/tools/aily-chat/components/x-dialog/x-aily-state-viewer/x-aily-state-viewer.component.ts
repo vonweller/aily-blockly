@@ -1,36 +1,21 @@
 import { Component, Input, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
-
-type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
+import {
+  appendDetailSections,
+  buildInstructionDetailProjection,
+  buildStandardStateViewerProjection,
+  type DetailSectionDescriptor,
+  type InstructionDiagnosticFilter,
+  type InstructionFilterChip,
+  type StateDetailOutputGroup,
+  type StateDetailSection,
+  type StateTone,
+} from './activity-detail-items';
 
 interface StateBadge {
   label: string;
   value: string;
   tone?: StateTone;
-}
-
-interface StateDetailRow {
-  id: string;
-  title: string;
-  subtitle?: string;
-  note?: string;
-  trailing?: string;
-  tone?: StateTone;
-}
-
-interface StateDetailSection {
-  title: string;
-  rows: StateDetailRow[];
-}
-
-type InstructionDiagnosticFilter = 'all' | 'active' | 'inactive' | 'overridden' | 'empty' | 'not_found';
-
-interface StateFilterChip {
-  id: InstructionDiagnosticFilter;
-  label: string;
-  count: number;
-  tone?: StateTone;
-  active: boolean;
 }
 
 interface StateViewerData {
@@ -51,6 +36,8 @@ interface StateViewerData {
       class="ac-state"
       [attr.data-state]="data?.state"
       [attr.data-kind]="data?.kind || null"
+      [class.ac-state-embedded]="embedded"
+      [class.ac-state-body-only]="bodyOnly"
       [class.ac-state-has-details]="hasDetails"
       [class.ac-state-expanded]="expanded">
       @if (data?.state === 'doing') {
@@ -60,39 +47,59 @@ interface StateViewerData {
           }
         </div>
       }
-      <div class="ac-state-header">
-        <i [class]="stateIconClass"></i>
-        <span class="ac-state-text">{{ data?.text }}</span>
-        @if (data?.progress != null) {
-          <span class="ac-state-pct">{{ data.progress }}%</span>
-        }
-      </div>
+      @if (!bodyOnly) {
+        <button
+          type="button"
+          class="ac-state-header"
+          [class.ac-state-header-clickable]="hasExpandableDetails && !embedded"
+          [attr.aria-expanded]="(hasExpandableDetails && !embedded) ? expanded : null"
+          [attr.aria-label]="(hasExpandableDetails && !embedded) ? (expanded ? '收起状态详情' : '展开状态详情') : null"
+          (click)="hasExpandableDetails && !embedded ? toggleExpanded() : null">
+          <i [class]="stateIconClass"></i>
+          <div class="ac-state-title-group">
+            <span class="ac-state-text">{{ headerTitle || data?.text }}</span>
+            @if (headerSubtitle) {
+              <span class="ac-state-subtitle">{{ headerSubtitle }}</span>
+            }
+          </div>
+          @if (headerStatusLabel) {
+            <span class="ac-state-status" [attr.data-tone]="headerStatusTone">{{ headerStatusLabel }}</span>
+          } @else if (data?.progress != null) {
+            <span class="ac-state-pct">{{ data.progress }}%</span>
+          }
+          @if (hasExpandableDetails && !embedded) {
+            <i class="fa-light fa-chevron-down ac-state-arrow" aria-hidden="true"></i>
+          }
+        </button>
+      }
 
       @if (hasDetails) {
-        <div class="ac-state-summary">
-          @if (summaryBadges.length > 0) {
-            <div class="ac-state-badges">
-              @for (badge of summaryBadges; track badge.label + ':' + badge.value) {
-                <span class="ac-state-badge" [attr.data-tone]="badge.tone || 'neutral'">
-                  <span class="ac-state-badge-label">{{ badge.label }}</span>
-                  <span class="ac-state-badge-value">{{ badge.value }}</span>
-                </span>
-              }
-            </div>
-          }
+        @if (showSummaryBadges() || (hasExpandableDetails && !embedded)) {
+          <div class="ac-state-summary">
+            @if (showSummaryBadges()) {
+              <div class="ac-state-badges ac-state-badges-standalone">
+                @for (badge of summaryBadges; track badge.label + ':' + badge.value) {
+                  <span class="ac-state-badge" [attr.data-tone]="badge.tone || 'neutral'">
+                    <span class="ac-state-badge-label">{{ badge.label }}</span>
+                    <span class="ac-state-badge-value">{{ badge.value }}</span>
+                  </span>
+                }
+              </div>
+            }
 
-          @if (hasExpandableDetails) {
-            <button
-              type="button"
-              class="ac-state-toggle"
-              [attr.aria-expanded]="expanded"
-              [attr.aria-label]="expanded ? '收起状态详情' : '展开状态详情'"
-              (click)="toggleExpanded()">
-              <span class="ac-state-toggle-label">{{ expanded ? '收起详情' : '展开详情' }}</span>
-              <i class="fa-light fa-chevron-down ac-state-toggle-icon"></i>
-            </button>
-          }
-        </div>
+            @if (hasExpandableDetails && !embedded) {
+              <button
+                type="button"
+                class="ac-state-toggle"
+                [attr.aria-expanded]="expanded"
+                [attr.aria-label]="expanded ? '收起详情' : '展开详情'"
+                (click)="toggleExpanded()">
+                <span class="ac-state-toggle-label">{{ expanded ? '收起详情' : '展开详情' }}</span>
+                <i class="fa-light fa-chevron-down ac-state-toggle-icon" aria-hidden="true"></i>
+              </button>
+            }
+          </div>
+        }
 
         @if (instructionFilterChips.length > 0) {
           <div class="ac-state-filters">
@@ -111,31 +118,94 @@ interface StateViewerData {
           </div>
         }
 
-        @if (expanded && sections.length > 0) {
+        @if ((embedded || expanded) && sections.length > 0) {
           <div class="ac-state-detail">
-          @for (section of sections; track section.title) {
-            <div class="ac-state-section">
-              <div class="ac-state-section-title">{{ section.title }}</div>
-              <div class="ac-state-list">
-                @for (row of section.rows; track row.id) {
-                  <div class="ac-state-list-item" [attr.data-tone]="row.tone || 'neutral'">
-                    <div class="ac-state-list-head">
-                      <span class="ac-state-list-title">{{ row.title }}</span>
-                      @if (row.trailing) {
-                        <span class="ac-state-list-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
-                      }
-                    </div>
-                    @if (row.subtitle) {
-                      <div class="ac-state-list-subtitle">{{ row.subtitle }}</div>
+            @for (section of sections; track section.title) {
+              <div class="ac-state-section">
+                @if (section.title) {
+                  <div class="ac-state-section-title">{{ section.title }}</div>
+                }
+                @if (getOutputGroups(section).length > 0) {
+                  <div class="ac-state-output-groups">
+                    @for (group of getOutputGroups(section); track group.id) {
+                      <div class="ac-state-output-group" [attr.data-group-kind]="group.kind">
+                        @for (row of group.rows; track row.id) {
+                          <div class="ac-state-list-item" [attr.data-tone]="row.tone || 'neutral'" [attr.data-output-kind]="row.outputKind || 'default'">
+                            <div class="ac-state-list-head">
+                              <span class="ac-state-list-title">{{ row.title }}</span>
+                              @if (row.trailing) {
+                                <span class="ac-state-list-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                              }
+                            </div>
+                            @if (row.subtitle) {
+                              <div class="ac-state-list-subtitle">{{ row.subtitle }}</div>
+                            }
+                            @if (row.outputKind === 'code') {
+                              <div class="ac-state-output-code-note">
+                                <pre class="ac-state-output-code-block"><code [attr.data-language]="row.outputLanguage || null" [textContent]="row.outputCode || ''"></code></pre>
+                              </div>
+                            }
+                            @if (row.outputKind === 'image' && getOutputImageSource(row); as imageSource) {
+                              <div class="ac-state-output-image-shell">
+                                <img class="ac-state-output-image-preview" [src]="imageSource" [alt]="row.outputLabel || row.title" />
+                              </div>
+                            }
+                            @if (row.outputLabel || row.outputMimeType) {
+                              <div class="ac-state-list-meta">
+                                @if (row.outputLabel) {
+                                  <span class="ac-state-list-meta-chip">{{ row.outputLabel }}</span>
+                                }
+                                @if (row.outputMimeType) {
+                                  <span class="ac-state-list-meta-chip">{{ row.outputMimeType }}</span>
+                                }
+                              </div>
+                            }
+                            @if (getOutputResourceHref(row); as resourceHref) {
+                              <a class="ac-state-list-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer">{{ resourceHref }}</a>
+                            }
+                            @if (row.note) {
+                              <div class="ac-state-list-note">{{ row.note }}</div>
+                            }
+                          </div>
+                        }
+                      </div>
                     }
-                    @if (row.note) {
-                      <div class="ac-state-list-note">{{ row.note }}</div>
+                  </div>
+                } @else {
+                  <div class="ac-state-list">
+                    @for (row of section.rows; track row.id) {
+                      <div class="ac-state-list-item" [attr.data-tone]="row.tone || 'neutral'">
+                        <div class="ac-state-list-head">
+                          <span class="ac-state-list-title">{{ row.title }}</span>
+                          @if (row.trailing) {
+                            <span class="ac-state-list-pill" [attr.data-tone]="row.tone || 'neutral'">{{ row.trailing }}</span>
+                          }
+                        </div>
+                        @if (row.subtitle) {
+                          <div class="ac-state-list-subtitle">{{ row.subtitle }}</div>
+                        }
+                        @if (row.outputLabel || row.outputMimeType) {
+                          <div class="ac-state-list-meta">
+                            @if (row.outputLabel) {
+                              <span class="ac-state-list-meta-chip">{{ row.outputLabel }}</span>
+                            }
+                            @if (row.outputMimeType) {
+                              <span class="ac-state-list-meta-chip">{{ row.outputMimeType }}</span>
+                            }
+                          </div>
+                        }
+                        @if (row.outputUri) {
+                          <a class="ac-state-list-link" [href]="row.outputUri" target="_blank" rel="noopener noreferrer">{{ row.outputUri }}</a>
+                        }
+                        @if (row.note) {
+                          <div class="ac-state-list-note">{{ row.note }}</div>
+                        }
+                      </div>
                     }
                   </div>
                 }
               </div>
-            </div>
-          }
+            }
           </div>
         }
       }
@@ -143,53 +213,108 @@ interface StateViewerData {
   `,
   styles: [
     `
-      /* ===== Semantic CSS Variables ===== */
+      /* ===== State Viewer — 对齐 Copilot progress-container / chatThinkingBox 风格 ===== */
       :host {
         display: block;
         width: 100%;
         min-width: 0;
-        --ac-state-bg: #3a3a3a;
-        --ac-state-fg: #ccc;
-        --ac-state-accent: #1890ff;
-        --ac-state-success: #52c41a;
-        --ac-state-warning: #faad14;
-        --ac-state-error: #ff4d4f;
-        --ac-state-progress-bg: rgba(24, 144, 255, 0.08);
-        --ac-state-progress-fill: rgba(24, 144, 255, 0.15);
       }
 
+      /* === 对齐 think-viewer：无卡片背景，纯平透明 === */
       .ac-state {
         position: relative;
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        padding: 8px 10px;
-        border-radius: 5px;
+        gap: 0;
+        padding: 2px 0;
+        border-radius: 0;
         font-size: 13px;
         margin: 0;
-        background-color: var(--ac-state-bg);
-        color: var(--ac-state-fg);
-        overflow: hidden;
+        background: transparent;
+        border: none;
+        color: var(--chat-fg, #cccccc);
+        overflow: visible;
       }
 
+      .ac-state.ac-state-embedded {
+        padding: 0;
+        border-radius: 0;
+        background: transparent;
+        border: none;
+        gap: 3px;
+      }
+
+      .ac-state.ac-state-body-only {
+        gap: 6px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-header {
+        gap: 6px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-title-group {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-text {
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--chat-fg-dim, #8e8e8e);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-pct {
+        min-width: auto;
+        font-size: 11px;
+        color: var(--chat-fg-muted, #6a6a6a);
+      }
+
+      /* === think-viewer header 风格：可点击、hover 高亮 === */
       .ac-state-header {
         position: relative;
-        z-index: 1;
         display: flex;
         align-items: center;
-        gap: 5px;
+        gap: 6px;
         width: 100%;
         min-width: 0;
+        padding: 3px 4px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        border-radius: 4px;
+        cursor: default;
+      }
+      .ac-state-header.ac-state-header-clickable {
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .ac-state-header.ac-state-header-clickable:hover {
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
+      }
+      .ac-state-arrow {
+        margin-left: auto;
+        font-size: 10px;
+        color: var(--chat-fg-muted, #6a6a6a);
+        transition: transform 0.15s ease;
+        flex-shrink: 0;
+      }
+      .ac-state.ac-state-expanded .ac-state-arrow {
+        transform: rotate(180deg);
       }
 
-      /* ===== Subtle progress background (VS Code style) ===== */
+      /* ===== 进度扫光背景（Copilot shimmer-progress 对齐）===== */
       .ac-state-progress-bg {
         position: absolute;
         inset: 0;
         background: linear-gradient(90deg,
-          var(--ac-state-progress-fill) 0%,
+          rgba(117, 190, 255, 0.08) 0%,
           transparent 50%,
-          var(--ac-state-progress-fill) 100%);
+          rgba(117, 190, 255, 0.08) 100%);
         background-size: 200% 100%;
         animation: ac-state-sweep 2s ease-in-out infinite;
         pointer-events: none;
@@ -197,34 +322,227 @@ interface StateViewerData {
       .ac-state-progress-fill {
         position: absolute;
         inset: 0;
-        background: var(--ac-state-progress-fill);
+        background: rgba(117, 190, 255, 0.10);
         transition: width 0.3s ease-out;
       }
       @keyframes ac-state-sweep {
-        0% { background-position: 200% 0; }
+        0%   { background-position: 200% 0; }
         100% { background-position: -200% 0; }
       }
 
-      .ac-state[data-state='doing'] i { color: var(--ac-state-accent); }
-      .ac-state[data-state='done'] i { color: var(--ac-state-success); }
-      .ac-state[data-state='warn'] i { color: var(--ac-state-warning); }
-      .ac-state[data-state='error'] i { color: var(--ac-state-error); }
-      .ac-state[data-state='info'] i { color: var(--ac-state-accent); }
-      .ac-state i { position: relative; flex-shrink: 0; font-size: 14px; margin-right: 5px; }
-      .ac-state-text {
+      /* 状态颜色（图标与文字）*/
+      .ac-state[data-state='doing'] i { color: var(--chat-info, #75beff); }
+      .ac-state[data-state='done']  i { color: var(--chat-success, #89d185); }
+      .ac-state[data-state='warn']  i { color: var(--chat-warn, #cca700); }
+      .ac-state[data-state='error'] i { color: var(--chat-error, #f14c4c); }
+      .ac-state[data-state='info']  i { color: var(--chat-info, #75beff); }
+      .ac-state i { position: relative; flex-shrink: 0; font-size: 12px; width: 14px; text-align: center; }
+      .ac-state-title-group {
         position: relative;
         flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .ac-state-text {
+        position: relative;
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        color: var(--chat-fg, #cccccc);
+        font-size: 12px;
+        line-height: 1.3;
       }
+      .ac-state-subtitle {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--chat-fg-dim, #8e8e8e);
+        font-size: 11px;
+        line-height: 1.25;
+      }
+      .ac-state-status {
+        position: relative;
+        flex-shrink: 0;
+        font-size: 11px;
+        color: var(--chat-fg-dim, #8e8e8e);
+      }
+      .ac-state-status[data-tone='info'] { color: var(--chat-info, #75beff); }
+      .ac-state-status[data-tone='success'] { color: var(--chat-success, #89d185); }
+      .ac-state-status[data-tone='warn'] { color: var(--chat-warn, #cca700); }
+      .ac-state-status[data-tone='error'] { color: var(--chat-error, #f14c4c); }
       .ac-state-pct {
         position: relative;
         font-size: 11px;
-        color: #a5a5a5;
+        color: var(--chat-fg-dim, #8e8e8e);
         min-width: 32px;
         text-align: right;
+      }
+
+      .ac-state.ac-state-subagent {
+        gap: 0;
+        /* Copilot subagent/tool-use \u98ce\u683c\uff1a\u65e0\u9762\u677f\uff0c\u4e0e think-viewer \u7edf\u4e00 */
+        background: transparent;
+        border: none;
+        padding: 2px 0;
+      }
+
+      .ac-subagent-header {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+        /* \u5bf9\u9f50 think-viewer .ac-think-header \u98ce\u683c */
+        padding: 3px 6px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.15s;
+        margin: 0 -6px;
+        width: calc(100% + 12px);
+      }
+
+      .ac-subagent-header:not(:disabled):hover {
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
+      }
+
+      .ac-subagent-header:disabled {
+        cursor: default;
+      }
+
+      .ac-subagent-inline-meta {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+        color: var(--chat-fg-dim, #8e8e8e);
+      }
+
+      .ac-subagent-inline-agent {
+        flex-shrink: 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--chat-fg, #cccccc);
+      }
+
+      .ac-subagent-inline-subtitle {
+        flex: 1;
+        min-width: 0;
+        font-size: 11px;
+        line-height: 1.25;
+        color: var(--chat-fg-dim, #8e8e8e);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ac-subagent-title-group {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .ac-subagent-title {
+        color: var(--chat-fg-head, #e3e3e3);
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ac-subagent-subtitle {
+        color: var(--chat-fg-dim, #8e8e8e);
+        font-size: 11px;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ac-subagent-state {
+        flex-shrink: 0;
+        font-size: 11px;
+        line-height: 1;
+        padding: 3px 7px;
+        border-radius: 999px;
+        background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+        border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+        color: var(--chat-fg-dim, #8e8e8e);
+      }
+
+      .ac-subagent-state[data-tone='info']    { color: var(--chat-info, #75beff); }
+      .ac-subagent-state[data-tone='success'] { color: var(--chat-success, #89d185); }
+      .ac-subagent-state[data-tone='warn']    { color: var(--chat-warn, #cca700); }
+      .ac-subagent-state[data-tone='error']   { color: var(--chat-error, #f14c4c); }
+
+      .ac-subagent-chevron {
+        flex-shrink: 0;
+        font-size: 10px;
+        color: var(--chat-fg-muted, #6a6a6a);
+        transition: transform 0.2s ease;
+      }
+
+      .ac-state.ac-state-expanded .ac-subagent-chevron {
+        transform: rotate(180deg);
+      }
+
+      /* === subagent 展开体：同 ac-state-detail，单一 border 框 === */
+      .ac-subagent-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        width: 100%;
+        padding: 6px 8px;
+        margin-top: 2px;
+        border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+        border-radius: 4px;
+      }
+
+      .ac-state.ac-state-embedded .ac-subagent-body {
+        padding: 4px 6px;
+        margin-top: 2px;
+      }
+
+      .ac-state.ac-state-embedded .ac-subagent-inline-meta {
+        margin-bottom: 2px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-summary {
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: flex-start;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      .ac-state-summary-activity {
+        gap: 5px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-badges {
+        gap: 4px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-badge {
+        padding: 2px 6px;
+        background: rgba(255, 255, 255, 0.025);
+        border-color: rgba(255, 255, 255, 0.04);
       }
 
       .ac-state-summary {
@@ -238,15 +556,61 @@ interface StateViewerData {
         min-width: 0;
       }
 
+      /* === 展开体：对齐 Copilot .chat-used-context-list / .chat-confirmation-widget-message-container ===
+       * 单个 border 框包裹所有展开内容，不再使用左侧连接线
+       */
       .ac-state-detail {
-        position: relative;
-        z-index: 1;
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        width: 100%;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        gap: 1px;
+        padding: 4px 8px;
+        margin-top: 2px;
+        border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+        border-radius: 4px;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-detail {
+        gap: 1px;
+        padding: 4px 8px;
+        margin-top: 2px;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-detail {
+        gap: 0;
+        padding: 0;
+        margin-top: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-section {
+        padding: 4px 12px 4px 18px;
+        gap: 3px;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-section + .ac-state-section {
+        margin-top: 0;
+        border-top: none;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-section-title {
+        font-size: 11px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: 0;
+        margin-bottom: 1px;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-list {
+        gap: 0;
+        margin-left: 2px;
+        padding: 0 2px;
+      }
+
+      .ac-state.ac-state-subagent .ac-state-list-item {
+        gap: 1px;
+        padding: 3px 0;
       }
 
       .ac-state-badges {
@@ -255,6 +619,10 @@ interface StateViewerData {
         gap: 6px;
         flex: 1;
         min-width: 0;
+      }
+      .ac-state-badges-standalone {
+        padding: 0 4px;
+        margin-top: 2px;
       }
 
       .ac-state-badge {
@@ -268,33 +636,17 @@ interface StateViewerData {
         border: 1px solid rgba(255, 255, 255, 0.06);
       }
 
-      .ac-state-badge-label {
-        color: #8e8e8e;
-      }
-
-      .ac-state-badge-value {
-        color: #dedede;
-      }
+      .ac-state-badge-label { color: var(--chat-fg-muted, #6a6a6a); }
+      .ac-state-badge-value  { color: var(--chat-fg, #cccccc); }
 
       .ac-state-badge[data-tone='info'],
-      .ac-state-list-pill[data-tone='info'] {
-        color: #91caff;
-      }
-
+      .ac-state-list-pill[data-tone='info']    { color: var(--chat-info, #75beff); }
       .ac-state-badge[data-tone='success'],
-      .ac-state-list-pill[data-tone='success'] {
-        color: #b7eb8f;
-      }
-
+      .ac-state-list-pill[data-tone='success'] { color: var(--chat-success, #89d185); }
       .ac-state-badge[data-tone='warn'],
-      .ac-state-list-pill[data-tone='warn'] {
-        color: #ffd666;
-      }
-
+      .ac-state-list-pill[data-tone='warn']    { color: var(--chat-warn, #cca700); }
       .ac-state-badge[data-tone='error'],
-      .ac-state-list-pill[data-tone='error'] {
-        color: #ff9c9c;
-      }
+      .ac-state-list-pill[data-tone='error']   { color: var(--chat-error, #f14c4c); }
 
       .ac-state-toggle {
         display: inline-flex;
@@ -304,15 +656,15 @@ interface StateViewerData {
         padding: 4px 8px;
         border: 0;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.04);
-        color: #bdbdbd;
+        background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+        color: var(--chat-fg-dim, #8e8e8e);
         cursor: pointer;
         transition: background 0.2s ease, color 0.2s ease;
       }
 
       .ac-state-toggle:hover {
-        background: rgba(255, 255, 255, 0.08);
-        color: #ededed;
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
+        color: var(--chat-fg-head, #e3e3e3);
       }
 
       .ac-state-toggle-label {
@@ -340,22 +692,22 @@ interface StateViewerData {
         gap: 6px;
         padding: 3px 8px;
         border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
-        color: #bdbdbd;
+        border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+        color: var(--chat-fg-dim, #8e8e8e);
         cursor: pointer;
         transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
       }
 
       .ac-state-filter:hover {
-        background: rgba(255, 255, 255, 0.06);
-        color: #ededed;
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
+        color: var(--chat-fg-head, #e3e3e3);
       }
 
       .ac-state-filter.ac-state-filter-active {
-        background: rgba(255, 255, 255, 0.1);
-        border-color: rgba(255, 255, 255, 0.18);
-        color: #ffffff;
+        background: var(--chat-bg-deep, rgba(255,255,255,0.08));
+        border-color: var(--chat-border, rgba(255,255,255,0.10));
+        color: var(--chat-fg-head, #e3e3e3);
       }
 
       .ac-state-filter-label,
@@ -367,24 +719,13 @@ interface StateViewerData {
       .ac-state-filter-count {
         padding: 1px 5px;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--chat-bg-deep, rgba(255,255,255,0.08));
       }
 
-      .ac-state-filter[data-tone='success'] {
-        color: #b7eb8f;
-      }
-
-      .ac-state-filter[data-tone='warn'] {
-        color: #ffd666;
-      }
-
-      .ac-state-filter[data-tone='error'] {
-        color: #ff9c9c;
-      }
-
-      .ac-state-filter[data-tone='info'] {
-        color: #91caff;
-      }
+      .ac-state-filter[data-tone='success'] { color: var(--chat-success, #89d185); }
+      .ac-state-filter[data-tone='warn']    { color: var(--chat-warn, #cca700); }
+      .ac-state-filter[data-tone='error']   { color: var(--chat-error, #f14c4c); }
+      .ac-state-filter[data-tone='info']    { color: var(--chat-info, #75beff); }
 
       .ac-state.ac-state-expanded .ac-state-toggle-icon {
         transform: rotate(180deg);
@@ -399,8 +740,13 @@ interface StateViewerData {
       .ac-state-section-title {
         font-size: 11px;
         font-weight: 600;
-        color: #8e8e8e;
+        color: var(--chat-fg-muted, #6a6a6a);
         letter-spacing: 0.02em;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-section-title {
+        font-size: 10px;
+        color: var(--chat-fg-muted, #6a6a6a);
       }
 
       .ac-state-list {
@@ -409,31 +755,56 @@ interface StateViewerData {
         gap: 6px;
       }
 
+      .ac-state-output-groups {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .ac-state-output-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .ac-state-output-group[data-group-kind='data'],
+      .ac-state-output-group[data-group-kind='code'],
+      .ac-state-output-group[data-group-kind='generic'] {
+        padding: 10px;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        background: rgba(255,255,255,0.02);
+      }
+
+      .ac-state-output-group[data-group-kind='code'] {
+        background: rgba(13, 17, 23, 0.38);
+        border-color: rgba(255,255,255,0.1);
+      }
+
+      /* list-item：纯行，无卡片。Copilot 内部行没有独立 border/background。
+       * 使用行间 separator 代替 gap */
       .ac-state-list-item {
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        padding: 7px 8px;
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.035);
-        border: 1px solid rgba(255, 255, 255, 0.04);
+        gap: 2px;
+        padding: 4px 0;
+        border-bottom: 1px solid var(--chat-border-dim, rgba(255,255,255,0.04));
       }
 
-      .ac-state-list-item[data-tone='info'] {
-        border-left: 2px solid rgba(145, 202, 255, 0.55);
+      .ac-state-list-item:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
       }
 
-      .ac-state-list-item[data-tone='success'] {
-        border-left: 2px solid rgba(183, 235, 143, 0.6);
+      .ac-state-list-item:first-child {
+        padding-top: 0;
       }
 
-      .ac-state-list-item[data-tone='warn'] {
-        border-left: 2px solid rgba(255, 214, 102, 0.65);
-      }
-
-      .ac-state-list-item[data-tone='error'] {
-        border-left: 2px solid rgba(255, 156, 156, 0.7);
-      }
+      /* tone 仅通过文字颜色体现，不再用 border-left 小卡片 */
+      .ac-state-list-item[data-tone='info']    .ac-state-list-title { color: var(--chat-info, #75beff); }
+      .ac-state-list-item[data-tone='success'] .ac-state-list-title { color: var(--chat-success, #89d185); }
+      .ac-state-list-item[data-tone='warn']    .ac-state-list-title { color: var(--chat-warn, #cca700); }
+      .ac-state-list-item[data-tone='error']   .ac-state-list-title { color: var(--chat-error, #f14c4c); }
 
       .ac-state-list-head {
         display: flex;
@@ -443,8 +814,80 @@ interface StateViewerData {
       }
 
       .ac-state-list-title {
-        color: #ededed;
+        color: var(--chat-fg-head, #e3e3e3);
         font-weight: 500;
+      }
+
+
+      .ac-state-list-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      .ac-state-list-meta-chip {
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--chat-fg-dim, #8e8e8e);
+      }
+
+      .ac-state-list-link {
+        display: block;
+        margin-top: 4px;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--vscode-textLink-foreground, #74b3ff);
+        text-decoration: none;
+        word-break: break-all;
+      }
+
+      .ac-state-output-image-shell {
+        margin-top: 6px;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.015);
+      }
+
+      .ac-state-output-image-preview {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+
+      .ac-state-output-code-note {
+        margin-top: 6px;
+      }
+
+      .ac-state-output-code-block {
+        margin: 0;
+        padding: 10px 12px;
+        overflow-x: auto;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(0,0,0,0.28);
+      }
+
+      .ac-state-output-code-block code {
+        display: block;
+        white-space: pre;
+        font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--chat-fg, #cccccc);
+      }
+
+      .ac-state-list-link:hover {
+        text-decoration: underline;
+      }
+      .ac-state.ac-state-embedded .ac-state-list-title {
+        font-size: 12px;
+        line-height: 1.35;
       }
 
       .ac-state-list-pill {
@@ -452,21 +895,32 @@ interface StateViewerData {
         font-size: 11px;
         padding: 1px 6px;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+        border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
+        color: var(--chat-fg-dim, #8e8e8e);
       }
 
       .ac-state-list-subtitle {
         font-size: 11px;
-        color: #a5a5a5;
+        color: var(--chat-fg-dim, #8e8e8e);
+      }
+
+      .ac-state.ac-state-embedded .ac-state-list-subtitle {
+        color: var(--chat-fg-dim, #8e8e8e);
+        line-height: 1.35;
       }
 
       .ac-state-list-note {
         font-size: 12px;
-        color: #d0d0d0;
+        color: var(--chat-fg, #cccccc);
         line-height: 1.45;
         white-space: normal;
         word-break: break-word;
+      }
+
+      .ac-state.ac-state-embedded .ac-state-list-note {
+        color: var(--chat-fg, #cccccc);
+        line-height: 1.4;
       }
 
       @keyframes ac-spin {
@@ -485,19 +939,26 @@ export class XAilyStateViewerComponent implements OnChanges {
   private static readonly expansionStateById = new Map<string, boolean>();
 
   @Input() data: StateViewerData | null = null;
+  @Input() embedded = false;
+  @Input() bodyOnly = false;
+  @Input() preparedDetailSections: readonly DetailSectionDescriptor[] | null = null;
 
   summaryBadges: StateBadge[] = [];
-  instructionFilterChips: StateFilterChip[] = [];
+  instructionFilterChips: InstructionFilterChip[] = [];
   sections: StateDetailSection[] = [];
   hasDetails = false;
   hasExpandableDetails = false;
   expanded = false;
   selectedInstructionFilter: InstructionDiagnosticFilter = 'all';
+  headerTitle = '';
+  headerSubtitle = '';
+  headerStatusLabel = '';
+  headerStatusTone: StateTone = 'neutral';
 
   private expansionIdentity = '';
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['data']) {
+    if (changes['data'] || changes['preparedDetailSections']) {
       this.rebuildDetails();
     }
   }
@@ -519,6 +980,10 @@ export class XAilyStateViewerComponent implements OnChanges {
     this.summaryBadges = [];
     this.instructionFilterChips = [];
     this.sections = [];
+    this.headerTitle = this.data?.text || '';
+    this.headerSubtitle = '';
+    this.headerStatusLabel = '';
+    this.headerStatusTone = 'neutral';
 
     const nextExpansionIdentity = this.getExpansionIdentity();
     const expansionStateKey = this.getExpansionStateKey();
@@ -557,15 +1022,24 @@ export class XAilyStateViewerComponent implements OnChanges {
       case 'task_autonomy':
         this.buildTaskAutonomyDetails(metadata);
         break;
+      case 'compaction':
+        this.buildCompactionDetails(metadata);
+        break;
       default:
         break;
     }
 
-    this.hasDetails = this.summaryBadges.length > 0 || this.sections.length > 0;
+    this.hasDetails = this.showSummaryBadges() || this.sections.length > 0;
     this.hasExpandableDetails = this.sections.length > 0;
 
     if (!this.hasExpandableDetails) {
       this.expanded = false;
+      this.expansionIdentity = nextExpansionIdentity;
+      return;
+    }
+
+    if (this.embedded) {
+      this.expanded = true;
       this.expansionIdentity = nextExpansionIdentity;
       return;
     }
@@ -580,43 +1054,20 @@ export class XAilyStateViewerComponent implements OnChanges {
   }
 
   private buildToolCallDetails(metadata: Record<string, unknown>): void {
-    const toolName = this.asString(metadata['toolName']);
-    const phase = this.asString(metadata['phase']);
-    const argsSummary = this.asString(metadata['argsSummary']);
-    const progress = this.asNumber(metadata['progress']);
-    const timeline = this.asRecordArray(metadata['timeline']);
-
-    this.pushBadge('工具', toolName, 'info');
-    this.pushBadge('阶段', this.formatNarrativePhase(phase), this.toneFromNarrativePhase(phase));
-    if (typeof progress === 'number') {
-      this.pushBadge('进度', `${Math.round(progress)}%`, this.toneFromNarrativePhase(phase));
-    }
-
-    if (argsSummary) {
-      this.sections.push({
-        title: '调用参数',
-        rows: [{
-          id: `${this.asString(metadata['recordId']) || this.data?.id || 'tool'}:args`,
-          title: toolName || '工具调用',
-          note: argsSummary,
-          tone: 'neutral',
-        }],
-      });
-    }
-
-    const rows = timeline.length > 0
-      ? timeline.map((entry, index) => this.toToolCallTimelineRow(entry, index))
-      : [this.toToolCallTimelineRow(metadata, 0)];
-
-    if (rows.length > 0) {
-      this.sections.push({
-        title: rows.length > 1 ? '历史时间线' : '当前记录',
-        rows,
-      });
-    }
+    const projection = buildStandardStateViewerProjection({
+      kind: 'tool_call',
+      id: this.data?.id,
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
   }
 
   toggleExpanded(): void {
+    if (this.embedded) {
+      return;
+    }
     if (!this.hasExpandableDetails) {
       return;
     }
@@ -638,421 +1089,79 @@ export class XAilyStateViewerComponent implements OnChanges {
   }
 
   private buildTaskGraphDetails(metadata: Record<string, unknown>): void {
-    const graphId = this.asString(metadata['graphId']);
-    const status = this.asString(metadata['status']);
-    const totalNodes = this.asNumber(metadata['totalNodes']);
-    const completedNodes = this.asNumber(metadata['completedNodes']);
-    const failedNodes = this.asNumber(metadata['failedNodes']);
-    const runningNodes = this.asNumber(metadata['runningNodes']);
-    const blockedNodes = this.asNumber(metadata['blockedNodes']);
-
-    this.pushBadge('图', graphId, 'info');
-    this.pushBadge('状态', this.formatTaskGraphStatus(status), this.toneFromTaskGraphStatus(status));
-    if (typeof totalNodes === 'number' && totalNodes > 0) {
-      this.pushBadge(
-        '进度',
-        `${completedNodes || 0}/${totalNodes}`,
-        failedNodes ? 'warn' : completedNodes === totalNodes ? 'success' : 'info',
-      );
-    }
-    if (runningNodes) this.pushBadge('运行中', String(runningNodes), 'info');
-    if (failedNodes) this.pushBadge('失败', String(failedNodes), 'error');
-    if (blockedNodes) this.pushBadge('阻塞', String(blockedNodes), 'warn');
-
-    const rows: StateDetailRow[] = [];
-    const seen = new Set<string>();
-    const currentNode = this.asRecord(metadata['currentNode']);
-    if (currentNode) {
-      const row = this.toTaskGraphRow(currentNode, true);
-      rows.push(row);
-      seen.add(row.id);
-    }
-
-    for (const value of this.asArray(metadata['nodeHighlights'])) {
-      const node = this.asRecord(value);
-      if (!node) continue;
-      const row = this.toTaskGraphRow(node, false);
-      if (seen.has(row.id)) continue;
-      seen.add(row.id);
-      rows.push(row);
-    }
-
-    if (rows.length > 0) {
-      this.sections.push({
-        title: currentNode ? '当前节点与关键节点' : '关键节点',
-        rows,
-      });
-    }
+    const projection = buildStandardStateViewerProjection({
+      kind: 'task_graph',
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
   }
 
   private buildBackgroundTaskDetails(metadata: Record<string, unknown>): void {
-    const taskId = this.asString(metadata['taskId']);
-    const status = this.asString(metadata['status']);
-    const agentName = this.asString(metadata['agentName']);
-    const description = this.asString(metadata['description']);
-    const summary = this.asString(metadata['summary']);
-    const progress = this.asNumber(metadata['progress']);
-    const startedAt = this.asNumber(metadata['startedAt']);
-    const completedAt = this.asNumber(metadata['completedAt']);
-    const output = this.asString(metadata['output']);
-    const error = this.asString(metadata['error']);
-    const activity = this.asRecord(metadata['activity']);
-
-    this.pushBadge('任务', taskId, 'info');
-    this.pushBadge('状态', this.formatBackgroundTaskStatus(status), this.toneFromBackgroundTaskStatus(status));
-    this.pushBadge('代理', agentName, 'neutral');
-    if (typeof progress === 'number') {
-      this.pushBadge('进度', `${Math.round(progress)}%`, status === 'running' ? 'info' : 'neutral');
-    }
-    this.pushBadge('开始', this.formatClock(startedAt), 'neutral');
-    this.pushBadge('结束', this.formatClock(completedAt), this.toneFromBackgroundTaskStatus(status));
-
-    const note = error || output || summary;
-    if (!note && !activity) {
+    const projection = buildStandardStateViewerProjection({
+      kind: 'background_task',
+      id: this.data?.id,
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    if (projection.sections.length === 0) {
       return;
     }
-
-    const rows: StateDetailRow[] = [];
-    if (note) {
-      rows.push({
-        id: taskId || 'background-task',
-        title: description || taskId || '后台任务',
-        subtitle: [
-          agentName ? `代理 ${agentName}` : '',
-          startedAt != null ? `开始 ${this.formatClock(startedAt)}` : '',
-          completedAt != null ? `结束 ${this.formatClock(completedAt)}` : '',
-        ].filter(Boolean).join(' · '),
-        note,
-        trailing: status === 'running' && typeof progress === 'number'
-          ? `${Math.round(progress)}%`
-          : this.formatBackgroundTaskStatus(status),
-        tone: this.toneFromBackgroundTaskStatus(status),
-      });
-    }
-
-    if (activity) {
-      rows.push(this.toBackgroundTaskActivityRow(activity, taskId || 'background-task'));
-    }
-
-    this.sections.push({
-      title: output || error ? '结果摘要' : activity ? '进度与活动' : '进度摘要',
-      rows,
-    });
+    this.pushDetailSections(projection.sections);
   }
 
   private buildAgentTeamDetails(metadata: Record<string, unknown>): void {
-    const teamId = this.asString(metadata['teamId']);
-    const status = this.asString(metadata['status']);
-    const roleCount = this.asNumber(metadata['roleCount']);
-    const messageCount = this.asNumber(metadata['messageCount']);
-    const graphId = this.asString(metadata['graphId']);
-
-    this.pushBadge('团队', teamId, 'info');
-    this.pushBadge('状态', this.formatAgentTeamStatus(status), this.toneFromAgentTeamStatus(status));
-    if (typeof roleCount === 'number') this.pushBadge('角色', String(roleCount), 'neutral');
-    if (typeof messageCount === 'number') this.pushBadge('消息', String(messageCount), 'neutral');
-    this.pushBadge('任务图', graphId, 'neutral');
-
-    const roleRows: StateDetailRow[] = [];
-    for (const value of this.asArray(metadata['roles'])) {
-      const role = this.asRecord(value);
-      if (!role) continue;
-      roleRows.push(this.toAgentTeamRoleRow(role));
-    }
-    if (roleRows.length > 0) {
-      this.sections.push({ title: '角色分工', rows: roleRows });
-    }
-
-    const messageRows: StateDetailRow[] = [];
-    for (const value of this.asArray(metadata['recentMessages'])) {
-      const message = this.asRecord(value);
-      if (!message) continue;
-      messageRows.push(this.toAgentTeamMessageRow(message));
-    }
-    if (messageRows.length > 0) {
-      this.sections.push({ title: '最近消息', rows: messageRows });
-    }
+    const projection = buildStandardStateViewerProjection({
+      kind: 'agent_team',
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
   }
 
   private buildTaskSchedulerDetails(metadata: Record<string, unknown>): void {
-    const scheduleId = this.asString(metadata['scheduleId']);
-    const phase = this.asString(metadata['phase']);
-    const schedulerStatus = this.asString(metadata['schedulerStatus']);
-    const launchKind = this.asString(metadata['launchKind']);
-    const launchMode = this.asString(metadata['launchMode']);
-    const scheduleCount = this.asNumber(metadata['scheduleCount']);
-
-    this.pushBadge('调度', scheduleId, 'info');
-    this.pushBadge('阶段', this.formatTaskSchedulerPhase(phase), this.toneFromTaskSchedulerPhase(phase));
-    this.pushBadge('服务', this.formatTaskSchedulerStatus(schedulerStatus), schedulerStatus === 'running' ? 'info' : 'neutral');
-    if (launchKind || launchMode) {
-      const value = [this.formatLaunchKind(launchKind), this.formatLaunchMode(launchMode)].filter(Boolean).join(' · ');
-      this.pushBadge('触发', value, launchMode === 'async' ? 'info' : 'neutral');
-    }
-    if (typeof scheduleCount === 'number' && scheduleCount > 0) {
-      this.pushBadge('计划数', String(scheduleCount), 'neutral');
-    }
+    const projection = buildStandardStateViewerProjection({
+      kind: 'task_scheduler',
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
   }
 
   private buildTaskAutonomyDetails(metadata: Record<string, unknown>): void {
-    const status = this.asString(metadata['status']);
-    const phase = this.asString(metadata['phase']);
-    const reason = this.asString(metadata['reason']);
-    const consecutiveFailures = this.asNumber(metadata['consecutiveFailures']);
-    const maxConsecutiveFailures = this.asNumber(metadata['maxConsecutiveFailures']);
+    const projection = buildStandardStateViewerProjection({
+      kind: 'task_autonomy',
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+  }
 
-    this.pushBadge('状态', this.formatTaskAutonomyStatus(status), this.toneFromTaskAutonomyStatus(status));
-    this.pushBadge('事件', this.formatTaskAutonomyPhase(phase), this.toneFromTaskAutonomyPhase(phase));
-    if (typeof consecutiveFailures === 'number' && typeof maxConsecutiveFailures === 'number') {
-      this.pushBadge('连续失败', `${consecutiveFailures}/${maxConsecutiveFailures}`, consecutiveFailures > 0 ? 'warn' : 'success');
-    }
-    this.pushBadge('原因', this.formatTaskAutonomyReason(reason), reason && reason !== 'manual_stop' ? 'warn' : 'neutral');
+  private buildCompactionDetails(metadata: Record<string, unknown>): void {
+    const projection = buildStandardStateViewerProjection({
+      kind: 'compaction',
+      id: this.data?.id,
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
   }
 
   private buildInstructionDetails(metadata: Record<string, unknown>): void {
-    const hostId = this.asString(metadata['hostId']);
-    const modelFamily = this.asString(metadata['modelFamily']);
-    const activeCount = this.asNumber(metadata['activeCount']) || 0;
-    const inactiveCount = this.asNumber(metadata['inactiveCount']) || 0;
-    const overriddenCount = this.asNumber(metadata['overriddenCount']) || 0;
-    const emptyCount = this.asNumber(metadata['emptyCount']) || 0;
-    const notFoundCount = this.asNumber(metadata['notFoundCount']) || 0;
-    const capabilities = this.asArray(metadata['capabilities'])
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-    const diagnostics = this.asRecordArray(metadata['diagnostics']);
-    const filterCounts = this.collectInstructionDiagnosticCounts(diagnostics);
+    const projection = buildInstructionDetailProjection({
+      id: this.data?.id,
+      metadata,
+      selectedFilter: this.selectedInstructionFilter,
+    });
 
-    this.selectedInstructionFilter = this.resolveInstructionFilter(this.selectedInstructionFilter, filterCounts);
-    this.instructionFilterChips = this.buildInstructionFilterChips(filterCounts, this.selectedInstructionFilter);
-
-    this.pushBadge('Host', hostId, 'info');
-    this.pushBadge('模型族', modelFamily, 'neutral');
-    this.pushBadge('生效', String(activeCount), activeCount > 0 ? 'success' : 'neutral');
-    if (inactiveCount > 0) this.pushBadge('条件跳过', String(inactiveCount), 'warn');
-    if (overriddenCount > 0) this.pushBadge('被覆盖', String(overriddenCount), 'warn');
-    if (emptyCount > 0) this.pushBadge('空文件', String(emptyCount), 'warn');
-    if (notFoundCount > 0) this.pushBadge('未发现', String(notFoundCount), 'neutral');
-    if (capabilities.length > 0) this.pushBadge('能力', String(capabilities.length), 'info');
-
-    if (hostId || modelFamily || capabilities.length > 0) {
-      this.sections.push({
-        title: '运行上下文',
-        rows: [{
-          id: `${this.data?.id || 'instructions'}:context`,
-          title: hostId || 'Instruction context',
-          subtitle: [modelFamily ? `模型 ${modelFamily}` : '', capabilities.length > 0 ? `能力 ${capabilities.join(', ')}` : '']
-            .filter(Boolean)
-            .join(' · '),
-          trailing: this.asString(metadata['summary']),
-          tone: 'info',
-        }],
-      });
-    }
-
-    if (this.selectedInstructionFilter === 'all') {
-      const activeRows: StateDetailRow[] = [];
-      const skippedRows: StateDetailRow[] = [];
-      for (const diagnostic of diagnostics) {
-        const row = this.toInstructionDiagnosticRow(diagnostic);
-        if (this.asBoolean(diagnostic['active'])) {
-          activeRows.push(row);
-        } else {
-          skippedRows.push(row);
-        }
-      }
-
-      if (activeRows.length > 0) {
-        this.sections.push({ title: '已生效规则', rows: activeRows });
-      }
-      if (skippedRows.length > 0) {
-        this.sections.push({ title: '跳过与覆盖', rows: skippedRows });
-      }
-      return;
-    }
-
-    const filteredRows = diagnostics
-      .filter(diagnostic => this.matchesInstructionDiagnosticFilter(diagnostic, this.selectedInstructionFilter))
-      .map(diagnostic => this.toInstructionDiagnosticRow(diagnostic));
-
-    if (filteredRows.length > 0) {
-      this.sections.push({
-        title: this.formatInstructionFilterTitle(this.selectedInstructionFilter),
-        rows: filteredRows,
-      });
-    }
-  }
-
-  private collectInstructionDiagnosticCounts(diagnostics: readonly Record<string, unknown>[]): Record<InstructionDiagnosticFilter, number> {
-    const counts: Record<InstructionDiagnosticFilter, number> = {
-      all: diagnostics.length,
-      active: 0,
-      inactive: 0,
-      overridden: 0,
-      empty: 0,
-      not_found: 0,
-    };
-
-    for (const diagnostic of diagnostics) {
-      if (this.asBoolean(diagnostic['active'])) {
-        counts.active += 1;
-        continue;
-      }
-
-      switch (this.asString(diagnostic['skipReason'])) {
-        case 'inactive':
-          counts.inactive += 1;
-          break;
-        case 'overridden':
-          counts.overridden += 1;
-          break;
-        case 'empty':
-          counts.empty += 1;
-          break;
-        case 'not_found':
-          counts.not_found += 1;
-          break;
-        default:
-          break;
-      }
-    }
-
-    return counts;
-  }
-
-  private resolveInstructionFilter(
-    current: InstructionDiagnosticFilter,
-    counts: Record<InstructionDiagnosticFilter, number>,
-  ): InstructionDiagnosticFilter {
-    if (current === 'all' || counts[current] > 0) {
-      return current;
-    }
-
-    return 'all';
-  }
-
-  private buildInstructionFilterChips(
-    counts: Record<InstructionDiagnosticFilter, number>,
-    selected: InstructionDiagnosticFilter,
-  ): StateFilterChip[] {
-    if (counts.all === 0) {
-      return [];
-    }
-
-    const options: Array<{ id: InstructionDiagnosticFilter; label: string; tone: StateTone }> = [
-      { id: 'all', label: '全部', tone: 'neutral' },
-      { id: 'active', label: '已生效', tone: 'success' },
-      { id: 'inactive', label: '条件跳过', tone: 'warn' },
-      { id: 'overridden', label: '被覆盖', tone: 'warn' },
-      { id: 'empty', label: '空文件', tone: 'warn' },
-      { id: 'not_found', label: '未发现', tone: 'neutral' },
-    ];
-
-    return options
-      .filter(option => option.id === 'all' || counts[option.id] > 0)
-      .map(option => ({
-        id: option.id,
-        label: option.label,
-        count: counts[option.id],
-        tone: option.tone,
-        active: option.id === selected,
-      }));
-  }
-
-  private matchesInstructionDiagnosticFilter(
-    diagnostic: Record<string, unknown>,
-    filter: InstructionDiagnosticFilter,
-  ): boolean {
-    if (filter === 'all') {
-      return true;
-    }
-
-    if (filter === 'active') {
-      return this.asBoolean(diagnostic['active']);
-    }
-
-    return this.asString(diagnostic['skipReason']) === filter;
-  }
-
-  private formatInstructionFilterTitle(filter: InstructionDiagnosticFilter): string {
-    const map: Record<InstructionDiagnosticFilter, string> = {
-      all: '规则明细',
-      active: '已生效规则',
-      inactive: '条件跳过',
-      overridden: '被覆盖规则',
-      empty: '空文件',
-      not_found: '未发现文件',
-    };
-
-    return map[filter];
-  }
-
-  private toTaskGraphRow(node: Record<string, unknown>, isCurrent: boolean): StateDetailRow {
-    const nodeId = this.asString(node['nodeId']) || 'node';
-    const description = this.asString(node['description']);
-    const taskId = this.asString(node['taskId']);
-    const status = this.asString(node['status']);
-    const attempts = this.asNumber(node['attempts']);
-    const executionMode = this.asString(node['executionMode']);
-    const note = this.asString(node['note']);
-    const subtitleParts = [
-      description && description !== nodeId ? `节点 ${nodeId}` : '',
-      taskId ? `任务 ${taskId}` : '',
-      typeof attempts === 'number' && attempts > 0 ? `尝试 ${attempts}` : '',
-      this.formatExecutionMode(executionMode),
-      isCurrent ? '当前事件' : '',
-    ].filter(Boolean);
-
-    return {
-      id: nodeId,
-      title: description || taskId || nodeId,
-      subtitle: subtitleParts.join(' · '),
-      note,
-      trailing: this.formatTaskGraphNodeStatus(status),
-      tone: this.toneFromTaskGraphNodeStatus(status),
-    };
-  }
-
-  private toAgentTeamRoleRow(role: Record<string, unknown>): StateDetailRow {
-    const roleId = this.asString(role['roleId']) || 'role';
-    const description = this.asString(role['description']);
-    const agentType = this.asString(role['agentType']);
-    const status = this.asString(role['status']);
-    const assignedCount = this.asNumber(role['assignedCount']) || 0;
-    const runningCount = this.asNumber(role['runningCount']) || 0;
-    const completedCount = this.asNumber(role['completedCount']) || 0;
-    const failedCount = this.asNumber(role['failedCount']) || 0;
-
-    return {
-      id: roleId,
-      title: description || roleId,
-      subtitle: [description && description !== roleId ? `角色 ${roleId}` : '', agentType].filter(Boolean).join(' · '),
-      note: [
-        assignedCount ? `分配 ${assignedCount}` : '',
-        runningCount ? `运行 ${runningCount}` : '',
-        completedCount ? `完成 ${completedCount}` : '',
-        failedCount ? `失败 ${failedCount}` : '',
-      ].filter(Boolean).join(' · '),
-      trailing: this.formatAgentTeamRoleStatus(status),
-      tone: this.toneFromAgentTeamRoleStatus(status),
-    };
-  }
-
-  private toAgentTeamMessageRow(message: Record<string, unknown>): StateDetailRow {
-    const messageId = this.asString(message['messageId']) || 'message';
-    const fromRoleId = this.asString(message['fromRoleId']) || 'unknown';
-    const toRoleId = this.asString(message['toRoleId']) || 'unknown';
-    const trigger = this.asString(message['trigger']);
-    const nodeId = this.asString(message['nodeId']);
-    const content = this.asString(message['content']);
-
-    return {
-      id: messageId,
-      title: `${fromRoleId} -> ${toRoleId}`,
-      subtitle: [this.formatAgentTeamTrigger(trigger), nodeId ? `节点 ${nodeId}` : ''].filter(Boolean).join(' · '),
-      note: content,
-      trailing: this.formatAgentTeamTrigger(trigger),
-      tone: 'info',
-    };
+    this.selectedInstructionFilter = projection.filter;
+    this.instructionFilterChips = projection.filterChips;
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
   }
 
   private pushBadge(label: string, value: string | undefined, tone: StateTone = 'neutral'): void {
@@ -1060,175 +1169,10 @@ export class XAilyStateViewerComponent implements OnChanges {
     this.summaryBadges.push({ label, value, tone });
   }
 
-  private toToolCallTimelineRow(entry: Record<string, unknown>, index: number): StateDetailRow {
-    const recordId = this.asString(entry['recordId']) || `tool-row-${index}`;
-    const phase = this.asString(entry['phase']);
-    const timestamp = this.asNumber(entry['timestamp']);
-    const summary = this.asString(entry['summary']);
-    const progress = this.asNumber(entry['progress']);
-    const progressDetails = this.asRecord(entry['progressDetails']);
-    const resultText = this.asString(entry['resultText']);
-
-    return {
-      id: recordId,
-      title: this.formatNarrativePhase(phase),
-      subtitle: [this.formatClock(timestamp), recordId].filter(Boolean).join(' · '),
-      note: this.buildToolCallNote(summary, progressDetails, resultText),
-      trailing: typeof progress === 'number' ? `${Math.round(progress)}%` : this.formatNarrativePhase(phase),
-      tone: this.toneFromNarrativePhase(phase),
-    };
-  }
-
-  private buildToolCallNote(
-    summary: string | undefined,
-    progressDetails: Record<string, unknown> | undefined,
-    resultText: string | undefined,
-  ): string | undefined {
-    const notes: string[] = [];
-    const pushNote = (value: string | undefined): void => {
-      if (!value || notes.includes(value)) {
-        return;
-      }
-      notes.push(value);
-    };
-
-    pushNote(summary);
-    if (progressDetails) {
-      pushNote(this.asString(progressDetails['message']));
-      const detail = this.asString(progressDetails['detail']);
-      if (detail) {
-        pushNote(`详情: ${detail}`);
-      }
-      const step = this.asString(progressDetails['step']);
-      if (step) {
-        pushNote(`步骤: ${step}`);
-      }
-      const statusText = this.asString(progressDetails['statusText']);
-      if (statusText) {
-        pushNote(`状态: ${statusText}`);
-      }
+  private pushSummaryBadges(badges: readonly { label: string; value: string; tone?: StateTone }[]): void {
+    for (const badge of badges) {
+      this.pushBadge(badge.label, badge.value, badge.tone ?? 'neutral');
     }
-    pushNote(resultText);
-
-    return notes.length > 0 ? notes.join('\n') : undefined;
-  }
-
-  private toBackgroundTaskActivityRow(activity: Record<string, unknown>, taskId: string): StateDetailRow {
-    const kind = this.asString(activity['kind']);
-    const toolName = this.asString(activity['toolName']);
-    const agentName = this.asString(activity['agentName']);
-    const description = this.asString(activity['description']);
-    const summary = this.asString(activity['summary']);
-    const detail = this.asString(activity['detail']);
-    const step = this.asString(activity['step']);
-    const statusText = this.asString(activity['statusText']);
-    const resultText = this.asString(activity['resultText']);
-    const progress = this.asNumber(activity['progress']);
-
-    const notes = [summary, detail, step ? `步骤: ${step}` : undefined, statusText ? `状态: ${statusText}` : undefined, resultText]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-      .join('\n');
-
-    return {
-      id: `${taskId}:activity`,
-      title: this.formatBackgroundTaskActivityKind(kind),
-      subtitle: [toolName, agentName, description].filter(Boolean).join(' · '),
-      note: notes || undefined,
-      trailing: typeof progress === 'number' ? `${Math.round(progress)}%` : undefined,
-      tone: this.toneFromBackgroundTaskActivityKind(kind),
-    };
-  }
-
-  private toInstructionDiagnosticRow(diagnostic: Record<string, unknown>): StateDetailRow {
-    const id = this.asString(diagnostic['id']) || `${this.data?.id || 'instructions'}:diagnostic`;
-    const name = this.asString(diagnostic['logicalName']) || this.asString(diagnostic['name']) || id;
-    const source = this.asString(diagnostic['source']);
-    const reference = this.asString(diagnostic['reference']);
-    const ownerId = this.asString(diagnostic['ownerId']);
-    const priority = this.asNumber(diagnostic['priority']);
-    const active = this.asBoolean(diagnostic['active']);
-    const skipReason = this.asString(diagnostic['skipReason']);
-    const overriddenById = this.asString(diagnostic['overriddenById']);
-    const activation = this.asRecord(diagnostic['activation']);
-
-    return {
-      id,
-      title: name,
-      subtitle: [this.formatInstructionSource(source), ownerId ? `来源 ${ownerId}` : '', typeof priority === 'number' ? `优先级 ${priority}` : '']
-        .filter(Boolean)
-        .join(' · '),
-      note: this.buildInstructionDiagnosticNote(reference, activation, overriddenById, active, skipReason),
-      trailing: active ? '已生效' : this.formatInstructionSkipReason(skipReason),
-      tone: this.toneFromInstructionDiagnostic(active, skipReason),
-    };
-  }
-
-  private buildInstructionDiagnosticNote(
-    reference: string | undefined,
-    activation: Record<string, unknown> | undefined,
-    overriddenById: string | undefined,
-    active: boolean,
-    skipReason: string | undefined,
-  ): string | undefined {
-    const notes: string[] = [];
-    const explanation = this.describeInstructionDiagnostic(active, skipReason, overriddenById);
-    if (explanation) {
-      notes.push(explanation);
-    }
-    if (reference) {
-      notes.push(`位置: ${reference}`);
-    }
-    const activationSummary = this.summarizeInstructionActivation(activation);
-    if (activationSummary) {
-      notes.push(`条件: ${activationSummary}`);
-    }
-    return notes.length > 0 ? notes.join('\n') : undefined;
-  }
-
-  private describeInstructionDiagnostic(
-    active: boolean,
-    skipReason: string | undefined,
-    overriddenById: string | undefined,
-  ): string | undefined {
-    if (active) {
-      return '当前规则优先级最高，已注入最终 prompt。';
-    }
-
-    switch (skipReason) {
-      case 'inactive':
-        return '当前规则存在激活条件，但未命中当前运行上下文，因此未注入最终 prompt。';
-      case 'overridden':
-        return overriddenById
-          ? `同名规则已被更高优先级条目 ${overriddenById} 覆盖。`
-          : '同名规则已被更高优先级条目覆盖。';
-      case 'empty':
-        return '文件为空，或去除 frontmatter 后没有可注入内容。';
-      case 'not_found':
-        return '扫描候选路径后未找到该指令文件。';
-      default:
-        return undefined;
-    }
-  }
-
-  private summarizeInstructionActivation(activation: Record<string, unknown> | undefined): string | undefined {
-    if (!activation) {
-      return undefined;
-    }
-
-    const enabled = typeof activation['enabled'] === 'boolean' ? activation['enabled'] : undefined;
-    const applyTo = this.stringifyStringArray(activation['applyTo']);
-    const hostIds = this.stringifyStringArray(activation['hostIds']);
-    const modelFamilies = this.stringifyStringArray(activation['modelFamilies']);
-    const requiredCapabilities = this.stringifyStringArray(activation['requiredCapabilities']);
-    const summary = [
-      typeof enabled === 'boolean' ? `enabled=${enabled}` : '',
-      applyTo ? `applyTo=${applyTo}` : '',
-      hostIds ? `hosts=${hostIds}` : '',
-      modelFamilies ? `models=${modelFamilies}` : '',
-      requiredCapabilities ? `capabilities=${requiredCapabilities}` : '',
-    ].filter(Boolean).join(' · ');
-
-    return summary || undefined;
   }
 
   private asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1259,13 +1203,6 @@ export class XAilyStateViewerComponent implements OnChanges {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
   }
 
-  private stringifyStringArray(value: unknown): string | undefined {
-    const items = this.asArray(value)
-      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-      .map(item => item.trim());
-    return items.length > 0 ? items.join(', ') : undefined;
-  }
-
   private getExpansionIdentity(): string {
     return `${this.data?.kind || ''}:${this.data?.id || ''}`;
   }
@@ -1278,349 +1215,37 @@ export class XAilyStateViewerComponent implements OnChanges {
     return this.data?.state === 'doing' || this.data?.state === 'warn' || this.data?.state === 'error';
   }
 
-  private formatTaskGraphStatus(status?: string): string {
-    const map: Record<string, string> = {
-      running: '运行中',
-      completed: '已完成',
-      failed: '失败',
-    };
-    return map[status || ''] || (status || '状态未知');
+  showSummaryBadges(): boolean {
+    return this.summaryBadges.length > 0;
   }
 
-  private formatBackgroundTaskStatus(status?: string): string {
-    const map: Record<string, string> = {
-      running: '运行中',
-      completed: '已完成',
-      failed: '失败',
-      cancelled: '已取消',
-    };
-    return map[status || ''] || (status || '状态未知');
+  private pushDetailSections(descriptors: readonly DetailSectionDescriptor[]): void {
+    appendDetailSections(this.sections, [], descriptors, false);
   }
 
-  private formatNarrativePhase(phase?: string): string {
-    const map: Record<string, string> = {
-      started: '开始',
-      progress: '进度',
-      completed: '完成',
-      failed: '失败',
-      cancelled: '取消',
-    };
-    return map[phase || ''] || (phase || '事件');
-  }
-
-  private formatBackgroundTaskActivityKind(kind?: string): string {
-    const map: Record<string, string> = {
-      tool_started: '子工具启动',
-      tool_progress: '子工具进度',
-      tool_completed: '子工具完成',
-      tool_failed: '子工具失败',
-      subagent_started: '子代理启动',
-      subagent_completed: '子代理完成',
-      subagent_failed: '子代理失败',
-    };
-    return map[kind || ''] || '最近活动';
-  }
-
-  private formatTaskGraphNodeStatus(status?: string): string {
-    const map: Record<string, string> = {
-      pending: '等待中',
-      ready: '就绪',
-      running: '运行中',
-      completed: '已完成',
-      failed: '失败',
-      blocked: '已阻塞',
-    };
-    return map[status || ''] || (status || '状态未知');
-  }
-
-  private formatTaskSchedulerPhase(phase?: string): string {
-    const map: Record<string, string> = {
-      started: '已启动',
-      stopped: '已停止',
-      triggered: '已触发',
-      trigger_failed: '触发失败',
-      skipped: '已跳过',
-    };
-    return map[phase || ''] || (phase || '阶段未知');
-  }
-
-  private formatTaskSchedulerStatus(status?: string): string {
-    const map: Record<string, string> = {
-      running: '运行中',
-      stopped: '已停止',
-    };
-    return map[status || ''] || (status || '状态未知');
-  }
-
-  private formatTaskAutonomyStatus(status?: string): string {
-    const map: Record<string, string> = {
-      disabled: '已禁用',
-      enabled: '已启用',
-      stopped: '已停止',
-    };
-    return map[status || ''] || (status || '状态未知');
-  }
-
-  private formatTaskAutonomyPhase(phase?: string): string {
-    const map: Record<string, string> = {
-      enabled: '已启用',
-      stopped: '已停止',
-      failure_recorded: '记录失败',
-      success_recorded: '记录成功',
-    };
-    return map[phase || ''] || (phase || '事件');
-  }
-
-  private formatTaskAutonomyReason(reason?: string): string {
-    const map: Record<string, string> = {
-      manual_stop: '手动停止',
-      schedule_failure: '调度失败',
-      background_task_failure: '后台任务失败',
-      graph_failure: '任务图失败',
-      max_consecutive_failures: '连续失败超限',
-    };
-    return map[reason || ''] || reason || '';
-  }
-
-  private formatInstructionSource(source?: string): string {
-    const map: Record<string, string> = {
-      user: '用户',
-      project: '项目',
-      repo: '仓库',
-      host: '宿主',
-      plugin: '插件',
-    };
-    return map[source || ''] || source || '指令';
-  }
-
-  private formatInstructionSkipReason(reason?: string): string {
-    const map: Record<string, string> = {
-      inactive: '条件未命中',
-      overridden: '已被覆盖',
-      empty: '空文件',
-      not_found: '未发现',
-    };
-    return map[reason || ''] || reason || '已跳过';
-  }
-
-  private formatLaunchKind(kind?: string): string {
-    const map: Record<string, string> = {
-      graph: '任务图',
-      task: '任务',
-    };
-    return map[kind || ''] || (kind || '');
-  }
-
-  private formatLaunchMode(mode?: string): string {
-    const map: Record<string, string> = {
-      async: '异步',
-      sync: '同步',
-    };
-    return map[mode || ''] || (mode || '');
-  }
-
-  private formatExecutionMode(mode?: string): string {
-    const map: Record<string, string> = {
-      async: '异步',
-      sync: '同步',
-    };
-    return map[mode || ''] || '';
-  }
-
-  private formatAgentTeamStatus(status?: string): string {
-    const map: Record<string, string> = {
-      running: '运行中',
-      completed: '已完成',
-      failed: '失败',
-    };
-    return map[status || ''] || (status || '状态未知');
-  }
-
-  private formatAgentTeamRoleStatus(status?: string): string {
-    const map: Record<string, string> = {
-      idle: '空闲',
-      running: '运行中',
-      completed: '已完成',
-      failed: '失败',
-    };
-    return map[status || ''] || (status || '状态未知');
-  }
-
-  private formatAgentTeamTrigger(trigger?: string): string {
-    const map: Record<string, string> = {
-      team_started: '团队启动',
-      node_completed: '节点完成',
-      node_failed: '节点失败',
-    };
-    return map[trigger || ''] || (trigger || '协议消息');
-  }
-
-  private toneFromTaskGraphStatus(status?: string): StateTone {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'running':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromTaskGraphNodeStatus(status?: string): StateTone {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'blocked':
-        return 'warn';
-      case 'running':
-      case 'ready':
-      case 'pending':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromBackgroundTaskStatus(status?: string): StateTone {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'cancelled':
-        return 'warn';
-      case 'running':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromNarrativePhase(phase?: string): StateTone {
-    switch (phase) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'cancelled':
-        return 'warn';
-      case 'started':
-      case 'progress':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromBackgroundTaskActivityKind(kind?: string): StateTone {
-    switch (kind) {
-      case 'tool_failed':
-      case 'subagent_failed':
-        return 'error';
-      case 'tool_completed':
-      case 'subagent_completed':
-        return 'success';
-      case 'tool_started':
-      case 'tool_progress':
-      case 'subagent_started':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromTaskSchedulerPhase(phase?: string): StateTone {
-    switch (phase) {
-      case 'trigger_failed':
-        return 'error';
-      case 'skipped':
-        return 'warn';
-      case 'triggered':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromTaskAutonomyStatus(status?: string): StateTone {
-    switch (status) {
-      case 'enabled':
-        return 'success';
-      case 'stopped':
-        return 'warn';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromTaskAutonomyPhase(phase?: string): StateTone {
-    switch (phase) {
-      case 'failure_recorded':
-      case 'stopped':
-        return 'warn';
-      case 'success_recorded':
-      case 'enabled':
-        return 'success';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromInstructionDiagnostic(active: boolean, skipReason?: string): StateTone {
-    if (active) {
-      return 'success';
-    }
-    switch (skipReason) {
-      case 'inactive':
-      case 'overridden':
-      case 'empty':
-        return 'warn';
-      case 'not_found':
-        return 'neutral';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromAgentTeamStatus(status?: string): StateTone {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'running':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private toneFromAgentTeamRoleStatus(status?: string): StateTone {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'running':
-        return 'info';
-      default:
-        return 'neutral';
-    }
-  }
-
-  private formatClock(timestamp?: number): string | undefined {
-    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-      return undefined;
+  getOutputGroups(section: StateDetailSection): readonly StateDetailOutputGroup[] {
+    if (section.outputGroups && section.outputGroups.length > 0) {
+      return section.outputGroups;
     }
 
-    const date = new Date(timestamp);
-    const hh = String(date.getUTCHours()).padStart(2, '0');
-    const mm = String(date.getUTCMinutes()).padStart(2, '0');
-    const ss = String(date.getUTCSeconds()).padStart(2, '0');
-    return `${hh}:${mm}:${ss}`;
+    return [];
   }
+
+  getOutputImageSource(row: { outputKind?: string; outputUri?: string; outputData?: string; outputMimeType?: string }): string | null {
+    if (row.outputKind !== 'image') {
+      return null;
+    }
+    if (row.outputUri) {
+      return row.outputUri;
+    }
+    if (row.outputData) {
+      return `data:${row.outputMimeType || 'image/png'};base64,${row.outputData}`;
+    }
+    return null;
+  }
+
+  getOutputResourceHref(row: { outputKind?: string; outputUri?: string }): string | null {
+    return row.outputKind === 'resource' && row.outputUri ? row.outputUri : null;
+  }
+
 }

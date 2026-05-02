@@ -8,7 +8,7 @@
  *  and loadable on-demand via the load_skill tool.
  *--------------------------------------------------------------------------------------------*/
 
-import type { IHostSkillProvider, IHostSkillContribution } from 'aily-lex';
+import type { IHostSkillProvider, IHostSkillContribution } from 'aily-lex/browser';
 import { SkillRegistry } from './skill-registry';
 
 /**

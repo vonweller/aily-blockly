@@ -1,6 +1,8 @@
+import { MAIN_AGENT_TYPE } from '../core/agent-identifiers';
+
 export const BLOCKLY_TOOL_DEFINITIONS = [
     {
-        name: "sync_abs_file",
+        name: "syncAbs",
         description: `🔄 ABS 文件同步工具 - 在 Blockly 工作区和 ABS 文件之间同步。
 
 **项目中的 ABS 文件（Aily Block Syntax）：**
@@ -12,10 +14,10 @@ export const BLOCKLY_TOOL_DEFINITIONS = [
 3. \`status\` - 获取 ABS 文件状态和内容预览
 
 **推荐工作流：**
-1. 首先使用 \`status\` 或 \`export\` 获取/生成 ABS 文件
+1. 首先使用 \`syncAbs action="status"\` 或 \`syncAbs action="export"\` 获取/生成 ABS 文件
 2. 使用 \`read_file\` 读取 \`project.abs\` 了解当前代码结构
 3. 使用 \`edit_file\` 修改 ABS 文件（像编辑普通代码一样！）
-4. 使用 \`import\` 将修改应用到 Blockly 工作区
+4. 使用 \`syncAbs action="import"\` 将修改应用到 Blockly 工作区
 
 **这种方式的优势：**
 - 📖 直接看到完整的代码结构
@@ -25,7 +27,7 @@ export const BLOCKLY_TOOL_DEFINITIONS = [
         input_schema: {
             type: 'object',
             properties: {
-                operation: {
+                action: {
                     type: 'string',
                     enum: ['export', 'import', 'status'],
                     description: '操作类型：export=导出到ABS文件，import=从ABS文件导入，status=查看状态'
@@ -36,7 +38,7 @@ export const BLOCKLY_TOOL_DEFINITIONS = [
                     default: true
                 }
             },
-            required: ['operation']
+            required: ['action']
         }
     },
     {
@@ -151,7 +153,7 @@ IMPORTANT: update是全量替换，必须包含所有任务。只想添加新任
             },
             required: ['operation']
         },
-        agents: ["mainAgent"]
+        agents: [MAIN_AGENT_TYPE]
     },
     {
         name: 'analyze_library_blocks',
@@ -163,10 +165,16 @@ IMPORTANT: update是全量替换，必须包含所有任务。只想添加新任
                     type: 'array',
                     items: { type: 'string' },
                     description: '要分析的库名称列表，如 ["@aily-project/lib-blinker", "@aily-project/lib-sensor"]'
+                },
+                mode: {
+                    type: 'string',
+                    enum: ['auto', 'readme_ref', 'analysis'],
+                    description: 'auto 优先返回 readme_ai.md 路径；readme_ref 只返回 readme 路径；analysis 强制返回块分析结果',
+                    default: 'auto'
                 }
             },
             required: ['libraryNames']
         },
-        agents: ["mainAgent"]
+        agents: [MAIN_AGENT_TYPE]
     },
 ];

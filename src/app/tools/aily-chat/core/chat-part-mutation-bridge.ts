@@ -1,47 +1,63 @@
-import type { ChatPartStore } from './chat-part-store';
-import type { ChatPart, StatePart, SubagentPart, TerminalPart, ToolCallPart } from './chat-parts';
+import type { ChatPartStore, ChatPartStoreReadableHandle } from './chat-part-store';
+import type { ChatPart, StatePart, SubagentToolCallSnapshot, TerminalPart, ToolCallPart } from './chat-parts';
 
-export interface MutableSubagentPart extends SubagentPart {
+export interface MutableSubagentPart extends SubagentToolCallSnapshot {
   _toolTimers?: Record<string, number>;
 }
 
+export type ChatPartMutationStoreAccess = Pick<
+  ChatPartStore,
+  | 'addPartToHandle'
+  | 'appendToMarkdownHandle'
+  | 'appendToThinkingHandle'
+  | 'completeThinkingHandle'
+  | 'getPartsForHandle'
+  | 'patchToolCallForHandle'
+  | 'updateToolCallForHandle'
+  | 'updateSubagentForHandle'
+  | 'updateStateForHandle'
+  | 'upsertStateForHandle'
+  | 'postProcessMarkdownForHandle'
+  | 'updateLatestRunningSubagentForHandle'
+  | 'findToolCallOpaqueHandle'
+>;
+
+type ChatPartMutationStateUpdate = {
+  state: StatePart['state'];
+  text: string;
+  progress?: number;
+  kind?: StatePart['kind'];
+  metadata?: Record<string, unknown>;
+};
+
 export class ChatPartMutationBridge {
   constructor(
-    private readonly store: ChatPartStore,
-    private readonly getMsgIndex: () => number,
+    private readonly store: ChatPartMutationStoreAccess,
+    private readonly getCurrentMessageHandle: () => ChatPartStoreReadableHandle | null,
   ) {}
 
-  currentMsgIndex(): number {
-    return this.getMsgIndex();
-  }
-
-  getCurrentParts(): ChatPart[] {
-    return this.store.getParts(this.currentMsgIndex());
+  currentMessageHandle(): ChatPartStoreReadableHandle | null {
+    return this.getCurrentMessageHandle() ?? null;
   }
 
   addPartToCurrentMessage(part: ChatPart): number {
-    return this.store.addPart(this.currentMsgIndex(), part);
+    return this.store.addPartToHandle(this.currentMessageHandle(), part);
   }
 
   addTerminalPartForToolCall(toolCallId: string, part: TerminalPart): number {
-    const msgIdx = this.findToolCallMsgIndex(toolCallId) ?? this.currentMsgIndex();
-    return this.store.addPart(msgIdx, part);
+    return this.store.addPartToHandle(this.findToolCallHandle(toolCallId), part);
   }
 
   appendMarkdownToCurrentMessage(text: string): number {
-    return this.store.appendToMarkdown(this.currentMsgIndex(), text);
+    return this.store.appendToMarkdownHandle(this.currentMessageHandle(), text);
   }
 
   appendThinkingToCurrentMessage(text: string): number {
-    return this.store.appendToThinking(this.currentMsgIndex(), text);
+    return this.store.appendToThinkingHandle(this.currentMessageHandle(), text);
   }
 
   completeThinkingOnCurrentMessage(): void {
-    this.store.completeThinking(this.currentMsgIndex());
-  }
-
-  findToolCallMsgIndex(toolCallId: string): number | undefined {
-    return this.store.findToolCallMsgIndex(toolCallId);
+    this.store.completeThinkingHandle(this.currentMessageHandle());
   }
 
   updateToolCall(
@@ -49,51 +65,61 @@ export class ChatPartMutationBridge {
     state: ToolCallPart['state'],
     text: string,
   ): void {
-    const msgIdx = this.findToolCallMsgIndex(toolCallId) ?? this.currentMsgIndex();
-    this.store.updateToolCall(msgIdx, toolCallId, state, text);
+    this.store.updateToolCallForHandle(this.findToolCallHandle(toolCallId), toolCallId, state, text);
+  }
+
+  patchToolCall(
+    toolCallId: string,
+    patch: Parameters<ChatPartStore['patchToolCallForHandle']>[2],
+  ): boolean {
+    return this.store.patchToolCallForHandle(this.findToolCallHandle(toolCallId), toolCallId, patch);
+  }
+
+  getToolCall(toolCallId: string): ToolCallPart | null {
+    const handle = this.findToolCallHandle(toolCallId);
+    const parts = this.store.getPartsForHandle(handle);
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (part.type === 'tool_call' && part.toolCallId === toolCallId) {
+        return part;
+      }
+    }
+    return null;
   }
 
   updateSubagent(
     toolCallId: string,
-    state: SubagentPart['state'],
+    state: SubagentToolCallSnapshot['state'],
     resultText: string,
   ): void {
-    const msgIdx = this.findToolCallMsgIndex(toolCallId) ?? this.currentMsgIndex();
-    this.store.updateSubagent(msgIdx, toolCallId, state, resultText);
+    this.store.updateSubagentForHandle(this.findToolCallHandle(toolCallId), toolCallId, state, resultText);
   }
 
   updateState(
     stateId: string,
-    next: {
-      state: StatePart['state'];
-      text: string;
-      progress?: number;
-      kind?: StatePart['kind'];
-      metadata?: Record<string, unknown>;
-    },
+    next: ChatPartMutationStateUpdate,
   ): void {
-    this.store.updateState(this.currentMsgIndex(), stateId, next);
+    this.store.updateStateForHandle(this.currentMessageHandle(), stateId, next);
   }
 
-  findLatestRunningSubagentOnCurrentMessage(): { msgIndex: number; partIndex: number; part: MutableSubagentPart } | null {
-    const msgIndex = this.currentMsgIndex();
-    const parts = this.store.getParts(msgIndex);
-
-    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
-      const part = parts[partIndex];
-      if (part.type === 'subagent' && part.state === 'doing') {
-        return {
-          msgIndex,
-          partIndex,
-          part: part as MutableSubagentPart,
-        };
-      }
-    }
-
-    return null;
+  upsertStateOnCurrentMessage(
+    stateId: string,
+    next: ChatPartMutationStateUpdate,
+  ): void {
+    this.store.upsertStateForHandle(this.currentMessageHandle(), stateId, next);
   }
 
-  replacePart(msgIndex: number, partIndex: number, part: ChatPart): void {
-    this.store.updatePart(msgIndex, partIndex, part);
+  postProcessMarkdownOnCurrentMessage(): void {
+    this.store.postProcessMarkdownForHandle(this.currentMessageHandle());
+  }
+
+  updateLatestRunningSubagentOnCurrentMessage(
+    update: (part: MutableSubagentPart) => MutableSubagentPart,
+  ): MutableSubagentPart | null {
+    return this.store.updateLatestRunningSubagentForHandle(this.currentMessageHandle(), update);
+  }
+
+  private findToolCallHandle(toolCallId: string): ChatPartStoreReadableHandle | null {
+    return this.store.findToolCallOpaqueHandle(toolCallId) ?? this.currentMessageHandle();
   }
 }

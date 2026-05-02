@@ -9,26 +9,39 @@
  *   - 消除 filterToolCalls（tool JSON 行 → ToolCallPart 直接生成）
  *   - 消除 think-content-store 中间层（ThinkingPart 自带 content）
  */
-import { ChatPartStore } from './chat-part-store';
+import type { ChatPartStoreReadableHandle } from './chat-part-store';
 import { ToolCallState } from './chat-types';
-import { ChatPartMutationBridge } from './chat-part-mutation-bridge';
+import { ChatPartMutationBridge, type ChatPartMutationStoreAccess } from './chat-part-mutation-bridge';
 import {
-  collectMarkdownPostProcessPatches,
   sanitizePartTextDelta,
 } from './chat-part-markdown-postprocessor';
 import {
-  mkApproval,
   mkError,
-  mkQuestion,
   mkState,
-  mkSubagent,
+  mkSubagentToolCall,
   mkTerminal,
   mkToolCall,
-  QuestionItem,
   StatePart,
 } from './chat-parts';
+import { parseTerminalPayload } from './terminal-payload';
+import { buildToolResultMetadataPatch, collectToolResultText, extractRawToolResultPayloadText } from './tool-result-content';
 import { makeJsonSafe as _makeJsonSafe } from '../services/content-sanitizer.service';
 import { generateToolResultText, generateToolStartText } from '../services/tool-display.service';
+
+type PartEventMutations = Pick<
+  ChatPartMutationBridge,
+  | 'addPartToCurrentMessage'
+  | 'addTerminalPartForToolCall'
+  | 'appendMarkdownToCurrentMessage'
+  | 'appendThinkingToCurrentMessage'
+  | 'completeThinkingOnCurrentMessage'
+  | 'getToolCall'
+  | 'patchToolCall'
+  | 'updateToolCall'
+  | 'updateSubagent'
+  | 'upsertStateOnCurrentMessage'
+  | 'postProcessMarkdownOnCurrentMessage'
+>;
 
 export class PartEventProcessor {
   /** 当前是否在 text_delta 内嵌的 <think> 块中 */
@@ -37,13 +50,13 @@ export class PartEventProcessor {
   private _nativeThinkStarted = false;
   /** 缓冲区 — 用于跨 chunk 的标签检测 */
   private _tagBuffer = '';
-  private readonly mutations: ChatPartMutationBridge;
+  private readonly mutations: PartEventMutations;
 
   constructor(
-    store: ChatPartStore,
-    getMsgIndex: () => number,
+    store: ChatPartMutationStoreAccess,
+    getCurrentMessageHandle: () => ChatPartStoreReadableHandle | null,
   ) {
-    this.mutations = new ChatPartMutationBridge(store, getMsgIndex);
+    this.mutations = new ChatPartMutationBridge(store, getCurrentMessageHandle);
   }
 
   // ==================== 事件处理 ====================
@@ -152,11 +165,11 @@ export class PartEventProcessor {
     this._closeNativeThinking();
     this._insideInlineThink = false;
 
-    // ★ agent 工具 → SubagentPart（内联可折叠，替代独立消息）
+    // ★ agent 工具 → Copilot 风格 tool_call（通过 metadata 承载子代理信息）
     if (toolName === 'agent') {
       const agentName = input?.agentName || input?.description || 'Agent';
       const description = input?.description || input?.prompt?.substring(0, 80) || '';
-      this.mutations.addPartToCurrentMessage(mkSubagent(toolCallId, agentName, description));
+      this.mutations.addPartToCurrentMessage(mkSubagentToolCall(toolCallId, agentName, description));
       return;
     }
 
@@ -171,7 +184,7 @@ export class PartEventProcessor {
   processToolCallEnd(toolCallId: string, toolName: string, result?: any): void {
     const isError = result?.isError ?? false;
 
-    // ★ agent 工具 → 更新 SubagentPart
+    // ★ agent 工具 → 更新 subagent tool_call metadata
     if (toolName === 'agent') {
       const text = this._extractResultText(result);
       const state = isError ? 'error' as const : 'done' as const;
@@ -179,24 +192,28 @@ export class PartEventProcessor {
       return;
     }
 
-    const resultText = generateToolResultText(toolName, {}, result) || '执行完成';
+    const currentToolCall = this.mutations.getToolCall(toolCallId);
+    const resultText = generateToolResultText(toolName, currentToolCall?.args || {}, result)
+      || currentToolCall?.text
+      || '执行完成';
     const state: ToolCallState = isError ? ToolCallState.ERROR : ToolCallState.DONE;
 
-    // 查找并更新对应的 ToolCallPart
-    this.mutations.updateToolCall(toolCallId, state, resultText);
+    this.mutations.patchToolCall(toolCallId, {
+      state,
+      text: resultText,
+      metadata: buildToolResultMetadataPatch({
+        toolCallId,
+        toolName,
+        state,
+        resultText,
+        result,
+      }),
+    });
   }
 
   /** 从工具结果中提取文本 */
   private _extractResultText(result: any): string {
-    if (!result?.content) return '';
-    if (typeof result.content === 'string') return result.content;
-    if (Array.isArray(result.content)) {
-      return result.content
-        .map((c: any) => c.type === 'text' ? c.text : '')
-        .filter(Boolean)
-        .join('\n');
-    }
-    return JSON.stringify(result.content);
+    return collectToolResultText(result);
   }
 
   /**
@@ -207,41 +224,40 @@ export class PartEventProcessor {
   }
 
   /**
-   * 处理用户提问事件（ask_user 工具）
-   */
-  processQuestion(questions: QuestionItem[], isHistory?: boolean): void {
-    this.mutations.addPartToCurrentMessage(mkQuestion(questions, isHistory));
-  }
-
-  /**
-   * 处理工具审批请求事件
-   */
-  processApproval(askId: string, message: string, toolName?: string, source?: string): void {
-    this.mutations.addPartToCurrentMessage(mkApproval(askId, message, toolName, source));
-  }
-
-  /**
    * 处理终端命令输出 — 从 tool_call_end 的结果中解析终端数据
    */
   processTerminalResult(toolCallId: string, result: any): void {
-    if (!result?.content) return;
-    try {
-      const data = typeof result.content === 'string' ? JSON.parse(result.content) : result.content;
-      const command = data.command || '';
-      const output = data.output || '';
-      const stderr = data.stderr || '';
-      const exitCode = data.exit_code ?? data.exitCode;
-      const isRunning = data.status === 'running';
+    const terminalData = this._extractTerminalResult(result);
+    if (!terminalData) return;
 
-      const part = mkTerminal(command, toolCallId);
-      part.output = output;
-      part.stderr = stderr;
-      part.exitCode = exitCode;
-      part.isRunning = isRunning;
-      this.mutations.addTerminalPartForToolCall(toolCallId, part);
-    } catch {
-      // 无法解析终端结果，跳过
+    const part = mkTerminal(terminalData.command || '', toolCallId);
+    part.output = terminalData.output || '';
+    part.stderr = terminalData.stderr || '';
+    part.exitCode = terminalData.exitCode;
+    part.isRunning = terminalData.isRunning;
+    this.mutations.addTerminalPartForToolCall(toolCallId, part);
+  }
+
+  private _extractTerminalResult(result: any): {
+    command: string;
+    output: string;
+    stderr: string;
+    exitCode?: number;
+    isRunning: boolean;
+  } | null {
+    const text = extractRawToolResultPayloadText(result);
+    if (!text) return null;
+    const parsed = parseTerminalPayload(text);
+    if (!parsed) {
+      return null;
     }
+    return {
+      command: parsed.command,
+      output: parsed.output,
+      stderr: parsed.stderr,
+      exitCode: parsed.exitCode,
+      isRunning: parsed.isRunning,
+    };
   }
 
   /** 处理宿主通用状态事件（任务图/调度/自治/协作团队） */
@@ -255,24 +271,13 @@ export class PartEventProcessor {
       metadata?: Record<string, unknown>;
     } = {},
   ): void {
-    const parts = this.mutations.getCurrentParts();
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const part = parts[i];
-      if (part.type === 'state' && part.stateId === stateId) {
-        this.mutations.updateState(stateId, {
-          state,
-          text,
-          progress: options.progress,
-          kind: options.kind,
-          metadata: options.metadata,
-        });
-        return;
-      }
-    }
-
-    this.mutations.addPartToCurrentMessage(
-      mkState(stateId, text, state, options.kind, options.progress, options.metadata),
-    );
+    this.mutations.upsertStateOnCurrentMessage(stateId, {
+      state,
+      text,
+      progress: options.progress,
+      kind: options.kind,
+      metadata: options.metadata,
+    });
   }
 
   // ==================== 生命周期 ====================
@@ -319,11 +324,6 @@ export class PartEventProcessor {
    * - fixContent 残余: 跨 chunk 的转义字符修复
    */
   private _postProcessMarkdownParts(): void {
-    const msgIdx = this.mutations.currentMsgIndex();
-    const patches = collectMarkdownPostProcessPatches(this.mutations.getCurrentParts());
-
-    for (const patch of patches) {
-      this.mutations.replacePart(msgIdx, patch.partIndex, patch.nextPart);
-    }
+    this.mutations.postProcessMarkdownOnCurrentMessage();
   }
 }

@@ -1,16 +1,42 @@
 ---
-name: schematicAgent
+agentType: SchematicAgent
+name: SchematicAgent
 displayName: 接线图代理
 description: >
   为用户生成开发板与电子模块的可视化接线图（电路原理图）。
   分析项目代码推断所需硬件外设，自动生成/补全 pinmap，
   使用 AWS (Aily Wiring Syntax) 格式输出接线方案并验证保存。
+whenToUse: >
+  Generate and validate circuit schematics / connection diagrams (连线图).
+  Use only when the task explicitly involves wiring, pin assignment, or component connections.
+  Do not use for programming help, ABS block/library analysis, code generation, or general project setup.
 useCases:
   - 用户要求生成、更新或修改接线图/电路图
   - 涉及开发板引脚连线的可视化需求
   - 根据代码自动推断所需硬件并生成接线图
   - 为缺少 pinmap 的组件生成引脚配置
 suggestedContext: 项目路径、开发板、已安装库已注入环境段；调用 get_project_context 获取组件目录和 C++ 代码
+tools:
+  - generate_schematic
+  - validate_schematic
+  - generate_pinmap
+  - save_pinmap
+  - get_pinmap_summary
+  - get_component_catalog
+  - get_project_context
+  - read_file
+  - grep_search
+  - glob_search
+  - get_current_schematic
+  - fetch_webpage
+  - tool_search
+  - edit_file
+  - multi_edit_file
+  - delete_file
+  - get_errors
+  - lint
+messageInheritance: none
+model: inherit
 maxTurns: 25
 ---
 

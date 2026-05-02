@@ -3,6 +3,7 @@ import type { ITurnDataSource, TurnSpan } from '../core/turn-data-source';
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
 type LexCompactionAnchor = import('aily-lex/browser').CompactionAnchor;
+type LexTurnRequestMetadata = import('aily-lex/browser').TurnRequest['metadata'];
 type LexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
 
 /**
@@ -69,7 +70,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     if (!agent) return;
     const tm = agent.turnManager;
     tm.startTurn({ content: request });
-    tm.completeTurn(response);
+    tm.completeTurnText(response);
   }
 
   buildMessages(): any[] {
@@ -136,6 +137,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
 
     const anchor: LexCompactionAnchor = {
       turnIndex: anchorTurn.index,
+      anchorRoundId,
       roundIndex,
       summary,
       source,
@@ -158,10 +160,46 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     return turns[turns.length - 1]?.id;
   }
 
-  startTurn(content: string): string | undefined {
+  findTurnIdByRoundId(roundId: string): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
-    const turn = agent.turnManager.startTurn({ content });
+    const turns = agent.turnManager.turns.get();
+    for (let index = turns.length - 1; index >= 0; index--) {
+      if (turns[index].rounds.some(round => round.id === roundId)) {
+        return turns[index].id;
+      }
+    }
+    return undefined;
+  }
+
+  getRequestContent(turnId: string): string | undefined {
+    const agent = this.getAgent();
+    if (!agent) return undefined;
+    const turns = agent.turnManager.turns.get();
+    return turns.find(turn => turn.id === turnId)?.request.content;
+  }
+
+  getLastRoundId(turnId: string): string | undefined {
+    const agent = this.getAgent();
+    if (!agent) return undefined;
+    const turns = agent.turnManager.turns.get();
+    return turns.find(turn => turn.id === turnId)?.rounds.at(-1)?.id;
+  }
+
+  getCurrentRequestMetadata(): LexTurnRequestMetadata {
+    return this.getAgent()?.turnManager.activeTurn?.request.metadata;
+  }
+
+  startTurn(content: string, displayContent?: string, metadata?: LexTurnRequestMetadata): string | undefined {
+    const agent = this.getAgent();
+    if (!agent) return undefined;
+    const turn = agent.turnManager.startTurn(
+      {
+        content,
+        ...(typeof displayContent === 'string' ? { displayContent } : {}),
+        ...(metadata ? { metadata } : {}),
+      },
+    );
     return turn.id;
   }
 
@@ -169,7 +207,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     const agent = this.getAgent();
     if (!agent) return;
     try {
-      agent.turnManager.completeTurn(response);
+      agent.turnManager.completeTurnText(response);
     } catch {
       // 如果没有 active turn（已被 lex 内部完成），忽略
     }
@@ -207,7 +245,13 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     if (turn) {
       const requestContent = turn.request.content;
       agent.turnManager.removeFrom(turn.index);
-      agent.turnManager.startTurn({ content: requestContent });
+      agent.turnManager.startTurn(
+        {
+          content: requestContent,
+          ...(typeof turn.request.displayContent === 'string' ? { displayContent: turn.request.displayContent } : {}),
+          ...(turn.request.metadata ? { metadata: turn.request.metadata } : {}),
+        },
+      );
     }
   }
 

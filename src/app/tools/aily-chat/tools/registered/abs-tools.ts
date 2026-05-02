@@ -1,49 +1,37 @@
 /**
- * 已注册工具 - ABS / ABI / 工具类
+ * 已注册工具 - ABS / ABI / 工具类（显示文本注册）
+ *
+ * Phase 3: invoke() 已迁移至 lex IHostToolProvider (blockly-contributed-tools.ts)，
+ * 此处仅保留 getStartText/getResultText 供 PartEventProcessor 使用。
  */
 
 import { IAilyTool, ToolContext, ToolUseResult } from '../../core/tool-types';
-import { ToolRegistry } from '../../core/tool-registry';
-import { syncAbsFileHandler } from '../syncAbsFileTool';
-import { absVersionControlHandler } from '../absVersionControlTool';
-import { editAbiFileTool as editAbiFileHandler } from '../editAbiFileTool';
-import { reloadAbiJsonTool as reloadAbiJsonHandler, ReloadAbiJsonToolService } from '../reloadAbiJsonTool';
-import { TOOLS as LEGACY_TOOLS } from '../tools';
-import * as asyncFs from '../../core/async-fs';
-
-function findLegacySchema(name: string): any {
-  return (LEGACY_TOOLS as any[]).find(t => t.name === name);
-}
+import { ToolDisplayRegistry } from '../../core/tool-display-registry';
+import { createDisplayOnlyToolSchema } from './display-only-tool-schema';
 
 // ============================
-// sync_abs_file
+// syncAbs
 // ============================
 
-class SyncAbsFileTool implements IAilyTool {
-  readonly name = 'sync_abs_file';
-  readonly schema = findLegacySchema('sync_abs_file');
+class SyncAbsTool implements IAilyTool {
+  readonly name = 'syncAbs';
+  readonly schema = createDisplayOnlyToolSchema('syncAbs');
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    // electronService compat wrapper: 使用异步 IPC 方法避免阻塞渲染线程
-    const fsCompat = {
-      exists: (p: string) => asyncFs.exists(p),
-      readFile: (p: string) => asyncFs.readFile(p, 'utf-8'),
-      writeFile: (p: string, data: string) => asyncFs.writeFile(p, data),
-    };
-    return syncAbsFileHandler(args, ctx.host.project, fsCompat, ctx.host.absSync);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'syncAbs execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
     // Only show UI for 'import' operation
-    if (args?.operation === 'import') return '加载 图形化代码...';
+    if (args?.action === 'import') return '加载 图形化代码...';
     return ''; // empty → executeRegisteredTool skips startToolCall
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
     if (result?.is_error) return '项目文件 同步失败';
-    if (args?.operation === 'import') return '加载 图形化代码 完成';
+    if (args?.action === 'import') return '加载 图形化代码 完成';
     return ''; // export/status → no completeToolCall display
   }
 }
@@ -116,36 +104,9 @@ class EditAbiFileTool implements IAilyTool {
   };
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    // Resolve current project path
-    const currentProjectPath = ctx.host?.project?.currentProjectPath !== ctx.host?.project?.projectRootPath
-      ? ctx.host?.project?.currentProjectPath
-      : '';
-    if (!currentProjectPath) {
-      return { content: '当前未打开项目', is_error: true };
-    }
-
-    // Construct params with path + optional fields
-    const editParams: any = { path: currentProjectPath, content: args.content };
-    if (args.insertLine !== undefined) editParams.insertLine = args.insertLine;
-    if (args.replaceStartLine !== undefined) editParams.replaceStartLine = args.replaceStartLine;
-    if (args.replaceEndLine !== undefined) editParams.replaceEndLine = args.replaceEndLine;
-    if (args.replaceMode !== undefined) editParams.replaceMode = args.replaceMode;
-    if (args.encoding !== undefined) editParams.encoding = args.encoding;
-    if (args.createIfNotExists !== undefined) editParams.createIfNotExists = args.createIfNotExists;
-
-    const editResult = await editAbiFileHandler(editParams);
-    if (editResult.is_error) {
-      return editResult;
-    }
-
-    // Auto-reload after successful edit
-    if (!ctx.host?.blockly || !ctx.host?.project) {
-      return { content: editResult.content + '\nℹ️ Blockly 服务不可用，跳过自动重载', is_error: false };
-    }
-    const reloadService = new ReloadAbiJsonToolService(ctx.host.blockly as any, ctx.host.project as any);
-    const reloadResult = await reloadService.executeReloadAbiJson(args);
-    return { content: reloadResult.content, is_error: reloadResult.is_error };
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'edit_abi_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -192,16 +153,9 @@ class ReloadAbiJsonTool implements IAilyTool {
   };
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.blockly || !ctx.host?.project) {
-      return { is_error: true, content: 'Blockly 服务不可用，无法重新加载 ABI 数据' };
-    }
-    const service = new ReloadAbiJsonToolService(ctx.host.blockly as any, ctx.host.project as any);
-    const result = await service.executeReloadAbiJson(args);
-    return {
-      content: result.content,
-      is_error: result.is_error,
-    };
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'reload_abi_json execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -218,8 +172,8 @@ class ReloadAbiJsonTool implements IAilyTool {
 // 注册
 // ============================
 
-ToolRegistry.register(new SyncAbsFileTool());
-// ToolRegistry.register(new AbsVersionControlTool());
-// ToolRegistry.register(new GetAbsSyntaxTool());
-ToolRegistry.register(new EditAbiFileTool());
-ToolRegistry.register(new ReloadAbiJsonTool());
+ToolDisplayRegistry.register(new SyncAbsTool());
+// ToolDisplayRegistry.register(new AbsVersionControlTool());
+// ToolDisplayRegistry.register(new GetAbsSyntaxTool());
+ToolDisplayRegistry.register(new EditAbiFileTool());
+ToolDisplayRegistry.register(new ReloadAbiJsonTool());

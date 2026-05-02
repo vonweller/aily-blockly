@@ -1,6 +1,13 @@
 import { AilyHost } from '../core/host';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import type { ChatListItem, HostSessionRecord, SessionMetadata } from './chat-history.service';
+import type {
+  HostSessionRecord,
+  HostSessionSidecar,
+  PersistedHostResponseData,
+  PersistedHostTurnResponse,
+  SessionMetadata,
+} from './chat-history.service';
 
 export interface HostSessionRecordStoreOptions {
   projectChatDir: string;
@@ -33,11 +40,26 @@ export class HostSessionRecordStore {
     };
   }
 
-  createRecord(chatList: ChatListItem[], metadata: SessionMetadata): HostSessionRecord {
-    return {
-      chatList,
+  createRecord(
+    metadata: SessionMetadata,
+    turnResponses?: PersistedHostTurnResponse[],
+    sidecar?: HostSessionSidecar,
+  ): HostSessionRecord {
+    const record: HostSessionRecord = {
       metadata,
     };
+
+    const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
+    if (normalizedTurnResponses?.length) {
+      record.turnResponses = normalizedTurnResponses;
+    }
+
+    const normalizedSidecar = this.normalizeSidecar(sidecar);
+    if (normalizedSidecar) {
+      record.sidecar = normalizedSidecar;
+    }
+
+    return record;
   }
 
   write(sessionId: string, data: HostSessionRecord): void {
@@ -90,13 +112,11 @@ export class HostSessionRecordStore {
         const parsed = JSON.parse(content);
 
         if (Array.isArray(parsed)) {
-          return {
-            chatList: parsed,
-            metadata: this.normalizeMetadata(undefined, sessionId, projectPath),
-          };
+          console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
+          continue;
         }
 
-        if (parsed.chatList && parsed.metadata) {
+        if (parsed.metadata && Array.isArray(parsed.turnResponses)) {
           return this.normalizeRecord(parsed, sessionId, projectPath);
         }
       } catch (error) {
@@ -108,25 +128,134 @@ export class HostSessionRecordStore {
   }
 
   private normalizeRecord(raw: any, sessionId: string, projectPath: string | null): HostSessionRecord | null {
-    if (!raw || !Array.isArray(raw.chatList)) {
+    if (!raw || !Array.isArray(raw.turnResponses)) {
       return null;
     }
 
+    const turnResponses = raw.turnResponses;
     const hostRecord: HostSessionRecord = {
-      chatList: raw.chatList,
       metadata: this.normalizeMetadata(raw.metadata, sessionId, projectPath),
     };
 
-    if (Object.prototype.hasOwnProperty.call(raw, 'turns')) {
-      hostRecord.turns = raw.turns;
+    const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
+    if (normalizedTurnResponses?.length) {
+      hostRecord.turnResponses = normalizedTurnResponses;
+    }
+
+    const normalizedSidecar = this.normalizeSidecar(raw.sidecar);
+    if (normalizedSidecar) {
+      hostRecord.sidecar = normalizedSidecar;
     }
 
     return hostRecord;
   }
 
+  private normalizeTurnResponses(turnResponses?: readonly PersistedHostTurnResponse[]): PersistedHostTurnResponse[] | undefined {
+    return turnResponses?.length ? turnResponses.map(turn => this.cloneTurnResponse(turn)) : undefined;
+  }
+
+  private cloneTurnResponse(turn: PersistedHostTurnResponse): PersistedHostTurnResponse {
+    const {
+      followups,
+      responseId,
+      result,
+      responseMarkdownInfo,
+      modelState,
+      vote,
+      timestamp,
+      elapsedMs,
+      timeSpentWaiting,
+      completionTokens,
+      ...responseWithoutPersistedData
+    } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData & {
+      followups?: TurnResponseTurn['response']['followups'];
+    };
+
+    return {
+      ...turn,
+      request: { ...turn.request },
+      rounds: [...turn.rounds],
+      ...(turn.usage ? { usage: { ...turn.usage } } : {}),
+      response: {
+        ...responseWithoutPersistedData,
+        ...(turn.response.usedContext
+          ? {
+            usedContext: {
+              ...turn.response.usedContext,
+              documents: turn.response.usedContext.documents.map(document => ({
+                ...document,
+                ranges: document.ranges.map(range => ({ ...range })),
+              })),
+            },
+          }
+          : {}),
+        contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
+          ...reference,
+          ...(reference.options
+            ? {
+              options: {
+                ...reference.options,
+                ...(reference.options.status ? { status: { ...reference.options.status } } : {}),
+                ...(reference.options.diffMeta ? { diffMeta: { ...reference.options.diffMeta } } : {}),
+              },
+            }
+            : {}),
+        })),
+        codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
+        progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
+        parts: [...turn.response.parts],
+        ...(typeof responseId === 'string' && responseId.length > 0 ? { responseId } : {}),
+        ...(typeof result === 'string' && result.length > 0 ? { result } : {}),
+        ...(Array.isArray(responseMarkdownInfo)
+          ? {
+              responseMarkdownInfo: responseMarkdownInfo
+                .filter(info => !!info && typeof info.suggestionId === 'string' && info.suggestionId.length > 0)
+                .map(info => ({ suggestionId: info.suggestionId })),
+            }
+          : {}),
+        ...(Array.isArray(followups) ? { followups: followups.map(followup => ({ ...followup })) } : {}),
+        ...(modelState && typeof modelState.value === 'number' ? { modelState: { ...modelState } } : {}),
+        ...(vote === 0 || vote === 1 ? { vote } : {}),
+        ...(typeof timestamp === 'number' ? { timestamp } : {}),
+        ...(typeof elapsedMs === 'number' ? { elapsedMs } : {}),
+        ...(typeof timeSpentWaiting === 'number' ? { timeSpentWaiting } : {}),
+        ...(typeof completionTokens === 'number' ? { completionTokens } : {}),
+      },
+    } satisfies PersistedHostTurnResponse;
+  }
+
+  private normalizeSidecar(sidecar: HostSessionSidecar | undefined): HostSessionSidecar | undefined {
+    const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
+      ? [...sidecar.response.compatMessages]
+      : undefined;
+
+    if (!compatMessages?.length) {
+      return undefined;
+    }
+
+    return {
+      response: {
+        ...(compatMessages?.length ? { compatMessages } : {}),
+      },
+    };
+  }
+
   private normalizeMetadata(raw: any, sessionId: string, projectPath: string | null): SessionMetadata {
     const now = Date.now();
     const metadata = raw && typeof raw === 'object' ? raw : {};
+    const rawToolSourceTokens = metadata.contextBudget?.toolSourceTokens;
+    const toolSourceTokens = rawToolSourceTokens && typeof rawToolSourceTokens === 'object'
+      ? Object.fromEntries(
+          Object.entries(rawToolSourceTokens)
+            .filter((entry): entry is [string, number] => (
+              typeof entry[0] === 'string'
+              && entry[0].length > 0
+              && typeof entry[1] === 'number'
+              && Number.isFinite(entry[1])
+              && entry[1] > 0
+            )),
+        )
+      : {};
     return {
       sessionId: typeof metadata.sessionId === 'string' && metadata.sessionId ? metadata.sessionId : sessionId,
       title: typeof metadata.title === 'string' ? metadata.title : '',
@@ -142,6 +271,15 @@ export class HostSessionRecordStore {
               ? metadata.contextBudget.maxContextTokens
               : 0,
             usagePercent: typeof metadata.contextBudget.usagePercent === 'number' ? metadata.contextBudget.usagePercent : 0,
+            systemTokens: typeof metadata.contextBudget.systemTokens === 'number' ? metadata.contextBudget.systemTokens : 0,
+            baseSystemTokens: typeof metadata.contextBudget.baseSystemTokens === 'number' ? metadata.contextBudget.baseSystemTokens : 0,
+            instructionTokens: typeof metadata.contextBudget.instructionTokens === 'number' ? metadata.contextBudget.instructionTokens : 0,
+            skillTokens: typeof metadata.contextBudget.skillTokens === 'number' ? metadata.contextBudget.skillTokens : 0,
+            toolsTokens: typeof metadata.contextBudget.toolsTokens === 'number' ? metadata.contextBudget.toolsTokens : 0,
+            toolSourceTokens,
+            messagesTokens: typeof metadata.contextBudget.messagesTokens === 'number' ? metadata.contextBudget.messagesTokens : 0,
+            toolResultsTokens: typeof metadata.contextBudget.toolResultsTokens === 'number' ? metadata.contextBudget.toolResultsTokens : 0,
+            messageCount: typeof metadata.contextBudget.messageCount === 'number' ? metadata.contextBudget.messageCount : 0,
           }
         : undefined,
       toolCallingIteration: typeof metadata.toolCallingIteration === 'number' ? metadata.toolCallingIteration : 0,

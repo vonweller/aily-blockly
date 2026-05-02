@@ -70,7 +70,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'glob_search': '搜索文件',
   'get_board_parameters': '获取开发板参数',
   'fetch': '获取网页',
-  'web_fetch': '获取网页',
+  'fetch_webpage': '获取网页',
 };
 
 /** BackgroundAgent 可用的 lex 核心工具子集（仅文件/搜索/上下文，不含终端/agent/web） */

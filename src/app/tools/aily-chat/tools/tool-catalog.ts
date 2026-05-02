@@ -1,4 +1,4 @@
-import { DEFERRED_TOOL_GROUPS, getDeferredTools } from './tool-discovery';
+import { LEGACY_DEFERRED_TOOL_GROUPS, getLegacyDeferredTools } from './tool-discovery';
 import { FOUNDATIONAL_TOOL_DEFINITIONS } from './foundational-tool-definitions';
 import { WORKSPACE_TOOL_DEFINITIONS } from './workspace-tool-definitions';
 import { DISCOVERY_TOOL_DEFINITIONS } from './discovery-tool-definitions';
@@ -38,7 +38,7 @@ export function findToolCatalogEntry(name: string): any | undefined {
  */
 export function getDeferredToolsListing(agentName?: string, excludeTools?: Set<string>): string {
   const lines: string[] = [];
-  for (const group of DEFERRED_TOOL_GROUPS) {
+  for (const group of LEGACY_DEFERRED_TOOL_GROUPS) {
     const filteredTools = group.tools.filter(toolName => {
       if (excludeTools?.has(toolName)) return false;
       if (agentName) {
@@ -51,7 +51,7 @@ export function getDeferredToolsListing(agentName?: string, excludeTools?: Set<s
     lines.push(`- ${group.name}: ${filteredTools.join(', ')}（${group.brief}）`);
   }
   if (lines.length === 0) return '';
-  return `<availableTools>\n以下工具可通过 search_available_tools 按需加载后使用：\n${lines.join('\n')}\n调用 search_available_tools 时传入关键词或工具名即可加载对应工具的完整定义。\n</availableTools>`;
+  return `<availableTools>\n以下工具可通过 legacy search_available_tools 按需加载后使用：\n${lines.join('\n')}\n调用 search_available_tools 时传入关键词或工具名即可加载对应工具的完整定义。\n</availableTools>`;
 }
 
 /**
@@ -63,7 +63,7 @@ export function getDeferredToolsListing(agentName?: string, excludeTools?: Set<s
  */
 export function searchDeferredTools(query: string, allTools: any[] = TOOL_CATALOG, agentName?: string, excludeTools?: Set<string>): any[] {
   const q = query.toLowerCase();
-  let deferredTools = getDeferredTools(allTools);
+  let deferredTools = getLegacyDeferredTools(allTools);
 
   if (agentName) {
     deferredTools = deferredTools.filter(tool => !tool.agents || tool.agents.includes(agentName));
@@ -75,7 +75,7 @@ export function searchDeferredTools(query: string, allTools: any[] = TOOL_CATALO
   const exactMatch = deferredTools.filter(tool => tool.name === q);
   if (exactMatch.length > 0) return exactMatch;
 
-  const groupMatch = DEFERRED_TOOL_GROUPS.find(group =>
+  const groupMatch = LEGACY_DEFERRED_TOOL_GROUPS.find(group =>
     group.name.toLowerCase().includes(q) || group.brief.toLowerCase().includes(q)
   );
   if (groupMatch) {

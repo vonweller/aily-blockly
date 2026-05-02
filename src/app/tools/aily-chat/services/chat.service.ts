@@ -62,6 +62,10 @@ export class ChatService {
     this.ailyChatConfigService.configChanged$.subscribe(() => {
       this.loadChatModel();
     });
+
+    this.ailyChatConfigService.modelCatalogChanged$.subscribe(() => {
+      this.refreshCurrentModelRuntimeMetadata();
+    });
   }
 
   /**
@@ -94,17 +98,23 @@ export class ChatService {
     // 重置当前模型，确保每次都重新验证
     this.currentModel = null;
 
-    if (savedModel && enabledModels.length > 0) {
-      // 尝试找到匹配的模型配置（从已启用的模型中查找）
-      const foundModel = enabledModels.find(m => m.model === savedModel.model);
-      if (foundModel) {
-        this.currentModel = foundModel;
-      }
+    if (savedModel) {
+      this.currentModel = this.ailyChatConfigService.resolveSavedModel(savedModel);
     }
 
-    // 如果没有找到保存的模型或保存的模型不可用（如自定义模型但未启用自定义API KEY），使用第一个已启用的模型
+    // 如果没有保存模型或保存的模型不可用，优先回退到内置 Auto preset。
+    if (!this.currentModel) {
+      this.currentModel = this.ailyChatConfigService.resolvePresetModel(
+        this.ailyChatConfigService.getDefaultModelPresetId(),
+      );
+    }
+
+    // 如果 Auto preset 也不可用，再回退到第一个已启用的具体模型。
     if (!this.currentModel && enabledModels.length > 0) {
       this.currentModel = enabledModels[0];
+    }
+
+    if (this.currentModel) {
       // 更新保存的模型配置
       this.saveChatModel(this.currentModel);
     }
@@ -114,10 +124,24 @@ export class ChatService {
    * 保存AI模型到配置
    */
   saveChatModel(model: ModelConfig): void {
-    this.currentModel = model;
+    this.currentModel = this.ailyChatConfigService.normalizeRuntimeModel(model);
     const config = AilyHost.get().config;
-    if (config.data) config.data.aiChatModel = model;
+    if (config.data) config.data.aiChatModel = this.currentModel;
     config.save?.();
+  }
+
+  private refreshCurrentModelRuntimeMetadata(): void {
+    if (this.currentModel) {
+      const refreshedModel = this.ailyChatConfigService.resolveSavedModel(this.currentModel);
+      if (refreshedModel) {
+        this.currentModel = refreshedModel;
+        return;
+      }
+    }
+
+    this.currentModel = this.ailyChatConfigService.resolvePresetModel(
+      this.ailyChatConfigService.getDefaultModelPresetId(),
+    );
   }
 
 
@@ -175,12 +199,24 @@ export class ChatService {
     }
   }
 
-  startSession(mode: string, tools: MCPTool[] | null = null, maxCount?: number, customllmConfig?: any, selectModel?: string, customSessionId?: string): Observable<any> {
+  startSession(
+    mode: string,
+    tools: MCPTool[] | null = null,
+    maxCount?: number,
+    customllmConfig?: any,
+    selectModel?: string,
+    customSessionId?: string,
+    modelPresetId?: string,
+    reasoningEffort?: ModelConfig['reasoningEffort'],
+  ): Observable<any> {
     const payload: any = {
       session_id: customSessionId || this.currentSessionId,
       tools: tools || [],
       mode
     };
+
+    const effectiveModelPresetId = modelPresetId ?? this.currentModel?.presetId;
+    const effectiveReasoningEffort = reasoningEffort ?? this.currentModel?.reasoningEffort;
 
     // 如果提供了 maxCount 参数，添加到请求中
     if (maxCount !== undefined && maxCount > 0) {
@@ -195,6 +231,14 @@ export class ChatService {
     // 如果提供了选择的模型名称，添加到请求中
     if (selectModel) {
       payload.select_model = selectModel;
+    }
+
+    if (effectiveModelPresetId) {
+      payload.model_preset_id = effectiveModelPresetId;
+    }
+
+    if (effectiveReasoningEffort) {
+      payload.reasoning_effort = effectiveReasoningEffort;
     }
 
     return this.http.post(ChatAPI.startSession, payload);

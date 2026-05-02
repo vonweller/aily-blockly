@@ -1,4 +1,18 @@
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  IChatViewAccess,
+  ISessionAccess,
+} from '../core/chat-context';
+
+type ChatStopCoordinatorContext = Pick<
+  IAgentLifecycle,
+  'isCancelled' | 'messageSubscription' | 'pendingUserInput' | 'activeToolExecutions' | 'currentStatelessMode' | 'isWaiting' | 'isCompleted'
+> & Pick<IChatCoordination, 'lexStream' | 'session' | 'applyPendingSwitch'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService'>
+  & Pick<ISessionAccess, 'conversationMessages'>
+  & Pick<IChatViewAccess, 'viewAdapter'>;
 
 /**
  * Coordinates host-side cleanup when the current turn is stopped.
@@ -7,7 +21,12 @@ import type { IChatContext } from '../core/chat-context';
  * cancel/finalize bookkeeping stays in one place.
  */
 export class ChatStopCoordinator {
-  constructor(private readonly ctx: IChatContext) {}
+  constructor(private readonly ctx: ChatStopCoordinatorContext) {}
+
+  private shouldRefreshLocalEstimate(): boolean {
+    const snapshot = this.ctx.contextBudgetService.getSnapshot();
+    return snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
+  }
 
   stop(): void {
     this.ctx.isCancelled = true;
@@ -24,17 +43,20 @@ export class ChatStopCoordinator {
 
     const turnDraft = this.ctx.lexStream.turn.draft();
     const turnControl = this.ctx.lexStream.turns;
-    const hasContent = !!turnDraft.assistantText || turnDraft.toolCallCount > 0;
+    const hasContent = turnDraft.partCount > 0;
     if (hasContent) {
       turnControl.complete(turnDraft.assistantText || '');
+      this.ctx.lexStream.finalizeCurrentTurnResponse('completed');
     } else {
       turnControl.discardIncomplete();
     }
 
-    this.ctx.contextBudgetService.refreshLocalEstimate(
-      this.ctx.conversationMessages,
-      this.ctx.lexStream.runtime.tools(),
-    );
+    if (this.shouldRefreshLocalEstimate()) {
+      this.ctx.contextBudgetService.refreshLocalEstimate(
+        this.ctx.conversationMessages,
+        this.ctx.lexStream.runtime.tools(),
+      );
+    }
 
     this.ctx.editCheckpointService.commitCurrentTurn();
     this.ctx.viewAdapter.markLastMessageDone();

@@ -1,14 +1,39 @@
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  IProjectContext,
+  ISessionAccess,
+} from '../core/chat-context';
 import type { ModelConfig } from '../services/chat.service';
+
+type ChatSwitchCoordinatorContext = Pick<
+  IAgentLifecycle,
+  'isWaiting' | '_pendingModelSwitch' | '_pendingModeSwitch'
+> & Pick<IProjectContext, 'currentModel' | 'currentMode'>
+  & Pick<ISessionAccess, 'chatService' | 'conversationMessages'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'message'>
+  & Pick<IChatCoordination, 'lexStream'>;
 
 /**
  * Coordinates model/mode switching and deferred switch application.
  */
 export class ChatSwitchCoordinator {
-  constructor(private readonly ctx: IChatContext) {}
+  constructor(private readonly ctx: ChatSwitchCoordinatorContext) {}
+
+  private isSameModelSelection(model: ModelConfig): boolean {
+    return model.model === this.ctx.currentModel?.model
+      && model.presetId === this.ctx.currentModel?.presetId
+      && model.reasoningEffort === this.ctx.currentModel?.reasoningEffort;
+  }
+
+  private shouldRefreshLocalEstimate(): boolean {
+    const snapshot = this.ctx.contextBudgetService?.getSnapshot();
+    return !snapshot || snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
+  }
 
   async switchToModel(model: ModelConfig): Promise<void> {
-    if (model.model === this.ctx.currentModel?.model) {
+    if (this.isSameModelSelection(model)) {
       return;
     }
 
@@ -21,6 +46,32 @@ export class ChatSwitchCoordinator {
     }
 
     await this.doSwitchModel(model);
+  }
+
+  async switchToReasoningEffort(reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>): Promise<void> {
+    const currentModel = this.ctx.currentModel;
+    if (!currentModel) {
+      return;
+    }
+
+    const nextModel: ModelConfig = {
+      ...currentModel,
+      reasoningEffort,
+    };
+
+    if (this.isSameModelSelection(nextModel)) {
+      return;
+    }
+
+    if (this.ctx.isWaiting) {
+      this.ctx.chatService.saveChatModel(nextModel);
+      this.ctx._pendingModelSwitch = nextModel;
+      this.ctx._pendingModeSwitch = null;
+      this.ctx.message.info('思考深度将在当前对话完成后切换');
+      return;
+    }
+
+    await this.doSwitchModel(nextModel);
   }
 
   async switchToMode(mode: string): Promise<void> {
@@ -65,11 +116,13 @@ export class ChatSwitchCoordinator {
       return;
     }
 
-    this.ctx.contextBudgetService?.updateModelContextSize(model.model || null);
-    this.ctx.contextBudgetService?.refreshLocalEstimate(
-      this.ctx.conversationMessages,
-      this.ctx.lexStream.runtime.tools(),
-    );
+    this.ctx.contextBudgetService?.updateModelContextSize(model);
+    if (this.shouldRefreshLocalEstimate()) {
+      this.ctx.contextBudgetService?.refreshLocalEstimate(
+        this.ctx.conversationMessages,
+        this.ctx.lexStream.runtime.tools(),
+      );
+    }
   }
 
   private async doSwitchMode(mode: string): Promise<void> {
@@ -83,9 +136,11 @@ export class ChatSwitchCoordinator {
       return;
     }
 
-    this.ctx.contextBudgetService?.refreshLocalEstimate(
-      this.ctx.conversationMessages,
-      this.ctx.lexStream.runtime.tools(),
-    );
+    if (this.shouldRefreshLocalEstimate()) {
+      this.ctx.contextBudgetService?.refreshLocalEstimate(
+        this.ctx.conversationMessages,
+        this.ctx.lexStream.runtime.tools(),
+      );
+    }
   }
 }

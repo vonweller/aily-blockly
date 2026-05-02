@@ -1,4 +1,4 @@
-import { estimateMessagesTokens, estimateToolsTokens } from './context-budget-estimation';
+import { estimateMessageTokens, estimateToolsTokens } from './context-budget-estimation';
 import { createContextBudgetSnapshot } from './context-budget-snapshot';
 
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
@@ -33,7 +33,7 @@ export class ContextBudgetLocalEstimator {
       this.updateToolsTokens(input.tools);
     }
 
-    const messagesTokens = estimateMessagesTokens(input.messages);
+    const { messagesTokens, toolResultsTokens } = this.estimatePromptBuckets(input.messages);
     return createContextBudgetSnapshot({
       maxContextTokens: input.maxContextTokens,
       compressionThreshold: input.compressionThreshold,
@@ -43,7 +43,24 @@ export class ContextBudgetLocalEstimator {
       toolsTokens: this.cachedToolsTokens,
       contextTokens: this.cachedContextTokens,
       messagesTokens,
+      toolResultsTokens,
     });
+  }
+
+  private estimatePromptBuckets(messages: any[]): { messagesTokens: number; toolResultsTokens: number } {
+    let messagesTokens = 0;
+    let toolResultsTokens = 0;
+
+    for (const message of messages ?? []) {
+      const tokenCount = estimateMessageTokens(message);
+      if (message?.role === 'tool') {
+        toolResultsTokens += tokenCount;
+      } else {
+        messagesTokens += tokenCount;
+      }
+    }
+
+    return { messagesTokens, toolResultsTokens };
   }
 
   private updateToolsTokens(tools: any[]): void {

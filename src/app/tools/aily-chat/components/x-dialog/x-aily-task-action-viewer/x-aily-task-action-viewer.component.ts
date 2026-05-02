@@ -1,5 +1,6 @@
 import { Component, Input, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import type { ChatTaskActionDetail, ChatTaskActionName } from '../../../helpers/chat-task-action-coordinator';
 
 @Component({
   selector: 'x-aily-task-action-viewer',
@@ -100,7 +101,7 @@ export class XAilyTaskActionViewerComponent {
     return map[this.data?.actionType || ''] || '任务操作';
   }
 
-  taskAction(action: string): void {
+  taskAction(action: Extract<ChatTaskActionName, 'continue' | 'retry' | 'newChat' | 'dismiss'>): void {
     if (this.actionTaken) return;
     this.actionTaken = true;
     const labels: Record<string, string> = {
@@ -110,9 +111,11 @@ export class XAilyTaskActionViewerComponent {
     this.actionTakenText = labels[action] || '处理中...';
     this.cdr.markForCheck();
 
+    const detail: ChatTaskActionDetail = { action, data: this.data };
+
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: { action, data: this.data },
+      detail,
     }));
   }
 }

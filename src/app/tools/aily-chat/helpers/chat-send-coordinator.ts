@@ -1,9 +1,16 @@
-import type { IChatContext } from '../core/chat-context';
+import type { IAgentLifecycle, IChatCoordination, ISessionAccess } from '../core/chat-context';
 import { buildUserTurnPayload, type UserTurnPayload } from './chat-user-turn-payload';
 
 export interface PreparedUserSend extends UserTurnPayload {
   text: string;
 }
+
+type ChatSendCoordinatorContext = Pick<
+  IAgentLifecycle,
+  'isCancelled' | 'isCompleted' | 'isWaiting' | 'pendingUserInput' | 'activeToolExecutions' | 'pendingEditFeedback'
+> & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatCoordination, 'msg'>
+  & Partial<Pick<IChatCoordination, 'lexStream'>>;
 
 /**
  * Coordinates host-side preflight for a new user send.
@@ -13,7 +20,7 @@ export interface PreparedUserSend extends UserTurnPayload {
  */
 export class ChatSendCoordinator {
   constructor(
-    private readonly ctx: IChatContext,
+    private readonly ctx: ChatSendCoordinatorContext,
     private readonly generateTitle: (content: string) => void,
     private readonly getResourcesText: () => string,
   ) {}
@@ -53,6 +60,12 @@ export class ChatSendCoordinator {
       text,
       this.getResourcesText(),
       this.ctx.pendingEditFeedback,
+      {
+        resolveCommand: ({ agentId, name, kind }) => this.ctx.lexStream
+          ?.agent
+          .getAgent()
+          ?.resolveRequestCommand(name, kind, agentId),
+      },
     );
     this.ctx.pendingEditFeedback = null;
     this.ctx.msg.appendMessage('user', payload.displayText);

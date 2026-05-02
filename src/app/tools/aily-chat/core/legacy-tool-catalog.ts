@@ -1,5 +1,6 @@
 import type { Tool } from './chat-types';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
+import { MAIN_AGENT_TYPE, normalizeAgentIdentifier } from './agent-identifiers';
 import { LEGACY_HOST_EXTERNAL_TOOLS } from '../tools/legacy-host-tool-definitions';
 
 export const LEGACY_HOST_EXTERNAL_TOOL_NAMES = LEGACY_HOST_EXTERNAL_TOOLS.map(tool => tool.name);
@@ -15,10 +16,10 @@ export function getMainAgentLegacyHostTools(
 ): Tool[] {
   let tools = LEGACY_HOST_EXTERNAL_TOOLS.filter(tool => {
     return LEGACY_HOST_EXTERNAL_TOOL_SET.has(tool.name)
-      && (!tool.agents || tool.agents.includes('mainAgent'));
+      && (!tool.agents || tool.agents.some(agent => normalizeAgentIdentifier(agent) === MAIN_AGENT_TYPE));
   });
 
-  const mainAgentConfig = configService.getAgentToolsConfig('mainAgent');
+  const mainAgentConfig = configService.getAgentToolsConfig(MAIN_AGENT_TYPE);
   const enabledToolNames = mainAgentConfig?.enabledTools || [];
   const disabledToolNames = new Set(mainAgentConfig?.disabledTools || []);
 

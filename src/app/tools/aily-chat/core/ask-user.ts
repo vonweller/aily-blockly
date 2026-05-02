@@ -82,31 +82,45 @@ export function unregisterAskUserCallback(): void {
  */
 export async function askUserSingle(
   question: string,
-  options?: { label: string; description?: string }[],
+  options?: { label: string; description?: string; recommended?: boolean }[],
   multiSelect?: boolean,
+  allowFreeform = true,
 ): Promise<{ answer: string; cancelled: boolean }> {
   const q: AskUserQuestion = {
     question,
-    options: options?.map(o => ({ label: o.label, description: o.description })),
+    options: options?.map(o => ({ label: o.label, description: o.description, recommended: o.recommended })),
     multi_select: multiSelect,
-    allow_freeform: true,
+    allow_freeform: allowFreeform,
   };
 
+  return askUserMany([q]);
+}
+
+export async function askUserMany(
+  questions: AskUserQuestion[],
+): Promise<{ answer: string; cancelled: boolean }> {
   if (_registeredCallback) {
-    const response = await _registeredCallback([q]);
+    const response = await _registeredCallback(questions);
     if (!response) return { answer: '', cancelled: true };
-    const key = Object.keys(response.answers)[0];
-    const ans = response.answers[key];
-    if (!ans || ans.skipped) return { answer: '', cancelled: true };
+
     const parts: string[] = [];
-    if (ans.selected.length) parts.push(ans.selected.join(', '));
-    if (ans.freeText) parts.push(ans.freeText);
+    for (const question of questions) {
+      const ans = response.answers[question.question];
+      if (!ans || ans.skipped) {
+        return { answer: '', cancelled: true };
+      }
+
+      if (ans.selected.length) parts.push(ans.selected.join(', '));
+      if (ans.freeText) parts.push(ans.freeText);
+    }
+
     return { answer: parts.join('\n'), cancelled: false };
   }
 
   // 降级：window.prompt
   if (typeof window !== 'undefined') {
-    const result = window.prompt(question);
+    const firstQuestion = questions[0]?.question || '';
+    const result = window.prompt(firstQuestion);
     return result === null
       ? { answer: '', cancelled: true }
       : { answer: result, cancelled: false };

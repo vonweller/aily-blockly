@@ -142,7 +142,7 @@ export class MarkdownPipe implements PipeTransform {
    * @deprecated Legacy compatibility only.
    */
   private isAilyCodeBlock(lang: string): boolean {
-    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid', 'mermaid', 'aily-task-action', 'aily-think', 'aily-context', 'aily-approval'];
+    const ailyTypes = ['aily-blockly', 'aily-board', 'aily-library', 'aily-state', 'aily-button', 'aily-error', 'aily-mermaid', 'mermaid', 'aily-task-action', 'aily-think', 'aily-context', 'aily-confirmation'];
     // 确保 lang 被正确 trim，避免空格或换行符导致匹配失败
     const normalizedLang = lang?.trim()?.toLowerCase() || '';
     return ailyTypes.includes(normalizedLang);
@@ -320,10 +320,12 @@ export class MarkdownPipe implements PipeTransform {
             content: String(ctxContent),
             metadata: jsonData.metadata || {}
           };
-        case 'aily-approval':
+        case 'aily-confirmation':
+          const askId = jsonData.askId || '';
           return {
-            type: 'aily-approval',
-            toolCallId: jsonData.toolCallId || '',
+            type: 'aily-confirmation',
+            partId: jsonData.partId || (askId ? `confirmation:${askId}` : ''),
+            askId,
             toolName: jsonData.toolName || '',
             title: jsonData.title || '确认操作',
             message: jsonData.message || '',

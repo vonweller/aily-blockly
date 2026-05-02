@@ -1,13 +1,29 @@
 import type { StatePart } from '../core/chat-parts';
 import type { PartEventProcessor } from '../core/part-event-processor';
 
+export type LexStatePartProcessor = Pick<
+  PartEventProcessor,
+  'upsertState'
+>;
+
+type LexStateHostSyncAccess = {
+  applyHandoffEvent(event: { targetAgent?: string; reason?: string }): void;
+};
+
 export class LexStateEventBridge {
-  constructor(private readonly partProcessor: PartEventProcessor) {}
+  constructor(
+    private readonly partProcessor: LexStatePartProcessor,
+    private readonly hostSyncBridge?: LexStateHostSyncAccess,
+  ) {}
 
   processEvent(event: any): boolean {
     switch (event.type) {
       case 'background_task':
         this.upsertBackgroundTaskState(event);
+        return true;
+
+      case 'compaction':
+        this.upsertCompactionState(event);
         return true;
 
       case 'task_graph':
@@ -34,9 +50,42 @@ export class LexStateEventBridge {
         this.upsertInstructionState(event);
         return true;
 
+      case 'handoff':
+        this.upsertHandoffState(event);
+        return true;
+
       default:
         return false;
     }
+  }
+
+  private upsertHandoffState(event: any): void {
+    const targetAgent = typeof event.targetAgent === 'string' && event.targetAgent.trim().length > 0
+      ? event.targetAgent.trim()
+      : '未知代理';
+    let text = `代理请求切换到 ${targetAgent}`;
+    if (typeof event.reason === 'string' && event.reason.trim().length > 0) {
+      text += ` - ${this.summarizeText(event.reason, 80)}`;
+    }
+
+    this.partProcessor.upsertState(
+      `handoff:${event.handoffId || targetAgent}`,
+      text,
+      'info',
+      {
+        kind: 'handoff',
+        metadata: {
+          handoffId: event.handoffId,
+          targetAgent,
+          reason: event.reason,
+        },
+      },
+    );
+
+    this.hostSyncBridge?.applyHandoffEvent({
+      targetAgent,
+      reason: typeof event.reason === 'string' ? event.reason : undefined,
+    });
   }
 
   private upsertInstructionState(event: any): void {
@@ -120,6 +169,61 @@ export class LexStateEventBridge {
           completedAt: event.completedAt,
           output: event.output ? this.summarizeText(event.output, 120) : undefined,
           error: event.error,
+        },
+      },
+    );
+  }
+
+  private upsertCompactionState(event: any): void {
+    const summary = typeof event.summary === 'string' && event.summary.trim().length > 0
+      ? event.summary.trim()
+      : undefined;
+    const messageCount = typeof event.messageCount === 'number' ? event.messageCount : undefined;
+    let text = '';
+
+    switch (event.level) {
+      case 'toolResultBudget':
+        text = '超长工具结果已截断';
+        break;
+      case 'micro':
+        text = '上下文已执行轻量压缩';
+        break;
+      case 'snip':
+        text = '最旧历史已裁剪';
+        break;
+      case 'collapse':
+        text = '历史摘要已再次压缩';
+        break;
+      case 'auto':
+        text = event.source === 'foreground'
+          ? '对话历史已写入模型摘要'
+          : '对话历史已写入启发式摘要';
+        break;
+      case 'reactive':
+      default:
+        text = '上下文压缩后已重试请求';
+        break;
+    }
+
+    if (typeof messageCount === 'number' && messageCount > 0) {
+      text += ` (${messageCount} 条消息)`;
+    }
+    if (summary && event.level !== 'reactive') {
+      text += ` - ${this.summarizeText(summary, 60)}`;
+    }
+
+    this.partProcessor.upsertState(
+      `compaction:${event.level}`,
+      text,
+      event.level === 'reactive' ? 'warn' : 'done',
+      {
+        kind: 'compaction',
+        metadata: {
+          level: event.level,
+          source: event.source,
+          summary,
+          messageCount,
+          boundary: event.boundary,
         },
       },
     );

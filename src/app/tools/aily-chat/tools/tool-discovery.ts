@@ -1,8 +1,12 @@
 /**
- * Deferred tool metadata and lightweight discovery helpers.
+ * Legacy deferred tool metadata and lightweight discovery helpers.
  *
- * This keeps deferred-tool grouping out of the large legacy TOOLS catalog so
- * runtime/bootstrap code does not need to import the full static schema set.
+ * This file only serves the legacy blockly chat path built around
+ * search_available_tools. The lex runtime uses BLOCKLY_LEX_DEFERRED_GROUPS
+ * plus contributed-tool deferred metadata instead.
+ *
+ * Keeping these helpers isolated avoids pulling the large legacy TOOLS catalog
+ * into unrelated bootstrap code.
  */
 
 export interface DeferredToolGroup {
@@ -11,7 +15,7 @@ export interface DeferredToolGroup {
   tools: string[];
 }
 
-export const DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
+export const LEGACY_DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
   {
     name: '文件工具',
     brief: '文件夹删除',
@@ -34,18 +38,33 @@ export const DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
   },
 ];
 
-const DEFERRED_TOOL_NAMES = new Set(
-  DEFERRED_TOOL_GROUPS.flatMap(group => group.tools),
+const LEGACY_DEFERRED_TOOL_NAMES = new Set(
+  LEGACY_DEFERRED_TOOL_GROUPS.flatMap(group => group.tools),
 );
 
+export function getLegacyCoreTools(allTools: any[]): any[] {
+  return allTools.filter(tool => !LEGACY_DEFERRED_TOOL_NAMES.has(tool.name));
+}
+
+export function getLegacyDeferredTools(allTools: any[]): any[] {
+  return allTools.filter(tool => LEGACY_DEFERRED_TOOL_NAMES.has(tool.name));
+}
+
+export function isLegacyDeferredTool(name: string): boolean {
+  return LEGACY_DEFERRED_TOOL_NAMES.has(name);
+}
+
+// Backward-compatible aliases for the remaining legacy call sites.
+export const DEFERRED_TOOL_GROUPS = LEGACY_DEFERRED_TOOL_GROUPS;
+
 export function getCoreTools(allTools: any[]): any[] {
-  return allTools.filter(tool => !DEFERRED_TOOL_NAMES.has(tool.name));
+  return getLegacyCoreTools(allTools);
 }
 
 export function getDeferredTools(allTools: any[]): any[] {
-  return allTools.filter(tool => DEFERRED_TOOL_NAMES.has(tool.name));
+  return getLegacyDeferredTools(allTools);
 }
 
 export function isDeferredTool(name: string): boolean {
-  return DEFERRED_TOOL_NAMES.has(name);
+  return isLegacyDeferredTool(name);
 }

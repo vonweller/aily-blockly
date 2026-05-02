@@ -15,10 +15,10 @@
  * - newChat / 切换会话时保存
  * - 30s 定时检查 dirty 标记
  *
- * 数据范围：UI 列表 + 元数据 + 兼容迁移数据
+ * 数据范围：UI 列表 + 元数据
  * - 标准会话快照由 lex SessionStorage 持有
- * - 本地数据文件主要承担历史列表、标题、项目归属和迁移兜底职责
- * - 新保存路径不再重复镜像 lex snapshot，`turns` 仅保留给旧会话兼容读取
+ * - 本地数据文件主要承担历史列表、标题和项目归属职责
+ * - 新保存路径只保存 metadata + canonical turnResponses，不再保留旧 snapshot 镜像字段
  *
  * 索引写入策略（双写）：
  * - 每次 writeIndex() 同时写全局索引和项目级索引
@@ -28,6 +28,7 @@
  */
 
 import { Injectable, OnDestroy } from '@angular/core';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore } from './chat-history-index-store';
@@ -54,14 +55,46 @@ export interface SessionIndexEntry {
   dataAvailable?: boolean;
 }
 
+export interface PersistedHostResponseData {
+  /**
+   * VS Code `ChatResponseModel.toJSON()` 风格的 response-level persisted fields.
+   * 这些字段只出现在宿主持久化记录中，不属于 aily-lex canonical response runtime shape。
+   */
+  responseId?: string;
+  result?: string;
+  responseMarkdownInfo?: ReadonlyArray<{ readonly suggestionId: string }>;
+  followups?: NonNullable<TurnResponseTurn['response']['followups']>;
+  modelState?:
+    | { value: 0 }
+    | { value: 4 }
+    | { value: 1 | 2 | 3; completedAt: number };
+  vote?: 0 | 1;
+  timestamp?: number;
+  elapsedMs?: number;
+  timeSpentWaiting?: number;
+  completionTokens?: number;
+}
+
+export type PersistedHostTurnResponse = Omit<TurnResponseTurn, 'response'> & {
+  response: TurnResponseTurn['response'] & PersistedHostResponseData;
+};
+
+export interface HostSessionResponseSidecar {
+  compatMessages?: unknown[];
+}
+
+export interface HostSessionSidecar {
+  response?: HostSessionResponseSidecar;
+}
+
 /** 单个会话的宿主持久化记录 */
 export interface HostSessionRecord {
-  /** UI 显示列表 */
-  chatList: ChatListItem[];
+  /** Copilot 风格的 turn/request/response 容器。 */
+  turnResponses?: PersistedHostTurnResponse[];
+  /** response-model sidecars that should not live inside response content turns. */
+  sidecar?: HostSessionSidecar;
   /** 会话元数据 */
   metadata: SessionMetadata;
-  /** @deprecated 仅允许旧会话兼容/迁移写入，标准 source of truth 为 lex SessionStorage snapshot */
-  turns?: any;
 }
 
 export interface ChatListItem {
@@ -88,6 +121,15 @@ export interface SessionMetadata {
     currentTokens: number;
     maxContextTokens: number;
     usagePercent: number;
+    systemTokens?: number;
+    baseSystemTokens?: number;
+    instructionTokens?: number;
+    skillTokens?: number;
+    toolsTokens?: number;
+    toolSourceTokens?: Record<string, number>;
+    messagesTokens?: number;
+    toolResultsTokens?: number;
+    messageCount?: number;
   };
   /** 工具调用迭代次数 */
   toolCallingIteration: number;
@@ -102,8 +144,17 @@ export type HistoryFilterMode = 'all' | 'current-project';
 /** 当前活跃会话的宿主侧持久化快照。 */
 export interface LiveHostSessionRecord {
   sessionId: string;
-  chatList: ChatListItem[];
+  turnResponses?: PersistedHostTurnResponse[];
+  sidecar?: HostSessionSidecar;
   metadata: Partial<SessionMetadata> & { sessionId: string };
+}
+
+export function countHostRecordMessages(record: Pick<HostSessionRecord, 'turnResponses'>): number {
+  if (!record.turnResponses?.length) {
+    return 0;
+  }
+
+  return record.turnResponses.length * 2;
 }
 
 type LiveSessionProvider = () => LiveHostSessionRecord | null;
@@ -234,12 +285,8 @@ export class ChatHistoryService implements OnDestroy {
    * 在每轮对话结束、newChat、组件销毁时调用。
    * 标准 snapshot 仍由 lex SessionStorage 持有。
    */
-  saveHostRecord(
-    sessionId: string,
-    chatList: ChatListItem[],
-    metadata: Partial<SessionMetadata> & { sessionId: string },
-  ): void {
-    this.hostSessionPersistenceBridge.saveHostRecord(sessionId, chatList, metadata);
+  saveHostRecord(record: LiveHostSessionRecord): void {
+    this.hostSessionPersistenceBridge.saveHostRecord(record);
   }
 
   /**

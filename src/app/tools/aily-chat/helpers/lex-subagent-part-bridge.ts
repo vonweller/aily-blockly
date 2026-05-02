@@ -1,113 +1,111 @@
-import type { IChatContext } from '../core/chat-context';
-import type { SubagentPart, SubagentChildItem } from '../core/chat-parts';
-import { ChatPartMutationBridge, type MutableSubagentPart } from '../core/chat-part-mutation-bridge';
+import type { ChatPartStoreReadableHandle } from '../core/chat-part-store';
+import type { SubagentChildItem } from '../core/chat-parts';
+import {
+  ChatPartMutationBridge,
+  type ChatPartMutationStoreAccess,
+  type MutableSubagentPart,
+} from '../core/chat-part-mutation-bridge';
+
+type LexSubagentPartMutations = Pick<
+  ChatPartMutationBridge,
+  'updateLatestRunningSubagentOnCurrentMessage'
+>;
 
 /**
- * Handles real-time forwarding of lex subagent events into blockly SubagentPart child items.
+ * Handles real-time forwarding of lex subagent events into tool_call metadata child items.
  */
 export class LexSubagentPartBridge {
-  private readonly partMutations: ChatPartMutationBridge;
+  private readonly partMutations: LexSubagentPartMutations;
+  private readonly toolTimers = new Map<string, number>();
 
   constructor(
-    ctx: IChatContext,
-    getCurrentMsgIndex: () => number,
+    partStore: ChatPartMutationStoreAccess,
+    getCurrentMessageHandle: () => ChatPartStoreReadableHandle | null,
   ) {
-    this.partMutations = new ChatPartMutationBridge(ctx.partStore, getCurrentMsgIndex);
+    this.partMutations = new ChatPartMutationBridge(
+      partStore,
+      getCurrentMessageHandle,
+    );
   }
 
   processEvent(event: any): void {
-    const activeSubagent = this.partMutations.findLatestRunningSubagentOnCurrentMessage();
-    if (!activeSubagent) return;
-
-    const nextPart: MutableSubagentPart = {
-      ...activeSubagent.part,
-      _toolTimers: { ...(activeSubagent.part._toolTimers ?? {}) },
-      childItems: [...(activeSubagent.part.childItems ?? [])],
-    };
-    const items = nextPart.childItems as SubagentChildItem[];
-
     switch (event.type) {
-      case 'thinking': {
-        const last = items.length > 0 ? items[items.length - 1] : null;
-        if (last && last.kind === 'thinking') {
-          last.content += event.text;
-        } else {
-          items.push({ kind: 'thinking', content: event.text });
-        }
-        break;
-      }
-
-      case 'text_delta': {
-        const last = items.length > 0 ? items[items.length - 1] : null;
-        if (last && last.kind === 'text') {
-          last.content += event.text;
-        } else {
-          items.push({ kind: 'text', content: event.text });
-        }
-        break;
-      }
-
-      case 'tool_call_start': {
-        nextPart._toolTimers = nextPart._toolTimers ?? {};
-        nextPart._toolTimers[event.toolCallId] = Date.now();
-        items.push({
-          kind: 'tool',
-          content: '',
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          argsSummary: this.formatToolArgs(event.input),
-          state: 'doing',
-        });
-        break;
-      }
-
-      case 'tool_call_end': {
-        const durationSec = nextPart._toolTimers?.[event.toolCallId]
-          ? (Date.now() - nextPart._toolTimers[event.toolCallId]) / 1000
-          : undefined;
-        const isError = event.result?.isError;
-        for (let i = items.length - 1; i >= 0; i--) {
-          if (items[i].kind === 'tool' && items[i].toolCallId === event.toolCallId) {
-            items[i].state = isError ? 'error' : 'done';
-            items[i].duration = durationSec != null ? +durationSec.toFixed(1) : undefined;
-            break;
-          }
-        }
-        break;
-      }
-
+      case 'thinking':
+      case 'text_delta':
+      case 'tool_call_start':
+      case 'tool_call_end':
       case 'error':
-        items.push({ kind: 'text', content: `❌ Error: ${event.error}` });
         break;
-
       default:
         return;
     }
 
-      nextPart.childItems = items;
-      nextPart.resultText = this.serializeChildItems(items);
-      this.partMutations.replacePart(activeSubagent.msgIndex, activeSubagent.partIndex, nextPart);
-  }
+    this.partMutations.updateLatestRunningSubagentOnCurrentMessage(activeSubagent => {
+      const nextPart: MutableSubagentPart = {
+        ...activeSubagent,
+        childItems: [...(activeSubagent.childItems ?? [])],
+      };
+      const items = nextPart.childItems as SubagentChildItem[];
 
-  private serializeChildItems(items: SubagentChildItem[]): string {
-    let text = '';
-    for (const item of items) {
-      switch (item.kind) {
-        case 'thinking':
-          text += `<think>${item.content}</think>`;
-          break;
-        case 'tool': {
-          const icon = item.state === 'doing' ? '⏳' : item.state === 'error' ? '❌' : '✅';
-          const dur = item.duration != null ? ` (${item.duration}s)` : '';
-          text += `\n${icon} \`${item.toolName}\`${item.argsSummary ? ' ' + item.argsSummary : ''}${dur}\n`;
+      switch (event.type) {
+        case 'thinking': {
+          const last = items.length > 0 ? items[items.length - 1] : null;
+          if (last && last.kind === 'thinking') {
+            last.content += event.text;
+          } else {
+            items.push({ kind: 'thinking', content: event.text });
+          }
           break;
         }
-        case 'text':
-          text += item.content;
+
+        case 'text_delta': {
+          const last = items.length > 0 ? items[items.length - 1] : null;
+          if (last && last.kind === 'text') {
+            last.content += event.text;
+          } else {
+            items.push({ kind: 'text', content: event.text });
+          }
+          break;
+        }
+
+        case 'tool_call_start': {
+          this.toolTimers.set(event.toolCallId, Date.now());
+          items.push({
+            kind: 'tool',
+            content: '',
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            argsSummary: this.formatToolArgs(event.input),
+            state: 'doing',
+          });
+          break;
+        }
+
+        case 'tool_call_end': {
+          const startTime = this.toolTimers.get(event.toolCallId);
+          const durationSec = typeof startTime === 'number'
+            ? (Date.now() - startTime) / 1000
+            : undefined;
+          const isError = event.result?.isError;
+          for (let i = items.length - 1; i >= 0; i--) {
+            if (items[i].kind === 'tool' && items[i].toolCallId === event.toolCallId) {
+              items[i].state = isError ? 'error' : 'done';
+              items[i].duration = durationSec != null ? +durationSec.toFixed(1) : undefined;
+              break;
+            }
+          }
+          this.toolTimers.delete(event.toolCallId);
+          break;
+        }
+
+        case 'error':
+          items.push({ kind: 'text', content: `❌ Error: ${event.error}` });
           break;
       }
-    }
-    return text;
+
+      nextPart.childItems = items;
+      return nextPart;
+    });
   }
 
   private formatToolArgs(input: any): string {

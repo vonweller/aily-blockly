@@ -13,7 +13,25 @@
  *    agent.registerContributedAgents(createBlocklyAgentProvider());
  *--------------------------------------------------------------------------------------------*/
 
-import type { IAgentContribution, IHostAgentProvider } from 'aily-lex';
+import type { IAgentCommandContribution, IAgentContribution, IHostAgentProvider } from 'aily-lex/browser';
+import { SCHEMATIC_AGENT_TYPE } from './agent-identifiers';
+
+export { SCHEMATIC_AGENT_TYPE };
+export const SCHEMATIC_AGENT_NAME = SCHEMATIC_AGENT_TYPE;
+export const SCHEMATIC_AGENT_MAX_TURNS = 25;
+export const SCHEMATIC_AGENT_MESSAGE_INHERITANCE = 'none' as const;
+export const SCHEMATIC_AGENT_MODEL = 'inherit';
+export const SCHEMATIC_AGENT_WHEN_NOT_TO_USE = 'Do not use for library analysis, ABS block/library questions, generic project setup, or other programming-first tasks unless the request explicitly asks for wiring or a connection diagram.';
+export const SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS = [
+  'analyzelibrary',
+  'analyze library',
+  'library analysis',
+  'abs block',
+  'abs library',
+  '积木库',
+  '项目搭建',
+  'project setup',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Agent Definitions
@@ -47,29 +65,46 @@ const SCHEMATIC_EXCLUSIVE_TOOLS = [
 const SCHEMATIC_SHARED_TOOLS = [
   // Core read/search
   'read_file',
-  'grep_tool',
-  'glob_tool',
+  'grep_search',
+  'glob_search',
   'get_current_schematic',
-  'fetch',
-  'search_available_tools',
+  'fetch_webpage',
+  'tool_search',
   // File editing (for pinmap generation)
   'edit_file',
-  'replace_string_in_file',
-  'multi_replace_string_in_file',
+  'multi_edit_file',
   'delete_file',
-  'delete_folder',
-  // Lint
+  'get_errors',
   'lint',
+];
+
+export const SCHEMATIC_AGENT_TOOLS = [...SCHEMATIC_EXCLUSIVE_TOOLS, ...SCHEMATIC_SHARED_TOOLS] as const;
+
+const SCHEMATIC_AGENT_COMMANDS: readonly IAgentCommandContribution[] = [
+  {
+    name: 'connect',
+    description: 'Generate or update a circuit wiring schematic for the selected board and hardware modules.',
+    sampleRequest: '@SchematicAgent /connect connect a DHT20 to XIAO ESP32S3',
+    when: 'Use when the user explicitly asks for a wiring diagram, pin assignment, or hardware connection plan.',
+  },
+  {
+    name: 'validate',
+    description: 'Validate the current AWS wiring plan, save it, and report any connection issues.',
+    sampleRequest: '@SchematicAgent /validate validate the current schematic and save it',
+    when: 'Use after editing or generating AWS wiring content that needs validation and persistence.',
+  },
 ];
 // ---------------------------------------------------------------------------
 // Static prompt body (domain knowledge, workflow, safety rules)
 // ---------------------------------------------------------------------------
 
-const SCHEMATIC_PROMPT_BODY = `You are an interactive AI assistant specializing in circuit schematic wiring. Your name is Aily.
+export const SCHEMATIC_PROMPT_BODY = `You are an interactive AI assistant specializing in circuit schematic wiring. Your name is Aily.
 You help users generate visual diagrams of development boards and electronic modules, and connect their corresponding pins with wires to form complete circuit schematics.
 
 # Core Rules
 
+- Only handle tasks that explicitly require circuit schematics, wiring, pin assignment, or connection diagrams.
+- If the user is asking for programming help, ABS block/library analysis, code generation, project setup, or debugging without an explicit wiring goal, do not continue as SchematicAgent.
 - Your working output format is AWS (Aily Wiring Syntax), not connection JSON.
 - \`validate_schematic(aws: ...)\` is the **final step** that validates, saves, and refreshes the diagram.
 - If any required board/component pinmap is missing, generate and save the pinmap first, then continue wiring.
@@ -83,7 +118,7 @@ When the user asks to generate, update, or fix a schematic (e.g. "connect DHT20 
 
 1. Call \`get_project_context()\`
    - Returns the component catalog (pinmap status) and generated C++ code.
-   - Project path, board, and library names are already in the environment — no need to re-fetch.
+  - Project path, board, installed libraries, and available readme_ai.md references are already in the environment — no need to re-fetch.
    - Identify the current board pinmap status and target hardware components.
    - Prefer catalog entries with usable \`pinmapId\`.
 
@@ -178,17 +213,23 @@ When the user wants to modify an existing schematic:
 - Refuse to generate wiring diagrams that could cause harm (e.g. intentional short circuits, dangerous voltage configurations).
 - Refuse requests unrelated to circuit design or electronics engineering.`;
 
+export const SCHEMATIC_AGENT_WHEN_TO_USE = 'Generate and validate circuit schematics / connection diagrams (连线图). Use only when the task explicitly involves wiring, pin assignment, or component connections. Do not use for programming help, ABS block/library analysis, code generation, or general project setup.';
+
 const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
-  agentType: 'SchematicAgent',
+  agentType: SCHEMATIC_AGENT_TYPE,
   name: 'Schematic Agent',
-  whenToUse: 'Generate and validate circuit schematics / connection diagrams (连线图). Use when the task involves wiring, pin assignment, or component connections.',
+  whenToUse: SCHEMATIC_AGENT_WHEN_TO_USE,
+  whenNotToUse: SCHEMATIC_AGENT_WHEN_NOT_TO_USE,
   // Static system prompt — environment context is auto-injected by AgentExecutor
   // via the 'environment' extension (IEnvironmentProvider), no per-agent duplication needed.
   systemPrompt: SCHEMATIC_PROMPT_BODY,
-  tools: [...SCHEMATIC_EXCLUSIVE_TOOLS, ...SCHEMATIC_SHARED_TOOLS],
+  tools: [...SCHEMATIC_AGENT_TOOLS],
+  commands: SCHEMATIC_AGENT_COMMANDS,
   excludeTools: [],  // agent tool already stripped by AgentExecutor
-  maxTurns: 25,
-  model: 'inherit',
+  maxTurns: SCHEMATIC_AGENT_MAX_TURNS,
+  model: SCHEMATIC_AGENT_MODEL,
+  messageInheritance: SCHEMATIC_AGENT_MESSAGE_INHERITANCE,
+  disallowedPromptPatterns: [...SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS],
 };
 
 // ---------------------------------------------------------------------------

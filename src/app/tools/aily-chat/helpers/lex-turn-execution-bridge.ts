@@ -1,8 +1,12 @@
-import type { IChatContext } from '../core/chat-context';
+import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
-import type { LexUiEventBridge } from './lex-ui-event-bridge';
-import type { LexRenderEventBridge } from './lex-render-event-bridge';
-import type { RenderEvent } from 'aily-lex';
+import type { RenderEvent, TurnRequest } from 'aily-lex/browser';
+import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
+
+type LexTurnExecutionContext = Pick<
+  IAgentLifecycle,
+  'activeToolExecutions' | 'currentStatelessMode' | 'toolCallingIteration' | 'isCancelled' | 'isWaiting'
+> & Pick<IChatServiceAccess, 'ngZone'>;
 
 type LexChatAgent = {
   chat(userMessage: string, signal: AbortSignal): AsyncIterable<any>;
@@ -13,6 +17,24 @@ type RenderEventSource = {
   chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent>;
 };
 
+type RenderEventSink = {
+  reset(): void;
+  prepareTurnRequest(requestContent: string, displayContent?: string, metadata?: TurnRequest['metadata']): void;
+  processEvent(event: RenderEvent): void;
+  flushPendingEvents(events: readonly RenderEvent[]): void;
+  appendExecutionError(message: string): boolean;
+};
+
+type TurnUiEventSink = {
+  ensureAilyMessage(): void;
+  resetTurnState(): void;
+  getCurrentTurnDraft(): LexTurnDraft;
+  finalizeTurn(): Promise<void>;
+  appendExecutionError(message: string, options?: { retry?: boolean }): void;
+  processEvent(event: any, scope?: 'main' | 'subagent'): void;
+  flushPendingEvents(events: readonly any[]): void;
+};
+
 /**
  * Handles lex turn execution scheduling for the blockly host path.
  *
@@ -20,19 +42,20 @@ type RenderEventSource = {
  * out of LexOwnerFacade so the helper remains a thin runtime bridge.
  */
 export class LexTurnExecutionBridge {
-  private _renderEventBridge: LexRenderEventBridge | null = null;
+  private _renderEventBridge: RenderEventSink | null = null;
 
   constructor(
-    private readonly ctx: IChatContext,
-    private readonly uiEventBridge: LexUiEventBridge,
+    private readonly ctx: LexTurnExecutionContext,
+    private readonly uiEventBridge: TurnUiEventSink,
     private readonly setAbortController: (controller: AbortController | null) => void,
+    private readonly getCurrentRequestMetadata?: () => TurnRequest['metadata'] | undefined,
   ) {}
 
   /**
    * Set the RenderEvent bridge. When set, `runTurnWithRenderEvents()` is used
    * instead of the legacy AgentEvent path.
    */
-  setRenderEventBridge(bridge: LexRenderEventBridge): void {
+  setRenderEventBridge(bridge: RenderEventSink): void {
     this._renderEventBridge = bridge;
   }
 
@@ -63,11 +86,11 @@ export class LexTurnExecutionBridge {
 
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `toolCalls=${turnDraft.toolCallCount}`);
-        this.uiEventBridge.finalizeTurn();
+        await this.uiEventBridge.finalizeTurn();
       });
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `error: ${error.message}`);
-      this.uiEventBridge.finalizeTurn();
+      void this.uiEventBridge.finalizeTurn();
     }
   }
 
@@ -86,7 +109,7 @@ export class LexTurnExecutionBridge {
    * This is the new R3 path: RenderEvent → LexRenderEventBridge → ChatPartStore.
    * No PartEventProcessor, no state-event/runtime-event bridge chain.
    */
-  runTurnWithRenderEvents(source: RenderEventSource, userMessage: string): void {
+  runTurnWithRenderEvents(source: RenderEventSource, userMessage: string, displayContent?: string): void {
     if (!this._renderEventBridge) {
       console.error('[LexStream] RenderEvent bridge not set, cannot use RenderEvent path');
       return;
@@ -97,7 +120,7 @@ export class LexTurnExecutionBridge {
     const signal = abortController.signal;
     const turnSpan = ChatPerformanceTracer.begin('lex_runTurn_render');
 
-    this.resetRenderEventTurnState();
+    this.resetRenderEventTurnState(userMessage, displayContent);
 
     try {
       this.ctx.ngZone.runOutsideAngular(async () => {
@@ -111,16 +134,21 @@ export class LexTurnExecutionBridge {
 
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `toolCalls=${turnDraft.toolCallCount}`);
-        this.uiEventBridge.finalizeTurn();
+        await this.uiEventBridge.finalizeTurn();
       });
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `error: ${error.message}`);
-      this.uiEventBridge.finalizeTurn();
+      void this.uiEventBridge.finalizeTurn();
     }
   }
 
-  private resetRenderEventTurnState(): void {
-    this._renderEventBridge!.resetTurnState();
+  private resetRenderEventTurnState(userMessage: string, displayContent?: string): void {
+    this._renderEventBridge!.reset();
+    this._renderEventBridge!.prepareTurnRequest(
+      userMessage,
+      displayContent,
+      this.getCurrentRequestMetadata?.(),
+    );
     this.ctx.activeToolExecutions = 0;
     this.ctx.currentStatelessMode = true;
     this.ctx.toolCallingIteration = 0;
@@ -149,6 +177,11 @@ export class LexTurnExecutionBridge {
   private shouldYieldForRenderEvent(eventType: string): boolean {
     return eventType === 'markdown_delta'
       || eventType === 'thinking_delta'
+      || eventType === 'info_notice'
+      || eventType === 'warning_notice'
+      || eventType === 'subagent_begin'
+      || eventType === 'subagent_activity'
+      || eventType === 'subagent_end'
       || eventType === 'tool_call_begin'
       || eventType === 'tool_call_end'
       || eventType === 'state_update'
@@ -209,6 +242,9 @@ export class LexTurnExecutionBridge {
     }
 
     console.error('[LexStream] Agent 执行异常:', error);
+    if (this._renderEventBridge?.appendExecutionError(error.message || '执行异常')) {
+      return;
+    }
     this.uiEventBridge.appendExecutionError(error.message || '执行异常', { retry: true });
   }
 }

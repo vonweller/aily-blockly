@@ -17,7 +17,7 @@
  *    agent.registerContributedTools(toolProvider);
  *--------------------------------------------------------------------------------------------*/
 
-import type { IToolContribution, IHostToolProvider, ToolResultContent, IExternalHostAPI } from 'aily-lex';
+import type { IToolContribution, IHostToolProvider, ToolResultContent, IExternalHostAPI } from 'aily-lex/browser';
 
 // ---- 复用已有工具实现 ----
 import { AilyHost } from './host';
@@ -26,10 +26,13 @@ import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { buildProjectTool } from '../tools/buildProjectTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { getBoardParametersTool } from '../tools/getBoardParametersTool';
+import { setBoardConfigTool } from '../tools/boardConfigTool';
 import { newProjectTool } from '../tools/createProjectTool';
 import { reloadProjectTool } from '../tools/reloadProjectTool';
 import { switchBoardTool } from '../tools/switchBoardTool';
 import { findLegacyToolDefinition, LEGACY_HOST_EXTERNAL_TOOL_NAMES } from './legacy-tool-catalog';
+import { normalizeAgentIdentifiers } from './agent-identifiers';
+import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 
 // ---- Schematic / save_arch 工具处理函数：直接调用 handler，不经 blockly 侧 runtime registry ----
 import {
@@ -38,10 +41,21 @@ import {
   getSensorPinmapCatalogTool as getComponentCatalogHandler,
   getProjectContextTool as getProjectContextHandler,
   validateConnectionGraphTool as validateSchematicHandler,
+  applySchematicTool as applySchematicHandler,
   generatePinmapTool as generatePinmapHandler,
   savePinmapTool as savePinmapHandler,
   getCurrentSchematicTool as getCurrentSchematicHandler,
 } from '../tools/connectionGraphTool';
+
+export const BLOCKLY_LEX_DEFERRED_GROUPS = [
+  { id: 'blockly-library-discovery', label: '硬件/库工具', description: '开发板、库搜索与库定义分析' },
+  { id: 'blockly-project-management', label: '项目管理', description: '项目创建、切板、构建与配置' },
+  { id: 'blockly-architecture', label: '架构文档', description: '低频架构图持久化工具' },
+] as const;
+
+function createDeferred(group: typeof BLOCKLY_LEX_DEFERRED_GROUPS[number]['id'], reason: string) {
+  return { group, reason };
+}
 
 // ---------------------------------------------------------------------------
 // Tool Definitions (schema + prompt)
@@ -59,10 +73,10 @@ Actions:
 - "status": Check sync status between the ABS file and workspace.
 
 Typical workflow:
-1. sync_abs action="export" → saves workspace content to .abs file
+1. syncAbs action="export" → saves workspace content to .abs file
 2. read_file the .abs file
 3. edit_file to modify the .abs content
-4. sync_abs action="import" → applies changes back to workspace`,
+4. syncAbs action="import" → applies changes back to workspace`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -93,15 +107,23 @@ function makeAnalyzeLibraryContribution(): IToolContribution {
   return {
     name: 'analyzeLibrary',
     description: 'Analyze library block definitions and generate ABS format documentation',
-    prompt: 'Use this tool to analyze the block definitions of an installed library. Returns ABS-compatible documentation showing available blocks, their inputs, and connection types. Useful when writing ABS code that uses library blocks.',
+    prompt: 'Use this tool to inspect an installed library. mode="auto" prefers readme_ai.md references when available and falls back to block analysis only for libraries without readme_ai.md. mode="readme_ref" returns only readme_ai.md references. mode="analysis" always returns block analysis. The metadata also reports whether the library has readme_ai.md and, when available, the readme path.',
     inputSchema: {
       type: 'object',
       properties: {
         libraryId: { type: 'string', description: 'Library package ID (e.g., "lib-servo")' },
+        mode: {
+          type: 'string',
+          enum: ['auto', 'readme_ref', 'analysis'],
+          default: 'auto',
+          description: 'auto prefers readme references, readme_ref returns only readme paths, analysis forces block analysis',
+        },
       },
       required: ['libraryId'],
     },
     annotations: { readOnly: true },
+    agentScope: ['main'],
+    deferred: createDeferred('blockly-library-discovery', '库定义分析属于低频查询能力'),
   };
 }
 
@@ -133,6 +155,8 @@ Note: Basic project info (path, board, libraries) is already in the environment 
       required: ['action'],
     },
     annotations: { readOnly: false },
+    agentScope: ['main'],
+    deferred: createDeferred('blockly-project-management', '项目创建、切板与配置通常按需使用'),
   };
 }
 
@@ -149,6 +173,8 @@ Set verbose to true for detailed compiler output.`,
       },
     },
     annotations: { readOnly: false },
+    agentScope: ['main'],
+    deferred: createDeferred('blockly-project-management', '构建属于按需执行的低频宿主能力'),
   };
 }
 
@@ -173,6 +199,7 @@ function makeBoardSearchContribution(): IToolContribution {
     },
     annotations: { readOnly: true },
     agentScope: ['main', 'SchematicAgent'],
+    deferred: createDeferred('blockly-library-discovery', '开发板与库搜索只在特定查询场景下需要'),
   };
 }
 
@@ -194,13 +221,17 @@ function makeBoardSearchContribution(): IToolContribution {
 function makeLegacyContribution(name: string): IToolContribution | null {
   const legacy = findLegacyToolDefinition(name);
   if (!legacy) return null;
+  const deferred = name === 'save_arch'
+    ? createDeferred('blockly-architecture', '保存架构图属于低频主代理工具')
+    : undefined;
   return {
     name: legacy.name,
     description: legacy.description || name,
     prompt: '', // legacy tools embed prompt in description
     inputSchema: legacy.input_schema || { type: 'object', properties: {} },
     annotations: { readOnly: false },
-    agentScope: legacy.agents?.length ? [...legacy.agents] : undefined,
+    agentScope: legacy.agents?.length ? normalizeAgentIdentifiers(legacy.agents) : undefined,
+    deferred,
   };
 }
 
@@ -303,7 +334,19 @@ This tool requires a code editor (VS Code, etc.) to be active.`,
 // Invoke Handlers
 // ---------------------------------------------------------------------------
 
-type InvokeHandler = (input: Record<string, unknown>, hostAPI: IExternalHostAPI) => Promise<ToolResultContent>;
+type InvokeHandler = (
+  input: Record<string, unknown>,
+  hostAPI: IExternalHostAPI,
+  invocationContext?: {
+    toolCallId?: string;
+    trace?: { turnId?: string };
+    host?: { getExtension<T>(id: string): T | undefined };
+  },
+) => Promise<ToolResultContent>;
+
+interface BlocklyToolProviderOverrides {
+  syncAbsHandler?: typeof syncAbsFileHandler;
+}
 
 function text(s: string): ToolResultContent {
   return { content: [{ type: 'text', text: s }] };
@@ -318,16 +361,25 @@ function fromToolResult(result: { is_error: boolean; content: string }): ToolRes
   return result.is_error ? error(result.content) : text(result.content);
 }
 
-const handlers: Record<string, InvokeHandler> = {
+function createHandlers(overrides?: BlocklyToolProviderOverrides): Record<string, InvokeHandler> {
+  const syncAbsHandler = overrides?.syncAbsHandler ?? syncAbsFileHandler;
+
+  return {
   // ---- syncAbs → syncAbsFileHandler ----
-  syncAbs: async (input, _hostAPI) => {
+  syncAbs: async (input, _hostAPI, invocationContext) => {
     const host = AilyHost.get();
     if (!host.absSync && !host.editor) return error('ABS editor is not available in this environment.');
-    const result = await syncAbsFileHandler(
+    const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
+    const result = await syncAbsHandler(
       { operation: input['action'] as 'export' | 'import' | 'status' },
       host.project as any,
       host.electron as any,
       host.absSync as any,
+      {
+        turnId: invocationContext?.trace?.turnId,
+        toolCallId: invocationContext?.toolCallId,
+        timelineWriter: editingTimeline,
+      },
     );
     return fromToolResult(result);
   },
@@ -368,15 +420,19 @@ const handlers: Record<string, InvokeHandler> = {
     const host = AilyHost.get();
     const result = await analyzeLibraryBlocksTool(
       host.project as any,
-      { libraryNames: [input['libraryId'] as string] },
+      {
+        libraryNames: [input['libraryId'] as string],
+        mode: (input['mode'] as 'auto' | 'readme_ref' | 'analysis' | undefined) ?? 'auto',
+      },
     );
     return fromToolResult(result);
   },
 
   // ---- project → getProjectInfoTool / newProjectTool / reloadProjectTool / switchBoardTool / getBoardParametersTool ----
-  project: async (input, _hostAPI) => {
+  project: async (input, _hostAPI, invocationContext) => {
     const host = AilyHost.get();
     if (!host.project) return error('Project management is not available.');
+    const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
 
     const action = input['action'] as string;
     switch (action) {
@@ -392,15 +448,40 @@ const handlers: Record<string, InvokeHandler> = {
       case 'switch_board': {
         const board = input['board'] as string | undefined;
         if (!board) return error('board is required for switch_board.');
-        return fromToolResult(await switchBoardTool(host.project as any, { board_name: board }));
+        return fromToolResult(await switchBoardTool(host.project as any, { board_name: board }, {
+          turnId: invocationContext?.trace?.turnId,
+          toolCallId: invocationContext?.toolCallId,
+          timelineWriter: editingTimeline,
+        }));
       }
       case 'get_board_config':
         return fromToolResult(await getBoardParametersTool.handler(host.project as any, { parameters: input['parameters'] as any }));
       case 'set_board_config': {
         const config = input['config'] as Record<string, unknown> | undefined;
-        if (!config) return error('config is required for set_board_config.');
-        await (host.project as any).setBoardConfig?.(config);
-        return text('Board configuration updated.');
+        const directConfigKey = input['config_key'] as string | undefined;
+        const directConfigValue = input['config_value'] as string | undefined;
+
+        let configKey = directConfigKey;
+        let configValue = directConfigValue;
+
+        if (!configKey && config && Object.keys(config).length === 1) {
+          const [entryKey, entryValue] = Object.entries(config)[0];
+          configKey = entryKey;
+          configValue = entryValue === undefined || entryValue === null ? '' : String(entryValue);
+        }
+
+        if (!configKey || configValue === undefined) {
+          return error('set_board_config requires config_key/config_value, or a single-entry config object.');
+        }
+
+        return fromToolResult(await setBoardConfigTool(host.project as any, host.builder as any, {
+          config_key: configKey,
+          config_value: configValue,
+        }, {
+          turnId: invocationContext?.trace?.turnId,
+          toolCallId: invocationContext?.toolCallId,
+          timelineWriter: editingTimeline,
+        }));
       }
       default: return error(`Unknown action: ${action}`);
     }
@@ -469,7 +550,8 @@ const handlers: Record<string, InvokeHandler> = {
   codeEditor: async (input, _hostAPI) => {
     return error(`Code editor action "${input['action']}" requires direct external tool integration.`);
   },
-};
+  };
+}
 
 // ---------------------------------------------------------------------------
 // External Tool Handlers (direct handler calls, no blockly-side runtime registry)
@@ -479,12 +561,25 @@ const handlers: Record<string, InvokeHandler> = {
  * Invoke a schematic/save_arch tool directly via its handler function.
  * Replaces the old Phase 1.3 bridge through the blockly runtime registry.
  */
-async function invokeExternalTool(toolName: string, input: Record<string, unknown>): Promise<ToolResultContent> {
+async function invokeExternalTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  invocationContext?: {
+    toolCallId?: string;
+    trace?: { turnId?: string };
+    host?: { getExtension<T>(id: string): T | undefined };
+  },
+): Promise<ToolResultContent> {
   const host = AilyHost.get();
+  const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
 
   // save_arch — uses fs/path/project, NOT connectionGraph
   if (toolName === 'save_arch') {
-    return invokeSaveArch(input, host);
+    return invokeSaveArch(input, host, {
+      turnId: invocationContext?.trace?.turnId,
+      toolCallId: invocationContext?.toolCallId,
+      timelineWriter: editingTimeline,
+    });
   }
 
   // All other external tools are schematic tools — require connectionGraph + project
@@ -492,6 +587,11 @@ async function invokeExternalTool(toolName: string, input: Record<string, unknow
   if (!host.project) return error('项目服务不可用');
   const cg = host.connectionGraph as any;
   const prj = host.project as any;
+  const schematicInvocationContext = {
+    turnId: invocationContext?.trace?.turnId,
+    toolCallId: invocationContext?.toolCallId,
+    timelineWriter: editingTimeline,
+  };
 
   try {
     let result: any;
@@ -512,7 +612,11 @@ async function invokeExternalTool(toolName: string, input: Record<string, unknow
         break;
       case 'validate_schematic':
         cg.emitNotice?.({ title: 'AI生成中', text: '正在验证并保存连线图...', state: 'doing', showProgress: false });
-        result = await validateSchematicHandler(cg, prj, input);
+        result = await validateSchematicHandler(cg, prj, input, schematicInvocationContext);
+        break;
+      case 'apply_schematic':
+        cg.emitNotice?.({ title: 'AI生成中', text: '正在验证并保存连线图...', state: 'doing', showProgress: false });
+        result = await applySchematicHandler(cg, prj, input, schematicInvocationContext);
         break;
       case 'get_current_schematic':
         result = await getCurrentSchematicHandler(cg, prj, input || {});
@@ -523,7 +627,7 @@ async function invokeExternalTool(toolName: string, input: Record<string, unknow
         break;
       case 'save_pinmap':
         cg.emitNotice?.({ title: 'AI生成中', text: '正在保存引脚配置...', state: 'doing', showProgress: false });
-        result = await savePinmapHandler(cg, prj, input as any);
+        result = await savePinmapHandler(cg, prj, input as any, schematicInvocationContext);
         break;
       default:
         return error(`Unknown external tool: ${toolName}`);
@@ -535,7 +639,15 @@ async function invokeExternalTool(toolName: string, input: Record<string, unknow
 }
 
 /** save_arch — inline implementation (from registered/project-tools.ts SaveArchTool) */
-async function invokeSaveArch(args: Record<string, unknown>, host: any): Promise<ToolResultContent> {
+async function invokeSaveArch(
+  args: Record<string, unknown>,
+  host: any,
+  invocationContext?: {
+    turnId?: string;
+    toolCallId?: string;
+    timelineWriter?: EditingTimelineWriter;
+  },
+): Promise<ToolResultContent> {
   if (!host?.fs || !host?.platform) return error('文件系统服务不可用');
 
   const code = String(args?.['code'] || '').trim();
@@ -547,10 +659,24 @@ async function invokeSaveArch(args: Record<string, unknown>, host: any): Promise
   const isOrphan = !projectPath || (rootPath && projectPath === rootPath);
   const separator = host.platform.pathSeparator || '/';
 
+  const writeArchFile = async (archPath: string) => {
+    const existedBefore = host.fs.existsSync(archPath);
+    const beforeContent = existedBefore ? host.fs.readFileSync(archPath, 'utf-8') : null;
+    host.fs.writeFileSync(archPath, content);
+    await invocationContext?.timelineWriter?.recordFileWrite({
+      turnId: invocationContext.turnId,
+      toolCallId: invocationContext.toolCallId,
+      filePath: archPath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
+  };
+
   try {
     if (projectPath && !isOrphan) {
       const archPath = projectPath + separator + 'arch.md';
-      host.fs.writeFileSync(archPath, content);
+      await writeArchFile(archPath);
       return text(`框架图已保存到 ${archPath}（已在对话中渲染，无需再次输出）`);
     } else if (isOrphan && rootPath) {
       const chatHistoryDir = rootPath + separator + '.chat_history';
@@ -558,7 +684,7 @@ async function invokeSaveArch(args: Record<string, unknown>, host: any): Promise
         host.fs.mkdirSync(chatHistoryDir, { recursive: true });
       }
       const archPath = chatHistoryDir + separator + 'arch.md';
-      host.fs.writeFileSync(archPath, content);
+      await writeArchFile(archPath);
       return text(`框架图已保存到 ${archPath}（已在对话中渲染，无需再次输出）`);
     } else {
       return error('无法确定保存路径：当前未打开项目');
@@ -577,8 +703,9 @@ async function invokeSaveArch(args: Record<string, unknown>, host: any): Promise
  *
  * Detects available capabilities and only contributes applicable tools.
  */
-export function createBlocklyToolProvider(hostAPI: IExternalHostAPI): IHostToolProvider {
+export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, overrides?: BlocklyToolProviderOverrides): IHostToolProvider {
   const contributions: IToolContribution[] = [];
+  const handlers = createHandlers(overrides);
 
   // ABS / Workspace tools (require blockly editor)
   if (hostAPI.blockly?.exportAbs) {
@@ -631,10 +758,14 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI): IHostToolP
       return contributions;
     },
 
-    async invoke(toolName: string, input: unknown, signal?: AbortSignal): Promise<ToolResultContent> {
+    async invoke(toolName: string, input: unknown, signal?: AbortSignal, invocationContext?: {
+      toolCallId?: string;
+      trace?: { turnId?: string };
+      host?: { getExtension<T>(id: string): T | undefined };
+    }): Promise<ToolResultContent> {
       // External tools call handlers directly; no blockly-side runtime registry remains here.
       if (LEGACY_HOST_EXTERNAL_TOOL_NAMES.includes(toolName as any)) {
-        return invokeExternalTool(toolName, input as Record<string, unknown>);
+        return invokeExternalTool(toolName, input as Record<string, unknown>, invocationContext);
       }
 
       const handler = handlers[toolName];
@@ -642,7 +773,7 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI): IHostToolP
         return error(`Unknown contributed tool: ${toolName}`);
       }
       try {
-        return await handler(input as Record<string, unknown>, hostAPI);
+        return await handler(input as Record<string, unknown>, hostAPI, invocationContext);
       } catch (err) {
         return error(`${toolName} error: ${err instanceof Error ? err.message : String(err)}`);
       }

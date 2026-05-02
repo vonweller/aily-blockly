@@ -161,15 +161,15 @@ export function markContentAsHistory(content: string): string {
     }
   );
 
-  // aily-approval: 标记为已解决状态以便历史恢复时以只读模式展示
+  // aily-confirmation: 标记为已解决状态以便历史恢复时以只读模式展示
   content = content.replace(
-    /```aily-approval\n([\s\S]*?)```/g,
-    (match, json) => {
+    /```(aily-confirmation)\n([\s\S]*?)```/g,
+    (match, lang, json) => {
       try {
         const data = JSON.parse(json.trim());
         if (data && typeof data === 'object') {
           data.resolved = true;
-          return '```aily-approval\n' + JSON.stringify(data) + '\n```';
+          return '```' + lang + '\n' + JSON.stringify(data) + '\n```';
         }
       } catch {}
       return match;

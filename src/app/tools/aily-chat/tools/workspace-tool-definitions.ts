@@ -1,3 +1,5 @@
+import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE } from '../core/agent-identifiers';
+
 export const WORKSPACE_TOOL_DEFINITIONS = [
     {
         name: 'read_file',
@@ -69,7 +71,7 @@ export const WORKSPACE_TOOL_DEFINITIONS = [
             },
             required: ['path']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
     {
         name: 'create_file',
@@ -99,7 +101,7 @@ export const WORKSPACE_TOOL_DEFINITIONS = [
             },
             required: ['path']
         },
-        agents: ["mainAgent"]
+        agents: [MAIN_AGENT_TYPE]
     },
     {
         name: 'create_folder',
@@ -119,7 +121,7 @@ export const WORKSPACE_TOOL_DEFINITIONS = [
             },
             required: ['path']
         },
-        agents: ["mainAgent"]
+        agents: [MAIN_AGENT_TYPE]
     },
     {
         name: 'edit_file',
@@ -229,7 +231,7 @@ editFileTool({
             },
             required: ['path']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
     {
         name: 'replace_string_in_file',
@@ -260,7 +262,7 @@ editFileTool({
             },
             required: ['path', 'old_string', 'new_string']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
     {
         name: 'multi_replace_string_in_file',
@@ -292,7 +294,7 @@ editFileTool({
             },
             required: ['replacements']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
     {
         name: 'delete_file',
@@ -312,7 +314,7 @@ editFileTool({
             },
             required: ['path']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
     {
         name: 'delete_folder',
@@ -337,6 +339,6 @@ editFileTool({
             },
             required: ['path']
         },
-        agents: ["mainAgent", "schematicAgent"]
+        agents: [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE]
     },
 ];

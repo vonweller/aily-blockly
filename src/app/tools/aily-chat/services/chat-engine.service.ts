@@ -11,7 +11,7 @@
  * - 订阅管理（项目路径、登录状态、配置变更等）
  */
 
-import { Injectable, ElementRef, NgZone } from '@angular/core';
+import { Injectable, ElementRef, NgZone, inject } from '@angular/core';
 import { Subscription, skip, distinctUntilChanged, combineLatest } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -20,9 +20,11 @@ import { ChatService, ChatTextOptions, ModelConfig } from './chat.service';
 import { McpService } from './mcp.service';
 import { AilyChatConfigService } from './aily-chat-config.service';
 import { ChatHistoryService } from './chat-history.service';
+import { MAIN_AGENT_TYPE } from '../core/agent-identifiers';
 import { RepetitionDetectionService } from './repetition-detection.service';
 import { ContextBudgetService } from './context-budget.service';
 import { ContextBudgetViewService } from './context-budget-view.service';
+import { ChatViewService } from './chat-view.service';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
@@ -47,35 +49,56 @@ import { ChatAiNoticeCoordinator } from '../helpers/chat-ai-notice-coordinator';
 import { ChatExternalInputCoordinator } from '../helpers/chat-external-input-coordinator';
 import { ChatSwitchCoordinator } from '../helpers/chat-switch-coordinator';
 import { ChatSubscriptionCoordinator } from '../helpers/chat-subscription-coordinator';
-import { ChatTaskActionCoordinator } from '../helpers/chat-task-action-coordinator';
+import { ChatTaskActionCoordinator, type ChatTaskActionEvent } from '../helpers/chat-task-action-coordinator';
 import { ChatViewAdapter } from './chat-view-adapter';
-import { initBundledAgents } from '../agents/bundled-agents';
 import { ChatPartStore } from '../core/chat-part-store';
 import type { IChatContext } from '../core/chat-context';
+import type { DialogTurnContext } from '../core/user-turn-action-target';
 import { EditActionsHelper } from '../helpers/edit-actions.helper';
 import { UserInteractionHelper } from '../helpers/user-interaction.helper';
+import { type ChatDialogViewItem } from '../helpers/chat-dialog-view-items';
+import {
+  applyHostResponseVoteToState,
+  createLiveHostRequestGraphSource,
+  LiveHostRequestGraphCache,
+  type HostRequestModel,
+  type HostResponseProjection,
+  type HostResponseVoteDirection,
+  type HostTurnResponseState,
+} from '../helpers/host-turn-response-state';
 
 @Injectable()
 export class ChatEngineService implements IChatContext {
+  private readonly chatViewState = inject(ChatViewService);
 
   // ==================== Part-based 消息模型（Phase 1） ====================
   /** Part 存储：与 string-based list[] 并行工作，供 lex-stream 路径使用 */
   readonly partStore = new ChatPartStore();
+  private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
+  private readonly messageDisplayContext = this.createMessageDisplayContext();
+  private readonly userInteractionContext = this.createUserInteractionContext();
+  private readonly editActionsContext = this.createEditActionsContext();
+  private readonly sessionLifecycleContext = this.createSessionLifecycleContext();
+  private readonly lexOwnerContext = this.createLexOwnerContext();
+  private readonly titleCoordinatorContext = this.createTitleCoordinatorContext();
+  private readonly stopCoordinatorContext = this.createStopCoordinatorContext();
+  private readonly switchCoordinatorContext = this.createSwitchCoordinatorContext();
+  private readonly conversationActionCoordinatorContext = this.createConversationActionCoordinatorContext();
 
   // ==================== 辅助类 ====================
-  readonly msg = new MessageDisplayHelper(this);
-  readonly session = new SessionLifecycleHelper(this);
-  readonly lexStream = new LexOwnerFacade(this);
-  readonly editActions = new EditActionsHelper(this);
-  readonly interaction = new UserInteractionHelper(this);
-  private readonly titleCoordinator = new ChatTitleCoordinator(this, lexGenerateTitle);
+  readonly msg = new MessageDisplayHelper(this.messageDisplayContext);
+  readonly session = new SessionLifecycleHelper(this.sessionLifecycleContext);
+  readonly lexStream = new LexOwnerFacade(this.lexOwnerContext);
+  readonly editActions = new EditActionsHelper(this.editActionsContext);
+  readonly interaction = new UserInteractionHelper(this.userInteractionContext);
+  private readonly titleCoordinator = new ChatTitleCoordinator(this.titleCoordinatorContext, lexGenerateTitle);
   private readonly sendCoordinator = new ChatSendCoordinator(
     this,
     (content) => this.titleCoordinator.generate(content),
     () => this.resourceManager.getResourcesText(),
   );
-  private readonly stopCoordinator = new ChatStopCoordinator(this);
-  private readonly conversationActionCoordinator = new ChatConversationActionCoordinator(this);
+  private readonly stopCoordinator = new ChatStopCoordinator(this.stopCoordinatorContext);
+  private readonly conversationActionCoordinator = new ChatConversationActionCoordinator(this.conversationActionCoordinatorContext);
   private readonly aiNoticeCoordinator = new ChatAiNoticeCoordinator({
     stop: () => this.stop(),
     updateNotice: (config) => {
@@ -85,7 +108,7 @@ export class ChatEngineService implements IChatContext {
       AilyHost.get().notice?.clear();
     },
   });
-  private readonly switchCoordinator = new ChatSwitchCoordinator(this);
+  private readonly switchCoordinator = new ChatSwitchCoordinator(this.switchCoordinatorContext);
   private readonly subscriptionCoordinator = new ChatSubscriptionCoordinator(this, {
     receiveTextFromExternal: (text, options) => this.receiveTextFromExternal(text, options),
     showAiWritingNotice: (isWaiting) => this.showAiWritingNotice(isWaiting),
@@ -115,6 +138,7 @@ export class ChatEngineService implements IChatContext {
     continueConversation: () => this.continueConversation(),
     retryLastAction: () => this.retryLastAction(),
     newChat: () => this.newChat(),
+    voteResponse: (target, vote) => this.voteResponse(target, vote),
     warnUnknownAction: (action) => {
       console.warn('未知的任务操作:', action);
     },
@@ -136,7 +160,7 @@ export class ChatEngineService implements IChatContext {
 
   // ==================== 半公共状态 ====================
   sessionAllowedPaths: string[] = [];
-  currentMessageSource: string = 'mainAgent';
+  currentMessageSource: string = MAIN_AGENT_TYPE;
   toolCallStates: { [key: string]: string } = {};
 
   // ==================== 内部状态（helper 可访问） ====================
@@ -147,6 +171,68 @@ export class ChatEngineService implements IChatContext {
   get conversationMessages(): any[] {
       return this.lexStream.conversation.messages();
   }
+
+  get dialogItems(): ChatDialogViewItem[] {
+    return this.hostResponseProjection
+      ? [...this.hostResponseProjection.dialogItems]
+      : [];
+  }
+
+  get hostResponseProjection(): HostResponseProjection | null {
+    return this.getHostResponseState();
+  }
+
+  private getHostResponseState(): HostTurnResponseState | null {
+    const snapshot = this.lexStream.session.snapshot();
+    const liveSource = createLiveHostRequestGraphSource(
+      () => snapshot,
+      this.lexStream.turnResponses,
+      this.lexStream.turns.currentId() ?? null,
+      this.editCheckpointService.getDisabledRequestBoundaries().map(snapshot => snapshot.turnId),
+    );
+
+    return this.liveHostRequestGraphCache.getState(liveSource);
+  }
+
+  get hostRequestModel(): HostRequestModel | null {
+    const snapshot = this.lexStream.session.snapshot();
+    const liveSource = createLiveHostRequestGraphSource(
+      () => snapshot,
+      this.lexStream.turnResponses,
+      this.lexStream.turns.currentId() ?? null,
+      this.editCheckpointService.getDisabledRequestBoundaries().map(snapshot => snapshot.turnId),
+    );
+
+    return this.liveHostRequestGraphCache.getRequestModel(liveSource);
+  }
+
+  clearSharedHostRequestGraph(): void {
+    this.liveHostRequestGraphCache.clear();
+  }
+
+  replaceSharedHostProjectionState(state: HostTurnResponseState | null): void {
+    this.liveHostRequestGraphCache.replaceState(state);
+  }
+
+  private voteResponse(target: DialogTurnContext | null | undefined, vote: HostResponseVoteDirection): void {
+    const turnId = target?.turnId;
+    if (!turnId) {
+      return;
+    }
+
+    const currentState = this.getHostResponseState();
+    const nextState = applyHostResponseVoteToState(currentState, turnId, vote);
+    if (nextState === currentState) {
+      return;
+    }
+
+    this.replaceSharedHostProjectionState(nextState);
+    if (this.sessionId) {
+      this.chatHistoryService.markDirty(this.sessionId);
+    }
+    this.triggerSyncDetectChanges();
+  }
+
   toolCallingIteration = 0;
   activeToolExecutions = 0;
   currentStatelessMode = false;
@@ -158,8 +244,8 @@ export class ChatEngineService implements IChatContext {
   private _isWaiting = false;
   mcpInitialized = false;
   lastStopReason = '';
-  /** 会话级：已激活的 deferred 工具名称集合（通过 search_available_tools 加载） */
-  activatedDeferredTools = new Set<string>();
+  /** 旧聊天链路会话级：已激活的 deferred 工具名称集合（通过 search_available_tools 加载） */
+  legacyActivatedDeferredTools = new Set<string>();
 
   /** 延迟切换：活跃请求期间暂存待切换的模型/模式，完成后自动应用 */
   _pendingModelSwitch: ModelConfig | null = null;
@@ -187,6 +273,49 @@ export class ChatEngineService implements IChatContext {
 
   get currentModelName() { return this.chatService.currentModel?.name; }
 
+  get currentReasoningEffort() { return this.chatService.currentModel?.reasoningEffort; }
+
+  get currentReasoningEffortLabel(): string {
+    return this.ailyChatConfigService.getReasoningEffortLabel(this.currentReasoningEffort);
+  }
+
+  get currentReasoningEffortDisplayLabel(): string {
+    return this.ailyChatConfigService.getReasoningEffortDisplayLabel(
+      this.ailyChatConfigService.resolveModelReasoningEffort(this.chatService.currentModel, this.currentReasoningEffort),
+    );
+  }
+
+  get currentModelReasoningEfforts() {
+    return this.ailyChatConfigService.getSupportedReasoningEfforts(this.chatService.currentModel);
+  }
+
+  get currentModelChipLabel(): string {
+    const modelName = this.currentModelName;
+    if (!modelName) {
+      return '';
+    }
+
+    if (this.currentModelReasoningEfforts.length > 0) {
+      return `${modelName} · ${this.currentReasoningEffortDisplayLabel}`;
+    }
+
+    return modelName;
+  }
+
+  get currentModelTooltip(): string {
+    return this.ailyChatConfigService.buildModelTooltip(this.chatService.currentModel, {
+      maxContextTokens: this.contextBudgetSnapshot?.maxContextTokens,
+    });
+  }
+
+  get currentModelBillingLabel(): string | undefined {
+    return this.ailyChatConfigService.getModelBillingLabel(this.chatService.currentModel);
+  }
+
+  syncRegisteredAgentNames(agentNames: readonly string[]): void {
+    this.chatViewState.setAvailableAgents(agentNames);
+  }
+
   get isWaiting() { return this._isWaiting; }
   set isWaiting(value: boolean) {
     this._isWaiting = value;
@@ -206,6 +335,259 @@ export class ChatEngineService implements IChatContext {
 
   get contextBudgetSnapshot(): ContextBudgetSnapshot | null {
     return this.contextBudgetViewService?.getSnapshot() ?? null;
+  }
+
+  private createMessageDisplayContext(): ConstructorParameters<typeof MessageDisplayHelper>[0] {
+    const thisEngine = this;
+
+    return {
+      get list() { return thisEngine.list; },
+      set list(value) { thisEngine.list = value; },
+      get partStore() { return thisEngine.partStore; },
+      get viewAdapter() { return thisEngine.viewAdapter; },
+      get scrollManager() { return thisEngine.scrollManager; },
+      invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
+      triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
+      get sessionId() { return thisEngine.sessionId; },
+      get chatHistoryService() { return thisEngine.chatHistoryService; },
+      get currentModelName() { return thisEngine.currentModelName; },
+      get currentMessageSource() { return thisEngine.currentMessageSource; },
+      get ngZone() { return thisEngine.ngZone; },
+      get toolCallStates() { return thisEngine.toolCallStates; },
+    };
+  }
+
+  private createUserInteractionContext(): ConstructorParameters<typeof UserInteractionHelper>[0] {
+    const thisEngine = this;
+
+    return {
+      get lexStream() { return thisEngine.lexStream; },
+      get isLoggedIn() { return thisEngine.isLoggedIn; },
+      getCurrentProjectPath: () => thisEngine.getCurrentProjectPath(),
+      get sessionId() { return thisEngine.sessionId; },
+      get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+    };
+  }
+
+  private createEditActionsContext(): ConstructorParameters<typeof EditActionsHelper>[0] {
+    const thisEngine = this;
+
+    return {
+      get list() { return thisEngine.list; },
+      set list(value) { thisEngine.list = value; },
+      get partStore() { return thisEngine.partStore; },
+      get viewAdapter() { return thisEngine.viewAdapter; },
+      get scrollManager() { return thisEngine.scrollManager; },
+      invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
+      triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
+      get sessionId() { return thisEngine.sessionId; },
+      get chatHistoryService() { return thisEngine.chatHistoryService; },
+      get currentModelName() { return thisEngine.currentModelName; },
+      get currentMessageSource() { return thisEngine.currentMessageSource; },
+      get ngZone() { return thisEngine.ngZone; },
+      get isWaiting() { return thisEngine.isWaiting; },
+      get isCompleted() { return thisEngine.isCompleted; },
+      set isCompleted(value) { thisEngine.isCompleted = value; },
+      get isCancelled() { return thisEngine.isCancelled; },
+      set isCancelled(value) { thisEngine.isCancelled = value; },
+      get pendingEditFeedback() { return thisEngine.pendingEditFeedback; },
+      set pendingEditFeedback(value) { thisEngine.pendingEditFeedback = value; },
+      get sessionAllowedPaths() { return thisEngine.sessionAllowedPaths; },
+      get conversationMessages() { return thisEngine.conversationMessages; },
+      getCurrentProjectPath: () => this.getCurrentProjectPath(),
+      get absAutoSyncService() { return thisEngine.absAutoSyncService; },
+      get editCheckpointService() { return thisEngine.editCheckpointService; },
+      get resourceManager() { return thisEngine.resourceManager; },
+      get message() { return thisEngine.message; },
+      get lexStream() { return thisEngine.lexStream; },
+      get session() { return thisEngine.session; },
+      replaceSharedHostProjectionState: (state) => thisEngine.replaceSharedHostProjectionState(state),
+      send: (sender, content, clear) => this.send(sender, content, clear),
+    };
+  }
+
+  private createSessionLifecycleContext(): ConstructorParameters<typeof SessionLifecycleHelper>[0] {
+    const thisEngine = this;
+
+    return {
+      get list() { return thisEngine.list; },
+      set list(value) { thisEngine.list = value; },
+      get partStore() { return thisEngine.partStore; },
+      get viewAdapter() { return thisEngine.viewAdapter; },
+      get scrollManager() { return thisEngine.scrollManager; },
+      get menuManager() { return thisEngine.menuManager; },
+      invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
+      triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
+      get sessionId() { return thisEngine.sessionId; },
+      get chatHistoryService() { return thisEngine.chatHistoryService; },
+      get currentModelName() { return thisEngine.currentModelName; },
+      get currentMessageSource() { return thisEngine.currentMessageSource; },
+      get ngZone() { return thisEngine.ngZone; },
+      get isWaiting() { return thisEngine.isWaiting; },
+      set isWaiting(value) { thisEngine.isWaiting = value; },
+      get isSessionStarting() { return thisEngine.isSessionStarting; },
+      set isSessionStarting(value) { thisEngine.isSessionStarting = value; },
+      get isCancelled() { return thisEngine.isCancelled; },
+      set isCancelled(value) { thisEngine.isCancelled = value; },
+      get toolCallingIteration() { return thisEngine.toolCallingIteration; },
+      set toolCallingIteration(value) { thisEngine.toolCallingIteration = value; },
+      get mcpInitialized() { return thisEngine.mcpInitialized; },
+      set mcpInitialized(value) { thisEngine.mcpInitialized = value; },
+      get isCompleted() { return thisEngine.isCompleted; },
+      set isCompleted(value) { thisEngine.isCompleted = value; },
+      get messageSubscription() { return thisEngine.messageSubscription; },
+      set messageSubscription(value) { thisEngine.messageSubscription = value; },
+      get activeToolExecutions() { return thisEngine.activeToolExecutions; },
+      set activeToolExecutions(value) { thisEngine.activeToolExecutions = value; },
+      get hasInitializedForThisLogin() { return thisEngine.hasInitializedForThisLogin; },
+      set hasInitializedForThisLogin(value) { thisEngine.hasInitializedForThisLogin = value; },
+      get legacyActivatedDeferredTools() { return thisEngine.legacyActivatedDeferredTools; },
+      get sessionTitle() { return thisEngine.sessionTitle; },
+      get sessionAllowedPaths() { return thisEngine.sessionAllowedPaths; },
+      set sessionAllowedPaths(value) { thisEngine.sessionAllowedPaths = value; },
+      get conversationMessages() { return thisEngine.conversationMessages; },
+      get chatService() { return thisEngine.chatService; },
+      get currentMode() { return thisEngine.currentMode; },
+      get currentModel() { return thisEngine.currentModel; },
+      get prjPath() { return thisEngine.prjPath; },
+      get prjRootPath() { return thisEngine.prjRootPath; },
+      get contextBudgetService() { return thisEngine.contextBudgetService; },
+      get repetitionDetectionService() { return thisEngine.repetitionDetectionService; },
+      get editCheckpointService() { return thisEngine.editCheckpointService; },
+      get mcpService() { return thisEngine.mcpService; },
+      get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      get resourceManager() { return thisEngine.resourceManager; },
+      get message() { return thisEngine.message; },
+      get translate() { return thisEngine.translate; },
+      get interaction() { return thisEngine.interaction; },
+      get lexStream() { return thisEngine.lexStream; },
+      send: (sender, content, clear) => this.send(sender, content, clear),
+      get session() { return thisEngine.session; },
+      get hostRequestModel() { return thisEngine.hostRequestModel; },
+      get hostResponseProjection() { return thisEngine.hostResponseProjection; },
+      replaceSharedHostProjectionState: (state) => this.replaceSharedHostProjectionState(state),
+    };
+  }
+
+  private createLexOwnerContext(): ConstructorParameters<typeof LexOwnerFacade>[0] {
+    const thisEngine = this;
+
+    return {
+      get prjPath() { return thisEngine.prjPath; },
+      get prjRootPath() { return thisEngine.prjRootPath; },
+      get currentModel() { return thisEngine.currentModel; },
+      get sessionId() { return thisEngine.sessionId; },
+      get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      get mcpService() { return thisEngine.mcpService; },
+      handleToolApproval: request => this.handleToolApproval(request),
+      get lexStream() { return thisEngine.lexStream; },
+      get editCheckpointService() { return thisEngine.editCheckpointService; },
+      get ngZone() { return thisEngine.ngZone; },
+      get message() { return thisEngine.message; },
+      get list() { return thisEngine.list; },
+      set list(value) { thisEngine.list = value; },
+      get partStore() { return thisEngine.partStore; },
+      get viewAdapter() { return thisEngine.viewAdapter; },
+      get scrollManager() { return thisEngine.scrollManager; },
+      invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
+      get inputValue() { return thisEngine.inputValue; },
+      set inputValue(value) { thisEngine.inputValue = value; },
+      triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
+      get chatHistoryService() { return thisEngine.chatHistoryService; },
+      get currentModelName() { return thisEngine.currentModelName; },
+      get currentMessageSource() { return thisEngine.currentMessageSource; },
+      set currentMessageSource(value) { thisEngine.currentMessageSource = value; },
+      get toolCallingIteration() { return thisEngine.toolCallingIteration; },
+      set toolCallingIteration(value) { thisEngine.toolCallingIteration = value; },
+      get contextBudgetService() { return thisEngine.contextBudgetService; },
+      get isWaiting() { return thisEngine.isWaiting; },
+      set isWaiting(value) { thisEngine.isWaiting = value; },
+      get isCompleted() { return thisEngine.isCompleted; },
+      set isCompleted(value) { thisEngine.isCompleted = value; },
+      get session() { return thisEngine.session; },
+      applyPendingSwitch: () => this.applyPendingSwitch(),
+      get repetitionDetectionService() { return thisEngine.repetitionDetectionService; },
+      get editActions() { return thisEngine.editActions; },
+      get isCancelled() { return thisEngine.isCancelled; },
+      set isCancelled(value) { thisEngine.isCancelled = value; },
+      get activeToolExecutions() { return thisEngine.activeToolExecutions; },
+      set activeToolExecutions(value) { thisEngine.activeToolExecutions = value; },
+      get currentStatelessMode() { return thisEngine.currentStatelessMode; },
+      set currentStatelessMode(value) { thisEngine.currentStatelessMode = value; },
+    };
+  }
+
+  private createTitleCoordinatorContext(): ConstructorParameters<typeof ChatTitleCoordinator>[0] {
+    const thisEngine = this;
+
+    return {
+      get sessionId() { return thisEngine.sessionId; },
+      get sessionTitle() { return thisEngine.sessionTitle; },
+      get chatService() { return thisEngine.chatService; },
+      get chatHistoryService() { return thisEngine.chatHistoryService; },
+      get currentModel() { return thisEngine.currentModel; },
+      get session() { return thisEngine.session; },
+      get lexStream() { return thisEngine.lexStream; },
+    };
+  }
+
+  private createStopCoordinatorContext(): ConstructorParameters<typeof ChatStopCoordinator>[0] {
+    const thisEngine = this;
+
+    return {
+      get isCancelled() { return thisEngine.isCancelled; },
+      set isCancelled(value) { thisEngine.isCancelled = value; },
+      get messageSubscription() { return thisEngine.messageSubscription; },
+      set messageSubscription(value) { thisEngine.messageSubscription = value; },
+      get pendingUserInput() { return thisEngine.pendingUserInput; },
+      set pendingUserInput(value) { thisEngine.pendingUserInput = value; },
+      get activeToolExecutions() { return thisEngine.activeToolExecutions; },
+      set activeToolExecutions(value) { thisEngine.activeToolExecutions = value; },
+      get currentStatelessMode() { return thisEngine.currentStatelessMode; },
+      set currentStatelessMode(value) { thisEngine.currentStatelessMode = value; },
+      get isWaiting() { return thisEngine.isWaiting; },
+      set isWaiting(value) { thisEngine.isWaiting = value; },
+      get isCompleted() { return thisEngine.isCompleted; },
+      set isCompleted(value) { thisEngine.isCompleted = value; },
+      get lexStream() { return thisEngine.lexStream; },
+      get session() { return thisEngine.session; },
+      applyPendingSwitch: () => this.applyPendingSwitch(),
+      get contextBudgetService() { return thisEngine.contextBudgetService; },
+      get editCheckpointService() { return thisEngine.editCheckpointService; },
+      get conversationMessages() { return thisEngine.conversationMessages; },
+      get viewAdapter() { return thisEngine.viewAdapter; },
+    };
+  }
+
+  private createSwitchCoordinatorContext(): ConstructorParameters<typeof ChatSwitchCoordinator>[0] {
+    const thisEngine = this;
+
+    return {
+      get isWaiting() { return thisEngine.isWaiting; },
+      get _pendingModelSwitch() { return thisEngine._pendingModelSwitch; },
+      set _pendingModelSwitch(value) { thisEngine._pendingModelSwitch = value; },
+      get _pendingModeSwitch() { return thisEngine._pendingModeSwitch; },
+      set _pendingModeSwitch(value) { thisEngine._pendingModeSwitch = value; },
+      get currentModel() { return thisEngine.currentModel; },
+      get currentMode() { return thisEngine.currentMode; },
+      get chatService() { return thisEngine.chatService; },
+      get conversationMessages() { return thisEngine.conversationMessages; },
+      get contextBudgetService() { return thisEngine.contextBudgetService; },
+      get message() { return thisEngine.message; },
+      get lexStream() { return thisEngine.lexStream; },
+    };
+  }
+
+  private createConversationActionCoordinatorContext(): ConstructorParameters<typeof ChatConversationActionCoordinator>[0] {
+    const thisEngine = this;
+
+    return {
+      get isWaiting() { return thisEngine.isWaiting; },
+      get sessionId() { return thisEngine.sessionId; },
+      send: (sender, content, clear) => this.send(sender, content, clear),
+      get message() { return thisEngine.message; },
+      get scrollManager() { return thisEngine.scrollManager; },
+    };
   }
 
   // ==================== 构造函数 ====================
@@ -241,11 +623,14 @@ export class ChatEngineService implements IChatContext {
     );
 
     this.chatHistoryService.setLiveSessionProvider(() => this.session.buildHostSessionRecord());
+
+    // H1: wire the cache as the host stream listener for incremental turn events.
+    this.lexStream.setHostStreamListener(this.liveHostRequestGraphCache);
   }
 
   /** 注册 OnPush CD 回调（由 component 调用 cdr.markForCheck） */
   setCdCallback(cb: () => void): void {
-    (this.viewAdapter as any).cdCallback = cb;
+    this.viewAdapter.setCdCallback(cb);
   }
 
   /**
@@ -256,6 +641,10 @@ export class ChatEngineService implements IChatContext {
 
   setSyncDetectChanges(cb: () => void): void {
     this._syncDetectChanges = cb;
+  }
+
+  invalidateHostRequestGraph(): void {
+    this.liveHostRequestGraphCache.markDirty();
   }
 
   /** 同步触发变更检测（zone 安全） */
@@ -290,9 +679,6 @@ export class ChatEngineService implements IChatContext {
     // 注册 ask_user 回调：在聊天界面显示全部问题并等待用户回答
     registerAskUserCallback((questions) => this.interaction.handleAskUser(questions));
 
-    // 从打包的 .agent.md 加载子代理定义（幂等）
-    initBundledAgents();
-
     // 预加载 aily-lex 模块
     this.lexStream.agent.loadModule().then(ok => {
       if (ok) { console.log('[ChatEngine] aily-lex 模块预加载成功'); }
@@ -306,6 +692,7 @@ export class ChatEngineService implements IChatContext {
    * 引擎销毁 — 由 Component 的 ngOnDestroy 调用
    */
   destroy(): void {
+    this.liveHostRequestGraphCache.clear();
     this.viewAdapter.destroy();
     this.lexStream.agent.dispose();
     this.partStore.destroy();
@@ -395,16 +782,28 @@ Do not create non-existent boards and libraries.
   getCurrentTools(): any[] { return this.lexStream.runtime.tools(); }
   getCurrentLLMConfig(): any { return this.lexStream.runtime.llmConfig(); }
 
+  async compactConversation(): Promise<boolean> {
+    const changed = await this.lexStream.compactConversation();
+    if (changed) {
+      this.invalidateHostRequestGraph();
+      this.triggerSyncDetectChanges();
+    }
+    return changed;
+  }
+
   // ==================== 消息发送 ====================
 
   async send(sender: string, content: string, clear: boolean = true): Promise<void> {
     const prepared = this.sendCoordinator.prepareSend(sender, content);
     if (!prepared) return;
 
-    this.lexStream.turn.begin(prepared.llmText);
-    if (clear) { this.inputValue = ''; }
+    this.lexStream.turn.begin(prepared.llmText, prepared.displayText, prepared.requestMetadata);
+    if (clear) {
+      this.inputValue = '';
+      this.triggerSyncDetectChanges();
+    }
 
-    await this.lexStream.turn.run(prepared.llmText);
+    await this.lexStream.turn.run(prepared.llmText, prepared.displayText);
   }
 
   resetChat(): Promise<void> { return this.session.startSession(); }
@@ -425,6 +824,10 @@ Do not create non-existent boards and libraries.
     await this.switchCoordinator.switchToMode(mode);
   }
 
+  async switchToReasoningEffort(reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>): Promise<void> {
+    await this.switchCoordinator.switchToReasoningEffort(reasoningEffort);
+  }
+
   /**
    * 应用延迟的模型/模式切换。
    * 在 turn 完成（finalizeStatelessTurn / stream complete / stop）后调用。
@@ -435,8 +838,8 @@ Do not create non-existent boards and libraries.
 
   // ==================== 任务操作 ====================
 
-  private handleTaskAction(event: Event): void {
-    this.taskActionCoordinator.handle((event as CustomEvent).detail || {});
+  private handleTaskAction(event: ChatTaskActionEvent): void {
+    this.taskActionCoordinator.handle(event.detail);
   }
 
   async continueConversation(): Promise<void> {
@@ -449,18 +852,16 @@ Do not create non-existent boards and libraries.
 
   // ==================== 委托到 EditActionsHelper ====================
 
-  editAndResendFromTurn(listIndex: number, newText: string, resources: ResourceItem[]): Promise<void> {
-    return this.editActions.editAndResendFromTurn(listIndex, newText, resources);
+  editAndResendFromTurn(target: DialogTurnContext, newText: string, resources: ResourceItem[]): Promise<void> {
+    return this.editActions.editAndResendFromTurn(target, newText, resources);
   }
 
   // ==================== 委托到 UserInteractionHelper ====================
 
   handleToolApproval(
-    toolName: string,
-    input: Record<string, unknown>,
-    reason: string,
+    request: import('../helpers/tool-approval-ui').ToolApprovalRequest,
   ): Promise<{ approved: true } | { approved: false; reason?: string }> {
-    return this.interaction.handleToolApproval(toolName, input, reason);
+    return this.interaction.handleToolApproval(request);
   }
 
   resolveAskUserResponse(answer: string, wasFreeform: boolean): void {
@@ -471,7 +872,7 @@ Do not create non-existent boards and libraries.
     this.interaction.skipAskUserResponse();
   }
 
-  approveToolExecution(toolCallId: string, scope: 'once' | 'session' | 'session-safe' = 'once'): void {
+  approveToolExecution(toolCallId: string, scope: 'once' | 'session' | 'workspace' | 'session-all-terminal' | 'session-safe' = 'once'): void {
     this.interaction.approveToolExecution(toolCallId, scope);
   }
 

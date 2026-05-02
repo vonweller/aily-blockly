@@ -22,6 +22,7 @@ import type { IPromptProfile, IPromptSection, PromptContext } from 'aily-lex/typ
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { SkillRegistry } from './skill-registry';
 import { AilyHost } from './host';
+import { buildBlocklyWorkspaceIdentityLines } from './blockly-environment-context';
 
 // ---------------------------------------------------------------------------
 // Identity Override — aily-blockly specific
@@ -76,7 +77,7 @@ Reading & editing the program:
 - Use \`analyzeLibrary\` to inspect what blocks a library provides.
 
 Tool usage efficiency:
-- The environment section above already contains the project path, board, and installed library list. Do NOT call any tool just to obtain this basic information.
+- The environment section above already contains the project path, board, installed library list, and available readme_ai.md paths. Do NOT call any tool just to obtain this basic information.
 - Do not re-fetch information you already obtained in a previous turn. Summarize key findings at the end of each response to preserve context across turns.`;
 
 // ---------------------------------------------------------------------------
@@ -127,36 +128,10 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
     BLOCKLY_SKILLS_LISTING_SECTION,
   ],
   cacheBreakpoint: PromptLayer.HostDomain,
-  getContext: () => {
+  getContext: async () => {
     const host = AilyHost.get();
-    const envExtra: string[] = [];
+    const envExtra = await buildBlocklyWorkspaceIdentityLines(host);
     const fileContext = collectPromptFileContext(host);
-
-    // Project info — injected so LLM doesn't need to call get_project_info for basic info
-    const project = host.project;
-    if (project?.currentProjectPath) {
-      envExtra.push(`Project path: ${project.currentProjectPath}`);
-    }
-    if (project?.projectName) {
-      envExtra.push(`Project: ${project.projectName}`);
-    }
-    if (project?.currentBoard) {
-      envExtra.push(`Current board: ${project.currentBoard}`);
-    }
-
-    // Installed libraries — lightweight summary (names only)
-    try {
-      const pkgJson = (project as any)?.getPackageJsonSync?.() ?? (window as any)['prjService']?.project?.packageJson;
-      const deps = pkgJson?.dependencies;
-      if (deps && typeof deps === 'object') {
-        const libNames = Object.keys(deps)
-          .filter(k => k.startsWith('@aily-project/lib-'))
-          .map(k => k.replace('@aily-project/', ''));
-        if (libNames.length > 0) {
-          envExtra.push(`Installed libraries (${libNames.length}): ${libNames.join(', ')}`);
-        }
-      }
-    } catch { /* ignore — library listing is best-effort */ }
 
     // Shell hint — platform-specific
     const platformType = host.platform?.type || 'unknown';

@@ -1,11 +1,13 @@
 import type { ChatPartStore } from '../core/chat-part-store';
-import type { ChatMessage } from '../core/chat-types';
 import type { ModelConfig } from '../services/chat.service';
 import type { ContextBudgetSnapshot } from '../services/context-budget-snapshot';
 import type { IMenuItem } from '../../../configs/menu.config';
+import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { HostRequestModel } from './host-turn-response-state';
 
 interface ChatEngineViewLike {
-  readonly list: ChatMessage[];
+  readonly hostRequestModel: HostRequestModel | null;
+  readonly dialogItems: readonly ChatDialogViewItem[];
   readonly partStore: ChatPartStore;
   readonly isWaiting: boolean;
   readonly isCompleted: boolean;
@@ -16,6 +18,13 @@ interface ChatEngineViewLike {
   readonly currentMode: string;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
+  readonly currentReasoningEffort: string | undefined;
+  readonly currentReasoningEffortLabel: string;
+  readonly currentReasoningEffortDisplayLabel: string;
+  readonly currentModelReasoningEfforts: readonly string[];
+  readonly currentModelChipLabel: string;
+  readonly currentModelTooltip: string;
+  readonly currentModelBillingLabel: string | undefined;
   readonly contextBudget$: unknown;
   readonly contextBudgetSnapshot: ContextBudgetSnapshot | null;
   readonly debug: boolean;
@@ -33,6 +42,8 @@ interface ChatViewStateLike {
   readonly agentSuggestions: readonly string[];
   readonly modeMenuItems: IMenuItem[];
   readonly modelMenuItems: IMenuItem[];
+  readonly currentReasoningEffortLabel: string;
+  readonly hasReasoningEffortOptions: boolean;
 }
 
 /**
@@ -49,8 +60,19 @@ export class ChatComponentViewModel {
     },
   ) {}
 
-  get list(): ChatMessage[] {
-    return this.deps.engine.list;
+  get hostRequestModel(): HostRequestModel | null {
+    return this.deps.engine.hostRequestModel;
+  }
+
+  get hasConversationContent(): boolean {
+    return this.dialogItems.length > 0
+      || this.hostRequestModel !== null
+      || this.hostRequestModel?.response?.response !== null
+      || this.hostRequestModel?.response?.entireResponse !== null;
+  }
+
+  get dialogItems(): readonly ChatDialogViewItem[] {
+    return this.deps.engine.dialogItems;
   }
 
   get partStore(): ChatPartStore {
@@ -91,6 +113,34 @@ export class ChatComponentViewModel {
 
   get currentModelName(): string | undefined {
     return this.deps.engine.currentModelName;
+  }
+
+  get currentReasoningEffort(): string | undefined {
+    return this.deps.engine.currentReasoningEffort;
+  }
+
+  get currentReasoningEffortLabel(): string {
+    return this.deps.engine.currentReasoningEffortLabel;
+  }
+
+  get currentReasoningEffortDisplayLabel(): string {
+    return this.deps.engine.currentReasoningEffortDisplayLabel;
+  }
+
+  get currentModelReasoningEfforts(): readonly string[] {
+    return this.deps.engine.currentModelReasoningEfforts;
+  }
+
+  get currentModelChipLabel(): string {
+    return this.deps.engine.currentModelChipLabel;
+  }
+
+  get currentModelTooltip(): string {
+    return this.deps.engine.currentModelTooltip;
+  }
+
+  get currentModelBillingLabel(): string | undefined {
+    return this.deps.engine.currentModelBillingLabel;
   }
 
   get contextBudget$(): unknown {
@@ -147,5 +197,9 @@ export class ChatComponentViewModel {
 
   get modelMenuItems(): IMenuItem[] {
     return this.deps.viewState.modelMenuItems;
+  }
+
+  get hasReasoningEffortOptions(): boolean {
+    return this.deps.viewState.hasReasoningEffortOptions;
   }
 }

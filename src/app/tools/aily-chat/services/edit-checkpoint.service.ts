@@ -15,13 +15,22 @@
  * 持久化规则：
  * - 文件备份/快照由 lex FileHistory 自动持久化到 .aily/file-history/{sessionId}/
  * - 本服务不再独立持久化到 .aily_checkpoints/（已废弃）
- * - 会话恢复时通过 loadFromFileHistory() 从 FileHistory 重建状态
+ * - 会话恢复时直接从 canonical turnResponses 重建 checkpoint timeline；FileHistory 只负责磁盘回滚
  */
 
 import { Injectable } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { AilyHost } from '../core/host';
-import type { FileHistory } from 'aily-lex';
+import type { FileHistory } from 'aily-lex/browser';
+import type { TurnResponseTurn } from 'aily-lex/browser';
+import { buildDialogTurnContext, type DialogTurnContext } from '../core/user-turn-action-target';
+import { EditingContentStore } from './editing-content-store.service';
+import { EditingDiffService } from './editing-diff.service';
+import { EditingFileApplyService } from './editing-file-apply.service';
+import { EditingSessionTimelineService } from './editing-session-timeline.service';
+import { EditingTextDiffService } from './editing-text-diff.service';
+import { EditingTimelineRepository } from './editing-timeline-repository.service';
+import type { RequestEditSummary, RestorePlan } from './editing-timeline.types';
 
 // ============================
 // 类型定义
@@ -29,13 +38,22 @@ import type { FileHistory } from 'aily-lex';
 
 /** 一个 turn/request 对应的快照元数据（文件内容由 FileHistory 管理） */
 export interface TurnSnapshot {
-  requestId: string;
+  checkpointId: string;
   turnIndex: number;
-  /** @deprecated 使用 turnId 进行 Turn-native 截断 */
-  conversationStartIndex: number;
-  listStartIndex: number;
+  /** user turn 在 host list 中的起始锚点 */
+  turnStartListIndex: number | null;
+  /** assistant response 在 host list 中的起始锚点 */
+  responseStartListIndex: number | null;
   /** 对应 TurnManager 中 Turn 的 ID，用于 Turn-native 回滚 */
   turnId?: string;
+  /** 该 turn 的原始 request payload（可含隐藏资源上下文） */
+  requestContent?: string;
+  /** 该 turn 对用户可见的请求文本 */
+  displayContent?: string;
+  /** 该 turn 最后一个 round 的锚点 ID */
+  lastRoundId?: string;
+  /** 该 turn 的轮次上下文，用于 turn-native checkpoint / history 消费 */
+  rounds?: TurnResponseTurn['rounds'];
   /** 本 turn 是否有文件变更 */
   hasFileEdits: boolean;
   createdAt: number;
@@ -53,6 +71,16 @@ export interface RollbackResult {
 
 @Injectable()
 export class EditCheckpointService {
+  private readonly editingTimelineRepository = new EditingTimelineRepository({
+    joinPath: (...parts) => AilyHost.get().path.join(...parts),
+  });
+  private readonly editingContentStore = new EditingContentStore({
+    joinPath: (...parts) => AilyHost.get().path.join(...parts),
+  });
+  private readonly editingTextDiffService = new EditingTextDiffService();
+
+  private timelineSessionId: string | null = null;
+  private timelineWorkspaceRoot: string | null = null;
 
   // ---- FileHistory (aily-lex) ----
   private fileHistory: FileHistory | null = null;
@@ -60,6 +88,12 @@ export class EditCheckpointService {
   /** 注入 FileHistory 实例（由 LexOwnerFacade 在 agent 创建后调用） */
   setFileHistory(fh: FileHistory | null): void {
     this.fileHistory = fh;
+    this.captureTimelineContextFromFileHistory(fh);
+  }
+
+  setTimelineContext(sessionId: string | null | undefined, workspaceRoot: string | null | undefined): void {
+    this.timelineSessionId = sessionId || null;
+    this.timelineWorkspaceRoot = workspaceRoot || null;
   }
 
   /** 获取 FileHistory 引用 */
@@ -74,6 +108,17 @@ export class EditCheckpointService {
 
   /** 快照时间线（线性历史），无上限 */
   private timeline: TurnSnapshot[] = [];
+
+  /**
+   * Restore 截断后临时保留的 request boundary。
+   * 这层只用于在同一会话里维持“已被 restore 掉的请求边界仍可识别”的语义，
+   * 与 VS Code agent-host session 在 restore 后保留 disabled sentinel 的行为对齐。
+   * 一旦开始新 turn 或从 canonical turnResponses 重新 hydrate，就会被清空。
+   */
+  private truncatedRequestBoundaries: TurnSnapshot[] = [];
+
+  /** Restore 后临时保留的 canonical turnResponses，用于恢复被截断的聊天。 */
+  private checkpointRestoreRedoTurnResponses: TurnResponseTurn[] | null = null;
 
   /** 当前在时间线中的位置 (-1 = 初始状态/所有 turn 均已 undo) */
   private timelineIndex: number = -1;
@@ -119,9 +164,9 @@ export class EditCheckpointService {
     this.summarySubject.next(summary);
   }
 
-  publishCurrentSummary(): void {
+  async publishCurrentSummary(): Promise<void> {
     if (this.autoSaveEdits && this.isInTurn) return;
-    const summary = this.getEditsSummary();
+    const summary = await this.getEditsSummary();
     this.summarySubject.next(summary);
   }
 
@@ -149,7 +194,15 @@ export class EditCheckpointService {
 
   // ==================== Turn 管理 ====================
 
-  startTurn(turnIndex: number, conversationStartIndex: number, listStartIndex: number, turnId?: string): void {
+  startTurn(
+    turnIndex: number,
+    turnStartListIndex: number | null,
+    responseStartListIndex: number | null,
+    turnId?: string,
+    requestContent?: string,
+    displayContent?: string,
+    checkpointId?: string,
+  ): void {
     if (this.isInTurn) {
       this.commitCurrentTurn();
     }
@@ -158,20 +211,29 @@ export class EditCheckpointService {
     if (this.timelineIndex < this.timeline.length - 1) {
       this.timeline.splice(this.timelineIndex + 1);
     }
+    this.truncatedRequestBoundaries = [];
+    this.checkpointRestoreRedoTurnResponses = null;
     this.pendingSnapshot = null;
 
+    if (!checkpointId) {
+      throw new Error('EditCheckpointService.startTurn requires request.metadata.checkpointId');
+    }
+
     const snapshot: TurnSnapshot = {
-      requestId: `cp_${Date.now()}_${turnIndex}`,
+      checkpointId,
       turnIndex,
-      conversationStartIndex,
-      listStartIndex,
+      turnStartListIndex,
+      responseStartListIndex,
       turnId,
+      requestContent,
+      displayContent,
       hasFileEdits: false,
       createdAt: Date.now(),
     };
 
     this.timeline.push(snapshot);
     this.timelineIndex = this.timeline.length - 1;
+    this.persistTimelineCheckpoint(snapshot);
 
     this.currentTurnTrackedPaths.clear();
     this.currentTurnOperations.clear();
@@ -246,7 +308,28 @@ export class EditCheckpointService {
   }
 
   get canRedo(): boolean {
-    return this.timelineIndex < this.timeline.length - 1 || this.pendingSnapshot !== null;
+    return this.timelineIndex < this.timeline.length - 1
+      || this.pendingSnapshot !== null
+      || this.checkpointRestoreRedoTurnResponses !== null;
+  }
+
+  setCheckpointRestoreRedoTurnResponses(
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): void {
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      this.checkpointRestoreRedoTurnResponses = null;
+      return;
+    }
+
+    this.checkpointRestoreRedoTurnResponses = [...turnResponses];
+  }
+
+  getCheckpointRestoreRedoTurnResponses(): readonly TurnResponseTurn[] {
+    return this.checkpointRestoreRedoTurnResponses ? [...this.checkpointRestoreRedoTurnResponses] : [];
+  }
+
+  clearCheckpointRestoreRedoTurnResponses(): void {
+    this.checkpointRestoreRedoTurnResponses = null;
   }
 
   /**
@@ -355,65 +438,177 @@ export class EditCheckpointService {
 
   // ==================== 快照访问 ====================
 
-  getSnapshotByRequestId(requestId: string): TurnSnapshot | undefined {
-    return this.timeline.find(s => s.requestId === requestId);
+  getSnapshotByCheckpointId(checkpointId: string): TurnSnapshot | undefined {
+    return this.timeline.find(s => s.checkpointId === checkpointId)
+      ?? this.truncatedRequestBoundaries.find(s => s.checkpointId === checkpointId);
   }
 
-  getSnapshotByListIndex(listIndex: number): TurnSnapshot | undefined {
-    return this.timeline.find(s =>
-      s.listStartIndex === listIndex || s.listStartIndex === listIndex + 1
-    );
+  getSnapshotByTurnId(turnId: string): TurnSnapshot | undefined {
+    return this.timeline.find(s => s.turnId === turnId)
+      ?? this.truncatedRequestBoundaries.find(s => s.turnId === turnId);
   }
 
-  getTurnStartListIndexByAnyListIndex(listIndex: number): number | null {
-    let matched: TurnSnapshot | undefined;
-    for (let i = this.timeline.length - 1; i >= 0; i--) {
-      const snapshot = this.timeline[i];
-      const userMsgIndex = snapshot.listStartIndex - 1;
-      if (userMsgIndex <= listIndex) {
-        matched = snapshot;
-        break;
-      }
-    }
-    return matched ? matched.listStartIndex - 1 : null;
+  getSnapshotByRoundId(roundId: string): TurnSnapshot | undefined {
+    return this.timeline.find(s => s.lastRoundId === roundId)
+      ?? this.truncatedRequestBoundaries.find(s => s.lastRoundId === roundId);
+  }
+
+  getTurnStartListIndexForSnapshot(snapshot: TurnSnapshot | undefined): number | null {
+    return snapshot?.turnStartListIndex ?? null;
+  }
+
+  getResponseStartListIndexForSnapshot(snapshot: TurnSnapshot | undefined): number | null {
+    return snapshot?.responseStartListIndex ?? null;
   }
 
   getLatestSnapshot(): TurnSnapshot | undefined {
     return this.timeline.length > 0 ? this.timeline[this.timeline.length - 1] : undefined;
   }
 
-  // ==================== 截断（用于 restoreToCheckpoint / regenerate） ====================
-
-  async truncateFromSnapshot(requestId: string): Promise<RollbackResult> {
-    const idx = this.timeline.findIndex(s => s.requestId === requestId);
-    if (idx === -1) {
-      return { rolledBackFiles: 0, errors: [`未找到快照: ${requestId}`] };
+  isSnapshotActive(snapshot: TurnSnapshot | undefined | null): boolean {
+    if (!snapshot) {
+      return false;
     }
 
-    let result: RollbackResult;
+    return this.timeline.some(candidate => candidate.checkpointId === snapshot.checkpointId);
+  }
 
+  getDisabledRequestBoundaries(): TurnSnapshot[] {
+    return this.truncatedRequestBoundaries.map(snapshot => ({
+      ...snapshot,
+      ...(snapshot.rounds ? { rounds: [...snapshot.rounds] } : {}),
+    }));
+  }
+
+  isRequestDisabled(turnId: string | undefined): boolean {
+    if (!turnId) {
+      return false;
+    }
+
+    return this.truncatedRequestBoundaries.some(snapshot => snapshot.turnId === turnId);
+  }
+
+  async rebuildFromTurnResponses(
+    turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[],
+  ): Promise<boolean> {
+    this.timeline = [];
+    this.truncatedRequestBoundaries = [];
+    this.checkpointRestoreRedoTurnResponses = null;
+    this.timelineIndex = -1;
+    this.keptTimelineIndex = -1;
+    this.pendingSnapshot = null;
+    this.currentTurnTrackedPaths.clear();
+    this.currentTurnOperations.clear();
+    this.currentTurnBaselines.clear();
+    this.isInTurn = false;
+
+    const fileHistorySnapshotsByTurnId = new Map<string, { trackedFileBackups: Record<string, unknown> }>();
     if (this.fileHistory) {
       try {
-        const targetTurnId = idx > 0 ? this.timeline[idx - 1].turnId : this.fileHistory.initialTurnId;
-        if (targetTurnId) {
-          const changed = await this.fileHistory.rewind(targetTurnId);
-          result = { rolledBackFiles: changed.length, errors: [] };
-        } else {
-          result = this.restoreToInitialState();
+        await this.fileHistory.load();
+        for (const snapshot of this.fileHistory.snapshots) {
+          if (snapshot.turnId && snapshot.turnId !== '__init__') {
+            fileHistorySnapshotsByTurnId.set(snapshot.turnId, snapshot);
+          }
         }
-      } catch (err: any) {
-        result = { rolledBackFiles: 0, errors: [err.message] };
+      } catch (err) {
+        console.warn('[EditCheckpoint] rebuildFromTurnResponses fileHistory load failed:', err);
       }
-    } else {
-      result = this.restoreToInitialState();
     }
+
+    this.initialFileContents.clear();
+    const initId = this.fileHistory?.initialTurnId;
+    if (this.fileHistory && initId) {
+      for (const filePath of this.fileHistory.trackedFiles) {
+        const content = await this.fileHistory.readBackup(filePath, initId);
+        if (content !== undefined) {
+          this.initialFileContents.set(filePath, content);
+        }
+      }
+    }
+
+    this.timeline = turnResponses.flatMap((turn, index) => {
+      const checkpointId = turn.request.metadata?.checkpointId;
+      if (!checkpointId) {
+        return [];
+      }
+
+      const fileHistorySnapshot = fileHistorySnapshotsByTurnId.get(turn.turnId);
+      const createdAt = turn.updatedAt
+        || turn.response?.updatedAt
+        || turn.createdAt
+        || turn.response?.createdAt
+        || Date.now();
+      return [{
+        checkpointId,
+        turnIndex: index,
+        turnStartListIndex: null,
+        responseStartListIndex: null,
+        turnId: turn.turnId,
+        requestContent: turn.request.content,
+        displayContent: turn.request.displayContent ?? turn.request.content,
+        lastRoundId: turn.rounds.at(-1)?.id,
+        rounds: turn.rounds,
+        hasFileEdits: !!fileHistorySnapshot && Object.keys(fileHistorySnapshot.trackedFileBackups ?? {}).length > 0,
+        createdAt,
+      } satisfies TurnSnapshot];
+    });
+    this.timelineIndex = this.timeline.length - 1;
+    this.replaceTimelineCheckpointsFromSnapshots(this.timeline);
+    this.syncTimelinePointerFromSnapshots(this.timeline);
+
+    return this.timeline.length > 0;
+  }
+
+  // ==================== 截断（用于 restoreToCheckpoint / regenerate） ====================
+
+  truncateStateFromCheckpoint(checkpointId: string): boolean {
+    const idx = this.timeline.findIndex(s => s.checkpointId === checkpointId);
+    if (idx === -1) {
+      return false;
+    }
+
+    this.truncatedRequestBoundaries = this.timeline.slice(idx).map(snapshot => ({
+      ...snapshot,
+      ...(snapshot.rounds ? { rounds: [...snapshot.rounds] } : {}),
+    }));
+    this.updateTimelinePointerForCheckpoint(checkpointId, idx > 0 ? this.timeline[idx - 1] : null);
 
     this.timeline.splice(idx);
     this.timelineIndex = this.timeline.length - 1;
     this.pendingSnapshot = null;
     this.keptTimelineIndex = this.timeline.length - 1;
 
-    return result;
+    return true;
+  }
+
+  async buildRestorePlanForCheckpoint(checkpointId: string): Promise<RestorePlan | null> {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService) {
+      return null;
+    }
+
+    const checkpoint = timelineService.getCheckpoint(checkpointId);
+    if (!checkpoint) {
+      return null;
+    }
+
+    return timelineService.buildPlanForEpoch(checkpointId, checkpoint.epoch);
+  }
+
+  async buildRedoPlanForCheckpoint(checkpointId: string): Promise<RestorePlan | null> {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService) {
+      return null;
+    }
+
+    const checkpoint = timelineService.getCheckpoint(checkpointId);
+    if (!checkpoint) {
+      return null;
+    }
+
+    const range = timelineService.getRequestEpochRange(checkpoint.requestId);
+    return timelineService.buildPlanForEpoch(checkpointId, range?.lastEpoch ?? checkpoint.epoch);
   }
 
   // ==================== 查询 ====================
@@ -443,149 +638,67 @@ export class EditCheckpointService {
     return this.initialFileContents.get(filePath);
   }
 
-  // ==================== 编辑摘要 ====================
-
-  getEditsSummary(requestId?: string): EditsSummary | null {
-    if (this.initialFileContents.size === 0 && this.currentTurnTrackedPaths.size === 0) {
-      return null;
-    }
-    if (this.keptTimelineIndex >= this.timelineIndex && this.currentTurnTrackedPaths.size === 0) {
+  getTurnContextForSnapshot(snapshot: TurnSnapshot | undefined, fallbackTurnId?: string): DialogTurnContext | null {
+    const turnId = snapshot?.turnId ?? fallbackTurnId;
+    if (!turnId) {
       return null;
     }
 
-    const fs = AilyHost.get().fs;
-    const pathUtil = AilyHost.get().path;
-    const projectPath = AilyHost.get().project.currentProjectPath || '';
-
-    let totalAdded = 0;
-    let totalRemoved = 0;
-    const files: EditFileSummary[] = [];
-
-    const filesToCheck = this.currentTurnTrackedPaths.size > 0
-      ? this.currentTurnTrackedPaths
-      : this.initialFileContents.keys();
-
-    for (const filePath of filesToCheck) {
-      const baselineContent = this.currentTurnBaselines.get(filePath)
-        ?? this.initialFileContents.get(filePath)
-        ?? null;
-
-      let currentContent: string | null = null;
-      try {
-        if (fs.existsSync(filePath)) {
-          currentContent = fs.readFileSync(filePath, 'utf-8');
-        }
-      } catch { /* ignore */ }
-
-      if (currentContent === baselineContent) continue;
-
-      const relativePath = projectPath
-        ? pathUtil.relative(projectPath, filePath)
-        : pathUtil.basename(filePath);
-
-      let added = 0, removed = 0;
-      let type: 'create' | 'modify' | 'delete';
-
-      if (baselineContent === null && currentContent !== null) {
-        type = 'create';
-        added = currentContent.split('\n').length;
-      } else if (baselineContent !== null && currentContent === null) {
-        type = 'delete';
-        removed = baselineContent.split('\n').length;
-      } else {
-        type = this.currentTurnOperations.get(filePath) || 'modify';
-        const oldLines = (baselineContent || '').split('\n');
-        const newLines = (currentContent || '').split('\n');
-        const oldBag = new Map<string, number>();
-        for (const line of oldLines) {
-          oldBag.set(line, (oldBag.get(line) || 0) + 1);
-        }
-        let matched = 0;
-        const tempBag = new Map(oldBag);
-        for (const line of newLines) {
-          const count = tempBag.get(line) || 0;
-          if (count > 0) {
-            tempBag.set(line, count - 1);
-            matched++;
-          }
-        }
-        removed = oldLines.length - matched;
-        added = newLines.length - matched;
-      }
-
-      totalAdded += added;
-      totalRemoved += removed;
-      files.push({ path: relativePath, fullPath: filePath, type, added, removed });
+    const turnContext = buildDialogTurnContext({
+      turnId,
+      rounds: snapshot?.rounds,
+      requestDisabled: !!snapshot && !this.isSnapshotActive(snapshot),
+      requestContent: snapshot?.requestContent,
+      displayContent: snapshot?.displayContent,
+    });
+    if (!turnContext) {
+      return null;
     }
 
-    if (files.length === 0) return null;
-
-    const latestSnapshot = this.getLatestSnapshot();
     return {
-      checkpointId: requestId || latestSnapshot?.requestId || 'current',
-      fileCount: files.length,
-      totalAdded,
-      totalRemoved,
-      files,
+      ...turnContext,
+      lastRoundId: snapshot?.lastRoundId ?? turnContext.lastRoundId,
     };
   }
 
-  // ==================== 从 FileHistory 加载（替代旧 loadFromDisk） ====================
+  // ==================== 编辑摘要 ====================
 
-  /**
-   * 从 lex FileHistory 恢复时间线状态。
-   * 替代旧的 loadFromDisk()，不再读取 .aily_checkpoints/。
-   */
-  async loadFromFileHistory(): Promise<boolean> {
-    if (!this.fileHistory) return false;
+  async getEditsSummary(checkpointId?: string): Promise<EditsSummary | null> {
+    const latestSnapshot = this.getLatestSnapshot();
+    const summarySnapshot = checkpointId
+      ? (this.getSnapshotByCheckpointId(checkpointId) ?? latestSnapshot)
+      : latestSnapshot;
+    const summaryTurnId = summarySnapshot?.turnId;
 
-    try {
-      await this.fileHistory.load();
-
-      const snapshots = this.fileHistory.snapshots;
-      if (snapshots.length === 0) return false;
-
-      // 从 FileHistory.snapshots 重建时间线（跳过 __init__ 等内部快照）
-      this.timeline = [];
-      for (const snap of snapshots) {
-        if (snap.turnId === '__init__') continue;
-        this.timeline.push({
-          requestId: `cp_fh_${snap.timestamp}_${this.timeline.length}`,
-          turnIndex: this.timeline.length,
-          conversationStartIndex: -1,
-          listStartIndex: -1,
-          turnId: snap.turnId,
-          hasFileEdits: Object.keys(snap.trackedFileBackups).length > 0,
-          createdAt: snap.timestamp,
-        });
-      }
-
-      this.timelineIndex = this.timeline.length - 1;
-      this.keptTimelineIndex = -1;
-
-      // 从 __init__ 快照恢复 initialFileContents
-      this.initialFileContents.clear();
-      const initId = this.fileHistory.initialTurnId;
-      if (initId) {
-        for (const filePath of this.fileHistory.trackedFiles) {
-          const content = await this.fileHistory.readBackup(filePath, initId);
-          if (content !== undefined) {
-            this.initialFileContents.set(filePath, content);
-          }
-        }
-      }
-
-      this.pendingSnapshot = null;
-      this.currentTurnTrackedPaths.clear();
-      this.currentTurnOperations.clear();
-      this.currentTurnBaselines.clear();
-      this.isInTurn = false;
-
-      return true;
-    } catch (err) {
-      console.warn('[EditCheckpoint] loadFromFileHistory failed:', err);
-      return false;
+    if (!checkpointId && this.keptTimelineIndex >= this.timelineIndex && this.currentTurnTrackedPaths.size === 0) {
+      return null;
     }
+
+    if (summaryTurnId) {
+      const requestSummary = await this.getTimelineRequestSummary(summaryTurnId);
+      if (requestSummary) {
+        return this.toEditsSummaryFromRequestSummary(requestSummary, summarySnapshot, checkpointId);
+      }
+    }
+
+    const fallbackSummary = await this.buildFallbackEditsSummary(summarySnapshot, checkpointId);
+    if (fallbackSummary) {
+      return fallbackSummary;
+    }
+
+    if (!summarySnapshot) {
+      return null;
+    }
+
+    const turnContext = this.getTurnContextForSnapshot(summarySnapshot);
+    return {
+      checkpointId: checkpointId || latestSnapshot?.checkpointId || 'current',
+      turnContext,
+      fileCount: 0,
+      totalAdded: 0,
+      totalRemoved: 0,
+      files: [],
+    };
   }
 
   // ==================== 清理 ====================
@@ -619,28 +732,13 @@ export class EditCheckpointService {
       console.warn('[EditCheckpoint] cleanSessionCheckpoints (fh) failed:', err);
     }
 
-    // 兼容清理旧格式：.aily_checkpoints/{sessionId}/
-    const legacyDir = pathUtil.join(projectPath, '.aily_checkpoints', sessionId);
-    try {
-      if (fs.existsSync(legacyDir)) {
-        const removeDir = (dirPath: string) => {
-          if (!fs.existsSync(dirPath)) return;
-          const entries = fs.readdirSync(dirPath);
-          for (const entry of entries) {
-            const fullPath = `${dirPath}/${entry}`;
-            const stat = fs.statSync(fullPath);
-            if (stat.isDirectory()) { removeDir(fullPath); } else { fs.unlinkSync(fullPath); }
-          }
-          fs.rmdirSync(dirPath);
-        };
-        removeDir(legacyDir);
-      }
-    } catch { /* ignore legacy cleanup errors */ }
   }
 
   clear(): void {
     this.initialFileContents.clear();
     this.timeline = [];
+    this.truncatedRequestBoundaries = [];
+    this.checkpointRestoreRedoTurnResponses = null;
     this.timelineIndex = -1;
     this.keptTimelineIndex = -1;
     this.pendingSnapshot = null;
@@ -649,6 +747,8 @@ export class EditCheckpointService {
     this.currentTurnBaselines.clear();
     this.isInTurn = false;
     this.fileHistory = null;
+    this.timelineSessionId = null;
+    this.timelineWorkspaceRoot = null;
   }
 
   // ==================== 内部辅助方法 ====================
@@ -668,6 +768,317 @@ export class EditCheckpointService {
       } catch { /* ignore */ }
     }
     this.pendingSnapshot = map;
+  }
+
+  private captureTimelineContextFromFileHistory(fh: FileHistory | null): void {
+    const options = (fh as any)?._options as { sessionId?: string; cwd?: string } | undefined;
+    this.timelineSessionId = options?.sessionId ?? this.timelineSessionId;
+    this.timelineWorkspaceRoot = options?.cwd ?? this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+  }
+
+  private getEditingDiffService(): EditingDiffService | null {
+    const sessionId = this.timelineSessionId;
+    const workspaceRoot = this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!sessionId || !workspaceRoot) {
+      return null;
+    }
+
+    return new EditingDiffService(
+      this.editingTimelineRepository,
+      this.editingContentStore,
+      workspaceRoot,
+      sessionId,
+      this.editingTextDiffService,
+    );
+  }
+
+  private getEditingSessionTimelineService(): EditingSessionTimelineService | null {
+    const sessionId = this.timelineSessionId;
+    const workspaceRoot = this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!sessionId || !workspaceRoot) {
+      return null;
+    }
+
+    return new EditingSessionTimelineService(
+      this.editingTimelineRepository,
+      this.editingContentStore,
+      workspaceRoot,
+      sessionId,
+    );
+  }
+
+  private getEditingFileApplyService(): EditingFileApplyService | null {
+    const sessionId = this.timelineSessionId;
+    const workspaceRoot = this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!sessionId || !workspaceRoot) {
+      return null;
+    }
+
+    return new EditingFileApplyService(
+      this.editingContentStore,
+      workspaceRoot,
+      sessionId,
+    );
+  }
+
+  async applyRestorePlan(plan: RestorePlan): Promise<RollbackResult> {
+    const applyService = this.getEditingFileApplyService();
+    if (!applyService) {
+      return { rolledBackFiles: 0, errors: ['缺少 timeline apply 上下文'] };
+    }
+
+    const result = await applyService.apply(plan);
+    return {
+      rolledBackFiles: result.appliedFiles,
+      errors: result.errors,
+    };
+  }
+
+  private updateTimelinePointerForPlan(plan: RestorePlan, snapshot: TurnSnapshot | null): void {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService) {
+      return;
+    }
+
+    timelineService.setCurrentPointer({
+      epoch: plan.epoch,
+      ...(snapshot?.checkpointId ? { checkpointId: snapshot.checkpointId } : {}),
+      ...(snapshot?.turnId ? { requestId: snapshot.turnId } : {}),
+    });
+  }
+
+  private updateTimelinePointerForCheckpoint(checkpointId: string, snapshot: TurnSnapshot | null): void {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService) {
+      return;
+    }
+
+    const checkpoint = timelineService.getCheckpoint(checkpointId);
+    if (!checkpoint) {
+      return;
+    }
+
+    timelineService.setCurrentPointer({
+      epoch: checkpoint.epoch,
+      ...(snapshot?.checkpointId ? { checkpointId: snapshot.checkpointId } : {}),
+      ...(snapshot?.turnId ? { requestId: snapshot.turnId } : {}),
+    });
+  }
+
+  private syncTimelinePointerFromSnapshots(snapshots: readonly TurnSnapshot[]): void {
+    const latestSnapshot = snapshots.at(-1) ?? null;
+    if (!latestSnapshot?.checkpointId) {
+      return;
+    }
+
+    this.updateTimelinePointerForCheckpoint(latestSnapshot.checkpointId, latestSnapshot);
+  }
+
+  private persistTimelineCheckpoint(snapshot: TurnSnapshot): void {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService || !snapshot.checkpointId || !snapshot.turnId) {
+      return;
+    }
+
+    timelineService.createCheckpoint({
+      checkpointId: snapshot.checkpointId,
+      requestId: snapshot.turnId,
+      turnId: snapshot.turnId,
+      label: snapshot.displayContent ?? snapshot.requestContent ?? '',
+    });
+  }
+
+  private replaceTimelineCheckpointsFromSnapshots(snapshots: readonly TurnSnapshot[]): void {
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!timelineService) {
+      return;
+    }
+
+    timelineService.replaceCheckpoints(
+      snapshots
+        .filter((snapshot): snapshot is TurnSnapshot & { turnId: string } => !!snapshot.checkpointId && !!snapshot.turnId)
+        .map(snapshot => ({
+          checkpointId: snapshot.checkpointId,
+          requestId: snapshot.turnId,
+          turnId: snapshot.turnId,
+          label: snapshot.displayContent ?? snapshot.requestContent ?? '',
+        })),
+    );
+  }
+
+  private async getTimelineRequestSummary(turnId: string): Promise<RequestEditSummary | null> {
+    const diffService = this.getEditingDiffService();
+    if (!diffService) {
+      return null;
+    }
+    return diffService.getRequestSummary(turnId);
+  }
+
+  private toEditsSummaryFromRequestSummary(
+    summary: RequestEditSummary,
+    snapshot: TurnSnapshot | undefined,
+    checkpointId?: string,
+  ): EditsSummary | null {
+    if (!summary.stats.length) {
+      return null;
+    }
+
+    const files = summary.stats.map(stat => ({
+      path: this.getDisplayPath(stat.uri),
+      fullPath: stat.uri,
+      type: this.resolveSummaryFileType(stat.operationTypes),
+      contentKind: stat.contentKind,
+      added: stat.addedLines,
+      removed: stat.removedLines,
+    }));
+    const totals = files.reduce(
+      (accumulator, file) => {
+        accumulator.totalAdded += file.added;
+        accumulator.totalRemoved += file.removed;
+        return accumulator;
+      },
+      { totalAdded: 0, totalRemoved: 0 },
+    );
+
+    return {
+      checkpointId: checkpointId || snapshot?.checkpointId || summary.checkpointId || 'current',
+      turnContext: this.getTurnContextForSnapshot(snapshot, summary.requestId),
+      fileCount: files.length,
+      totalAdded: totals.totalAdded,
+      totalRemoved: totals.totalRemoved,
+      files,
+    };
+  }
+
+  private async buildFallbackEditsSummary(
+    summarySnapshot: TurnSnapshot | undefined,
+    checkpointId?: string,
+  ): Promise<EditsSummary | null> {
+    if (this.initialFileContents.size === 0 && this.currentTurnTrackedPaths.size === 0) {
+      return null;
+    }
+
+    const fs = AilyHost.get().fs;
+    const files: EditFileSummary[] = [];
+    const filesToCheck = this.currentTurnTrackedPaths.size > 0
+      ? this.currentTurnTrackedPaths
+      : this.initialFileContents.keys();
+
+    for (const filePath of filesToCheck) {
+      const baselineContent = this.currentTurnBaselines.get(filePath)
+        ?? this.initialFileContents.get(filePath)
+        ?? null;
+
+      let currentContent: string | null = null;
+      try {
+        if (fs.existsSync(filePath)) {
+          currentContent = fs.readFileSync(filePath, 'utf-8');
+        }
+      } catch { /* ignore */ }
+
+      if (currentContent === baselineContent) {
+        continue;
+      }
+
+      const counts = await this.computeLineCounts(baselineContent, currentContent);
+      files.push({
+        path: this.getDisplayPath(filePath),
+        fullPath: filePath,
+        type: this.resolveFallbackFileType(filePath, baselineContent, currentContent),
+        contentKind: 'text',
+        added: counts.added,
+        removed: counts.removed,
+      });
+    }
+
+    if (!files.length) {
+      return null;
+    }
+
+    const totalAdded = files.reduce((sum, file) => sum + file.added, 0);
+    const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0);
+    return {
+      checkpointId: checkpointId || summarySnapshot?.checkpointId || 'current',
+      turnContext: this.getTurnContextForSnapshot(summarySnapshot),
+      fileCount: files.length,
+      totalAdded,
+      totalRemoved,
+      files,
+    };
+  }
+
+  private async computeLineCounts(before: string | null, after: string | null): Promise<{ added: number; removed: number }> {
+    if (before === null && after !== null) {
+      const added = await this.countAllLines(after);
+      return { added, removed: 0 };
+    }
+    if (before !== null && after === null) {
+      const removed = await this.countAllLines(before);
+      return { added: 0, removed };
+    }
+    if (before === null || after === null) {
+      return { added: 0, removed: 0 };
+    }
+
+    const diff = await this.editingTextDiffService.computeDiff(before, after, {
+      ignoreTrimWhitespace: false,
+      maxComputationTimeMs: 5_000,
+      computeMoves: false,
+      extendToSubwords: true,
+    });
+    let added = 0;
+    let removed = 0;
+    for (const change of diff.changes) {
+      removed += Math.max(0, change.originalEndLineNumberExclusive - change.originalStartLineNumber);
+      added += Math.max(0, change.modifiedEndLineNumberExclusive - change.modifiedStartLineNumber);
+    }
+    return { added, removed };
+  }
+
+  private async countAllLines(content: string): Promise<number> {
+    if (content.length === 0) {
+      return 0;
+    }
+    const diff = await this.editingTextDiffService.computeDiff('', content, {
+      ignoreTrimWhitespace: false,
+      maxComputationTimeMs: 5_000,
+      computeMoves: false,
+      extendToSubwords: true,
+    });
+    return diff.changes.reduce(
+      (sum, change) => sum + Math.max(0, change.modifiedEndLineNumberExclusive - change.modifiedStartLineNumber),
+      0,
+    );
+  }
+
+  private getDisplayPath(filePath: string): string {
+    const pathUtil = AilyHost.get().path;
+    const projectPath = this.timelineWorkspaceRoot ?? (AilyHost.get().project.currentProjectPath || '');
+    return projectPath ? pathUtil.relative(projectPath, filePath) : pathUtil.basename(filePath);
+  }
+
+  private resolveSummaryFileType(operationTypes: readonly string[]): 'create' | 'modify' | 'delete' {
+    if (operationTypes.includes('create') && !operationTypes.includes('delete')) {
+      return 'create';
+    }
+    if (operationTypes.includes('delete') && !operationTypes.includes('create')) {
+      return 'delete';
+    }
+    return 'modify';
+  }
+
+  private resolveFallbackFileType(
+    filePath: string,
+    baselineContent: string | null,
+    currentContent: string | null,
+  ): 'create' | 'modify' | 'delete' {
+    if (baselineContent === null && currentContent !== null) {
+      return 'create';
+    }
+    if (baselineContent !== null && currentContent === null) {
+      return 'delete';
+    }
+    return this.currentTurnOperations.get(filePath) || 'modify';
   }
 
   /** 从 pendingSnapshot 恢复所有文件 */
@@ -747,6 +1158,7 @@ export class EditCheckpointService {
       return { rolledBackFiles: 0, errors: [`恢复 ${filePath} 失败: ${err.message}`] };
     }
   }
+
 }
 
 // ============================
@@ -757,12 +1169,14 @@ export interface EditFileSummary {
   path: string;
   fullPath: string;
   type: 'create' | 'modify' | 'delete';
+  contentKind: 'text' | 'binary' | 'notebook';
   added: number;
   removed: number;
 }
 
 export interface EditsSummary {
   checkpointId: string;
+  turnContext?: DialogTurnContext | null;
   fileCount: number;
   totalAdded: number;
   totalRemoved: number;

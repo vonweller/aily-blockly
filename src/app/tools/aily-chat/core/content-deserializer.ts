@@ -10,9 +10,9 @@
  */
 
 import {
-  ChatPart, mkMarkdown, mkThinking, mkToolCall, mkState, mkError, mkQuestion, mkApproval, mkTerminal,
+  ChatPart, buildConfirmationPartId, mkMarkdown, mkThinking, mkToolCall, mkState, mkError, mkQuestion, mkConfirmation, mkTerminal,
 } from './chat-parts';
-import type { SubagentPart, ApprovalPart, TerminalPart } from './chat-parts';
+import type { ConfirmationPart, TerminalPart } from './chat-parts';
 import { getThinkContent } from './think-content-store';
 import { AGENT_NAMES } from './agent-names';
 
@@ -119,6 +119,7 @@ export function deserializeContentToParts(content: string): ChatPart[] {
             || data.kind === 'agent_team'
             || data.kind === 'background_task'
             || data.kind === 'instructions'
+            || data.kind === 'compaction'
           ) {
             parts.push(mkState(
               data.id || `hist_state_${parts.length}`,
@@ -145,7 +146,14 @@ export function deserializeContentToParts(content: string): ChatPart[] {
         flushMd();
         try {
           const data = JSON.parse(body.trim());
-          parts.push(mkError(data.message || ''));
+          parts.push(mkError(
+            data.message || '',
+            data.severity === 'warning'
+              ? 'warning'
+              : data.severity === 'info'
+                ? 'info'
+                : 'error',
+          ));
         } catch {}
         pos = fenceEnd;
         continue;
@@ -155,7 +163,8 @@ export function deserializeContentToParts(content: string): ChatPart[] {
         flushMd();
         try {
           const data = JSON.parse(body.trim());
-          const questionPart = mkQuestion(data.questions || [], data.isHistory ?? true);
+          const questionPart = mkQuestion(data.questions || [], data.isHistory ?? true, data.requestId || data.partId?.replace(/^question:/, ''));
+          questionPart.partId = data.partId || questionPart.partId;
           if (data.answers) questionPart.answers = data.answers;
           parts.push(questionPart);
         } catch {}
@@ -163,21 +172,45 @@ export function deserializeContentToParts(content: string): ChatPart[] {
         continue;
       }
 
-      if (lang === 'aily-ask-confirm' || lang === 'aily-approval') {
+      if (lang === 'aily-confirmation' || lang === 'aily-ask-confirm') {
         flushMd();
         try {
           const data = JSON.parse(body.trim());
-          const p = mkApproval(data.askId || data.toolCallId || '', data.message || '', data.toolName, data.source);
+          const p = mkConfirmation(
+            data.askId || '',
+            data.message || '',
+            data.toolName,
+            data.source,
+            {
+              args: data.args,
+              description: typeof data.description === 'string' ? data.description : undefined,
+            },
+          );
+          p.partId = typeof data.partId === 'string' && data.partId.trim().length > 0
+            ? data.partId
+            : buildConfirmationPartId(data.askId || '');
+          if (typeof data.title === 'string' && data.title.trim()) {
+            p.title = data.title;
+          }
+          if (typeof data.subtitle === 'string' && data.subtitle.trim()) {
+            p.subtitle = data.subtitle;
+          }
+          if (Array.isArray(data.actions)) {
+            p.actions = data.actions;
+          }
+          if (typeof data.primaryScope === 'string') {
+            p.primaryScope = data.primaryScope as ConfirmationPart['primaryScope'];
+          }
           p.resolved = data.resolved ?? true;
           if (data.result === 'confirmed') {
             p.result = 'approved';
           } else if (data.result === 'denied') {
             p.result = 'rejected';
           } else if (data.result) {
-            p.result = data.result as ApprovalPart['result'];
+            p.result = data.result as ConfirmationPart['result'];
           }
           if (data.scope) {
-            p.scope = data.scope as ApprovalPart['scope'];
+            p.scope = data.scope as ConfirmationPart['scope'];
           }
           parts.push(p);
         } catch {}
@@ -206,39 +239,12 @@ export function deserializeContentToParts(content: string): ChatPart[] {
         flushMd();
         try {
           const data = JSON.parse(body.trim());
-          const tp: TerminalPart = mkTerminal(data.command || '', data.toolCallId);
+          const tp: TerminalPart = mkTerminal(data.command || '', data.toolCallId, data.partId);
           tp.output = data.output || '';
           tp.stderr = data.stderr || '';
           tp.exitCode = data.exitCode ?? data.exit_code;
           tp.isRunning = false; // 历史中终端不再运行
           parts.push(tp);
-        } catch { /* skip broken */ }
-        pos = fenceEnd;
-        continue;
-      }
-
-      if (lang === 'aily-subagent') {
-        flushMd();
-        try {
-          const data = JSON.parse(body.trim());
-          const sa: SubagentPart = {
-            type: 'subagent',
-            toolCallId: data.toolCallId || `hist_sa_${parts.length}`,
-            agentName: data.agentName || 'Agent',
-            description: data.description || '',
-            state: data.state === 'doing' ? 'done' : (data.state || 'done'),
-            resultText: data.resultText || '',
-            childItems: Array.isArray(data.childItems) ? data.childItems.map((ci: any) => ({
-              kind: ci.kind || 'text',
-              content: ci.content || '',
-              toolName: ci.toolName,
-              toolCallId: ci.toolCallId,
-              argsSummary: ci.argsSummary,
-              state: ci.state === 'doing' ? 'done' : ci.state,
-              duration: ci.duration,
-            })) : [],
-          };
-          parts.push(sa);
         } catch { /* skip broken */ }
         pos = fenceEnd;
         continue;

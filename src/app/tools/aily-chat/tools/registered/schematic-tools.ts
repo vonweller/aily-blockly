@@ -1,25 +1,13 @@
 /**
- * 已注册工具 - 连线图 / Schematic 类
+ * 已注册工具 - 连线图 / Schematic 类（显示文本注册）
+ *
+ * Phase 3: invoke() 已迁移至 lex IHostToolProvider (blockly-contributed-tools.ts)，
+ * 此处仅保留 getStartText/getResultText 供 PartEventProcessor 使用。
  */
 
 import { IAilyTool, ToolContext, ToolUseResult } from '../../core/tool-types';
-import { ToolRegistry } from '../../core/tool-registry';
-import {
-  generateConnectionGraphTool as generateSchematicHandler,
-  getPinmapSummaryTool as getPinmapSummaryHandler,
-  getSensorPinmapCatalogTool as getComponentCatalogHandler,
-  getProjectContextTool as getProjectContextHandler,
-  validateConnectionGraphTool as validateSchematicHandler,
-  generatePinmapTool as generatePinmapHandler,
-  savePinmapTool as savePinmapHandler,
-  getCurrentSchematicTool as getCurrentSchematicHandler,
-  applySchematicTool as applySchematicHandler,
-} from '../connectionGraphTool';
-import { TOOLS as LEGACY_TOOLS } from '../tools';
-
-function findLegacySchema(name: string): any {
-  return (LEGACY_TOOLS as any[]).find(t => t.name === name);
-}
+import { ToolDisplayRegistry } from '../../core/tool-display-registry';
+import { createDisplayOnlyToolSchema } from './display-only-tool-schema';
 
 // ============================
 // generate_schematic
@@ -27,14 +15,12 @@ function findLegacySchema(name: string): any {
 
 class GenerateSchematicTool implements IAilyTool {
   readonly name = 'generate_schematic';
-  readonly schema = findLegacySchema('generate_schematic');
+  readonly schema = createDisplayOnlyToolSchema('generate_schematic', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    ctx.host.connectionGraph.emitNotice?.({ title: 'AI生成中', text: '正在准备硬件组件引脚信息...', state: 'doing', showProgress: false });
-    return generateSchematicHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'generate_schematic execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -53,13 +39,12 @@ class GenerateSchematicTool implements IAilyTool {
 
 class GetPinmapSummaryTool implements IAilyTool {
   readonly name = 'get_pinmap_summary';
-  readonly schema = findLegacySchema('get_pinmap_summary');
+  readonly schema = createDisplayOnlyToolSchema('get_pinmap_summary', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return getPinmapSummaryHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_pinmap_summary execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -78,13 +63,12 @@ class GetPinmapSummaryTool implements IAilyTool {
 
 class GetComponentCatalogTool implements IAilyTool {
   readonly name = 'get_component_catalog';
-  readonly schema = findLegacySchema('get_component_catalog');
+  readonly schema = createDisplayOnlyToolSchema('get_component_catalog', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return getComponentCatalogHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_component_catalog execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -103,14 +87,12 @@ class GetComponentCatalogTool implements IAilyTool {
 
 class GetProjectContextTool implements IAilyTool {
   readonly name = 'get_project_context';
-  readonly schema = findLegacySchema('get_project_context');
+  readonly schema = createDisplayOnlyToolSchema('get_project_context', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    ctx.host.connectionGraph.emitNotice?.({ title: 'AI生成中', text: '正在分析项目和组件信息...', state: 'doing', showProgress: false });
-    return getProjectContextHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args || {});
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_project_context execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -129,14 +111,12 @@ class GetProjectContextTool implements IAilyTool {
 
 class ValidateSchematicTool implements IAilyTool {
   readonly name = 'validate_schematic';
-  readonly schema = findLegacySchema('validate_schematic');
+  readonly schema = createDisplayOnlyToolSchema('validate_schematic', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    ctx.host.connectionGraph.emitNotice?.({ title: 'AI生成中', text: '正在验证并保存连线图...', state: 'doing', showProgress: false });
-    return validateSchematicHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'validate_schematic execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -155,14 +135,12 @@ class ValidateSchematicTool implements IAilyTool {
 
 class GeneratePinmapTool implements IAilyTool {
   readonly name = 'generate_pinmap';
-  readonly schema = findLegacySchema('generate_pinmap');
+  readonly schema = createDisplayOnlyToolSchema('generate_pinmap', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    ctx.host.connectionGraph.emitNotice?.({ title: 'AI生成中', text: '正在生成引脚配置...', state: 'doing', showProgress: false });
-    return generatePinmapHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'generate_pinmap execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -181,14 +159,12 @@ class GeneratePinmapTool implements IAilyTool {
 
 class SavePinmapTool implements IAilyTool {
   readonly name = 'save_pinmap';
-  readonly schema = findLegacySchema('save_pinmap');
+  readonly schema = createDisplayOnlyToolSchema('save_pinmap', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    ctx.host.connectionGraph.emitNotice?.({ title: 'AI生成中', text: '正在保存引脚配置...', state: 'doing', showProgress: false });
-    return savePinmapHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'save_pinmap execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -207,13 +183,12 @@ class SavePinmapTool implements IAilyTool {
 
 class GetCurrentSchematicTool implements IAilyTool {
   readonly name = 'get_current_schematic';
-  readonly schema = findLegacySchema('get_current_schematic');
+  readonly schema = createDisplayOnlyToolSchema('get_current_schematic', { agents: ['mainAgent', 'schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return getCurrentSchematicHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args || {});
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_current_schematic execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -232,14 +207,12 @@ class GetCurrentSchematicTool implements IAilyTool {
 
 class ApplySchematicTool implements IAilyTool {
   readonly name = 'apply_schematic';
-  readonly schema = findLegacySchema('apply_schematic');
+  readonly schema = createDisplayOnlyToolSchema('apply_schematic', { agents: ['schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    // 已废弃：直接转发到 validate_schematic，它已包含保存 + 刷新功能
-    if (!ctx.host?.connectionGraph) return { is_error: true, content: '连线图服务不可用' };
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return validateSchematicHandler(ctx.host.connectionGraph as any, ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管 (apply_schematic 已废弃，转发到 validate_schematic)
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'apply_schematic execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -256,12 +229,12 @@ class ApplySchematicTool implements IAilyTool {
 // 注册
 // ============================
 
-ToolRegistry.register(new GenerateSchematicTool());
-ToolRegistry.register(new GetPinmapSummaryTool());
-ToolRegistry.register(new GetComponentCatalogTool());
-ToolRegistry.register(new ValidateSchematicTool());
-ToolRegistry.register(new GeneratePinmapTool());
-ToolRegistry.register(new SavePinmapTool());
-ToolRegistry.register(new GetCurrentSchematicTool());
-ToolRegistry.register(new ApplySchematicTool());
-ToolRegistry.register(new GetProjectContextTool());
+ToolDisplayRegistry.register(new GenerateSchematicTool());
+ToolDisplayRegistry.register(new GetPinmapSummaryTool());
+ToolDisplayRegistry.register(new GetComponentCatalogTool());
+ToolDisplayRegistry.register(new ValidateSchematicTool());
+ToolDisplayRegistry.register(new GeneratePinmapTool());
+ToolDisplayRegistry.register(new SavePinmapTool());
+ToolDisplayRegistry.register(new GetCurrentSchematicTool());
+ToolDisplayRegistry.register(new ApplySchematicTool());
+ToolDisplayRegistry.register(new GetProjectContextTool());

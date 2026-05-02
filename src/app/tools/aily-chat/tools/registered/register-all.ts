@@ -1,7 +1,7 @@
 /**
  * 工具统一注册入口
  *
- * 导入此模块会触发所有已注册工具的副作用注册（ToolRegistry.register）。
+ * 导入此模块会触发所有已注册工具的显示文案副作用注册（ToolDisplayRegistry.register）。
  * 在应用初始化时导入一次即可。
  *
  * 用法:
@@ -22,3 +22,6 @@ import './schematic-tools';
 
 // ABS / ABI / 工具类
 import './abs-tools';
+
+// 子代理动态注册
+import './agent-tools';

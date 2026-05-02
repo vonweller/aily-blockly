@@ -1,8 +1,12 @@
-import type { SessionSnapshot } from 'aily-lex/browser';
+import type { SessionSnapshot, TurnRequest } from 'aily-lex/browser';
 
 interface TurnControlLike {
   getCurrentTurnId(): string | undefined;
-  startTurn(content: string): string | undefined;
+  findTurnIdByRoundId(roundId: string): string | undefined;
+  getRequestContent(turnId: string): string | undefined;
+  getLastRoundId(turnId: string): string | undefined;
+  getCurrentRequestMetadata?(): TurnRequest['metadata'] | undefined;
+  startTurn(content: string, displayContent?: string, metadata?: TurnRequest['metadata']): string | undefined;
   completeTurn(response: string): void;
   failTurn(): void;
   removeIncomplete(): boolean;
@@ -19,8 +23,24 @@ export class LexTurnControlBridge {
     return this.turnControl.getCurrentTurnId();
   }
 
-  start(content: string): string | undefined {
-    return this.turnControl.startTurn(content);
+  turnIdByRound(roundId: string): string | undefined {
+    return this.turnControl.findTurnIdByRoundId(roundId);
+  }
+
+  requestContent(turnId: string): string | undefined {
+    return this.turnControl.getRequestContent(turnId);
+  }
+
+  lastRoundId(turnId: string): string | undefined {
+    return this.turnControl.getLastRoundId(turnId);
+  }
+
+  currentRequestMetadata(): TurnRequest['metadata'] | undefined {
+    return this.turnControl.getCurrentRequestMetadata?.();
+  }
+
+  start(content: string, displayContent?: string, metadata?: TurnRequest['metadata']): string | undefined {
+    return this.turnControl.startTurn(content, displayContent, metadata);
   }
 
   complete(response: string): void {

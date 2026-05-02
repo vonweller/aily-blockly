@@ -1,30 +1,50 @@
 <div
   class="dialog-box animate__animated animate__fadeIn animate__faster"
-  [ngClass]="{ user: role === 'user', editable: canEditUserMessage && !isEditing }"
+  [ngClass]="{ user: role === 'user', editable: canEditUserMessage && !isEditing, 'request-disabled': isRequestDisabled }"
   (mouseenter)="onDialogMouseEnter()"
   (mouseleave)="onDialogMouseLeave()"
   (click)="canEditUserMessage && !isEditing ? onUserMessageClick() : null"
   nz-tooltip
-  [nzTooltipTitle]="(canEditUserMessage && !isEditing) ? ('AILY_CHAT.CLICK_TO_EDIT' | translate) : ''"
+  [nzTooltipTitle]="editTooltipTitle || ((canEditUserMessage && !isEditing) ? ('AILY_CHAT.CLICK_TO_EDIT' | translate) : '')"
   nzTooltipPlacement="bottom"
   [nzTooltipOverlayStyle]="{ marginTop: '-10px', fontSize: '12px' }"
 >
     @if (canRenderCheckpointAnchor) {
       <div class="checkpoint-action-row" [class.expanded]="showCheckpointAnchor">
-        <span
-          class="restore-checkpoint-text"
+        <span class="checkpoint-action-line checkpoint-action-line-left" [class.visible]="showCheckpointAnchor"></span>
+        <button
+          type="button"
+          class="checkpoint-action-link checkpoint-action-link-text"
+          [class.disabled]="checkpointActionDisabled"
           [class.visible]="showCheckpointAnchor"
+          [title]="checkpointActionTitle"
           (click)="onRestoreCheckpoint(); $event.stopPropagation()"
-        >还原检查点</span>
+        >{{ checkpointActionLabel }}</button>
+        <span class="checkpoint-action-dot" [class.visible]="showCheckpointAnchor" aria-hidden="true">·</span>
+        <button
+          type="button"
+          class="checkpoint-action-link checkpoint-action-link-icon"
+          [class.disabled]="forkSessionActionDisabled"
+          [class.visible]="showCheckpointAnchor"
+          [title]="forkSessionActionTitle"
+          [attr.aria-label]="forkSessionActionLabel"
+          (click)="onForkSession(); $event.stopPropagation()"
+        ><i class="fa-light fa-code-branch"></i></button>
+        <span class="checkpoint-action-line checkpoint-action-line-right" [class.visible]="showCheckpointAnchor"></span>
       </div>
     }
-    <div class="username">
-      @if (role === "user") {
-        <i class="fa-light fa-user-vneck"></i>&nbsp;&nbsp;me
-      } @else {
-        <i class="fa-light fa-user-astronaut"></i>&nbsp;&nbsp;aily
-      }
-    </div>
+    @if (disabledRequestBadgeLabel || userTurnMetadataLabel || assistantTerminationLabel) {
+      <div class="turn-meta-row">
+        @if (disabledRequestBadgeLabel) {
+          <span class="turn-meta-label request-disabled-label" [title]="disabledRequestBadgeTitle">{{ disabledRequestBadgeLabel }}</span>
+        }
+        @if (userTurnMetadataLabel) {
+          <span class="turn-meta-label subtle-meta-label" [title]="checkpointActionTitle">{{ userTurnMetadataLabel }}</span>
+        } @else if (assistantTerminationLabel) {
+          <span class="turn-meta-label assistant-termination-label" [title]="assistantTerminationTitle">{{ assistantTerminationLabel }}</span>
+        }
+      </div>
+    }
 
     @if (isEditing) {
       <!-- 编辑模式：模拟输入框样式 -->
@@ -50,6 +70,9 @@
             }
           </div>
         }
+        @if (editContextHint) {
+          <div class="edit-turn-hint">{{ editContextHint }}</div>
+        }
         <div class="edit-textarea-wrapper">
           <textarea class="sscroll" [(ngModel)]="editText"
             (keydown)="onEditKeyDown($event)"
@@ -66,10 +89,10 @@
                 <i class="fa-light fa-angle-left"></i>
               </div>
             </div>
-            <div class="edit-btn2 ccenter" title="添加文件" (click)="editAddFile.emit()">
+            <div class="edit-btn2 ccenter" title="添加文件" (click)="onEditAddFileRequest()">
               <i class="fa-light fa-file-plus"></i>
             </div>
-            <div class="edit-btn2 ccenter" title="添加文件夹" (click)="editAddFolder.emit()">
+            <div class="edit-btn2 ccenter" title="添加文件夹" (click)="onEditAddFolderRequest()">
               <i class="fa-light fa-folder-plus"></i>
             </div>
           }
@@ -97,13 +120,12 @@
         </div>
       </div>
     } @else {
-      <div class="content" [class.thinking]="doing">
-        @if (role === 'aily' && partStore) {
+      <div class="content" [class.thinking]="effectiveDoing">
+        @if (hasStructuredAilyContent) {
           <!-- ★ Phase 2: aily 消息统一走 Part-based 渲染 -->
           <aily-chat-message-parts
-            [msgIndex]="msgIndex"
-            [store]="partStore"
-            [doing]="doing"
+            [parts]="effectiveParts"
+            [doing]="effectiveDoing"
           />
         } @else if (streamContent()) {
           <x-markdown
@@ -117,41 +139,58 @@
       </div>
     }
 
-    @if (doing) {
+    @if (effectiveDoing) {
       <div class="loader"></div>
     }
-    @if (canShowActions) {
-      <div class="msg-actions">
-        <div class="msg-action-btn" (click)="onRegenerate(); $event.stopPropagation()" title="重试">
-          <i class="fa-light fa-rotate-right"></i>
-        </div>
-        <div class="msg-action-btn" (click)="onCopyContent(); $event.stopPropagation()" title="复制">
-          <i class="fa-light fa-copy"></i>
-        </div>
-        <div class="msg-action-btn" [class.active]="feedbackState === 'helpful'" (click)="onFeedback('helpful'); $event.stopPropagation()" title="有帮助">
-          <i class="fa-light fa-thumbs-up"></i>
-        </div>
-        <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
-          <i class="fa-light fa-thumbs-down"></i>
-        </div>
-        @if (turnModelName && showActions) {
-          <span class="msg-model-label" title="本轮使用模型">{{ turnModelName }}</span>
+    @if (canShowActions || (canShowLimitActions && showActions) || showAssistantModelBadge) {
+      <div class="msg-footer" [class.model-only]="!(canShowActions || (canShowLimitActions && showActions))">
+        @if (canShowActions) {
+          <div class="msg-actions">
+            <div class="msg-action-btn" [class.disabled]="regenerateActionDisabled" (click)="onRegenerate(); $event.stopPropagation()" [title]="regenerateActionTitle">
+              <i class="fa-light fa-rotate-right"></i>
+            </div>
+            <div class="msg-action-btn" (click)="onCopyContent(); $event.stopPropagation()" title="复制">
+              <i class="fa-light fa-copy"></i>
+            </div>
+            <div class="msg-action-btn" [class.active]="feedbackState === 'helpful'" (click)="onFeedback('helpful'); $event.stopPropagation()" title="有帮助">
+              <i class="fa-light fa-thumbs-up"></i>
+            </div>
+            <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
+              <i class="fa-light fa-thumbs-down"></i>
+            </div>
+          </div>
+        } @else if (canShowLimitActions && showActions) {
+          <div class="msg-actions">
+            <div class="msg-action-btn" (click)="onCopyContent(); $event.stopPropagation()" title="复制">
+              <i class="fa-light fa-copy"></i>
+            </div>
+            <div class="msg-action-btn" [class.active]="feedbackState === 'helpful'" (click)="onFeedback('helpful'); $event.stopPropagation()" title="有帮助">
+              <i class="fa-light fa-thumbs-up"></i>
+            </div>
+            <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
+              <i class="fa-light fa-thumbs-down"></i>
+            </div>
+          </div>
+        }
+
+        @if (showAssistantModelBadge) {
+          <span class="msg-model-label" [title]="assistantModelBadgeTitle">{{ assistantModelBadgeLabel }}</span>
         }
       </div>
-    } @else if (canShowLimitActions && showActions) {
-      <div class="msg-actions">
-        <div class="msg-action-btn" (click)="onCopyContent(); $event.stopPropagation()" title="复制">
-          <i class="fa-light fa-copy"></i>
-        </div>
-        <div class="msg-action-btn" [class.active]="feedbackState === 'helpful'" (click)="onFeedback('helpful'); $event.stopPropagation()" title="有帮助">
-          <i class="fa-light fa-thumbs-up"></i>
-        </div>
-        <div class="msg-action-btn" [class.active]="feedbackState === 'unhelpful'" (click)="onFeedback('unhelpful'); $event.stopPropagation()" title="没帮助">
-          <i class="fa-light fa-thumbs-down"></i>
-        </div>
-        @if (turnModelName) {
-          <span class="msg-model-label" title="本轮使用模型">{{ turnModelName }}</span>
-        }
+    }
+
+    @if (showCheckpointRestore) {
+      <div class="checkpoint-restore-row">
+        <span class="checkpoint-action-line checkpoint-action-line-left visible"></span>
+        <span class="checkpoint-restore-label">{{ checkpointRestoreStatusLabel }}</span>
+        <span class="checkpoint-restore-dot" aria-hidden="true">·</span>
+        <button
+          type="button"
+          class="checkpoint-restore-action"
+          [title]="checkpointRestoreActionTitle"
+          (click)="onRestoreCheckpointState(); $event.stopPropagation()"
+        >{{ checkpointRestoreActionLabel }}</button>
+        <span class="checkpoint-action-line checkpoint-action-line-right visible"></span>
       </div>
     }
   </div>

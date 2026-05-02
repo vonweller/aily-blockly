@@ -1,12 +1,12 @@
 import { HostSessionRecordStore } from './host-session-record-store';
 
 import type {
-  ChatListItem,
   HostSessionRecord,
   LiveHostSessionRecord,
   SessionIndexEntry,
   SessionMetadata,
 } from './chat-history.service';
+import { countHostRecordMessages } from './chat-history.service';
 
 type LiveSessionProvider = () => LiveHostSessionRecord | null;
 
@@ -41,24 +41,26 @@ export class HostSessionPersistenceBridge {
   }
 
   saveHostRecord(
-    sessionId: string,
-    chatList: ChatListItem[],
-    metadata: Partial<SessionMetadata> & { sessionId: string },
+    record: LiveHostSessionRecord,
   ): void {
-    if (!sessionId || chatList.length === 0) {
+    const { sessionId } = record;
+    if (!sessionId) {
       return;
     }
 
     this.options.ensureIndexLoaded();
 
-    const fullMetadata = this.applyPendingTitle(this.hostRecordStore.createFullMetadata(metadata));
-    const hostRecord = this.hostRecordStore.createRecord(chatList, fullMetadata);
+    const hostRecord = this.materializeHostRecord(record);
+    const messageCount = countHostRecordMessages(hostRecord);
+    if (messageCount === 0) {
+      return;
+    }
 
     this.sessionCache.set(sessionId, hostRecord);
 
     const existingEntry = this.options.findIndexEntry(sessionId);
-    const messageCountChanged = !existingEntry || existingEntry.messageCount !== chatList.length;
-    this.options.upsertIndexEntry(sessionId, fullMetadata, chatList.length, messageCountChanged);
+    const messageCountChanged = !existingEntry || existingEntry.messageCount !== messageCount;
+    this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount, messageCountChanged);
 
     this.hostRecordStore.write(sessionId, hostRecord);
     this.options.writeIndex();
@@ -134,15 +136,14 @@ export class HostSessionPersistenceBridge {
     for (const sessionId of this.dirtySessionIds) {
       let hostRecord = this.sessionCache.get(sessionId);
 
-      if (liveRecord && liveRecord.sessionId === sessionId && liveRecord.chatList.length > 0) {
-        const fullMetadata = this.applyPendingTitle(this.hostRecordStore.createFullMetadata(liveRecord.metadata));
-        hostRecord = this.hostRecordStore.createRecord(liveRecord.chatList, fullMetadata);
+      if (liveRecord && liveRecord.sessionId === sessionId && countHostRecordMessages(liveRecord) > 0) {
+        hostRecord = this.materializeHostRecord(liveRecord);
         this.sessionCache.set(sessionId, hostRecord);
       }
 
       if (hostRecord) {
         this.hostRecordStore.write(sessionId, hostRecord);
-        this.options.upsertIndexEntry(sessionId, hostRecord.metadata, hostRecord.chatList.length);
+        this.options.upsertIndexEntry(sessionId, hostRecord.metadata, countHostRecordMessages(hostRecord));
       }
     }
     this.dirtySessionIds.clear();
@@ -168,6 +169,11 @@ export class HostSessionPersistenceBridge {
     this.sessionCache.delete(sessionId);
     this.dirtySessionIds.delete(sessionId);
     this.pendingTitles.delete(sessionId);
+  }
+
+  private materializeHostRecord(record: LiveHostSessionRecord): HostSessionRecord {
+    const fullMetadata = this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata));
+    return this.hostRecordStore.createRecord(fullMetadata, record.turnResponses, record.sidecar);
   }
 
   private applyPendingTitle(metadata: SessionMetadata): SessionMetadata {

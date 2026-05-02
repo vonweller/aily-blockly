@@ -1,7 +1,8 @@
 ﻿import type { ToolUseResult } from '../core/tool-types';
 import { ProjectService } from '../../../services/project.service';
-import { ConnectionGraphService, PinSummary, PinmapCatalog, ComponentInstanceInput, ComponentConfig, PinmapProtocol } from '../../../services/connection-graph.service';
+import { ConnectionGraphService, PinSummary, PinmapCatalog, ComponentInstanceInput, ComponentConfig, PinmapProtocol, type ConnectionGraphTextFileWriteEvent } from '../../../services/connection-graph.service';
 import { AilyHost } from '../core/host';
+import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 
 /**
  * 解析后的组件实例信息（内部使用）
@@ -15,6 +16,80 @@ interface ParsedComponentInstance {
   label?: string;
   /** 同一 pinmapId 的第几个实例 (0-based) */
   instance: number;
+}
+
+export interface ConnectionGraphInvocationContext {
+  turnId?: string;
+  toolCallId?: string;
+  timelineWriter?: EditingTimelineWriter;
+}
+
+export async function saveTimelineAwareConnectionGraphTextFile(
+  filePath: string,
+  content: string,
+  save: () => boolean | Promise<boolean>,
+  invocationContext?: ConnectionGraphInvocationContext,
+): Promise<boolean> {
+  const timelineWriter = invocationContext?.timelineWriter;
+  const turnId = invocationContext?.turnId;
+  let existedBefore = false;
+  let beforeContent: string | null = null;
+
+  if (timelineWriter?.recordFileWrite && turnId) {
+    const fs = AilyHost.get().fs;
+    try {
+      existedBefore = fs.existsSync(filePath);
+      beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
+    } catch {
+      existedBefore = false;
+      beforeContent = null;
+    }
+  }
+
+  const saved = await Promise.resolve(save());
+  if (!saved) {
+    return false;
+  }
+
+  if (!timelineWriter?.recordFileWrite || !turnId) {
+    return true;
+  }
+
+  try {
+    await timelineWriter.recordFileWrite({
+      turnId,
+      toolCallId: invocationContext?.toolCallId,
+      filePath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
+  } catch (error) {
+    console.warn('[connectionGraphTool] editing timeline recording failed:', error);
+  }
+
+  return true;
+}
+
+function createConnectionGraphTimelineObserver(invocationContext?: ConnectionGraphInvocationContext) {
+  const timelineWriter = invocationContext?.timelineWriter;
+  const turnId = invocationContext?.turnId;
+  if (!timelineWriter?.recordFileWrite || !turnId) {
+    return undefined;
+  }
+
+  return (event: ConnectionGraphTextFileWriteEvent): void => {
+    void Promise.resolve(timelineWriter.recordFileWrite({
+      turnId,
+      toolCallId: invocationContext?.toolCallId,
+      filePath: event.filePath,
+      existedBefore: event.existedBefore,
+      beforeContent: event.beforeContent,
+      afterContent: event.afterContent,
+    })).catch(error => {
+      console.warn('[connectionGraphTool] editing timeline recording failed:', error);
+    });
+  };
 }
 
 /**
@@ -925,7 +1000,8 @@ export async function getSensorPinmapCatalogTool(
 export async function validateConnectionGraphTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { aws?: string }
+  input: { aws?: string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const currentProjectPath = projectService.currentProjectPath;
@@ -939,6 +1015,9 @@ export async function validateConnectionGraphTool(
     }
 
     const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin, inferDataFlow } = await import('../../../services/connection-aws');
+
+    const awsFilePath = connectionGraphService.getAWSFilePath();
+    const jsonFilePath = connectionGraphService.getJSONFilePath();
 
     // 1. 获取 AWS 内容
     let awsContent: string;
@@ -1119,9 +1198,20 @@ export async function validateConnectionGraphTool(
 
     // 7. 保存 AWS 和 JSON
     if (input.aws) {
-      connectionGraphService.saveAWSFile(awsContent);
+      await saveTimelineAwareConnectionGraphTextFile(
+        awsFilePath,
+        awsContent,
+        () => connectionGraphService.saveAWSFile(awsContent),
+        invocationContext,
+      );
     }
-    connectionGraphService.saveJSONFile(jsonData);
+    const jsonContent = JSON.stringify(jsonData, null, 2);
+    await saveTimelineAwareConnectionGraphTextFile(
+      jsonFilePath,
+      jsonContent,
+      () => connectionGraphService.saveJSONFile(jsonData),
+      invocationContext,
+    );
 
     // 8. 通知 iframe 刷新（嵌入模式；子窗口模式已由 saveJSONFile → IPC 处理）
     if (connectionGraphService.hasActiveIframe) {
@@ -1353,7 +1443,8 @@ export async function generatePinmapTool(
 export async function savePinmapTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { pinmapId: string; pinmapConfig: ComponentConfig | string }
+  input: { pinmapId: string; pinmapConfig: ComponentConfig | string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     if (!input.pinmapId) {
@@ -1404,7 +1495,9 @@ export async function savePinmapTool(
     }
 
     // 保存 pinmap
-    const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath);
+    const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath, {
+      onFileWrite: createConnectionGraphTimelineObserver(invocationContext),
+    });
 
     if (!saveResult.success) {
       return {
@@ -1507,7 +1600,8 @@ export async function getCurrentSchematicTool(
 export async function applySchematicTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { aws?: string }
+  input: { aws?: string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const currentProjectPath = projectService.currentProjectPath;
@@ -1537,7 +1631,12 @@ export async function applySchematicTool(
     if (input.aws) {
       awsContent = input.aws;
       // 同时保存 .aws 文件
-      connectionGraphService.saveAWSFile(awsContent);
+      await saveTimelineAwareConnectionGraphTextFile(
+        awsFilePath,
+        awsContent,
+        () => connectionGraphService.saveAWSFile(awsContent),
+        invocationContext,
+      );
     } else {
       // 从文件读取
       if (!connectionGraphService.hasAWSFile()) {
@@ -1772,7 +1871,13 @@ export async function applySchematicTool(
     const validationResult = connectionGraphService.validateConnectionGraph(jsonData);
 
     // 8. 保存 JSON
-    connectionGraphService.saveJSONFile(jsonData);
+    const jsonContent = JSON.stringify(jsonData, null, 2);
+    await saveTimelineAwareConnectionGraphTextFile(
+      jsonFilePath,
+      jsonContent,
+      () => connectionGraphService.saveJSONFile(jsonData),
+      invocationContext,
+    );
 
     // 9. 同步保存 AWS（确保两个文件一致）
     if (!input.aws) {

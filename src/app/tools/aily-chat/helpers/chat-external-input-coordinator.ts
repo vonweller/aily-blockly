@@ -1,5 +1,17 @@
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  IChatViewAccess,
+  ISessionAccess,
+} from '../core/chat-context';
 import type { ChatTextOptions } from '../services/chat.service';
+
+type ChatExternalInputContext = Pick<IAgentLifecycle, 'isWaiting'>
+  & Pick<IChatViewAccess, 'inputValue' | 'scrollManager'>
+  & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatCoordination, 'send'>
+  & Pick<IChatServiceAccess, 'message'>;
 
 interface ExternalInputCallbacks {
   retryLastAction: () => Promise<void> | void;
@@ -19,7 +31,7 @@ interface ExternalInputCallbacks {
  */
 export class ChatExternalInputCoordinator {
   constructor(
-    private readonly ctx: IChatContext,
+    private readonly ctx: ChatExternalInputContext,
     private readonly callbacks: ExternalInputCallbacks,
   ) {}
 

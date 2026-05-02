@@ -170,6 +170,12 @@
                             &:hover {
                                 background: #404040;
                             }
+
+                            &.preset-list-item {
+                                justify-content: space-between;
+                                gap: 12px;
+                                align-items: flex-start;
+                            }
                         }
 
                         // 模型项特定样式
@@ -190,7 +196,7 @@
                                 .list-item {
                                     flex: 1;
                                     display: flex;
-                                    align-items: center;
+                                    align-items: flex-start;
                                     gap: 6px;
                                     padding: 0;
                                     background: transparent;
@@ -204,17 +210,8 @@
                                     // 让 checkbox 垂直居中
                                     ::ng-deep .ant-checkbox {
                                         top: 0;
-                                        align-self: center;
-                                    }
-
-                                    .model-id {
-                                        color: rgba(255, 255, 255, 0.4);
-                                        margin-left: 10px;
-                                        overflow: hidden;
-                                        text-overflow: ellipsis;
-                                        white-space: nowrap;
-                                        min-width: 0;
-                                        flex-shrink: 1;
+                                        align-self: flex-start;
+                                        margin-top: 3px;
                                     }
                                 }
 
@@ -238,6 +235,84 @@
             }
         }
     }
+}
+
+.model-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+}
+
+.model-primary-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.model-secondary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.model-name {
+    color: rgba(255, 255, 255, 0.88);
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-id {
+    color: rgba(255, 255, 255, 0.42);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-kind-tag,
+.model-default-tag,
+.model-meta-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 20px;
+    white-space: nowrap;
+}
+
+.model-kind-tag {
+    background: rgba(97, 175, 239, 0.14);
+    color: #b8dcff;
+}
+
+.model-default-tag {
+    flex-shrink: 0;
+    background: rgba(52, 211, 153, 0.14);
+    color: #9ff0cb;
+}
+
+.model-meta-pill {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.model-description {
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .model-item-add {

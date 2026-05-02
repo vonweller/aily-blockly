@@ -1,25 +1,13 @@
 /**
- * 已注册工具 - Blockly 块操作类
+ * 已注册工具 - Blockly 块操作类（显示文本注册）
+ *
+ * Phase 3: invoke() 已迁移至 lex IHostToolProvider，
+ * 此处仅保留 getStartText/getResultText 供 PartEventProcessor 使用。
  */
 
 import { IAilyTool, ToolContext, ToolUseResult } from '../../core/tool-types';
-import { ToolRegistry } from '../../core/tool-registry';
-import {
-  smartBlockTool as smartBlockHandler,
-  connectBlocksTool as connectBlocksHandler,
-  createCodeStructureTool as createCodeStructureHandler,
-  configureBlockTool as configureBlockHandler,
-  deleteBlockTool as deleteBlockHandler,
-  getWorkspaceOverviewTool as getWorkspaceOverviewHandler,
-  queryBlockDefinitionTool as queryBlockDefinitionHandler,
-  analyzeLibraryBlocksTool as analyzeLibraryBlocksHandler,
-  verifyBlockExistenceTool as verifyBlockExistenceHandler,
-} from '../editBlockTool';
-import { TOOLS as LEGACY_TOOLS } from '../tools';
-
-function findLegacySchema(name: string): any {
-  return (LEGACY_TOOLS as any[]).find(t => t.name === name);
-}
+import { ToolDisplayRegistry } from '../../core/tool-display-registry';
+import { createDisplayOnlyToolSchema } from './display-only-tool-schema';
 
 // ============================
 // smart_block_tool
@@ -27,16 +15,12 @@ function findLegacySchema(name: string): any {
 
 class SmartBlockTool implements IAilyTool {
   readonly name = 'smart_block_tool';
-  readonly schema = findLegacySchema('smart_block_tool') || {
-    name: 'smart_block_tool',
-    description: '智能创建Blockly块',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('smart_block_tool', { description: '智能创建Blockly块' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return smartBlockHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'smart_block_tool execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -55,16 +39,12 @@ class SmartBlockTool implements IAilyTool {
 
 class ConnectBlocksTool implements IAilyTool {
   readonly name = 'connect_blocks_tool';
-  readonly schema = findLegacySchema('connect_blocks_tool') || {
-    name: 'connect_blocks_tool',
-    description: '连接Blockly块',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('connect_blocks_tool', { description: '连接Blockly块' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return connectBlocksHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'connect_blocks_tool execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -83,16 +63,12 @@ class ConnectBlocksTool implements IAilyTool {
 
 class CreateCodeStructureTool implements IAilyTool {
   readonly name = 'create_code_structure_tool';
-  readonly schema = findLegacySchema('create_code_structure_tool') || {
-    name: 'create_code_structure_tool',
-    description: '创建代码结构',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('create_code_structure_tool', { description: '创建代码结构' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return createCodeStructureHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'create_code_structure_tool execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -111,16 +87,12 @@ class CreateCodeStructureTool implements IAilyTool {
 
 class ConfigureBlockTool implements IAilyTool {
   readonly name = 'configure_block_tool';
-  readonly schema = findLegacySchema('configure_block_tool') || {
-    name: 'configure_block_tool',
-    description: '配置Blockly块',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('configure_block_tool', { description: '配置Blockly块' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return configureBlockHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'configure_block_tool execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -139,16 +111,12 @@ class ConfigureBlockTool implements IAilyTool {
 
 class DeleteBlockTool implements IAilyTool {
   readonly name = 'delete_block_tool';
-  readonly schema = findLegacySchema('delete_block_tool') || {
-    name: 'delete_block_tool',
-    description: '删除Blockly块',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('delete_block_tool', { description: '删除Blockly块' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return deleteBlockHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'delete_block_tool execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -167,11 +135,12 @@ class DeleteBlockTool implements IAilyTool {
 
 class GetWorkspaceOverviewTool implements IAilyTool {
   readonly name = 'get_workspace_overview_tool';
-  readonly schema = findLegacySchema('get_workspace_overview_tool');
+  readonly schema = createDisplayOnlyToolSchema('get_workspace_overview_tool');
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return getWorkspaceOverviewHandler(args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_workspace_overview execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -190,17 +159,12 @@ class GetWorkspaceOverviewTool implements IAilyTool {
 
 class QueryBlockDefinitionTool implements IAilyTool {
   readonly name = 'queryBlockDefinitionTool';
-  readonly schema = findLegacySchema('queryBlockDefinitionTool') || {
-    name: 'queryBlockDefinitionTool',
-    description: '查询块定义信息',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('queryBlockDefinitionTool', { description: '查询块定义信息' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return queryBlockDefinitionHandler(ctx.host.project, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'queryBlockDefinitionTool execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -219,26 +183,13 @@ class QueryBlockDefinitionTool implements IAilyTool {
 
 class AnalyzeLibraryBlocksTool implements IAilyTool {
   readonly name = 'analyze_library_blocks';
-  readonly schema = findLegacySchema('analyze_library_blocks');
+  readonly schema = createDisplayOnlyToolSchema('analyze_library_blocks');
   readonly environment = 'gui' as const;
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    // Pre-process libraryNames: string → array
-    if (typeof args.libraryNames === 'string') {
-      try {
-        if (args.libraryNames.startsWith('[')) {
-          args.libraryNames = JSON.parse(args.libraryNames);
-        } else {
-          args.libraryNames = args.libraryNames.split(',').map((s: string) => s.trim()).filter(Boolean);
-        }
-      } catch {
-        if (args.libraryNames) {
-          args.libraryNames = [args.libraryNames];
-        }
-      }
-    }
-    return analyzeLibraryBlocksHandler(ctx.host?.project, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'analyze_library_blocks execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -274,24 +225,12 @@ class AnalyzeLibraryBlocksTool implements IAilyTool {
 class VerifyBlockExistenceTool implements IAilyTool {
   readonly name = 'verify_block_existence';
   readonly displayMode = 'appendMessage' as const;
-  readonly schema = findLegacySchema('verify_block_existence') || {
-    name: 'verify_block_existence',
-    description: '验证块存在性',
-    input_schema: { type: 'object', properties: {} },
-    agents: ['mainAgent']
-  };
+  readonly schema = createDisplayOnlyToolSchema('verify_block_existence', { description: '验证块存在性' });
   readonly environment = 'gui' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    // Pre-process blockTypes: string → array via JSON.parse
-    if (typeof args.blockTypes === 'string') {
-      try {
-        args.blockTypes = JSON.parse(args.blockTypes);
-      } catch {
-        // keep as-is, handler may handle string
-      }
-    }
-    return verifyBlockExistenceHandler(ctx.host?.project, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'verify_block_existence execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -323,12 +262,12 @@ class VerifyBlockExistenceTool implements IAilyTool {
 // 注册
 // ============================
 
-ToolRegistry.register(new SmartBlockTool());
-ToolRegistry.register(new ConnectBlocksTool());
-ToolRegistry.register(new CreateCodeStructureTool());
-ToolRegistry.register(new ConfigureBlockTool());
-ToolRegistry.register(new DeleteBlockTool());
-ToolRegistry.register(new GetWorkspaceOverviewTool());
-ToolRegistry.register(new QueryBlockDefinitionTool());
-ToolRegistry.register(new AnalyzeLibraryBlocksTool());
-ToolRegistry.register(new VerifyBlockExistenceTool());
+ToolDisplayRegistry.register(new SmartBlockTool());
+ToolDisplayRegistry.register(new ConnectBlocksTool());
+ToolDisplayRegistry.register(new CreateCodeStructureTool());
+ToolDisplayRegistry.register(new ConfigureBlockTool());
+ToolDisplayRegistry.register(new DeleteBlockTool());
+ToolDisplayRegistry.register(new GetWorkspaceOverviewTool());
+ToolDisplayRegistry.register(new QueryBlockDefinitionTool());
+ToolDisplayRegistry.register(new AnalyzeLibraryBlocksTool());
+ToolDisplayRegistry.register(new VerifyBlockExistenceTool());

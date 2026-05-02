@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { AilyChatConfigService } from './aily-chat-config.service';
 import { ContextBudgetViewService } from './context-budget-view.service';
 import { TiktokenService } from './tiktoken.service';
+import { AilyHost } from '../core/host';
 import {
   setContextBudgetTiktokenService,
 } from './context-budget-estimation';
@@ -70,7 +71,7 @@ export class ContextBudgetService {
    * 通过人工预估给出合理值。后续可由服务端 API 返回精确值。
    * 当前 系统提示词约 10000+ 中文字符 → ~4500 tokens
    */
-  private static readonly ESTIMATED_SYSTEM_PROMPT_TOKENS = 5000;
+  private static readonly ESTIMATED_SYSTEM_PROMPT_TOKENS = 3000;
 
   // ==================== 状态 ====================
 
@@ -114,7 +115,17 @@ export class ContextBudgetService {
   get maxContextTokens(): number {
     const configSize = this.ailyChatConfigService?.contextWindowSize;
     if (configSize && configSize > 0) return configSize;
-    return this._customMaxContextTokens ?? this._maxContextTokens;
+
+    if (this._customMaxContextTokens && this._customMaxContextTokens > 0) {
+      return this._customMaxContextTokens;
+    }
+
+    const activeModelContextTokens = this.resolveActiveModelContextWindowTokens();
+    if (activeModelContextTokens && activeModelContextTokens > 0) {
+      return activeModelContextTokens;
+    }
+
+    return this._maxContextTokens;
   }
 
   /**
@@ -148,7 +159,20 @@ export class ContextBudgetService {
    * 根据模型名称更新上下文窗口大小
    * @param modelName 模型名称（如 'gpt-4o', 'claude-3-sonnet' 等）
    */
-  updateModelContextSize(modelName: string | null): void {
+  updateModelContextSize(model: string | { model?: string | null; contextWindowTokens?: number; presetId?: string | null } | null): void {
+    const resolvedContextTokens = typeof model === 'object' && model
+      ? this.ailyChatConfigService.resolveModelContextWindowTokens(model)
+      : undefined;
+    const modelName = typeof model === 'string' ? model : model?.model ?? null;
+
+    if (resolvedContextTokens && resolvedContextTokens > 0) {
+      this._maxContextTokens = resolvedContextTokens;
+      if (modelName) {
+        this.tiktokenService.switchEncoderForModel(modelName);
+      }
+      return;
+    }
+
     if (!modelName || modelName === 'auto') {
       this._maxContextTokens = ContextBudgetService.DEFAULT_CONTEXT_SIZE;
       return;
@@ -160,7 +184,7 @@ export class ContextBudgetService {
     // 尝试精确匹配
     const lowerName = modelName.toLowerCase();
     for (const [key, size] of Object.entries(ContextBudgetService.MODEL_CONTEXT_SIZES)) {
-      if (lowerName.includes(key)) {
+      if (lowerName.includes(key.toLowerCase())) {
         this._maxContextTokens = size;
         return;
       }
@@ -173,13 +197,21 @@ export class ContextBudgetService {
   /**
   * 刷新本地预算快照估算（仅用于展示/持久化元数据）
    *
-  * 参考 Copilot 的 Context Window 面板，完整上下文 = System + Tools + Context + Messages。
+   * 参考 Copilot 的 Context Window 面板，当前展示语义对齐为：
+   * System = System Instructions + Tool Definitions
+    * User Context = Files + Messages + Tool Results
   * 这不是运行时压缩入口；真实预算决策由 lex ContextManager 负责。
    *
    * @param messages 当前完整对话历史
    * @param tools 可选，当前工具数组（传入时会更新工具 token 缓存）
    */
   refreshLocalEstimate(messages: any[], tools?: any[]): void {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      this.localEstimator.reset();
+      this.contextBudgetViewService.reset(this.buildEmptySnapshot());
+      return;
+    }
+
     this.contextBudgetViewService.applySnapshot(this.localEstimator.createSnapshot({
       messages,
       tools,
@@ -223,5 +255,11 @@ export class ContextBudgetService {
   reset(): void {
     this.localEstimator.reset();
     this.contextBudgetViewService.reset(this.buildEmptySnapshot());
+  }
+
+  private resolveActiveModelContextWindowTokens(): number | undefined {
+    const savedModel = AilyHost.get().config.data?.aiChatModel;
+    const resolvedModel = this.ailyChatConfigService.resolveSavedModel(savedModel);
+    return this.ailyChatConfigService.resolveModelContextWindowTokens(resolvedModel ?? savedModel);
   }
 }

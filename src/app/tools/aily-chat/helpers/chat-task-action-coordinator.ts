@@ -1,17 +1,39 @@
+import type { DialogTurnContext } from '../core/user-turn-action-target';
 import type { EditActionsHelper } from './edit-actions.helper';
 
+export type ChatTaskActionName =
+  | 'continue'
+  | 'retry'
+  | 'regenerate'
+  | 'undoEdits'
+  | 'redoEdits'
+  | 'keepEdits'
+  | 'acceptFile'
+  | 'rejectFile'
+  | 'voteResponse'
+  | 'restoreCheckpoint'
+  | 'forkSession'
+  | 'newChat'
+  | 'dismiss';
+
 export interface ChatTaskActionDetail {
-  action?: string;
-  checkpointId?: string;
-  listIndex?: number;
+  action?: ChatTaskActionName | string;
+  data?: unknown;
+  target?: DialogTurnContext | null;
+  vote?: 0 | 1;
   filePath?: string;
-  [key: string]: unknown;
+  fileCount?: number;
+  totalAdded?: number;
+  totalRemoved?: number;
 }
+
+export type ChatTaskActionEvent = CustomEvent<ChatTaskActionDetail | undefined>;
 
 interface TaskActionCallbacks {
   continueConversation: () => Promise<void> | void;
   retryLastAction: () => Promise<void> | void;
   newChat: () => Promise<void> | void;
+  voteResponse: (target: DialogTurnContext, vote: 0 | 1) => Promise<void> | void;
   warnUnknownAction: (action: string | undefined) => void;
 }
 
@@ -35,7 +57,7 @@ export class ChatTaskActionCoordinator {
         void this.callbacks.retryLastAction();
         return;
       case 'regenerate':
-        void this.editActions.regenerateTurn(detail?.checkpointId);
+        void this.editActions.regenerateTurn(detail?.target);
         return;
       case 'undoEdits':
         void this.editActions.undoLastEdits();
@@ -52,8 +74,20 @@ export class ChatTaskActionCoordinator {
       case 'rejectFile':
         this.editActions.onRejectFile(detail?.filePath);
         return;
+      case 'voteResponse':
+        if (detail?.target && (detail.vote === 0 || detail.vote === 1)) {
+          void this.callbacks.voteResponse(detail.target, detail.vote);
+        }
+        return;
       case 'restoreCheckpoint':
-        void this.editActions.restoreToCheckpoint(detail?.listIndex);
+        if (detail?.target) {
+          void this.editActions.restoreToCheckpoint(detail.target);
+        }
+        return;
+      case 'forkSession':
+        if (detail?.target) {
+          void this.editActions.forkSessionFromTurn(detail.target);
+        }
         return;
       case 'newChat':
         void this.callbacks.newChat();

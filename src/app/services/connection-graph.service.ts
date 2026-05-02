@@ -175,6 +175,13 @@ export interface ValidationResult {
   message: string;
 }
 
+export interface ConnectionGraphTextFileWriteEvent {
+  filePath: string;
+  existedBefore: boolean;
+  beforeContent: string | null;
+  afterContent: string;
+}
+
 // =====================================================
 // Pinmap Catalog 类型定义
 // =====================================================
@@ -1828,7 +1835,9 @@ export class ConnectionGraphService {
    * @param config pinmap 配置
    * @param packagesBasePath 包基础路径
    */
-  savePinmapConfig(pinmapId: string, config: ComponentConfig, packagesBasePath: string): {
+  savePinmapConfig(pinmapId: string, config: ComponentConfig, packagesBasePath: string, options?: {
+    onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void | Promise<void>;
+  }): {
     success: boolean;
     filePath?: string;
     error?: string;
@@ -1889,12 +1898,13 @@ export class ConnectionGraphService {
       // 生成文件名
       const fileName = `${ref.modelId}_${ref.variantId}.json`;
       const filePath = this.electronService.pathJoin(pinmapsDir, fileName);
+      const pinmapContent = JSON.stringify(config, null, 2);
 
       // 保存文件
-      this.electronService.writeFile(filePath, JSON.stringify(config, null, 2));
+      this.writeTextFileWithObserver(filePath, pinmapContent, options?.onFileWrite);
 
       // 更新 catalog 状态（传入已解析的 packagePath，避免重新从 packageSlug 构建错误路径）
-      const catalogUpdated = this.updateCatalogStatus(pinmapId, 'available', `pinmaps/${fileName}`, packagePath, config);
+      const catalogUpdated = this.updateCatalogStatus(pinmapId, 'available', `pinmaps/${fileName}`, packagePath, config, options);
       if (!catalogUpdated) {
         console.warn('[savePinmapConfig] catalog 更新失败，但 pinmap 文件已保存');
       }
@@ -1919,7 +1929,10 @@ export class ConnectionGraphService {
     status: 'available' | 'needs_generation',
     pinmapFile: string,
     resolvedPackagePath: string,
-    componentConfig?: ComponentConfig
+    componentConfig?: ComponentConfig,
+    options?: {
+      onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void | Promise<void>;
+    },
   ): boolean {
     try {
       const ref = this.parsePinmapId(pinmapId);
@@ -1980,7 +1993,7 @@ export class ConnectionGraphService {
       // 保存 catalog
       console.log('[updateCatalogStatus] 保存前 models 数量:', catalog.models.length, 'model IDs:', catalog.models.map(m => m.id).join(', '));
       const catalogContent = JSON.stringify(catalog, null, 2);
-      this.electronService.writeFile(catalogPath, catalogContent);
+      this.writeTextFileWithObserver(catalogPath, catalogContent, options?.onFileWrite);
       console.log('[updateCatalogStatus] catalog 已更新:', catalogPath);
       
       return true;
@@ -2006,6 +2019,45 @@ export class ConnectionGraphService {
       type: 'library',
       models: []
     };
+  }
+
+  private writeTextFileWithObserver(
+    filePath: string,
+    content: string,
+    onFileWrite?: (event: ConnectionGraphTextFileWriteEvent) => void | Promise<void>,
+  ): void {
+    let existedBefore = false;
+    let beforeContent: string | null = null;
+
+    try {
+      existedBefore = this.electronService.exists(filePath);
+      beforeContent = existedBefore ? this.electronService.readFile(filePath) : null;
+    } catch {
+      existedBefore = false;
+      beforeContent = null;
+    }
+
+    this.electronService.writeFile(filePath, content);
+
+    if (!onFileWrite) {
+      return;
+    }
+
+    try {
+      const result = onFileWrite({
+        filePath,
+        existedBefore,
+        beforeContent,
+        afterContent: content,
+      });
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        void (result as Promise<void>).catch(error => {
+          console.warn('[ConnectionGraphService] file write observer failed:', error);
+        });
+      }
+    } catch (error) {
+      console.warn('[ConnectionGraphService] file write observer failed:', error);
+    }
   }
 
   /**

@@ -1,17 +1,43 @@
 import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
 import type { PartEventProcessor } from '../core/part-event-processor';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
-import type { LexMessageLifecycleBridge } from './lex-message-lifecycle-bridge';
+
+export type LexRuntimePartProcessor = Pick<
+  PartEventProcessor,
+  | 'processTextDelta'
+  | 'processThinking'
+  | 'processToolCallStart'
+  | 'processToolCallEnd'
+  | 'processTerminalResult'
+  | 'processError'
+>;
+
+export type LexRuntimeHostSyncAccess = Pick<
+  LexHostSyncBridge,
+  'recordFileToolEdit' | 'applyTodoStateEvent'
+>;
 
 /** Narrow context: toolCallingIteration + contextBudgetService */
-type LexRuntimeEventContext = Pick<IAgentLifecycle, 'toolCallingIteration'> & Pick<IChatServiceAccess, 'contextBudgetService'>;
+export type LexRuntimeEventContext = Pick<IAgentLifecycle, 'toolCallingIteration'> & Pick<IChatServiceAccess, 'contextBudgetService'>;
+type LexRuntimeLifecycleAccess = {
+  closeNativeThinking(): void;
+  startNativeThinking(): void;
+};
 
 export class LexRuntimeEventBridge {
+  private static readonly TERMINAL_TOOLS = new Set([
+    'run_terminal',
+    'get_terminal_output',
+    'send_to_terminal',
+    'kill_terminal',
+    'start_background_command',
+  ]);
+
   constructor(
     private readonly ctx: LexRuntimeEventContext,
-    private readonly partProcessor: PartEventProcessor,
-    private readonly hostSyncBridge: LexHostSyncBridge,
-    private readonly messageLifecycleBridge: LexMessageLifecycleBridge,
+    private readonly partProcessor: LexRuntimePartProcessor,
+    private readonly hostSyncBridge: LexRuntimeHostSyncAccess,
+    private readonly messageLifecycleBridge: LexRuntimeLifecycleAccess,
   ) {}
 
   processEvent(event: any): boolean {
@@ -40,7 +66,7 @@ export class LexRuntimeEventBridge {
       case 'tool_call_end': {
         this.partProcessor.processToolCallEnd(event.toolCallId, event.toolName, event.result);
 
-        if (event.toolName === 'get_terminal_output' || event.toolName === 'start_background_command') {
+        if (LexRuntimeEventBridge.TERMINAL_TOOLS.has(event.toolName)) {
           this.partProcessor.processTerminalResult(event.toolCallId, event.result);
         }
         return true;
@@ -63,8 +89,13 @@ export class LexRuntimeEventBridge {
           event.usedTokens,
           {
             systemTokens: event.systemTokens,
+            baseSystemTokens: event.baseSystemTokens,
+            instructionTokens: event.instructionTokens,
+            skillTokens: event.skillTokens,
             toolsTokens: event.toolsTokens,
+            toolSourceTokens: event.toolSourceTokens,
             messagesTokens: event.messagesTokens,
+            toolResultsTokens: event.toolResultsTokens,
             usagePercent: event.usagePercent,
             compressionThreshold: event.compressionThreshold,
             summarizationThreshold: event.summarizationThreshold,

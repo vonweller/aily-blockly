@@ -1,0 +1,2484 @@
+import { parseTerminalPayload } from '../../../core/terminal-payload';
+import type { ToolResultContentPart } from '../../../core/tool-result-content';
+import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
+
+export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
+
+export interface StateDetailRow {
+  id: string;
+  title: string;
+  subtitle?: string;
+  note?: string;
+  trailing?: string;
+  tone?: StateTone;
+  outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code';
+  outputChannel?: 'stdout' | 'stderr';
+  outputUri?: string;
+  outputMimeType?: string;
+  outputData?: string;
+  outputCode?: string;
+  outputLanguage?: string;
+  outputLabel?: string;
+  outputDescription?: string;
+}
+
+export interface StateDetailOutputGroup {
+  id: string;
+  kind: 'terminal' | 'data' | 'code' | 'generic';
+  rows: readonly StateDetailRow[];
+}
+
+export interface StateDetailSection {
+  title: string;
+  rows: StateDetailRow[];
+  outputGroups?: readonly StateDetailOutputGroup[];
+}
+
+export interface DetailSectionDescriptor {
+  title: string;
+  rows: readonly StateDetailRow[];
+  outputGroups?: readonly StateDetailOutputGroup[];
+}
+
+export interface ActivityDetailItem {
+  id: string;
+  kicker?: string;
+  title: string;
+  subtitle?: string;
+  note?: string;
+  trailing?: string;
+  tone?: StateTone;
+}
+
+export interface ActivitySummaryBadge {
+  label: string;
+  value: string;
+  tone?: StateTone;
+}
+
+export type InstructionDiagnosticFilter = 'all' | 'active' | 'inactive' | 'overridden' | 'empty' | 'not_found';
+
+export interface InstructionFilterChip {
+  id: InstructionDiagnosticFilter;
+  label: string;
+  count: number;
+  tone?: StateTone;
+  active: boolean;
+}
+
+export interface InstructionDetailProjection {
+  badges: ActivitySummaryBadge[];
+  filter: InstructionDiagnosticFilter;
+  filterChips: InstructionFilterChip[];
+  sections: DetailSectionDescriptor[];
+}
+
+export interface StateViewerStandardProjection {
+  badges: ActivitySummaryBadge[];
+  sections: DetailSectionDescriptor[];
+}
+
+export function appendDetailSection(
+  sections: StateDetailSection[],
+  activityItems: ActivityDetailItem[],
+  title: string,
+  rows: readonly StateDetailRow[],
+  outputGroups: readonly StateDetailOutputGroup[] | undefined,
+  includeActivityItems: boolean,
+): void {
+  if (rows.length === 0) {
+    return;
+  }
+
+  sections.push({
+    title,
+    rows: [...rows],
+    outputGroups: descriptorOutputGroups(rows, outputGroups),
+  });
+
+  if (!includeActivityItems) {
+    return;
+  }
+
+  activityItems.push(
+    ...rows.map((row) => ({
+      id: row.id,
+      kicker: title,
+      title: row.title,
+      subtitle: row.subtitle,
+      note: row.note,
+      trailing: row.trailing,
+      tone: row.tone,
+    })),
+  );
+}
+
+export function appendDetailSections(
+  sections: StateDetailSection[],
+  activityItems: ActivityDetailItem[],
+  descriptors: readonly DetailSectionDescriptor[],
+  includeActivityItems: boolean,
+): void {
+  for (const descriptor of descriptors) {
+    appendDetailSection(sections, activityItems, descriptor.title, descriptor.rows, descriptor.outputGroups, includeActivityItems);
+  }
+}
+
+export function buildActivityItemsFromDetailSections(
+  descriptors: readonly DetailSectionDescriptor[],
+): ActivityDetailItem[] {
+  const items: ActivityDetailItem[] = [];
+  for (const descriptor of descriptors) {
+    items.push(
+      ...descriptor.rows.map((row) => ({
+        id: row.id,
+        kicker: descriptor.title || undefined,
+        title: row.title,
+        subtitle: row.subtitle,
+        note: row.note,
+        trailing: row.trailing,
+        tone: row.tone,
+      })),
+    );
+  }
+  return items;
+}
+
+export function buildToolCallDetailSections(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+  args?: unknown;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const toolSpecificData = asRecord(metadata['toolSpecificData']);
+  if (isSubagentMetadata(toolSpecificData)) {
+    return [];
+  }
+
+  const toolName = asString(metadata['toolName']);
+  const readFileMetadata = asRecord(metadata['readFile']);
+  const argsSummary = asString(metadata['argsSummary']);
+  const argsNote = argsSummary || formatToolCallArgs(source.args);
+  const toolSummary = toolName ? buildToolInvocationDisplaySummary({ toolName, args: source.args, metadata }) : undefined;
+  const timeline = asRecordArray(metadata['timeline']);
+  const descriptors: DetailSectionDescriptor[] = [];
+  const timelineEntries = timeline.length > 0 ? timeline : [metadata];
+  const baseId = asString(metadata['recordId']) || source.id || 'tool';
+
+  if (argsNote) {
+    descriptors.push({
+      title: '调用参数',
+      rows: [{
+        id: `${baseId}:args`,
+        title: toolSummary?.label || toolName || '工具调用',
+        subtitle: toolSummary?.subtitle,
+        note: argsNote,
+        tone: 'neutral',
+      }],
+    });
+  }
+
+  if (isReadFileToolName(toolName) && readFileMetadata) {
+    const readFileDescriptor = buildReadFileDetailSection(baseId, readFileMetadata);
+    if (readFileDescriptor) {
+      descriptors.push(readFileDescriptor);
+    }
+  }
+
+  const outputRows = timelineEntries.flatMap((entry, index) => buildToolCallOutputRows(entry, index, toolName));
+
+  const timelineRows = timelineEntries.map((entry, index) => toToolCallTimelineRow(entry, index));
+
+  if (timelineRows.length > 0) {
+    descriptors.push({
+      title: timelineRows.length > 1 ? '历史时间线' : '当前记录',
+      rows: timelineRows,
+    });
+  }
+
+  if (outputRows.length > 0) {
+    descriptors.push({
+      title: '工具输出',
+      rows: outputRows,
+      outputGroups: buildStateDetailOutputGroups(outputRows),
+    });
+  }
+
+  return descriptors;
+}
+
+export function buildToolCallSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const toolSpecificData = asRecord(metadata['toolSpecificData']);
+  if (isSubagentMetadata(toolSpecificData)) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const toolName = asString(metadata['toolName']);
+  const readFileMetadata = asRecord(metadata['readFile']);
+  const agentName = asString(toolSpecificData?.['agentName']);
+  const phase = asString(metadata['phase']);
+  const progress = asNumber(metadata['progress']);
+
+  if (toolName) {
+    badges.push({ label: '工具', value: toolName, tone: 'info' });
+  }
+  if (agentName) {
+    badges.push({ label: '子代理', value: agentName, tone: 'info' });
+  }
+  if (phase) {
+    badges.push({
+      label: '阶段',
+      value: formatNarrativePhase(phase),
+      tone: toneFromNarrativePhase(phase),
+    });
+  }
+  if (typeof progress === 'number') {
+    badges.push({
+      label: '进度',
+      value: `${Math.round(progress)}%`,
+      tone: toneFromNarrativePhase(phase),
+    });
+  }
+  if (isReadFileToolName(toolName) && readFileMetadata) {
+    badges.push(...buildReadFileSummaryBadges(readFileMetadata));
+  }
+
+  return badges;
+}
+
+function buildReadFileSummaryBadges(readFileMetadata: Record<string, unknown>): ActivitySummaryBadge[] {
+  const badges: ActivitySummaryBadge[] = [];
+  const returnedRange = formatReadFileCompactLineSpan(
+    readFileMetadata['returnedStartLine'],
+    readFileMetadata['returnedEndLine'],
+  );
+  const byteRatio = formatReadFileCompactByteRatio(
+    readFileMetadata['readBytes'],
+    readFileMetadata['totalBytes'],
+  );
+  const truncatedByBytes = asBoolean(readFileMetadata['truncatedByBytes']);
+
+  if (returnedRange) {
+    badges.push({ label: '范围', value: returnedRange, tone: 'info' });
+  }
+  if (byteRatio) {
+    badges.push({ label: '字节', value: byteRatio, tone: truncatedByBytes ? 'warn' : 'neutral' });
+  }
+  if (truncatedByBytes) {
+    badges.push({ label: '截断', value: '字节上限', tone: 'warn' });
+  }
+
+  return badges;
+}
+
+function buildReadFileDetailSection(
+  baseId: string,
+  readFileMetadata: Record<string, unknown>,
+): DetailSectionDescriptor | undefined {
+  const rows: StateDetailRow[] = [];
+  const returnedRange = formatReadFileDetailedLineSpan(
+    readFileMetadata['returnedStartLine'],
+    readFileMetadata['returnedEndLine'],
+  );
+  const requestedRange = formatReadFileDetailedLineSpan(
+    readFileMetadata['requestedStartLine'],
+    readFileMetadata['requestedEndLine'],
+  );
+  const lineCount = asNumber(readFileMetadata['lineCount']);
+  const totalLines = asNumber(readFileMetadata['totalLines']);
+  const byteSummary = formatReadFileDetailedBytes(
+    readFileMetadata['readBytes'],
+    readFileMetadata['totalBytes'],
+  );
+  const continuation = formatReadFileContinuation(readFileMetadata['continueWith']);
+  const truncatedByBytes = asBoolean(readFileMetadata['truncatedByBytes']);
+
+  if (returnedRange) {
+    rows.push({
+      id: `${baseId}:read-file:range`,
+      title: '返回范围',
+      subtitle: [
+        requestedRange ? `请求 ${requestedRange}` : '',
+        typeof totalLines === 'number' ? `共 ${formatReadFileInteger(totalLines)} 行` : '',
+      ].filter(Boolean).join(' · ') || undefined,
+      note: returnedRange,
+      trailing: typeof lineCount === 'number' ? `${formatReadFileInteger(lineCount)} 行` : undefined,
+      tone: 'info',
+    });
+  }
+
+  if (byteSummary || truncatedByBytes) {
+    rows.push({
+      id: `${baseId}:read-file:bytes`,
+      title: '字节统计',
+      note: byteSummary,
+      trailing: truncatedByBytes ? '字节截断' : undefined,
+      tone: truncatedByBytes ? 'warn' : 'neutral',
+    });
+  }
+
+  if (continuation) {
+    rows.push({
+      id: `${baseId}:read-file:continue`,
+      title: '继续读取',
+      note: continuation,
+      tone: 'info',
+    });
+  }
+
+  return rows.length > 0
+    ? { title: '读取信息', rows }
+    : undefined;
+}
+
+export function buildSubagentDetailSections(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const toolSpecificData = asRecord(metadata['toolSpecificData']);
+  if (!isSubagentMetadata(toolSpecificData)) {
+    return [];
+  }
+
+  const baseId = asString(metadata['recordId']) || source.id || 'subagent';
+  const description = asString(toolSpecificData?.['description']) || asString(metadata['argsSummary']) || undefined;
+  const prompt = asString(toolSpecificData?.['prompt']);
+  const childItems = asRecordArray(toolSpecificData?.['childItems']);
+  const result = asString(toolSpecificData?.['result']);
+  const activityRows = childItems
+    .map((item, index) => toSubagentDetailRow(item, index))
+    .filter((row): row is StateDetailRow => !!row);
+  const rows: StateDetailRow[] = [];
+
+  if (prompt && prompt !== description) {
+    rows.push(textToSubagentNarrativeRow(`${baseId}:prompt`, prompt, 'info'));
+  }
+
+  rows.push(...activityRows);
+
+  if (rows.length === 0 && description) {
+    rows.push(textToSubagentNarrativeRow(`${baseId}:pending`, description, 'info'));
+  }
+
+  if (result) {
+    rows.push(textToSubagentNarrativeRow(`${baseId}:result`, result, 'success'));
+  }
+
+  return rows.length > 0
+    ? [{ title: '任务', rows }]
+    : [];
+}
+
+export function buildBackgroundTaskDetailSections(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const taskId = asString(metadata['taskId']) || source.id || 'background-task';
+  const status = asString(metadata['status']);
+  const agentName = asString(metadata['agentName']);
+  const description = asString(metadata['description']);
+  const summary = asString(metadata['summary']);
+  const progress = asNumber(metadata['progress']);
+  const startedAt = asNumber(metadata['startedAt']);
+  const completedAt = asNumber(metadata['completedAt']);
+  const output = asString(metadata['output']);
+  const error = asString(metadata['error']);
+  const activity = asRecord(metadata['activity']);
+  const note = error || output || summary;
+
+  if (!note && !activity) {
+    return [];
+  }
+
+  const rows: StateDetailRow[] = [];
+  if (note) {
+    rows.push({
+      id: taskId,
+      title: description || taskId || '后台任务',
+      subtitle: [
+        agentName ? `代理 ${agentName}` : '',
+        startedAt != null ? `开始 ${formatClock(startedAt)}` : '',
+        completedAt != null ? `结束 ${formatClock(completedAt)}` : '',
+      ].filter(Boolean).join(' · '),
+      note,
+      trailing: status === 'running' && typeof progress === 'number'
+        ? `${Math.round(progress)}%`
+        : formatBackgroundTaskStatus(status),
+      tone: toneFromBackgroundTaskStatus(status),
+    });
+  }
+
+  if (activity) {
+    rows.push(toBackgroundTaskActivityRow(activity, taskId));
+  }
+
+  return [{
+    title: output || error ? '结果摘要' : activity ? '进度与活动' : '进度摘要',
+    rows,
+  }];
+}
+
+export function buildBackgroundTaskSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const taskId = asString(metadata['taskId']);
+  const status = asString(metadata['status']);
+  const agentName = asString(metadata['agentName']);
+  const progress = asNumber(metadata['progress']);
+  const startedAt = asNumber(metadata['startedAt']);
+  const completedAt = asNumber(metadata['completedAt']);
+
+  if (taskId) {
+    badges.push({ label: '任务', value: taskId, tone: 'info' });
+  }
+  if (status) {
+    badges.push({
+      label: '状态',
+      value: formatBackgroundTaskStatus(status),
+      tone: toneFromBackgroundTaskStatus(status),
+    });
+  }
+  if (agentName) {
+    badges.push({ label: '代理', value: agentName, tone: 'neutral' });
+  }
+  if (typeof progress === 'number') {
+    badges.push({
+      label: '进度',
+      value: `${Math.round(progress)}%`,
+      tone: status === 'running' ? 'info' : 'neutral',
+    });
+  }
+  if (typeof startedAt === 'number') {
+    badges.push({ label: '开始', value: formatClock(startedAt), tone: 'neutral' });
+  }
+  if (typeof completedAt === 'number') {
+    badges.push({
+      label: '结束',
+      value: formatClock(completedAt),
+      tone: toneFromBackgroundTaskStatus(status),
+    });
+  }
+
+  return badges;
+}
+
+export function buildAgentTeamDetailSections(source: {
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const descriptors: DetailSectionDescriptor[] = [];
+  const roleRows: StateDetailRow[] = [];
+  for (const value of asArray(metadata['roles'])) {
+    const role = asRecord(value);
+    if (!role) continue;
+    roleRows.push(toAgentTeamRoleRow(role));
+  }
+  if (roleRows.length > 0) {
+    descriptors.push({ title: '角色分工', rows: roleRows });
+  }
+
+  const messageRows: StateDetailRow[] = [];
+  for (const value of asArray(metadata['recentMessages'])) {
+    const message = asRecord(value);
+    if (!message) continue;
+    messageRows.push(toAgentTeamMessageRow(message));
+  }
+  if (messageRows.length > 0) {
+    descriptors.push({ title: '最近消息', rows: messageRows });
+  }
+
+  return descriptors;
+}
+
+export function buildAgentTeamSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const teamId = asString(metadata['teamId']);
+  const status = asString(metadata['status']);
+  const roleCount = asNumber(metadata['roleCount']);
+  const messageCount = asNumber(metadata['messageCount']);
+  const graphId = asString(metadata['graphId']);
+
+  if (teamId) {
+    badges.push({ label: '团队', value: teamId, tone: 'info' });
+  }
+  if (status) {
+    badges.push({
+      label: '状态',
+      value: formatAgentTeamStatus(status),
+      tone: toneFromAgentTeamStatus(status),
+    });
+  }
+  if (typeof roleCount === 'number') {
+    badges.push({ label: '角色', value: String(roleCount), tone: 'neutral' });
+  }
+  if (typeof messageCount === 'number') {
+    badges.push({ label: '消息', value: String(messageCount), tone: 'neutral' });
+  }
+  if (graphId) {
+    badges.push({ label: '任务图', value: graphId, tone: 'neutral' });
+  }
+
+  return badges;
+}
+
+export function buildInstructionDetailProjection(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+  selectedFilter?: InstructionDiagnosticFilter;
+}): InstructionDetailProjection {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return {
+      badges: [],
+      filter: 'all',
+      filterChips: [],
+      sections: [],
+    };
+  }
+
+  const hostId = asString(metadata['hostId']);
+  const modelFamily = asString(metadata['modelFamily']);
+  const activeCount = asNumber(metadata['activeCount']) || 0;
+  const inactiveCount = asNumber(metadata['inactiveCount']) || 0;
+  const overriddenCount = asNumber(metadata['overriddenCount']) || 0;
+  const emptyCount = asNumber(metadata['emptyCount']) || 0;
+  const notFoundCount = asNumber(metadata['notFoundCount']) || 0;
+  const capabilities = asArray(metadata['capabilities'])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const diagnostics = asRecordArray(metadata['diagnostics']);
+  const filterCounts = collectInstructionDiagnosticCounts(diagnostics);
+  const filter = resolveInstructionFilter(source.selectedFilter || 'all', filterCounts);
+
+  const badges: ActivitySummaryBadge[] = [];
+  if (hostId) badges.push({ label: 'Host', value: hostId, tone: 'info' });
+  if (modelFamily) badges.push({ label: '模型族', value: modelFamily, tone: 'neutral' });
+  badges.push({ label: '生效', value: String(activeCount), tone: activeCount > 0 ? 'success' : 'neutral' });
+  if (inactiveCount > 0) badges.push({ label: '条件跳过', value: String(inactiveCount), tone: 'warn' });
+  if (overriddenCount > 0) badges.push({ label: '被覆盖', value: String(overriddenCount), tone: 'warn' });
+  if (emptyCount > 0) badges.push({ label: '空文件', value: String(emptyCount), tone: 'warn' });
+  if (notFoundCount > 0) badges.push({ label: '未发现', value: String(notFoundCount), tone: 'neutral' });
+  if (capabilities.length > 0) badges.push({ label: '能力', value: String(capabilities.length), tone: 'info' });
+
+  const sections: DetailSectionDescriptor[] = [];
+  if (hostId || modelFamily || capabilities.length > 0) {
+    sections.push({
+      title: '运行上下文',
+      rows: [{
+        id: `${source.id || 'instructions'}:context`,
+        title: hostId || 'Instruction context',
+        subtitle: [modelFamily ? `模型 ${modelFamily}` : '', capabilities.length > 0 ? `能力 ${capabilities.join(', ')}` : '']
+          .filter(Boolean)
+          .join(' · '),
+        trailing: asString(metadata['summary']),
+        tone: 'info',
+      }],
+    });
+  }
+
+  if (filter === 'all') {
+    const activeRows: StateDetailRow[] = [];
+    const skippedRows: StateDetailRow[] = [];
+    for (const diagnostic of diagnostics) {
+      const row = toInstructionDiagnosticRow(diagnostic, source.id);
+      if (asBoolean(diagnostic['active'])) {
+        activeRows.push(row);
+      } else {
+        skippedRows.push(row);
+      }
+    }
+
+    if (activeRows.length > 0) {
+      sections.push({ title: '已生效规则', rows: activeRows });
+    }
+    if (skippedRows.length > 0) {
+      sections.push({ title: '跳过与覆盖', rows: skippedRows });
+    }
+  } else {
+    const filteredRows = diagnostics
+      .filter(diagnostic => matchesInstructionDiagnosticFilter(diagnostic, filter))
+      .map(diagnostic => toInstructionDiagnosticRow(diagnostic, source.id));
+
+    if (filteredRows.length > 0) {
+      sections.push({
+        title: formatInstructionFilterTitle(filter),
+        rows: filteredRows,
+      });
+    }
+  }
+
+  return {
+    badges,
+    filter,
+    filterChips: buildInstructionFilterChips(filterCounts, filter),
+    sections,
+  };
+}
+
+export function buildStandardStateViewerProjection(source: {
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction';
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+  preparedDetailSections?: readonly DetailSectionDescriptor[] | null;
+}): StateViewerStandardProjection {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return { badges: [], sections: [] };
+  }
+
+  const sections = source.preparedDetailSections?.length
+    ? [...source.preparedDetailSections]
+    : buildDefaultDetailSections(source.kind, source.id, metadata);
+
+  return {
+    badges: buildDefaultSummaryBadges(source.kind, metadata),
+    sections,
+  };
+}
+
+function buildDefaultSummaryBadges(
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction',
+  metadata: Record<string, unknown>,
+): ActivitySummaryBadge[] {
+  switch (kind) {
+    case 'tool_call':
+      return buildToolCallSummaryBadges({ metadata });
+    case 'background_task':
+      return buildBackgroundTaskSummaryBadges({ metadata });
+    case 'agent_team':
+      return buildAgentTeamSummaryBadges({ metadata });
+    case 'task_graph':
+      return buildTaskGraphSummaryBadges({ metadata });
+    case 'task_scheduler':
+      return buildTaskSchedulerSummaryBadges({ metadata });
+    case 'task_autonomy':
+      return buildTaskAutonomySummaryBadges({ metadata });
+    case 'compaction':
+      return buildCompactionSummaryBadges({ metadata });
+  }
+}
+
+function buildDefaultDetailSections(
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction',
+  id: string | undefined,
+  metadata: Record<string, unknown>,
+): DetailSectionDescriptor[] {
+  switch (kind) {
+    case 'tool_call':
+      return buildToolCallDetailSections({ id, metadata });
+    case 'background_task':
+      return buildBackgroundTaskDetailSections({ id, metadata });
+    case 'agent_team':
+      return buildAgentTeamDetailSections({ metadata });
+    case 'task_graph':
+      return buildTaskGraphDetailSections({ metadata });
+    case 'task_scheduler':
+    case 'task_autonomy':
+      return [];
+    case 'compaction':
+      return buildCompactionDetailSections({ id, metadata });
+  }
+}
+
+function buildTaskGraphSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const graphId = asString(metadata['graphId']);
+  const status = asString(metadata['status']);
+  const totalNodes = asNumber(metadata['totalNodes']);
+  const completedNodes = asNumber(metadata['completedNodes']);
+  const failedNodes = asNumber(metadata['failedNodes']);
+  const runningNodes = asNumber(metadata['runningNodes']);
+  const blockedNodes = asNumber(metadata['blockedNodes']);
+
+  if (graphId) {
+    badges.push({ label: '图', value: graphId, tone: 'info' });
+  }
+  if (status) {
+    badges.push({ label: '状态', value: formatTaskGraphStatus(status), tone: toneFromTaskGraphStatus(status) });
+  }
+  if (typeof totalNodes === 'number' && totalNodes > 0) {
+    badges.push({
+      label: '进度',
+      value: `${completedNodes || 0}/${totalNodes}`,
+      tone: failedNodes ? 'warn' : completedNodes === totalNodes ? 'success' : 'info',
+    });
+  }
+  if (runningNodes) {
+    badges.push({ label: '运行中', value: String(runningNodes), tone: 'info' });
+  }
+  if (failedNodes) {
+    badges.push({ label: '失败', value: String(failedNodes), tone: 'error' });
+  }
+  if (blockedNodes) {
+    badges.push({ label: '阻塞', value: String(blockedNodes), tone: 'warn' });
+  }
+
+  return badges;
+}
+
+function buildTaskGraphDetailSections(source: {
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const rows: StateDetailRow[] = [];
+  const seen = new Set<string>();
+  const currentNode = asRecord(metadata['currentNode']);
+  if (currentNode) {
+    const row = toTaskGraphRow(currentNode, true);
+    rows.push(row);
+    seen.add(row.id);
+  }
+
+  for (const value of asArray(metadata['nodeHighlights'])) {
+    const node = asRecord(value);
+    if (!node) {
+      continue;
+    }
+    const row = toTaskGraphRow(node, false);
+    if (seen.has(row.id)) {
+      continue;
+    }
+    seen.add(row.id);
+    rows.push(row);
+  }
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  return [{ title: currentNode ? '当前节点与关键节点' : '关键节点', rows }];
+}
+
+function buildTaskSchedulerSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const scheduleId = asString(metadata['scheduleId']);
+  const phase = asString(metadata['phase']);
+  const schedulerStatus = asString(metadata['schedulerStatus']);
+  const launchKind = asString(metadata['launchKind']);
+  const launchMode = asString(metadata['launchMode']);
+  const scheduleCount = asNumber(metadata['scheduleCount']);
+
+  if (scheduleId) {
+    badges.push({ label: '调度', value: scheduleId, tone: 'info' });
+  }
+  if (phase) {
+    badges.push({ label: '阶段', value: formatTaskSchedulerPhase(phase), tone: toneFromTaskSchedulerPhase(phase) });
+  }
+  if (schedulerStatus) {
+    badges.push({ label: '服务', value: formatTaskSchedulerStatus(schedulerStatus), tone: schedulerStatus === 'running' ? 'info' : 'neutral' });
+  }
+  if (launchKind || launchMode) {
+    badges.push({
+      label: '触发',
+      value: [formatLaunchKind(launchKind), formatLaunchMode(launchMode)].filter(Boolean).join(' · '),
+      tone: launchMode === 'async' ? 'info' : 'neutral',
+    });
+  }
+  if (typeof scheduleCount === 'number' && scheduleCount > 0) {
+    badges.push({ label: '计划数', value: String(scheduleCount), tone: 'neutral' });
+  }
+
+  return badges;
+}
+
+function buildTaskAutonomySummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const status = asString(metadata['status']);
+  const phase = asString(metadata['phase']);
+  const reason = asString(metadata['reason']);
+  const consecutiveFailures = asNumber(metadata['consecutiveFailures']);
+  const maxConsecutiveFailures = asNumber(metadata['maxConsecutiveFailures']);
+
+  if (status) {
+    badges.push({ label: '状态', value: formatTaskAutonomyStatus(status), tone: toneFromTaskAutonomyStatus(status) });
+  }
+  if (phase) {
+    badges.push({ label: '事件', value: formatTaskAutonomyPhase(phase), tone: toneFromTaskAutonomyPhase(phase) });
+  }
+  if (typeof consecutiveFailures === 'number' && typeof maxConsecutiveFailures === 'number') {
+    badges.push({
+      label: '连续失败',
+      value: `${consecutiveFailures}/${maxConsecutiveFailures}`,
+      tone: consecutiveFailures > 0 ? 'warn' : 'success',
+    });
+  }
+  if (reason) {
+    badges.push({ label: '原因', value: formatTaskAutonomyReason(reason), tone: reason !== 'manual_stop' ? 'warn' : 'neutral' });
+  }
+
+  return badges;
+}
+
+function buildCompactionSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const level = asString(metadata['level']);
+  const sourceKind = asString(metadata['source']);
+  const messageCount = asNumber(metadata['messageCount']);
+  const boundary = asRecord(metadata['boundary']);
+  const anchorRoundId = asString(boundary?.['anchorRoundId']);
+  const tone = toneFromCompactionLevel(level);
+
+  if (level) {
+    badges.push({ label: '级别', value: formatCompactionLevel(level), tone });
+  }
+  if (sourceKind) {
+    badges.push({ label: '来源', value: formatCompactionSource(sourceKind), tone: sourceKind === 'foreground' ? 'info' : 'neutral' });
+  }
+  if (typeof messageCount === 'number' && messageCount > 0) {
+    badges.push({ label: '收敛消息', value: String(messageCount), tone });
+  }
+  if (anchorRoundId) {
+    badges.push({ label: '锚点轮次', value: anchorRoundId, tone: 'info' });
+  }
+
+  return badges;
+}
+
+function buildCompactionDetailSections(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const sections: DetailSectionDescriptor[] = [];
+  const level = asString(metadata['level']);
+  const sourceKind = asString(metadata['source']);
+  const summary = asString(metadata['summary']);
+  const messageCount = asNumber(metadata['messageCount']);
+  const boundary = asRecord(metadata['boundary']);
+  const anchorTurnId = asString(boundary?.['anchorTurnId']);
+  const anchorRoundId = asString(boundary?.['anchorRoundId']);
+  const turnIndex = asNumber(boundary?.['turnIndex']);
+  const roundIndex = asNumber(boundary?.['roundIndex']);
+  const tone = toneFromCompactionLevel(level);
+  const baseId = source.id || 'compaction';
+
+  if (summary) {
+    sections.push({
+      title: '摘要内容',
+      rows: [{
+        id: `${baseId}:summary`,
+        title: '模型摘要',
+        subtitle: [formatCompactionLevel(level), formatCompactionSource(sourceKind)].filter(Boolean).join(' · '),
+        note: summary,
+        trailing: typeof messageCount === 'number' ? `${messageCount} 条` : undefined,
+        tone,
+      }],
+    });
+  }
+
+  const boundaryNotes = [
+    anchorTurnId ? `anchorTurnId: ${anchorTurnId}` : '',
+    anchorRoundId ? `anchorRoundId: ${anchorRoundId}` : '',
+    typeof turnIndex === 'number' ? `turnIndex: ${turnIndex}` : '',
+    typeof roundIndex === 'number' ? `roundIndex: ${roundIndex}` : '',
+  ].filter(Boolean).join('\n');
+
+  if (boundaryNotes) {
+    sections.push({
+      title: '压缩边界',
+      rows: [{
+        id: `${baseId}:boundary`,
+        title: anchorRoundId || anchorTurnId || '摘要锚点',
+        subtitle: [anchorTurnId ? `Turn ${anchorTurnId}` : '', anchorRoundId ? `Round ${anchorRoundId}` : ''].filter(Boolean).join(' · '),
+        note: boundaryNotes,
+        trailing: typeof turnIndex === 'number' ? `#${turnIndex}` : undefined,
+        tone: 'info',
+      }],
+    });
+  }
+
+  return sections;
+}
+
+function toTaskGraphRow(node: Record<string, unknown>, isCurrent: boolean): StateDetailRow {
+  const nodeId = asString(node['nodeId']) || 'node';
+  const description = asString(node['description']);
+  const taskId = asString(node['taskId']);
+  const status = asString(node['status']);
+  const attempts = asNumber(node['attempts']);
+  const executionMode = asString(node['executionMode']);
+  const note = asString(node['note']);
+  const subtitleParts = [
+    description && description !== nodeId ? `节点 ${nodeId}` : '',
+    taskId ? `任务 ${taskId}` : '',
+    typeof attempts === 'number' && attempts > 0 ? `尝试 ${attempts}` : '',
+    formatExecutionMode(executionMode),
+    isCurrent ? '当前事件' : '',
+  ].filter(Boolean);
+
+  return {
+    id: nodeId,
+    title: description || taskId || nodeId,
+    subtitle: subtitleParts.join(' · '),
+    note,
+    trailing: formatTaskGraphNodeStatus(status),
+    tone: toneFromTaskGraphNodeStatus(status),
+  };
+}
+
+function toAgentTeamRoleRow(role: Record<string, unknown>): StateDetailRow {
+  const roleId = asString(role['roleId']) || 'role';
+  const description = asString(role['description']);
+  const agentType = asString(role['agentType']);
+  const status = asString(role['status']);
+  const assignedCount = asNumber(role['assignedCount']) || 0;
+  const runningCount = asNumber(role['runningCount']) || 0;
+  const completedCount = asNumber(role['completedCount']) || 0;
+  const failedCount = asNumber(role['failedCount']) || 0;
+
+  return {
+    id: roleId,
+    title: description || roleId,
+    subtitle: [description && description !== roleId ? `角色 ${roleId}` : '', agentType].filter(Boolean).join(' · '),
+    note: [
+      assignedCount ? `分配 ${assignedCount}` : '',
+      runningCount ? `运行 ${runningCount}` : '',
+      completedCount ? `完成 ${completedCount}` : '',
+      failedCount ? `失败 ${failedCount}` : '',
+    ].filter(Boolean).join(' · '),
+    trailing: formatAgentTeamRoleStatus(status),
+    tone: toneFromAgentTeamRoleStatus(status),
+  };
+}
+
+function toAgentTeamMessageRow(message: Record<string, unknown>): StateDetailRow {
+  const messageId = asString(message['messageId']) || 'message';
+  const fromRoleId = asString(message['fromRoleId']) || 'unknown';
+  const toRoleId = asString(message['toRoleId']) || 'unknown';
+  const trigger = asString(message['trigger']);
+  const nodeId = asString(message['nodeId']);
+  const content = asString(message['content']);
+
+  return {
+    id: messageId,
+    title: `${fromRoleId} -> ${toRoleId}`,
+    subtitle: [formatAgentTeamTrigger(trigger), nodeId ? `节点 ${nodeId}` : ''].filter(Boolean).join(' · '),
+    note: content,
+    trailing: formatAgentTeamTrigger(trigger),
+    tone: 'info',
+  };
+}
+
+function toToolCallTimelineRow(entry: Record<string, unknown>, index: number): StateDetailRow {
+  const recordId = asString(entry['recordId']) || `tool-row-${index}`;
+  const phase = asString(entry['phase']);
+  const timestamp = asNumber(entry['timestamp']);
+  const summary = asString(entry['summary']);
+  const progress = asNumber(entry['progress']);
+  const progressDetails = asRecord(entry['progressDetails']);
+
+  return {
+    id: recordId,
+    title: formatNarrativePhase(phase),
+    subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
+    note: buildToolCallNote(summary, progressDetails),
+    trailing: typeof progress === 'number' ? `${Math.round(progress)}%` : formatNarrativePhase(phase),
+    tone: toneFromNarrativePhase(phase),
+  };
+}
+
+function isReadFileToolName(toolName: string | undefined): boolean {
+  return (toolName || '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase() === 'readfile';
+}
+
+function formatReadFileCompactLineSpan(start: unknown, end: unknown): string | undefined {
+  const startLine = asNumber(start);
+  const endLine = asNumber(end);
+  if (startLine === undefined) {
+    return undefined;
+  }
+  if (endLine === undefined || endLine === startLine) {
+    return formatReadFileInteger(startLine);
+  }
+  return `${formatReadFileInteger(startLine)}-${formatReadFileInteger(endLine)}`;
+}
+
+function formatReadFileDetailedLineSpan(start: unknown, end: unknown): string | undefined {
+  const startLine = asNumber(start);
+  const endLine = asNumber(end);
+  if (startLine === undefined) {
+    return undefined;
+  }
+  if (endLine === undefined || endLine === startLine) {
+    return `第 ${formatReadFileInteger(startLine)} 行`;
+  }
+  return `第 ${formatReadFileInteger(startLine)} 到 ${formatReadFileInteger(endLine)} 行`;
+}
+
+function formatReadFileCompactByteRatio(readBytes: unknown, totalBytes: unknown): string | undefined {
+  const read = asNumber(readBytes);
+  const total = asNumber(totalBytes);
+  if (read === undefined && total === undefined) {
+    return undefined;
+  }
+  if (read !== undefined && total !== undefined) {
+    return `${formatReadFileInteger(read)}/${formatReadFileInteger(total)}`;
+  }
+  return formatReadFileInteger(read ?? total ?? 0);
+}
+
+function formatReadFileDetailedBytes(readBytes: unknown, totalBytes: unknown): string | undefined {
+  const read = asNumber(readBytes);
+  const total = asNumber(totalBytes);
+  if (read === undefined && total === undefined) {
+    return undefined;
+  }
+  if (read !== undefined && total !== undefined) {
+    return `已读取 ${formatReadFileInteger(read)} bytes，共 ${formatReadFileInteger(total)} bytes`;
+  }
+  if (read !== undefined) {
+    return `已读取 ${formatReadFileInteger(read)} bytes`;
+  }
+  return `共 ${formatReadFileInteger(total || 0)} bytes`;
+}
+
+function formatReadFileContinuation(value: unknown): string | undefined {
+  const continuation = asRecord(value);
+  if (!continuation) {
+    return undefined;
+  }
+
+  const startLine = asNumber(continuation['startLine']);
+  const endLine = asNumber(continuation['endLine']);
+  if (startLine !== undefined) {
+    return endLine !== undefined
+      ? `startLine=${startLine}, endLine=${endLine}`
+      : `startLine=${startLine}`;
+  }
+
+  const offset = asNumber(continuation['offset']);
+  const limit = asNumber(continuation['limit']);
+  if (offset !== undefined) {
+    return limit !== undefined
+      ? `offset=${offset}, limit=${limit}`
+      : `offset=${offset}`;
+  }
+
+  return undefined;
+}
+
+function formatReadFileInteger(value: number): string {
+  return value.toLocaleString('en-US');
+}
+
+function toSubagentDetailRow(item: Record<string, unknown>, index: number): StateDetailRow | null {
+  const kind = asString(item['kind']);
+  const content = asString(item['content']);
+  const toolName = asString(item['toolName']);
+  const argsSummary = asString(item['argsSummary']);
+  const toolState = asString(item['state']);
+  const duration = asNumber(item['duration']);
+  const itemId = asString(item['toolCallId']) || `subagent-step-${index}`;
+
+  if (kind === 'thinking') {
+    return content ? textToSubagentNarrativeRow(`${itemId}:thinking`, content, 'info') : null;
+  }
+
+  if (kind === 'tool') {
+    return {
+      id: `${itemId}:tool`,
+      title: toolName || '工具调用',
+      subtitle: argsSummary,
+      trailing: formatSubagentToolTrailing(toolState, duration),
+      tone: toneFromSubagentToolState(toolState),
+    };
+  }
+
+  if (!content) {
+    return null;
+  }
+
+  return textToSubagentNarrativeRow(`${itemId}:text`, content, 'neutral');
+}
+
+function textToSubagentNarrativeRow(id: string, text: string, tone: StateTone): StateDetailRow {
+  const lines = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+  const title = lines[0] || text.trim();
+  const note = lines.slice(1).join('\n') || undefined;
+
+  return {
+    id,
+    title,
+    note,
+    tone,
+  };
+}
+
+function buildToolCallOutputRows(
+  entry: Record<string, unknown>,
+  index: number,
+  toolName: string | undefined,
+): StateDetailRow[] {
+  const resultContent = asToolResultContentArray(entry['resultContent']);
+  if (resultContent.length > 0) {
+    return buildToolCallOutputRowsFromContent(entry, resultContent, toolName);
+  }
+
+  const resultText = asString(entry['resultText']);
+  if (!resultText) {
+    return [];
+  }
+
+  const recordId = asString(entry['recordId']) || `tool-row-${index}`;
+  const phase = asString(entry['phase']);
+  const timestamp = asNumber(entry['timestamp']);
+  const summary = asString(entry['summary']);
+  const terminal = parseTerminalPayload(resultText);
+
+  if (terminal) {
+    return buildTerminalOutputRows({
+      recordId,
+      phase,
+      timestamp,
+      summary,
+      toolName,
+      terminal,
+    });
+  }
+
+  return [{
+    id: `${recordId}:output`,
+    title: summary || toolName || '工具输出',
+    subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
+    note: resultText,
+    trailing: phase ? formatNarrativePhase(phase) : undefined,
+    tone: toneFromNarrativePhase(phase),
+  }];
+}
+
+function buildToolCallOutputRowsFromContent(
+  entry: Record<string, unknown>,
+  resultContent: readonly ToolResultContentPart[],
+  toolName: string | undefined,
+): StateDetailRow[] {
+  const recordId = asString(entry['recordId']) || 'tool-output';
+  const phase = asString(entry['phase']);
+  const timestamp = asNumber(entry['timestamp']);
+  const summary = asString(entry['summary']);
+
+  if (resultContent.some((part) => part.type.startsWith('terminal_'))) {
+    return buildTerminalOutputRowsFromContent({
+      recordId,
+      phase,
+      timestamp,
+      summary,
+      toolName,
+      resultContent,
+    });
+  }
+
+  if (resultContent.length === 1) {
+    const singleText = getToolResultContentText(resultContent[0]);
+    if (singleText) {
+      const terminal = parseTerminalPayload(singleText);
+      if (terminal) {
+        return buildTerminalOutputRows({
+          recordId,
+          phase,
+          timestamp,
+          summary,
+          toolName,
+          terminal,
+        });
+      }
+    }
+  }
+
+  return resultContent
+    .map((part, partIndex) => normalizeStructuredToolResultRow({
+      id: `${recordId}:output:${partIndex}`,
+      title: formatToolResultContentPartTitle(part.type, partIndex, summary, toolName),
+      subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
+      note: getToolResultContentText(part) || getToolResultContentDescription(part) || (hasStructuredToolResultPayload(part) ? undefined : safeJsonStringify(part)),
+      trailing: partIndex === 0 && phase ? formatNarrativePhase(phase) : undefined,
+      tone: toneFromToolResultContentPart(part.type, phase),
+      outputKind: outputKindFromToolResultContentType(part.type),
+      outputUri: getToolResultContentUri(part),
+      outputMimeType: getToolResultContentMimeType(part),
+      outputData: getToolResultContentData(part),
+      outputLabel: getToolResultContentLabel(part),
+      outputDescription: getToolResultContentDescription(part),
+    }));
+}
+
+function normalizeStructuredToolResultRow(row: StateDetailRow): StateDetailRow {
+  if (row.outputKind !== 'text' && row.outputKind !== 'default') {
+    return row;
+  }
+
+  const codeBlock = parseStandaloneFencedCodeBlock(row.note);
+  if (!codeBlock) {
+    return row;
+  }
+
+  return {
+    ...row,
+    note: undefined,
+    outputKind: 'code',
+    outputCode: codeBlock.code,
+    outputLanguage: codeBlock.language,
+  };
+}
+
+function parseStandaloneFencedCodeBlock(note: string | undefined): { code: string; language?: string } | undefined {
+  if (!note) {
+    return undefined;
+  }
+
+  const trimmed = note.trim();
+  const match = /^```([^\n`]*)\n([\s\S]*?)\n```$/.exec(trimmed);
+  if (!match) {
+    return undefined;
+  }
+
+  const language = match[1].trim() || undefined;
+  const code = match[2].replace(/\n$/, '');
+  if (!code.trim()) {
+    return undefined;
+  }
+
+  return { code, language };
+}
+
+function buildTerminalOutputRowsFromContent(input: {
+  recordId: string;
+  phase: string | undefined;
+  timestamp: number | undefined;
+  summary: string | undefined;
+  toolName: string | undefined;
+  resultContent: readonly ToolResultContentPart[];
+}): StateDetailRow[] {
+  const { recordId, phase, timestamp, summary, toolName, resultContent } = input;
+  const baseSubtitle = [formatClock(timestamp), recordId].filter(Boolean);
+  return resultContent.flatMap<StateDetailRow>((part, partIndex) => {
+    const text = getToolResultContentText(part);
+    if (!text) {
+      return [];
+    }
+
+    if (part.type === 'terminal_command') {
+      const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
+      const isRunning = part['isRunning'] === true;
+      const terminalId = typeof part['terminalId'] === 'string' ? part['terminalId'] : undefined;
+      const cwd = typeof part['cwd'] === 'string' ? part['cwd'] : undefined;
+      return [{
+        id: `${recordId}:output:command`,
+        title: text || summary || toolName || '终端命令',
+        subtitle: [...baseSubtitle, terminalId ? `终端 ${terminalId}` : '', cwd || ''].filter(Boolean).join(' · ') || undefined,
+        note: summary && summary !== text ? summary : undefined,
+        trailing: isRunning ? '运行中' : (typeof exitCode === 'number' ? `退出码 ${exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
+        tone: isRunning ? 'info' : (typeof exitCode === 'number' && exitCode !== 0 ? 'error' : toneFromNarrativePhase(phase)),
+        outputKind: 'terminal-command',
+      }];
+    }
+
+    if (part.type === 'terminal_stdout') {
+      return [{
+        id: `${recordId}:output:stdout`,
+        title: '标准输出',
+        subtitle: baseSubtitle.join(' · ') || undefined,
+        note: text,
+        tone: 'success',
+        outputKind: 'terminal-stream',
+        outputChannel: 'stdout',
+      }];
+    }
+
+    if (part.type === 'terminal_stderr') {
+      const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
+      return [{
+        id: `${recordId}:output:stderr`,
+        title: '标准错误',
+        subtitle: baseSubtitle.join(' · ') || undefined,
+        note: text,
+        tone: typeof exitCode === 'number' && exitCode !== 0 ? 'error' : 'warn',
+        outputKind: 'terminal-stream',
+        outputChannel: 'stderr',
+      }];
+    }
+
+    return [{
+      id: `${recordId}:output:${partIndex}`,
+      title: formatToolResultContentPartTitle(part.type, partIndex, summary, toolName),
+      subtitle: baseSubtitle.join(' · ') || undefined,
+      note: text || getToolResultContentDescription(part),
+      trailing: partIndex === 0 && phase ? formatNarrativePhase(phase) : undefined,
+      tone: toneFromToolResultContentPart(part.type, phase),
+      outputKind: outputKindFromToolResultContentType(part.type),
+      outputUri: getToolResultContentUri(part),
+      outputMimeType: getToolResultContentMimeType(part),
+      outputData: getToolResultContentData(part),
+      outputLabel: getToolResultContentLabel(part),
+      outputDescription: getToolResultContentDescription(part),
+    }];
+  });
+}
+
+function buildTerminalOutputRows(input: {
+  recordId: string;
+  phase: string | undefined;
+  timestamp: number | undefined;
+  summary: string | undefined;
+  toolName: string | undefined;
+  terminal: ReturnType<typeof parseTerminalPayload> extends infer T ? Exclude<T, null> : never;
+}): StateDetailRow[] {
+  const { recordId, phase, timestamp, summary, toolName, terminal } = input;
+  const baseSubtitle = [formatClock(timestamp), recordId].filter(Boolean);
+  const rows: StateDetailRow[] = [];
+  const commandTitle = terminal.command || summary || toolName || '终端命令';
+  const commandSubtitle = [
+    ...baseSubtitle,
+    terminal.terminalId ? `终端 ${terminal.terminalId}` : '',
+    terminal.cwd || '',
+  ].filter(Boolean).join(' · ');
+  const stderr = normalizeTerminalStream(terminal.stderr);
+  const commandTone: StateTone = terminal.isRunning
+    ? 'info'
+    : (typeof terminal.exitCode === 'number' && terminal.exitCode !== 0)
+        ? 'error'
+        : stderr
+            ? 'warn'
+            : toneFromNarrativePhase(phase);
+
+  rows.push({
+    id: `${recordId}:output:command`,
+    title: commandTitle,
+    subtitle: commandSubtitle || undefined,
+    note: summary && summary !== commandTitle ? summary : undefined,
+    trailing: terminal.isRunning
+      ? '运行中'
+      : (typeof terminal.exitCode === 'number' ? `退出码 ${terminal.exitCode}` : (phase ? formatNarrativePhase(phase) : undefined)),
+    tone: commandTone,
+    outputKind: 'terminal-command',
+  });
+
+  if (terminal.output) {
+    rows.push({
+      id: `${recordId}:output:stdout`,
+      title: '标准输出',
+      subtitle: baseSubtitle.join(' · ') || undefined,
+      note: terminal.output,
+      tone: stderr ? 'neutral' : 'success',
+      outputKind: 'terminal-stream',
+      outputChannel: 'stdout',
+    });
+  }
+
+  if (stderr) {
+    rows.push({
+      id: `${recordId}:output:stderr`,
+      title: '标准错误',
+      subtitle: baseSubtitle.join(' · ') || undefined,
+      note: stderr,
+      tone: typeof terminal.exitCode === 'number' && terminal.exitCode !== 0 ? 'error' : 'warn',
+      outputKind: 'terminal-stream',
+      outputChannel: 'stderr',
+    });
+  }
+
+  return rows;
+}
+
+function normalizeTerminalStream(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '(terminal stderr completed with no output)') {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function formatToolCallArgs(args: unknown): string | undefined {
+  if (args == null) {
+    return undefined;
+  }
+  if (typeof args === 'string') {
+    return args.trim() || undefined;
+  }
+  return safeJsonStringify(args);
+}
+
+function asToolResultContentArray(value: unknown): ToolResultContentPart[] {
+  return Array.isArray(value)
+    ? value
+      .map(item => asRecord(item))
+      .filter((item): item is Record<string, unknown> => !!item && typeof item['type'] === 'string')
+      .map(item => item as ToolResultContentPart)
+    : [];
+}
+
+function getToolResultContentText(part: ToolResultContentPart): string | undefined {
+  if (typeof part.text === 'string' && part.text.trim().length > 0) {
+    return part.text;
+  }
+  const value = part['value'];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function getToolResultContentDescription(part: ToolResultContentPart): string | undefined {
+  const description = part['description'];
+  return typeof description === 'string' && description.trim().length > 0 ? description : undefined;
+}
+
+function getToolResultContentUri(part: ToolResultContentPart): string | undefined {
+  const uri = part['uri'];
+  if (typeof uri === 'string' && uri.trim().length > 0) {
+    return uri;
+  }
+  const url = part['url'];
+  return typeof url === 'string' && url.trim().length > 0 ? url : undefined;
+}
+
+function getToolResultContentMimeType(part: ToolResultContentPart): string | undefined {
+  const mimeType = part['mimeType'];
+  if (typeof mimeType === 'string' && mimeType.trim().length > 0) {
+    return mimeType;
+  }
+  const mediaType = part['media_type'];
+  return typeof mediaType === 'string' && mediaType.trim().length > 0 ? mediaType : undefined;
+}
+
+function getToolResultContentData(part: ToolResultContentPart): string | undefined {
+  const data = part['data'];
+  return typeof data === 'string' && data.trim().length > 0 ? data : undefined;
+}
+
+function getToolResultContentLabel(part: ToolResultContentPart): string | undefined {
+  const name = part['name'];
+  if (typeof name === 'string' && name.trim().length > 0) {
+    return name;
+  }
+  const title = part['title'];
+  if (typeof title === 'string' && title.trim().length > 0) {
+    return title;
+  }
+  const uri = getToolResultContentUri(part);
+  if (!uri) {
+    return undefined;
+  }
+  const slashIndex = Math.max(uri.lastIndexOf('/'), uri.lastIndexOf('\\'));
+  return slashIndex >= 0 ? uri.slice(slashIndex + 1) || uri : uri;
+}
+
+function hasStructuredToolResultPayload(part: ToolResultContentPart): boolean {
+  return !!(
+    getToolResultContentUri(part)
+    || getToolResultContentMimeType(part)
+    || getToolResultContentData(part)
+    || getToolResultContentDescription(part)
+    || getToolResultContentLabel(part)
+  );
+}
+
+function formatToolResultContentPartTitle(
+  type: string,
+  index: number,
+  summary: string | undefined,
+  toolName: string | undefined,
+): string {
+  if (index === 0) {
+    return summary || toolName || '工具输出';
+  }
+
+  switch (type) {
+    case 'terminal_command':
+      return summary || toolName || '终端命令';
+    case 'terminal_stdout':
+      return '标准输出';
+    case 'terminal_stderr':
+      return '标准错误';
+    case 'text':
+    case 'output_text':
+      return `文本输出 ${index + 1}`;
+    case 'image':
+    case 'output_image':
+      return `图像输出 ${index + 1}`;
+    case 'output_resource':
+    case 'resource':
+    case 'resource_link':
+    case 'file':
+      return `资源输出 ${index + 1}`;
+    default:
+      return `${type} 输出 ${index + 1}`;
+  }
+}
+
+function toneFromToolResultContentPart(type: string, phase: string | undefined): StateTone {
+  switch (type) {
+    case 'terminal_command':
+      return toneFromNarrativePhase(phase);
+    case 'terminal_stdout':
+      return 'success';
+    case 'terminal_stderr':
+      return 'warn';
+    case 'image':
+    case 'output_image':
+    case 'output_resource':
+    case 'resource':
+    case 'resource_link':
+    case 'file':
+      return 'info';
+    default:
+      return toneFromNarrativePhase(phase);
+  }
+}
+
+function outputKindFromToolResultContentType(type: string): StateDetailRow['outputKind'] {
+  switch (type) {
+    case 'terminal_command':
+      return 'terminal-command';
+    case 'terminal_stdout':
+    case 'terminal_stderr':
+      return 'terminal-stream';
+    case 'image':
+    case 'output_image':
+      return 'image';
+    case 'output_resource':
+    case 'resource':
+    case 'resource_link':
+    case 'file':
+      return 'resource';
+    case 'text':
+    case 'output_text':
+      return 'text';
+    default:
+      return 'default';
+  }
+}
+
+function safeJsonStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return undefined;
+  }
+}
+
+function buildToolCallNote(
+  summary: string | undefined,
+  progressDetails: Record<string, unknown> | undefined,
+): string | undefined {
+  const notes: string[] = [];
+  const pushNote = (value: string | undefined): void => {
+    if (!value || notes.includes(value)) {
+      return;
+    }
+    notes.push(value);
+  };
+
+  pushNote(summary);
+  if (progressDetails) {
+    pushNote(asString(progressDetails['message']));
+    const detail = asString(progressDetails['detail']);
+    if (detail) {
+      pushNote(`详情: ${detail}`);
+    }
+    const step = asString(progressDetails['step']);
+    if (step) {
+      pushNote(`步骤: ${step}`);
+    }
+    const statusText = asString(progressDetails['statusText']);
+    if (statusText) {
+      pushNote(`状态: ${statusText}`);
+    }
+  }
+
+  return notes.length > 0 ? notes.join('\n') : undefined;
+}
+
+function toBackgroundTaskActivityRow(activity: Record<string, unknown>, taskId: string): StateDetailRow {
+  const kind = asString(activity['kind']);
+  const toolName = asString(activity['toolName']);
+  const agentName = asString(activity['agentName']);
+  const description = asString(activity['description']);
+  const summary = asString(activity['summary']);
+  const detail = asString(activity['detail']);
+  const step = asString(activity['step']);
+  const statusText = asString(activity['statusText']);
+  const resultText = asString(activity['resultText']);
+  const progress = asNumber(activity['progress']);
+
+  const notes = [summary, detail, step ? `步骤: ${step}` : undefined, statusText ? `状态: ${statusText}` : undefined, resultText]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join('\n');
+
+  return {
+    id: `${taskId}:activity`,
+    title: formatBackgroundTaskActivityKind(kind),
+    subtitle: [toolName, agentName, description].filter(Boolean).join(' · '),
+    note: notes || undefined,
+    trailing: typeof progress === 'number' ? `${Math.round(progress)}%` : undefined,
+    tone: toneFromBackgroundTaskActivityKind(kind),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  return asArray(value)
+    .map(item => asRecord(item))
+    .filter((item): item is Record<string, unknown> => !!item);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function collectInstructionDiagnosticCounts(diagnostics: readonly Record<string, unknown>[]): Record<InstructionDiagnosticFilter, number> {
+  const counts: Record<InstructionDiagnosticFilter, number> = {
+    all: diagnostics.length,
+    active: 0,
+    inactive: 0,
+    overridden: 0,
+    empty: 0,
+    not_found: 0,
+  };
+
+  for (const diagnostic of diagnostics) {
+    if (asBoolean(diagnostic['active'])) {
+      counts.active += 1;
+      continue;
+    }
+
+    switch (asString(diagnostic['skipReason'])) {
+      case 'inactive':
+        counts.inactive += 1;
+        break;
+      case 'overridden':
+        counts.overridden += 1;
+        break;
+      case 'empty':
+        counts.empty += 1;
+        break;
+      case 'not_found':
+        counts.not_found += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return counts;
+}
+
+function resolveInstructionFilter(
+  current: InstructionDiagnosticFilter,
+  counts: Record<InstructionDiagnosticFilter, number>,
+): InstructionDiagnosticFilter {
+  if (current === 'all' || counts[current] > 0) {
+    return current;
+  }
+
+  return 'all';
+}
+
+function buildInstructionFilterChips(
+  counts: Record<InstructionDiagnosticFilter, number>,
+  selected: InstructionDiagnosticFilter,
+): InstructionFilterChip[] {
+  if (counts.all === 0) {
+    return [];
+  }
+
+  const options: Array<{ id: InstructionDiagnosticFilter; label: string; tone: StateTone }> = [
+    { id: 'all', label: '全部', tone: 'neutral' },
+    { id: 'active', label: '已生效', tone: 'success' },
+    { id: 'inactive', label: '条件跳过', tone: 'warn' },
+    { id: 'overridden', label: '被覆盖', tone: 'warn' },
+    { id: 'empty', label: '空文件', tone: 'warn' },
+    { id: 'not_found', label: '未发现', tone: 'neutral' },
+  ];
+
+  return options
+    .filter(option => option.id === 'all' || counts[option.id] > 0)
+    .map(option => ({
+      id: option.id,
+      label: option.label,
+      count: counts[option.id],
+      tone: option.tone,
+      active: option.id === selected,
+    }));
+}
+
+function matchesInstructionDiagnosticFilter(
+  diagnostic: Record<string, unknown>,
+  filter: InstructionDiagnosticFilter,
+): boolean {
+  if (filter === 'all') {
+    return true;
+  }
+
+  if (filter === 'active') {
+    return asBoolean(diagnostic['active']);
+  }
+
+  return asString(diagnostic['skipReason']) === filter;
+}
+
+function formatInstructionFilterTitle(filter: InstructionDiagnosticFilter): string {
+  const map: Record<InstructionDiagnosticFilter, string> = {
+    all: '规则明细',
+    active: '已生效规则',
+    inactive: '条件跳过',
+    overridden: '被覆盖规则',
+    empty: '空文件',
+    not_found: '未发现文件',
+  };
+
+  return map[filter];
+}
+
+function toInstructionDiagnosticRow(diagnostic: Record<string, unknown>, fallbackId?: string): StateDetailRow {
+  const id = asString(diagnostic['id']) || `${fallbackId || 'instructions'}:diagnostic`;
+  const name = asString(diagnostic['logicalName']) || asString(diagnostic['name']) || id;
+  const source = asString(diagnostic['source']);
+  const reference = asString(diagnostic['reference']);
+  const ownerId = asString(diagnostic['ownerId']);
+  const priority = asNumber(diagnostic['priority']);
+  const active = asBoolean(diagnostic['active']);
+  const skipReason = asString(diagnostic['skipReason']);
+  const overriddenById = asString(diagnostic['overriddenById']);
+  const activation = asRecord(diagnostic['activation']);
+
+  return {
+    id,
+    title: name,
+    subtitle: [formatInstructionSource(source), ownerId ? `来源 ${ownerId}` : '', typeof priority === 'number' ? `优先级 ${priority}` : '']
+      .filter(Boolean)
+      .join(' · '),
+    note: buildInstructionDiagnosticNote(reference, activation, overriddenById, active, skipReason),
+    trailing: active ? '已生效' : formatInstructionSkipReason(skipReason),
+    tone: toneFromInstructionDiagnostic(active, skipReason),
+  };
+}
+
+function buildInstructionDiagnosticNote(
+  reference: string | undefined,
+  activation: Record<string, unknown> | undefined,
+  overriddenById: string | undefined,
+  active: boolean,
+  skipReason: string | undefined,
+): string | undefined {
+  const notes: string[] = [];
+  const explanation = describeInstructionDiagnostic(active, skipReason, overriddenById);
+  if (explanation) {
+    notes.push(explanation);
+  }
+  if (reference) {
+    notes.push(`位置: ${reference}`);
+  }
+  const activationSummary = summarizeInstructionActivation(activation);
+  if (activationSummary) {
+    notes.push(`条件: ${activationSummary}`);
+  }
+  return notes.length > 0 ? notes.join('\n') : undefined;
+}
+
+function describeInstructionDiagnostic(
+  active: boolean,
+  skipReason: string | undefined,
+  overriddenById: string | undefined,
+): string | undefined {
+  if (active) {
+    return '当前规则优先级最高，已注入最终 prompt。';
+  }
+
+  switch (skipReason) {
+    case 'inactive':
+      return '当前规则存在激活条件，但未命中当前运行上下文，因此未注入最终 prompt。';
+    case 'overridden':
+      return overriddenById
+        ? `同名规则已被更高优先级条目 ${overriddenById} 覆盖。`
+        : '同名规则已被更高优先级条目覆盖。';
+    case 'empty':
+      return '文件为空，或去除 frontmatter 后没有可注入内容。';
+    case 'not_found':
+      return '扫描候选路径后未找到该指令文件。';
+    default:
+      return undefined;
+  }
+}
+
+function summarizeInstructionActivation(activation: Record<string, unknown> | undefined): string | undefined {
+  if (!activation) {
+    return undefined;
+  }
+
+  const enabled = typeof activation['enabled'] === 'boolean' ? activation['enabled'] : undefined;
+  const applyTo = stringifyStringArray(activation['applyTo']);
+  const hostIds = stringifyStringArray(activation['hostIds']);
+  const modelFamilies = stringifyStringArray(activation['modelFamilies']);
+  const requiredCapabilities = stringifyStringArray(activation['requiredCapabilities']);
+  const summary = [
+    typeof enabled === 'boolean' ? `enabled=${enabled}` : '',
+    applyTo ? `applyTo=${applyTo}` : '',
+    hostIds ? `hosts=${hostIds}` : '',
+    modelFamilies ? `models=${modelFamilies}` : '',
+    requiredCapabilities ? `capabilities=${requiredCapabilities}` : '',
+  ].filter(Boolean).join(' · ');
+
+  return summary || undefined;
+}
+
+function stringifyStringArray(value: unknown): string | undefined {
+  const items = asArray(value)
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+  return items.length > 0 ? items.join(', ') : undefined;
+}
+
+function formatInstructionSource(source?: string): string {
+  const map: Record<string, string> = {
+    user: '用户',
+    project: '项目',
+    repo: '仓库',
+    host: '宿主',
+    plugin: '插件',
+  };
+  return map[source || ''] || source || '指令';
+}
+
+function formatInstructionSkipReason(reason?: string): string {
+  const map: Record<string, string> = {
+    inactive: '条件未命中',
+    overridden: '已被覆盖',
+    empty: '空文件',
+    not_found: '未发现',
+  };
+  return map[reason || ''] || reason || '已跳过';
+}
+
+function toneFromInstructionDiagnostic(active: boolean, skipReason?: string): StateTone {
+  if (active) {
+    return 'success';
+  }
+
+  switch (skipReason) {
+    case 'inactive':
+    case 'empty':
+      return 'warn';
+    case 'overridden':
+      return 'info';
+    case 'not_found':
+      return 'neutral';
+    default:
+      return 'neutral';
+  }
+}
+
+export function isSubagentMetadata(toolSpecificData: Record<string, unknown> | undefined): boolean {
+  return asString(toolSpecificData?.['kind']) === 'subagent'
+    || !!asString(toolSpecificData?.['agentName'])
+    || !!asString(toolSpecificData?.['description']);
+}
+
+export function buildSubagentSubtitle(description: string, childItems: Record<string, unknown>[], result: string): string {
+  if (description) {
+    return truncateSingleLine(description, 72);
+  }
+
+  for (let index = childItems.length - 1; index >= 0; index -= 1) {
+    const item = childItems[index];
+    const kind = asString(item['kind']);
+    if (kind === 'tool' && asString(item['state']) === 'doing') {
+      return [asString(item['toolName']), asString(item['argsSummary'])]
+        .filter((value): value is string => !!value)
+        .join(' · ');
+    }
+  }
+
+  for (let index = childItems.length - 1; index >= 0; index -= 1) {
+    const item = childItems[index];
+    const kind = asString(item['kind']);
+    if (kind === 'text' || kind === 'thinking') {
+      const content = asString(item['content']);
+      if (content) {
+        return truncateSingleLine(content, 72);
+      }
+    }
+  }
+
+  if (result) {
+    return truncateSingleLine(result, 72);
+  }
+
+  return '';
+}
+
+export function findSubagentResultText(timeline: Record<string, unknown>[]): string | undefined {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const recordId = asString(timeline[index]['recordId']);
+    if (recordId.startsWith('child:')) {
+      continue;
+    }
+
+    const resultText = asString(timeline[index]['resultText']);
+    if (resultText) {
+      return resultText;
+    }
+  }
+  return undefined;
+}
+
+export function toneFromSubagentToolState(state: string | undefined): StateTone {
+  if (state === 'error') {
+    return 'error';
+  }
+  if (state === 'done') {
+    return 'success';
+  }
+  if (state === 'doing') {
+    return 'info';
+  }
+  return 'neutral';
+}
+
+export function formatSubagentToolTrailing(state: string | undefined, duration: number | undefined): string | undefined {
+  if (state === 'done' && typeof duration === 'number') {
+    return `${duration >= 10 ? duration.toFixed(0) : duration.toFixed(1)}s`;
+  }
+
+  const map: Record<string, string> = {
+    doing: '运行中',
+    done: '完成',
+    error: '失败',
+  };
+  return map[state || ''] || undefined;
+}
+
+export function formatSubagentState(state: string | undefined): string {
+  const map: Record<string, string> = {
+    doing: '运行中',
+    done: '已完成',
+    error: '失败',
+    warn: '警告',
+    info: '信息',
+  };
+  return map[state || ''] || '子代理';
+}
+
+export function toneFromSubagentState(state: string | undefined, phase?: string): StateTone {
+  if (state === 'error') {
+    return 'error';
+  }
+  if (state === 'done') {
+    return 'success';
+  }
+  if (state === 'doing') {
+    return 'info';
+  }
+  return toneFromNarrativePhase(phase);
+}
+
+function truncateSingleLine(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function formatBackgroundTaskStatus(status?: string): string {
+  const map: Record<string, string> = {
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatTaskGraphStatus(status?: string): string {
+  const map: Record<string, string> = {
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatNarrativePhase(phase?: string): string {
+  const map: Record<string, string> = {
+    started: '开始',
+    progress: '进度',
+    completed: '完成',
+    failed: '失败',
+    cancelled: '取消',
+  };
+  return map[phase || ''] || (phase || '事件');
+}
+
+function formatBackgroundTaskActivityKind(kind?: string): string {
+  const map: Record<string, string> = {
+    tool_started: '子工具启动',
+    tool_progress: '子工具进度',
+    tool_completed: '子工具完成',
+    tool_failed: '子工具失败',
+    subagent_started: '子代理启动',
+    subagent_completed: '子代理完成',
+    subagent_failed: '子代理失败',
+  };
+  return map[kind || ''] || '最近活动';
+}
+
+function formatAgentTeamRoleStatus(status?: string): string {
+  const map: Record<string, string> = {
+    idle: '空闲',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatAgentTeamStatus(status?: string): string {
+  const map: Record<string, string> = {
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatAgentTeamTrigger(trigger?: string): string {
+  const map: Record<string, string> = {
+    team_started: '团队启动',
+    node_completed: '节点完成',
+    node_failed: '节点失败',
+  };
+  return map[trigger || ''] || (trigger || '协议消息');
+}
+
+function toneFromBackgroundTaskStatus(status?: string): StateTone {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'cancelled':
+      return 'warn';
+    case 'running':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromNarrativePhase(phase?: string): StateTone {
+  switch (phase) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'cancelled':
+      return 'warn';
+    case 'started':
+    case 'progress':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromBackgroundTaskActivityKind(kind?: string): StateTone {
+  switch (kind) {
+    case 'tool_failed':
+    case 'subagent_failed':
+      return 'error';
+    case 'tool_completed':
+    case 'subagent_completed':
+      return 'success';
+    case 'tool_started':
+    case 'tool_progress':
+    case 'subagent_started':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromAgentTeamRoleStatus(status?: string): StateTone {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'running':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromAgentTeamStatus(status?: string): StateTone {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'running':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function formatClock(timestamp?: number): string | undefined {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  const date = new Date(timestamp);
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const mm = String(date.getUTCMinutes()).padStart(2, '0');
+  const ss = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatTaskGraphNodeStatus(status?: string): string {
+  const map: Record<string, string> = {
+    pending: '等待中',
+    ready: '就绪',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    blocked: '已阻塞',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatTaskSchedulerPhase(phase?: string): string {
+  const map: Record<string, string> = {
+    started: '已启动',
+    stopped: '已停止',
+    triggered: '已触发',
+    trigger_failed: '触发失败',
+    skipped: '已跳过',
+  };
+  return map[phase || ''] || (phase || '阶段未知');
+}
+
+function formatTaskSchedulerStatus(status?: string): string {
+  const map: Record<string, string> = {
+    running: '运行中',
+    stopped: '已停止',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatTaskAutonomyStatus(status?: string): string {
+  const map: Record<string, string> = {
+    disabled: '已禁用',
+    enabled: '已启用',
+    stopped: '已停止',
+  };
+  return map[status || ''] || (status || '状态未知');
+}
+
+function formatTaskAutonomyPhase(phase?: string): string {
+  const map: Record<string, string> = {
+    enabled: '已启用',
+    stopped: '已停止',
+    failure_recorded: '记录失败',
+    success_recorded: '记录成功',
+  };
+  return map[phase || ''] || (phase || '事件');
+}
+
+function formatTaskAutonomyReason(reason?: string): string {
+  const map: Record<string, string> = {
+    manual_stop: '手动停止',
+    schedule_failure: '调度失败',
+    background_task_failure: '后台任务失败',
+    graph_failure: '任务图失败',
+    max_consecutive_failures: '连续失败超限',
+  };
+  return map[reason || ''] || reason || '';
+}
+
+function formatCompactionLevel(level?: string): string {
+  const map: Record<string, string> = {
+    toolResultBudget: '工具结果裁剪',
+    micro: '微压缩',
+    snip: '截断旧历史',
+    collapse: '折叠旧摘要',
+    auto: '自动摘要',
+    reactive: '重试压缩',
+  };
+  return map[level || ''] || (level || '摘要压缩');
+}
+
+function formatCompactionSource(source?: string): string {
+  const map: Record<string, string> = {
+    foreground: '模型摘要',
+    heuristic: '启发式摘要',
+  };
+  return map[source || ''] || (source || '来源未知');
+}
+
+function formatLaunchKind(kind?: string): string {
+  const map: Record<string, string> = {
+    graph: '任务图',
+    task: '任务',
+  };
+  return map[kind || ''] || (kind || '');
+}
+
+function formatLaunchMode(mode?: string): string {
+  const map: Record<string, string> = {
+    async: '异步',
+    sync: '同步',
+  };
+  return map[mode || ''] || (mode || '');
+}
+
+function formatExecutionMode(mode?: string): string {
+  const map: Record<string, string> = {
+    async: '异步',
+    sync: '同步',
+  };
+  return map[mode || ''] || '';
+}
+
+function toneFromTaskGraphStatus(status?: string): StateTone {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'running':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromTaskGraphNodeStatus(status?: string): StateTone {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'blocked':
+      return 'warn';
+    case 'running':
+    case 'ready':
+    case 'pending':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromTaskSchedulerPhase(phase?: string): StateTone {
+  switch (phase) {
+    case 'trigger_failed':
+      return 'error';
+    case 'skipped':
+      return 'warn';
+    case 'triggered':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromTaskAutonomyStatus(status?: string): StateTone {
+  switch (status) {
+    case 'enabled':
+      return 'success';
+    case 'stopped':
+      return 'warn';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromTaskAutonomyPhase(phase?: string): StateTone {
+  switch (phase) {
+    case 'failure_recorded':
+    case 'stopped':
+      return 'warn';
+    case 'success_recorded':
+    case 'enabled':
+      return 'success';
+    default:
+      return 'neutral';
+  }
+}
+
+function toneFromCompactionLevel(level?: string): StateTone {
+  switch (level) {
+    case 'auto':
+    case 'collapse':
+      return 'success';
+    case 'reactive':
+      return 'warn';
+    case 'micro':
+    case 'toolResultBudget':
+    case 'snip':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function buildStateDetailOutputGroups(rows: readonly StateDetailRow[]): StateDetailOutputGroup[] {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const groups: StateDetailOutputGroup[] = [];
+  let currentKind: StateDetailOutputGroup['kind'] | null = null;
+  let currentRows: StateDetailRow[] = [];
+
+  const pushGroup = (): void => {
+    if (!currentKind || currentRows.length === 0) {
+      return;
+    }
+    groups.push({
+      id: currentRows[0].id,
+      kind: currentKind,
+      rows: [...currentRows],
+    });
+    currentKind = null;
+    currentRows = [];
+  };
+
+  for (const row of rows) {
+    const nextKind = outputGroupKindFromRow(row);
+    if (currentKind !== nextKind) {
+      pushGroup();
+      currentKind = nextKind;
+    }
+    currentRows.push(row);
+  }
+
+  pushGroup();
+  return groups;
+}
+
+function outputGroupKindFromRow(row: StateDetailRow): StateDetailOutputGroup['kind'] {
+  switch (row.outputKind) {
+    case 'terminal-command':
+    case 'terminal-stream':
+      return 'terminal';
+    case 'code':
+      return 'code';
+    case 'image':
+    case 'resource':
+    case 'text':
+    case 'default':
+      return 'data';
+    default:
+      return 'generic';
+  }
+}
+
+function descriptorOutputGroups(
+  rows: readonly StateDetailRow[],
+  outputGroups?: readonly StateDetailOutputGroup[],
+): readonly StateDetailOutputGroup[] | undefined {
+  if (outputGroups && outputGroups.length > 0) {
+    return outputGroups;
+  }
+  return rows.some((row) => row.outputKind) ? buildStateDetailOutputGroups(rows) : undefined;
+}
+

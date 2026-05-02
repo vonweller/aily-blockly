@@ -27,6 +27,22 @@ class ToolDisplayRegistryImpl {
   }
 
   /**
+   * 为已注册工具添加别名，复用同一套显示文本逻辑。
+   */
+  registerAlias(alias: string, targetName: string): void {
+    const target = this.tools.get(targetName);
+    if (!target) {
+      console.warn(`[ToolDisplayRegistry] 无法为 "${alias}" 注册别名，目标工具 "${targetName}" 尚未注册`);
+      return;
+    }
+    this.register({
+      name: alias,
+      getStartText: target.getStartText,
+      getResultText: target.getResultText,
+    });
+  }
+
+  /**
    * 判断工具显示文案是否已注册
    */
   has(name: string): boolean {

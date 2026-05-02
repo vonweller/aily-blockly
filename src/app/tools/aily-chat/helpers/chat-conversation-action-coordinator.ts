@@ -1,4 +1,16 @@
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  IChatViewAccess,
+  ISessionAccess,
+} from '../core/chat-context';
+
+type ChatConversationActionContext = Pick<IAgentLifecycle, 'isWaiting'>
+  & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatCoordination, 'send'>
+  & Pick<IChatServiceAccess, 'message'>
+  & Pick<IChatViewAccess, 'scrollManager'>;
 
 /**
  * Coordinates canned main-conversation follow-up actions.
@@ -7,7 +19,7 @@ import type { IChatContext } from '../core/chat-context';
  * preserving the existing user-visible prompts and scroll semantics.
  */
 export class ChatConversationActionCoordinator {
-  constructor(private readonly ctx: IChatContext) {}
+  constructor(private readonly ctx: ChatConversationActionContext) {}
 
   async continueConversation(): Promise<void> {
     if (this.ctx.isWaiting) {

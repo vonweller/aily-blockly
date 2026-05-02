@@ -1,26 +1,14 @@
 ﻿/**
- * 已注册工具 - 文件操作类
+ * 已注册工具 - 文件操作类（显示文本注册）
  *
- * 将已有的工具函数封装为 IAilyTool 接口，
- * 通过 ToolRegistry.register() 注册到注册中心。
+ * Phase 3: invoke() 已迁移至 lex core，此处仅保留 getStartText/getResultText 供 PartEventProcessor 使用。
+ * Handler imports 已移除，invoke() 为 stub。
  */
 
 import { IAilyTool, ToolContext, ToolUseResult } from '../../core/tool-types';
-import { ToolRegistry } from '../../core/tool-registry';
-import { readFileTool as readFileHandler } from '../readFileTool';
-import { createFileTool as createFileHandler } from '../createFileTool';
-import { createFolderTool as createFolderHandler } from '../createFolderTool';
-import { editFileTool as editFileHandler } from '../editFileTool';
-import { deleteFileTool as deleteFileHandler } from '../deleteFileTool';
-import { deleteFolderTool as deleteFolderHandler } from '../deleteFolderTool';
-import { checkExistsTool as checkExistsHandler } from '../checkExistsTool';
-import { listDirectoryTool as listDirectoryHandler } from '../listDirectoryTool';
-import { getDirectoryTreeTool as getDirectoryTreeHandler } from '../getDirectoryTreeTool';
-import { grepTool as grepHandler } from '../grepTool';
+import { ToolDisplayRegistry } from '../../core/tool-display-registry';
 import { AilyHost } from '../../core/host';
-import globHandler from '../globTool';
-import { replaceStringInFileTool as replaceStringHandler, multiReplaceStringInFileTool as multiReplaceHandler } from '../replaceStringTool';
-import { TOOLS as LEGACY_TOOLS } from '../tools';
+import { createDisplayOnlyToolSchema } from './display-only-tool-schema';
 
 // ============================
 // 辅助函数
@@ -41,8 +29,50 @@ function getLastFolderName(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : '';
 }
 
-function findLegacySchema(name: string): any {
-  return (LEGACY_TOOLS as any[]).find(t => t.name === name);
+function getPathArg(args: any): string {
+  return args?.path || args?.dirPath || args?.filePath || args?.cwd || '';
+}
+
+function getSearchPatternArg(args: any): string {
+  return args?.pattern || args?.query || '';
+}
+
+function formatReadRange(startLine: any, endLine: any): string {
+  const start = typeof startLine === 'number' && Number.isFinite(startLine) ? startLine : undefined;
+  const end = typeof endLine === 'number' && Number.isFinite(endLine) ? endLine : undefined;
+
+  if (start !== undefined && end !== undefined) {
+    return start === end ? `, line ${start}` : `, lines ${start} to ${end}`;
+  }
+  if (start !== undefined) {
+    return `, from line ${start}`;
+  }
+  if (end !== undefined) {
+    return `, through line ${end}`;
+  }
+  return '';
+}
+
+function formatSearchScope(args: any): string {
+  const pathArg = getPathArg(args) || args?.includePattern || '';
+  if (!pathArg) {
+    return 'workspace';
+  }
+
+  const normalized = String(pathArg).replace(/\\/g, '/').trim();
+  if (!normalized) {
+    return 'workspace';
+  }
+  if (normalized.includes('*')) {
+    return normalized.length > 48 ? `${normalized.substring(0, 45)}...` : normalized;
+  }
+
+  const trimmed = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+  const parts = trimmed.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    return parts.slice(-2).join('/');
+  }
+  return trimmed;
 }
 
 // ============================
@@ -51,7 +81,7 @@ function findLegacySchema(name: string): any {
 
 class ReadFileTool implements IAilyTool {
   readonly name = 'read_file';
-  readonly schema = findLegacySchema('read_file');
+  readonly schema = createDisplayOnlyToolSchema('read_file', { agents: ['mainAgent', 'schematicAgent'] });
 
   /**
    * Resolve library nickname from path (synchronous, uses AilyHost.get().fs).
@@ -81,14 +111,9 @@ class ReadFileTool implements IAilyTool {
     return { isLib: true, libNickName: nickname || libName };
   }
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    const result = await readFileHandler(args, ctx.securityContext);
-    // Attach library info to metadata for getResultText
-    const libInfo = this.resolveLibInfo(args?.path);
-    if (libInfo.isLib) {
-      result.metadata = { ...result.metadata, libNickName: libInfo.libNickName, isLib: true };
-    }
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'read_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -96,24 +121,24 @@ class ReadFileTool implements IAilyTool {
     if (libInfo.isLib && libInfo.libNickName) {
       return `了解 ${libInfo.libNickName} 使用方法`;
     }
-    const fileName = getFileName(args?.path);
-    return `读取: ${fileName}`;
+    const fileName = getFileName(args?.filePath || args?.path);
+    return `Read ${fileName}${formatReadRange(args?.startLine, args?.endLine)}`;
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
-    const fileName = getFileName(args?.path);
+    const fileName = getFileName(args?.filePath || args?.path);
     const libNickName = result?.metadata?.libNickName;
     const isLib = result?.metadata?.isLib;
 
     if (result?.is_error) {
       if (fileName === 'project.abs') return '读取 项目文件 异常, 即将重试';
       if (libNickName) return `了解 ${libNickName} 使用方法异常, 即将重试`;
-      return '读取 文件 异常, 即将重试';
+      return `Failed to read ${fileName || 'file'}${formatReadRange(args?.startLine, args?.endLine)}`;
     }
 
     if (fileName === 'project.abs') return '读取 项目文件 成功';
     if (libNickName || isLib) return `了解 ${libNickName || fileName} 使用方法成功`;
-    return `读取 ${fileName} 文件成功`;
+    return `Read ${fileName}${formatReadRange(args?.startLine, args?.endLine)}`;
   }
 }
 
@@ -123,13 +148,11 @@ class ReadFileTool implements IAilyTool {
 
 class CreateFileTool implements IAilyTool {
   readonly name = 'create_file';
-  readonly schema = findLegacySchema('create_file');
+  readonly schema = createDisplayOnlyToolSchema('create_file');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (args?.path) ctx.editCheckpoint?.recordEdit(args.path, 'create');
-    const result = await createFileHandler(args, ctx.securityContext);
-    ctx.editCheckpoint?.publishCurrentSummary();
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'create_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -152,18 +175,19 @@ class CreateFileTool implements IAilyTool {
 
 class CreateFolderTool implements IAilyTool {
   readonly name = 'create_folder';
-  readonly schema = findLegacySchema('create_folder');
+  readonly schema = createDisplayOnlyToolSchema('create_folder');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return createFolderHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'create_folder execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
-    return `创建: ${getLastFolderName(args?.path)}`;
+    return `创建: ${getLastFolderName(getPathArg(args))}`;
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
-    const name = getLastFolderName(args?.path);
+    const name = getLastFolderName(getPathArg(args));
     if (result?.is_error) return `创建 ${name} 文件夹异常, 即将重试`;
     return `创建 ${name} 文件夹成功`;
   }
@@ -175,13 +199,11 @@ class CreateFolderTool implements IAilyTool {
 
 class EditFileTool implements IAilyTool {
   readonly name = 'edit_file';
-  readonly schema = findLegacySchema('edit_file');
+  readonly schema = createDisplayOnlyToolSchema('edit_file', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (args?.path) ctx.editCheckpoint?.recordEdit(args.path, 'modify');
-    const result = await editFileHandler(args);
-    ctx.editCheckpoint?.publishCurrentSummary();
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'edit_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -204,13 +226,11 @@ class EditFileTool implements IAilyTool {
 
 class DeleteFileTool implements IAilyTool {
   readonly name = 'delete_file';
-  readonly schema = findLegacySchema('delete_file');
+  readonly schema = createDisplayOnlyToolSchema('delete_file', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (args?.path) ctx.editCheckpoint?.recordEdit(args.path, 'delete');
-    const result = await deleteFileHandler(args, ctx.securityContext);
-    ctx.editCheckpoint?.publishCurrentSummary();
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'delete_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -230,10 +250,11 @@ class DeleteFileTool implements IAilyTool {
 
 class DeleteFolderTool implements IAilyTool {
   readonly name = 'delete_folder';
-  readonly schema = findLegacySchema('delete_folder');
+  readonly schema = createDisplayOnlyToolSchema('delete_folder', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return deleteFolderHandler(args, ctx.securityContext);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'delete_folder execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -267,8 +288,9 @@ class CheckExistsTool implements IAilyTool {
     agents: ['mainAgent']
   };
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return checkExistsHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'check_exists execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -304,16 +326,17 @@ class ListDirectoryTool implements IAilyTool {
     agents: ['mainAgent', 'schematicAgent']
   };
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return listDirectoryHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'list_directory execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
-    return `获取${getLastFolderName(args?.path)}目录内容`;
+    return `获取${getLastFolderName(getPathArg(args))}目录内容`;
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
-    const name = getLastFolderName(args?.path);
+    const name = getLastFolderName(getPathArg(args));
     if (result?.is_error) return `获取 ${name} 目录内容异常, 即将重试`;
     return `获取 ${name} 目录内容成功`;
   }
@@ -340,16 +363,17 @@ class GetDirectoryTreeTool implements IAilyTool {
     agents: ['mainAgent', 'schematicAgent']
   };
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return getDirectoryTreeHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_directory_tree execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
-    return `获取目录树: ${getLastFolderName(args?.path)}`;
+    return `获取目录树: ${getLastFolderName(getPathArg(args))}`;
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
-    const name = getLastFolderName(args?.path);
+    const name = getLastFolderName(getPathArg(args));
     if (result?.is_error) return `获取目录树 ${name} 失败: ${result?.content || '未知错误'}`;
     return `获取目录树 ${name} 成功`;
   }
@@ -361,31 +385,32 @@ class GetDirectoryTreeTool implements IAilyTool {
 
 class GrepTool implements IAilyTool {
   readonly name = 'grep_tool';
-  readonly schema = findLegacySchema('grep_tool');
+  readonly schema = createDisplayOnlyToolSchema('grep_tool', { agents: ['mainAgent', 'schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return grepHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'grep_tool execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
-    const pattern = (args?.pattern || '').substring(0, 30);
-    const pathDisplay = args?.path ? getLastFolderName(args.path) : '当前项目';
-    return `正在搜索内容: ${pattern} (${pathDisplay})`;
+    const pattern = getSearchPatternArg(args).substring(0, 48);
+    return `Searching ${formatSearchScope(args)} for ${pattern}`;
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
-    const pattern = (args?.pattern || '').substring(0, 20);
-    if (result?.is_error) return `搜索「${pattern}」失败: ${result?.content || '未知错误'}`;
+    const pattern = getSearchPatternArg(args).substring(0, 48);
+    const searchLabel = `Searched ${formatSearchScope(args)} for ${pattern}`;
+    if (result?.is_error) return `${searchLabel} failed`;
     const numMatches = result?.metadata?.numMatches;
     const numFiles = result?.metadata?.numFiles;
     if (numMatches !== undefined) {
       return numMatches === 0
-        ? `搜索「${pattern}」完成，未找到匹配内容`
-        : `搜索「${pattern}」完成，找到 ${numMatches} 个匹配记录`;
+        ? `${searchLabel} with no matches`
+        : `${searchLabel} (${numMatches} matches)`;
     }
-    if (numFiles !== undefined) return `搜索「${pattern}」完成，找到 ${numFiles} 个匹配文件`;
-    return `搜索「${pattern}」完成`;
+    if (numFiles !== undefined) return `${searchLabel} (${numFiles} files)`;
+    return searchLabel;
   }
 }
 
@@ -395,16 +420,17 @@ class GrepTool implements IAilyTool {
 
 class GlobTool implements IAilyTool {
   readonly name = 'glob_tool';
-  readonly schema = findLegacySchema('glob_tool');
+  readonly schema = createDisplayOnlyToolSchema('glob_tool', { agents: ['mainAgent', 'schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return globHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'glob_tool execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
-    const pattern = (args?.pattern || '未知模式').substring(0, 30);
-    const pathDisplay = args?.path ? getLastFolderName(args.path) : '当前目录';
+    const pattern = (getSearchPatternArg(args) || '未知模式').substring(0, 30);
+    const pathDisplay = getPathArg(args) ? getLastFolderName(getPathArg(args)) : '当前目录';
     return `正在查找文件: ${pattern} (${pathDisplay})`;
   }
 
@@ -424,13 +450,11 @@ class GlobTool implements IAilyTool {
 
 class ReplaceStringInFileTool implements IAilyTool {
   readonly name = 'replace_string_in_file';
-  readonly schema = findLegacySchema('replace_string_in_file');
+  readonly schema = createDisplayOnlyToolSchema('replace_string_in_file', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (args?.path) ctx.editCheckpoint?.recordEdit(args.path, 'modify');
-    const result = await replaceStringHandler(args);
-    ctx.editCheckpoint?.publishCurrentSummary();
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'replace_string_in_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -453,22 +477,11 @@ class ReplaceStringInFileTool implements IAilyTool {
 
 class MultiReplaceStringInFileTool implements IAilyTool {
   readonly name = 'multi_replace_string_in_file';
-  readonly schema = findLegacySchema('multi_replace_string_in_file');
+  readonly schema = createDisplayOnlyToolSchema('multi_replace_string_in_file', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    // 记录每个文件的编辑前状态
-    if (Array.isArray(args?.replacements)) {
-      const recorded = new Set<string>();
-      for (const r of args.replacements) {
-        if (r.path && !recorded.has(r.path)) {
-          ctx.editCheckpoint?.recordEdit(r.path, 'modify');
-          recorded.add(r.path);
-        }
-      }
-    }
-    const result = await multiReplaceHandler(args);
-    ctx.editCheckpoint?.publishCurrentSummary();
-    return result;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'multi_replace_string_in_file execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -487,16 +500,20 @@ class MultiReplaceStringInFileTool implements IAilyTool {
 // 注册所有文件操作类工具
 // ============================
 
-ToolRegistry.register(new ReadFileTool());
-ToolRegistry.register(new CreateFileTool());
-ToolRegistry.register(new CreateFolderTool());
-ToolRegistry.register(new EditFileTool());
-ToolRegistry.register(new ReplaceStringInFileTool());
-ToolRegistry.register(new MultiReplaceStringInFileTool());
-ToolRegistry.register(new DeleteFileTool());
-ToolRegistry.register(new DeleteFolderTool());
-ToolRegistry.register(new CheckExistsTool());
-ToolRegistry.register(new ListDirectoryTool());
-ToolRegistry.register(new GetDirectoryTreeTool());
-ToolRegistry.register(new GrepTool());
-ToolRegistry.register(new GlobTool());
+ToolDisplayRegistry.register(new ReadFileTool());
+ToolDisplayRegistry.register(new CreateFileTool());
+ToolDisplayRegistry.register(new CreateFolderTool());
+ToolDisplayRegistry.register(new EditFileTool());
+ToolDisplayRegistry.register(new ReplaceStringInFileTool());
+ToolDisplayRegistry.register(new MultiReplaceStringInFileTool());
+ToolDisplayRegistry.register(new DeleteFileTool());
+ToolDisplayRegistry.register(new DeleteFolderTool());
+ToolDisplayRegistry.register(new CheckExistsTool());
+ToolDisplayRegistry.register(new ListDirectoryTool());
+ToolDisplayRegistry.register(new GetDirectoryTreeTool());
+ToolDisplayRegistry.register(new GrepTool());
+ToolDisplayRegistry.register(new GlobTool());
+ToolDisplayRegistry.registerAlias('create_directory', 'create_folder');
+ToolDisplayRegistry.registerAlias('list_dir', 'list_directory');
+ToolDisplayRegistry.registerAlias('grep_search', 'grep_tool');
+ToolDisplayRegistry.registerAlias('glob_search', 'glob_tool');

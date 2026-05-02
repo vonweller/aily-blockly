@@ -1,16 +1,46 @@
 import { Subscription, skip, distinctUntilChanged, combineLatest } from 'rxjs';
 
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  IChatViewAccess,
+  IProjectContext,
+  ISessionAccess,
+} from '../core/chat-context';
 import { AilyHost } from '../core/host';
 import type { ChatTextOptions } from '../services/chat.service';
-import { ChatViewWriteBridge } from './chat-view-write-bridge';
+import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
+import {
+  hasHostResponseConversationContent,
+  type HostResponseProjection,
+} from './host-turn-response-state';
+import type { ChatTaskActionEvent } from './chat-task-action-coordinator';
+
+type ChatSubscriptionCoordinatorContext = ChatViewWriteBridgeContext
+  & Pick<
+    IAgentLifecycle,
+    'hasInitializedForThisLogin' | 'isSessionStarting' | 'mcpInitialized' | 'isWaiting' | 'isCompleted' | 'messageSubscription'
+  >
+  & Pick<IChatViewAccess, 'toolCallStates'>
+  & Pick<IProjectContext, 'currentUserGroup' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
+  & Pick<ISessionAccess, 'chatService' | 'chatHistoryService'>
+  & Pick<IChatServiceAccess, 'resourceManager' | 'absAutoSyncService' | 'ailyChatConfigService' | 'message'>
+  & Pick<IChatCoordination, 'session' | 'interaction'>
+  & {
+    readonly hostResponseProjection?: HostResponseProjection | null;
+  };
+
+type ChatSubscriptionViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
 interface SubscriptionCallbacks {
   receiveTextFromExternal: (text: string, options?: ChatTextOptions) => void;
   showAiWritingNotice: (isWaiting: boolean) => void;
-  handleTaskAction: (event: Event) => void;
+  handleTaskAction: (event: ChatTaskActionEvent) => void;
   flushPendingAutoSend: () => void;
 }
+
+type ChatSubscriptionViewWriteAccess = Pick<ChatViewWriteBridge, 'clearChatView'>;
 
 /**
  * Coordinates host-side subscriptions and teardown for ChatEngineService.
@@ -27,13 +57,47 @@ export class ChatSubscriptionCoordinator {
   private userInfoSubscription: Subscription | null = null;
   private taskActionHandler: ((event: Event) => void) | null = null;
   private active = false;
-  private readonly viewWriteBridge: ChatViewWriteBridge;
+  private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
 
   constructor(
-    private readonly ctx: IChatContext,
+    private readonly ctx: ChatSubscriptionCoordinatorContext,
     private readonly callbacks: SubscriptionCallbacks,
   ) {
-    this.viewWriteBridge = new ChatViewWriteBridge(ctx);
+    const viewWriteContext: ChatSubscriptionViewWriteContext = {
+      get list() {
+        return ctx.list;
+      },
+      set list(list) {
+        ctx.list = list;
+      },
+      get partStore() {
+        return ctx.partStore;
+      },
+      get viewAdapter() {
+        return ctx.viewAdapter;
+      },
+      get scrollManager() {
+        return ctx.scrollManager;
+      },
+      invalidateHostRequestGraph: () => ctx.invalidateHostRequestGraph(),
+      triggerSyncDetectChanges: () => ctx.triggerSyncDetectChanges(),
+      get sessionId() {
+        return ctx.sessionId;
+      },
+      get chatHistoryService() {
+        return ctx.chatHistoryService;
+      },
+      get currentModelName() {
+        return ctx.currentModelName;
+      },
+      get currentMessageSource() {
+        return ctx.currentMessageSource;
+      },
+      get ngZone() {
+        return ctx.ngZone;
+      },
+    };
+    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
   setup(): void {
@@ -79,7 +143,9 @@ export class ChatSubscriptionCoordinator {
       );
     });
 
-    this.taskActionHandler = this.callbacks.handleTaskAction;
+    this.taskActionHandler = (event: Event) => {
+      this.callbacks.handleTaskAction(event as ChatTaskActionEvent);
+    };
     document.addEventListener('aily-task-action', this.taskActionHandler);
 
     this.projectPathSubscription = AilyHost.get().project.currentProjectPath$.pipe(
@@ -147,7 +213,7 @@ export class ChatSubscriptionCoordinator {
     }) ?? null;
 
     this.configChangedSubscription = this.ctx.ailyChatConfigService.configChanged$.subscribe(async () => {
-      const hasConversationHistory = this.ctx.list.length > 0;
+      const hasConversationHistory = this.hasConversationHistory();
       if (!hasConversationHistory && this.ctx.sessionId && this.ctx.isLoggedIn) {
         try {
           await this.ctx.session.stopAndCloseSession(true);
@@ -182,5 +248,11 @@ export class ChatSubscriptionCoordinator {
     this.ctx.isSessionStarting = false;
     this.ctx.mcpInitialized = false;
     this.ctx.hasInitializedForThisLogin = false;
+  }
+
+  private hasConversationHistory(): boolean {
+    return hasHostResponseConversationContent(
+      this.ctx.hostResponseProjection ?? null,
+    );
   }
 }

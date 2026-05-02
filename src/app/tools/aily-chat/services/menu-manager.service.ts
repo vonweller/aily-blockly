@@ -13,6 +13,7 @@ export interface IMenuItem {
   action: string;
   icon?: string;
   data?: any;
+  sep?: boolean;
 }
 
 export interface MenuPosition {
@@ -82,15 +83,23 @@ export class MenuManagerService {
   }
 
   /** 切换模型菜单的显示/隐藏 */
-  toggleModelMenu(event: MouseEvent, modelCount: number): void {
+  toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
-      const menuHeight = modelCount * 30 + 12;
+      const menuHeight = this.estimateMenuHeight(modelItems);
+      const estimatedMenuWidth = 280;
       let x = rect.left;
       let y = rect.top - menuHeight - 1;
-      if (x < 0) x = rect.left;
-      if (y < 0) y = rect.bottom - 1;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < 8) {
+        y = Math.max(8, rect.bottom - 1);
+      }
+
       this.modelListPosition = { x: Math.max(0, x), y: Math.max(0, y) };
     } else {
       this.modelListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
@@ -99,6 +108,29 @@ export class MenuManagerService {
     event.stopPropagation();
     this.showMode = false;
     this.showModelMenu = !this.showModelMenu;
+  }
+
+  private estimateMenuHeight(items: IMenuItem[] | null | undefined): number {
+    if (!Array.isArray(items) || items.length === 0) {
+      return 40;
+    }
+
+    let height = 8;
+    for (const item of items) {
+      if (item?.sep) {
+        height += 6;
+        continue;
+      }
+
+      if (typeof item?.action === 'string' && item.action.startsWith('section-')) {
+        height += 20;
+        continue;
+      }
+
+      height += 28;
+    }
+
+    return height + 8;
   }
 
   /**

@@ -4,6 +4,7 @@ import { jsonrepair } from 'jsonrepair';
 import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';
 import { normalizeInputNameForAbs } from './abiAbsConverter';
+import { getProjectInfoTool } from './getProjectInfoTool';
 declare const Blockly: any;
 
 /**
@@ -11782,14 +11783,22 @@ function inferFieldDescription(fieldName: string, values: string[]): string {
  */
 interface AnalyzeLibraryBlocksArgs {
   libraryNames: string[];
+  mode?: 'analysis' | 'readme_ref' | 'auto';
   includeUsagePatterns?: boolean;
   refreshCache?: boolean;
   analyzeConnections?: boolean;
   analyzeGenerator?: boolean;
 }
 
+interface AnalyzeLibraryDocReference {
+  hasReadme: boolean;
+  readmePath?: string;
+  libraryPath?: string;
+}
+
 interface AnalyzeLibraryBlocksResult extends ToolUseResult {
   metadata?: {
+    resultKind?: 'analysis' | 'readme_ref' | 'mixed';
     librariesAnalyzed?: number;
     totalBlocks?: number;
     totalPatterns?: number;
@@ -11797,6 +11806,9 @@ interface AnalyzeLibraryBlocksResult extends ToolUseResult {
     error?: string;
     projectPath?: string;
     troubleshooting?: string[];
+    libraryDocs?: {
+      [libraryName: string]: AnalyzeLibraryDocReference;
+    };
     libraries?: {
       [libraryName: string]: {
         blockCount: number;
@@ -11805,6 +11817,16 @@ interface AnalyzeLibraryBlocksResult extends ToolUseResult {
       };
     };
   };
+}
+
+interface AnalyzeLibraryResolvedProjectInfo {
+  projectOpened: boolean;
+  projectPath?: string;
+  libraries?: Array<{
+    name: string;
+    path: string;
+    readmePath?: string;
+  }>;
 }
 
 /**
@@ -11908,6 +11930,7 @@ export async function analyzeLibraryBlocksTool(
 
     let { 
       libraryNames, 
+      mode = 'auto',
       includeUsagePatterns = true, 
       refreshCache = false,
       analyzeConnections = true,
@@ -11934,13 +11957,38 @@ export async function analyzeLibraryBlocksTool(
     libraryNames = parsedLibraryNames;
 
     const startTime = Date.now();
+    const libraryDocs = await resolveAnalyzeLibraryDocReferences(projectService, libraryNames);
+    const librariesWithReadme = libraryNames.filter(libraryName => libraryDocs[libraryName]?.hasReadme);
+    const librariesWithoutReadme = libraryNames.filter(libraryName => !libraryDocs[libraryName]?.hasReadme);
+    const shouldReturnReadmeRefsOnly = mode === 'readme_ref'
+      || (mode === 'auto' && librariesWithReadme.length > 0 && librariesWithoutReadme.length === 0);
+
+    if (shouldReturnReadmeRefsOnly) {
+      metadata = {
+        resultKind: 'readme_ref',
+        librariesAnalyzed: 0,
+        totalBlocks: 0,
+        totalPatterns: 0,
+        analysisTime: Date.now() - startTime,
+        libraryDocs,
+        libraries: {},
+      };
+
+      return {
+        content: buildAnalyzeLibraryReadmeReport(libraryNames, libraryDocs),
+        is_error: false,
+        metadata,
+      };
+    }
+
+    const analysisTargets = mode === 'analysis' ? libraryNames : librariesWithoutReadme;
     const libraryResults: { [libraryName: string]: LibraryBlockKnowledge } = {};
     let totalBlocks = 0;
     let totalPatterns = 0;
 
-    // console.log(`📚 开始分析 ${libraryNames.length} 个库...`);
+    // console.log(`📚 开始分析 ${analysisTargets.length} 个库...`);
 
-    for (const libraryName of libraryNames) {
+    for (const libraryName of analysisTargets) {
       try {
         // console.log(`🔍 分析库: ${libraryName}`);
         
@@ -12083,7 +12131,7 @@ export async function analyzeLibraryBlocksTool(
       }
     }
 
-    toolResult = report;
+    toolResult = prependAnalyzeLibraryReadmeReport(report, librariesWithReadme, libraryDocs);
 
     // 生成元数据
     const libraryMetadata: { [libraryName: string]: any } = {};
@@ -12096,10 +12144,12 @@ export async function analyzeLibraryBlocksTool(
     }
 
     metadata = {
+      resultKind: librariesWithReadme.length > 0 && mode === 'auto' ? 'mixed' : 'analysis',
       librariesAnalyzed: Object.keys(libraryResults).length,
       totalBlocks,
       totalPatterns,
       analysisTime,
+      libraryDocs,
       libraries: libraryMetadata
     };
 
@@ -12119,6 +12169,91 @@ export async function analyzeLibraryBlocksTool(
   };
 
   return toolResults;
+}
+
+async function resolveAnalyzeLibraryDocReferences(
+  projectService: any,
+  libraryNames: readonly string[],
+): Promise<Record<string, AnalyzeLibraryDocReference>> {
+  const references: Record<string, AnalyzeLibraryDocReference> = {};
+  const normalizedNames = libraryNames.map(name => String(name).trim()).filter(Boolean);
+
+  if (normalizedNames.length === 0) {
+    return references;
+  }
+
+  try {
+    const projectInfo = await getProjectInfoTool(projectService as any, { include_readme: true });
+    const content = typeof projectInfo?.content === 'string' ? projectInfo.content : '';
+    const parsed = content ? JSON.parse(content) as AnalyzeLibraryResolvedProjectInfo : null;
+    const libraries = parsed?.libraries ?? [];
+    const libraryByName = new Map(libraries.map(library => [library.name, library] as const));
+
+    for (const libraryName of normalizedNames) {
+      const library = libraryByName.get(libraryName);
+      references[libraryName] = {
+        hasReadme: Boolean(library?.readmePath),
+        ...(library?.readmePath ? { readmePath: library.readmePath } : {}),
+        ...(library?.path ? { libraryPath: library.path } : {}),
+      };
+    }
+
+    return references;
+  } catch {
+    for (const libraryName of normalizedNames) {
+      references[libraryName] = { hasReadme: false };
+    }
+    return references;
+  }
+}
+
+function buildAnalyzeLibraryReadmeReport(
+  libraryNames: readonly string[],
+  libraryDocs: Record<string, AnalyzeLibraryDocReference>,
+): string {
+  const lines: string[] = ['# Library Documentation References', ''];
+
+  for (const libraryName of libraryNames) {
+    const docRef = libraryDocs[libraryName];
+    lines.push(`## ${libraryName}`);
+    if (docRef?.hasReadme && docRef.readmePath) {
+      lines.push(`- readme_ai.md: ${docRef.readmePath}`);
+      if (docRef.libraryPath) {
+        lines.push(`- Library path: ${docRef.libraryPath}`);
+      }
+      lines.push('- Recommended next step: read this file with read_file before relying on deeper block analysis.');
+    } else {
+      lines.push('- No readme_ai.md found for this library.');
+      lines.push('- Recommended next step: retry analyzeLibrary with mode="analysis" for block-level documentation.');
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
+}
+
+function prependAnalyzeLibraryReadmeReport(
+  analysisReport: string,
+  librariesWithReadme: readonly string[],
+  libraryDocs: Record<string, AnalyzeLibraryDocReference>,
+): string {
+  if (librariesWithReadme.length === 0) {
+    return analysisReport;
+  }
+
+  const lines: string[] = ['# Library Documentation References', ''];
+  for (const libraryName of librariesWithReadme) {
+    const docRef = libraryDocs[libraryName];
+    if (!docRef?.hasReadme || !docRef.readmePath) {
+      continue;
+    }
+    lines.push(`- ${libraryName}: ${docRef.readmePath}`);
+  }
+  lines.push('');
+  lines.push('Libraries above already provide readme_ai.md references. The block analysis below is limited to libraries without readme_ai.md.');
+  lines.push('');
+  lines.push(analysisReport);
+  return lines.join('\n');
 }
 
 // /**

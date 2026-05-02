@@ -15,7 +15,10 @@ export class LexSessionRestoreBridge {
     },
   ) {}
 
-  async restorePersistedSession(sessionId: string, legacyTurns?: unknown): Promise<boolean> {
+  async restorePersistedSession(
+    sessionId: string,
+    turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
+  ): Promise<boolean> {
     if (!await this.deps.ensureAgent(sessionId)) {
       return false;
     }
@@ -30,7 +33,7 @@ export class LexSessionRestoreBridge {
       lex,
       sessionId,
       cwd: this.deps.getCwd(),
-      legacyTurns,
+      turnResponses,
     });
 
     return snapshot ? this.deps.restoreSnapshot(snapshot) : false;

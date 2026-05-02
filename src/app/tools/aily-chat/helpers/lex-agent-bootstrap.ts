@@ -6,22 +6,33 @@
  * contract, but it is not the canonical integration path for non-blockly hosts.
  */
 
-import type { IChatContext } from '../core/chat-context';
+import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
 import { getMainAgentLegacyHostTools } from '../core/legacy-tool-catalog';
-import { DEFERRED_TOOL_GROUPS } from '../tools/tool-discovery';
 import { BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
-import { createBlocklyToolProvider } from '../core/blockly-contributed-tools';
+import { buildBlocklyWorkspaceIdentityLines } from '../core/blockly-environment-context';
+import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
+import { createBlocklySlashCommandProvider } from '../core/blockly-slash-command-provider';
 import { createBlocklySubagentExtension } from '../core/blockly-subagent-extension';
+import { getBundledLexAgentFiles } from '../agents/bundled-lex-agent-files';
 import { BlocklySkillProvider } from '../core/blockly-skill-provider';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { askUserSingle } from '../core/ask-user';
+import { askUserMany, askUserSingle } from '../core/ask-user';
 import { collectDiagnostics } from '../core/diagnostics';
+import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
+import { EditingContentStore } from '../services/editing-content-store.service';
+import { EditingTextDiffService } from '../services/editing-text-diff.service';
+import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
+import { EditingTimelineRecordingBridge } from '../services/editing-timeline-recording-bridge';
+import type { EditingTimelineFileWriteEvent } from '../services/editing-timeline-recording-bridge';
+import type { EditingTextLineChange } from '../services/editing-text-diff.types';
+import type { NormalizedTextEdit } from '../services/editing-timeline.types';
 import { BlocklyHostAdapter, type IExternalHostAPI } from 'aily-lex/host/blockly';
+import { createConversationTurnResponse } from 'aily-lex/browser';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 
@@ -29,6 +40,8 @@ export interface LexRuntimeModelConfig {
   model?: string;
   baseUrl?: string;
   apiKey?: string;
+  presetId?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 export interface LexRuntimeApiConfig {
@@ -41,16 +54,21 @@ interface ResolvePersistedLexSessionOptions {
   lex: AilyLexModule;
   sessionId: string;
   cwd?: string;
-  legacyTurns?: unknown;
+  turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[];
 }
 
 interface BootstrapLexAgentOptions {
-  ctx: IChatContext;
+  ctx: BootstrapLexAgentContext;
   lex: AilyLexModule;
   sessionId?: string;
   askHandler?: (askContext: any) => Promise<boolean>;
   onSubagentEvent?: (event: any) => void;
 }
+
+export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel'>
+  & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService'>
+  & Pick<IChatCoordination, 'handleToolApproval'>;
 
 export interface BlocklyCompatibilityHostBinding {
   hostAPI: IExternalHostAPI;
@@ -64,20 +82,64 @@ export interface BlocklyCompatibilityHostBinding {
 // - if a tool is portable across hosts, it should move into aily-lex core instead of growing this host list
 const LEX_CORE_SAFE_TOOLS = new Set([
   'read_file', 'write_file', 'edit_file', 'multi_edit_file',
-  'delete_file',
+  'delete_file', 'list_dir', 'create_directory',
   'grep_search', 'glob_search',
-  'run_terminal', 'agent',
+  'run_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'agent',
   'get_changed_files',
-  'web_fetch', 'clone_repository',
+  'fetch_webpage', 'clone_repository',
   'todo_manage',
   'get_context',
-  'think',
   'ask_user',
   'get_errors',
   'web_search',
   'tool_search',
   'load_skill',
 ]);
+
+function registerBlocklySkillOnLexAgent(
+  agent: { registerSkill(skill: any): void },
+  name: string,
+): boolean {
+  const skill = BlocklySkillRegistry.get(name);
+  if (!skill) {
+    return false;
+  }
+
+  const content = skill.content || BlocklySkillRegistry.loadSkillContent(name) || '';
+  agent.registerSkill({
+    name: skill.metadata.name,
+    description: skill.metadata.description,
+    priority: 80,
+    getPromptContent: () => content,
+  });
+  return true;
+}
+
+function syncPersistedActiveSkills(
+  agent: {
+    getActiveSkillNames?(): readonly string[];
+    unregisterSkill?(name: string): boolean;
+    registerSkill(skill: any): void;
+  },
+  activeSkillNames: readonly string[] | undefined,
+): void {
+  const desired = new Set(activeSkillNames ?? []);
+
+  for (const name of agent.getActiveSkillNames?.() ?? []) {
+    if (desired.has(name)) {
+      continue;
+    }
+    BlocklySkillRegistry.deactivateSkill(name);
+    agent.unregisterSkill?.(name);
+  }
+
+  for (const name of desired) {
+    if (!BlocklySkillRegistry.activateSkill(name)) {
+      continue;
+    }
+    registerBlocklySkillOnLexAgent(agent, name);
+  }
+}
 
 function resolvePlatformType(type?: string, isWindows?: boolean, isMacOS?: boolean): 'win32' | 'darwin' | 'linux' {
   if (type === 'win32' || type === 'darwin' || type === 'linux') {
@@ -99,6 +161,86 @@ function toDirectoryNames(entries: unknown): string[] {
   return entries.map(entry => typeof entry === 'string' ? entry : String((entry as { name?: unknown })?.name ?? ''));
 }
 
+const EDITING_TIMELINE_DIFF_OPTIONS = {
+  ignoreTrimWhitespace: false,
+  maxComputationTimeMs: 5_000,
+  computeMoves: false,
+  extendToSubwords: true,
+} as const;
+
+async function computeNormalizedTextEdits(beforeContent: string, afterContent: string): Promise<NormalizedTextEdit[] | undefined> {
+  if (beforeContent === afterContent) {
+    return undefined;
+  }
+
+  const diffService = new EditingTextDiffService({ preferWorker: false });
+  const diff = await diffService.computeDiff(beforeContent, afterContent, EDITING_TIMELINE_DIFF_OPTIONS);
+  const edits = diff.changes.flatMap(change => toNormalizedTextEdits(change, afterContent));
+  return edits.length > 0 ? edits : undefined;
+}
+
+function toNormalizedTextEdits(change: EditingTextLineChange, modifiedContent: string): NormalizedTextEdit[] {
+  if (Array.isArray(change.charChanges) && change.charChanges.length > 0) {
+    return change.charChanges.map(charChange => ({
+      startLine: charChange.originalStartLineNumber,
+      startColumn: charChange.originalStartColumn,
+      endLine: charChange.originalEndLineNumber,
+      endColumn: charChange.originalEndColumn,
+      newText: sliceTextByPosition(
+        modifiedContent,
+        charChange.modifiedStartLineNumber,
+        charChange.modifiedStartColumn,
+        charChange.modifiedEndLineNumber,
+        charChange.modifiedEndColumn,
+      ),
+    }));
+  }
+
+  return [{
+    startLine: change.originalStartLineNumber,
+    startColumn: 1,
+    endLine: change.originalEndLineNumberExclusive,
+    endColumn: 1,
+    newText: sliceTextByPosition(
+      modifiedContent,
+      change.modifiedStartLineNumber,
+      1,
+      change.modifiedEndLineNumberExclusive,
+      1,
+    ),
+  }];
+}
+
+function sliceTextByPosition(
+  content: string,
+  startLine: number,
+  startColumn: number,
+  endLine: number,
+  endColumn: number,
+): string {
+  const lineStarts = computeLineStarts(content);
+  const startOffset = positionToOffset(lineStarts, content.length, startLine, startColumn);
+  const endOffset = positionToOffset(lineStarts, content.length, endLine, endColumn);
+  return content.slice(startOffset, endOffset);
+}
+
+function computeLineStarts(content: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < content.length; index++) {
+    if (content.charCodeAt(index) === 10) {
+      starts.push(index + 1);
+    }
+  }
+  return starts;
+}
+
+function positionToOffset(lineStarts: readonly number[], contentLength: number, line: number, column: number): number {
+  const safeLine = Math.max(1, line);
+  const lineIndex = Math.min(safeLine - 1, lineStarts.length - 1);
+  const lineStart = lineStarts[lineIndex] ?? contentLength;
+  return Math.min(contentLength, lineStart + Math.max(0, column - 1));
+}
+
 export function buildExternalHostAPI(): IExternalHostAPI {
   const host = AilyHost.get();
   const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
@@ -112,6 +254,7 @@ export function buildExternalHostAPI(): IExternalHostAPI {
     || host.config?.boardIndex
     || host.config?.boardList
   );
+  const terminal = createExternalTerminal(host, prjPath);
 
   return {
     fs: {
@@ -136,39 +279,7 @@ export function buildExternalHostAPI(): IExternalHostAPI {
       delete: (path: string) =>
         Promise.resolve(host.fs.unlinkSync(path)),
     },
-    terminal: host.terminal ? {
-      exec: (command: string, opts?: { cwd?: string; timeout?: number }) =>
-        new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
-          let stdout = '';
-          let stderr = '';
-          let settled = false;
-          const streamId = `lex_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-          const settle = (exitCode: number) => {
-            if (settled) return;
-            settled = true;
-            removeListener?.();
-            if (timer != null) clearTimeout(timer);
-            resolve({ stdout, stderr, exitCode });
-          };
-
-          const removeListener = host.terminal.onData?.(streamId, (data: any) => {
-            switch (data.type) {
-              case 'stdout': stdout += data.data ?? ''; break;
-              case 'stderr': stderr += data.data ?? ''; break;
-              case 'close': settle(data.code ?? 0); break;
-              case 'error': stderr += data.error ?? ''; settle(1); break;
-            }
-          });
-
-          const timeout = opts?.timeout || 30_000;
-          const timer = setTimeout(() => settle(124), timeout);
-
-          host.terminal.run?.({ command, cwd: opts?.cwd, streamId })
-            .then((r: any) => { if (!r?.success) settle(1); })
-            .catch(() => settle(1));
-        }),
-    } : undefined,
+    terminal,
     platform: {
         type: resolvePlatformType(host.platform?.type, host.platform?.isWindows, host.platform?.isMacOS),
       cwd: () => prjPath(),
@@ -176,10 +287,25 @@ export function buildExternalHostAPI(): IExternalHostAPI {
       env: (key: string) => host.env?.get?.(key),
     },
     project: host.project ? {
-        getProjectInfo: async () => host.project.getProjectInfo?.() ?? {
-          name: host.project.projectName,
-          path: prjPath(),
-          board: host.project.currentBoard,
+        getProjectInfo: async () => {
+          if (typeof host.project.getProjectInfo === 'function') {
+            return host.project.getProjectInfo();
+          }
+
+          try {
+            const legacyResult = await getProjectInfoTool(host.project as any, { include_readme: true });
+            if (!legacyResult.is_error) {
+              return JSON.parse(legacyResult.content);
+            }
+          } catch {
+            // Fall back to the minimal project shape below when legacy discovery is unavailable.
+          }
+
+          return {
+            name: host.project.projectName,
+            path: prjPath(),
+            board: host.project.currentBoard,
+          };
         },
       getProjectPath: () => host.project.currentProjectPath,
       getBoard: () => host.project.currentBoard,
@@ -294,6 +420,10 @@ export function createBlocklyCompatibilityHostBinding(cwd = ''): BlocklyCompatib
   const hostAPI = buildExternalHostAPI();
   const toolProvider = createBlocklyToolProvider(hostAPI);
   const adapter = BlocklyHostAdapter.create(hostAPI, cwd, toolProvider);
+  const searchExtension = createBlocklySearchExtension();
+  if (searchExtension) {
+    adapter.registerExtension('search', searchExtension);
+  }
   return { hostAPI, toolProvider, adapter };
 }
 
@@ -331,7 +461,7 @@ export function getLexRuntimeLLMConfig(
 export async function resolvePersistedLexSessionSnapshot(
   options: ResolvePersistedLexSessionOptions,
 ): Promise<import('aily-lex/browser').SessionSnapshot | null> {
-  const { lex, sessionId, cwd = '', legacyTurns } = options;
+  const { lex, sessionId, cwd = '', turnResponses } = options;
 
   try {
     const storedSnapshot = await loadStoredLexSessionSnapshot(lex, sessionId, cwd);
@@ -339,14 +469,19 @@ export async function resolvePersistedLexSessionSnapshot(
       return storedSnapshot as import('aily-lex/browser').SessionSnapshot;
     }
   } catch (err) {
-    console.warn('[LexBootstrap] 读取标准 snapshot 失败，回退 legacy turns:', err);
+    console.warn('[LexBootstrap] 读取标准 snapshot 失败:', err);
   }
 
-  return buildLegacyLexSessionSnapshot(legacyTurns, sessionId);
+  const turnResponseSnapshot = buildTurnResponseLexSessionSnapshot(turnResponses, sessionId);
+  if (turnResponseSnapshot) {
+    return turnResponseSnapshot;
+  }
+
+  return null;
 }
 
 export function getMainAgentHostTools(
-  ctx: Pick<IChatContext, 'ailyChatConfigService' | 'mcpService'>,
+  ctx: Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService'>,
 ): any[] {
   const tools = getMainAgentLegacyHostTools(ctx.ailyChatConfigService);
 
@@ -388,6 +523,8 @@ export function buildLexModelConfig(
 ): any {
   return {
     modelId: currentModel?.model || 'default',
+    presetId: currentModel?.presetId,
+    reasoningEffort: currentModel?.reasoningEffort,
     maxOutputTokens,
   };
 }
@@ -404,19 +541,66 @@ export function bootstrapBlocklyLexAgent(
     getEnvironmentSection: () => buildHostEnvironmentSection(),
   });
   adapter.registerExtension('askUser', {
-    ask: async (opts: { question: string; options?: { label: string; description?: string }[]; multiSelect: boolean; signal?: AbortSignal }) => {
-      return askUserSingle(opts.question, opts.options, opts.multiSelect);
+    ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal }) => {
+      return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true);
+    },
+    askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal }) => {
+      return askUserMany(opts.questions);
     },
   });
   adapter.registerExtension('diagnostics', {
     getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
   });
+  if (cwd && (sessionId || ctx.sessionId)) {
+    const editingTimelineRepository = new EditingTimelineRepository({
+      joinPath: (...parts) => AilyHost.get().path.join(...parts),
+    });
+    const editingContentStore = new EditingContentStore({
+      joinPath: (...parts) => AilyHost.get().path.join(...parts),
+    });
+    const editingTimelineRecorder = new EditingTimelineRecordingBridge(
+      editingTimelineRepository,
+      editingContentStore,
+      cwd,
+      sessionId || ctx.sessionId,
+    );
+    adapter.registerExtension('editingTimeline', {
+      recordFileWrite: async (event: EditingTimelineFileWriteEvent) => {
+        const edits = event.contentKind !== 'binary'
+          && event.beforeContent !== null
+          && event.beforeContent !== undefined
+          && event.afterContent !== null
+          && event.afterContent !== undefined
+          ? await computeNormalizedTextEdits(event.beforeContent, event.afterContent)
+          : undefined;
+        editingTimelineRecorder.recordFileWrite({
+          ...event,
+          ...(edits ? { edits } : {}),
+        });
+      },
+      reconcileWorktreeChanges: async (input: { turnId: string; filePaths: readonly string[] }) => {
+        await editingTimelineRecorder.reconcileWorktreeChanges({
+          ...input,
+          readCurrentText: async (filePath: string) => {
+            try {
+              return AilyHost.get().fs.readFileSync(filePath, 'utf-8');
+            } catch {
+              return null;
+            }
+          },
+          computeEdits: computeNormalizedTextEdits,
+        });
+      },
+    });
+  }
 
   let pendingNpmCommand: { command: string; isInstall: boolean; isUninstall: boolean } | null = null;
 
   // Blockly only contributes host adapters and domain capabilities here.
   // createAgent() remains the runtime owner for core tool registration,
   // prompt/skill assembly, and AgentExecutor/subagent execution.
+  const terminalPolicy = ctx.ailyChatConfigService.getLexTerminalPolicy?.();
+  const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(ctx.prjPath || ctx.prjRootPath || '');
   const agent = lex.createAgent({
     host: adapter,
     endpoint: buildLexEndpoint(lex, ctx.currentModel, ctx.ailyChatConfigService),
@@ -429,6 +613,7 @@ export function bootstrapBlocklyLexAgent(
     promptProfile: BLOCKLY_PROMPT_PROFILE,
     userInstructionFolders: ctx.ailyChatConfigService.userInstructionFolders.map(path => ({ path })),
     projectInstructionFolders: ctx.ailyChatConfigService.projectInstructionFolders.map(path => ({ path })),
+    projectAgentFiles: getBundledLexAgentFiles(),
     hooks: {
       askHandler: askHandler ?? (async () => false),
       onBeforeToolExecution: async (toolName: string, input: Record<string, unknown>) => {
@@ -458,17 +643,27 @@ export function bootstrapBlocklyLexAgent(
       },
     },
     coreToolFilter: LEX_CORE_SAFE_TOOLS,
-    additionalDeferredGroups: DEFERRED_TOOL_GROUPS.map(g => ({
-      id: g.name, label: g.name, description: g.brief,
+    additionalDeferredGroups: BLOCKLY_LEX_DEFERRED_GROUPS.map(g => ({
+      id: g.id, label: g.label, description: g.description,
     })),
     toolProvider,
     skillProvider: new BlocklySkillProvider(),
     agentProvider: createBlocklyAgentProvider(),
-    approvalHandler: async (request) => {
-      const { toolName, input, reason } = request;
-      return ctx.handleToolApproval(toolName, input, reason);
-    },
+    slashCommandProvider: createBlocklySlashCommandProvider(),
+    approvalHandler: async request => ctx.handleToolApproval({
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      title: request.title || '',
+      subtitle: request.subtitle,
+      message: request.message || '',
+      source: request.source,
+      actions: request.actions,
+      primaryScope: request.primaryScope,
+      args: request.input,
+    }),
+    permissionPolicy,
     permissionMode: 'default',
+    terminalPolicy,
   });
 
   adapter.registerExtension('skillManager', {
@@ -484,20 +679,17 @@ export function bootstrapBlocklyLexAgent(
     load: (name: string) => {
       const ok = BlocklySkillRegistry.activateSkill(name);
       if (ok) {
-        const skill = BlocklySkillRegistry.get(name);
-        if (skill) {
-          const content = skill.content || BlocklySkillRegistry.loadSkillContent(name) || '';
-          agent.registerSkill({
-            name: skill.metadata.name,
-            description: skill.metadata.description,
-            priority: 80,
-            getPromptContent: () => content,
-          });
-        }
+        registerBlocklySkillOnLexAgent(agent, name);
       }
       return ok;
     },
-    unload: (name: string) => BlocklySkillRegistry.deactivateSkill(name),
+    unload: (name: string) => {
+      const ok = BlocklySkillRegistry.deactivateSkill(name);
+      if (ok) {
+        agent.unregisterSkill(name);
+      }
+      return ok;
+    },
     listLoaded: () => {
       const names = BlocklySkillRegistry.getActivatedSkillNames();
       return names.map((name: string) => {
@@ -520,9 +712,286 @@ export function bootstrapBlocklyLexAgent(
       },
     });
   };
+  const origRestoreSession = agent.restoreSession.bind(agent);
+  (agent as any).restoreSession = (snapshot: import('aily-lex/browser').SessionSnapshot) => {
+    origRestoreSession(snapshot);
+    syncPersistedActiveSkills(agent, snapshot.activeSkillNames);
+  };
   adapter.registerExtension('agentExecutor', agentExecutor);
 
   return agent;
+}
+
+function createBlocklySearchExtension(): {
+  searchFiles?(input: {
+    pattern: string;
+    cwd: string;
+    maxResults: number;
+    signal?: AbortSignal;
+  }): Promise<string[]>;
+  searchText?(input: {
+    query: string;
+    isRegexp: boolean;
+    includePattern?: string;
+    maxResults: number;
+    cwd: string;
+  }): Promise<Array<{ file: string; line: number; content: string }>>;
+} | null {
+  const ripgrep = (window as any)?.electronAPI?.ripgrep;
+  const hasSearchContent = typeof ripgrep?.searchContent === 'function';
+  const hasListAllContentFiles = typeof ripgrep?.listAllContentFiles === 'function';
+  if (!hasSearchContent && !hasListAllContentFiles) {
+    return null;
+  }
+
+  const searchExtension: {
+    searchFiles?: (input: {
+      pattern: string;
+      cwd: string;
+      maxResults: number;
+      signal?: AbortSignal;
+    }) => Promise<string[]>;
+    searchText?: (input: {
+      query: string;
+      isRegexp: boolean;
+      includePattern?: string;
+      maxResults: number;
+      cwd: string;
+    }) => Promise<Array<{ file: string; line: number; content: string }>>;
+  } = {};
+
+  if (hasListAllContentFiles) {
+    searchExtension.searchFiles = async (input) => {
+      const matchesEverything = input.pattern === '**/*' || input.pattern === '**' || input.pattern === '*';
+      const regex = matchesEverything ? null : globToRegex(input.pattern);
+      const seen = new Set<string>();
+      const matches: string[] = [];
+      let scanLimit = Math.max(input.maxResults * 50, 2000);
+      let lastBatchSize = 0;
+
+      while (true) {
+        const result = await ripgrep.listAllContentFiles(input.cwd, scanLimit);
+        if (!result?.success) {
+          throw new Error(result?.error || 'Blockly ripgrep file listing failed');
+        }
+
+        const files = Array.isArray(result.files) ? result.files : [];
+        lastBatchSize = files.length;
+        appendSearchFileMatches(files, input.cwd, regex, seen, matches, input.maxResults);
+
+        if (matches.length >= input.maxResults || files.length < scanLimit || scanLimit >= 32000) {
+          break;
+        }
+
+        scanLimit = Math.min(scanLimit * 2, 32000);
+      }
+
+      if (matches.length < input.maxResults) {
+        appendSearchFileMatchesFromHostFs(input.cwd, regex, seen, matches, input.maxResults);
+      }
+
+      if (matches.length === 0 && lastBatchSize === 0) {
+        return [];
+      }
+
+      return matches.slice(0, input.maxResults);
+    };
+  }
+
+  if (hasSearchContent) {
+    searchExtension.searchText = async (input) => {
+      const result = await ripgrep.searchContent({
+        pattern: input.query,
+        path: input.cwd,
+        include: input.includePattern,
+        isRegex: input.isRegexp,
+        maxResults: input.maxResults,
+        ignoreCase: true,
+        maxLineLength: 500,
+      });
+
+      if (!result?.success) {
+        throw new Error(result?.error || 'Blockly ripgrep search failed');
+      }
+
+      if (!Array.isArray(result.matches)) {
+        return [];
+      }
+
+      return result.matches
+        .filter((match: any) => !!match?.file)
+        .map((match: any) => ({
+          file: String(match.file),
+          line: Number(match.line || 0),
+          content: String(match.content || ''),
+        }));
+    };
+  }
+
+  return searchExtension;
+}
+
+function appendSearchFileMatches(
+  files: readonly unknown[],
+  cwd: string,
+  regex: RegExp | null,
+  seen: Set<string>,
+  matches: string[],
+  maxResults: number,
+): void {
+  for (const file of files) {
+    const normalized = normalizePath(String(file));
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    const relative = relativizePath(normalized, cwd);
+    if (!relative || (regex && !regex.test(relative))) {
+      continue;
+    }
+
+    seen.add(normalized);
+    matches.push(normalized);
+    if (matches.length >= maxResults) {
+      return;
+    }
+  }
+}
+
+function appendSearchFileMatchesFromHostFs(
+  cwd: string,
+  regex: RegExp | null,
+  seen: Set<string>,
+  matches: string[],
+  maxResults: number,
+): void {
+  const host = AilyHost.get();
+  const pending = [cwd];
+
+  while (pending.length > 0 && matches.length < maxResults) {
+    const current = pending.pop()!;
+    const entries = readSearchDirectoryNames(host, current);
+    for (const entry of entries) {
+      const absolutePath = host.path.join(current, entry);
+      const stat = safeSearchStat(host, absolutePath);
+      if (!stat) {
+        continue;
+      }
+
+      const relative = relativizePath(absolutePath, cwd);
+      if (stat.isDirectory) {
+        if (relative && !isIgnoredSearchPath(relative)) {
+          pending.push(absolutePath);
+        }
+        continue;
+      }
+
+      if (!stat.isFile || !relative) {
+        continue;
+      }
+
+      const normalizedAbsolutePath = normalizePath(absolutePath);
+      if (seen.has(normalizedAbsolutePath) || (regex && !regex.test(relative))) {
+        continue;
+      }
+
+      seen.add(normalizedAbsolutePath);
+      matches.push(normalizedAbsolutePath);
+      if (matches.length >= maxResults) {
+        return;
+      }
+    }
+  }
+}
+
+function readSearchDirectoryNames(host: any, path: string): string[] {
+  try {
+    return toDirectoryNames(host.fs.readdirSync?.(path) ?? host.fs.readDirSync?.(path));
+  } catch {
+    return [];
+  }
+}
+
+function safeSearchStat(
+  host: any,
+  path: string,
+): { isFile: boolean; isDirectory: boolean } | null {
+  try {
+    const stat = host.fs.statSync(path);
+    return {
+      isFile: typeof stat?.isFile === 'function' ? stat.isFile() : !!stat?.isFile,
+      isDirectory: typeof stat?.isDirectory === 'function' ? stat.isDirectory() : !!stat?.isDirectory,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isIgnoredSearchPath(path: string): boolean {
+  return normalizePath(path)
+    .split('/')
+    .some(segment => segment === '.git' || segment === '.svn' || segment === '.hg' || segment === 'node_modules' || segment === '__pycache__' || segment === '.aily' || segment === '.aily_checkpoints' || segment === '.cache');
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\.\//, '');
+}
+
+function relativizePath(path: string, cwd: string): string {
+  const normalizedPath = normalizePath(path);
+  const normalizedCwd = normalizePath(cwd).replace(/\/$/, '');
+  if (!normalizedCwd) {
+    return normalizedPath;
+  }
+
+  const lowerPath = normalizedPath.toLocaleLowerCase();
+  const lowerCwd = normalizedCwd.toLocaleLowerCase();
+  if (lowerPath === lowerCwd) {
+    return '';
+  }
+  if (lowerPath.startsWith(`${lowerCwd}/`)) {
+    return normalizedPath.slice(normalizedCwd.length + 1);
+  }
+  return normalizedPath;
+}
+
+function globToRegex(pattern: string): RegExp {
+  let p = pattern.replace(/^\.\//, '').replace(/^\//, '');
+  let regex = '';
+  let index = 0;
+  while (index < p.length) {
+    const ch = p[index];
+    if (ch === '*' && p[index + 1] === '*') {
+      regex += '.*';
+      index += 2;
+      if (p[index] === '/') index++;
+    } else if (ch === '*') {
+      regex += '[^/]*';
+      index++;
+    } else if (ch === '?') {
+      regex += '[^/]';
+      index++;
+    } else if (ch === '{') {
+      const close = p.indexOf('}', index);
+      if (close > index) {
+        const inner = p.slice(index + 1, close).split(',')
+          .map((segment: string) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('|');
+        regex += `(${inner})`;
+        index = close + 1;
+      } else {
+        regex += '\\{';
+        index++;
+      }
+    } else if ('.+^$|()[]\\'.includes(ch)) {
+      regex += `\\${ch}`;
+      index++;
+    } else {
+      regex += ch;
+      index++;
+    }
+  }
+  return new RegExp(`^${regex}$`, 'i');
 }
 
 function getLexSessionStorageRoot(): string {
@@ -561,34 +1030,49 @@ function normalizeMcpTool(tool: any): any {
   };
 }
 
-function buildLegacyLexSessionSnapshot(
-  legacyTurns: unknown,
+function buildTurnResponseLexSessionSnapshot(
+  turnResponses: readonly import('aily-lex/browser').TurnResponseTurn[] | undefined,
   sessionId: string,
 ): import('aily-lex/browser').SessionSnapshot | null {
-  const rawTurns = extractLegacyTurns(legacyTurns);
-  if (rawTurns.length === 0) {
+  if (!turnResponses?.length) {
     return null;
   }
 
-  const lexTurns: import('aily-lex/browser').ConversationTurn[] = rawTurns.map((turn: any, index) => ({
-    id: turn?.id || `turn-${index}`,
+  const lexTurns: import('aily-lex/browser').ConversationTurn[] = turnResponses.map((turn, index) => ({
+    id: turn.turnId || `turn-${index}`,
     index,
-    request: { content: turn?.request?.content || '' },
-    rounds: (turn?.response?.toolCallRounds ?? []).map((round: any, roundIndex: number) => ({
+    request: {
+      content: turn.request?.content || turn.request?.displayContent || '',
+      ...(typeof turn.request?.displayContent === 'string' ? { displayContent: turn.request.displayContent } : {}),
+      ...(turn.request?.metadata ? { metadata: turn.request.metadata } : {}),
+      ...(turn.request?.attachments ? { attachments: turn.request.attachments } : {}),
+    },
+    rounds: (turn.rounds ?? []).map((round: any, roundIndex: number) => ({
       id: round?.id || `round-${index}-${roundIndex}`,
-      assistantText: round?.assistantContent || '',
+      assistantText: round?.assistantText || '',
       toolCalls: (round?.toolCalls ?? []).map((toolCall: any) => ({
         id: toolCall?.id,
-        toolName: toolCall?.name,
-        input: safeParseJSON(toolCall?.arguments),
-        output: round?.results?.[toolCall?.id]?.content,
-        error: round?.results?.[toolCall?.id]?.isError ? round.results[toolCall.id].content : undefined,
+        toolName: toolCall?.toolName,
+        input: toolCall?.input,
+        output: toolCall?.output,
+        error: toolCall?.error,
       })),
-      timestamp: turn?.request?.timestamp,
+      timestamp: round?.timestamp,
     })),
-    response: turn?.response?.content || '',
-    status: turn?.response ? 'completed' as const : 'cancelled' as const,
-    createdAt: turn?.request?.timestamp,
+    response: createConversationTurnResponse({
+      participant: turn.response?.participant || 'assistant',
+      ...(turn.response?.command !== undefined ? { command: turn.response.command } : {}),
+      ...(turn.response?.usedContext ? { usedContext: turn.response.usedContext } : {}),
+      ...(turn.response?.contentReferences ? { contentReferences: turn.response.contentReferences } : {}),
+      ...(turn.response?.codeCitations ? { codeCitations: turn.response.codeCitations } : {}),
+      ...(turn.response?.progressMessages ? { progressMessages: turn.response.progressMessages } : {}),
+      parts: turn.response?.parts ?? [],
+      resultText: turn.response?.resultText || '',
+      createdAt: turn.response?.createdAt ?? turn.createdAt ?? Date.now(),
+      updatedAt: turn.response?.updatedAt ?? turn.updatedAt ?? turn.createdAt ?? Date.now(),
+    }),
+    status: toLexConversationTurnStatus(turn.response?.status),
+    createdAt: turn.createdAt ?? turn.response?.createdAt,
   }));
 
   return {
@@ -596,35 +1080,22 @@ function buildLegacyLexSessionSnapshot(
     turns: lexTurns,
     revision: 0,
     createdAt: lexTurns[0]?.createdAt ?? Date.now(),
-    updatedAt: Date.now(),
+    updatedAt: turnResponses[turnResponses.length - 1]?.updatedAt ?? Date.now(),
   };
 }
 
-function extractLegacyTurns(legacyTurns: unknown): readonly any[] {
-  if (typeof legacyTurns === 'undefined' || legacyTurns === null) {
-    return [];
-  }
-
-  if (Array.isArray((legacyTurns as any)?.turns)) {
-    return (legacyTurns as any).turns;
-  }
-
-  return Array.isArray(legacyTurns) ? legacyTurns : [];
-}
-
-function safeParseJSON(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-
-  if (typeof value !== 'string') {
-    return { _raw: value as any };
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return { _raw: value };
+function toLexConversationTurnStatus(
+  status: import('aily-lex/browser').TurnResponseStatus | undefined,
+): import('aily-lex/browser').TurnStatus {
+  switch (status) {
+    case 'streaming':
+      return 'active';
+    case 'completed':
+    case 'cancelled':
+    case 'error':
+      return status;
+    default:
+      return 'completed';
   }
 }
 
@@ -724,40 +1195,289 @@ async function loadNpmLibraries(command: string): Promise<void> {
   }
 }
 
-function buildHostEnvironmentSection(): string {
+async function buildHostEnvironmentSection(): Promise<string> {
   const host = AilyHost.get();
-  const lines: string[] = [];
-
-  const project = host.project;
-  if (project?.currentProjectPath) {
-    lines.push(`Project path: ${project.currentProjectPath}`);
-  }
-  if (project?.projectName) {
-    lines.push(`Project: ${project.projectName}`);
-  }
-  if (project?.currentBoard) {
-    lines.push(`Current board: ${project.currentBoard}`);
-  }
-
-  try {
-    const pkgJson = (project as any)?.getPackageJsonSync?.()
-      ?? (window as any)['prjService']?.project?.packageJson;
-    const deps = pkgJson?.dependencies;
-    if (deps && typeof deps === 'object') {
-      const libNames = Object.keys(deps)
-        .filter(k => k.startsWith('@aily-project/lib-'))
-        .map(k => k.replace('@aily-project/', ''));
-      if (libNames.length > 0) {
-        lines.push(`Installed libraries (${libNames.length}): ${libNames.join(', ')}`);
-      }
-    }
-  } catch { }
-
-  if (project?.currentProjectPath) {
-    const path = project.currentProjectPath;
-    lines.push(`ABS source: ${path}/project.abs`);
-    lines.push(`Generated C++: ${path}/.temp/sketch/sketch.ino`);
-  }
+  const lines = await buildBlocklyWorkspaceIdentityLines(host);
 
   return lines.length > 0 ? lines.join('\n') : 'No project opened.';
+}
+
+function createExternalTerminal(host: any, prjPath: () => string): IExternalHostAPI['terminal'] {
+  const hasRawTerminal = !!(host.terminal?.run && host.terminal?.onData);
+  const hasCmdService = !!(host.cmd?.spawn && host.cmd?.kill && host.cmd?.sendInput);
+
+  if (!hasRawTerminal && !hasCmdService) {
+    return undefined;
+  }
+
+  const sessions = new Map<string, ExternalTerminalSession>();
+
+  const createSnapshot = (session: ExternalTerminalSession) => ({
+    id: session.id,
+    command: session.command,
+    cwd: session.cwd,
+    stdout: session.stdout,
+    stderr: session.stderr,
+    running: session.running,
+    exitCode: session.exitCode,
+    pid: session.pid,
+  });
+
+  const settleReady = (session: ExternalTerminalSession) => {
+    if (session.readyResolved) {
+      return;
+    }
+    session.readyResolved = true;
+    session.resolveReady();
+  };
+
+  const finalize = (session: ExternalTerminalSession, exitCode: number) => {
+    if (session.timer) {
+      clearTimeout(session.timer);
+      session.timer = undefined;
+    }
+    session.running = false;
+    session.exitCode = exitCode;
+    settleReady(session);
+    if (!session.finishedResolved) {
+      session.finishedResolved = true;
+      session.resolveFinished();
+    }
+    session.removeListener?.();
+    session.removeListener = undefined;
+    session.subscription?.unsubscribe?.();
+    session.subscription = undefined;
+  };
+
+  const attachCmdServiceSession = (
+    session: ExternalTerminalSession,
+    command: string,
+    cwd: string,
+  ) => {
+    const parts = parseShellCommand(command);
+    const executable = parts.shift() ?? command;
+
+    session.subscription = host.cmd.spawn(executable, parts, { cwd, streamId: session.id }, true).subscribe({
+      next: (data: any) => {
+        switch (data?.type) {
+          case 'stdout':
+            session.stdout += data.data ?? '';
+            settleReady(session);
+            break;
+          case 'stderr':
+            session.stderr += data.data ?? '';
+            settleReady(session);
+            break;
+          case 'close': {
+            if (!session.stdout && typeof data.stdout === 'string') {
+              session.stdout = data.stdout;
+            }
+            if (!session.stderr && typeof data.stderr === 'string') {
+              session.stderr = data.stderr;
+            }
+            finalize(session, data.code ?? 0);
+            break;
+          }
+          case 'error':
+            session.stderr += data.error ?? '';
+            finalize(session, 1);
+            break;
+        }
+      },
+      error: (err: unknown) => {
+        session.stderr += err instanceof Error ? err.message : String(err);
+        finalize(session, 1);
+      },
+    });
+  };
+
+  const attachRawTerminalSession = (session: ExternalTerminalSession) => {
+    session.removeListener = host.terminal.onData(session.id, (data: any) => {
+      switch (data.type) {
+        case 'stdout':
+          session.stdout += data.data ?? '';
+          settleReady(session);
+          break;
+        case 'stderr':
+          session.stderr += data.data ?? '';
+          settleReady(session);
+          break;
+        case 'close':
+          finalize(session, data.code ?? 0);
+          break;
+        case 'error':
+          session.stderr += data.error ?? '';
+          finalize(session, 1);
+          break;
+      }
+    });
+  };
+
+  const start = async (command: string, opts?: { cwd?: string; timeout?: number }) => {
+    const id = `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const cwd = opts?.cwd ?? prjPath();
+    let resolveReady!: () => void;
+    let resolveFinished!: () => void;
+    const session: ExternalTerminalSession = {
+      id,
+      command,
+      cwd,
+      stdout: '',
+      stderr: '',
+      running: true,
+      readyResolved: false,
+      finishedResolved: false,
+      ready: new Promise<void>((resolve) => { resolveReady = resolve; }),
+      finished: new Promise<void>((resolve) => { resolveFinished = resolve; }),
+      resolveReady,
+      resolveFinished,
+    };
+
+    if (hasCmdService) {
+      attachCmdServiceSession(session, command, cwd);
+    } else if (hasRawTerminal) {
+      attachRawTerminalSession(session);
+    }
+
+    const timeout = opts?.timeout ?? 30_000;
+    session.timer = setTimeout(async () => {
+      if (!session.running) {
+        return;
+      }
+      session.stderr += `${session.stderr ? '\n' : ''}[Process killed: timeout exceeded]`;
+      if (typeof host.terminal.kill === 'function') {
+        await host.terminal.kill(id);
+      }
+      finalize(session, 124);
+    }, timeout);
+
+    sessions.set(id, session);
+
+    try {
+      if (hasRawTerminal) {
+        const result = await host.terminal.run({ command, cwd, streamId: id });
+        session.pid = result?.pid;
+        if (!result?.success) {
+          session.stderr += result?.error ?? 'Terminal start failed';
+          finalize(session, 1);
+        }
+      } else if (!hasCmdService) {
+        session.stderr += 'Terminal start failed';
+        finalize(session, 1);
+      }
+    } catch (err) {
+      session.stderr += err instanceof Error ? err.message : String(err);
+      finalize(session, 1);
+    }
+
+    await Promise.race([session.ready, delay(150)]);
+    return createSnapshot(session);
+  };
+
+  return {
+    exec: async (command: string, opts?: { cwd?: string; timeout?: number }) => {
+      const snapshot = await start(command, opts);
+      const session = sessions.get(snapshot.id);
+      if (session?.running) {
+        await session.finished;
+      }
+      const finalSnapshot = sessions.get(snapshot.id) ? createSnapshot(sessions.get(snapshot.id)!) : snapshot;
+      sessions.delete(snapshot.id);
+      return {
+        stdout: finalSnapshot.stdout,
+        stderr: finalSnapshot.stderr,
+        exitCode: finalSnapshot.exitCode ?? 1,
+      };
+    },
+    start,
+    getOutput: async (id: string) => {
+      const session = sessions.get(id);
+      return session ? createSnapshot(session) : null;
+    },
+    sendInput: async (id: string, input: string) => {
+      const sendInput = host.cmd?.sendInput ?? host.terminal?.input;
+      if (!sessions.has(id) || typeof sendInput !== 'function') {
+        return false;
+      }
+      const result = await sendInput.call(host.cmd ?? host.terminal, id, input);
+      return result?.success !== false;
+    },
+    kill: async (id: string) => {
+      const session = sessions.get(id);
+      const kill = host.cmd?.kill ?? host.terminal?.kill;
+      if (!session || typeof kill !== 'function') {
+        return false;
+      }
+      const result = await kill.call(host.cmd ?? host.terminal, id);
+      if (result?.success !== false && session.running) {
+        finalize(session, session.exitCode ?? 130);
+      }
+      return result?.success !== false;
+    },
+  };
+}
+
+interface ExternalTerminalSession {
+  id: string;
+  command: string;
+  cwd: string;
+  stdout: string;
+  stderr: string;
+  running: boolean;
+  exitCode?: number;
+  pid?: number;
+  readyResolved: boolean;
+  finishedResolved: boolean;
+  ready: Promise<void>;
+  finished: Promise<void>;
+  resolveReady(): void;
+  resolveFinished(): void;
+  removeListener?: () => void;
+  subscription?: { unsubscribe(): void };
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseShellCommand(command: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+
+    if ((char === '"' || char === '\'') && !inQuotes) {
+      inQuotes = true;
+      quoteChar = char;
+      current += char;
+      continue;
+    }
+
+    if (char === quoteChar && inQuotes) {
+      inQuotes = false;
+      quoteChar = '';
+      current += char;
+      continue;
+    }
+
+    if (char === ' ' && !inQuotes) {
+      if (current.length > 0) {
+        result.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    result.push(current);
+  }
+
+  return result;
 }

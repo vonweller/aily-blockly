@@ -11,8 +11,8 @@
     border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 
     .edits-panel-header {
-        height: 30px;
-        padding: 0 12px;
+        min-height: 30px;
+        padding: 4px 12px;
         border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
         user-select: none;
         background: var(--vscode-sideBar-background, #252526);
@@ -30,6 +30,7 @@
             gap: 8px;
             cursor: pointer;
             flex: 1;
+            min-width: 0;
 
             .panel-icon {
                 font-size: 10px;
@@ -41,11 +42,27 @@
                 }
             }
 
+            .header-copy {
+                display: flex;
+                flex: 1;
+                min-width: 0;
+                flex-direction: column;
+                gap: 2px;
+            }
+
             .panel-title {
                 font-size: 12px;
                 font-weight: 600;
                 color: var(--vscode-sideBar-foreground, #cccccc);
                 letter-spacing: 0.5px;
+            }
+
+            .panel-subtitle {
+                font-size: 11px;
+                color: var(--vscode-descriptionForeground, #888);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
         }
 

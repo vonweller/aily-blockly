@@ -50,7 +50,7 @@ export interface ITurnDataSource {
 
   /**
    * 获取 Turn 0..turnIndex（含）的 ID 列表
-   * 用于 buildSummaryPlan 中计算 coveredTurnIds
+    * 用于 turn-summary-plan 中计算 coveredTurnIds
    */
   getCoveredTurnIds(upToTurnIndex: number): string[];
 

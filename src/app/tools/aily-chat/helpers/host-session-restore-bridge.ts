@@ -1,10 +1,37 @@
-import type { SessionSnapshot, RenderEvent } from 'aily-lex/browser';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import type { IChatContext } from '../core/chat-context';
-import { RenderEventPartAdapter } from '../core/render-event-part-adapter';
-import { ChatViewWriteBridge } from './chat-view-write-bridge';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IChatServiceAccess,
+  ISessionAccess,
+} from '../core/chat-context';
+import {
+  buildHostProjectionStateFromPersistedRecord,
+  buildTurnNativeRestoreChatList,
+  type HostResponseProjection,
+  type HostTurnResponseState,
+} from './host-turn-response-state';
+import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
+import { projectTurnResponsesToHistory } from './turn-response-history-projector';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
+
+type HostSessionRestoreContext = ChatViewWriteBridgeContext
+  & Pick<IAgentLifecycle, 'toolCallingIteration'>
+  & Pick<ISessionAccess, 'conversationMessages' | 'chatService'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService'>
+  & Pick<IChatCoordination, 'lexStream'>
+  & {
+    replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
+  };
+
+type HostSessionRestoreViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
+
+type HostSessionRestoreViewWriteAccess = Pick<
+  ChatViewWriteBridge,
+  'restoreLegacyHistoryList' | 'restoreTurnNativeHistoryList'
+>;
 
 /**
  * Restores host-side persisted chat history back into the active UI/session state.
@@ -13,25 +40,66 @@ import type { HostSessionRecord } from '../services/chat-history.service';
  * and post-restore host sync out of SessionLifecycleHelper.
  */
 export class HostSessionRestoreBridge {
-  private readonly viewWriteBridge: ChatViewWriteBridge;
+  private readonly viewWriteBridge: HostSessionRestoreViewWriteAccess;
 
-  constructor(private readonly ctx: IChatContext) {
-    this.viewWriteBridge = new ChatViewWriteBridge(ctx);
+  constructor(private readonly ctx: HostSessionRestoreContext) {
+    const viewWriteContext: HostSessionRestoreViewWriteContext = {
+      get list() {
+        return ctx.list;
+      },
+      set list(list) {
+        ctx.list = list;
+      },
+      get partStore() {
+        return ctx.partStore;
+      },
+      get viewAdapter() {
+        return ctx.viewAdapter;
+      },
+      get scrollManager() {
+        return ctx.scrollManager;
+      },
+      get invalidateHostRequestGraph() {
+        return ctx.invalidateHostRequestGraph;
+      },
+      get triggerSyncDetectChanges() {
+        return ctx.triggerSyncDetectChanges;
+      },
+      get sessionId() {
+        return ctx.sessionId;
+      },
+      get chatHistoryService() {
+        return ctx.chatHistoryService;
+      },
+      get currentModelName() {
+        return ctx.currentModelName;
+      },
+      get currentMessageSource() {
+        return ctx.currentMessageSource;
+      },
+      get ngZone() {
+        return ctx.ngZone;
+      },
+    };
+    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
   async restore(hostRecord: HostSessionRecord): Promise<void> {
-    this.applyChatList(hostRecord);
     this.restoreSessionMetadata(hostRecord);
 
     const restoredLexSession = await this.ctx.lexStream.session.restore(
       this.ctx.sessionId,
-      hostRecord.turns,
+      hostRecord.turnResponses,
     );
 
-    const lexSnapshot = restoredLexSession
-      ? this.ctx.lexStream.session.snapshot()
-      : null;
-    this.restoreExecutionNarrative(lexSnapshot);
+    const turnResponses = this.resolveTurnResponsesForRestore(hostRecord) ?? [];
+    this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
+    const supportsTurnNativeRestore = turnResponses.length > 0;
+    const hostResponseState = buildHostProjectionStateFromPersistedRecord({
+      turnResponses,
+    });
+    this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
+    this.applyHostView(hostResponseState);
 
     // Restore context budget: prefer persisted lex-derived values over local estimate
     const savedBudget = hostRecord.metadata?.contextBudget;
@@ -39,7 +107,18 @@ export class HostSessionRestoreBridge {
       this.ctx.contextBudgetService?.applyLexBudgetEvent(
         savedBudget.maxContextTokens,
         savedBudget.currentTokens,
-        { usagePercent: savedBudget.usagePercent },
+        {
+          usagePercent: savedBudget.usagePercent,
+          systemTokens: savedBudget.systemTokens,
+          baseSystemTokens: savedBudget.baseSystemTokens,
+          instructionTokens: savedBudget.instructionTokens,
+          skillTokens: savedBudget.skillTokens,
+          toolsTokens: savedBudget.toolsTokens,
+          toolSourceTokens: savedBudget.toolSourceTokens,
+          messagesTokens: savedBudget.messagesTokens,
+          toolResultsTokens: savedBudget.toolResultsTokens,
+          messageCount: savedBudget.messageCount,
+        },
       );
     } else {
       this.ctx.contextBudgetService?.refreshLocalEstimate(
@@ -48,12 +127,23 @@ export class HostSessionRestoreBridge {
       );
     }
 
-    await this.restoreEditCheckpoints();
+    await this.restoreEditCheckpoints(hostResponseState.turnResponses);
     this.finalizeRestoreUi(restoredLexSession);
   }
 
-  private applyChatList(hostRecord: HostSessionRecord): void {
-    this.viewWriteBridge.replaceHistoryList(hostRecord.chatList);
+  private applyHostView(hostResponseState: Pick<HostResponseProjection, 'turnResponses' | 'chatList'>): void {
+    if (hostResponseState.turnResponses.length === 0) {
+      this.viewWriteBridge.restoreLegacyHistoryList(hostResponseState.chatList);
+      return;
+    }
+
+    const turnIds = new Set(hostResponseState.turnResponses.map(turn => turn.turnId));
+    this.viewWriteBridge.restoreTurnNativeHistoryList(
+      buildTurnNativeRestoreChatList(hostResponseState.chatList, turnIds),
+      turnIds,
+    );
+
+    projectTurnResponsesToHistory(this.ctx, hostResponseState.turnResponses);
   }
 
   private restoreSessionMetadata(hostRecord: HostSessionRecord): void {
@@ -69,7 +159,7 @@ export class HostSessionRestoreBridge {
     this.ctx.toolCallingIteration = hostRecord.metadata?.toolCallingIteration || 0;
   }
 
-  private async restoreEditCheckpoints(): Promise<void> {
+  private async restoreEditCheckpoints(turnResponses: readonly TurnResponseTurn[]): Promise<void> {
     this.ctx.editCheckpointService?.clear();
     try {
       const fileHistory = this.ctx.lexStream.agent.getAgent()?.getFileHistory?.();
@@ -80,7 +170,9 @@ export class HostSessionRestoreBridge {
       // ignore file history restore failures
     }
 
-    await this.ctx.editCheckpointService?.loadFromFileHistory();
+    if (turnResponses.length > 0) {
+      await this.ctx.editCheckpointService?.rebuildFromTurnResponses?.(turnResponses);
+    }
 
     if (this.ctx.editCheckpointService?.hasUnsavedEdits()) {
       if (this.ctx.ailyChatConfigService.autoSaveEdits) {
@@ -99,111 +191,13 @@ export class HostSessionRestoreBridge {
     this.ctx.scrollManager.scrollToBottom('auto');
   }
 
-  private restoreExecutionNarrative(snapshot: SessionSnapshot | null): void {
-    // Phase 3: only the RenderEvent path remains.
-    // When it cannot run (no lex snapshot / no renderSessionHistory), the Parts
-    // already deserialized by applyChatList → replaceHistoryList serve as static fallback.
-    if (snapshot) {
-      this.tryRestoreFromRenderEvents(snapshot);
+  private resolveTurnResponsesForRestore(
+    hostRecord: HostSessionRecord,
+  ): TurnResponseTurn[] | null {
+    if (!hostRecord.turnResponses?.length) {
+      return null;
     }
+
+    return [...hostRecord.turnResponses];
   }
-
-  /**
-   * R3.3 — New restore path using renderSessionHistory() → RenderEventPartAdapter.
-   *
-   * Produces a flat RenderEvent[] from the lex SessionSnapshot, then replays
-   * them through the adapter to reconstruct all Parts (tool calls, subagents,
-   * thinking, background tasks, todos) in a single pass.
-   *
-   * Phase 1.3: each turn targets a distinct existing aily message (matched by
-   * position), so multi-turn sessions restore into separate messages instead of
-   * being concatenated into one.
-   *
-   * Returns true if it handled the restore, false to fall back to legacy path.
-   */
-  private tryRestoreFromRenderEvents(snapshot: SessionSnapshot): boolean {
-    // renderSessionHistory is available on ctx.lexStream from the lex bootstrap
-    const renderFn = this.ctx.lexStream?.agent?.getLex?.()?.renderSessionHistory as
-      ((snap: SessionSnapshot) => RenderEvent[]) | undefined;
-    if (!renderFn) return false;
-
-    const events = renderFn(snapshot);
-    if (events.length === 0) return false;
-
-    // Build a queue of existing aily message indices from the chat list.
-    // These were created by applyChatList → replaceHistoryList.
-    const ailyMsgIndices: number[] = [];
-    for (let i = 0; i < this.ctx.list.length; i++) {
-      if (this.ctx.list[i].role === 'aily') {
-        ailyMsgIndices.push(i);
-      }
-    }
-
-    const adapter = new RenderEventPartAdapter(this.ctx.partStore);
-    let ailyMsgCursor = 0; // index into ailyMsgIndices
-    let currentMsgIndex = -1;
-
-    try {
-      for (const event of events) {
-        if (event.type === 'turn_begin') {
-          const turnId = event.turnId;
-
-          if (ailyMsgCursor < ailyMsgIndices.length) {
-            // Target the next existing aily message
-            currentMsgIndex = ailyMsgIndices[ailyMsgCursor];
-            ailyMsgCursor++;
-
-            // Clear old deserialized Parts — we will re-populate from render events
-            this.ctx.partStore.clearMessage(currentMsgIndex);
-
-            // Tag the message with turnId
-            const msg = this.ctx.list[currentMsgIndex];
-            if (msg) {
-              if (turnId) msg.turnId = turnId;
-            }
-          } else {
-            // More turns than existing aily messages — create a new one
-            currentMsgIndex = this.viewWriteBridge.ensureTrailingAilyPartsMessage({
-              source: 'mainAgent',
-              state: 'done',
-              scrollOnCreate: false,
-              forceNew: true,
-              turnId,
-            });
-          }
-
-          adapter.setMsgIndex(currentMsgIndex);
-          adapter.reset();
-          continue;
-        }
-
-        if (event.type === 'turn_end') {
-          // Finalize the current message
-          if (currentMsgIndex >= 0 && currentMsgIndex < this.ctx.list.length) {
-            this.ctx.list[currentMsgIndex].state = 'done';
-            this.ctx.list[currentMsgIndex].content = this.ctx.partStore.serializeToContent(currentMsgIndex);
-          }
-          continue;
-        }
-
-        // If we haven't seen a turn_begin yet (shouldn't happen normally), skip
-        if (currentMsgIndex < 0) continue;
-
-        adapter.process(event);
-      }
-
-      // Finalize the last message (in case there was no trailing turn_end)
-      if (currentMsgIndex >= 0 && currentMsgIndex < this.ctx.list.length) {
-        const msg = this.ctx.list[currentMsgIndex];
-        if (msg.state !== 'done') msg.state = 'done';
-        msg.content = this.ctx.partStore.serializeToContent(currentMsgIndex);
-      }
-    } finally {
-      adapter.dispose();
-    }
-
-    this.ctx.triggerSyncDetectChanges();
-    return true;
-  }
-
 }

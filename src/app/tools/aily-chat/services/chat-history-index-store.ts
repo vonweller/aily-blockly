@@ -1,6 +1,7 @@
 import { AilyHost } from '../core/host';
 
 import type { HostSessionRecord, ProjectIndexEntry, SessionIndexEntry } from './chat-history.service';
+import { countHostRecordMessages } from './chat-history.service';
 
 export interface ChatHistoryIndexStoreOptions {
   indexFile: string;
@@ -173,7 +174,7 @@ export class ChatHistoryIndexStore {
           projectName,
           createdAt: data.metadata.createdAt || Date.now(),
           updatedAt: data.metadata.updatedAt || Date.now(),
-          messageCount: data.chatList?.length || 0,
+          messageCount: countHostRecordMessages(data),
           mode: data.metadata.mode || 'agent',
           model: data.metadata.model ?? null,
           dataAvailable: true,

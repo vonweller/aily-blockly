@@ -21,7 +21,10 @@ export class LexSessionFacade {
     return this.persistenceBridge.getSessionSnapshot();
   }
 
-  restore(sessionId: string, legacyTurns?: unknown): Promise<boolean> {
-    return this.restoreBridge.restorePersistedSession(sessionId, legacyTurns);
+  restore(
+    sessionId: string,
+    turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
+  ): Promise<boolean> {
+    return this.restoreBridge.restorePersistedSession(sessionId, turnResponses);
   }
 }

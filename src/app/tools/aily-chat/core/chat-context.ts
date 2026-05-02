@@ -61,7 +61,7 @@ export interface IAgentLifecycle {
   pendingUserInput: boolean;
   mcpInitialized: boolean;
   lastStopReason: string;
-  activatedDeferredTools: Set<string>;
+  legacyActivatedDeferredTools: Set<string>;
   currentMessageSource: string;
   messageSubscription: any;
   _pendingModelSwitch: ModelConfig | null;
@@ -81,6 +81,8 @@ export interface IChatViewAccess {
   readonly viewAdapter: ChatViewAdapter;
   readonly scrollManager: ScrollManagerService;
   readonly menuManager: MenuManagerService;
+   /** 显式使共享 host request graph/projection 失效 */
+  invalidateHostRequestGraph(): void;
   /** 同步触发变更检测 */
   triggerSyncDetectChanges(): void;
 }
@@ -146,15 +148,15 @@ export interface IChatCoordination {
   readonly lexStream: LexOwnerFacade;
   readonly editActions: EditActionsHelper;
   readonly interaction: UserInteractionHelper;
+  /** 将 lex runtime 当前已注册 agent 列表同步给视图层。 */
+  syncRegisteredAgentNames?(agentNames: readonly string[]): void;
   /** 发送消息 */
   send(sender: string, content: string, clear?: boolean): Promise<void>;
   /** 应用延迟的模型/模式切换 */
   applyPendingSwitch(): Promise<void>;
   /** 工具审批桥接（委托到 interaction） */
   handleToolApproval(
-    toolName: string,
-    input: Record<string, unknown>,
-    reason: string,
+    request: import('../helpers/tool-approval-ui').ToolApprovalRequest,
   ): Promise<{ approved: true } | { approved: false; reason?: string }>;
 }
 

@@ -1,14 +1,23 @@
-import type { IChatContext } from '../core/chat-context';
+import type {
+  IAgentLifecycle,
+  IChatCoordination,
+  IProjectContext,
+  ISessionAccess,
+} from '../core/chat-context';
 import type { LexStatelessStreamOptions } from '../core/lex-endpoint';
 
 type AsyncTitleGenerator = (content: string, options?: LexStatelessStreamOptions) => Promise<string>;
+type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
+  & Pick<IProjectContext, 'currentModel'>
+  & Pick<IChatCoordination, 'session' | 'lexStream'>
+  & Pick<IAgentLifecycle, never>;
 
 /**
  * Coordinates session title generation and persistence refresh.
  */
 export class ChatTitleCoordinator {
   constructor(
-    private readonly ctx: IChatContext,
+    private readonly ctx: ChatTitleCoordinatorContext,
     private readonly generateAsyncTitle: AsyncTitleGenerator,
   ) {}
 

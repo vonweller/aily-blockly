@@ -1,37 +1,14 @@
 /**
- * 已注册工具 - 项目与系统操作类
+ * 已注册工具 - 项目与系统操作类（显示文本注册）
+ *
+ * Phase 3: invoke() 已迁移至 lex core / IHostToolProvider，
+ * 此处仅保留 getStartText/getResultText 供 PartEventProcessor 使用。
  */
 
 import { IAilyTool, ToolContext, ToolUseResult } from '../../core/tool-types';
-import { ToolRegistry } from '../../core/tool-registry';
-import { newProjectTool as newProjectHandler } from '../createProjectTool';
-import { executeCommandTool as executeCommandHandler } from '../executeCommandTool';
-import { getContextTool as getContextHandler } from '../getContextTool';
-import { getProjectInfoTool as getProjectInfoHandler } from '../getProjectInfoTool';
-import { buildProjectTool as buildProjectHandler } from '../buildProjectTool';
-import { reloadProjectTool as reloadProjectHandler } from '../reloadProjectTool';
-import { switchBoardTool as switchBoardHandler } from '../switchBoardTool';
-import { getBoardConfigTool as getBoardConfigHandler, setBoardConfigTool as setBoardConfigHandler } from '../boardConfigTool';
-import { askApprovalTool as askApprovalHandler } from '../askApprovalTool';
-import { askUserTool as askUserHandler } from '../askUserTool';
-import { searchBoardsLibrariesTool } from '../searchBoardsLibrariesTool';
-import { getHardwareCategoriesTool } from '../getHardwareCategoriesTools';
-import { getBoardParametersTool } from '../getBoardParametersTool';
-import { fetchTool as fetchHandler } from '../fetchTool';
-import { webSearchTool as webSearchHandler } from '../webSearchTool';
-import { cloneRepositoryTool as cloneRepoHandler } from '../cloneRepositoryTool';
-import { todoWriteTool as todoWriteHandler, injectTodoReminder } from '../todoWriteTool';
-import { memoryTool as memoryHandler } from '../memoryTool';
-import { getErrorsTool as getErrorsHandler, setLastBuildErrors } from '../getErrorsTool';
-import {
-  startBackgroundCommandTool as startBgCmdHandler,
-  getTerminalOutputTool as getTermOutputHandler,
-} from '../terminalSessionTool';
-import { TOOLS as LEGACY_TOOLS } from '../tools';
-
-function findLegacySchema(name: string): any {
-  return (LEGACY_TOOLS as any[]).find(t => t.name === name);
-}
+import { ToolDisplayRegistry } from '../../core/tool-display-registry';
+import { migratedToLexCoreResult, withDisplayOnlyCompat } from './display-only-compat';
+import { createDisplayOnlyToolSchema } from './display-only-tool-schema';
 
 // ============================
 // create_project
@@ -39,17 +16,11 @@ function findLegacySchema(name: string): any {
 
 class CreateProjectTool implements IAilyTool {
   readonly name = 'create_project';
-  readonly schema = findLegacySchema('create_project');
+  readonly schema = createDisplayOnlyToolSchema('create_project');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用，无法创建项目' };
-    if (!ctx.host?.config) return { is_error: true, content: '配置服务不可用，无法获取开发板信息' };
-    const result = await newProjectHandler(ctx.host.project.projectRootPath || '', args, ctx.host.project as any, ctx.host.config as any);
-    if (!result.is_error) {
-      // Signal to post-switch logic that Blockly rules injection is needed
-      result.metadata = { ...result.metadata, newProject: true };
-    }
-    return result;
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'create_project execution migrated to lex core' };
   }
 
   getStartText() { return '正在创建项目...'; }
@@ -65,138 +36,11 @@ class CreateProjectTool implements IAilyTool {
 
 class ExecuteCommandTool implements IAilyTool {
   readonly name = 'execute_command';
-  readonly schema = findLegacySchema('execute_command');
+  readonly schema = createDisplayOnlyToolSchema('execute_command');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    const host = ctx.host!;
-    if (!host.cmd) return { is_error: true, content: '命令执行服务不可用' };
-    if (!args.cwd && host.project) {
-      args.cwd = host.project.currentProjectPath || host.project.projectRootPath;
-    }
-
-    const projectPath = args.cwd || host.project?.currentProjectPath;
-    const command = args.command || '';
-    const isNpmInstall = command.includes('npm i') || command.includes('npm install');
-    const isNpmUninstall = command.includes('npm uninstall');
-    let unloadResults: string[] = [];
-
-    // Pre-execution: npm uninstall → check blocks in use → unload libraries
-    if (isNpmUninstall && host.blockly && host.platform) {
-      const npmRegex = /@aily-project\/[a-zA-Z0-9-_]+/g;
-      const matches = command.match(npmRegex);
-
-      if (matches && matches.length > 0) {
-        const uniqueLibs = [...new Set(matches)];
-        const separator = host.platform.pathSeparator;
-        const libsInUse: string[] = [];
-
-        for (const libPackageName of uniqueLibs as string[]) {
-          try {
-            const libBlockPath = projectPath + `${separator}node_modules${separator}` + libPackageName + `${separator}block.json`;
-            if (host.fs.existsSync(libBlockPath)) {
-              const blocksData = JSON.parse(host.fs.readFileSync(libBlockPath, 'utf-8'));
-              const abiJson = JSON.stringify(host.blockly.getWorkspaceJson());
-              for (const element of blocksData) {
-                if (abiJson.includes(element.type)) {
-                  libsInUse.push(libPackageName);
-                  break;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('检查库使用情况失败:', libPackageName, e);
-          }
-        }
-
-        if (libsInUse.length > 0) {
-          return {
-            content: `无法卸载以下库，因为项目代码正在使用它们：${libsInUse.join(', ')}。请先删除相关代码块后再尝试卸载。`,
-            is_error: true
-          };
-        }
-
-        for (const libPackageName of uniqueLibs) {
-          try {
-            await host.blockly.unloadLibrary(libPackageName, projectPath);
-            unloadResults.push(`${libPackageName} 卸载成功`);
-          } catch (e: any) {
-            console.warn('卸载库失败:', libPackageName, e);
-            unloadResults.push(`${libPackageName} 卸载失败: ${e.message || e}`);
-          }
-        }
-      }
-    }
-
-    // Execute the command
-    const toolResult: ToolUseResult = await executeCommandHandler(host.cmd, args, ctx.securityContext);
-
-    // Post-execution: append uninstall results
-    if (isNpmUninstall && unloadResults.length > 0) {
-      toolResult.content = (toolResult.content || '') + `\n\n库卸载结果:\n${unloadResults.join('\n')}`;
-    }
-
-    // Post-execution: npm install → load libraries
-    if (!toolResult.is_error && isNpmInstall && host.blockly && host.platform) {
-      const installSeparator = host.platform.pathSeparator;
-      const libsToLoad: string[] = [];
-
-      // 1. Match @aily-project/xxx scoped packages
-      const npmRegex = /@aily-project\/[a-zA-Z0-9-_]+/g;
-      const scopedMatches = command.match(npmRegex);
-      if (scopedMatches) libsToLoad.push(...scopedMatches);
-
-      // 2. Match local path installs
-      const npmInstallArgMatch = command.match(/npm\s+(?:install|i|ci)\b(.*?)(?:&&|$)/);
-      const npmInstallArgs = npmInstallArgMatch ? npmInstallArgMatch[1] : '';
-      const tokens = npmInstallArgs.trim().split(/\s+/).map((t: string) => t.replace(/^["']|["']$/g, ''));
-      const skipTokens = new Set(['--save', '--save-dev', '-D', '-S', '-g', '--global', '--legacy-peer-deps', '--force']);
-      for (const token of tokens) {
-        if (!token || skipTokens.has(token) || token.startsWith('-')) continue;
-        const isLocalPath = token.startsWith('./') || token.startsWith('../') ||
-          token.startsWith('/') || /^[A-Za-z]:[/\\]/.test(token) ||
-          token.startsWith('.\\') || token.startsWith('..\\');
-        if (isLocalPath) {
-          try {
-            let fullPath = token;
-            if (!(/^[A-Za-z]:[/\\]/.test(token) || token.startsWith('/'))) {
-              fullPath = projectPath + installSeparator + token.replace(/[/\\]/g, installSeparator);
-            }
-            const pkgJsonPath = fullPath.replace(/[/\\]+$/, '') + installSeparator + 'package.json';
-            const pkgJson = JSON.parse(host.fs.readFileSync(pkgJsonPath, 'utf-8'));
-            if (pkgJson?.name) libsToLoad.push(pkgJson.name);
-          } catch (e) {
-            console.warn('读取本地包 package.json 失败:', token, e);
-          }
-        }
-      }
-
-      const uniqueLibs = [...new Set(libsToLoad)];
-      const loadResults: string[] = [];
-      for (const libPackageName of uniqueLibs) {
-        try {
-          await host.blockly.loadLibrary(libPackageName, projectPath);
-          loadResults.push(`${libPackageName} 加载成功`);
-        } catch (e: any) {
-          console.warn('加载库失败:', libPackageName, e);
-          loadResults.push(`${libPackageName} 加载失败: ${e.message || e}`);
-        }
-      }
-      // if (loadResults.length > 0) {
-      //   toolResult.content = (toolResult.content || '') + `\n\n库加载结果:\n${loadResults.join('\n')}`;
-      // }
-    }
-
-    // Handle npm install failure: mark as non-retryable (via warning = false, is_error = true stays)
-    if (toolResult.is_error && isNpmInstall) {
-      // npm install failures should not trigger retry - keep is_error but don't set warning
-      toolResult.metadata = { ...toolResult.metadata, npmInstallFailure: true };
-    } else if (toolResult.is_error) {
-      // Regular command failures should trigger retry
-      toolResult.warning = true;
-      toolResult.is_error = false;
-    }
-
-    return toolResult;
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'execute_command execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -229,11 +73,11 @@ class ExecuteCommandTool implements IAilyTool {
 
 class GetContextTool implements IAilyTool {
   readonly name = 'get_context';
-  readonly schema = findLegacySchema('get_context');
+  readonly schema = createDisplayOnlyToolSchema('get_context', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return getContextHandler(ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_context execution migrated to lex core' };
   }
 
   getStartText() { return '获取 上下文信息...'; }
@@ -248,11 +92,11 @@ class GetContextTool implements IAilyTool {
 
 class GetProjectInfoTool implements IAilyTool {
   readonly name = 'get_project_info';
-  readonly schema = findLegacySchema('get_project_info');
+  readonly schema = createDisplayOnlyToolSchema('get_project_info', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return getProjectInfoHandler(ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_project_info execution migrated to lex core' };
   }
 
   getStartText() { return '获取 项目信息...'; }
@@ -267,12 +111,11 @@ class GetProjectInfoTool implements IAilyTool {
 
 class BuildProjectTool implements IAilyTool {
   readonly name = 'build_project';
-  readonly schema = findLegacySchema('build_project');
+  readonly schema = createDisplayOnlyToolSchema('build_project');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.builder) return { is_error: true, content: '编译服务不可用' };
-    const projectPath = ctx.host.project?.currentProjectPath || '';
-    return buildProjectHandler(ctx.host.builder as any, args, projectPath);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'build_project execution migrated to lex core' };
   }
 
   getStartText() { return '正在编译项目...'; }
@@ -287,11 +130,11 @@ class BuildProjectTool implements IAilyTool {
 
 class ReloadProjectTool implements IAilyTool {
   readonly name = 'reload_project';
-  readonly schema = findLegacySchema('reload_project');
+  readonly schema = createDisplayOnlyToolSchema('reload_project');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用' };
-    return reloadProjectHandler(ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'reload_project execution migrated to lex core' };
   }
 
   getStartText() { return '重新加载项目...'; }
@@ -306,16 +149,11 @@ class ReloadProjectTool implements IAilyTool {
 
 class SwitchBoardTool implements IAilyTool {
   readonly name = 'switch_board';
-  readonly schema = findLegacySchema('switch_board');
+  readonly schema = createDisplayOnlyToolSchema('switch_board');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用，无法切换开发板' };
-    const result = await switchBoardHandler(ctx.host.project as any, args);
-    if (!result.is_error && result.metadata?.boardChanged) {
-      // 通知后续逻辑需要重新注入 Blockly 规则
-      result.metadata = { ...result.metadata, newProject: true };
-    }
-    return result;
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'switch_board execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -337,11 +175,11 @@ class SwitchBoardTool implements IAilyTool {
 
 class GetBoardConfigTool implements IAilyTool {
   readonly name = 'get_board_config';
-  readonly schema = findLegacySchema('get_board_config');
+  readonly schema = createDisplayOnlyToolSchema('get_board_config');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用，无法获取开发板配置' };
-    return getBoardConfigHandler(ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_board_config execution migrated to lex core' };
   }
 
   getStartText() { return '获取开发板配置...'; }
@@ -356,11 +194,11 @@ class GetBoardConfigTool implements IAilyTool {
 
 class SetBoardConfigTool implements IAilyTool {
   readonly name = 'set_board_config';
-  readonly schema = findLegacySchema('set_board_config');
+  readonly schema = createDisplayOnlyToolSchema('set_board_config');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用，无法设置开发板配置' };
-    return setBoardConfigHandler(ctx.host.project as any, ctx.host.builder as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'set_board_config execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -384,13 +222,14 @@ class AskApprovalTool implements IAilyTool {
   readonly displayMode = 'silent' as const;
   readonly schema = {
     name: 'ask_approval',
-    description: '请求用户确认操作',
+    description: withDisplayOnlyCompat('请求用户确认操作'),
     input_schema: { type: 'object', properties: {}, required: [] },
     agents: ['mainAgent']
   };
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    return askApprovalHandler(args);
+  // Phase 3 stub: 执行已由 lex ApprovalProtocol 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return migratedToLexCoreResult(this.name);
   }
 }
 
@@ -400,11 +239,15 @@ class AskApprovalTool implements IAilyTool {
 
 class AskUserTool implements IAilyTool {
   readonly name = 'ask_user';
-  readonly schema = findLegacySchema('ask_user');
+  readonly schema = createDisplayOnlyToolSchema('ask_user', {
+    description: '向用户提问并等待回答。',
+    agents: ['mainAgent', 'schematicAgent'],
+  });
   readonly displayMode = 'silent' as const;
 
-  async invoke(args: any, _ctx: ToolContext): Promise<ToolUseResult> {
-    return askUserHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return migratedToLexCoreResult(this.name);
   }
 
   getStartText(args: any): string {
@@ -425,12 +268,12 @@ class AskUserTool implements IAilyTool {
 
 class SearchBoardsLibrariesTool implements IAilyTool {
   readonly name = 'search_boards_libraries';
-  readonly schema = findLegacySchema('search_boards_libraries');
+  readonly schema = createDisplayOnlyToolSchema('search_boards_libraries');
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.config) return { is_error: true, content: '配置服务不可用，无法搜索硬件' };
-    return searchBoardsLibrariesTool.handler(args, ctx.host.config as any);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'search_boards_libraries execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -501,12 +344,12 @@ class SearchBoardsLibrariesTool implements IAilyTool {
 
 class GetHardwareCategoriesTool implements IAilyTool {
   readonly name = 'get_hardware_categories';
-  readonly schema = findLegacySchema('get_hardware_categories');
+  readonly schema = createDisplayOnlyToolSchema('get_hardware_categories');
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.config) return { is_error: true, content: '配置服务不可用，无法获取硬件分类' };
-    return getHardwareCategoriesTool.handler(args, ctx.host.config as any);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_hardware_categories execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -528,12 +371,12 @@ class GetHardwareCategoriesTool implements IAilyTool {
 
 class GetBoardParametersTool implements IAilyTool {
   readonly name = 'get_board_parameters';
-  readonly schema = findLegacySchema('get_board_parameters');
+  readonly schema = createDisplayOnlyToolSchema('get_board_parameters', { agents: ['mainAgent', 'schematicAgent'] });
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.project) return { is_error: true, content: '项目服务不可用，无法获取开发板参数' };
-    return getBoardParametersTool.handler(ctx.host.project as any, args);
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_board_parameters execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -554,11 +397,11 @@ class GetBoardParametersTool implements IAilyTool {
 
 class FetchTool implements IAilyTool {
   readonly name = 'fetch';
-  readonly schema = findLegacySchema('fetch');
+  readonly schema = createDisplayOnlyToolSchema('fetch', { agents: ['mainAgent', 'schematicAgent'] });
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.fetch) return { is_error: true, content: '网络请求服务不可用' };
-    return fetchHandler(ctx.host.fetch, args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'fetch execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -578,10 +421,11 @@ class FetchTool implements IAilyTool {
 
 class CloneRepositoryTool implements IAilyTool {
   readonly name = 'clone_repository';
-  readonly schema = findLegacySchema('clone_repository');
+  readonly schema = createDisplayOnlyToolSchema('clone_repository');
 
-  async invoke(args: any, _ctx: ToolContext): Promise<ToolUseResult> {
-    return cloneRepoHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'clone_repository execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -604,11 +448,11 @@ class CloneRepositoryTool implements IAilyTool {
 
 class WebSearchTool implements IAilyTool {
   readonly name = 'web_search';
-  readonly schema = findLegacySchema('web_search');
+  readonly schema = createDisplayOnlyToolSchema('web_search');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!ctx.host?.webSearch) return { is_error: true, content: '网页搜索服务不可用' };
-    return webSearchHandler(ctx.host.webSearch, args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'web_search execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -628,12 +472,12 @@ class WebSearchTool implements IAilyTool {
 
 class TodoWriteTool implements IAilyTool {
   readonly name = 'todo_write_tool';
-  readonly schema = findLegacySchema('todo_write_tool');
+  readonly schema = createDisplayOnlyToolSchema('todo_write_tool');
   readonly displayMode = 'silent' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    const todoArgs = { ...args, sessionId: ctx.sessionId };
-    return todoWriteHandler(todoArgs);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'todo_write_tool execution migrated to lex core' };
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
@@ -659,24 +503,25 @@ class TodoWriteTool implements IAilyTool {
 // 注册
 // ============================
 
-ToolRegistry.register(new CreateProjectTool());
-ToolRegistry.register(new ExecuteCommandTool());
-ToolRegistry.register(new GetContextTool());
-ToolRegistry.register(new GetProjectInfoTool());
-ToolRegistry.register(new BuildProjectTool());
-ToolRegistry.register(new ReloadProjectTool());
-ToolRegistry.register(new SwitchBoardTool());
-ToolRegistry.register(new GetBoardConfigTool());
-ToolRegistry.register(new SetBoardConfigTool());
-ToolRegistry.register(new AskApprovalTool());
-ToolRegistry.register(new AskUserTool());
-ToolRegistry.register(new SearchBoardsLibrariesTool());
-ToolRegistry.register(new GetHardwareCategoriesTool());
-ToolRegistry.register(new GetBoardParametersTool());
-ToolRegistry.register(new FetchTool());
-ToolRegistry.register(new CloneRepositoryTool());
-ToolRegistry.register(new WebSearchTool());
-ToolRegistry.register(new TodoWriteTool());
+ToolDisplayRegistry.register(new CreateProjectTool());
+ToolDisplayRegistry.register(new ExecuteCommandTool());
+ToolDisplayRegistry.registerAlias('run_terminal', 'execute_command');
+ToolDisplayRegistry.register(new GetContextTool());
+ToolDisplayRegistry.register(new GetProjectInfoTool());
+ToolDisplayRegistry.register(new BuildProjectTool());
+ToolDisplayRegistry.register(new ReloadProjectTool());
+ToolDisplayRegistry.register(new SwitchBoardTool());
+ToolDisplayRegistry.register(new GetBoardConfigTool());
+ToolDisplayRegistry.register(new SetBoardConfigTool());
+ToolDisplayRegistry.register(new AskApprovalTool());
+ToolDisplayRegistry.register(new AskUserTool());
+ToolDisplayRegistry.register(new SearchBoardsLibrariesTool());
+ToolDisplayRegistry.register(new GetHardwareCategoriesTool());
+ToolDisplayRegistry.register(new GetBoardParametersTool());
+ToolDisplayRegistry.register(new FetchTool());
+ToolDisplayRegistry.register(new CloneRepositoryTool());
+ToolDisplayRegistry.register(new WebSearchTool());
+ToolDisplayRegistry.register(new TodoWriteTool());
 
 // ============================
 // memory — 记忆工具
@@ -684,11 +529,12 @@ ToolRegistry.register(new TodoWriteTool());
 
 class MemoryTool implements IAilyTool {
   readonly name = 'memory';
-  readonly schema = findLegacySchema('memory');
+  readonly schema = createDisplayOnlyToolSchema('memory');
   readonly displayMode = 'silent' as const;
 
-  async invoke(args: any, _ctx: ToolContext): Promise<ToolUseResult> {
-    return memoryHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'memory execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -704,7 +550,7 @@ class MemoryTool implements IAilyTool {
   }
 }
 
-ToolRegistry.register(new MemoryTool());
+ToolDisplayRegistry.register(new MemoryTool());
 
 // ============================
 // get_errors — 错误诊断工具
@@ -712,11 +558,12 @@ ToolRegistry.register(new MemoryTool());
 
 class GetErrorsTool implements IAilyTool {
   readonly name = 'get_errors';
-  readonly schema = findLegacySchema('get_errors');
+  readonly schema = createDisplayOnlyToolSchema('get_errors');
   readonly displayMode = 'appendMessage' as const;
 
-  async invoke(args: any, _ctx: ToolContext): Promise<ToolUseResult> {
-    return getErrorsHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_errors execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -731,7 +578,7 @@ class GetErrorsTool implements IAilyTool {
   }
 }
 
-ToolRegistry.register(new GetErrorsTool());
+ToolDisplayRegistry.register(new GetErrorsTool());
 
 // ============================
 // start_background_command — 后台命令执行
@@ -739,13 +586,11 @@ ToolRegistry.register(new GetErrorsTool());
 
 class StartBackgroundCommandTool implements IAilyTool {
   readonly name = 'start_background_command';
-  readonly schema = findLegacySchema('start_background_command');
+  readonly schema = createDisplayOnlyToolSchema('start_background_command');
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    if (!args.cwd && ctx.host?.project) {
-      args.cwd = ctx.host.project.currentProjectPath || ctx.host.project.projectRootPath;
-    }
-    return startBgCmdHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'start_background_command execution migrated to lex core' };
   }
 
   getStartText(args: any): string {
@@ -765,11 +610,12 @@ class StartBackgroundCommandTool implements IAilyTool {
 
 class GetTerminalOutputTool implements IAilyTool {
   readonly name = 'get_terminal_output';
-  readonly schema = findLegacySchema('get_terminal_output');
+  readonly schema = createDisplayOnlyToolSchema('get_terminal_output');
   readonly displayMode = 'silent' as const;
 
-  async invoke(args: any, _ctx: ToolContext): Promise<ToolUseResult> {
-    return getTermOutputHandler(args);
+  // Phase 3 stub: 执行已由 lex core 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'get_terminal_output execution migrated to lex core' };
   }
 
   getResultText(args: any, result?: ToolUseResult): string {
@@ -779,8 +625,10 @@ class GetTerminalOutputTool implements IAilyTool {
   }
 }
 
-ToolRegistry.register(new StartBackgroundCommandTool());
-ToolRegistry.register(new GetTerminalOutputTool());
+ToolDisplayRegistry.register(new StartBackgroundCommandTool());
+ToolDisplayRegistry.register(new GetTerminalOutputTool());
+ToolDisplayRegistry.registerAlias('send_to_terminal', 'get_terminal_output');
+ToolDisplayRegistry.registerAlias('kill_terminal', 'get_terminal_output');
 
 // ============================
 // save_arch — 框架图保存工具
@@ -788,49 +636,12 @@ ToolRegistry.register(new GetTerminalOutputTool());
 
 class SaveArchTool implements IAilyTool {
   readonly name = 'save_arch';
-  readonly schema = findLegacySchema('save_arch');
+  readonly schema = createDisplayOnlyToolSchema('save_arch');
   readonly displayMode = 'silent' as const;
 
-  async invoke(args: any, ctx: ToolContext): Promise<ToolUseResult> {
-    const host = ctx.host;
-    if (!host?.fs || !host?.path) {
-      return { is_error: true, content: '文件系统服务不可用' };
-    }
-
-    const code: string = (args?.code || '').trim();
-    if (!code) {
-      return { is_error: true, content: '参数 code 不能为空' };
-    }
-
-    const content = `\`\`\`mermaid\n${code}\n\`\`\`\n`;
-
-    const projectPath = host.project?.currentProjectPath || host.project?.projectRootPath;
-    const rootPath = host.project?.projectRootPath;
-    const isOrphan = !projectPath || (rootPath && projectPath === rootPath);
-
-    try {
-      if (projectPath && !isOrphan) {
-        const archPath = host.path.join(projectPath, 'arch.md');
-        const dir = host.path.dirname(archPath);
-        if (!host.fs.existsSync(dir)) {
-          host.fs.mkdirSync(dir, { recursive: true });
-        }
-        host.fs.writeFileSync(archPath, content);
-        return { is_error: false, content: `框架图已保存到 ${archPath}（已在对话中渲染，无需再次输出）`, metadata: { chatContent: `\n\n${content}\n` } };
-      } else if (isOrphan && rootPath && ctx.sessionId) {
-        const chatHistoryDir = host.path.join(rootPath, '.chat_history');
-        if (!host.fs.existsSync(chatHistoryDir)) {
-          host.fs.mkdirSync(chatHistoryDir, { recursive: true });
-        }
-        const archPath = host.path.join(chatHistoryDir, `${ctx.sessionId}_arch.md`);
-        host.fs.writeFileSync(archPath, content);
-        return { is_error: false, content: `框架图已保存到 ${archPath}（已在对话中渲染，无需再次输出）`, metadata: { chatContent: `\n\n${content}\n` } };
-      } else {
-        return { is_error: true, content: '无法确定保存路径：当前未打开项目且无会话 ID' };
-      }
-    } catch (err: any) {
-      return { is_error: true, content: `保存框架图失败: ${err.message || err}` };
-    }
+  // Phase 3 stub: 执行已由 lex IHostToolProvider 接管
+  async invoke(_args: any, _ctx: ToolContext): Promise<ToolUseResult> {
+    return { is_error: true, content: 'save_arch execution migrated to lex core' };
   }
 
   getStartText(): string {
@@ -842,4 +653,4 @@ class SaveArchTool implements IAilyTool {
   }
 }
 
-ToolRegistry.register(new SaveArchTool());
+ToolDisplayRegistry.register(new SaveArchTool());

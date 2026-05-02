@@ -26,7 +26,7 @@ import { getThinkContent } from '../../../core/think-content-store';
         @if (data?.isComplete) {
           <i class="fa-light fa-circle-check ac-think-icon done"></i>
         } @else {
-          <i class="fa-duotone fa-solid fa-loader ac-think-icon loading ac-spin"></i>
+          <i class="fa-light fa-spinner-third ac-think-icon loading ac-spin"></i>
         }
         <span class="ac-think-label" [class.ac-think-shimmer]="data?.isComplete === false && !thinkExpanded">
           {{ displayLabel }}
@@ -49,145 +49,159 @@ import { getThinkContent } from '../../../core/think-content-store';
   `,
   styles: [
     `
-      /* ===== Semantic CSS Variables ===== */
+      /*
+       * Think Viewer — 对齐 Copilot chatThinkingContent.css
+       * 使用 x-dialog 通过 DOM 传播的 --chat-* 变量
+       * 无独立背景面板，内嵌在 aily 响应区内
+       */
       :host {
         display: block;
         width: 100%;
         min-width: 0;
-        --ac-think-bg: #3a3a3a;
-        --ac-think-fg: #ccc;
-        --ac-think-fg-dim: #999;
-        --ac-think-fg-heading: #bbb;
-        --ac-think-accent: #1890ff;
-        --ac-think-success: #52c41a;
-        --ac-think-border: rgba(255, 255, 255, 0.08);
-        --ac-think-connector: rgba(255, 255, 255, 0.15);
-        --ac-think-shimmer: #4fc3f7;
-        --ac-think-hover: rgba(255, 255, 255, 0.05);
       }
 
+      /* ===== 外层容器：无背景面板（Copilot .chat-thinking-box 风格）=====  */
       .ac-think {
-        border-radius: 5px;
-        padding: 5px 10px;
-        margin: 0;
-        overflow: hidden;
-        background-color: var(--ac-think-bg);
-        color: var(--ac-think-fg);
+        position: relative;
+        margin: 2px 0;
+        color: var(--chat-fg, #ccc);
       }
+
+      /* ===== 折叠头部（Copilot .monaco-button.monaco-icon-button 风格）===== */
       .ac-think-header {
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 0;
+        padding: 3px 4px;
         cursor: pointer;
         font-size: 13px;
+        color: var(--chat-fg-dim, #8e8e8e);
         user-select: none;
-        transition: background 0.2s;
+        border-radius: 4px;
+        transition: background 0.15s;
       }
       .ac-think-header:hover {
-        background: var(--ac-think-hover);
-        margin: -5px -10px;
-        padding: 5px 10px;
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
       }
-      .ac-think-icon { flex-shrink: 0; margin-right: 5px; }
-      .ac-think-icon.loading { color: var(--ac-think-accent); }
-      .ac-think-icon.done { color: var(--ac-think-success); }
 
-      /* ===== Shimmer Animation (VS Code style) ===== */
+      /* 状态图标 */
+      .ac-think-icon {
+        flex-shrink: 0;
+        font-size: 12px;
+        width: 14px;
+        text-align: center;
+      }
+      .ac-think-icon.loading { color: var(--chat-info, #75beff); }
+      .ac-think-icon.done    { color: var(--chat-success, #89d185); }
+
+      /* 标签文字 */
+      .ac-think-label {
+        font-size: 13px;
+        color: var(--chat-fg-dim, #8e8e8e);
+        line-height: 1.4;
+      }
+
+      /* ===== Shimmer 扫光动画（Copilot chat-thinking-title-shimmer 对齐）===== */
       @keyframes ac-think-shimmer {
-        0% { background-position: 120% 0; }
+        0%   { background-position: 120% 0; }
         100% { background-position: -120% 0; }
       }
       .ac-think-shimmer {
         background: linear-gradient(90deg,
-          var(--ac-think-fg) 0%, var(--ac-think-fg) 30%,
-          var(--ac-think-shimmer) 50%,
-          var(--ac-think-fg) 70%, var(--ac-think-fg) 100%);
+          var(--chat-fg-dim, #8e8e8e) 0%,
+          var(--chat-fg-dim, #8e8e8e) 30%,
+          var(--chat-shimmer, #4fc3f7) 50%,
+          var(--chat-fg-dim, #8e8e8e) 70%,
+          var(--chat-fg-dim, #8e8e8e) 100%);
         background-size: 400% 100%;
         background-clip: text;
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         animation: ac-think-shimmer 2s linear infinite;
+        will-change: background-position;
       }
 
+      /* 展开箭头 */
       .ac-think-arrow {
         margin-left: auto;
         font-size: 10px;
-        color: #888;
-        transition: transform 0.2s;
+        color: var(--chat-fg-muted, #6a6a6a);
+        transition: transform 0.15s ease;
       }
       .ac-think.expanded .ac-think-arrow {
         transform: rotate(180deg);
       }
 
-      /* ===== Chain-of-thought Connector Line ===== */
+      /* ===== 展开体：左侧连接线（Copilot chain-of-thought ::before 风格）===== */
       .ac-think-body {
         position: relative;
-        padding: 8px 2px 8px 18px;
-        margin: 5px -10px 0 0;
+        padding: 4px 2px 6px 20px;
+        margin-top: 2px;
         max-height: 200px;
         overflow-y: auto;
         overflow-x: hidden;
         scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        scrollbar-color: var(--chat-border, rgba(255,255,255,0.10)) transparent;
         scrollbar-gutter: stable;
         user-select: text;
       }
+
+      /* 垂直连接线 */
       .ac-think-body::before {
         content: '';
         position: absolute;
-        left: 4px;
+        left: 9px;
         top: 0;
         bottom: 0;
         width: 1px;
-        background-color: var(--ac-think-connector);
+        background-color: var(--chat-border, rgba(255,255,255,0.10));
         mask-image: linear-gradient(to bottom,
           transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
         -webkit-mask-image: linear-gradient(to bottom,
           transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
       }
 
-      /* ===== Curved connector from header to body ===== */
-      .ac-think.expanded.streaming .ac-think-header::after {
+      /* Header → Body 弯曲连接弧 */
+      .ac-think-header::after {
+        content: none;
+      }
+      .ac-think.expanded .ac-think-header::after {
         content: '';
         position: absolute;
-        left: 13px;
-        top: 22px;
-        height: 12px;
-        width: 5px;
-        border-left: 1px solid var(--ac-think-connector);
-        border-bottom: 1px solid var(--ac-think-connector);
-        border-bottom-left-radius: 5px;
+        left: 9px;
+        top: 20px;
+        height: 10px;
+        width: 6px;
+        border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        border-bottom-left-radius: 4px;
+        pointer-events: none;
+      }
+      .ac-think.expanded {
+        position: relative;
       }
 
+      /* Markdown 内容样式 */
       :host ::ng-deep .ac-think-body .x-markdown-dark {
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.5;
-        color: var(--ac-think-fg-dim);
+        color: var(--chat-fg-dim, #8e8e8e);
         word-break: break-word;
         overflow-wrap: anywhere;
         white-space: normal;
         max-width: 100%;
         min-width: 0;
       }
-      :host ::ng-deep .ac-think-body .x-markdown-dark * {
-        max-width: 100%;
-      }
-      :host ::ng-deep .ac-think-body .x-markdown-dark p {
-        margin: 2px 0;
-      }
+      :host ::ng-deep .ac-think-body .x-markdown-dark * { max-width: 100%; }
+      :host ::ng-deep .ac-think-body .x-markdown-dark p { margin: 2px 0; }
       :host ::ng-deep .ac-think-body .x-markdown-dark h1,
       :host ::ng-deep .ac-think-body .x-markdown-dark h2,
       :host ::ng-deep .ac-think-body .x-markdown-dark h3,
       :host ::ng-deep .ac-think-body .x-markdown-dark h4 {
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
-        color: var(--ac-think-fg-heading);
+        color: var(--chat-fg, #ccc);
         margin: 4px 0 2px;
-      }
-      :host ::ng-deep .ac-think-body .x-markdown-dark h2 {
-        border-left: 4px solid #3794ff;
-        padding-left: 6px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark ul,
       :host ::ng-deep .ac-think-body .x-markdown-dark ol {
@@ -205,17 +219,16 @@ import { getThinkContent } from '../../../core/think-content-store';
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark th,
       :host ::ng-deep .ac-think-body .x-markdown-dark td {
-        padding: 4px 8px;
-        font-size: 12px;
+        padding: 3px 6px;
+        font-size: 11px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark blockquote {
-        margin: 4px 0;
-        padding: 2px 8px;
+        margin: 3px 0;
+        padding: 2px 6px;
       }
+
       @keyframes ac-spin {
-        to {
-          transform: rotate(360deg);
-        }
+        to { transform: rotate(360deg); }
       }
       .ac-spin {
         animation: ac-spin 0.8s linear infinite;

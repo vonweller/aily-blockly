@@ -1,14 +1,16 @@
 import type { NzModalService } from 'ng-zorro-antd/modal';
+import type { DialogTurnContext } from '../core/user-turn-action-target';
 
 import { UnsavedEditsDialogComponent } from '../components/unsaved-edits-dialog/unsaved-edits-dialog.component';
 
 interface EditSummaryLike {
   fileCount: number;
+  turnContext?: DialogTurnContext | null;
 }
 
 interface EditCheckpointServiceLike {
   hasUnsavedEdits(): boolean;
-  getEditsSummary(): EditSummaryLike | null;
+  getEditsSummary(): Promise<EditSummaryLike | null>;
   acceptAllAsBaseline(): void;
   dismissSummary(): void;
   readonly canUndo: boolean;
@@ -93,7 +95,7 @@ export class ChatSessionShellCoordinator {
     };
 
     if (this.deps.editCheckpointService.hasUnsavedEdits()) {
-      this.confirmUnsavedEditsBeforeSwitch(onSwitch);
+      void this.confirmUnsavedEditsBeforeSwitch(onSwitch);
       return;
     }
 
@@ -114,15 +116,15 @@ export class ChatSessionShellCoordinator {
 
   newChat(): void {
     if (this.deps.editCheckpointService.hasUnsavedEdits()) {
-      this.confirmUnsavedEditsBeforeSwitch(() => this.callbacks.newChat());
+      void this.confirmUnsavedEditsBeforeSwitch(() => this.callbacks.newChat());
       return;
     }
 
     this.callbacks.newChat();
   }
 
-  private confirmUnsavedEditsBeforeSwitch(onConfirm: () => void): void {
-    const summary = this.deps.editCheckpointService.getEditsSummary();
+  private async confirmUnsavedEditsBeforeSwitch(onConfirm: () => void): Promise<void> {
+    const summary = await this.deps.editCheckpointService.getEditsSummary();
     if (!summary || summary.fileCount === 0) {
       this.deps.editCheckpointService.acceptAllAsBaseline();
       this.deps.editCheckpointService.dismissSummary();
@@ -137,7 +139,7 @@ export class ChatSessionShellCoordinator {
       nzBodyStyle: { padding: '0' },
       nzWidth: 340,
       nzContent: UnsavedEditsDialogComponent,
-      nzData: { fileCount: summary.fileCount },
+      nzData: { fileCount: summary.fileCount, turnContext: summary.turnContext },
     });
 
     modalRef.afterClose.subscribe(async (action: string | null) => {

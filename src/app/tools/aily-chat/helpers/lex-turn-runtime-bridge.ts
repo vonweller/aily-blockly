@@ -1,9 +1,28 @@
-import type { LexAgentLifecycleBridge } from './lex-agent-lifecycle-bridge';
-import type { LexTurnExecutionBridge } from './lex-turn-execution-bridge';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
-import type { LexTurnStartupBridge } from './lex-turn-startup-bridge';
-import type { LexUiEventBridge } from './lex-ui-event-bridge';
-import type { RenderEvent } from 'aily-lex';
+import type { RenderEvent, TurnRequest } from 'aily-lex/browser';
+
+type AgentLifecycleAccess = {
+  getAgent(): { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null;
+  getLex(): { RenderEventEmitter?: new () => {
+    process(event: any): readonly RenderEvent[];
+    finalize(): readonly RenderEvent[];
+  } } | undefined;
+};
+
+type TurnStartupAccess = {
+  beginMainAgentTurn(userMessage: string, displayContent?: string, requestMetadata?: TurnRequest['metadata']): string | undefined;
+};
+
+type TurnExecutionAccess = {
+  runTurn(agent: { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null, userMessage: string): void;
+  runTurnWithRenderEvents(source: { chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent> }, userMessage: string, displayContent?: string): void;
+};
+
+type TurnUiAccess = {
+  getCurrentTurnDraft(): LexTurnDraft;
+  ensureAilyMessage(): void;
+  appendLifecycleError(message: string): void;
+};
 
 /**
  * Groups the remaining turn-level startup/execution lifecycle entrypoints
@@ -11,17 +30,17 @@ import type { RenderEvent } from 'aily-lex';
  */
 export class LexTurnRuntimeBridge {
   constructor(
-    private readonly agentLifecycleBridge: LexAgentLifecycleBridge,
-    private readonly turnStartupBridge: LexTurnStartupBridge,
-    private readonly turnExecutionBridge: LexTurnExecutionBridge,
-    private readonly uiEventBridge: LexUiEventBridge,
+    private readonly agentLifecycleBridge: AgentLifecycleAccess,
+    private readonly turnStartupBridge: TurnStartupAccess,
+    private readonly turnExecutionBridge: TurnExecutionAccess,
+    private readonly uiEventBridge: TurnUiAccess,
   ) {}
 
-  begin(userMessage: string): string | undefined {
-    return this.turnStartupBridge.beginMainAgentTurn(userMessage);
+  begin(userMessage: string, displayContent?: string, requestMetadata?: TurnRequest['metadata']): string | undefined {
+    return this.turnStartupBridge.beginMainAgentTurn(userMessage, displayContent, requestMetadata);
   }
 
-  async run(userMessage: string): Promise<void> {
+  async run(userMessage: string, displayContent?: string): Promise<void> {
     const agent = this.agentLifecycleBridge.getAgent();
     if (!agent) {
       this.turnExecutionBridge.runTurn(null, userMessage);
@@ -50,7 +69,7 @@ export class LexTurnRuntimeBridge {
           }
         },
       };
-      this.turnExecutionBridge.runTurnWithRenderEvents(source, userMessage);
+      this.turnExecutionBridge.runTurnWithRenderEvents(source, userMessage, displayContent);
     } else {
       // Fallback: legacy AgentEvent path
       this.turnExecutionBridge.runTurn(agent, userMessage);

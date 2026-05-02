@@ -324,10 +324,28 @@ nz-resize-handle {
   &.mode {
     width: auto !important;
     padding: 0 6px !important;
+    gap: 4px;
 
-    span {
+    > span:not(.mini-tag) {
       margin-left: 5px;
       font-size: 12px;
+    }
+
+    .mini-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      height: 18px;
+      padding: 0 6px;
+      margin-left: 2px;
+      border-radius: 999px;
+      background: rgba(97, 175, 239, 0.14);
+      color: #8ec8ff;
+      font-size: 10px;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
     }
 
   }
@@ -370,6 +388,34 @@ nz-resize-handle {
     &.danger {
       color: #e06c75;
     }
+  }
+}
+
+.context-compact-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.context-compact-action {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: rgba(97, 175, 239, 0.16);
+  color: #d7e9ff;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background 0.2s ease, opacity 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: rgba(97, 175, 239, 0.24);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 }
 

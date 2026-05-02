@@ -13,9 +13,9 @@
  *  - Depth tracking + lifecycle hooks
  */
 
-import type { AgentExecutor } from 'aily-lex';
+import type { AgentExecutor } from 'aily-lex/browser';
 
-type AilyLexModule = typeof import('aily-lex');
+type AilyLexModule = typeof import('aily-lex/browser');
 type AgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
 
 /**

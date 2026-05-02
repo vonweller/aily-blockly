@@ -45,7 +45,7 @@ export interface ToolContext {
   editCheckpoint?: {
     recordEdit(filePath: string, type: 'create' | 'modify' | 'delete'): void;
     /** 重新计算并推送当前摘要到面板（工具写盘后调用） */
-    publishCurrentSummary(): void;
+    publishCurrentSummary(): void | Promise<void>;
   };
 
   /** 中止信号，工具在长时间操作中应定期检查 signal.aborted */

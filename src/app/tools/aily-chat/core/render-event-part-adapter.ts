@@ -10,49 +10,88 @@
  *
  * 职责：
  *   - 每种 RenderEvent 精确映射到一个 ChatPartStore 操作
- *   - 维护必要的 UI 上下文（当前 msgIndex、活跃的 toolCallId 列表）
+ *   - 维护必要的 UI 上下文（当前消息 handle、活跃的 toolCallId 列表）
  *   - 提供 finalize() + reset() 供 turn 生命周期调用
  */
 
 import type {
   RenderEvent,
   SubagentActivity,
-} from 'aily-lex';
+} from 'aily-lex/browser';
 import {
-  type ChatPart,
+  buildConfirmationPartId,
   type SubagentChildItem,
-  type SubagentPart,
   type StatePart,
+  mkSubagentTimelineEntry,
+  mkSubagentToolCall,
+  mkTerminal,
   mkToolCall,
   mkState,
   mkError,
   mkQuestion,
-  mkApproval,
+  mkConfirmation,
 } from './chat-parts';
-import type { ChatPartStore } from './chat-part-store';
+import {
+  buildPendingToolCallApprovalMetadata,
+  buildResolvedToolCallApprovalMetadata,
+} from './tool-call-approval';
+import { parseTerminalPayload } from './terminal-payload';
+import { buildToolResultMetadataPatch, collectToolResultText, extractRawToolResultPayloadText } from './tool-result-content';
+import {
+  type ChatPartStore,
+  type ChatPartStoreOpaqueHandle,
+  type ToolCallPartPatch,
+} from './chat-part-store';
+
+export type RenderEventPartStoreAccess = Pick<
+  ChatPartStore,
+  | 'appendToMarkdownHandle'
+  | 'appendToThinkingHandle'
+  | 'completeThinkingHandle'
+  | 'addPartToHandle'
+  | 'updateToolCallForHandle'
+  | 'patchToolCallForHandle'
+  | 'upsertStateForHandle'
+  | 'updateConfirmationResultForHandle'
+  | 'updateSubagentForHandle'
+  | 'upsertSubagentChildItemForHandle'
+  | 'findToolCallOpaqueHandle'
+>;
+
+function hasUsableStoreHandle(
+  handle: ({ storeKey?: object | symbol; message?: unknown; msgIndex?: unknown } & object) | null,
+): boolean {
+  if (!handle) {
+    return false;
+  }
+
+  if (typeof handle.storeKey === 'object' || typeof handle.storeKey === 'symbol') {
+    return true;
+  }
+
+  if (typeof handle.msgIndex === 'number' && handle.msgIndex >= 0) {
+    return true;
+  }
+
+  return !!handle.message && typeof handle.message === 'object';
+}
 
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
 
 export class RenderEventPartAdapter {
-  private _msgIndex = -1;
-  private readonly _store: ChatPartStore;
+  private readonly _store: RenderEventPartStoreAccess;
+  private static readonly TERMINAL_TOOLS = new Set([
+    'run_terminal',
+    'get_terminal_output',
+    'send_to_terminal',
+    'kill_terminal',
+    'start_background_command',
+  ]);
 
-  /** Subagent toolCallId → partIndex in store (for childItem updates) */
-  private readonly _subagentPartMap = new Map<string, number>();
-
-  constructor(store: ChatPartStore) {
+  constructor(store: RenderEventPartStoreAccess) {
     this._store = store;
-  }
-
-  /** Set the current assistant message index for Part writes. */
-  setMsgIndex(msgIndex: number): void {
-    this._msgIndex = msgIndex;
-  }
-
-  get msgIndex(): number {
-    return this._msgIndex;
   }
 
   /**
@@ -60,27 +99,26 @@ export class RenderEventPartAdapter {
    *
    * Returns true if the event resulted in a store write, false if ignored.
    */
-  process(event: RenderEvent): boolean {
-    const i = this._msgIndex;
-    if (i < 0) return false;
+  process(event: RenderEvent, handle: ChatPartStoreOpaqueHandle | null): boolean {
+    if (!hasUsableStoreHandle(handle)) return false;
 
     switch (event.type) {
       // ---- Text ----
       case 'markdown_delta':
-        this._store.appendToMarkdown(i, event.text);
+        this._store.appendToMarkdownHandle(handle, event.text);
         return true;
 
       case 'thinking_delta':
-        this._store.appendToThinking(i, event.text);
+        this._store.appendToThinkingHandle(handle, event.text);
         return true;
 
       case 'thinking_complete':
-        this._store.completeThinking(i);
+        this._store.completeThinkingHandle(handle);
         return true;
 
       // ---- Tool Call ----
       case 'tool_call_begin':
-        this._store.addPart(i, mkToolCall(
+        this._store.addPartToHandle(handle, mkToolCall(
           event.toolCallId,
           event.toolName,
           `${event.toolName}…`,
@@ -92,22 +130,34 @@ export class RenderEventPartAdapter {
       case 'tool_call_progress':
         // Progress data can be free-form; update text if string
         if (typeof event.data === 'string') {
-          this._store.updateToolCall(i, event.toolCallId, 'doing', event.data);
+          this._store.updateToolCallForHandle(this._findToolCallHandle(event.toolCallId, handle), event.toolCallId, 'doing', event.data);
         }
         return true;
 
       case 'tool_call_end':
-        this._store.updateToolCall(
-          i,
+        this._store.patchToolCallForHandle(
+          this._findToolCallHandle(event.toolCallId, handle),
           event.toolCallId,
-          event.state === 'error' ? 'error' : 'done',
-          event.resultText,
+          {
+            state: event.state === 'error' ? 'error' : 'done',
+            text: event.resultText,
+            metadata: buildToolResultMetadataPatch({
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              state: event.state === 'error' ? 'error' : 'done',
+              resultText: event.resultText,
+              result: event.result,
+              timestamp: event.timestamp,
+              durationMs: event.durationMs,
+            }),
+          },
         );
+        this._appendTerminalPart(handle, event);
         return true;
 
       // ---- State ----
       case 'state_update':
-        this._upsertState(i, event.stateId, {
+        this._upsertState(handle, event.stateId, {
           state: event.state,
           text: event.text,
           progress: event.progress,
@@ -117,7 +167,7 @@ export class RenderEventPartAdapter {
         return true;
 
       case 'background_task_update':
-        this._upsertState(i, event.stateId, {
+        this._upsertState(handle, event.stateId, {
           state: event.state,
           text: event.description,
           progress: event.progress,
@@ -132,7 +182,7 @@ export class RenderEventPartAdapter {
         return true;
 
       case 'todo_update':
-        this._upsertState(i, `todo-${event.sessionId}`, {
+        this._upsertState(handle, `todo-${event.sessionId}`, {
           state: 'info',
           text: event.summary,
           kind: undefined,
@@ -142,60 +192,62 @@ export class RenderEventPartAdapter {
 
       // ---- Interaction ----
       case 'question_request':
-        this._store.addPart(i, mkQuestion(
-          event.questions.map(q => ({
-            question: q.question,
-            options: q.options?.map(o => ({ ...o })),
-            allow_freeform: q.allowFreeform,
-            multi_select: q.multiSelect,
-          })),
-        ));
+        this._store.addPartToHandle(handle, questionRequestToPart(event));
         return true;
 
       case 'approval_request':
-        this._store.addPart(i, mkApproval(
-          event.requestId,
-          event.message,
-          event.toolName,
-          event.source,
-        ));
+        if (isToolExecutionApprovalEvent(event)) {
+          this._store.patchToolCallForHandle(
+            this._findToolCallHandle(event.toolCallId, handle),
+            event.toolCallId,
+            approvalRequestToToolCallPatch(event),
+          );
+        } else {
+          this._store.addPartToHandle(handle, confirmationRequestToPart(event));
+        }
         return true;
 
       case 'approval_resolve':
-        this._store.updateApprovalResult(i, event.requestId, {
-          resolved: true,
-          result: event.result,
-          scope: event.scope,
-        });
+        if (isToolExecutionApprovalEvent(event)) {
+          this._store.patchToolCallForHandle(
+            this._findToolCallHandle(event.toolCallId, handle),
+            event.toolCallId,
+            approvalResolveToToolCallPatch(event),
+          );
+        } else {
+          this._store.updateConfirmationResultForHandle(handle, buildConfirmationPartId(getStandaloneApprovalRequestId(event)), {
+            resolved: true,
+            result: event.result,
+            scope: event.scope,
+          });
+        }
         return true;
 
-      // ---- Error ----
+      // ---- Info / Warning / Error ----
+      case 'info_notice':
+        this._store.addPartToHandle(handle, infoNoticeToPart(event));
+        return true;
+
+      case 'warning_notice':
+        this._store.addPartToHandle(handle, warningNoticeToPart(event));
+        return true;
+
       case 'error_notice':
-        this._store.addPart(i, mkError(event.message));
+        this._store.addPartToHandle(handle, errorNoticeToPart(event));
         return true;
 
       // ---- Sub-agent ----
       case 'subagent_begin': {
-        const partIndex = this._store.addPart(i, {
-          type: 'subagent',
-          toolCallId: event.toolCallId,
-          agentName: event.agentName,
-          description: event.description,
-          state: 'doing',
-          resultText: '',
-          childItems: [],
-        } satisfies SubagentPart);
-        this._subagentPartMap.set(event.toolCallId, partIndex);
+        this._store.addPartToHandle(handle, subagentBeginToPart(event));
         return true;
       }
 
       case 'subagent_activity':
-        this._appendSubagentChild(i, event);
+        this._appendSubagentChild(event, handle);
         return true;
 
       case 'subagent_end':
-        this._store.updateSubagent(i, event.toolCallId, event.state, event.resultText);
-        this._subagentPartMap.delete(event.toolCallId);
+        this._store.updateSubagentForHandle(this._findToolCallHandle(event.toolCallId, handle), event.toolCallId, event.state, event.resultText);
         return true;
 
       // ---- Turn lifecycle (non-Part) ----
@@ -213,13 +265,12 @@ export class RenderEventPartAdapter {
 
   /** Reset per-turn state. Call at the start of each new turn. */
   reset(): void {
-    this._subagentPartMap.clear();
+    // no-op: current-handle ownership lives with the caller/runtime
   }
 
   /** Clean up. */
   dispose(): void {
-    this._subagentPartMap.clear();
-    this._msgIndex = -1;
+    // no-op
   }
 
   // ---------------------------------------------------------------------------
@@ -231,7 +282,7 @@ export class RenderEventPartAdapter {
    * otherwise add a new one.
    */
   private _upsertState(
-    msgIndex: number,
+    handle: ChatPartStoreOpaqueHandle,
     stateId: string,
     next: {
       state: StatePart['state'];
@@ -241,55 +292,40 @@ export class RenderEventPartAdapter {
       metadata?: Record<string, unknown>;
     },
   ): void {
-    // Try update first
-    const parts = this._store.getParts(msgIndex);
-    for (let idx = parts.length - 1; idx >= 0; idx--) {
-      const p = parts[idx];
-      if (p.type === 'state' && p.stateId === stateId) {
-        this._store.updateState(msgIndex, stateId, next);
-        return;
-      }
-    }
-
-    // Not found → add new
-    this._store.addPart(msgIndex, mkState(
-      stateId,
-      next.text,
-      next.state,
-      next.kind,
-      next.progress,
-      next.metadata,
-    ));
+    this._store.upsertStateForHandle(handle, stateId, next);
   }
 
   /**
-   * Map SubagentActivity → SubagentChildItem and append to the SubagentPart.
+   * Map SubagentActivity → SubagentChildItem and append to the tool_call metadata.
    */
-  private _appendSubagentChild(msgIndex: number, event: SubagentActivity): void {
-    const partIndex = this._subagentPartMap.get(event.toolCallId);
-    if (partIndex === undefined) return;
-
-    const part = this._store.getPart(msgIndex, partIndex);
-    if (!part || part.type !== 'subagent') return;
+  private _appendSubagentChild(event: SubagentActivity, fallbackHandle: ChatPartStoreOpaqueHandle): void {
+    const handle = this._findToolCallHandle(event.toolCallId, fallbackHandle);
+    if (!handle) {
+      return;
+    }
 
     const child = activityToChildItem(event);
     if (!child) return;
 
-    // For tool events with a childToolCallId, update existing child if present
-    if (event.childToolCallId && part.childItems) {
-      const existing = part.childItems.findIndex(
-        c => c.kind === 'tool' && c.toolCallId === event.childToolCallId
-      );
-      if (existing >= 0) {
-        part.childItems[existing] = child;
-        this._store.updatePart(msgIndex, partIndex, { ...part });
-        return;
-      }
+    this._store.upsertSubagentChildItemForHandle(handle, event.toolCallId, child);
+  }
+
+  private _findToolCallHandle(toolCallId: string, fallbackHandle: ChatPartStoreOpaqueHandle | null): ChatPartStoreOpaqueHandle | null {
+    return this._store.findToolCallOpaqueHandle(toolCallId) ?? fallbackHandle;
+  }
+
+  private _appendTerminalPart(handle: ChatPartStoreOpaqueHandle, event: Extract<RenderEvent, { type: 'tool_call_end' }>): void {
+    if (!RenderEventPartAdapter.TERMINAL_TOOLS.has(event.toolName)) {
+      return;
     }
 
-    // Append new child
-    const children = [...(part.childItems || []), child];
-    this._store.updatePart(msgIndex, partIndex, { ...part, childItems: children });
+    const terminal = extractTerminalPart(event.toolCallId, event.result);
+    if (!terminal) {
+      return;
+    }
+
+    const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
+    this._store.addPartToHandle(toolHandle ?? handle, terminal);
   }
 }
 
@@ -306,46 +342,190 @@ function activityToChildItem(event: SubagentActivity): SubagentChildItem | null 
       return { kind: 'text', content: event.content ?? '' };
 
     case 'tool_started':
-      return {
-        kind: 'tool',
-        content: event.content ?? '',
-        toolName: event.toolName,
-        toolCallId: event.childToolCallId,
-        argsSummary: event.argsSummary,
-        state: 'doing',
-      };
+      return toolActivityToChildItem(event, 'doing');
 
     case 'tool_progress':
-      return {
-        kind: 'tool',
-        content: event.content ?? '',
-        toolName: event.toolName,
-        toolCallId: event.childToolCallId,
-        argsSummary: event.argsSummary,
-        state: 'doing',
-      };
+      return toolActivityToChildItem(event, 'doing');
 
     case 'tool_completed':
-      return {
-        kind: 'tool',
-        content: event.content ?? '',
-        toolName: event.toolName,
-        toolCallId: event.childToolCallId,
-        state: 'done',
-        duration: event.durationMs != null ? event.durationMs / 1000 : undefined,
-      };
+      return toolActivityToChildItem(event, 'done');
 
     case 'tool_failed':
-      return {
-        kind: 'tool',
-        content: event.content ?? '',
-        toolName: event.toolName,
-        toolCallId: event.childToolCallId,
-        state: 'error',
-        duration: event.durationMs != null ? event.durationMs / 1000 : undefined,
-      };
+      return toolActivityToChildItem(event, 'error');
 
     default:
       return null;
   }
+}
+
+function toolActivityToChildItem(
+  event: Pick<SubagentActivity, 'content' | 'toolName' | 'childToolCallId' | 'argsSummary' | 'durationMs'>,
+  state: 'doing' | 'done' | 'error',
+): SubagentChildItem {
+  return {
+    kind: 'tool',
+    content: event.content ?? '',
+    toolName: event.toolName,
+    toolCallId: event.childToolCallId,
+    argsSummary: event.argsSummary,
+    state,
+    duration: event.durationMs != null ? event.durationMs / 1000 : undefined,
+  };
+}
+
+function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']) {
+  const text = extractRawToolResultPayloadText(result);
+  if (!text) {
+    return null;
+  }
+
+  const parsed = parseTerminalPayload(text);
+  if (!parsed) {
+    return null;
+  }
+
+  const terminal = mkTerminal(parsed.command, toolCallId);
+  terminal.output = parsed.output;
+  terminal.stderr = parsed.stderr;
+  terminal.exitCode = parsed.exitCode;
+  terminal.isRunning = parsed.isRunning;
+  return terminal;
+}
+
+function extractToolResultText(result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']): string {
+  return collectToolResultText(result);
+}
+
+function questionRequestToPart(event: Extract<RenderEvent, { type: 'question_request' }>) {
+  return mkQuestion(
+    event.questions.map(q => ({
+      question: q.question,
+      options: q.options?.map(o => ({ ...o })),
+      allow_freeform: q.allowFreeform,
+      multi_select: q.multiSelect,
+    })),
+    undefined,
+    event.requestId,
+  );
+}
+
+function confirmationRequestToPart(event: Extract<RenderEvent, { type: 'approval_request' }>) {
+  return mkConfirmation(
+    getStandaloneApprovalRequestId(event),
+    event.message,
+    event.toolName,
+    event.source,
+    {
+      args: event.input,
+      title: event.title,
+      subtitle: event.subtitle,
+      description: event.description,
+      actions: event.actions,
+      primaryScope: event.primaryScope,
+    },
+  );
+}
+
+function approvalRequestToToolCallPatch(
+  event: Extract<RenderEvent, { type: 'approval_request' }> & { toolCallId: string },
+): ToolCallPartPatch {
+  return {
+    state: 'pending_approval',
+    text: event.message || `${event.toolName} requires approval`,
+    args: event.input,
+    metadata: {
+      approval: buildPendingToolCallApprovalMetadata({
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        message: event.message,
+        description: event.description,
+        source: event.source,
+        title: event.title,
+        subtitle: event.subtitle,
+        actions: event.actions,
+        primaryScope: event.primaryScope,
+        args: event.input,
+      }),
+    },
+  };
+}
+
+function approvalResolveToToolCallPatch(
+  event: Extract<RenderEvent, { type: 'approval_resolve' }> & { toolCallId: string },
+): ToolCallPartPatch {
+  return {
+    state: event.result === 'approved' ? 'doing' : 'error',
+    metadata: {
+      approval: buildResolvedToolCallApprovalMetadata({
+        toolCallId: event.toolCallId,
+        result: event.result,
+        scope: event.scope,
+      }),
+    },
+  };
+}
+
+function isToolExecutionApprovalEvent(
+  event: Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' }>,
+): event is Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' }> & { toolCallId: string } {
+  return typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0;
+}
+
+function getStandaloneApprovalRequestId(
+  event: Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' }>,
+): string {
+  if (typeof event.requestId === 'string' && event.requestId.trim().length > 0) {
+    return event.requestId;
+  }
+
+  return '';
+}
+
+function errorNoticeToPart(event: Extract<RenderEvent, { type: 'error_notice' }>) {
+  return mkError(event.message);
+}
+
+function warningNoticeToPart(event: Extract<RenderEvent, { type: 'warning_notice' }>) {
+  return mkError(event.message, 'warning');
+}
+
+function infoNoticeToPart(event: Extract<RenderEvent, { type: 'info_notice' }>) {
+  return mkError(event.message, 'info');
+}
+
+function subagentBeginToPart(event: Extract<RenderEvent, { type: 'subagent_begin' }>) {
+  return mkSubagentToolCall(
+    event.toolCallId,
+    event.agentName,
+    event.description,
+    buildSubagentMetadata(event),
+  );
+}
+
+function buildSubagentMetadata(
+  event: Extract<RenderEvent, { type: 'subagent_begin' }>,
+): Record<string, unknown> {
+  const description = event.description?.trim() || event.agentName;
+
+  return {
+    toolName: 'agent',
+    phase: 'started',
+    argsSummary: event.description,
+    recordId: event.toolCallId,
+    subAgentInvocationId: event.toolCallId,
+    invocationMessage: description,
+    pastTenseMessage: description ? `Completed Task: "${description}"` : event.agentName,
+    timeline: [mkSubagentTimelineEntry({
+      recordId: `${event.toolCallId}:started`,
+      phase: 'started',
+      summary: description,
+      timestamp: event.timestamp,
+    })],
+    toolSpecificData: {
+      kind: 'subagent',
+      description: event.description,
+      agentName: event.agentName,
+      result: '',
+    },
+  };
 }

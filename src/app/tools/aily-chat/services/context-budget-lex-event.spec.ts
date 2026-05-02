@@ -9,7 +9,12 @@ describe('createLexContextBudgetSnapshot', () => {
       fallbackSummarizationThreshold: 750,
       extra: {
         systemTokens: 100,
+        baseSystemTokens: 35,
+        instructionTokens: 25,
+        skillTokens: 40,
         toolsTokens: 50,
+        toolSourceTokens: { builtin: 20, mcp: 30 },
+        toolResultsTokens: 75,
         compressionThreshold: 0.6,
         summarizationThreshold: 0.85,
         messageCount: 4,
@@ -19,7 +24,13 @@ describe('createLexContextBudgetSnapshot', () => {
     expect(snapshot.currentTokens).toBe(600);
     expect(snapshot.compressionThreshold).toBe(600);
     expect(snapshot.summarizationThreshold).toBe(850);
-    expect(snapshot.messagesTokens).toBe(450);
+    expect(snapshot.toolResultsTokens).toBe(75);
+    expect(snapshot.baseSystemTokens).toBe(35);
+    expect(snapshot.instructionTokens).toBe(25);
+    expect(snapshot.skillTokens).toBe(40);
+    expect(snapshot.toolSourceTokens).toEqual({ builtin: 20, mcp: 30 });
+    expect(snapshot.conversationTokens).toBe(375);
+    expect(snapshot.messagesTokens).toBe(375);
     expect(snapshot.usagePercent).toBe(60);
     expect(snapshot.messageCount).toBe(4);
   });
@@ -37,8 +48,14 @@ describe('createLexContextBudgetSnapshot', () => {
 
     expect(snapshot.compressionThreshold).toBe(900);
     expect(snapshot.summarizationThreshold).toBe(1400);
+    expect(snapshot.toolResultsTokens).toBe(0);
+    expect(snapshot.conversationTokens).toBe(250);
     expect(snapshot.messagesTokens).toBe(250);
     expect(snapshot.systemTokens).toBe(0);
+    expect(snapshot.baseSystemTokens).toBe(0);
+    expect(snapshot.instructionTokens).toBe(0);
+    expect(snapshot.skillTokens).toBe(0);
     expect(snapshot.toolsTokens).toBe(0);
+    expect(snapshot.toolSourceTokens).toEqual({});
   });
 });

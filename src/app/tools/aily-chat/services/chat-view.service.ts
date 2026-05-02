@@ -5,7 +5,6 @@ import { TranslateService } from '@ngx-translate/core';
 import { filter } from 'rxjs';
 
 import { IMenuItem } from '../../../configs/menu.config';
-import { getRegisteredSubagents } from '../core/subagent-registry';
 import {
   insertComposerLineBreak,
   resolveComposerKeyAction as _resolveComposerKeyAction,
@@ -14,7 +13,8 @@ import {
   type ComposerKeyAction,
   type ComposerLineBreakEdit,
 } from '../helpers/chat-composer-view';
-import { AilyChatConfigService } from './aily-chat-config.service';
+import { AilyChatConfigService, type ReasoningEffortOption } from './aily-chat-config.service';
+import { ChatService } from './chat.service';
 
 /**
  * ChatViewService
@@ -36,6 +36,7 @@ export class ChatViewService {
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
   private readonly ailyChatConfigService = inject(AilyChatConfigService);
+  private readonly chatService = inject(ChatService);
   private readonly destroyRef = inject(DestroyRef);
 
   private allAgents: string[] = [];
@@ -74,11 +75,52 @@ export class ChatViewService {
   }
 
   get modelMenuItems(): IMenuItem[] {
-    return this.ailyChatConfigService.getEnabledModels().map((model) => ({
-      name: model.name,
-      action: 'select-model',
-      data: { model },
-    }));
+    const currentModel = this.chatService.currentModel;
+    const presets = this.ailyChatConfigService.getModelPresets();
+    const models = [...this.ailyChatConfigService.getEnabledModels()].sort((left, right) => {
+      const leftCurrent = currentModel?.model === left.model && !currentModel?.presetId;
+      const rightCurrent = currentModel?.model === right.model && !currentModel?.presetId;
+      if (leftCurrent !== rightCurrent) {
+        return leftCurrent ? -1 : 1;
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+
+    const presetItems = presets
+      .map((preset) => {
+        const model = this.ailyChatConfigService.resolvePresetModel(preset.id);
+        if (!model) {
+          return null;
+        }
+
+        return this.createModelMenuItem(model, currentModel, {
+          description: preset.description,
+          preferBillingMeta: true,
+        });
+      })
+      .filter((item): item is IMenuItem => item !== null);
+
+    const concreteModelItems = models.map((model) => this.createModelMenuItem(model, currentModel));
+
+    return [...presetItems, ...concreteModelItems];
+  }
+
+  get currentReasoningEffortLabel(): string {
+    return this.ailyChatConfigService.getReasoningEffortLabel(this.chatService.currentModel?.reasoningEffort);
+  }
+
+  get currentReasoningEffortDisplayLabel(): string {
+    return this.ailyChatConfigService.getReasoningEffortDisplayLabel(
+      this.ailyChatConfigService.resolveModelReasoningEffort(
+        this.chatService.currentModel,
+        this.chatService.currentModel?.reasoningEffort,
+      ),
+    );
+  }
+
+  get hasReasoningEffortOptions(): boolean {
+    return this.ailyChatConfigService.getSupportedReasoningEfforts(this.chatService.currentModel).length > 0;
   }
 
   get firstAgentSuggestion(): string | undefined {
@@ -133,14 +175,19 @@ export class ChatViewService {
     this.setSettingsVisible(false);
   }
 
+  setAvailableAgents(agentNames: readonly string[]): void {
+    this.allAgents = [...new Set(
+      agentNames
+        .filter((agentName): agentName is string => typeof agentName === 'string')
+        .map(agentName => agentName.trim())
+        .filter(agentName => agentName.length > 0),
+    )].sort((left, right) => left.localeCompare(right));
+  }
+
   updateAgentSuggestions(inputValue: string): void {
     if (!inputValue.startsWith('@')) {
       this.hideAgentSuggestions();
       return;
-    }
-
-    if (this.allAgents.length === 0) {
-      this.allAgents = getRegisteredSubagents().map((agent) => agent.name);
     }
 
     const query = inputValue.slice(1).split(/\s/)[0].toLowerCase();
@@ -156,5 +203,59 @@ export class ChatViewService {
   applyAgentSelection(agentName: string): string {
     this.hideAgentSuggestions();
     return `@${agentName} `;
+  }
+
+  private createModelMenuItem(
+    model: NonNullable<ChatService['currentModel']>,
+    currentModel: NonNullable<ChatService['currentModel']> | null,
+    options?: {
+      description?: string | null;
+      preferBillingMeta?: boolean;
+    },
+  ): IMenuItem {
+    const reasoningEfforts = this.ailyChatConfigService.getSupportedReasoningEfforts(model);
+    const isCurrentModel = currentModel?.model === model.model && currentModel?.presetId === model.presetId;
+    const currentReasoningEffort = isCurrentModel
+      ? this.ailyChatConfigService.resolveModelReasoningEffort(model, currentModel?.reasoningEffort)
+      : undefined;
+    const displayModel = isCurrentModel
+      ? {
+          ...model,
+          reasoningEffort: currentReasoningEffort,
+        }
+      : model;
+
+    return {
+      name: model.name,
+      text: this.ailyChatConfigService.getModelMenuMeta(displayModel, { preferBilling: options?.preferBillingMeta ?? false }),
+      action: 'select-model',
+      current: isCurrentModel,
+      tooltip: this.ailyChatConfigService.buildModelTooltip(displayModel, {
+        description: options?.description,
+      }),
+      data: { model },
+      hideChildrenArrow: true,
+      children: reasoningEfforts.length > 0
+        ? reasoningEfforts.map((effort) => this.createReasoningEffortItem(model, effort, currentReasoningEffort))
+        : undefined,
+    };
+  }
+
+  private createReasoningEffortItem(
+    model: NonNullable<ChatService['currentModel']>,
+    effort: ReasoningEffortOption,
+    currentReasoningEffort: ReasoningEffortOption | undefined,
+  ): IMenuItem {
+    return {
+      name: this.ailyChatConfigService.getReasoningEffortDisplayLabel(effort),
+      action: 'select-model',
+      check: currentReasoningEffort === effort,
+      data: {
+        model: {
+          ...model,
+          reasoningEffort: effort,
+        },
+      },
+    };
   }
 }

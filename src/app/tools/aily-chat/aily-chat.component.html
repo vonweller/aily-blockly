@@ -37,28 +37,31 @@
   <div class="window-box">
     <!-- 对话内容 -->
     <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
-      @if(vm.list.length > 0){
+      @if(vm.hasConversationContent){
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs">
-        @for(item of vm.list; track vm.sessionId + '-' + $index){
+        @for(item of vm.dialogItems; track item.trackId){
           <aily-x-dialog
             [role]="item.role"
             [content]="item.content"
-            [doing]="item.state === 'doing'"
-            [source]="item.source"
-            [isLastAily]="$last && item.role === 'aily'"
+            [doing]="item.doing"
+            [isLastAily]="item.isLastAily"
+            [isFirstUserTurn]="item.isFirstUserTurn"
+            [showCheckpointRestore]="item.showCheckpointRestore"
             [sessionId]="vm.sessionId"
-            [msgIndex]="$index"
             [currentMode]="vm.currentMode"
             [currentModelName]="vm.currentModelName"
-            [turnModelName]="item.modelName || ''"
+            [currentModelBillingLabel]="vm.currentModelBillingLabel"
+            [turnModelName]="item.turnModelName"
+            [responseVote]="item.responseVote"
             [isWaiting]="vm.isWaiting"
-            [partStore]="vm.partStore"
+            [turnContext]="item.turnContext"
+            [turnResponse]="item.turnContext?.turnResponse ?? null"
             (editAndResend)="surfaceShellCoordinator.editAndResend($event)"
             (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event)"
-            (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems.length)"
-            (editAddFile)="editResourceShellCoordinator.addFile($index)"
-            (editAddFolder)="editResourceShellCoordinator.addFolder($index)">
+            (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
+            (editAddFile)="editResourceShellCoordinator.addFile($event)"
+            (editAddFolder)="editResourceShellCoordinator.addFolder($event)">
           </aily-x-dialog>
           }
       </div>
@@ -161,8 +164,11 @@
             </div>
             <!-- 模型选择 -->
             @if(vm.modelMenuItems.length > 0) {
-            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems.length)">
-              <i class="fa-light fa-star-christmas"></i><span>{{ vm.currentModelName }}</span>
+            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)">
+              <i class="fa-light fa-star-christmas"></i><span>{{ vm.currentModelChipLabel }}</span>
+              @if(vm.currentModelBillingLabel) {
+              <span class="mini-tag">{{ vm.currentModelBillingLabel }}</span>
+              }
             </div>
             }
             <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
@@ -181,10 +187,24 @@
                         style="height:100%;border-radius:2px;transition:width 0.3s ease"></div>
                     </div>
                   </div>
-                  <div><span style="color:#98c379">■</span> System: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span style="color:#61afef">■</span> Tools: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
-                  <!-- <div><span style="color:#e5c07b">■</span> Context: {{ (contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div> -->
-                  <div><span style="color:#c678dd">■</span> Messages: {{ ((vm.contextBudgetSnapshot.messagesTokens + vm.contextBudgetSnapshot.contextTokens) / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ (vm.contextBudgetSnapshot.messagesPercent + vm.contextBudgetSnapshot.contextPercent) | number:'1.1-1' }}%)</span></div>
+                  <div style="font-weight:600;opacity:0.85">System</div>
+                  <div><span style="color:#98c379">■</span> System Instructions: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span style="color:#61afef">■</span> Tool Definitions: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
+                  <div style="font-weight:600;opacity:0.85;margin-top:4px">User Context</div>
+                  @if(vm.contextBudgetSnapshot.contextTokens > 0) {
+                  <div><span style="color:#56b6c2">■</span> Files: {{ (vm.contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div>
+                  }
+                  <div><span style="color:#e5c07b">■</span> Messages: {{ (vm.contextBudgetSnapshot.messagesTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.messagesPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span style="color:#c678dd">■</span> Tool Results: {{ (vm.contextBudgetSnapshot.toolResultsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolResultsPercent | number:'1.1-1' }}%)</span></div>
+                  <div class="context-compact-row">
+                    <button
+                      type="button"
+                      class="context-compact-action"
+                      [disabled]="vm.isWaiting || isManualCompacting"
+                      (click)="handleManualCompaction($event)">
+                      {{ isManualCompacting ? '压缩中...' : '压缩对话' }}
+                    </button>
+                  </div>
                 </div>
               </ng-template>
               <svg viewBox="0 0 24 24" class="token-ring">
@@ -243,7 +263,7 @@
 
 @if(menuManager.showModelMenu){
 <app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)"></app-menu>
+  (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuSubItemClick($event)"></app-menu>
 }
 
 

@@ -2,6 +2,7 @@ import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, Ch
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AskUserOption, AskUserQuestion, AskUserAnswer } from '../../../core/ask-user';
+import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.component';
 
 /** 组件内部归一化的问题（所有字段必填） */
 interface NormalizedQuestion {
@@ -19,198 +20,230 @@ interface AnswerRecord {
 @Component({
   selector: 'x-aily-question-viewer',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ChatPartHeaderShellComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (questions.length > 0) {
       <div class="aq-container" [class.aq-all-done]="allDone">
-        <!-- Header -->
-        <div class="aq-header">
-          <div class="aq-question">{{ currentQ.question }}</div>
-          @if (!allDone && !isHistory) {
-            <button class="aq-close" (click)="onSkip()" title="跳过">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
+        <div class="aq-card" [class.aq-card-collapsed]="collapsed">
+          <aily-chat-part-header-shell
+            [title]="currentQ.question"
+            [meta]="headerMeta"
+            [pill]="headerPill"
+            [pillTone]="headerTone"
+            [tone]="headerTone"
+            [iconClass]="headerIconClass"
+            [showChevron]="true"
+            [showExpandedConnector]="false"
+            [clickable]="true"
+            [expanded]="!collapsed"
+            (toggleRequested)="toggleCollapsed()">
+            @if (!allDone && !isHistory) {
+              <span header-actions class="aq-header-actions">
+                <button class="aq-close" type="button" (click)="onSkipFromHeader($event)" title="跳过" aria-label="跳过当前问题">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </span>
+            }
+          </aily-chat-part-header-shell>
+
+          @if (!collapsed) {
+            <div class="aq-body">
+              <div class="aq-input-container">
+                @if (currentQ.options.length > 0) {
+                  <div class="aq-options">
+                    @for (opt of currentQ.options; track $index) {
+                      <label class="aq-option"
+                        [class.aq-checked]="isOptionSelected($index)"
+                        [class.aq-disabled]="allDone || isHistory">
+                        <span class="aq-opt-num">{{ $index + 1 }}</span>
+                        <span class="aq-option-body">
+                          <span class="aq-option-label">
+                            {{ opt.label }}
+                            @if (opt.recommended) {
+                              <span class="aq-badge-rec">推荐</span>
+                            }
+                          </span>
+                          @if (opt.description) {
+                            <span class="aq-option-desc">{{ opt.description }}</span>
+                          }
+                        </span>
+                        @if (isOptionSelected($index)) {
+                          <i class="fa-solid fa-check aq-check-icon"></i>
+                        }
+                        <input type="checkbox" class="aq-hidden-input"
+                          [checked]="isOptionSelected($index)"
+                          [disabled]="allDone || isHistory"
+                          (change)="toggleOption($index)" />
+                      </label>
+                    }
+                  </div>
+                }
+
+                @if (currentQ.allow_freeform) {
+                  <div class="aq-freeform" [class.aq-freeform-only]="currentQ.options.length === 0">
+                    @if (currentQ.options.length > 0) {
+                      <span class="aq-opt-num aq-opt-num-free">{{ currentQ.options.length + 1 }}</span>
+                    }
+                    <input
+                      class="aq-freeform-input"
+                      type="text"
+                      placeholder="Enter custom answer"
+                      [ngModel]="currentAnswer.freeform"
+                      (ngModelChange)="onFreeformChange($event)"
+                      [disabled]="allDone || isHistory"
+                      (keydown.enter)="onConfirm()" />
+                  </div>
+                }
+
+                @if (resultSummary) {
+                  <div class="aq-result-note">{{ resultSummary }}</div>
+                }
+              </div>
+
+              @if (questions.length > 1 && (!allDone || isHistory)) {
+                <div class="aq-nav">
+                  <div class="aq-nav-left">
+                    <button class="aq-nav-btn" [disabled]="currentIndex === 0" (click)="goPrev()">
+                      <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    @if (!isHistory) {
+                      <button class="aq-nav-btn" (click)="goNextOrConfirm()">
+                        <i class="fa-solid fa-chevron-right"></i>
+                      </button>
+                    } @else {
+                      <button class="aq-nav-btn" [disabled]="isLastQuestion" (click)="goNext()">
+                        <i class="fa-solid fa-chevron-right"></i>
+                      </button>
+                    }
+                    <span class="aq-nav-page">{{ currentIndex + 1 }}/{{ questions.length }}</span>
+                  </div>
+                  @if (!isHistory && isLastQuestion) {
+                    <div class="aq-nav-right">
+                      <button class="aq-nav-submit" [disabled]="!canSubmitAll" (click)="submitAll()">确认提交</button>
+                    </div>
+                  }
+                </div>
+              }
+
+              @if (!allDone && !isHistory && questions.length === 1 && hasCurrentSelection) {
+                <div class="aq-nav aq-nav-single">
+                  <div class="aq-nav-right">
+                    <button class="aq-nav-submit" (click)="onConfirm()">确认提交</button>
+                  </div>
+                </div>
+              }
+            </div>
           }
         </div>
-
-        <!-- Options -->
-        @if (currentQ.options.length > 0) {
-          <div class="aq-options">
-            @for (opt of currentQ.options; track $index) {
-              <label class="aq-option"
-                [class.aq-checked]="isOptionSelected($index)"
-                [class.aq-disabled]="allDone || isHistory">
-                <span class="aq-opt-num">{{ $index + 1 }}</span>
-                <span class="aq-option-body">
-                  <span class="aq-option-label">
-                    {{ opt.label }}
-                    @if (opt.recommended) {
-                      <span class="aq-badge-rec">推荐</span>
-                    }
-                  </span>
-                  @if (opt.description) {
-                    <span class="aq-option-desc">{{ opt.description }}</span>
-                  }
-                </span>
-                @if (isOptionSelected($index)) {
-                  <i class="fa-solid fa-check aq-check-icon"></i>
-                }
-                <input type="checkbox" class="aq-hidden-input"
-                  [checked]="isOptionSelected($index)"
-                  [disabled]="allDone || isHistory"
-                  (change)="toggleOption($index)" />
-              </label>
-            }
-          </div>
-        }
-
-        <!-- Freeform input -->
-        @if (currentQ.allow_freeform) {
-          <div class="aq-freeform" [class.aq-freeform-only]="currentQ.options.length === 0">
-            @if (currentQ.options.length > 0) {
-              <span class="aq-opt-num aq-opt-num-free">{{ currentQ.options.length + 1 }}</span>
-            }
-            <input
-              class="aq-freeform-input"
-              type="text"
-              placeholder="Enter custom answer"
-              [ngModel]="currentAnswer.freeform"
-              (ngModelChange)="onFreeformChange($event)"
-              [disabled]="allDone || isHistory"
-              (keydown.enter)="onConfirm()" />
-          </div>
-        }
-
-        <!-- Bottom nav (Copilot style) -->
-        @if (questions.length > 1 && (!allDone || isHistory)) {
-          <div class="aq-nav">
-            <button class="aq-nav-btn" [disabled]="currentIndex === 0" (click)="goPrev()">
-              <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            @if (!isHistory) {
-              <button class="aq-nav-btn" (click)="goNextOrConfirm()">
-                <i class="fa-solid fa-chevron-right"></i>
-              </button>
-            } @else {
-              <button class="aq-nav-btn" [disabled]="isLastQuestion" (click)="goNext()">
-                <i class="fa-solid fa-chevron-right"></i>
-              </button>
-            }
-            <span class="aq-nav-page">{{ currentIndex + 1 }}/{{ questions.length }}</span>
-            @if (!isHistory && isLastQuestion) {
-              <button class="aq-nav-submit" [disabled]="!canSubmitAll" (click)="submitAll()">确认提交</button>
-            }
-          </div>
-        }
-
-        <!-- Single question: confirm button (same style as multi-question submit) -->
-        @if (!allDone && !isHistory && questions.length === 1 && hasCurrentSelection) {
-          <div class="aq-nav">
-            <button class="aq-nav-submit" (click)="onConfirm()">确认提交</button>
-          </div>
-        }
-
-        <!-- History: skipped indicator -->
-        @if (isHistory && isCurrentSkipped) {
-          <div class="aq-skipped-bar">
-            <i class="fa-solid fa-forward"></i>
-            <span>已跳过</span>
-          </div>
-        }
-
-        <!-- All done result -->
-        @if (allDone && !isHistory) {
-          <div class="aq-done-bar">
-            <i class="fa-solid fa-circle-check"></i>
-            <span>{{ submittedSummary }}</span>
-          </div>
-        }
-        @if (allDone && isHistory && !isMultiQuestion && !isCurrentSkipped) {
-          <div class="aq-done-bar">
-            <i class="fa-solid fa-circle-check"></i>
-            <span>{{ historySummary || '已回答' }}</span>
-          </div>
-        }
       </div>
     }
   `,
   styles: [`
-    .aq-container {
-      border-radius: 10px;
-      padding: 10px;
-      margin: 0;
-      background: #1e1e1e;
-      border: 1px solid #333;
-      transition: border-color 0.2s;
-      overflow: hidden;
+    :host {
+      display: block;
       min-width: 0;
     }
-    .aq-container:not(.aq-all-done):hover { border-color: #444; }
-    .aq-all-done { opacity: 0.72; }
 
-    /* Header */
-    .aq-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-    .aq-question {
-      font-size: 13px;
-      font-weight: 500;
-      color: #d4d4d4;
-      line-height: 1.5;
-      flex: 1;
+    .aq-container {
+      padding: 2px 0;
+      margin: 0;
       min-width: 0;
-      word-break: break-word;
-      overflow-wrap: break-word;
-      white-space: pre-wrap;
     }
+    .aq-all-done { opacity: 0.88; }
+
+    .aq-card {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      margin: 0;
+      border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+
+    .aq-body {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-top: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+    }
+
+    .aq-header-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: -2px;
+    }
+
+    :host ::ng-deep .aq-card .cphs-header {
+      margin-bottom: 0;
+      padding: 8px 8px 8px 12px;
+      border-radius: 0;
+    }
+
     .aq-close {
-      flex-shrink: 0;
-      width: 24px; height: 24px;
-      display: flex; align-items: center; justify-content: center;
-      background: transparent; border: none; outline: none;
-      color: #666; font-size: 13px; cursor: pointer;
-      border-radius: 4px; transition: all 0.15s;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--chat-fg-dim, #8e8e8e);
+      outline: none;
+      cursor: pointer;
     }
-    .aq-close:hover { color: #bbb; background: rgba(255,255,255,0.06); }
+
+    .aq-close:hover {
+      background: rgba(255,255,255,0.04);
+      color: var(--chat-fg, #cccccc);
+    }
+
+    .aq-input-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      min-width: 0;
+    }
 
     /* Options */
     .aq-options { display: flex; flex-direction: column; gap: 6px; }
     .aq-option {
       display: flex;
       align-items: flex-start;
-      gap: 10px;
-      padding: 10px;
-      border-radius: 8px;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
       cursor: pointer;
-      background: #252526;
-      border: 1px solid #333;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.08);
       transition: all 0.15s ease;
       user-select: none;
     }
-    .aq-option:hover:not(.aq-disabled) { background: #2a2d2e; border-color: #444; }
+    .aq-option:hover:not(.aq-disabled) { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); }
     .aq-option.aq-checked:not(.aq-disabled) {
-      background: rgba(24, 144, 255, 0.08);
-      border-color: rgba(24, 144, 255, 0.4);
+      background: rgba(116, 179, 255, 0.06);
+      border-color: rgba(116, 179, 255, 0.18);
     }
     .aq-option.aq-disabled { cursor: default; opacity: 0.6; }
 
     /* Option number prefix (Copilot style) */
     .aq-opt-num {
       flex-shrink: 0;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
-      color: #888;
-      line-height: 1.4;
+      color: var(--chat-fg-muted, #6a6a6a);
+      line-height: 1.35;
     }
     .aq-check-icon {
       flex-shrink: 0;
-      font-size: 12px;
-      color: #d4d4d4;
+      font-size: 11px;
+      color: var(--chat-fg, #cccccc);
       margin-left: auto;
       align-self: center;
     }
@@ -224,33 +257,35 @@ interface AnswerRecord {
       min-width: 0;
     }
     .aq-option-label {
-      font-size: 13px;
-      color: #ccc;
-      line-height: 1.4;
+      font-size: 12px;
+      color: var(--chat-fg, #cccccc);
+      line-height: 1.35;
       display: inline-flex;
       align-items: center;
       gap: 6px;
       white-space: pre-wrap;
-      word-break: break-all;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .aq-badge-rec {
       display: inline-block;
       font-size: 10px;
       font-weight: 600;
-      color: #1890ff;
-      background: rgba(24, 144, 255, 0.12);
-      border-radius: 4px;
-      padding: 1px 5px;
+      color: var(--chat-info, #75beff);
+      background: rgba(116, 179, 255, 0.12);
+      border-radius: 999px;
+      padding: 1px 6px;
       line-height: 1.4;
       vertical-align: middle;
       white-space: nowrap;
     }
     .aq-option-desc {
       font-size: 11px;
-      color: #777;
+      color: var(--chat-fg-dim, #8e8e8e);
       line-height: 1.3;
       white-space: pre-wrap;
-      word-break: break-all;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .aq-hidden-input {
@@ -259,50 +294,69 @@ interface AnswerRecord {
 
     /* Freeform */
     .aq-freeform {
-      margin-top: 6px;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 0 12px;
+      gap: 8px;
+      padding: 0;
     }
     .aq-freeform-only { margin-top: 0; padding: 0; }
     .aq-opt-num-free { flex-shrink: 0; }
     .aq-freeform-input {
       width: 100%;
       box-sizing: border-box;
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 1px solid #333;
-      background: #252526;
-      color: #d4d4d4;
-      font-size: 13px;
+      min-height: 22px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.02);
+      color: var(--chat-fg, #cccccc);
+      font-size: 12px;
       outline: none;
       transition: border-color 0.2s;
     }
-    .aq-freeform-input:focus { border-color: #1890ff; }
+    .aq-freeform-input:focus { border-color: var(--vscode-textLink-foreground, #74b3ff); }
     .aq-freeform-input:disabled { opacity: 0.5; cursor: not-allowed; }
-    .aq-freeform-input::placeholder { color: #666; }
+    .aq-freeform-input::placeholder { color: var(--chat-fg-muted, #6a6a6a); }
 
     /* Bottom nav (Copilot style) */
     .aq-nav {
-      margin-top: 10px;
       display: flex;
       align-items: center;
-      gap: 4px;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 8px;
+      border-top: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+      min-width: 0;
     }
+
+    .aq-nav-left,
+    .aq-nav-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .aq-nav-single {
+      justify-content: flex-end;
+    }
+
     .aq-nav-btn {
-      width: 28px; height: 28px;
+      width: 22px; height: 22px;
       display: flex; align-items: center; justify-content: center;
-      background: transparent; border: none; outline: none;
-      color: #999; font-size: 12px; cursor: pointer;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 11px;
+      cursor: pointer;
       border-radius: 4px; transition: all 0.15s;
     }
-    .aq-nav-btn:hover:not(:disabled) { color: #ddd; background: rgba(255,255,255,0.06); }
+    .aq-nav-btn:hover:not(:disabled) { color: var(--chat-fg, #cccccc); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
     .aq-nav-btn:disabled { opacity: 0.3; cursor: default; }
     .aq-nav-page {
-      font-size: 12px;
-      color: #666;
-      margin-left: 4px;
+      font-size: 11px;
+      color: var(--chat-fg-muted, #6a6a6a);
       user-select: none;
     }
     .aq-nav-confirm {
@@ -315,34 +369,24 @@ interface AnswerRecord {
     .aq-nav-confirm:hover { color: #ddd; border-color: #666; }
     .aq-nav-submit {
       margin-left: auto;
-      padding: 4px 14px; border-radius: 6px;
-      font-size: 12px; font-weight: 500;
-      background: #1890ff; color: #fff;
-      border: none; outline: none;
+      min-height: 22px;
+      padding: 0 10px; border-radius: 6px;
+      font-size: 12px; font-weight: 400;
+      background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #ffffff);
+      border: 1px solid transparent; outline: none;
       cursor: pointer; transition: all 0.15s;
     }
-    .aq-nav-submit:hover:not(:disabled) { background: #40a9ff; }
+    .aq-nav-submit:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
     .aq-nav-submit:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    /* Skipped indicator */
-    .aq-skipped-bar {
-      margin-top: 10px;
-      display: flex; align-items: center; gap: 6px;
-      font-size: 12px; color: #888;
+    .aq-result-note {
+      font-size: 11px;
+      line-height: 1.35;
+      color: var(--chat-fg-dim, #8e8e8e);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
-    .aq-skipped-bar i { font-size: 11px; color: #666; }
-
-    /* Done bar */
-    .aq-done-bar {
-      margin-top: 10px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      color: #52c41a;
-    }
-    .aq-done-bar i { font-size: 13px; }
-    .aq-done-bar span { color: #888; white-space: pre-wrap; word-break: break-all; }
 
 
   `],
@@ -356,17 +400,23 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   isHistory = false;
   allDone = false;
   submittedSummary = '';
+  collapsed = false;
 
   answers = new Map<number, AnswerRecord>();
   answeredSet = new Set<number>();
 
   /** ★ 引用守卫：防止 parent CD 导致 processData 反复重置用户选择（参考 VSCode hasSameContent 模式） */
   private _lastQuestionsRef: any = null;
+  private _lastAnswersRef: Record<string, AskUserAnswer> | undefined = undefined;
+  private _lastHistoryFlag = false;
 
   constructor(private cdr: ChangeDetectorRef) {}
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['data']) this.processData();
+    if (changes['data']) {
+      this.collapsed = false;
+      this.processData();
+    }
   }
 
   // ===== Getters =====
@@ -380,6 +430,59 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       this.answers.set(this.currentIndex, { selected: new Set(), freeform: '' });
     }
     return this.answers.get(this.currentIndex)!;
+  }
+
+  get headerIconClass(): string {
+    if (this.allDone && !this.isHistory) {
+      return 'fa-light fa-circle-check';
+    }
+
+    if (this.isHistory && this.isCurrentSkipped) {
+      return 'fa-light fa-forward';
+    }
+
+    return 'fa-light fa-circle-question';
+  }
+
+  get headerTone(): 'neutral' | 'success' {
+    return this.allDone && !this.isHistory ? 'success' : 'neutral';
+  }
+
+  get headerMeta(): string | undefined {
+    return undefined;
+  }
+
+  get headerPill(): string | undefined {
+    if (this.allDone && !this.isHistory) {
+      return '已提交';
+    }
+
+    if (this.isHistory && this.isCurrentSkipped) {
+      return '已跳过';
+    }
+
+    if (this.isHistory && !this.isMultiQuestion) {
+      return '已回答';
+    }
+
+    return undefined;
+  }
+
+  get resultSummary(): string {
+    if (this.allDone && !this.isHistory) {
+      return this.submittedSummary;
+    }
+
+    if (this.isHistory && !this.isCurrentSkipped && !this.isMultiQuestion) {
+      return this.historySummary || '';
+    }
+
+    return '';
+  }
+
+  toggleCollapsed(): void {
+    this.collapsed = !this.collapsed;
+    this.cdr.markForCheck();
   }
 
   get hasCurrentSelection(): boolean {
@@ -499,6 +602,12 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     }
   }
 
+  onSkipFromHeader(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.onSkip();
+  }
+
   goPrev(): void {
     if (this.currentIndex > 0) {
       this.currentIndex--;
@@ -552,7 +661,10 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
     document.dispatchEvent(new CustomEvent('aily-question-answer', {
       bubbles: true,
-      detail: { answers: answersMap },
+      detail: {
+        answers: answersMap,
+        partId: this.data && typeof this.data.partId === 'string' ? this.data.partId : undefined,
+      },
     }));
   }
 
@@ -568,6 +680,8 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     }
     try {
       let rawQuestions: AskUserQuestion[];
+      const savedAnswers = this.readSavedAnswers();
+      const nextIsHistory = this.data.isHistory === true || !!savedAnswers;
 
       // 主格式：{ questions: AskUserQuestion[] }（来自 chat-engine._handleAskUser）
       if (this.data.questions && Array.isArray(this.data.questions)) {
@@ -583,12 +697,19 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       // ★ 引用相等守卫：同一 questions 数组引用 → 跳过重置
       // 防止 parent CD 每次创建新 wrapper 对象导致 ngOnChanges 触发 processData，
       // 清空用户已选择的选项（参考 VSCode chatQuestionCarouselPart.hasSameContent 模式）
-      if (this._lastQuestionsRef === rawQuestions && this.questions.length > 0) {
+      if (
+        this._lastQuestionsRef === rawQuestions
+        && this._lastAnswersRef === savedAnswers
+        && this._lastHistoryFlag === nextIsHistory
+        && this.questions.length > 0
+      ) {
         return;
       }
       this._lastQuestionsRef = rawQuestions;
+      this._lastAnswersRef = savedAnswers;
+      this._lastHistoryFlag = nextIsHistory;
 
-      this.isHistory = this.data.isHistory === true;
+      this.isHistory = nextIsHistory;
       this.questions = rawQuestions
         .filter((d: any) => d.question && typeof d.question === 'string')
         .map((d: AskUserQuestion) => this.normalizeQuestion(d));
@@ -650,8 +771,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
    * 数据格式：data.answers = { [questionText]: { selected: string[], freeText: string|null, skipped: boolean } }
    */
   private restoreAnswersFromHistory(): void {
-    const savedAnswers: Record<string, AskUserAnswer> | undefined = this.data?.answers;
-    console.log('[AilyQuestion] restoreAnswersFromHistory, data.answers:', savedAnswers, 'data keys:', Object.keys(this.data || {}));
+    const savedAnswers = this.readSavedAnswers();
     if (!savedAnswers) return;
 
     for (let i = 0; i < this.questions.length; i++) {
@@ -671,5 +791,13 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
       this.answers.set(i, ans);
     }
+  }
+
+  private readSavedAnswers(): Record<string, AskUserAnswer> | undefined {
+    const answers = this.data?.answers;
+    if (!answers || typeof answers !== 'object') {
+      return undefined;
+    }
+    return answers as Record<string, AskUserAnswer>;
   }
 }
