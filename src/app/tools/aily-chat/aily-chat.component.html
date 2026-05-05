@@ -20,15 +20,14 @@
       [nzTooltipTitle]="'AILY_CHAT.NEW_CHAT' | translate">
       <i class="fa-light fa-message-plus"></i>
     </div>
+    <!-- <div class="btn ccenter" (click)="toggleActionMenu($event)" nz-tooltip nzTooltipPlacement="bottom"
+      nzTooltipTitle="Chat Actions">
+      <i class="fa-light fa-bolt"></i>
+    </div> -->
   </ng-container>
 
   <!-- 整个聊天区域的容器 -->
   <div class="aily-chat-wrapper">
-    <div class="todo-panel-container">
-      @if(!vm.showSettings){
-        <app-floating-todo [sessionId]="vm.sessionId"></app-floating-todo>
-      }
-    </div>
     <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
   </div>
 </app-tool-container>
@@ -39,7 +38,7 @@
     <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
       @if(vm.hasConversationContent){
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
-      <div class="dialogs">
+      <div class="dialogs" #dialogsContent>
         @for(item of vm.dialogItems; track item.trackId){
           <aily-x-dialog
             [role]="item.role"
@@ -53,6 +52,7 @@
             [currentModelName]="vm.currentModelName"
             [currentModelBillingLabel]="vm.currentModelBillingLabel"
             [turnModelName]="item.turnModelName"
+            [turnModelBillingLabel]="item.turnModelBillingLabel || ''"
             [responseVote]="item.responseVote"
             [isWaiting]="vm.isWaiting"
             [turnContext]="item.turnContext"
@@ -75,16 +75,18 @@
       </div>
       }
     </div>
-    <!-- 文件变更面板（sender上方） -->
-    <app-aily-edits-viewer></app-aily-edits-viewer>
     <!-- 发送部分 -->
-    <div class="sender" nz-resizable [style.height.px]="vm.bottomHeight" [nzMaxHeight]="vm.senderMaxHeight" [nzMinHeight]="vm.senderMinHeight"
-      (nzResize)="viewportShellCoordinator.resizeContent($event.height)">
-      <nz-resize-handle nzDirection="top">
-        <div class="line"></div>
-      </nz-resize-handle>
-
+    <div class="sender">
       <div class="s-box">
+        <aily-chat-input-part-host [sessionId]="vm.sessionId" (todoFocusToggleRequested)="handleTodoFocusToggleShortcut()">
+        @if(!vm.showSettings){
+        <div inputPartWidget class="chat-todo-list-widget-container">
+          <app-floating-todo [sessionId]="vm.sessionId" [requestInProgress]="vm.isWaiting"></app-floating-todo>
+        </div>
+        }
+        <div inputPartWidget class="chat-editing-session">
+          <app-aily-edits-viewer></app-aily-edits-viewer>
+        </div>
         <!-- 快捷发送栏 -->
         <!-- <div class="settings" style="padding: 0;">
           <div class="btns">
@@ -93,7 +95,7 @@
             </div>
           </div>
         </div> -->
-        <div class="input-box">
+        <div class="input-box" [class.working]="vm.isWaiting" [class.focused]="isComposerFocused">
           @if( resourceManager.items.length > 0 ) {
           <div class="resource-list">
             @for( item of resourceManager.items; track $index) {
@@ -127,6 +129,7 @@
               </div>
             }
             <textarea #chatTextarea class="sscroll" [ngModel]="vm.inputValue" (ngModelChange)="composerShellCoordinator.updateInputValue($event)"
+              (focus)="setComposerFocusState(true)" (blur)="setComposerFocusState(false)"
               (keydown)="composerShellCoordinator.handleKeyDown($event)" (input)="composerShellCoordinator.updateSuggestions()">
             </textarea>
           </div>
@@ -242,6 +245,7 @@
             </div>
           </div>
         </div>
+        </aily-chat-input-part-host>
       </div>
     </div>
     @if(vm.showSettings){
@@ -264,6 +268,11 @@
 @if(menuManager.showModelMenu){
 <app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuSubItemClick($event)"></app-menu>
+}
+
+@if(menuManager.showActionMenu){
+<app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
 }
 
 

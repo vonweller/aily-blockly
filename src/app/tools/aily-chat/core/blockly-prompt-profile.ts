@@ -22,7 +22,13 @@ import type { IPromptProfile, IPromptSection, PromptContext } from 'aily-lex/typ
 import { PromptLayer } from 'aily-lex/types/prompt';
 import { SkillRegistry } from './skill-registry';
 import { AilyHost } from './host';
-import { buildBlocklyWorkspaceIdentityLines } from './blockly-environment-context';
+import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+
+export const BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT = {
+  scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
+  strict: true,
+  hydrateBeforeFirstModelCall: true,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Identity Override — aily-blockly specific
@@ -121,6 +127,7 @@ const BLOCKLY_SKILLS_LISTING_SECTION: IPromptSection = {
 
 export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
   hostId: 'blockly',
+  requiredContext: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
   sections: [
     BLOCKLY_IDENTITY_SECTION,
     BLOCKLY_DOMAIN_SECTION,
@@ -130,7 +137,11 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
   cacheBreakpoint: PromptLayer.HostDomain,
   getContext: async () => {
     const host = AilyHost.get();
-    const envExtra = await buildBlocklyWorkspaceIdentityLines(host);
+    const contextSnapshotService = getBlocklyContextSnapshotService();
+    const envExtra = [...await contextSnapshotService.getSummary({
+      scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
+      reason: 'main-agent-prompt',
+    })];
     const fileContext = collectPromptFileContext(host);
 
     // Shell hint — platform-specific

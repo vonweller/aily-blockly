@@ -6,7 +6,7 @@ import type {
   ISessionAccess,
   IChatViewAccess,
 } from '../core/chat-context';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import type {
   LiveHostSessionRecord,
   PersistedHostResponseData,
@@ -20,6 +20,32 @@ import {
   hasHostResponseConversationContent,
 } from './host-turn-response-state';
 import { createChatMessageHandle } from './chat-message-handle';
+
+function cloneTurnResponseModelSidecar(
+  responseModel: TurnResponseTurn['responseModel'] | undefined,
+): TurnResponseTurn['responseModel'] | undefined {
+  if (!responseModel) {
+    return undefined;
+  }
+
+  const modelName = typeof responseModel.modelName === 'string' && responseModel.modelName.trim()
+    ? responseModel.modelName.trim()
+    : undefined;
+  const modelBillingLabel = typeof responseModel.modelBillingLabel === 'string' && responseModel.modelBillingLabel.trim()
+    ? responseModel.modelBillingLabel.trim()
+    : undefined;
+
+  if (!responseModel.slashCommand && !responseModel.followups && !modelName && !modelBillingLabel) {
+    return undefined;
+  }
+
+  return {
+    ...(responseModel.slashCommand ? { slashCommand: { ...responseModel.slashCommand } } : {}),
+    ...(responseModel.followups ? { followups: responseModel.followups.map((followup: TurnResponseFollowup) => ({ ...followup })) } : {}),
+    ...(modelName ? { modelName } : {}),
+    ...(modelBillingLabel ? { modelBillingLabel } : {}),
+  };
+}
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentModel'>
@@ -407,11 +433,26 @@ function isExplicitTurnTailTruncation(
   return true;
 }
 
+function normalizePersistedSlashCommand(
+  slashCommand: TurnResponseCommand | null | undefined,
+): TurnResponseCommand | undefined {
+  if (!slashCommand || typeof slashCommand.name !== 'string') {
+    return undefined;
+  }
+
+  const normalizedName = slashCommand.name.trim();
+  if (!normalizedName) {
+    return undefined;
+  }
+
+  return { ...slashCommand, name: normalizedName };
+}
+
 function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
+  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
   const {
-    followups: _followups,
+    slashCommand: _slashCommand,
     responseId: _responseId,
-    result: _result,
     responseMarkdownInfo: _responseMarkdownInfo,
     modelState: _modelState,
     vote: _vote,
@@ -420,9 +461,7 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
     timeSpentWaiting: _timeSpentWaiting,
     completionTokens: _completionTokens,
     ...responseWithoutPersistedData
-  } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData & {
-    followups?: TurnResponseTurn['response']['followups'];
-  };
+  } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData;
 
   return {
     ...turn,
@@ -458,6 +497,7 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
       progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
       parts: [...turn.response.parts],
     },
+    ...(responseModel ? { responseModel } : {}),
   };
 }
 
@@ -474,14 +514,11 @@ function persistResponseDataOnTurnResponses(
 
   if (hostRequestModel?.turnId && hostRequestModel.response) {
     const response = hostRequestModel.response;
-    const result = response.response?.getFinalResponse()
-      || response.entireResponse?.getFinalResponse()
-      || undefined;
     responseDataByTurnId.set(
       hostRequestModel.turnId,
       {
+        ...(normalizePersistedSlashCommand(response.slashCommand) ? { slashCommand: normalizePersistedSlashCommand(response.slashCommand) } : {}),
         ...(typeof response.id === 'string' && response.id.length > 0 ? { responseId: response.id } : {}),
-        ...(typeof result === 'string' && result.length > 0 ? { result } : {}),
         ...(Array.isArray(response.responseMarkdownInfo) && response.responseMarkdownInfo.length > 0
           ? { responseMarkdownInfo: response.responseMarkdownInfo.map(info => ({ ...info })) }
           : {}),
@@ -533,15 +570,11 @@ function collectResponseSidecarFromProjection(
     }
 
     target.set(entry.turnId, {
+      ...(normalizePersistedSlashCommand(responseSidecar.slashCommand) ? { slashCommand: normalizePersistedSlashCommand(responseSidecar.slashCommand) } : {}),
       ...(typeof responseSidecar.responseId === 'string' && responseSidecar.responseId.length > 0
         ? { responseId: responseSidecar.responseId }
         : (typeof entry.turnResponse?.response.id === 'string' && entry.turnResponse.response.id.length > 0
           ? { responseId: entry.turnResponse.response.id }
-          : {})),
-      ...(typeof responseSidecar.result === 'string' && responseSidecar.result.length > 0
-        ? { result: responseSidecar.result }
-        : (typeof entry.turnResponse?.response.resultText === 'string' && entry.turnResponse.response.resultText.length > 0
-          ? { result: entry.turnResponse.response.resultText }
           : {})),
       ...(Array.isArray(responseSidecar.responseMarkdownInfo) && responseSidecar.responseMarkdownInfo.length > 0
         ? { responseMarkdownInfo: responseSidecar.responseMarkdownInfo.map(info => ({ ...info })) }

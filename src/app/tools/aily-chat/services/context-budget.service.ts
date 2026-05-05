@@ -7,6 +7,7 @@ import {
   setContextBudgetTiktokenService,
 } from './context-budget-estimation';
 import {
+  createContextBudgetSnapshot,
   createEmptyContextBudgetSnapshot,
 } from './context-budget-snapshot';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
@@ -170,11 +171,13 @@ export class ContextBudgetService {
       if (modelName) {
         this.tiktokenService.switchEncoderForModel(modelName);
       }
+      this.syncSnapshotLimits();
       return;
     }
 
     if (!modelName || modelName === 'auto') {
       this._maxContextTokens = ContextBudgetService.DEFAULT_CONTEXT_SIZE;
+      this.syncSnapshotLimits();
       return;
     }
 
@@ -186,12 +189,14 @@ export class ContextBudgetService {
     for (const [key, size] of Object.entries(ContextBudgetService.MODEL_CONTEXT_SIZES)) {
       if (lowerName.includes(key.toLowerCase())) {
         this._maxContextTokens = size;
+        this.syncSnapshotLimits();
         return;
       }
     }
 
     // 无匹配时使用默认值
     this._maxContextTokens = ContextBudgetService.DEFAULT_CONTEXT_SIZE;
+    this.syncSnapshotLimits();
   }
 
   /**
@@ -261,5 +266,25 @@ export class ContextBudgetService {
     const savedModel = AilyHost.get().config.data?.aiChatModel;
     const resolvedModel = this.ailyChatConfigService.resolveSavedModel(savedModel);
     return this.ailyChatConfigService.resolveModelContextWindowTokens(resolvedModel ?? savedModel);
+  }
+
+  private syncSnapshotLimits(): void {
+    const snapshot = this.contextBudgetViewService.getSnapshot();
+    this.contextBudgetViewService.applySnapshot(createContextBudgetSnapshot({
+      maxContextTokens: this.maxContextTokens,
+      compressionThreshold: this.compressionThreshold,
+      summarizationThreshold: this.summarizationThreshold,
+      messageCount: snapshot.messageCount,
+      systemTokens: snapshot.systemTokens,
+      baseSystemTokens: snapshot.baseSystemTokens,
+      instructionTokens: snapshot.instructionTokens,
+      skillTokens: snapshot.skillTokens,
+      toolsTokens: snapshot.toolsTokens,
+      toolSourceTokens: snapshot.toolSourceTokens,
+      contextTokens: snapshot.contextTokens,
+      messagesTokens: snapshot.messagesTokens,
+      toolResultsTokens: snapshot.toolResultsTokens,
+      currentTokens: snapshot.currentTokens,
+    }));
   }
 }

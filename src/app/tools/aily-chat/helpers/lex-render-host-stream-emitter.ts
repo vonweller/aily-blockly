@@ -1,4 +1,4 @@
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 
 import {
   createHostStreamClearToPreviousToolInvocationItem,
@@ -33,8 +33,8 @@ export type HostStreamPartChange = {
 };
 
 function areTurnResponseCommandsEqual(
-  left: TurnResponseTurn['response']['command'] | undefined,
-  right: TurnResponseTurn['response']['command'] | undefined,
+  left: TurnResponseCommand | undefined,
+  right: TurnResponseCommand | undefined,
 ): boolean {
   if (left === right) {
     return true;
@@ -79,7 +79,7 @@ export class LexRenderHostStreamEmitter {
 
   emitResponseFollowups(
     turnId: string,
-    followups: TurnResponseTurn['response']['followups'],
+    followups: readonly TurnResponseFollowup[] | undefined,
     updatedAt: number,
   ): void {
     this.emitResponseItem(
@@ -104,7 +104,7 @@ export class LexRenderHostStreamEmitter {
       );
     }
 
-    const identityPatch = this.buildResponseIdentityPatch(turn.response);
+    const identityPatch = this.buildResponseIdentityPatch(turn.response, turn.responseModel);
     if (identityPatch) {
       this.emitResponseItem(
         turn.turnId,
@@ -136,7 +136,12 @@ export class LexRenderHostStreamEmitter {
       );
     }
 
-    const identityPatch = this.buildResponseIdentityPatch(currentTurn.response, previousTurn.response);
+    const identityPatch = this.buildResponseIdentityPatch(
+      currentTurn.response,
+      currentTurn.responseModel,
+      previousTurn.response,
+      previousTurn.responseModel,
+    );
     if (identityPatch) {
       this.emitResponseItem(
         currentTurn.turnId,
@@ -397,7 +402,9 @@ export class LexRenderHostStreamEmitter {
 
   private buildResponseIdentityPatch(
     response: TurnResponseTurn['response'],
+    responseModel?: TurnResponseTurn['responseModel'],
     previous?: TurnResponseTurn['response'],
+    previousResponseModel?: TurnResponseTurn['responseModel'],
   ): HostStreamResponseIdentityPatch | null {
     const patch: HostStreamResponseIdentityPatch = {};
 
@@ -405,8 +412,8 @@ export class LexRenderHostStreamEmitter {
       patch.participant = response.participant;
     }
 
-    if (!previous || !areTurnResponseCommandsEqual(previous.command, response.command)) {
-      patch.command = response.command ?? null;
+    if (!previous || !areTurnResponseCommandsEqual(previousResponseModel?.slashCommand, responseModel?.slashCommand)) {
+      patch.slashCommand = responseModel?.slashCommand ?? null;
     }
 
     return Object.keys(patch).length > 0 ? patch : null;

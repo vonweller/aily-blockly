@@ -1,4 +1,4 @@
-import type { RenderEvent, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { RenderEvent, TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import {
   type ChatPartStore,
@@ -32,7 +32,10 @@ interface TurnResponseIncrementalProjection {
   readonly rounds: TurnResponseTurn['rounds'];
   readonly usage?: TurnResponseTurn['usage'];
   readonly participant?: string;
-  readonly command?: TurnResponseTurn['response']['command'];
+  readonly slashCommand?: TurnResponseCommand;
+  readonly followups?: readonly TurnResponseFollowup[];
+  readonly modelName?: string;
+  readonly modelBillingLabel?: string;
   readonly usedContext?: TurnResponseTurn['response']['usedContext'];
   readonly contentReferences?: readonly NonNullable<TurnResponseTurn['response']['contentReferences']>[number][];
   readonly codeCitations?: readonly NonNullable<TurnResponseTurn['response']['codeCitations']>[number][];
@@ -44,7 +47,7 @@ export interface TurnResponseIncrementalBeginOptions {
   readonly turnId: string;
   readonly request: TurnResponseTurn['request'];
   readonly participant?: string;
-  readonly command?: TurnResponseTurn['response']['command'];
+  readonly slashCommand?: TurnResponseCommand;
   readonly timestamp: number;
 }
 
@@ -52,7 +55,7 @@ export interface TurnResponseIncrementalRetargetOptions {
   readonly turnId: string;
   readonly request: TurnResponseTurn['request'];
   readonly participant?: string;
-  readonly command?: TurnResponseTurn['response']['command'];
+  readonly slashCommand?: TurnResponseCommand;
   readonly timestamp: number;
 }
 
@@ -68,6 +71,8 @@ export interface TurnResponseIncrementalMaterializeOptions {
     readonly usage?: TurnResponseTurn['usage'];
     readonly createdAt?: number;
     readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
+    readonly modelName?: string;
+    readonly modelBillingLabel?: string;
   };
 }
 
@@ -95,7 +100,7 @@ export class TurnResponseIncrementalBuilder {
       request: options.request,
       rounds: [],
       participant: options.participant,
-      command: options.command,
+      slashCommand: options.slashCommand,
       createdAt: options.timestamp,
     };
 
@@ -116,7 +121,7 @@ export class TurnResponseIncrementalBuilder {
       sourceTurnId: options.turnId,
       request: options.request,
       participant: options.participant ?? this.currentProjection.participant,
-      command: options.command ?? this.currentProjection.command,
+      slashCommand: options.slashCommand ?? this.currentProjection.slashCommand,
     };
 
     return this.materialize({
@@ -158,7 +163,12 @@ export class TurnResponseIncrementalBuilder {
       rounds,
       usage,
       participant,
-      command: this.currentProjection.command,
+      slashCommand: this.currentProjection.slashCommand,
+      followups: this.currentProjection.followups
+        ? [...this.currentProjection.followups]
+        : undefined,
+      modelName: options.snapshot?.modelName ?? this.currentProjection.modelName,
+      modelBillingLabel: options.snapshot?.modelBillingLabel ?? this.currentProjection.modelBillingLabel,
       usedContext: this.currentProjection.usedContext,
       contentReferences: this.currentProjection.contentReferences
         ? [...this.currentProjection.contentReferences]
@@ -178,7 +188,10 @@ export class TurnResponseIncrementalBuilder {
       rounds,
       usage,
       participant,
-      command: this.currentProjection.command,
+      slashCommand: this.currentProjection.slashCommand,
+      followups: this.currentProjection.followups,
+      modelName: this.currentProjection.modelName,
+      modelBillingLabel: this.currentProjection.modelBillingLabel,
       usedContext: this.currentProjection.usedContext,
       contentReferences: this.currentProjection.contentReferences,
       codeCitations: this.currentProjection.codeCitations,
@@ -224,7 +237,7 @@ export class TurnResponseIncrementalBuilder {
       case 'response_command':
         this.currentProjection = {
           ...this.currentProjection,
-          command: event.value,
+          slashCommand: event.value,
         };
         return true;
       case 'response_reference':
@@ -254,6 +267,10 @@ export class TurnResponseIncrementalBuilder {
         };
         return true;
       case 'response_followups':
+        this.currentProjection = {
+          ...this.currentProjection,
+          followups: event.value ? [...event.value] : undefined,
+        };
         return true;
       default:
         return false;

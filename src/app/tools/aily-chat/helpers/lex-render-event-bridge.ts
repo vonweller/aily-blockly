@@ -3,6 +3,7 @@ import type {
   RenderEvent,
   RenderClearToPreviousToolInvocationReason,
   SessionSnapshot,
+  TurnResponseCommand,
   TurnResponseQuestionPart,
   TurnResponseStatus,
   TurnResponseTurn,
@@ -23,6 +24,32 @@ import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
 } from './host-turn-response-state';
+
+function cloneTurnResponseModelSidecar(
+  responseModel: TurnResponseTurn['responseModel'] | undefined,
+): TurnResponseTurn['responseModel'] | undefined {
+  if (!responseModel) {
+    return undefined;
+  }
+
+  const modelName = typeof responseModel.modelName === 'string' && responseModel.modelName.trim()
+    ? responseModel.modelName.trim()
+    : undefined;
+  const modelBillingLabel = typeof responseModel.modelBillingLabel === 'string' && responseModel.modelBillingLabel.trim()
+    ? responseModel.modelBillingLabel.trim()
+    : undefined;
+
+  if (!responseModel.slashCommand && !responseModel.followups && !modelName && !modelBillingLabel) {
+    return undefined;
+  }
+
+  return {
+    ...(responseModel.slashCommand ? { slashCommand: { ...responseModel.slashCommand } } : {}),
+    ...(responseModel.followups ? { followups: responseModel.followups.map(followup => ({ ...followup })) } : {}),
+    ...(modelName ? { modelName } : {}),
+    ...(modelBillingLabel ? { modelBillingLabel } : {}),
+  };
+}
 
 /** Narrow context: only needs partStore for rendering + toolCallingIteration for turn tracking */
 type LexRenderEventBridgeContext =
@@ -102,7 +129,7 @@ export class LexRenderEventBridge {
 
     const createdAt = Date.now();
     const request = buildTurnResponseRequest(requestContent, displayContent, metadata);
-    const command = resolveInitialResponseCommand(metadata);
+    const slashCommand = resolveInitialResponseSlashCommand(metadata);
     const seededTurn: TurnResponseTurn = {
       turnId,
       request,
@@ -115,8 +142,8 @@ export class LexRenderEventBridge {
         resultText: '',
         createdAt,
         updatedAt: createdAt,
-        ...(command ? { command } : {}),
       },
+      ...(slashCommand ? { responseModel: { slashCommand } } : {}),
       createdAt,
       updatedAt: createdAt,
     };
@@ -127,7 +154,9 @@ export class LexRenderEventBridge {
   }
 
   get turnResponses(): readonly TurnResponseTurn[] {
-    return [...this._turnResponses.values()].sort((left, right) => left.createdAt - right.createdAt);
+    return [...this._turnResponses.values()]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map(turn => clonePublicTurnResponseTurn(turn));
   }
 
   hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
@@ -300,7 +329,7 @@ export class LexRenderEventBridge {
       this._pendingRequestDisplayContent,
       this._pendingRequestMetadata,
     );
-    const initialCommand = resolveInitialResponseCommand(this._pendingRequestMetadata);
+    const initialSlashCommand = resolveInitialResponseSlashCommand(this._pendingRequestMetadata);
 
     if (this.shouldContinueCurrentTurn(request)) {
       const previousTurn = this._currentTurn!;
@@ -308,7 +337,7 @@ export class LexRenderEventBridge {
         turnId,
         request,
         participant: getTurnResponseParticipant(this.ctx.currentMessageSource),
-        command: initialCommand,
+        slashCommand: initialSlashCommand,
         timestamp,
       });
       if (continuedTurn) {
@@ -327,7 +356,7 @@ export class LexRenderEventBridge {
       turnId,
       request,
       participant: getTurnResponseParticipant(this.ctx.currentMessageSource),
-      command: initialCommand,
+      slashCommand: initialSlashCommand,
       timestamp,
     });
     this._turnResponses.set(turnId, this._currentTurn);
@@ -379,10 +408,25 @@ export class LexRenderEventBridge {
 
     this._currentTurn = materialized;
 
+    const previousModelName = getTurnResponseModelName(previousTurn);
+    const currentModelName = getTurnResponseModelName(this._currentTurn);
+    if (currentModelName && currentModelName !== previousModelName) {
+      this.ctx.contextBudgetService?.updateModelContextSize({
+        model: currentModelName,
+        presetId: currentModelName,
+      });
+    }
+
     this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, partChanges);
   }
+}
+
+function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {
+  return typeof turn?.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
+    ? turn.responseModel.modelName.trim()
+    : undefined;
 }
 
 function toHostClearToPreviousToolInvocationReason(
@@ -392,9 +436,7 @@ function toHostClearToPreviousToolInvocationReason(
 }
 
 function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
-  const { followups: _followups, ...responseWithoutFollowups } = turn.response as TurnResponseTurn['response'] & {
-    followups?: TurnResponseTurn['response']['followups'];
-  };
+  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
 
   return {
     ...turn,
@@ -405,7 +447,7 @@ function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
       toolCalls: round.toolCalls.map(toolCall => ({ ...toolCall })),
     })),
     response: {
-      ...responseWithoutFollowups,
+      ...turn.response,
       ...(turn.response.usedContext
         ? {
           usedContext: {
@@ -433,14 +475,59 @@ function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
       progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
       parts: turn.response.parts.map(part => ({ ...part })),
     },
+    ...(responseModel ? { responseModel } : {}),
   };
 }
 
-function resolveInitialResponseCommand(
+function clonePublicTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
+  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
+
+  return {
+    ...turn,
+    ...(turn.usage ? { usage: { ...turn.usage } } : {}),
+    request: { ...turn.request },
+    rounds: turn.rounds.map(round => ({
+      ...round,
+      toolCalls: round.toolCalls.map(toolCall => ({ ...toolCall })),
+    })),
+    response: {
+      ...turn.response,
+      ...(turn.response.usedContext
+        ? {
+          usedContext: {
+            ...turn.response.usedContext,
+            documents: turn.response.usedContext.documents.map(document => ({
+              ...document,
+              ranges: document.ranges.map(range => ({ ...range })),
+            })),
+          },
+        }
+        : {}),
+      contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
+        ...reference,
+        ...(reference.options
+          ? {
+            options: {
+              ...reference.options,
+              ...(reference.options.status ? { status: { ...reference.options.status } } : {}),
+              ...(reference.options.diffMeta ? { diffMeta: { ...reference.options.diffMeta } } : {}),
+            },
+          }
+          : {}),
+      })),
+      codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
+      progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
+      parts: turn.response.parts.map(part => ({ ...part })),
+    },
+    ...(responseModel ? { responseModel } : {}),
+  };
+}
+
+function resolveInitialResponseSlashCommand(
   metadata: TurnResponseTurn['request']['metadata'],
-): TurnResponseTurn['response']['command'] | undefined {
-  const command = metadata?.command;
-  return command ? createTurnResponseCommand(command.name, command) : undefined;
+): TurnResponseCommand | undefined {
+  const slashCommand = metadata?.command;
+  return slashCommand ? createTurnResponseCommand(slashCommand.name, slashCommand) : undefined;
 }
 
 function cloneQuestionAnswers(answers: TurnResponseQuestionPart['answers']): TurnResponseQuestionPart['answers'] {

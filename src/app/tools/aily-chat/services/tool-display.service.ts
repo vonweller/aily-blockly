@@ -6,7 +6,6 @@
  * - 格式化命令、搜索模式、文件名、URL 等
  */
 
-import { ToolDisplayRegistry } from '../core/tool-display-registry';
 import { AilyHost } from '../core/host';
 import { generateCopilotToolResultText, generateCopilotToolStartText } from '../core/tool-invocation-formatter';
 
@@ -22,45 +21,7 @@ export function generateToolStartText(toolName: string, args?: any): string {
   if (!args) return `正在执行工具: ${toolName}`;
 
   const cleanToolName = toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
-
-  if (ToolDisplayRegistry.has(cleanToolName)) {
-    return ToolDisplayRegistry.getStartText(toolName, args);
-  }
-
-  switch (cleanToolName) {
-    case 'create_single_block':
-      return `创建块: ${args.type || 'unknown'}`;
-    case 'connect_blocks_simple':
-      return `连接块: ${args.action || 'unknown'}`;
-    case 'set_block_field':
-      return `设置字段: ${args.fieldName || 'unknown'}`;
-    case 'set_block_input':
-      return `设置输入: ${args.inputName || 'unknown'}`;
-    case 'get_workspace_blocks':
-      return "获取工作区块列表...";
-    case 'flat_create_blocks': {
-      let flatBlockCount = 0;
-      if (args?.blocks) {
-        if (typeof args.blocks === 'string') {
-          try { flatBlockCount = JSON.parse(args.blocks).length; } catch { flatBlockCount = 0; }
-        } else if (Array.isArray(args.blocks)) {
-          flatBlockCount = args.blocks.length;
-        }
-      }
-      return `扁平化创建块: ${flatBlockCount}个块...`;
-    }
-    case 'variable_manager_tool': {
-      const operation = args.operation;
-      const operationText = operation === 'create' ? '创建' :
-        operation === 'delete' ? '删除' :
-          operation === 'rename' ? '重命名' : '列出';
-      return `${operationText}变量...`;
-    }
-    case 'getBlockConnectionCompatibilityTool':
-      return "分析块连接兼容性...";
-    default:
-      return `执行工具: ${cleanToolName}`;
-  }
+  return `执行工具: ${cleanToolName}`;
 }
 
 /**
@@ -74,47 +35,11 @@ export function generateToolResultText(toolName: string, args?: any, result?: an
 
   const cleanToolName = toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
 
-  if (ToolDisplayRegistry.has(cleanToolName)) {
-    return ToolDisplayRegistry.getResultText(toolName, args, result);
-  }
-
   if (result?.is_error) {
     return `${toolName} 执行失败`;
   }
 
-  switch (cleanToolName) {
-    case 'create_single_block':
-      return `块创建成功: ${args?.type || 'unknown'}`;
-    case 'connect_blocks_simple':
-      return `块连接成功: ${args?.action || 'unknown'}`;
-    case 'set_block_field':
-      return `字段设置成功: ${args?.fieldName || 'unknown'}`;
-    case 'set_block_input':
-      return `输入设置成功: ${args?.inputName || 'unknown'}`;
-    case 'get_workspace_blocks':
-      return `获取块列表成功`;
-    case 'flat_create_blocks': {
-      let blocksCreated = result?.data?.stats?.blocksCreated || 0;
-      if (blocksCreated === 0 && args?.blocks) {
-        if (typeof args.blocks === 'string') {
-          try { blocksCreated = JSON.parse(args.blocks).length; } catch { blocksCreated = 0; }
-        } else if (Array.isArray(args.blocks)) {
-          blocksCreated = args.blocks.length;
-        }
-      }
-      const connsCreated = result?.data?.stats?.connectionsEstablished || 0;
-      return `扁平化创建成功: ${blocksCreated}个块, ${connsCreated}个连接`;
-    }
-    case 'variable_manager_tool': {
-      const operation = args?.operation || 'unknown';
-      const variableName = args?.variableName ? ` ${args.variableName}` : '';
-      return `变量操作成功: ${operation}${variableName}`;
-    }
-    case 'getBlockConnectionCompatibilityTool':
-      return `块连接兼容性分析完成`;
-    default:
-      return `${cleanToolName} 执行成功`;
-  }
+  return `${cleanToolName} 执行成功`;
 }
 
 /**

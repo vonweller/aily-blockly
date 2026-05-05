@@ -12,7 +12,7 @@
   flex-shrink: 0;
   /* 不允许收缩，保持TODO面板完整显示 */
   border-top: 1px solid var(--border-color, #3c3c3c);
-  background: var(--vscode-sideBar-background, #252526);
+  background: #252526;
   max-height: 300px;
   /* 限制最大高度防止占用过多空间 */
   overflow: hidden;
@@ -49,8 +49,34 @@
 }
 
 .sender {
-  position: relative;
   flex-shrink: 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+
+  .interactive-input-part > .chat-todo-list-widget-container,
+  .interactive-input-part > .chat-editing-session {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-width: 0;
+    padding: 0 10px;
+    margin-bottom: -4px;
+    box-sizing: border-box;
+    position: relative;
+  }
+
+  .interactive-input-part:has(> .chat-todo-list-widget-container .chat-todo-list-widget.has-todos) .input-box,
+  .interactive-input-part:has(> .chat-editing-session .chat-editing-session-container) .input-box {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  .interactive-input-part > .chat-todo-list-widget-container:has(.chat-todo-list-widget.has-todos) + .chat-editing-session .chat-editing-session-container {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
 
   .settings {
     height: 40px;
@@ -58,29 +84,56 @@
   }
 
   .s-box {
-    height: calc(100% - 20px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
   }
 
   .input-box {
+    --chat-input-border-color: transparent;
+    --chat-input-outline-color: transparent;
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 0 0 auto;
+    min-height: 140px;
     margin: 10px;
     padding: 5px;
+    border: 1px solid transparent;
     border-radius: 5px;
     position: relative;
+    overflow: visible;
+    isolation: isolate;
     background: #292929;
+    border-color: var(--chat-input-border-color);
+    box-shadow: 0 0 0 1px var(--chat-input-outline-color);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+    &.focused {
+      --chat-input-border-color: rgba(95, 154, 255, 0.4);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.1);
+    }
+
+    &.working {
+      --chat-input-border-color: rgba(95, 154, 255, 0.28);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.08);
+    }
+
+    &.working.focused {
+      --chat-input-border-color: rgba(95, 154, 255, 0.5);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.14);
+    }
 
     .textarea-wrapper {
       position: relative;
-      flex-grow: 1;
+      min-height: 92px;
       display: flex;
       flex-direction: column;
     }
 
     textarea {
       font-size: 14px;
-      flex-grow: 1;
+      min-height: 92px;
       border: none;
       resize: none;
       outline: none;
@@ -199,14 +252,6 @@
         font-size: 22px;
       }
     }
-  }
-}
-
-nz-resize-handle {
-  .line {
-    margin-top: 5px;
-    height: 1px;
-    background: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -351,7 +396,7 @@ nz-resize-handle {
   }
 
   &.active {
-    color: var(--vscode-focusBorder, #007acc) !important;
+    color: #007acc !important;
     background: rgba(0, 122, 204, 0.1);
   }
 }

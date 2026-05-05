@@ -1,4 +1,5 @@
 import type { ISessionAccess, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
+import { buildTodoListSemanticDataFromTodos } from '../services/todoUpdate.service';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 
 /** Narrow context: editCheckpointService for recording edits, ngZone for UI sync, sessionId for todo keying */
@@ -65,7 +66,11 @@ export class LexHostSyncBridge {
       try {
         const svc = (window as any).todoUpdateService;
         if (svc) {
-          svc.updateTodoData(sessionId, blocklyTodos);
+          svc.updateTodoListSemanticData(
+            sessionId,
+            buildTodoListSemanticDataFromTodos(blocklyTodos),
+            blocklyTodos,
+          );
         }
       } catch {
         // ignore UI notification failures

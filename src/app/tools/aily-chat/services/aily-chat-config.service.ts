@@ -1,9 +1,11 @@
-﻿import { HttpClient, HttpResponse } from '@angular/common/http';
-import { Injectable } from '@angular/core';
-import { Subject, Observable } from 'rxjs';
+﻿import { HttpClient, HttpErrorResponse, HttpResponse } from '@angular/common/http';
+import { Injectable, Optional } from '@angular/core';
+import { Subject, Observable, Subscription } from 'rxjs';
+import { distinctUntilChanged } from 'rxjs/operators';
 import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex';
 import { AilyHost } from '../core/host';
 import { ChatAPI } from '../core/api-endpoints';
+import { AuthService } from '../../../services/auth.service';
 import {
     MAIN_AGENT_LEGACY_ALIAS,
     MAIN_AGENT_TYPE,
@@ -127,6 +129,7 @@ export interface LexTerminalPolicyConfig {
 }
 
 export type WorkspacePermissionRulesByProject = Record<string, PermissionRuleInput[]>;
+export type WorkspaceApprovalCombinationsByProject = Record<string, string[]>;
 
 /**
  * Aily Chat 配置接口
@@ -185,6 +188,8 @@ export interface AilyChatConfig {
     terminalInheritDefaultAllowList?: boolean;
     /** 当前工作区维度持久化的 lex permission rules。键为规范化后的 projectPath。 */
     workspacePermissionRules?: WorkspacePermissionRulesByProject;
+    /** 当前工作区维度持久化的 tool+arguments approval combination keys。 */
+    workspaceApprovalCombinations?: WorkspaceApprovalCombinationsByProject;
 }
 
 /**
@@ -261,6 +266,7 @@ export class AilyChatConfigService {
     private remoteModelCatalog: RemoteModelCatalog = { models: {}, modelPresets: {} };
     private remoteModelCatalogStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
     private remoteModelCatalogStatusHint = '正在加载远端 model catalog...';
+    private authReadySubscription?: Subscription;
 
     /** 配置变更通知 Subject */
     private configChangedSubject = new Subject<AilyChatConfig>();
@@ -282,18 +288,38 @@ export class AilyChatConfigService {
         return this.hasUsableRemoteModelCatalog();
     }
 
-    constructor(private http: HttpClient) {
+    constructor(
+        private http: HttpClient,
+        @Optional() private authService: AuthService | null = null,
+    ) {
         this.load();
+        this.bindAuthReadyReload();
         if (AilyHost.isInitialized()) {
             this.loadRemoteModelCatalog('constructor');
         } else {
-            this.setRemoteModelCatalogStatus('loading', '等待 host 初始化后加载远端 model catalog...');
+            this.setRemoteModelCatalogStatus('loading', '等待 host 初始化后自动加载模型目录...');
             console.info('[AilyChatConfigService] host 尚未初始化，延迟加载远端 model catalog');
         }
     }
 
     reloadRemoteModelCatalog(reason = 'manual'): void {
         this.loadRemoteModelCatalog(reason);
+    }
+
+    private bindAuthReadyReload(): void {
+        if (!this.authService?.isLoggedIn$) {
+            return;
+        }
+
+        this.authReadySubscription = this.authService.isLoggedIn$
+            .pipe(distinctUntilChanged())
+            .subscribe((isLoggedIn) => {
+                if (!isLoggedIn || !AilyHost.isInitialized() || this.hasUsableRemoteModelCatalog()) {
+                    return;
+                }
+
+                this.loadRemoteModelCatalog('auth_ready');
+            });
     }
 
     /**
@@ -592,6 +618,36 @@ export class AilyChatConfigService {
         return true;
     }
 
+    hasWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedKey = typeof combinationKey === 'string' ? combinationKey.trim() : '';
+        if (!normalizedProjectPath || !normalizedKey) {
+            return false;
+        }
+
+        const combinations = this.config.workspaceApprovalCombinations?.[normalizedProjectPath] ?? [];
+        return combinations.includes(normalizedKey);
+    }
+
+    addWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedKey = typeof combinationKey === 'string' ? combinationKey.trim() : '';
+        if (!normalizedProjectPath || !normalizedKey) {
+            return false;
+        }
+
+        const existing = this.config.workspaceApprovalCombinations?.[normalizedProjectPath] ?? [];
+        if (existing.includes(normalizedKey)) {
+            return false;
+        }
+
+        this.config.workspaceApprovalCombinations = {
+            ...(this.config.workspaceApprovalCombinations ?? {}),
+            [normalizedProjectPath]: [...existing, normalizedKey],
+        };
+        return true;
+    }
+
     getLexPermissionPolicy(projectPath: string | null | undefined): PermissionPolicy | undefined {
         const projectRules = this.getWorkspacePermissionRules(projectPath);
         if (projectRules.length === 0) {
@@ -834,6 +890,51 @@ export class AilyChatConfigService {
 
         const rawModel = this.getRawModelMetadataById(modelId);
         return rawModel ? this.normalizeRuntimeModel(rawModel) : undefined;
+    }
+
+    resolveRuntimeModelFromServerModelName(
+        modelName: string | null | undefined,
+        options?: { contextWindowTokens?: number | null },
+    ): ModelConfigOption | null {
+        if (typeof modelName !== 'string' || !modelName.trim()) {
+            return null;
+        }
+
+        const normalizedModelName = modelName.trim();
+        const contextWindowTokens = typeof options?.contextWindowTokens === 'number' && options.contextWindowTokens > 0
+            ? options.contextWindowTokens
+            : undefined;
+        const exactMatch = this.getModelById(normalizedModelName);
+        if (exactMatch) {
+            return this.normalizeRuntimeModel({
+                ...exactMatch,
+                ...(contextWindowTokens ? { contextWindowTokens } : {}),
+            });
+        }
+
+        const lowerModelName = normalizedModelName.toLowerCase();
+        const matchedModel = [...this.getEnabledModels(), ...this.models].find((model) => {
+            const modelId = typeof model.model === 'string' ? model.model.trim().toLowerCase() : '';
+            const displayName = typeof model.name === 'string' ? model.name.trim().toLowerCase() : '';
+            return modelId === lowerModelName || displayName === lowerModelName;
+        });
+
+        if (matchedModel) {
+            return this.normalizeRuntimeModel({
+                ...matchedModel,
+                ...(contextWindowTokens ? { contextWindowTokens } : {}),
+            });
+        }
+
+        return this.normalizeRuntimeModel({
+            model: normalizedModelName,
+            name: normalizedModelName,
+            family: '',
+            speed: 'Remote',
+            enabled: true,
+            isCustom: false,
+            ...(contextWindowTokens ? { contextWindowTokens } : {}),
+        });
     }
 
     resolvePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
@@ -1242,6 +1343,15 @@ export class AilyChatConfigService {
     }
 
     private loadRemoteModelCatalog(reason = 'unspecified'): void {
+        if (this.authService && !this.authService.isLoggedIn) {
+            this.setRemoteModelCatalogStatus('loading', '等待认证完成后自动加载模型目录...');
+            console.info('[AilyChatConfigService] 登录态尚未就绪，延迟加载远端 model catalog', {
+                url: ChatAPI.modelCatalog,
+                reason,
+            });
+            return;
+        }
+
         console.info('[AilyChatConfigService] 请求远端 model catalog', {
             url: ChatAPI.modelCatalog,
             apiEndpoint: AilyHost.get().config.apiEndpoint,
@@ -1257,9 +1367,9 @@ export class AilyChatConfigService {
                     this.remoteModelCatalog = { models: {}, modelPresets: {} };
                     this.setRemoteModelCatalogStatus(
                         'unavailable',
-                        `远端 model catalog 响应格式无效，已回退为 Auto-only。请检查 ${ChatAPI.modelCatalog}`,
+                        `远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
                     );
-                    console.warn('[AilyChatConfigService] 远端 model catalog 响应格式无效，已回退为 Auto-only', {
+                    console.warn('[AilyChatConfigService] 远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设', {
                         url: ChatAPI.modelCatalog,
                         status: response.status,
                         body: responseBody,
@@ -1323,9 +1433,9 @@ export class AilyChatConfigService {
                 } else {
                     this.setRemoteModelCatalogStatus(
                         'unavailable',
-                        `远端 model catalog 为空，已回退为 Auto-only。请检查 ${ChatAPI.modelCatalog}`,
+                        `远端 model catalog 为空，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
                     );
-                    console.warn('[AilyChatConfigService] 远端 model catalog 为空，已回退为 Auto-only', {
+                    console.warn('[AilyChatConfigService] 远端 model catalog 为空，暂时仅显示本地内置模型预设', {
                         url: ChatAPI.modelCatalog,
                         status: response.status,
                         body: responseBody,
@@ -1335,11 +1445,30 @@ export class AilyChatConfigService {
             },
             error: (error) => {
                 this.remoteModelCatalog = { models: {}, modelPresets: {} };
+                const isUnauthorized = error instanceof HttpErrorResponse
+                    ? error.status === 401
+                    : error?.status === 401;
+
+                if (isUnauthorized) {
+                    this.setRemoteModelCatalogStatus(
+                        'loading',
+                        '远端 model catalog 认证尚未就绪，登录完成后会自动加载模型目录。',
+                    );
+                    console.info('[AilyChatConfigService] 远端 model catalog 返回 401，等待认证完成后自动加载模型目录', {
+                        url: ChatAPI.modelCatalog,
+                        status: error?.status,
+                        message: error?.message,
+                        reason,
+                    });
+                    this.modelCatalogChangedSubject.next();
+                    return;
+                }
+
                 this.setRemoteModelCatalogStatus(
                     'unavailable',
-                    `未获取到远端 model catalog，当前按 Copilot 风格回退为 Auto-only。请检查 ${ChatAPI.modelCatalog} 与认证状态。`,
+                    `暂时无法加载远端 model catalog，将继续显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}。`,
                 );
-                console.warn('[AilyChatConfigService] 加载远端 model catalog 失败，已回退为 Auto-only', {
+                console.warn('[AilyChatConfigService] 加载远端 model catalog 失败，暂时仅显示本地内置模型预设', {
                     url: ChatAPI.modelCatalog,
                     status: error?.status,
                     message: error?.message,

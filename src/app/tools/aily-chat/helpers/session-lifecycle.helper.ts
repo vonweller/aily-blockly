@@ -173,7 +173,7 @@ export class SessionLifecycleHelper {
     }
 
     await this.switchToSession(forkedSessionId, forkedRecord);
-    this.ctx.scrollManager.autoScrollEnabled = true;
+    this.ctx.scrollManager.setScrollLock(true);
     this.ctx.scrollManager.scrollToBottom();
 
     return true;
@@ -212,6 +212,7 @@ export class SessionLifecycleHelper {
     this.ctx.isCancelled = false;
 
     this.ctx.interaction.resetApprovalState();
+    this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.lexStream.resetSessionState();
 
     this.ctx.lexStream.turns.clear();
@@ -267,6 +268,7 @@ export class SessionLifecycleHelper {
     const _curPath = AilyHost.get().project.currentProjectPath;
     const _rootPath = AilyHost.get().project.projectRootPath;
     this.ctx.chatService.currentSessionPath = (_curPath && _curPath !== _rootPath) ? _curPath : '';
+    await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(pendingSessionId);
 
     this.ctx.isSessionStarting = false;
   }
@@ -280,6 +282,7 @@ export class SessionLifecycleHelper {
   async stopAndCloseSession(skipSave: boolean = false): Promise<void> {
     if (!skipSave) { this.saveCurrentSession(); }
     this.ctx.lexStream.agent.stop();
+    this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.isWaiting = false;
   }
 
@@ -293,9 +296,10 @@ export class SessionLifecycleHelper {
     if (this.ctx.isSessionStarting) return;
     this.saveCurrentSession();
     this.ctx.interaction.resetApprovalState();
+    this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.lexStream.resetSessionState();
     this._viewWriteBridge.clearChatView();
-    this.ctx.scrollManager.autoScrollEnabled = true;
+    this.ctx.scrollManager.setScrollLock(true);
     this.ctx.isCompleted = false;
     this.ctx.isCancelled = true;
     this.ctx.editCheckpointService.clear();
@@ -321,6 +325,7 @@ export class SessionLifecycleHelper {
   async getHistory(): Promise<void> {
     if (!this.ctx.sessionId) return;
     this.ctx.interaction.resetApprovalState();
+    this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.lexStream.resetSessionState();
     this._viewWriteBridge.clearChatView();
     this.ctx.lexStream.turns.clear();
@@ -374,7 +379,7 @@ export class SessionLifecycleHelper {
     this.ctx.interaction.resetApprovalState();
     this.ctx.lexStream.resetSessionState();
     this._viewWriteBridge.clearChatView();
-    this.ctx.scrollManager.autoScrollEnabled = true;
+    this.ctx.scrollManager.setScrollLock(true);
     this.ctx.isCompleted = false;
     this.ctx.isCancelled = true;
     this.ctx.editCheckpointService.clear();

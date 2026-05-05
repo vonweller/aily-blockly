@@ -13,15 +13,20 @@
  */
 
 import {
+  AfterViewChecked,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   Input,
   OnChanges,
   SimpleChanges,
+  ViewChild,
+  inject,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 import { ChatPart, ConfirmationPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
+import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import {
   buildConfirmationActivityDisplayItem,
   buildPrimaryActivitySummary,
@@ -46,7 +51,13 @@ import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-det
   imports: [CommonModule, ChatActivityListComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="cag" [attr.data-state]="groupState" [class.cag-expanded]="expanded">
+    <div
+      class="cag"
+      [attr.data-state]="groupState"
+      [class.cag-expanded]="expanded"
+      [class.cag-fixed-streaming]="useFixedViewport"
+      [class.cag-fade-top]="showDetailViewportTopFade"
+      [class.cag-fade-bottom]="showDetailViewportBottomFade">
       <button
         type="button"
         class="cag-header"
@@ -109,7 +120,13 @@ import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-det
       </button>
 
       @if (expanded) {
-        <aily-chat-activity-list [items]="displayItems" />
+        <div
+          #detailViewport
+          class="cag-detail-viewport"
+          [class.cag-detail-viewport-fixed]="useFixedViewport"
+          (scroll)="onDetailViewportScroll()">
+          <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" />
+        </div>
       }
     </div>
   `,
@@ -302,16 +319,60 @@ import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-det
     .cag-expanded .cag-chevron {
       transform: rotate(180deg);
     }
+
+    .cag-detail-viewport {
+      position: relative;
+      min-width: 0;
+    }
+
+    .cag-detail-viewport-fixed {
+      max-height: 200px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: var(--chat-border, rgba(255,255,255,0.10)) transparent;
+      scrollbar-gutter: stable;
+    }
+
+    .cag.cag-fixed-streaming > .cag-detail-viewport-fixed {
+      mask-image: none;
+      -webkit-mask-image: none;
+    }
+
+    .cag.cag-fixed-streaming.cag-fade-top > .cag-detail-viewport-fixed {
+      mask-image: linear-gradient(to bottom, transparent 0px, black 20px);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px);
+    }
+
+    .cag.cag-fixed-streaming.cag-fade-bottom > .cag-detail-viewport-fixed {
+      mask-image: linear-gradient(to top, transparent 0px, black 20px);
+      -webkit-mask-image: linear-gradient(to top, transparent 0px, black 20px);
+    }
+
+    .cag.cag-fixed-streaming.cag-fade-top.cag-fade-bottom > .cag-detail-viewport-fixed {
+      mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black calc(100% - 20px), transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 20px, black calc(100% - 20px), transparent 100%);
+    }
   `],
 })
-export class ChatActivityGroupComponent implements OnChanges {
+export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   @Input() parts: readonly ChatPart[] = [];
   @Input() doing = false;
+  @Input() sessionId = '';
+  @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
 
   expanded = false;
   groupState: 'doing' | 'done' | 'error' = 'doing';
   groupHeader: ActivityGroupHeaderDisplayData = { kind: 'default', title: '' };
   displayItems: ActivityGroupDisplayItem[] = [];
+
+  private lastAutoExpanded = false;
+  private detailViewportAutoScrollEnabled = true;
+  private lastViewportScrollHeight = 0;
+  private ignoreNextViewportScroll = false;
+  private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
+  showDetailViewportTopFade = false;
+  showDetailViewportBottomFade = false;
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['parts'] || changes['doing']) {
@@ -319,12 +380,24 @@ export class ChatActivityGroupComponent implements OnChanges {
     }
   }
 
+  ngAfterViewChecked(): void {
+    this._syncDetailViewportScroll();
+  }
+
   toggle(): void {
     this.expanded = !this.expanded;
+    if (this.expanded && this.groupState === 'doing') {
+      this.detailViewportAutoScrollEnabled = true;
+      this.lastViewportScrollHeight = 0;
+    }
   }
 
   get isGroupSpinning(): boolean {
-    return this.groupState === 'doing';
+    return this.doing;
+  }
+
+  get useFixedViewport(): boolean {
+    return this.doing;
   }
 
   get groupIconClass(): string {
@@ -335,14 +408,129 @@ export class ChatActivityGroupComponent implements OnChanges {
     }
   }
 
+  onDetailViewportScroll(): void {
+    const viewport = this.detailViewportRef?.nativeElement;
+    if (!viewport) {
+      return;
+    }
+
+    if (this.ignoreNextViewportScroll) {
+      this.ignoreNextViewportScroll = false;
+      this.updateDetailViewportFades(viewport);
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    this.detailViewportAutoScrollEnabled = maxScrollTop <= 0 || viewport.scrollTop >= maxScrollTop - 10;
+    this.updateDetailViewportFades(viewport);
+  }
+
   private _refresh(): void {
     if (!this.parts.length) {
       return;
     }
     const pres = buildActivityGroupPresentation(this.parts);
-    this.groupState = pres.state;
+    const settledState = pres.state === 'doing' ? 'done' : pres.state;
+    this.groupState = this.doing ? 'doing' : settledState;
     this.groupHeader = pres.header;
     this.displayItems = this.parts.flatMap((part, i) => this._buildItems(part, i));
+    this._syncExpandedState();
+  }
+
+  private _syncExpandedState(): void {
+    const shouldAutoExpand = this.doing || this.hasActivePendingInlineApproval();
+    if (shouldAutoExpand === this.lastAutoExpanded) {
+      return;
+    }
+
+    this.expanded = shouldAutoExpand;
+    this.lastAutoExpanded = shouldAutoExpand;
+    this.detailViewportAutoScrollEnabled = shouldAutoExpand;
+    this.lastViewportScrollHeight = 0;
+    this.showDetailViewportTopFade = false;
+    this.showDetailViewportBottomFade = false;
+  }
+
+  private hasActivePendingInlineApproval(): boolean {
+    if (!this.sessionId || !this.displayItems.length) {
+      return false;
+    }
+
+    const activeConfirmation = this.runtimeInteractionHost?.getActiveConfirmation(this.sessionId);
+    if (!activeConfirmation) {
+      return false;
+    }
+
+    return this.displayItems.some((item) => {
+      const approval = item.approval;
+      if (!approval || approval.resolved === true) {
+        return false;
+      }
+
+      if (activeConfirmation.partId && approval.partId) {
+        return activeConfirmation.partId === approval.partId;
+      }
+
+      if (activeConfirmation.askId && approval.askId) {
+        return activeConfirmation.askId === approval.askId;
+      }
+
+      if (activeConfirmation.toolCallId && approval.toolCallId) {
+        return activeConfirmation.toolCallId === approval.toolCallId;
+      }
+
+      return false;
+    });
+  }
+
+  private _syncDetailViewportScroll(): void {
+    if (!this.expanded || !this.useFixedViewport) {
+      this.showDetailViewportTopFade = false;
+      this.showDetailViewportBottomFade = false;
+      return;
+    }
+
+    const viewport = this.detailViewportRef?.nativeElement;
+    if (!viewport) {
+      return;
+    }
+
+    const scrollHeight = viewport.scrollHeight;
+    if (!scrollHeight) {
+      return;
+    }
+
+    if (scrollHeight === this.lastViewportScrollHeight && !this.detailViewportAutoScrollEnabled) {
+      return;
+    }
+
+    this.lastViewportScrollHeight = scrollHeight;
+    if (!this.detailViewportAutoScrollEnabled) {
+      this.updateDetailViewportFades(viewport);
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, scrollHeight - viewport.clientHeight);
+    if (maxScrollTop <= 0 || viewport.scrollTop >= maxScrollTop - 1) {
+      this.updateDetailViewportFades(viewport);
+      return;
+    }
+
+    this.ignoreNextViewportScroll = true;
+    viewport.scrollTop = maxScrollTop;
+    this.updateDetailViewportFades(viewport);
+  }
+
+  private updateDetailViewportFades(viewport: HTMLElement): void {
+    if (!this.useFixedViewport) {
+      this.showDetailViewportTopFade = false;
+      this.showDetailViewportBottomFade = false;
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    this.showDetailViewportTopFade = maxScrollTop > 0 && viewport.scrollTop > 5;
+    this.showDetailViewportBottomFade = maxScrollTop > 0 && viewport.scrollTop < maxScrollTop - 5;
   }
 
   private _buildItems(part: ChatPart, index: number): ActivityGroupDisplayItem[] {

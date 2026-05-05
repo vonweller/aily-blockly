@@ -1,267 +1,226 @@
-.todo-panel {
-  background: var(--vscode-sideBar-background, #252526);
-  color: var(--vscode-sideBar-foreground, #cccccc);
-  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 13px;
-  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
-  
-  .todo-panel-header {
-    height: 30px;
-    padding: 0 12px;
-    border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
-    user-select: none;
-    background: var(--vscode-sideBar-background, #252526);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    
-    &:hover {
-      background: var(--vscode-list-hoverBackground, #2a2d2e);
-      
-      .header-actions {
-        opacity: 1;
-      }
-    }
+:host {
+  display: block;
+  width: 100%;
+}
 
-    .header-content {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-      flex: 1;
+.chat-todo-list-widget {
+  padding: 4px 3px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: color-mix(in srgb, #1f1f1f 72%, transparent);
+  backdrop-filter: blur(6px);
+  color: #cccccc;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
 
-      .panel-icon {
-        font-size: 12px;
-        color: var(--vscode-icon-foreground, #c5c5c5);
-        transition: transform 0.2s ease;
+.todo-list-expand {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 
-        &.expanded {
-          transform: rotate(90deg);
-        }
-      }
+.todo-list-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #cccccc;
+  cursor: pointer;
+}
 
-      .panel-title {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--vscode-sideBar-foreground, #cccccc);
-        text-transform: none;
-        letter-spacing: 0.5px;
-      }
-    }
-    
-    .header-actions {
-      opacity: 0;
-      transition: opacity 0.2s ease;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      
-      .delete-icon {
-        font-size: 12px;
-        color: var(--vscode-icon-foreground, #c5c5c5);
-        cursor: pointer;
-        padding: 4px;
-        border-radius: 2px;
-        transition: all 0.2s ease;
-        
-        &:hover {
-          color: var(--vscode-errorForeground, #f48771);
-          background: var(--vscode-toolbar-hoverBackground, #37373a);
-        }
-      }
-    }
+.todo-list-title-section {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 3px;
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expand-icon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 12px;
+  color: #cccccc;
+  transition: transform 0.2s ease;
+
+  &.expanded {
+    transform: rotate(90deg);
+  }
+}
+
+.todo-list-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.todo-list-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-header-status-icon {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 11px;
+}
+
+.todo-clear-button-container {
+  display: flex;
+  align-items: center;
+  height: 18px;
+  padding-right: 2px;
+}
+
+.todo-clear-button {
+  width: 16px;
+  height: 16px;
+  padding: 3px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: #cccccc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 
-  .todo-panel-content {
-    background: var(--vscode-sideBar-background, #252526);
-    max-height: 180px; /* 为header留出30px，限制内容最大高度 */
-    overflow-y: auto; /* 内容超出时显示滚动条 */
+  &:disabled {
+    cursor: default;
+    color: #6a6a6a;
+  }
 
-    /* 滚动条样式 */
-    &::-webkit-scrollbar {
-      width: 6px;
-    }
+  &:disabled:hover {
+    background: transparent;
+  }
 
-    &::-webkit-scrollbar-track {
-      background: var(--vscode-scrollbar-shadow, transparent);
-    }
+  i {
+    font-size: 10px;
+  }
+}
 
-    &::-webkit-scrollbar-thumb {
-      background: var(--vscode-scrollbarSlider-background, #424242);
-      border-radius: 3px;
-    }
+.todo-list-container {
+  margin-top: 2px;
+  max-height: calc(6.5 * 21px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scroll-padding-top: 24px;
+  scroll-padding-bottom: 24px;
 
-    &::-webkit-scrollbar-thumb:hover {
-      background: var(--vscode-scrollbarSlider-hoverBackground, #4f4f4f);
-    }
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
 
-    .todo-list {
-      .todo-item {
-        display: flex;
-        align-items: center;
-        height: 30px;
-        padding: 0 12px;
-        gap: 8px;
-        border-bottom: 1px solid var(--vscode-panel-border, rgba(60, 60, 60, 0.3));
-        cursor: pointer;
-        
-        &:hover {
-          background: var(--vscode-list-hoverBackground, #2a2d2e);
-        }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-        &.completed {
-          opacity: 0.6;
-          
-          .todo-content .todo-text {
-            text-decoration: line-through;
-          }
-        }
+  &::-webkit-scrollbar-thumb {
+    background: #424242;
+    border-radius: 3px;
+  }
+}
 
-        .todo-status-icon {
-          padding: 0;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 16px;
-          height: 16px;
-          
-          i {
-            font-size: 12px;
-            
-            &.status-pending {
-              color: var(--vscode-charts-orange, #ff8c00);
-            }
-            
-            &.status-in-progress {
-              color: var(--vscode-charts-blue, #007acc);
-            }
-            
-            &.status-completed {
-              color: var(--vscode-charts-green, #4ec9b0);
-            }
-          }
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scroll-snap-type: y proximity;
+}
 
-          &:hover i {
-            opacity: 0.8;
-          }
-        }
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 22px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  scroll-snap-align: start;
+  font-size: 12px;
+  text-align: left;
 
-        .todo-content {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          
-          .todo-line {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            width: 100%;
-          }
-          
-          .todo-text {
-            color: var(--vscode-editor-foreground, #d4d4d4);
-            font-size: 12px;
-            line-height: 1;
-            word-wrap: break-word;
-            flex: 1;
-            
-            &.completed-text {
-              color: var(--vscode-disabledForeground, #656565);
-              text-decoration: line-through;
-            }
-          }
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
 
-          .todo-priority {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 2px 4px;
-            border-radius: 2px;
-            font-size: 10px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-            flex-shrink: 0;
-            line-height: 1;
-            
-            &.priority-high {
-              background: var(--vscode-charts-red, #f85149);
-              color: white;
-            }
-            
-            &.priority-medium {
-              background: var(--vscode-charts-orange, #ff8c00);
-              color: white;
-            }
-            
-            &.priority-low {
-              background: var(--vscode-charts-gray, #6e7681);
-              color: var(--vscode-editor-foreground, #d4d4d4);
-            }
-          }
-        }
-      }
-    }
-    
-    .empty-state {
-      padding: 20px 12px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground, #999999);
-      
-      .empty-message {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        
-        i {
-          font-size: 24px;
-          opacity: 0.5;
-        }
-        
-        span {
-          font-size: 12px;
-        }
-      }
+  &:focus {
+    outline: 1px solid #007fd4;
+    outline-offset: -1px;
+  }
+
+  &.completed {
+    .todo-text {
+      color: #8a8a8a;
+      text-decoration: line-through;
     }
   }
 }
 
-/* 动画效果 */
-.todo-panel-content {
-  animation: slideDown 0.2s ease-out;
-}
+.todo-status-icon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 14px;
 
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 响应式调整 */
-@media (max-width: 768px) {
-  .todo-panel {
-    .todo-item {
-      padding: 8px 10px;
-      
-      .todo-content .todo-text {
-        font-size: 11px;
-      }
+  &.status-pending,
+  &.status-in-progress,
+  &.status-completed {
+    &.todo-header-status-icon {
+      width: 12px;
+      font-size: 11px;
     }
   }
+
+  &.status-pending {
+    color: #cca700;
+  }
+
+  &.status-in-progress {
+    color: #3794ff;
+  }
+
+  &.status-completed {
+    color: #89d185;
+  }
 }
 
-/* VSCode主题适配 */
-:root {
-  --todo-panel-background: var(--vscode-sideBar-background, #252526);
-  --todo-panel-foreground: var(--vscode-sideBar-foreground, #cccccc);
-  --todo-panel-border: var(--vscode-panel-border, #3c3c3c);
-  --todo-hover-background: var(--vscode-list-hoverBackground, #2a2d2e);
+.todo-content {
+  flex-grow: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.todo-text {
+  color: #cccccc;
 }

@@ -9,23 +9,28 @@
  * 从 ChatEngineService 中提取（Phase 4），减轻后者的体积。
  */
 
-import type { IChatCoordination, IProjectContext, ISessionAccess } from '../core/chat-context';
+import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
-import { generateApprovalMessage } from './tool-approval-ui';
+import { normalizeToolApprovalRequest } from './tool-approval-ui';
 import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from './tool-approval-ui';
 import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer } from '../core/ask-user';
 import type { QuestionItem } from '../core/chat-parts';
 import { AILY_CHAT_ONBOARDING_CONFIG } from '../../../configs/onboarding.config';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
-import { AILY_CONFIRMATION_RESULT_EVENT } from './interaction-events';
 
 type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
   & Pick<IProjectContext, 'isLoggedIn' | 'getCurrentProjectPath'>
   & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & {
     readonly ailyChatConfigService: Pick<
       AilyChatConfigService,
-      'terminalAllowList' | 'save' | 'hasWorkspaceToolApprovalRule' | 'addWorkspaceToolApprovalRule'
+      'terminalAllowList'
+      | 'save'
+      | 'hasWorkspaceToolApprovalRule'
+      | 'addWorkspaceToolApprovalRule'
+      | 'hasWorkspaceToolApprovalCombinationKey'
+      | 'addWorkspaceToolApprovalCombinationKey'
     >;
   };
 
@@ -100,6 +105,7 @@ export class UserInteractionHelper {
   private _approvalSessionId: string | null = null;
   private readonly _sessionApprovedTools = new Set<string>();
   private readonly _sessionApprovedTerminalCommands = new Set<string>();
+  private readonly _sessionApprovedApprovalCombinations = new Set<string>();
   private _sessionAllowAllTerminalCommands = false;
 
   constructor(private ctx: UserInteractionContext) {}
@@ -125,37 +131,26 @@ export class UserInteractionHelper {
    * ask_user 工具的 UI 层回调。
    * 在聊天界面显示全部问题，等待用户逐题回答后 resolve 完整结果。
    */
-  handleAskUser(questions: AskUserQuestion[]): Promise<AskUserFullResponse | undefined> {
-    return new Promise<AskUserFullResponse | undefined>((resolve) => {
-      this._askUserQuestions = questions;
-      this._askUserQuestionPartId = this.ctx.lexStream.ui.presentQuestion(this.toQuestionItems(questions));
+  async handleAskUser(questions: AskUserQuestion[]): Promise<AskUserFullResponse | undefined> {
+    this._askUserQuestions = questions;
+    this._askUserQuestionPartId = this.ctx.lexStream.ui.presentQuestion(this.toQuestionItems(questions));
 
-      this._resolveAskUser = resolve;
+    const partId = this._askUserQuestionPartId;
+    if (!partId) {
+      throw new Error('handleAskUser requires an active question partId.');
+    }
 
-      const handler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (!detail || !this._resolveAskUser) return;
-        document.removeEventListener('aily-question-answer', handler);
-
-        // 将用户回答写回 QuestionPart，后续持久化时再序列化为历史内容
-        if (detail.answers) {
-          const partId = typeof detail.partId === 'string' && detail.partId.trim().length > 0
-            ? detail.partId
-            : this._askUserQuestionPartId;
-          if (!partId) {
-            throw new Error('ask_user answer event is missing question partId.');
-          }
-          this.ctx.lexStream.ui.updateQuestionAnswers(detail.answers, partId);
-        }
-
-        const resolveRef = this._resolveAskUser;
-        this._resolveAskUser = null;
-        this._askUserQuestions = null;
-        this._askUserQuestionPartId = null;
-        resolveRef(detail as AskUserFullResponse);
-      };
-      document.addEventListener('aily-question-answer', handler);
-    });
+    try {
+      const result = await this.ctx.runtimeInteractionHost.presentQuestion(this.ctx.sessionId, partId, questions);
+      if (result?.answers) {
+        this.ctx.lexStream.ui.updateQuestionAnswers(result.answers, partId);
+      }
+      return result;
+    } finally {
+      this._resolveAskUser = null;
+      this._askUserQuestions = null;
+      this._askUserQuestionPartId = null;
+    }
   }
 
   /**
@@ -178,48 +173,14 @@ export class UserInteractionHelper {
    * 用户在聊天界面回答 ask_user 问题后调用此方法（兼容外部调用）。
    */
   resolveAskUserResponse(answer: string, wasFreeform: boolean): void {
-    if (this._resolveAskUser && this._askUserQuestions) {
-      const resolve = this._resolveAskUser;
-      const partId = this._askUserQuestionPartId;
-      this._resolveAskUser = null;
-
-      const q = this._askUserQuestions[0];
-      const questionKey = q?.question || 'unknown';
-      const ans: AskUserAnswer = wasFreeform
-        ? { selected: [], freeText: answer, skipped: false }
-        : { selected: [answer], freeText: null, skipped: false };
-      if (!partId) {
-        throw new Error('resolveAskUserResponse requires an active question partId.');
-      }
-      this.ctx.lexStream.ui.updateQuestionAnswers({ [questionKey]: ans }, partId);
-      this._askUserQuestions = null;
-      this._askUserQuestionPartId = null;
-      resolve({ answers: { [questionKey]: ans } });
-    }
+    this.ctx.runtimeInteractionHost.resolveQuestionCompat(this.ctx.sessionId, answer, wasFreeform);
   }
 
   /**
    * 用户跳过/取消 ask_user 问题。
    */
   skipAskUserResponse(): void {
-    if (this._resolveAskUser && this._askUserQuestions) {
-      const resolve = this._resolveAskUser;
-      const questions = this._askUserQuestions;
-      const partId = this._askUserQuestionPartId;
-      this._resolveAskUser = null;
-      this._askUserQuestions = null;
-      this._askUserQuestionPartId = null;
-      const answers = Object.fromEntries(questions.map((question) => [question.question, {
-        selected: [],
-        freeText: null,
-        skipped: true,
-      } satisfies AskUserAnswer]));
-      if (!partId) {
-        throw new Error('skipAskUserResponse requires an active question partId.');
-      }
-      this.ctx.lexStream.ui.updateQuestionAnswers(answers, partId);
-      resolve({ answers });
-    }
+    this.ctx.runtimeInteractionHost.skipQuestion(this.ctx.sessionId);
   }
 
   // ==================== 工具审批交互处理 ====================
@@ -231,29 +192,20 @@ export class UserInteractionHelper {
   async handleToolApproval(
     request: ToolApprovalRequest,
   ): Promise<{ approved: true } | { approved: false; reason?: string }> {
-    const toolName = request.toolName;
-    const input = request.args && typeof request.args === 'object'
-      ? request.args as Record<string, unknown>
-      : {};
+    const normalizedRequest = normalizeToolApprovalRequest({
+      ...request,
+      args: request.args && typeof request.args === 'object'
+        ? request.args as Record<string, unknown>
+        : {},
+    });
     this.ensureApprovalSessionState();
-    if (this.shouldAutoApprove(toolName, input)) {
+    if (this.shouldAutoApprove(normalizedRequest)) {
       return { approved: true };
     }
 
-    const fallback = generateApprovalMessage(toolName, input as any);
-    const result = await this._handleToolApproval({
-      toolCallId: request.toolCallId,
-      toolName,
-      title: request.title || fallback.title,
-      subtitle: request.subtitle,
-      source: request.source,
-      actions: request.actions,
-      primaryScope: request.primaryScope,
-      message: request.message || fallback.message,
-      args: input,
-    });
+    const result = await this._handleToolApproval(normalizedRequest);
     if (result.approved) {
-      this.rememberApproval(toolName, input, result.scope ?? 'once');
+      this.rememberApproval(normalizedRequest, result.scope ?? 'once', result.actionId);
     }
     return result.approved
       ? { approved: true }
@@ -274,10 +226,33 @@ export class UserInteractionHelper {
     this._approvalSessionId = null;
     this._sessionApprovedTools.clear();
     this._sessionApprovedTerminalCommands.clear();
+    this._sessionApprovedApprovalCombinations.clear();
     this._sessionAllowAllTerminalCommands = false;
   }
 
-  private shouldAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
+  private shouldAutoApprove(request: ToolApprovalRequest): boolean {
+    if (request.allowAutoConfirm === false) {
+      return false;
+    }
+
+    const toolName = request.toolName;
+    const input = request.args && typeof request.args === 'object'
+      ? request.args as Record<string, unknown>
+      : {};
+    const combinationKey = typeof request.approveCombination?.key === 'string'
+      ? request.approveCombination.key.trim()
+      : '';
+
+    if (combinationKey) {
+      if (this._sessionApprovedApprovalCombinations.has(combinationKey)) {
+        return true;
+      }
+
+      if (this.ctx.ailyChatConfigService.hasWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
+        return true;
+      }
+    }
+
     if (isTerminalApprovalTool(toolName)) {
       if (this._sessionAllowAllTerminalCommands) {
         return true;
@@ -299,10 +274,31 @@ export class UserInteractionHelper {
       || this.ctx.ailyChatConfigService.hasWorkspaceToolApprovalRule(this.ctx.getCurrentProjectPath(), toolName);
   }
 
-  private rememberApproval(toolName: string, input: Record<string, unknown>, scope: ToolApprovalScope): void {
+  private rememberApproval(request: ToolApprovalRequest, scope: ToolApprovalScope, actionId?: string): void {
+    const toolName = request.toolName;
+    const input = request.args && typeof request.args === 'object'
+      ? request.args as Record<string, unknown>
+      : {};
     const normalizedScope = scope === 'session-safe' ? 'session-all-terminal' : scope;
+    const combinationKey = typeof request.approveCombination?.key === 'string'
+      ? request.approveCombination.key.trim()
+      : '';
+    const isCombinationApproval = !!combinationKey && actionId?.startsWith('combination:');
 
     if (normalizedScope === 'once') {
+      return;
+    }
+
+    if (isCombinationApproval) {
+      if (normalizedScope === 'session') {
+        this._sessionApprovedApprovalCombinations.add(combinationKey);
+        return;
+      }
+
+      if (normalizedScope === 'workspace'
+        && this.ctx.ailyChatConfigService.addWorkspaceToolApprovalCombinationKey(this.ctx.getCurrentProjectPath(), combinationKey)) {
+        this.ctx.ailyChatConfigService.save();
+      }
       return;
     }
 
@@ -345,52 +341,33 @@ export class UserInteractionHelper {
    * 工具审批的 UI 层回调。
    */
   private _handleToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalResult> {
-    return new Promise<ToolApprovalResult>((resolve) => {
-      this.ctx.lexStream.ui.presentToolCallApproval(request);
-
-      this._resolveToolApproval = resolve;
-
-      const handler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (!detail || !this._resolveToolApproval) return;
-        if (detail.toolCallId !== request.toolCallId) return;
-
-        document.removeEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
-
-        this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!detail.approved, detail.scope);
-
-        const resolveRef = this._resolveToolApproval;
-        this._resolveToolApproval = null;
-        resolveRef({
-          approved: !!detail.approved,
-          reason: detail.reason || (detail.approved ? undefined : '用户拒绝执行'),
-          scope: detail.scope || 'once'
-        });
+    this.ctx.lexStream.ui.presentToolCallApproval(request);
+    return this.ctx.runtimeInteractionHost.presentToolApproval(this.ctx.sessionId, request).then((result) => {
+      this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!result.approved, result.scope);
+      return {
+        approved: !!result.approved,
+        reason: result.reason || (result.approved ? undefined : '用户拒绝执行'),
+        scope: result.scope || 'once',
+        actionId: typeof result.actionId === 'string' ? result.actionId : undefined,
       };
-      document.addEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
     });
   }
 
   /**
    * 外部调用：用户批准工具执行。
    */
-  approveToolExecution(toolCallId: string, scope: ToolApprovalScope = 'once'): void {
-    if (this._resolveToolApproval) {
-      document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
-        detail: { toolCallId, approved: true, scope }
-      }));
-    }
+  approveToolExecution(toolCallId: string, scope: ToolApprovalScope = 'once', actionId?: string): void {
+    this.ctx.runtimeInteractionHost.resolveToolApproval(this.ctx.sessionId, toolCallId, { approved: true, scope, actionId });
   }
 
   /**
    * 外部调用：用户拒绝工具执行。
    */
   rejectToolExecution(toolCallId: string, reason?: string): void {
-    if (this._resolveToolApproval) {
-      document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
-        detail: { toolCallId, approved: false, reason: reason || '用户拒绝执行' }
-      }));
-    }
+    this.ctx.runtimeInteractionHost.resolveToolApproval(this.ctx.sessionId, toolCallId, {
+      approved: false,
+      reason: reason || '用户拒绝执行',
+    });
   }
 
   // ==================== 新手引导 ====================

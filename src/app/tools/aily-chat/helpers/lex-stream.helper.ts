@@ -11,7 +11,7 @@
  * - 工具执行由 lex 核心 + contributed tools (IHostToolProvider) 处理
  */
 
-import type { IChatCoordination } from '../core/chat-context';
+import type { IChatCoordination, IChatServiceAccess } from '../core/chat-context';
 import { PartEventProcessor } from '../core/part-event-processor';
 import {
   bootstrapBlocklyLexAgent,
@@ -62,6 +62,7 @@ type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 
 type LexOwnerContext = BootstrapLexAgentContext
   & Pick<IChatCoordination, 'lexStream' | 'syncRegisteredAgentNames'>
+  & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
   & ConstructorParameters<typeof LexUiEventBridge>[0]

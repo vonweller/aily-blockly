@@ -866,12 +866,10 @@ export class EditActionsHelper {
     if (editFeedback) {
       this.ctx.pendingEditFeedback = editFeedback;
     }
+    this.ctx.scrollManager.startNewExchange?.();
     await this.ctx.send('user', newText, false);
     this.ctx.resourceManager.mergePathsTo(this.ctx.sessionAllowedPaths);
     this.ctx.resourceManager.items = [];
-
-    this.ctx.scrollManager.autoScrollEnabled = true;
-    this.ctx.scrollManager.scrollToBottom();
   }
 
   /**

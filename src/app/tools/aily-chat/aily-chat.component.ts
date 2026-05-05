@@ -31,7 +31,6 @@ import { NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../../services/config.service';
 import { AilyChatConfigService } from './services/aily-chat-config.service';
 import { MERMAID_DARK_THEME, MermaidCodeComponent } from 'ngx-x-markdown';
-import './tools/registered/register-all';
 import { AilyHost } from './core/host';
 import { createElectronHostAdapter } from './adapters/electron-host-adapter';
 import { ScrollManagerService } from './services/scroll-manager.service';
@@ -48,7 +47,9 @@ import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordina
 import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
+import { ChatActionRegistry } from './helpers/chat-action-registry';
 import { ChatComponentViewModel } from './helpers/chat-component-view-model';
+import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -61,10 +62,12 @@ import { TranslateModule } from '@ngx-translate/core';
 import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
+import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
 import { ChatHistoryService } from './services/chat-history.service';
+import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 
 // 共享类型从 core/chat-types.ts 导入并重新导出（保持向后兼容）
 import { Tool, ResourceItem, ChatMessage, ToolCallState, ToolCallInfo } from './core/chat-types';
@@ -90,7 +93,8 @@ export { ToolCallState };
     AilyEditsViewerComponent,
     TranslateModule,
     LoginComponent,
-    AilyChatSettingsComponent
+    AilyChatSettingsComponent,
+    ChatInputPartHostComponent,
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
@@ -102,15 +106,22 @@ export { ToolCallState };
     ChatViewService,
     EditCheckpointService,
     ChatEngineService,
+    ChatRuntimeInteractionHostService,
   ],
 })
 export class AilyChatComponent implements OnDestroy {
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
+  @ViewChild(ChatInputPartHostComponent) inputPartHost?: ChatInputPartHostComponent;
+  @ViewChild('dialogsContent')
+  set dialogsContent(ref: ElementRef<HTMLElement> | undefined) {
+    this.observeDialogContent(ref?.nativeElement ?? null);
+  }
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
 
   public readonly vm: ChatComponentViewModel;
   public isManualCompacting = false;
+  public isComposerFocused = false;
 
   public readonly sessionShellCoordinator: ChatSessionShellCoordinator;
   public readonly switchShellCoordinator: ChatSwitchShellCoordinator;
@@ -119,7 +130,10 @@ export class AilyChatComponent implements OnDestroy {
   public readonly submitShellCoordinator: ChatSubmitShellCoordinator;
   public readonly composerShellCoordinator: ChatComposerShellCoordinator;
   public readonly viewportShellCoordinator: ChatViewportShellCoordinator;
+  public readonly actionRegistry: ChatActionRegistry;
   private readonly lifecycleCoordinator: ChatComponentLifecycleCoordinator;
+  private dialogsResizeObserver: ResizeObserver | null = null;
+  private observedDialogsElement: HTMLElement | null = null;
 
   constructor(
     private uiService: UiService,
@@ -146,6 +160,7 @@ export class AilyChatComponent implements OnDestroy {
     private chatHistoryService: ChatHistoryService,
     private cdr: ChangeDetectorRef,
     private builderService: BuilderService,
+    public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
     public scrollManager: ScrollManagerService,
     public resourceManager: ResourceManagerService,
@@ -221,6 +236,10 @@ export class AilyChatComponent implements OnDestroy {
       viewState: this.viewState,
       refreshHistoryList: () => this.engine.refreshHistoryList(),
     });
+    this.actionRegistry = new ChatActionRegistry(() => ({
+      currentMode: this.vm.currentMode,
+      runFocusTodosViewAction: () => this.runFocusTodosViewAction(),
+    }));
     this.lifecycleCoordinator = new ChatComponentLifecycleCoordinator({
       isHostInitialized: () => AilyHost.isInitialized(),
       initializeHost: () => {
@@ -266,6 +285,7 @@ export class AilyChatComponent implements OnDestroy {
 
   ngAfterViewInit(): void {
     this.viewportShellCoordinator.initialize(this.chatContainer);
+    this.scrollManager.handleContentHeightChange();
   }
 
   async handleManualCompaction(event?: MouseEvent): Promise<void> {
@@ -297,6 +317,81 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngOnDestroy() {
+    this.disconnectDialogContentObserver();
     this.lifecycleCoordinator.destroy();
+  }
+
+  focusTodosView(): boolean {
+    if (!this.inputPartHost?.hasVisibleTodos()) {
+      return false;
+    }
+
+    return this.inputPartHost.focusTodoList();
+  }
+
+  toggleTodosViewFocus(): boolean {
+    if (!this.inputPartHost?.hasVisibleTodos()) {
+      return false;
+    }
+
+    if (this.inputPartHost.isTodoListFocused()) {
+      this.chatTextarea?.nativeElement?.focus();
+      return true;
+    }
+
+    return this.inputPartHost.focusTodoList();
+  }
+
+  runFocusTodosViewAction(): boolean {
+    return runChatTodoFocusAction({
+      currentMode: this.vm.currentMode,
+      toggleTodosViewFocus: () => this.toggleTodosViewFocus(),
+      notifyUnavailable: () => this.message.info('当前没有可聚焦的 agent 待办事项'),
+    });
+  }
+
+  get actionMenuItems() {
+    return this.actionRegistry.getMenuItems();
+  }
+
+  toggleActionMenu(event: MouseEvent): void {
+    this.menuManager.toggleActionMenu(event, [...this.actionMenuItems]);
+  }
+
+  handleActionMenuClick(item: { action?: string }): void {
+    this.menuManager.showActionMenu = false;
+    this.actionRegistry.runMenuAction(item);
+  }
+
+  setComposerFocusState(focused: boolean): void {
+    this.isComposerFocused = focused;
+  }
+
+  handleTodoFocusToggleShortcut(): void {
+    this.runFocusTodosViewAction();
+  }
+
+  private observeDialogContent(element: HTMLElement | null): void {
+    if (this.observedDialogsElement === element) {
+      return;
+    }
+
+    this.disconnectDialogContentObserver();
+    this.observedDialogsElement = element;
+
+    if (!element || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    this.dialogsResizeObserver = new ResizeObserver(() => {
+      this.scrollManager.handleContentHeightChange();
+    });
+    this.dialogsResizeObserver.observe(element);
+  }
+
+  private disconnectDialogContentObserver(): void {
+    this.dialogsResizeObserver?.disconnect();
+    this.dialogsResizeObserver = null;
+    this.observedDialogsElement = null;
   }
 }

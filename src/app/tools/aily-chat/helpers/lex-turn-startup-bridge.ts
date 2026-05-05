@@ -1,11 +1,13 @@
 import type { TurnRequest } from 'aily-lex/browser';
 import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
+import type { IProjectContext } from '../core/chat-context';
 import { MAIN_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 
 type LexTurnStartupContext = Pick<
   IAgentLifecycle,
   'isCompleted' | 'isCancelled' | 'isWaiting' | 'currentMessageSource' | 'toolCallingIteration'
 > & Pick<IChatViewAccess, 'list' | 'scrollManager'>
+  & Pick<IProjectContext, 'currentModel'>
   & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
   & Pick<IChatCoordination, 'editActions'>;
 
@@ -50,6 +52,25 @@ export class LexTurnStartupBridge {
     return agentId || MAIN_AGENT_TYPE;
   }
 
+  private buildTurnModelDisplayMetadata(): TurnRequest['metadata'] {
+    const selectedModel = this.ctx.currentModel;
+    const modelDisplayName = typeof selectedModel?.name === 'string' && selectedModel.name.trim()
+      ? selectedModel.name.trim()
+      : undefined;
+    const modelDisplayBillingLabel = typeof this.ctx.ailyChatConfigService.getModelBillingLabel === 'function'
+      ? this.ctx.ailyChatConfigService.getModelBillingLabel(selectedModel)
+      : undefined;
+    const modelPresetId = typeof selectedModel?.presetId === 'string' && selectedModel.presetId.trim()
+      ? selectedModel.presetId.trim()
+      : undefined;
+
+    return {
+      ...(modelDisplayName ? { modelDisplayName } : {}),
+      ...(modelDisplayBillingLabel ? { modelDisplayBillingLabel } : {}),
+      ...(modelPresetId ? { modelPresetId } : {}),
+    };
+  }
+
   beginMainAgentTurn(
     userMessage: string,
     displayContent?: string,
@@ -57,6 +78,7 @@ export class LexTurnStartupBridge {
   ): string | undefined {
     const nextRequestMetadata: TurnRequest['metadata'] = {
       checkpointId: this.createCheckpointId(),
+      ...this.buildTurnModelDisplayMetadata(),
       ...(requestMetadata ?? {}),
     };
     const turnId = this.startTurn(userMessage, displayContent, nextRequestMetadata);
@@ -106,7 +128,7 @@ export class LexTurnStartupBridge {
         );
       }
     }
-    this.ctx.scrollManager.autoScrollEnabled = true;
+    this.ctx.scrollManager.setScrollLock(true);
 
     return turnId;
   }

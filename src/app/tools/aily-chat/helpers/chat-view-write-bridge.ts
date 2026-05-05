@@ -34,13 +34,13 @@ export type ChatViewWriteBridgeContext = Pick<
   IChatViewAccess,
   'list' | 'partStore' | 'viewAdapter' | 'scrollManager' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'
 > & Pick<ISessionAccess, 'sessionId' | 'chatHistoryService'>
-  & Pick<IProjectContext, 'currentModelName'>
+  & Pick<IProjectContext, 'currentModelName' | 'currentModelBillingLabel'>
   & Pick<IAgentLifecycle, 'currentMessageSource'>
   & Pick<IChatServiceAccess, 'ngZone'>;
 
 type ChatViewWriteListAccess = Pick<
   ChatViewWriteBridgeContext,
-  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentMessageSource'
+  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource'
 >;
 
 type ChatViewWriteStoreAccess = Pick<
@@ -81,7 +81,7 @@ type ChatViewWriteResetAccess = Pick<
 
 type ChatViewWriteMessageHandleAccess = Pick<
   ChatViewWriteListAccess,
-  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentMessageSource'
+  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource'
 > & ChatViewWriteStoreAccess;
 
 class ChatViewHistoryRestoreHelper {
@@ -389,7 +389,7 @@ class ChatViewPartMutationHelper {
     this.access.triggerSyncDetectChanges();
 
     if (options.scroll) {
-      this.access.scrollManager.autoScrollEnabled = true;
+      this.access.scrollManager.setScrollLock(true);
       this.access.scrollManager.scrollToBottom();
     }
 
@@ -474,11 +474,16 @@ class ChatViewMessageHandleHelper {
     if (!options.forceNew
         && lastMessage
         && lastMessage.role === 'aily'
+        && lastMessage.state === 'doing'
         && getTurnResponseParticipant(lastMessage.source) === msgSource) {
+      if (options.turnId && lastMessage.turnId && lastMessage.turnId !== options.turnId) {
+        // Completed/foreign-turn assistant entries must remain immutable.
+      } else {
       if (options.turnId && !lastMessage.turnId) {
         lastMessage.turnId = options.turnId;
       }
       return trailingHandle!;
+      }
     }
 
     this.access.list.push({
@@ -487,6 +492,7 @@ class ChatViewMessageHandleHelper {
       state: options.state ?? 'doing',
       source: msgSource,
       modelName: this.access.currentModelName || undefined,
+      modelBillingLabel: this.access.currentModelBillingLabel || undefined,
       turnId: options.turnId,
     } as any);
 
@@ -520,6 +526,7 @@ class ChatViewMessageHandleHelper {
       state: options.state ?? 'doing',
       source: msgSource,
       modelName: this.access.currentModelName || undefined,
+      modelBillingLabel: this.access.currentModelBillingLabel || undefined,
       turnId: options.turnId,
     } as any);
 

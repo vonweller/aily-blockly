@@ -23,7 +23,7 @@ export class FooterComponent {
       this.changeState(state);
     });
     // 其他窗口通过electron侧改变主窗口状态
-    window['ipcRenderer'].on('state-update', (event, state: ActionState) => {
+    window['ipcRenderer']?.on?.('state-update', (event, state: ActionState) => {
       this.changeState(state);
     });
   }

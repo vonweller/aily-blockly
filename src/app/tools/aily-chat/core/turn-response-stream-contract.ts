@@ -1,4 +1,4 @@
-import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
   buildDialogTurnContext,
@@ -17,6 +17,7 @@ export interface TurnResponseUserEntryProjection {
   readonly state: TurnResponseHostMessageState;
   readonly source?: string;
   readonly modelName?: string;
+  readonly modelBillingLabel?: string;
 }
 
 export interface TurnResponseAssistantEntryProjection {
@@ -24,6 +25,7 @@ export interface TurnResponseAssistantEntryProjection {
   readonly state: TurnResponseHostMessageState;
   readonly source?: string;
   readonly modelName?: string;
+  readonly modelBillingLabel?: string;
 }
 
 export interface TurnResponseUserMessageProjection {
@@ -33,6 +35,7 @@ export interface TurnResponseUserMessageProjection {
   readonly turnContext: DialogTurnContext;
   readonly source?: string;
   readonly modelName?: string;
+  readonly modelBillingLabel?: string;
 }
 
 export interface TurnResponseAssistantMessageProjection {
@@ -42,6 +45,7 @@ export interface TurnResponseAssistantMessageProjection {
   readonly turnContext: DialogTurnContext;
   readonly source?: string;
   readonly modelName?: string;
+  readonly modelBillingLabel?: string;
 }
 
 export interface TurnResponseStreamProjection {
@@ -50,7 +54,10 @@ export interface TurnResponseStreamProjection {
   readonly rounds: TurnResponseTurn['rounds'];
   readonly usage?: TurnResponseTurn['usage'];
   readonly participant?: string;
-  readonly command?: TurnResponseTurn['response']['command'];
+  readonly slashCommand?: TurnResponseCommand;
+  readonly followups?: readonly TurnResponseFollowup[];
+  readonly modelName?: string;
+  readonly modelBillingLabel?: string;
   readonly usedContext?: TurnResponseTurn['response']['usedContext'];
   readonly contentReferences?: TurnResponseTurn['response']['contentReferences'];
   readonly codeCitations?: TurnResponseTurn['response']['codeCitations'];
@@ -157,6 +164,7 @@ export function buildTurnResponseUserEntryProjection(
     state: overrides.state ?? 'done',
     source: overrides.source,
     modelName: overrides.modelName,
+    modelBillingLabel: overrides.modelBillingLabel,
   };
 }
 
@@ -164,11 +172,31 @@ export function buildTurnResponseAssistantEntryProjection(
   turn: TurnResponseTurn,
   overrides: Partial<TurnResponseAssistantEntryProjection> = {},
 ): TurnResponseAssistantEntryProjection {
+  const requestMetadata = turn.request.metadata;
+  const requestModelDisplayName = typeof requestMetadata?.['modelDisplayName'] === 'string' && requestMetadata['modelDisplayName'].trim()
+    ? requestMetadata['modelDisplayName'].trim()
+    : undefined;
+  const requestModelDisplayBillingLabel = typeof requestMetadata?.['modelDisplayBillingLabel'] === 'string' && requestMetadata['modelDisplayBillingLabel'].trim()
+    ? requestMetadata['modelDisplayBillingLabel'].trim()
+    : undefined;
+  const responseModelName = typeof turn.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
+    ? turn.responseModel.modelName.trim()
+    : undefined;
+  const responseModelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
+    ? turn.responseModel.modelBillingLabel.trim()
+    : undefined;
+  const modelName = overrides.modelName
+    ?? responseModelName
+    ?? requestModelDisplayName;
+  const modelBillingLabel = overrides.modelBillingLabel
+    ?? responseModelBillingLabel
+    ?? requestModelDisplayBillingLabel;
   return {
     content: overrides.content ?? '',
     state: overrides.state ?? toTurnResponseHostMessageState(turn.response.status),
     source: overrides.source ?? getTurnResponseParticipant(turn.response.participant),
-    modelName: overrides.modelName,
+    modelName,
+    modelBillingLabel,
   };
 }
 
@@ -189,6 +217,7 @@ export function buildTurnResponseUserMessageProjection(
     turnContext: turnContext!,
     source: projection.source,
     modelName: projection.modelName,
+    modelBillingLabel: projection.modelBillingLabel,
   };
 }
 
@@ -210,6 +239,7 @@ export function buildTurnResponseAssistantMessageProjection(
     turnContext: turnContext!,
     source: projection.source,
     modelName: projection.modelName,
+    modelBillingLabel: projection.modelBillingLabel,
   };
 }
 
@@ -256,6 +286,12 @@ export function buildTurnResponseTurn(
   const contentReferences = projection.contentReferences ? [...projection.contentReferences] : [];
   const codeCitations = projection.codeCitations ? [...projection.codeCitations] : [];
   const progressMessages = projection.progressMessages ? [...projection.progressMessages] : [];
+  const modelName = typeof projection.modelName === 'string' && projection.modelName.trim()
+    ? projection.modelName.trim()
+    : undefined;
+  const modelBillingLabel = typeof projection.modelBillingLabel === 'string' && projection.modelBillingLabel.trim()
+    ? projection.modelBillingLabel.trim()
+    : undefined;
 
   return {
     turnId: projection.turnId,
@@ -265,7 +301,6 @@ export function buildTurnResponseTurn(
     response: {
       id: projection.turnId,
       participant,
-      command: projection.command,
       usedContext: projection.usedContext,
       contentReferences,
       codeCitations,
@@ -277,6 +312,19 @@ export function buildTurnResponseTurn(
       createdAt: projection.createdAt,
       updatedAt: projection.updatedAt,
     },
+    ...((projection.slashCommand !== undefined
+      || projection.followups !== undefined
+      || modelName !== undefined
+      || modelBillingLabel !== undefined)
+      ? {
+        responseModel: {
+          ...(projection.slashCommand !== undefined ? { slashCommand: projection.slashCommand } : {}),
+          ...(projection.followups !== undefined ? { followups: [...projection.followups] } : {}),
+          ...(modelName !== undefined ? { modelName } : {}),
+          ...(modelBillingLabel !== undefined ? { modelBillingLabel } : {}),
+        },
+      }
+      : {}),
     createdAt: projection.createdAt,
     updatedAt: projection.updatedAt,
   };

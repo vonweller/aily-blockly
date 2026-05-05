@@ -17,6 +17,7 @@ export interface ChatDialogViewItem {
   readonly content: string;
   readonly doing: boolean;
   readonly turnModelName: string;
+  readonly turnModelBillingLabel?: string;
   readonly turnContext: DialogTurnContext | null;
   readonly responseVote?: 0 | 1;
   readonly isLastAily: boolean;
@@ -31,6 +32,7 @@ export interface ChatDialogViewMessageProjection {
   readonly turnContext?: DialogTurnContext | null;
   readonly source?: string;
   readonly modelName?: string;
+  readonly modelBillingLabel?: string;
   readonly responseVote?: 0 | 1;
 }
 
@@ -65,6 +67,7 @@ function toDialogMessageProjection(
     turnContext,
     source: message.source,
     modelName: message.modelName,
+    modelBillingLabel: message.modelBillingLabel,
   };
 }
 
@@ -125,6 +128,7 @@ function createDialogViewItem(
       ...(message.content ? { content: message.content } : {}),
       ...(message.source ? { source: message.source } : {}),
       ...(message.modelName ? { modelName: message.modelName } : {}),
+      ...(message.modelBillingLabel ? { modelBillingLabel: message.modelBillingLabel } : {}),
     })
     : null;
   const effectiveState = assistantProjection?.state ?? message.state;
@@ -153,6 +157,9 @@ function createDialogViewItem(
     turnModelName: message.role === 'aily'
       ? (assistantProjection?.modelName || message.modelName || '')
       : '',
+    turnModelBillingLabel: message.role === 'aily'
+      ? (assistantProjection?.modelBillingLabel || message.modelBillingLabel)
+      : undefined,
     resolvedTurnId: turnId,
     turnContext,
     responseVote: message.responseVote,

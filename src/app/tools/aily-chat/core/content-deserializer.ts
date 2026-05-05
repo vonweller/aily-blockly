@@ -119,6 +119,7 @@ export function deserializeContentToParts(content: string): ChatPart[] {
             || data.kind === 'agent_team'
             || data.kind === 'background_task'
             || data.kind === 'instructions'
+            || data.kind === 'todo'
             || data.kind === 'compaction'
           ) {
             parts.push(mkState(

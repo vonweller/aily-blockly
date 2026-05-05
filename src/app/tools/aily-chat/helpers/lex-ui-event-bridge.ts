@@ -229,7 +229,21 @@ export class LexUiEventBridge {
   }
 
   presentToolCallApproval(request: ToolApprovalRequest): string {
-    if (this.viewWriteBridge.updateToolCallApprovalRequestByToolCallId(request)) {
+    const mirrored = this.renderEventBridge?.processInteractionEvent({
+      type: 'approval_request',
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      input: request.args ?? {},
+      message: request.message,
+      title: request.title,
+      subtitle: request.subtitle,
+      actions: request.actions,
+      primaryScope: request.primaryScope,
+      source: request.source,
+      timestamp: Date.now(),
+    } as any) ?? false;
+    const updated = this.viewWriteBridge.updateToolCallApprovalRequestByToolCallId(request);
+    if (mirrored || updated) {
       return request.toolCallId;
     }
 
@@ -241,7 +255,15 @@ export class LexUiEventBridge {
     approved: boolean,
     scope?: ConfirmationPart['scope'],
   ): void {
-    if (this.viewWriteBridge.resolveToolCallApprovalByToolCallId(toolCallId, { approved, scope })) {
+    const mirrored = this.renderEventBridge?.processInteractionEvent({
+      type: 'approval_resolve',
+      toolCallId,
+      result: approved ? 'approved' : 'rejected',
+      scope,
+      timestamp: Date.now(),
+    } as any) ?? false;
+    const updated = this.viewWriteBridge.resolveToolCallApprovalByToolCallId(toolCallId, { approved, scope });
+    if (mirrored || updated) {
       return;
     }
 

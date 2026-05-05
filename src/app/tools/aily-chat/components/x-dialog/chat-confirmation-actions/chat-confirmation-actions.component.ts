@@ -68,8 +68,8 @@ export interface ChatConfirmationActionOption {
       font-size: 12px;
       font-weight: 400;
       line-height: 1.2;
-      background: var(--vscode-button-background, #0e639c);
-      color: var(--vscode-button-foreground, #ffffff);
+      background: #0e639c;
+      color: #ffffff;
       border: 1px solid transparent;
       outline: none;
       cursor: pointer;
@@ -78,9 +78,9 @@ export interface ChatConfirmationActionOption {
     .cca-btn-primary-standalone {
       border-radius: 6px;
     }
-    .cca-btn-primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    .cca-btn-primary:hover { background: #1177bb; }
     .cca-btn-primary:disabled {
-      background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 40%, transparent);
+      background: color-mix(in srgb, #0e639c 40%, transparent);
       color: rgba(255,255,255,0.7);
       cursor: not-allowed;
     }
@@ -90,8 +90,8 @@ export interface ChatConfirmationActionOption {
       padding: 0;
       border-radius: 0 6px 6px 0;
       font-size: 11px;
-      background: var(--vscode-button-background, #0e639c);
-      color: var(--vscode-button-foreground, #ffffff);
+      background: #0e639c;
+      color: #ffffff;
       border: 1px solid transparent;
       border-left: 1px solid rgba(255,255,255,0.2);
       outline: none;
@@ -101,15 +101,15 @@ export interface ChatConfirmationActionOption {
       align-items: center;
       justify-content: center;
     }
-    .cca-btn-caret:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    .cca-btn-caret:hover { background: #1177bb; }
     .cca-btn-caret:disabled {
-      background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 40%, transparent);
+      background: color-mix(in srgb, #0e639c 40%, transparent);
       color: rgba(255,255,255,0.7);
       cursor: not-allowed;
     }
     .cca-dropdown {
       position: fixed;
-      background: var(--vscode-menu-background, #252526);
+      background: #252526;
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 6px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);

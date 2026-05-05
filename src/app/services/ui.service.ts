@@ -221,7 +221,7 @@ export class UiService {
   // 更新footer右下角的状态
   updateFooterState(state: ActionState) {
     // 判断当前url是否是main-window
-    if (this.isMainWindow) {
+    if (this.isMainWindow || !window['ipcRenderer']?.send) {
       this.stateSubject.next(state);
     } else {
       window['ipcRenderer'].send('state-update', state);

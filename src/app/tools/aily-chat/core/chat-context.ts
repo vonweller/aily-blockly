@@ -31,6 +31,7 @@ import type { ScrollManagerService } from '../services/scroll-manager.service';
 import type { ResourceManagerService } from '../services/resource-manager.service';
 import type { MenuManagerService } from '../services/menu-manager.service';
 import type { ChatViewAdapter } from '../services/chat-view-adapter';
+import type { ChatRuntimeInteractionHostService } from '../services/chat-runtime-interaction-host.service';
 
 import type { ChatMessage } from './chat-types';
 import type { ChatPartStore } from './chat-part-store';
@@ -115,6 +116,7 @@ export interface IProjectContext {
   readonly currentMode: string;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
+  readonly currentModelBillingLabel?: string;
   /** 获取当前项目路径 */
   getCurrentProjectPath(): string;
 }
@@ -135,6 +137,7 @@ export interface IChatServiceAccess {
   readonly translate: TranslateService;
   readonly message: NzMessageService;
   readonly resourceManager: ResourceManagerService;
+  readonly runtimeInteractionHost: ChatRuntimeInteractionHostService;
 }
 
 // ---------------------------------------------------------------------------

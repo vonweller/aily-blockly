@@ -1,4 +1,12 @@
-import { collectTurnResponseText, type SessionSnapshot, type TurnRequest, type TurnResponsePart, type TurnResponseTurn } from 'aily-lex/browser';
+import {
+  collectTurnResponseText,
+  type SessionSnapshot,
+  type TurnRequest,
+  type TurnResponseCommand,
+  type TurnResponseFollowup,
+  type TurnResponsePart,
+  type TurnResponseTurn,
+} from 'aily-lex/browser';
 
 import type { ChatPartStore, ChatPartStoreReadableHandle } from '../core/chat-part-store';
 import type { ChatPart } from '../core/chat-parts';
@@ -8,6 +16,7 @@ import {
 } from '../core/user-turn-action-target';
 import {
   buildTurnResponseAssistantMessageProjection,
+  getTurnResponseAssistantText,
   getTurnResponseParticipant,
   buildTurnResponseUserMessageProjection,
   type TurnResponseAssistantEntryProjection,
@@ -59,7 +68,6 @@ function applyHostStreamResponseProgressUpdate(
   };
 }
 import {
-  buildChatDialogViewItemsFromMessageProjections,
   type ChatDialogViewMessageProjection,
   type ChatDialogViewItem,
 } from './chat-dialog-view-items';
@@ -130,13 +138,13 @@ export interface HostResponseModel {
   readonly request: HostRequestModel | null;
   readonly id: string | null;
   readonly state: TurnResponseTurn['response']['status'] | null;
-  readonly slashCommand: TurnResponseTurn['response']['command'] | null;
+  readonly slashCommand: TurnResponseCommand | null;
   readonly agentOrSlashCommandDetected: boolean;
   readonly usedContext: TurnResponseTurn['response']['usedContext'] | null;
   readonly contentReferences: readonly NonNullable<TurnResponseTurn['response']['contentReferences']>[number][];
   readonly codeCitations: readonly NonNullable<TurnResponseTurn['response']['codeCitations']>[number][];
   readonly progressMessages: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][];
-  readonly followups: readonly NonNullable<TurnResponseTurn['response']['followups']>[number][];
+  readonly followups: readonly TurnResponseFollowup[];
   readonly completedAt: number | null;
   readonly terminationReason: TurnResponseTurn['response']['terminationReason'] | null;
   readonly isComplete: boolean;
@@ -237,10 +245,11 @@ interface HostTurnWaitingRuntimeState {
 }
 
 interface HostResponseSidecarRuntimeState {
+  readonly slashCommand?: TurnResponseCommand | null;
   readonly responseId?: string;
   readonly result?: string;
   readonly responseMarkdownInfo?: readonly HostResponseMarkdownInfo[];
-  readonly followups?: readonly NonNullable<TurnResponseTurn['response']['followups']>[number][];
+  readonly followups?: readonly TurnResponseFollowup[];
   readonly modelState?: HostResponseModelState;
   readonly vote?: HostResponseVoteDirection;
   readonly timestamp?: number;
@@ -405,7 +414,7 @@ export interface HostStreamTurnRoundsPatch {
 
 export interface HostStreamResponseIdentityPatch {
   participant?: string | null;
-  command?: NonNullable<TurnResponseTurn['response']['command']> | null;
+  slashCommand?: TurnResponseCommand | null;
 }
 
 export interface HostStreamResponseIdentityUpdateEvent extends HostStreamResponseItemBase<'response_identity_update'> {
@@ -433,7 +442,7 @@ export interface HostStreamResponseProgressMessageEvent extends HostStreamRespon
 }
 
 export interface HostStreamResponseFollowupsEvent extends HostStreamResponseItemBase<'response_followups'> {
-  value: NonNullable<TurnResponseTurn['response']['followups']> | undefined;
+  value: readonly TurnResponseFollowup[] | undefined;
   updatedAt: number;
 }
 
@@ -504,8 +513,8 @@ function cloneHostStreamResponseIdentityPatch(
   if (Object.prototype.hasOwnProperty.call(value, 'participant')) {
     cloned.participant = value.participant ?? null;
   }
-  if (Object.prototype.hasOwnProperty.call(value, 'command')) {
-    cloned.command = value.command ?? null;
+  if (Object.prototype.hasOwnProperty.call(value, 'slashCommand')) {
+    cloned.slashCommand = value.slashCommand ?? null;
   }
   return cloned;
 }
@@ -573,7 +582,7 @@ export function createHostStreamResponseProgressMessageItem(
 }
 
 export function createHostStreamResponseFollowupsItem(
-  value: NonNullable<TurnResponseTurn['response']['followups']> | undefined,
+  value: readonly TurnResponseFollowup[] | undefined,
   updatedAt: number,
 ): HostStreamResponseFollowupsEvent {
   return {
@@ -682,7 +691,7 @@ export interface HostStreamResponseProgressMessageItemEvent {
 export interface HostStreamResponseFollowupsItemEvent {
   type: 'response_followups';
   turnId: string;
-  value: NonNullable<TurnResponseTurn['response']['followups']> | undefined;
+  value: readonly TurnResponseFollowup[] | undefined;
   updatedAt: number;
 }
 
@@ -1214,10 +1223,9 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     let changed = false;
     const liveTurnIds = new Set(liveTurnResponses.map(turn => turn.turnId));
     const snapshotTurnIdsForRetention = new Set(snapshot?.turns?.map(turn => turn.id) ?? []);
-    const retainedTurnIds = new Set<string>([
-      ...liveTurnIds,
-      ...snapshotTurnIdsForRetention,
-    ]);
+    const retainedTurnIds = liveTurnResponses.length > 0
+      ? liveTurnIds
+      : snapshotTurnIdsForRetention;
 
     if (liveTurnResponses.length === 0) {
       this.pruneTurnEntries(retainedTurnIds);
@@ -1250,18 +1258,9 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
 
     changed = this.pruneTurnEntries(retainedTurnIds) || changed;
 
-    if (!snapshot?.turns?.length) {
-      if (changed) {
-        this.turnEntryStateRevision += 1;
-      }
-      return;
-    }
-
-    const snapshotTurnIds = new Set(snapshot.turns.map(turn => turn.id));
-    const nextTurnEntryOrder = [
-      ...snapshot.turns.map(turn => turn.id).filter(turnId => this.turnEntriesById.has(turnId)),
-      ...this.turnEntryOrder.filter(turnId => !snapshotTurnIds.has(turnId) && this.turnEntriesById.has(turnId)),
-    ];
+    const nextTurnEntryOrder = liveTurnResponses.length > 0
+      ? liveTurnResponses.map(turn => turn.turnId).filter(turnId => this.turnEntriesById.has(turnId))
+      : (snapshot?.turns?.map(turn => turn.id).filter(turnId => this.turnEntriesById.has(turnId)) ?? []);
     if (nextTurnEntryOrder.length !== this.turnEntryOrder.length
       || nextTurnEntryOrder.some((turnId, index) => turnId !== this.turnEntryOrder[index])) {
       changed = true;
@@ -1347,11 +1346,7 @@ function buildHostResponseProjectionFromEntries(
   return {
     turnResponses,
     chatList: buildChatListFromEntries(entries),
-    dialogItems: buildChatDialogViewItemsFromMessageProjections(
-      buildDialogMessageProjectionsFromEntries(entries),
-      turnResponses,
-      options,
-    ),
+    dialogItems: buildCanonicalDialogItemsFromEntries(entries, options),
   };
 }
 
@@ -1382,7 +1377,7 @@ function buildHostRequestModelFromOwner(
     pendingConfirmation,
     owner?.runtimeState?.waiting?.accumulatedMs ?? 0,
   );
-  const slashCommand = resolveHostResponseSlashCommand(latestTurnResponse);
+  const slashCommand = resolveHostResponseSlashCommand(latestTurnResponse, owner?.runtimeState);
   const followups = resolveHostResponseFollowups(latestTurnResponse, owner?.runtimeState);
   const derivedTimeSpentWaiting = responseTiming
     ? Math.max(0, responseTiming.confirmationAdjustedTimestamp - responseTiming.timestamp)
@@ -1445,17 +1440,37 @@ function buildHostRequestModelFromOwner(
 
 function resolveHostResponseSlashCommand(
   turn: TurnResponseTurn,
-): TurnResponseTurn['response']['command'] | null {
-  if (typeof turn.response.command?.name === 'string' && turn.response.command.name.trim().length > 0) {
-    return { ...turn.response.command, name: turn.response.command.name.trim() };
+  runtimeState?: HostTurnRuntimeState,
+): TurnResponseCommand | null {
+  if (runtimeState) {
+    if (runtimeState.responseSidecar && Object.prototype.hasOwnProperty.call(runtimeState.responseSidecar, 'slashCommand')) {
+      return normalizeHostResponseSlashCommand(runtimeState.responseSidecar.slashCommand);
+    }
+
+    return null;
   }
 
-  return null;
+  return normalizeHostResponseSlashCommand(turn.responseModel?.slashCommand);
+}
+
+function normalizeHostResponseSlashCommand(
+  slashCommand: TurnResponseCommand | null | undefined,
+): TurnResponseCommand | null {
+  if (!slashCommand || typeof slashCommand.name !== 'string') {
+    return null;
+  }
+
+  const normalizedName = slashCommand.name.trim();
+  if (!normalizedName) {
+    return null;
+  }
+
+  return { ...slashCommand, name: normalizedName };
 }
 
 function deriveHostAgentOrSlashCommandDetected(
   turn: TurnResponseTurn | null | undefined,
-  slashCommand: TurnResponseTurn['response']['command'] | null,
+  slashCommand: TurnResponseCommand | null,
 ): boolean {
   if (slashCommand) {
     return true;
@@ -1471,12 +1486,12 @@ function deriveHostAgentOrSlashCommandDetected(
 function resolveHostResponseFollowups(
   turn: TurnResponseTurn,
   runtimeState?: HostTurnRuntimeState,
-): readonly NonNullable<TurnResponseTurn['response']['followups']>[number][] {
+): readonly TurnResponseFollowup[] {
   if (runtimeState?.responseSidecar?.followups !== undefined) {
     return runtimeState.responseSidecar.followups.map(followup => ({ ...followup }));
   }
 
-  return [];
+  return turn.responseModel?.followups?.map(followup => ({ ...followup })) ?? [];
 }
 
 function buildHostResponseView(
@@ -1706,6 +1721,16 @@ function applyHostStreamItemRuntimeState(
     };
   }
 
+  if (isHostStreamResponseIdentityUpdateEvent(event) && Object.prototype.hasOwnProperty.call(event.value, 'slashCommand')) {
+    entry.runtimeState = compactHostTurnRuntimeState({
+      ...entry.runtimeState,
+      responseSidecar: compactHostResponseSidecarRuntimeState({
+        ...entry.runtimeState?.responseSidecar,
+        slashCommand: normalizeHostResponseSlashCommand(event.value.slashCommand),
+      }),
+    });
+  }
+
   if (isHostStreamResponseFollowupsEvent(event)) {
     entry.runtimeState = compactHostTurnRuntimeState({
       ...entry.runtimeState,
@@ -1811,7 +1836,8 @@ function compactHostResponseSidecarRuntimeState(
     return undefined;
   }
 
-  return state.responseId !== undefined
+  return state.slashCommand !== undefined
+    || state.responseId !== undefined
     || state.result !== undefined
     || state.responseMarkdownInfo !== undefined
     || state.followups !== undefined
@@ -2010,23 +2036,11 @@ function resolveOrderedTurnIds(
   turnEntryOrder: readonly string[],
   turnEntriesById: ReadonlyMap<string, HostTurnResponseEntry>,
 ): string[] {
-  const snapshotTurnIds = snapshot?.turns?.map(turn => turn.id).filter(turnId => turnEntriesById.has(turnId)) ?? [];
-  if (snapshotTurnIds.length === 0) {
+  if (turnEntryOrder.length > 0) {
     return turnEntryOrder.filter(turnId => turnEntriesById.has(turnId));
   }
 
-  const snapshotTurnIdSet = new Set(snapshotTurnIds);
-  return [
-    ...snapshotTurnIds,
-    ...turnEntryOrder.filter((turnId) => {
-      if (!turnEntriesById.has(turnId) || snapshotTurnIdSet.has(turnId)) {
-        return false;
-      }
-
-      const status = turnEntriesById.get(turnId)?.turnResponse?.response.status;
-      return status !== 'completed';
-    }),
-  ];
+  return snapshot?.turns?.map(turn => turn.id).filter(turnId => turnEntriesById.has(turnId)) ?? [];
 }
 
 function createHostTurnEntriesById(
@@ -2059,11 +2073,14 @@ function buildOrderedHostResponseEntries(
 
 function projectTurnResponseForHostEntry(entry: HostTurnResponseEntry): TurnResponseTurn {
   const turn = entry.turnResponse!;
-  const response = turn.response as TurnResponseTurn['response'] & { followups?: TurnResponseTurn['response']['followups'] };
-  const { followups: _followups, ...responseWithoutFollowups } = response;
+  const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn as TurnResponseTurn & {
+    responseModel?: unknown;
+  };
   return {
-    ...turn,
-    response: responseWithoutFollowups,
+    ...turnWithoutResponseModel,
+    response: {
+      ...turn.response,
+    },
   };
 }
 
@@ -2092,6 +2109,7 @@ function cloneHostResponseSidecarRuntimeState(
   }
 
   return compactHostResponseSidecarRuntimeState({
+    ...(state.slashCommand !== undefined ? { slashCommand: normalizeHostResponseSlashCommand(state.slashCommand) } : {}),
     ...(typeof state.responseId === 'string' ? { responseId: state.responseId } : {}),
     ...(typeof state.result === 'string' ? { result: state.result } : {}),
     ...(state.responseMarkdownInfo
@@ -2568,7 +2586,7 @@ function buildHostResponseEntries(
   if (turnResponses.length > 0) {
     return turnResponses.map(turn => ({
       kind: 'turn',
-      turnId: turn.turnId,
+      turnId: turn['turnId'],
       turnResponse: turn,
       user: null,
       assistant: null,
@@ -2589,8 +2607,8 @@ function buildPersistedHostTurnRuntimeState(
 
   return {
     responseSidecar: {
+      ...(normalizeHostResponseSlashCommand(persistedResponseData.slashCommand) ? { slashCommand: normalizeHostResponseSlashCommand(persistedResponseData.slashCommand) } : {}),
       ...(typeof persistedResponseData.responseId === 'string' && persistedResponseData.responseId.length > 0 ? { responseId: persistedResponseData.responseId } : {}),
-      ...(typeof persistedResponseData.result === 'string' && persistedResponseData.result.length > 0 ? { result: persistedResponseData.result } : {}),
       ...(normalizePersistedResponseMarkdownInfo(persistedResponseData.responseMarkdownInfo)
         ? { responseMarkdownInfo: normalizePersistedResponseMarkdownInfo(persistedResponseData.responseMarkdownInfo) }
         : {}),
@@ -2611,8 +2629,10 @@ function extractPersistedResponseData(
   response: TurnResponseTurn['response'] & PersistedHostResponseData,
 ): PersistedHostResponseData | undefined {
   const persistedResponseData: PersistedHostResponseData = {
+    ...(normalizeHostResponseSlashCommand(response.slashCommand)
+      ? { slashCommand: normalizeHostResponseSlashCommand(response.slashCommand)! }
+      : {}),
     ...(typeof response.responseId === 'string' && response.responseId.length > 0 ? { responseId: response.responseId } : {}),
-    ...(typeof response.result === 'string' && response.result.length > 0 ? { result: response.result } : {}),
     ...(normalizePersistedResponseMarkdownInfo(response.responseMarkdownInfo)
       ? { responseMarkdownInfo: normalizePersistedResponseMarkdownInfo(response.responseMarkdownInfo) }
       : {}),
@@ -2641,6 +2661,7 @@ export function buildChatListFromEntries(entries: readonly HostResponseEntry[]):
         state: message.state,
         source: message.source,
         modelName: message.modelName,
+        modelBillingLabel: message.modelBillingLabel,
         turnId: message.turnContext?.turnId,
       });
     }
@@ -2664,6 +2685,7 @@ export function buildTurnNativeRestoreChatListFromEntries(entries: readonly Host
         state: message.state,
         source: message.source,
         modelName: message.modelName,
+        modelBillingLabel: message.modelBillingLabel,
         turnId: message.turnContext?.turnId,
       });
     }
@@ -2701,16 +2723,93 @@ export function buildTurnNativeRestoreChatList(
   return restoreList;
  }
 
-function buildDialogMessageProjectionsFromEntries(
+function buildCanonicalDialogItemsFromEntries(
   entries: readonly HostResponseEntry[],
-): ChatDialogViewMessageProjection[] {
-  const messages: ChatDialogViewMessageProjection[] = [];
+  options: { disabledRequestTurnIds?: readonly string[] } = {},
+): ChatDialogViewItem[] {
+  const disabledRequestTurnIds = new Set(options.disabledRequestTurnIds ?? []);
+  const items: ChatDialogViewItem[] = [];
 
   for (const entry of entries) {
-    messages.push(...buildTurnEntryMessageProjections(entry));
+    if (entry.kind !== 'turn' || !entry.turnResponse) {
+      continue;
+    }
+
+    const requestDisabled = disabledRequestTurnIds.has(entry.turnId);
+    const userProjection = buildTurnResponseUserMessageProjection(entry.turnResponse, entry.user ?? undefined);
+    const userTurnContext = buildDialogTurnContext({
+      turnResponse: entry.turnResponse,
+      requestDisabled,
+      requestContent: userProjection.turnContext?.requestContent,
+      displayContent: userProjection.turnContext?.displayContent,
+    });
+
+    if (userTurnContext) {
+      items.push({
+        trackId: `request:${entry.turnId}`,
+        role: 'user',
+        content: userProjection.content,
+        doing: userProjection.state === 'doing',
+        turnModelName: '',
+        turnContext: userTurnContext,
+        isLastAily: false,
+        isFirstUserTurn: false,
+        showCheckpointRestore: false,
+      });
+    }
+
+    const assistantProjection = buildTurnResponseAssistantMessageProjection(entry.turnResponse, entry.assistant ?? undefined);
+    const assistantTurnContext = buildDialogTurnContext({
+      turnResponse: entry.turnResponse,
+      requestDisabled,
+    });
+
+    if (assistantTurnContext) {
+      items.push({
+        trackId: `response:${entry.turnId}`,
+        role: 'aily',
+        content: assistantProjection.content || getTurnResponseAssistantText(entry.turnResponse),
+        doing: assistantProjection.state === 'doing',
+        turnModelName: assistantProjection.modelName || '',
+        turnModelBillingLabel: assistantProjection.modelBillingLabel,
+        turnContext: assistantTurnContext,
+        responseVote: entry.runtimeState?.responseSidecar?.vote,
+        isLastAily: false,
+        isFirstUserTurn: false,
+        showCheckpointRestore: false,
+      });
+    }
   }
 
-  return messages;
+  return finalizeCanonicalDialogItems(items, disabledRequestTurnIds);
+}
+
+function finalizeCanonicalDialogItems(
+  items: readonly ChatDialogViewItem[],
+  disabledRequestTurnIds: ReadonlySet<string>,
+): ChatDialogViewItem[] {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const firstUserIndex = items.findIndex(item => item.role === 'user' && !!item.turnContext?.turnId);
+  let lastAilyIndex = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].role === 'aily') {
+      lastAilyIndex = index;
+      break;
+    }
+  }
+
+  const shouldShowRestore = disabledRequestTurnIds.size > 0;
+  const lastItemIndex = items.length - 1;
+
+  return items.map((item, index) => ({
+    ...item,
+    isLastAily: index === lastAilyIndex,
+    isFirstUserTurn: index === firstUserIndex,
+    showCheckpointRestore: shouldShowRestore && index === lastItemIndex,
+  }));
 }
 
 function buildTurnEntryMessageProjections(
@@ -2737,6 +2836,7 @@ function buildTurnEntryMessageProjections(
         turnContext,
         source: entry.user?.source,
         modelName: entry.user?.modelName,
+        modelBillingLabel: entry.user?.modelBillingLabel,
       });
     }
   }
@@ -2756,6 +2856,7 @@ function buildTurnEntryMessageProjections(
         turnContext,
         source: getTurnResponseParticipant(entry.assistant?.source),
         modelName: entry.assistant?.modelName,
+        modelBillingLabel: entry.assistant?.modelBillingLabel,
         responseVote: entry.runtimeState?.responseSidecar?.vote,
       });
     }
@@ -2851,13 +2952,6 @@ function applyHostStreamEvent(
       ...(Object.prototype.hasOwnProperty.call(event.value, 'participant')
         ? {
           participant: getTurnResponseParticipant(event.value.participant ?? baseTurn.response.participant),
-        }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(event.value, 'command')
-        ? {
-          command: typeof event.value.command?.name === 'string' && event.value.command.name.trim().length > 0
-            ? { ...event.value.command, name: event.value.command.name.trim() }
-            : undefined,
         }
         : {}),
     };
@@ -3072,8 +3166,8 @@ function cloneHostStreamProgressMessage(
 }
 
 function cloneHostStreamFollowups(
-  value: NonNullable<TurnResponseTurn['response']['followups']> | undefined,
-): NonNullable<TurnResponseTurn['response']['followups']> | undefined {
+  value: readonly TurnResponseFollowup[] | undefined,
+): readonly TurnResponseFollowup[] | undefined {
   return value?.map(followup => ({ ...followup }));
 }
 

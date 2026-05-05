@@ -25,7 +25,9 @@ import { RepetitionDetectionService } from './repetition-detection.service';
 import { ContextBudgetService } from './context-budget.service';
 import { ContextBudgetViewService } from './context-budget-view.service';
 import { ChatViewService } from './chat-view.service';
+import { ChatRuntimeInteractionHostService } from './chat-runtime-interaction-host.service';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
+import { ConfigService } from '../../../services/config.service';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
@@ -41,6 +43,7 @@ import { lexGenerateTitle } from '../core/lex-endpoint';
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
 import { MessageDisplayHelper } from '../helpers/message-display.helper';
 import { SessionLifecycleHelper } from '../helpers/session-lifecycle.helper';
+import { getUserSelectedToolsForRequest } from '../helpers/lex-agent-bootstrap';
 import { LexOwnerFacade } from '../helpers/lex-stream.helper';
 import { ChatSendCoordinator } from '../helpers/chat-send-coordinator';
 import { ChatStopCoordinator } from '../helpers/chat-stop-coordinator';
@@ -96,6 +99,14 @@ export class ChatEngineService implements IChatContext {
     this,
     (content) => this.titleCoordinator.generate(content),
     () => this.resourceManager.getResourcesText(),
+    (requestAgentId) => getUserSelectedToolsForRequest(
+      {
+        ailyChatConfigService: this.ailyChatConfigService,
+        mcpService: this.mcpService,
+      },
+      requestAgentId,
+      this.prjPath || this.prjRootPath || '',
+    ),
   );
   private readonly stopCoordinator = new ChatStopCoordinator(this.stopCoordinatorContext);
   private readonly conversationActionCoordinator = new ChatConversationActionCoordinator(this.conversationActionCoordinatorContext);
@@ -271,7 +282,7 @@ export class ChatEngineService implements IChatContext {
 
   get currentModel() { return this.chatService.currentModel; }
 
-  get currentModelName() { return this.chatService.currentModel?.name; }
+  get currentModelName() { return this.getSelectedDisplayModel()?.name; }
 
   get currentReasoningEffort() { return this.chatService.currentModel?.reasoningEffort; }
 
@@ -303,13 +314,17 @@ export class ChatEngineService implements IChatContext {
   }
 
   get currentModelTooltip(): string {
-    return this.ailyChatConfigService.buildModelTooltip(this.chatService.currentModel, {
+    return this.ailyChatConfigService.buildModelTooltip(this.getSelectedDisplayModel(), {
       maxContextTokens: this.contextBudgetSnapshot?.maxContextTokens,
     });
   }
 
   get currentModelBillingLabel(): string | undefined {
-    return this.ailyChatConfigService.getModelBillingLabel(this.chatService.currentModel);
+    return this.ailyChatConfigService.getModelBillingLabel(this.getSelectedDisplayModel());
+  }
+
+  private getSelectedDisplayModel(): ModelConfig | null {
+    return this.chatService.currentModel ?? this.chatService.getActiveDisplayModel() ?? null;
   }
 
   syncRegisteredAgentNames(agentNames: readonly string[]): void {
@@ -366,6 +381,7 @@ export class ChatEngineService implements IChatContext {
       getCurrentProjectPath: () => thisEngine.getCurrentProjectPath(),
       get sessionId() { return thisEngine.sessionId; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
     };
   }
 
@@ -479,6 +495,7 @@ export class ChatEngineService implements IChatContext {
       get sessionId() { return thisEngine.sessionId; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
       get mcpService() { return thisEngine.mcpService; },
+      get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       handleToolApproval: request => this.handleToolApproval(request),
       get lexStream() { return thisEngine.lexStream; },
       get editCheckpointService() { return thisEngine.editCheckpointService; },
@@ -599,6 +616,7 @@ export class ChatEngineService implements IChatContext {
     public chatHistoryService: ChatHistoryService,
     public repetitionDetectionService: RepetitionDetectionService,
     public contextBudgetService: ContextBudgetService,
+    public configService: ConfigService,
     private contextBudgetViewService: ContextBudgetViewService,
     public ngZone: NgZone,
     public absAutoSyncService: AbsAutoSyncService,
@@ -608,6 +626,7 @@ export class ChatEngineService implements IChatContext {
     public scrollManager: ScrollManagerService,
     public resourceManager: ResourceManagerService,
     public menuManager: MenuManagerService,
+    public runtimeInteractionHost: ChatRuntimeInteractionHostService,
   ) {
     // 初始化 viewAdapter（需要 ngZone 已注入）
     (this as any).viewAdapter = new ChatViewAdapter(
@@ -615,11 +634,13 @@ export class ChatEngineService implements IChatContext {
       (msg) => this.list.push(msg),
       () => this.currentMessageSource,
       () => this.currentModelName || undefined,
+      () => this.currentModelBillingLabel || undefined,
       () => this._isWaiting,
       () => { if (this.sessionId) { this.chatHistoryService.markDirty(this.sessionId); } },
       this.ngZone,
       undefined, // cdCallback — 由 component 通过 setCdCallback 注入
-      () => this.scrollManager.scrollToBottom(), // scrollToBottom — 流式 rAF flush 后自动滚动
+      () => this.scrollManager.captureAutoScrollState(),
+      (shouldFollow) => this.scrollManager.scrollToBottomIfNeeded(shouldFollow, 'auto'),
     );
 
     this.chatHistoryService.setLiveSessionProvider(() => this.session.buildHostSessionRecord());
@@ -804,6 +825,11 @@ Do not create non-existent boards and libraries.
     }
 
     await this.lexStream.turn.run(prepared.llmText, prepared.displayText);
+
+    if (this.chatService.currentSessionId) {
+      await this.chatService.syncResolvedActiveModelFromContextInfo(this.chatService.currentSessionId);
+      this.triggerSyncDetectChanges();
+    }
   }
 
   resetChat(): Promise<void> { return this.session.startSession(); }
@@ -872,8 +898,12 @@ Do not create non-existent boards and libraries.
     this.interaction.skipAskUserResponse();
   }
 
-  approveToolExecution(toolCallId: string, scope: 'once' | 'session' | 'workspace' | 'session-all-terminal' | 'session-safe' = 'once'): void {
-    this.interaction.approveToolExecution(toolCallId, scope);
+  approveToolExecution(
+    toolCallId: string,
+    scope: 'once' | 'session' | 'workspace' | 'session-all-terminal' | 'session-safe' = 'once',
+    actionId?: string,
+  ): void {
+    this.interaction.approveToolExecution(toolCallId, scope, actionId);
   }
 
   rejectToolExecution(toolCallId: string, reason?: string): void {

@@ -1,6 +1,6 @@
 <div
   class="dialog-box animate__animated animate__fadeIn animate__faster"
-  [ngClass]="{ user: role === 'user', editable: canEditUserMessage && !isEditing, 'request-disabled': isRequestDisabled }"
+  [ngClass]="{ user: role === 'user', editable: canEditUserMessage && !isEditing, 'request-disabled': isRequestDisabled, 'chat-most-recent-response': isCurrentStreamingResponse }"
   (mouseenter)="onDialogMouseEnter()"
   (mouseleave)="onDialogMouseLeave()"
   (click)="canEditUserMessage && !isEditing ? onUserMessageClick() : null"
@@ -33,7 +33,7 @@
         <span class="checkpoint-action-line checkpoint-action-line-right" [class.visible]="showCheckpointAnchor"></span>
       </div>
     }
-    @if (disabledRequestBadgeLabel || userTurnMetadataLabel || assistantTerminationLabel) {
+    <!-- @if (disabledRequestBadgeLabel || userTurnMetadataLabel || assistantTerminationLabel) {
       <div class="turn-meta-row">
         @if (disabledRequestBadgeLabel) {
           <span class="turn-meta-label request-disabled-label" [title]="disabledRequestBadgeTitle">{{ disabledRequestBadgeLabel }}</span>
@@ -44,7 +44,7 @@
           <span class="turn-meta-label assistant-termination-label" [title]="assistantTerminationTitle">{{ assistantTerminationLabel }}</span>
         }
       </div>
-    }
+    } -->
 
     @if (isEditing) {
       <!-- 编辑模式：模拟输入框样式 -->
@@ -125,6 +125,7 @@
           <!-- ★ Phase 2: aily 消息统一走 Part-based 渲染 -->
           <aily-chat-message-parts
             [parts]="effectiveParts"
+            [sessionId]="sessionId"
             [doing]="effectiveDoing"
           />
         } @else if (streamContent()) {
@@ -142,8 +143,8 @@
     @if (effectiveDoing) {
       <div class="loader"></div>
     }
-    @if (canShowActions || (canShowLimitActions && showActions) || showAssistantModelBadge) {
-      <div class="msg-footer" [class.model-only]="!(canShowActions || (canShowLimitActions && showActions))">
+    @if (showFooterActions) {
+      <div class="msg-footer">
         @if (canShowActions) {
           <div class="msg-actions">
             <div class="msg-action-btn" [class.disabled]="regenerateActionDisabled" (click)="onRegenerate(); $event.stopPropagation()" [title]="regenerateActionTitle">

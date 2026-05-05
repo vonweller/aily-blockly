@@ -1,7 +1,6 @@
-import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import type { ToolApprovalAction, ToolApprovalScope } from '../../../helpers/tool-approval-ui';
-import { AILY_CONFIRMATION_RESULT_EVENT } from '../../../helpers/interaction-events';
 import { ChatCommandPreviewComponent } from '../chat-command-preview/chat-command-preview.component';
 import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } from '../chat-confirmation-actions/chat-confirmation-actions.component';
 import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.component';
@@ -47,11 +46,11 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
         @if (showDisplayMessage) {
           <div class="aa-message">{{ displayMessage }}</div>
         }
-        @if (!resolved) {
+        @if (!resolved && interactive) {
           <div class="aa-actions">
             <aily-chat-confirmation-actions
               [primaryLabel]="primaryButtonLabel"
-              [primaryValue]="primaryScope"
+              [primaryValue]="primaryActionValue"
               [primaryTooltip]="primaryButtonTooltip"
               [primaryDisabled]="primaryActionDisabled"
               [moreActionsTooltip]="moreActionsTooltip"
@@ -139,6 +138,16 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
 export class XAilyConfirmationViewerComponent implements OnChanges {
   @Input() data: any = null;
   @Input() embedded = false;
+  @Input() interactive = true;
+  @Output() decision = new EventEmitter<{
+    approved: boolean;
+    scope?: ToolApprovalScope;
+    reason?: string;
+    actionId?: string;
+    askId?: string;
+    partId?: string;
+    toolCallId?: string;
+  }>();
 
   partId = '';
   kind: 'approval' | 'confirmation' = 'approval';
@@ -158,6 +167,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   approvalActions: readonly ToolApprovalAction[] = [];
   primaryScope: ToolApprovalScope = 'once';
   primaryButtonLabel = '允许';
+  primaryActionValue = 'once';
   collapsed = false;
 
   get hasMoreActions(): boolean {
@@ -240,7 +250,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
 
   get approvalActionOptions(): readonly ChatConfirmationActionOption[] {
     return this.approvalActions.map(action => ({
-      value: action.scope,
+      value: action.id || action.scope,
       label: this.getActionMenuLabel(action),
       tooltip: action.tooltip || action.description || action.label,
       disabled: !!action.disabled,
@@ -281,6 +291,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.approvalActions = Array.isArray(this.data.actions) ? this.data.actions : [];
       this.primaryScope = this.data.primaryScope || 'once';
       this.primaryButtonLabel = this.getPrimaryButtonLabel(this.primaryScope);
+      this.primaryActionValue = this.getPrimaryActionValue(this.primaryScope);
       this.resolvedText = this.resolved ? this.formatResolvedText(this.approved, this.data.scope) : '';
       this.collapsed = false;
     }
@@ -430,20 +441,27 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
   }
 
-  onApproveFromActions(scope: string): void {
-    this.onApprove(scope as ToolApprovalScope);
+  onApproveFromActions(value: string): void {
+    const action = this.approvalActions.find(candidate => (candidate.id || candidate.scope) === value);
+    this.onApprove((action?.scope || value) as ToolApprovalScope, action?.id);
   }
 
-  onApprove(scope: ToolApprovalScope): void {
+  onApprove(scope: ToolApprovalScope, actionId?: string): void {
     this.resolved = true;
     this.approved = true;
     this.resolvedText = this.formatResolvedText(true, scope);
     this.cdr.markForCheck();
-    document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
-      detail: this.toolCallId
-        ? { toolCallId: this.toolCallId, approved: true, scope }
-        : { askId: this.askId, partId: this.partId, approved: true, scope }
-    }));
+    this.decision.emit(this.toolCallId
+      ? { toolCallId: this.toolCallId, approved: true, scope, actionId }
+      : { askId: this.askId, partId: this.partId, approved: true, scope, actionId });
+  }
+
+  private getPrimaryActionValue(scope: ToolApprovalScope): string {
+    if (scope === 'once') {
+      return 'once';
+    }
+
+    return this.approvalActions.find(action => action.scope === scope)?.id || scope;
   }
 
   onReject(): void {
@@ -451,10 +469,8 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     this.approved = false;
     this.resolvedText = this.formatResolvedText(false, undefined);
     this.cdr.markForCheck();
-    document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
-      detail: this.toolCallId
-        ? { toolCallId: this.toolCallId, approved: false, reason: '用户拒绝执行' }
-        : { askId: this.askId, partId: this.partId, approved: false, reason: '用户拒绝执行' }
-    }));
+    this.decision.emit(this.toolCallId
+      ? { toolCallId: this.toolCallId, approved: false, reason: '用户拒绝执行' }
+      : { askId: this.askId, partId: this.partId, approved: false, reason: '用户拒绝执行' });
   }
 }

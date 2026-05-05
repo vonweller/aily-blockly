@@ -7,6 +7,7 @@ import {
   buildSubagentDetailSections,
   buildSubagentSubtitle,
   buildStandardStateViewerProjection,
+  buildTodoDetailSections,
   buildToolCallDetailSections,
   formatSubagentToolTrailing,
   isSubagentMetadata,
@@ -157,6 +158,8 @@ export function getPreparedDetailSections(part: ChatPart): readonly DetailSectio
       id: part.toolCallId,
       metadata: part.metadata || null,
       args: part.args,
+      text: part.text,
+      state: part.state,
     });
     return sections.length > 0 ? sections : undefined;
   }
@@ -170,6 +173,11 @@ export function getPreparedDetailSections(part: ChatPart): readonly DetailSectio
       id: part.stateId,
       metadata: part.metadata || null,
     });
+    return sections.length > 0 ? sections : undefined;
+  }
+
+  if (part.kind === 'todo') {
+    const sections = buildTodoDetailSections({ metadata: part.metadata || null });
     return sections.length > 0 ? sections : undefined;
   }
 
@@ -953,7 +961,22 @@ function buildAggregateThinkingSummaryTitle(toolSummaries: readonly ActivityTool
   const readTargets = uniqueValues(toolSummaries.map((summary) => extractReadTarget(summary)).filter((value): value is string => !!value));
   const searchQueries = uniqueValues(toolSummaries.map((summary) => extractSearchQuery(summary)).filter((value): value is string => !!value));
   const editTargets = uniqueValues(toolSummaries.map((summary) => extractEditTarget(summary)).filter((value): value is string => !!value));
+  const hasLint = toolSummaries.some((summary) => summary.toolName === 'lint');
   const hasUnsupportedTools = toolSummaries.some((summary) => !isThinkingSummaryTool(summary.toolName));
+
+  const withLintSummary = (title: string | undefined): string | undefined => {
+    if (!hasLint) {
+      return title;
+    }
+
+    if (!title) {
+      return 'Checked generated code';
+    }
+
+    return title.includes('checked generated code')
+      ? title
+      : `${title} and checked generated code`;
+  };
 
   if (hasUnsupportedTools) {
     return undefined;
@@ -961,52 +984,52 @@ function buildAggregateThinkingSummaryTitle(toolSummaries: readonly ActivityTool
 
   if (editTargets.length > 0) {
     if (editTargets.length === 1 && readTargets.length === 1 && readTargets[0] === editTargets[0] && searchQueries.length === 0) {
-      return `Reviewed and updated ${editTargets[0]}`;
+      return withLintSummary(`Reviewed and updated ${editTargets[0]}`);
     }
 
     if (editTargets.length === 1 && readTargets.length === 0 && searchQueries.length === 0) {
-      return `Updated ${editTargets[0]}`;
+      return withLintSummary(`Updated ${editTargets[0]}`);
     }
 
     if (editTargets.length > 1 && readTargets.length === 0 && searchQueries.length === 0) {
-      return `Modified ${editTargets.length} files`;
+      return withLintSummary(`Modified ${editTargets.length} files`);
     }
 
     if (searchQueries.length === 0 && readTargets.length > 0) {
       const readSummary = readTargets.length === 1 ? readTargets[0] : `${readTargets.length} files`;
-      return editTargets.length === 1
+      return withLintSummary(editTargets.length === 1
         ? `Updated ${editTargets[0]} and reviewed ${readSummary}`
-        : `Modified ${editTargets.length} files and reviewed ${readSummary}`;
+        : `Modified ${editTargets.length} files and reviewed ${readSummary}`);
     }
 
-    return undefined;
+    return withLintSummary(undefined);
   }
 
   if (searchQueries.length === 1 && (readTargets.length > 0 || toolSummaries.length > 1)) {
-    return `Analyzed ${searchQueries[0]}`;
+    return withLintSummary(`Analyzed ${searchQueries[0]}`);
   }
 
   if (readTargets.length > 0 && searchQueries.length === 0) {
-    return readTargets.length === 1 ? `Reviewed ${readTargets[0]}` : `Reviewed ${readTargets.length} files`;
+    return withLintSummary(readTargets.length === 1 ? `Reviewed ${readTargets[0]}` : `Reviewed ${readTargets.length} files`);
   }
 
   if (readTargets.length > 0 && searchQueries.length > 1) {
-    return 'Analyzed code paths';
+    return withLintSummary('Analyzed code paths');
   }
 
   if (searchQueries.length === 1) {
-    return `Searched for ${searchQueries[0]}`;
+    return withLintSummary(`Searched for ${searchQueries[0]}`);
   }
 
   if (searchQueries.length === 2) {
-    return `Searched for ${searchQueries[0]} and ${searchQueries[1]}`;
+    return withLintSummary(`Searched for ${searchQueries[0]} and ${searchQueries[1]}`);
   }
 
   if (searchQueries.length > 2) {
-    return 'Searched code paths';
+    return withLintSummary('Searched code paths');
   }
 
-  return undefined;
+  return withLintSummary(undefined);
 }
 
 function splitHeaderSummaryTitle(value: string): { title: string; detail?: string } {
@@ -1072,7 +1095,7 @@ function extractEditTarget(summary: ActivityToolSummaryCandidate): string | unde
 }
 
 function isThinkingSummaryTool(toolName: string): boolean {
-  return isSearchSummaryTool(toolName) || toolName === 'read_file' || isEditSummaryTool(toolName);
+  return isSearchSummaryTool(toolName) || toolName === 'read_file' || toolName === 'lint' || isEditSummaryTool(toolName);
 }
 
 function isSearchSummaryTool(toolName: string): boolean {
@@ -1362,12 +1385,17 @@ function escapeRegExp(value: string): string {
 
 function isActivityStatePart(part: ChatPart): part is StatePart {
   return part.type === 'state' && (
-    part.kind === 'background_task'
+    part.kind === 'todo'
+    || part.kind === 'background_task'
     || (part.kind === 'agent_team' && hasAgentTeamActivityMessages(part.metadata))
   );
 }
 
 function getActivityStateGroupTitle(part: StatePart): string {
+  if (part.kind === 'todo') {
+    return 'Todo';
+  }
+
   if (part.kind === 'agent_team') {
     return '协作';
   }
@@ -1381,6 +1409,8 @@ function getActivityStateGroupTitle(part: StatePart): string {
 
 function getStandaloneStateGroupTitle(part: StatePart): string | undefined {
   switch (part.kind) {
+    case 'todo':
+      return 'Todo';
     case 'instructions':
       return '提示';
     case 'handoff':

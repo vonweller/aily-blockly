@@ -28,7 +28,7 @@
  */
 
 import { Injectable, OnDestroy } from '@angular/core';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore } from './chat-history-index-store';
@@ -60,10 +60,10 @@ export interface PersistedHostResponseData {
    * VS Code `ChatResponseModel.toJSON()` 风格的 response-level persisted fields.
    * 这些字段只出现在宿主持久化记录中，不属于 aily-lex canonical response runtime shape。
    */
+  slashCommand?: TurnResponseCommand;
   responseId?: string;
-  result?: string;
   responseMarkdownInfo?: ReadonlyArray<{ readonly suggestionId: string }>;
-  followups?: NonNullable<TurnResponseTurn['response']['followups']>;
+  followups?: readonly TurnResponseFollowup[];
   modelState?:
     | { value: 0 }
     | { value: 4 }
@@ -104,6 +104,8 @@ export interface ChatListItem {
   source?: string;
   /** 该消息对应的模型名称（创建时快照） */
   modelName?: string;
+  /** 该消息对应的计费倍率（创建时快照） */
+  modelBillingLabel?: string;
   /** 关联的 lex turn ID，用于恢复时按 turn 粒度分消息 */
   turnId?: string;
 }

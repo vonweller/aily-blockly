@@ -530,6 +530,74 @@ describe('RenderEventPartAdapter', () => {
     expect((parts[0] as any).progress).toBe(50);
   });
 
+  it('projects todo updates as dedicated todo activity state', () => {
+    processCurrent({
+      type: 'todo_update',
+      sessionId: 'sess-1',
+      summary: 'Todo list updated: 2 items (0 completed, 2 remaining). Current: "收口 input part band"',
+      items: [
+        { id: 1, title: '收口 input part band', status: 'in-progress' },
+        { id: 2, title: '对齐 todo transcript 标题', status: 'not-started' },
+      ],
+      timestamp: 1,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts[0].type).toBe('state');
+    expect((parts[0] as any).kind).toBe('todo');
+    expect((parts[0] as any).state).toBe('doing');
+    expect((parts[0] as any).text).toContain('Todo list updated');
+    expect((parts[0] as any).metadata.timeline.length).toBe(1);
+    expect((parts[0] as any).metadata.timeline[0].phaseLabel).toBe('开始 收口 input part band');
+
+    processCurrent({
+      type: 'todo_update',
+      sessionId: 'sess-1',
+      summary: 'Todo list updated: 2 items (1 completed, 1 remaining). Current: "对齐 todo transcript 标题"',
+      items: [
+        { id: 1, title: '收口 input part band', status: 'completed' },
+        { id: 2, title: '对齐 todo transcript 标题', status: 'in-progress' },
+      ],
+      timestamp: 2,
+    } as any);
+
+    const nextParts = store.getPartsForHandle(currentHandle);
+    expect((nextParts[0] as any).metadata.timeline.length).toBe(2);
+    expect((nextParts[0] as any).metadata.timeline[1].activeTitle).toBe('对齐 todo transcript 标题');
+    expect((nextParts[0] as any).metadata.timeline[1].phaseLabel).toBe('完成 收口 input part band');
+    expect((nextParts[0] as any).metadata.timeline[1].phaseDetail).toBe('切换到 对齐 todo transcript 标题');
+  });
+
+  it('patches the latest todo tool call with todoList-style toolSpecificData on todo updates', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'todo-tool-1',
+      toolName: 'todo_write_tool',
+      input: { operation: 'add' },
+      timestamp: 1,
+    } as any);
+
+    processCurrent({
+      type: 'todo_update',
+      sessionId: 'sess-tools',
+      summary: 'Todo list updated: 1 items (0 completed, 1 remaining). Current: "补齐 toolSpecificData"',
+      items: [
+        { id: 1, title: '补齐 toolSpecificData', status: 'in-progress' },
+      ],
+      timestamp: 2,
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect((parts[0] as any).metadata.toolSpecificData).toEqual(jasmine.objectContaining({
+      kind: 'todoList',
+      summary: 'Todo list updated: 1 items (0 completed, 1 remaining). Current: "补齐 toolSpecificData"',
+      currentTask: '补齐 toolSpecificData',
+      todoList: [
+        jasmine.objectContaining({ id: '1', title: '补齐 toolSpecificData', status: 'in-progress' }),
+      ],
+    }));
+  });
+
   it('should return false for lifecycle events', () => {
     expect(processCurrent({ type: 'turn_begin', turnId: 't1', timestamp: 1 } as RenderEvent)).toBe(false);
     expect(processCurrent({ type: 'turn_end', turnId: 't1', reason: 'end_turn', timestamp: 2 } as RenderEvent)).toBe(false);

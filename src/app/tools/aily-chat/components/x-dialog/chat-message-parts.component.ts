@@ -18,6 +18,7 @@ import {
 import { CommonModule } from '@angular/common';
 
 import { ChatPart } from '../../core/chat-parts';
+import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
 import {
   buildActivityGroupIdentity,
   buildChatPartIdentity,
@@ -30,13 +31,14 @@ import { ChatMessagePartItemComponent } from './chat-message-part-item.component
 interface PartRenderItem {
   kind: 'part';
   id: string;
-  part: ChatPart;
+  part: RenderableChatPart;
 }
 
 interface ActivityGroupRenderItem {
   kind: 'group';
   id: string;
   parts: readonly ChatPart[];
+  live: boolean;
 }
 
 type ChatRenderItem = PartRenderItem | ActivityGroupRenderItem;
@@ -54,11 +56,11 @@ type ChatRenderItem = PartRenderItem | ActivityGroupRenderItem;
     @for (item of renderItems; track item.id) {
       @if (isGroupItem(item)) {
         <!-- 统一活动组：对齐 Copilot ChatThinkingContentPart -->
-        <aily-chat-activity-group [parts]="item.parts" [doing]="doing" />
+        <aily-chat-activity-group [parts]="item.parts" [doing]="item.live" [sessionId]="sessionId" />
       } @else {
         <!-- 独立 Part：路由至专用 viewer -->
         <div class="chat-part" [attr.data-part-type]="item.part.type">
-          <aily-chat-message-part-item [part]="item.part" [doing]="doing" />
+          <aily-chat-message-part-item [part]="item.part" [doing]="doing" [sessionId]="sessionId" />
         </div>
       }
     }
@@ -79,13 +81,14 @@ type ChatRenderItem = PartRenderItem | ActivityGroupRenderItem;
   `],
 })
 export class ChatMessagePartsComponent implements OnChanges {
-  @Input() parts: readonly ChatPart[] | null = null;
+  @Input() parts: readonly RenderableChatPart[] | null = null;
   @Input() doing = false;
+  @Input() sessionId = '';
 
   renderItems: ChatRenderItem[] = [];
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['parts']) {
+    if (changes['parts'] || changes['doing']) {
       this._refresh();
     }
   }
@@ -95,10 +98,10 @@ export class ChatMessagePartsComponent implements OnChanges {
   }
 
   private _refresh(): void {
-    this.renderItems = this._buildRenderItems(this.parts || []);
+    this.renderItems = this._markLiveGroups(this._buildRenderItems(this.parts || []));
   }
 
-  private _buildRenderItems(parts: readonly ChatPart[]): ChatRenderItem[] {
+  private _buildRenderItems(parts: readonly RenderableChatPart[]): ChatRenderItem[] {
     const items: ChatRenderItem[] = [];
     let buffer: ChatPart[] = [];
 
@@ -108,12 +111,23 @@ export class ChatMessagePartsComponent implements OnChanges {
           kind: 'group',
           id: buildActivityGroupIdentity(buffer),
           parts: buffer,
+          live: false,
         });
       }
       buffer = [];
     };
 
     parts.forEach((part, index) => {
+      if (this._isIgnorablePart(part)) {
+        return;
+      }
+
+      if (isProgressMessageDisplayPart(part)) {
+        flushBuffer();
+        items.push({ kind: 'part', id: `progress:${part.progressKind}:${index}:${part.content}`, part });
+        return;
+      }
+
       if (isSubagentToolCall(part)) {
         flushBuffer();
         items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
@@ -130,5 +144,33 @@ export class ChatMessagePartsComponent implements OnChanges {
 
     flushBuffer();
     return items;
+  }
+
+  private _markLiveGroups(items: readonly ChatRenderItem[]): ChatRenderItem[] {
+    if (!this.doing || items.length === 0) {
+      return items.map((item) => item.kind === 'group' ? { ...item, live: false } : item);
+    }
+
+    return items.map((item, index) => item.kind === 'group'
+      ? { ...item, live: !this._hasLookAheadBoundary(items, index) }
+      : item);
+  }
+
+  private _hasLookAheadBoundary(items: readonly ChatRenderItem[], groupIndex: number): boolean {
+    for (let index = groupIndex + 1; index < items.length; index++) {
+      if (items[index].kind === 'part') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private _isIgnorablePart(part: RenderableChatPart): boolean {
+    if (isProgressMessageDisplayPart(part)) {
+      return part.content.trim().length === 0;
+    }
+
+    return part.type === 'markdown' && part.content.trim().length === 0;
   }
 }

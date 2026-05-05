@@ -1,5 +1,5 @@
 import { AilyHost } from '../core/host';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 
 import type {
   HostSessionRecord,
@@ -158,7 +158,6 @@ export class HostSessionRecordStore {
     const {
       followups,
       responseId,
-      result,
       responseMarkdownInfo,
       modelState,
       vote,
@@ -168,7 +167,7 @@ export class HostSessionRecordStore {
       completionTokens,
       ...responseWithoutPersistedData
     } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData & {
-      followups?: TurnResponseTurn['response']['followups'];
+      followups?: readonly TurnResponseFollowup[];
     };
 
     return {
@@ -205,7 +204,6 @@ export class HostSessionRecordStore {
         progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
         parts: [...turn.response.parts],
         ...(typeof responseId === 'string' && responseId.length > 0 ? { responseId } : {}),
-        ...(typeof result === 'string' && result.length > 0 ? { result } : {}),
         ...(Array.isArray(responseMarkdownInfo)
           ? {
               responseMarkdownInfo: responseMarkdownInfo

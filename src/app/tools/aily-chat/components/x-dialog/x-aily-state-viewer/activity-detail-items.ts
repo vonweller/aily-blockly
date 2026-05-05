@@ -148,6 +148,8 @@ export function buildToolCallDetailSections(source: {
   id?: string;
   metadata?: Record<string, unknown> | null;
   args?: unknown;
+  text?: string;
+  state?: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval';
 }): DetailSectionDescriptor[] {
   const metadata = asRecord(source.metadata);
   if (!metadata) {
@@ -189,7 +191,15 @@ export function buildToolCallDetailSections(source: {
     }
   }
 
-  const outputRows = timelineEntries.flatMap((entry, index) => buildToolCallOutputRows(entry, index, toolName));
+  const outputRows = buildToolCallOutputRowsWithFallback({
+    metadata,
+    toolSpecificData,
+    timelineEntries,
+    toolName,
+    baseId,
+    text: source.text,
+    state: source.state,
+  });
 
   const timelineRows = timelineEntries.map((entry, index) => toToolCallTimelineRow(entry, index));
 
@@ -209,6 +219,92 @@ export function buildToolCallDetailSections(source: {
   }
 
   return descriptors;
+}
+
+function buildToolCallOutputRowsWithFallback(input: {
+  metadata: Record<string, unknown>;
+  toolSpecificData?: Record<string, unknown>;
+  timelineEntries: readonly Record<string, unknown>[];
+  toolName?: string;
+  baseId: string;
+  text?: string;
+  state?: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval';
+}): StateDetailRow[] {
+  const timelineRows = input.timelineEntries.flatMap((entry, index) => buildToolCallOutputRows(entry, index, input.toolName));
+  if (timelineRows.length > 0) {
+    return timelineRows;
+  }
+
+  const metadataRows = buildToolCallOutputRows(input.metadata, 0, input.toolName);
+  if (metadataRows.length > 0) {
+    return metadataRows;
+  }
+
+  const toolSpecificResult = asString(input.toolSpecificData?.['result']);
+  if (toolSpecificResult) {
+    return [buildFallbackToolCallOutputRow(`${input.baseId}:output:toolSpecificData`, input.toolName, toolSpecificResult, input.state)];
+  }
+
+  const fallbackText = asMeaningfulToolCallFallbackText(input.text, input.toolName, input.state);
+  if (fallbackText) {
+    return [buildFallbackToolCallOutputRow(`${input.baseId}:output:text`, input.toolName, fallbackText, input.state)];
+  }
+
+  return [];
+}
+
+function buildFallbackToolCallOutputRow(
+  id: string,
+  toolName: string | undefined,
+  text: string,
+  state: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval' | undefined,
+): StateDetailRow {
+  const phase = state === 'error'
+    ? 'failed'
+    : state === 'done' || state === 'warn'
+      ? 'completed'
+      : state === 'doing'
+        ? 'progress'
+        : undefined;
+
+  return {
+    id,
+    title: toolName || '工具输出',
+    note: text,
+    trailing: phase ? formatNarrativePhase(phase) : undefined,
+    tone: phase ? toneFromNarrativePhase(phase) : 'neutral',
+  };
+}
+
+function asMeaningfulToolCallFallbackText(
+  value: string | undefined,
+  toolName: string | undefined,
+  state: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval' | undefined,
+): string | undefined {
+  const text = asString(value);
+  if (!text) {
+    return undefined;
+  }
+
+  if (state !== 'done' && state !== 'error' && state !== 'warn') {
+    return undefined;
+  }
+
+  const normalized = text.trim().toLowerCase();
+  const normalizedToolName = (toolName || '').trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalizedToolName && (normalized === normalizedToolName || normalized === `${normalizedToolName}…`)) {
+    return undefined;
+  }
+
+  if (/^正在执行工具:\s*/.test(text) || /^执行工具:\s*/.test(text)) {
+    return undefined;
+  }
+
+  return text;
 }
 
 export function buildToolCallSummaryBadges(source: {
@@ -438,6 +534,45 @@ export function buildBackgroundTaskDetailSections(source: {
     title: output || error ? '结果摘要' : activity ? '进度与活动' : '进度摘要',
     rows,
   }];
+}
+
+export function buildTodoDetailSections(source: {
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const timeline = asRecordArray(metadata['timeline']);
+  const latestEntry = timeline.at(-1) ?? metadata;
+  const latestRow = toTodoTimelineRow(latestEntry, 'current');
+  const currentItems = buildTodoItemRows(asRecordArray(latestEntry['items']));
+  const historyRows = timeline.slice(0, -1).map((entry, index) => toTodoTimelineRow(entry, `history-${index}`));
+  const sections: DetailSectionDescriptor[] = [];
+
+  if (latestRow) {
+    sections.push({
+      title: '当前记录',
+      rows: [latestRow],
+    });
+  }
+
+  if (currentItems.length > 0) {
+    sections.push({
+      title: '当前待办',
+      rows: currentItems,
+    });
+  }
+
+  if (historyRows.length > 0) {
+    sections.push({
+      title: '历史时间线',
+      rows: historyRows,
+    });
+  }
+
+  return sections;
 }
 
 export function buildBackgroundTaskSummaryBadges(source: {
@@ -715,6 +850,91 @@ function buildDefaultDetailSections(
       return [];
     case 'compaction':
       return buildCompactionDetailSections({ id, metadata });
+  }
+}
+
+function buildTodoItemRows(items: readonly Record<string, unknown>[]): StateDetailRow[] {
+  return items.map((item, index) => {
+    const title = asString(item['title']) || `Todo ${index + 1}`;
+    const status = asString(item['status']) || 'not-started';
+    return {
+      id: `todo-item:${index}:${title}`,
+      title,
+      subtitle: formatTodoStatus(status),
+      tone: toneFromTodoState(status),
+    };
+  });
+}
+
+function toTodoTimelineRow(entry: Record<string, unknown>, idSuffix: string | number): StateDetailRow | undefined {
+  const summary = asString(entry['summary']);
+  const activeTitle = asString(entry['activeTitle']);
+  const phaseLabel = asString(entry['phaseLabel']);
+  const phaseDetail = asString(entry['phaseDetail']);
+  const totalCount = asNumber(entry['totalCount']);
+  const currentStep = asNumber(entry['currentStep']);
+  const completedCount = asNumber(entry['completedCount']);
+  const state = asString(entry['state']) || 'info';
+  const progressLabel = typeof totalCount === 'number' && totalCount > 0
+    ? `${Math.max(0, currentStep ?? completedCount ?? 0)}/${totalCount}`
+    : undefined;
+  const title = phaseLabel
+    || activeTitle
+    || (summary ? 'Todo 更新' : undefined)
+    || 'Todo';
+
+  if (!title && !summary) {
+    return undefined;
+  }
+
+  return {
+    id: `todo-timeline:${idSuffix}`,
+    title,
+    subtitle: phaseDetail || progressLabel,
+    note: summary,
+    trailing: formatTodoStateLabel(state),
+    tone: toneFromTodoState(state),
+  };
+}
+
+function formatTodoStatus(status: string): string {
+  switch (status) {
+    case 'completed':
+      return '已完成';
+    case 'in-progress':
+      return '进行中';
+    default:
+      return '未开始';
+  }
+}
+
+function formatTodoStateLabel(state: string): string {
+  switch (state) {
+    case 'done':
+    case 'completed':
+      return '已完成';
+    case 'doing':
+    case 'in-progress':
+      return '进行中';
+    default:
+      return '待处理';
+  }
+}
+
+function toneFromTodoState(state: string): StateTone {
+  switch (state) {
+    case 'done':
+    case 'completed':
+      return 'success';
+    case 'doing':
+    case 'in-progress':
+      return 'info';
+    case 'warn':
+      return 'warn';
+    case 'error':
+      return 'error';
+    default:
+      return 'neutral';
   }
 }
 

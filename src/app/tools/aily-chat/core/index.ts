@@ -3,7 +3,6 @@
  */
 
 export type { IAilyTool, ToolContext, ToolSchema, ToolUseResult, ToolExecutionCallbacks } from './tool-types';
-export { ToolDisplayRegistry } from './tool-display-registry';
 export { buildTurnSummaryPlan, findTurnSummaryPreserveStartSpanIndex } from './turn-summary-plan';
 export type { TurnSummaryPlan, TurnSummaryPlanOptions } from './turn-summary-plan';
 

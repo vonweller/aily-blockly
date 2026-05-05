@@ -1,5 +1,5 @@
 interface ScrollManagerLike {
-  autoScrollEnabled: boolean;
+  startNewExchange(): void;
   scrollToBottom(): void;
 }
 
@@ -51,7 +51,6 @@ export class ChatSubmitShellCoordinator {
   }
 
   private prepareForSubmit(): void {
-    this.deps.scrollManager.autoScrollEnabled = true;
-    this.deps.scrollManager.scrollToBottom();
+    this.deps.scrollManager.startNewExchange();
   }
 }

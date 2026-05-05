@@ -16,7 +16,7 @@ import { AilyChatConfigService } from '../tools/aily-chat/services/aily-chat-con
 import { ChatService } from '../tools/aily-chat/services/chat.service';
 import { AilyHost } from '../tools/aily-chat/core/host';
 import {
-  createBlocklyCompatibilityHostBinding,
+  createBlocklyStandardHostBinding,
   buildLexEndpoint,
   buildLexModelConfig,
 } from '../tools/aily-chat/helpers/lex-agent-bootstrap';
@@ -152,7 +152,7 @@ export class BackgroundAgentService implements OnDestroy {
 
       // 2. 构建 host API + adapter
       const cwd = this.projectService.currentProjectPath || '';
-      const { adapter, toolProvider } = createBlocklyCompatibilityHostBinding(cwd);
+      const { adapter, toolProvider } = createBlocklyStandardHostBinding(cwd);
 
       // 3. 创建 lex agent
       const agent = lex.createAgent({

@@ -841,7 +841,7 @@ interface StateViewerData {
         margin-top: 4px;
         font-size: 11px;
         line-height: 1.35;
-        color: var(--vscode-textLink-foreground, #74b3ff);
+        color: #74b3ff;
         text-decoration: none;
         word-break: break-all;
       }
@@ -876,7 +876,7 @@ interface StateViewerData {
       .ac-state-output-code-block code {
         display: block;
         white-space: pre;
-        font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+        font-family: Consolas, 'Courier New', monospace;
         font-size: 12px;
         line-height: 1.5;
         color: var(--chat-fg, #cccccc);

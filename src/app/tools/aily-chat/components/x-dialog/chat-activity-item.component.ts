@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
@@ -22,6 +22,7 @@ import {
   type StateDetailRow,
   type InstructionDiagnosticFilter,
 } from './x-aily-state-viewer/activity-detail-items';
+import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../../services/chat-runtime-interaction-host.service';
 
 @Component({
   selector: 'aily-chat-activity-item',
@@ -131,12 +132,14 @@ import {
             </div>
           }
 
-          @if (item.approval) {
+          @if (shouldRenderInlineApproval()) {
             <div class="cag-item-confirmation-body" data-detail-kind="invocation">
               <x-aily-confirmation-viewer
                 class="chat-confirmation-widget2 cag-item-confirmation-widget cag-item-approval"
                 [data]="item.approval"
-                [embedded]="true" />
+                [embedded]="true"
+                [interactive]="isInteractiveInlineApproval()"
+                (decision)="onInlineApprovalDecision($event)" />
             </div>
           }
 
@@ -1427,7 +1430,7 @@ import {
     }
 
     .cag-item-invocation-diff-hunk-title {
-      font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+      font-family: Consolas, 'Courier New', monospace;
       font-size: 11px;
       line-height: 1.4;
       color: var(--chat-fg-dim, #8e8e8e);
@@ -1443,7 +1446,7 @@ import {
     .cag-item-invocation-diff-stat {
       font-size: 10px;
       line-height: 1.2;
-      font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+      font-family: Consolas, 'Courier New', monospace;
     }
 
     .cag-item-invocation-diff-stat-add {
@@ -1504,7 +1507,7 @@ import {
     .cag-item-invocation-output-code-block code {
       display: block;
       white-space: pre;
-      font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+      font-family: Consolas, 'Courier New', monospace;
       font-size: 12px;
       line-height: 1.5;
       color: var(--chat-fg, #cccccc);
@@ -1524,7 +1527,7 @@ import {
     }
 
     .cag-item-invocation-output-diff-file-link {
-      color: var(--vscode-textLink-foreground, #4da3ff);
+      color: #4da3ff;
       text-decoration: none;
       font-size: 11px;
       line-height: 1.35;
@@ -1560,7 +1563,7 @@ import {
       align-items: stretch;
       min-width: 0;
       border-top: 1px solid rgba(255,255,255,0.04);
-      font-family: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+      font-family: Consolas, 'Courier New', monospace;
       font-size: 12px;
       line-height: 1.5;
     }
@@ -1657,7 +1660,7 @@ import {
     .cag-item-invocation-output-resource-link {
       display: block;
       margin-top: 6px;
-      color: var(--vscode-textLink-foreground, #74b3ff);
+      color: #74b3ff;
       text-decoration: none;
       word-break: break-all;
     }
@@ -1759,25 +1762,86 @@ import {
 })
 export class ChatActivityItemComponent implements OnChanges {
   @Input({ required: true }) item!: ActivityGroupDisplayItem;
+  @Input() sessionId = '';
   @Input() first = false;
   @Input() last = false;
   @Input() only = false;
 
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
+  private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
 
   detailExpanded = false;
+
+  shouldRenderInlineApproval(): boolean {
+    return !!this.item?.approval && (this.item.approval.resolved === true || this.hasActiveInlineApproval());
+  }
+
+  isInteractiveInlineApproval(): boolean {
+    return this.hasActiveInlineApproval();
+  }
+
+  onInlineApprovalDecision(decision: RuntimeConfirmationDecision): void {
+    if (!this.sessionId || !this.hasActiveInlineApproval()) {
+      return;
+    }
+
+    const activeConfirmation = this.runtimeInteractionHost?.getActiveConfirmation(this.sessionId);
+    if (!activeConfirmation) {
+      return;
+    }
+
+    if (activeConfirmation.toolCallId) {
+      this.runtimeInteractionHost?.resolveToolApproval(this.sessionId, activeConfirmation.toolCallId, decision);
+      return;
+    }
+
+    this.runtimeInteractionHost?.resolveConfirmation(this.sessionId, activeConfirmation.id, decision);
+  }
+
+  private hasActiveInlineApproval(): boolean {
+    if (!this.sessionId || !this.item?.approval) {
+      return false;
+    }
+
+    const activeConfirmation = this.runtimeInteractionHost?.getActiveConfirmation(this.sessionId);
+    if (!activeConfirmation) {
+      return false;
+    }
+
+    if (activeConfirmation.partId && this.item.approval.partId) {
+      return activeConfirmation.partId === this.item.approval.partId;
+    }
+
+    if (activeConfirmation.askId && this.item.approval.askId) {
+      return activeConfirmation.askId === this.item.approval.askId;
+    }
+
+    if (activeConfirmation.toolCallId && this.item.approval.toolCallId) {
+      return activeConfirmation.toolCallId === this.item.approval.toolCallId;
+    }
+
+    return false;
+  }
+
   selectedInstructionFilter: InstructionDiagnosticFilter = 'all';
   private readonly collapsedDiffHunks = new Set<string>();
+  private lastAutoDetailExpanded = false;
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['item']) {
       const previousItem = changes['item'].previousValue as ActivityGroupDisplayItem | undefined;
       const isSameItem = previousItem?.id === this.item.id;
+      const nextAutoDetailExpanded = this.shouldAutoExpandDetails();
 
-      if (!isSameItem || this.item.detailExpanded === true) {
-        this.detailExpanded = this.item.detailExpanded === true;
+      if (!isSameItem) {
+        this.detailExpanded = nextAutoDetailExpanded;
+      } else if (nextAutoDetailExpanded !== this.lastAutoDetailExpanded) {
+        this.detailExpanded = nextAutoDetailExpanded;
+      } else if (this.item.detailExpanded === true && !this.detailExpanded) {
+        this.detailExpanded = true;
       }
 
+      this.lastAutoDetailExpanded = nextAutoDetailExpanded;
       this.selectedInstructionFilter = 'all';
     }
   }
@@ -1804,6 +1868,31 @@ export class ChatActivityItemComponent implements OnChanges {
 
   hasDetailContent(): boolean {
     return this.hasDetailSections() || !!this.item.instructionMetadata;
+  }
+
+  shouldAutoExpandDetails(): boolean {
+    if (this.item.detailExpanded === true) {
+      return true;
+    }
+
+    if (!this.hasDetailContent()) {
+      return false;
+    }
+
+    if (this.item.detailKind === 'invocation') {
+      return this.item.isSpinning && this.hasLiveInvocationOutput();
+    }
+
+    return this.item.isSpinning;
+  }
+
+  private hasLiveInvocationOutput(): boolean {
+    const invocationDetail = this.item.invocationDetail;
+    if (!invocationDetail) {
+      return false;
+    }
+
+    return invocationDetail.outputSections.some((section) => (section.rows?.length || 0) > 0);
   }
 
   toggleDetail(): void {

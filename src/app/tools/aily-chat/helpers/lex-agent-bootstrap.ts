@@ -8,9 +8,9 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
-import { getMainAgentLegacyHostTools } from '../core/legacy-tool-catalog';
-import { BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
-import { buildBlocklyWorkspaceIdentityLines } from '../core/blockly-environment-context';
+import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
+import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
+import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
 import { createBlocklySlashCommandProvider } from '../core/blockly-slash-command-provider';
@@ -24,6 +24,8 @@ import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
+import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
+import type { PersistedHostResponseData } from '../services/chat-history.service';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
 import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
@@ -31,16 +33,28 @@ import { EditingTimelineRecordingBridge } from '../services/editing-timeline-rec
 import type { EditingTimelineFileWriteEvent } from '../services/editing-timeline-recording-bridge';
 import type { EditingTextLineChange } from '../services/editing-text-diff.types';
 import type { NormalizedTextEdit } from '../services/editing-timeline.types';
-import { BlocklyHostAdapter, type IExternalHostAPI } from 'aily-lex/host/blockly';
-import { createConversationTurnResponse } from 'aily-lex/browser';
+import { LEGACY_HOST_EXTERNAL_TOOLS } from '../tools/legacy-host-tool-definitions';
+import {
+  BlocklyHostAdapter,
+  createBlocklyHostBinding,
+  createEnvironmentProviderFromContext,
+  type IExternalHostAPI,
+} from 'aily-lex/host/blockly';
+import {
+  createConversationTurnResponse,
+  type IHostToolProvider,
+  type IToolContribution,
+} from 'aily-lex/browser';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
+type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
 
 export interface LexRuntimeModelConfig {
   model?: string;
   baseUrl?: string;
   apiKey?: string;
   presetId?: string;
+  contextWindowTokens?: number;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
 }
 
@@ -76,6 +90,18 @@ export interface BlocklyCompatibilityHostBinding {
   adapter: BlocklyHostAdapter;
 }
 
+interface BlocklyStandardHostBinding {
+  hostAPI: IExternalHostAPI;
+  toolProvider: ReturnType<typeof createBlocklyToolProvider>;
+  adapter: BlocklyHostAdapter;
+}
+
+const BLOCKLY_SUBAGENT_REQUIRED_CONTEXT = {
+  scopes: [...BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes],
+  strict: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.strict,
+  hydrateBeforeFirstModelCall: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.hydrateBeforeFirstModelCall,
+} as const;
+
 // Host/runtime boundary:
 // - this set only selects lex-owned core tools for the main agent
 // - blockly-specific capabilities must enter through toolProvider / agentProvider / skillProvider
@@ -95,6 +121,229 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'tool_search',
   'load_skill',
 ]);
+
+const TOOL_CONFIG_AGENTS = [MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE] as const;
+
+type ToolConfigAgent = typeof TOOL_CONFIG_AGENTS[number];
+
+type AgentToolConfigAccessor = Pick<IChatServiceAccess, 'ailyChatConfigService'>['ailyChatConfigService'];
+
+type RequestToolSelectionContext = {
+  mcpService: Pick<IChatServiceAccess, 'mcpService'>['mcpService'];
+} & (
+  | { ailyChatConfigService: AgentToolConfigAccessor }
+  | AgentToolConfigAccessor
+);
+
+type ToolCatalogSource = 'core' | 'contributed' | 'mcp';
+
+export interface RuntimeToolCatalogEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly agents: readonly ToolConfigAgent[];
+  readonly source: ToolCatalogSource;
+}
+
+export type RequestUserSelectedTools = Readonly<Record<string, boolean>>;
+
+function isToolConfigAgent(value: string): value is ToolConfigAgent {
+  return TOOL_CONFIG_AGENTS.includes(value as ToolConfigAgent);
+}
+
+function getDefaultToolConfigAgents(): ToolConfigAgent[] {
+  return [...TOOL_CONFIG_AGENTS];
+}
+
+function getContributionAgents(contribution: Pick<IToolContribution, 'agentScope'>): ToolConfigAgent[] {
+  if (!Array.isArray(contribution.agentScope) || contribution.agentScope.length === 0) {
+    return getDefaultToolConfigAgents();
+  }
+
+  const normalized = contribution.agentScope
+    .map(agent => normalizeAgentIdentifier(agent))
+    .filter(isToolConfigAgent);
+
+  return normalized.length > 0 ? normalized : getDefaultToolConfigAgents();
+}
+
+function isToolEnabledForAgent(
+  configService: AgentToolConfigAccessor,
+  agentName: ToolConfigAgent,
+  toolName: string,
+): boolean {
+  const config = configService.getAgentToolsConfig(agentName);
+  if (config?.disabledTools?.includes(toolName)) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveAgentToolConfigAccessor(
+  ctx: RequestToolSelectionContext,
+): AgentToolConfigAccessor {
+  return 'ailyChatConfigService' in ctx ? ctx.ailyChatConfigService : ctx;
+}
+
+export function getConfiguredCoreToolFilter(
+  configService: AgentToolConfigAccessor,
+): ReadonlySet<string> {
+  return new Set(
+    [...LEX_CORE_SAFE_TOOLS].filter(toolName => isToolEnabledForAgent(configService, MAIN_AGENT_TYPE, toolName)),
+  );
+}
+
+function cloneContributionWithScopedAgents(
+  contribution: IToolContribution,
+  agents: readonly ToolConfigAgent[],
+): IToolContribution {
+  return {
+    ...contribution,
+    agentScope: [...agents],
+  };
+}
+
+export function filterContributedToolsByAgentToolConfig(
+  contributions: readonly IToolContribution[],
+  configService: AgentToolConfigAccessor,
+): IToolContribution[] {
+  const filtered: IToolContribution[] = [];
+
+  for (const contribution of contributions) {
+    const configuredAgents = getContributionAgents(contribution).filter(agentName => {
+      return isToolEnabledForAgent(configService, agentName, contribution.name);
+    });
+
+    if (configuredAgents.length === 0) {
+      continue;
+    }
+
+    const originalAgents = getContributionAgents(contribution);
+    const sameScope = configuredAgents.length === originalAgents.length
+      && configuredAgents.every((agent, index) => agent === originalAgents[index]);
+
+    filtered.push(sameScope ? contribution : cloneContributionWithScopedAgents(contribution, configuredAgents));
+  }
+
+  return filtered;
+}
+
+function toHostToolShape(contribution: IToolContribution): any {
+  return {
+    name: contribution.name,
+    description: contribution.description || contribution.name,
+    input_schema: contribution.inputSchema || { type: 'object', properties: {} },
+  };
+}
+
+function mergeRuntimeToolCatalogEntries(entries: readonly RuntimeToolCatalogEntry[]): RuntimeToolCatalogEntry[] {
+  const merged = new Map<string, RuntimeToolCatalogEntry>();
+
+  for (const entry of entries) {
+    const existing = merged.get(entry.name);
+    if (!existing) {
+      merged.set(entry.name, {
+        ...entry,
+        agents: [...entry.agents],
+      });
+      continue;
+    }
+
+    const nextAgents = [...new Set([...existing.agents, ...entry.agents])]
+      .filter(isToolConfigAgent);
+
+    merged.set(entry.name, {
+      name: entry.name,
+      description: existing.description || entry.description,
+      source: existing.source,
+      agents: nextAgents,
+    });
+  }
+
+  const sourceOrder: Record<ToolCatalogSource, number> = { core: 0, contributed: 1, mcp: 2 };
+  return [...merged.values()].sort((left, right) => {
+    const sourceDelta = sourceOrder[left.source] - sourceOrder[right.source];
+    if (sourceDelta !== 0) {
+      return sourceDelta;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function getCatalogDescription(name: string): string {
+  return TOOL_SETTINGS_CATALOG.find(tool => tool.name === name)?.description || name;
+}
+
+function getRuntimeCoreToolCatalogEntries(): RuntimeToolCatalogEntry[] {
+  return [...LEX_CORE_SAFE_TOOLS].sort((left, right) => left.localeCompare(right)).map(toolName => ({
+    name: toolName,
+    description: getCatalogDescription(toolName),
+    agents: [MAIN_AGENT_TYPE],
+    source: 'core' as const,
+  }));
+}
+
+function getRuntimeContributedToolCatalogEntries(cwd = ''): RuntimeToolCatalogEntry[] {
+  const { toolProvider } = createBlocklyStandardHostBinding(cwd);
+  return toolProvider.contributeTools().map(contribution => ({
+    name: contribution.name,
+    description: contribution.description || contribution.name,
+    agents: getContributionAgents(contribution),
+    source: 'contributed' as const,
+  }));
+}
+
+function getRuntimeMcpToolCatalogEntries(tools: readonly any[] | undefined): RuntimeToolCatalogEntry[] {
+  return (tools || []).map(tool => {
+    const normalized = normalizeMcpTool(tool);
+    return {
+      name: normalized.name,
+      description: normalized.description || normalized.name,
+      agents: [MAIN_AGENT_TYPE],
+      source: 'mcp' as const,
+    };
+  });
+}
+
+export function getRuntimeToolSettingsCatalog(
+  ctx: Pick<IChatServiceAccess, 'mcpService'>,
+  cwd = '',
+): RuntimeToolCatalogEntry[] {
+  return mergeRuntimeToolCatalogEntries([
+    ...getRuntimeCoreToolCatalogEntries(),
+    ...getRuntimeContributedToolCatalogEntries(cwd),
+    ...getRuntimeMcpToolCatalogEntries(ctx.mcpService?.tools),
+  ]);
+}
+
+export function getUserSelectedToolsForRequest(
+  ctx: RequestToolSelectionContext,
+  requestAgentId?: string,
+  cwd = '',
+): RequestUserSelectedTools | undefined {
+  const normalizedAgentId = typeof requestAgentId === 'string' && requestAgentId.trim().length > 0
+    ? normalizeAgentIdentifier(requestAgentId)
+    : MAIN_AGENT_TYPE;
+
+  if (!isToolConfigAgent(normalizedAgentId)) {
+    return undefined;
+  }
+
+  const catalogEntries = getRuntimeToolSettingsCatalog(ctx, cwd)
+    .filter(entry => entry.agents.includes(normalizedAgentId));
+
+  if (catalogEntries.length === 0) {
+    return undefined;
+  }
+
+  const configService = resolveAgentToolConfigAccessor(ctx);
+  const userSelectedTools: Record<string, boolean> = {};
+  for (const entry of catalogEntries) {
+    userSelectedTools[entry.name] = isToolEnabledForAgent(configService, normalizedAgentId, entry.name);
+  }
+
+  return userSelectedTools;
+}
 
 function registerBlocklySkillOnLexAgent(
   agent: { registerSkill(skill: any): void },
@@ -243,6 +492,8 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
 
 export function buildExternalHostAPI(): IExternalHostAPI {
   const host = AilyHost.get();
+  const contextSnapshotService = getBlocklyContextSnapshotService();
+  (window as { path?: typeof host.path }).path = host.path;
   const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
   const absFilePath = () => host.path.join(prjPath(), 'project.abs');
   const abiFilePath = () => host.path.join(prjPath(), 'project.abi');
@@ -310,16 +561,60 @@ export function buildExternalHostAPI(): IExternalHostAPI {
       getProjectPath: () => host.project.currentProjectPath,
       getBoard: () => host.project.currentBoard,
         createProject: host.project.createProject
-          ? (name: string, board: string, path?: string) => host.project.createProject!(name, board, path ?? prjPath())
+          ? async (name: string, board: string, path?: string) => {
+              const result = await host.project.createProject!(name, board, path ?? prjPath());
+              contextSnapshotService.invalidate([
+                'workspaceIdentity',
+                'projectInfo',
+                'boardInfo',
+                'libraryIndex',
+                'libraryReadmeRefs',
+                'workspaceArtifacts',
+                'workspaceState',
+              ], 'project create');
+              return result;
+            }
           : undefined,
         reloadProject: host.project.reloadProject
-          ? () => host.project.reloadProject!()
+          ? async () => {
+              const result = await host.project.reloadProject!();
+              contextSnapshotService.invalidate([
+                'projectInfo',
+                'boardInfo',
+                'libraryIndex',
+                'libraryReadmeRefs',
+                'workspaceArtifacts',
+                'workspaceState',
+              ], 'project reload');
+              return result;
+            }
+          : undefined,
+        switchBoard: typeof (host.project as any)?.switchBoard === 'function'
+          ? async (board: string) => {
+              const result = await (host.project as any).switchBoard(board);
+              contextSnapshotService.invalidate([
+                'boardInfo',
+                'libraryIndex',
+                'libraryReadmeRefs',
+                'workspaceArtifacts',
+                'workspaceState',
+              ], 'switch board');
+              return result;
+            }
           : undefined,
         getBoardConfig: host.project.getBoardJson
           ? async () => host.project.getBoardJson!()
           : undefined,
         setBoardConfig: typeof (host.project as any)?.setBoardConfig === 'function'
-          ? async (config: Record<string, unknown>) => (host.project as any).setBoardConfig(config)
+          ? async (config: Record<string, unknown>) => {
+              const result = await (host.project as any).setBoardConfig(config);
+              contextSnapshotService.invalidate([
+                'boardInfo',
+                'workspaceArtifacts',
+                'workspaceState',
+              ], 'set board config');
+              return result;
+            }
           : undefined,
     } : undefined,
       builder: hasBuilder ? {
@@ -416,15 +711,32 @@ export function buildExternalHostAPI(): IExternalHostAPI {
   };
 }
 
+export function createBlocklySearchCompatibilityHostBinding(cwd = ''): BlocklyCompatibilityHostBinding {
+  const binding = createBlocklyStandardHostBinding(cwd);
+  attachBlocklyCompatibilityExtensions(binding.adapter);
+  return binding;
+}
+
 export function createBlocklyCompatibilityHostBinding(cwd = ''): BlocklyCompatibilityHostBinding {
+  return createBlocklySearchCompatibilityHostBinding(cwd);
+}
+
+export function createBlocklyStandardHostBinding(cwd = ''): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI();
   const toolProvider = createBlocklyToolProvider(hostAPI);
-  const adapter = BlocklyHostAdapter.create(hostAPI, cwd, toolProvider);
+  const binding = createBlocklyHostBinding({ hostAPI, cwd, toolProvider });
+  return {
+    hostAPI,
+    toolProvider,
+    adapter: binding.adapter,
+  };
+}
+
+function attachBlocklyCompatibilityExtensions(adapter: BlocklyHostAdapter): void {
   const searchExtension = createBlocklySearchExtension();
   if (searchExtension) {
     adapter.registerExtension('search', searchExtension);
   }
-  return { hostAPI, toolProvider, adapter };
 }
 
 export function createLexSessionStorage(
@@ -446,7 +758,7 @@ export async function loadStoredLexSessionSnapshot(
   sessionId: string,
   cwd = '',
 ): Promise<import('aily-lex/browser').SessionSnapshot | null> {
-  const { adapter } = createBlocklyCompatibilityHostBinding(cwd);
+  const { adapter } = createBlocklyStandardHostBinding(cwd);
   const storage = createLexSessionStorage(lex, adapter.fs);
   return await storage.load(sessionId) as import('aily-lex/browser').SessionSnapshot | null;
 }
@@ -483,10 +795,19 @@ export async function resolvePersistedLexSessionSnapshot(
 export function getMainAgentHostTools(
   ctx: Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService'>,
 ): any[] {
-  const tools = getMainAgentLegacyHostTools(ctx.ailyChatConfigService);
+  const tools = getConfiguredMainAgentHostTools(ctx.ailyChatConfigService);
 
   const mcpTools = (ctx.mcpService.tools || []).map(tool => normalizeMcpTool(tool));
   return mcpTools.length > 0 ? tools.concat(mcpTools) : tools;
+}
+
+function getConfiguredMainAgentHostTools(
+  configService: Pick<IChatServiceAccess, 'ailyChatConfigService'>['ailyChatConfigService'],
+): any[] {
+  const { toolProvider } = createBlocklyStandardHostBinding('');
+  return filterContributedToolsByAgentToolConfig(toolProvider.contributeTools(), configService)
+    .filter(tool => getContributionAgents(tool).includes(MAIN_AGENT_TYPE))
+    .map(tool => toHostToolShape(tool));
 }
 
 export function buildLexEndpoint(
@@ -524,6 +845,7 @@ export function buildLexModelConfig(
   return {
     modelId: currentModel?.model || 'default',
     presetId: currentModel?.presetId,
+    contextWindowTokens: currentModel?.contextWindowTokens,
     reasoningEffort: currentModel?.reasoningEffort,
     maxOutputTokens,
   };
@@ -531,26 +853,33 @@ export function buildLexModelConfig(
 
 export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
-): InstanceType<AilyLexModule['AilyLexAgent']> {
+): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, onSubagentEvent } = options;
   const cwd = ctx.prjPath || ctx.prjRootPath || '';
-  const { hostAPI, toolProvider, adapter } = createBlocklyCompatibilityHostBinding(cwd);
+  const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd);
+  attachBlocklyCompatibilityExtensions(adapter);
+  const contextSnapshotService = getBlocklyContextSnapshotService();
   const sessionStorage = createLexSessionStorage(lex, adapter.fs);
 
-  adapter.registerExtension('environment', {
-    getEnvironmentSection: () => buildHostEnvironmentSection(),
-  });
-  adapter.registerExtension('askUser', {
-    ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal }) => {
-      return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true);
+  const runtimeExtensions: Record<string, unknown> = {
+    environment: createEnvironmentProviderFromContext(
+      contextSnapshotService,
+      BLOCKLY_SUBAGENT_REQUIRED_CONTEXT,
+      'subagent-environment',
+    ),
+    contextSnapshot: contextSnapshotService,
+    askUser: {
+      ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal }) => {
+        return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true);
+      },
+      askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal }) => {
+        return askUserMany(opts.questions);
+      },
     },
-    askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal }) => {
-      return askUserMany(opts.questions);
+    diagnostics: {
+      getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
     },
-  });
-  adapter.registerExtension('diagnostics', {
-    getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
-  });
+  };
   if (cwd && (sessionId || ctx.sessionId)) {
     const editingTimelineRepository = new EditingTimelineRepository({
       joinPath: (...parts) => AilyHost.get().path.join(...parts),
@@ -564,7 +893,7 @@ export function bootstrapBlocklyLexAgent(
       cwd,
       sessionId || ctx.sessionId,
     );
-    adapter.registerExtension('editingTimeline', {
+    runtimeExtensions['editingTimeline'] = {
       recordFileWrite: async (event: EditingTimelineFileWriteEvent) => {
         const edits = event.contentKind !== 'binary'
           && event.beforeContent !== null
@@ -591,7 +920,7 @@ export function bootstrapBlocklyLexAgent(
           computeEdits: computeNormalizedTextEdits,
         });
       },
-    });
+    };
   }
 
   let pendingNpmCommand: { command: string; isInstall: boolean; isUninstall: boolean } | null = null;
@@ -611,6 +940,7 @@ export function bootstrapBlocklyLexAgent(
     cwd: cwd || undefined,
     maxIterations: ctx.ailyChatConfigService.maxCount,
     promptProfile: BLOCKLY_PROMPT_PROFILE,
+    extensions: runtimeExtensions,
     userInstructionFolders: ctx.ailyChatConfigService.userInstructionFolders.map(path => ({ path })),
     projectInstructionFolders: ctx.ailyChatConfigService.projectInstructionFolders.map(path => ({ path })),
     projectAgentFiles: getBundledLexAgentFiles(),
@@ -638,7 +968,13 @@ export function bootstrapBlocklyLexAgent(
         pendingNpmCommand = null;
         const isError = (result as any)?.isError ?? false;
         if (isError) return { action: 'continue' as const };
-        if (npmCmd.isInstall) await loadNpmLibraries(npmCmd.command);
+        if (npmCmd.isInstall) {
+          await loadNpmLibraries(npmCmd.command);
+          contextSnapshotService.invalidate(['libraryIndex', 'libraryReadmeRefs'], 'npm install');
+        }
+        if (npmCmd.isUninstall) {
+          contextSnapshotService.invalidate(['libraryIndex', 'libraryReadmeRefs'], 'npm uninstall');
+        }
         return { action: 'continue' as const };
       },
     },
@@ -659,6 +995,8 @@ export function bootstrapBlocklyLexAgent(
       source: request.source,
       actions: request.actions,
       primaryScope: request.primaryScope,
+      allowAutoConfirm: request.allowAutoConfirm,
+      approveCombination: request.approveCombination,
       args: request.input,
     }),
     permissionPolicy,
@@ -666,6 +1004,16 @@ export function bootstrapBlocklyLexAgent(
     terminalPolicy,
   });
 
+  attachBlocklyPostCreateExtensions(agent, adapter, onSubagentEvent);
+
+  return agent;
+}
+
+function attachBlocklyPostCreateExtensions(
+  agent: BlocklyLexAgentInstance,
+  adapter: BlocklyHostAdapter,
+  onSubagentEvent?: (event: any) => void,
+): void {
   adapter.registerExtension('skillManager', {
     search: (query: string) => {
       const results = BlocklySkillRegistry.searchSkills(query);
@@ -718,8 +1066,6 @@ export function bootstrapBlocklyLexAgent(
     syncPersistedActiveSkills(agent, snapshot.activeSkillNames);
   };
   adapter.registerExtension('agentExecutor', agentExecutor);
-
-  return agent;
 }
 
 function createBlocklySearchExtension(): {
@@ -1038,7 +1384,18 @@ function buildTurnResponseLexSessionSnapshot(
     return null;
   }
 
-  const lexTurns: import('aily-lex/browser').ConversationTurn[] = turnResponses.map((turn, index) => ({
+  const lexTurns: import('aily-lex/browser').ConversationTurn[] = turnResponses.map((turn, index) => {
+    const persistedResponse = (turn.response ?? {}) as typeof turn.response & PersistedHostResponseData;
+    const slashCommand = turn.responseModel?.slashCommand ?? persistedResponse.slashCommand;
+    const followups = turn.responseModel?.followups ?? persistedResponse.followups;
+    const modelName = typeof turn.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
+      ? turn.responseModel.modelName.trim()
+      : undefined;
+    const modelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
+      ? turn.responseModel.modelBillingLabel.trim()
+      : undefined;
+
+    return ({
     id: turn.turnId || `turn-${index}`,
     index,
     request: {
@@ -1061,7 +1418,6 @@ function buildTurnResponseLexSessionSnapshot(
     })),
     response: createConversationTurnResponse({
       participant: turn.response?.participant || 'assistant',
-      ...(turn.response?.command !== undefined ? { command: turn.response.command } : {}),
       ...(turn.response?.usedContext ? { usedContext: turn.response.usedContext } : {}),
       ...(turn.response?.contentReferences ? { contentReferences: turn.response.contentReferences } : {}),
       ...(turn.response?.codeCitations ? { codeCitations: turn.response.codeCitations } : {}),
@@ -1071,9 +1427,20 @@ function buildTurnResponseLexSessionSnapshot(
       createdAt: turn.response?.createdAt ?? turn.createdAt ?? Date.now(),
       updatedAt: turn.response?.updatedAt ?? turn.updatedAt ?? turn.createdAt ?? Date.now(),
     }),
+    ...((slashCommand || followups || modelName || modelBillingLabel)
+      ? {
+        responseModel: {
+          ...(slashCommand ? { slashCommand } : {}),
+          ...(followups ? { followups: followups.map(followup => ({ ...followup })) } : {}),
+          ...(modelName ? { modelName } : {}),
+          ...(modelBillingLabel ? { modelBillingLabel } : {}),
+        },
+      }
+      : {}),
     status: toLexConversationTurnStatus(turn.response?.status),
     createdAt: turn.createdAt ?? turn.response?.createdAt,
-  }));
+    });
+  });
 
   return {
     sessionId,
@@ -1193,13 +1560,6 @@ async function loadNpmLibraries(command: string): Promise<void> {
       console.warn('[LexStream] npm 库加载失败:', libPackageName, e);
     }
   }
-}
-
-async function buildHostEnvironmentSection(): Promise<string> {
-  const host = AilyHost.get();
-  const lines = await buildBlocklyWorkspaceIdentityLines(host);
-
-  return lines.length > 0 ? lines.join('\n') : 'No project opened.';
 }
 
 function createExternalTerminal(host: any, prjPath: () => string): IExternalHostAPI['terminal'] {

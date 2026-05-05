@@ -95,7 +95,6 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         title: part.title,
         subtitle: part.subtitle,
         message: part.message,
-        description: part.description,
         args: part.args,
         source: part.source,
         actions: part.actions,
@@ -103,6 +102,7 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         resolved: part.resolved,
         result: part.result,
         scope: part.scope,
+        ...(part.description != null ? { description: part.description } : {}),
       } satisfies TurnResponseConfirmationPart;
     case 'terminal':
       return {

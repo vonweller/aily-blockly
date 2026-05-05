@@ -10,7 +10,7 @@
  *   - 与现有 ChatMessage.content string 并行运行（双轨模式）
  */
 
-import { getToolApprovalActions, getToolApprovalSubtitle, getToolApprovalTitle, type ToolApprovalAction, type ToolApprovalScope } from '../helpers/tool-approval-ui';
+import { normalizeToolApprovalPresentation, type ToolApprovalAction, type ToolApprovalScope } from '../helpers/tool-approval-ui';
 
 // ==================== Phase 1 Part 类型 ====================
 
@@ -61,7 +61,7 @@ export interface StatePart {
   /** 可选进度百分比 */
   progress?: number;
   /** 事件类型 */
-  kind?: 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'agent_team' | 'mcp' | 'background_task' | 'instructions' | 'compaction' | 'handoff';
+  kind?: 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'agent_team' | 'mcp' | 'background_task' | 'instructions' | 'compaction' | 'handoff' | 'todo';
   /** 轻量元数据，供持久化/恢复使用 */
   metadata?: Record<string, unknown>;
 }
@@ -264,20 +264,29 @@ export function mkConfirmation(
   source?: string,
   presentation?: Partial<Pick<ConfirmationPart, 'title' | 'subtitle' | 'description' | 'actions' | 'primaryScope' | 'args'>>,
 ): ConfirmationPart {
-  const actions = presentation?.actions ?? [];
+  const normalized = normalizeToolApprovalPresentation({
+    toolName,
+    source,
+    title: presentation?.title,
+    subtitle: presentation?.subtitle,
+    message,
+    actions: presentation?.actions,
+    primaryScope: presentation?.primaryScope,
+    args: presentation?.args,
+  });
   return {
     type: 'confirmation',
     partId: buildConfirmationPartId(askId),
     askId,
-    message,
+    message: normalized.message,
     description: presentation?.description,
-    args: presentation?.args,
+    args: normalized.args,
     toolName,
-    title: presentation?.title ?? getToolApprovalTitle(toolName),
-    subtitle: presentation?.subtitle ?? getToolApprovalSubtitle(toolName, source),
+    title: normalized.title,
+    subtitle: normalized.subtitle,
     source,
-    actions,
-    primaryScope: presentation?.primaryScope ?? 'once',
+    actions: normalized.actions,
+    primaryScope: normalized.primaryScope,
     resolved: false,
   };
 }

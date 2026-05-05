@@ -38,6 +38,8 @@ export class ChatViewAdapter {
     private getCurrentSource: () => string,
     /** 获取当前模型名 */
     private getCurrentModelName: () => string | undefined,
+    /** 获取当前模型倍率 */
+    private getCurrentModelBillingLabel: () => string | undefined,
     /** 获取 isWaiting 状态 */
     private getIsWaiting: () => boolean,
     /** 标记历史脏位 */
@@ -46,8 +48,10 @@ export class ChatViewAdapter {
     private ngZone?: NgZone,
     /** 变更检测回调（OnPush 模式下由组件注入 cdr.markForCheck） */
     private cdCallback?: () => void,
-    /** 滚动到底部（可选，flush 后调用） */
-    private scrollToBottom?: () => void,
+    /** 记录 flush 前是否应维持贴底 */
+    private captureAutoScrollState?: () => boolean,
+    /** 根据 flush 前快照决定是否滚动到底部 */
+    private scrollToBottom?: (shouldFollow: boolean) => void,
   ) {}
 
   /**
@@ -287,6 +291,7 @@ export class ChatViewAdapter {
     const _s = ChatPerformanceTracer.begin('doFlush');
     const segments = this._computeMergedChunks();
     if (segments.length === 0) { ChatPerformanceTracer.end(_s, 'doFlush', 'empty'); return; }
+    const shouldFollow = this.captureAutoScrollState?.() ?? true;
 
     // 进入 Angular Zone 执行 list 变更 → 触发 CD
     this._runInZone(() => {
@@ -294,7 +299,7 @@ export class ChatViewAdapter {
         this._doAppendMessage(seg.role, seg.content, seg.source);
       }
       this.cdCallback?.();
-      this.scrollToBottom?.();
+      this.scrollToBottom?.(shouldFollow);
       this.onFlushCallback?.();
       ChatPerformanceTracer.end(_s, 'doFlush');
     });
@@ -338,6 +343,7 @@ export class ChatViewAdapter {
     }
     // 在 zone 外完成纯计算
     const segments = this._computeMergedChunks();
+    const shouldFollow = this.captureAutoScrollState?.() ?? true;
 
     // 单次 zone entry：flush mutations + action → 1 次 CD
     const _imfSpan = ChatPerformanceTracer.begin('_immediateFlushAndRun', `${segments.length}segs`);
@@ -347,7 +353,7 @@ export class ChatViewAdapter {
       }
       fn();
       this.cdCallback?.();
-      this.scrollToBottom?.();
+      this.scrollToBottom?.(shouldFollow);
       this.onFlushCallback?.();
     });
     ChatPerformanceTracer.end(_imfSpan, '_immediateFlushAndRun');
@@ -416,6 +422,7 @@ export class ChatViewAdapter {
         state: (role === 'aily' && this.getIsWaiting()) ? 'doing' : 'done',
         source: msgSource,
         modelName: this.getCurrentModelName(),
+        modelBillingLabel: this.getCurrentModelBillingLabel(),
       });
     }
     this.markHistoryDirty();

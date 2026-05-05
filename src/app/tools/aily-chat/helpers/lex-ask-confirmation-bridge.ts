@@ -1,13 +1,14 @@
-import type { IChatCoordination } from '../core/chat-context';
+import type { IChatCoordination, IChatServiceAccess, ISessionAccess } from '../core/chat-context';
 import {
-  getToolApprovalSubtitle,
-  getToolApprovalTitle,
+  normalizeToolApprovalRequest,
+  normalizeToolApprovalPresentation,
   type ToolApprovalPresentation,
 } from './tool-approval-ui';
-import { AILY_CONFIRMATION_RESULT_EVENT } from './interaction-events';
 
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
-type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>;
+type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>
+  & Pick<ISessionAccess, 'sessionId'>
+  & Pick<IChatServiceAccess, 'runtimeInteractionHost'>;
 
 /**
  * Handles lex hook `ask` confirmations through blockly confirmation UI.
@@ -27,37 +28,35 @@ export class LexAskConfirmationBridge {
     subtitle?: ToolApprovalPresentation['subtitle'];
     actions?: ToolApprovalPresentation['actions'];
     primaryScope?: ToolApprovalPresentation['primaryScope'];
+    allowAutoConfirm?: ToolApprovalPresentation['allowAutoConfirm'];
+    approveCombination?: ToolApprovalPresentation['approveCombination'];
   }): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       if (request.source === 'beforeToolExecution' && request.toolCallId && request.toolName) {
-        this.ctx.lexStream.ui.presentToolCallApproval({
+        const normalizedRequest = normalizeToolApprovalRequest({
           toolCallId: request.toolCallId,
           toolName: request.toolName,
-          title: request.title ?? getToolApprovalTitle(request.toolName),
-          subtitle: request.subtitle ?? getToolApprovalSubtitle(request.toolName, request.source),
+          title: request.title || '',
+          subtitle: request.subtitle,
           message: request.message,
           source: request.source,
           actions: request.actions,
           primaryScope: request.primaryScope,
+          allowAutoConfirm: request.allowAutoConfirm,
+          approveCombination: request.approveCombination,
           args: request.toolInput,
         });
 
+        this.ctx.lexStream.ui.presentToolCallApproval(normalizedRequest);
+
         this.resolveAskConfirmation = resolve;
 
-        const handler = (e: Event) => {
-          const detail = (e as CustomEvent).detail;
-          if (!detail || !this.resolveAskConfirmation) return;
-          if (detail.toolCallId !== request.toolCallId) return;
-
-          document.removeEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
-          this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId!, !!detail.approved, detail.scope);
-
+        void this.ctx.runtimeInteractionHost.presentToolApproval(this.ctx.sessionId, normalizedRequest).then((result) => {
+          this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId!, !!result.approved, result.scope);
           const resolveRef = this.resolveAskConfirmation;
           this.resolveAskConfirmation = null;
-          resolveRef(!!detail.approved);
-        };
-
-        document.addEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
+          resolveRef?.(!!result.approved);
+        });
         return;
       }
 
@@ -68,10 +67,18 @@ export class LexAskConfirmationBridge {
         request.toolName,
         request.source,
         {
-          title: request.title,
-          subtitle: request.subtitle,
-          actions: request.actions,
-          primaryScope: request.primaryScope,
+          ...normalizeToolApprovalPresentation({
+            toolName: request.toolName,
+            source: request.source,
+            title: request.title,
+            subtitle: request.subtitle,
+            message: request.message,
+            actions: request.actions,
+            primaryScope: request.primaryScope,
+            allowAutoConfirm: request.allowAutoConfirm,
+            approveCombination: request.approveCombination,
+            args: request.toolInput,
+          }),
         },
       );
       if (typeof confirmationPartId !== 'string' || !confirmationPartId.trim()) {
@@ -80,20 +87,33 @@ export class LexAskConfirmationBridge {
 
       this.resolveAskConfirmation = resolve;
 
-      const handler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (!detail || !this.resolveAskConfirmation) return;
-        if (detail.askId && detail.askId !== askId) return;
-
-        document.removeEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
-        this.ctx.lexStream.ui.resolveConfirmation(confirmationPartId, askId, !!detail.approved, detail.scope);
-
+      void this.ctx.runtimeInteractionHost.presentConfirmation(this.ctx.sessionId, {
+        askId,
+        partId: confirmationPartId,
+        toolName: request.toolName,
+        title: request.title || '确认操作',
+        subtitle: request.subtitle,
+        message: request.message,
+        args: request.toolInput,
+        actions: normalizeToolApprovalPresentation({
+          toolName: request.toolName,
+          source: request.source,
+          title: request.title,
+          subtitle: request.subtitle,
+          message: request.message,
+          actions: request.actions,
+          primaryScope: request.primaryScope,
+          allowAutoConfirm: request.allowAutoConfirm,
+          approveCombination: request.approveCombination,
+          args: request.toolInput,
+        }).actions,
+        primaryScope: request.primaryScope || 'once',
+      }).then((result) => {
+        this.ctx.lexStream.ui.resolveConfirmation(confirmationPartId, askId, !!result.approved, result.scope);
         const resolveRef = this.resolveAskConfirmation;
         this.resolveAskConfirmation = null;
-        resolveRef(!!detail.approved);
-      };
-
-      document.addEventListener(AILY_CONFIRMATION_RESULT_EVENT, handler);
+        resolveRef?.(!!result.approved);
+      });
     });
   }
 }

@@ -1,4 +1,4 @@
-import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AskUserOption, AskUserQuestion, AskUserAnswer } from '../../../core/ask-user';
@@ -15,6 +15,10 @@ interface NormalizedQuestion {
 interface AnswerRecord {
   selected: Set<number>;
   freeform: string;
+}
+
+interface QuestionAnsweredEvent {
+  answers: Record<string, AskUserAnswer>;
 }
 
 @Component({
@@ -38,7 +42,7 @@ interface AnswerRecord {
             [clickable]="true"
             [expanded]="!collapsed"
             (toggleRequested)="toggleCollapsed()">
-            @if (!allDone && !isHistory) {
+            @if (!allDone && !isHistory && interactive) {
               <span header-actions class="aq-header-actions">
                 <button class="aq-close" type="button" (click)="onSkipFromHeader($event)" title="跳过" aria-label="跳过当前问题">
                   <i class="fa-solid fa-xmark"></i>
@@ -55,7 +59,7 @@ interface AnswerRecord {
                     @for (opt of currentQ.options; track $index) {
                       <label class="aq-option"
                         [class.aq-checked]="isOptionSelected($index)"
-                        [class.aq-disabled]="allDone || isHistory">
+                        [class.aq-disabled]="interactionLocked">
                         <span class="aq-opt-num">{{ $index + 1 }}</span>
                         <span class="aq-option-body">
                           <span class="aq-option-label">
@@ -73,7 +77,7 @@ interface AnswerRecord {
                         }
                         <input type="checkbox" class="aq-hidden-input"
                           [checked]="isOptionSelected($index)"
-                          [disabled]="allDone || isHistory"
+                          [disabled]="interactionLocked"
                           (change)="toggleOption($index)" />
                       </label>
                     }
@@ -91,7 +95,7 @@ interface AnswerRecord {
                       placeholder="Enter custom answer"
                       [ngModel]="currentAnswer.freeform"
                       (ngModelChange)="onFreeformChange($event)"
-                      [disabled]="allDone || isHistory"
+                      [disabled]="interactionLocked"
                       (keydown.enter)="onConfirm()" />
                   </div>
                 }
@@ -101,13 +105,13 @@ interface AnswerRecord {
                 }
               </div>
 
-              @if (questions.length > 1 && (!allDone || isHistory)) {
+              @if (questions.length > 1) {
                 <div class="aq-nav">
                   <div class="aq-nav-left">
                     <button class="aq-nav-btn" [disabled]="currentIndex === 0" (click)="goPrev()">
                       <i class="fa-solid fa-chevron-left"></i>
                     </button>
-                    @if (!isHistory) {
+                    @if (interactive && !isHistory) {
                       <button class="aq-nav-btn" (click)="goNextOrConfirm()">
                         <i class="fa-solid fa-chevron-right"></i>
                       </button>
@@ -118,7 +122,7 @@ interface AnswerRecord {
                     }
                     <span class="aq-nav-page">{{ currentIndex + 1 }}/{{ questions.length }}</span>
                   </div>
-                  @if (!isHistory && isLastQuestion) {
+                  @if (interactive && !isHistory && isLastQuestion) {
                     <div class="aq-nav-right">
                       <button class="aq-nav-submit" [disabled]="!canSubmitAll" (click)="submitAll()">确认提交</button>
                     </div>
@@ -126,7 +130,7 @@ interface AnswerRecord {
                 </div>
               }
 
-              @if (!allDone && !isHistory && questions.length === 1 && hasCurrentSelection) {
+              @if (interactive && !allDone && !isHistory && questions.length === 1 && hasCurrentSelection) {
                 <div class="aq-nav aq-nav-single">
                   <div class="aq-nav-right">
                     <button class="aq-nav-submit" (click)="onConfirm()">确认提交</button>
@@ -314,7 +318,7 @@ interface AnswerRecord {
       outline: none;
       transition: border-color 0.2s;
     }
-    .aq-freeform-input:focus { border-color: var(--vscode-textLink-foreground, #74b3ff); }
+    .aq-freeform-input:focus { border-color: #74b3ff; }
     .aq-freeform-input:disabled { opacity: 0.5; cursor: not-allowed; }
     .aq-freeform-input::placeholder { color: var(--chat-fg-muted, #6a6a6a); }
 
@@ -372,11 +376,11 @@ interface AnswerRecord {
       min-height: 22px;
       padding: 0 10px; border-radius: 6px;
       font-size: 12px; font-weight: 400;
-      background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #ffffff);
+      background: #0e639c; color: #ffffff;
       border: 1px solid transparent; outline: none;
       cursor: pointer; transition: all 0.15s;
     }
-    .aq-nav-submit:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
+    .aq-nav-submit:hover:not(:disabled) { background: #1177bb; }
     .aq-nav-submit:disabled { opacity: 0.35; cursor: not-allowed; }
 
     .aq-result-note {
@@ -394,6 +398,8 @@ interface AnswerRecord {
 export class XAilyQuestionViewerComponent implements OnChanges {
   @Input() data: any = null;
   @Input() streamStatus: string = 'done';
+  @Input() interactive = true;
+  @Output() answered = new EventEmitter<QuestionAnsweredEvent>();
 
   questions: NormalizedQuestion[] = [];
   currentIndex = 0;
@@ -489,6 +495,10 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     return this.currentAnswer.selected.size > 0 || this.currentAnswer.freeform.trim().length > 0;
   }
 
+  get interactionLocked(): boolean {
+    return this.allDone || this.isHistory || !this.interactive;
+  }
+
   get isLastQuestion(): boolean {
     return this.currentIndex === this.questions.length - 1;
   }
@@ -533,7 +543,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   // ===== Actions =====
 
   toggleOption(index: number): void {
-    if (this.allDone || this.isHistory) return;
+    if (this.interactionLocked) return;
     const ans = this.currentAnswer;
     if (this.currentQ.multi_select) {
       if (ans.selected.has(index)) {
@@ -551,12 +561,13 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   }
 
   onFreeformChange(value: string): void {
+    if (this.interactionLocked) return;
     this.currentAnswer.freeform = value;
     this.cdr.detectChanges();
   }
 
   onConfirm(): void {
-    if (this.allDone || !this.hasCurrentSelection) return;
+    if (this.interactionLocked || !this.hasCurrentSelection) return;
     this.answeredSet.add(this.currentIndex);
 
     if (this.isLastQuestion) {
@@ -570,7 +581,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
   /** 多问题模式 > 按钮：非末页前进，末页不做操作（由提交按钮负责） */
   goNextOrConfirm(): void {
-    if (this.allDone || this.isHistory) return;
+    if (this.interactionLocked) return;
     this.answeredSet.add(this.currentIndex);
     if (!this.isLastQuestion) {
       this.currentIndex++;
@@ -588,7 +599,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   }
 
   onSkip(): void {
-    if (this.allDone || this.isHistory) return;
+    if (this.interactionLocked) return;
     // 清空当前回答，标记为已处理（跳过）
     this.answers.set(this.currentIndex, { selected: new Set(), freeform: '' });
     this.answeredSet.add(this.currentIndex);
@@ -618,6 +629,9 @@ export class XAilyQuestionViewerComponent implements OnChanges {
   // ===== Submit =====
 
   submitAll(): void {
+    if (!this.interactive || this.isHistory) {
+      return;
+    }
     this.allDone = true;
 
     const answersMap: Record<string, AskUserAnswer> = {};
@@ -659,13 +673,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       this.data.answers = answersMap;
     }
 
-    document.dispatchEvent(new CustomEvent('aily-question-answer', {
-      bubbles: true,
-      detail: {
-        answers: answersMap,
-        partId: this.data && typeof this.data.partId === 'string' ? this.data.partId : undefined,
-      },
-    }));
+    this.answered.emit({ answers: answersMap });
   }
 
   // ===== Data processing =====
@@ -681,7 +689,7 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     try {
       let rawQuestions: AskUserQuestion[];
       const savedAnswers = this.readSavedAnswers();
-      const nextIsHistory = this.data.isHistory === true || !!savedAnswers;
+      const nextIsHistory = this.data.isHistory === true;
 
       // 主格式：{ questions: AskUserQuestion[] }（来自 chat-engine._handleAskUser）
       if (this.data.questions && Array.isArray(this.data.questions)) {
@@ -694,12 +702,12 @@ export class XAilyQuestionViewerComponent implements OnChanges {
         return;
       }
 
-      // ★ 引用相等守卫：同一 questions 数组引用 → 跳过重置
-      // 防止 parent CD 每次创建新 wrapper 对象导致 ngOnChanges 触发 processData，
-      // 清空用户已选择的选项（参考 VSCode chatQuestionCarouselPart.hasSameContent 模式）
+      // VS Code question carousel 会复用同一个 runtime widget。
+      // 这里至少要把“语义相同但对象重建”的 live question 视为同一交互，
+      // 避免映射层 remap 后把当前选择和分页重置掉。
       if (
-        this._lastQuestionsRef === rawQuestions
-        && this._lastAnswersRef === savedAnswers
+        this.areQuestionsEquivalent(this._lastQuestionsRef, rawQuestions)
+        && this.areSavedAnswersEquivalent(this._lastAnswersRef, savedAnswers)
         && this._lastHistoryFlag === nextIsHistory
         && this.questions.length > 0
       ) {
@@ -799,5 +807,81 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       return undefined;
     }
     return answers as Record<string, AskUserAnswer>;
+  }
+
+  private areQuestionsEquivalent(
+    previous: AskUserQuestion[] | null | undefined,
+    next: AskUserQuestion[] | null | undefined,
+  ): boolean {
+    if (previous === next) {
+      return true;
+    }
+    if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) {
+      return false;
+    }
+
+    return previous.every((prevQuestion, index) => {
+      const nextQuestion = next[index];
+      if (!nextQuestion) {
+        return false;
+      }
+      if (
+        prevQuestion.question !== nextQuestion.question
+        || (prevQuestion.multi_select ?? false) !== (nextQuestion.multi_select ?? false)
+        || (prevQuestion.allow_freeform ?? false) !== (nextQuestion.allow_freeform ?? false)
+      ) {
+        return false;
+      }
+
+      const prevOptions = Array.isArray(prevQuestion.options) ? prevQuestion.options : [];
+      const nextOptions = Array.isArray(nextQuestion.options) ? nextQuestion.options : [];
+      if (prevOptions.length !== nextOptions.length) {
+        return false;
+      }
+
+      return prevOptions.every((prevOption, optionIndex) => {
+        const nextOption = nextOptions[optionIndex];
+        return !!nextOption
+          && prevOption.label === nextOption.label
+          && prevOption.description === nextOption.description
+          && !!prevOption.recommended === !!nextOption.recommended;
+      });
+    });
+  }
+
+  private areSavedAnswersEquivalent(
+    previous: Record<string, AskUserAnswer> | undefined,
+    next: Record<string, AskUserAnswer> | undefined,
+  ): boolean {
+    if (previous === next) {
+      return true;
+    }
+    if (!previous || !next) {
+      return false;
+    }
+
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    if (previousKeys.length !== nextKeys.length) {
+      return false;
+    }
+
+    return previousKeys.every((key) => {
+      const prevAnswer = previous[key];
+      const nextAnswer = next[key];
+      if (!prevAnswer || !nextAnswer) {
+        return false;
+      }
+
+      const prevSelected = Array.isArray(prevAnswer.selected) ? prevAnswer.selected : [];
+      const nextSelected = Array.isArray(nextAnswer.selected) ? nextAnswer.selected : [];
+      if (prevSelected.length !== nextSelected.length) {
+        return false;
+      }
+
+      return prevAnswer.freeText === nextAnswer.freeText
+        && !!prevAnswer.skipped === !!nextAnswer.skipped
+        && prevSelected.every((value, index) => value === nextSelected[index]);
+    });
   }
 }

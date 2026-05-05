@@ -1,5 +1,6 @@
 import type { IAgentLifecycle, IChatCoordination, ISessionAccess } from '../core/chat-context';
 import { buildUserTurnPayload, type UserTurnPayload } from './chat-user-turn-payload';
+import type { RequestUserSelectedTools } from './lex-agent-bootstrap';
 
 export interface PreparedUserSend extends UserTurnPayload {
   text: string;
@@ -23,6 +24,7 @@ export class ChatSendCoordinator {
     private readonly ctx: ChatSendCoordinatorContext,
     private readonly generateTitle: (content: string) => void,
     private readonly getResourcesText: () => string,
+    private readonly getUserSelectedTools?: (requestAgentId?: string) => RequestUserSelectedTools | undefined,
   ) {}
 
   prepareSend(sender: string, content: string): PreparedUserSend | null {
@@ -67,12 +69,22 @@ export class ChatSendCoordinator {
           ?.resolveRequestCommand(name, kind, agentId),
       },
     );
+    const userSelectedTools = this.getUserSelectedTools?.(
+      typeof payload.requestMetadata?.agentId === 'string' ? payload.requestMetadata.agentId : undefined,
+    );
+    const requestMetadata = userSelectedTools
+      ? {
+          ...(payload.requestMetadata ?? {}),
+          userSelectedTools,
+        }
+      : payload.requestMetadata;
     this.ctx.pendingEditFeedback = null;
     this.ctx.msg.appendMessage('user', payload.displayText);
 
     return {
       text,
       ...payload,
+      ...(requestMetadata ? { requestMetadata } : {}),
     };
   }
 }

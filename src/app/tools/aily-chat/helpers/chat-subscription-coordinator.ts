@@ -1,4 +1,5 @@
 import { Subscription, skip, distinctUntilChanged, combineLatest } from 'rxjs';
+import { ConfigService } from '../../../services/config.service';
 
 import type {
   IAgentLifecycle,
@@ -26,7 +27,10 @@ type ChatSubscriptionCoordinatorContext = ChatViewWriteBridgeContext
   & Pick<IProjectContext, 'currentUserGroup' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
   & Pick<ISessionAccess, 'chatService' | 'chatHistoryService'>
   & Pick<IChatServiceAccess, 'resourceManager' | 'absAutoSyncService' | 'ailyChatConfigService' | 'message'>
-  & Pick<IChatCoordination, 'session' | 'interaction'>
+  & Pick<IChatCoordination, 'session' | 'interaction' | 'lexStream'>
+  & {
+    readonly configService: ConfigService;
+  }
   & {
     readonly hostResponseProjection?: HostResponseProjection | null;
   };
@@ -52,11 +56,13 @@ export class ChatSubscriptionCoordinator {
   private aiWaitingSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
   private configChangedSubscription: Subscription | null = null;
+  private hostConfigReloadSubscription: Subscription | null = null;
   private blockSelectionSubscription: Subscription | null = null;
   private uiChatMessageSubscription: Subscription | null = null;
   private userInfoSubscription: Subscription | null = null;
   private taskActionHandler: ((event: Event) => void) | null = null;
   private active = false;
+  private lastKnownApiServer = '';
   private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
 
   constructor(
@@ -102,6 +108,7 @@ export class ChatSubscriptionCoordinator {
 
   setup(): void {
     this.active = true;
+    this.lastKnownApiServer = this.normalizeApiServer(this.ctx.configService.getCurrentApiServer());
 
     this.textMessageSubscription = this.ctx.chatService.getTextMessages().subscribe(message => {
       if (!message) {
@@ -227,7 +234,29 @@ export class ChatSubscriptionCoordinator {
       }
 
       if (hasConversationHistory) {
-        this.ctx.message.info('配置已保存，将在下次新建对话时生效');
+        this.ctx.message.info('配置已保存；工具选择会在后续请求中生效，其余配置可能需要新建对话');
+      }
+    });
+
+    this.hostConfigReloadSubscription = this.ctx.configService.configReloaded$.subscribe(async () => {
+      const nextApiServer = this.normalizeApiServer(this.ctx.configService.getCurrentApiServer());
+      if (!nextApiServer || nextApiServer === this.lastKnownApiServer) {
+        return;
+      }
+
+      this.lastKnownApiServer = nextApiServer;
+
+      if (!this.ctx.isLoggedIn) {
+        return;
+      }
+
+      try {
+        await this.ctx.session.stopAndCloseSession(true);
+        await this.ctx.session.startSession();
+        this.ctx.message.success('服务节点已切换，后续请求将使用新的 endpoint');
+      } catch (error) {
+        console.warn('服务节点切换后重建会话失败:', error);
+        this.ctx.message.warning('服务节点切换后重建会话失败，请尝试新建对话');
       }
     });
   }
@@ -242,6 +271,7 @@ export class ChatSubscriptionCoordinator {
     if (this.aiWaitingSubscription) { this.aiWaitingSubscription.unsubscribe(); this.aiWaitingSubscription = null; }
     if (this.projectPathSubscription) { this.projectPathSubscription.unsubscribe(); this.projectPathSubscription = null; }
     if (this.configChangedSubscription) { this.configChangedSubscription.unsubscribe(); this.configChangedSubscription = null; }
+    if (this.hostConfigReloadSubscription) { this.hostConfigReloadSubscription.unsubscribe(); this.hostConfigReloadSubscription = null; }
     if (this.blockSelectionSubscription) { this.blockSelectionSubscription.unsubscribe(); this.blockSelectionSubscription = null; }
     if (this.uiChatMessageSubscription) { this.uiChatMessageSubscription.unsubscribe(); this.uiChatMessageSubscription = null; }
     if (this.taskActionHandler) { document.removeEventListener('aily-task-action', this.taskActionHandler); this.taskActionHandler = null; }
@@ -254,5 +284,9 @@ export class ChatSubscriptionCoordinator {
     return hasHostResponseConversationContent(
       this.ctx.hostResponseProjection ?? null,
     );
+  }
+
+  private normalizeApiServer(value: string | null | undefined): string {
+    return typeof value === 'string' ? value.trim().replace(/\/$/, '') : '';
   }
 }

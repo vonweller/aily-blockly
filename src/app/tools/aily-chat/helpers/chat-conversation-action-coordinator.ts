@@ -31,6 +31,7 @@ export class ChatConversationActionCoordinator {
       return;
     }
 
+    this.ctx.scrollManager.startNewExchange?.();
     await this.ctx.send('user', '请继续完成之前的任务。', false);
   }
 
@@ -44,8 +45,7 @@ export class ChatConversationActionCoordinator {
       return;
     }
 
+    this.ctx.scrollManager.startNewExchange?.();
     await this.ctx.send('user', '请重试上次的操作。', false);
-    this.ctx.scrollManager.autoScrollEnabled = true;
-    this.ctx.scrollManager.scrollToBottom();
   }
 }

@@ -21,6 +21,11 @@ export const SCHEMATIC_AGENT_NAME = SCHEMATIC_AGENT_TYPE;
 export const SCHEMATIC_AGENT_MAX_TURNS = 25;
 export const SCHEMATIC_AGENT_MESSAGE_INHERITANCE = 'none' as const;
 export const SCHEMATIC_AGENT_MODEL = 'inherit';
+export const SCHEMATIC_AGENT_REQUIRED_CONTEXT = {
+  scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
+  strict: true,
+  hydrateBeforeFirstModelCall: true,
+} as const;
 export const SCHEMATIC_AGENT_WHEN_NOT_TO_USE = 'Do not use for library analysis, ABS block/library questions, generic project setup, or other programming-first tasks unless the request explicitly asks for wiring or a connection diagram.';
 export const SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS = [
   'analyzelibrary',
@@ -116,9 +121,10 @@ You help users generate visual diagrams of development boards and electronic mod
 
 When the user asks to generate, update, or fix a schematic (e.g. "connect DHT20 to ESP32S3"):
 
-1. Call \`get_project_context()\`
-   - Returns the component catalog (pinmap status) and generated C++ code.
-  - Project path, board, installed libraries, and available readme_ai.md references are already in the environment — no need to re-fetch.
+1. Start from the runtime project context already present in the environment.
+  - Project path, board, installed libraries, available readme_ai.md references, and generated workspace artifact paths are already injected by runtime.
+  - Do not call \`get_project_context()\` just to re-fetch those base facts.
+  - Call \`get_project_context()\` only when you need Blockly-specific detail that is not already in the runtime summary, especially component catalog entries, board/component pinmap availability, or generated C++ content.
    - Identify the current board pinmap status and target hardware components.
    - Prefer catalog entries with usable \`pinmapId\`.
 
@@ -133,6 +139,7 @@ When the user asks to generate, update, or fix a schematic (e.g. "connect DHT20 
    - IMPORTANT: If a requested module is misclassified as a software/framework entry but still requires real electrical connections (such as VCC/GND/I2S/I2C/SPI/UART/GPIO), you MUST still prepare a component pinmap for it.
    - IMPORTANT: If a needed component appears as \`missing_catalog\` (or has no usable pinmap in catalog), you MUST generate/save a pinmap for that component and MUST NOT skip it from the schematic.
    - If any required board/component is missing a usable pinmap:
+     a. If pinmap availability is still unknown, call \`get_project_context()\` first to confirm board/component catalog status.
      a. Call \`generate_pinmap(pinmapId: ...)\` to get README/example/template material.
      b. Generate the pinmap JSON.
      c. Call \`save_pinmap(pinmapId: ..., pinmapConfig: {...})\`.
@@ -220,6 +227,7 @@ const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
   name: 'Schematic Agent',
   whenToUse: SCHEMATIC_AGENT_WHEN_TO_USE,
   whenNotToUse: SCHEMATIC_AGENT_WHEN_NOT_TO_USE,
+  requiredContext: SCHEMATIC_AGENT_REQUIRED_CONTEXT,
   // Static system prompt — environment context is auto-injected by AgentExecutor
   // via the 'environment' extension (IEnvironmentProvider), no per-agent duplication needed.
   systemPrompt: SCHEMATIC_PROMPT_BODY,

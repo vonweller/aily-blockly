@@ -51,7 +51,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
           <div class="aa-actions">
             <aily-chat-confirmation-actions
               [primaryLabel]="primaryButtonLabel"
-              [primaryValue]="primaryScope"
+              [primaryValue]="primaryActionValue"
               [primaryTooltip]="primaryButtonTooltip"
               [primaryDisabled]="primaryActionDisabled"
               [moreActionsTooltip]="moreActionsTooltip"
@@ -158,6 +158,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   approvalActions: readonly ToolApprovalAction[] = [];
   primaryScope: ToolApprovalScope = 'once';
   primaryButtonLabel = '允许';
+  primaryActionValue = 'once';
   collapsed = false;
 
   get hasMoreActions(): boolean {
@@ -240,7 +241,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
 
   get approvalActionOptions(): readonly ChatConfirmationActionOption[] {
     return this.approvalActions.map(action => ({
-      value: action.scope,
+      value: action.id || action.scope,
       label: this.getActionMenuLabel(action),
       tooltip: action.tooltip || action.description || action.label,
       disabled: !!action.disabled,
@@ -281,6 +282,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.approvalActions = Array.isArray(this.data.actions) ? this.data.actions : [];
       this.primaryScope = this.data.primaryScope || 'once';
       this.primaryButtonLabel = this.getPrimaryButtonLabel(this.primaryScope);
+      this.primaryActionValue = this.getPrimaryActionValue(this.primaryScope);
       this.resolvedText = this.resolved ? this.formatResolvedText(this.approved, this.data.scope) : '';
       this.collapsed = false;
     }
@@ -430,20 +432,29 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     }
   }
 
-  onApproveFromActions(scope: string): void {
-    this.onApprove(scope as ToolApprovalScope);
+  onApproveFromActions(value: string): void {
+    const action = this.approvalActions.find(candidate => (candidate.id || candidate.scope) === value);
+    this.onApprove((action?.scope || value) as ToolApprovalScope, action?.id);
   }
 
-  onApprove(scope: ToolApprovalScope): void {
+  onApprove(scope: ToolApprovalScope, actionId?: string): void {
     this.resolved = true;
     this.approved = true;
     this.resolvedText = this.formatResolvedText(true, scope);
     this.cdr.markForCheck();
     document.dispatchEvent(new CustomEvent(AILY_CONFIRMATION_RESULT_EVENT, {
       detail: this.toolCallId
-        ? { toolCallId: this.toolCallId, approved: true, scope }
-        : { askId: this.askId, partId: this.partId, approved: true, scope }
+        ? { toolCallId: this.toolCallId, approved: true, scope, actionId }
+        : { askId: this.askId, partId: this.partId, approved: true, scope, actionId }
     }));
+  }
+
+  private getPrimaryActionValue(scope: ToolApprovalScope): string {
+    if (scope === 'once') {
+      return 'once';
+    }
+
+    return this.approvalActions.find(action => action.scope === scope)?.id || scope;
   }
 
   onReject(): void {

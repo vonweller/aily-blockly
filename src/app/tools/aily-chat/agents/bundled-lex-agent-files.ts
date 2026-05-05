@@ -1,4 +1,5 @@
 import {
+  SCHEMATIC_AGENT_REQUIRED_CONTEXT,
   SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS,
   SCHEMATIC_AGENT_MAX_TURNS,
   SCHEMATIC_AGENT_MESSAGE_INHERITANCE,
@@ -21,6 +22,7 @@ function indentFoldedYaml(value: string): string {
 function buildSchematicAgentMarkdown(): string {
   const toolsYaml = SCHEMATIC_AGENT_TOOLS.map(tool => `  - ${tool}`).join('\n');
   const disallowedPromptPatternsYaml = SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS.map(pattern => `  - ${pattern}`).join('\n');
+  const requiredContextScopesYaml = SCHEMATIC_AGENT_REQUIRED_CONTEXT.scopes.map(scope => `    - ${scope}`).join('\n');
   return `---
 agentType: ${SCHEMATIC_AGENT_TYPE}
 name: ${SCHEMATIC_AGENT_NAME}
@@ -28,6 +30,11 @@ whenToUse: >
 ${indentFoldedYaml(SCHEMATIC_AGENT_WHEN_TO_USE)}
 whenNotToUse: >
 ${indentFoldedYaml(SCHEMATIC_AGENT_WHEN_NOT_TO_USE)}
+requiredContext:
+  strict: ${SCHEMATIC_AGENT_REQUIRED_CONTEXT.strict}
+  hydrateBeforeFirstModelCall: ${SCHEMATIC_AGENT_REQUIRED_CONTEXT.hydrateBeforeFirstModelCall}
+  scopes:
+${requiredContextScopesYaml}
 tools:
 ${toolsYaml}
 disallowedPromptPatterns:

@@ -60,6 +60,7 @@ export class ChatExternalInputCoordinator {
       }
 
       if (this.ctx.sessionId) {
+        this.ctx.scrollManager.startNewExchange();
         void this.ctx.send('user', this.ctx.inputValue, true);
       } else {
         this.callbacks.queuePendingAutoSend(this.ctx.inputValue);
@@ -82,9 +83,8 @@ export class ChatExternalInputCoordinator {
         void this.callbacks.newChat();
         return;
       default:
+        this.ctx.scrollManager.startNewExchange();
         void this.ctx.send('user', text, false);
-        this.ctx.scrollManager.autoScrollEnabled = true;
-        this.ctx.scrollManager.scrollToBottom();
     }
   }
 }

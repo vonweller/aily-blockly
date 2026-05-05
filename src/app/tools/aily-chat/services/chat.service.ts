@@ -4,6 +4,7 @@ import { Observable, ReplaySubject } from 'rxjs';
 import { MCPTool } from './mcp.service';
 import { ChatAPI } from '../core/api-endpoints';
 import { AilyChatConfigService, ModelConfigOption } from './aily-chat-config.service';
+import { ContextBudgetService } from './context-budget.service';
 import { AilyHost } from '../core/host';
 
 // 使用 ModelConfigOption 作为统一的模型配置类型，保留 ModelConfig 别名以兼容旧代码
@@ -30,6 +31,7 @@ export class ChatService {
 
   currentMode = 'agent'; // 默认为代理模式
   currentModel: ModelConfig | null = null; // 当前模型，在构造函数中初始化
+  resolvedActiveModel: ModelConfig | null = null;
 
   currentSessionId = '';
   currentSessionTitle = '';
@@ -51,6 +53,7 @@ export class ChatService {
   constructor(
     private http: HttpClient,
     private ailyChatConfigService: AilyChatConfigService,
+    private contextBudgetService: ContextBudgetService,
   ) {
     ChatService.instance = this;
     // 从配置加载AI聊天模式
@@ -114,10 +117,15 @@ export class ChatService {
       this.currentModel = enabledModels[0];
     }
 
+    this.clearResolvedActiveModel();
+
     if (this.currentModel) {
       // 更新保存的模型配置
       this.saveChatModel(this.currentModel);
+      return;
     }
+
+    this.contextBudgetService.updateModelContextSize(this.currentModel);
   }
 
   /**
@@ -125,6 +133,8 @@ export class ChatService {
    */
   saveChatModel(model: ModelConfig): void {
     this.currentModel = this.ailyChatConfigService.normalizeRuntimeModel(model);
+    this.clearResolvedActiveModel();
+    this.contextBudgetService.updateModelContextSize(this.currentModel);
     const config = AilyHost.get().config;
     if (config.data) config.data.aiChatModel = this.currentModel;
     config.save?.();
@@ -135,12 +145,72 @@ export class ChatService {
       const refreshedModel = this.ailyChatConfigService.resolveSavedModel(this.currentModel);
       if (refreshedModel) {
         this.currentModel = refreshedModel;
+        this.refreshResolvedActiveModelRuntimeMetadata();
+        this.contextBudgetService.updateModelContextSize(this.currentModel);
         return;
       }
     }
 
     this.currentModel = this.ailyChatConfigService.resolvePresetModel(
       this.ailyChatConfigService.getDefaultModelPresetId(),
+    );
+    this.refreshResolvedActiveModelRuntimeMetadata();
+    this.contextBudgetService.updateModelContextSize(this.currentModel);
+  }
+
+  getActiveDisplayModel(): ModelConfig | null {
+    return this.resolvedActiveModel ?? this.currentModel;
+  }
+
+  clearResolvedActiveModel(): void {
+    this.resolvedActiveModel = null;
+  }
+
+  private isLegacyContextInfoSession(sessionId: string): boolean {
+    return !!sessionId && !sessionId.startsWith('lex-');
+  }
+
+  async syncResolvedActiveModelFromContextInfo(sessionId: string): Promise<void> {
+    if (!sessionId) {
+      this.clearResolvedActiveModel();
+      return;
+    }
+
+    // /api/v1/context_info only understands legacy stateful sessions stored on the service.
+    // Lex stateless sessions use lex-* ids and already stream context budget + response model metadata.
+    if (!this.isLegacyContextInfoSession(sessionId)) {
+      this.clearResolvedActiveModel();
+      return;
+    }
+
+    const contextInfo = await this.fetchContextInfo(sessionId);
+    if (!contextInfo) {
+      return;
+    }
+
+    this.resolvedActiveModel = this.ailyChatConfigService.resolveRuntimeModelFromServerModelName(
+      contextInfo.model_name,
+      { contextWindowTokens: contextInfo.model_context_limit },
+    );
+
+    if (this.resolvedActiveModel) {
+      this.contextBudgetService.updateModelContextSize(this.resolvedActiveModel);
+      return;
+    }
+
+    if (typeof contextInfo.model_context_limit === 'number' && contextInfo.model_context_limit > 0) {
+      this.contextBudgetService.maxContextTokens = contextInfo.model_context_limit;
+    }
+  }
+
+  private refreshResolvedActiveModelRuntimeMetadata(): void {
+    if (!this.resolvedActiveModel) {
+      return;
+    }
+
+    this.resolvedActiveModel = this.ailyChatConfigService.resolveRuntimeModelFromServerModelName(
+      this.resolvedActiveModel.model || this.resolvedActiveModel.name,
+      { contextWindowTokens: this.resolvedActiveModel.contextWindowTokens },
     );
   }
 
@@ -245,8 +315,8 @@ export class ChatService {
   }
 
   /**
-   * 获取服务端准确的系统提示词 / 工具定义 token 数和模型上下文窗口大小。
-   * 用于前端 ContextBudgetService 精确计算可用 token 预算。
+    * 获取旧版有状态会话的系统提示词 / 工具定义 token 数和模型上下文窗口大小。
+    * Lex 无状态会话不走这里，而是依赖流式 context_budget / responseModel 元数据。
    */
   async fetchContextInfo(sessionId: string): Promise<{
     system_tokens: number;

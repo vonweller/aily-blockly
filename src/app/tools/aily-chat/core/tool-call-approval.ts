@@ -1,9 +1,6 @@
 import type { ToolCallPart } from './chat-parts';
 import {
-  generateApprovalMessage,
-  getToolApprovalActions,
-  getToolApprovalSubtitle,
-  getToolApprovalTitle,
+  normalizeToolApprovalPresentation,
   type ToolApprovalAction,
   type ToolApprovalScope,
 } from '../helpers/tool-approval-ui';
@@ -97,21 +94,31 @@ export function projectToolCallApprovalDisplayData(
 
   const metadata = asRecord(part.metadata) || {};
   const source = asString(approval?.source) || asString(metadata['source']);
-  const fallback = generateApprovalMessage(part.toolName, approval?.args ?? part.args);
+  const normalized = normalizeToolApprovalPresentation({
+    toolName: part.toolName,
+    source,
+    title: asString(approval?.title),
+    subtitle: asString(approval?.subtitle),
+    message: asString(approval?.message),
+    actions: approval?.actions,
+    primaryScope: asApprovalScope(approval?.primaryScope),
+    args: approval?.args ?? part.args,
+    metadata,
+  });
 
   return {
     toolCallId: part.toolCallId,
     toolName: part.toolName,
-    title: asString(approval?.title) || getToolApprovalTitle(part.toolName, fallback.title),
-    subtitle: asString(approval?.subtitle) || getToolApprovalSubtitle(part.toolName, source),
-    message: asString(approval?.message) || fallback.message,
+    title: normalized.title,
+    subtitle: normalized.subtitle,
+    message: normalized.message,
     description: asString(approval?.description),
-    args: approval?.args ?? part.args,
+    args: normalized.args,
     resolved: approval?.resolved === true,
     approved: approval?.result === 'approved',
     scope: asApprovalScope(approval?.scope),
-    actions: approval?.actions?.length ? approval.actions : getToolApprovalActions(part.toolName),
-    primaryScope: asApprovalScope(approval?.primaryScope) || 'once',
+    actions: normalized.actions,
+    primaryScope: normalized.primaryScope,
   };
 }
 
@@ -160,12 +167,14 @@ function asApprovalActions(value: unknown): readonly ToolApprovalAction[] | unde
     .filter((item): item is Record<string, unknown> => !!item)
     .filter(item => typeof item['scope'] === 'string' && typeof item['label'] === 'string')
     .map(item => ({
+      id: asString(item['id']),
       scope: item['scope'] as ToolApprovalScope,
       label: item['label'] as string,
       description: asString(item['description']),
       tooltip: asString(item['tooltip']),
       disabled: item['disabled'] === true,
       isSecondary: item['isSecondary'] === true,
+      combinationKey: asString(item['combinationKey']),
     }));
 }
 

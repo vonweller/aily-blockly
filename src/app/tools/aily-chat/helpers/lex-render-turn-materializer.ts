@@ -45,6 +45,8 @@ export class LexRenderTurnMaterializer {
           usage: snapshotTurn.usage,
           createdAt: snapshotTurn.createdAt,
           terminationReason: snapshotTurn.terminationReason,
+          modelName: snapshotTurn.responseModel?.modelName,
+          modelBillingLabel: snapshotTurn.responseModel?.modelBillingLabel,
         }
         : undefined,
     });

@@ -1,4 +1,5 @@
 import {
+  Optional,
   Component,
   Input,
   OnChanges,
@@ -41,9 +42,12 @@ import {
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
 import { turnResponsePartToChatPart } from '../../core/turn-response-part-mapper';
+import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
+import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 
 const EMPTY_TURN_PARTS: readonly TurnResponsePart[] = [];
+const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
 
 
 @Component({
@@ -97,6 +101,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Input() currentModelBillingLabel = '';
   /** 该消息创建时使用的模型名称 */
   @Input() turnModelName = '';
+  /** 该消息创建时使用的模型倍率 */
+  @Input() turnModelBillingLabel = '';
   @Input() isWaiting = false;
 
   /** 本组件 dialog-box 是否被 hover */
@@ -130,10 +136,13 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   private _responseVote: HostResponseVoteDirection | undefined;
   private compatTurnContext: DialogTurnContext | null = null;
   private _effectivePartsSource: readonly TurnResponsePart[] = EMPTY_TURN_PARTS;
-  private _effectivePartsCache = [] as ReturnType<typeof turnResponsePartToChatPart>[];
+  private _effectiveProgressMessagesSource: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = EMPTY_PROGRESS_MESSAGES;
+  private _effectivePartsDoing = false;
+  private _effectivePartsCache = [] as RenderableChatPart[];
 
   constructor(
     private cdr: ChangeDetectorRef,
+    @Optional() private runtimeInteractionHost: ChatRuntimeInteractionHostService | null = null,
   ) {}
 
   /** 是否可显示操作栏（非 doing 的最后一条 aily 消息） */
@@ -143,6 +152,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   get canShowLimitActions(): boolean {
     return this.role !== 'user' && !this.effectiveDoing;
+  }
+
+  get showFooterActions(): boolean {
+    return this.canShowActions || (this.canShowLimitActions && this.showActions);
   }
 
   get actionTurnId(): string | undefined {
@@ -166,14 +179,28 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get effectiveParts() {
-    const turnParts = this.effectiveTurnContext?.response?.parts ?? EMPTY_TURN_PARTS;
-    if (turnParts === this._effectivePartsSource) {
+    const response = this.effectiveTurnContext?.response;
+    const turnParts = response?.parts ?? EMPTY_TURN_PARTS;
+    const progressMessages = response?.progressMessages ?? EMPTY_PROGRESS_MESSAGES;
+    const doing = this.effectiveDoing;
+    if (turnParts === this._effectivePartsSource
+      && progressMessages === this._effectiveProgressMessagesSource
+      && doing === this._effectivePartsDoing) {
       return this._effectivePartsCache;
     }
 
     this._effectivePartsSource = turnParts;
-    this._effectivePartsCache = turnParts.map(part => turnResponsePartToChatPart(part));
+    this._effectiveProgressMessagesSource = progressMessages;
+    this._effectivePartsDoing = doing;
+    this._effectivePartsCache = [
+      ...turnParts.map(part => turnResponsePartToChatPart(part)),
+      ...buildRenderableProgressParts(response, doing, this.hasActiveConfirmationCarousel),
+    ];
     return this._effectivePartsCache;
+  }
+
+  private get hasActiveConfirmationCarousel(): boolean {
+    return !!this.sessionId && !!this.runtimeInteractionHost?.getActiveConfirmation(this.sessionId);
   }
 
   get hasStructuredAilyContent(): boolean {
@@ -191,26 +218,28 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get assistantModelBadgeLabel(): string | null {
-    const modelName = this.currentModelName || this.turnModelName;
+    const modelName = this.turnModelName;
+    const billingLabel = this.turnModelBillingLabel;
     if (!modelName) {
       return null;
     }
 
-    return `${modelName} · ${this.currentModelBillingLabel || '倍率待定'}`;
+    return `${modelName} · ${billingLabel || '倍率待定'}`;
   }
 
   get showAssistantModelBadge(): boolean {
-    return this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
+    return this.showFooterActions && this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
   }
 
   get assistantModelBadgeTitle(): string {
-    const modelName = this.currentModelName || this.turnModelName;
+    const modelName = this.turnModelName;
+    const billingLabel = this.turnModelBillingLabel;
     if (!modelName) {
       return '当前模型信息';
     }
 
-    return this.currentModelBillingLabel
-      ? `当前模型: ${modelName}\n计费倍率: ${this.currentModelBillingLabel}`
+    return billingLabel
+      ? `当前模型: ${modelName}\n计费倍率: ${billingLabel}`
       : `当前模型: ${modelName}\n计费倍率待配置`;
   }
 
@@ -243,6 +272,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   get canRenderCheckpointAnchor(): boolean {
     return this.role === 'user' && !!this.actionTurnId;
+  }
+  
+  get isCurrentStreamingResponse(): boolean {
+    return this.role === 'aily' && this.isLastAily && this.effectiveDoing;
   }
 
   get showCheckpointAnchor(): boolean {

@@ -9,11 +9,12 @@ import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { TOOL_SETTINGS_CATALOG } from '../../tools/tool-settings-catalog';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE } from '../../core/agent-identifiers';
 import { ElectronService } from '../../../../services/electron.service';
 import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig, ModelPresetOption } from '../../services/aily-chat-config.service';
 import { ChatService } from '../../services/chat.service';
+import { McpService } from '../../services/mcp.service';
+import { getRuntimeToolSettingsCatalog, type RuntimeToolCatalogEntry } from '../../helpers/lex-agent-bootstrap';
 
 /** Agent 类型定义 */
 type AgentType = typeof MAIN_AGENT_TYPE | typeof SCHEMATIC_AGENT_TYPE;
@@ -162,6 +163,7 @@ export class AilyChatSettingsComponent implements OnInit {
     private electronService: ElectronService,
     private ailyChatConfigService: AilyChatConfigService,
     private chatService: ChatService,
+    private mcpService: McpService,
   ) {
   }
 
@@ -214,6 +216,8 @@ export class AilyChatSettingsComponent implements OnInit {
    * 初始化工具列表 - 按Agent分类
    */
   private initializeTools() {
+    const toolCatalog = this.getToolCatalogEntries();
+
     // 为每个 Agent 初始化工具列表
     for (const agentConfig of this.agentConfigs) {
       const agentName = agentConfig.name;
@@ -225,7 +229,7 @@ export class AilyChatSettingsComponent implements OnInit {
       const hasStoredConfig = savedEnabledTools.length > 0 || savedDisabledTools.length > 0;
       
       // 从独立 metadata catalog 中筛选出属于该 Agent 的工具
-      const agentTools: ToolConfig[] = TOOL_SETTINGS_CATALOG
+      const agentTools: ToolConfig[] = toolCatalog
         .filter(tool => tool.agents && tool.agents.includes(agentName))
         .map(tool => {
           let enabled: boolean;
@@ -254,6 +258,10 @@ export class AilyChatSettingsComponent implements OnInit {
       this.agentToolsMap.set(agentName, agentTools);
       this.updateAgentAllChecked(agentName);
     }
+  }
+
+  private getToolCatalogEntries(): RuntimeToolCatalogEntry[] {
+    return getRuntimeToolSettingsCatalog({ mcpService: this.mcpService });
   }
 
   /**
