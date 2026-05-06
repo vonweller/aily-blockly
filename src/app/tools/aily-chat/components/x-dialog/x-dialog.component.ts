@@ -115,6 +115,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -577,6 +578,26 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     this.isEditing = true;
     // 下一帧再 focus，确保 @if (isEditing) 已渲染出 textarea
     setTimeout(() => this.editTextareaRef?.nativeElement?.focus(), 0);
+  }
+
+  /** 焦点离开编辑区域（且未进入子控件 / 模式与模型浮层菜单）时退出编辑 */
+  onEditInputBoxFocusOut(event: FocusEvent): void {
+    if (!this.isEditing) return;
+    const box = this.editInputBoxRef?.nativeElement;
+    if (!box) return;
+
+    const next = event.relatedTarget as Node | null;
+    if (next && box.contains(next)) return;
+
+    setTimeout(() => {
+      if (!this.isEditing) return;
+      const active = document.activeElement;
+      if (active && (box.contains(active) || active.closest('.mode-menu') || active.closest('.model-menu'))) {
+        return;
+      }
+      this.onCancelEdit();
+      this.cdr.markForCheck();
+    }, 0);
   }
 
   onCancelEdit(): void {

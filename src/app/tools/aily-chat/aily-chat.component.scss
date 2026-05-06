@@ -33,7 +33,7 @@
 }
 
 .dialog-list {
-  padding-left: 10px;
+  padding: 10px;
   flex: 1;
   /* 使用flex:1让对话区域占用剩余空间 */
   overflow-y: auto;
@@ -44,7 +44,7 @@
   z-index: 10;
 
   .dialogs {
-    padding: 0 10px 10px 0;
+    padding: 10px 0;
   }
 }
 

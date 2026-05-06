@@ -48,7 +48,12 @@
 
     @if (isEditing) {
       <!-- 编辑模式：模拟输入框样式 -->
-      <div class="edit-input-box" (click)="$event.stopPropagation()">
+      <div
+        class="edit-input-box"
+        #editInputBox
+        (click)="$event.stopPropagation()"
+        (focusout)="onEditInputBoxFocusOut($event)"
+      >
         @if (editResources.length > 0) {
           <div class="resource-list">
             @for (item of editResources; track $index) {
@@ -69,9 +74,6 @@
               </div>
             }
           </div>
-        }
-        @if (editContextHint) {
-          <div class="edit-turn-hint">{{ editContextHint }}</div>
         }
         <div class="edit-textarea-wrapper">
           <textarea class="sscroll" [(ngModel)]="editText"

@@ -349,7 +349,7 @@
 }
 
 .content {
-  padding: 4px 12px 8px;
+  padding: 4px 0 8px;
   user-select: text;
 }
 
@@ -358,8 +358,8 @@
   max-width: 88%;
   background: var(--chat-bg-request);
   border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 5px;
+  padding: 5px 10px;
   align-self: flex-end;
   width: fit-content;
   margin-bottom: 5px;
@@ -682,7 +682,7 @@
 .edit-input-box {
   display: flex;
   flex-direction: column;
-  margin: 6px 12px 5px;
+  margin: 5px 10px 5px;
   padding: 5px;
   border-radius: 6px;
   border: 1px solid var(--aily-chat-xdialog-msg-divider, var(--chat-border));
