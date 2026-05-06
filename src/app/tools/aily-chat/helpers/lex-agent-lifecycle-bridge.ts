@@ -1,8 +1,19 @@
+import type { AgentHandle } from 'aily-lex/browser';
+
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
+type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
+type LexAgentCreationResult = BlocklyLexAgentInstance | AgentHandle;
+
+function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
+  return typeof (value as AgentHandle).chat === 'function'
+    && typeof (value as AgentHandle).saveSession === 'function'
+    && !!(value as AgentHandle).agent;
+}
 
 export class LexAgentLifecycleBridge {
   private _lex: AilyLexModule | null = null;
-  private _agent: InstanceType<AilyLexModule['AilyLexAgent']> | null = null;
+  private _agent: BlocklyLexAgentInstance | null = null;
+  private _handle: AgentHandle | null = null;
   private _abortController: AbortController | null = null;
   private _loadPromise: Promise<boolean> | null = null;
   private _todoUnsubscribe: (() => void) | null = null;
@@ -13,18 +24,22 @@ export class LexAgentLifecycleBridge {
       createAgent: (
         lex: AilyLexModule,
         sessionId: string,
-      ) => InstanceType<AilyLexModule['AilyLexAgent']>;
+      ) => LexAgentCreationResult;
       loadModule: () => Promise<AilyLexModule>;
       onAgentReady?: (
-        agent: InstanceType<AilyLexModule['AilyLexAgent']>,
+        agent: BlocklyLexAgentInstance,
         lex: AilyLexModule,
         currentTodoUnsubscribe: (() => void) | null,
       ) => (() => void) | null;
     },
   ) {}
 
-  getAgent(): InstanceType<AilyLexModule['AilyLexAgent']> | null {
+  getAgent(): BlocklyLexAgentInstance | null {
     return this._agent;
+  }
+
+  getHandle(): AgentHandle | null {
+    return this._handle;
   }
 
   getLex(): AilyLexModule | null {
@@ -63,8 +78,15 @@ export class LexAgentLifecycleBridge {
     }
 
     const lex = this._lex!;
-    this._agent?.dispose();
-    this._agent = this.deps.createAgent(lex, sessionId || this.deps.getSessionId());
+    this.disposeActiveAgent();
+    const created = this.deps.createAgent(lex, sessionId || this.deps.getSessionId());
+    if (isAgentHandle(created)) {
+      this._handle = created;
+      this._agent = created.agent as BlocklyLexAgentInstance;
+    } else {
+      this._handle = null;
+      this._agent = created;
+    }
     this._todoUnsubscribe = this.deps.onAgentReady?.(this._agent, lex, this._todoUnsubscribe) ?? this._todoUnsubscribe;
     return true;
   }
@@ -72,13 +94,27 @@ export class LexAgentLifecycleBridge {
   stop(): void {
     this._abortController?.abort();
     this._abortController = null;
-    this._agent?.abort?.('用户取消');
+    this._handle?.abort?.('用户取消');
+    if (!this._handle) {
+      this._agent?.abort?.('用户取消');
+    }
   }
 
   dispose(): void {
     this.stop();
     this._todoUnsubscribe?.();
     this._todoUnsubscribe = null;
+    this.disposeActiveAgent();
+  }
+
+  private disposeActiveAgent(): void {
+    if (this._handle) {
+      this._handle.dispose();
+      this._handle = null;
+      this._agent = null;
+      return;
+    }
+
     this._agent?.dispose();
     this._agent = null;
   }

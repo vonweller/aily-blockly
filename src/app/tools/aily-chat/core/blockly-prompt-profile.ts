@@ -30,6 +30,12 @@ export const BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT = {
   hydrateBeforeFirstModelCall: true,
 } as const;
 
+const BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS = {
+  maxLibraries: 24,
+  maxReadmeRefs: 16,
+  maxLibrariesWithoutReadme: 16,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Identity Override — aily-blockly specific
 // ---------------------------------------------------------------------------
@@ -141,6 +147,7 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
     const envExtra = [...await contextSnapshotService.getSummary({
       scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
       reason: 'main-agent-prompt',
+      summaryOptions: BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS,
     })];
     const fileContext = collectPromptFileContext(host);
 

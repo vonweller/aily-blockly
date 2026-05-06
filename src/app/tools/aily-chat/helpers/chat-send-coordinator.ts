@@ -65,6 +65,10 @@ export class ChatSendCoordinator {
       {
         resolveCommand: ({ agentId, name, kind }) => this.ctx.lexStream
           ?.agent
+          .getHandle?.()
+          .resolveRequestCommand(name, kind, agentId)
+          ?? this.ctx.lexStream
+            ?.agent
           .getAgent()
           ?.resolveRequestCommand(name, kind, agentId),
       },

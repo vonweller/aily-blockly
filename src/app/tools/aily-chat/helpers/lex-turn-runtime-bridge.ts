@@ -1,7 +1,8 @@
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
-import type { RenderEvent, TurnRequest } from 'aily-lex/browser';
+import type { AgentHandle, RenderEvent, TurnRequest } from 'aily-lex/browser';
 
 type AgentLifecycleAccess = {
+  getHandle?(): Pick<AgentHandle, 'chat'> | null;
   getAgent(): { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null;
   getLex(): { RenderEventEmitter?: new () => {
     process(event: any): readonly RenderEvent[];
@@ -41,6 +42,12 @@ export class LexTurnRuntimeBridge {
   }
 
   async run(userMessage: string, displayContent?: string): Promise<void> {
+    const handle = this.agentLifecycleBridge.getHandle?.() ?? null;
+    if (handle) {
+      this.turnExecutionBridge.runTurnWithRenderEvents(handle, userMessage, displayContent);
+      return;
+    }
+
     const agent = this.agentLifecycleBridge.getAgent();
     if (!agent) {
       this.turnExecutionBridge.runTurn(null, userMessage);

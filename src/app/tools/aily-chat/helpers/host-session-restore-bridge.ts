@@ -162,7 +162,8 @@ export class HostSessionRestoreBridge {
   private async restoreEditCheckpoints(turnResponses: readonly TurnResponseTurn[]): Promise<void> {
     this.ctx.editCheckpointService?.clear();
     try {
-      const fileHistory = this.ctx.lexStream.agent.getAgent()?.getFileHistory?.();
+      const fileHistory = this.ctx.lexStream.agent.getHandle?.()?.getFileHistory()
+        ?? this.ctx.lexStream.agent.getAgent()?.getFileHistory?.();
       if (fileHistory) {
         this.ctx.editCheckpointService.setFileHistory(fileHistory);
       }

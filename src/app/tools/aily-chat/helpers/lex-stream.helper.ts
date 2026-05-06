@@ -43,7 +43,7 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   clearSessionState(): void;
 };
 
-type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'loadModule' | 'stop' | 'dispose' | 'getAgent'>;
+type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'loadModule' | 'stop' | 'dispose' | 'getAgent' | 'getHandle'>;
 type LexOwnerConversationAccess = Pick<LexTurnSessionBridge, 'messages'>;
 type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuestionAnswers' | 'presentConfirmation' | 'resolveConfirmation' | 'presentToolCallApproval' | 'resolveToolCallApproval' | 'processEvent'>;
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
@@ -136,7 +136,9 @@ export class LexOwnerFacade {
   }
 
   async compactConversation(): Promise<boolean> {
-    const changed = await this._agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.() ?? false;
+    const changed = await this._agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
+      ?? await this._agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.()
+      ?? false;
     this._flushPendingEvents();
     return changed;
   }
@@ -179,7 +181,9 @@ export class LexOwnerFacade {
         );
 
         try {
-          this.ctx.editCheckpointService.setFileHistory(agent.getFileHistory());
+          const fileHistory = agentLifecycleBridge.getHandle()?.getFileHistory()
+            ?? agent.getFileHistory();
+          this.ctx.editCheckpointService.setFileHistory(fileHistory);
         } catch {
           // ignore if agent not ready
         }
@@ -196,6 +200,7 @@ export class LexOwnerFacade {
     const runtimeConfigBridge = new LexRuntimeConfigBridge(this.ctx);
     this._runtimeConfigBridge = runtimeConfigBridge;
     const sessionPersistenceBridge = new LexSessionPersistenceBridge({
+      getHandle: () => agentLifecycleBridge.getHandle(),
       getAgent: () => agentLifecycleBridge.getAgent(),
       flushPendingEvents: (events) => {
         this._turnExecutionBridge.flushPendingEvents(events);
@@ -222,7 +227,9 @@ export class LexOwnerFacade {
       () => {
         agentLifecycleBridge.setAbortController(null);
       },
-      () => agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.() ?? false,
+      async () => agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
+        ?? await agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.()
+        ?? false,
       (fallbackStatus) => this._renderEventBridge.finalizeCurrentTurn(fallbackStatus),
     );
     this._messageLifecycleBridge = messageLifecycleBridge;

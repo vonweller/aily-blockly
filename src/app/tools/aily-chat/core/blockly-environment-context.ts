@@ -54,9 +54,9 @@ export interface BlocklyContextSummaryOptions {
   maxLibrariesWithoutReadme?: number;
 }
 
-const MAX_ENV_LIBRARY_NAMES = 12;
-const MAX_ENV_README_REFS = 8;
-const MAX_ENV_LIBRARIES_WITHOUT_README = 8;
+const MAX_ENV_LIBRARY_NAMES = 24;
+const MAX_ENV_README_REFS = 16;
+const MAX_ENV_LIBRARIES_WITHOUT_README = 16;
 
 export async function buildBlocklyWorkspaceIdentityLines(host = AilyHost.get()): Promise<string[]> {
   const snapshot = await buildBlocklyContextSnapshot(host);
@@ -130,31 +130,35 @@ export function summarizeBlocklyContextSnapshot(
 
   const libraries = snapshot.libraryIndex ?? [];
   if (libraries.length > 0) {
+    const librariesWithReadme = libraries.filter(library => Boolean(library.readmePath));
+    const librariesWithoutReadme = libraries.filter(library => !library.readmePath);
+    lines.push(
+      `Library inventory: total ${libraries.length}; with readme_ai.md ${librariesWithReadme.length}; without readme_ai.md ${librariesWithoutReadme.length}`,
+    );
+
     const displayedLibraryNames = libraries.slice(0, maxLibraries).map(library => library.name);
     const remainingLibraryNames = libraries.length - displayedLibraryNames.length;
     lines.push(
-      `Installed libraries (${libraries.length}): ${displayedLibraryNames.join(', ')}`
+      `Installed libraries (${displayedLibraryNames.length}/${libraries.length} shown): ${displayedLibraryNames.join(', ')}`
       + (remainingLibraryNames > 0 ? ` ... (+${remainingLibraryNames} more)` : ''),
     );
 
-    const librariesWithReadme = libraries.filter(library => Boolean(library.readmePath));
     if (librariesWithReadme.length > 0) {
       const displayedReadmes = librariesWithReadme.slice(0, maxReadmeRefs);
       const remainingReadmes = librariesWithReadme.length - displayedReadmes.length;
       lines.push(
-        `Library README docs (${librariesWithReadme.length}): ${displayedReadmes
+        `Library README docs (${displayedReadmes.length}/${librariesWithReadme.length} shown): ${displayedReadmes
           .map(library => `${library.name}=${library.readmePath}`)
           .join('; ')}`
         + (remainingReadmes > 0 ? ` ... (+${remainingReadmes} more)` : ''),
       );
     }
 
-    const librariesWithoutReadme = libraries.filter(library => !library.readmePath);
     if (librariesWithoutReadme.length > 0) {
       const displayedWithoutReadme = librariesWithoutReadme.slice(0, maxLibrariesWithoutReadme);
       const remainingWithoutReadme = librariesWithoutReadme.length - displayedWithoutReadme.length;
       lines.push(
-        `Libraries without readme_ai.md (${librariesWithoutReadme.length}): ${displayedWithoutReadme
+        `Libraries without readme_ai.md (${displayedWithoutReadme.length}/${librariesWithoutReadme.length} shown): ${displayedWithoutReadme
           .map(library => library.name)
           .join(', ')}`
         + (remainingWithoutReadme > 0 ? ` ... (+${remainingWithoutReadme} more)` : ''),

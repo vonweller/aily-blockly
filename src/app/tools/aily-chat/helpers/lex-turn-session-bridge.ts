@@ -1,10 +1,73 @@
 import type { ITurnDataSource, TurnSpan } from '../core/turn-data-source';
 
-type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
 type LexCompactionAnchor = import('aily-lex/browser').CompactionAnchor;
 type LexTurnRequestMetadata = import('aily-lex/browser').TurnRequest['metadata'];
-type LexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
+
+interface LexApiMessage {
+  role: string;
+  content?: unknown;
+  toolCalls?: readonly {
+    id: string;
+    name: string;
+    arguments: unknown;
+  }[];
+  toolCallId?: unknown;
+  name?: unknown;
+}
+
+interface LexApiMessageSpan {
+  turnIndex: number;
+  startMsgIdx: number;
+  endMsgIdx: number;
+}
+
+interface LexTurnRoundAccess {
+  id: string;
+}
+
+interface LexTurnAccess {
+  id: string;
+  index: number;
+  request: {
+    content: string;
+    displayContent?: string;
+    metadata?: LexTurnRequestMetadata;
+  };
+  rounds: readonly LexTurnRoundAccess[];
+}
+
+interface LexTurnManagerAccess {
+  readonly revision: number;
+  readonly activeTurn?: {
+    readonly request: {
+      readonly metadata?: LexTurnRequestMetadata;
+    };
+  };
+  readonly turns: {
+    get(): readonly LexTurnAccess[];
+  };
+  toAPIMessages(): readonly LexApiMessage[];
+  toAPIMessagesWithSpans(): {
+    readonly messages: readonly LexApiMessage[];
+    readonly spans: readonly LexApiMessageSpan[];
+  };
+  startTurn(request: {
+    content: string;
+    displayContent?: string;
+    metadata?: LexTurnRequestMetadata;
+  }): { id: string };
+  completeTurnText(response: string): void;
+  failTurn(reason: string): void;
+  removeIncomplete(): boolean;
+  removeFrom(turnIndex: number): void;
+  applyCompaction(anchor: LexCompactionAnchor, historyRevision?: number): void;
+  toSnapshot(): LexSessionSnapshot;
+}
+
+interface LexTurnSessionAgentAccess {
+  readonly turnManager: LexTurnManagerAccess;
+}
 
 /**
  * Thin adapter over lex TurnManager / session APIs.
@@ -13,7 +76,7 @@ type LexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
  * OpenAI-shape conversion plus turn/session mutation helpers used by blockly.
  */
 export class LexTurnSessionBridge implements ITurnDataSource {
-  constructor(private readonly getAgent: () => LexAgentInstance | null) {}
+  constructor(private readonly getAgent: () => LexTurnSessionAgentAccess | null) {}
 
   messages(): any[] {
     const agent = this.getAgent();
