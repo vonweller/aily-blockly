@@ -178,44 +178,49 @@
             @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
             <div class="token-budget-indicator ccenter"
               nz-tooltip nzTooltipPlacement="top"
+              nzTooltipOverlayClassName="aily-chat-token-budget-tooltip-overlay"
               [nzTooltipTitle]="tokenBudgetTooltip">
               <ng-template #tokenBudgetTooltip>
-                <div style="font-size:11px;line-height:1.6;white-space:nowrap">
-                  <div style="font-weight:600;margin-bottom:2px">Context Window</div>
-                  <div style="margin-bottom:5px">
-                    <div style="margin-bottom:3px">{{ (vm.contextBudgetSnapshot.currentTokens / 1000) | number:'1.1-1' }}K / {{ (vm.contextBudgetSnapshot.maxContextTokens / 1000) | number:'1.1-1' }}K tokens · {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}%</div>
-                    <div style="position:relative;height:3px;background:rgba(255,255,255,0.12);border-radius:2px;overflow:hidden">
-                      <div [style.width.%]="vm.contextBudgetSnapshot.usagePercent"
-                        [style.background]="vm.contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : vm.contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
-                        style="height:100%;border-radius:2px;transition:width 0.3s ease"></div>
+                <div class="token-budget-tooltip-inner">
+                  <div class="token-budget-tooltip-title">{{ 'AILY_CHAT.TOKEN_CONTEXT_WINDOW' | translate }}</div>
+                  <div class="token-budget-tooltip-block">
+                    <div class="token-budget-tooltip-row">{{ (vm.contextBudgetSnapshot.currentTokens / 1000) | number:'1.1-1' }}K / {{ (vm.contextBudgetSnapshot.maxContextTokens / 1000) | number:'1.1-1' }}K tokens · {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}%</div>
+                    <div class="token-budget-tooltip-bar-track">
+                      <div
+                        class="token-budget-tooltip-bar-fill"
+                        [class.token-budget-tooltip-bar-fill--danger]="vm.contextBudgetSnapshot.usagePercent >= 75"
+                        [class.token-budget-tooltip-bar-fill--warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
+                        [class.token-budget-tooltip-bar-fill--ok]="vm.contextBudgetSnapshot.usagePercent < 50"
+                        [style.width.%]="vm.contextBudgetSnapshot.usagePercent"></div>
                     </div>
                   </div>
-                  <div style="font-weight:600;opacity:0.85">System</div>
-                  <div><span style="color:#98c379">■</span> System Instructions: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span style="color:#61afef">■</span> Tool Definitions: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
-                  <div style="font-weight:600;opacity:0.85;margin-top:4px">User Context</div>
+                  <div class="token-budget-tooltip-section">{{ 'AILY_CHAT.TOKEN_SECTION_SYSTEM' | translate }}</div>
+                  <div><span class="token-budget-label-dot token-budget-label-dot--system">■</span> {{ 'AILY_CHAT.TOKEN_SYSTEM_INSTRUCTIONS' | translate }}: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span class="token-budget-label-dot token-budget-label-dot--tools">■</span> {{ 'AILY_CHAT.TOKEN_TOOL_DEFINITIONS' | translate }}: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
+                  <div class="token-budget-tooltip-section token-budget-tooltip-section--spaced">{{ 'AILY_CHAT.TOKEN_SECTION_USER_CONTEXT' | translate }}</div>
                   @if(vm.contextBudgetSnapshot.contextTokens > 0) {
-                  <div><span style="color:#56b6c2">■</span> Files: {{ (vm.contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span class="token-budget-label-dot token-budget-label-dot--files">■</span> {{ 'AILY_CHAT.TOKEN_FILES' | translate }}: {{ (vm.contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div>
                   }
-                  <div><span style="color:#e5c07b">■</span> Messages: {{ (vm.contextBudgetSnapshot.messagesTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.messagesPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span style="color:#c678dd">■</span> Tool Results: {{ (vm.contextBudgetSnapshot.toolResultsTokens / 1000) | number:'1.1-1' }}K <span style="opacity:0.6">({{ vm.contextBudgetSnapshot.toolResultsPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span class="token-budget-label-dot token-budget-label-dot--messages">■</span> {{ 'AILY_CHAT.TOKEN_MESSAGES' | translate }}: {{ (vm.contextBudgetSnapshot.messagesTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.messagesPercent | number:'1.1-1' }}%)</span></div>
+                  <div><span class="token-budget-label-dot token-budget-label-dot--tool-results">■</span> {{ 'AILY_CHAT.TOKEN_TOOL_RESULTS' | translate }}: {{ (vm.contextBudgetSnapshot.toolResultsTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.toolResultsPercent | number:'1.1-1' }}%)</span></div>
                   <div class="context-compact-row">
                     <button
                       type="button"
                       class="context-compact-action"
                       [disabled]="vm.isWaiting || isManualCompacting"
                       (click)="handleManualCompaction($event)">
-                      {{ isManualCompacting ? '压缩中...' : '压缩对话' }}
+                      {{ (isManualCompacting ? 'AILY_CHAT.TOKEN_COMPACTING' : 'AILY_CHAT.TOKEN_COMPACT_CHAT') | translate }}
                     </button>
                   </div>
                 </div>
               </ng-template>
               <svg viewBox="0 0 24 24" class="token-ring">
-                <!-- 背景环 -->
-                <circle cx="12" cy="12" r="9" fill="none" stroke="#3f3f3f" stroke-width="2.5"/>
-                <!-- 进度环 -->
+                <circle cx="12" cy="12" r="9" class="token-ring-track" fill="none" stroke-width="2.5"/>
                 <circle cx="12" cy="12" r="9" fill="none"
-                  [attr.stroke]="vm.contextBudgetSnapshot.usagePercent >= 75 ? '#e06c75' : vm.contextBudgetSnapshot.usagePercent >= 50 ? '#e5c07b' : '#98c379'"
+                  class="token-ring-fill"
+                  [class.token-ring-fill--danger]="vm.contextBudgetSnapshot.usagePercent >= 75"
+                  [class.token-ring-fill--warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
+                  [class.token-ring-fill--ok]="vm.contextBudgetSnapshot.usagePercent < 50"
                   stroke-width="2.5"
                   stroke-linecap="round"
                   [attr.stroke-dasharray]="56.549"

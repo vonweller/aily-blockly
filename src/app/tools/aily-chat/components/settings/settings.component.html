@@ -9,11 +9,11 @@
                 <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('tools')"></i>
             </div>
             <div class="items-list">
-                <div class="setting-block" style="margin-bottom: 12px;">
+                <div class="setting-block setting-block--section-gap">
                     <div class="setting-label">内置模型预设</div>
                     <div class="setting-hint">Auto 是软件内置默认 LLM。预设负责产品层选择，下面的具体模型负责 canonical model 能力配置。</div>
                     @if(modelCatalogStatusHint; as catalogStatusHint) {
-                    <div class="setting-hint" [style.color]="isModelCatalogUnavailable ? '#d97706' : null">{{ catalogStatusHint }}</div>
+                    <div class="setting-hint" [class.setting-hint--warning]="isModelCatalogUnavailable">{{ catalogStatusHint }}</div>
                     }
                     <div class="items-container">
                         @for (preset of modelPresetList; track preset.id) {
@@ -255,9 +255,10 @@
                     <label nz-checkbox [(ngModel)]="autoSaveEdits">默认自动保存变更</label>
                     <span class="setting-hint">AI编辑完成后自动保留变更，不弹出变更面板</span>
                 </div>
-                <div>最大循环次数 <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('maxCount')"></i>
+                <div class="setting-block">
+                    <div class="setting-label">最大循环次数 <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('maxCount')"></i></div>
+                    <input nz-input [(ngModel)]="maxCount" />
                 </div>
-                <input nz-input [(ngModel)]="maxCount" />
             </div>
         </div>
     </div>

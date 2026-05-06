@@ -11,8 +11,8 @@
 .todo-panel-container {
   flex-shrink: 0;
   /* 不允许收缩，保持TODO面板完整显示 */
-  border-top: 1px solid var(--border-color, #3c3c3c);
-  background: #252526;
+  border-top: 1px solid var(--aily-border-primary, #3c3c3c);
+  background: var(--aily-chat-viewer-panel-raised, #252526);
   max-height: 300px;
   /* 限制最大高度防止占用过多空间 */
   overflow: hidden;
@@ -51,7 +51,7 @@
 .sender {
   flex-shrink: 0;
   padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 
   .interactive-input-part > .chat-todo-list-widget-container,
   .interactive-input-part > .chat-editing-session {
@@ -104,24 +104,24 @@
     position: relative;
     overflow: visible;
     isolation: isolate;
-    background: #292929;
+    background: var(--aily-bg-card, #292929);
     border-color: var(--chat-input-border-color);
     box-shadow: 0 0 0 1px var(--chat-input-outline-color);
     transition: border-color 0.18s ease, box-shadow 0.18s ease;
 
     &.focused {
-      --chat-input-border-color: rgba(95, 154, 255, 0.4);
-      --chat-input-outline-color: rgba(95, 154, 255, 0.1);
+      --chat-input-border-color: color-mix(in srgb, var(--aily-color-accent) 40%, transparent);
+      --chat-input-outline-color: color-mix(in srgb, var(--aily-color-accent) 10%, transparent);
     }
 
     &.working {
-      --chat-input-border-color: rgba(95, 154, 255, 0.28);
-      --chat-input-outline-color: rgba(95, 154, 255, 0.08);
+      --chat-input-border-color: color-mix(in srgb, var(--aily-color-accent) 28%, transparent);
+      --chat-input-outline-color: color-mix(in srgb, var(--aily-color-accent) 8%, transparent);
     }
 
     &.working.focused {
-      --chat-input-border-color: rgba(95, 154, 255, 0.5);
-      --chat-input-outline-color: rgba(95, 154, 255, 0.14);
+      --chat-input-border-color: color-mix(in srgb, var(--aily-color-accent) 50%, transparent);
+      --chat-input-outline-color: color-mix(in srgb, var(--aily-color-accent) 14%, transparent);
     }
 
     .textarea-wrapper {
@@ -139,6 +139,11 @@
       outline: none;
       padding: 7px 0 0 5px;
       background: transparent;
+      color: var(--aily-text-primary, #ffffff);
+
+      &::placeholder {
+        color: var(--aily-text-muted, #a5a5a5);
+      }
     }
 
     .agent-suggestions {
@@ -147,13 +152,13 @@
       left: 0;
       min-width: 200px;
       max-width: 300px;
-      background: #3a3a3a;
-      border: 1px solid #555;
+      background: var(--aily-bg-tertiary, #3a3a3a);
+      border: 1px solid var(--aily-border-secondary, #555);
       border-radius: 6px;
       padding: 4px;
       margin-bottom: 4px;
       z-index: 100;
-      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--aily-chat-viewer-dropdown-shadow, 0 -4px 12px rgba(0, 0, 0, 0.3));
 
       .agent-suggestion-item {
         display: flex;
@@ -163,16 +168,16 @@
         border-radius: 4px;
         cursor: pointer;
         font-size: 13px;
-        color: #c4b5fd;
+        color: var(--aily-subagent-label, #c4b5fd);
         transition: background 0.15s;
 
         i {
-          color: #818cf8;
+          color: var(--aily-subagent-icon-loading, #818cf8);
           font-size: 14px;
         }
 
         &:hover {
-          background: rgba(99, 102, 241, 0.2);
+          background: var(--aily-subagent-body-divider, rgba(99, 102, 241, 0.2));
         }
       }
     }
@@ -208,22 +213,22 @@
         width: 28px;
         height: 28px;
         font-size: 14px;
-        color: #eee;
+        color: var(--aily-text-quaternary, #eee);
         padding-top: 1px;
         border-radius: 5px;
 
         &:hover {
-          color: #fff;
-          background: #3f3f3f;
+          color: var(--aily-text-primary, #fff);
+          background: var(--aily-bg-tertiary, #3f3f3f);
         }
 
         &.actived {
-          background: rgba(40, 100, 250, 0.8);
+          background: color-mix(in srgb, var(--aily-color-primary-alt) 80%, transparent);
           border-radius: 5px;
         }
 
         i.actived {
-          color: #4f77dd;
+          color: var(--aily-color-primary-alt, #4f77dd);
         }
       }
     }
@@ -239,7 +244,7 @@
       .spinner-box {
         width: 24px;
         height: 24px;
-        border: 3px solid #5a5a5a;
+        border: 3px solid var(--aily-border-tertiary, #5a5a5a);
         border-radius: 50%;
         box-sizing: border-box;
       }
@@ -256,7 +261,7 @@
 }
 
 .historyList {
-  background: #555;
+  background: var(--aily-border-secondary, #555);
   position: absolute;
   top: 40px;
   right: 0;
@@ -276,7 +281,7 @@
   }
 
   .text {
-    color: #999;
+    color: var(--aily-text-secondary, #999);
     text-align: center;
     padding-right: 10px;
   }
@@ -290,7 +295,7 @@
 
 .list-box {
   border-radius: 5px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--aily-border-secondary, #ccc);
   position: absolute;
   top: 0;
   left: 0;
@@ -298,21 +303,21 @@
   height: 28px;
   z-index: 0;
   pointer-events: none;
-  background: #3f3f3f;
+  background: var(--aily-bg-tertiary, #3f3f3f);
 }
 
 .btn2 {
   width: 28px;
   height: 28px;
   font-size: 14px;
-  color: #ccc;
+  color: var(--aily-text-tertiary, #ccc);
   padding-top: 1px;
   border-radius: 5px;
   z-index: 999;
   cursor: pointer;
 
   &:hover {
-    color: #fff;
+    color: var(--aily-text-primary, #fff);
   }
 }
 
@@ -328,34 +333,34 @@
     border-radius: 5px;
     padding: 0 5px;
     border-radius: 2px;
-    border: 1px solid #666;
+    border: 1px solid var(--aily-border-tertiary, #666);
 
     &:hover {
-      background-color: #444;
+      background-color: var(--aily-bg-tertiary, #444);
     }
 
     &.block-item {
-      border-color: #d4a017;
-      background-color: rgba(212, 160, 23, 0.1);
+      border-color: var(--aily-chat-xdialog-context-accent, #d4a017);
+      background-color: var(--aily-chat-xdialog-context-bg, rgba(212, 160, 23, 0.1));
 
       &:hover {
-        background-color: rgba(212, 160, 23, 0.2);
+        background-color: var(--aily-chat-xdialog-context-hover-bg, rgba(212, 160, 23, 0.2));
       }
 
       i {
-        color: #d4a017;
+        color: var(--aily-chat-xdialog-context-accent, #d4a017);
       }
     }
 
     .resource-name {
       margin: 0 5px;
-      color: #fff;
+      color: var(--aily-text-primary, #fff);
     }
 
     .btn {
       cursor: pointer;
       font-size: 12px;
-      color: #ccc;
+      color: var(--aily-text-tertiary, #ccc);
     }
   }
 }
@@ -385,8 +390,8 @@
       padding: 0 6px;
       margin-left: 2px;
       border-radius: 999px;
-      background: rgba(97, 175, 239, 0.14);
-      color: #8ec8ff;
+      background: var(--aily-chat-viewer-badge-bg, rgba(97, 175, 239, 0.14));
+      color: var(--aily-chat-viewer-blockly-chip-fg, #8ec8ff);
       font-size: 10px;
       line-height: 1;
       letter-spacing: 0.02em;
@@ -396,8 +401,8 @@
   }
 
   &.active {
-    color: #007acc !important;
-    background: rgba(0, 122, 204, 0.1);
+    color: var(--aily-bg-active, #007acc) !important;
+    background: color-mix(in srgb, var(--aily-bg-active) 10%, transparent);
   }
 }
 
@@ -413,6 +418,26 @@
     width: 22px;
     height: 22px;
 
+    .token-ring-track {
+      stroke: var(--aily-chat-token-budget-ring-track);
+    }
+
+    .token-ring-fill {
+      transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+
+      &.token-ring-fill--ok {
+        stroke: var(--aily-chat-token-budget-fill-ok);
+      }
+
+      &.token-ring-fill--warn {
+        stroke: var(--aily-chat-token-budget-fill-warn);
+      }
+
+      &.token-ring-fill--danger {
+        stroke: var(--aily-chat-token-budget-fill-danger);
+      }
+    }
+
     circle {
       transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
     }
@@ -422,16 +447,16 @@
     position: absolute;
     font-size: 7px;
     font-weight: 600;
-    color: #98c379;
+    color: var(--aily-chat-token-budget-fill-ok);
     line-height: 1;
     pointer-events: none;
 
     &.warn {
-      color: #e5c07b;
+      color: var(--aily-chat-token-budget-fill-warn);
     }
 
     &.danger {
-      color: #e06c75;
+      color: var(--aily-chat-token-budget-fill-danger);
     }
   }
 }
@@ -439,7 +464,7 @@
 .context-compact-row {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 }
 
 .context-compact-action {
@@ -447,15 +472,15 @@
   border: 0;
   border-radius: 6px;
   padding: 5px 8px;
-  background: rgba(97, 175, 239, 0.16);
-  color: #d7e9ff;
+  background: color-mix(in srgb, var(--aily-color-accent) 16%, transparent);
+  color: var(--aily-text-primary);
   font-size: 11px;
   line-height: 1.3;
   cursor: pointer;
   transition: background 0.2s ease, opacity 0.2s ease;
 
   &:hover:not(:disabled) {
-    background: rgba(97, 175, 239, 0.24);
+    background: color-mix(in srgb, var(--aily-color-accent) 24%, transparent);
   }
 
   &:disabled {
@@ -485,16 +510,16 @@
     }
 
     .x-mermaid-placeholder {
-      background-color: #3a3a3a !important;
+      background-color: var(--aily-bg-tertiary, #3a3a3a) !important;
     }
 
     .x-mermaid-diagram {
       border-radius: 5px;
-      background-color: #3a3a3a;
+      background-color: var(--aily-bg-tertiary, #3a3a3a);
       max-height: 500px;
       overflow: auto;
       scrollbar-width: thin !important;
-      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+      scrollbar-color: var(--aily-scrollbar-thumb, rgba(255, 255, 255, 0.2)) var(--aily-scrollbar-track, transparent);
 
       >svg {
         user-select: none;
