@@ -1,4 +1,4 @@
-﻿import { ToolUseResult } from "./tools";
+﻿import type { ToolUseResult } from '../core/tool-types';
 import { ProjectService } from "../../../services/project.service";
 import { AilyHost } from '../core/host';
 

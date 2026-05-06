@@ -11,8 +11,8 @@
 .todo-panel-container {
   flex-shrink: 0;
   /* 不允许收缩，保持TODO面板完整显示 */
-  border-top: 1px solid var(--aily-border-subtle, #3c3c3c);
-  background: var(--aily-bg-secondary, #252526);
+  border-top: 1px solid var(--border-color, #3c3c3c);
+  background: #252526;
   max-height: 300px;
   /* 限制最大高度防止占用过多空间 */
   overflow: hidden;
@@ -49,8 +49,34 @@
 }
 
 .sender {
-  position: relative;
   flex-shrink: 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+
+  .interactive-input-part > .chat-todo-list-widget-container,
+  .interactive-input-part > .chat-editing-session {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-width: 0;
+    padding: 0 10px;
+    margin-bottom: -4px;
+    box-sizing: border-box;
+    position: relative;
+  }
+
+  .interactive-input-part:has(> .chat-todo-list-widget-container .chat-todo-list-widget.has-todos) .input-box,
+  .interactive-input-part:has(> .chat-editing-session .chat-editing-session-container) .input-box {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  .interactive-input-part > .chat-todo-list-widget-container:has(.chat-todo-list-widget.has-todos) + .chat-editing-session .chat-editing-session-container {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
 
   .settings {
     height: 40px;
@@ -58,29 +84,56 @@
   }
 
   .s-box {
-    height: calc(100% - 20px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
   }
 
   .input-box {
+    --chat-input-border-color: transparent;
+    --chat-input-outline-color: transparent;
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 0 0 auto;
+    min-height: 140px;
     margin: 10px;
     padding: 5px;
+    border: 1px solid transparent;
     border-radius: 5px;
     position: relative;
-    background: var(--aily-bg-elevated);
+    overflow: visible;
+    isolation: isolate;
+    background: #292929;
+    border-color: var(--chat-input-border-color);
+    box-shadow: 0 0 0 1px var(--chat-input-outline-color);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+    &.focused {
+      --chat-input-border-color: rgba(95, 154, 255, 0.4);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.1);
+    }
+
+    &.working {
+      --chat-input-border-color: rgba(95, 154, 255, 0.28);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.08);
+    }
+
+    &.working.focused {
+      --chat-input-border-color: rgba(95, 154, 255, 0.5);
+      --chat-input-outline-color: rgba(95, 154, 255, 0.14);
+    }
 
     .textarea-wrapper {
       position: relative;
-      flex-grow: 1;
+      min-height: 92px;
       display: flex;
       flex-direction: column;
     }
 
     textarea {
       font-size: 14px;
-      flex-grow: 1;
+      min-height: 92px;
       border: none;
       resize: none;
       outline: none;
@@ -94,8 +147,8 @@
       left: 0;
       min-width: 200px;
       max-width: 300px;
-      background: var(--aily-bg-tertiary);
-      border: 1px solid var(--aily-border-tertiary);
+      background: #3a3a3a;
+      border: 1px solid #555;
       border-radius: 6px;
       padding: 4px;
       margin-bottom: 4px;
@@ -155,13 +208,13 @@
         width: 28px;
         height: 28px;
         font-size: 14px;
-        color: var(--aily-text-primary);
+        color: #eee;
         padding-top: 1px;
         border-radius: 5px;
 
         &:hover {
-          color: var(--aily-text-primary);
-          background: var(--aily-bg-tertiary);
+          color: #fff;
+          background: #3f3f3f;
         }
 
         &.actived {
@@ -186,7 +239,7 @@
       .spinner-box {
         width: 24px;
         height: 24px;
-        border: 3px solid var(--aily-border-tertiary);
+        border: 3px solid #5a5a5a;
         border-radius: 50%;
         box-sizing: border-box;
       }
@@ -202,16 +255,8 @@
   }
 }
 
-nz-resize-handle {
-  .line {
-    margin-top: 5px;
-    height: 1px;
-    background: var(--aily-scrollbar-thumb);
-  }
-}
-
 .historyList {
-  background: var(--aily-border-tertiary);
+  background: #555;
   position: absolute;
   top: 40px;
   right: 0;
@@ -231,7 +276,7 @@ nz-resize-handle {
   }
 
   .text {
-    color: var(--aily-text-secondary);
+    color: #999;
     text-align: center;
     padding-right: 10px;
   }
@@ -245,7 +290,7 @@ nz-resize-handle {
 
 .list-box {
   border-radius: 5px;
-  border: 1px solid var(--aily-border-subtle);
+  border: 1px solid #ccc;
   position: absolute;
   top: 0;
   left: 0;
@@ -253,21 +298,21 @@ nz-resize-handle {
   height: 28px;
   z-index: 0;
   pointer-events: none;
-  background: var(--aily-bg-tertiary);
+  background: #3f3f3f;
 }
 
 .btn2 {
   width: 28px;
   height: 28px;
   font-size: 14px;
-  color: var(--aily-text-quaternary);
+  color: #ccc;
   padding-top: 1px;
   border-radius: 5px;
   z-index: 999;
   cursor: pointer;
 
   &:hover {
-    color: var(--aily-text-primary);
+    color: #fff;
   }
 }
 
@@ -283,10 +328,10 @@ nz-resize-handle {
     border-radius: 5px;
     padding: 0 5px;
     border-radius: 2px;
-    border: 1px solid var(--aily-border-tertiary);
+    border: 1px solid #666;
 
     &:hover {
-      background-color: var(--aily-bg-tertiary);
+      background-color: #444;
     }
 
     &.block-item {
@@ -304,13 +349,13 @@ nz-resize-handle {
 
     .resource-name {
       margin: 0 5px;
-      color: var(--aily-text-primary);
+      color: #fff;
     }
 
     .btn {
       cursor: pointer;
       font-size: 12px;
-      color: var(--aily-text-quaternary);
+      color: #ccc;
     }
   }
 }
@@ -324,16 +369,34 @@ nz-resize-handle {
   &.mode {
     width: auto !important;
     padding: 0 6px !important;
+    gap: 4px;
 
-    span {
+    > span:not(.mini-tag) {
       margin-left: 5px;
       font-size: 12px;
+    }
+
+    .mini-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      height: 18px;
+      padding: 0 6px;
+      margin-left: 2px;
+      border-radius: 999px;
+      background: rgba(97, 175, 239, 0.14);
+      color: #8ec8ff;
+      font-size: 10px;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
     }
 
   }
 
   &.active {
-    color: var(--aily-color-accent, #007acc) !important;
+    color: #007acc !important;
     background: rgba(0, 122, 204, 0.1);
   }
 }
@@ -355,39 +418,49 @@ nz-resize-handle {
     }
   }
 
-  .token-ring-track {
-    stroke: var(--aily-chat-token-budget-ring-track);
-  }
-
-  .token-ring-fill {
-    &--ok {
-      stroke: var(--aily-chat-token-budget-fill-ok);
-    }
-
-    &--warn {
-      stroke: var(--aily-chat-token-budget-fill-warn);
-    }
-
-    &--danger {
-      stroke: var(--aily-chat-token-budget-fill-danger);
-    }
-  }
-
   .token-percent {
     position: absolute;
     font-size: 7px;
     font-weight: 600;
-    color: var(--aily-chat-token-budget-fill-ok);
+    color: #98c379;
     line-height: 1;
     pointer-events: none;
 
     &.warn {
-      color: var(--aily-chat-token-budget-fill-warn);
+      color: #e5c07b;
     }
 
     &.danger {
-      color: var(--aily-chat-token-budget-fill-danger);
+      color: #e06c75;
     }
+  }
+}
+
+.context-compact-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.context-compact-action {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: rgba(97, 175, 239, 0.16);
+  color: #d7e9ff;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background 0.2s ease, opacity 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: rgba(97, 175, 239, 0.24);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 }
 
@@ -400,71 +473,6 @@ nz-resize-handle {
 }
 
 ::ng-deep {
-  // Token 用量说明（tooltip 挂载在浮层，需穿透样式）
-  .token-budget-tooltip {
-    font-size: 11px;
-    line-height: 1.6;
-    white-space: nowrap;
-    color: var(--aily-text-primary);
-
-    &__title {
-      font-weight: 600;
-      margin-bottom: 2px;
-    }
-
-    &__summary {
-      margin-bottom: 5px;
-    }
-
-    &__line {
-      margin-bottom: 3px;
-    }
-
-    &__bar-track {
-      position: relative;
-      height: 3px;
-      background: var(--aily-chat-token-budget-tooltip-bar-track);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    &__bar-fill {
-      height: 100%;
-      border-radius: 2px;
-      transition: width 0.3s ease;
-
-      &--ok {
-        background: var(--aily-chat-token-budget-fill-ok);
-      }
-
-      &--warn {
-        background: var(--aily-chat-token-budget-fill-warn);
-      }
-
-      &--danger {
-        background: var(--aily-chat-token-budget-fill-danger);
-      }
-    }
-
-    &__swatch {
-      &--system {
-        color: var(--aily-chat-token-budget-label-system);
-      }
-
-      &--tools {
-        color: var(--aily-chat-token-budget-label-tools);
-      }
-
-      &--messages {
-        color: var(--aily-chat-token-budget-label-messages);
-      }
-    }
-
-    &__pct {
-      opacity: 0.6;
-    }
-  }
-
   .x-markdown {
     p {
       margin-top: 5px;
@@ -477,16 +485,16 @@ nz-resize-handle {
     }
 
     .x-mermaid-placeholder {
-      background-color: var(--aily-bg-tertiary) !important;
+      background-color: #3a3a3a !important;
     }
 
     .x-mermaid-diagram {
       border-radius: 5px;
-      background-color: var(--aily-bg-tertiary);
+      background-color: #3a3a3a;
       max-height: 500px;
       overflow: auto;
       scrollbar-width: thin !important;
-      scrollbar-color: var(--aily-scrollbar-thumb) transparent;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 
       >svg {
         user-select: none;

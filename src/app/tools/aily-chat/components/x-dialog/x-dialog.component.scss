@@ -1,89 +1,74 @@
+// ===== 全局 CSS 变量（通过 DOM 继承到所有子组件）=====
+:host {
+  // 文本色阶
+  --chat-fg:         #cccccc;   // 主文本
+  --chat-fg-dim:     #8e8e8e;   // 次级文本 / 描述
+  --chat-fg-head:    #e3e3e3;   // 标题 / 用户名
+  --chat-fg-muted:   #6a6a6a;   // 极弱文本（meta、分隔符）
+
+  // 边框 / 连接线
+  --chat-border:     rgba(255, 255, 255, 0.10);
+  --chat-border-dim: rgba(255, 255, 255, 0.06);
+
+  // 强调色
+  --chat-shimmer:    #4fc3f7;   // shimmer 扫光
+  --chat-info:       #75beff;   // 进行中 / info
+  --chat-success:    #89d185;   // 完成 / success
+  --chat-warn:       #cca700;   // 警告
+  --chat-error:      #f14c4c;   // 错误
+
+  // 背景层次
+  --chat-bg-request: #292929;                    // 用户消息底色（与输入框同色）
+  --chat-bg-request-hover: #323232;              // 对齐 VS Code requestBubbleHoverBackground
+  --chat-bg-subtle:  rgba(255, 255, 255, 0.04);  // 内容面板 subtle
+  --chat-bg-hover:   rgba(255, 255, 255, 0.06);  // hover 态
+  --chat-bg-deep:    rgba(255, 255, 255, 0.08);  // 深层嵌套
+}
+
+// ===== 对话气泡容器（Copilot interactive-item-container 对齐）=====
 .dialog-box {
-  background: var(--aily-chat-xdialog-bubble-bg, #2d2d2d);
-  border-radius: 5px;
-  margin: 5px 0;
   position: relative;
-  overflow: hidden;
-  padding-bottom: 2px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background: transparent;
+  
+  &.chat-most-recent-response {
+    min-height: var(--chat-current-response-min-height, 0px);
+  }
+
+  &.request-disabled {
+    .content {
+      position: relative;
+    }
+
+    .content::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      border: 1px solid rgba(250, 173, 20, 0.14);
+      background: linear-gradient(180deg, rgba(250, 173, 20, 0.05), rgba(250, 173, 20, 0.02));
+      pointer-events: none;
+    }
+
+    .msg-model-label {
+      color: var(--chat-warn);
+    }
+  }
+
+  // AI 响应：透明，内容直接贴近页面底色（Copilot response 风格）
 
   &.user {
-    background: none;
+    // 用户消息：整体右对齐，气泡由 .content 提供（Copilot request bubble 风格）
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    background: transparent;
   }
-}
-
-// ===== 子Agent折叠面板（含 schematicAgent →「Schematic Agent」展示）=====
-.subagent-fold {
-  border-radius: 5px;
-  margin: 5px 0;
-  padding: 5px 10px;
-  background-color: var(--aily-subagent-bg, #2d2d2d);
-  border-left: 3px solid var(--aily-subagent-border, #6366f1);
-  overflow: hidden;
-}
-
-.subagent-fold-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--aily-subagent-text, #cccccc);
-  user-select: none;
-  transition: background 0.2s;
-
-  &:hover {
-    background: var(--aily-subagent-header-hover, rgba(255, 255, 255, 0.05));
-    margin: -5px -10px;
-    padding: 5px 10px;
-  }
-}
-
-.subagent-fold-icon {
-  flex-shrink: 0;
-  margin-right: 2px;
-
-  &.loading {
-    color: var(--aily-subagent-icon-loading, #818cf8);
-  }
-
-  &.done {
-    color: var(--aily-subagent-icon-done, #10b981);
-  }
-}
-
-.subagent-fold-label {
-  color: var(--aily-subagent-label, #c4b5fd);
-  font-weight: 500;
-}
-
-.subagent-fold-arrow {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--aily-subagent-arrow, #888888);
-  transition: transform 0.2s;
-
-  &.expanded {
-    transform: rotate(180deg);
-  }
-}
-
-.subagent-fold-body {
-  padding: 5px 0;
-  margin-top: 5px;
-  max-height: 400px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--aily-subagent-scrollbar-thumb, rgba(255, 255, 255, 0.2))
-    var(--aily-subagent-scrollbar-track, transparent);
-  border-top: 1px solid var(--aily-subagent-body-divider, rgba(99, 102, 241, 0.2));
-  user-select: text;
 }
 
 @keyframes ac-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .ac-spin {
@@ -91,17 +76,50 @@
   display: inline-block;
 }
 
-.username {
-  padding: 3px 6px;
-  border-bottom: 1px solid var(--aily-chat-xdialog-username-border, #444444);
-  font-size: 14px;
-  color: var(--aily-chat-xdialog-username-text, #888888);
+// ===== 元数据标签行（仅在有标签时显示）=====
+.turn-meta-row {
   display: flex;
   align-items: center;
+  gap: 6px;
+  padding: 2px 12px 1px;
+  min-height: 18px;
+}
 
-  i {
-    font-size: 16px;
-  }
+.turn-meta-label {
+  padding: 0;
+  border-radius: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--chat-fg-dim);
+  background: transparent;
+  border: none;
+  user-select: none;
+  font-weight: 400;
+  opacity: 0.78;
+}
+
+.subtle-meta-label {
+  color: var(--chat-fg-dim);
+}
+
+.assistant-termination-label,
+.request-disabled-label {
+  padding: 1px 6px;
+  border-radius: 999px;
+  opacity: 1;
+  border: 1px solid transparent;
+}
+
+.assistant-termination-label {
+  color: var(--chat-warn);
+  background: rgba(250, 173, 20, 0.10);
+  border-color: rgba(250, 173, 20, 0.20);
+}
+
+.request-disabled-label {
+  color: var(--chat-warn);
+  background: rgba(250, 173, 20, 0.10);
+  border-color: rgba(250, 173, 20, 0.22);
 }
 
 // .checkpoint-action-row {
@@ -164,30 +182,76 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   height: 0;
-  padding: 0 6px;
+  padding: 0 12px;
   width: 100%;
   overflow: hidden;
   transition: height 0.18s ease;
 
   &.expanded {
-    height: 24px;
+    height: 26px;
   }
 }
 
-.restore-checkpoint-text {
+.checkpoint-action-line {
+  flex: 1;
+  height: 1px;
+  min-width: 24px;
+  background-color: var(--chat-border);
+  opacity: 0;
+  transition: opacity 0.14s ease;
+
+  &.visible {
+    opacity: 1;
+  }
+}
+
+.checkpoint-action-line-left {
+  mask-image: linear-gradient(to right, transparent, black);
+  -webkit-mask-image: linear-gradient(to right, transparent, black);
+}
+
+.checkpoint-action-line-right {
+  mask-image: linear-gradient(to left, transparent, black);
+  -webkit-mask-image: linear-gradient(to left, transparent, black);
+}
+
+.checkpoint-action-dot {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--chat-fg-dim);
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 0.14s ease;
+
+  &.visible {
+    opacity: 1;
+  }
+}
+
+.checkpoint-action-link {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: 100%;
-  
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 18px;
+  padding: 0 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  appearance: none;
+  outline: none;
+  box-sizing: border-box;
   font-size: 12px;
-  color: var(--aily-chat-xdialog-checkpoint-fg, #888888);
+  font-family: inherit;
+  line-height: 18px;
+  color: var(--chat-fg-dim);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  
+
   opacity: 0;
   pointer-events: none;
   transform: translateY(-1px);
@@ -198,52 +262,167 @@
     pointer-events: auto;
   }
 
+  &.disabled,
+  &:disabled {
+    color: var(--chat-fg-muted);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  &:hover:not(.disabled):not(:disabled) {
+    color: var(--chat-fg);
+  }
+}
+
+.checkpoint-action-link-text {
+  padding: 0 4px;
+}
+
+.checkpoint-action-link-icon {
+  width: 20px;
+  padding: 0 3px;
+  color: inherit;
+
+  i {
+    font-size: 11px;
+    color: currentColor;
+    opacity: 0.88;
+    transition: opacity 0.14s ease, color 0.14s ease;
+  }
+
+  &:hover:not(.disabled):not(:disabled) i {
+    opacity: 1;
+  }
+}
+
+.checkpoint-restore-row {
+  display: flex;
+  width: 100%;
+  position: relative;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+
+.checkpoint-restore-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--chat-fg-dim);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border: 1px solid transparent;
+}
+
+.checkpoint-restore-dot {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--chat-fg-dim);
+  flex-shrink: 0;
+}
+
+.checkpoint-restore-action {
+  padding: 0;
+  border: none;
+  background: transparent;
+  appearance: none;
+  outline: none;
+  color: var(--chat-fg-dim);
+  font-size: 12px;
+  line-height: 18px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+
   &:hover {
-    color: var(--aily-chat-xdialog-checkpoint-fg-hover, #cccccc);
-    &::before, &::after {
-      background-image: linear-gradient(
-        var(--line-dir),
-        var(--aily-chat-xdialog-checkpoint-fg-hover, #cccccc),
-        transparent
-      );
-    }
+    color: var(--chat-fg);
   }
+}
 
-  &::before {
-    --line-dir: to left;
-    content: "";
-    height: 1px;
-    flex: 1;
-    background: linear-gradient(
-      to left,
-      var(--aily-chat-xdialog-checkpoint-fg, #888888),
-      transparent
-    );
-  }
+.edit-turn-hint {
+  margin: 2px 2px 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--chat-fg-dim);
+  background: var(--chat-bg-subtle);
+  border: 1px solid var(--chat-border-dim);
+}
 
-  &::after {
-    --line-dir: to right;
-    content: "";
-    height: 1px;
-    flex: 1;
-    background: linear-gradient(
-      to right,
-      var(--aily-chat-xdialog-checkpoint-fg, #888888),
-      transparent
-    );
+.content {
+  padding: 4px 12px 8px;
+  user-select: text;
+}
+
+// ===== 用户消息气泡（与输入框同色，右对齐）=====
+.dialog-box.user .content {
+  max-width: 88%;
+  background: var(--chat-bg-request);   // #292929，与输入框同色
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 8px 12px;
+  align-self: flex-end;
+  width: fit-content;
+  margin-bottom: 5px;
+  transition: background-color 0.14s ease;
+}
+
+.dialog-box.user.editable:hover .content {
+  background: var(--chat-bg-request-hover);
+}
+
+.dialog-box.user.request-disabled .content {
+  border-color: rgba(250, 173, 20, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(250, 173, 20, 0.08);
+}
+
+// 编辑框：用户编辑时占满宽度
+.dialog-box.user .edit-input-box {
+  align-self: stretch;
+  width: 100%;
+}
+
+// 操作栏：用户消息右对齐
+.dialog-box.user .msg-footer,
+.dialog-box.user .msg-actions {
+  justify-content: flex-end;
+  align-self: flex-end;
+  margin: -1px 8px 2px 0;
+  padding: 0;
+  min-height: 22px;
+}
+
+// loader 对齐
+.dialog-box.user .loader {
+  align-self: flex-end;
+  margin-right: 2px;
+}
+
+// 元数据行：用户消息右对齐
+.dialog-box.user .turn-meta-row {
+  justify-content: flex-end;
+  width: 100%;
+
+  .subtle-meta-label {
+    max-width: 88%;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .content {
-  padding: 5px 10px;
-  user-select: text;
-
+  // thinking 态（死代码占位，实际 loading 由 .loader 处理）
   &.thinking {
     display: flex;
     align-items: center;
     gap: 2px;
-    color: var(--aily-chat-xdialog-thinking-fg, #a5a5a5);
-    font-size: 14px;
+    color: var(--chat-fg-dim);
+    font-size: 13px;
 
     .thinking-text {
       margin-right: 2px;
@@ -258,7 +437,7 @@
         width: 4px;
         height: 4px;
         border-radius: 50%;
-        background-color: var(--aily-chat-xdialog-thinking-dot, #888888);
+        background-color: var(--chat-fg-dim);
         animation: wave-bounce 1.4s ease-in-out infinite both;
       }
       .dot:nth-child(1) { animation-delay: 0s; }
@@ -273,13 +452,13 @@
       border-radius: 5px;
       padding: 4px 8px;
       margin: 4px 0;
-      background-color: var(--aily-chat-xdialog-context-bg, rgba(212, 160, 23, 0.08));
-      border: 1px solid var(--aily-chat-xdialog-context-border, rgba(212, 160, 23, 0.25));
+      background-color: rgba(212, 160, 23, 0.08);
+      border: 1px solid rgba(212, 160, 23, 0.25);
       font-size: 12px;
 
       .aily-context-summary {
         cursor: pointer;
-        color: var(--aily-chat-xdialog-context-accent, #d4a017);
+        color: #d4a017;
         font-size: 13px;
         user-select: none;
         list-style: none;
@@ -296,7 +475,7 @@
           font-family: 'Font Awesome 6 Pro';
           font-weight: 300;
           font-size: 10px;
-          color: var(--aily-chat-xdialog-context-chevron, #888888);
+          color: #888;
           margin-left: auto;
           transition: transform 0.2s;
         }
@@ -315,8 +494,8 @@
         padding: 6px 8px;
         font-size: 12px;
         line-height: 1.5;
-        color: var(--aily-chat-xdialog-context-body-fg, #999999);
-        background: var(--aily-chat-xdialog-context-body-bg, rgba(0, 0, 0, 0.15));
+        color: #999;
+        background: rgba(0, 0, 0, 0.15);
         border-radius: 3px;
         max-height: 200px;
         overflow-y: auto;
@@ -331,7 +510,7 @@
       font-size: 14px;
 
       h2 {
-        border-left: 6px solid var(--aily-chat-xdialog-md-h2-border, #3794ff);
+        border-left: 6px solid #3794ff;
         padding-left: 10px;
       }
 
@@ -340,7 +519,7 @@
       }
 
       li > code {
-        background: var(--aily-chat-xdialog-md-code-bg, #514e4e);
+        background: #514e4e;
         border-radius: 2px;
         padding: 0 2px;
         word-break: break-word;
@@ -349,114 +528,137 @@
       table {
         border-collapse: collapse;
         overflow: hidden;
-        box-shadow: var(--aily-chat-xdialog-md-table-shadow, 0 1px 3px rgba(255, 255, 255, 0.05));
+        box-shadow: 0 1px 3px rgba(255, 255, 255, 0.05);
         border-radius: 3px;
       }
       
       thead {
-        background-color: var(--aily-chat-xdialog-md-thead-bg, rgb(50, 50, 50));
+        background-color: rgb(50, 50, 50);
       }
       
       tbody {
-        background-color: var(--aily-chat-xdialog-md-tbody-bg, rgb(46, 45, 45));
+        background-color: rgb(46, 45, 45);
       }
       
       tbody tr {
-        background-color: var(--aily-chat-xdialog-md-tbody-bg, rgb(46, 45, 45));
+        background-color: rgb(46, 45, 45);
         transition: background-color 200ms linear;
       }
       
       tbody tr:hover {
-        background-color: var(--aily-chat-xdialog-md-tr-hover, rgb(29, 29, 29));
+        background-color: rgba(29, 29, 29, 1);
       }
       
       th,
       td {
         padding: 10px 12px;
-        border: 1px solid var(--aily-chat-xdialog-md-cell-border, #444444);
+        border: 1px solid #444;
       }
       
       th {
-        color: var(--aily-chat-xdialog-md-cell-fg, #ffffff);
+        color: #ffffff;
       }
       
       td {
-        color: var(--aily-chat-xdialog-md-cell-fg, #ffffff);
+        color: #ffffff;
       }
 
       blockquote {
-        border-left: 4px solid var(--aily-chat-xdialog-md-bq-border, #6b6b6b);
+        border-left: 4px solid #6b6b6b;
         padding: 4px 12px;
         margin: 5px 0;
-        background-color: var(--aily-chat-xdialog-md-bq-bg, rgba(187, 187, 187, 0.1));
+        background-color: rgba(187, 187, 187, 0.1);
         border-radius: 0 3px 3px 0;
         transition: background-color 0.2s ease;
       }
       
       blockquote:hover {
-        background-color: var(--aily-chat-xdialog-md-bq-bg-hover, rgba(187, 187, 187, 0.2));
+        background-color: rgba(187, 187, 187, 0.2);
       }
     }
   }
 }
 
-// 消息操作栏
+// 消息底部栏：左操作、右模型信息
+.msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 4px;
+  min-height: 24px;
+
+  &.model-only {
+    justify-content: flex-end;
+  }
+}
+
+// 消息操作栏（Copilot footer-toolbar 对齐）
 .msg-actions {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 6px;
+  padding: 0;
   justify-content: flex-start;
 }
 
 .msg-action-btn {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--aily-chat-xdialog-msg-btn, #888888);
+  color: var(--chat-fg-dim);
   font-size: 13px;
   transition: background 0.15s, color 0.15s;
 
   &:hover {
-    background: var(--aily-chat-xdialog-msg-btn-hover-bg, rgba(255, 255, 255, 0.1));
-    color: var(--aily-chat-xdialog-msg-btn-hover-fg, #cccccc);
+    background: var(--chat-bg-hover);
+    color: var(--chat-fg);
   }
 
   &.active {
-    color: var(--aily-chat-xdialog-msg-btn-active, #61afef);
+    color: var(--chat-shimmer);
+  }
+
+  &.disabled {
+    opacity: 0.45;
+    cursor: default;
+    pointer-events: none;
   }
 }
 
 .msg-actions-divider {
   width: 1px;
   height: 14px;
-  background: var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.12));
+  background: var(--chat-border);
   margin: 0 2px;
 }
 
 .msg-model-label {
-  margin-left: auto;
   font-size: 11px;
-  color: var(--aily-chat-xdialog-msg-model, #666666);
+  color: var(--chat-fg-muted);
   white-space: nowrap;
   user-select: none;
-  line-height: 26px;
-  padding: 0 4px;
+  line-height: 20px;
+  padding: 0;
+  opacity: 0.85;
+  flex: 0 0 auto;
 }
 
+// 流式加载进度条（底部横条，Copilot shimmer-progress 对齐）
 .loader {
-  position: absolute;
-  bottom: 0;
+  position: static;
   height: 2px;
   width: 100%;
-  --c: no-repeat linear-gradient(var(--aily-chat-xdialog-loader-stripe, #585858) 0 0);
-  background: var(--c), var(--c), var(--aily-chat-xdialog-loader-track, #3d3d3d);
+  --c: no-repeat linear-gradient(rgba(117, 190, 255, 0.5) 0 0);
+  background: var(--c), var(--c), rgba(255, 255, 255, 0.06);
   background-size: 60% 100%;
   animation: l16 3s infinite;
+  margin: 2px 12px 0;
+  width: calc(100% - 24px);
 }
 
 @keyframes l16 {
@@ -476,7 +678,7 @@
   transition: background 0.15s;
 
   &:hover {
-    background: var(--aily-chat-xdialog-editable-hover, rgba(255, 255, 255, 0.03));
+    background: var(--chat-bg-hover);
   }
 }
 
@@ -484,10 +686,11 @@
 .edit-input-box {
   display: flex;
   flex-direction: column;
-  margin: 10px 0 5px;
+  margin: 6px 12px 5px;
   padding: 5px;
-  border-radius: 5px;
-  background: var(--aily-chat-xdialog-edit-bg, #292929);
+  border-radius: 6px;
+  border: 1px solid var(--chat-border);
+  background: rgba(0, 0, 0, 0.18);
 
   .resource-list {
     display: flex;
@@ -501,34 +704,34 @@
       font-size: 10px;
       border-radius: 2px;
       padding: 0 5px;
-      border: 1px solid var(--aily-chat-xdialog-edit-resource-border, #666666);
+      border: 1px solid #666;
 
       &:hover {
-        background-color: var(--aily-chat-xdialog-edit-resource-hover-bg, #444444);
+        background-color: #444;
       }
 
       &.block-item {
-        border-color: var(--aily-chat-xdialog-context-accent, #d4a017);
-        background-color: var(--aily-chat-xdialog-context-bg, rgba(212, 160, 23, 0.08));
+        border-color: #d4a017;
+        background-color: rgba(212, 160, 23, 0.1);
 
         &:hover {
-          background-color: var(--aily-chat-xdialog-context-hover-bg, rgba(212, 160, 23, 0.2));
+          background-color: rgba(212, 160, 23, 0.2);
         }
 
         i {
-          color: var(--aily-chat-xdialog-context-accent, #d4a017);
+          color: #d4a017;
         }
       }
 
       .resource-name {
         margin: 0 5px;
-        color: var(--aily-chat-xdialog-edit-resource-name, #ffffff);
+        color: #fff;
       }
 
       .res-remove-btn {
         cursor: pointer;
         font-size: 12px;
-        color: var(--aily-text-tertiary, #cccccc);
+        color: #ccc;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -536,7 +739,7 @@
         height: 16px;
 
         &:hover {
-          color: var(--aily-text-primary, #ffffff);
+          color: #fff;
         }
       }
     }
@@ -573,14 +776,14 @@
       width: 28px;
       height: 28px;
       font-size: 14px;
-      color: var(--aily-chat-xdialog-edit-btn-fg, #eeeeee);
+      color: #eee;
       padding-top: 1px;
       border-radius: 5px;
       cursor: pointer;
 
       &:hover {
-        color: var(--aily-text-primary, #ffffff);
-        background: var(--aily-chat-xdialog-edit-btn-hover-bg, #3f3f3f);
+        color: #fff;
+        background: #3f3f3f;
       }
     }
 
@@ -597,11 +800,11 @@
     .edit-cancel-btn {
       position: absolute;
       right: 32px;
-      color: var(--aily-text-hint, #888888);
+      color: #888;
 
       &:hover {
-        color: var(--aily-chat-xdialog-edit-cancel-hover-fg, #e06c75);
-        background: var(--aily-chat-xdialog-edit-cancel-hover-bg, rgba(224, 108, 117, 0.1));
+        color: #e06c75;
+        background: rgba(224, 108, 117, 0.1);
       }
     }
 
@@ -612,7 +815,7 @@
 
     .edit-list-box {
       border-radius: 5px;
-      border: 1px solid var(--aily-chat-xdialog-edit-list-border, #cccccc);
+      border: 1px solid #ccc;
       position: absolute;
       top: 0;
       left: 0;
@@ -620,14 +823,14 @@
       height: 28px;
       z-index: 0;
       pointer-events: none;
-      background: var(--aily-chat-xdialog-edit-list-bg, #3f3f3f);
+      background: #3f3f3f;
     }
 
     .edit-btn2 {
       width: 28px;
       height: 28px;
       font-size: 14px;
-      color: var(--aily-chat-xdialog-edit-btn2-fg, #cccccc);
+      color: #ccc;
       padding-top: 1px;
       border-radius: 5px;
       z-index: 999;
@@ -637,7 +840,7 @@
       justify-content: center;
 
       &:hover {
-        color: var(--aily-text-primary, #ffffff);
+        color: #fff;
       }
     }
   }

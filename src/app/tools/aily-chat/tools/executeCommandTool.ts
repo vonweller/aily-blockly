@@ -1,4 +1,4 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 import { CmdService } from "../../../services/cmd.service";
 import { 
     CommandSecurity, 

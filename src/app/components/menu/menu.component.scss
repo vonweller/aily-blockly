@@ -4,11 +4,13 @@
 
 .menu-box {
   background: var(--aily-bg-primary);
-  border-radius: 5px;
+  border: 1px solid var(--aily-border-secondary, rgba(255, 255, 255, 0.06));
+  border-radius: 8px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
   position: fixed;
   z-index: 999;
   flex-direction: column;
-  padding: 3px 0;
+  padding: 4px 0;
 
   // 滚动条样式
   &::-webkit-scrollbar {
@@ -33,56 +35,68 @@
 
   .menu-item {
     padding: 0 10px;
-    height: 30px;
-    min-height: 30px; // 保持最小高度,防止被压缩
+    height: 28px;
+    min-height: 28px; // 保持最小高度,防止被压缩
     flex-shrink: 0; // 防止flex布局压缩item
     justify-content: flex-start;
-    margin: 0 3px;
-    border-radius: 5px;
+    margin: 0 4px;
+    border-radius: 4px;
     cursor: pointer;
     color: var(--aily-menu-text);
     position: relative;
     overflow: hidden;
+    transition: background 120ms ease, transform 120ms ease;
 
     .name {
       white-space: nowrap;
       flex-shrink: 0;
       min-width: 0;
       padding: 0 1px;
+      font-size: 12px;
+      font-weight: 500;
+      transition: color 120ms ease;
     }
 
     .icon {
-      width: 20px;
-      margin-right: 10px;
+      width: 18px;
+      margin-right: 8px;
       flex-shrink: 0;
+      color: #a8b0b9;
     }
 
     .text {
       margin-left: auto;
-      padding-left: 10px;
+      padding-left: 12px;
       white-space: nowrap;
       color: var(--aily-menu-text-secondary);
       flex-shrink: 0;
+      font-size: 11px;
+      letter-spacing: 0.01em;
+      transition: color 120ms ease;
     }
 
     &:hover {
       background: var(--aily-menu-hover);
+      transform: translateX(1px);
     }
 
-    &.active{
+    &.active {
       background: var(--aily-menu-hover);
     }
 
     &.disabled {
       background: none;
+      transform: none;
     }
 
     &.current {
+      background: rgba(97, 175, 239, 0.14);
+
       .name::before {
         content: '';
         display: inline-block;
-        width: 5px;
-        height: 5px;
+        width: 4px;
+        height: 4px;
         border-radius: 50%;
         background: var(--aily-color-accent);
         margin-right: 6px;
@@ -90,6 +104,14 @@
         flex-shrink: 0;
       }
       .name {
+        color: var(--aily-color-accent);
+      }
+
+      .text {
+        color: var(--aily-menu-text-secondary);
+      }
+
+      .icon {
         color: var(--aily-color-accent);
       }
     }
@@ -102,6 +124,36 @@
 
     &.disabled {
       opacity: 0.6;
+    }
+
+    &.section {
+      height: 20px;
+      min-height: 20px;
+      margin-top: 8px;
+      margin-bottom: 3px;
+      cursor: default;
+      opacity: 1;
+
+      &:hover {
+        background: transparent;
+        transform: none;
+      }
+
+      .name {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: #7f8790;
+        text-transform: uppercase;
+      }
+
+      .text,
+      .icon,
+      .arrow,
+      .check,
+      .item-actions {
+        display: none;
+      }
     }
 
     .arrow {
@@ -147,14 +199,14 @@
   .sep {
     height: 1px;
     background: var(--aily-menu-separator);
-    margin: 2px 0;
+    margin: 4px 8px;
   }
 }
 
 // 独立的子菜单样式
 .submenu-box {
-  min-width: 100px;
-  box-shadow: 0 0 5px #111;
+  min-width: 128px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.36);
   z-index: 1000;
   
   &.show {

@@ -3,23 +3,12 @@
  */
 
 export type { IAilyTool, ToolContext, ToolSchema, ToolUseResult, ToolExecutionCallbacks } from './tool-types';
-export { ToolRegistry } from './tool-registry';
+export { buildTurnSummaryPlan, findTurnSummaryPreserveStartSpanIndex } from './turn-summary-plan';
+export type { TurnSummaryPlan, TurnSummaryPlanOptions } from './turn-summary-plan';
 
 // 工具审批系统
-export {
-  toolRequiresApproval,
-  addToolRequiringApproval,
-  removeToolApprovalRequirement,
-  registerToolApprovalCallback,
-  unregisterToolApprovalCallback,
-  approveToolForSession,
-  enableSessionSafeMode,
-  clearSessionApprovals,
-  isReadOnlyCommand,
-  isDestructiveOperation,
-  isDestructiveCommand,
-} from './tool-approval';
-export type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalCallback } from './tool-approval';
+export { generateApprovalMessage } from '../helpers/tool-approval-ui';
+export type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalCallback } from '../helpers/tool-approval-ui';
 
 // Skills 系统
 export type { IAilySkill, SkillMetadata, SkillOrigin, SkillSearchResult } from './skill-types';

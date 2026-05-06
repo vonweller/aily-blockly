@@ -251,6 +251,12 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     this.projectService.stateSubject.next('loaded');
 
     this.localLibrarySyncService.start(projectPath);
+    // 项目加载完成后自动生成 sketch.ino，供 AI 工具和代码预览使用（无需触发完整编译）
+    setTimeout(() => {
+      this._builderService.generateAndWriteSketchIno().catch(e => {
+        console.warn('[loadProject] 自动生成 sketch.ino 失败:', e);
+      });
+    }, 600); // 等待 Blockly 渲染完成（debounce 500ms + 余量）
 
     // 检查是否需要显示新手引导
     this.checkBlocklyOnboarding();

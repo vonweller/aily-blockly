@@ -1,7 +1,8 @@
-﻿import { ToolUseResult } from './tools';
+﻿import type { ToolUseResult } from '../core/tool-types';
 import { ProjectService } from '../../../services/project.service';
-import { ConnectionGraphService, PinSummary, PinmapCatalog, ComponentInstanceInput, ComponentConfig, PinmapProtocol } from '../../../services/connection-graph.service';
+import { ConnectionGraphService, PinSummary, PinmapCatalog, ComponentInstanceInput, ComponentConfig, PinmapProtocol, type ConnectionGraphTextFileWriteEvent } from '../../../services/connection-graph.service';
 import { AilyHost } from '../core/host';
+import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 
 /**
  * 解析后的组件实例信息（内部使用）
@@ -15,6 +16,80 @@ interface ParsedComponentInstance {
   label?: string;
   /** 同一 pinmapId 的第几个实例 (0-based) */
   instance: number;
+}
+
+export interface ConnectionGraphInvocationContext {
+  turnId?: string;
+  toolCallId?: string;
+  timelineWriter?: EditingTimelineWriter;
+}
+
+export async function saveTimelineAwareConnectionGraphTextFile(
+  filePath: string,
+  content: string,
+  save: () => boolean | Promise<boolean>,
+  invocationContext?: ConnectionGraphInvocationContext,
+): Promise<boolean> {
+  const timelineWriter = invocationContext?.timelineWriter;
+  const turnId = invocationContext?.turnId;
+  let existedBefore = false;
+  let beforeContent: string | null = null;
+
+  if (timelineWriter?.recordFileWrite && turnId) {
+    const fs = AilyHost.get().fs;
+    try {
+      existedBefore = fs.existsSync(filePath);
+      beforeContent = existedBefore ? fs.readFileSync(filePath, 'utf-8') : null;
+    } catch {
+      existedBefore = false;
+      beforeContent = null;
+    }
+  }
+
+  const saved = await Promise.resolve(save());
+  if (!saved) {
+    return false;
+  }
+
+  if (!timelineWriter?.recordFileWrite || !turnId) {
+    return true;
+  }
+
+  try {
+    await timelineWriter.recordFileWrite({
+      turnId,
+      toolCallId: invocationContext?.toolCallId,
+      filePath,
+      existedBefore,
+      beforeContent,
+      afterContent: content,
+    });
+  } catch (error) {
+    console.warn('[connectionGraphTool] editing timeline recording failed:', error);
+  }
+
+  return true;
+}
+
+function createConnectionGraphTimelineObserver(invocationContext?: ConnectionGraphInvocationContext) {
+  const timelineWriter = invocationContext?.timelineWriter;
+  const turnId = invocationContext?.turnId;
+  if (!timelineWriter?.recordFileWrite || !turnId) {
+    return undefined;
+  }
+
+  return (event: ConnectionGraphTextFileWriteEvent): void => {
+    void Promise.resolve(timelineWriter.recordFileWrite({
+      turnId,
+      toolCallId: invocationContext?.toolCallId,
+      filePath: event.filePath,
+      existedBefore: event.existedBefore,
+      beforeContent: event.beforeContent,
+      afterContent: event.afterContent,
+    })).catch(error => {
+      console.warn('[connectionGraphTool] editing timeline recording failed:', error);
+    });
+  };
 }
 
 /**
@@ -617,8 +692,9 @@ export async function getPinmapSummaryTool(
 /**
  * get_project_context 工具
  *
- * 合并 get_context + get_component_catalog 的功能，一次返回项目上下文 + 组件目录。
- * 替代原先需要依次调用两个工具的两步操作。
+ * 返回组件目录 + 生成的 C++ 代码（用于推断硬件外设）。
+ * 项目基本信息（path, board, libraries）已注入系统提示词的 environment 段，
+ * 此工具只提供动态数据（pinmap 状态、catalog entries、C++ code）。
  */
 export async function getProjectContextTool(
   connectionGraphService: ConnectionGraphService,
@@ -626,15 +702,14 @@ export async function getProjectContextTool(
   input: { includeNeedsGeneration?: boolean }
 ): Promise<ToolUseResult> {
   try {
-    // === Part 1: 项目上下文（来自 getContextTool 逻辑）===
-    const { getContextTool } = await import('./getContextTool');
-    const contextResult = await getContextTool(projectService, { info_type: 'all' });
-    let contextData: any = {};
+    // === Part 1: 生成的 C++ 代码（用于推断硬件外设需求）===
+    let cppCode = '';
     try {
-      contextData = JSON.parse(contextResult.content);
+      const host = (await import('../core/host')).AilyHost.get();
+      cppCode = host.editor?.getGeneratedCode?.() || '';
     } catch { /* ignore */ }
 
-    // === Part 2: 组件目录（来自 getSensorPinmapCatalogTool 逻辑）===
+    // === Part 2: 组件目录（pinmap 状态是动态数据，需实时获取）===
     const catalogResult = await getSensorPinmapCatalogTool(
       connectionGraphService,
       projectService,
@@ -647,16 +722,11 @@ export async function getProjectContextTool(
 
     // === 合并结果 ===
     const merged: any = {
-      // 项目基本信息
-      project: contextData.project,
-      editingMode: contextData.editingMode,
-      cppCode: contextData.cppCode,
-      // 组件目录信息
       currentBoard: catalogData.currentBoard,
     };
 
-    if (contextData.warn) {
-      merged.warn = contextData.warn;
+    if (cppCode) {
+      merged.cppCode = cppCode;
     }
 
     if (catalogData.catalogs) {
@@ -930,7 +1000,8 @@ export async function getSensorPinmapCatalogTool(
 export async function validateConnectionGraphTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { aws?: string }
+  input: { aws?: string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const currentProjectPath = projectService.currentProjectPath;
@@ -943,7 +1014,10 @@ export async function validateConnectionGraphTool(
       return { is_error: true, content: '当前项目没有配置开发板，请先选择开发板。' };
     }
 
-    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin } = await import('../../../services/connection-aws');
+    const { parseAWS, hasErrors, formatErrors, AWS_SYNTAX_REFERENCE, CONNECTION_COLORS, resolvePin, inferDataFlow } = await import('../../../services/connection-aws');
+
+    const awsFilePath = connectionGraphService.getAWSFilePath();
+    const jsonFilePath = connectionGraphService.getJSONFilePath();
 
     // 1. 获取 AWS 内容
     let awsContent: string;
@@ -1074,11 +1148,15 @@ export async function validateConnectionGraphTool(
       const color = CONNECTION_COLORS[connType] || CONNECTION_COLORS.other;
       const label = conn.note || `${conn.type.toUpperCase()}: ${conn.fromPin} → ${conn.toPin}`;
 
+      // 推断数据流向
+      const flow = inferDataFlow(conn.type, fromResolved.functionName, toResolved.functionName, conn.arrow);
+
       connections.push({
         id: `conn_${connIndex++}`,
         from: { ref: conn.fromRef, pinId: fromResolved.pinId, function: fromResolved.functionName },
         to: { ref: conn.toRef, pinId: toResolved.pinId, function: toResolved.functionName },
         type: conn.type, label, color, bus: conn.bus,
+        direction: flow.direction, half: flow.half, animationPattern: flow.animationPattern,
       });
     }
 
@@ -1120,9 +1198,20 @@ export async function validateConnectionGraphTool(
 
     // 7. 保存 AWS 和 JSON
     if (input.aws) {
-      connectionGraphService.saveAWSFile(awsContent);
+      await saveTimelineAwareConnectionGraphTextFile(
+        awsFilePath,
+        awsContent,
+        () => connectionGraphService.saveAWSFile(awsContent),
+        invocationContext,
+      );
     }
-    connectionGraphService.saveJSONFile(jsonData);
+    const jsonContent = JSON.stringify(jsonData, null, 2);
+    await saveTimelineAwareConnectionGraphTextFile(
+      jsonFilePath,
+      jsonContent,
+      () => connectionGraphService.saveJSONFile(jsonData),
+      invocationContext,
+    );
 
     // 8. 通知 iframe 刷新（嵌入模式；子窗口模式已由 saveJSONFile → IPC 处理）
     if (connectionGraphService.hasActiveIframe) {
@@ -1354,7 +1443,8 @@ export async function generatePinmapTool(
 export async function savePinmapTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { pinmapId: string; pinmapConfig: ComponentConfig | string }
+  input: { pinmapId: string; pinmapConfig: ComponentConfig | string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     if (!input.pinmapId) {
@@ -1405,7 +1495,9 @@ export async function savePinmapTool(
     }
 
     // 保存 pinmap
-    const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath);
+    const saveResult = connectionGraphService.savePinmapConfig(input.pinmapId, config, packagesBasePath, {
+      onFileWrite: createConnectionGraphTimelineObserver(invocationContext),
+    });
 
     if (!saveResult.success) {
       return {
@@ -1508,7 +1600,8 @@ export async function getCurrentSchematicTool(
 export async function applySchematicTool(
   connectionGraphService: ConnectionGraphService,
   projectService: ProjectService,
-  input: { aws?: string }
+  input: { aws?: string },
+  invocationContext?: ConnectionGraphInvocationContext,
 ): Promise<ToolUseResult> {
   try {
     const currentProjectPath = projectService.currentProjectPath;
@@ -1538,7 +1631,12 @@ export async function applySchematicTool(
     if (input.aws) {
       awsContent = input.aws;
       // 同时保存 .aws 文件
-      connectionGraphService.saveAWSFile(awsContent);
+      await saveTimelineAwareConnectionGraphTextFile(
+        awsFilePath,
+        awsContent,
+        () => connectionGraphService.saveAWSFile(awsContent),
+        invocationContext,
+      );
     } else {
       // 从文件读取
       if (!connectionGraphService.hasAWSFile()) {
@@ -1634,7 +1732,7 @@ export async function applySchematicTool(
     }
 
     // 5. 解析引脚并构建连线
-    const { resolvePin } = await import('../../../services/connection-aws');
+    const { resolvePin, inferDataFlow: inferDataFlow2 } = await import('../../../services/connection-aws');
     const connections: any[] = [];
     const resolveErrors: Array<{ message: string; line: number; source: string }> = [];
 
@@ -1687,6 +1785,9 @@ export async function applySchematicTool(
       const color = CONNECTION_COLORS[connType] || CONNECTION_COLORS.other;
       const label = conn.note || `${conn.type.toUpperCase()}: ${conn.fromPin} → ${conn.toPin}`;
 
+      // 推断数据流向
+      const flow2 = inferDataFlow2(conn.type, fromResolved.functionName, toResolved.functionName, conn.arrow);
+
       connections.push({
         id: `conn_${connIndex++}`,
         from: {
@@ -1703,6 +1804,9 @@ export async function applySchematicTool(
         label,
         color,
         bus: conn.bus,
+        direction: flow2.direction,
+        half: flow2.half,
+        animationPattern: flow2.animationPattern,
       });
     }
 
@@ -1767,7 +1871,13 @@ export async function applySchematicTool(
     const validationResult = connectionGraphService.validateConnectionGraph(jsonData);
 
     // 8. 保存 JSON
-    connectionGraphService.saveJSONFile(jsonData);
+    const jsonContent = JSON.stringify(jsonData, null, 2);
+    await saveTimelineAwareConnectionGraphTextFile(
+      jsonFilePath,
+      jsonContent,
+      () => connectionGraphService.saveJSONFile(jsonData),
+      invocationContext,
+    );
 
     // 9. 同步保存 AWS（确保两个文件一致）
     if (!input.aws) {

@@ -10,7 +10,7 @@ import { CommonModule } from '@angular/common';
       <div class="ac-error-header">
         <i class="fa-light" [class]="errorIconClass"></i>
         <span class="ac-error-title">
-          @if (data?.error?.status) { 错误 {{ data.error.status }} } @else { 错误 }
+          {{ titleText }}
         </span>
         @if (data?.timestamp) {
           <span class="ac-error-time">{{ fmtTime(data.timestamp) }}</span>
@@ -24,19 +24,21 @@ import { CommonModule } from '@angular/common';
   styles: [`
     .ac-error {
       border-radius: 5px; padding: 5px 10px; margin: 0;
-      background-color: var(--aily-chat-viewer-card-bg, #3a3a3a); color: var(--aily-chat-viewer-fg, #cccccc);
+      background-color: #3a3a3a; color: #ccc;
       overflow: hidden; display: flex; flex-direction: column;
     }
     .ac-error-header {
       display: flex; align-items: center; gap: 5px;
       flex: 1; min-width: 0;
     }
-    .ac-error-header i { flex-shrink: 0; font-size: 14px; color: var(--aily-chat-viewer-state-error, #ff4d4f); }
-    .ac-error[data-sev="warning"] .ac-error-header i { color: var(--aily-chat-viewer-state-warn, #faad14); }
-    .ac-error-title { flex: 1; font-size: 13px; color: var(--aily-chat-viewer-error-title, #ff7875); font-weight: 500; }
-    .ac-error[data-sev="warning"] .ac-error-title { color: var(--aily-chat-viewer-error-title-warn, #ffd666); }
-    .ac-error-time { font-size: 11px; color: var(--aily-text-disabled, #666666); flex-shrink: 0; }
-    .ac-error-msg { padding: 6px 0 0 0; margin: 0; font-size: 12px; color: var(--aily-chat-viewer-muted, #888888); line-height: 1.6; width: 100%; white-space: pre-wrap; }
+    .ac-error-header i { flex-shrink: 0; font-size: 14px; color: #ff4d4f; }
+    .ac-error[data-sev="warning"] .ac-error-header i { color: #faad14; }
+    .ac-error[data-sev="info"] .ac-error-header i { color: #69b1ff; }
+    .ac-error-title { flex: 1; font-size: 13px; color: #ff7875; font-weight: 500; }
+    .ac-error[data-sev="warning"] .ac-error-title { color: #ffd666; }
+    .ac-error[data-sev="info"] .ac-error-title { color: #91caff; }
+    .ac-error-time { font-size: 11px; color: #666; flex-shrink: 0; }
+    .ac-error-msg { padding: 6px 0 0 0; margin: 0; font-size: 12px; color: #888; line-height: 1.6; width: 100%; white-space: pre-wrap; }
   `],
 })
 export class XAilyErrorViewerComponent {
@@ -54,7 +56,18 @@ export class XAilyErrorViewerComponent {
 
   get errorIconClass(): string {
     return this.data?.severity === 'warning'
-      ? 'fa-triangle-exclamation' : 'fa-circle-xmark';
+      ? 'fa-triangle-exclamation'
+      : this.data?.severity === 'info'
+        ? 'fa-circle-info'
+        : 'fa-circle-xmark';
+  }
+
+  get titleText(): string {
+    return this.data?.severity === 'warning'
+      ? '警告'
+      : this.data?.severity === 'info'
+        ? '信息'
+        : (this.data?.error?.status ? `错误 ${this.data.error.status}` : '错误');
   }
 
   fmtTime(ts: string): string {

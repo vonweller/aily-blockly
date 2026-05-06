@@ -1,20 +1,23 @@
-<div class="edits-panel" *ngIf="summary">
+<div class="chat-editing-session-container" *ngIf="summary">
     <!-- 头部摘要栏 -->
     <div class="edits-panel-header">
         <div class="header-content" (click)="toggleExpanded()">
             <i class="fas fa-chevron-right panel-icon" [class.expanded]="isExpanded"></i>
-            <span class="panel-title">{{ summary.fileCount }} files changed</span>
+            <div class="header-copy">
+                <span class="panel-title">{{ summary.fileCount }} files changed</span>
+                <!-- <span class="panel-subtitle" *ngIf="requestPreview" [title]="summary.displayContent">关联请求：{{ requestPreview }}</span> -->
+            </div>
             <span class="stat-added" *ngIf="summary.totalAdded > 0">+{{ summary.totalAdded }}</span>
             <span class="stat-removed" *ngIf="summary.totalRemoved > 0">-{{ summary.totalRemoved }}</span>
         </div>
         <div class="header-actions" *ngIf="!isAccepted">
-            <button class="action-btn icon-btn" (click)="onUndo()" [disabled]="!canUndo" title="撤销">
+            <button class="action-btn icon-btn" (click)="onUndo()" [disabled]="!canUndo" [title]="undoActionTitle">
                 <i class="fas fa-arrow-rotate-left"></i>
             </button>
-            <button class="action-btn icon-btn" (click)="onRedo()" [disabled]="!canRedo" title="重做">
+            <button class="action-btn icon-btn" (click)="onRedo()" [disabled]="!canRedo" [title]="redoActionTitle">
                 <i class="fas fa-arrow-rotate-right"></i>
             </button>
-            <button class="action-btn primary" (click)="onKeep()" title="保留所有变更">保留</button>
+            <button class="action-btn primary" (click)="onKeep()" [title]="keepActionTitle">保留</button>
         </div>
         <div class="header-actions" *ngIf="isAccepted">
             <span class="action-taken-text">已保留</span>
@@ -34,6 +37,7 @@
                 [class.icon-modified]="file.type === 'modify'"
                 [class.icon-deleted]="file.type === 'delete'"></i>
             <span class="file-path" [title]="file.fullPath">{{ file.path }}</span>
+            <span class="file-kind-badge" *ngIf="getFileKindBadge(file) as badge">{{ badge }}</span>
             <span class="file-stats">
                 <span class="stat-added" *ngIf="file.added > 0">+{{ file.added }}</span>
                 <span class="stat-removed" *ngIf="file.removed > 0">-{{ file.removed }}</span>

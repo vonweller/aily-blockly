@@ -25,7 +25,7 @@ export class MenuComponent {
   @ViewChild('submenuBox') submenuBox: ElementRef;
   @ViewChildren('menuItem') menuItems: QueryList<ElementRef>;
 
-  @Input() menuList = [];
+  @Input() menuList: readonly any[] = [];
 
   @Input() position = {
     x: 2,
@@ -44,7 +44,7 @@ export class MenuComponent {
 
   @Output() closeEvent = new EventEmitter();
 
-  @Input() keywords = [];
+  @Input() keywords: readonly string[] = [];
 
   // 添加子菜单显示状态管理
   activeSubmenuIndex: number | null = null;
@@ -79,7 +79,7 @@ export class MenuComponent {
 
   itemClick(item) {
     if (item.disabled) return;
-    if (item.children) return;
+    if (item.children && item.action !== 'select-model') return;
     this.itemClickEvent.emit(item);
   }
 
@@ -126,15 +126,25 @@ export class MenuComponent {
   }
   // 显示子菜单
   showSubMenu(event: MouseEvent, index: number) {
+    const item = this.menuList[index];
+    if (!item?.children?.length) {
+      if (this.activeSubmenuIndex === index) {
+        this.activeSubmenuIndex = null;
+      }
+      return;
+    }
+
     // 清除之前的延时
     if (this.submenuTimeout) {
       clearTimeout(this.submenuTimeout);
     }
+
+    if (this.activeSubmenuIndex === index) {
+      return;
+    }
+
     this.activeSubmenuIndex = index;
-    // 计算子菜单位置
-    setTimeout(() => {
-      this.calculateSubmenuPosition(index);
-    }, 0);
+    this.calculateSubmenuPosition(index);
   }
 
   // 计算子菜单位置
@@ -166,8 +176,8 @@ export class MenuComponent {
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();
 
-      // 子菜单显示在主菜单右侧
-      const left = menuBoxRect.right + 2;
+      // 子菜单与主菜单轻微贴合，减少 hover 过渡距离。
+      const left = menuBoxRect.right - 4;
       const top = itemRect.top;
 
       this.submenuPosition = {
@@ -187,8 +197,8 @@ export class MenuComponent {
 
     // 预估子菜单项数量和高度
     const submenuItems = this.menuList[this.activeSubmenuIndex]?.children || [];
-    const itemHeight = 30; // 每个菜单项高度
-    const padding = 6; // 上下padding (3px * 2)
+    const itemHeight = 28; // 每个菜单项高度
+    const padding = 8; // 上下padding (4px * 2)
     const estimatedSubmenuHeight = submenuItems.length * itemHeight + padding;
 
     // 计算最大可用高度 (窗口高度 - 子菜单顶部距离 - 底部预留空间)
@@ -212,7 +222,7 @@ export class MenuComponent {
       if (this.activeSubmenuIndex === index) {
         this.activeSubmenuIndex = null;
       }
-    }, 100);
+    }, 60);
   }
 
   // 保持子菜单打开

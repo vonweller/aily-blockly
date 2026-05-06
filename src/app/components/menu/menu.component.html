@@ -6,9 +6,10 @@
     <div class="sep"></div>
     } @else {
     @if((item.children && item.children.length > 0)||(!item.children&&showInRouter(item))){
-    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, $index)"
+    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, $index)" (mousemove)="showSubMenu($event, $index)"
       (mouseleave)="hideSubMenu($event, $index)"
-      [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuIndex == $index, 'current': item.current}">
+      [attr.title]="item.tooltip || null"
+      [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuIndex == $index, 'current': item.current, 'section': item.action?.startsWith('section-')}">
       @if(item.icon){
       <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
       }
@@ -22,7 +23,7 @@
         }
       </div>
       }
-      @if(item.children){
+      @if(item.children && !item.hideChildrenArrow){
       <div class="arrow"><i class="fa-light fa-chevron-right"></i></div>
       }
     </div>
@@ -39,7 +40,7 @@
       'overflow-y': submenuOverflow
     }" (mouseenter)="keepSubMenuOpen(activeSubmenuIndex)" (mouseleave)="hideSubMenu($event, activeSubmenuIndex)">
     @for (subItem of menuList[activeSubmenuIndex].children; track $index) {
-    <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" style="padding-right: 25px;">
+    <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" style="padding-right: 25px;" [attr.title]="subItem.tooltip || null">
       <div class="name ellipsis">{{ subItem.name }}</div>
       @if(subItem.check){
       <div class="check"><i class="fa-light fa-circle-check"></i></div>

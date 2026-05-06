@@ -2,18 +2,12 @@ import { Injectable } from '@angular/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { TranslateService } from '@ngx-translate/core';
+import type { IMenuItem } from '../../../configs/menu.config';
 import { ChatService } from './chat.service';
 import { ChatHistoryService } from './chat-history.service';
 import { AilyHost } from '../core/host';
 import { ChatRenameDialogComponent } from '../components/chat-rename-dialog/chat-rename-dialog.component';
 import { ChatDeleteDialogComponent } from '../components/chat-delete-dialog/chat-delete-dialog.component';
-
-export interface IMenuItem {
-  name: string;
-  action: string;
-  icon?: string;
-  data?: any;
-}
 
 export interface MenuPosition {
   x: number;
@@ -32,9 +26,11 @@ export class MenuManagerService {
   showHistoryList = false;
   showMode = false;
   showModelMenu = false;
+  showActionMenu = false;
   historyListPosition: MenuPosition = { x: 0, y: 0 };
   modeListPosition: MenuPosition = { x: 0, y: 0 };
   modelListPosition: MenuPosition = { x: 0, y: 0 };
+  actionMenuPosition: MenuPosition = { x: 0, y: 0 };
   historyList: any[] = [];
 
   constructor(
@@ -49,6 +45,7 @@ export class MenuManagerService {
     this.showHistoryList = false;
     this.showMode = false;
     this.showModelMenu = false;
+    this.showActionMenu = false;
   }
 
   /** 打开/关闭历史记录面板 */
@@ -82,15 +79,23 @@ export class MenuManagerService {
   }
 
   /** 切换模型菜单的显示/隐藏 */
-  toggleModelMenu(event: MouseEvent, modelCount: number): void {
+  toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
-      const menuHeight = modelCount * 30 + 12;
+      const menuHeight = this.estimateMenuHeight(modelItems);
+      const estimatedMenuWidth = 280;
       let x = rect.left;
       let y = rect.top - menuHeight - 1;
-      if (x < 0) x = rect.left;
-      if (y < 0) y = rect.bottom - 1;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < 8) {
+        y = Math.max(8, rect.bottom - 1);
+      }
+
       this.modelListPosition = { x: Math.max(0, x), y: Math.max(0, y) };
     } else {
       this.modelListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
@@ -99,6 +104,59 @@ export class MenuManagerService {
     event.stopPropagation();
     this.showMode = false;
     this.showModelMenu = !this.showModelMenu;
+  }
+
+  toggleActionMenu(event: MouseEvent, actionItems: IMenuItem[]): void {
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const menuHeight = this.estimateMenuHeight(actionItems);
+      const estimatedMenuWidth = 300;
+      let x = rect.left;
+      let y = rect.bottom + 4;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y + menuHeight > window.innerHeight - 8) {
+        y = Math.max(8, rect.top - menuHeight - 4);
+      }
+
+      this.actionMenuPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+    } else {
+      this.actionMenuPosition = { x: window.innerWidth - 320, y: 72 };
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.showHistoryList = false;
+    this.showMode = false;
+    this.showModelMenu = false;
+    this.showActionMenu = !this.showActionMenu;
+  }
+
+  private estimateMenuHeight(items: IMenuItem[] | null | undefined): number {
+    if (!Array.isArray(items) || items.length === 0) {
+      return 40;
+    }
+
+    let height = 8;
+    for (const item of items) {
+      if (item?.sep) {
+        height += 6;
+        continue;
+      }
+
+      if (typeof item?.action === 'string' && item.action.startsWith('section-')) {
+        height += 20;
+        continue;
+      }
+
+      height += 28;
+    }
+
+    return height + 8;
   }
 
   /**

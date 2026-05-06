@@ -1,6 +1,18 @@
-﻿import { Injectable } from '@angular/core';
-import { Subject, Observable } from 'rxjs';
+﻿import { HttpClient, HttpErrorResponse, HttpResponse } from '@angular/common/http';
+import { Injectable, Optional } from '@angular/core';
+import { Subject, Observable, Subscription } from 'rxjs';
+import { distinctUntilChanged } from 'rxjs/operators';
+import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex';
 import { AilyHost } from '../core/host';
+import { ChatAPI } from '../core/api-endpoints';
+import { AuthService } from '../../../services/auth.service';
+import {
+    MAIN_AGENT_LEGACY_ALIAS,
+    MAIN_AGENT_TYPE,
+    normalizeAgentIdentifier,
+    SCHEMATIC_AGENT_LEGACY_ALIAS,
+    SCHEMATIC_AGENT_TYPE,
+} from '../core/agent-identifiers';
 
 /**
  * 安全工作区配置项
@@ -25,16 +37,79 @@ export interface ApiKeyConfig {
 /**
  * 模型配置项
  */
+export type ReasoningEffortOption = 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface ModelPresetOption {
+    id: string;
+    name: string;
+    model?: string;
+    family?: string;
+    description?: string;
+    billingMultiplier?: number;
+    billingLabelOverride?: string;
+    billingDescription?: string;
+    contextWindowTokens?: number;
+    supportsReasoningEfforts?: ReasoningEffortOption[];
+    enabled: boolean;
+}
+
 export interface ModelConfigOption {
     model: string;          // 模型标识符
     name: string;           // 显示名称
     family: string;         // 模型家族
     speed: string;          // 速度标识
+    description?: string;   // 模型描述（用于 tooltip）
+    billingMultiplier?: number; // 计费倍率（用于 UI 展示）
+    billingLabelOverride?: string; // 自定义计费标签（如 Auto 的动态费率）
+    billingDescription?: string; // tooltip 中使用的计费说明
+    contextWindowTokens?: number; // 上下文窗口长度（用于 tooltip）
     enabled: boolean;       // 是否在列表中显示
     isCustom?: boolean;     // 是否是自定义模型
     baseUrl?: string;       // API Base URL
     apiKey?: string;        // API Key
     apiKeyId?: string;      // 关联的API配置ID（兼容旧版本）
+    presetId?: string;      // 产品预设ID（如 auto-max）
+    reasoningEffort?: ReasoningEffortOption; // 请求级思考深度
+    supportsReasoningEfforts?: ReasoningEffortOption[]; // 当前模型支持的思考深度集合
+}
+
+interface RemoteCatalogPayloadEntry {
+    id?: string;
+    model?: string;
+    display_name?: string;
+    family?: string;
+    description?: string;
+    context_window_tokens?: number | null;
+    supports_reasoning_effort?: string[];
+    billing_multiplier?: number | null;
+    billing_label_override?: string | null;
+    billing_description?: string | null;
+}
+
+interface RemoteModelCatalogEntry {
+    id?: string;
+    model?: string;
+    displayName?: string;
+    family?: string;
+    description?: string;
+    contextWindowTokens?: number;
+    supportsReasoningEfforts?: ReasoningEffortOption[];
+    billingMultiplier?: number;
+    billingLabelOverride?: string;
+    billingDescription?: string;
+}
+
+interface RemoteModelCatalog {
+    models: Record<string, RemoteModelCatalogEntry>;
+    modelPresets: Record<string, RemoteModelCatalogEntry>;
+}
+
+interface RemoteModelCatalogResponse {
+    status?: string;
+    data?: {
+        models?: Record<string, RemoteCatalogPayloadEntry>;
+        model_presets?: Record<string, RemoteCatalogPayloadEntry>;
+    };
 }
 
 /**
@@ -46,6 +121,15 @@ export interface AgentToolsConfig {
     /** 禁用的工具列表 */
     disabledTools: string[];
 }
+
+export interface LexTerminalPolicyConfig {
+    allowList?: string[];
+    denyList?: string[];
+    inheritDefaultAllowList?: boolean;
+}
+
+export type WorkspacePermissionRulesByProject = Record<string, PermissionRuleInput[]>;
+export type WorkspaceApprovalCombinationsByProject = Record<string, string[]>;
 
 /**
  * Aily Chat 配置接口
@@ -65,6 +149,8 @@ export interface AilyChatConfig {
     disabledTools?: string[];
     /** 按Agent分类的工具配置 */
     agentTools?: {
+        main?: AgentToolsConfig;
+        SchematicAgent?: AgentToolsConfig;
         mainAgent?: AgentToolsConfig;
         schematicAgent?: AgentToolsConfig;
         [agentName: string]: AgentToolsConfig | undefined;
@@ -90,6 +176,20 @@ export interface AilyChatConfig {
     summarizationThresholdRatio?: number;
     /** 默认自动保存变更（AI编辑完成后自动保留，不弹出变更面板） */
     autoSaveEdits?: boolean;
+    /** 用户级 instruction folders，扫描其中的 `*.instructions.md`。 */
+    userInstructionFolders?: string[];
+    /** 项目级 instruction folders，扫描其中的 `*.instructions.md`。 */
+    projectInstructionFolders?: string[];
+    /** 追加到 lex terminal runtime policy 的 allow list。 */
+    terminalAllowList?: string[];
+    /** 强制要求确认的 terminal 命令规则。 */
+    terminalDenyList?: string[];
+    /** 是否继承 lex 内建 innocuous terminal allow list。 */
+    terminalInheritDefaultAllowList?: boolean;
+    /** 当前工作区维度持久化的 lex permission rules。键为规范化后的 projectPath。 */
+    workspacePermissionRules?: WorkspacePermissionRulesByProject;
+    /** 当前工作区维度持久化的 tool+arguments approval combination keys。 */
+    workspaceApprovalCombinations?: WorkspaceApprovalCombinationsByProject;
 }
 
 /**
@@ -97,17 +197,34 @@ export interface AilyChatConfig {
  */
 const DEFAULT_MODELS: ModelConfigOption[] = [];
 
+const DEFAULT_MODEL_PRESET_ID = 'auto';
+
 /**
- * Auto 自动模型选项（由服务端决定使用哪个模型）
+ * 产品预设选项。
+ * 仅保留本地最小兜底展示字段；名称之外的 preset 元数据优先由服务端 model_presets 提供。
  */
-const AUTO_MODEL: ModelConfigOption = {
-    model: 'auto',
-    name: 'Auto',
-    family: 'auto',
-    speed: '1x',
-    enabled: true,
-    isCustom: false
-};
+const MODEL_PRESET_OPTIONS: ModelPresetOption[] = [
+    {
+        id: 'auto',
+        name: 'Auto',
+        enabled: true,
+    },
+    {
+        id: 'auto-max',
+        name: 'Auto-Max',
+        enabled: true,
+    },
+    {
+        id: 'auto-balanced',
+        name: 'Auto-Balanced',
+        enabled: true,
+    },
+    {
+        id: 'auto-fast',
+        name: 'Auto-Fast',
+        enabled: true,
+    },
+];
 
 /**
  * 默认API配置（空列表）
@@ -130,7 +247,9 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     contextWindowSize: 0,
     compressionThresholdRatio: 0.5,
     summarizationThresholdRatio: 0.75,
-    autoSaveEdits: true
+    autoSaveEdits: true,
+    userInstructionFolders: [],
+    projectInstructionFolders: []
 };
 
 /**
@@ -144,15 +263,63 @@ export class AilyChatConfigService {
     private config: AilyChatConfig = { ...DEFAULT_CONFIG };
     private configFileName = 'aily-chat-config.json';
     private loaded = false;
+    private remoteModelCatalog: RemoteModelCatalog = { models: {}, modelPresets: {} };
+    private remoteModelCatalogStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
+    private remoteModelCatalogStatusHint = '正在加载远端 model catalog...';
+    private authReadySubscription?: Subscription;
 
     /** 配置变更通知 Subject */
     private configChangedSubject = new Subject<AilyChatConfig>();
+    private modelCatalogChangedSubject = new Subject<void>();
 
     /** 配置变更通知 Observable */
     public configChanged$: Observable<AilyChatConfig> = this.configChangedSubject.asObservable();
+    public modelCatalogChanged$: Observable<void> = this.modelCatalogChangedSubject.asObservable();
 
-    constructor() {
+    get modelCatalogStatus(): 'loading' | 'ready' | 'unavailable' {
+        return this.remoteModelCatalogStatus;
+    }
+
+    get modelCatalogStatusHint(): string | undefined {
+        return this.remoteModelCatalogStatusHint;
+    }
+
+    get hasRemoteModelCatalog(): boolean {
+        return this.hasUsableRemoteModelCatalog();
+    }
+
+    constructor(
+        private http: HttpClient,
+        @Optional() private authService: AuthService | null = null,
+    ) {
         this.load();
+        this.bindAuthReadyReload();
+        if (AilyHost.isInitialized()) {
+            this.loadRemoteModelCatalog('constructor');
+        } else {
+            this.setRemoteModelCatalogStatus('loading', '等待 host 初始化后自动加载模型目录...');
+            console.info('[AilyChatConfigService] host 尚未初始化，延迟加载远端 model catalog');
+        }
+    }
+
+    reloadRemoteModelCatalog(reason = 'manual'): void {
+        this.loadRemoteModelCatalog(reason);
+    }
+
+    private bindAuthReadyReload(): void {
+        if (!this.authService?.isLoggedIn$) {
+            return;
+        }
+
+        this.authReadySubscription = this.authService.isLoggedIn$
+            .pipe(distinctUntilChanged())
+            .subscribe((isLoggedIn) => {
+                if (!isLoggedIn || !AilyHost.isInitialized() || this.hasUsableRemoteModelCatalog()) {
+                    return;
+                }
+
+                this.loadRemoteModelCatalog('auth_ready');
+            });
     }
 
     /**
@@ -351,6 +518,147 @@ export class AilyChatConfigService {
         this.config.autoSaveEdits = value;
     }
 
+    get userInstructionFolders(): string[] {
+        return normalizeInstructionFolderPaths(this.config.userInstructionFolders);
+    }
+
+    set userInstructionFolders(value: string[]) {
+        this.config.userInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
+    get projectInstructionFolders(): string[] {
+        return normalizeInstructionFolderPaths(this.config.projectInstructionFolders);
+    }
+
+    set projectInstructionFolders(value: string[]) {
+        this.config.projectInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
+    get terminalAllowList(): string[] {
+        return normalizeTerminalPermissionRules(this.config.terminalAllowList);
+    }
+
+    set terminalAllowList(value: string[]) {
+        this.config.terminalAllowList = normalizeTerminalPermissionRules(value);
+    }
+
+    get terminalDenyList(): string[] {
+        return normalizeTerminalPermissionRules(this.config.terminalDenyList);
+    }
+
+    set terminalDenyList(value: string[]) {
+        this.config.terminalDenyList = normalizeTerminalPermissionRules(value);
+    }
+
+    get terminalInheritDefaultAllowList(): boolean | undefined {
+        return typeof this.config.terminalInheritDefaultAllowList === 'boolean'
+            ? this.config.terminalInheritDefaultAllowList
+            : undefined;
+    }
+
+    set terminalInheritDefaultAllowList(value: boolean | undefined) {
+        this.config.terminalInheritDefaultAllowList = value;
+    }
+
+    getLexTerminalPolicy(): LexTerminalPolicyConfig | undefined {
+        const allowList = this.terminalAllowList;
+        const denyList = this.terminalDenyList;
+        const inheritDefaultAllowList = this.terminalInheritDefaultAllowList;
+
+        if (allowList.length === 0 && denyList.length === 0 && inheritDefaultAllowList === undefined) {
+            return undefined;
+        }
+
+        return {
+            ...(allowList.length > 0 ? { allowList } : {}),
+            ...(denyList.length > 0 ? { denyList } : {}),
+            ...(inheritDefaultAllowList === undefined ? {} : { inheritDefaultAllowList }),
+        };
+    }
+
+    getWorkspacePermissionRules(projectPath: string | null | undefined): PermissionRuleInput[] {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        if (!normalizedProjectPath) {
+            return [];
+        }
+
+        return normalizePermissionRuleInputs(this.config.workspacePermissionRules?.[normalizedProjectPath]);
+    }
+
+    hasWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean {
+        const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
+        if (!normalizedToolName) {
+            return false;
+        }
+
+        return this.getWorkspacePermissionRules(projectPath).some(rule =>
+            rule.mode === 'bypassPermissions' && rule.toolName === normalizedToolName,
+        );
+    }
+
+    addWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
+        if (!normalizedProjectPath || !normalizedToolName) {
+            return false;
+        }
+
+        const currentRules = this.getWorkspacePermissionRules(normalizedProjectPath);
+        if (currentRules.some(rule => rule.mode === 'bypassPermissions' && rule.toolName === normalizedToolName)) {
+            return false;
+        }
+
+        this.config.workspacePermissionRules = {
+            ...normalizeWorkspacePermissionRulesByProject(this.config.workspacePermissionRules),
+            [normalizedProjectPath]: [
+                ...currentRules,
+                { toolName: normalizedToolName, mode: 'bypassPermissions', source: 'project' },
+            ],
+        };
+        return true;
+    }
+
+    hasWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedKey = typeof combinationKey === 'string' ? combinationKey.trim() : '';
+        if (!normalizedProjectPath || !normalizedKey) {
+            return false;
+        }
+
+        const combinations = this.config.workspaceApprovalCombinations?.[normalizedProjectPath] ?? [];
+        return combinations.includes(normalizedKey);
+    }
+
+    addWorkspaceToolApprovalCombinationKey(projectPath: string | null | undefined, combinationKey: string): boolean {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedKey = typeof combinationKey === 'string' ? combinationKey.trim() : '';
+        if (!normalizedProjectPath || !normalizedKey) {
+            return false;
+        }
+
+        const existing = this.config.workspaceApprovalCombinations?.[normalizedProjectPath] ?? [];
+        if (existing.includes(normalizedKey)) {
+            return false;
+        }
+
+        this.config.workspaceApprovalCombinations = {
+            ...(this.config.workspaceApprovalCombinations ?? {}),
+            [normalizedProjectPath]: [...existing, normalizedKey],
+        };
+        return true;
+    }
+
+    getLexPermissionPolicy(projectPath: string | null | undefined): PermissionPolicy | undefined {
+        const projectRules = this.getWorkspacePermissionRules(projectPath);
+        if (projectRules.length === 0) {
+            return undefined;
+        }
+
+        return {
+            project: projectRules,
+        };
+    }
+
     /**
      * 获取启用的工具列表
      */
@@ -375,19 +683,27 @@ export class AilyChatConfigService {
 
     /**
      * 获取指定Agent的工具配置
-     * @param agentName Agent名称（如 'mainAgent', 'schematicAgent'）
+     * @param agentName Agent名称（如 'main' / 'SchematicAgent'，兼容旧别名）
      */
     getAgentToolsConfig(agentName: string): AgentToolsConfig {
+        const canonicalAgentName = normalizeAgentIdentifier(agentName);
+        const legacyAgentName = canonicalAgentName === MAIN_AGENT_TYPE
+            ? MAIN_AGENT_LEGACY_ALIAS
+            : canonicalAgentName === SCHEMATIC_AGENT_TYPE
+                ? SCHEMATIC_AGENT_LEGACY_ALIAS
+                : canonicalAgentName;
+
         // 优先从 agentTools 获取
-        const agentConfig = this.config.agentTools?.[agentName];
+        const agentConfig = this.config.agentTools?.[canonicalAgentName]
+            ?? this.config.agentTools?.[legacyAgentName];
         if (agentConfig) {
             return {
                 enabledTools: agentConfig.enabledTools ?? [],
                 disabledTools: agentConfig.disabledTools ?? []
             };
         }
-        // 兼容旧版本：mainAgent 使用顶层的 enabledTools/disabledTools
-        if (agentName === 'mainAgent') {
+        // 兼容旧版本：main agent 使用顶层的 enabledTools/disabledTools
+        if (canonicalAgentName === MAIN_AGENT_TYPE) {
             return {
                 enabledTools: this.config.enabledTools ?? [],
                 disabledTools: this.config.disabledTools ?? []
@@ -403,12 +719,19 @@ export class AilyChatConfigService {
      * @param config 工具配置
      */
     setAgentToolsConfig(agentName: string, config: AgentToolsConfig): void {
+        const canonicalAgentName = normalizeAgentIdentifier(agentName);
         if (!this.config.agentTools) {
             this.config.agentTools = {};
         }
-        this.config.agentTools[agentName] = config;
+        this.config.agentTools[canonicalAgentName] = config;
+        if (canonicalAgentName === MAIN_AGENT_TYPE && this.config.agentTools[MAIN_AGENT_LEGACY_ALIAS]) {
+            delete this.config.agentTools[MAIN_AGENT_LEGACY_ALIAS];
+        }
+        if (canonicalAgentName === SCHEMATIC_AGENT_TYPE && this.config.agentTools[SCHEMATIC_AGENT_LEGACY_ALIAS]) {
+            delete this.config.agentTools[SCHEMATIC_AGENT_LEGACY_ALIAS];
+        }
         // 同步更新顶层配置（兼容旧版本）
-        if (agentName === 'mainAgent') {
+        if (canonicalAgentName === MAIN_AGENT_TYPE) {
             this.config.enabledTools = config.enabledTools;
             this.config.disabledTools = config.disabledTools;
         }
@@ -490,14 +813,11 @@ export class AilyChatConfigService {
      * 获取模型列表
      */
     get models(): ModelConfigOption[] {
-        if (!this.config.models || this.config.models.length === 0) {
-            this.config.models = [...DEFAULT_MODELS];
-        }
-        return this.config.models;
+        return this.buildRuntimeModels();
     }
 
     set models(value: ModelConfigOption[]) {
-        this.config.models = value;
+        this.config.models = this.buildPersistedModels(value);
     }
 
     /**
@@ -515,9 +835,804 @@ export class AilyChatConfigService {
         } else {
             resultModels = enabledModels;
         }
-        
-        // 始终在列表最前面添加 Auto 选项
-        return [AUTO_MODEL, ...resultModels];
+
+        return resultModels;
+    }
+
+    getModelPresets(): ModelPresetOption[] {
+        if (!this.hasUsableRemoteModelCatalog()) {
+            const autoPreset = MODEL_PRESET_OPTIONS.find(preset => preset.id === DEFAULT_MODEL_PRESET_ID);
+            return autoPreset ? [{ ...autoPreset }] : [];
+        }
+
+        const localPresets = MODEL_PRESET_OPTIONS
+            .filter(preset => preset.enabled)
+            .map(preset => this.mergeRemotePresetOption(preset));
+
+        const knownPresetIds = new Set(localPresets.map(preset => preset.id));
+        const remoteOnlyPresets = Object.entries(this.remoteModelCatalog.modelPresets)
+            .filter(([presetId]) => !knownPresetIds.has(presetId))
+            .map(([presetId, remotePreset]) => ({
+                id: presetId,
+                name: remotePreset.displayName || remotePreset.id || presetId,
+                model: remotePreset.model,
+                family: remotePreset.family,
+                description: remotePreset.description,
+                billingMultiplier: remotePreset.billingMultiplier,
+                billingLabelOverride: remotePreset.billingLabelOverride,
+                billingDescription: remotePreset.billingDescription,
+                contextWindowTokens: remotePreset.contextWindowTokens,
+                supportsReasoningEfforts: remotePreset.supportsReasoningEfforts?.length
+                    ? [...remotePreset.supportsReasoningEfforts]
+                    : undefined,
+                enabled: true,
+            } satisfies ModelPresetOption));
+
+        return [...localPresets, ...remoteOnlyPresets];
+    }
+
+    getDefaultModelPresetId(): string {
+        return DEFAULT_MODEL_PRESET_ID;
+    }
+
+    getModelPresetById(presetId: string | null | undefined): ModelPresetOption | undefined {
+        if (typeof presetId !== 'string' || !presetId.trim()) {
+            return undefined;
+        }
+
+        return this.getModelPresets().find(preset => preset.id === presetId.trim());
+    }
+
+    getModelById(modelId: string | null | undefined): ModelConfigOption | undefined {
+        if (typeof modelId !== 'string' || !modelId.trim()) {
+            return undefined;
+        }
+
+        const rawModel = this.getRawModelMetadataById(modelId);
+        return rawModel ? this.normalizeRuntimeModel(rawModel) : undefined;
+    }
+
+    resolveRuntimeModelFromServerModelName(
+        modelName: string | null | undefined,
+        options?: { contextWindowTokens?: number | null },
+    ): ModelConfigOption | null {
+        if (typeof modelName !== 'string' || !modelName.trim()) {
+            return null;
+        }
+
+        const normalizedModelName = modelName.trim();
+        const contextWindowTokens = typeof options?.contextWindowTokens === 'number' && options.contextWindowTokens > 0
+            ? options.contextWindowTokens
+            : undefined;
+        const exactMatch = this.getModelById(normalizedModelName);
+        if (exactMatch) {
+            return this.normalizeRuntimeModel({
+                ...exactMatch,
+                ...(contextWindowTokens ? { contextWindowTokens } : {}),
+            });
+        }
+
+        const lowerModelName = normalizedModelName.toLowerCase();
+        const matchedModel = [...this.getEnabledModels(), ...this.models].find((model) => {
+            const modelId = typeof model.model === 'string' ? model.model.trim().toLowerCase() : '';
+            const displayName = typeof model.name === 'string' ? model.name.trim().toLowerCase() : '';
+            return modelId === lowerModelName || displayName === lowerModelName;
+        });
+
+        if (matchedModel) {
+            return this.normalizeRuntimeModel({
+                ...matchedModel,
+                ...(contextWindowTokens ? { contextWindowTokens } : {}),
+            });
+        }
+
+        return this.normalizeRuntimeModel({
+            model: normalizedModelName,
+            name: normalizedModelName,
+            family: '',
+            speed: 'Remote',
+            enabled: true,
+            isCustom: false,
+            ...(contextWindowTokens ? { contextWindowTokens } : {}),
+        });
+    }
+
+    resolvePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
+        if (typeof presetId !== 'string' || !presetId.trim()) {
+            return null;
+        }
+
+        const preset = this.getModelPresetById(presetId);
+        if (!preset) {
+            return null;
+        }
+
+        const resolvedModel = typeof preset.model === 'string' && preset.model.trim()
+            ? this.getModelById(preset.model)
+            : undefined;
+        const supportsReasoningEfforts = Array.isArray(preset.supportsReasoningEfforts)
+            ? [...preset.supportsReasoningEfforts]
+            : this.getSupportedReasoningEfforts({ model: preset.model, family: preset.family || resolvedModel?.family || '' });
+        const family = preset.family || resolvedModel?.family || 'auto';
+
+        return {
+            model: preset.id,
+            name: preset.name,
+            family,
+            speed: 'Auto',
+            description: preset.description,
+            billingMultiplier: preset.billingMultiplier,
+            billingLabelOverride: preset.billingLabelOverride,
+            billingDescription: preset.billingDescription,
+            contextWindowTokens: preset.contextWindowTokens ?? resolvedModel?.contextWindowTokens,
+            enabled: true,
+            isCustom: false,
+            presetId: preset.id,
+            supportsReasoningEfforts,
+            reasoningEffort: this.getDefaultReasoningEffortForModel({
+                family,
+                supportsReasoningEfforts,
+            }),
+        };
+    }
+
+    resolveSavedModel(savedModel: Partial<ModelConfigOption> | null | undefined): ModelConfigOption | null {
+        if (!savedModel) {
+            return null;
+        }
+
+        const mergeRuntimeFields = (model: ModelConfigOption): ModelConfigOption => ({
+            ...model,
+            presetId: savedModel.presetId,
+            reasoningEffort: this.resolveModelReasoningEffort(model, savedModel.reasoningEffort),
+        });
+
+        const directModel = this.getEnabledModels().find(model => model.model === savedModel.model);
+        if (directModel) {
+            return mergeRuntimeFields(directModel);
+        }
+
+        const presetId = resolveSavedPresetId(savedModel, this.getModelPresets());
+        const presetModel = this.resolvePresetModel(presetId);
+        if (presetModel) {
+            return mergeRuntimeFields(presetModel);
+        }
+
+        const defaultPresetModel = this.resolvePresetModel(this.getDefaultModelPresetId());
+        if (defaultPresetModel) {
+            return mergeRuntimeFields(defaultPresetModel);
+        }
+
+        return null;
+    }
+
+    getSupportedReasoningEfforts(model: Partial<ModelConfigOption> | null | undefined): ReasoningEffortOption[] {
+        if (!model) {
+            return [];
+        }
+
+        if (Array.isArray(model.supportsReasoningEfforts) && model.supportsReasoningEfforts.length > 0) {
+            return [...model.supportsReasoningEfforts];
+        }
+
+        const canonicalModel = this.resolveCanonicalModelMetadata(model);
+        if (Array.isArray(canonicalModel?.supportsReasoningEfforts) && canonicalModel.supportsReasoningEfforts.length > 0) {
+            return [...canonicalModel.supportsReasoningEfforts];
+        }
+
+        const family = typeof (model.family || canonicalModel?.family) === 'string'
+            ? (model.family || canonicalModel?.family || '').toLowerCase()
+            : '';
+        if (['openai', 'deepseek', 'qwen', 'moonshot', 'yi', 'groq', 'together', 'mistral', 'openrouter'].includes(family)) {
+            return ['low', 'medium', 'high', 'xhigh'];
+        }
+        if (['claude', 'anthropic', 'glm'].includes(family)) {
+            return ['low', 'medium', 'high'];
+        }
+
+        return [];
+    }
+
+    getDefaultReasoningEffortForModel(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): ReasoningEffortOption | undefined {
+        const supportedEfforts = this.getSupportedReasoningEfforts(model);
+        if (supportedEfforts.length === 0) {
+            return undefined;
+        }
+
+        if (supportedEfforts.includes('medium')) {
+            return 'medium';
+        }
+
+        return supportedEfforts[0];
+    }
+
+    resolveModelReasoningEffort(
+        model: Partial<ModelConfigOption> | null | undefined,
+        reasoningEffort: ReasoningEffortOption | null | undefined,
+    ): ReasoningEffortOption | undefined {
+        if (reasoningEffort) {
+            return reasoningEffort;
+        }
+
+        return this.getDefaultReasoningEffortForModel(model);
+    }
+
+    normalizeRuntimeModel(model: ModelConfigOption): ModelConfigOption {
+        return {
+            ...model,
+            reasoningEffort: this.resolveModelReasoningEffort(model, model.reasoningEffort),
+        };
+    }
+
+    getReasoningEffortLabel(reasoningEffort: ReasoningEffortOption | null | undefined): string {
+        switch (reasoningEffort) {
+            case 'low':
+                return '低';
+            case 'medium':
+                return '中';
+            case 'high':
+                return '高';
+            case 'xhigh':
+                return '极高';
+            default:
+                return '自动';
+        }
+    }
+
+    getReasoningEffortDisplayLabel(reasoningEffort: ReasoningEffortOption | null | undefined): string {
+        switch (reasoningEffort) {
+            case 'low':
+                return 'Low';
+            case 'medium':
+                return 'Medium';
+            case 'high':
+                return 'High';
+            case 'xhigh':
+                return 'Max';
+            default:
+                return 'Auto';
+        }
+    }
+
+    getReasoningEffortsSummaryLabel(efforts: readonly ReasoningEffortOption[] | null | undefined): string | undefined {
+        if (!Array.isArray(efforts) || efforts.length === 0) {
+            return undefined;
+        }
+
+        return efforts.map((effort) => this.getReasoningEffortDisplayLabel(effort)).join(' / ');
+    }
+
+    getModelReasoningSummaryLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
+        return this.getReasoningEffortsSummaryLabel(this.getSupportedReasoningEfforts(model));
+    }
+
+    getModelBillingLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
+        if (typeof model?.billingLabelOverride === 'string' && model.billingLabelOverride.trim()) {
+            return model.billingLabelOverride.trim();
+        }
+
+        const canonicalModel = this.resolveCanonicalModelMetadata(model);
+        if (typeof canonicalModel?.billingLabelOverride === 'string' && canonicalModel.billingLabelOverride.trim()) {
+            return canonicalModel.billingLabelOverride.trim();
+        }
+
+        const multiplier = model?.billingMultiplier ?? canonicalModel?.billingMultiplier;
+        if (typeof multiplier !== 'number' || !Number.isFinite(multiplier) || multiplier <= 0) {
+            return undefined;
+        }
+
+        const normalized = Number.isInteger(multiplier)
+            ? multiplier.toFixed(0)
+            : multiplier.toFixed(multiplier * 10 === Math.trunc(multiplier * 10) ? 1 : 2);
+        return `${normalized}x`;
+    }
+
+    getModelMenuReasoningLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
+        const effectiveReasoningEffort = this.resolveModelReasoningEffort(model, model?.reasoningEffort);
+        if (!effectiveReasoningEffort) {
+            return undefined;
+        }
+
+        return this.getReasoningEffortDisplayLabel(effectiveReasoningEffort);
+    }
+
+    getModelMenuMeta(
+        model: Partial<ModelConfigOption> | null | undefined,
+        options?: { preferBilling?: boolean },
+    ): string | undefined {
+        const preferBilling = options?.preferBilling ?? false;
+        const reasoningLabel = this.getModelMenuReasoningLabel(model);
+        const billingLabel = this.getModelBillingLabel(model);
+
+        if (preferBilling && billingLabel && !reasoningLabel) {
+            return billingLabel;
+        }
+
+        const parts = [reasoningLabel, billingLabel].filter((part): part is string => !!part);
+        if (parts.length > 0) {
+            return parts.join('·');
+        }
+
+        if (model?.isCustom) {
+            return 'Custom';
+        }
+
+        const contextLabel = this.getModelCapabilityContextWindowLabel(model);
+        if (contextLabel && contextLabel !== '自动检测') {
+            return contextLabel;
+        }
+
+        return billingLabel;
+    }
+
+    getModelCapabilitySummaryParts(
+        model: Partial<ModelConfigOption> | null | undefined,
+        options?: { includeBillingDescription?: boolean },
+    ): string[] {
+        if (!model) {
+            return [];
+        }
+
+        const canonicalModel = this.resolveCanonicalModelMetadata(model);
+        const parts: string[] = [];
+        const contextLabel = this.getModelCapabilityContextWindowLabel(model);
+        if (contextLabel && contextLabel !== '自动检测') {
+            parts.push(contextLabel);
+        }
+
+        const reasoningLabel = this.getModelReasoningSummaryLabel(model);
+        if (reasoningLabel) {
+            parts.push(reasoningLabel);
+        }
+
+        const billingLabel = this.getModelBillingLabel(model);
+        if (billingLabel) {
+            const billingDescription = model.billingDescription || canonicalModel?.billingDescription;
+            parts.push(options?.includeBillingDescription && billingDescription
+                ? billingDescription
+                : billingLabel);
+        }
+
+        return parts;
+    }
+
+    getModelContextWindowLabel(maxContextTokens?: number | null): string {
+        const resolvedContextTokens = typeof maxContextTokens === 'number' && maxContextTokens > 0
+            ? maxContextTokens
+            : this.contextWindowSize;
+
+        if (!resolvedContextTokens || resolvedContextTokens <= 0) {
+            return '自动检测';
+        }
+
+        if (resolvedContextTokens >= 1000) {
+            const contextK = resolvedContextTokens / 1000;
+            const formatted = Number.isInteger(contextK) ? contextK.toFixed(0) : contextK.toFixed(1);
+            return `${formatted}K`;
+        }
+
+        return `${resolvedContextTokens}`;
+    }
+
+    resolveModelContextWindowTokens(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): number | undefined {
+        const contextWindowTokens = typeof model?.contextWindowTokens === 'number' && model.contextWindowTokens > 0
+            ? model.contextWindowTokens
+            : this.resolveCanonicalModelMetadata(model)?.contextWindowTokens;
+
+        return typeof contextWindowTokens === 'number' && contextWindowTokens > 0
+            ? contextWindowTokens
+            : undefined;
+    }
+
+    getModelCapabilityContextWindowLabel(model: Partial<ModelConfigOption> | null | undefined): string {
+        if (model?.isCustom) {
+            return '自定义';
+        }
+
+        const contextWindowTokens = this.resolveModelContextWindowTokens(model);
+
+        if (typeof contextWindowTokens === 'number' && contextWindowTokens > 0) {
+            return this.getModelContextWindowLabel(contextWindowTokens);
+        }
+
+        return '自动检测';
+    }
+
+    private resolveCanonicalModelMetadata(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): ModelConfigOption | undefined {
+        if (!model) {
+            return undefined;
+        }
+
+        const presetId = typeof model.presetId === 'string' && model.presetId.trim()
+            ? model.presetId.trim()
+            : (typeof model.model === 'string' && this.getModelPresetById(model.model)
+                ? model.model.trim()
+                : undefined);
+        if (presetId) {
+            const preset = this.getModelPresetById(presetId);
+            if (preset?.model) {
+                const presetModel = this.getRawModelMetadataById(preset.model);
+                if (presetModel) {
+                    return presetModel;
+                }
+            }
+        }
+
+        if (typeof model.model === 'string' && model.model.trim()) {
+            return this.getRawModelMetadataById(model.model);
+        }
+
+        return undefined;
+    }
+
+    private getRawModelMetadataById(modelId: string | null | undefined): ModelConfigOption | undefined {
+        if (typeof modelId !== 'string' || !modelId.trim()) {
+            return undefined;
+        }
+
+        const normalizedModelId = modelId.trim();
+        const storedModel = this.getStoredModelEntries().find(model => model.model === normalizedModelId);
+        const remoteCatalogEntry = this.remoteModelCatalog.models[normalizedModelId]
+            || Object.values(this.remoteModelCatalog.models).find(model => model.model === normalizedModelId);
+
+        if (remoteCatalogEntry) {
+            const family = remoteCatalogEntry.family || storedModel?.family || '';
+            return {
+                model: remoteCatalogEntry.model || normalizedModelId,
+                name: remoteCatalogEntry.displayName || remoteCatalogEntry.id || normalizedModelId,
+                family,
+                speed: storedModel?.speed || family || 'Remote',
+                description: remoteCatalogEntry.description || storedModel?.description,
+                billingMultiplier: remoteCatalogEntry.billingMultiplier ?? storedModel?.billingMultiplier,
+                billingLabelOverride: remoteCatalogEntry.billingLabelOverride ?? storedModel?.billingLabelOverride,
+                billingDescription: remoteCatalogEntry.billingDescription ?? storedModel?.billingDescription,
+                contextWindowTokens: remoteCatalogEntry.contextWindowTokens ?? storedModel?.contextWindowTokens,
+                enabled: storedModel?.enabled ?? true,
+                isCustom: storedModel?.isCustom ?? false,
+                baseUrl: storedModel?.baseUrl,
+                apiKey: storedModel?.apiKey,
+                apiKeyId: storedModel?.apiKeyId,
+                supportsReasoningEfforts: remoteCatalogEntry.supportsReasoningEfforts?.length
+                    ? [...remoteCatalogEntry.supportsReasoningEfforts]
+                    : storedModel?.supportsReasoningEfforts,
+                reasoningEffort: storedModel?.reasoningEffort,
+            };
+        }
+
+        return storedModel ? { ...storedModel } : undefined;
+    }
+
+    buildModelTooltip(
+        model: Partial<ModelConfigOption> | null | undefined,
+        options?: {
+            description?: string | null;
+            maxContextTokens?: number | null;
+        },
+    ): string {
+        if (!model) {
+            return '';
+        }
+
+        if (model.isCustom) {
+            return options?.description || model.description || '自定义模型';
+        }
+
+        const lines: string[] = [];
+        const description = options?.description ?? model.description;
+        if (description) {
+            lines.push(description);
+        }
+
+        const capabilityParts = this.getModelCapabilitySummaryParts({
+            ...model,
+            contextWindowTokens: typeof options?.maxContextTokens === 'number' && options.maxContextTokens > 0
+                ? options.maxContextTokens
+                : model.contextWindowTokens,
+        }, { includeBillingDescription: true });
+        if (capabilityParts.length > 0) {
+            lines.push(`能力: ${capabilityParts.join(' · ')}`);
+        }
+
+        return lines.join('\n');
+    }
+
+    private loadRemoteModelCatalog(reason = 'unspecified'): void {
+        if (this.authService && !this.authService.isLoggedIn) {
+            this.setRemoteModelCatalogStatus('loading', '等待认证完成后自动加载模型目录...');
+            console.info('[AilyChatConfigService] 登录态尚未就绪，延迟加载远端 model catalog', {
+                url: ChatAPI.modelCatalog,
+                reason,
+            });
+            return;
+        }
+
+        console.info('[AilyChatConfigService] 请求远端 model catalog', {
+            url: ChatAPI.modelCatalog,
+            apiEndpoint: AilyHost.get().config.apiEndpoint,
+            hostInitialized: AilyHost.isInitialized(),
+            reason,
+        });
+
+        this.http.get<RemoteModelCatalogResponse>(ChatAPI.modelCatalog, { observe: 'response' }).subscribe({
+            next: (response) => {
+                const responseBody = response.body;
+                const normalizedCatalog = this.normalizeRemoteModelCatalog(responseBody?.data);
+                if (!normalizedCatalog) {
+                    this.remoteModelCatalog = { models: {}, modelPresets: {} };
+                    this.setRemoteModelCatalogStatus(
+                        'unavailable',
+                        `远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
+                    );
+                    console.warn('[AilyChatConfigService] 远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设', {
+                        url: ChatAPI.modelCatalog,
+                        status: response.status,
+                        body: responseBody,
+                    });
+                    this.modelCatalogChangedSubject.next();
+                    return;
+                }
+
+                const modelIds = Object.keys(normalizedCatalog.models);
+                const presetIds = Object.keys(normalizedCatalog.modelPresets);
+                const modelMetadata = modelIds.reduce<Record<string, {
+                    displayName?: string;
+                    contextWindowTokens?: number;
+                    supportsReasoningEfforts?: readonly ReasoningEffortOption[];
+                    billingMultiplier?: number;
+                    billingLabelOverride?: string;
+                }>>((acc, modelId) => {
+                    const entry = normalizedCatalog.models[modelId];
+                    acc[modelId] = {
+                        displayName: entry.displayName,
+                        contextWindowTokens: entry.contextWindowTokens,
+                        supportsReasoningEfforts: entry.supportsReasoningEfforts,
+                        billingMultiplier: entry.billingMultiplier,
+                        billingLabelOverride: entry.billingLabelOverride,
+                    };
+                    return acc;
+                }, {});
+                const presetMetadata = presetIds.reduce<Record<string, {
+                    model?: string;
+                    displayName?: string;
+                    contextWindowTokens?: number;
+                    supportsReasoningEfforts?: readonly ReasoningEffortOption[];
+                    billingMultiplier?: number;
+                    billingLabelOverride?: string;
+                }>>((acc, presetId) => {
+                    const entry = normalizedCatalog.modelPresets[presetId];
+                    acc[presetId] = {
+                        model: entry.model,
+                        displayName: entry.displayName,
+                        contextWindowTokens: entry.contextWindowTokens,
+                        supportsReasoningEfforts: entry.supportsReasoningEfforts,
+                        billingMultiplier: entry.billingMultiplier,
+                        billingLabelOverride: entry.billingLabelOverride,
+                    };
+                    return acc;
+                }, {});
+                console.info('[AilyChatConfigService] 远端 model catalog 响应成功', {
+                    url: ChatAPI.modelCatalog,
+                    status: response.status,
+                    modelCount: modelIds.length,
+                    presetCount: presetIds.length,
+                    modelIds,
+                    presetIds,
+                    modelMetadata,
+                    presetMetadata,
+                });
+
+                this.remoteModelCatalog = normalizedCatalog;
+                if (this.hasUsableRemoteModelCatalog(normalizedCatalog)) {
+                    this.setRemoteModelCatalogStatus('ready', undefined);
+                } else {
+                    this.setRemoteModelCatalogStatus(
+                        'unavailable',
+                        `远端 model catalog 为空，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
+                    );
+                    console.warn('[AilyChatConfigService] 远端 model catalog 为空，暂时仅显示本地内置模型预设', {
+                        url: ChatAPI.modelCatalog,
+                        status: response.status,
+                        body: responseBody,
+                    });
+                }
+                this.modelCatalogChangedSubject.next();
+            },
+            error: (error) => {
+                this.remoteModelCatalog = { models: {}, modelPresets: {} };
+                const isUnauthorized = error instanceof HttpErrorResponse
+                    ? error.status === 401
+                    : error?.status === 401;
+
+                if (isUnauthorized) {
+                    this.setRemoteModelCatalogStatus(
+                        'loading',
+                        '远端 model catalog 认证尚未就绪，登录完成后会自动加载模型目录。',
+                    );
+                    console.info('[AilyChatConfigService] 远端 model catalog 返回 401，等待认证完成后自动加载模型目录', {
+                        url: ChatAPI.modelCatalog,
+                        status: error?.status,
+                        message: error?.message,
+                        reason,
+                    });
+                    this.modelCatalogChangedSubject.next();
+                    return;
+                }
+
+                this.setRemoteModelCatalogStatus(
+                    'unavailable',
+                    `暂时无法加载远端 model catalog，将继续显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}。`,
+                );
+                console.warn('[AilyChatConfigService] 加载远端 model catalog 失败，暂时仅显示本地内置模型预设', {
+                    url: ChatAPI.modelCatalog,
+                    status: error?.status,
+                    message: error?.message,
+                    error,
+                });
+                this.modelCatalogChangedSubject.next();
+            },
+        });
+    }
+
+    private setRemoteModelCatalogStatus(
+        status: 'loading' | 'ready' | 'unavailable',
+        hint: string | undefined,
+    ): void {
+        this.remoteModelCatalogStatus = status;
+        this.remoteModelCatalogStatusHint = hint;
+    }
+
+    private hasUsableRemoteModelCatalog(catalog: RemoteModelCatalog = this.remoteModelCatalog): boolean {
+        return Object.keys(catalog.models).length > 0 || Object.keys(catalog.modelPresets).length > 0;
+    }
+
+    private mergeRemotePresetOption(preset: ModelPresetOption): ModelPresetOption {
+        const remotePreset = this.remoteModelCatalog.modelPresets[preset.id];
+        if (!remotePreset) {
+            return { ...preset };
+        }
+
+        return {
+            ...preset,
+            name: remotePreset.displayName || preset.name,
+            model: remotePreset.model || preset.model,
+            family: remotePreset.family || preset.family,
+            description: remotePreset.description || preset.description,
+            billingMultiplier: remotePreset.billingMultiplier ?? preset.billingMultiplier,
+            billingLabelOverride: remotePreset.billingLabelOverride ?? preset.billingLabelOverride,
+            billingDescription: remotePreset.billingDescription ?? preset.billingDescription,
+            contextWindowTokens: remotePreset.contextWindowTokens ?? preset.contextWindowTokens,
+            supportsReasoningEfforts: remotePreset.supportsReasoningEfforts?.length
+                ? [...remotePreset.supportsReasoningEfforts]
+                : preset.supportsReasoningEfforts,
+        };
+    }
+
+    private normalizeRemoteModelCatalog(
+        payload: RemoteModelCatalogResponse['data'] | null | undefined,
+    ): RemoteModelCatalog | null {
+        if (!payload || typeof payload !== 'object') {
+            return null;
+        }
+
+        return {
+            models: this.normalizeRemoteCatalogEntries(payload.models),
+            modelPresets: this.normalizeRemoteCatalogEntries(payload.model_presets),
+        };
+    }
+
+    private normalizeRemoteCatalogEntries(
+        entries: Record<string, RemoteCatalogPayloadEntry> | null | undefined,
+    ): Record<string, RemoteModelCatalogEntry> {
+        if (!entries || typeof entries !== 'object') {
+            return {};
+        }
+
+        return Object.entries(entries).reduce<Record<string, RemoteModelCatalogEntry>>((acc, [id, entry]) => {
+            if (!entry || typeof entry !== 'object') {
+                return acc;
+            }
+
+            acc[id] = {
+                id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : id,
+                model: typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined,
+                displayName: typeof entry.display_name === 'string' && entry.display_name.trim()
+                    ? entry.display_name.trim()
+                    : undefined,
+                family: typeof entry.family === 'string' && entry.family.trim() ? entry.family.trim() : undefined,
+                description: typeof entry.description === 'string' && entry.description.trim() ? entry.description.trim() : undefined,
+                contextWindowTokens: typeof entry.context_window_tokens === 'number' && entry.context_window_tokens > 0
+                    ? entry.context_window_tokens
+                    : undefined,
+                supportsReasoningEfforts: normalizeReasoningEfforts(entry.supports_reasoning_effort),
+                billingMultiplier: typeof entry.billing_multiplier === 'number' && Number.isFinite(entry.billing_multiplier)
+                    ? entry.billing_multiplier
+                    : undefined,
+                billingLabelOverride: typeof entry.billing_label_override === 'string' && entry.billing_label_override.trim()
+                    ? entry.billing_label_override.trim()
+                    : undefined,
+                billingDescription: typeof entry.billing_description === 'string' && entry.billing_description.trim()
+                    ? entry.billing_description.trim()
+                    : undefined,
+            };
+            return acc;
+        }, {});
+    }
+
+    private buildRuntimeModels(): ModelConfigOption[] {
+        const storedModels = this.getStoredModelEntries();
+        const storedCustomModels = storedModels.filter(model => model.isCustom);
+
+        if (!this.hasUsableRemoteModelCatalog()) {
+            return storedCustomModels.map(model => this.normalizeRuntimeModel(model));
+        }
+
+        const storedBuiltinModels = storedModels.filter(model => !model.isCustom);
+        const remoteBuiltinModels = this.buildRemoteBuiltinModels(storedBuiltinModels);
+
+        if (remoteBuiltinModels.length === 0) {
+            return storedCustomModels.map(model => this.normalizeRuntimeModel(model));
+        }
+
+        const remoteBuiltinIds = new Set(remoteBuiltinModels.map(model => model.model));
+        const legacyBuiltinModels = storedBuiltinModels.filter(model => !remoteBuiltinIds.has(model.model));
+
+        return [...remoteBuiltinModels, ...legacyBuiltinModels, ...storedCustomModels]
+            .map(model => this.normalizeRuntimeModel(model));
+    }
+
+    private buildRemoteBuiltinModels(overrides: ModelConfigOption[]): ModelConfigOption[] {
+        const overridesById = new Map(overrides.map(model => [model.model, model]));
+
+        return Object.entries(this.remoteModelCatalog.models).map(([modelId, remoteModel]) => {
+            const resolvedModelId = remoteModel.model || modelId;
+            const override = overridesById.get(resolvedModelId);
+            const family = remoteModel.family || override?.family || '';
+
+            return {
+                model: resolvedModelId,
+                name: remoteModel.displayName || remoteModel.id || resolvedModelId,
+                family,
+                speed: override?.speed || family || 'Remote',
+                description: remoteModel.description || override?.description,
+                billingMultiplier: remoteModel.billingMultiplier ?? override?.billingMultiplier,
+                billingLabelOverride: remoteModel.billingLabelOverride ?? override?.billingLabelOverride,
+                billingDescription: remoteModel.billingDescription ?? override?.billingDescription,
+                contextWindowTokens: remoteModel.contextWindowTokens ?? override?.contextWindowTokens,
+                enabled: override?.enabled ?? true,
+                isCustom: false,
+                supportsReasoningEfforts: remoteModel.supportsReasoningEfforts?.length
+                    ? [...remoteModel.supportsReasoningEfforts]
+                    : override?.supportsReasoningEfforts,
+                reasoningEffort: this.resolveModelReasoningEffort({
+                    family,
+                    supportsReasoningEfforts: remoteModel.supportsReasoningEfforts?.length
+                        ? [...remoteModel.supportsReasoningEfforts]
+                        : override?.supportsReasoningEfforts,
+                }, override?.reasoningEffort),
+            } satisfies ModelConfigOption;
+        });
+    }
+
+    private buildPersistedModels(models: ModelConfigOption[] | null | undefined): ModelConfigOption[] {
+        const runtimeModels = Array.isArray(models) ? models : [];
+        const persistedBuiltinModels = runtimeModels
+            .filter(model => !model.isCustom)
+            .map(model => sanitizePersistedBuiltinModel(model));
+        const persistedCustomModels = runtimeModels
+            .filter(model => model.isCustom)
+            .map(model => ({ ...model }));
+
+        return [...persistedBuiltinModels, ...persistedCustomModels];
+    }
+
+    private getStoredModelEntries(): ModelConfigOption[] {
+        return mergeModelsWithDefaults(this.config.models);
     }
 
     /**
@@ -528,16 +1643,16 @@ export class AilyChatConfigService {
             ...model,
             isCustom: true
         };
-        this.models.push(newModel);
+        this.models = [...this.models.filter(item => item.model !== newModel.model), newModel];
     }
 
     /**
      * 删除模型（只能删除自定义模型）
      */
     removeModel(modelId: string): boolean {
-        const index = this.models.findIndex(m => m.model === modelId && m.isCustom);
-        if (index !== -1) {
-            this.models.splice(index, 1);
+        const nextModels = this.models.filter(model => !(model.model === modelId && model.isCustom));
+        if (nextModels.length !== this.models.length) {
+            this.models = nextModels;
             return true;
         }
         return false;
@@ -547,9 +1662,9 @@ export class AilyChatConfigService {
      * 更新模型启用状态
      */
     updateModelEnabled(modelId: string, enabled: boolean): void {
-        const model = this.models.find(m => m.model === modelId);
-        if (model) {
-            model.enabled = enabled;
+        const nextModels = this.models.map(model => model.model === modelId ? { ...model, enabled } : model);
+        if (nextModels.some(model => model.model === modelId)) {
+            this.models = nextModels;
         }
     }
 
@@ -701,7 +1816,184 @@ export class AilyChatConfigService {
                         model.apiKey = apiKey.apiKey;
                     }
                 }
+
+                if (!Array.isArray(model.supportsReasoningEfforts) || model.supportsReasoningEfforts.length === 0) {
+                    const supported = this.getSupportedReasoningEfforts(model);
+                    if (supported.length > 0) {
+                        model.supportsReasoningEfforts = supported;
+                    }
+                }
             });
         }
+
+        if (this.config.agentTools) {
+            const normalizedAgentTools: Record<string, AgentToolsConfig> = {};
+            for (const [agentName, agentConfig] of Object.entries(this.config.agentTools)) {
+                if (!agentConfig) {
+                    continue;
+                }
+                const canonicalAgentName = normalizeAgentIdentifier(agentName);
+                if (!canonicalAgentName) {
+                    continue;
+                }
+                normalizedAgentTools[canonicalAgentName] = {
+                    enabledTools: agentConfig.enabledTools ?? [],
+                    disabledTools: agentConfig.disabledTools ?? [],
+                };
+            }
+            this.config.agentTools = normalizedAgentTools;
+        }
     }
+}
+
+function normalizeLegacyPresetId(value: string | null | undefined): string | undefined {
+    switch (value) {
+        case 'auto':
+            return 'auto';
+        case 'high':
+            return 'auto-max';
+        case 'medium':
+            return 'auto-balanced';
+        case 'low':
+            return 'auto-fast';
+        default:
+            return undefined;
+    }
+}
+
+function resolveSavedPresetId(
+    savedModel: Partial<ModelConfigOption>,
+    presets: readonly ModelPresetOption[],
+): string | undefined {
+    if (savedModel.presetId) {
+        return savedModel.presetId;
+    }
+
+    const directPreset = typeof savedModel.model === 'string'
+        ? presets.find(preset => preset.id === savedModel.model)?.id
+        : undefined;
+    if (directPreset) {
+        return directPreset;
+    }
+
+    return normalizeLegacyPresetId(savedModel.model);
+}
+
+function normalizeReasoningEfforts(value: string[] | null | undefined): ReasoningEffortOption[] | undefined {
+    if (!Array.isArray(value) || value.length === 0) {
+        return undefined;
+    }
+
+    const allowed = new Set<ReasoningEffortOption>(['low', 'medium', 'high', 'xhigh']);
+    const normalized = value
+        .map(item => typeof item === 'string' ? item.trim().toLowerCase() : '')
+        .filter((item): item is ReasoningEffortOption => allowed.has(item as ReasoningEffortOption));
+
+    if (normalized.length === 0) {
+        return undefined;
+    }
+
+    return [...new Set(normalized)];
+}
+
+function mergeModelsWithDefaults(models: ModelConfigOption[] | null | undefined): ModelConfigOption[] {
+    const savedModels = Array.isArray(models) ? models : [];
+    const defaultsById = new Map(DEFAULT_MODELS.map(model => [model.model, model]));
+    const mergedDefaults = DEFAULT_MODELS.map(model => ({
+        ...model,
+        ...(savedModels.find(savedModel => savedModel.model === model.model) || {}),
+    }));
+
+    const extraModels = savedModels.filter(model => !defaultsById.has(model.model));
+    return [...mergedDefaults, ...extraModels];
+}
+
+function sanitizePersistedBuiltinModel(model: ModelConfigOption): ModelConfigOption {
+    return {
+        model: model.model,
+        name: model.model,
+        family: model.family,
+        speed: model.speed,
+        enabled: model.enabled,
+        isCustom: false,
+        reasoningEffort: model.reasoningEffort,
+    };
+}
+
+function normalizeInstructionFolderPaths(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
+}
+
+function normalizeTerminalPermissionRules(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
+}
+
+function normalizeProjectPermissionScope(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.replace(/\\/g, '/').replace(/\/+$|\/+$/g, '').trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function normalizePermissionRuleInputs(value: PermissionRuleInput[] | undefined): PermissionRuleInput[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value.flatMap((item) => {
+        if (!item || typeof item !== 'object' || typeof item.mode !== 'string') {
+            return [];
+        }
+
+        const normalizedMode = item.mode;
+        if (!['default', 'plan', 'acceptEdits', 'bypassPermissions'].includes(normalizedMode)) {
+            return [];
+        }
+
+        const normalizedToolName = typeof item.toolName === 'string' ? item.toolName.trim() : undefined;
+        const normalizedToolSource = typeof item.toolSource === 'string' ? item.toolSource.trim() : undefined;
+        const normalizedSource = typeof item.source === 'string' ? item.source : undefined;
+
+        return [{
+            mode: normalizedMode,
+            ...(normalizedToolName ? { toolName: normalizedToolName } : {}),
+            ...(normalizedToolSource ? { toolSource: normalizedToolSource } : {}),
+            ...(normalizedSource ? { source: normalizedSource } : {}),
+        } satisfies PermissionRuleInput];
+    });
+}
+
+function normalizeWorkspacePermissionRulesByProject(
+    value: WorkspacePermissionRulesByProject | undefined,
+): WorkspacePermissionRulesByProject {
+    if (!value || typeof value !== 'object') {
+        return {};
+    }
+
+    const normalizedEntries = Object.entries(value).flatMap(([projectPath, rules]) => {
+        const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
+        const normalizedRules = normalizePermissionRuleInputs(rules);
+        if (!normalizedProjectPath || normalizedRules.length === 0) {
+            return [];
+        }
+        return [[normalizedProjectPath, normalizedRules] as const];
+    });
+
+    return Object.fromEntries(normalizedEntries);
 }

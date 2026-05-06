@@ -54,10 +54,6 @@ export interface IAilyHostAPI {
   readonly cmd?: any;
   /** ABS 自动同步服务（可选） */
   readonly absSync?: any;
-  /** HTTP 请求服务（可选） */
-  readonly fetch?: any;
-  /** 网页搜索服务（可选） */
-  readonly webSearch?: any;
   /** 跨平台命令服务（可选 — createDirectory / linkItem 等） */
   readonly crossPlatformCmd?: any;
   /** 通知服务透传（可选 — update / clear 等完整 NoticeService 透传） */

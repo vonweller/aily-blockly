@@ -2,6 +2,8 @@ import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { EditCheckpointService, EditsSummary, EditFileSummary } from '../../services/edit-checkpoint.service';
+import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
+import { getInteractionDisplayContent } from '../../core/user-turn-action-target';
 
 @Component({
   selector: 'app-aily-edits-viewer',
@@ -43,6 +45,35 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
     return this.checkpointService.canRedo;
   }
 
+  get requestPreview(): string | null {
+    const normalized = (getInteractionDisplayContent(this.summary?.turnContext) ?? '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return null;
+    }
+
+    return normalized.length > 72
+      ? `${normalized.slice(0, 72).trimEnd()}...`
+      : normalized;
+  }
+
+  get keepActionTitle(): string {
+    return this.requestPreview
+      ? `保留与“${this.requestPreview}”关联的所有变更`
+      : '保留所有变更';
+  }
+
+  get undoActionTitle(): string {
+    return this.requestPreview
+      ? `撤销与“${this.requestPreview}”关联的文件变更`
+      : '撤销';
+  }
+
+  get redoActionTitle(): string {
+    return this.requestPreview
+      ? `重新应用与“${this.requestPreview}”关联的文件变更`
+      : '重做';
+  }
+
   toggleExpanded(): void {
     this.isExpanded = !this.isExpanded;
   }
@@ -50,48 +81,63 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
   onKeep(): void {
     if (this.isAccepted) return;
     this.isAccepted = true;
+    const detail: ChatTaskActionDetail = {
+      action: 'keepEdits',
+      target: this.summary?.turnContext,
+      fileCount: this.summary?.fileCount || 0,
+      totalAdded: this.summary?.totalAdded || 0,
+      totalRemoved: this.summary?.totalRemoved || 0,
+    };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: {
-        action: 'keepEdits',
-        checkpointId: this.summary?.checkpointId,
-        fileCount: this.summary?.fileCount || 0,
-        totalAdded: this.summary?.totalAdded || 0,
-        totalRemoved: this.summary?.totalRemoved || 0,
-      }
+      detail,
     }));
     this.checkpointService.dismissSummary();
   }
 
   onUndo(): void {
+    const detail: ChatTaskActionDetail = { action: 'undoEdits' };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: { action: 'undoEdits' }
+      detail,
     }));
   }
 
   onRedo(): void {
+    const detail: ChatTaskActionDetail = { action: 'redoEdits' };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: { action: 'redoEdits' }
+      detail,
     }));
   }
 
   onAcceptFile(file: EditFileSummary): void {
+    const detail: ChatTaskActionDetail = { action: 'acceptFile', filePath: file.fullPath };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: { action: 'acceptFile', filePath: file.fullPath }
+      detail,
     }));
   }
 
   onRejectFile(file: EditFileSummary): void {
+    const detail: ChatTaskActionDetail = { action: 'rejectFile', filePath: file.fullPath };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
-      detail: { action: 'rejectFile', filePath: file.fullPath }
+      detail,
     }));
   }
 
   trackByPath(index: number, file: EditFileSummary): string {
     return file.fullPath;
+  }
+
+  getFileKindBadge(file: EditFileSummary): string | null {
+    if (file.contentKind === 'binary') {
+      return '二进制';
+    }
+    if (file.contentKind === 'notebook') {
+      return 'Notebook';
+    }
+    return null;
   }
 }

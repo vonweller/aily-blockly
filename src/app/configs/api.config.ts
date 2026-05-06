@@ -101,10 +101,14 @@ export const API = {
   get sendMessage() { return `${getServerUrl()}/api/v1/send_message`; },
   /** 无状态聊天请求：每次请求携带完整 messages[]，返回 SSE 流 */
   get chatRequest() { return `${getServerUrl()}/api/v1/chat`; },
+  get chatStateless() { return `${getServerUrl()}/api/v2/chat_stateless`; },
+  get modelCatalog() { return `${getServerUrl()}/api/v2/model_catalog`; },
+  get contextInfo() { return `${getServerUrl()}/api/v1/context_info`; },
   get getHistory() { return `${getServerUrl()}/api/v1/conversation_history`; },
   get stopSession() { return `${getServerUrl()}/api/v1/stop_session`; },
   get cancelTask() { return `${getServerUrl()}/api/v1/cancel_task`; },
   get generateTitle() { return `${getServerUrl()}/api/v1/generate_title`; },
+  get conversationFeedback() { return `${getServerUrl()}/api/v1/conversation_feedback`; },
   // cloud
   get cloudBase() { return `${getServerUrl()}/api/v1/cloud`; },
   get cloudSync() { return `${getServerUrl()}/api/v1/cloud/sync`; },

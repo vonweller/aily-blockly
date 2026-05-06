@@ -14,8 +14,7 @@ import { ProjectService } from '../../services/project.service';
 import { LogService } from '../../services/log.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { stripAnsi } from 'fancy-ansi';
-
-import { version } from '../../../../package.json';
+import packageJson from '../../../../package.json';
 
 @Component({
   selector: 'app-feedback-dialog',
@@ -180,7 +179,7 @@ export class FeedbackDialogComponent implements OnDestroy {
 
     return `
 - OS Version: ${window['platform'].type}
-- Software Version: ${version}
+- Software Version: ${packageJson.version}
 - Project Dependencies:
 \`\`\`json
 ${dependenciesStr}

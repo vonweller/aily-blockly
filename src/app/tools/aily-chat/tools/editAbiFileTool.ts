@@ -1,5 +1,5 @@
 ﻿import path from "path";
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 import { normalizePath } from "../services/security.service";
 import { AilyHost } from '../core/host';
 

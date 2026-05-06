@@ -1,6 +1,9 @@
 <div class="sub-window-box bborder">
   <div class="header" [class.darwin]="isMac" [class.full-screen]="isMacFullScreen">
-    <div class="title">{{ title }}</div>
+    <div class="title">
+      <span class="title-text">{{ title }}</span>
+      <ng-content select="[title-extra]"></ng-content>
+    </div>
     <div class="win-btns">
       @for (btn of winBtns; track btn) {
         @if (btn === "go-main") {

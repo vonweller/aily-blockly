@@ -6,22 +6,22 @@ import {
   OnDestroy,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
+  forwardRef,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { XAilyStateViewerComponent } from './x-aily-state-viewer/x-aily-state-viewer.component';
 import { XAilyButtonViewerComponent } from './x-aily-button-viewer/x-aily-button-viewer.component';
 import { XAilyBoardViewerComponent } from './x-aily-board-viewer/x-aily-board-viewer.component';
 import { XAilyLibraryViewerComponent } from './x-aily-library-viewer/x-aily-library-viewer.component';
-import { XAilyThinkViewerComponent } from './x-aily-think-viewer/x-aily-think-viewer.component';
 import { MermaidCodeComponent } from 'ngx-x-markdown';
 import { XAilyContextViewerComponent } from './x-aily-context-viewer/x-aily-context-viewer.component';
 import { XAilyBlocklyViewerComponent } from './x-aily-blockly-viewer/x-aily-blockly-viewer.component';
 import { XAilyErrorViewerComponent } from './x-aily-error-viewer/x-aily-error-viewer.component';
 import { XAilyTaskActionViewerComponent } from './x-aily-task-action-viewer/x-aily-task-action-viewer.component';
-import { XAilyQuestionViewerComponent } from './x-aily-question-viewer/x-aily-question-viewer.component';
-import { XAilyApprovalViewerComponent } from './x-aily-approval-viewer/x-aily-approval-viewer.component';
 import { XAilyCodeViewerComponent } from './x-aily-code-viewer/x-aily-code-viewer.component';
 import { XAilyDefaultViewerComponent } from './x-aily-default-viewer/x-aily-default-viewer.component';
+import { ChatActivityGroupComponent } from './chat-activity-group.component';
+import type { ChatPart } from '../../core/chat-parts';
+import { buildCompatActivityParts } from './chat-activity-compat';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
@@ -36,7 +36,7 @@ import { ChatService } from '../../services/chat.service';
 const AILY_TYPES = [
   'aily-state', 'aily-button', 'aily-board', 'aily-library',
   'aily-think', 'aily-mermaid', 'aily-context', 'aily-blockly',
-  'aily-error', 'aily-task-action', 'aily-question', 'aily-approval',
+  'aily-error', 'aily-task-action',
 ] as const;
 
 /**
@@ -54,6 +54,9 @@ const AILY_TYPES = [
  * - aily-blockly:     Blockly 积木代码查看器
  * - aily-error:       错误信息卡片
  * - aily-task-action: 任务动作面板
+ *
+* `aily-question` / `aily-approval` 已迁到 Part-based 主路径并已降为非渲染入口，
+ * 这里只保留 active source 仍会直接渲染的 code-block 类型。
  * - 其他:             标准代码块
  */
 @Component({
@@ -64,25 +67,22 @@ const AILY_TYPES = [
     NzToolTipModule,
     NzPopconfirmModule,
     TranslateModule,
-    XAilyStateViewerComponent,
     XAilyButtonViewerComponent,
     XAilyBoardViewerComponent,
     XAilyLibraryViewerComponent,
-    XAilyThinkViewerComponent,
     MermaidCodeComponent,
     XAilyContextViewerComponent,
     XAilyBlocklyViewerComponent,
     XAilyErrorViewerComponent,
     XAilyTaskActionViewerComponent,
-    XAilyQuestionViewerComponent,
-    XAilyApprovalViewerComponent,
     XAilyCodeViewerComponent,
     XAilyDefaultViewerComponent,
+    forwardRef(() => ChatActivityGroupComponent),
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (isType('aily-state') && parsedData) {
-      <x-aily-state-viewer [data]="parsedData" />
+    @if (isType('aily-state') && compatActivityParts.length > 0) {
+      <aily-chat-activity-group [parts]="compatActivityParts" [doing]="streamStatus === 'loading'" />
     }
     @if (isType('aily-button') && (parsedArray || streamStatus === 'loading')) {
       <x-aily-button-viewer [data]="parsedArray" [streamStatus]="streamStatus" />
@@ -93,8 +93,8 @@ const AILY_TYPES = [
     @if (isType('aily-library')) {
       <x-aily-library-viewer [data]="parsedData" />
     }
-    @if (isType('aily-think') && parsedData) {
-      <x-aily-think-viewer [data]="parsedData" />
+    @if (isType('aily-think') && compatActivityParts.length > 0) {
+      <aily-chat-activity-group [parts]="compatActivityParts" [doing]="streamStatus === 'loading'" />
     }
     @if (isType('aily-mermaid') || isMermaidStd) {
       <div class="aily-mermaid-wrapper" (click)="openMermaidFullscreen()" title="点击全屏查看">
@@ -156,12 +156,6 @@ const AILY_TYPES = [
     }
     @if (isType('aily-task-action') && parsedData) {
       <x-aily-task-action-viewer [data]="parsedData" />
-    }
-    @if (isType('aily-question') && (parsedData || parsedArray)) {
-      <x-aily-question-viewer [data]="parsedData || parsedArray" [streamStatus]="streamStatus" />
-    }
-    @if (isType('aily-approval') && parsedData) {
-      <x-aily-approval-viewer [data]="parsedData" />
     }
     @if (isRegularCode) {
       <x-aily-code-viewer [children]="children" [block]="block" [lang]="lang" />
@@ -238,6 +232,7 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
   // ===== State =====
   parsedData: any = null;
   parsedArray: any[] | null = null;
+  compatActivityParts: readonly ChatPart[] = [];
   mermaidCopySuccess = false;
   mermaidDownloadSuccess = false;
   private copySuccessTimer: ReturnType<typeof setTimeout> | null = null;
@@ -327,6 +322,7 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
     const prevParsedArray = this.lang === 'aily-button' ? this.parsedArray : null;
     this.parsedData = null;
     this.parsedArray = null;
+    this.compatActivityParts = [];
 
     if (!this.block || !AILY_TYPES.includes(this.lang as any)) return;
 
@@ -339,6 +335,7 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
         this.parsedArray = parsed;
       } else {
         this.parsedData = parsed;
+        this.compatActivityParts = this.buildCompatActivityParts(parsed);
       }
     } catch {
       // 流式过程中 parse 可能因中间 chunk 失败，保留上次成功结果避免按钮闪烁
@@ -346,6 +343,16 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
         this.parsedArray = prevParsedArray;
       }
     }
+  }
+
+  private buildCompatActivityParts(parsed: unknown): readonly ChatPart[] {
+    if (this.isType('aily-think')) {
+      return buildCompatActivityParts(parsed, 'aily-think');
+    }
+    if (this.isType('aily-state')) {
+      return buildCompatActivityParts(parsed, 'aily-state');
+    }
+    return [];
   }
 
   private decodeEntities(html: string): string {
