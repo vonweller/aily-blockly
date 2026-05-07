@@ -186,6 +186,7 @@ import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-det
       justify-content: center;
       width: 16px;
       height: 16px;
+      margin-top: 1px;
     }
 
     .cag-icon {

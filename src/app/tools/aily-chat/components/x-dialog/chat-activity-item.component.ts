@@ -764,7 +764,6 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-title-subtitle {
-      font-size: 1em;
       opacity: 0.7;
       white-space: normal;
       word-break: break-word;
@@ -1122,8 +1121,8 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-confirmation-summary {
-      margin: 6px 9px 8px;
-      padding: 8px 10px;
+      margin: 5px;
+      padding: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 6px;
       background: rgba(255,255,255,0.03);
@@ -1303,7 +1302,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 6px;
       background: rgba(255,255,255,0.03);
-      padding: 5px 10px;
+      padding: 5px;
     }
 
     .cag-item-invocation-output[data-output-kind='terminal-command'],
