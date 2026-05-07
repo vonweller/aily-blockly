@@ -260,7 +260,7 @@ import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-det
     .cag-subtitle {
       flex: 1 1 auto;
       min-width: 0;
-      font-size: 13px;
+      font-size: 11px;
       line-height: 1.4;
       color: var(--chat-fg-dim, #8e8e8e);
       white-space: normal;

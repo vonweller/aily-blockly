@@ -62,9 +62,9 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
             (click)="toggleDetail()"
             (keydown.enter)="toggleDetail()"
             (keydown.space)="toggleDetailFromKeyboard($event)">
-            @if (item.kicker) {
+            <!-- @if (item.kicker) {
               <div class="cag-item-kicker">{{ item.kicker }}</div>
-            }
+            } -->
 
             @if (isToolHeader()) {
               <div class="cag-item-tool-title">
