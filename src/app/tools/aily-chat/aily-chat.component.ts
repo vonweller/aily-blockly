@@ -137,6 +137,8 @@ export class AilyChatComponent implements OnDestroy {
   private readonly lifecycleCoordinator: ChatComponentLifecycleCoordinator;
   private dialogsResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
+  /** 用户消息重新编辑互斥：同时最多展开一条 */
+  userMessageEditingTurnId: string | undefined;
 
   constructor(
     private uiService: UiService,
@@ -374,6 +376,21 @@ export class AilyChatComponent implements OnDestroy {
 
   setComposerFocusState(focused: boolean): void {
     this.isComposerFocused = focused;
+  }
+
+  onUserMessageEditSessionOpened(turnId: string): void {
+    this.userMessageEditingTurnId = turnId;
+    this.cdr.markForCheck();
+  }
+
+  onUserMessageEditSessionClosed(): void {
+    this.userMessageEditingTurnId = undefined;
+    this.cdr.markForCheck();
+  }
+
+  closeChatSessionMenus(): void {
+    this.menuManager.closeAll();
+    this.cdr.markForCheck();
   }
 
   handleTodoFocusToggleShortcut(): void {

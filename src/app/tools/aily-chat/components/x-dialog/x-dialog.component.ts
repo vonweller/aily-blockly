@@ -115,17 +115,26 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   /** 该消息创建时使用的模型倍率 */
   @Input() turnModelBillingLabel = '';
   @Input() isWaiting = false;
+  /** 全局互斥：当前允许展开编辑框的用户 turnId；与本条不一致时需收起（由父级统一传入） */
+  @Input() exclusiveEditTurnId: string | undefined;
 
   /** 本组件 dialog-box 是否被 hover */
   dialogBoxHovered = false;
 
   @Output() editAndResend = new EventEmitter<{ target: DialogTurnContext; newText: string; resources: ResourceItem[] }>();
+  /** 本消息进入编辑态时发出 turnId，供父级互斥 */
+  @Output() editSessionOpened = new EventEmitter<string>();
+  /** 用户在本条取消或提交编辑时发出，父级清除互斥态 */
+  @Output() editSessionClosed = new EventEmitter<void>();
+  /** 编辑区内点击会 stopPropagation，父级需主动收起模式/模型等会话菜单 */
+  @Output() dismissSessionMenus = new EventEmitter<void>();
   @Output() editModeToggle = new EventEmitter<{ event: MouseEvent; type: 'mode' }>();
   @Output() editModelToggle = new EventEmitter<{ event: MouseEvent; type: 'model' }>();
   @Output() editAddFile = new EventEmitter<DialogTurnContext>();
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -155,6 +164,41 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     private cdr: ChangeDetectorRef,
     @Optional() private runtimeInteractionHost: ChatRuntimeInteractionHostService | null = null,
   ) {}
+
+  /** 在已进入编辑态之后通过 setTimeout 挂载，避免「点开编辑」的同一次点击误关 */
+  private readonly editOutsideDocumentClickBound = (e: MouseEvent) => this.onEditOutsideDocumentClick(e);
+
+  private onEditOutsideDocumentClick(event: MouseEvent): void {
+    if (!this.isEditing) {
+      return;
+    }
+    if (this.shouldKeepEditingForOutsideClick(event.target)) {
+      return;
+    }
+    this.onCancelEdit();
+  }
+
+  private attachEditOutsideClickListener(): void {
+    document.addEventListener('click', this.editOutsideDocumentClickBound, true);
+  }
+
+  private detachEditOutsideClickListener(): void {
+    document.removeEventListener('click', this.editOutsideDocumentClickBound, true);
+  }
+
+  private scheduleAttachEditOutsideClickListener(): void {
+    this.detachEditOutsideClickListener();
+    setTimeout(() => {
+      if (this.isEditing) {
+        this.attachEditOutsideClickListener();
+      }
+    }, 0);
+  }
+
+  /** 编辑框根节点 stopPropagation，document 无法收到点击，需让父级关掉 app-menu */
+  private dismissChatShellMenus(): void {
+    this.dismissSessionMenus.emit();
+  }
 
   /** 是否可显示操作栏（非 doing 的最后一条 aily 消息） */
   get canShowActions(): boolean {
@@ -586,21 +630,34 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     this.editResources = mergeUserTurnResources(resources, requestResources);
     this.showEditAddList = false;
     this.isEditing = true;
+    this.scheduleAttachEditOutsideClickListener();
+    const tid = this.actionTurnId;
+    if (tid) {
+      this.editSessionOpened.emit(tid);
+    }
     // 下一帧再 focus，确保 @if (isEditing) 已渲染出 textarea
     setTimeout(() => this.editTextareaRef?.nativeElement?.focus(), 0);
   }
 
   onCancelEdit(): void {
+    const wasEditing = this.isEditing;
+    this.dismissChatShellMenus();
+    this.detachEditOutsideClickListener();
     this.isEditing = false;
     this.editText = '';
     this.editResources = [];
     this.showEditAddList = false;
+    if (wasEditing) {
+      this.editSessionClosed.emit();
+    }
   }
 
   onSubmitEdit(): void {
     const trimmed = this.editText.trim();
     const target = this.effectiveTurnContext;
     if (!trimmed || !target) return;
+    this.dismissChatShellMenus();
+    this.detachEditOutsideClickListener();
     this.isEditing = false;
     this.editAndResend.emit({
       target,
@@ -610,6 +667,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     this.editText = '';
     this.editResources = [];
     this.showEditAddList = false;
+    this.editSessionClosed.emit();
   }
 
   onEditAddFileRequest(): void {
@@ -656,6 +714,40 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   onEditToggleAddList(): void {
     this.showEditAddList = !this.showEditAddList;
+  }
+
+  /** 互斥：其它消息打开编辑时收起本条，不向父级发 closed（避免清掉新的 active） */
+  private forceCloseEditFromExclusiveLock(): void {
+    if (!this.isEditing) {
+      return;
+    }
+    this.dismissChatShellMenus();
+    this.detachEditOutsideClickListener();
+    this.isEditing = false;
+    this.editText = '';
+    this.editResources = [];
+    this.showEditAddList = false;
+    this.cdr.markForCheck();
+  }
+
+  /** 点击在编辑壳层、会话级菜单或 ng-zorro 浮层上时不因「点外部」收起 */
+  private shouldKeepEditingForOutsideClick(target: EventTarget | null): boolean {
+    if (!(target instanceof Node)) {
+      return true;
+    }
+    const box = this.editInputBoxRef?.nativeElement;
+    if (box?.contains(target)) {
+      return true;
+    }
+    if (target instanceof Element) {
+      if (target.closest('.menu-container')) {
+        return true;
+      }
+      if (target.closest('.ant-tooltip, .ant-popover, .ant-dropdown, .ant-picker-dropdown, .cdk-overlay-container')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 从父组件接收添加的文件资源 */
@@ -775,6 +867,13 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   private lastRaw = '';
 
   ngOnChanges(changes: SimpleChanges) {
+    if (changes['exclusiveEditTurnId'] && this.isEditing && this.actionTurnId) {
+      const excl = this.exclusiveEditTurnId;
+      if (excl != null && excl !== this.actionTurnId) {
+        this.forceCloseEditFromExclusiveLock();
+      }
+    }
+
     if (changes['role'] || changes['content']) {
       this.refreshCompatTurnContext();
     }
@@ -799,5 +898,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   ngAfterViewChecked(): void { }
 
-  ngOnDestroy(): void { }
+  ngOnDestroy(): void {
+    this.detachEditOutsideClickListener();
+    if (this.isEditing) {
+      this.editSessionClosed.emit();
+    }
+  }
 }
