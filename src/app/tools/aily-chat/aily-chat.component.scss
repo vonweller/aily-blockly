@@ -293,34 +293,6 @@
 
 
 
-.list-box {
-  border-radius: 5px;
-  border: 1px solid var(--aily-border-secondary, #ccc);
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 84px;
-  height: 28px;
-  z-index: 0;
-  pointer-events: none;
-  background: var(--aily-bg-tertiary, #3f3f3f);
-}
-
-.btn2 {
-  width: 28px;
-  height: 28px;
-  font-size: 14px;
-  color: var(--aily-text-tertiary, #ccc);
-  padding-top: 1px;
-  border-radius: 5px;
-  z-index: 999;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--aily-text-primary, #fff);
-  }
-}
-
 .resource-list {
   display: flex;
   flex-wrap: wrap;
@@ -366,39 +338,10 @@
 }
 
 
-// 模式切换按钮
+// 发送区按钮（如发送/停止）
 .btn {
   margin-left: 1px;
   transition: all 0.2s;
-
-  &.mode {
-    width: auto !important;
-    padding: 0 6px !important;
-    gap: 4px;
-
-    > span:not(.mini-tag) {
-      margin-left: 5px;
-      font-size: 12px;
-    }
-
-    .mini-tag {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 26px;
-      height: 18px;
-      padding: 0 6px;
-      margin-left: 2px;
-      border-radius: 999px;
-      background: var(--aily-chat-viewer-badge-bg, rgba(97, 175, 239, 0.14));
-      color: var(--aily-chat-viewer-blockly-chip-fg, #8ec8ff);
-      font-size: 10px;
-      line-height: 1;
-      letter-spacing: 0.02em;
-      flex-shrink: 0;
-    }
-
-  }
 
   &.active {
     color: var(--aily-bg-active, #007acc) !important;

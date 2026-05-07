@@ -63,6 +63,7 @@ import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
+import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
@@ -96,6 +97,7 @@ export { ToolCallState };
     LoginComponent,
     AilyChatSettingsComponent,
     ChatInputPartHostComponent,
+    ChatContextToolbarComponent,
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',

@@ -50,6 +50,7 @@
             [sessionId]="vm.sessionId"
             [currentMode]="vm.currentMode"
             [currentModelName]="vm.currentModelName"
+            [currentModelChipLabel]="vm.currentModelChipLabel"
             [currentModelBillingLabel]="vm.currentModelBillingLabel"
             [turnModelName]="item.turnModelName"
             [turnModelBillingLabel]="item.turnModelBillingLabel || ''"
@@ -134,46 +135,18 @@
             </textarea>
           </div>
           <div class="btns">
-            <div class="btn ccenter" nz-tooltip nzTooltipPlacement="bottom"
-              [nzTooltipTitle]="'AILY_CHAT.ADD_CONTEXT' | translate" (click)="resourceManager.toggleAddList()">
-              <i class="fa-light fa-paperclip"></i>
-            </div>
-            @if(resourceManager.showAddList){
-            <div class="list-box">
-              <div class="btn2 ccenter" (click)="resourceManager.toggleAddList()" style="margin-top: -1px;">
-                <i class="fa-light fa-angle-left"></i>
-              </div>
-            </div>
-            <div class="btn2 ccenter " nz-tooltip [nzTooltipTitle]="'AILY_CHAT.ADD_FILE' | translate"
-              (click)="resourceManager.addFile()">
-              <i class="fa-light fa-file-plus"></i>
-            </div>
-            <div class="btn2 ccenter " nz-tooltip [nzTooltipTitle]="'AILY_CHAT.ADD_FOLDER' | translate"
-              (click)="resourceManager.addFolder()">
-              <i class="fa-light fa-folder-plus"></i>
-            </div>
-            <!-- <div class="btn2 ccenter " nz-tooltip [nzTooltipTitle]="'AILY_CHAT.ADD_WEBSITE' | translate"
-              (click)="addUrl()">
-              <i class="fa-light fa-globe-pointer"></i>
-            </div> -->
-            }
-            <!-- 模式选择 -->
-            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModeMenu($event)">
-              @if(vm.currentMode === 'agent') {
-              <i class="fa-light fa-user-astronaut"></i><span>{{ 'AILY_CHAT.MODE_AGENT' | translate }}</span>
-              } @else {
-              <i class="fa-light fa-comment-smile"></i><span>{{ 'AILY_CHAT.MODE_QA' | translate }}</span>
-              }
-            </div>
-            <!-- 模型选择 -->
-            @if(vm.modelMenuItems.length > 0) {
-            <div class="btn mode ccenter" (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)">
-              <i class="fa-light fa-star-christmas"></i><span>{{ vm.currentModelChipLabel }}</span>
-              @if(vm.currentModelBillingLabel) {
-              <span class="mini-tag">{{ vm.currentModelBillingLabel }}</span>
-              }
-            </div>
-            }
+            <aily-chat-context-toolbar
+              [showAddList]="resourceManager.showAddList"
+              [currentMode]="vm.currentMode"
+              [showModelChip]="vm.modelMenuItems.length > 0"
+              [modelChipLabel]="vm.currentModelChipLabel"
+              [modelBillingLabel]="vm.currentModelBillingLabel"
+              (toggleAddList)="resourceManager.toggleAddList()"
+              (addFile)="resourceManager.addFile()"
+              (addFolder)="resourceManager.addFolder()"
+              (modeClick)="switchShellCoordinator.toggleModeMenu($event)"
+              (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
+            />
             <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
             @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
             <div class="token-budget-indicator ccenter"

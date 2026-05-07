@@ -48,12 +48,7 @@
 
     @if (isEditing) {
       <!-- 编辑模式：模拟输入框样式 -->
-      <div
-        class="edit-input-box"
-        #editInputBox
-        (click)="$event.stopPropagation()"
-        (focusout)="onEditInputBoxFocusOut($event)"
-      >
+      <div class="edit-input-box" (click)="$event.stopPropagation()">
         @if (editResources.length > 0) {
           <div class="resource-list">
             @for (item of editResources; track $index) {
@@ -82,36 +77,19 @@
           </textarea>
         </div>
         <div class="edit-btns">
-          <div class="edit-btn ccenter" title="添加上下文" (click)="onEditToggleAddList()">
-            <i class="fa-light fa-paperclip"></i>
-          </div>
-          @if (showEditAddList) {
-            <div class="edit-list-box">
-              <div class="edit-btn2 ccenter" (click)="onEditToggleAddList()">
-                <i class="fa-light fa-angle-left"></i>
-              </div>
-            </div>
-            <div class="edit-btn2 ccenter" title="添加文件" (click)="onEditAddFileRequest()">
-              <i class="fa-light fa-file-plus"></i>
-            </div>
-            <div class="edit-btn2 ccenter" title="添加文件夹" (click)="onEditAddFolderRequest()">
-              <i class="fa-light fa-folder-plus"></i>
-            </div>
-          }
-          <!-- 模式选择 -->
-          <div class="edit-btn edit-mode-btn ccenter" (click)="editModeToggle.emit({ event: $event, type: 'mode' })">
-            @if (currentMode === 'agent') {
-              <i class="fa-light fa-user-astronaut"></i><span>Agent</span>
-            } @else {
-              <i class="fa-light fa-comment-smile"></i><span>Q&A</span>
-            }
-          </div>
-          <!-- 模型选择 -->
-          @if (currentModelName) {
-            <div class="edit-btn edit-mode-btn ccenter" (click)="editModelToggle.emit({ event: $event, type: 'model' })">
-              <i class="fa-light fa-star-christmas"></i><span>{{ currentModelName }}</span>
-            </div>
-          }
+          <aily-chat-context-toolbar
+            appearance="edit"
+            [showAddList]="showEditAddList"
+            [currentMode]="currentMode"
+            [showModelChip]="!!(currentModelChipLabel || currentModelName)"
+            [modelChipLabel]="currentModelChipLabel || currentModelName"
+            [modelBillingLabel]="currentModelBillingLabel"
+            (toggleAddList)="onEditToggleAddList()"
+            (addFile)="onEditAddFileRequest()"
+            (addFolder)="onEditAddFolderRequest()"
+            (modeClick)="editModeToggle.emit({ event: $event, type: 'mode' })"
+            (modelClick)="editModelToggle.emit({ event: $event, type: 'model' })"
+          />
           <!-- 发送/取消 -->
           <div class="edit-btn edit-cancel-btn ccenter" title="取消 (Esc)" (click)="onCancelEdit()">
             <i class="fa-light fa-xmark"></i>

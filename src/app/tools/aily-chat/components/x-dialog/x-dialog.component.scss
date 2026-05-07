@@ -672,10 +672,6 @@
 .dialog-box.editable {
   cursor: pointer;
   transition: background 0.15s;
-
-  &:hover {
-    background: var(--aily-chat-xdialog-editable-hover, var(--chat-bg-hover));
-  }
 }
 
 // ===== 编辑模式输入框（与主输入框样式一致） =====
@@ -783,16 +779,6 @@
       }
     }
 
-    .edit-mode-btn {
-      width: auto !important;
-      padding: 0 6px !important;
-
-      span {
-        margin-left: 5px;
-        font-size: 12px;
-      }
-    }
-
     .edit-cancel-btn {
       position: absolute;
       right: 32px;
@@ -809,35 +795,5 @@
       right: 0;
     }
 
-    .edit-list-box {
-      border-radius: 5px;
-      border: 1px solid var(--aily-chat-xdialog-edit-list-border, #ccc);
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 84px;
-      height: 28px;
-      z-index: 0;
-      pointer-events: none;
-      background: var(--aily-chat-xdialog-edit-list-bg, #3f3f3f);
-    }
-
-    .edit-btn2 {
-      width: 28px;
-      height: 28px;
-      font-size: 14px;
-      color: var(--aily-chat-xdialog-edit-btn2-fg, #ccc);
-      padding-top: 1px;
-      border-radius: 5px;
-      z-index: 999;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      &:hover {
-        color: var(--aily-chat-xdialog-edit-resource-name, #fff);
-      }
-    }
   }
 }

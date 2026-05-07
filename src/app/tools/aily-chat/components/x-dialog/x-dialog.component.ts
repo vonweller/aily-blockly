@@ -31,6 +31,7 @@ import {
 import { extractUserTurnResources, mergeUserTurnResources, parseUserTurnTextAndResources } from '../../helpers/chat-user-turn-context';
 import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
 import { ChatMessagePartsComponent } from './chat-message-parts.component';
+import { ChatContextToolbarComponent } from '../chat-context-toolbar/chat-context-toolbar.component';
 import type { TurnResponsePart, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
@@ -55,7 +56,15 @@ const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']
   templateUrl: './x-dialog.component.html',
   styleUrls: ['./x-dialog.component.scss'],
   standalone: true,
-  imports: [CommonModule, FormsModule, TranslateModule, NzToolTipModule, XMarkdownComponent, ChatMessagePartsComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    TranslateModule,
+    NzToolTipModule,
+    XMarkdownComponent,
+    ChatMessagePartsComponent,
+    ChatContextToolbarComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy {
@@ -98,6 +107,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
   @Input() currentMode = 'agent';
   @Input() currentModelName = '';
+  /** 与主输入区一致的模型展示文案（含推理档位等二级信息，如「模型 · Low」） */
+  @Input() currentModelChipLabel = '';
   @Input() currentModelBillingLabel = '';
   /** 该消息创建时使用的模型名称 */
   @Input() turnModelName = '';
@@ -115,7 +126,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
-  @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -578,26 +588,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     this.isEditing = true;
     // 下一帧再 focus，确保 @if (isEditing) 已渲染出 textarea
     setTimeout(() => this.editTextareaRef?.nativeElement?.focus(), 0);
-  }
-
-  /** 焦点离开编辑区域（且未进入子控件 / 模式与模型浮层菜单）时退出编辑 */
-  onEditInputBoxFocusOut(event: FocusEvent): void {
-    if (!this.isEditing) return;
-    const box = this.editInputBoxRef?.nativeElement;
-    if (!box) return;
-
-    const next = event.relatedTarget as Node | null;
-    if (next && box.contains(next)) return;
-
-    setTimeout(() => {
-      if (!this.isEditing) return;
-      const active = document.activeElement;
-      if (active && (box.contains(active) || active.closest('.mode-menu') || active.closest('.model-menu'))) {
-        return;
-      }
-      this.onCancelEdit();
-      this.cdr.markForCheck();
-    }, 0);
   }
 
   onCancelEdit(): void {

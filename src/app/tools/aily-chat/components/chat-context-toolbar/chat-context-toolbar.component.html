@@ -1,0 +1,51 @@
+<div
+  class="acc-clip ccenter"
+  nz-tooltip
+  nzTooltipPlacement="bottom"
+  [nzTooltipTitle]="'AILY_CHAT.ADD_CONTEXT' | translate"
+  (click)="toggleAddList.emit()"
+>
+  <i class="fa-light fa-paperclip"></i>
+</div>
+@if (showAddList) {
+  <div class="acc-expand-backdrop">
+    <div
+      class="acc-back ccenter"
+      [class.acc-back--composer]="appearance === 'composer'"
+      (click)="toggleAddList.emit()"
+    >
+      <i class="fa-light fa-angle-left"></i>
+    </div>
+  </div>
+  <div
+    class="acc-sub ccenter"
+    nz-tooltip
+    [nzTooltipTitle]="'AILY_CHAT.ADD_FILE' | translate"
+    (click)="addFile.emit()"
+  >
+    <i class="fa-light fa-file-plus"></i>
+  </div>
+  <div
+    class="acc-sub ccenter"
+    nz-tooltip
+    [nzTooltipTitle]="'AILY_CHAT.ADD_FOLDER' | translate"
+    (click)="addFolder.emit()"
+  >
+    <i class="fa-light fa-folder-plus"></i>
+  </div>
+}
+<div class="acc-chip ccenter" (click)="modeClick.emit($event)">
+  @if (currentMode === 'agent') {
+    <i class="fa-light fa-user-astronaut"></i><span>{{ 'AILY_CHAT.MODE_AGENT' | translate }}</span>
+  } @else {
+    <i class="fa-light fa-comment-smile"></i><span>{{ 'AILY_CHAT.MODE_QA' | translate }}</span>
+  }
+</div>
+@if (showModelChip) {
+  <div class="acc-chip ccenter" (click)="modelClick.emit($event)">
+    <i class="fa-light fa-star-christmas"></i><span>{{ modelChipLabel }}</span>
+    @if (modelBillingLabel) {
+      <span class="acc-mini-tag">{{ modelBillingLabel }}</span>
+    }
+  </div>
+}
