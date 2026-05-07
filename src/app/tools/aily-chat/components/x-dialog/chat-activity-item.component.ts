@@ -935,8 +935,8 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-detail-body {
-      margin-top: 6px;
-      padding: 8px 10px;
+      margin-top: 5px;
+      padding: 5px;
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-radius: 8px;
       background: rgba(255,255,255,0.025);
@@ -1175,6 +1175,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       display: flex;
       gap: 0;
       min-width: 0;
+      margin-bottom: 5px;
     }
 
     .cag-item-progress-message {
@@ -1220,11 +1221,11 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-body {
-      padding: 0 9px 8px;
+      padding: 5px;
     }
 
     .cag-item-tool-body + .cag-item-tool-body {
-      padding-top: 8px;
+      padding-top: 5px;
       border-top: 1px solid rgba(255,255,255,0.06);
     }
 
@@ -1258,7 +1259,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 6px;
       background: rgba(255,255,255,0.03);
-      padding: 8px 10px;
+      padding: 5px 5px;
     }
 
     .cag-item-invocation-args-title {
@@ -1291,7 +1292,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-invocation-output-group[data-group-kind='data'],
     .cag-item-invocation-output-group[data-group-kind='code'],
     .cag-item-invocation-output-group[data-group-kind='generic'] {
-      padding: 10px;
+      padding: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 8px;
       background: rgba(255,255,255,0.02);
@@ -1302,7 +1303,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 6px;
       background: rgba(255,255,255,0.03);
-      padding: 8px 10px;
+      padding: 5px 10px;
     }
 
     .cag-item-invocation-output[data-output-kind='terminal-command'],
