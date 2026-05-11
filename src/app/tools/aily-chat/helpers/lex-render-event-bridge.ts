@@ -26,6 +26,7 @@ import {
 } from './host-turn-response-state';
 import {
   cloneTurnResponseModelSidecar,
+  getTurnResponseResolvedModelName,
   withExplicitAgentSummaryPreview,
 } from './turn-response-response-model';
 
@@ -412,9 +413,7 @@ export class LexRenderEventBridge {
 }
 
 function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {
-  return typeof turn?.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
-    ? turn.responseModel.modelName.trim()
-    : undefined;
+  return getTurnResponseResolvedModelName(turn);
 }
 
 function toHostClearToPreviousToolInvocationReason(

@@ -34,6 +34,7 @@ import { createInteractionBudgetSnapshot, type InteractionBudgetSnapshot } from 
 import type { RequestQuotaSnapshot } from './request-quota-snapshot';
 import { RequestQuotaStateService } from './request-quota-state.service';
 import { ConfigService } from '../../../services/config.service';
+import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
@@ -323,10 +324,6 @@ export class ChatEngineService implements IChatContext {
       return '';
     }
 
-    if (this.currentModelReasoningEfforts.length > 0) {
-      return `${modelName} · ${this.currentReasoningEffortDisplayLabel}`;
-    }
-
     return modelName;
   }
 
@@ -341,7 +338,19 @@ export class ChatEngineService implements IChatContext {
   }
 
   private getSelectedDisplayModel(): ModelConfig | null {
-    return this.chatService.getActiveDisplayModel() ?? null;
+    const activeDisplayModel = this.chatService.getActiveDisplayModel() ?? null;
+    if (!activeDisplayModel) {
+      return null;
+    }
+
+    if (!isDefaultAutoPresetSelected(this.chatService.currentModel)) {
+      return activeDisplayModel;
+    }
+
+    return {
+      ...activeDisplayModel,
+      presetId: this.ailyChatConfigService.getDefaultModelPresetId(),
+    };
   }
 
   syncRegisteredAgentNames(agentNames: readonly string[]): void {

@@ -246,6 +246,12 @@
       font-size: 11px;
       flex-shrink: 0;
     }
+
+    &.menu-filter-row-global {
+      padding-top: 6px;
+      padding-bottom: 8px;
+      margin-bottom: 2px;
+    }
   }
 
   .menu-filter-input {

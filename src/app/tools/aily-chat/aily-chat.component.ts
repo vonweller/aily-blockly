@@ -396,9 +396,28 @@ export class AilyChatComponent implements OnDestroy {
     this.menuManager.toggleActionMenu(event, [...this.actionMenuItems]);
   }
 
+  toggleReasoningMenu(event: MouseEvent): void {
+    this.menuManager.toggleReasoningMenu(event, [...this.vm.currentReasoningEffortMenuItems]);
+  }
+
   handleActionMenuClick(item: { action?: string }): void {
     this.menuManager.showActionMenu = false;
     this.actionRegistry.runMenuAction(item);
+  }
+
+  handleReasoningMenuClick(item: { data?: { model?: unknown; modelConfiguration?: { key?: string; value: unknown } } }): void {
+    this.menuManager.showReasoningMenu = false;
+
+    const model = item?.data?.model;
+    const modelConfiguration = item?.data?.modelConfiguration;
+    if (!model || typeof modelConfiguration?.key !== 'string' || !modelConfiguration.key.trim()) {
+      return;
+    }
+
+    void this.engine.switchToModelConfiguration(model as Parameters<ChatEngineService['switchToModelConfiguration']>[0], {
+      key: modelConfiguration.key.trim(),
+      value: modelConfiguration.value,
+    });
   }
 
   setComposerFocusState(focused: boolean): void {

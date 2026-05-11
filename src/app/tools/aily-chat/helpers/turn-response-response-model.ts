@@ -6,6 +6,42 @@ export function normalizeTurnResponseSummaryPreview(summaryPreview: string | nul
     : undefined;
 }
 
+function normalizeOptionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
+    : undefined;
+}
+
+export function getTurnResponseResolvedModelName(
+  turn:
+    | {
+      responseModel?: { modelName?: string | null } | null;
+      response?: unknown;
+    }
+    | null
+    | undefined,
+): string | undefined {
+  const responseModelName = normalizeOptionalText(turn?.responseModel?.modelName);
+  if (responseModelName) {
+    return responseModelName;
+  }
+
+  const response = turn?.response as { continuation?: { diagnostics?: unknown } | null } | null | undefined;
+  const continuationDiagnostics = response?.continuation?.diagnostics;
+  if (!continuationDiagnostics || typeof continuationDiagnostics !== 'object') {
+    return undefined;
+  }
+
+  const usage = 'usage' in continuationDiagnostics ? continuationDiagnostics['usage'] : undefined;
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  return 'resolvedModel' in usage
+    ? normalizeOptionalText(usage['resolvedModel'])
+    : undefined;
+}
+
 export function cloneTurnResponseModelSidecar(
   responseModel: TurnResponseTurn['responseModel'] | undefined,
 ): TurnResponseTurn['responseModel'] | undefined {
@@ -13,12 +49,8 @@ export function cloneTurnResponseModelSidecar(
     return undefined;
   }
 
-  const modelName = typeof responseModel.modelName === 'string' && responseModel.modelName.trim()
-    ? responseModel.modelName.trim()
-    : undefined;
-  const modelBillingLabel = typeof responseModel.modelBillingLabel === 'string' && responseModel.modelBillingLabel.trim()
-    ? responseModel.modelBillingLabel.trim()
-    : undefined;
+  const modelName = normalizeOptionalText(responseModel.modelName);
+  const modelBillingLabel = normalizeOptionalText(responseModel.modelBillingLabel);
   const summaryPreview = normalizeTurnResponseSummaryPreview(responseModel.summaryPreview);
 
   if (!responseModel.slashCommand && !responseModel.followups && !summaryPreview && !modelName && !modelBillingLabel) {

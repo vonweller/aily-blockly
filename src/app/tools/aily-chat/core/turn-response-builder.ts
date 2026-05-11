@@ -7,6 +7,7 @@ import {
   toTurnResponseStatus,
 } from 'aily-lex/browser';
 
+import { getTurnResponseResolvedModelName } from '../helpers/turn-response-response-model';
 import { TurnResponseIncrementalBuilder } from './turn-response-stream-builder';
 import { buildTurnResponseTurn } from './turn-response-stream-contract';
 import { MAIN_AGENT_TYPE } from './agent-identifiers';
@@ -52,7 +53,7 @@ export function buildTurnResponsesFromSessionHistory(
           usage: turn.usage,
           createdAt: turn.createdAt,
           terminationReason: turn.terminationReason,
-          modelName: turn.responseModel?.modelName,
+          modelName: getTurnResponseResolvedModelName(turn),
           modelBillingLabel: turn.responseModel?.modelBillingLabel,
           quotaSnapshot: turn.responseModel?.quotaSnapshot,
         }

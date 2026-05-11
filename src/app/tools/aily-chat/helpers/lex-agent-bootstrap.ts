@@ -45,7 +45,7 @@ import {
   type IHostToolProvider,
   type IToolContribution,
 } from 'aily-lex/browser';
-import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
+import { getTurnResponseResolvedModelName, normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -1421,9 +1421,7 @@ function buildTurnResponseLexSessionSnapshot(
     const slashCommand = turn.responseModel?.slashCommand ?? persistedResponse.slashCommand;
     const followups = turn.responseModel?.followups ?? persistedResponse.followups;
     const summaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
-    const modelName = typeof turn.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
-      ? turn.responseModel.modelName.trim()
-      : undefined;
+    const modelName = getTurnResponseResolvedModelName(turn);
     const modelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
       ? turn.responseModel.modelBillingLabel.trim()
       : undefined;

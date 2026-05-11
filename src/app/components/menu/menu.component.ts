@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewChecked,
   Component,
   ElementRef,
   EventEmitter,
@@ -21,12 +22,17 @@ import { PlatformService } from '../../services/platform.service';
   templateUrl: './menu.component.html',
   styleUrl: './menu.component.scss',
 })
-export class MenuComponent {
+export class MenuComponent implements AfterViewChecked {
   @ViewChild('menuBox') menuBox: ElementRef;
   @ViewChild('submenuBox') submenuBox: ElementRef;
+  @ViewChild('globalFilterInput') globalFilterInput?: ElementRef<HTMLInputElement>;
   @ViewChildren('menuItem') menuItems: QueryList<ElementRef>;
 
   private _menuList: readonly any[] = [];
+  private _position: { x: number; y: number; anchorBottom?: number } = {
+    x: 2,
+    y: 40,
+  };
 
   @Input()
   set menuList(value: readonly any[]) {
@@ -38,14 +44,24 @@ export class MenuComponent {
     return this._menuList;
   }
 
-  @Input() position = {
-    x: 2,
-    y: 40,
-  };
+  @Input()
+  set position(value: { x: number; y: number; anchorBottom?: number }) {
+    this._position = value && typeof value.x === 'number' && typeof value.y === 'number'
+      ? value
+      : { x: 2, y: 40, anchorBottom: undefined };
+  }
+
+  get position(): { x: number; y: number; anchorBottom?: number } {
+    return this._position;
+  }
 
   @Input() width;
 
   @Input() maxHeight: number | null = null;
+
+  @Input() globalFilterPlaceholder = '';
+
+  @Input() focusGlobalFilterOnOpen = false;
 
   @Output() itemClickEvent = new EventEmitter();
 
@@ -59,6 +75,10 @@ export class MenuComponent {
 
   sectionCollapsedState: Record<string, boolean> = {};
   sectionFilterState: Record<string, string> = {};
+  sectionExpandedAnchorY: Record<string, number> = {};
+  globalFilterValue = '';
+  private pendingGlobalFilterFocus = false;
+  private pendingViewportAdjustment = false;
 
   // 添加子菜单显示状态管理
   activeSubmenuItem: IMenuItem | null = null;
@@ -84,6 +104,32 @@ export class MenuComponent {
   ngAfterViewInit(): void {
     document.addEventListener('click', this.handleDocumentClick);
     document.addEventListener('contextmenu', this.handleDocumentClick);
+    this.pendingGlobalFilterFocus = this.focusGlobalFilterOnOpen && !!this.globalFilterPlaceholder;
+
+    // Defer the first geometry correction until after the initial change-detection
+    // pass so the menu can align against its rendered height without triggering NG0100.
+    setTimeout(() => {
+      if (!this.menuBox?.nativeElement) {
+        return;
+      }
+
+      this.alignMenuPositionToAnchor();
+      this.adjustMenuPositionWithinViewport();
+    });
+  }
+
+  ngAfterViewChecked(): void {
+    if (this.pendingGlobalFilterFocus && this.globalFilterInput?.nativeElement) {
+      this.globalFilterInput.nativeElement.focus();
+      this.globalFilterInput.nativeElement.select();
+      this.pendingGlobalFilterFocus = false;
+    }
+
+    if (!this.pendingViewportAdjustment) {
+      return;
+    }
+
+    this.adjustMenuPositionWithinViewport();
   }
 
   ngOnDestroy(): void {
@@ -129,10 +175,19 @@ export class MenuComponent {
 
   get visibleMenuItems(): IMenuItem[] {
     const visibleItems: IMenuItem[] = [];
+    const globalFilter = this.getGlobalFilterValue();
 
     for (const item of this.menuList) {
       if (item.sep) {
         visibleItems.push(item);
+        continue;
+      }
+
+      if (this.isSectionFilter(item) && this.hasGlobalFilter()) {
+        continue;
+      }
+
+      if (globalFilter && !this.shouldKeepItemForGlobalFilter(item, globalFilter)) {
         continue;
       }
 
@@ -201,14 +256,45 @@ export class MenuComponent {
     return !this.sectionCollapsedState[sectionId];
   }
 
+  hasGlobalFilter(): boolean {
+    return this.globalFilterPlaceholder.trim().length > 0;
+  }
+
+  updateGlobalFilter(value: string): void {
+    this.globalFilterValue = typeof value === 'string' ? value : '';
+    this.pendingViewportAdjustment = true;
+  }
+
+  getGlobalFilterValue(): string {
+    return this.globalFilterValue.trim().toLowerCase();
+  }
+
   toggleSection(item: IMenuItem): void {
     const sectionId = this.getSectionId(item);
     if (!sectionId) {
       return;
     }
 
+    const isExpanding = !this.isSectionExpanded(sectionId);
+    if (isExpanding) {
+      this.reserveExpandedSectionViewport(sectionId);
+    } else {
+      this.restoreCollapsedSectionViewport(sectionId);
+    }
+
     this.sectionCollapsedState[sectionId] = !this.sectionCollapsedState[sectionId];
     this.activeSubmenuItem = null;
+
+    if (isExpanding) {
+      this.pendingViewportAdjustment = true;
+      return;
+    }
+
+    // Wait until the collapsed DOM height is rendered before re-checking the
+    // viewport, otherwise the stale expanded height pulls the menu upward.
+    setTimeout(() => {
+      this.adjustMenuPositionWithinViewport();
+    });
   }
 
   updateSectionFilter(sectionId: string, value: string): void {
@@ -251,6 +337,11 @@ export class MenuComponent {
       return true;
     }
 
+    const globalFilter = this.getGlobalFilterValue();
+    if (globalFilter) {
+      return this.matchesGlobalFilter(item, globalFilter);
+    }
+
     if (!this.isSectionExpanded(sectionId)) {
       return false;
     }
@@ -265,6 +356,162 @@ export class MenuComponent {
       .join(' ')
       .toLowerCase();
     return haystack.includes(filterValue);
+  }
+
+  private shouldKeepItemForGlobalFilter(item: IMenuItem, filterValue: string): boolean {
+    if (!filterValue) {
+      return true;
+    }
+
+    if (this.isSectionFilter(item)) {
+      return false;
+    }
+
+    if (this.isSectionToggle(item)) {
+      const sectionId = this.getSectionId(item);
+      return sectionId ? this.sectionHasGlobalFilterMatch(sectionId, filterValue) : true;
+    }
+
+    if (typeof item?.action === 'string' && item.action.startsWith('section-')) {
+      const sectionId = this.getSectionId(item);
+      return sectionId ? this.sectionHasGlobalFilterMatch(sectionId, filterValue) : true;
+    }
+
+    return this.matchesGlobalFilter(item, filterValue);
+  }
+
+  private sectionHasGlobalFilterMatch(sectionId: string, filterValue: string): boolean {
+    if (!sectionId) {
+      return false;
+    }
+
+    return this.menuList.some((candidate) => {
+      if (!candidate || candidate.sep || this.isSectionToggle(candidate) || this.isSectionFilter(candidate)) {
+        return false;
+      }
+
+      return this.getSectionId(candidate) === sectionId && this.matchesGlobalFilter(candidate, filterValue);
+    });
+  }
+
+  private matchesGlobalFilter(item: IMenuItem, filterValue: string): boolean {
+    if (!filterValue) {
+      return true;
+    }
+
+    const haystack = [item.name, item.text, item.tooltip]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(filterValue);
+  }
+
+  private reserveExpandedSectionViewport(sectionId: string): void {
+    if (!this.position || this.getGlobalFilterValue()) {
+      return;
+    }
+
+    const viewportPadding = 8;
+    const revealedHeight = this.estimateSectionRevealHeight(sectionId);
+    if (revealedHeight <= 0) {
+      return;
+    }
+
+    const currentTop = this.menuBox?.nativeElement
+      ? (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect().top
+      : this.position.y;
+    this.sectionExpandedAnchorY[sectionId] = currentTop;
+
+    this.position = {
+      ...this.position,
+      y: Math.max(viewportPadding, currentTop - revealedHeight),
+    };
+  }
+
+  private restoreCollapsedSectionViewport(sectionId: string): void {
+    if (!this.position || this.getGlobalFilterValue()) {
+      delete this.sectionExpandedAnchorY[sectionId];
+      return;
+    }
+
+    const anchorY = this.sectionExpandedAnchorY[sectionId];
+    delete this.sectionExpandedAnchorY[sectionId];
+    if (typeof anchorY !== 'number' || Number.isNaN(anchorY)) {
+      return;
+    }
+
+    this.position = {
+      ...this.position,
+      y: anchorY,
+    };
+  }
+
+  private estimateSectionRevealHeight(sectionId: string): number {
+    let height = 0;
+
+    for (const item of this.menuList) {
+      if (this.isSectionFilter(item) && this.getSectionId(item) === sectionId) {
+        height += 34;
+        continue;
+      }
+
+      if (this.isSectionScoped(item) && this.getSectionId(item) === sectionId) {
+        const filterValue = this.getSectionFilterValue(sectionId).trim().toLowerCase();
+        if (!filterValue || this.matchesGlobalFilter(item, filterValue)) {
+          height += 28;
+        }
+      }
+    }
+
+    return height;
+  }
+
+  private alignMenuPositionToAnchor(): void {
+    const anchorBottom = this.position?.anchorBottom;
+    if (typeof anchorBottom !== 'number' || Number.isNaN(anchorBottom) || !this.menuBox?.nativeElement) {
+      return;
+    }
+
+    const viewportPadding = 8;
+    const menuRect = (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect();
+    const anchoredTop = Math.max(viewportPadding, anchorBottom - menuRect.height);
+    if (anchoredTop === this.position.y) {
+      return;
+    }
+
+    this.position = {
+      ...this.position,
+      y: anchoredTop,
+    };
+  }
+
+  private adjustMenuPositionWithinViewport(): void {
+    if (!this.menuBox?.nativeElement || !this.position) {
+      this.pendingViewportAdjustment = false;
+      return;
+    }
+
+    const viewportPadding = 8;
+    const menuRect = (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect();
+    let nextTop = this.position.y;
+
+    const overflowBottom = menuRect.bottom - (window.innerHeight - viewportPadding);
+    if (overflowBottom > 0) {
+      nextTop = Math.max(viewportPadding, nextTop - overflowBottom);
+    }
+
+    if (menuRect.top < viewportPadding) {
+      nextTop = Math.max(nextTop, viewportPadding);
+    }
+
+    if (nextTop !== this.position.y) {
+      this.position = {
+        ...this.position,
+        y: nextTop,
+      };
+    }
+
+    this.pendingViewportAdjustment = false;
   }
 
   private trimSectionSeparators(items: IMenuItem[]): IMenuItem[] {

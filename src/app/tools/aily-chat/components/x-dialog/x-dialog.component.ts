@@ -243,8 +243,12 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
 
     return billingLabel
-      ? `当前模型: ${modelName}\n计费倍率: ${billingLabel}`
-      : `当前模型: ${modelName}\n计费倍率待配置`;
+      ? `当前模型: ${modelName}\n${this.isMultiplierBillingLabel(billingLabel) ? '计费倍率' : '计费信息'}: ${billingLabel}`
+      : `当前模型: ${modelName}\n计费信息待配置`;
+  }
+
+  private isMultiplierBillingLabel(label: string): boolean {
+    return /^\s*(?:x\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*x)\s*$/i.test(label);
   }
 
   get assistantTerminationLabel(): string | null {

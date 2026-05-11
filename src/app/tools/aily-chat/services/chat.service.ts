@@ -8,6 +8,7 @@ import { AilyChatConfigService, ModelConfigOption } from './aily-chat-config.ser
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ContextBudgetService } from './context-budget.service';
 import { AilyHost } from '../core/host';
+import { getTurnResponseResolvedModelName } from '../helpers/turn-response-response-model';
 
 // 使用 ModelConfigOption 作为统一的模型配置类型，保留 ModelConfig 别名以兼容旧代码
 export type ModelConfig = ModelConfigOption;
@@ -292,8 +293,8 @@ export class ChatService {
 
   private syncResolvedActiveModelFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
     for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
-      const modelName = turnResponses[index]?.responseModel?.modelName;
-      if (typeof modelName !== 'string' || !modelName.trim()) {
+      const modelName = getTurnResponseResolvedModelName(turnResponses[index]);
+      if (!modelName) {
         continue;
       }
 

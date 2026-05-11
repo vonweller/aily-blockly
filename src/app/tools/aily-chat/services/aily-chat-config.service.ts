@@ -8,6 +8,11 @@ import { AilyHost } from '../core/host';
 import { ChatAPI } from '../core/api-endpoints';
 import { AuthService } from '../../../services/auth.service';
 import {
+    applyAutoDiscountToBillingLabel,
+    formatBillingMultiplierLabel,
+    isDefaultAutoPresetSelected,
+} from '../helpers/model-billing-label';
+import {
     MAIN_AGENT_LEGACY_ALIAS,
     MAIN_AGENT_TYPE,
     normalizeAgentIdentifier,
@@ -1277,13 +1282,19 @@ export class AilyChatConfigService {
     }
 
     getModelBillingLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
+        const autoDiscountActive = isDefaultAutoPresetSelected(model);
+
         if (typeof model?.billingLabelOverride === 'string' && model.billingLabelOverride.trim()) {
-            return model.billingLabelOverride.trim();
+            return autoDiscountActive
+                ? applyAutoDiscountToBillingLabel(model.billingLabelOverride)
+                : model.billingLabelOverride.trim();
         }
 
         const canonicalModel = this.resolveCanonicalModelMetadata(model);
         if (typeof canonicalModel?.billingLabelOverride === 'string' && canonicalModel.billingLabelOverride.trim()) {
-            return canonicalModel.billingLabelOverride.trim();
+            return autoDiscountActive
+                ? applyAutoDiscountToBillingLabel(canonicalModel.billingLabelOverride)
+                : canonicalModel.billingLabelOverride.trim();
         }
 
         const multiplier = model?.billingMultiplier ?? canonicalModel?.billingMultiplier;
@@ -1291,10 +1302,10 @@ export class AilyChatConfigService {
             return undefined;
         }
 
-        const normalized = Number.isInteger(multiplier)
-            ? multiplier.toFixed(0)
-            : multiplier.toFixed(multiplier * 10 === Math.trunc(multiplier * 10) ? 1 : 2);
-        return `${normalized}x`;
+        const billingLabel = formatBillingMultiplierLabel(multiplier);
+        return autoDiscountActive
+            ? applyAutoDiscountToBillingLabel(billingLabel)
+            : billingLabel;
     }
 
     getModelMenuReasoningLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
@@ -1500,14 +1511,21 @@ export class AilyChatConfigService {
             lines.push(description);
         }
 
+        const canonicalModel = this.resolveCanonicalModelMetadata(model);
         const capabilityParts = this.getModelCapabilitySummaryParts({
             ...model,
             contextWindowTokens: typeof options?.maxContextTokens === 'number' && options.maxContextTokens > 0
                 ? options.maxContextTokens
                 : model.contextWindowTokens,
-        }, { includeBillingDescription: true });
+        });
         if (capabilityParts.length > 0) {
             lines.push(`能力: ${capabilityParts.join(' · ')}`);
+        }
+
+        const billingLabel = this.getModelBillingLabel(model);
+        const billingDescription = model.billingDescription || canonicalModel?.billingDescription;
+        if (billingDescription && billingDescription !== billingLabel) {
+            lines.push(billingDescription);
         }
 
         return lines.join('\n');
@@ -1757,7 +1775,21 @@ export class AilyChatConfigService {
     }
 
     private resolveUserVisiblePresetIds(): string[] {
-        return this.getExplicitUserVisiblePresetIds();
+        const explicitPresetIds = this.getExplicitUserVisiblePresetIds();
+        if (explicitPresetIds.length > 0) {
+            return explicitPresetIds;
+        }
+
+        const fallbackRemotePresetIds = Object.entries(this.remoteModelCatalog.modelPresets)
+            .filter(([, entry]) => entry.userVisible)
+            .map(([presetId]) => presetId);
+        if (fallbackRemotePresetIds.length > 0) {
+            return fallbackRemotePresetIds;
+        }
+
+        return CORE_MODEL_PRESET_OPTIONS
+            .filter(preset => preset.enabled)
+            .map(preset => preset.id);
     }
 
     private getExplicitUserVisiblePresetIds(): string[] {

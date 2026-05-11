@@ -13,6 +13,7 @@ import {
   type ComposerKeyAction,
   type ComposerLineBreakEdit,
 } from '../helpers/chat-composer-view';
+import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 import {
   AilyChatConfigService,
   type ModelPickerControlOption,
@@ -26,7 +27,6 @@ interface ModelMenuPresetEntry {
   readonly presetId: string;
   readonly sortName: string;
   readonly enabled: boolean;
-  readonly preset: ModelPresetOption;
   readonly item: IMenuItem;
 }
 
@@ -105,6 +105,7 @@ export class ChatViewService {
 
     const presetEntries = presets
       .map((preset) => {
+        const isDefaultPreset = preset.id === defaultPresetId;
         visiblePresetIds.add(preset.id);
         const model = this.ailyChatConfigService.resolvePresetModel(preset.id);
         if (!model) {
@@ -115,14 +116,13 @@ export class ChatViewService {
           presetId: preset.id,
           sortName: preset.name,
           enabled: preset.enabled,
-          preset,
           item: this.createModelMenuItem(model, currentModel, {
             description: preset.description,
             preferBillingMeta: true,
-            disabled: !preset.enabled,
-            disabledReason: preset.unavailableReason,
-            requiredTier: preset.requiredTier,
-            minimumClientVersion: preset.minimumClientVersion,
+            disabled: isDefaultPreset ? false : !preset.enabled,
+            disabledReason: isDefaultPreset ? undefined : preset.unavailableReason,
+            requiredTier: isDefaultPreset ? undefined : preset.requiredTier,
+            minimumClientVersion: isDefaultPreset ? undefined : preset.minimumClientVersion,
           }),
         } satisfies ModelMenuPresetEntry;
       })
@@ -134,7 +134,9 @@ export class ChatViewService {
       defaultPresetId,
       currentModel,
     );
-    const autoEntry = presetEntries.find(entry => entry.presetId === defaultPresetId);
+    const customModelEntries = this.getCustomModelMenuEntries(currentModel);
+    const autoEntry = presetEntries.find(entry => entry.presetId === defaultPresetId)
+      ?? this.getDefaultPresetMenuEntry(defaultPresetId, currentModel);
     const promotedEntries = this.sortModelMenuPresetEntries(
       [
         ...presetEntries.filter(entry => entry.presetId !== defaultPresetId && promotedPresetIds.has(entry.presetId)),
@@ -142,7 +144,10 @@ export class ChatViewService {
       ],
     );
     const otherEntries = this.sortModelMenuPresetEntries(
-      presetEntries.filter(entry => entry.presetId !== defaultPresetId && !promotedPresetIds.has(entry.presetId)),
+      [
+        ...presetEntries.filter(entry => entry.presetId !== defaultPresetId && !promotedPresetIds.has(entry.presetId)),
+        ...customModelEntries,
+      ],
     );
 
     const menuItems: IMenuItem[] = [];
@@ -154,8 +159,13 @@ export class ChatViewService {
       if (menuItems.length > 0) {
         menuItems.push({ sep: true });
       }
-      menuItems.push(this.createModelMenuSection('推荐模型', 'section-promoted-models'));
-      menuItems.push(...promotedEntries.map(entry => entry.item));
+      menuItems.push(...promotedEntries.map(entry => ({
+        ...entry.item,
+        extra: {
+          ...entry.item.extra,
+          section: 'promoted-models',
+        },
+      })));
     }
 
     if (otherEntries.length > 0) {
@@ -163,7 +173,6 @@ export class ChatViewService {
         menuItems.push({ sep: true });
       }
       menuItems.push(this.createModelMenuSectionToggle('其他模型', 'other-models'));
-      menuItems.push(this.createModelMenuSectionFilter('搜索模型', 'other-models'));
       menuItems.push(...otherEntries.map(entry => ({
         ...entry.item,
         extra: {
@@ -177,20 +186,34 @@ export class ChatViewService {
   }
 
   get currentReasoningEffortLabel(): string {
-    return this.ailyChatConfigService.getReasoningEffortLabel(this.chatService.currentModel?.reasoningEffort);
+    return this.ailyChatConfigService.getReasoningEffortLabel(
+      this.getConfiguredReasoningEffort(this.chatService.currentModel),
+    );
   }
 
   get currentReasoningEffortDisplayLabel(): string {
+    const currentAction = this.getCurrentReasoningEffortAction(this.chatService.currentModel);
+    if (currentAction) {
+      return this.normalizeConfigurationActionLabel(currentAction.label);
+    }
+
     return this.ailyChatConfigService.getReasoningEffortDisplayLabel(
-      this.ailyChatConfigService.resolveModelReasoningEffort(
-        this.chatService.currentModel,
-        this.chatService.currentModel?.reasoningEffort,
-      ),
+      this.getConfiguredReasoningEffort(this.chatService.currentModel),
     );
   }
 
   get hasReasoningEffortOptions(): boolean {
     return this.getReasoningEffortMenuItems(this.chatService.currentModel).length > 0;
+  }
+
+  get currentReasoningEffortMenuItems(): IMenuItem[] {
+    const currentModel = this.chatService.currentModel;
+    if (!currentModel) {
+      return [];
+    }
+
+    return this.getReasoningEffortMenuItems(currentModel)
+      .map((item) => this.createReasoningEffortItem(currentModel, item));
   }
 
   get firstAgentSuggestion(): string | undefined {
@@ -288,16 +311,11 @@ export class ChatViewService {
     },
   ): IMenuItem {
     const isCurrentModel = currentModel?.model === model.model && currentModel?.presetId === model.presetId;
-    const currentReasoningEffort = isCurrentModel
-      ? this.ailyChatConfigService.resolveModelReasoningEffort(model, currentModel?.reasoningEffort)
-      : undefined;
-    const reasoningItems = !options?.disabled
-      ? this.getReasoningEffortMenuItems(model)
-      : [];
-    const displayModel = isCurrentModel
+    const configuredReasoningEffort = this.getConfiguredReasoningEffort(model);
+    const displayModel = configuredReasoningEffort
       ? {
           ...model,
-          reasoningEffort: currentReasoningEffort,
+          reasoningEffort: configuredReasoningEffort,
         }
       : model;
 
@@ -312,25 +330,18 @@ export class ChatViewService {
       }),
       data: { model },
       hideChildrenArrow: true,
-      children: reasoningItems.length > 0
-        ? reasoningItems.map((item) => this.createReasoningEffortItem(model, item))
-        : undefined,
     };
   }
 
   private getReasoningEffortMenuItems(
     model: NonNullable<ChatService['currentModel']> | null | undefined,
   ) {
-    const modelId = typeof model?.presetId === 'string' && model.presetId.trim()
-      ? model.presetId.trim()
-      : typeof model?.model === 'string'
-        ? model.model.trim()
-        : '';
-    if (!model || !modelId) {
+    const modelId = this.getModelConfigurationId(model);
+    if (!model || !modelId || isDefaultAutoPresetSelected(model)) {
       return [];
     }
 
-    return this.languageModelsService.getModelConfigurationActions(modelId, { group: 'navigation' })
+    const schemaActions = this.languageModelsService.getModelConfigurationActions(modelId, { group: 'navigation' })
       .filter((group) => group.key === 'reasoningEffort')
       .flatMap((group) => group.actions)
       .filter((action) => typeof action.value === 'string')
@@ -338,6 +349,65 @@ export class ChatViewService {
         ...action,
         value: action.value as ReasoningEffortOption,
       }));
+
+    if (schemaActions.length > 0) {
+      return schemaActions;
+    }
+
+    const configuredReasoningEffort = this.getStoredOrDefaultReasoningEffort(model);
+    return this.ailyChatConfigService.getSupportedReasoningEfforts(model)
+      .map((value) => ({
+        id: `fallback.reasoningEffort.${value}`,
+        key: 'reasoningEffort',
+        label: this.ailyChatConfigService.getReasoningEffortDisplayLabel(value),
+        checked: value === configuredReasoningEffort,
+        value,
+      }));
+  }
+
+  private getModelConfigurationId(
+    model: NonNullable<ChatService['currentModel']> | null | undefined,
+  ): string {
+    return typeof model?.presetId === 'string' && model.presetId.trim()
+      ? model.presetId.trim()
+      : typeof model?.model === 'string'
+        ? model.model.trim()
+        : '';
+  }
+
+  private getCurrentReasoningEffortAction(
+    model: NonNullable<ChatService['currentModel']> | null | undefined,
+  ) {
+    return this.getReasoningEffortMenuItems(model).find((item) => item.checked);
+  }
+
+  private getConfiguredReasoningEffort(
+    model: NonNullable<ChatService['currentModel']> | null | undefined,
+  ): ReasoningEffortOption | undefined {
+    const checkedAction = this.getCurrentReasoningEffortAction(model);
+    if (checkedAction) {
+      return checkedAction.value;
+    }
+
+    return this.getStoredOrDefaultReasoningEffort(model);
+  }
+
+  private getStoredOrDefaultReasoningEffort(
+    model: NonNullable<ChatService['currentModel']> | null | undefined,
+  ): ReasoningEffortOption | undefined {
+    const modelId = this.getModelConfigurationId(model);
+    const configuredReasoningEffort = modelId
+      ? this.languageModelsService.getModelConfiguration(modelId)?.['reasoningEffort']
+      : undefined;
+    if (typeof configuredReasoningEffort === 'string') {
+      return configuredReasoningEffort as ReasoningEffortOption;
+    }
+
+    return this.ailyChatConfigService.resolveModelReasoningEffort(model, model?.reasoningEffort);
+  }
+
+  private normalizeConfigurationActionLabel(label: string): string {
+    return label.replace(/\s*\(default\)$/i, '');
   }
 
   private buildPresetTooltipDescription(options?: {
@@ -459,7 +529,6 @@ export class ChatViewService {
           presetId,
           sortName,
           enabled: preset?.enabled ?? true,
-          preset: preset ?? { id: presetId, name: sortName, enabled: true },
           item,
         });
         continue;
@@ -470,7 +539,6 @@ export class ChatViewService {
           presetId,
           sortName,
           enabled: false,
-          preset: preset ?? { id: presetId, name: sortName, enabled: false },
           item: this.createUnavailableModelMenuItem(controlEntry, {
             description: preset?.description,
             disabledReason: preset?.unavailableReason ?? this.resolveSyntheticUnavailableReason(controlEntry),
@@ -482,6 +550,43 @@ export class ChatViewService {
     }
 
     return syntheticEntries;
+  }
+
+  private getCustomModelMenuEntries(
+    currentModel: NonNullable<ChatService['currentModel']> | null,
+  ): ModelMenuPresetEntry[] {
+    return this.ailyChatConfigService.getEnabledModels()
+      .filter(model => model.isCustom)
+      .map((model) => ({
+        presetId: model.model,
+        sortName: model.name,
+        enabled: model.enabled,
+        item: this.createModelMenuItem(model, currentModel, {
+          description: model.description,
+        }),
+      }));
+  }
+
+  private getDefaultPresetMenuEntry(
+    defaultPresetId: string,
+    currentModel: NonNullable<ChatService['currentModel']> | null,
+  ): ModelMenuPresetEntry | undefined {
+    const defaultPreset = this.ailyChatConfigService.getModelPresetById(defaultPresetId);
+    const defaultModel = this.ailyChatConfigService.resolvePresetModel(defaultPresetId);
+    if (!defaultModel) {
+      return undefined;
+    }
+
+    return {
+      presetId: defaultPresetId,
+      sortName: defaultPreset?.name ?? defaultModel.name,
+      enabled: true,
+      item: this.createModelMenuItem(defaultModel, currentModel, {
+        description: defaultPreset?.description,
+        preferBillingMeta: true,
+        disabled: false,
+      }),
+    };
   }
 
   private createUnavailableModelMenuItem(
@@ -520,11 +625,12 @@ export class ChatViewService {
     });
   }
 
-  private createModelMenuSection(name: string, action: string): IMenuItem {
+  private createModelMenuSection(name: string, action: string, sectionId?: string): IMenuItem {
     return {
       name,
       action,
       disabled: true,
+      extra: sectionId ? { sectionId } : undefined,
     };
   }
 

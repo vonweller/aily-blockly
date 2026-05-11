@@ -214,6 +214,11 @@
               } -->
             </div>
             }
+            @if(vm.hasReasoningEffortOptions && vm.currentReasoningEffortMenuItems.length > 0) {
+            <div class="btn mode ccenter reasoning-toggle" (click)="toggleReasoningMenu($event)">
+              <span class="reasoning-label">{{ vm.currentReasoningEffortDisplayLabel }}</span>
+            </div>
+            }
             <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
             @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
             <div class="token-budget-indicator ccenter"
@@ -390,13 +395,18 @@
 }
 
 @if(menuManager.showModelMenu){
-<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" (closeEvent)="menuManager.closeAll()"
+<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="320" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuSubItemClick($event)"></app-menu>
 }
 
 @if(menuManager.showActionMenu){
 <app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
+}
+
+@if(menuManager.showReasoningMenu){
+<app-menu class="reasoning-menu" [menuList]="vm.currentReasoningEffortMenuItems" [position]="menuManager.reasoningMenuPosition" [width]="220" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="handleReasoningMenuClick($event)"></app-menu>
 }
 
 

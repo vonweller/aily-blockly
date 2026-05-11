@@ -595,6 +595,20 @@
 
   }
 
+  &.mode.reasoning-toggle {
+    justify-content: center;
+    gap: 0;
+
+    > span:not(.mini-tag),
+    .reasoning-label {
+      margin-left: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+  }
+
   &.active {
     color: #007acc !important;
     background: rgba(0, 122, 204, 0.1);

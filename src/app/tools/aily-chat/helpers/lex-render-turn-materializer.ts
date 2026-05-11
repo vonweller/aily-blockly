@@ -4,6 +4,7 @@ import { toTurnResponseStatus } from 'aily-lex/browser';
 
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import { getTurnResponseParticipant } from '../core/turn-response-stream-contract';
+import { getTurnResponseResolvedModelName } from './turn-response-response-model';
 
 type LexRenderTurnMaterializerContext = Pick<IAgentLifecycle, 'isCancelled' | 'currentMessageSource'>;
 
@@ -49,7 +50,7 @@ export class LexRenderTurnMaterializer {
           usage: snapshotTurn.usage,
           createdAt: snapshotTurn.createdAt,
           terminationReason: snapshotTurn.terminationReason,
-          modelName: snapshotTurn.responseModel?.modelName,
+          modelName: getTurnResponseResolvedModelName(snapshotTurn),
           modelBillingLabel: snapshotTurn.responseModel?.modelBillingLabel,
           quotaSnapshot: snapshotTurn.responseModel?.quotaSnapshot,
         }

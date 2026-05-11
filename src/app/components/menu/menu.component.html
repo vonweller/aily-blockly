@@ -1,6 +1,19 @@
 <div class="menu-container">
   <div class="menu-box bborder sscroll" #menuBox
     [ngStyle]="{ left: position.x + 'px', top: position.y + 'px', 'width': width ? width + 'px' : 'auto', 'max-height': maxHeight ? maxHeight + 'px' : 'none', 'overflow-y': maxHeight ? 'auto' : 'visible' }">
+    @if(hasGlobalFilter()) {
+    <div class="menu-filter-row menu-filter-row-global">
+      <i class="fa-light fa-magnifying-glass"></i>
+      <input
+        #globalFilterInput
+        type="text"
+        class="menu-filter-input"
+        [value]="globalFilterValue"
+        [placeholder]="globalFilterPlaceholder"
+        (click)="$event.stopPropagation()"
+        (input)="updateGlobalFilter($any($event.target).value)" />
+    </div>
+    }
     @for (item of visibleMenuItems; track $index) {
     @if (item.sep) {
     <div class="sep"></div>

@@ -53,7 +53,9 @@ interface ChatViewStateLike {
   readonly agentSuggestions: readonly string[];
   readonly modeMenuItems: IMenuItem[];
   readonly modelMenuItems: IMenuItem[];
+  readonly currentReasoningEffortMenuItems: IMenuItem[];
   readonly currentReasoningEffortLabel: string;
+  readonly currentReasoningEffortDisplayLabel: string;
   readonly hasReasoningEffortOptions: boolean;
 }
 
@@ -135,7 +137,7 @@ export class ChatComponentViewModel {
   }
 
   get currentReasoningEffortDisplayLabel(): string {
-    return this.deps.engine.currentReasoningEffortDisplayLabel;
+    return this.deps.viewState.currentReasoningEffortDisplayLabel;
   }
 
   get currentModelReasoningEfforts(): readonly string[] {
@@ -144,6 +146,10 @@ export class ChatComponentViewModel {
 
   get currentModelChipLabel(): string {
     return this.deps.engine.currentModelChipLabel;
+  }
+
+  get currentReasoningEffortMenuItems(): IMenuItem[] {
+    return this.deps.viewState.currentReasoningEffortMenuItems;
   }
 
   get currentModelTooltip(): string {
