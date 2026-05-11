@@ -24,6 +24,7 @@ import {
   inject,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatPart, ConfirmationPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
@@ -32,6 +33,7 @@ import {
   buildPrimaryActivitySummary,
   buildSubagentActivityItems,
   buildActivityGroupPresentation,
+  buildInvocationDetailDisplay,
   buildTerminalActivityDisplayItem,
   buildToolActivityDisplayItem,
   buildResolvedApprovalSummary,
@@ -43,7 +45,10 @@ import {
 } from './chat-activity-group-projection';
 import { ChatActivityListComponent } from './chat-activity-list.component';
 import type { ActivityGroupDisplayItem, ActivityGroupHeaderDisplayData } from './chat-activity-group.types';
-import type { DetailSectionDescriptor } from './x-aily-state-viewer/activity-detail-items';
+import {
+  buildTurnResponseContinuationDetailSections,
+  type DetailSectionDescriptor,
+} from './x-aily-state-viewer/activity-detail-items';
 
 @Component({
   selector: 'aily-chat-activity-group',
@@ -359,6 +364,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   @Input() parts: readonly ChatPart[] = [];
   @Input() doing = false;
   @Input() sessionId = '';
+  @Input() turnResponse: TurnResponseTurn | null = null;
   @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
 
   expanded = false;
@@ -375,7 +381,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   showDetailViewportBottomFade = false;
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['parts'] || changes['doing']) {
+    if (changes['parts'] || changes['doing'] || changes['turnResponse']) {
       this._refresh();
     }
   }
@@ -433,8 +439,54 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
     const settledState = pres.state === 'doing' ? 'done' : pres.state;
     this.groupState = this.doing ? 'doing' : settledState;
     this.groupHeader = pres.header;
-    this.displayItems = this.parts.flatMap((part, i) => this._buildItems(part, i));
+    this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i)));
     this._syncExpandedState();
+  }
+
+  private _attachTurnResponseContinuation(items: ActivityGroupDisplayItem[]): ActivityGroupDisplayItem[] {
+    const continuationSections = buildTurnResponseContinuationDetailSections({
+      id: this.turnResponse?.turnId,
+      continuation: this.turnResponse?.response?.continuation,
+    });
+    if (continuationSections.length === 0) {
+      return items;
+    }
+
+    let targetIndex = -1;
+    for (let index = items.length - 1; index >= 0; index--) {
+      const item = items[index];
+      if (item.kind === 'activity' && item.detailKind !== 'subagent') {
+        targetIndex = index;
+        break;
+      }
+    }
+
+    if (targetIndex < 0) {
+      return items;
+    }
+
+    const target = items[targetIndex];
+    const detailSections = [...(target.detailSections ?? []), ...continuationSections];
+    const detailKind = target.detailKind
+      ?? (target.headerKind === 'tool' || target.invocationDetail || target.approval ? 'invocation' : 'state');
+
+    return items.map((item, index) => {
+      if (index !== targetIndex) {
+        return item;
+      }
+
+      return {
+        ...target,
+        detailSections,
+        detailKind,
+        invocationDetail: detailKind === 'invocation'
+          ? buildInvocationDetailDisplay({
+              detailSections,
+              postConfirmation: !!target.approvalSummary,
+            })
+          : target.invocationDetail,
+      };
+    });
   }
 
   private _syncExpandedState(): void {

@@ -44,25 +44,38 @@ export function extractUserTurnRoutingMetadata(
     if (!subCommandMatch) {
       return {
         agentId,
+        explicitAgentInvocation: {
+          kind: 'explicit-agent-invocation',
+          targetAgent: agentId,
+          strippedPrompt: afterAgent,
+          originalText: trimmed,
+          source: 'mention',
+        },
         parsedParts: [{ kind: 'agent', agentId, text: `@${agentId}`, promptText: '' }],
       };
     }
 
     const command = resolveCommand(subCommandMatch[1], 'subcommand', agentId);
-    return command
-      ? {
-        agentId,
-        command,
-        commandKind: 'subcommand',
-        parsedParts: [
-          { kind: 'agent', agentId, text: `@${agentId}`, promptText: '' },
-          { kind: 'subcommand', command, text: `/${command.name}`, promptText: '' },
-        ],
-      }
-      : {
-        agentId,
-        parsedParts: [{ kind: 'agent', agentId, text: `@${agentId}`, promptText: '' }],
-      };
+    const strippedPrompt = afterAgent.slice(subCommandMatch[0].length).trimStart();
+    return {
+      agentId,
+      explicitAgentInvocation: {
+        kind: 'explicit-agent-invocation',
+        targetAgent: agentId,
+        strippedPrompt,
+        originalText: trimmed,
+        source: 'mention',
+        childRequest: {
+          command,
+          commandKind: 'slash',
+          parsedParts: [{ kind: 'slash', command, text: `/${command.name}`, promptText: `/${command.name}` }],
+        },
+      },
+      parsedParts: [
+        { kind: 'agent', agentId, text: `@${agentId}`, promptText: '' },
+        { kind: 'subcommand', command, text: `/${command.name}`, promptText: '' },
+      ],
+    };
   }
 
   const slashCommandMatch = /^\/([^\s/]+)(?=\s|$)/.exec(trimmed);

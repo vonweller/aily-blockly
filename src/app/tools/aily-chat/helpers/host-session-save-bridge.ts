@@ -20,32 +20,10 @@ import {
   hasHostResponseConversationContent,
 } from './host-turn-response-state';
 import { createChatMessageHandle } from './chat-message-handle';
-
-function cloneTurnResponseModelSidecar(
-  responseModel: TurnResponseTurn['responseModel'] | undefined,
-): TurnResponseTurn['responseModel'] | undefined {
-  if (!responseModel) {
-    return undefined;
-  }
-
-  const modelName = typeof responseModel.modelName === 'string' && responseModel.modelName.trim()
-    ? responseModel.modelName.trim()
-    : undefined;
-  const modelBillingLabel = typeof responseModel.modelBillingLabel === 'string' && responseModel.modelBillingLabel.trim()
-    ? responseModel.modelBillingLabel.trim()
-    : undefined;
-
-  if (!responseModel.slashCommand && !responseModel.followups && !modelName && !modelBillingLabel) {
-    return undefined;
-  }
-
-  return {
-    ...(responseModel.slashCommand ? { slashCommand: { ...responseModel.slashCommand } } : {}),
-    ...(responseModel.followups ? { followups: responseModel.followups.map((followup: TurnResponseFollowup) => ({ ...followup })) } : {}),
-    ...(modelName ? { modelName } : {}),
-    ...(modelBillingLabel ? { modelBillingLabel } : {}),
-  };
-}
+import {
+  cloneTurnResponseModelSidecar,
+  withExplicitAgentSummaryPreview,
+} from './turn-response-response-model';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentModel'>
@@ -449,7 +427,8 @@ function normalizePersistedSlashCommand(
 }
 
 function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
-  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
+  const normalizedTurn = withExplicitAgentSummaryPreview(turn, { allowSubagentPartFallback: true });
+  const responseModel = cloneTurnResponseModelSidecar(normalizedTurn.responseModel);
   const {
     slashCommand: _slashCommand,
     responseId: _responseId,
@@ -461,27 +440,27 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
     timeSpentWaiting: _timeSpentWaiting,
     completionTokens: _completionTokens,
     ...responseWithoutPersistedData
-  } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData;
+  } = normalizedTurn.response as TurnResponseTurn['response'] & PersistedHostResponseData;
 
   return {
-    ...turn,
-    request: { ...turn.request },
-    rounds: [...turn.rounds],
-    ...(turn.usage ? { usage: { ...turn.usage } } : {}),
+    ...normalizedTurn,
+    request: { ...normalizedTurn.request },
+    rounds: [...normalizedTurn.rounds],
+    ...(normalizedTurn.usage ? { usage: { ...normalizedTurn.usage } } : {}),
     response: {
       ...responseWithoutPersistedData,
-      ...(turn.response.usedContext
+      ...(normalizedTurn.response.usedContext
         ? {
           usedContext: {
-            ...turn.response.usedContext,
-            documents: turn.response.usedContext.documents.map(document => ({
+            ...normalizedTurn.response.usedContext,
+            documents: normalizedTurn.response.usedContext.documents.map(document => ({
               ...document,
               ranges: document.ranges.map(range => ({ ...range })),
             })),
           },
         }
         : {}),
-      contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
+      contentReferences: (normalizedTurn.response.contentReferences ?? []).map(reference => ({
         ...reference,
         ...(reference.options
           ? {
@@ -493,9 +472,9 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
           }
           : {}),
       })),
-      codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
-      progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: [...turn.response.parts],
+      codeCitations: (normalizedTurn.response.codeCitations ?? []).map(citation => ({ ...citation })),
+      progressMessages: (normalizedTurn.response.progressMessages ?? []).map(message => ({ ...message })),
+      parts: [...normalizedTurn.response.parts],
     },
     ...(responseModel ? { responseModel } : {}),
   };

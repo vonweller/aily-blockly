@@ -1,6 +1,11 @@
 import type { ChatPartStore } from '../core/chat-part-store';
+import type { Observable } from 'rxjs';
 import type { ModelConfig } from '../services/chat.service';
+import type { AuthQuotaSnapshot } from '../services/auth-quota-snapshot';
+import type { ChatInputNotice } from '../services/chat-input-notice';
 import type { ContextBudgetSnapshot } from '../services/context-budget-snapshot';
+import type { InteractionBudgetSnapshot } from '../services/interaction-budget-snapshot';
+import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
 import type { HostRequestModel } from './host-turn-response-state';
@@ -25,8 +30,14 @@ interface ChatEngineViewLike {
   readonly currentModelChipLabel: string;
   readonly currentModelTooltip: string;
   readonly currentModelBillingLabel: string | undefined;
-  readonly contextBudget$: unknown;
+  readonly contextBudget$: Observable<ContextBudgetSnapshot>;
+  readonly authQuotaSnapshot$: Observable<AuthQuotaSnapshot | null>;
+  readonly chatInputNotice$: Observable<ChatInputNotice | null>;
+  readonly authQuotaExhausted: boolean;
+  readonly requestQuotaSnapshot$: Observable<RequestQuotaSnapshot | null>;
   readonly contextBudgetSnapshot: ContextBudgetSnapshot | null;
+  readonly interactionBudgetSnapshot: InteractionBudgetSnapshot | null;
+  readonly requestQuotaSnapshot: RequestQuotaSnapshot | null;
   readonly debug: boolean;
   readonly prjPath: string;
   readonly prjRootPath: string;
@@ -143,12 +154,36 @@ export class ChatComponentViewModel {
     return this.deps.engine.currentModelBillingLabel;
   }
 
-  get contextBudget$(): unknown {
+  get contextBudget$(): Observable<ContextBudgetSnapshot> {
     return this.deps.engine.contextBudget$;
+  }
+
+  get authQuotaSnapshot$(): Observable<AuthQuotaSnapshot | null> {
+    return this.deps.engine.authQuotaSnapshot$;
+  }
+
+  get chatInputNotice$(): Observable<ChatInputNotice | null> {
+    return this.deps.engine.chatInputNotice$;
+  }
+
+  get authQuotaExhausted(): boolean {
+    return this.deps.engine.authQuotaExhausted;
+  }
+
+  get requestQuotaSnapshot$(): Observable<RequestQuotaSnapshot | null> {
+    return this.deps.engine.requestQuotaSnapshot$;
   }
 
   get contextBudgetSnapshot(): ContextBudgetSnapshot | null {
     return this.deps.engine.contextBudgetSnapshot;
+  }
+
+  get interactionBudgetSnapshot(): InteractionBudgetSnapshot | null {
+    return this.deps.engine.interactionBudgetSnapshot;
+  }
+
+  get requestQuotaSnapshot(): RequestQuotaSnapshot | null {
+    return this.deps.engine.requestQuotaSnapshot;
   }
 
   get debug(): boolean {

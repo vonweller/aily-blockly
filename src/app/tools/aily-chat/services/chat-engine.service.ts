@@ -19,6 +19,7 @@ import { NzMessageService } from 'ng-zorro-antd/message';
 import { ChatService, ChatTextOptions, ModelConfig } from './chat.service';
 import { McpService } from './mcp.service';
 import { AilyChatConfigService } from './aily-chat-config.service';
+import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatHistoryService } from './chat-history.service';
 import { MAIN_AGENT_TYPE } from '../core/agent-identifiers';
 import { RepetitionDetectionService } from './repetition-detection.service';
@@ -26,7 +27,12 @@ import { ContextBudgetService } from './context-budget.service';
 import { ContextBudgetViewService } from './context-budget-view.service';
 import { ChatViewService } from './chat-view.service';
 import { ChatRuntimeInteractionHostService } from './chat-runtime-interaction-host.service';
+import { AuthQuotaStateService, readAuthQuotaStateSnapshot, type AuthQuotaInfo } from './auth-quota-state.service';
+import { ChatInputNoticeStateService } from './chat-input-notice-state.service';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
+import { createInteractionBudgetSnapshot, type InteractionBudgetSnapshot } from './interaction-budget-snapshot';
+import type { RequestQuotaSnapshot } from './request-quota-snapshot';
+import { RequestQuotaStateService } from './request-quota-state.service';
 import { ConfigService } from '../../../services/config.service';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
@@ -38,6 +44,7 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
+import type { TurnRequest } from 'aily-lex/browser';
 import { lexGenerateTitle } from '../core/lex-endpoint';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
@@ -125,6 +132,10 @@ export class ChatEngineService implements IChatContext {
     showAiWritingNotice: (isWaiting) => this.showAiWritingNotice(isWaiting),
     handleTaskAction: (event) => this.handleTaskAction(event),
     flushPendingAutoSend: () => this.flushPendingAutoSend(),
+    syncAuthQuotaState: () => this.authQuotaStateService.syncAuthSnapshotFromHost(),
+    refreshRequestQuotaState: () => this.refreshRequestQuotaState(),
+    clearAuthQuotaState: () => this.authQuotaStateService.clear(),
+    clearRequestQuotaState: () => this.requestQuotaStateService.clear(),
   });
   private readonly externalInputCoordinator = new ChatExternalInputCoordinator(this, {
     retryLastAction: () => this.retryLastAction(),
@@ -223,6 +234,11 @@ export class ChatEngineService implements IChatContext {
 
   replaceSharedHostProjectionState(state: HostTurnResponseState | null): void {
     this.liveHostRequestGraphCache.replaceState(state);
+    this.acceptLiveRequestQuotaState();
+  }
+
+  restoreSharedHostProjectionState(state: HostTurnResponseState | null): void {
+    this.liveHostRequestGraphCache.replaceState(state);
   }
 
   private voteResponse(target: DialogTurnContext | null | undefined, vote: HostResponseVoteDirection): void {
@@ -267,6 +283,7 @@ export class ChatEngineService implements IChatContext {
 
   // ==================== 订阅 ====================
   messageSubscription: any;
+  private requestQuotaStateSubscription: Subscription | null = null;
 
   // ==================== 外部引用 ====================
   private chatTextareaRef: ElementRef | null = null;
@@ -324,7 +341,7 @@ export class ChatEngineService implements IChatContext {
   }
 
   private getSelectedDisplayModel(): ModelConfig | null {
-    return this.chatService.currentModel ?? this.chatService.getActiveDisplayModel() ?? null;
+    return this.chatService.getActiveDisplayModel() ?? null;
   }
 
   syncRegisteredAgentNames(agentNames: readonly string[]): void {
@@ -339,6 +356,7 @@ export class ChatEngineService implements IChatContext {
     if (!value) {
       this.aiWriting = false;
       AilyHost.get().blockly.aiWaitWriting = false;
+      void this.refreshRequestQuotaState();
     }
   }
 
@@ -348,8 +366,24 @@ export class ChatEngineService implements IChatContext {
 
   get contextBudget$() { return this.contextBudgetViewService?.budget$; }
 
+  get authQuotaSnapshot$() { return this.authQuotaStateService.authQuotaSnapshot$; }
+
+  get chatInputNotice$() { return this.chatInputNoticeStateService.inputNotice$; }
+
+  get authQuotaExhausted() { return this.authQuotaStateService.quotaExhausted; }
+
+  get requestQuotaSnapshot$() { return this.requestQuotaStateService.requestQuotaSnapshot$; }
+
   get contextBudgetSnapshot(): ContextBudgetSnapshot | null {
     return this.contextBudgetViewService?.getSnapshot() ?? null;
+  }
+
+  get interactionBudgetSnapshot(): InteractionBudgetSnapshot | null {
+    return createInteractionBudgetSnapshot(this.hostResponseProjection?.turnResponses ?? []);
+  }
+
+  get requestQuotaSnapshot(): RequestQuotaSnapshot | null {
+    return this.requestQuotaStateService.getRequestQuotaSnapshot();
   }
 
   private createMessageDisplayContext(): ConstructorParameters<typeof MessageDisplayHelper>[0] {
@@ -472,15 +506,18 @@ export class ChatEngineService implements IChatContext {
       get editCheckpointService() { return thisEngine.editCheckpointService; },
       get mcpService() { return thisEngine.mcpService; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       get resourceManager() { return thisEngine.resourceManager; },
       get message() { return thisEngine.message; },
       get translate() { return thisEngine.translate; },
       get interaction() { return thisEngine.interaction; },
       get lexStream() { return thisEngine.lexStream; },
+      resumeRestoredInteraction: (content, interactionAction) => thisEngine.resumeRestoredInteraction(content, interactionAction),
       send: (sender, content, clear) => this.send(sender, content, clear),
       get session() { return thisEngine.session; },
       get hostRequestModel() { return thisEngine.hostRequestModel; },
       get hostResponseProjection() { return thisEngine.hostResponseProjection; },
+      restoreSharedHostProjectionState: (state) => this.restoreSharedHostProjectionState(state),
       replaceSharedHostProjectionState: (state) => this.replaceSharedHostProjectionState(state),
     };
   }
@@ -498,6 +535,7 @@ export class ChatEngineService implements IChatContext {
       get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       handleToolApproval: request => this.handleToolApproval(request),
       get lexStream() { return thisEngine.lexStream; },
+      openSettings: () => this.openSettings(),
       get editCheckpointService() { return thisEngine.editCheckpointService; },
       get ngZone() { return thisEngine.ngZone; },
       get message() { return thisEngine.message; },
@@ -590,6 +628,7 @@ export class ChatEngineService implements IChatContext {
       get chatService() { return thisEngine.chatService; },
       get conversationMessages() { return thisEngine.conversationMessages; },
       get contextBudgetService() { return thisEngine.contextBudgetService; },
+      get languageModelsService() { return thisEngine.languageModelsService; },
       get message() { return thisEngine.message; },
       get lexStream() { return thisEngine.lexStream; },
     };
@@ -613,11 +652,14 @@ export class ChatEngineService implements IChatContext {
     public chatService: ChatService,
     public mcpService: McpService,
     public ailyChatConfigService: AilyChatConfigService,
+    public languageModelsService: AilyChatLanguageModelsService,
     public chatHistoryService: ChatHistoryService,
     public repetitionDetectionService: RepetitionDetectionService,
     public contextBudgetService: ContextBudgetService,
     public configService: ConfigService,
     private contextBudgetViewService: ContextBudgetViewService,
+    public authQuotaStateService: AuthQuotaStateService,
+    public chatInputNoticeStateService: ChatInputNoticeStateService,
     public ngZone: NgZone,
     public absAutoSyncService: AbsAutoSyncService,
     public editCheckpointService: EditCheckpointService,
@@ -627,6 +669,7 @@ export class ChatEngineService implements IChatContext {
     public resourceManager: ResourceManagerService,
     public menuManager: MenuManagerService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
+    public requestQuotaStateService: RequestQuotaStateService,
   ) {
     // 初始化 viewAdapter（需要 ngZone 已注入）
     (this as any).viewAdapter = new ChatViewAdapter(
@@ -675,6 +718,11 @@ export class ChatEngineService implements IChatContext {
     }
   }
 
+  openSettings(): void {
+    this.chatViewState.openSettings();
+    this.triggerSyncDetectChanges();
+  }
+
   // ==================== 初始化 / 销毁 ====================
 
   /**
@@ -684,6 +732,7 @@ export class ChatEngineService implements IChatContext {
   init(chatTextareaRef: ElementRef | null): void {
     this.chatTextareaRef = chatTextareaRef;
     this.chatService.isWaiting = this._isWaiting;
+    void this.refreshRequestQuotaState();
 
     this.prjPath = AilyHost.get().project.currentProjectPath === AilyHost.get().project.projectRootPath
       ? '' : AilyHost.get().project.currentProjectPath;
@@ -736,9 +785,14 @@ export class ChatEngineService implements IChatContext {
 
   private setupSubscriptions(): void {
     this.subscriptionCoordinator.setup();
+    this.requestQuotaStateSubscription = this.requestQuotaStateService.requestQuotaSnapshot$
+      .pipe(distinctUntilChanged())
+      .subscribe(() => this.triggerSyncDetectChanges());
   }
 
   private cleanupSubscriptions(): void {
+    this.requestQuotaStateSubscription?.unsubscribe();
+    this.requestQuotaStateSubscription = null;
     this.subscriptionCoordinator.cleanup();
   }
 
@@ -825,11 +879,105 @@ Do not create non-existent boards and libraries.
     }
 
     await this.lexStream.turn.run(prepared.llmText, prepared.displayText);
+    this.acceptLiveRequestQuotaState();
+    this.refreshAuthQuotaStateAfterSuccessfulTurn();
 
     if (this.chatService.currentSessionId) {
-      await this.chatService.syncResolvedActiveModelFromContextInfo(this.chatService.currentSessionId);
+      await this.chatService.syncResolvedActiveModelAfterSuccessfulTurn(
+        this.chatService.currentSessionId,
+        this.hostResponseProjection?.turnResponses ?? [],
+      );
       this.triggerSyncDetectChanges();
     }
+  }
+
+  private async resumeRestoredInteraction(
+    content: string,
+    interactionAction: NonNullable<TurnRequest['metadata']>['interactionAction'],
+  ): Promise<void> {
+    if (!this.sessionId || this.isWaiting) {
+      return;
+    }
+
+    this.lexStream.turn.begin(content, content, { interactionAction });
+    await this.lexStream.turn.run(content, content);
+    this.acceptLiveRequestQuotaState();
+    this.refreshAuthQuotaStateAfterSuccessfulTurn();
+
+    if (this.chatService.currentSessionId) {
+      await this.chatService.syncResolvedActiveModelAfterSuccessfulTurn(
+        this.chatService.currentSessionId,
+        this.hostResponseProjection?.turnResponses ?? [],
+      );
+      this.triggerSyncDetectChanges();
+    }
+  }
+
+  private refreshAuthQuotaStateAfterSuccessfulTurn(): void {
+    void this.refreshAuthQuotaStateFromHost();
+  }
+
+  private async refreshAuthQuotaStateFromHost(): Promise<void> {
+    try {
+      await AilyHost.get().auth.refreshMe?.();
+    } catch (error) {
+      console.warn('[ChatEngine] refresh auth quota failed:', error);
+    }
+
+    this.authQuotaStateService.syncAuthSnapshotFromHost();
+  }
+
+  private async refreshRequestQuotaState(): Promise<void> {
+    await this.requestQuotaStateService.refresh();
+  }
+
+  private acceptLiveRequestQuotaState(): void {
+    this.requestQuotaStateService.acceptTurnResponseQuotaSnapshot(
+      this.hostResponseProjection?.turnResponses ?? [],
+    );
+    this.projectAuthQuotaStateFromRequestQuota();
+  }
+
+  private projectAuthQuotaStateFromRequestQuota(): void {
+    const premiumInteractions = this.requestQuotaStateService.getSnapshot()?.quotaSnapshots?.['premium_interactions'];
+    if (!premiumInteractions) {
+      return;
+    }
+
+    const hostMetadata = readAuthQuotaStateSnapshot(AilyHost.get().auth.getSnapshot?.() ?? null);
+    const quotaInfo: AuthQuotaInfo = {
+      source: 'token',
+      usageUnit: 'interactions',
+      quota: premiumInteractions.entitlement,
+      used: premiumInteractions.entitlement >= 0
+        ? Math.max(0, premiumInteractions.entitlement - premiumInteractions.remaining)
+        : 0,
+      remaining: premiumInteractions.remaining,
+      percentRemaining: Math.max(0, Math.min(100, premiumInteractions.percentRemaining)),
+      ...(premiumInteractions.unlimited === true || premiumInteractions.entitlement < 0
+        ? { unlimited: true }
+        : {}),
+      ...(typeof premiumInteractions.overageCount === 'number'
+        ? { overageCount: premiumInteractions.overageCount }
+        : {}),
+      ...(typeof premiumInteractions.overagePermitted === 'boolean'
+        ? { overagePermitted: premiumInteractions.overagePermitted }
+        : {}),
+      ...(typeof premiumInteractions.resetAt === 'string'
+        ? { resetTime: premiumInteractions.resetAt }
+        : {}),
+    };
+
+    this.authQuotaStateService.acceptProjectedQuotaInfo(quotaInfo, {
+      ...(typeof hostMetadata.plan === 'string' ? { plan: hostMetadata.plan } : {}),
+      ...(typeof hostMetadata.serviceTier === 'string' ? { serviceTier: hostMetadata.serviceTier } : {}),
+      ...(typeof hostMetadata.subscriptionStatus === 'string'
+        ? { subscriptionStatus: hostMetadata.subscriptionStatus }
+        : {}),
+      ...(typeof hostMetadata.subscriptionEndDate === 'string'
+        ? { subscriptionEndDate: hostMetadata.subscriptionEndDate }
+        : {}),
+    });
   }
 
   resetChat(): Promise<void> { return this.session.startSession(); }
@@ -852,6 +1000,13 @@ Do not create non-existent boards and libraries.
 
   async switchToReasoningEffort(reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>): Promise<void> {
     await this.switchCoordinator.switchToReasoningEffort(reasoningEffort);
+  }
+
+  async switchToModelConfiguration(
+    model: ModelConfig,
+    update: { key: string; value: unknown },
+  ): Promise<void> {
+    await this.switchCoordinator.switchToModelConfiguration(model, update);
   }
 
   /**

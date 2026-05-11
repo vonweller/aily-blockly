@@ -21,6 +21,8 @@ export class LexRenderTurnMaterializer {
       fallbackStatus: TurnResponseStatus;
       hasExecutionError: boolean;
       usage?: TurnResponseTurn['usage'];
+      continuation?: TurnResponseTurn['response']['continuation'];
+      terminationReason?: TurnResponseTurn['response']['terminationReason'];
     },
   ): TurnResponseTurn | null {
     const snapshotTurnId = streamBuilder.currentSourceTurnId ?? currentTurn.turnId;
@@ -35,6 +37,8 @@ export class LexRenderTurnMaterializer {
       updatedAt: options.updatedAt,
       status,
       usage: options.usage,
+      continuation: options.continuation,
+      terminationReason: options.terminationReason,
       participant: getTurnResponseParticipant(
         this.ctx.currentMessageSource || currentTurn.response.participant,
       ),
@@ -47,6 +51,7 @@ export class LexRenderTurnMaterializer {
           terminationReason: snapshotTurn.terminationReason,
           modelName: snapshotTurn.responseModel?.modelName,
           modelBillingLabel: snapshotTurn.responseModel?.modelBillingLabel,
+          quotaSnapshot: snapshotTurn.responseModel?.quotaSnapshot,
         }
         : undefined,
     });

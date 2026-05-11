@@ -24,6 +24,8 @@ type LexRuntimeLifecycleAccess = {
   startNativeThinking(): void;
 };
 
+const GENERIC_RUNTIME_ERROR_MESSAGE = 'Sorry, something went wrong.';
+
 export class LexRuntimeEventBridge {
   private static readonly TERMINAL_TOOLS = new Set([
     'run_terminal',
@@ -80,7 +82,7 @@ export class LexRuntimeEventBridge {
         return true;
 
       case 'error':
-        this.partProcessor.processError(event.error || '未知错误');
+        this.partProcessor.processError(GENERIC_RUNTIME_ERROR_MESSAGE);
         return true;
 
       case 'context_budget':

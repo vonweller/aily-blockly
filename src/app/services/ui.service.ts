@@ -159,6 +159,50 @@ export class UiService {
     this.chatMessageSubject.next({ text, options });
   }
 
+  openCodeEditorFile(
+    projectPath: string,
+    filePath: string,
+    position?: {
+      lineNumber?: number;
+      column?: number;
+      line?: number;
+      character?: number;
+    },
+  ): Promise<boolean> {
+    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+    const normalizedFilePath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedProjectPath || !normalizedFilePath) {
+      return Promise.resolve(false);
+    }
+
+    const lineNumber = typeof position?.lineNumber === 'number'
+      ? position.lineNumber
+      : typeof position?.line === 'number'
+        ? position.line + 1
+        : undefined;
+    const column = typeof position?.column === 'number'
+      ? position.column
+      : typeof position?.character === 'number'
+        ? position.character + 1
+        : undefined;
+
+    const queryParams: Record<string, string | number> = {
+      path: normalizedProjectPath,
+      openFile: normalizedFilePath,
+    };
+    if (typeof lineNumber === 'number' && Number.isFinite(lineNumber) && lineNumber > 0) {
+      queryParams['lineNumber'] = lineNumber;
+    }
+    if (typeof column === 'number' && Number.isFinite(column) && column > 0) {
+      queryParams['column'] = column;
+    }
+
+    return this.router.navigate(['/main/code-editor'], {
+      queryParams,
+      replaceUrl: true,
+    });
+  }
+
   // 判断某个工具是否打开
   isToolOpen(name: string): boolean {
     return this.openToolList.includes(name);

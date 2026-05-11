@@ -67,6 +67,7 @@ interface LexTurnManagerAccess {
 
 interface LexTurnSessionAgentAccess {
   readonly turnManager: LexTurnManagerAccess;
+  saveSession?(): LexSessionSnapshot;
 }
 
 /**
@@ -256,11 +257,16 @@ export class LexTurnSessionBridge implements ITurnDataSource {
   startTurn(content: string, displayContent?: string, metadata?: LexTurnRequestMetadata): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
+    const persistedRequestContext = agent.saveSession?.().requestContext as LexTurnRequestMetadata | undefined;
+    const effectiveMetadata = mergeResumedInteractionMetadata(
+      agent.turnManager.activeTurn?.request.metadata ?? persistedRequestContext,
+      metadata,
+    );
     const turn = agent.turnManager.startTurn(
       {
         content,
         ...(typeof displayContent === 'string' ? { displayContent } : {}),
-        ...(metadata ? { metadata } : {}),
+        ...(effectiveMetadata ? { metadata: effectiveMetadata } : {}),
       },
     );
     return turn.id;
@@ -327,4 +333,25 @@ export class LexTurnSessionBridge implements ITurnDataSource {
   toSnapshot(): LexSessionSnapshot | null {
     return this.getAgent()?.turnManager.toSnapshot() ?? null;
   }
+}
+
+function mergeResumedInteractionMetadata(
+  existing: LexTurnRequestMetadata | undefined,
+  incoming: LexTurnRequestMetadata | undefined,
+): LexTurnRequestMetadata | undefined {
+  if (!incoming) {
+    return incoming;
+  }
+
+  const existingContinuation = existing?.['interactionContinuation'];
+  const incomingContinuation = incoming['interactionContinuation'];
+
+  if (!existingContinuation || incomingContinuation) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    interactionContinuation: existingContinuation,
+  };
 }

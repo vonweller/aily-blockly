@@ -904,6 +904,10 @@ export class EditActionsHelper {
       ?? snapshotContext?.displayContent
       ?? (normalizedTarget ? getInteractionDisplayContent(normalizedTarget) : undefined)
       ?? requestContent;
+    const requestMetadata = canonicalTarget?.request?.metadata
+      ?? snapshotContext?.request?.metadata
+      ?? normalizedTarget?.request?.metadata
+      ?? normalizedTarget?.turnResponse?.request?.metadata;
     const lastRoundId = resolvedTarget?.lastRoundId
       ?? canonicalTarget?.lastRoundId
       ?? snapshotContext?.lastRoundId
@@ -948,7 +952,7 @@ export class EditActionsHelper {
       requestContent ?? fallbackUserMsg,
       regenerateTarget,
     );
-    this.ctx.lexStream.turn.begin(nextRequest);
-    this.ctx.lexStream.turn.run(nextRequest);
+    this.ctx.lexStream.turn.begin(nextRequest, displayContent, requestMetadata);
+    this.ctx.lexStream.turn.run(nextRequest, displayContent);
   }
 }

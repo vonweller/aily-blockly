@@ -71,6 +71,7 @@ export interface ErrorPart {
   type: 'error';
   message: string;
   severity?: 'error' | 'warning' | 'info';
+  metadata?: Record<string, unknown>;
 }
 
 // ==================== Phase 2 Part 类型 ====================
@@ -242,8 +243,12 @@ export function mkState(
 }
 
 /** 创建 ErrorPart */
-export function mkError(message: string, severity: ErrorPart['severity'] = 'error'): ErrorPart {
-  return { type: 'error', message, severity };
+export function mkError(
+  message: string,
+  severity: ErrorPart['severity'] = 'error',
+  metadata?: Record<string, unknown>,
+): ErrorPart {
+  return { type: 'error', message, severity, metadata };
 }
 
 /** 创建 QuestionPart */

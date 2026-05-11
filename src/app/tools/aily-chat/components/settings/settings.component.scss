@@ -278,6 +278,7 @@
 }
 
 .model-kind-tag,
+.model-locked-tag,
 .model-default-tag,
 .model-meta-pill {
     display: inline-flex;
@@ -299,6 +300,11 @@
     flex-shrink: 0;
     background: rgba(52, 211, 153, 0.14);
     color: #9ff0cb;
+}
+
+.model-locked-tag {
+    background: rgba(245, 158, 11, 0.16);
+    color: #ffd089;
 }
 
 .model-meta-pill {

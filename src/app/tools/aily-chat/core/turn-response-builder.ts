@@ -28,7 +28,11 @@ export function buildTurnResponsesFromSessionHistory(
 
   const turnResponses: TurnResponseTurn[] = [];
 
-  const finalizeCurrentTurn = (updatedAt?: number, usage?: TurnResponseTurn['usage']) => {
+  const finalizeCurrentTurn = (
+    updatedAt?: number,
+    usage?: TurnResponseTurn['usage'],
+    continuation?: TurnResponseTurn['response']['continuation'],
+  ) => {
     const currentTurnId = replayBuilder.currentTurnId;
     if (!currentTurnId) {
       return;
@@ -39,6 +43,7 @@ export function buildTurnResponsesFromSessionHistory(
       updatedAt: updatedAt ?? turn?.createdAt ?? Date.now(),
       status: toTurnResponseStatus(turn?.status ?? 'completed'),
       usage,
+      continuation,
       participant,
       snapshot: turn
         ? {
@@ -47,6 +52,9 @@ export function buildTurnResponsesFromSessionHistory(
           usage: turn.usage,
           createdAt: turn.createdAt,
           terminationReason: turn.terminationReason,
+          modelName: turn.responseModel?.modelName,
+          modelBillingLabel: turn.responseModel?.modelBillingLabel,
+          quotaSnapshot: turn.responseModel?.quotaSnapshot,
         }
         : undefined,
     });
@@ -76,7 +84,7 @@ export function buildTurnResponsesFromSessionHistory(
       }
 
       if (event.type === 'turn_end') {
-        finalizeCurrentTurn(event.timestamp, event.usage);
+        finalizeCurrentTurn(event.timestamp, event.usage, event.continuation);
         continue;
       }
 

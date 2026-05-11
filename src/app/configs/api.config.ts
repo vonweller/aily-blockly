@@ -78,6 +78,7 @@ export const API = {
   get verifyToken() { return `${getServerUrl()}/api/v1/auth/verify`; },
   get refreshToken() { return `${getServerUrl()}/api/v1/auth/refresh`; },
   get me() { return `${getServerUrl()}/api/v1/auth/me`; },
+  get authQuotaInfo() { return `${getServerUrl()}/api/v1/auth/me/quota-info`; },
   get changeNickname() { return `${getServerUrl()}/api/v1/auth/me/nickname`; },
   // invitation
   get invitationValidateCompile() { return `${getServerUrl()}/api/v1/invitation/validate-compile`; },

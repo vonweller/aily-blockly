@@ -43,6 +43,12 @@ export interface AskUserFullResponse {
   answers: Record<string, AskUserAnswer>;
 }
 
+export interface AskUserBridgeResponse {
+  answer: string;
+  cancelled: boolean;
+  fullResponse?: AskUserFullResponse;
+}
+
 /** 兼容旧回调的单问题应答 */
 export interface AskUserResponse {
   answer: string;
@@ -85,7 +91,7 @@ export async function askUserSingle(
   options?: { label: string; description?: string; recommended?: boolean }[],
   multiSelect?: boolean,
   allowFreeform = true,
-): Promise<{ answer: string; cancelled: boolean }> {
+): Promise<AskUserBridgeResponse> {
   const q: AskUserQuestion = {
     question,
     options: options?.map(o => ({ label: o.label, description: o.description, recommended: o.recommended })),
@@ -98,7 +104,7 @@ export async function askUserSingle(
 
 export async function askUserMany(
   questions: AskUserQuestion[],
-): Promise<{ answer: string; cancelled: boolean }> {
+): Promise<AskUserBridgeResponse> {
   if (_registeredCallback) {
     const response = await _registeredCallback(questions);
     if (!response) return { answer: '', cancelled: true };
@@ -114,7 +120,7 @@ export async function askUserMany(
       if (ans.freeText) parts.push(ans.freeText);
     }
 
-    return { answer: parts.join('\n'), cancelled: false };
+    return { answer: parts.join('\n'), cancelled: false, fullResponse: response };
   }
 
   // 降级：window.prompt

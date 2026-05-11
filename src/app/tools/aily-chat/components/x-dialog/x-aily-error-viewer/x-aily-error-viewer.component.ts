@@ -1,5 +1,14 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import {
+  formatContinuationHardStopReason,
+  formatContinuationStopReason,
+} from '../../../core/continuation-stop-reason';
+
+interface ErrorDiagnosticsRow {
+  label: string;
+  value: string;
+}
 
 @Component({
   selector: 'x-aily-error-viewer',
@@ -18,6 +27,16 @@ import { CommonModule } from '@angular/common';
       </div>
       @if (displayMessage) {
         <p class="ac-error-msg">{{ displayMessage }}</p>
+      }
+      @if (diagnosticRows.length > 0) {
+        <div class="ac-error-meta">
+          @for (row of diagnosticRows; track row.label) {
+            <div class="ac-error-meta-row">
+              <span class="ac-error-meta-label">{{ row.label }}</span>
+              <span class="ac-error-meta-value">{{ row.value }}</span>
+            </div>
+          }
+        </div>
       }
     </div>
   `,
@@ -39,6 +58,32 @@ import { CommonModule } from '@angular/common';
     .ac-error[data-sev="info"] .ac-error-title { color: #91caff; }
     .ac-error-time { font-size: 11px; color: #666; flex-shrink: 0; }
     .ac-error-msg { padding: 6px 0 0 0; margin: 0; font-size: 12px; color: #888; line-height: 1.6; width: 100%; white-space: pre-wrap; }
+    .ac-error-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .ac-error-meta-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+      font-size: 11px;
+      color: #9aa0a6;
+    }
+    .ac-error-meta-label {
+      flex: 0 0 auto;
+      color: #7f8690;
+    }
+    .ac-error-meta-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      color: #c6cad0;
+    }
   `],
 })
 export class XAilyErrorViewerComponent {
@@ -47,6 +92,9 @@ export class XAilyErrorViewerComponent {
     message?: string;
     error?: { status?: number; message?: string };
     timestamp?: string;
+    details?: unknown;
+    metadata?: Record<string, unknown>;
+    diagnostics?: Record<string, unknown>;
   } | null = null;
 
   /** 优先使用顶层 message，其次 error.message */
@@ -70,7 +118,113 @@ export class XAilyErrorViewerComponent {
         : (this.data?.error?.status ? `错误 ${this.data.error.status}` : '错误');
   }
 
+  get diagnosticRows(): readonly ErrorDiagnosticsRow[] {
+    const entries = [
+      ...this.buildNoticeMetadataRows(this.data?.metadata),
+      ...this.buildDiagnosticRows(this.data?.diagnostics ?? this.readNoticeDiagnostics(this.data?.metadata)),
+    ];
+
+    return entries
+      .filter((entry): entry is [keyof typeof DIAGNOSTIC_LABELS, string] => {
+        const value = entry[1];
+        return typeof value === 'string' && value.length > 0;
+      })
+      .map(([key, value]) => ({ label: DIAGNOSTIC_LABELS[key], value }));
+  }
+
   fmtTime(ts: string): string {
     try { return new Date(ts).toLocaleString('zh-CN'); } catch { return ts; }
   }
+
+  private readDiagnosticSource(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+
+  private buildDiagnosticRows(source: Record<string, unknown> | null): Array<[keyof typeof DIAGNOSTIC_LABELS, string | undefined]> {
+    if (!source) {
+      return [];
+    }
+
+    return [
+      ['interactionId', this.readText(source['interactionId'])],
+      ['executionId', this.readText(source['executionId'])],
+      ['requestId', this.readText(source['requestId'])],
+      ['toolCallId', this.readText(source['toolCallId'])],
+      ['stopReason', formatContinuationStopReason(this.readText(source['stopReason']))],
+      ['hardStopReason', formatContinuationHardStopReason(this.readText(source['hardStopReason']))],
+      ['status', this.readText(source['status'])],
+      ['errorCode', this.readText(source['errorCode'])],
+      ['sourceEvent', this.readText(source['sourceEvent'])],
+      ['resolvedModel', this.readText(source['resolvedModel'])],
+      ['modelBillingLabel', this.readText(source['modelBillingLabel'])],
+      ['promptTokens', this.readText(source['promptTokens'])],
+      ['completionTokens', this.readText(source['completionTokens'])],
+      ['cacheReadTokens', this.readText(source['cacheReadTokens'])],
+      ['cacheCreationTokens', this.readText(source['cacheCreationTokens'])],
+      ['repeatedTextScore', this.readText(source['repeatedTextScore'])],
+      ['repeatedChunkStreak', this.readText(source['repeatedChunkStreak'])],
+      ['noProgressRounds', this.readText(source['noProgressRounds'])],
+      ['repeatedToolCallStreak', this.readText(source['repeatedToolCallStreak'])],
+      ['repeatedPendingStreak', this.readText(source['repeatedPendingStreak'])],
+    ];
+  }
+
+  private buildNoticeMetadataRows(metadata: unknown): Array<[keyof typeof DIAGNOSTIC_LABELS, string | undefined]> {
+    const source = this.readDiagnosticSource(metadata);
+    const details = this.readDiagnosticSource(source?.['details']);
+    const categories = Array.isArray(details?.['categories'])
+      ? details?.['categories'].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      : [];
+
+    return [
+      ['noticeCode', this.readText(source?.['code'])],
+      ['noticeAction', this.readText(details?.['action'])],
+      ['noticeCategories', categories.length > 0 ? categories.join(', ') : undefined],
+      ['stopReason', formatContinuationStopReason(this.readText(details?.['stopReason']))],
+    ];
+  }
+
+  private readNoticeDiagnostics(metadata: unknown): Record<string, unknown> | null {
+    const source = this.readDiagnosticSource(metadata);
+    const details = this.readDiagnosticSource(source?.['details']);
+    return this.readDiagnosticSource(details?.['diagnostics']);
+  }
+
+  private readText(value: unknown): string | undefined {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return `${value}`;
+    }
+    return undefined;
+  }
 }
+
+const DIAGNOSTIC_LABELS = {
+  noticeCode: 'noticeCode',
+  noticeAction: 'noticeAction',
+  noticeCategories: 'noticeCategories',
+  interactionId: 'interactionId',
+  executionId: 'executionId',
+  requestId: 'requestId',
+  toolCallId: 'toolCallId',
+  stopReason: 'stopReason',
+  hardStopReason: 'hardStopReason',
+  status: 'status',
+  errorCode: 'errorCode',
+  sourceEvent: 'sourceEvent',
+  resolvedModel: 'resolvedModel',
+  modelBillingLabel: 'modelBillingLabel',
+  promptTokens: 'promptTokens',
+  completionTokens: 'completionTokens',
+  cacheReadTokens: 'cacheReadTokens',
+  cacheCreationTokens: 'cacheCreationTokens',
+  repeatedTextScore: 'repeatedTextScore',
+  repeatedChunkStreak: 'repeatedChunkStreak',
+  noProgressRounds: 'noProgressRounds',
+  repeatedToolCallStreak: 'repeatedToolCallStreak',
+  repeatedPendingStreak: 'repeatedPendingStreak',
+} as const;

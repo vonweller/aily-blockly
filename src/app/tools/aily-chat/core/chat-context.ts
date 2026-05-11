@@ -22,6 +22,7 @@ import type { NzMessageService } from 'ng-zorro-antd/message';
 import type { ChatService, ModelConfig } from '../services/chat.service';
 import type { McpService } from '../services/mcp.service';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
+import type { AilyChatLanguageModelsService } from '../services/aily-chat-language-models.service';
 import type { ChatHistoryService } from '../services/chat-history.service';
 import type { RepetitionDetectionService } from '../services/repetition-detection.service';
 import type { ContextBudgetFacade } from '../services/context-budget-facade';
@@ -128,6 +129,7 @@ export interface IProjectContext {
 /** 注入的 Angular 服务集合 */
 export interface IChatServiceAccess {
   readonly ailyChatConfigService: AilyChatConfigService;
+  readonly languageModelsService: AilyChatLanguageModelsService;
   readonly mcpService: McpService;
   readonly editCheckpointService: EditCheckpointService;
   readonly contextBudgetService: ContextBudgetFacade;
@@ -151,6 +153,7 @@ export interface IChatCoordination {
   readonly lexStream: LexOwnerFacade;
   readonly editActions: EditActionsHelper;
   readonly interaction: UserInteractionHelper;
+  openSettings(): void;
   /** 将 lex runtime 当前已注册 agent 列表同步给视图层。 */
   syncRegisteredAgentNames?(agentNames: readonly string[]): void;
   /** 发送消息 */

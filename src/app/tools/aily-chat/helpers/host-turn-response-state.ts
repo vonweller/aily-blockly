@@ -22,6 +22,7 @@ import {
   type TurnResponseAssistantEntryProjection,
   type TurnResponseUserEntryProjection,
 } from '../core/turn-response-stream-contract';
+import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
 
 function applyHostStreamResponseProgressUpdate(
   baseTurn: TurnResponseTurn,
@@ -139,6 +140,7 @@ export interface HostResponseModel {
   readonly id: string | null;
   readonly state: TurnResponseTurn['response']['status'] | null;
   readonly slashCommand: TurnResponseCommand | null;
+  readonly summaryPreview: string | null;
   readonly agentOrSlashCommandDetected: boolean;
   readonly usedContext: TurnResponseTurn['response']['usedContext'] | null;
   readonly contentReferences: readonly NonNullable<TurnResponseTurn['response']['contentReferences']>[number][];
@@ -750,11 +752,13 @@ export interface HostStreamThinkingProgressItemEvent extends HostStreamPartItemE
 export interface HostStreamWarningItemEvent extends HostStreamPartItemEventBase {
   type: 'warning';
   message: string;
+  part?: Extract<TurnResponsePart, { type: 'warning' }>;
 }
 
 export interface HostStreamInfoItemEvent extends HostStreamPartItemEventBase {
   type: 'info';
   message: string;
+  part?: Extract<TurnResponsePart, { type: 'info' }>;
 }
 
 export interface HostStreamConfirmationItemEvent extends HostStreamPartItemEventBase {
@@ -928,7 +932,7 @@ function normalizeHostStreamEvent(event: HostStreamEvent): {
           updatedAt: event.updatedAt,
           partIndex: event.partIndex,
           kind: 'add',
-          part: {
+          part: event.part ?? {
             type: 'warning',
             message: event.message,
           },
@@ -941,7 +945,7 @@ function normalizeHostStreamEvent(event: HostStreamEvent): {
           updatedAt: event.updatedAt,
           partIndex: event.partIndex,
           kind: 'add',
-          part: {
+          part: event.part ?? {
             type: 'info',
             message: event.message,
           },
@@ -1401,6 +1405,7 @@ function buildHostRequestModelFromOwner(
     id: responseSidecar?.responseId ?? latestTurnResponse?.response.id ?? null,
     state: responseState,
     slashCommand,
+    summaryPreview: resolveHostResponseSummaryPreview(latestTurnResponse),
     agentOrSlashCommandDetected,
     usedContext: latestTurnResponse?.response.usedContext ?? null,
     contentReferences: [...(latestTurnResponse?.response.contentReferences ?? [])],
@@ -1466,6 +1471,13 @@ function normalizeHostResponseSlashCommand(
   }
 
   return { ...slashCommand, name: normalizedName };
+}
+
+function resolveHostResponseSummaryPreview(
+  turn: TurnResponseTurn | null | undefined,
+): string | null {
+  const summaryPreview = normalizeTurnResponseSummaryPreview(turn?.responseModel?.summaryPreview);
+  return summaryPreview ?? null;
 }
 
 function deriveHostAgentOrSlashCommandDetected(
@@ -2073,11 +2085,21 @@ function buildOrderedHostResponseEntries(
 
 function projectTurnResponseForHostEntry(entry: HostTurnResponseEntry): TurnResponseTurn {
   const turn = entry.turnResponse!;
+  const summaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
+  const quotaSnapshot = turn.responseModel?.quotaSnapshot;
   const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn as TurnResponseTurn & {
     responseModel?: unknown;
   };
   return {
     ...turnWithoutResponseModel,
+    ...(summaryPreview || quotaSnapshot
+      ? {
+          responseModel: {
+            ...(summaryPreview ? { summaryPreview } : {}),
+            ...(quotaSnapshot ? { quotaSnapshot: { ...quotaSnapshot } } : {}),
+          },
+        }
+      : {}),
     response: {
       ...turn.response,
     },
@@ -2551,6 +2573,7 @@ function mergeTurnResponseContinuation(previous: TurnResponseTurn, next: TurnRes
       ...previous.response,
       ...next.response,
       parts: mergedParts,
+      continuation: next.response.continuation ?? previous.response.continuation,
       resultText: next.response.resultText || collectTurnResponseText(mergedParts),
       createdAt: previous.response.createdAt || next.response.createdAt,
       updatedAt: next.response.updatedAt || previous.response.updatedAt,

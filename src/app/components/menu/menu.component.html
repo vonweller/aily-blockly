@@ -1,15 +1,26 @@
 <div class="menu-container">
   <div class="menu-box bborder sscroll" #menuBox
     [ngStyle]="{ left: position.x + 'px', top: position.y + 'px', 'width': width ? width + 'px' : 'auto', 'max-height': maxHeight ? maxHeight + 'px' : 'none', 'overflow-y': maxHeight ? 'auto' : 'visible' }">
-    @for (item of menuList; track $index) {
+    @for (item of visibleMenuItems; track $index) {
     @if (item.sep) {
     <div class="sep"></div>
     } @else {
-    @if((item.children && item.children.length > 0)||(!item.children&&showInRouter(item))){
-    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, $index)" (mousemove)="showSubMenu($event, $index)"
+    @if(isSectionFilter(item)) {
+    <div class="menu-filter-row">
+      <i class="fa-light fa-magnifying-glass"></i>
+      <input
+        type="text"
+        class="menu-filter-input"
+        [value]="getSectionFilterValue(getSectionId(item))"
+        [placeholder]="item.name || ''"
+        (click)="$event.stopPropagation()"
+        (input)="updateSectionFilter(getSectionId(item), $any($event.target).value)" />
+    </div>
+    } @else {
+    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item, $index)" (mousemove)="showSubMenu($event, item, $index)"
       (mouseleave)="hideSubMenu($event, $index)"
       [attr.title]="item.tooltip || null"
-      [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuIndex == $index, 'current': item.current, 'section': item.action?.startsWith('section-')}">
+      [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuItem === item, 'current': item.current, 'section': item.action?.startsWith('section-'), 'section-toggle': isSectionToggle(item)}">
       @if(item.icon){
       <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
       }
@@ -22,7 +33,9 @@
         }
       </div>
       }
-      @if(item.children && !item.hideChildrenArrow){
+      @if(isSectionToggle(item)) {
+      <div class="arrow"><i class="{{ getSectionToggleIcon(item) }}"></i></div>
+      } @else if(item.children && !item.hideChildrenArrow){
       <div class="arrow"><i class="fa-light fa-chevron-right"></i></div>
       }
     </div>
@@ -31,14 +44,14 @@
     }
   </div>
   <!-- 子菜单放在主菜单外部 -->
-  @if(activeSubmenuIndex !== null && menuList[activeSubmenuIndex]?.children) {
-  <div class="submenu-box menu-box bborder" #submenuBox [ngClass]="{'show': activeSubmenuIndex !== null}" [ngStyle]="{
+  @if(activeSubmenuItem?.children) {
+  <div class="submenu-box menu-box bborder" #submenuBox [ngClass]="{'show': activeSubmenuItem !== null}" [ngStyle]="{
       'left': submenuPosition.left, 
       'top': submenuPosition.top,
       'max-height': submenuMaxHeight,
       'overflow-y': submenuOverflow
-    }" (mouseenter)="keepSubMenuOpen(activeSubmenuIndex)" (mouseleave)="hideSubMenu($event, activeSubmenuIndex)">
-    @for (subItem of menuList[activeSubmenuIndex].children; track $index) {
+    }" (mouseenter)="keepSubMenuOpen()" (mouseleave)="hideSubMenu($event, 0)">
+    @for (subItem of activeSubmenuItem.children; track $index) {
     <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" [attr.title]="subItem.tooltip || null">
       <div class="name ellipsis">{{ subItem.name }}</div>
       @if(subItem.check){

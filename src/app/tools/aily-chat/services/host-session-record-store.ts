@@ -9,6 +9,52 @@ import type {
   SessionMetadata,
 } from './chat-history.service';
 
+function cloneContinuationBudgets(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): Record<string, unknown> | undefined {
+  const budgets = (continuation as (TurnResponseTurn['response']['continuation'] & {
+    budgets?: Record<string, unknown>;
+  }) | undefined)?.budgets;
+
+  return budgets && typeof budgets === 'object'
+    ? { ...budgets }
+    : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneContinuationDiagnostics(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): Record<string, unknown> | undefined {
+  const diagnostics = (continuation as (TurnResponseTurn['response']['continuation'] & {
+    diagnostics?: Record<string, unknown>;
+  }) | undefined)?.diagnostics;
+
+  if (!isRecord(diagnostics)) {
+    return undefined;
+  }
+
+  const identity = isRecord(diagnostics['identity']) ? { ...diagnostics['identity'] } : undefined;
+  const trace = isRecord(diagnostics['trace']) ? { ...diagnostics['trace'] } : undefined;
+  const usage = isRecord(diagnostics['usage']) ? { ...diagnostics['usage'] } : undefined;
+  const runtime = isRecord(diagnostics['runtime']) ? { ...diagnostics['runtime'] } : undefined;
+  const budget = isRecord(diagnostics['budget']) ? { ...diagnostics['budget'] } : undefined;
+  const outcome = isRecord(diagnostics['outcome']) ? { ...diagnostics['outcome'] } : undefined;
+  const behavior = isRecord(diagnostics['behavior']) ? { ...diagnostics['behavior'] } : undefined;
+
+  return {
+    ...(identity ? { identity } : {}),
+    ...(trace ? { trace } : {}),
+    ...(usage ? { usage } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(budget ? { budget } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...(behavior ? { behavior } : {}),
+  };
+}
+
 export interface HostSessionRecordStoreOptions {
   projectChatDir: string;
   getGlobalChatDataDir: () => string;
@@ -165,9 +211,11 @@ export class HostSessionRecordStore {
       elapsedMs,
       timeSpentWaiting,
       completionTokens,
+      continuation,
       ...responseWithoutPersistedData
     } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData & {
       followups?: readonly TurnResponseFollowup[];
+      continuation?: TurnResponseTurn['response']['continuation'];
     };
 
     return {
@@ -203,6 +251,16 @@ export class HostSessionRecordStore {
         codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
         progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
         parts: [...turn.response.parts],
+        ...(continuation
+          ? {
+              continuation: {
+                ...continuation,
+                ...(cloneContinuationBudgets(continuation) ? { budgets: cloneContinuationBudgets(continuation) } : {}),
+                ...(cloneContinuationDiagnostics(continuation) ? { diagnostics: cloneContinuationDiagnostics(continuation) } : {}),
+                ...(continuation.pendingState ? { pendingState: { ...continuation.pendingState } } : {}),
+              },
+            }
+          : {}),
         ...(typeof responseId === 'string' && responseId.length > 0 ? { responseId } : {}),
         ...(Array.isArray(responseMarkdownInfo)
           ? {

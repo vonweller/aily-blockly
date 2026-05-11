@@ -2,7 +2,8 @@
  * SessionLifecycleHelper — 会话生命周期辅助类
  *
  * 负责会话的创建、关闭、保存、历史加载等逻辑。
- * 完全基于 aily-lex 本地 agent，不涉及服务端会话管理。
+ * 负责本地 session/projection/restore 协调；interaction 的 authoritative state
+ * 仍由 services 返回的 continuation / pendingState 决定，不在这里本地判定 lease 或 pending 合法性。
  */
 
 import type {
@@ -23,6 +24,8 @@ import { HostSessionRestoreBridge } from './host-session-restore-bridge';
 import { HostSessionSaveBridge } from './host-session-save-bridge';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import type { ResourceItem } from '../core/chat-types';
+
+type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
 type SessionLifecycleContext = ChatViewWriteBridgeContext
   & Pick<
@@ -48,6 +51,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     | 'editCheckpointService'
     | 'mcpService'
     | 'ailyChatConfigService'
+    | 'runtimeInteractionHost'
     | 'resourceManager'
     | 'message'
     | 'translate'
@@ -56,12 +60,16 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
   & {
     readonly hostRequestModel?: import('./host-turn-response-state').HostRequestModel | null;
     readonly hostResponseProjection?: import('./host-turn-response-state').HostResponseProjection | null;
+    resumeRestoredInteraction?(content: string, interactionAction: LexInteractionAction): Promise<void>;
+    restoreSharedHostProjectionState?(state: import('./host-turn-response-state').HostTurnResponseState | null): void;
     replaceSharedHostProjectionState?(state: import('./host-turn-response-state').HostTurnResponseState | null): void;
   };
 
 type SessionLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
 type SessionLifecycleViewWriteAccess = Pick<ChatViewWriteBridge, 'clearChatView'>;
+
+const GENERIC_SESSION_START_ERROR_MESSAGE = 'Sorry, something went wrong.';
 
 export class SessionLifecycleHelper {
   private readonly _hostSessionRestoreBridge: HostSessionRestoreBridge;
@@ -249,7 +257,7 @@ export class SessionLifecycleHelper {
     try {
       const agentReady = await this.ctx.lexStream.agent.ensureAgent(pendingSessionId);
       if (!agentReady) {
-        const msg = 'aily-lex 模块加载失败，无法初始化 Agent';
+        const msg = GENERIC_SESSION_START_ERROR_MESSAGE;
         console.error('[SessionLifecycle]', msg);
         this.ctx.lexStream.turn.appendError(msg);
         this.ctx.isSessionStarting = false;
@@ -257,7 +265,7 @@ export class SessionLifecycleHelper {
       }
     } catch (err) {
       console.error('[SessionLifecycle] aily-lex agent 初始化失败:', err);
-      this.ctx.lexStream.turn.appendError('aily-lex 初始化失败: ' + (err as any)?.message);
+      this.ctx.lexStream.turn.appendError(GENERIC_SESSION_START_ERROR_MESSAGE);
       this.ctx.isSessionStarting = false;
       throw err;
     }
@@ -440,7 +448,7 @@ export class SessionLifecycleHelper {
     try {
       const agentReady = await this.ctx.lexStream.agent.ensureAgent(sessionId);
       if (!agentReady) {
-        const msg = 'aily-lex 模块加载失败，无法初始化 Agent';
+        const msg = GENERIC_SESSION_START_ERROR_MESSAGE;
         console.error('[SessionLifecycle]', msg);
         this.ctx.lexStream.turn.appendError(msg);
         this.ctx.isSessionStarting = false;
@@ -448,7 +456,7 @@ export class SessionLifecycleHelper {
       }
     } catch (err) {
       console.error('[SessionLifecycle] aily-lex agent 初始化失败:', err);
-      this.ctx.lexStream.turn.appendError('aily-lex 初始化失败: ' + (err as any)?.message);
+      this.ctx.lexStream.turn.appendError(GENERIC_SESSION_START_ERROR_MESSAGE);
       this.ctx.isSessionStarting = false;
       throw err;
     }

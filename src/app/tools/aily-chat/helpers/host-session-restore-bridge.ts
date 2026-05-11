@@ -1,4 +1,4 @@
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 
 import type {
   IAgentLifecycle,
@@ -16,13 +16,20 @@ import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-vie
 import { projectTurnResponsesToHistory } from './turn-response-history-projector';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
+import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
+import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
+
+type LexInteractionAction = NonNullable<TurnRequest['metadata']>['interactionAction'];
+type LexTurnContinuation = NonNullable<TurnResponseTurn['response']['continuation']>;
 
 type HostSessionRestoreContext = ChatViewWriteBridgeContext
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<ISessionAccess, 'conversationMessages' | 'chatService'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
+    resumeRestoredInteraction?(content: string, interactionAction: LexInteractionAction): Promise<void>;
+    restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
     replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
   };
 
@@ -98,8 +105,13 @@ export class HostSessionRestoreBridge {
     const hostResponseState = buildHostProjectionStateFromPersistedRecord({
       turnResponses,
     });
-    this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
+    if (this.ctx.restoreSharedHostProjectionState) {
+      this.ctx.restoreSharedHostProjectionState(hostResponseState);
+    } else {
+      this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
+    }
     this.applyHostView(hostResponseState);
+    this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
 
     // Restore context budget: prefer persisted lex-derived values over local estimate
     const savedBudget = hostRecord.metadata?.contextBudget;
@@ -201,4 +213,181 @@ export class HostSessionRestoreBridge {
 
     return [...hostRecord.turnResponses];
   }
+
+  private restorePendingRuntimeInteraction(turnResponses: readonly TurnResponseTurn[]): void {
+    const continuation = this.ctx.lexStream.session.snapshot()?.requestContext?.interactionContinuation;
+    if (!continuation?.pendingState || continuation.pendingState['kind'] === 'none') {
+      return;
+    }
+
+    if (continuation.pendingState['kind'] === 'question') {
+      this.restorePendingQuestion(turnResponses);
+      return;
+    }
+
+    if (continuation.pendingState['kind'] === 'confirmation') {
+      this.restorePendingConfirmation(turnResponses, continuation);
+    }
+  }
+
+  private restorePendingQuestion(turnResponses: readonly TurnResponseTurn[]): void {
+    const questionPart = findPendingQuestionPart(turnResponses);
+    if (!questionPart?.partId) {
+      return;
+    }
+
+    const questions = questionPart.questions.map<AskUserQuestion>((question) => ({
+      question: question.question,
+      options: question.options?.map(option => ({
+        label: option.label,
+        description: option.description,
+        recommended: option.recommended,
+      })),
+      allow_freeform: question.allow_freeform,
+      multi_select: question.multi_select,
+    }));
+
+    void this.ctx.runtimeInteractionHost.presentQuestion(this.ctx.sessionId, questionPart.partId, questions)
+      .then(async (result) => {
+        if (!result?.answers) {
+          return;
+        }
+
+        this.ctx.lexStream.ui.updateQuestionAnswers(result.answers, questionPart.partId!);
+        await this.ctx.resumeRestoredInteraction?.(
+          buildQuestionAnswerResumeContent(result.answers),
+          {
+            kind: 'question_answer',
+            payload: { answers: result.answers },
+          },
+        );
+      })
+      .catch(() => undefined);
+  }
+
+  private restorePendingConfirmation(
+    turnResponses: readonly TurnResponseTurn[],
+    continuation: LexTurnContinuation,
+  ): void {
+    const confirmationPart = findPendingConfirmationPart(turnResponses, continuation);
+    if (!confirmationPart?.partId) {
+      return;
+    }
+
+    void this.ctx.runtimeInteractionHost.presentConfirmation(this.ctx.sessionId, {
+      askId: confirmationPart.askId,
+      partId: confirmationPart.partId,
+      toolName: confirmationPart.toolName,
+      title: confirmationPart.title,
+      subtitle: confirmationPart.subtitle,
+      message: confirmationPart.message,
+      args: isRecord(confirmationPart.args) ? confirmationPart.args : undefined,
+      actions: Array.isArray(confirmationPart.actions) ? confirmationPart.actions : [],
+      primaryScope: confirmationPart.primaryScope ?? 'once',
+    })
+      .then(async (result) => {
+        this.ctx.lexStream.ui.resolveConfirmation(
+          confirmationPart.partId!,
+          confirmationPart.askId,
+          result.approved,
+          result.scope,
+        );
+        await this.ctx.resumeRestoredInteraction?.(
+          buildConfirmationResumeContent(confirmationPart, result.approved),
+          buildConfirmationInteractionAction(continuation, confirmationPart, result),
+        );
+      })
+      .catch(() => undefined);
+  }
+}
+
+function findPendingQuestionPart(turnResponses: readonly TurnResponseTurn[]): QuestionPart | null {
+  for (let turnIndex = turnResponses.length - 1; turnIndex >= 0; turnIndex--) {
+    const parts = turnResponses[turnIndex]?.response?.parts ?? [];
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
+      const part = parts[partIndex] as Partial<QuestionPart> | undefined;
+      if (part?.type !== 'question' || !Array.isArray(part.questions) || part.answers) {
+        continue;
+      }
+      return part as QuestionPart;
+    }
+  }
+
+  return null;
+}
+
+function findPendingConfirmationPart(
+  turnResponses: readonly TurnResponseTurn[],
+  continuation: LexTurnContinuation,
+): ConfirmationPart | null {
+  const pendingRequestId = typeof continuation.pendingState?.['requestId'] === 'string'
+    ? continuation.pendingState['requestId']
+    : undefined;
+
+  for (let turnIndex = turnResponses.length - 1; turnIndex >= 0; turnIndex--) {
+    const parts = turnResponses[turnIndex]?.response?.parts ?? [];
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
+      const part = parts[partIndex] as Partial<ConfirmationPart> | undefined;
+      if (part?.type !== 'confirmation' || part.resolved === true || typeof part.askId !== 'string') {
+        continue;
+      }
+
+      if (pendingRequestId && part.askId !== pendingRequestId) {
+        continue;
+      }
+
+      return part as ConfirmationPart;
+    }
+  }
+
+  return null;
+}
+
+function buildQuestionAnswerResumeContent(answers: Record<string, AskUserAnswer>): string {
+  const summary = Object.entries(answers)
+    .map(([question, answer]) => {
+      const parts = [
+        ...answer.selected,
+        ...(typeof answer.freeText === 'string' && answer.freeText.trim().length > 0 ? [answer.freeText.trim()] : []),
+      ];
+      const answerText = answer.skipped ? '已跳过' : (parts.join('，') || '已回答');
+      return `${question}: ${answerText}`;
+    })
+    .filter(text => text.length > 0)
+    .join('；');
+
+  return summary.length > 0 ? `已回答问题：${summary}` : '已回答问题。';
+}
+
+function buildConfirmationResumeContent(part: ConfirmationPart, approved: boolean): string {
+  const action = approved ? '已确认' : '已拒绝';
+  const target = typeof part.toolName === 'string' && part.toolName.length > 0
+    ? `${action}执行 ${part.toolName}。`
+    : `${action}继续当前确认。`;
+  return target;
+}
+
+function buildConfirmationInteractionAction(
+  continuation: LexTurnContinuation,
+  part: ConfirmationPart,
+  result: { approved: boolean; scope?: string; reason?: string; actionId?: string },
+): LexInteractionAction {
+  const payload: Record<string, unknown> = {
+    result: result.approved ? 'approved' : 'rejected',
+    source: continuation.pendingState?.['sourceEvent'] === 'approval_request' ? 'approval' : 'confirmation',
+    ...(typeof part.toolName === 'string' && part.toolName.length > 0 ? { toolName: part.toolName } : {}),
+    ...(typeof continuation.pendingState?.['toolCallId'] === 'string' ? { toolCallId: continuation.pendingState['toolCallId'] } : {}),
+    ...(typeof result.scope === 'string' ? { scope: result.scope } : {}),
+    ...(typeof result.reason === 'string' && result.reason.length > 0 ? { reason: result.reason } : {}),
+    ...(typeof result.actionId === 'string' && result.actionId.length > 0 ? { actionId: result.actionId } : {}),
+  };
+
+  return {
+    kind: 'confirmation',
+    payload,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

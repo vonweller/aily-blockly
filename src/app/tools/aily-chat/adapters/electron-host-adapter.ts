@@ -215,10 +215,17 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   // ----- auth (映射 getToken2 → getToken) -----
   const auth: IAuthProvider = {
     get isLoggedIn() { return deps.authService?.isLoggedIn ?? false; },
+    get isLoggedIn$() { return deps.authService?.isLoggedIn$; },
+    get authChanged$() { return deps.authService?.authChanged$; },
     get token() { return deps.authService?.token ?? ''; },
     get userInfo() { return deps.authService?.userInfo; },
+    get userInfo$() { return deps.authService?.userInfo$; },
+    get authSnapshot$() { return deps.authService?.authSnapshot$; },
     getAuthHeaders: () => deps.authService?.getAuthHeaders?.() ?? {},
+    initializeAuth: () => deps.authService?.initializeAuth?.() ?? Promise.resolve(),
     getToken: () => deps.authService?.getToken2?.() ?? Promise.resolve(''),
+    getSnapshot: () => deps.authService?.getAuthSnapshot?.() ?? null,
+    refreshMe: () => deps.authService?.refreshMe?.() ?? Promise.resolve(null),
     promptLogin: () => deps.authService?.promptLogin?.() ?? Promise.resolve(false),
   };
 
@@ -274,8 +281,18 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
 
   // ----- editor (可选) -----
   let editor: IEditorProvider | undefined;
-  if (deps.blocklyService) {
+  if (deps.blocklyService || deps.uiService) {
     editor = {
+      showTextDocument: (targetPath, options) => {
+        const projectPath = options?.projectPath?.trim()
+          || deps.projectService?.currentProjectPath
+          || deps.projectService?.projectRootPath;
+        if (!deps.uiService?.openCodeEditorFile || !projectPath || !targetPath?.trim()) {
+          return false;
+        }
+
+        return deps.uiService.openCodeEditorFile(projectPath, targetPath, options?.selection);
+      },
       getWorkspaceXml: () => deps.blocklyService?.getWorkspaceXml?.(),
       loadWorkspace: (xml) => deps.blocklyService?.loadWorkspace?.(xml),
       getGeneratedCode: () => deps.blocklyService?.getGeneratedCode?.(),
@@ -314,7 +331,6 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     electron: deps.electronService,
     absSync: deps.absAutoSyncService,
     ui: deps.uiService,
-    authFull: deps.authService,
     onboarding: deps.onboardingService,
   };
 }

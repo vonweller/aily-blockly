@@ -63,6 +63,7 @@ export interface ToolApprovalAction {
   readonly tooltip?: string;
   readonly disabled?: boolean;
   readonly isSecondary?: boolean;
+  readonly resolves?: boolean;
   readonly combinationKey?: string;
 }
 

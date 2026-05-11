@@ -160,7 +160,7 @@ export class BackgroundAgentService implements OnDestroy {
         endpoint: buildLexEndpoint(lex, this.chatService.currentModel, this.ailyChatConfigService),
         model: buildLexModelConfig(this.chatService.currentModel),
         cwd: cwd || undefined,
-        maxIterations: this.ailyChatConfigService.maxCount,
+        maxToolCallIterations: this.ailyChatConfigService.maxRequests,
         toolProvider,
         coreToolFilter: BACKGROUND_AGENT_CORE_TOOLS,
       });

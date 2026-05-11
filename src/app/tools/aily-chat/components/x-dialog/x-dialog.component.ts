@@ -207,6 +207,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return this.role === 'aily' && this.effectiveParts.length > 0;
   }
 
+  get activityTurnResponse(): TurnResponseTurn | null {
+    return this.effectiveTurnContext?.turnResponse ?? this._turnResponse;
+  }
+
   get effectiveDoing(): boolean {
     const responseStatus = this.effectiveTurnContext?.response?.status;
 

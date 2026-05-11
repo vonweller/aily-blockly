@@ -2,6 +2,9 @@
  * 安全服务模块导出
  */
 
+export * from './aily-chat-language-models-config.service';
+export * from './aily-chat-language-models.service';
+
 // 安全验证服务
 export * from './security.service';
 export { default as SecurityService } from './security.service';

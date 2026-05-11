@@ -167,8 +167,8 @@ export class MenuManagerService {
     e: { action: string; data: any },
     currentSessionId: string,
     callbacks: {
-      onGetHistory: () => void;
-      onNewChat: () => void;
+      onGetHistory: () => void | Promise<void>;
+      onNewChat: () => void | Promise<void>;
       onDetectChanges: () => void;
       onUpdateTitle: (title: string) => void;
       onRefreshHistory: () => void;
@@ -223,9 +223,9 @@ export class MenuManagerService {
             const _rootPath1 = AilyHost.get().project.projectRootPath;
             this.chatService.currentSessionPath = entry?.projectPath
               || (_curPath1 && _curPath1 !== _rootPath1 ? _curPath1 : '');
-            callbacks.onGetHistory();
+            void callbacks.onGetHistory();
           } else {
-            callbacks.onNewChat();
+            void callbacks.onNewChat();
           }
         }
       });
@@ -236,16 +236,16 @@ export class MenuManagerService {
    * 点击历史会话条目，切换到该会话
    * @returns true 表示执行了切换
    */
-  switchToSession(
+  async switchToSession(
     sessionId: string,
     currentSessionId: string,
     callbacks: {
       onSaveCurrentSession: () => void;
-      onGetHistory: () => void;
+      onGetHistory: () => void | Promise<void>;
       onSetCompleted: () => void;
       onSetServerSessionInactive: () => void;
     }
-  ): boolean {
+  ): Promise<boolean> {
     if (currentSessionId === sessionId) return false;
 
     callbacks.onSaveCurrentSession();
@@ -255,7 +255,7 @@ export class MenuManagerService {
     const _rootPath2 = AilyHost.get().project.projectRootPath;
     this.chatService.currentSessionPath = entry?.projectPath
       || (_curPath2 && _curPath2 !== _rootPath2 ? _curPath2 : '');
-    callbacks.onGetHistory();
+    await callbacks.onGetHistory();
     callbacks.onSetCompleted();
     callbacks.onSetServerSessionInactive();
     this.closeAll();

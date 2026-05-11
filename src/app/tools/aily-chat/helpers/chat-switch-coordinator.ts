@@ -5,6 +5,7 @@ import type {
   IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
+import type { LanguageModelConfigurationUpdate } from '../services/aily-chat-language-models.service';
 import type { ModelConfig } from '../services/chat.service';
 
 type ChatSwitchCoordinatorContext = Pick<
@@ -12,7 +13,7 @@ type ChatSwitchCoordinatorContext = Pick<
   'isWaiting' | '_pendingModelSwitch' | '_pendingModeSwitch'
 > & Pick<IProjectContext, 'currentModel' | 'currentMode'>
   & Pick<ISessionAccess, 'chatService' | 'conversationMessages'>
-  & Pick<IChatServiceAccess, 'contextBudgetService' | 'message'>
+  & Pick<IChatServiceAccess, 'contextBudgetService' | 'languageModelsService' | 'message'>
   & Pick<IChatCoordination, 'lexStream'>;
 
 /**
@@ -20,6 +21,39 @@ type ChatSwitchCoordinatorContext = Pick<
  */
 export class ChatSwitchCoordinator {
   constructor(private readonly ctx: ChatSwitchCoordinatorContext) {}
+
+  private getConfigurationModelId(model: ModelConfig | null | undefined): string | undefined {
+    const presetId = typeof model?.presetId === 'string' ? model.presetId.trim() : '';
+    if (presetId) {
+      return presetId;
+    }
+
+    const modelId = typeof model?.model === 'string' ? model.model.trim() : '';
+    return modelId || undefined;
+  }
+
+  private getConfiguredRuntimeModel(model: ModelConfig, update: LanguageModelConfigurationUpdate): ModelConfig {
+    if (update.key === 'reasoningEffort' && typeof update.value === 'string') {
+      return {
+        ...model,
+        reasoningEffort: update.value as NonNullable<ModelConfig['reasoningEffort']>,
+      };
+    }
+
+    return model;
+  }
+
+  private getConfigurationSaveErrorMessage(update: LanguageModelConfigurationUpdate): string {
+    return update.key === 'reasoningEffort'
+      ? '思考深度配置保存失败'
+      : '模型配置保存失败';
+  }
+
+  private getPendingConfigurationMessage(update: LanguageModelConfigurationUpdate): string {
+    return update.key === 'reasoningEffort'
+      ? '思考深度将在当前对话完成后切换'
+      : '模型配置将在当前对话完成后生效';
+  }
 
   private isSameModelSelection(model: ModelConfig): boolean {
     return model.model === this.ctx.currentModel?.model
@@ -54,10 +88,34 @@ export class ChatSwitchCoordinator {
       return;
     }
 
-    const nextModel: ModelConfig = {
-      ...currentModel,
-      reasoningEffort,
+    await this.switchToModelConfiguration(currentModel, {
+      key: 'reasoningEffort',
+      value: reasoningEffort,
+    });
+  }
+
+  async switchToModelConfiguration(model: ModelConfig, update: LanguageModelConfigurationUpdate): Promise<void> {
+    const key = typeof update?.key === 'string' ? update.key.trim() : '';
+    if (!model || !key) {
+      return;
+    }
+
+    const normalizedUpdate: LanguageModelConfigurationUpdate = {
+      key,
+      value: update.value,
     };
+
+    const modelId = this.getConfigurationModelId(model);
+    if (!modelId) {
+      return;
+    }
+
+    const nextModel = this.getConfiguredRuntimeModel(model, normalizedUpdate);
+    const configured = this.ctx.languageModelsService.configureModel(modelId, normalizedUpdate);
+    if (!configured) {
+      this.ctx.message.error(this.getConfigurationSaveErrorMessage(normalizedUpdate));
+      return;
+    }
 
     if (this.isSameModelSelection(nextModel)) {
       return;
@@ -67,7 +125,7 @@ export class ChatSwitchCoordinator {
       this.ctx.chatService.saveChatModel(nextModel);
       this.ctx._pendingModelSwitch = nextModel;
       this.ctx._pendingModeSwitch = null;
-      this.ctx.message.info('思考深度将在当前对话完成后切换');
+      this.ctx.message.info(this.getPendingConfigurationMessage(normalizedUpdate));
       return;
     }
 

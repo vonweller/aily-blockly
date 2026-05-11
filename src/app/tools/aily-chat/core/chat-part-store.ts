@@ -1364,7 +1364,7 @@ export class ChatPartStore {
         }
         case 'error':
           segments.push(
-            `\n\`\`\`aily-error\n${JSON.stringify({ message: part.message, ...(part.severity ? { severity: part.severity } : {}) })}\n\`\`\`\n`
+            `\n\`\`\`aily-error\n${JSON.stringify({ message: part.message, ...(part.severity ? { severity: part.severity } : {}), ...(part.metadata ? { metadata: part.metadata } : {}) })}\n\`\`\`\n`
           );
           break;
         case 'question':

@@ -1,9 +1,11 @@
 ﻿import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, ReplaySubject } from 'rxjs';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 import { MCPTool } from './mcp.service';
 import { ChatAPI } from '../core/api-endpoints';
 import { AilyChatConfigService, ModelConfigOption } from './aily-chat-config.service';
+import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ContextBudgetService } from './context-budget.service';
 import { AilyHost } from '../core/host';
 
@@ -48,12 +50,14 @@ export class ChatService {
    */
   private textSubject = new ReplaySubject<ChatTextMessage | null>(1);
   private static instance: ChatService;
+  private static readonly maxRecentModelPresetIds = 3;
 
 
   constructor(
     private http: HttpClient,
     private ailyChatConfigService: AilyChatConfigService,
     private contextBudgetService: ContextBudgetService,
+    private languageModelsService: AilyChatLanguageModelsService,
   ) {
     ChatService.instance = this;
     // 从配置加载AI聊天模式
@@ -117,11 +121,13 @@ export class ChatService {
       this.currentModel = enabledModels[0];
     }
 
+    this.currentModel = this.applyPersistedLanguageModelConfiguration(this.currentModel);
+
     this.clearResolvedActiveModel();
 
     if (this.currentModel) {
-      // 更新保存的模型配置
-      this.saveChatModel(this.currentModel);
+      // 更新保存的模型配置，但不要把启动恢复路径计入 recent。
+      this.saveChatModel(this.currentModel, { rememberRecent: false });
       return;
     }
 
@@ -131,20 +137,50 @@ export class ChatService {
   /**
    * 保存AI模型到配置
    */
-  saveChatModel(model: ModelConfig): void {
-    this.currentModel = this.ailyChatConfigService.normalizeRuntimeModel(model);
+  saveChatModel(model: ModelConfig, options?: { rememberRecent?: boolean }): void {
+    this.currentModel = this.applyPersistedLanguageModelConfiguration(
+      this.ailyChatConfigService.normalizeRuntimeModel(model),
+    );
     this.clearResolvedActiveModel();
     this.contextBudgetService.updateModelContextSize(this.currentModel);
     const config = AilyHost.get().config;
-    if (config.data) config.data.aiChatModel = this.currentModel;
+    if (config.data) {
+      config.data.aiChatModel = this.buildPersistedChatModel(this.currentModel);
+      if (options?.rememberRecent !== false) {
+        config.data.aiChatRecentModelPresetIds = this.buildNextRecentModelPresetIds(this.currentModel);
+      }
+    }
     config.save?.();
+  }
+
+  getRecentModelPresetIds(): string[] {
+    const rawRecentPresetIds = AilyHost.get().config.data?.aiChatRecentModelPresetIds;
+    if (!Array.isArray(rawRecentPresetIds)) {
+      return [];
+    }
+
+    return [...new Set(rawRecentPresetIds
+      .filter((presetId): presetId is string => typeof presetId === 'string')
+      .map(presetId => presetId.trim())
+      .filter(presetId => presetId.length > 0 && presetId !== this.ailyChatConfigService.getDefaultModelPresetId()))]
+      .slice(0, ChatService.maxRecentModelPresetIds);
+  }
+
+  private buildNextRecentModelPresetIds(model: ModelConfig | null): string[] {
+    const presetId = typeof model?.presetId === 'string' ? model.presetId.trim() : '';
+    if (!presetId || presetId === this.ailyChatConfigService.getDefaultModelPresetId()) {
+      return this.getRecentModelPresetIds();
+    }
+
+    return [presetId, ...this.getRecentModelPresetIds().filter(id => id !== presetId)]
+      .slice(0, ChatService.maxRecentModelPresetIds);
   }
 
   private refreshCurrentModelRuntimeMetadata(): void {
     if (this.currentModel) {
       const refreshedModel = this.ailyChatConfigService.resolveSavedModel(this.currentModel);
       if (refreshedModel) {
-        this.currentModel = refreshedModel;
+        this.currentModel = this.applyPersistedLanguageModelConfiguration(refreshedModel);
         this.refreshResolvedActiveModelRuntimeMetadata();
         this.contextBudgetService.updateModelContextSize(this.currentModel);
         return;
@@ -201,6 +237,74 @@ export class ChatService {
     if (typeof contextInfo.model_context_limit === 'number' && contextInfo.model_context_limit > 0) {
       this.contextBudgetService.maxContextTokens = contextInfo.model_context_limit;
     }
+  }
+
+  private applyPersistedLanguageModelConfiguration(model: ModelConfig | null): ModelConfig | null {
+    if (!model) {
+      return null;
+    }
+
+    const modelId = typeof model.presetId === 'string' && model.presetId.trim()
+      ? model.presetId.trim()
+      : typeof model.model === 'string'
+        ? model.model.trim()
+        : '';
+    if (!modelId) {
+      return this.ailyChatConfigService.normalizeRuntimeModel(model);
+    }
+
+    const configuredReasoningEffort = this.languageModelsService.getModelConfiguration(modelId)?.['reasoningEffort'];
+    if (typeof configuredReasoningEffort !== 'string') {
+      return this.ailyChatConfigService.normalizeRuntimeModel(model);
+    }
+
+    return this.ailyChatConfigService.normalizeRuntimeModel({
+      ...model,
+      reasoningEffort: configuredReasoningEffort as ModelConfig['reasoningEffort'],
+    });
+  }
+
+  private buildPersistedChatModel(model: ModelConfig | null): ModelConfig | null {
+    if (!model) {
+      return null;
+    }
+
+    const { reasoningEffort: _reasoningEffort, ...persistedModel } = model;
+    return persistedModel as ModelConfig;
+  }
+
+  async syncResolvedActiveModelAfterSuccessfulTurn(
+    sessionId: string,
+    turnResponses: readonly TurnResponseTurn[],
+  ): Promise<void> {
+    if (!sessionId) {
+      this.clearResolvedActiveModel();
+      return;
+    }
+
+    if (this.isLegacyContextInfoSession(sessionId)) {
+      await this.syncResolvedActiveModelFromContextInfo(sessionId);
+      return;
+    }
+
+    this.syncResolvedActiveModelFromTurnResponses(turnResponses);
+  }
+
+  private syncResolvedActiveModelFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
+    for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+      const modelName = turnResponses[index]?.responseModel?.modelName;
+      if (typeof modelName !== 'string' || !modelName.trim()) {
+        continue;
+      }
+
+      this.resolvedActiveModel = this.ailyChatConfigService.resolveRuntimeModelFromServerModelName(modelName);
+      if (this.resolvedActiveModel) {
+        this.contextBudgetService.updateModelContextSize(this.resolvedActiveModel);
+        return;
+      }
+    }
+
+    this.clearResolvedActiveModel();
   }
 
   private refreshResolvedActiveModelRuntimeMetadata(): void {

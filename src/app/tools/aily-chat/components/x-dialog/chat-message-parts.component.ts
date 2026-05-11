@@ -16,6 +16,7 @@ import {
   ChangeDetectionStrategy,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatPart } from '../../core/chat-parts';
 import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
@@ -56,11 +57,11 @@ type ChatRenderItem = PartRenderItem | ActivityGroupRenderItem;
     @for (item of renderItems; track item.id) {
       @if (isGroupItem(item)) {
         <!-- 统一活动组：对齐 Copilot ChatThinkingContentPart -->
-        <aily-chat-activity-group [parts]="item.parts" [doing]="item.live" [sessionId]="sessionId" />
+        <aily-chat-activity-group [parts]="item.parts" [doing]="item.live" [sessionId]="sessionId" [turnResponse]="turnResponse" />
       } @else {
         <!-- 独立 Part：路由至专用 viewer -->
         <div class="chat-part" [attr.data-part-type]="item.part.type">
-          <aily-chat-message-part-item [part]="item.part" [doing]="doing" [sessionId]="sessionId" />
+          <aily-chat-message-part-item [part]="item.part" [doing]="doing" [sessionId]="sessionId" [turnResponse]="turnResponse" />
         </div>
       }
     }
@@ -84,6 +85,7 @@ export class ChatMessagePartsComponent implements OnChanges {
   @Input() parts: readonly RenderableChatPart[] | null = null;
   @Input() doing = false;
   @Input() sessionId = '';
+  @Input() turnResponse: TurnResponseTurn | null = null;
 
   renderItems: ChatRenderItem[] = [];
 

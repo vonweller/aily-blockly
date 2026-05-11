@@ -360,6 +360,7 @@ export class LexRenderHostStreamEmitter {
             partIndex,
             updatedAt: partItem.updatedAt,
             message: partItem.part.message,
+            part: partItem.part,
           });
           return;
         }
@@ -371,6 +372,7 @@ export class LexRenderHostStreamEmitter {
             partIndex,
             updatedAt: partItem.updatedAt,
             message: partItem.part.message,
+            part: partItem.part,
           });
           return;
         }

@@ -5,8 +5,10 @@ import {
   type ToolApprovalPresentation,
 } from './tool-approval-ui';
 
+const OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID = 'open-max-requests-settings';
+
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
-type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream'>
+type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream' | 'openSettings'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>;
 
@@ -108,6 +110,11 @@ export class LexAskConfirmationBridge {
           args: request.toolInput,
         }).actions,
         primaryScope: request.primaryScope || 'once',
+        onAction: (actionId) => {
+          if (actionId === OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID) {
+            this.ctx.openSettings();
+          }
+        },
       }).then((result) => {
         this.ctx.lexStream.ui.resolveConfirmation(confirmationPartId, askId, !!result.approved, result.scope);
         const resolveRef = this.resolveAskConfirmation;

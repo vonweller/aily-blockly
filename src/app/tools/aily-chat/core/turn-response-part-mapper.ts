@@ -61,12 +61,14 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         return {
           type: 'warning',
           message: part.message,
+          metadata: part.metadata,
         };
       }
       if (part.severity === 'info') {
         return {
           type: 'info',
           message: part.message,
+          metadata: part.metadata,
         };
       }
       return {
@@ -134,9 +136,9 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
     case 'error':
       return mkError(part.message);
     case 'warning':
-      return mkError(part.message, 'warning');
+      return mkError(part.message, 'warning', part.metadata);
     case 'info':
-      return mkError(part.message, 'info');
+      return mkError(part.message, 'info', part.metadata);
     case 'question': {
       const question = mkQuestion(part.questions.map(item => ({
         question: item.question,

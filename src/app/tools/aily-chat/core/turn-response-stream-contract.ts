@@ -1,4 +1,4 @@
-import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseQuotaSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
   buildDialogTurnContext,
@@ -58,10 +58,12 @@ export interface TurnResponseStreamProjection {
   readonly followups?: readonly TurnResponseFollowup[];
   readonly modelName?: string;
   readonly modelBillingLabel?: string;
+  readonly quotaSnapshot?: TurnResponseQuotaSnapshot;
   readonly usedContext?: TurnResponseTurn['response']['usedContext'];
   readonly contentReferences?: TurnResponseTurn['response']['contentReferences'];
   readonly codeCitations?: TurnResponseTurn['response']['codeCitations'];
   readonly progressMessages?: TurnResponseTurn['response']['progressMessages'];
+  readonly continuation?: TurnResponseTurn['response']['continuation'];
   readonly status: TurnResponseStatus;
   readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
   readonly parts: TurnResponseTurn['response']['parts'];
@@ -292,6 +294,17 @@ export function buildTurnResponseTurn(
   const modelBillingLabel = typeof projection.modelBillingLabel === 'string' && projection.modelBillingLabel.trim()
     ? projection.modelBillingLabel.trim()
     : undefined;
+  const quotaSnapshot = projection.quotaSnapshot
+    ? {
+      ...projection.quotaSnapshot,
+      ...(projection.quotaSnapshot.quotaSnapshots
+        ? { quotaSnapshots: { ...projection.quotaSnapshot.quotaSnapshots } }
+        : {}),
+      ...(projection.quotaSnapshot.rateLimitSnapshots
+        ? { rateLimitSnapshots: { ...projection.quotaSnapshot.rateLimitSnapshots } }
+        : {}),
+    }
+    : undefined;
 
   return {
     turnId: projection.turnId,
@@ -305,6 +318,7 @@ export function buildTurnResponseTurn(
       contentReferences,
       codeCitations,
       progressMessages,
+      continuation: projection.continuation,
       status: projection.status,
       terminationReason: projection.terminationReason,
       parts: projection.parts,
@@ -315,13 +329,15 @@ export function buildTurnResponseTurn(
     ...((projection.slashCommand !== undefined
       || projection.followups !== undefined
       || modelName !== undefined
-      || modelBillingLabel !== undefined)
+      || modelBillingLabel !== undefined
+      || quotaSnapshot !== undefined)
       ? {
         responseModel: {
           ...(projection.slashCommand !== undefined ? { slashCommand: projection.slashCommand } : {}),
           ...(projection.followups !== undefined ? { followups: [...projection.followups] } : {}),
           ...(modelName !== undefined ? { modelName } : {}),
           ...(modelBillingLabel !== undefined ? { modelBillingLabel } : {}),
+          ...(quotaSnapshot !== undefined ? { quotaSnapshot } : {}),
         },
       }
       : {}),

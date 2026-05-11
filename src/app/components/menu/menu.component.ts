@@ -9,6 +9,7 @@ import {
   QueryList,
   ViewChildren,
 } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { TranslateModule } from '@ngx-translate/core';
 import { IMenuItem } from '../../configs/menu.config';
 import { Router } from '@angular/router';
@@ -16,7 +17,7 @@ import { PlatformService } from '../../services/platform.service';
 
 @Component({
   selector: 'app-menu',
-  imports: [CommonModule, TranslateModule],
+  imports: [CommonModule, FormsModule, TranslateModule],
   templateUrl: './menu.component.html',
   styleUrl: './menu.component.scss',
 })
@@ -25,7 +26,17 @@ export class MenuComponent {
   @ViewChild('submenuBox') submenuBox: ElementRef;
   @ViewChildren('menuItem') menuItems: QueryList<ElementRef>;
 
-  @Input() menuList: readonly any[] = [];
+  private _menuList: readonly any[] = [];
+
+  @Input()
+  set menuList(value: readonly any[]) {
+    this._menuList = Array.isArray(value) ? value : [];
+    this.initializeSectionState();
+  }
+
+  get menuList(): readonly any[] {
+    return this._menuList;
+  }
 
   @Input() position = {
     x: 2,
@@ -46,8 +57,11 @@ export class MenuComponent {
 
   @Input() keywords: readonly string[] = [];
 
+  sectionCollapsedState: Record<string, boolean> = {};
+  sectionFilterState: Record<string, string> = {};
+
   // 添加子菜单显示状态管理
-  activeSubmenuIndex: number | null = null;
+  activeSubmenuItem: IMenuItem | null = null;
   submenuTimeout: any = null;
   submenuPosition = { left: '0px', top: '0px' };
   submenuMaxHeight = 'none';
@@ -79,6 +93,13 @@ export class MenuComponent {
 
   itemClick(item) {
     if (item.disabled) return;
+    if (this.isSectionToggle(item)) {
+      this.toggleSection(item);
+      return;
+    }
+    if (this.isSectionFilter(item)) {
+      return;
+    }
     if (item.children && item.action !== 'select-model') return;
     this.itemClickEvent.emit(item);
   }
@@ -102,7 +123,33 @@ export class MenuComponent {
   };
 
   closeMenu() {
+    this.activeSubmenuItem = null;
     this.closeEvent.emit('');
+  }
+
+  get visibleMenuItems(): IMenuItem[] {
+    const visibleItems: IMenuItem[] = [];
+
+    for (const item of this.menuList) {
+      if (item.sep) {
+        visibleItems.push(item);
+        continue;
+      }
+
+      if (this.isSectionScoped(item) && !this.isSectionItemVisible(item)) {
+        continue;
+      }
+
+      if (this.isSectionFilter(item) && !this.isSectionExpanded(this.getSectionId(item))) {
+        continue;
+      }
+
+      if ((item.children && item.children.length > 0) || (!item.children && this.showInRouter(item))) {
+        visibleItems.push(item);
+      }
+    }
+
+    return this.trimSectionSeparators(visibleItems);
   }
 
   isHighlight(text) {
@@ -124,12 +171,123 @@ export class MenuComponent {
       }
     }
   }
+
+  isSectionToggle(item: IMenuItem | null | undefined): boolean {
+    return typeof item?.action === 'string' && item.action.startsWith('section-toggle-');
+  }
+
+  isSectionFilter(item: IMenuItem | null | undefined): boolean {
+    return typeof item?.action === 'string' && item.action.startsWith('section-filter-');
+  }
+
+  getSectionId(item: IMenuItem | null | undefined): string {
+    const explicitSectionId = typeof item?.extra?.sectionId === 'string' ? item.extra.sectionId.trim() : '';
+    if (explicitSectionId) {
+      return explicitSectionId;
+    }
+
+    const action = typeof item?.action === 'string' ? item.action : '';
+    if (action.startsWith('section-toggle-')) {
+      return action.slice('section-toggle-'.length);
+    }
+    if (action.startsWith('section-filter-')) {
+      return action.slice('section-filter-'.length);
+    }
+
+    return typeof item?.extra?.section === 'string' ? item.extra.section : '';
+  }
+
+  isSectionExpanded(sectionId: string): boolean {
+    return !this.sectionCollapsedState[sectionId];
+  }
+
+  toggleSection(item: IMenuItem): void {
+    const sectionId = this.getSectionId(item);
+    if (!sectionId) {
+      return;
+    }
+
+    this.sectionCollapsedState[sectionId] = !this.sectionCollapsedState[sectionId];
+    this.activeSubmenuItem = null;
+  }
+
+  updateSectionFilter(sectionId: string, value: string): void {
+    this.sectionFilterState[sectionId] = typeof value === 'string' ? value : '';
+  }
+
+  getSectionFilterValue(sectionId: string): string {
+    return this.sectionFilterState[sectionId] ?? '';
+  }
+
+  getSectionToggleIcon(item: IMenuItem): string {
+    return this.isSectionExpanded(this.getSectionId(item)) ? 'fa-light fa-chevron-down' : 'fa-light fa-chevron-right';
+  }
+
+  private initializeSectionState(): void {
+    for (const item of this.menuList) {
+      if (this.isSectionToggle(item)) {
+        const sectionId = this.getSectionId(item);
+        if (!sectionId || this.sectionCollapsedState[sectionId] !== undefined) {
+          continue;
+        }
+        this.sectionCollapsedState[sectionId] = item.extra?.collapsed !== false;
+      }
+      if (this.isSectionFilter(item)) {
+        const sectionId = this.getSectionId(item);
+        if (sectionId && this.sectionFilterState[sectionId] === undefined) {
+          this.sectionFilterState[sectionId] = '';
+        }
+      }
+    }
+  }
+
+  private isSectionScoped(item: IMenuItem): boolean {
+    return typeof item?.extra?.section === 'string' && item.extra.section.trim().length > 0;
+  }
+
+  private isSectionItemVisible(item: IMenuItem): boolean {
+    const sectionId = this.getSectionId(item);
+    if (!sectionId) {
+      return true;
+    }
+
+    if (!this.isSectionExpanded(sectionId)) {
+      return false;
+    }
+
+    const filterValue = this.getSectionFilterValue(sectionId).trim().toLowerCase();
+    if (!filterValue) {
+      return true;
+    }
+
+    const haystack = [item.name, item.text, item.tooltip]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(filterValue);
+  }
+
+  private trimSectionSeparators(items: IMenuItem[]): IMenuItem[] {
+    const normalized: IMenuItem[] = [];
+
+    for (const item of items) {
+      if (item.sep && (normalized.length === 0 || normalized[normalized.length - 1].sep)) {
+        continue;
+      }
+      normalized.push(item);
+    }
+
+    while (normalized.length > 0 && normalized[normalized.length - 1].sep) {
+      normalized.pop();
+    }
+
+    return normalized;
+  }
   // 显示子菜单
-  showSubMenu(event: MouseEvent, index: number) {
-    const item = this.menuList[index];
+  showSubMenu(event: MouseEvent, item: IMenuItem, index: number) {
     if (!item?.children?.length) {
-      if (this.activeSubmenuIndex === index) {
-        this.activeSubmenuIndex = null;
+      if (this.activeSubmenuItem === item) {
+        this.activeSubmenuItem = null;
       }
       return;
     }
@@ -139,39 +297,19 @@ export class MenuComponent {
       clearTimeout(this.submenuTimeout);
     }
 
-    if (this.activeSubmenuIndex === index) {
+    if (this.activeSubmenuItem === item) {
       return;
     }
 
-    this.activeSubmenuIndex = index;
+    this.activeSubmenuItem = item;
     this.calculateSubmenuPosition(index);
   }
 
   // 计算子菜单位置
   calculateSubmenuPosition(index: number) {
     const menuItems = this.menuItems.toArray();
-    let targetItemIndex = 0;
-    let visibleItemCount = 0;
-
-    // 计算目标菜单项在可见项中的索引
-    for (let i = 0; i <= index; i++) {
-      const item = this.menuList[i];
-      // 跳过分隔符
-      if (item.sep) {
-        continue;
-      }
-      // 检查是否应该渲染这个菜单项
-      const shouldRender = (item.children && item.children.length > 0) || (!item.children && this.showInRouter(item));
-      if (shouldRender) {
-        if (i === index) {
-          targetItemIndex = visibleItemCount;
-        }
-        visibleItemCount++;
-      }
-    }
-
-    if (menuItems[targetItemIndex]) {
-      const menuItemElement = menuItems[targetItemIndex].nativeElement;
+    if (menuItems[index]) {
+      const menuItemElement = menuItems[index].nativeElement;
       const menuBoxElement = this.menuBox.nativeElement;
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();
@@ -196,7 +334,7 @@ export class MenuComponent {
     const submenuTopFromWindow = submenuTop;
 
     // 预估子菜单项数量和高度
-    const submenuItems = this.menuList[this.activeSubmenuIndex]?.children || [];
+    const submenuItems = this.activeSubmenuItem?.children || [];
     const itemHeight = 28; // 每个菜单项高度
     const padding = 8; // 上下padding (4px * 2)
     const estimatedSubmenuHeight = submenuItems.length * itemHeight + padding;
@@ -219,22 +357,19 @@ export class MenuComponent {
   hideSubMenu(event: MouseEvent, index: number) {
     // 延时隐藏，给用户时间移动到子菜单
     this.submenuTimeout = setTimeout(() => {
-      if (this.activeSubmenuIndex === index) {
-        this.activeSubmenuIndex = null;
-      }
+      this.activeSubmenuItem = null;
     }, 60);
   }
 
   // 保持子菜单打开
-  keepSubMenuOpen(index: number) {
+  keepSubMenuOpen() {
     if (this.submenuTimeout) {
       clearTimeout(this.submenuTimeout);
     }
-    this.activeSubmenuIndex = index;
   }
 
   subItemClick(event, subItem) {
-    this.menuList[this.activeSubmenuIndex].children.forEach(item => {
+    this.activeSubmenuItem?.children?.forEach(item => {
       item['check'] = false
     });
     subItem['check'] = true
