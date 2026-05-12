@@ -6,12 +6,12 @@
 .chat-editing-session-container {
     padding: 4px 3px;
     box-sizing: border-box;
-    background: color-mix(in srgb, #1f1f1f 72%, transparent);
+    background: color-mix(in srgb, var(--aily-bg-elevated, #1f1f1f) 72%, transparent);
     backdrop-filter: blur(6px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
     border-bottom: none;
     border-radius: 8px 8px 0 0;
-    color: #cccccc;
+    color: var(--aily-text-tertiary, #cccccc);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -26,7 +26,7 @@
         justify-content: space-between;
 
         &:hover {
-            background: rgba(255, 255, 255, 0.06);
+            background: var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.06));
         }
 
         .header-content {
@@ -39,7 +39,7 @@
 
             .panel-icon {
                 font-size: 10px;
-                color: #c5c5c5;
+                color: var(--aily-icon-color, #c5c5c5);
                 transition: transform 0.2s ease;
 
                 &.expanded {
@@ -58,12 +58,12 @@
             .panel-title {
                 font-size: 12px;
                 font-weight: 400;
-                color: #cccccc;
+                color: var(--aily-text-tertiary, #cccccc);
             }
 
             .panel-subtitle {
                 font-size: 11px;
-                color: #888;
+                color: var(--aily-text-hint, #888);
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
@@ -85,26 +85,26 @@
                 white-space: nowrap;
 
                 &.primary {
-                    background-color: #0078d4;
-                    color: #fff;
-                    border-color: #0078d4;
+                    background-color: var(--aily-color-primary, #0078d4);
+                    color: var(--aily-chat-viewer-on-primary, #fff);
+                    border-color: var(--aily-color-primary, #0078d4);
 
                     &:hover {
-                        background-color: #1a8ae8;
+                        background-color: var(--aily-color-link-hover, #1a8ae8);
                     }
                 }
 
                 &.icon-btn {
                     padding: 1px 4px;
                     background: transparent;
-                    color: #c5c5c5;
+                    color: var(--aily-icon-color, #c5c5c5);
                     border: none;
                     font-size: 13px;
                     line-height: 20px;
 
                     &:hover:not(:disabled) {
-                        background: #37373a;
-                        color: #cccccc;
+                        background: var(--aily-bg-tertiary, #37373a);
+                        color: var(--aily-text-tertiary, #cccccc);
                     }
 
                     &:disabled {
@@ -116,7 +116,7 @@
 
             .action-taken-text {
                 font-size: 11px;
-                color: #888;
+                color: var(--aily-text-hint, #888);
                 font-style: italic;
             }
         }
@@ -136,7 +136,7 @@
         }
 
         &::-webkit-scrollbar-thumb {
-            background: #424242;
+            background: var(--aily-scrollbar-thumb-hover, #424242);
             border-radius: 3px;
         }
 
@@ -150,7 +150,7 @@
             border-radius: 2px;
 
             &:hover {
-                background: rgba(255, 255, 255, 0.06);
+                background: var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.06));
             }
 
             .file-icon {
@@ -160,15 +160,15 @@
                 flex-shrink: 0;
 
                 &.icon-created {
-                    color: #3fb950;
+                    color: var(--aily-color-success-alt, #3fb950);
                 }
 
                 &.icon-modified {
-                    color: #58a6ff;
+                    color: var(--aily-color-accent, #58a6ff);
                 }
 
                 &.icon-deleted {
-                    color: #f85149;
+                    color: var(--aily-color-error-bright, #f85149);
                 }
             }
 
@@ -179,7 +179,7 @@
                 text-overflow: ellipsis;
                 white-space: nowrap;
                 font-size: 12px;
-                color: #d4d4d4;
+                color: var(--aily-text-quaternary, #d4d4d4);
             }
 
             .file-stats {
@@ -207,18 +207,18 @@
                     font-size: 10px;
 
                     &.accept {
-                        color: #3fb950;
+                        color: var(--aily-color-success-alt, #3fb950);
 
                         &:hover {
-                            background: rgba(63, 185, 80, 0.15);
+                            background: color-mix(in srgb, var(--aily-color-success-alt) 15%, transparent);
                         }
                     }
 
                     &.reject {
-                        color: #f85149;
+                        color: var(--aily-color-error-bright, #f85149);
 
                         &:hover {
-                            background: rgba(248, 81, 73, 0.15);
+                            background: color-mix(in srgb, var(--aily-color-error-bright) 15%, transparent);
                         }
                     }
                 }
@@ -232,12 +232,12 @@
 }
 
 .stat-added {
-    color: #3fb950;
+    color: var(--aily-color-success-alt, #3fb950);
     font-weight: 500;
 }
 
 .stat-removed {
-    color: #f85149;
+    color: var(--aily-color-error-bright, #f85149);
     font-weight: 500;
 }
 

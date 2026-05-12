@@ -20,7 +20,7 @@ function getInitialToolWebUrl(): string {
 function getInitialRegistryUrl(): string {
   return (typeof process !== 'undefined' && window['env'].get("AILY_NPM_REGISTRY"))
     ? window['env'].get("AILY_NPM_REGISTRY")
-    : 'https://registry.yysc.tech';
+    : 'https://registry.yiyu.pro';
 }
 
 // 动态获取服务器地址，优先使用缓存的值
@@ -80,6 +80,7 @@ export const API = {
   get me() { return `${getServerUrl()}/api/v1/auth/me`; },
   get authQuotaInfo() { return `${getServerUrl()}/api/v1/auth/me/quota-info`; },
   get changeNickname() { return `${getServerUrl()}/api/v1/auth/me/nickname`; },
+  get benefits() { return `${getServerUrl()}/api/v1/entitlements/me/benefits`; },
   // invitation
   get invitationValidateCompile() { return `${getServerUrl()}/api/v1/invitation/validate-compile`; },
   // github oauth
@@ -88,6 +89,10 @@ export const API = {
   // wechat oauth
   get wechatQrcode() { return `${getServerUrl()}/api/v1/oauth/wechat/qrcode`; },
   get wechatCheck() { return `${getServerUrl()}/api/v1/oauth/wechat/check`; },
+  get wechatLoginBindQrcode() { return `${getServerUrl()}/api/v1/oauth/wechat/login-bind-qrcode`; },
+  get wechatLoginBindCheck() { return `${getServerUrl()}/api/v1/oauth/wechat/login-bind-check`; },
+  get wechatCompleteEmailBind() { return `${getServerUrl()}/api/v1/oauth/wechat/complete-email-bind-login`; },
+  get wechatConfirmMerge() { return `${getServerUrl()}/api/v1/oauth/wechat/confirm-merge`; },
   // sso
   get ssoGenerate() { return `${getServerUrl()}/api/v1/auth/sso/generate`; },
   // ai

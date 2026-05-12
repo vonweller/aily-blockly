@@ -175,6 +175,51 @@ export class CloudService {
   }
 
   /**
+   * 将项目设为模板
+   * @param projectId 项目ID
+   */
+  setTemplate(projectId: string): Observable<any> {
+    return this.http.post<any>(`${this.cloudProjectsUrl}/${projectId}/template`, {})
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
+  /**
+   * 取消项目模板状态
+   * @param projectId 项目ID
+   */
+  unsetTemplate(projectId: string): Observable<any> {
+    return this.http.delete<any>(`${this.cloudProjectsUrl}/${projectId}/template`)
+      .pipe(
+        catchError(this.handleError)
+      );
+  }
+
+  /**
+   * 获取当前用户的模板项目列表
+   * @param page 页码
+   * @param perPage 每页数量
+   * @param board 开发板包名
+   */
+  getMyTemplates(page: number = 1, perPage: number = 100, board?: string): Observable<any> {
+    const params: Record<string, string> = {
+      page: page.toString(),
+      perPage: perPage.toString()
+    };
+
+    if (board?.trim()) {
+      params['board'] = board.trim();
+    }
+
+    return this.http.get<any>(`${this.cloudProjectsUrl}/templates`, {
+      params
+    }).pipe(
+      catchError(this.handleError)
+    );
+  }
+
+  /**
    * 删除项目接口
    * @param projectId 项目ID
    */

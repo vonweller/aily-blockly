@@ -21,9 +21,9 @@ import { CommonModule } from '@angular/common';
     }
     .cmdp-block {
       min-width: 0;
-      padding: 4px 8px;
+      padding: 5px;
       background: rgba(255,255,255,0.025);
-      border-radius: 4px;
+      border-radius: 5px;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
     }
     .cmdp-command {

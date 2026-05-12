@@ -80,8 +80,8 @@ export class ChatComponentViewModel {
   get hasConversationContent(): boolean {
     return this.dialogItems.length > 0
       || this.hostRequestModel !== null
-      || this.hostRequestModel?.response?.response !== null
-      || this.hostRequestModel?.response?.entireResponse !== null;
+      || this.hostRequestModel?.response?.response != null
+      || this.hostRequestModel?.response?.entireResponse != null;
   }
 
   get dialogItems(): readonly ChatDialogViewItem[] {

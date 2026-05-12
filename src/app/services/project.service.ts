@@ -31,6 +31,7 @@ interface ProjectPackageData {
   type?: string;
   framework?: string;
   cloudId?: string; // 云端项目ID
+  blocklyToolboxOrder?: string[];
 }
 
 @Injectable({
@@ -126,14 +127,48 @@ export class ProjectService {
     return chineseRegex.test(str);
   }
 
+  private buildProjectPath(newProjectData: NewProjectData): string {
+    const inputName = String(newProjectData.name ?? '').trim();
+    const projectPath = window['path'].join(newProjectData.path, inputName.replace(/\s/g, '_'));
+    return projectPath;
+  }
+
+  private updateNewProjectPackageJson(
+    projectPath: string,
+    newProjectData: NewProjectData,
+    options?: { removeCloudId?: boolean }
+  ) {
+    const inputName = String(newProjectData.name ?? '').trim();
+    const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
+      if (this.containsChineseCharacters(inputName)) {
+        packageJson.name = pinyin(inputName, {
+          toneType: "none",
+          separator: ""
+        }).replace(/\s/g, '_');
+        packageJson.nickname = inputName;
+      } else {
+        packageJson.name = inputName;
+        packageJson.nickname = packageJson.name;
+      }
+      // 设置开发框架
+      packageJson.devmode = newProjectData.devmode;
+
+      window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
+  }
+
+  private async finishProjectCreation(projectPath: string): Promise<boolean> {
+    this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
+    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
+    return true;
+  }
+
   // 新建项目
-  async projectNew(newProjectData: NewProjectData) {
+  async projectNew(newProjectData: NewProjectData): Promise<boolean> {
     try {
       const separator = this.platformService.getPlatformSeparator();
       // console.log('newProjectData: ', newProjectData);
       const appDataPath = window['path'].getAppDataPath();
-      // const projectPath = (newProjectData.path + newProjectData.name).replace(/\s/g, '_');
-      const projectPath = window['path'].join(newProjectData.path, newProjectData.name.replace(/\s/g, '_'));
+      const projectPath = this.buildProjectPath(newProjectData);
       const boardPackage = newProjectData.board.name + '@' + newProjectData.board.version;
 
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
@@ -145,24 +180,8 @@ export class ProjectService {
       // 复制模板文件到项目目录
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
-      // 3. 修改package.json文件
-      const packageJson = JSON.parse(window['fs'].readFileSync(`${projectPath}/package.json`));
-      if (this.containsChineseCharacters(newProjectData.name)) {
-        packageJson.name = pinyin(newProjectData.name, {
-          toneType: "none",
-          separator: ""
-        }).replace(/\s/g, '_');
-      } else {
-        packageJson.name = newProjectData.name;
-      }
-      // 设置开发框架
-      packageJson.devmode = newProjectData.devmode;
-
-      window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
-
-      this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
-      // 此后就是打开项目(projectOpen)的逻辑，理论可复用，由于此时在新建项目窗口，因此要告知主窗口，进行打开项目操作
-      await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
+      this.updateNewProjectPackageJson(projectPath, newProjectData);
+      return await this.finishProjectCreation(projectPath);
 
       // if (closeWindow) {
       //   this.uiService.closeWindow();
@@ -170,6 +189,25 @@ export class ProjectService {
     } catch (error) {
       this.message.error(this.translate.instant('PROJECT.CREATE_FAILED') + ": " + error.message);
       this.uiService.updateFooterState({ state: 'error', text: this.translate.instant('PROJECT.CREATE_FAILED') });
+      return false;
+    }
+  }
+
+  async projectNewFromTemplate(newProjectData: NewProjectData, templatePath: string): Promise<boolean> {
+    try {
+      const separator = this.platformService.getPlatformSeparator();
+      const projectPath = this.buildProjectPath(newProjectData);
+
+      this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.CREATING_PROJECT') });
+      await this.crossPlatformCmdService.createDirectory(projectPath, true);
+      await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
+
+      this.updateNewProjectPackageJson(projectPath, newProjectData, { removeCloudId: true });
+      return await this.finishProjectCreation(projectPath);
+    } catch (error) {
+      this.message.error(this.translate.instant('PROJECT.CREATE_FAILED') + ": " + error.message);
+      this.uiService.updateFooterState({ state: 'error', text: this.translate.instant('PROJECT.CREATE_FAILED') });
+      return false;
     }
   }
 
@@ -268,15 +306,17 @@ export class ProjectService {
     if (packageJson.cloudId) {
       delete packageJson.cloudId;
     }
-    // 获取新的项目名称
-    let name = path.split('\\').pop();
+    // 获取新的项目名称（文件夹名）
+    let name = window['path'].basename(path);
     if (this.containsChineseCharacters(name)) {
       packageJson.name = pinyin(name, {
         toneType: "none",
         separator: ""
       }).replace(/\s/g, '_');
+      packageJson.nickname = name;
     } else {
       packageJson.name = name;
+      packageJson.nickname = name;
     }
     window['fs'].writeFileSync(`${path}/package.json`, JSON.stringify(packageJson, null, 2));
     // 修改当前项目路径
@@ -533,26 +573,40 @@ export class ProjectService {
     const packageJsonPath = `${this.currentProjectPath}/package.json`;
 
     try {
-      // 尝试直接写入
-      window['fs'].writeFileSync(packageJsonPath, JSON.stringify(data, null, 2));
+      this.writePackageJsonFile(packageJsonPath, data);
     } catch (error) {
-      // 如果写入失败，尝试移除只读属性后重试
-      console.warn('写入package.json失败，尝试修改权限后重试:', error);
-      try {
-        if (window['fs'].existsSync(packageJsonPath)) {
-          // 0o666 确保文件可读写
-          window['fs'].chmodSync(packageJsonPath, 0o666);
-          // 重试写入
-          window['fs'].writeFileSync(packageJsonPath, JSON.stringify(data, null, 2));
-        }
-      } catch (retryError) {
-        console.error('修改权限后写入仍然失败:', retryError);
-        throw retryError;
+      console.error('写入package.json失败:', error);
+      throw error;
+    }
+
+    const tempPackageJsonPath = window['path'].join(this.currentProjectPath, '.temp', 'package.json');
+    try {
+      const tempDir = window['path'].dirname(tempPackageJsonPath);
+      if (!window['fs'].existsSync(tempDir)) {
+        window['fs'].mkdirSync(tempDir, { recursive: true });
       }
+      this.writePackageJsonFile(tempPackageJsonPath, data);
+    } catch (error) {
+      console.warn('同步 package.json 到 temp 失败:', error);
     }
 
     // 更新当前packageData
     this.currentPackageData = data;
+  }
+
+  private writePackageJsonFile(packageJsonPath: string, data: any) {
+    try {
+      window['fs'].writeFileSync(packageJsonPath, JSON.stringify(data, null, 2));
+    } catch (error) {
+      console.warn('写入package.json失败，尝试修改权限后重试:', error);
+      if (window['fs'].existsSync(packageJsonPath)) {
+        window['fs'].chmodSync(packageJsonPath, 0o666);
+        window['fs'].writeFileSync(packageJsonPath, JSON.stringify(data, null, 2));
+        return;
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -1198,7 +1252,9 @@ export class ProjectService {
   // 更新STM32配置菜单项
   async updateStm32ConfigMenu(boardName: string) {
     try {
+      console.log("updateStm32ConfigMenu: " + boardName);
       const boardConfig = await this.getStm32BoardConfig(boardName);
+      console.log(boardConfig);
 
       if (!boardConfig) {
         console.warn(`无法获取开发板 "${boardName}" 的配置`);
@@ -1418,6 +1474,7 @@ export class ProjectService {
     if (pinConfig.data == this.currentStm32Config.board) {
       return true;
     } else if (pinConfig.extra?.build.variant == this.currentStm32Config.variant) {
+      this.currentStm32Config.board = pinConfig.data;
       return true;
     } else {
       let newPinConfig = pinConfig;
@@ -1448,11 +1505,10 @@ export class ProjectService {
       // 保存更新后的board.json
       if (isChanged) {
         await this.setBoardJson(currentBoardJson);
-        this.currentStm32Config.board = pinConfig.data;
-        this.currentStm32Config.variant = variant;
-        this.currentStm32Config.variant_h = variant_h;
-        // console.log('Updated STM32 pin config:', this.currentStm32Config);
       }
+      this.currentStm32Config.board = pinConfig.data;
+      this.currentStm32Config.variant = variant;
+      this.currentStm32Config.variant_h = variant_h;
 
       // // // 获取到的config格式为“STM32F1xx/F100C(4-6)T”
       // // // 我们需要转换为“F1XXC”
@@ -1692,18 +1748,18 @@ export class ProjectService {
       // 2.5. 获取新开发板的模板并更新package.json
       console.log('更新项目配置文件...');
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UPDATING_PROJECT_CONFIG') });
-      
+
       // 读取当前package.json保留项目基本信息
       const currentPackageJson = await this.getPackageJson();
-      
+
       // 获取新开发板的模板package.json（从 appDataPath 读取）
       const templatePath = `${appDataPath}${separator}node_modules${separator}${boardInfo.name}${separator}template`;
       const templatePackageJsonPath = `${templatePath}${separator}package.json`;
-      
+
       if (window['fs'].existsSync(templatePackageJsonPath)) {
         // 读取模板package.json
         const templatePackageJson = JSON.parse(window['fs'].readFileSync(templatePackageJsonPath, 'utf8'));
-        
+
         // 合并配置：保留当前项目的基本信息，使用新开发板的依赖和配置
         const newPackageJson = {
           ...templatePackageJson,
@@ -1724,7 +1780,7 @@ export class ProjectService {
           // ...(currentPackageJson.projectConfig && { projectConfig: currentPackageJson.projectConfig }),
           // ...(currentPackageJson.cloudId && { cloudId: currentPackageJson.cloudId }),
         };
-        
+
         // 写入新的package.json
         window['fs'].writeFileSync(`${this.currentProjectPath}/package.json`, JSON.stringify(newPackageJson, null, 2));
         console.log('package.json 更新完成');

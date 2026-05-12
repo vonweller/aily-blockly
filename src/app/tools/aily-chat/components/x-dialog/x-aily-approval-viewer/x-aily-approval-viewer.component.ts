@@ -97,7 +97,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
       display: flex;
       align-items: center;
       gap: 6px;
-      margin: 0 0 2px;
+      padding: 5px;
       font-size: 11px;
       line-height: 1.35;
       color: var(--chat-fg-dim, #8e8e8e);

@@ -64,7 +64,7 @@ interface ButtonData {
     .ac-btns { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 0; }
     .ac-btn {
       align-items: center;
-      border-radius: 6px;
+      border-radius: 5px;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
 
@@ -76,11 +76,11 @@ interface ButtonData {
       transform: translateY(-1px);
     }
     .ac-btn:active:not(:disabled) { transform: translateY(0); }
-    .ac-btn[data-type="primary"] { background: #1890ff; border-color: #1890ff; color: #fff; }
-    .ac-btn[data-type="primary"]:hover:not(:disabled) { background: #40a9ff; }
+    .ac-btn[data-type="primary"] { background: var(--aily-chat-viewer-primary, #1890ff); border-color: var(--aily-chat-viewer-primary, #1890ff); color: var(--aily-chat-viewer-on-primary, #ffffff); }
+    .ac-btn[data-type="primary"]:hover:not(:disabled) { background: var(--aily-chat-viewer-primary-hover, #40a9ff); }
     .ac-btn[data-type="dashed"] { border-style: dashed; }
-    .ac-btn[data-type="link"] { border: none; background: none; color: #1890ff; padding: 4px 6px; min-width: auto; height: auto; }
-    .ac-btn[data-type="link"]:hover { color: #40a9ff; transform: none; box-shadow: none; }
+    .ac-btn[data-type="link"] { border: none; background: none; color: var(--aily-chat-viewer-primary, #1890ff); padding: 4px 6px; min-width: auto; height: auto; }
+    .ac-btn[data-type="link"]:hover { color: var(--aily-chat-viewer-primary-hover, #40a9ff); transform: none; box-shadow: none; }
     .ac-btn[data-type="text"] { border: none; background: none; min-width: auto; height: auto; }
     .ac-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
     .ac-loading {
@@ -88,12 +88,12 @@ interface ButtonData {
       align-items: center;
       justify-content: flex-start;
       margin: 0;
-      border-radius: 4px;
+      border-radius: 5px;
       overflow-x: auto;
-      background: #0d1117;
+      background: var(--aily-chat-viewer-code-bg, #0d1117);
       padding: 12px;
-      border: 1px solid #444;
-      color: #8c8c8c;
+      border: 1px solid var(--aily-chat-viewer-code-border, #444444);
+      color: var(--aily-text-hint, #8c8c8c);
     }
   `],
 })

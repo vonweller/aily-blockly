@@ -3,9 +3,9 @@
 }
 
 .menu-box {
-  background: rgba(33, 36, 40, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: var(--aily-bg-primary);
+  border: 1px solid var(--aily-border-secondary, rgba(255, 255, 255, 0.06));
+  border-radius: 5px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
   position: fixed;
   z-index: 999;
@@ -22,16 +22,16 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 2px;
+    background: var(--aily-border-tertiary);
+    border-radius: 5px;
 
     &:hover {
-      background: #777;
+      background: var(--aily-scrollbar-thumb-hover);
     }
   }
 
   scrollbar-width: thin;
-  scrollbar-color: #555 transparent;
+  scrollbar-color: var(--aily-border-tertiary) transparent;
 
   .menu-item {
     padding: 0 10px;
@@ -40,9 +40,9 @@
     flex-shrink: 0; // 防止flex布局压缩item
     justify-content: flex-start;
     margin: 0 4px;
-    border-radius: 4px;
+    border-radius: 5px;
     cursor: pointer;
-    color: #d9dee3;
+    color: var(--aily-menu-text);
     position: relative;
     overflow: hidden;
     transition: background 120ms ease, transform 120ms ease;
@@ -61,14 +61,14 @@
       width: 18px;
       margin-right: 8px;
       flex-shrink: 0;
-      color: #a8b0b9;
+      color: var(--aily-menu-text-secondary);
     }
 
     .text {
       margin-left: auto;
       padding-left: 12px;
       white-space: nowrap;
-      color: #98a2ad;
+      color: var(--aily-menu-text-secondary);
       flex-shrink: 0;
       font-size: 11px;
       letter-spacing: 0.01em;
@@ -76,20 +76,12 @@
     }
 
     &:hover {
-      background: rgba(92, 149, 222, 0.2);
+      background: var(--aily-menu-hover);
       transform: translateX(1px);
-
-      .name {
-        color: #eef6ff;
-      }
-
-      .text {
-        color: #c5def7;
-      }
     }
 
-    &.active{
-      background: rgba(92, 149, 222, 0.2);
+    &.active {
+      background: var(--aily-menu-hover);
     }
 
     &.disabled {
@@ -106,27 +98,27 @@
         width: 4px;
         height: 4px;
         border-radius: 50%;
-        background: #61afef;
+        background: var(--aily-color-accent);
         margin-right: 6px;
         vertical-align: middle;
         flex-shrink: 0;
       }
       .name {
-        color: #d5ebff;
+        color: var(--aily-color-accent);
       }
 
       .text {
-        color: #b8dcff;
+        color: var(--aily-menu-text-secondary);
       }
 
       .icon {
-        color: #7fc2ff;
+        color: var(--aily-color-accent);
       }
     }
 
     &.highlight {
       .icon {
-        color: #f7ce42;
+        color: var(--aily-color-warning);
       }
     }
 
@@ -151,7 +143,7 @@
         font-size: 10px;
         font-weight: 600;
         letter-spacing: 0.08em;
-        color: #7f8790;
+        color: var(--aily-text-hint);
         text-transform: uppercase;
       }
 
@@ -173,18 +165,18 @@
 
       .name {
         font-size: 11px;
-        color: #c4ccd4;
+        color: var(--aily-text-secondary);
         letter-spacing: 0.03em;
         text-transform: none;
       }
 
       .arrow {
         display: flex;
-        color: #8fa4ba;
+        color: var(--aily-text-muted);
       }
 
       &:hover .name {
-        color: #eef6ff;
+        color: var(--aily-text-primary);
       }
     }
 
@@ -196,7 +188,7 @@
     .check {
       position: absolute;
       right: 5px;
-      color: #f7ce42;
+      color: var(--aily-color-warning);
     }
 
     .item-actions {
@@ -217,20 +209,20 @@
       justify-content: center;
       width: 20px;
       height: 20px;
-      border-radius: 3px;
-      color: #aaa;
+      border-radius: 5px;
+      color: var(--aily-text-muted);
       font-size: 12px;
 
       &:hover {
-        background: rgba(255, 255, 255, 0.15);
-        color: #fff;
+        background: var(--aily-highlight-bg);
+        color: var(--aily-text-primary);
       }
     }
   }
 
   .sep {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--aily-menu-separator);
     margin: 4px 8px;
   }
 
@@ -240,7 +232,7 @@
     gap: 6px;
     padding: 4px 10px 6px;
     margin: 0 4px;
-    color: #8e99a5;
+    color: var(--aily-text-muted);
 
     i {
       font-size: 11px;
@@ -257,21 +249,21 @@
   .menu-filter-input {
     width: 100%;
     height: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--aily-border-input);
     border-radius: 5px;
-    background: rgba(18, 21, 24, 0.82);
-    color: #d9dee3;
+    background: var(--aily-bg-input);
+    color: var(--aily-text-primary);
     font-size: 11px;
     padding: 0 8px;
     outline: none;
 
     &::placeholder {
-      color: #7a8590;
+      color: var(--aily-text-hint);
     }
 
     &:focus {
-      border-color: rgba(97, 175, 239, 0.45);
-      box-shadow: 0 0 0 1px rgba(97, 175, 239, 0.18);
+      border-color: color-mix(in srgb, var(--aily-color-accent) 52%, var(--aily-border-input));
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--aily-color-accent) 22%, transparent);
     }
   }
 }
@@ -296,20 +288,20 @@
   }
 
   &::-webkit-scrollbar-track {
-    background: #2b2d30;
-    border-radius: 4px;
+    background: var(--aily-bg-primary);
+    border-radius: 5px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 4px;
+    background: var(--aily-border-tertiary);
+    border-radius: 5px;
     
     &:hover {
-      background: #666;
+      background: var(--aily-text-disabled);
     }
   }
 
   // Firefox滚动条样式
   scrollbar-width: thin;
-  scrollbar-color: #555 #2b2d30;
+  scrollbar-color: var(--aily-border-tertiary) var(--aily-bg-primary);
 }

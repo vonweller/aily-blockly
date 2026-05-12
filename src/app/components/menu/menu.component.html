@@ -42,7 +42,8 @@
       @if(item.actions && item.actions.length > 0){
       <div class="item-actions" (click)="$event.stopPropagation()">
         @for(act of item.actions; track act.action){
-        <span class="item-action-btn" [title]="act.title || ''" (click)="actionClick($event, act, item)"><i class="{{ act.icon }}"></i></span>
+        <span class="item-action-btn" [title]="act.title || ''" (click)="actionClick($event, act, item)"><i
+            class="{{ act.icon }}"></i></span>
         }
       </div>
       }
@@ -65,7 +66,7 @@
       'overflow-y': submenuOverflow
     }" (mouseenter)="keepSubMenuOpen()" (mouseleave)="hideSubMenu($event, 0)">
     @for (subItem of activeSubmenuItem.children; track $index) {
-    <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" [attr.title]="subItem.tooltip || null">
+    <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" style="padding-right: 25px;" [attr.title]="subItem.tooltip || null">
       <div class="name ellipsis">{{ subItem.name }}</div>
       @if(subItem.check){
       <div class="check"><i class="fa-light fa-circle-check"></i></div>

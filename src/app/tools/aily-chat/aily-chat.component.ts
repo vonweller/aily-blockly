@@ -63,11 +63,13 @@ import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
+import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
 import { ChatHistoryService } from './services/chat-history.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
+import { ThemeService } from '../../services/theme.service';
 
 // 共享类型从 core/chat-types.ts 导入并重新导出（保持向后兼容）
 import { Tool, ResourceItem, ChatMessage, ToolCallState, ToolCallInfo } from './core/chat-types';
@@ -95,6 +97,7 @@ export { ToolCallState };
     LoginComponent,
     AilyChatSettingsComponent,
     ChatInputPartHostComponent,
+    ChatContextToolbarComponent,
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
@@ -134,6 +137,8 @@ export class AilyChatComponent implements OnDestroy {
   private readonly lifecycleCoordinator: ChatComponentLifecycleCoordinator;
   private dialogsResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
+  /** 用户消息重新编辑互斥：同时最多展开一条 */
+  userMessageEditingTurnId: string | undefined;
 
   constructor(
     private uiService: UiService,
@@ -160,6 +165,7 @@ export class AilyChatComponent implements OnDestroy {
     private chatHistoryService: ChatHistoryService,
     private cdr: ChangeDetectorRef,
     private builderService: BuilderService,
+    private themeService: ThemeService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
     public scrollManager: ScrollManagerService,
@@ -270,7 +276,12 @@ export class AilyChatComponent implements OnDestroy {
       },
       loadMermaid: () => import('mermaid'),
       setMermaidInstance: (instance) => {
-        MermaidCodeComponent.setMermaidInstance(instance, { startOnLoad: false, ...MERMAID_DARK_THEME });
+        const mode = this.themeService.theme();
+        const config =
+          mode === 'dark'
+            ? { startOnLoad: false, ...MERMAID_DARK_THEME }
+            : { startOnLoad: false, theme: 'default' as const };
+        MermaidCodeComponent.setMermaidInstance(instance, config);
       },
       exposeEditBlockTools: () => {
         (window as any).editBlockTool = {
@@ -422,6 +433,21 @@ export class AilyChatComponent implements OnDestroy {
 
   setComposerFocusState(focused: boolean): void {
     this.isComposerFocused = focused;
+  }
+
+  onUserMessageEditSessionOpened(turnId: string): void {
+    this.userMessageEditingTurnId = turnId;
+    this.cdr.markForCheck();
+  }
+
+  onUserMessageEditSessionClosed(): void {
+    this.userMessageEditingTurnId = undefined;
+    this.cdr.markForCheck();
+  }
+
+  closeChatSessionMenus(): void {
+    this.menuManager.closeAll();
+    this.cdr.markForCheck();
   }
 
   handleTodoFocusToggleShortcut(): void {

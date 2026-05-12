@@ -1,4 +1,4 @@
-import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnRequest, TurnResponseTurn, SessionSnapshot } from 'aily-lex/browser';
 
 import type {
   IAgentLifecycle,
@@ -21,7 +21,16 @@ import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
 
 type LexInteractionAction = NonNullable<TurnRequest['metadata']>['interactionAction'];
 type LexTurnContinuation = NonNullable<TurnResponseTurn['response']['continuation']>;
+type LexSessionInteractionContinuation = NonNullable<
+  NonNullable<SessionSnapshot['requestContext']>['interactionContinuation']
+>;
 
+function readInteractionPendingRecord(
+  continuation: LexSessionInteractionContinuation | LexTurnContinuation | undefined,
+): Record<string, unknown> | undefined {
+  const pending = continuation?.pendingState;
+  return pending && typeof pending === 'object' ? pending : undefined;
+}
 type HostSessionRestoreContext = ChatViewWriteBridgeContext
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<ISessionAccess, 'conversationMessages' | 'chatService'>
@@ -215,18 +224,19 @@ export class HostSessionRestoreBridge {
   }
 
   private restorePendingRuntimeInteraction(turnResponses: readonly TurnResponseTurn[]): void {
-    const continuation = this.ctx.lexStream.session.snapshot()?.requestContext?.interactionContinuation;
-    if (!continuation?.pendingState || continuation.pendingState['kind'] === 'none') {
+    const interactionContinuation = this.ctx.lexStream.session.snapshot()?.requestContext?.interactionContinuation;
+    const pending = readInteractionPendingRecord(interactionContinuation);
+    if (!pending || pending['kind'] === 'none') {
       return;
     }
 
-    if (continuation.pendingState['kind'] === 'question') {
+    if (pending['kind'] === 'question') {
       this.restorePendingQuestion(turnResponses);
       return;
     }
 
-    if (continuation.pendingState['kind'] === 'confirmation') {
-      this.restorePendingConfirmation(turnResponses, continuation);
+    if (pending['kind'] === 'confirmation') {
+      this.restorePendingConfirmation(turnResponses, interactionContinuation!);
     }
   }
 
@@ -320,8 +330,9 @@ function findPendingConfirmationPart(
   turnResponses: readonly TurnResponseTurn[],
   continuation: LexTurnContinuation,
 ): ConfirmationPart | null {
-  const pendingRequestId = typeof continuation.pendingState?.['requestId'] === 'string'
-    ? continuation.pendingState['requestId']
+  const pendingRecord = readInteractionPendingRecord(continuation);
+  const pendingRequestId = typeof pendingRecord?.['requestId'] === 'string'
+    ? pendingRecord['requestId']
     : undefined;
 
   for (let turnIndex = turnResponses.length - 1; turnIndex >= 0; turnIndex--) {
@@ -372,11 +383,12 @@ function buildConfirmationInteractionAction(
   part: ConfirmationPart,
   result: { approved: boolean; scope?: string; reason?: string; actionId?: string },
 ): LexInteractionAction {
+  const pendingRecord = readInteractionPendingRecord(continuation);
   const payload: Record<string, unknown> = {
     result: result.approved ? 'approved' : 'rejected',
-    source: continuation.pendingState?.['sourceEvent'] === 'approval_request' ? 'approval' : 'confirmation',
+    source: pendingRecord?.['sourceEvent'] === 'approval_request' ? 'approval' : 'confirmation',
     ...(typeof part.toolName === 'string' && part.toolName.length > 0 ? { toolName: part.toolName } : {}),
-    ...(typeof continuation.pendingState?.['toolCallId'] === 'string' ? { toolCallId: continuation.pendingState['toolCallId'] } : {}),
+    ...(typeof pendingRecord?.['toolCallId'] === 'string' ? { toolCallId: pendingRecord['toolCallId'] } : {}),
     ...(typeof result.scope === 'string' ? { scope: result.scope } : {}),
     ...(typeof result.reason === 'string' && result.reason.length > 0 ? { reason: result.reason } : {}),
     ...(typeof result.actionId === 'string' && result.actionId.length > 0 ? { actionId: result.actionId } : {}),

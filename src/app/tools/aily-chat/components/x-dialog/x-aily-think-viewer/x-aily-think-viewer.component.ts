@@ -77,7 +77,7 @@ import { getThinkContent } from '../../../core/think-content-store';
         font-size: 13px;
         color: var(--chat-fg-dim, #8e8e8e);
         user-select: none;
-        border-radius: 4px;
+        border-radius: 5px;
         transition: background 0.15s;
       }
       .ac-think-header:hover {

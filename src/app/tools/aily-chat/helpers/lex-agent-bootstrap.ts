@@ -843,12 +843,12 @@ export function buildLexEndpoint(
     },
     authStateFingerprintProvider: () => {
       const auth = AilyHost.get().auth;
-      return {
+      return JSON.stringify({
         isLoggedIn: auth?.isLoggedIn ?? false,
         token: auth?.token || '',
         userId: auth?.userInfo?.id ?? null,
         snapshot: auth?.getSnapshot?.() ?? null,
-      };
+      });
     },
     interactionBudget: buildInteractionBudgetConfig(apiConfig),
   });
@@ -1483,6 +1483,7 @@ function buildTurnResponseLexSessionSnapshot(
     turns: lexTurns,
     ...(interactionContinuation ? {
       requestContext: {
+        directToolReferences: [],
         interactionContinuation,
       },
     } : {}),
@@ -1499,24 +1500,31 @@ function clonePersistableInteractionContinuation(
     return undefined;
   }
 
-  const budgets = (continuation as (typeof continuation & {
-    budgets?: Record<string, unknown>;
-  }))?.budgets;
-  const diagnostics = (continuation as (typeof continuation & {
-    diagnostics?: Record<string, unknown>;
-  }))?.diagnostics;
+  const budgets = continuation.budgets;
+  const diagnostics = continuation.diagnostics;
+
+  const pendingState = continuation.pendingState
+    ? { ...continuation.pendingState }
+    : ({ kind: 'none' } as Record<string, unknown>);
+
+  const clonedDiagnostics = clonePersistableInteractionDiagnostics(diagnostics as unknown as Record<string, unknown>);
 
   return {
-    ...continuation,
-    ...(budgets && typeof budgets === 'object'
-      ? { budgets: { ...budgets } }
+    interactionId: continuation.interactionId,
+    stepIndex: continuation.stepIndex,
+    lease: continuation.lease,
+    ...(continuation.status !== undefined ? { status: continuation.status } : {}),
+    ...(continuation.stopReason !== undefined ? { stopReason: continuation.stopReason } : {}),
+    ...(continuation.hardStopReason !== undefined ? { hardStopReason: continuation.hardStopReason } : {}),
+    ...(budgets && typeof budgets === 'object' ? { budgets: { ...budgets } } : {}),
+    ...(clonedDiagnostics
+      ? {
+        diagnostics: clonedDiagnostics as NonNullable<
+          NonNullable<import('aily-lex/browser').TurnResponseTurn['response']['continuation']>['diagnostics']
+        >,
+      }
       : {}),
-    ...(clonePersistableInteractionDiagnostics(diagnostics)
-      ? { diagnostics: clonePersistableInteractionDiagnostics(diagnostics) }
-      : {}),
-    pendingState: continuation?.pendingState
-      ? { ...continuation.pendingState }
-      : { kind: 'none' },
+    pendingState,
   };
 }
 

@@ -123,7 +123,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
     }
     .term-output::-webkit-scrollbar { width: 6px; }
     .term-output::-webkit-scrollbar-track { background: transparent; }
-    .term-output::-webkit-scrollbar-thumb { background: var(--chat-border, rgba(255,255,255,0.10)); border-radius: 3px; }
+    .term-output::-webkit-scrollbar-thumb { background: var(--chat-border, rgba(255,255,255,0.10)); border-radius: 5px; }
     .term-stderr {
       margin-top: 4px;
       color: var(--chat-error, #f14c4c);

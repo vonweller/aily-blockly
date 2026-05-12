@@ -162,7 +162,7 @@ interface QuestionAnsweredEvent {
       min-width: 0;
       margin: 0;
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
-      border-radius: 8px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.02);
       overflow: hidden;
     }
@@ -195,7 +195,7 @@ interface QuestionAnsweredEvent {
       align-items: center;
       justify-content: center;
       border: none;
-      border-radius: 4px;
+      border-radius: 5px;
       background: transparent;
       color: var(--chat-fg-dim, #8e8e8e);
       outline: none;
@@ -222,7 +222,7 @@ interface QuestionAnsweredEvent {
       align-items: flex-start;
       gap: 8px;
       padding: 8px 10px;
-      border-radius: 6px;
+      border-radius: 5px;
       cursor: pointer;
       background: rgba(255,255,255,0.02);
       border: 1px solid rgba(255,255,255,0.08);
@@ -277,7 +277,7 @@ interface QuestionAnsweredEvent {
       font-weight: 600;
       color: var(--chat-info, #75beff);
       background: rgba(116, 179, 255, 0.12);
-      border-radius: 999px;
+      border-radius: 5px;
       padding: 1px 6px;
       line-height: 1.4;
       vertical-align: middle;
@@ -310,7 +310,7 @@ interface QuestionAnsweredEvent {
       box-sizing: border-box;
       min-height: 22px;
       padding: 0 10px;
-      border-radius: 6px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(255,255,255,0.02);
       color: var(--chat-fg, #cccccc);
@@ -354,7 +354,7 @@ interface QuestionAnsweredEvent {
       color: var(--chat-fg-dim, #8e8e8e);
       font-size: 11px;
       cursor: pointer;
-      border-radius: 4px; transition: all 0.15s;
+      border-radius: 5px; transition: all 0.15s;
     }
     .aq-nav-btn:hover:not(:disabled) { color: var(--chat-fg, #cccccc); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
     .aq-nav-btn:disabled { opacity: 0.3; cursor: default; }
@@ -364,7 +364,7 @@ interface QuestionAnsweredEvent {
       user-select: none;
     }
     .aq-nav-confirm {
-      padding: 4px 14px; border-radius: 4px;
+      padding: 4px 14px; border-radius: 5px;
       font-size: 12px; font-weight: 500;
       background: transparent; color: #999;
       border: 1px solid #444; outline: none;
@@ -374,7 +374,7 @@ interface QuestionAnsweredEvent {
     .aq-nav-submit {
       margin-left: auto;
       min-height: 22px;
-      padding: 0 10px; border-radius: 6px;
+      padding: 0 10px; border-radius: 5px;
       font-size: 12px; font-weight: 400;
       background: #0e639c; color: #ffffff;
       border: 1px solid transparent; outline: none;

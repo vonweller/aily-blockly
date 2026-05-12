@@ -174,7 +174,7 @@ import {
       color: inherit;
       text-align: initial;
       cursor: pointer;
-      border-radius: 3px;
+      border-radius: 5px;
       transition: background 0.15s;
       min-height: 22px;
       line-height: unset;
@@ -191,6 +191,7 @@ import {
       justify-content: center;
       width: 16px;
       height: 16px;
+      margin-top: 1px;
     }
 
     .cag-icon {
@@ -264,7 +265,7 @@ import {
     .cag-subtitle {
       flex: 1 1 auto;
       min-width: 0;
-      font-size: 13px;
+      font-size: 11px;
       line-height: 1.4;
       color: var(--chat-fg-dim, #8e8e8e);
       white-space: normal;

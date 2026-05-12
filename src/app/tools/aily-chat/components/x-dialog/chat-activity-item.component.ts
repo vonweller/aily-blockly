@@ -62,9 +62,9 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
             (click)="toggleDetail()"
             (keydown.enter)="toggleDetail()"
             (keydown.space)="toggleDetailFromKeyboard($event)">
-            @if (item.kicker) {
+            <!-- @if (item.kicker) {
               <div class="cag-item-kicker">{{ item.kicker }}</div>
-            }
+            } -->
 
             @if (isToolHeader()) {
               <div class="cag-item-tool-title">
@@ -703,7 +703,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-summary-clickable:focus-visible {
       outline: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       outline-offset: 2px;
-      border-radius: 3px;
+      border-radius: 5px;
     }
 
     .cag-item-thinking-content {
@@ -764,7 +764,6 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-title-subtitle {
-      font-size: 1em;
       opacity: 0.7;
       white-space: normal;
       word-break: break-word;
@@ -804,7 +803,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       flex-shrink: 0;
       font-size: 10px;
       padding: 1px 5px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
       color: var(--chat-fg-muted, #6a6a6a);
     }
@@ -861,7 +860,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
 
     .cag-item-confirmation-widget {
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
-      border-radius: 8px;
+      border-radius: 5px;
       overflow: hidden;
       background: rgba(255,255,255,0.02);
     }
@@ -907,7 +906,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-child-pill {
       flex-shrink: 0;
       padding: 1px 6px;
-      border-radius: 999px;
+      border-radius: 5px;
       font-size: 10px;
       line-height: 1.1;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
@@ -935,10 +934,10 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-detail-body {
-      margin-top: 6px;
-      padding: 8px 10px;
+      margin-top: 5px;
+      padding: 5px;
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
-      border-radius: 8px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.025);
     }
 
@@ -1007,7 +1006,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       align-items: center;
       gap: 4px;
       padding: 1px 6px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
       background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
       font-size: 10px;
@@ -1039,7 +1038,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       align-items: center;
       gap: 5px;
       padding: 2px 8px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.08));
       background: rgba(255,255,255,0.02);
       color: var(--chat-fg-dim, #8e8e8e);
@@ -1067,7 +1066,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       flex-direction: column;
       min-width: 0;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 8px;
+      border-radius: 5px;
       overflow: hidden;
       background: rgba(255,255,255,0.02);
     }
@@ -1122,10 +1121,10 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-confirmation-summary {
-      margin: 6px 9px 8px;
-      padding: 8px 10px;
+      margin: 5px;
+      padding: 5px;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.03);
     }
 
@@ -1175,6 +1174,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       display: flex;
       gap: 0;
       min-width: 0;
+      margin-bottom: 5px;
     }
 
     .cag-item-progress-message {
@@ -1220,11 +1220,11 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item-tool-body {
-      padding: 0 9px 8px;
+      padding: 5px;
     }
 
     .cag-item-tool-body + .cag-item-tool-body {
-      padding-top: 8px;
+      padding-top: 5px;
       border-top: 1px solid rgba(255,255,255,0.06);
     }
 
@@ -1256,9 +1256,9 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
 
     .cag-item-invocation-args {
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.03);
-      padding: 8px 10px;
+      padding: 5px 5px;
     }
 
     .cag-item-invocation-args-title {
@@ -1291,18 +1291,18 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-invocation-output-group[data-group-kind='data'],
     .cag-item-invocation-output-group[data-group-kind='code'],
     .cag-item-invocation-output-group[data-group-kind='generic'] {
-      padding: 10px;
+      padding: 5px;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 8px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.02);
     }
 
     .cag-item-invocation-output-subpart {
       min-width: 0;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.03);
-      padding: 8px 10px;
+      padding: 5px;
     }
 
     .cag-item-invocation-output[data-output-kind='terminal-command'],
@@ -1359,7 +1359,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       flex-direction: column;
       gap: 8px;
       padding: 8px;
-      border-radius: 8px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(8, 11, 16, 0.84);
     }
@@ -1422,7 +1422,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       width: 100%;
       padding: 6px 8px;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.03);
       color: var(--chat-fg, #cccccc);
       cursor: pointer;
@@ -1499,7 +1499,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       margin: 0;
       padding: 10px 12px;
       overflow-x: auto;
-      border-radius: 6px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(0,0,0,0.28);
     }
@@ -1540,7 +1540,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
 
     .cag-item-invocation-output-diff-language {
       padding: 2px 7px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.12);
       background: rgba(255,255,255,0.05);
       color: var(--chat-fg-dim, #8e8e8e);
@@ -1552,7 +1552,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
 
     .cag-item-invocation-output-diff-block {
       overflow: hidden;
-      border-radius: 6px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(7, 10, 14, 0.92);
     }
@@ -1623,7 +1623,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       margin-top: 6px;
       padding: 6px;
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
+      border-radius: 5px;
       background: rgba(0,0,0,0.14);
     }
 
@@ -1631,7 +1631,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       display: block;
       max-width: 100%;
       max-height: 220px;
-      border-radius: 4px;
+      border-radius: 5px;
       object-fit: contain;
       background: rgba(255,255,255,0.02);
     }
@@ -1652,7 +1652,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-invocation-output-resource-label,
     .cag-item-invocation-output-resource-mime {
       padding: 2px 6px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(255,255,255,0.06);
     }
@@ -1699,7 +1699,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     .cag-item-detail-row-pill {
       flex-shrink: 0;
       padding: 1px 6px;
-      border-radius: 999px;
+      border-radius: 5px;
       font-size: 10px;
       line-height: 1.1;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));

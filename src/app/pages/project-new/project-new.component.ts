@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { ChangeDetectorRef, Component, OnDestroy } from '@angular/core';
 import { CommonModule, Location } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -19,6 +19,11 @@ import { PlatformService } from '../../services/platform.service';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { CloudService } from '../../tools/cloud-space/services/cloud.service';
 import { SequentialImgDirective } from './sequential-img.directive';
+import { firstValueFrom, Subject } from 'rxjs';
+import { debounceTime, takeUntil } from 'rxjs/operators';
+import { createBoardSearchIndex, searchBoards } from '../../utils/fuzzy-search.utils';
+import type { AnyOrama } from '@orama/orama';
+import { NzMessageService } from 'ng-zorro-antd/message';
 
 @Component({
   selector: 'app-project-new',
@@ -39,7 +44,7 @@ import { SequentialImgDirective } from './sequential-img.directive';
   templateUrl: './project-new.component.html',
   styleUrl: './project-new.component.scss',
 })
-export class ProjectNewComponent {
+export class ProjectNewComponent implements OnDestroy {
   currentStep = 0;
 
   listMode = 'brand'; // brand | core | function
@@ -66,6 +71,10 @@ export class ProjectNewComponent {
 
   _boardList: any[] = [];
   boardList: any[] = [];
+
+  private searchSubject = new Subject<string>();
+  private destroy$ = new Subject<void>();
+  private searchIndex: AnyOrama | null = null;
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
@@ -95,8 +104,19 @@ export class ProjectNewComponent {
     private platformService: PlatformService,
     private cloudService: CloudService,
     private cd: ChangeDetectorRef,
-    private translate: TranslateService
-  ) { }
+    private translate: TranslateService,
+    private message: NzMessageService
+  ) {
+    this.searchSubject.pipe(
+      debounceTime(200),
+      takeUntil(this.destroy$)
+    ).subscribe(keyword => this.doSearch(keyword));
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
 
   async ngOnInit() {
     if (this.electronService.isElectron) {
@@ -136,19 +156,60 @@ export class ProjectNewComponent {
   }
 
   search(keyword = this.keyword) {
-    if (keyword) {
-      keyword = keyword.replace(/\s/g, '').toLowerCase();
-      let filteredBoardList = this._boardList.filter(item => item.fulltext.includes(keyword));
-      // 对搜索结果按使用次数排序
-      this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
-    } else {
+    this.keyword = keyword;
+    this.searchSubject.next(keyword);
+  }
+
+  private doSearch(keyword: string) {
+    if (!keyword) {
       // 恢复完整列表（已按使用次数排序）
       this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      if (this.boardList.length > 0) {
+        this.selectBoard(this.boardList[0]);
+      }
+      this.cd.detectChanges();
+      return;
     }
+
+    // 使用 Orama 进行模糊搜索
+    const localizedList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+    this.searchIndex = createBoardSearchIndex(localizedList);
+    const matchedNames = searchBoards(this.searchIndex, keyword);
+
+    // 按 Orama 返回的顺序（相关度排序）还原开发板对象
+    const nameIndexMap = new Map<string, number>();
+    matchedNames.forEach((name, i) => nameIndexMap.set(name, i));
+
+    this.boardList = localizedList
+      .filter(board => nameIndexMap.has(board.name))
+      .sort((a, b) => (nameIndexMap.get(a.name) ?? 0) - (nameIndexMap.get(b.name) ?? 0));
+
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
+    }
+    this.cd.detectChanges();
   }
 
   devmodes = [];
   hasExamples = false;
+  myTemplateList: CloudProjectTemplate[] = [];
+  isLoadingTemplates = false;
+  selectedTemplateName = '';
+
+  get selectedTemplate(): CloudProjectTemplate | null {
+    return this.myTemplateList.find(template => template.name === this.selectedTemplateName) || null;
+  }
+
+  get selectedTemplateDescription(): string {
+    const description = this.selectedTemplate?.description?.trim() || '';
+    if (description.length <= 20) {
+      return description;
+    }
+    return `${description.slice(0, 20)}......`;
+  }
+
   selectBoard(boardInfo: any) {
     this.currentBoard = boardInfo;
     this.newProjectData.board.name = boardInfo.name;
@@ -157,6 +218,7 @@ export class ProjectNewComponent {
     this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
     this.devmodes = boardInfo.mode;
     this.checkHasExamples(boardInfo.name);
+    this.loadMyTemplates(boardInfo.name);
   }
 
   checkHasExamples(boardName: string) {
@@ -164,6 +226,36 @@ export class ProjectNewComponent {
     this.cloudService.getPublicProjects(1, 1, '', '', boardName).subscribe(res => {
       if (res && res.status === 200 && res.data && res.data.total > 0) {
         this.hasExamples = true;
+        this.cd.detectChanges();
+      }
+    });
+  }
+
+  loadMyTemplates(boardName: string) {
+    this.myTemplateList = [];
+    this.selectedTemplateName = '';
+    if (!boardName?.trim()) {
+      this.isLoadingTemplates = false;
+      this.cd.detectChanges();
+      return;
+    }
+
+    this.isLoadingTemplates = true;
+    this.cloudService.getMyTemplates(1, 20, boardName).subscribe({
+      next: (res) => {
+        if (res?.status === 200 && Array.isArray(res?.data?.list)) {
+          this.myTemplateList = res.data.list;
+        } else {
+          this.myTemplateList = [];
+        }
+        this.selectedTemplateName = '';
+        this.isLoadingTemplates = false;
+        this.cd.detectChanges();
+      },
+      error: () => {
+        this.myTemplateList = [];
+        this.selectedTemplateName = '';
+        this.isLoadingTemplates = false;
         this.cd.detectChanges();
       }
     });
@@ -233,7 +325,65 @@ export class ProjectNewComponent {
     // 记录开发板使用次数
     this.configService.recordBoardUsage(this.newProjectData.board.name);
 
-    await this.projectService.projectNew(this.newProjectData);
+    let success = false;
+    let extractPath = '';
+    try {
+      if (this.selectedTemplateName) {
+        const templateProject = await this.findSelectedTemplateProject();
+        if (!templateProject?.archive_url) {
+          throw new Error('未找到所选模板的归档文件');
+        }
+
+        const archiveUrl = `${this.cloudService.baseUrl}${templateProject.archive_url}`;
+        extractPath = await firstValueFrom(this.cloudService.getProjectArchive(archiveUrl));
+        success = await this.projectService.projectNewFromTemplate(this.newProjectData, extractPath);
+      } else {
+        success = await this.projectService.projectNew(this.newProjectData);
+      }
+    } catch (error: any) {
+      const message = typeof error === 'string' ? error : (error?.message || '创建项目失败');
+      this.message.error(message);
+    } finally {
+      if (extractPath) {
+        this.cloudService.cleanupExtractedFiles(extractPath);
+      }
+    }
+
+    if (!success) {
+      this.currentStep = 1;
+    }
+  }
+
+  private async findSelectedTemplateProject(): Promise<any> {
+    const selectedTemplate = this.selectedTemplate;
+    if (!selectedTemplate) {
+      return null;
+    }
+
+    const pageSize = 100;
+    let page = 1;
+    let total = 0;
+
+    do {
+      const res = await firstValueFrom(this.cloudService.getProjects(page, pageSize));
+      const projects = Array.isArray(res?.data?.list) ? res.data.list : [];
+      total = Number(res?.data?.total || 0);
+
+      const matchedProject = projects.find((project: any) => (
+        project?.is_template === true &&
+        project?.name === selectedTemplate.name &&
+        (project?.nickname || '') === (selectedTemplate.nickname || '') &&
+        (project?.description || '') === (selectedTemplate.description || '')
+      ));
+
+      if (matchedProject) {
+        return matchedProject;
+      }
+
+      page += 1;
+    } while ((page - 1) * pageSize < total);
+
+    throw new Error('未找到所选模板项目');
   }
 
   openUrl(url) {
@@ -418,4 +568,10 @@ export interface NewProjectData {
     version: string
   },
   devmode?: string
+}
+
+interface CloudProjectTemplate {
+  name: string;
+  nickname?: string;
+  description?: string;
 }

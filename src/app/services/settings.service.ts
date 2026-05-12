@@ -14,6 +14,8 @@ export class SettingsService {
   // 缓存 verdaccio-db 数据，避免重复请求
   private verdaccioDbCache: { list: string[], timestamp: number } | null = null;
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5分钟缓存
+  /** 同一 registry 并发 getVerdaccioDb 时共用一个请求，避免并行三次 vc-packages.json */
+  private verdaccioDbInflight = new Map<string, Promise<string[]>>();
 
   constructor(
     private http: HttpClient
@@ -24,31 +26,41 @@ export class SettingsService {
    * 这个文件包含所有包的列表，比使用 search API 更快
    */
   async getVerdaccioDb(registry: string): Promise<string[]> {
-    // 检查缓存是否有效
     if (this.verdaccioDbCache && (Date.now() - this.verdaccioDbCache.timestamp) < this.CACHE_TTL) {
       console.log('Using cached verdaccio-db');
       return this.verdaccioDbCache.list;
     }
 
-    try {
-      // 直接获取 .verdaccio-db.json 静态文件
-      const dbJsonUrl = registry.replace(/\/?$/, '/') + 'vc-packages.json';
-      const response: any = await this.http.get(dbJsonUrl).toPromise();
-      
-      // .verdaccio-db.json 格式: { "list": ["package1", "package2", ...], "secret": "..." }
-      const packageList = response.list || [];
-      
-      this.verdaccioDbCache = {
-        list: packageList,
-        timestamp: Date.now()
-      };
-      
-      console.log('Fetched verdaccio-db.json:', packageList.length);
-      return packageList;
-    } catch (error) {
-      console.error('Failed to fetch verdaccio-db.json:', error);
-      return [];
+    const registryKey = registry.replace(/\/?$/, '/');
+    let inflight = this.verdaccioDbInflight.get(registryKey);
+    if (inflight) {
+      return inflight;
     }
+
+    inflight = (async (): Promise<string[]> => {
+      try {
+        const dbJsonUrl = registryKey + 'vc-packages.json';
+        const response: any = await this.http.get(dbJsonUrl).toPromise();
+
+        const packageList = response.list || [];
+
+        this.verdaccioDbCache = {
+          list: packageList,
+          timestamp: Date.now()
+        };
+
+        console.log('Fetched verdaccio-db.json:', packageList.length);
+        return packageList;
+      } catch (error) {
+        console.error('Failed to fetch verdaccio-db.json:', error);
+        return [];
+      } finally {
+        this.verdaccioDbInflight.delete(registryKey);
+      }
+    })();
+
+    this.verdaccioDbInflight.set(registryKey, inflight);
+    return inflight;
   }
 
   /**
@@ -179,8 +191,8 @@ export class SettingsService {
   // installed dependencies
   async getInstalledDependencies(prefix: string) {
     try {
-      // 首先尝试 npm ls
-      const cmd = `npm ls --json=true --depth=0 --silent --prefix ${prefix}`;
+      // 首先尝试 npm ls（prefix 必须加引号：macOS 常见路径含 Application Support 空格，否则 exec 会拆参失败）
+      const cmd = `npm ls --json=true --depth=0 --silent --prefix "${prefix}"`;
       const result = await window['npm'].run({ cmd });
       const installedDict = JSON.parse(result);
       return installedDict["dependencies"] || {};

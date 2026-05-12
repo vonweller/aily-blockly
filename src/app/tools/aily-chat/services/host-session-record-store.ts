@@ -220,9 +220,9 @@ export class HostSessionRecordStore {
 
     return {
       ...turn,
-      request: { ...turn.request },
-      rounds: [...turn.rounds],
-      ...(turn.usage ? { usage: { ...turn.usage } } : {}),
+      request: { ...turn['request'] },
+      rounds: [...turn['rounds']],
+      ...(turn['usage'] ? { usage: { ...turn['usage'] } } : {}),
       response: {
         ...responseWithoutPersistedData,
         ...(turn.response.usedContext

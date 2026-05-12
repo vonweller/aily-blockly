@@ -142,7 +142,7 @@ export class SessionLifecycleHelper {
 
     const sourceRecord = this.resolveForkSourceRecord();
     const sourceTurnResponses = sourceRecord?.turnResponses ?? [];
-    const targetTurnIndex = sourceTurnResponses.findIndex(turn => turn.turnId === options.turnId);
+    const targetTurnIndex = sourceTurnResponses.findIndex(turn => turn['turnId'] === options.turnId);
     if (targetTurnIndex < 0) {
       this.ctx.message.info('未找到该请求对应的会话边界');
       return false;
@@ -151,7 +151,7 @@ export class SessionLifecycleHelper {
     this.saveCurrentSession();
 
     const retainedTurnResponses = sourceTurnResponses.slice(0, targetTurnIndex);
-    const retainedTurnIds = new Set(retainedTurnResponses.map(turn => turn.turnId));
+    const retainedTurnIds = new Set(retainedTurnResponses.map(turn => turn['turnId']));
     const forkedSessionId = `lex-${Date.now()}-fork`;
     const forkedMetadata = {
       sessionId: forkedSessionId,

@@ -65,7 +65,7 @@ export interface ChatConfirmationActionOption {
     .cca-btn-primary {
       min-height: 22px;
       padding: 0 10px;
-      border-radius: 6px 0 0 6px;
+      border-radius: 5px 0 0 5px;
       font-size: 12px;
       font-weight: 400;
       line-height: 1.2;
@@ -77,7 +77,7 @@ export interface ChatConfirmationActionOption {
       transition: background 0.15s;
     }
     .cca-btn-primary-standalone {
-      border-radius: 6px;
+      border-radius: 5px;
     }
     .cca-btn-primary:hover { background: #1177bb; }
     .cca-btn-primary:disabled {
@@ -89,7 +89,7 @@ export interface ChatConfirmationActionOption {
       min-height: 22px;
       width: 22px;
       padding: 0;
-      border-radius: 0 6px 6px 0;
+      border-radius: 0 5px 5px 0;
       font-size: 11px;
       background: #0e639c;
       color: #ffffff;
@@ -112,7 +112,7 @@ export interface ChatConfirmationActionOption {
       position: fixed;
       background: #252526;
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 6px;
+      border-radius: 5px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
       z-index: 9999;
       min-width: 220px;
@@ -131,7 +131,7 @@ export interface ChatConfirmationActionOption {
       cursor: pointer;
       text-align: left;
       transition: background 0.15s;
-      border-radius: 4px;
+      border-radius: 5px;
       line-height: 1.35;
     }
     .cca-dropdown-item-secondary {
@@ -149,7 +149,7 @@ export interface ChatConfirmationActionOption {
     .cca-btn-reject {
       min-height: 22px;
       padding: 0 10px;
-      border-radius: 6px;
+      border-radius: 5px;
       font-size: 12px;
       font-weight: 400;
       background: transparent;

@@ -17,11 +17,12 @@ import { _BuilderService } from './services/builder.service';
 import { BitmapUploadService } from './services/bitmap-upload.service';
 import { ProjectService } from '../../services/project.service';
 import { DevToolComponent } from './components/dev-tool/dev-tool.component';
-import { HistoryService } from './services/history.service';
 import { OnboardingService } from '../../services/onboarding.service';
 import { BLOCKLY_ONBOARDING_CONFIG } from '../../configs/onboarding.config';
 import { NoticeService } from '../../services/notice.service';
 import { FloatSiderComponent } from '../../components/float-sider/float-sider.component';
+import { LocalLibrarySyncService } from '../../services/local-library-sync.service';
+import { CodeViewerIpcService } from './services/code-viewer-ipc.service';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -69,6 +70,8 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     private noticeService: NoticeService,
     private el: ElementRef,
     private ngZone: NgZone,
+    private localLibrarySyncService: LocalLibrarySyncService,
+    private codeViewerIpcService: CodeViewerIpcService,
   ) { }
 
   ngOnInit(): void {
@@ -124,11 +127,14 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   ngOnDestroy(): void {
+    this.uiService.closeTool('code-viewer');
+    this.localLibrarySyncService.stop();
     this._projectService.destroy();
     this._builderService.cancel();
     this._builderService.destroy();
     this._uploadService.cancel();
     this._uploadService.destroy();
+    this.codeViewerIpcService.clear();
     this.electronService.setTitle('aily blockly');
     this.blocklyService.reset();
     this.el.nativeElement.removeEventListener('mousemove', this._onMouseMoveBound);
@@ -156,6 +162,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     this._projectService.currentPackageData = packageJson;
     this.projectService.currentPackageData = packageJson;
     window['packageJson'] = packageJson;
+    this.blocklyService.setToolboxSortOrder(packageJson.blocklyToolboxOrder);
     // 暴露 ProjectService 到全局，供 generator.js 使用
     window['projectService'] = this.projectService;
 
@@ -214,7 +221,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       await this.npmService.getAllInstalledLibraries(projectPath)
     ).map((item) => item.name);
 
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await this.blocklyService.waitForWorkspace();
 
     for (let index = 0; index < libraryModuleList.length; index++) {
       const libPackageName = libraryModuleList[index];
@@ -243,6 +250,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     });
     this.projectService.stateSubject.next('loaded');
 
+    this.localLibrarySyncService.start(projectPath);
     // 项目加载完成后自动生成 sketch.ino，供 AI 工具和代码预览使用（无需触发完整编译）
     setTimeout(() => {
       this._builderService.generateAndWriteSketchIno().catch(e => {
