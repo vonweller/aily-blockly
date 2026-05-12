@@ -168,6 +168,12 @@ export class XAilyErrorViewerComponent {
       ['noProgressRounds', this.readText(source['noProgressRounds'])],
       ['repeatedToolCallStreak', this.readText(source['repeatedToolCallStreak'])],
       ['repeatedPendingStreak', this.readText(source['repeatedPendingStreak'])],
+      ['syncConflictStreak', this.readText(source['syncConflictStreak'])],
+      ['pendingInterruptions', this.readText(source['pendingInterruptions'])],
+      ['pendingReplyOscillationCount', this.readText(source['pendingReplyOscillationCount'])],
+      ['sameToolFingerprintCount', this.readText(source['sameToolFingerprintCount'])],
+      ['samePendingFingerprintCount', this.readText(source['samePendingFingerprintCount'])],
+      ['lastProgressAtRound', this.readText(source['lastProgressAtRound'])],
     ];
   }
 
@@ -227,4 +233,10 @@ const DIAGNOSTIC_LABELS = {
   noProgressRounds: 'noProgressRounds',
   repeatedToolCallStreak: 'repeatedToolCallStreak',
   repeatedPendingStreak: 'repeatedPendingStreak',
+  syncConflictStreak: 'syncConflictStreak',
+  pendingInterruptions: 'pendingInterruptions',
+  pendingReplyOscillationCount: 'pendingReplyOscillationCount',
+  sameToolFingerprintCount: 'sameToolFingerprintCount',
+  samePendingFingerprintCount: 'samePendingFingerprintCount',
+  lastProgressAtRound: 'lastProgressAtRound',
 } as const;

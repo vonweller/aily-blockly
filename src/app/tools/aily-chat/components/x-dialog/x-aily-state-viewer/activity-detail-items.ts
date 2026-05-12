@@ -928,6 +928,12 @@ export function buildTurnResponseContinuationDetailSections(source: {
     formatDiagnosticValue('noProgressRounds', asNumber(behavior?.['noProgressRounds'])),
     formatDiagnosticValue('repeatedToolCallStreak', asNumber(behavior?.['repeatedToolCallStreak'])),
     formatDiagnosticValue('repeatedPendingStreak', asNumber(behavior?.['repeatedPendingStreak'])),
+    formatDiagnosticValue('syncConflictStreak', asNumber(behavior?.['syncConflictStreak'])),
+    formatDiagnosticValue('pendingInterruptions', asNumber(behavior?.['pendingInterruptions'])),
+    formatDiagnosticValue('pendingReplyOscillationCount', asNumber(behavior?.['pendingReplyOscillationCount'])),
+    formatDiagnosticValue('sameToolFingerprintCount', asNumber(behavior?.['sameToolFingerprintCount'])),
+    formatDiagnosticValue('samePendingFingerprintCount', asNumber(behavior?.['samePendingFingerprintCount'])),
+    formatDiagnosticValue('lastProgressAtRound', asNumber(behavior?.['lastProgressAtRound'])),
   ].filter((value): value is string => !!value);
 
   if (diagnosticsLines.length > 0) {

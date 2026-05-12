@@ -235,6 +235,12 @@ export class ChatMessagePartItemComponent implements OnChanges {
       noProgressRounds: readNumberText(behavior?.['noProgressRounds']),
       repeatedToolCallStreak: readNumberText(behavior?.['repeatedToolCallStreak']),
       repeatedPendingStreak: readNumberText(behavior?.['repeatedPendingStreak']),
+      syncConflictStreak: readNumberText(behavior?.['syncConflictStreak']),
+      pendingInterruptions: readNumberText(behavior?.['pendingInterruptions']),
+      pendingReplyOscillationCount: readNumberText(behavior?.['pendingReplyOscillationCount']),
+      sameToolFingerprintCount: readNumberText(behavior?.['sameToolFingerprintCount']),
+      samePendingFingerprintCount: readNumberText(behavior?.['samePendingFingerprintCount']),
+      lastProgressAtRound: readNumberText(behavior?.['lastProgressAtRound']),
     });
 
     return {

@@ -134,6 +134,12 @@ function formatBehaviorMetadata(behavior: Record<string, unknown> | null): strin
     formatBehaviorEntry('noProgressRounds', behavior['noProgressRounds']),
     formatBehaviorEntry('repeatedToolCallStreak', behavior['repeatedToolCallStreak']),
     formatBehaviorEntry('repeatedPendingStreak', behavior['repeatedPendingStreak']),
+    formatBehaviorEntry('syncConflictStreak', behavior['syncConflictStreak']),
+    formatBehaviorEntry('pendingInterruptions', behavior['pendingInterruptions']),
+    formatBehaviorEntry('pendingReplyOscillationCount', behavior['pendingReplyOscillationCount']),
+    formatBehaviorEntry('sameToolFingerprintCount', behavior['sameToolFingerprintCount']),
+    formatBehaviorEntry('samePendingFingerprintCount', behavior['samePendingFingerprintCount']),
+    formatBehaviorEntry('lastProgressAtRound', behavior['lastProgressAtRound']),
   ].filter((value): value is string => !!value);
 
   return entries.length > 0 ? entries.join(', ') : undefined;
