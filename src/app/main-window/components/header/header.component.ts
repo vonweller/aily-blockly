@@ -821,9 +821,9 @@ export class HeaderComponent implements OnDestroy {
     }
   }
 
-  // 判断路由是否为 ['/main/blockly-editor', '/main/code-editor']中的一个，如果是返回true
+  // 判断路由是否为 ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']中的一个，如果是返回true
   isLoaded() {
-    for (const router of ['/main/blockly-editor', '/main/code-editor']) {
+    for (const router of ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']) {
       if (this.router.url.indexOf(router) > -1) {
         return true;
       }

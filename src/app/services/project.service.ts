@@ -263,7 +263,7 @@ export class ProjectService {
       });
     } else {
       // 打开代码编辑器
-      this.router.navigate(['/main/code-editor'], {
+      this.router.navigate(['/main/code-editor-pro'], {
         queryParams: {
           path: projectPath
         },

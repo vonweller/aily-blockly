@@ -17,6 +17,9 @@ declare global {
       terminal: any;
       iWindow: any;
       subWindow: any;
+      coderEmbed: {
+        getBaseUrl: () => Promise<string>;
+      };
       codeViewer: any;
       builder: any;
       uploader: any;

@@ -277,7 +277,7 @@ function getEditingMode(): { mode: 'blockly' | 'code' | 'unknown' } {
 
             if (path.includes('/main/blockly-editor')) {
                 return { mode: 'blockly' };
-            } else if (path.includes('/main/code-editor')) {
+            } else if (path.includes('/main/code-editor') || path.includes('/main/code-editor-pro')) {
                 return { mode: 'code' };
             }
         }

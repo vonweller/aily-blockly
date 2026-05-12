@@ -1,6 +1,8 @@
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
+const http = require("http");
+const url = require("url");
 const WinState = require('electron-win-state').default;
 const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("electron");
 
@@ -310,6 +312,132 @@ let pendingRoute = null;
 let pendingQueryParams = null;
 /** 当前主进程已持有的项目锁（规范化路径） */
 let heldProjectLockNormalized = null;
+
+/** 内嵌 monaco-vscode（child/coder/dist）本地静态服务 */
+let coderEmbedHttpServer = null;
+
+function getCoderEmbedDistPath() {
+  const childPath = serve
+    ? path.join(__dirname, "..", "child")
+    : path.join(process.resourcesPath, "child");
+  return path.join(childPath, "coder", "dist");
+}
+
+function coderEmbedMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm",
+    ".map": "application/json; charset=utf-8",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+function ensureCoderEmbedServerStarted() {
+  if (coderEmbedHttpServer) {
+    return Promise.resolve(coderEmbedHttpServer.port);
+  }
+  const dist = getCoderEmbedDistPath();
+  if (!fs.existsSync(dist)) {
+    return Promise.reject(new Error(`Coder 静态资源未找到: ${dist}`));
+  }
+  const distResolved = path.resolve(dist);
+  const distPrefix = distResolved.endsWith(path.sep) ? distResolved : distResolved + path.sep;
+
+  const server = http.createServer((req, res) => {
+    res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    const parsed = url.parse(req.url);
+    let pathname = decodeURIComponent(parsed.pathname || "/");
+    if (pathname.includes("\0")) {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    pathname = path.posix.normalize("/" + pathname.replace(/\\/g, "/"));
+    if (pathname.includes("..")) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    let rel = pathname.replace(/^\//, "");
+    if (!rel || rel.endsWith("/")) {
+      rel = path.posix.join(rel || ".", "index.html");
+    }
+    const filePath = path.join(distResolved, rel);
+    const fileResolved = path.resolve(filePath);
+    if (fileResolved !== distResolved && !fileResolved.startsWith(distPrefix)) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    fs.stat(fileResolved, (err, st) => {
+      if (!err && st.isFile()) {
+        if (req.method === "HEAD") {
+          res.writeHead(200, { "Content-Type": coderEmbedMimeType(fileResolved) });
+          res.end();
+          return;
+        }
+        fs.readFile(fileResolved, (e2, data) => {
+          if (e2) {
+            res.writeHead(500);
+            res.end();
+            return;
+          }
+          res.writeHead(200, { "Content-Type": coderEmbedMimeType(fileResolved) });
+          res.end(data);
+        });
+        return;
+      }
+      const indexPath = path.join(distResolved, "index.html");
+      if (req.method === "HEAD") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end();
+        return;
+      }
+      fs.readFile(indexPath, (e3, data) => {
+        if (e3) {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(data);
+      });
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : null;
+      if (!port) {
+        try {
+          server.close();
+        } catch (_) {}
+        reject(new Error("无法为 Coder 嵌入服务分配端口"));
+        return;
+      }
+      coderEmbedHttpServer = { server, port };
+      resolve(port);
+    });
+    server.on("error", reject);
+  });
+}
 
 /** 主进程读取 i18n JSON：开发态在仓库 public；打包后 Angular 资源在 app.asar/renderer */
 function getMainProcessI18nJsonPath(pack) {
@@ -1749,6 +1877,14 @@ app.on("will-quit", () => {
     }
     heldInstanceLockPath = null;
   }
+  if (coderEmbedHttpServer) {
+    try {
+      coderEmbedHttpServer.server.close();
+    } catch (e) {
+      console.warn('will-quit coder embed server:', e.message);
+    }
+    coderEmbedHttpServer = null;
+  }
 });
 
 // 在 macOS 上，当应用被激活时（如点击 Dock 图标），重新创建窗口
@@ -1806,6 +1942,12 @@ app.on('open-url', (event, url) => {
   event.preventDefault();
   console.log('macOS open-url:', url);
   handleProtocol(url);
+});
+
+// 内嵌 Coder（child/coder/dist）本地服务根地址
+ipcMain.handle("coder-embed-get-base-url", async () => {
+  const port = await ensureCoderEmbedServerStarted();
+  return `http://127.0.0.1:${port}/`;
 });
 
 // 文件选择

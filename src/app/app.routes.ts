@@ -49,6 +49,10 @@ export const routes: Routes = [
             {
                 path: 'code-editor',
                 loadComponent: () => import('./editors/code-editor/code-editor.component').then(m => m.CodeEditorComponent)
+            },
+            {
+                path: 'code-editor-pro',
+                loadComponent: () => import('./editors/code-editor-pro/code-editor-pro.component').then(m => m.CodeEditorProComponent)
             }
         ]
     },
