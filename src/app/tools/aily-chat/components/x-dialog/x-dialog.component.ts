@@ -283,7 +283,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       return null;
     }
 
-    return `${modelName} · ${billingLabel || '倍率待定'}`;
+    return billingLabel ? `${modelName} · ${billingLabel}` : modelName;
   }
 
   get showAssistantModelBadge(): boolean {
@@ -299,7 +299,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
     return billingLabel
       ? `当前模型: ${modelName}\n${this.isMultiplierBillingLabel(billingLabel) ? '计费倍率' : '计费信息'}: ${billingLabel}`
-      : `当前模型: ${modelName}\n计费信息待配置`;
+      : `当前模型: ${modelName}`;
   }
 
   private isMultiplierBillingLabel(label: string): boolean {
