@@ -2,6 +2,7 @@ const path = require("path");
 const os = require("os");
 const fs = require("fs");
 const http = require("http");
+const { spawn, exec } = require("child_process");
 const url = require("url");
 const WinState = require('electron-win-state').default;
 const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("electron");
@@ -313,14 +314,69 @@ let pendingQueryParams = null;
 /** 当前主进程已持有的项目锁（规范化路径） */
 let heldProjectLockNormalized = null;
 
-/** 内嵌 monaco-vscode（child/coder/dist）本地静态服务 */
+/** 内嵌 coder：开发态挂 child/coder 的 Vite；生产态本地静态 child/coder/dist */
 let coderEmbedHttpServer = null;
 
-function getCoderEmbedDistPath() {
-  const childPath = serve
+const CODER_EMBED_VITE_PORT_MIN = 5174;
+const CODER_EMBED_VITE_PORT_RANGE = 24;
+
+function getCoderEmbedPackageDir() {
+  const childRoot = serve
     ? path.join(__dirname, "..", "child")
     : path.join(process.resourcesPath, "child");
-  return path.join(childPath, "coder", "dist");
+  return path.join(childRoot, "coder");
+}
+
+function getCoderEmbedDistPath() {
+  return path.join(getCoderEmbedPackageDir(), "dist");
+}
+
+function probeCoderEmbedViteListening(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/`, { timeout: 800 }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function findListeningCoderEmbedDevPort() {
+  for (let i = 0; i < CODER_EMBED_VITE_PORT_RANGE; i++) {
+    const port = CODER_EMBED_VITE_PORT_MIN + i;
+    if (await probeCoderEmbedViteListening(port)) {
+      return port;
+    }
+  }
+  return null;
+}
+
+function spawnCoderEmbedViteDevServer(coderDir) {
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  return spawn(npmCmd, ["run", "start"], {
+    cwd: coderDir,
+    env: process.env,
+    stdio: "inherit",
+  });
+}
+
+function killCoderEmbedSpawnedDevProcess(devProcess) {
+  if (!devProcess || typeof devProcess.pid !== "number") {
+    return;
+  }
+  try {
+    if (isWin32) {
+      exec(`taskkill /pid ${devProcess.pid} /T /F`, () => {});
+    } else {
+      devProcess.kill("SIGTERM");
+    }
+  } catch (e) {
+    console.warn("kill coder vite dev:", e.message);
+  }
 }
 
 function coderEmbedMimeType(filePath) {
@@ -345,6 +401,74 @@ function coderEmbedMimeType(filePath) {
 function ensureCoderEmbedServerStarted() {
   if (coderEmbedHttpServer) {
     return Promise.resolve(coderEmbedHttpServer.port);
+  }
+  if (serve) {
+    const coderDir = getCoderEmbedPackageDir();
+    const pkgJson = path.join(coderDir, "package.json");
+    if (!fs.existsSync(pkgJson)) {
+      return Promise.reject(new Error(`Coder 开发目录无效，缺少 package.json: ${coderDir}`));
+    }
+    return findListeningCoderEmbedDevPort().then((existingPort) => {
+      if (existingPort != null) {
+        coderEmbedHttpServer = {
+          kind: "dev",
+          port: existingPort,
+          devProcess: null,
+          spawned: false,
+        };
+        return existingPort;
+      }
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const devProcess = spawnCoderEmbedViteDevServer(coderDir);
+        const deadline = Date.now() + 120000;
+        const fail = (err) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          killCoderEmbedSpawnedDevProcess(devProcess);
+          reject(err);
+        };
+        devProcess.on("error", (err) => {
+          fail(new Error(`无法启动 child/coder 开发服务器: ${err.message}`));
+        });
+        devProcess.once("exit", (code) => {
+          if (!settled) {
+            fail(new Error(`child/coder Vite 异常退出，代码: ${code}`));
+          }
+        });
+        const poll = () => {
+          if (settled) {
+            return;
+          }
+          findListeningCoderEmbedDevPort()
+            .then((port) => {
+              if (port != null) {
+                if (settled) {
+                  return;
+                }
+                settled = true;
+                coderEmbedHttpServer = {
+                  kind: "dev",
+                  port,
+                  devProcess,
+                  spawned: true,
+                };
+                resolve(port);
+                return;
+              }
+              if (Date.now() > deadline) {
+                fail(new Error("等待 child/coder Vite 就绪超时"));
+                return;
+              }
+              setTimeout(poll, 400);
+            })
+            .catch((e) => fail(e || new Error(String(e))));
+        };
+        devProcess.once("spawn", () => poll());
+      });
+    });
   }
   const dist = getCoderEmbedDistPath();
   if (!fs.existsSync(dist)) {
@@ -432,7 +556,7 @@ function ensureCoderEmbedServerStarted() {
         reject(new Error("无法为 Coder 嵌入服务分配端口"));
         return;
       }
-      coderEmbedHttpServer = { server, port };
+      coderEmbedHttpServer = { kind: "static", server, port };
       resolve(port);
     });
     server.on("error", reject);
@@ -1878,10 +2002,14 @@ app.on("will-quit", () => {
     heldInstanceLockPath = null;
   }
   if (coderEmbedHttpServer) {
-    try {
-      coderEmbedHttpServer.server.close();
-    } catch (e) {
-      console.warn('will-quit coder embed server:', e.message);
+    if (coderEmbedHttpServer.kind === "static") {
+      try {
+        coderEmbedHttpServer.server.close();
+      } catch (e) {
+        console.warn("will-quit coder embed server:", e.message);
+      }
+    } else if (coderEmbedHttpServer.spawned && coderEmbedHttpServer.devProcess) {
+      killCoderEmbedSpawnedDevProcess(coderEmbedHttpServer.devProcess);
     }
     coderEmbedHttpServer = null;
   }
@@ -1944,7 +2072,7 @@ app.on('open-url', (event, url) => {
   handleProtocol(url);
 });
 
-// 内嵌 Coder（child/coder/dist）本地服务根地址
+// 内嵌 Coder（开发: child/coder Vite；生产: child/coder/dist）服务根地址
 ipcMain.handle("coder-embed-get-base-url", async () => {
   const port = await ensureCoderEmbedServerStarted();
   return `http://127.0.0.1:${port}/`;
