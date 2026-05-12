@@ -350,19 +350,7 @@ export class ChatViewService {
         value: action.value as ReasoningEffortOption,
       }));
 
-    if (schemaActions.length > 0) {
-      return schemaActions;
-    }
-
-    const configuredReasoningEffort = this.getStoredOrDefaultReasoningEffort(model);
-    return this.ailyChatConfigService.getSupportedReasoningEfforts(model)
-      .map((value) => ({
-        id: `fallback.reasoningEffort.${value}`,
-        key: 'reasoningEffort',
-        label: this.ailyChatConfigService.getReasoningEffortDisplayLabel(value),
-        checked: value === configuredReasoningEffort,
-        value,
-      }));
+    return schemaActions;
   }
 
   private getModelConfigurationId(
