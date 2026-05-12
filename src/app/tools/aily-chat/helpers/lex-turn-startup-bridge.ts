@@ -46,6 +46,9 @@ export class LexTurnStartupBridge {
   }
 
   private resolveInitialMessageSource(requestMetadata?: TurnRequest['metadata']): string {
+    if (requestMetadata?.['explicitAgentInvocation']) {
+      return MAIN_AGENT_TYPE;
+    }
     const agentId = typeof requestMetadata?.['agentId'] === 'string'
       ? normalizeAgentIdentifier(requestMetadata['agentId'])
       : '';

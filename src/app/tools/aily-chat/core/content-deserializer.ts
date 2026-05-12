@@ -154,6 +154,7 @@ export function deserializeContentToParts(content: string): ChatPart[] {
               : data.severity === 'info'
                 ? 'info'
                 : 'error',
+            data.metadata && typeof data.metadata === 'object' ? data.metadata : undefined,
           ));
         } catch {}
         pos = fenceEnd;

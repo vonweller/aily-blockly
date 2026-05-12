@@ -328,6 +328,7 @@
 }
 
 .model-kind-tag,
+.model-locked-tag,
 .model-default-tag,
 .model-meta-pill {
   display: inline-flex;
@@ -351,6 +352,11 @@
   background: rgba(52, 211, 153, 0.14);
   color: var(--aily-color-success-alt, #10b981);
   border: 1px solid rgba(52, 211, 153, 0.28);
+}
+
+.model-locked-tag {
+    background: rgba(245, 158, 11, 0.16);
+    color: #ffd089;
 }
 
 .model-meta-pill {

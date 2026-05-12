@@ -1,6 +1,12 @@
 import { parseTerminalPayload } from '../../../core/terminal-payload';
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
 import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
+import {
+  formatContinuationHardStopReason,
+  formatContinuationStopReason,
+  getContinuationStopReasonPresentation,
+} from '../../../core/continuation-stop-reason';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
 export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
 
@@ -807,6 +813,175 @@ export function buildStandardStateViewerProjection(source: {
     badges: buildDefaultSummaryBadges(source.kind, metadata),
     sections,
   };
+}
+
+export function buildTurnResponseContinuationDetailSections(source: {
+  id?: string;
+  continuation?: TurnResponseTurn['response']['continuation'] | null;
+}): DetailSectionDescriptor[] {
+  const continuation = source.continuation;
+  if (!continuation) {
+    return [];
+  }
+
+  const baseId = source.id || continuation.interactionId || 'turn';
+  const rows: StateDetailRow[] = [];
+  const budgets = asRecord(continuation['budgets']);
+  const diagnostics = asRecord(continuation['diagnostics']);
+  const identity = asRecord(diagnostics?.['identity']);
+  const trace = asRecord(diagnostics?.['trace']);
+  const usage = asRecord(diagnostics?.['usage']);
+  const runtime = asRecord(diagnostics?.['runtime']);
+  const budgetDiagnostics = asRecord(diagnostics?.['budget']);
+  const outcome = asRecord(diagnostics?.['outcome']);
+  const behavior = asRecord(diagnostics?.['behavior']);
+  const executionId = asString(budgets?.['executionId']) || asString(identity?.['executionId']);
+  const executionOrigin = asString(budgets?.['origin']);
+  const status = asString(continuation.status);
+  const stopReason = asString(continuation.stopReason);
+  const stopReasonPresentation = getContinuationStopReasonPresentation(stopReason);
+  const hardStopReason = asString(continuation.hardStopReason);
+  const errorCode = asString(outcome?.['errorCode']);
+  const runtimeLines = [
+    continuation.interactionId ? `interactionId: ${continuation.interactionId}` : undefined,
+    continuation.lease ? `lease: ${continuation.lease}` : undefined,
+    executionId ? `executionId: ${executionId}` : undefined,
+    executionOrigin ? `origin: ${executionOrigin}` : undefined,
+  ].filter((value): value is string => !!value);
+  const runtimeSubtitle = [
+    typeof continuation.stepIndex === 'number' ? `step ${continuation.stepIndex}` : undefined,
+    status,
+  ].filter((value): value is string => !!value).join(' · ');
+
+  if (runtimeLines.length > 0 || typeof continuation.stepIndex === 'number') {
+    rows.push({
+      id: `${baseId}:continuation:runtime`,
+      title: '继续执行上下文',
+      subtitle: runtimeSubtitle || undefined,
+      note: runtimeLines.length > 0 ? runtimeLines.join('\n') : undefined,
+      tone: 'info',
+    });
+  }
+
+  if (stopReason || hardStopReason) {
+    rows.push({
+      id: `${baseId}:continuation:stop`,
+      title: '结束原因',
+      subtitle: formatContinuationStopReason(stopReason) || undefined,
+      note: [
+        stopReasonPresentation?.detail,
+        stopReason && stopReasonPresentation?.label !== stopReason ? `stopReason: ${stopReason}` : undefined,
+        hardStopReason ? `hardStopReason: ${formatContinuationHardStopReason(hardStopReason) ?? hardStopReason}` : undefined,
+        errorCode ? `errorCode: ${errorCode}` : undefined,
+      ].filter((value): value is string => !!value).join('\n') || undefined,
+      tone: hardStopReason || stopReasonPresentation?.isBehaviorStop ? 'warn' : 'info',
+    });
+  }
+
+  const traceLines = [
+    asString(identity?.['requestId']) ? `requestId: ${asString(identity?.['requestId'])}` : undefined,
+    asString(trace?.['toolCallId']) ? `toolCallId: ${asString(trace?.['toolCallId'])}` : undefined,
+    asString(trace?.['parentToolCallId']) ? `parentToolCallId: ${asString(trace?.['parentToolCallId'])}` : undefined,
+  ].filter((value): value is string => !!value);
+  const traceSubtitle = asString(outcome?.['sourceEvent']);
+
+  if (traceLines.length > 0 || traceSubtitle) {
+    rows.push({
+      id: `${baseId}:continuation:trace`,
+      title: '请求与追踪',
+      subtitle: traceSubtitle || undefined,
+      note: traceLines.length > 0 ? traceLines.join('\n') : undefined,
+      tone: 'info',
+    });
+  }
+
+  const usageLines = [
+    typeof asNumber(usage?.['promptTokens']) === 'number' ? `promptTokens: ${Math.round(asNumber(usage?.['promptTokens'])!)}` : undefined,
+    typeof asNumber(usage?.['completionTokens']) === 'number' ? `completionTokens: ${Math.round(asNumber(usage?.['completionTokens'])!)}` : undefined,
+    typeof asNumber(usage?.['cacheReadTokens']) === 'number' ? `cacheReadTokens: ${Math.round(asNumber(usage?.['cacheReadTokens'])!)}` : undefined,
+    typeof asNumber(usage?.['cacheCreationTokens']) === 'number' ? `cacheCreationTokens: ${Math.round(asNumber(usage?.['cacheCreationTokens'])!)}` : undefined,
+  ].filter((value): value is string => !!value);
+  const usageSubtitle = [
+    asString(usage?.['resolvedModel']),
+    asString(usage?.['modelBillingLabel']),
+  ].filter((value): value is string => !!value).join(' · ');
+
+  if (usageLines.length > 0 || usageSubtitle) {
+    rows.push({
+      id: `${baseId}:continuation:usage`,
+      title: '模型与用量',
+      subtitle: usageSubtitle || undefined,
+      note: usageLines.length > 0 ? usageLines.join('\n') : undefined,
+      tone: 'info',
+    });
+  }
+
+  const diagnosticsLines = [
+    formatDiagnosticCounter('roundCount', asNumber(runtime?.['roundCount']), asNumber(budgetDiagnostics?.['hardRoundCap'])),
+    formatDiagnosticCounter('rawToolCallCount', asNumber(runtime?.['rawToolCallCount']), asNumber(budgetDiagnostics?.['rawToolCallCap'])),
+    formatDiagnosticCounter('executionUnits', asNumber(runtime?.['executionUnits']), asNumber(budgetDiagnostics?.['executionUnitCap'])),
+    formatDiagnosticCounter('wallClockMs', asNumber(runtime?.['wallClockMs']), asNumber(budgetDiagnostics?.['wallClockCapMs'])),
+    formatDiagnosticCounter('questionAnswerCount', asNumber(runtime?.['questionAnswerCount']), asNumber(budgetDiagnostics?.['questionAnswerCap'])),
+    formatDiagnosticCounter('confirmationCount', asNumber(runtime?.['confirmationCount']), asNumber(budgetDiagnostics?.['confirmationCap'])),
+    formatDiagnosticValue('repeatedTextScore', asNumber(behavior?.['repeatedTextScore'])),
+    formatDiagnosticValue('repeatedChunkStreak', asNumber(behavior?.['repeatedChunkStreak'])),
+    formatDiagnosticValue('noProgressRounds', asNumber(behavior?.['noProgressRounds'])),
+    formatDiagnosticValue('repeatedToolCallStreak', asNumber(behavior?.['repeatedToolCallStreak'])),
+    formatDiagnosticValue('repeatedPendingStreak', asNumber(behavior?.['repeatedPendingStreak'])),
+  ].filter((value): value is string => !!value);
+
+  if (diagnosticsLines.length > 0) {
+    rows.push({
+      id: `${baseId}:continuation:diagnostics`,
+      title: '诊断统计',
+      note: diagnosticsLines.join('\n'),
+      tone: behavior ? 'warn' : 'info',
+    });
+  }
+
+  if (continuation.pendingState) {
+    const pendingKind = asString(continuation.pendingState['kind']);
+    const pendingRequestId = asString(continuation.pendingState['requestId']);
+    const pendingSourceEvent = asString(continuation.pendingState['sourceEvent']);
+    const pendingLines = [
+      pendingRequestId ? `requestId: ${pendingRequestId}` : undefined,
+      pendingSourceEvent ? `sourceEvent: ${pendingSourceEvent}` : undefined,
+    ].filter((value): value is string => !!value);
+
+    rows.push({
+      id: `${baseId}:continuation:pending`,
+      title: '挂起状态',
+      subtitle: pendingKind || undefined,
+      note: pendingLines.length > 0 ? pendingLines.join('\n') : undefined,
+      tone: 'warn',
+    });
+  }
+
+  return rows.length > 0 ? [{ title: '继续执行', rows }] : [];
+}
+
+function formatDiagnosticCounter(label: string, used: number | undefined, cap: number | undefined): string | undefined {
+  if (typeof used !== 'number' && typeof cap !== 'number') {
+    return undefined;
+  }
+  if (typeof used === 'number' && typeof cap === 'number') {
+    return `${label}: ${formatDiagnosticNumber(used)} / ${formatDiagnosticNumber(cap)}`;
+  }
+  return `${label}: ${formatDiagnosticNumber((used ?? cap)! )}`;
+}
+
+function formatDiagnosticValue(label: string, value: number | undefined): string | undefined {
+  if (typeof value !== 'number') {
+    return undefined;
+  }
+  return `${label}: ${formatDiagnosticNumber(value)}`;
+}
+
+function formatDiagnosticNumber(value: number): string {
+  if (Number.isInteger(value)) {
+    return `${value}`;
+  }
+  return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
 function buildDefaultSummaryBadges(

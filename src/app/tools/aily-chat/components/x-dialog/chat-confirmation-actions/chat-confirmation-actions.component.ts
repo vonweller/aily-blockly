@@ -7,6 +7,7 @@ export interface ChatConfirmationActionOption {
   tooltip?: string;
   disabled?: boolean;
   isSecondary?: boolean;
+  resolveOnSelect?: boolean;
 }
 
 @Component({
@@ -172,6 +173,7 @@ export class ChatConfirmationActionsComponent {
   @Input() options: readonly ChatConfirmationActionOption[] = [];
 
   @Output() approve = new EventEmitter<string>();
+  @Output() action = new EventEmitter<string>();
   @Output() reject = new EventEmitter<void>();
 
   @ViewChild('caretBtn', { static: false }) caretBtn?: ElementRef<HTMLButtonElement>;
@@ -212,6 +214,10 @@ export class ChatConfirmationActionsComponent {
 
     this.dropdownOpen = false;
     this.cdr.markForCheck();
+    if (option.resolveOnSelect === false) {
+      this.action.emit(option.value);
+      return;
+    }
     this.approve.emit(option.value);
   }
 }

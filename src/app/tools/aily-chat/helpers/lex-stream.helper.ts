@@ -61,7 +61,7 @@ type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendin
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 
 type LexOwnerContext = BootstrapLexAgentContext
-  & Pick<IChatCoordination, 'lexStream' | 'syncRegisteredAgentNames'>
+  & Pick<IChatCoordination, 'lexStream' | 'openSettings' | 'syncRegisteredAgentNames'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]

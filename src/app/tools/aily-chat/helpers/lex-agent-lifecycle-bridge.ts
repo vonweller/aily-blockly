@@ -3,6 +3,7 @@ import type { AgentHandle } from 'aily-lex/browser';
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
 type LexAgentCreationResult = BlocklyLexAgentInstance | AgentHandle;
+type LexSessionSnapshot = ReturnType<AgentHandle['saveSession']>;
 
 function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
   return typeof (value as AgentHandle).chat === 'function'
@@ -78,8 +79,10 @@ export class LexAgentLifecycleBridge {
     }
 
     const lex = this._lex!;
+    const targetSessionId = sessionId || this.deps.getSessionId();
+    const snapshotToRestore = this.captureLiveSessionSnapshot(targetSessionId);
     this.disposeActiveAgent();
-    const created = this.deps.createAgent(lex, sessionId || this.deps.getSessionId());
+    const created = this.deps.createAgent(lex, targetSessionId);
     if (isAgentHandle(created)) {
       this._handle = created;
       this._agent = created.agent as BlocklyLexAgentInstance;
@@ -87,6 +90,15 @@ export class LexAgentLifecycleBridge {
       this._handle = null;
       this._agent = created;
     }
+
+    if (snapshotToRestore) {
+      try {
+        this.restoreLiveSessionSnapshot(snapshotToRestore);
+      } catch (error) {
+        console.warn('[LexStream] restore rebuilt agent snapshot failed:', error);
+      }
+    }
+
     this._todoUnsubscribe = this.deps.onAgentReady?.(this._agent, lex, this._todoUnsubscribe) ?? this._todoUnsubscribe;
     return true;
   }
@@ -117,5 +129,23 @@ export class LexAgentLifecycleBridge {
 
     this._agent?.dispose();
     this._agent = null;
+  }
+
+  private captureLiveSessionSnapshot(targetSessionId: string): LexSessionSnapshot | null {
+    const snapshot = this._handle?.saveSession?.()
+      ?? this._agent?.saveSession?.()
+      ?? null;
+    return snapshot?.sessionId === targetSessionId
+      ? snapshot
+      : null;
+  }
+
+  private restoreLiveSessionSnapshot(snapshot: LexSessionSnapshot): void {
+    if (this._handle?.restoreSession) {
+      this._handle.restoreSession(snapshot);
+      return;
+    }
+
+    this._agent?.restoreSession?.(snapshot);
   }
 }

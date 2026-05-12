@@ -42,6 +42,10 @@ interface SubscriptionCallbacks {
   showAiWritingNotice: (isWaiting: boolean) => void;
   handleTaskAction: (event: ChatTaskActionEvent) => void;
   flushPendingAutoSend: () => void;
+  syncAuthQuotaState: () => void;
+  refreshRequestQuotaState: () => Promise<void>;
+  clearAuthQuotaState: () => void;
+  clearRequestQuotaState: () => void;
 }
 
 type ChatSubscriptionViewWriteAccess = Pick<ChatViewWriteBridge, 'clearChatView'>;
@@ -52,6 +56,7 @@ type ChatSubscriptionViewWriteAccess = Pick<ChatViewWriteBridge, 'clearChatView'
 export class ChatSubscriptionCoordinator {
   private textMessageSubscription: Subscription | null = null;
   private loginStatusSubscription: Subscription | null = null;
+  private authChangeSubscription: Subscription | null = null;
   private aiWritingSubscription: Subscription | null = null;
   private aiWaitingSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
@@ -64,6 +69,50 @@ export class ChatSubscriptionCoordinator {
   private active = false;
   private lastKnownApiServer = '';
   private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
+
+  private tryInitializeLoggedInSession(): void {
+    if (!this.isReadyForLoggedInSessionWork() || this.ctx.hasInitializedForThisLogin || this.ctx.isSessionStarting) {
+      return;
+    }
+
+    this.ctx.hasInitializedForThisLogin = true;
+    this.viewWriteBridge.clearChatView();
+    this.ctx.session.startSession().then(async () => {
+      await this.ctx.session.getHistory();
+      this.ctx.interaction.checkFirstUsage();
+      this.callbacks.flushPendingAutoSend();
+    }).catch((err) => {
+      console.error('[ChatEngine] startSession 失败:', err);
+    });
+  }
+
+  private tryInitializeLoggedInSessionFromAuthRefresh(): void {
+    if (this.hasConversationHistory()) {
+      return;
+    }
+
+    this.tryInitializeLoggedInSession();
+  }
+
+  private isReadyForLoggedInSessionWork(): boolean {
+    if (!this.ctx.isLoggedIn) {
+      return false;
+    }
+
+    return this.isAuthSnapshotReady(AilyHost.get().auth);
+  }
+
+  private isAuthSnapshotReady(authProvider: ReturnType<typeof AilyHost.get>['auth'] | undefined): boolean {
+    if (!authProvider?.getSnapshot) {
+      return true;
+    }
+
+    if (!authProvider.authChanged$ && !authProvider.authSnapshot$) {
+      return true;
+    }
+
+    return !!authProvider.getSnapshot();
+  }
 
   constructor(
     private readonly ctx: ChatSubscriptionCoordinatorContext,
@@ -126,15 +175,31 @@ export class ChatSubscriptionCoordinator {
       });
     }
 
-    const auth = AilyHost.get().authFull;
-    auth?.initializeAuth().then(() => {
+    const authProvider = AilyHost.get().auth;
+    authProvider?.initializeAuth?.().then(() => {
       if (!this.active) {
         return;
       }
 
-      this.userInfoSubscription = auth?.userInfo$?.subscribe((userInfo: any) => {
-        this.ctx.currentUserGroup = userInfo?.groups || [];
+      this.userInfoSubscription = authProvider?.userInfo$?.subscribe((userInfo) => {
+        this.ctx.currentUserGroup = Array.isArray(userInfo?.groups) ? [...userInfo.groups] : [];
       }) ?? null;
+
+      this.authChangeSubscription = authProvider?.authChanged$?.subscribe(() => {
+        this.callbacks.syncAuthQuotaState();
+        if (this.ctx.isLoggedIn) {
+          void this.callbacks.refreshRequestQuotaState();
+        }
+        this.tryInitializeLoggedInSessionFromAuthRefresh();
+      }) ?? authProvider?.authSnapshot$?.subscribe(() => {
+        this.callbacks.syncAuthQuotaState();
+        if (this.ctx.isLoggedIn) {
+          void this.callbacks.refreshRequestQuotaState();
+        }
+        this.tryInitializeLoggedInSessionFromAuthRefresh();
+      }) ?? null;
+
+      this.tryInitializeLoggedInSession();
     });
 
     this.aiWritingSubscription = AilyHost.get().blockly.aiWriting$.subscribe(this.callbacks.showAiWritingNotice);
@@ -181,21 +246,16 @@ export class ChatSubscriptionCoordinator {
       }
     });
 
-    this.loginStatusSubscription = auth?.isLoggedIn$?.subscribe(async isLoggedIn => {
-      if (!this.ctx.hasInitializedForThisLogin && !this.ctx.isSessionStarting && isLoggedIn) {
-        this.ctx.isLoggedIn = isLoggedIn;
-        this.ctx.hasInitializedForThisLogin = true;
-        this.viewWriteBridge.clearChatView();
-        this.ctx.session.startSession().then(() => {
-          this.ctx.session.getHistory();
-          this.ctx.interaction.checkFirstUsage();
-          this.callbacks.flushPendingAutoSend();
-        }).catch((err) => {
-          console.error('[ChatEngine] startSession 失败:', err);
-        });
+    this.loginStatusSubscription = authProvider?.isLoggedIn$?.subscribe(async isLoggedIn => {
+      this.ctx.isLoggedIn = isLoggedIn;
+
+      if (isLoggedIn) {
+        this.tryInitializeLoggedInSession();
       }
 
       if (isLoggedIn) {
+        this.callbacks.syncAuthQuotaState();
+        await this.callbacks.refreshRequestQuotaState();
         return;
       }
 
@@ -211,6 +271,8 @@ export class ChatSubscriptionCoordinator {
       this.ctx.isSessionStarting = false;
       this.ctx.chatService.currentSessionId = '';
       this.ctx.chatService.currentSessionPath = '';
+      this.callbacks.clearAuthQuotaState();
+      this.callbacks.clearRequestQuotaState();
       this.viewWriteBridge.clearChatView();
       this.ctx.toolCallStates = {};
       if (this.ctx.messageSubscription) {
@@ -221,7 +283,7 @@ export class ChatSubscriptionCoordinator {
 
     this.configChangedSubscription = this.ctx.ailyChatConfigService.configChanged$.subscribe(async () => {
       const hasConversationHistory = this.hasConversationHistory();
-      if (!hasConversationHistory && this.ctx.sessionId && this.ctx.isLoggedIn) {
+      if (!hasConversationHistory && this.ctx.sessionId && this.isReadyForLoggedInSessionWork()) {
         try {
           await this.ctx.session.stopAndCloseSession(true);
           await this.ctx.session.startSession();
@@ -246,7 +308,7 @@ export class ChatSubscriptionCoordinator {
 
       this.lastKnownApiServer = nextApiServer;
 
-      if (!this.ctx.isLoggedIn) {
+      if (!this.isReadyForLoggedInSessionWork()) {
         return;
       }
 
@@ -266,6 +328,7 @@ export class ChatSubscriptionCoordinator {
     if (this.ctx.messageSubscription) { this.ctx.messageSubscription.unsubscribe(); this.ctx.messageSubscription = null; }
     if (this.textMessageSubscription) { this.textMessageSubscription.unsubscribe(); this.textMessageSubscription = null; }
     if (this.loginStatusSubscription) { this.loginStatusSubscription.unsubscribe(); this.loginStatusSubscription = null; }
+    if (this.authChangeSubscription) { this.authChangeSubscription.unsubscribe(); this.authChangeSubscription = null; }
     if (this.userInfoSubscription) { this.userInfoSubscription.unsubscribe(); this.userInfoSubscription = null; }
     if (this.aiWritingSubscription) { this.aiWritingSubscription.unsubscribe(); this.aiWritingSubscription = null; }
     if (this.aiWaitingSubscription) { this.aiWaitingSubscription.unsubscribe(); this.aiWaitingSubscription = null; }

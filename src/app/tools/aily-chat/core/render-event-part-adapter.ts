@@ -753,7 +753,10 @@ function errorNoticeToPart(event: Extract<RenderEvent, { type: 'error_notice' }>
 }
 
 function warningNoticeToPart(event: Extract<RenderEvent, { type: 'warning_notice' }>) {
-  return mkError(event.message, 'warning');
+  return mkError(event.message, 'warning', {
+    ...(typeof event.code === 'string' ? { code: event.code } : {}),
+    ...(event.details && typeof event.details === 'object' ? { details: event.details } : {}),
+  });
 }
 
 function infoNoticeToPart(event: Extract<RenderEvent, { type: 'info_notice' }>) {

@@ -25,7 +25,10 @@ export class ChatSwitchShellCoordinator {
     private readonly callbacks: {
       switchToMode: (mode: string) => void | Promise<void>;
       switchToModel: (model: ModelConfig) => void | Promise<void>;
-      switchToReasoningEffort: (reasoningEffort: NonNullable<ModelConfig['reasoningEffort']>) => void | Promise<void>;
+      switchToModelConfiguration: (
+        model: ModelConfig,
+        update: { key: string; value: unknown },
+      ) => void | Promise<void>;
     },
   ) {}
 
@@ -59,16 +62,18 @@ export class ChatSwitchShellCoordinator {
     this.deps.menuManager.showModelMenu = false;
 
     const model = item.data?.model as ModelConfig | undefined;
+    const modelConfiguration = item.data?.modelConfiguration as { key?: string; value: unknown } | undefined;
+    if (model?.model && typeof modelConfiguration?.key === 'string' && modelConfiguration.key.trim()) {
+      void this.callbacks.switchToModelConfiguration(model, {
+        key: modelConfiguration.key.trim(),
+        value: modelConfiguration.value,
+      });
+      return;
+    }
+
     if (model?.model && !isSameModelSelection(model, this.deps.getCurrentModel())) {
       void this.callbacks.switchToModel(model);
       return;
     }
-
-    const reasoningEffort = item.data?.reasoningEffort as ModelConfig['reasoningEffort'] | undefined;
-    if (!reasoningEffort || reasoningEffort === this.deps.getCurrentModel()?.reasoningEffort) {
-      return;
-    }
-
-    void this.callbacks.switchToReasoningEffort(reasoningEffort);
   }
 }

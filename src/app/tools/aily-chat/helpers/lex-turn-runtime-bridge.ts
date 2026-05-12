@@ -15,8 +15,8 @@ type TurnStartupAccess = {
 };
 
 type TurnExecutionAccess = {
-  runTurn(agent: { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null, userMessage: string): void;
-  runTurnWithRenderEvents(source: { chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent> }, userMessage: string, displayContent?: string): void;
+  runTurn(agent: { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null, userMessage: string): Promise<void>;
+  runTurnWithRenderEvents(source: { chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent> }, userMessage: string, displayContent?: string): Promise<void>;
 };
 
 type TurnUiAccess = {
@@ -44,13 +44,13 @@ export class LexTurnRuntimeBridge {
   async run(userMessage: string, displayContent?: string): Promise<void> {
     const handle = this.agentLifecycleBridge.getHandle?.() ?? null;
     if (handle) {
-      this.turnExecutionBridge.runTurnWithRenderEvents(handle, userMessage, displayContent);
+      await this.turnExecutionBridge.runTurnWithRenderEvents(handle, userMessage, displayContent);
       return;
     }
 
     const agent = this.agentLifecycleBridge.getAgent();
     if (!agent) {
-      this.turnExecutionBridge.runTurn(null, userMessage);
+      await this.turnExecutionBridge.runTurn(null, userMessage);
       return;
     }
 
@@ -76,10 +76,10 @@ export class LexTurnRuntimeBridge {
           }
         },
       };
-      this.turnExecutionBridge.runTurnWithRenderEvents(source, userMessage, displayContent);
+      await this.turnExecutionBridge.runTurnWithRenderEvents(source, userMessage, displayContent);
     } else {
       // Fallback: legacy AgentEvent path
-      this.turnExecutionBridge.runTurn(agent, userMessage);
+      await this.turnExecutionBridge.runTurn(agent, userMessage);
     }
   }
 

@@ -11,7 +11,7 @@
             <div class="items-list">
                 <div class="setting-block setting-block--section-gap">
                     <div class="setting-label">内置模型预设</div>
-                    <div class="setting-hint">Auto 是软件内置默认 LLM。预设负责产品层选择，下面的具体模型负责 canonical model 能力配置。</div>
+                    <div class="setting-hint">当前阶段用户侧只展示稳定预设。Auto 是软件内置默认 LLM；如需接入自定义模型，可在下方单独管理。</div>
                     @if(modelCatalogStatusHint; as catalogStatusHint) {
                     <div class="setting-hint" [class.setting-hint--warning]="isModelCatalogUnavailable">{{ catalogStatusHint }}</div>
                     }
@@ -23,6 +23,9 @@
                                     <div class="model-primary-row">
                                         <span class="model-name">{{ preset.name }}</span>
                                         <span class="model-kind-tag">预设</span>
+                                        @if(getPresetUnavailableTag(preset); as unavailableTag) {
+                                        <span class="model-locked-tag">{{ unavailableTag }}</span>
+                                        }
                                     </div>
                                     <div class="model-secondary-row">
                                         <span class="model-id">{{ preset.id }}</span>
@@ -38,6 +41,9 @@
                                     </div>
                                     @if(preset.description) {
                                     <div class="model-description">{{ preset.description }}</div>
+                                    }
+                                    @if(getPresetUnavailableHint(preset); as unavailableHint) {
+                                    <div class="model-description">{{ unavailableHint }}</div>
                                     }
                                 </div>
                                 @if(preset.id === defaultModelPresetId) {
@@ -64,7 +70,7 @@
                             @if(!showAddModelForm || editingModel){
                             <div class="add-model-btn" (click)="openAddModelForm()">
                                 <i class="fa-light fa-plus"></i>
-                                添加新模型
+                                添加自定义模型
                             </div>
                             } @else {
                             <!-- 添加模式：显示表单 -->
@@ -255,10 +261,10 @@
                     <label nz-checkbox [(ngModel)]="autoSaveEdits">默认自动保存变更</label>
                     <span class="setting-hint">AI编辑完成后自动保留变更，不弹出变更面板</span>
                 </div>
-                <div class="setting-block">
-                    <div class="setting-label">最大循环次数 <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('maxCount')"></i></div>
-                    <input nz-input [(ngModel)]="maxCount" />
+                <div>最大请求数（工具调用轮数） <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('maxRequests')"></i>
                 </div>
+                <div class="setting-hint">对齐 VS Code 的 chat.agent.maxRequests（默认 200）：限制一次请求中代理最多还能继续发起多少轮工具调用与模型请求。</div>
+                <input nz-input [(ngModel)]="maxRequests" />
             </div>
         </div>
     </div>

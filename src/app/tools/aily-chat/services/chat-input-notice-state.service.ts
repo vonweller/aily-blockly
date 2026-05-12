@@ -1,0 +1,228 @@
+import { Injectable, OnDestroy } from '@angular/core';
+import { BehaviorSubject, Subscription } from 'rxjs';
+
+import { AuthQuotaStateService } from './auth-quota-state.service';
+import { RequestQuotaStateService, type RequestQuotaServiceState } from './request-quota-state.service';
+import {
+  createRequestQuotaInputNotice,
+  createRequestRateLimitInputNotice,
+  type RequestQuotaSnapshot,
+} from './request-quota-snapshot';
+import { type ChatInputNotice, isSameChatInputNotice } from './chat-input-notice';
+
+const INPUT_NOTICE_THRESHOLDS = [50, 75, 90, 95];
+
+@Injectable({
+  providedIn: 'root',
+})
+export class ChatInputNoticeStateService implements OnDestroy {
+  private readonly inputNoticeSubject = new BehaviorSubject<ChatInputNotice | null>(null);
+  readonly inputNotice$ = this.inputNoticeSubject.asObservable();
+  private readonly subscription = new Subscription();
+  private readonly notifications = new Map<string, ChatInputNotice>();
+  private readonly dismissedNoticeIds = new Set<string>();
+  private readonly insertionOrder = new Map<string, number>();
+  private nextInsertionOrder = 0;
+  private readonly sourceNoticeIds = new Map<ChatInputNotice['source'], string>();
+  private latestRequestQuotaSnapshot: RequestQuotaSnapshot | null = null;
+  private latestRequestState: RequestQuotaServiceState | null = null;
+
+  constructor(
+    private readonly authQuotaStateService: AuthQuotaStateService,
+    private readonly requestQuotaStateService: RequestQuotaStateService,
+  ) {
+    this.subscription.add(
+      this.authQuotaStateService.authQuotaInputNotice$.subscribe((notice) => {
+        this.syncSourceNotification('auth-quota', notice);
+      }),
+    );
+    this.subscription.add(
+      this.requestQuotaStateService.requestQuotaSnapshot$.subscribe((requestQuotaSnapshot) => {
+        this.latestRequestQuotaSnapshot = requestQuotaSnapshot;
+        this.syncSourceNotification('request-quota', this.computeRequestNotice());
+      }),
+    );
+    this.subscription.add(
+      this.requestQuotaStateService.snapshot$.subscribe((requestState) => {
+        this.latestRequestState = requestState;
+        this.syncSourceNotification('request-quota', this.computeRequestNotice());
+      }),
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.subscription.unsubscribe();
+  }
+
+  getInputNotice(): ChatInputNotice | null {
+    return this.inputNoticeSubject.getValue();
+  }
+
+  dismissCurrentNotice(): void {
+    const notice = this.getInputNotice();
+    if (!notice) {
+      return;
+    }
+
+    this.dismissNotification(notice.id);
+  }
+
+  handleMessageSubmitted(): void {
+    let changed = false;
+    for (const notice of this.notifications.values()) {
+      if (notice.autoDismissOnMessage && !this.dismissedNoticeIds.has(notice.id)) {
+        this.dismissedNoticeIds.add(notice.id);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.publishActiveNotice();
+    }
+  }
+
+  private computeRequestNotice(): ChatInputNotice | null {
+    const activeFailureNotice = createRequestQuotaInputNotice(this.latestRequestQuotaSnapshot);
+    if (activeFailureNotice) {
+      return activeFailureNotice;
+    }
+
+    return this.checkRateLimitThreshold(
+      this.latestRequestState?.rateLimitSnapshots?.['session'],
+      'session',
+    ) ?? this.checkRateLimitThreshold(
+      this.latestRequestState?.rateLimitSnapshots?.['weekly'],
+      'weekly',
+    );
+  }
+
+  private checkRateLimitThreshold(
+    snapshot: RequestQuotaServiceState['rateLimitSnapshots'] extends Readonly<Record<string, infer Snapshot>> ? Snapshot | undefined : never,
+    type: 'session' | 'weekly',
+  ): ChatInputNotice | null {
+    if (!snapshot || snapshot.unlimited) {
+      return null;
+    }
+
+    const percentUsed = 100 - snapshot.percentRemaining;
+    if (percentUsed < INPUT_NOTICE_THRESHOLDS[0]) {
+      return null;
+    }
+
+    return createRequestRateLimitInputNotice(type, Math.round(percentUsed), snapshot.resetAt);
+  }
+
+  private syncSourceNotification(
+    source: ChatInputNotice['source'],
+    notice: ChatInputNotice | null,
+  ): void {
+    const previousId = this.sourceNoticeIds.get(source);
+    if (!notice) {
+      if (previousId) {
+        this.deleteNotification(previousId);
+        this.sourceNoticeIds.delete(source);
+      }
+      return;
+    }
+
+    if (previousId && previousId !== notice.id) {
+      this.deleteNotification(previousId);
+    }
+
+    this.sourceNoticeIds.set(source, notice.id);
+    this.setNotification(notice);
+  }
+
+  private setNotification(notice: ChatInputNotice): void {
+    this.notifications.set(notice.id, notice);
+    this.dismissedNoticeIds.delete(notice.id);
+    this.insertionOrder.set(notice.id, this.nextInsertionOrder++);
+    this.publishActiveNotice();
+  }
+
+  private deleteNotification(id: string): void {
+    const removed = this.notifications.delete(id);
+    if (!removed) {
+      return;
+    }
+
+    this.dismissedNoticeIds.delete(id);
+    this.insertionOrder.delete(id);
+    this.publishActiveNotice();
+  }
+
+  private dismissNotification(id: string): void {
+    if (!this.notifications.has(id) || this.dismissedNoticeIds.has(id)) {
+      return;
+    }
+
+    this.dismissedNoticeIds.add(id);
+    this.publishActiveNotice();
+  }
+
+  private publishActiveNotice(): void {
+    this.acceptNotice(this.getActiveNotice());
+  }
+
+  private getActiveNotice(): ChatInputNotice | null {
+    let best: ChatInputNotice | null = null;
+    let bestOrder = -1;
+
+    for (const notice of this.notifications.values()) {
+      if (this.dismissedNoticeIds.has(notice.id)) {
+        continue;
+      }
+
+      const order = this.insertionOrder.get(notice.id) ?? 0;
+      if (!best) {
+        best = notice;
+        bestOrder = order;
+        continue;
+      }
+
+      const sourcePriorityDelta = getNoticeSourcePriority(notice) - getNoticeSourcePriority(best);
+      if (sourcePriorityDelta > 0) {
+        best = notice;
+        bestOrder = order;
+        continue;
+      }
+
+      if (sourcePriorityDelta < 0) {
+        continue;
+      }
+
+      const severityDelta = getNoticeSeverityRank(notice) - getNoticeSeverityRank(best);
+      if (severityDelta > 0 || (severityDelta === 0 && order > bestOrder)) {
+        best = notice;
+        bestOrder = order;
+      }
+    }
+
+    return best;
+  }
+
+  private acceptNotice(notice: ChatInputNotice | null): void {
+    if (isSameChatInputNotice(this.getInputNotice(), notice)) {
+      return;
+    }
+
+    this.inputNoticeSubject.next(notice);
+  }
+}
+
+function getNoticeSeverityRank(notice: ChatInputNotice): number {
+  switch (notice.tone) {
+    case 'error':
+      return 2;
+    case 'warning':
+      return 1;
+    case 'info':
+    case 'muted':
+    default:
+      return 0;
+  }
+}
+
+function getNoticeSourcePriority(notice: ChatInputNotice): number {
+  return notice.source === 'auth-quota' ? 1 : 0;
+}

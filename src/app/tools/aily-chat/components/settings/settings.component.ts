@@ -55,8 +55,8 @@ export class AilyChatSettingsComponent implements OnInit {
   @Output() close = new EventEmitter<void>();
   @Output() saved = new EventEmitter<void>(); // 保存成功事件
 
-  // 最大循环次数
-  maxCount: number = 100;
+  // 最大请求数 / 最大工具调用轮数
+  maxRequests: number = 200;
 
   // 默认自动保存变更
   autoSaveEdits: boolean = false;
@@ -184,7 +184,7 @@ export class AilyChatSettingsComponent implements OnInit {
    */
   private loadAllConfig() {
     // 加载配置
-    this.maxCount = this.ailyChatConfigService.maxCount;
+    this.maxRequests = this.ailyChatConfigService.maxRequests;
     this.autoSaveEdits = this.ailyChatConfigService.autoSaveEdits;
     this.userInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.userInstructionFolders);
     this.projectInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.projectInstructionFolders);
@@ -337,9 +337,9 @@ export class AilyChatSettingsComponent implements OnInit {
    * 加载模型列表
    */
   private loadModelList() {
-    this.modelPresetList = this.ailyChatConfigService.getModelPresets();
+    this.modelPresetList = this.ailyChatConfigService.getUserVisibleModelPresets();
     this.defaultModelPresetId = this.ailyChatConfigService.getDefaultModelPresetId();
-    this.modelList = this.sortModelList([...this.ailyChatConfigService.models]);
+    this.modelList = this.sortModelList(this.ailyChatConfigService.models.filter(model => model.isCustom));
     this.updateModelsAllChecked();
   }
 
@@ -401,6 +401,44 @@ export class AilyChatSettingsComponent implements OnInit {
     return resolvedPresetModel
       ? this.ailyChatConfigService.getModelReasoningSummaryLabel(resolvedPresetModel)
       : undefined;
+  }
+
+  getPresetUnavailableTag(preset: ModelPresetOption): string | undefined {
+    if (preset.enabled) {
+      return undefined;
+    }
+
+    switch (preset.unavailableReason) {
+      case 'update':
+        return '需更新';
+      case 'admin':
+        return '管理员';
+      case 'upgrade':
+        return '需升级';
+      default:
+        return '不可用';
+    }
+  }
+
+  getPresetUnavailableHint(preset: ModelPresetOption): string | undefined {
+    if (preset.enabled) {
+      return undefined;
+    }
+
+    switch (preset.unavailableReason) {
+      case 'update':
+        return preset.minimumClientVersion
+          ? `升级客户端到 ${preset.minimumClientVersion} 或更高版本后可选`
+          : '升级客户端后可选';
+      case 'admin':
+        return '需要管理员权限后可选';
+      case 'upgrade':
+        return preset.requiredTier
+          ? `升级到 ${preset.requiredTier.toUpperCase()} 后可选`
+          : '升级套餐后可选';
+      default:
+        return undefined;
+    }
   }
 
   /**
@@ -565,7 +603,7 @@ export class AilyChatSettingsComponent implements OnInit {
 
   async onSave() {
     // 保存配置
-    this.ailyChatConfigService.maxCount = this.maxCount;
+    this.ailyChatConfigService.maxRequests = this.maxRequests;
     this.ailyChatConfigService.autoSaveEdits = this.autoSaveEdits;
     this.ailyChatConfigService.userInstructionFolders = this.parseFolderPaths(this.userInstructionFoldersText);
     this.ailyChatConfigService.projectInstructionFolders = this.parseFolderPaths(this.projectInstructionFoldersText);
@@ -605,9 +643,9 @@ export class AilyChatSettingsComponent implements OnInit {
   /**
    * 打开帮助链接
    */
-  openHelpUrl(type: 'maxCount' | 'workspace' | 'tools' | 'apiKey') {
+  openHelpUrl(type: 'maxRequests' | 'workspace' | 'tools' | 'apiKey') {
     const helpUrls = {
-      maxCount: 'https://example.com/help/max-count',
+      maxRequests: 'https://example.com/help/max-requests',
       workspace: 'https://example.com/help/workspace',
       tools: 'https://example.com/help/tools',
       apiKey: 'https://example.com/help/api-key'

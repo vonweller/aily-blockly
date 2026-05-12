@@ -141,6 +141,11 @@ export class ChatRuntimeConfirmationCarouselComponent {
       return;
     }
 
+    if (decision.sideEffectOnly && typeof decision.actionId === 'string' && decision.actionId.length > 0) {
+      this.runtimeHost.triggerConfirmationAction(this.sessionId, active.id, decision.actionId);
+      return;
+    }
+
     if (active.toolCallId) {
       this.runtimeHost.resolveToolApproval(this.sessionId, active.toolCallId, decision);
       return;

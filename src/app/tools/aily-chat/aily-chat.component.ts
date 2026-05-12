@@ -204,7 +204,7 @@ export class AilyChatComponent implements OnDestroy {
     }, {
       switchToMode: (mode) => this.engine.switchToMode(mode),
       switchToModel: (model) => this.engine.switchToModel(model),
-      switchToReasoningEffort: (reasoningEffort) => this.engine.switchToReasoningEffort(reasoningEffort),
+      switchToModelConfiguration: (model, update) => this.engine.switchToModelConfiguration(model, update),
     });
     this.editResourceShellCoordinator = new ChatEditResourceShellCoordinator({
       getDialog: () => AilyHost.get().dialog,
@@ -220,6 +220,8 @@ export class AilyChatComponent implements OnDestroy {
     this.submitShellCoordinator = new ChatSubmitShellCoordinator({
       scrollManager: this.scrollManager,
       resourceManager: this.resourceManager,
+      authQuota: this.engine.authQuotaStateService,
+      inputNotice: this.engine.chatInputNoticeStateService,
       getSessionAllowedPaths: () => this.engine.sessionAllowedPaths,
       getSessionId: () => this.vm.sessionId,
       getInputValue: () => this.vm.inputValue,
@@ -244,7 +246,12 @@ export class AilyChatComponent implements OnDestroy {
     });
     this.actionRegistry = new ChatActionRegistry(() => ({
       currentMode: this.vm.currentMode,
+      canRunManageModelsAction: () => Boolean(AilyHost.get().editor?.showTextDocument),
+      runManageModelsAction: () => this.runManageModelsAction(),
       runFocusTodosViewAction: () => this.runFocusTodosViewAction(),
+      notifyManageModelsUnavailable: () => {
+        this.message.warning('当前宿主无法打开模型配置文件');
+      },
     }));
     this.lifecycleCoordinator = new ChatComponentLifecycleCoordinator({
       isHostInitialized: () => AilyHost.isInitialized(),
@@ -361,6 +368,37 @@ export class AilyChatComponent implements OnDestroy {
     });
   }
 
+  runManageModelsAction(): boolean {
+    const targetPath = this.engine.languageModelsService.prepareConfigurationFile();
+    if (!targetPath) {
+      this.message.error('无法准备聊天模型配置文件');
+      return false;
+    }
+
+    const host = AilyHost.get();
+    const projectPath = host.project.currentProjectPath || host.project.projectRootPath;
+    const openResult = host.editor?.showTextDocument?.(targetPath, { projectPath });
+
+    if (typeof (openResult as Promise<boolean> | undefined)?.then === 'function') {
+      void (openResult as Promise<boolean>).then((opened) => {
+        if (!opened) {
+          this.message.error('无法打开聊天模型配置文件');
+        }
+      }).catch((err) => {
+        console.error('打开聊天模型配置文件失败:', err);
+        this.message.error('无法打开聊天模型配置文件');
+      });
+      return true;
+    }
+
+    if (!openResult) {
+      this.message.error('无法打开聊天模型配置文件');
+      return false;
+    }
+
+    return true;
+  }
+
   get actionMenuItems() {
     return this.actionRegistry.getMenuItems();
   }
@@ -369,9 +407,28 @@ export class AilyChatComponent implements OnDestroy {
     this.menuManager.toggleActionMenu(event, [...this.actionMenuItems]);
   }
 
+  toggleReasoningMenu(event: MouseEvent): void {
+    this.menuManager.toggleReasoningMenu(event, [...this.vm.currentReasoningEffortMenuItems]);
+  }
+
   handleActionMenuClick(item: { action?: string }): void {
     this.menuManager.showActionMenu = false;
     this.actionRegistry.runMenuAction(item);
+  }
+
+  handleReasoningMenuClick(item: { data?: { model?: unknown; modelConfiguration?: { key?: string; value: unknown } } }): void {
+    this.menuManager.showReasoningMenu = false;
+
+    const model = item?.data?.model;
+    const modelConfiguration = item?.data?.modelConfiguration;
+    if (!model || typeof modelConfiguration?.key !== 'string' || !modelConfiguration.key.trim()) {
+      return;
+    }
+
+    void this.engine.switchToModelConfiguration(model as Parameters<ChatEngineService['switchToModelConfiguration']>[0], {
+      key: modelConfiguration.key.trim(),
+      value: modelConfiguration.value,
+    });
   }
 
   setComposerFocusState(focused: boolean): void {
@@ -395,6 +452,27 @@ export class AilyChatComponent implements OnDestroy {
 
   handleTodoFocusToggleShortcut(): void {
     this.runFocusTodosViewAction();
+  }
+
+  openAuthQuotaUsage(event?: MouseEvent): void {
+    event?.stopPropagation();
+    this.uiService.openTool('user-center');
+  }
+
+  dismissChatInputNotice(event?: MouseEvent): void {
+    event?.stopPropagation();
+    this.engine.chatInputNoticeStateService.dismissCurrentNotice();
+  }
+
+  getChatInputNoticeSeverityClass(notice: { tone?: string } | null | undefined): string {
+    switch (notice?.tone) {
+      case 'error':
+        return 'severity-error';
+      case 'warning':
+        return 'severity-warning';
+      default:
+        return 'severity-info';
+    }
   }
 
   private observeDialogContent(element: HTMLElement | null): void {

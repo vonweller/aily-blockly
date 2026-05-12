@@ -36,10 +36,12 @@ interface TurnResponseIncrementalProjection {
   readonly followups?: readonly TurnResponseFollowup[];
   readonly modelName?: string;
   readonly modelBillingLabel?: string;
+  readonly quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'];
   readonly usedContext?: TurnResponseTurn['response']['usedContext'];
   readonly contentReferences?: readonly NonNullable<TurnResponseTurn['response']['contentReferences']>[number][];
   readonly codeCitations?: readonly NonNullable<TurnResponseTurn['response']['codeCitations']>[number][];
   readonly progressMessages?: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][];
+  readonly continuation?: TurnResponseTurn['response']['continuation'];
   readonly createdAt: number;
 }
 
@@ -63,6 +65,7 @@ export interface TurnResponseIncrementalMaterializeOptions {
   readonly updatedAt: number;
   readonly status: TurnResponseStatus;
   readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
+  readonly continuation?: TurnResponseTurn['response']['continuation'];
   readonly usage?: TurnResponseTurn['usage'];
   readonly participant?: string;
   readonly snapshot?: {
@@ -70,9 +73,11 @@ export interface TurnResponseIncrementalMaterializeOptions {
     readonly rounds?: TurnResponseTurn['rounds'];
     readonly usage?: TurnResponseTurn['usage'];
     readonly createdAt?: number;
+    readonly continuation?: TurnResponseTurn['response']['continuation'];
     readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
     readonly modelName?: string;
     readonly modelBillingLabel?: string;
+    readonly quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'];
   };
 }
 
@@ -169,6 +174,7 @@ export class TurnResponseIncrementalBuilder {
         : undefined,
       modelName: options.snapshot?.modelName ?? this.currentProjection.modelName,
       modelBillingLabel: options.snapshot?.modelBillingLabel ?? this.currentProjection.modelBillingLabel,
+      quotaSnapshot: options.snapshot?.quotaSnapshot ?? this.currentProjection.quotaSnapshot,
       usedContext: this.currentProjection.usedContext,
       contentReferences: this.currentProjection.contentReferences
         ? [...this.currentProjection.contentReferences]
@@ -179,6 +185,7 @@ export class TurnResponseIncrementalBuilder {
       progressMessages: this.currentProjection.progressMessages
         ? [...this.currentProjection.progressMessages]
         : undefined,
+      continuation: options.continuation ?? options.snapshot?.continuation ?? this.currentProjection.continuation,
       createdAt,
     };
 
@@ -192,10 +199,12 @@ export class TurnResponseIncrementalBuilder {
       followups: this.currentProjection.followups,
       modelName: this.currentProjection.modelName,
       modelBillingLabel: this.currentProjection.modelBillingLabel,
+      quotaSnapshot: this.currentProjection.quotaSnapshot,
       usedContext: this.currentProjection.usedContext,
       contentReferences: this.currentProjection.contentReferences,
       codeCitations: this.currentProjection.codeCitations,
       progressMessages: this.currentProjection.progressMessages,
+      continuation: this.currentProjection.continuation,
       status: options.status,
       terminationReason: options.terminationReason ?? options.snapshot?.terminationReason,
       parts: this.runtime.collectTurnResponseParts(),

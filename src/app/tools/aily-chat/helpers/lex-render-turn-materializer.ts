@@ -4,6 +4,7 @@ import { toTurnResponseStatus } from 'aily-lex/browser';
 
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import { getTurnResponseParticipant } from '../core/turn-response-stream-contract';
+import { getTurnResponseResolvedModelName } from './turn-response-response-model';
 
 type LexRenderTurnMaterializerContext = Pick<IAgentLifecycle, 'isCancelled' | 'currentMessageSource'>;
 
@@ -21,6 +22,8 @@ export class LexRenderTurnMaterializer {
       fallbackStatus: TurnResponseStatus;
       hasExecutionError: boolean;
       usage?: TurnResponseTurn['usage'];
+      continuation?: TurnResponseTurn['response']['continuation'];
+      terminationReason?: TurnResponseTurn['response']['terminationReason'];
     },
   ): TurnResponseTurn | null {
     const snapshotTurnId = streamBuilder.currentSourceTurnId ?? currentTurn.turnId;
@@ -35,6 +38,8 @@ export class LexRenderTurnMaterializer {
       updatedAt: options.updatedAt,
       status,
       usage: options.usage,
+      continuation: options.continuation,
+      terminationReason: options.terminationReason,
       participant: getTurnResponseParticipant(
         this.ctx.currentMessageSource || currentTurn.response.participant,
       ),
@@ -45,8 +50,9 @@ export class LexRenderTurnMaterializer {
           usage: snapshotTurn.usage,
           createdAt: snapshotTurn.createdAt,
           terminationReason: snapshotTurn.terminationReason,
-          modelName: snapshotTurn.responseModel?.modelName,
+          modelName: getTurnResponseResolvedModelName(snapshotTurn),
           modelBillingLabel: snapshotTurn.responseModel?.modelBillingLabel,
+          quotaSnapshot: snapshotTurn.responseModel?.quotaSnapshot,
         }
         : undefined,
     });

@@ -35,6 +35,8 @@ type TurnUiEventSink = {
   flushPendingEvents(events: readonly any[]): void;
 };
 
+const GENERIC_EXECUTION_ERROR_MESSAGE = 'Sorry, something went wrong.';
+
 /**
  * Handles lex turn execution scheduling for the blockly host path.
  *
@@ -59,12 +61,12 @@ export class LexTurnExecutionBridge {
     this._renderEventBridge = bridge;
   }
 
-  runTurn(agent: LexChatAgent | null, userMessage: string): void {
+  runTurn(agent: LexChatAgent | null, userMessage: string): Promise<void> {
     if (!agent) {
       console.error('[LexStream] Agent 未初始化，请先调用 ensureAgent()');
-      this.uiEventBridge.appendExecutionError('aily-lex Agent 未初始化，请新建对话后重试');
+      this.uiEventBridge.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE);
       this.ctx.isWaiting = false;
-      return;
+      return Promise.resolve();
     }
 
     const abortController = new AbortController();
@@ -75,7 +77,7 @@ export class LexTurnExecutionBridge {
     this.resetTurnState();
 
     try {
-      this.ctx.ngZone.runOutsideAngular(async () => {
+      return this.ctx.ngZone.runOutsideAngular(async () => {
         await this.preparePartsRendering();
 
         try {
@@ -90,7 +92,7 @@ export class LexTurnExecutionBridge {
       });
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `error: ${error.message}`);
-      void this.uiEventBridge.finalizeTurn();
+      return this.uiEventBridge.finalizeTurn();
     }
   }
 
@@ -109,10 +111,10 @@ export class LexTurnExecutionBridge {
    * This is the new R3 path: RenderEvent → LexRenderEventBridge → ChatPartStore.
    * No PartEventProcessor, no state-event/runtime-event bridge chain.
    */
-  runTurnWithRenderEvents(source: RenderEventSource, userMessage: string, displayContent?: string): void {
+  runTurnWithRenderEvents(source: RenderEventSource, userMessage: string, displayContent?: string): Promise<void> {
     if (!this._renderEventBridge) {
       console.error('[LexStream] RenderEvent bridge not set, cannot use RenderEvent path');
-      return;
+      return Promise.resolve();
     }
 
     const abortController = new AbortController();
@@ -123,7 +125,7 @@ export class LexTurnExecutionBridge {
     this.resetRenderEventTurnState(userMessage, displayContent);
 
     try {
-      this.ctx.ngZone.runOutsideAngular(async () => {
+      return this.ctx.ngZone.runOutsideAngular(async () => {
         await this.preparePartsRendering();
 
         try {
@@ -138,7 +140,7 @@ export class LexTurnExecutionBridge {
       });
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `error: ${error.message}`);
-      void this.uiEventBridge.finalizeTurn();
+      return this.uiEventBridge.finalizeTurn();
     }
   }
 
@@ -242,9 +244,9 @@ export class LexTurnExecutionBridge {
     }
 
     console.error('[LexStream] Agent 执行异常:', error);
-    if (this._renderEventBridge?.appendExecutionError(error.message || '执行异常')) {
+    if (this._renderEventBridge?.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE)) {
       return;
     }
-    this.uiEventBridge.appendExecutionError(error.message || '执行异常', { retry: true });
+    this.uiEventBridge.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE, { retry: true });
   }
 }

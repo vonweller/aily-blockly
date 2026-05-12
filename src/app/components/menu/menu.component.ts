@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewChecked,
   Component,
   ElementRef,
   EventEmitter,
@@ -9,6 +10,7 @@ import {
   QueryList,
   ViewChildren,
 } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { TranslateModule } from '@ngx-translate/core';
 import { IMenuItem } from '../../configs/menu.config';
 import { Router } from '@angular/router';
@@ -16,25 +18,50 @@ import { PlatformService } from '../../services/platform.service';
 
 @Component({
   selector: 'app-menu',
-  imports: [CommonModule, TranslateModule],
+  imports: [CommonModule, FormsModule, TranslateModule],
   templateUrl: './menu.component.html',
   styleUrl: './menu.component.scss',
 })
-export class MenuComponent {
+export class MenuComponent implements AfterViewChecked {
   @ViewChild('menuBox') menuBox: ElementRef;
   @ViewChild('submenuBox') submenuBox: ElementRef;
+  @ViewChild('globalFilterInput') globalFilterInput?: ElementRef<HTMLInputElement>;
   @ViewChildren('menuItem') menuItems: QueryList<ElementRef>;
 
-  @Input() menuList: readonly any[] = [];
-
-  @Input() position = {
+  private _menuList: readonly any[] = [];
+  private _position: { x: number; y: number; anchorBottom?: number } = {
     x: 2,
     y: 40,
   };
 
+  @Input()
+  set menuList(value: readonly any[]) {
+    this._menuList = Array.isArray(value) ? value : [];
+    this.initializeSectionState();
+  }
+
+  get menuList(): readonly any[] {
+    return this._menuList;
+  }
+
+  @Input()
+  set position(value: { x: number; y: number; anchorBottom?: number }) {
+    this._position = value && typeof value.x === 'number' && typeof value.y === 'number'
+      ? value
+      : { x: 2, y: 40, anchorBottom: undefined };
+  }
+
+  get position(): { x: number; y: number; anchorBottom?: number } {
+    return this._position;
+  }
+
   @Input() width;
 
   @Input() maxHeight: number | null = null;
+
+  @Input() globalFilterPlaceholder = '';
+
+  @Input() focusGlobalFilterOnOpen = false;
 
   @Output() itemClickEvent = new EventEmitter();
 
@@ -46,8 +73,15 @@ export class MenuComponent {
 
   @Input() keywords: readonly string[] = [];
 
+  sectionCollapsedState: Record<string, boolean> = {};
+  sectionFilterState: Record<string, string> = {};
+  sectionExpandedAnchorY: Record<string, number> = {};
+  globalFilterValue = '';
+  private pendingGlobalFilterFocus = false;
+  private pendingViewportAdjustment = false;
+
   // 添加子菜单显示状态管理
-  activeSubmenuIndex: number | null = null;
+  activeSubmenuItem: IMenuItem | null = null;
   submenuTimeout: any = null;
   submenuPosition = { left: '0px', top: '0px' };
   submenuMaxHeight = 'none';
@@ -70,6 +104,32 @@ export class MenuComponent {
   ngAfterViewInit(): void {
     document.addEventListener('click', this.handleDocumentClick);
     document.addEventListener('contextmenu', this.handleDocumentClick);
+    this.pendingGlobalFilterFocus = this.focusGlobalFilterOnOpen && !!this.globalFilterPlaceholder;
+
+    // Defer the first geometry correction until after the initial change-detection
+    // pass so the menu can align against its rendered height without triggering NG0100.
+    setTimeout(() => {
+      if (!this.menuBox?.nativeElement) {
+        return;
+      }
+
+      this.alignMenuPositionToAnchor();
+      this.adjustMenuPositionWithinViewport();
+    });
+  }
+
+  ngAfterViewChecked(): void {
+    if (this.pendingGlobalFilterFocus && this.globalFilterInput?.nativeElement) {
+      this.globalFilterInput.nativeElement.focus();
+      this.globalFilterInput.nativeElement.select();
+      this.pendingGlobalFilterFocus = false;
+    }
+
+    if (!this.pendingViewportAdjustment) {
+      return;
+    }
+
+    this.adjustMenuPositionWithinViewport();
   }
 
   ngOnDestroy(): void {
@@ -79,6 +139,13 @@ export class MenuComponent {
 
   itemClick(item) {
     if (item.disabled) return;
+    if (this.isSectionToggle(item)) {
+      this.toggleSection(item);
+      return;
+    }
+    if (this.isSectionFilter(item)) {
+      return;
+    }
     if (item.children && item.action !== 'select-model') return;
     this.itemClickEvent.emit(item);
   }
@@ -102,7 +169,42 @@ export class MenuComponent {
   };
 
   closeMenu() {
+    this.activeSubmenuItem = null;
     this.closeEvent.emit('');
+  }
+
+  get visibleMenuItems(): IMenuItem[] {
+    const visibleItems: IMenuItem[] = [];
+    const globalFilter = this.getGlobalFilterValue();
+
+    for (const item of this.menuList) {
+      if (item.sep) {
+        visibleItems.push(item);
+        continue;
+      }
+
+      if (this.isSectionFilter(item) && this.hasGlobalFilter()) {
+        continue;
+      }
+
+      if (globalFilter && !this.shouldKeepItemForGlobalFilter(item, globalFilter)) {
+        continue;
+      }
+
+      if (this.isSectionScoped(item) && !this.isSectionItemVisible(item)) {
+        continue;
+      }
+
+      if (this.isSectionFilter(item) && !this.isSectionExpanded(this.getSectionId(item))) {
+        continue;
+      }
+
+      if ((item.children && item.children.length > 0) || (!item.children && this.showInRouter(item))) {
+        visibleItems.push(item);
+      }
+    }
+
+    return this.trimSectionSeparators(visibleItems);
   }
 
   isHighlight(text) {
@@ -124,12 +226,315 @@ export class MenuComponent {
       }
     }
   }
+
+  isSectionToggle(item: IMenuItem | null | undefined): boolean {
+    return typeof item?.action === 'string' && item.action.startsWith('section-toggle-');
+  }
+
+  isSectionFilter(item: IMenuItem | null | undefined): boolean {
+    return typeof item?.action === 'string' && item.action.startsWith('section-filter-');
+  }
+
+  getSectionId(item: IMenuItem | null | undefined): string {
+    const explicitSectionId = typeof item?.extra?.sectionId === 'string' ? item.extra.sectionId.trim() : '';
+    if (explicitSectionId) {
+      return explicitSectionId;
+    }
+
+    const action = typeof item?.action === 'string' ? item.action : '';
+    if (action.startsWith('section-toggle-')) {
+      return action.slice('section-toggle-'.length);
+    }
+    if (action.startsWith('section-filter-')) {
+      return action.slice('section-filter-'.length);
+    }
+
+    return typeof item?.extra?.section === 'string' ? item.extra.section : '';
+  }
+
+  isSectionExpanded(sectionId: string): boolean {
+    return !this.sectionCollapsedState[sectionId];
+  }
+
+  hasGlobalFilter(): boolean {
+    return this.globalFilterPlaceholder.trim().length > 0;
+  }
+
+  updateGlobalFilter(value: string): void {
+    this.globalFilterValue = typeof value === 'string' ? value : '';
+    this.pendingViewportAdjustment = true;
+  }
+
+  getGlobalFilterValue(): string {
+    return this.globalFilterValue.trim().toLowerCase();
+  }
+
+  toggleSection(item: IMenuItem): void {
+    const sectionId = this.getSectionId(item);
+    if (!sectionId) {
+      return;
+    }
+
+    const isExpanding = !this.isSectionExpanded(sectionId);
+    if (isExpanding) {
+      this.reserveExpandedSectionViewport(sectionId);
+    } else {
+      this.restoreCollapsedSectionViewport(sectionId);
+    }
+
+    this.sectionCollapsedState[sectionId] = !this.sectionCollapsedState[sectionId];
+    this.activeSubmenuItem = null;
+
+    if (isExpanding) {
+      this.pendingViewportAdjustment = true;
+      return;
+    }
+
+    // Wait until the collapsed DOM height is rendered before re-checking the
+    // viewport, otherwise the stale expanded height pulls the menu upward.
+    setTimeout(() => {
+      this.adjustMenuPositionWithinViewport();
+    });
+  }
+
+  updateSectionFilter(sectionId: string, value: string): void {
+    this.sectionFilterState[sectionId] = typeof value === 'string' ? value : '';
+  }
+
+  getSectionFilterValue(sectionId: string): string {
+    return this.sectionFilterState[sectionId] ?? '';
+  }
+
+  getSectionToggleIcon(item: IMenuItem): string {
+    return this.isSectionExpanded(this.getSectionId(item)) ? 'fa-light fa-chevron-down' : 'fa-light fa-chevron-right';
+  }
+
+  private initializeSectionState(): void {
+    for (const item of this.menuList) {
+      if (this.isSectionToggle(item)) {
+        const sectionId = this.getSectionId(item);
+        if (!sectionId || this.sectionCollapsedState[sectionId] !== undefined) {
+          continue;
+        }
+        this.sectionCollapsedState[sectionId] = item.extra?.collapsed !== false;
+      }
+      if (this.isSectionFilter(item)) {
+        const sectionId = this.getSectionId(item);
+        if (sectionId && this.sectionFilterState[sectionId] === undefined) {
+          this.sectionFilterState[sectionId] = '';
+        }
+      }
+    }
+  }
+
+  private isSectionScoped(item: IMenuItem): boolean {
+    return typeof item?.extra?.section === 'string' && item.extra.section.trim().length > 0;
+  }
+
+  private isSectionItemVisible(item: IMenuItem): boolean {
+    const sectionId = this.getSectionId(item);
+    if (!sectionId) {
+      return true;
+    }
+
+    const globalFilter = this.getGlobalFilterValue();
+    if (globalFilter) {
+      return this.matchesGlobalFilter(item, globalFilter);
+    }
+
+    if (!this.isSectionExpanded(sectionId)) {
+      return false;
+    }
+
+    const filterValue = this.getSectionFilterValue(sectionId).trim().toLowerCase();
+    if (!filterValue) {
+      return true;
+    }
+
+    const haystack = [item.name, item.text, item.tooltip]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(filterValue);
+  }
+
+  private shouldKeepItemForGlobalFilter(item: IMenuItem, filterValue: string): boolean {
+    if (!filterValue) {
+      return true;
+    }
+
+    if (this.isSectionFilter(item)) {
+      return false;
+    }
+
+    if (this.isSectionToggle(item)) {
+      const sectionId = this.getSectionId(item);
+      return sectionId ? this.sectionHasGlobalFilterMatch(sectionId, filterValue) : true;
+    }
+
+    if (typeof item?.action === 'string' && item.action.startsWith('section-')) {
+      const sectionId = this.getSectionId(item);
+      return sectionId ? this.sectionHasGlobalFilterMatch(sectionId, filterValue) : true;
+    }
+
+    return this.matchesGlobalFilter(item, filterValue);
+  }
+
+  private sectionHasGlobalFilterMatch(sectionId: string, filterValue: string): boolean {
+    if (!sectionId) {
+      return false;
+    }
+
+    return this.menuList.some((candidate) => {
+      if (!candidate || candidate.sep || this.isSectionToggle(candidate) || this.isSectionFilter(candidate)) {
+        return false;
+      }
+
+      return this.getSectionId(candidate) === sectionId && this.matchesGlobalFilter(candidate, filterValue);
+    });
+  }
+
+  private matchesGlobalFilter(item: IMenuItem, filterValue: string): boolean {
+    if (!filterValue) {
+      return true;
+    }
+
+    const haystack = [item.name, item.text, item.tooltip]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(filterValue);
+  }
+
+  private reserveExpandedSectionViewport(sectionId: string): void {
+    if (!this.position || this.getGlobalFilterValue()) {
+      return;
+    }
+
+    const viewportPadding = 8;
+    const revealedHeight = this.estimateSectionRevealHeight(sectionId);
+    if (revealedHeight <= 0) {
+      return;
+    }
+
+    const currentTop = this.menuBox?.nativeElement
+      ? (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect().top
+      : this.position.y;
+    this.sectionExpandedAnchorY[sectionId] = currentTop;
+
+    this.position = {
+      ...this.position,
+      y: Math.max(viewportPadding, currentTop - revealedHeight),
+    };
+  }
+
+  private restoreCollapsedSectionViewport(sectionId: string): void {
+    if (!this.position || this.getGlobalFilterValue()) {
+      delete this.sectionExpandedAnchorY[sectionId];
+      return;
+    }
+
+    const anchorY = this.sectionExpandedAnchorY[sectionId];
+    delete this.sectionExpandedAnchorY[sectionId];
+    if (typeof anchorY !== 'number' || Number.isNaN(anchorY)) {
+      return;
+    }
+
+    this.position = {
+      ...this.position,
+      y: anchorY,
+    };
+  }
+
+  private estimateSectionRevealHeight(sectionId: string): number {
+    let height = 0;
+
+    for (const item of this.menuList) {
+      if (this.isSectionFilter(item) && this.getSectionId(item) === sectionId) {
+        height += 34;
+        continue;
+      }
+
+      if (this.isSectionScoped(item) && this.getSectionId(item) === sectionId) {
+        const filterValue = this.getSectionFilterValue(sectionId).trim().toLowerCase();
+        if (!filterValue || this.matchesGlobalFilter(item, filterValue)) {
+          height += 28;
+        }
+      }
+    }
+
+    return height;
+  }
+
+  private alignMenuPositionToAnchor(): void {
+    const anchorBottom = this.position?.anchorBottom;
+    if (typeof anchorBottom !== 'number' || Number.isNaN(anchorBottom) || !this.menuBox?.nativeElement) {
+      return;
+    }
+
+    const viewportPadding = 8;
+    const menuRect = (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect();
+    const anchoredTop = Math.max(viewportPadding, anchorBottom - menuRect.height);
+    if (anchoredTop === this.position.y) {
+      return;
+    }
+
+    this.position = {
+      ...this.position,
+      y: anchoredTop,
+    };
+  }
+
+  private adjustMenuPositionWithinViewport(): void {
+    if (!this.menuBox?.nativeElement || !this.position) {
+      this.pendingViewportAdjustment = false;
+      return;
+    }
+
+    const viewportPadding = 8;
+    const menuRect = (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect();
+    let nextTop = this.position.y;
+
+    const overflowBottom = menuRect.bottom - (window.innerHeight - viewportPadding);
+    if (overflowBottom > 0) {
+      nextTop = Math.max(viewportPadding, nextTop - overflowBottom);
+    }
+
+    if (menuRect.top < viewportPadding) {
+      nextTop = Math.max(nextTop, viewportPadding);
+    }
+
+    if (nextTop !== this.position.y) {
+      this.position = {
+        ...this.position,
+        y: nextTop,
+      };
+    }
+
+    this.pendingViewportAdjustment = false;
+  }
+
+  private trimSectionSeparators(items: IMenuItem[]): IMenuItem[] {
+    const normalized: IMenuItem[] = [];
+
+    for (const item of items) {
+      if (item.sep && (normalized.length === 0 || normalized[normalized.length - 1].sep)) {
+        continue;
+      }
+      normalized.push(item);
+    }
+
+    while (normalized.length > 0 && normalized[normalized.length - 1].sep) {
+      normalized.pop();
+    }
+
+    return normalized;
+  }
   // 显示子菜单
-  showSubMenu(event: MouseEvent, index: number) {
-    const item = this.menuList[index];
+  showSubMenu(event: MouseEvent, item: IMenuItem, index: number) {
     if (!item?.children?.length) {
-      if (this.activeSubmenuIndex === index) {
-        this.activeSubmenuIndex = null;
+      if (this.activeSubmenuItem === item) {
+        this.activeSubmenuItem = null;
       }
       return;
     }
@@ -139,39 +544,19 @@ export class MenuComponent {
       clearTimeout(this.submenuTimeout);
     }
 
-    if (this.activeSubmenuIndex === index) {
+    if (this.activeSubmenuItem === item) {
       return;
     }
 
-    this.activeSubmenuIndex = index;
+    this.activeSubmenuItem = item;
     this.calculateSubmenuPosition(index);
   }
 
   // 计算子菜单位置
   calculateSubmenuPosition(index: number) {
     const menuItems = this.menuItems.toArray();
-    let targetItemIndex = 0;
-    let visibleItemCount = 0;
-
-    // 计算目标菜单项在可见项中的索引
-    for (let i = 0; i <= index; i++) {
-      const item = this.menuList[i];
-      // 跳过分隔符
-      if (item.sep) {
-        continue;
-      }
-      // 检查是否应该渲染这个菜单项
-      const shouldRender = (item.children && item.children.length > 0) || (!item.children && this.showInRouter(item));
-      if (shouldRender) {
-        if (i === index) {
-          targetItemIndex = visibleItemCount;
-        }
-        visibleItemCount++;
-      }
-    }
-
-    if (menuItems[targetItemIndex]) {
-      const menuItemElement = menuItems[targetItemIndex].nativeElement;
+    if (menuItems[index]) {
+      const menuItemElement = menuItems[index].nativeElement;
       const menuBoxElement = this.menuBox.nativeElement;
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();
@@ -196,7 +581,7 @@ export class MenuComponent {
     const submenuTopFromWindow = submenuTop;
 
     // 预估子菜单项数量和高度
-    const submenuItems = this.menuList[this.activeSubmenuIndex]?.children || [];
+    const submenuItems = this.activeSubmenuItem?.children || [];
     const itemHeight = 28; // 每个菜单项高度
     const padding = 8; // 上下padding (4px * 2)
     const estimatedSubmenuHeight = submenuItems.length * itemHeight + padding;
@@ -219,22 +604,19 @@ export class MenuComponent {
   hideSubMenu(event: MouseEvent, index: number) {
     // 延时隐藏，给用户时间移动到子菜单
     this.submenuTimeout = setTimeout(() => {
-      if (this.activeSubmenuIndex === index) {
-        this.activeSubmenuIndex = null;
-      }
+      this.activeSubmenuItem = null;
     }, 60);
   }
 
   // 保持子菜单打开
-  keepSubMenuOpen(index: number) {
+  keepSubMenuOpen() {
     if (this.submenuTimeout) {
       clearTimeout(this.submenuTimeout);
     }
-    this.activeSubmenuIndex = index;
   }
 
   subItemClick(event, subItem) {
-    this.menuList[this.activeSubmenuIndex].children.forEach(item => {
+    this.activeSubmenuItem?.children?.forEach(item => {
       item['check'] = false
     });
     subItem['check'] = true

@@ -10,6 +10,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatPart, MarkdownPart, ErrorPart, QuestionPart } from '../../core/chat-parts';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
@@ -133,6 +134,7 @@ export class ChatMessagePartItemComponent implements OnChanges {
   @Input() part: RenderableChatPart | null = null;
   @Input() doing = false;
   @Input() sessionId = '';
+  @Input() turnResponse: TurnResponseTurn | null = null;
 
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -196,8 +198,51 @@ export class ChatMessagePartItemComponent implements OnChanges {
     };
   }
 
-  getErrorData(): { message: string } {
-    return { message: (this.part as ErrorPart).message };
+  getErrorData(): {
+    message: string;
+    severity?: ErrorPart['severity'];
+    metadata?: Record<string, unknown>;
+    diagnostics?: Record<string, unknown>;
+  } {
+    const errorPart = this.part as ErrorPart;
+    const continuation = this.turnResponse?.response?.continuation as unknown as Record<string, unknown> | undefined;
+    const budgets = continuation?.['budgets'];
+    const continuationDiagnostics = isRecord(continuation?.['diagnostics']) ? continuation['diagnostics'] : undefined;
+    const identity = isRecord(continuationDiagnostics?.['identity']) ? continuationDiagnostics['identity'] : undefined;
+    const trace = isRecord(continuationDiagnostics?.['trace']) ? continuationDiagnostics['trace'] : undefined;
+    const usage = isRecord(continuationDiagnostics?.['usage']) ? continuationDiagnostics['usage'] : undefined;
+    const outcome = isRecord(continuationDiagnostics?.['outcome']) ? continuationDiagnostics['outcome'] : undefined;
+    const behavior = isRecord(continuationDiagnostics?.['behavior']) ? continuationDiagnostics['behavior'] : undefined;
+    const executionId = isRecord(budgets) ? readString(budgets['executionId']) : undefined;
+    const diagnostics = compactRecord({
+      interactionId: readString(continuation?.['interactionId']) ?? readString(identity?.['interactionId']),
+      executionId: executionId ?? readString(identity?.['executionId']),
+      requestId: readString(identity?.['requestId']),
+      toolCallId: readString(trace?.['toolCallId']),
+      stopReason: readString(continuation?.['stopReason']) ?? readString(outcome?.['stopReason']),
+      hardStopReason: readString(continuation?.['hardStopReason']),
+      status: readString(continuation?.['status']) ?? readString(outcome?.['status']),
+      errorCode: readString(outcome?.['errorCode']),
+      sourceEvent: readString(outcome?.['sourceEvent']),
+      resolvedModel: readString(usage?.['resolvedModel']),
+      modelBillingLabel: readString(usage?.['modelBillingLabel']),
+      promptTokens: readNumberText(usage?.['promptTokens']),
+      completionTokens: readNumberText(usage?.['completionTokens']),
+      cacheReadTokens: readNumberText(usage?.['cacheReadTokens']),
+      cacheCreationTokens: readNumberText(usage?.['cacheCreationTokens']),
+      repeatedTextScore: readNumberText(behavior?.['repeatedTextScore']),
+      repeatedChunkStreak: readNumberText(behavior?.['repeatedChunkStreak']),
+      noProgressRounds: readNumberText(behavior?.['noProgressRounds']),
+      repeatedToolCallStreak: readNumberText(behavior?.['repeatedToolCallStreak']),
+      repeatedPendingStreak: readNumberText(behavior?.['repeatedPendingStreak']),
+    });
+
+    return {
+      message: errorPart.message,
+      severity: errorPart.severity,
+      ...(isRecord(errorPart.metadata) ? { metadata: errorPart.metadata } : {}),
+      ...(Object.keys(diagnostics).length > 0 ? { diagnostics } : {}),
+    };
   }
 
   getQuestionData(): any {
@@ -250,4 +295,27 @@ export class ChatMessagePartItemComponent implements OnChanges {
     return !!activeQuestion && activeQuestion.partId === (this.part as QuestionPart).partId;
   }
 
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readNumberText(value: unknown): string | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value}`
+    : undefined;
+}
+
+function compactRecord(record: Record<string, string | undefined>): Record<string, string> {
+  const entries = Object.entries(record).filter((entry): entry is [string, string] => {
+    const value = entry[1];
+    return typeof value === 'string' && value.length > 0;
+  });
+
+  return Object.fromEntries(entries);
 }

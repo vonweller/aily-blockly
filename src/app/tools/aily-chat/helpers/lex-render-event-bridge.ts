@@ -24,32 +24,11 @@ import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
 } from './host-turn-response-state';
-
-function cloneTurnResponseModelSidecar(
-  responseModel: TurnResponseTurn['responseModel'] | undefined,
-): TurnResponseTurn['responseModel'] | undefined {
-  if (!responseModel) {
-    return undefined;
-  }
-
-  const modelName = typeof responseModel.modelName === 'string' && responseModel.modelName.trim()
-    ? responseModel.modelName.trim()
-    : undefined;
-  const modelBillingLabel = typeof responseModel.modelBillingLabel === 'string' && responseModel.modelBillingLabel.trim()
-    ? responseModel.modelBillingLabel.trim()
-    : undefined;
-
-  if (!responseModel.slashCommand && !responseModel.followups && !modelName && !modelBillingLabel) {
-    return undefined;
-  }
-
-  return {
-    ...(responseModel.slashCommand ? { slashCommand: { ...responseModel.slashCommand } } : {}),
-    ...(responseModel.followups ? { followups: responseModel.followups.map(followup => ({ ...followup })) } : {}),
-    ...(modelName ? { modelName } : {}),
-    ...(modelBillingLabel ? { modelBillingLabel } : {}),
-  };
-}
+import {
+  cloneTurnResponseModelSidecar,
+  getTurnResponseResolvedModelName,
+  withExplicitAgentSummaryPreview,
+} from './turn-response-response-model';
 
 /** Narrow context: only needs partStore for rendering + toolCallingIteration for turn tracking */
 type LexRenderEventBridgeContext =
@@ -265,7 +244,13 @@ export class LexRenderEventBridge {
     }
 
     if (event.type === 'turn_end') {
-      this.syncCurrentTurn(event.timestamp, 'completed', event.usage);
+      this.syncCurrentTurn(
+        event.timestamp,
+        'completed',
+        event.usage,
+        event.continuation,
+        event.terminationReason,
+      );
       this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
       return;
     }
@@ -385,6 +370,8 @@ export class LexRenderEventBridge {
     updatedAt: number,
     fallbackStatus: TurnResponseStatus,
     usage?: TurnResponseTurn['usage'],
+    continuation?: TurnResponseTurn['response']['continuation'],
+    terminationReason?: TurnResponseTurn['response']['terminationReason'],
   ): void {
     if (!this._currentTurn) {
       return;
@@ -399,6 +386,8 @@ export class LexRenderEventBridge {
         fallbackStatus,
         hasExecutionError: this._currentTurnHasExecutionError,
         usage,
+        continuation,
+        terminationReason,
       },
     );
 
@@ -406,7 +395,7 @@ export class LexRenderEventBridge {
       return;
     }
 
-    this._currentTurn = materialized;
+    this._currentTurn = withExplicitAgentSummaryPreview(materialized);
 
     const previousModelName = getTurnResponseModelName(previousTurn);
     const currentModelName = getTurnResponseModelName(this._currentTurn);
@@ -424,9 +413,7 @@ export class LexRenderEventBridge {
 }
 
 function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {
-  return typeof turn?.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
-    ? turn.responseModel.modelName.trim()
-    : undefined;
+  return getTurnResponseResolvedModelName(turn);
 }
 
 function toHostClearToPreviousToolInvocationReason(

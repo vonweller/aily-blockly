@@ -19,6 +19,7 @@ export interface RuntimeConfirmationDecision {
   readonly scope?: ToolApprovalScope;
   readonly reason?: string;
   readonly actionId?: string;
+  readonly sideEffectOnly?: boolean;
 }
 
 export interface RuntimeConfirmationWidgetState {
@@ -53,6 +54,7 @@ type QuestionRuntimeEntry = RuntimeQuestionWidgetState & {
 
 type ConfirmationRuntimeEntry = RuntimeConfirmationWidgetState & {
   readonly resolve: (result: RuntimeConfirmationDecision) => void;
+  readonly onAction?: (actionId: string) => void;
 };
 
 @Injectable()
@@ -214,6 +216,7 @@ export class ChatRuntimeInteractionHostService {
       args?: Record<string, unknown>;
       actions: readonly ToolApprovalAction[];
       primaryScope: ToolApprovalScope;
+      onAction?: (actionId: string) => void;
     },
   ): Promise<RuntimeConfirmationDecision> {
     return this.enqueueConfirmation(sessionId, {
@@ -235,7 +238,18 @@ export class ChatRuntimeInteractionHostService {
         actions: confirmation.actions,
         primaryScope: confirmation.primaryScope,
       },
+      onAction: confirmation.onAction,
     });
+  }
+
+  triggerConfirmationAction(sessionId: string, id: string, actionId: string): void {
+    const queue = this._confirmationEntries()[sessionId];
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const target = queue.find(entry => entry.id === id);
+    target?.onAction?.(actionId);
   }
 
   approveActiveConfirmation(sessionId: string, scope: ToolApprovalScope, actionId?: string): void {
@@ -319,7 +333,10 @@ export class ChatRuntimeInteractionHostService {
     this._confirmationActiveIndices.set(nextIndices);
   }
 
-  private enqueueConfirmation(sessionId: string, entry: RuntimeConfirmationWidgetState): Promise<RuntimeConfirmationDecision> {
+  private enqueueConfirmation(
+    sessionId: string,
+    entry: RuntimeConfirmationWidgetState & { onAction?: (actionId: string) => void },
+  ): Promise<RuntimeConfirmationDecision> {
     return new Promise<RuntimeConfirmationDecision>((resolve) => {
       const currentQueues = this._confirmationEntries();
       const currentQueue = currentQueues[sessionId] ?? [];

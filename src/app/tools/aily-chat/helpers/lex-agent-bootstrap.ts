@@ -45,6 +45,7 @@ import {
   type IHostToolProvider,
   type IToolContribution,
 } from 'aily-lex/browser';
+import { getTurnResponseResolvedModelName, normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -62,7 +63,10 @@ export interface LexRuntimeApiConfig {
   useCustomApiKey: boolean;
   apiKey: string;
   baseUrl: string;
+  maxRequests?: number;
 }
+
+const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
 
 interface ResolvePersistedLexSessionOptions {
   lex: AilyLexModule;
@@ -707,6 +711,8 @@ export function buildExternalHostAPI(): IExternalHostAPI {
       auth: host.auth ? {
         getToken: async () => host.auth.getToken?.() ?? host.auth.token,
       isLoggedIn: () => host.auth.isLoggedIn,
+      authChanged$: host.auth.authChanged$,
+      getSnapshot: () => host.auth.getSnapshot?.() ?? null,
     } : undefined,
   };
 }
@@ -835,7 +841,33 @@ export function buildLexEndpoint(
       }
       return auth?.token || '';
     },
+    authStateFingerprintProvider: () => {
+      const auth = AilyHost.get().auth;
+      return {
+        isLoggedIn: auth?.isLoggedIn ?? false,
+        token: auth?.token || '',
+        userId: auth?.userInfo?.id ?? null,
+        snapshot: auth?.getSnapshot?.() ?? null,
+      };
+    },
+    interactionBudget: buildInteractionBudgetConfig(apiConfig),
   });
+}
+
+function buildInteractionBudgetConfig(apiConfig?: LexRuntimeApiConfig | null): Partial<Record<string, number>> {
+  const softRoundLimit = normalizeSoftRoundLimit(apiConfig?.maxRequests);
+
+  return {
+    softRoundLimit,
+  };
+}
+
+function normalizeSoftRoundLimit(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_INTERACTION_HARD_ROUND_CAP;
+  }
+
+  return Math.max(1, Math.min(DEFAULT_INTERACTION_HARD_ROUND_CAP, Math.trunc(value)));
 }
 
 export function buildLexModelConfig(
@@ -938,7 +970,7 @@ export function bootstrapBlocklyLexAgent(
     sessionStorage,
     capabilities: adapter.capabilities,
     cwd: cwd || undefined,
-    maxIterations: ctx.ailyChatConfigService.maxCount,
+    maxToolCallIterations: ctx.ailyChatConfigService.maxRequests,
     promptProfile: BLOCKLY_PROMPT_PROFILE,
     extensions: runtimeExtensions,
     userInstructionFolders: ctx.ailyChatConfigService.userInstructionFolders.map(path => ({ path })),
@@ -1388,9 +1420,8 @@ function buildTurnResponseLexSessionSnapshot(
     const persistedResponse = (turn.response ?? {}) as typeof turn.response & PersistedHostResponseData;
     const slashCommand = turn.responseModel?.slashCommand ?? persistedResponse.slashCommand;
     const followups = turn.responseModel?.followups ?? persistedResponse.followups;
-    const modelName = typeof turn.responseModel?.modelName === 'string' && turn.responseModel.modelName.trim()
-      ? turn.responseModel.modelName.trim()
-      : undefined;
+    const summaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
+    const modelName = getTurnResponseResolvedModelName(turn);
     const modelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
       ? turn.responseModel.modelBillingLabel.trim()
       : undefined;
@@ -1427,11 +1458,12 @@ function buildTurnResponseLexSessionSnapshot(
       createdAt: turn.response?.createdAt ?? turn.createdAt ?? Date.now(),
       updatedAt: turn.response?.updatedAt ?? turn.updatedAt ?? turn.createdAt ?? Date.now(),
     }),
-    ...((slashCommand || followups || modelName || modelBillingLabel)
+    ...((slashCommand || followups || summaryPreview || modelName || modelBillingLabel)
       ? {
         responseModel: {
           ...(slashCommand ? { slashCommand } : {}),
           ...(followups ? { followups: followups.map(followup => ({ ...followup })) } : {}),
+          ...(summaryPreview ? { summaryPreview } : {}),
           ...(modelName ? { modelName } : {}),
           ...(modelBillingLabel ? { modelBillingLabel } : {}),
         },
@@ -1442,13 +1474,95 @@ function buildTurnResponseLexSessionSnapshot(
     });
   });
 
+  const interactionContinuation = clonePersistableInteractionContinuation(
+    turnResponses[turnResponses.length - 1]?.response?.continuation,
+  );
+
   return {
     sessionId,
     turns: lexTurns,
+    ...(interactionContinuation ? {
+      requestContext: {
+        interactionContinuation,
+      },
+    } : {}),
     revision: 0,
     createdAt: lexTurns[0]?.createdAt ?? Date.now(),
     updatedAt: turnResponses[turnResponses.length - 1]?.updatedAt ?? Date.now(),
   };
+}
+
+function clonePersistableInteractionContinuation(
+  continuation: import('aily-lex/browser').TurnResponseTurn['response']['continuation'] | undefined,
+): import('aily-lex/browser').SessionSnapshot['requestContext']['interactionContinuation'] | undefined {
+  if (!shouldPersistInteractionContinuation(continuation)) {
+    return undefined;
+  }
+
+  const budgets = (continuation as (typeof continuation & {
+    budgets?: Record<string, unknown>;
+  }))?.budgets;
+  const diagnostics = (continuation as (typeof continuation & {
+    diagnostics?: Record<string, unknown>;
+  }))?.diagnostics;
+
+  return {
+    ...continuation,
+    ...(budgets && typeof budgets === 'object'
+      ? { budgets: { ...budgets } }
+      : {}),
+    ...(clonePersistableInteractionDiagnostics(diagnostics)
+      ? { diagnostics: clonePersistableInteractionDiagnostics(diagnostics) }
+      : {}),
+    pendingState: continuation?.pendingState
+      ? { ...continuation.pendingState }
+      : { kind: 'none' },
+  };
+}
+
+function clonePersistableInteractionDiagnostics(
+  diagnostics: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!isRecord(diagnostics)) {
+    return undefined;
+  }
+
+  const identity = isRecord(diagnostics['identity']) ? { ...diagnostics['identity'] } : undefined;
+  const trace = isRecord(diagnostics['trace']) ? { ...diagnostics['trace'] } : undefined;
+  const usage = isRecord(diagnostics['usage']) ? { ...diagnostics['usage'] } : undefined;
+  const runtime = isRecord(diagnostics['runtime']) ? { ...diagnostics['runtime'] } : undefined;
+  const budget = isRecord(diagnostics['budget']) ? { ...diagnostics['budget'] } : undefined;
+  const outcome = isRecord(diagnostics['outcome']) ? { ...diagnostics['outcome'] } : undefined;
+  const behavior = isRecord(diagnostics['behavior']) ? { ...diagnostics['behavior'] } : undefined;
+
+  return {
+    ...(identity ? { identity } : {}),
+    ...(trace ? { trace } : {}),
+    ...(usage ? { usage } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(budget ? { budget } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...(behavior ? { behavior } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function shouldPersistInteractionContinuation(
+  continuation: import('aily-lex/browser').TurnResponseTurn['response']['continuation'] | undefined,
+): continuation is NonNullable<import('aily-lex/browser').TurnResponseTurn['response']['continuation']> {
+  if (!continuation) {
+    return false;
+  }
+
+  return typeof continuation.interactionId === 'string'
+    && continuation.interactionId.trim().length > 0
+    && Number.isFinite(continuation.stepIndex)
+    && continuation.stepIndex >= 0
+    && typeof continuation.lease === 'string'
+    && continuation.lease.trim().length > 0;
 }
 
 function toLexConversationTurnStatus(

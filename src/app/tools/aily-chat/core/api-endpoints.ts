@@ -27,6 +27,7 @@ export const ChatAPI = {
   get sendMessage()   { return `${base()}/api/v1/send_message`; },
   get chatRequest()   { return `${base()}/api/v1/chat`; },
   get chatStateless() { return `${base()}/api/v2/chat_stateless`; },
+  get interactionQuotaSnapshot() { return `${base()}/api/v3/interaction_quotas/snapshot`; },
   get modelCatalog()  { return `${base()}/api/v2/model_catalog`; },
   get contextInfo()   { return `${base()}/api/v1/context_info`; },
   get getHistory()    { return `${base()}/api/v1/conversation_history`; },

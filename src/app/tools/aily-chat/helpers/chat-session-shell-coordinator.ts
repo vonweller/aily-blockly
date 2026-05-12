@@ -23,8 +23,8 @@ interface MenuManagerLike {
     event: { action: string; data: any },
     currentSessionId: string,
     callbacks: {
-      onGetHistory: () => void;
-      onNewChat: () => void;
+      onGetHistory: () => void | Promise<void>;
+      onNewChat: () => void | Promise<void>;
       onDetectChanges: () => void;
       onUpdateTitle: (title: string) => void;
       onRefreshHistory: () => void;
@@ -35,11 +35,11 @@ interface MenuManagerLike {
     currentSessionId: string,
     callbacks: {
       onSaveCurrentSession: () => void;
-      onGetHistory: () => void;
+      onGetHistory: () => void | Promise<void>;
       onSetCompleted: () => void;
       onSetServerSessionInactive: () => void;
     },
-  ): boolean;
+  ): Promise<boolean>;
 }
 
 interface ChatViewStateLike {
@@ -63,8 +63,8 @@ export class ChatSessionShellCoordinator {
     },
     private readonly callbacks: {
       saveCurrentSession: () => void;
-      getHistory: () => void;
-      newChat: () => void;
+      getHistory: () => void | Promise<void>;
+      newChat: () => void | Promise<void>;
       refreshHistoryList: () => void;
       markForCheck: () => void;
       setCompleted: () => void;
@@ -86,7 +86,7 @@ export class ChatSessionShellCoordinator {
 
   menuClick(event: { sessionId: string }): void {
     const onSwitch = () => {
-      this.deps.menuManager.switchToSession(event.sessionId, this.deps.chatService.currentSessionId, {
+      void this.deps.menuManager.switchToSession(event.sessionId, this.deps.chatService.currentSessionId, {
         onSaveCurrentSession: this.callbacks.saveCurrentSession,
         onGetHistory: this.callbacks.getHistory,
         onSetCompleted: this.callbacks.setCompleted,
@@ -120,15 +120,15 @@ export class ChatSessionShellCoordinator {
       return;
     }
 
-    this.callbacks.newChat();
+    void this.callbacks.newChat();
   }
 
-  private async confirmUnsavedEditsBeforeSwitch(onConfirm: () => void): Promise<void> {
+  private async confirmUnsavedEditsBeforeSwitch(onConfirm: () => void | Promise<void>): Promise<void> {
     const summary = await this.deps.editCheckpointService.getEditsSummary();
     if (!summary || summary.fileCount === 0) {
       this.deps.editCheckpointService.acceptAllAsBaseline();
       this.deps.editCheckpointService.dismissSummary();
-      onConfirm();
+      await onConfirm();
       return;
     }
 
@@ -147,7 +147,7 @@ export class ChatSessionShellCoordinator {
         this.deps.editCheckpointService.acceptAllAsBaseline();
         this.deps.editCheckpointService.dismissSummary();
         this.callbacks.saveCurrentSession();
-        onConfirm();
+        await onConfirm();
         return;
       }
 
@@ -157,7 +157,7 @@ export class ChatSessionShellCoordinator {
         }
         this.deps.editCheckpointService.dismissSummary();
         this.callbacks.saveCurrentSession();
-        onConfirm();
+        await onConfirm();
       }
     });
   }

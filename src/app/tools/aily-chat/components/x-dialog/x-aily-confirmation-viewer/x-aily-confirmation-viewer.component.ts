@@ -56,6 +56,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
               [moreActionsTooltip]="moreActionsTooltip"
               [options]="approvalActionOptions"
               (approve)="onApproveFromActions($event)"
+              (action)="onActionFromActions($event)"
               (reject)="onReject()"
             />
           </div>
@@ -144,6 +145,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
     scope?: ToolApprovalScope;
     reason?: string;
     actionId?: string;
+    sideEffectOnly?: boolean;
     askId?: string;
     partId?: string;
     toolCallId?: string;
@@ -255,6 +257,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       tooltip: action.tooltip || action.description || action.label,
       disabled: !!action.disabled,
       isSecondary: !!action.isSecondary,
+      resolveOnSelect: action.resolves !== false,
     }));
   }
 
@@ -444,6 +447,22 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   onApproveFromActions(value: string): void {
     const action = this.approvalActions.find(candidate => (candidate.id || candidate.scope) === value);
     this.onApprove((action?.scope || value) as ToolApprovalScope, action?.id);
+  }
+
+  onActionFromActions(value: string): void {
+    const action = this.approvalActions.find(candidate => (candidate.id || candidate.scope) === value);
+    if (!action?.id) {
+      return;
+    }
+
+    this.decision.emit({
+      approved: false,
+      actionId: action.id,
+      sideEffectOnly: true,
+      askId: this.askId,
+      partId: this.partId,
+      toolCallId: this.toolCallId,
+    });
   }
 
   onApprove(scope: ToolApprovalScope, actionId?: string): void {

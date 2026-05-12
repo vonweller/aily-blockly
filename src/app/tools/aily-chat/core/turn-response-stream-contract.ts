@@ -1,4 +1,4 @@
-import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseQuotaSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
   buildDialogTurnContext,
@@ -8,6 +8,10 @@ import {
   MAIN_AGENT_TYPE,
   normalizeAgentIdentifier,
 } from './agent-identifiers';
+import {
+  applyAutoDiscountToBillingLabel,
+  isDefaultAutoPresetIdentifier,
+} from '../helpers/model-billing-label';
 
 export type TurnResponseHostMessageState = 'doing' | 'done';
 
@@ -58,10 +62,12 @@ export interface TurnResponseStreamProjection {
   readonly followups?: readonly TurnResponseFollowup[];
   readonly modelName?: string;
   readonly modelBillingLabel?: string;
+  readonly quotaSnapshot?: TurnResponseQuotaSnapshot;
   readonly usedContext?: TurnResponseTurn['response']['usedContext'];
   readonly contentReferences?: TurnResponseTurn['response']['contentReferences'];
   readonly codeCitations?: TurnResponseTurn['response']['codeCitations'];
   readonly progressMessages?: TurnResponseTurn['response']['progressMessages'];
+  readonly continuation?: TurnResponseTurn['response']['continuation'];
   readonly status: TurnResponseStatus;
   readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
   readonly parts: TurnResponseTurn['response']['parts'];
@@ -185,10 +191,17 @@ export function buildTurnResponseAssistantEntryProjection(
   const responseModelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
     ? turn.responseModel.modelBillingLabel.trim()
     : undefined;
+  const continuationResolvedModelName = getContinuationResolvedModelName(turn.response.continuation);
+  const continuationModelBillingLabel = getContinuationModelBillingLabel(turn.response.continuation);
   const modelName = overrides.modelName
+    ?? continuationResolvedModelName
     ?? responseModelName
     ?? requestModelDisplayName;
+  const requestModelPresetId = typeof requestMetadata?.['modelPresetId'] === 'string' && requestMetadata['modelPresetId'].trim()
+    ? requestMetadata['modelPresetId'].trim()
+    : undefined;
   const modelBillingLabel = overrides.modelBillingLabel
+    ?? continuationModelBillingLabel
     ?? responseModelBillingLabel
     ?? requestModelDisplayBillingLabel;
   return {
@@ -196,7 +209,9 @@ export function buildTurnResponseAssistantEntryProjection(
     state: overrides.state ?? toTurnResponseHostMessageState(turn.response.status),
     source: overrides.source ?? getTurnResponseParticipant(turn.response.participant),
     modelName,
-    modelBillingLabel,
+    modelBillingLabel: isDefaultAutoPresetIdentifier(requestModelPresetId)
+      ? applyAutoDiscountToBillingLabel(modelBillingLabel)
+      : modelBillingLabel,
   };
 }
 
@@ -288,9 +303,20 @@ export function buildTurnResponseTurn(
   const progressMessages = projection.progressMessages ? [...projection.progressMessages] : [];
   const modelName = typeof projection.modelName === 'string' && projection.modelName.trim()
     ? projection.modelName.trim()
-    : undefined;
+    : getContinuationResolvedModelName(projection.continuation);
   const modelBillingLabel = typeof projection.modelBillingLabel === 'string' && projection.modelBillingLabel.trim()
     ? projection.modelBillingLabel.trim()
+    : undefined;
+  const quotaSnapshot = projection.quotaSnapshot
+    ? {
+      ...projection.quotaSnapshot,
+      ...(projection.quotaSnapshot.quotaSnapshots
+        ? { quotaSnapshots: { ...projection.quotaSnapshot.quotaSnapshots } }
+        : {}),
+      ...(projection.quotaSnapshot.rateLimitSnapshots
+        ? { rateLimitSnapshots: { ...projection.quotaSnapshot.rateLimitSnapshots } }
+        : {}),
+    }
     : undefined;
 
   return {
@@ -305,6 +331,7 @@ export function buildTurnResponseTurn(
       contentReferences,
       codeCitations,
       progressMessages,
+      continuation: projection.continuation,
       status: projection.status,
       terminationReason: projection.terminationReason,
       parts: projection.parts,
@@ -315,17 +342,57 @@ export function buildTurnResponseTurn(
     ...((projection.slashCommand !== undefined
       || projection.followups !== undefined
       || modelName !== undefined
-      || modelBillingLabel !== undefined)
+      || modelBillingLabel !== undefined
+      || quotaSnapshot !== undefined)
       ? {
         responseModel: {
           ...(projection.slashCommand !== undefined ? { slashCommand: projection.slashCommand } : {}),
           ...(projection.followups !== undefined ? { followups: [...projection.followups] } : {}),
           ...(modelName !== undefined ? { modelName } : {}),
           ...(modelBillingLabel !== undefined ? { modelBillingLabel } : {}),
+          ...(quotaSnapshot !== undefined ? { quotaSnapshot } : {}),
         },
       }
       : {}),
     createdAt: projection.createdAt,
     updatedAt: projection.updatedAt,
   };
+}
+
+function getContinuationResolvedModelName(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): string | undefined {
+  const diagnostics = continuation?.diagnostics;
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return undefined;
+  }
+
+  const usage = 'usage' in diagnostics ? diagnostics['usage'] : undefined;
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  const resolvedModel = 'resolvedModel' in usage ? usage['resolvedModel'] : undefined;
+  return typeof resolvedModel === 'string' && resolvedModel.trim()
+    ? resolvedModel.trim()
+    : undefined;
+}
+
+function getContinuationModelBillingLabel(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): string | undefined {
+  const diagnostics = continuation?.diagnostics;
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return undefined;
+  }
+
+  const usage = 'usage' in diagnostics ? diagnostics['usage'] : undefined;
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  const modelBillingLabel = 'modelBillingLabel' in usage ? usage['modelBillingLabel'] : undefined;
+  return typeof modelBillingLabel === 'string' && modelBillingLabel.trim()
+    ? modelBillingLabel.trim()
+    : undefined;
 }

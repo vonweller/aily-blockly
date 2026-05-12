@@ -1,5 +1,6 @@
 import type { IAgentLifecycle, IChatCoordination, ISessionAccess } from '../core/chat-context';
 import { buildUserTurnPayload, type UserTurnPayload } from './chat-user-turn-payload';
+import { buildExplicitAgentInvocationPayload } from './explicit-agent-invocation';
 import type { RequestUserSelectedTools } from './lex-agent-bootstrap';
 
 export interface PreparedUserSend extends UserTurnPayload {
@@ -73,22 +74,41 @@ export class ChatSendCoordinator {
           ?.resolveRequestCommand(name, kind, agentId),
       },
     );
-    const userSelectedTools = this.getUserSelectedTools?.(
-      typeof payload.requestMetadata?.agentId === 'string' ? payload.requestMetadata.agentId : undefined,
-    );
-    const requestMetadata = userSelectedTools
+    const explicitAgentInvocation = payload.requestMetadata?.explicitAgentInvocation;
+    const requestMetadata = explicitAgentInvocation && typeof explicitAgentInvocation === 'object'
       ? {
-          ...(payload.requestMetadata ?? {}),
-          userSelectedTools,
+          ...Object.fromEntries(
+            Object.entries(payload.requestMetadata ?? {}).filter(([key]) => key !== 'agentId'),
+          ),
+          explicitAgentInvocation: buildExplicitAgentInvocationPayload({
+            targetAgent: typeof explicitAgentInvocation['targetAgent'] === 'string' ? explicitAgentInvocation['targetAgent'] : '',
+            strippedPrompt: typeof explicitAgentInvocation['strippedPrompt'] === 'string' ? explicitAgentInvocation['strippedPrompt'] : '',
+            originalText: typeof explicitAgentInvocation['originalText'] === 'string' ? explicitAgentInvocation['originalText'] : text,
+            resourcesText: this.getResourcesText(),
+            editFeedback: this.ctx.pendingEditFeedback,
+            childRequest: explicitAgentInvocation.childRequest,
+          }),
         }
       : payload.requestMetadata;
+    const requestAgentId = explicitAgentInvocation && typeof explicitAgentInvocation === 'object'
+      ? (typeof explicitAgentInvocation['targetAgent'] === 'string' ? explicitAgentInvocation['targetAgent'] : undefined)
+      : (typeof requestMetadata?.agentId === 'string' ? requestMetadata.agentId : undefined);
+    const userSelectedTools = this.getUserSelectedTools?.(
+      requestAgentId,
+    );
+    const finalRequestMetadata = userSelectedTools
+      ? {
+          ...(requestMetadata ?? {}),
+          userSelectedTools,
+        }
+      : requestMetadata;
     this.ctx.pendingEditFeedback = null;
     this.ctx.msg.appendMessage('user', payload.displayText);
 
     return {
       text,
       ...payload,
-      ...(requestMetadata ? { requestMetadata } : {}),
+      ...(finalRequestMetadata ? { requestMetadata: finalRequestMetadata } : {}),
     };
   }
 }

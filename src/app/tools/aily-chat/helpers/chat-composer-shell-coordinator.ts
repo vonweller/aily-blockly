@@ -87,8 +87,8 @@ export class ChatComposerShellCoordinator {
         return;
 
       case 'submit':
-        await this.deps.submitCurrentInput();
         event.preventDefault();
+        await this.deps.submitCurrentInput();
         return;
 
       default:

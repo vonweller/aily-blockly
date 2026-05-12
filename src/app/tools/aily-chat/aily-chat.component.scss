@@ -53,6 +53,7 @@
   padding-top: 6px;
   border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 
+  .interactive-input-part > .chat-input-notification-container,
   .interactive-input-part > .chat-todo-list-widget-container,
   .interactive-input-part > .chat-editing-session {
     width: 100%;
@@ -66,6 +67,7 @@
     position: relative;
   }
 
+  .interactive-input-part:has(> .chat-input-notification-container.has-notification) .input-box,
   .interactive-input-part:has(> .chat-todo-list-widget-container .chat-todo-list-widget.has-todos) .input-box,
   .interactive-input-part:has(> .chat-editing-session .chat-editing-session-container) .input-box {
     margin-top: 0;
@@ -73,9 +75,190 @@
     border-top-right-radius: 0;
   }
 
+  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-todo-list-widget-container .chat-todo-list-widget,
+  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-editing-session .chat-editing-session-container {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
   .interactive-input-part > .chat-todo-list-widget-container:has(.chat-todo-list-widget.has-todos) + .chat-editing-session .chat-editing-session-container {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
+  }
+
+  .interactive-input-part > .chat-input-notification-container {
+    margin-bottom: -10px;
+  }
+
+  .interactive-input-part > .chat-input-notification-container:not(.has-notification) {
+    display: none;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification {
+    padding: 10px 16px 16px 16px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-info {
+    border-color: rgba(117, 190, 255, 0.42);
+    background: color-mix(in srgb, #75beff 6%, #252526);
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-warning {
+    border-color: rgba(204, 167, 0, 0.55);
+    background: color-mix(in srgb, #cca700 6%, #252526);
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-error {
+    border-color: rgba(241, 76, 76, 0.55);
+    background: color-mix(in srgb, #f14c4c 6%, #252526);
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-info .chat-input-notification-icon {
+    color: #75beff;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-warning .chat-input-notification-icon {
+    color: #cca700;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-error .chat-input-notification-icon {
+    color: #f14c4c;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-title {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    color: #cccccc;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-status {
+    flex: none;
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+    color: #6a6a6a;
+
+    &[data-tone='info'] {
+      color: #75beff;
+    }
+
+    &[data-tone='success'] {
+      color: #89d185;
+    }
+
+    &[data-tone='warning'] {
+      color: #cca700;
+    }
+
+    &[data-tone='error'] {
+      color: #f14c4c;
+    }
+
+    &[data-tone='muted'] {
+      color: #6a6a6a;
+    }
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-body {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-description {
+    font-size: 12px;
+    line-height: 18px;
+    color: #8e8e8e;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-action-button {
+    font-size: 11px;
+    padding: 4px 8px;
+    min-width: unset;
+    width: auto;
+    min-height: 24px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: #cccccc;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
+    opacity: 0.85;
+
+    &:hover {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+      opacity: 1;
+    }
+  }
+
+  .interactive-input-part > .chat-input-notification-container .chat-input-notification-dismiss {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #a0a0a0;
+    background: transparent;
+    border: none;
+    outline: none;
+    flex-shrink: 0;
+    margin-left: auto;
+    transition: background 0.15s ease, color 0.15s ease;
+
+    &:hover {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    i {
+      font-size: 10px;
+    }
   }
 
   .settings {
@@ -222,6 +405,13 @@
           background: var(--aily-bg-tertiary, #3f3f3f);
         }
 
+        &.disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+          pointer-events: none;
+          background: transparent;
+        }
+
         &.actived {
           background: color-mix(in srgb, var(--aily-color-primary-alt) 80%, transparent);
           border-radius: 5px;
@@ -342,6 +532,59 @@
 .btn {
   margin-left: 1px;
   transition: all 0.2s;
+
+  &.mode {
+    width: auto !important;
+    padding: 0 6px !important;
+    gap: 4px;
+
+    > span:not(.mini-tag) {
+      margin-left: 5px;
+      font-size: 12px;
+    }
+
+    .mini-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      height: 18px;
+      padding: 0 6px;
+      margin-left: 2px;
+      border-radius: 999px;
+      background: rgba(97, 175, 239, 0.14);
+      color: #8ec8ff;
+      font-size: 10px;
+      line-height: 1;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
+
+      &.warn {
+        background: rgba(229, 192, 123, 0.16);
+        color: #f4d48e;
+      }
+
+      &.danger {
+        background: rgba(224, 108, 117, 0.18);
+        color: #ffb3bb;
+      }
+    }
+
+  }
+
+  &.mode.reasoning-toggle {
+    justify-content: center;
+    gap: 0;
+
+    > span:not(.mini-tag),
+    .reasoning-label {
+      margin-left: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+  }
 
   &.active {
     color: var(--aily-bg-active, #007acc) !important;
@@ -481,5 +724,34 @@
     span {
       font-family: "MiSans Regular", "FiraCode Regular";
     }
+  }
+}
+
+.interaction-budget-indicator {
+  cursor: default;
+
+  &.warn {
+    color: #f4d48e;
+    background: rgba(229, 192, 123, 0.08);
+  }
+
+  &.danger {
+    color: #ffb3bb;
+    background: rgba(224, 108, 117, 0.1);
+  }
+}
+
+.auth-quota-indicator,
+.request-quota-indicator {
+  cursor: default;
+
+  &.warn {
+    color: #f4d48e;
+    background: rgba(229, 192, 123, 0.08);
+  }
+
+  &.danger {
+    color: #ffb3bb;
+    background: rgba(224, 108, 117, 0.1);
   }
 }

@@ -9,7 +9,7 @@ export type ChatStatusHeaderTone = 'info' | 'success' | 'warning' | 'error' | 'm
   imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="csh-header">
+    <div class="csh-header" [class.csh-compact]="compact">
       <div class="csh-main">
         <div class="csh-title-row">
           <div class="csh-title-group">
@@ -109,6 +109,53 @@ export type ChatStatusHeaderTone = 'info' | 'success' | 'warning' | 'error' | 'm
     .csh-status[data-tone="muted"]   { color: var(--chat-fg-muted, #6a6a6a); }
     .csh-side {
       flex: none;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .csh-header.csh-compact {
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .csh-header.csh-compact .csh-main {
+      gap: 1px;
+    }
+    .csh-header.csh-compact .csh-title-row {
+      align-items: center;
+      gap: 8px;
+      min-height: 22px;
+    }
+    .csh-header.csh-compact .csh-title-group {
+      gap: 4px;
+      padding-left: 3px;
+    }
+    .csh-header.csh-compact .csh-icon {
+      width: 12px;
+      font-size: 11px;
+    }
+    .csh-header.csh-compact .csh-title {
+      font-size: 12px;
+      line-height: 22px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .csh-header.csh-compact .csh-subtitle {
+      font-size: 11px;
+      line-height: 1.35;
+      padding-left: 19px;
+    }
+    .csh-header.csh-compact .csh-status {
+      font-size: 11px;
+      line-height: 18px;
+      align-self: center;
+    }
+    .csh-header.csh-compact .csh-side {
+      align-items: center;
+      gap: 4px;
+      padding-right: 2px;
+      min-height: 18px;
+      margin-top: 2px;
     }
     @keyframes csh-spin {
       to { transform: rotate(360deg); }
@@ -122,4 +169,5 @@ export class ChatStatusHeaderComponent {
   @Input() statusTone: ChatStatusHeaderTone = 'muted';
   @Input() iconClass = '';
   @Input() iconSpin = false;
+  @Input() compact = false;
 }

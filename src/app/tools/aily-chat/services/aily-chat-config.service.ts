@@ -3,9 +3,15 @@ import { Injectable, Optional } from '@angular/core';
 import { Subject, Observable, Subscription } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
 import type { PermissionPolicy, PermissionRuleInput } from 'aily-lex';
+import packageJson from '../../../../../package.json';
 import { AilyHost } from '../core/host';
 import { ChatAPI } from '../core/api-endpoints';
 import { AuthService } from '../../../services/auth.service';
+import {
+    applyAutoDiscountToBillingLabel,
+    formatBillingMultiplierLabel,
+    isDefaultAutoPresetSelected,
+} from '../helpers/model-billing-label';
 import {
     MAIN_AGENT_LEGACY_ALIAS,
     MAIN_AGENT_TYPE,
@@ -50,7 +56,42 @@ export interface ModelPresetOption {
     billingDescription?: string;
     contextWindowTokens?: number;
     supportsReasoningEfforts?: ReasoningEffortOption[];
+    availableTiers?: string[];
+    requiredTier?: string;
+    minimumClientVersion?: string;
+    unavailableReason?: 'upgrade' | 'admin' | 'update';
     enabled: boolean;
+}
+
+export interface ModelPickerCategoryOption {
+    label: string;
+    order: number;
+}
+
+export interface ModelPickerControlOption {
+    label: string;
+    featured?: boolean;
+    minClientVersion?: string;
+    exists: boolean;
+    presetSurface?: string;
+}
+
+export interface LanguageModelConfigurationPropertySchema extends Record<string, unknown> {
+    type?: string | string[];
+    title?: string;
+    description?: string;
+    default?: unknown;
+    enum?: unknown[];
+    enumItemLabels?: string[];
+    enumDescriptions?: string[];
+    group?: string;
+    secret?: boolean;
+}
+
+export interface LanguageModelConfigurationSchema extends Record<string, unknown> {
+    type?: string;
+    required?: string[];
+    properties?: Record<string, LanguageModelConfigurationPropertySchema>;
 }
 
 export interface ModelConfigOption {
@@ -71,10 +112,15 @@ export interface ModelConfigOption {
     presetId?: string;      // 产品预设ID（如 auto-max）
     reasoningEffort?: ReasoningEffortOption; // 请求级思考深度
     supportsReasoningEfforts?: ReasoningEffortOption[]; // 当前模型支持的思考深度集合
+    languageModelsVendor?: string; // VS Code-style language model vendor
+    languageModelsGroupName?: string; // VS Code-style provider group name
+    configurationSchema?: LanguageModelConfigurationSchema; // VS Code-style per-model configuration schema
 }
 
 interface RemoteCatalogPayloadEntry {
     id?: string;
+    canonical_id?: string;
+    aliases?: string[];
     model?: string;
     display_name?: string;
     family?: string;
@@ -84,10 +130,33 @@ interface RemoteCatalogPayloadEntry {
     billing_multiplier?: number | null;
     billing_label_override?: string | null;
     billing_description?: string | null;
+    language_models_vendor?: string | null;
+    language_models_group_name?: string | null;
+    configuration_schema?: LanguageModelConfigurationSchema | null;
+    user_visible?: boolean | null;
+    is_user_selectable?: boolean | null;
+    available_tiers?: string[] | null;
+    required_tier?: string | null;
+    minimum_client_version?: string | null;
+    unavailable_reason?: 'upgrade' | 'admin' | 'update' | null;
+    model_picker_category?: {
+        label?: string | null;
+        order?: number | null;
+    } | null;
+}
+
+interface RemotePickerControlPayloadEntry {
+    label?: string | null;
+    featured?: boolean | null;
+    min_client_version?: string | null;
+    exists?: boolean | null;
+    preset_surface?: string | null;
 }
 
 interface RemoteModelCatalogEntry {
     id?: string;
+    canonicalId?: string;
+    aliases?: string[];
     model?: string;
     displayName?: string;
     family?: string;
@@ -97,11 +166,23 @@ interface RemoteModelCatalogEntry {
     billingMultiplier?: number;
     billingLabelOverride?: string;
     billingDescription?: string;
+    languageModelsVendor?: string;
+    languageModelsGroupName?: string;
+    configurationSchema?: LanguageModelConfigurationSchema;
+    userVisible?: boolean;
+    isUserSelectable?: boolean;
+    availableTiers?: string[];
+    requiredTier?: string;
+    minimumClientVersion?: string;
+    unavailableReason?: 'upgrade' | 'admin' | 'update';
+    modelPickerCategory?: ModelPickerCategoryOption;
 }
 
 interface RemoteModelCatalog {
     models: Record<string, RemoteModelCatalogEntry>;
     modelPresets: Record<string, RemoteModelCatalogEntry>;
+    userVisibleModelPresets: Record<string, RemoteModelCatalogEntry>;
+    pickerControlModelPresets: Record<string, ModelPickerControlOption>;
 }
 
 interface RemoteModelCatalogResponse {
@@ -109,6 +190,8 @@ interface RemoteModelCatalogResponse {
     data?: {
         models?: Record<string, RemoteCatalogPayloadEntry>;
         model_presets?: Record<string, RemoteCatalogPayloadEntry>;
+        user_visible_model_presets?: Record<string, RemoteCatalogPayloadEntry>;
+        picker_control_model_presets?: Record<string, RemotePickerControlPayloadEntry>;
     };
 }
 
@@ -141,7 +224,9 @@ export interface AilyChatConfig {
     baseUrl?: string;
     /** API Key (兼容旧版本) */
     apiKey?: string;
-    /** 最大循环次数 */
+    /** 最大请求数 / 最大工具调用轮数（VS Code chat.agent.maxRequests 对齐） */
+    maxRequests?: number;
+    /** 旧字段：最大循环次数 */
     maxCount?: number;
     /** 启用的工具列表（兼容旧版本，mainAgent） */
     enabledTools?: string[];
@@ -200,10 +285,9 @@ const DEFAULT_MODELS: ModelConfigOption[] = [];
 const DEFAULT_MODEL_PRESET_ID = 'auto';
 
 /**
- * 产品预设选项。
- * 仅保留本地最小兜底展示字段；名称之外的 preset 元数据优先由服务端 model_presets 提供。
+ * 本地 core preset 仅作为远端 model catalog 不可用时的兜底。
  */
-const MODEL_PRESET_OPTIONS: ModelPresetOption[] = [
+const CORE_MODEL_PRESET_OPTIONS: ModelPresetOption[] = [
     {
         id: 'auto',
         name: 'Auto',
@@ -215,8 +299,8 @@ const MODEL_PRESET_OPTIONS: ModelPresetOption[] = [
         enabled: true,
     },
     {
-        id: 'auto-balanced',
-        name: 'Auto-Balanced',
+        id: 'auto-balance',
+        name: 'Auto-Balance',
         enabled: true,
     },
     {
@@ -235,7 +319,7 @@ const DEFAULT_API_KEYS: ApiKeyConfig[] = [];
  * 默认配置
  */
 const DEFAULT_CONFIG: AilyChatConfig = {
-    maxCount: 100,
+    maxCount: 200,
     enabledTools: [],
     disabledTools: [],
     securityWorkspaces: {
@@ -262,10 +346,17 @@ const DEFAULT_CONFIG: AilyChatConfig = {
 export class AilyChatConfigService {
     private config: AilyChatConfig = { ...DEFAULT_CONFIG };
     private configFileName = 'aily-chat-config.json';
+    private readonly clientVersion = packageJson.version;
     private loaded = false;
-    private remoteModelCatalog: RemoteModelCatalog = { models: {}, modelPresets: {} };
+    private remoteModelCatalog: RemoteModelCatalog = {
+        models: {},
+        modelPresets: {},
+        userVisibleModelPresets: {},
+        pickerControlModelPresets: {},
+    };
     private remoteModelCatalogStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
     private remoteModelCatalogStatusHint = '正在加载远端 model catalog...';
+    private lastRemoteModelCatalogAuthKey: string | null = null;
     private authReadySubscription?: Subscription;
 
     /** 配置变更通知 Subject */
@@ -307,6 +398,42 @@ export class AilyChatConfigService {
     }
 
     private bindAuthReadyReload(): void {
+        if (this.authService?.authChanged$) {
+            this.authReadySubscription = this.authService.authChanged$
+                .subscribe(() => {
+                    if (!AilyHost.isInitialized() || !this.isAuthReadyForRemoteModelCatalog()) {
+                        return;
+                    }
+
+                    const authKey = this.getRemoteModelCatalogAuthKey(this.authService?.getAuthSnapshot?.());
+                    if (this.hasUsableRemoteModelCatalog() && authKey === this.lastRemoteModelCatalogAuthKey) {
+                        return;
+                    }
+
+                    this.loadRemoteModelCatalog('auth_ready');
+                });
+
+            return;
+        }
+
+        if (this.authService?.authSnapshot$) {
+            this.authReadySubscription = this.authService.authSnapshot$
+                .subscribe((authSnapshot) => {
+                    if (!authSnapshot || !AilyHost.isInitialized()) {
+                        return;
+                    }
+
+                    const authKey = this.getRemoteModelCatalogAuthKey(authSnapshot);
+                    if (this.hasUsableRemoteModelCatalog() && authKey === this.lastRemoteModelCatalogAuthKey) {
+                        return;
+                    }
+
+                    this.loadRemoteModelCatalog('auth_ready');
+                });
+
+            return;
+        }
+
         if (!this.authService?.isLoggedIn$) {
             return;
         }
@@ -387,6 +514,17 @@ export class AilyChatConfigService {
      */
     updateConfig(updates: Partial<AilyChatConfig>): void {
         this.config = { ...this.config, ...updates };
+        if (updates.maxRequests !== undefined) {
+            this.config.maxRequests = updates.maxRequests;
+            this.config.maxCount = updates.maxRequests;
+            return;
+        }
+        if (updates.maxCount !== undefined) {
+            this.config.maxRequests = updates.maxCount;
+            this.config.maxCount = updates.maxCount;
+            return;
+        }
+        this.normalizeRequestLimitConfig();
     }
 
     // ==================== 便捷访问方法 ====================
@@ -451,14 +589,28 @@ export class AilyChatConfigService {
     }
 
     /**
-     * 获取最大循环次数
+     * 获取最大请求数 / 最大工具调用轮数。
+     * 优先读取新字段 maxRequests，兼容旧字段 maxCount。
+     */
+    get maxRequests(): number {
+        return this.config.maxRequests ?? this.config.maxCount ?? 200;
+    }
+
+    set maxRequests(value: number) {
+        this.config.maxRequests = value;
+        this.config.maxCount = value;
+    }
+
+    /**
+     * 兼容旧调用点：最大循环次数。
+     * 内部代理到 maxRequests。
      */
     get maxCount(): number {
-        return this.config.maxCount ?? 100;
+        return this.maxRequests;
     }
 
     set maxCount(value: number) {
-        this.config.maxCount = value;
+        this.maxRequests = value;
     }
 
     /**
@@ -840,35 +992,43 @@ export class AilyChatConfigService {
     }
 
     getModelPresets(): ModelPresetOption[] {
-        if (!this.hasUsableRemoteModelCatalog()) {
-            const autoPreset = MODEL_PRESET_OPTIONS.find(preset => preset.id === DEFAULT_MODEL_PRESET_ID);
-            return autoPreset ? [{ ...autoPreset }] : [];
+        const remotePresetOptions = this.getRemoteModelPresetOptions();
+        if (remotePresetOptions.length > 0) {
+            return remotePresetOptions;
         }
 
-        const localPresets = MODEL_PRESET_OPTIONS
+        return CORE_MODEL_PRESET_OPTIONS
             .filter(preset => preset.enabled)
-            .map(preset => this.mergeRemotePresetOption(preset));
+            .map(preset => ({ ...preset }));
+    }
 
-        const knownPresetIds = new Set(localPresets.map(preset => preset.id));
-        const remoteOnlyPresets = Object.entries(this.remoteModelCatalog.modelPresets)
-            .filter(([presetId]) => !knownPresetIds.has(presetId))
-            .map(([presetId, remotePreset]) => ({
-                id: presetId,
-                name: remotePreset.displayName || remotePreset.id || presetId,
-                model: remotePreset.model,
-                family: remotePreset.family,
-                description: remotePreset.description,
-                billingMultiplier: remotePreset.billingMultiplier,
-                billingLabelOverride: remotePreset.billingLabelOverride,
-                billingDescription: remotePreset.billingDescription,
-                contextWindowTokens: remotePreset.contextWindowTokens,
-                supportsReasoningEfforts: remotePreset.supportsReasoningEfforts?.length
-                    ? [...remotePreset.supportsReasoningEfforts]
-                    : undefined,
-                enabled: true,
-            } satisfies ModelPresetOption));
+    getUserVisibleModelPresets(): ModelPresetOption[] {
+        const resolvedPresetIds = this.resolveUserVisiblePresetIds();
+        if (resolvedPresetIds.length > 0) {
+            return resolvedPresetIds
+                .map(presetId => this.getModelPresetById(presetId))
+                .filter((preset): preset is ModelPresetOption => preset !== undefined);
+        }
 
-        return [...localPresets, ...remoteOnlyPresets];
+        return [];
+    }
+
+    getModelPickerControlPresets(): Record<string, ModelPickerControlOption> {
+        return Object.entries(this.remoteModelCatalog.pickerControlModelPresets)
+            .reduce<Record<string, ModelPickerControlOption>>((acc, [presetId, entry]) => {
+                acc[presetId] = { ...entry };
+                return acc;
+            }, {});
+    }
+
+    getModelPickerControlPresetById(presetId: string | null | undefined): ModelPickerControlOption | undefined {
+        const normalizedPresetId = normalizeKnownPresetId(presetId);
+        if (!normalizedPresetId) {
+            return undefined;
+        }
+
+        const entry = this.remoteModelCatalog.pickerControlModelPresets[normalizedPresetId];
+        return entry ? { ...entry } : undefined;
     }
 
     getDefaultModelPresetId(): string {
@@ -876,11 +1036,12 @@ export class AilyChatConfigService {
     }
 
     getModelPresetById(presetId: string | null | undefined): ModelPresetOption | undefined {
-        if (typeof presetId !== 'string' || !presetId.trim()) {
+        const normalizedPresetId = normalizeKnownPresetId(presetId);
+        if (!normalizedPresetId) {
             return undefined;
         }
 
-        return this.getModelPresets().find(preset => preset.id === presetId.trim());
+        return this.getModelPresets().find(preset => preset.id === normalizedPresetId);
     }
 
     getModelById(modelId: string | null | undefined): ModelConfigOption | undefined {
@@ -904,6 +1065,14 @@ export class AilyChatConfigService {
         const contextWindowTokens = typeof options?.contextWindowTokens === 'number' && options.contextWindowTokens > 0
             ? options.contextWindowTokens
             : undefined;
+        const presetMatch = this.resolvePresetModel(normalizedModelName);
+        if (presetMatch) {
+            return this.normalizeRuntimeModel({
+                ...presetMatch,
+                ...(contextWindowTokens ? { contextWindowTokens } : {}),
+            });
+        }
+
         const exactMatch = this.getModelById(normalizedModelName);
         if (exactMatch) {
             return this.normalizeRuntimeModel({
@@ -938,11 +1107,12 @@ export class AilyChatConfigService {
     }
 
     resolvePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
-        if (typeof presetId !== 'string' || !presetId.trim()) {
+        const normalizedPresetId = normalizeKnownPresetId(presetId);
+        if (!normalizedPresetId) {
             return null;
         }
 
-        const preset = this.getModelPresetById(presetId);
+        const preset = this.getModelPresetById(normalizedPresetId);
         if (!preset) {
             return null;
         }
@@ -981,26 +1151,29 @@ export class AilyChatConfigService {
             return null;
         }
 
-        const mergeRuntimeFields = (model: ModelConfigOption): ModelConfigOption => ({
+        const normalizedSavedPresetId = resolveSavedPresetId(savedModel, this.getModelPresets());
+        const savedPreset = this.getModelPresetById(normalizedSavedPresetId);
+        const resolvedSavedPresetId = savedPreset?.id;
+
+        const mergeRuntimeFields = (model: ModelConfigOption, presetId?: string): ModelConfigOption => ({
             ...model,
-            presetId: savedModel.presetId,
+            presetId,
             reasoningEffort: this.resolveModelReasoningEffort(model, savedModel.reasoningEffort),
         });
 
-        const directModel = this.getEnabledModels().find(model => model.model === savedModel.model);
-        if (directModel) {
-            return mergeRuntimeFields(directModel);
+        const presetModel = savedPreset?.enabled ? this.resolvePresetModel(normalizedSavedPresetId) : null;
+        if (presetModel && savedPreset?.enabled) {
+            return mergeRuntimeFields(presetModel, resolvedSavedPresetId ?? presetModel.presetId);
         }
 
-        const presetId = resolveSavedPresetId(savedModel, this.getModelPresets());
-        const presetModel = this.resolvePresetModel(presetId);
-        if (presetModel) {
-            return mergeRuntimeFields(presetModel);
+        const directModel = this.getEnabledModels().find(model => model.model === savedModel.model);
+        if (directModel?.isCustom) {
+            return mergeRuntimeFields(directModel);
         }
 
         const defaultPresetModel = this.resolvePresetModel(this.getDefaultModelPresetId());
         if (defaultPresetModel) {
-            return mergeRuntimeFields(defaultPresetModel);
+            return mergeRuntimeFields(defaultPresetModel, defaultPresetModel.presetId);
         }
 
         return null;
@@ -1109,13 +1282,19 @@ export class AilyChatConfigService {
     }
 
     getModelBillingLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
+        const autoDiscountActive = isDefaultAutoPresetSelected(model);
+
         if (typeof model?.billingLabelOverride === 'string' && model.billingLabelOverride.trim()) {
-            return model.billingLabelOverride.trim();
+            return autoDiscountActive
+                ? applyAutoDiscountToBillingLabel(model.billingLabelOverride)
+                : model.billingLabelOverride.trim();
         }
 
         const canonicalModel = this.resolveCanonicalModelMetadata(model);
         if (typeof canonicalModel?.billingLabelOverride === 'string' && canonicalModel.billingLabelOverride.trim()) {
-            return canonicalModel.billingLabelOverride.trim();
+            return autoDiscountActive
+                ? applyAutoDiscountToBillingLabel(canonicalModel.billingLabelOverride)
+                : canonicalModel.billingLabelOverride.trim();
         }
 
         const multiplier = model?.billingMultiplier ?? canonicalModel?.billingMultiplier;
@@ -1123,10 +1302,10 @@ export class AilyChatConfigService {
             return undefined;
         }
 
-        const normalized = Number.isInteger(multiplier)
-            ? multiplier.toFixed(0)
-            : multiplier.toFixed(multiplier * 10 === Math.trunc(multiplier * 10) ? 1 : 2);
-        return `${normalized}x`;
+        const billingLabel = formatBillingMultiplierLabel(multiplier);
+        return autoDiscountActive
+            ? applyAutoDiscountToBillingLabel(billingLabel)
+            : billingLabel;
     }
 
     getModelMenuReasoningLabel(model: Partial<ModelConfigOption> | null | undefined): string | undefined {
@@ -1292,6 +1471,9 @@ export class AilyChatConfigService {
                 billingMultiplier: remoteCatalogEntry.billingMultiplier ?? storedModel?.billingMultiplier,
                 billingLabelOverride: remoteCatalogEntry.billingLabelOverride ?? storedModel?.billingLabelOverride,
                 billingDescription: remoteCatalogEntry.billingDescription ?? storedModel?.billingDescription,
+                languageModelsVendor: remoteCatalogEntry.languageModelsVendor ?? storedModel?.languageModelsVendor,
+                languageModelsGroupName: remoteCatalogEntry.languageModelsGroupName ?? storedModel?.languageModelsGroupName,
+                configurationSchema: remoteCatalogEntry.configurationSchema ?? storedModel?.configurationSchema,
                 contextWindowTokens: remoteCatalogEntry.contextWindowTokens ?? storedModel?.contextWindowTokens,
                 enabled: storedModel?.enabled ?? true,
                 isCustom: storedModel?.isCustom ?? false,
@@ -1329,21 +1511,28 @@ export class AilyChatConfigService {
             lines.push(description);
         }
 
+        const canonicalModel = this.resolveCanonicalModelMetadata(model);
         const capabilityParts = this.getModelCapabilitySummaryParts({
             ...model,
             contextWindowTokens: typeof options?.maxContextTokens === 'number' && options.maxContextTokens > 0
                 ? options.maxContextTokens
                 : model.contextWindowTokens,
-        }, { includeBillingDescription: true });
+        });
         if (capabilityParts.length > 0) {
             lines.push(`能力: ${capabilityParts.join(' · ')}`);
+        }
+
+        const billingLabel = this.getModelBillingLabel(model);
+        const billingDescription = model.billingDescription || canonicalModel?.billingDescription;
+        if (billingDescription && billingDescription !== billingLabel) {
+            lines.push(billingDescription);
         }
 
         return lines.join('\n');
     }
 
     private loadRemoteModelCatalog(reason = 'unspecified'): void {
-        if (this.authService && !this.authService.isLoggedIn) {
+        if (!this.isAuthReadyForRemoteModelCatalog()) {
             this.setRemoteModelCatalogStatus('loading', '等待认证完成后自动加载模型目录...');
             console.info('[AilyChatConfigService] 登录态尚未就绪，延迟加载远端 model catalog', {
                 url: ChatAPI.modelCatalog,
@@ -1359,12 +1548,17 @@ export class AilyChatConfigService {
             reason,
         });
 
-        this.http.get<RemoteModelCatalogResponse>(ChatAPI.modelCatalog, { observe: 'response' }).subscribe({
+        this.http.get<RemoteModelCatalogResponse>(ChatAPI.modelCatalog, this.getRemoteModelCatalogRequestOptions()).subscribe({
             next: (response) => {
                 const responseBody = response.body;
                 const normalizedCatalog = this.normalizeRemoteModelCatalog(responseBody?.data);
                 if (!normalizedCatalog) {
-                    this.remoteModelCatalog = { models: {}, modelPresets: {} };
+                    this.remoteModelCatalog = {
+                        models: {},
+                        modelPresets: {},
+                        userVisibleModelPresets: {},
+                        pickerControlModelPresets: {},
+                    };
                     this.setRemoteModelCatalogStatus(
                         'unavailable',
                         `远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
@@ -1444,7 +1638,12 @@ export class AilyChatConfigService {
                 this.modelCatalogChangedSubject.next();
             },
             error: (error) => {
-                this.remoteModelCatalog = { models: {}, modelPresets: {} };
+                this.remoteModelCatalog = {
+                    models: {},
+                    modelPresets: {},
+                    userVisibleModelPresets: {},
+                    pickerControlModelPresets: {},
+                };
                 const isUnauthorized = error instanceof HttpErrorResponse
                     ? error.status === 401
                     : error?.status === 401;
@@ -1487,29 +1686,76 @@ export class AilyChatConfigService {
         this.remoteModelCatalogStatusHint = hint;
     }
 
+    private isAuthReadyForRemoteModelCatalog(): boolean {
+        if (!this.authService) {
+            return true;
+        }
+
+        if (this.authService.authChanged$ || this.authService.authSnapshot$) {
+            return !!this.authService.getAuthSnapshot();
+        }
+
+        return this.authService.isLoggedIn;
+    }
+
     private hasUsableRemoteModelCatalog(catalog: RemoteModelCatalog = this.remoteModelCatalog): boolean {
         return Object.keys(catalog.models).length > 0 || Object.keys(catalog.modelPresets).length > 0;
     }
 
-    private mergeRemotePresetOption(preset: ModelPresetOption): ModelPresetOption {
-        const remotePreset = this.remoteModelCatalog.modelPresets[preset.id];
-        if (!remotePreset) {
-            return { ...preset };
+    private getRemoteModelCatalogRequestOptions(): { observe: 'response'; headers?: Record<string, string> } {
+        const normalizedClientVersion = typeof this.clientVersion === 'string' ? this.clientVersion.trim() : '';
+        if (!normalizedClientVersion) {
+            return { observe: 'response' };
         }
 
         return {
-            ...preset,
-            name: remotePreset.displayName || preset.name,
-            model: remotePreset.model || preset.model,
-            family: remotePreset.family || preset.family,
-            description: remotePreset.description || preset.description,
-            billingMultiplier: remotePreset.billingMultiplier ?? preset.billingMultiplier,
-            billingLabelOverride: remotePreset.billingLabelOverride ?? preset.billingLabelOverride,
-            billingDescription: remotePreset.billingDescription ?? preset.billingDescription,
-            contextWindowTokens: remotePreset.contextWindowTokens ?? preset.contextWindowTokens,
+            observe: 'response',
+            headers: {
+                'X-Aily-Client-Version': normalizedClientVersion,
+            },
+        };
+    }
+
+    private getRemoteModelCatalogAuthKey(
+        authSnapshot: { plan?: string; serviceTier?: string; subscriptionStatus?: string; groups?: readonly string[] } | null | undefined,
+    ): string {
+        const plan = typeof authSnapshot?.plan === 'string' ? authSnapshot.plan.trim() : '';
+        const serviceTier = typeof authSnapshot?.serviceTier === 'string' ? authSnapshot.serviceTier.trim() : '';
+        const subscriptionStatus = typeof authSnapshot?.subscriptionStatus === 'string' ? authSnapshot.subscriptionStatus.trim() : '';
+        const groups = Array.isArray(authSnapshot?.groups)
+            ? [...new Set(authSnapshot.groups
+                .filter((group): group is string => typeof group === 'string')
+                .map(group => group.trim())
+                .filter(group => group.length > 0))].sort().join(',')
+            : '';
+        return `${plan}|${serviceTier}|${subscriptionStatus}|${groups}`;
+    }
+
+    private buildRemotePresetOption(
+        presetId: string,
+        remotePreset: RemoteModelCatalogEntry,
+    ): ModelPresetOption {
+        const fallbackPreset = CORE_MODEL_PRESET_OPTIONS.find(preset => preset.id === presetId);
+        return {
+            id: presetId,
+            name: remotePreset.displayName || fallbackPreset?.name || presetId,
+            model: remotePreset.model || fallbackPreset?.model,
+            family: remotePreset.family || fallbackPreset?.family,
+            description: remotePreset.description || fallbackPreset?.description,
+            billingMultiplier: remotePreset.billingMultiplier ?? fallbackPreset?.billingMultiplier,
+            billingLabelOverride: remotePreset.billingLabelOverride ?? fallbackPreset?.billingLabelOverride,
+            billingDescription: remotePreset.billingDescription ?? fallbackPreset?.billingDescription,
+            contextWindowTokens: remotePreset.contextWindowTokens ?? fallbackPreset?.contextWindowTokens,
             supportsReasoningEfforts: remotePreset.supportsReasoningEfforts?.length
                 ? [...remotePreset.supportsReasoningEfforts]
-                : preset.supportsReasoningEfforts,
+                : fallbackPreset?.supportsReasoningEfforts,
+            availableTiers: Array.isArray(remotePreset.availableTiers) ? [...remotePreset.availableTiers] : undefined,
+            requiredTier: remotePreset.requiredTier,
+            minimumClientVersion: remotePreset.minimumClientVersion,
+            unavailableReason: remotePreset.unavailableReason,
+            enabled: typeof remotePreset.isUserSelectable === 'boolean'
+                ? remotePreset.isUserSelectable
+                : (fallbackPreset?.enabled ?? true),
         };
     }
 
@@ -1522,8 +1768,149 @@ export class AilyChatConfigService {
 
         return {
             models: this.normalizeRemoteCatalogEntries(payload.models),
-            modelPresets: this.normalizeRemoteCatalogEntries(payload.model_presets),
+            modelPresets: this.normalizeRemotePresetEntries(payload.model_presets),
+            userVisibleModelPresets: this.normalizeRemotePresetEntries(payload.user_visible_model_presets),
+            pickerControlModelPresets: this.normalizeRemotePickerControlEntries(payload.picker_control_model_presets),
         };
+    }
+
+    private resolveUserVisiblePresetIds(): string[] {
+        const explicitPresetIds = this.getExplicitUserVisiblePresetIds();
+        if (explicitPresetIds.length > 0) {
+            return explicitPresetIds;
+        }
+
+        const fallbackRemotePresetIds = Object.entries(this.remoteModelCatalog.modelPresets)
+            .filter(([, entry]) => entry.userVisible)
+            .map(([presetId]) => presetId);
+        if (fallbackRemotePresetIds.length > 0) {
+            return fallbackRemotePresetIds;
+        }
+
+        return CORE_MODEL_PRESET_OPTIONS
+            .filter(preset => preset.enabled)
+            .map(preset => preset.id);
+    }
+
+    private getExplicitUserVisiblePresetIds(): string[] {
+        const explicitPresetIds = Object.keys(this.remoteModelCatalog.userVisibleModelPresets);
+        if (explicitPresetIds.length > 0) {
+            return explicitPresetIds;
+        }
+
+        return [];
+    }
+
+    private getRemoteModelPresetOptions(): ModelPresetOption[] {
+        if (Object.keys(this.remoteModelCatalog.modelPresets).length === 0) {
+            return [];
+        }
+
+        return Object.entries(this.remoteModelCatalog.modelPresets)
+            .filter(([presetId]) => !this.remoteModelCatalog.models[presetId])
+            .map(([presetId, remotePreset]) => this.buildRemotePresetOption(presetId, remotePreset));
+    }
+
+    private normalizeRemotePresetEntries(
+        entries: Record<string, RemoteCatalogPayloadEntry> | null | undefined,
+    ): Record<string, RemoteModelCatalogEntry> {
+        if (!entries || typeof entries !== 'object') {
+            return {};
+        }
+
+        return Object.entries(entries).reduce<Record<string, RemoteModelCatalogEntry>>((acc, [rawId, entry]) => {
+            if (!entry || typeof entry !== 'object') {
+                return acc;
+            }
+
+            const normalizedId = normalizeKnownPresetId(rawId) || rawId;
+            const normalizedCanonicalId = normalizeKnownPresetId(entry.canonical_id)
+                || normalizeKnownPresetId(entry.id)
+                || normalizedId;
+            const normalizedAliases = Array.isArray(entry.aliases)
+                ? [...new Set(entry.aliases
+                    .map(alias => normalizeKnownPresetId(alias) || (typeof alias === 'string' ? alias.trim() : ''))
+                    .filter((alias): alias is string => typeof alias === 'string' && alias.length > 0))]
+                : undefined;
+            acc[normalizedId] = {
+                id: normalizedCanonicalId,
+                canonicalId: normalizedCanonicalId,
+                aliases: normalizedAliases,
+                model: typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined,
+                displayName: typeof entry.display_name === 'string' && entry.display_name.trim()
+                    ? entry.display_name.trim()
+                    : undefined,
+                family: typeof entry.family === 'string' && entry.family.trim() ? entry.family.trim() : undefined,
+                description: typeof entry.description === 'string' && entry.description.trim() ? entry.description.trim() : undefined,
+                contextWindowTokens: typeof entry.context_window_tokens === 'number' && entry.context_window_tokens > 0
+                    ? entry.context_window_tokens
+                    : undefined,
+                supportsReasoningEfforts: normalizeReasoningEfforts(entry.supports_reasoning_effort),
+                billingMultiplier: typeof entry.billing_multiplier === 'number' && Number.isFinite(entry.billing_multiplier)
+                    ? entry.billing_multiplier
+                    : undefined,
+                billingLabelOverride: typeof entry.billing_label_override === 'string' && entry.billing_label_override.trim()
+                    ? entry.billing_label_override.trim()
+                    : undefined,
+                billingDescription: typeof entry.billing_description === 'string' && entry.billing_description.trim()
+                    ? entry.billing_description.trim()
+                    : undefined,
+                languageModelsVendor: typeof entry.language_models_vendor === 'string' && entry.language_models_vendor.trim()
+                    ? entry.language_models_vendor.trim()
+                    : undefined,
+                languageModelsGroupName: typeof entry.language_models_group_name === 'string' && entry.language_models_group_name.trim()
+                    ? entry.language_models_group_name.trim()
+                    : undefined,
+                configurationSchema: this.normalizeLanguageModelConfigurationSchema(entry.configuration_schema),
+                userVisible: typeof entry.user_visible === 'boolean' ? entry.user_visible : undefined,
+                isUserSelectable: typeof entry.is_user_selectable === 'boolean' ? entry.is_user_selectable : undefined,
+                availableTiers: Array.isArray(entry.available_tiers)
+                    ? entry.available_tiers.filter((tier): tier is string => typeof tier === 'string' && tier.trim().length > 0)
+                    : undefined,
+                requiredTier: typeof entry.required_tier === 'string' && entry.required_tier.trim()
+                    ? entry.required_tier.trim()
+                    : undefined,
+                minimumClientVersion: typeof entry.minimum_client_version === 'string' && entry.minimum_client_version.trim()
+                    ? entry.minimum_client_version.trim()
+                    : undefined,
+                unavailableReason: entry.unavailable_reason === 'upgrade'
+                    || entry.unavailable_reason === 'admin'
+                    || entry.unavailable_reason === 'update'
+                    ? entry.unavailable_reason
+                    : undefined,
+                modelPickerCategory: this.normalizeModelPickerCategory(entry.model_picker_category),
+            };
+            return acc;
+        }, {});
+    }
+
+    private normalizeRemotePickerControlEntries(
+        entries: Record<string, RemotePickerControlPayloadEntry> | null | undefined,
+    ): Record<string, ModelPickerControlOption> {
+        if (!entries || typeof entries !== 'object') {
+            return {};
+        }
+
+        return Object.entries(entries).reduce<Record<string, ModelPickerControlOption>>((acc, [rawId, entry]) => {
+            if (!entry || typeof entry !== 'object') {
+                return acc;
+            }
+
+            const normalizedId = normalizeKnownPresetId(rawId) || rawId;
+            const label = typeof entry.label === 'string' && entry.label.trim() ? entry.label.trim() : normalizedId;
+            acc[normalizedId] = {
+                label,
+                featured: typeof entry.featured === 'boolean' ? entry.featured : undefined,
+                minClientVersion: typeof entry.min_client_version === 'string' && entry.min_client_version.trim()
+                    ? entry.min_client_version.trim()
+                    : undefined,
+                exists: typeof entry.exists === 'boolean' ? entry.exists : false,
+                presetSurface: typeof entry.preset_surface === 'string' && entry.preset_surface.trim()
+                    ? entry.preset_surface.trim()
+                    : undefined,
+            };
+            return acc;
+        }, {});
     }
 
     private normalizeRemoteCatalogEntries(
@@ -1559,9 +1946,54 @@ export class AilyChatConfigService {
                 billingDescription: typeof entry.billing_description === 'string' && entry.billing_description.trim()
                     ? entry.billing_description.trim()
                     : undefined,
+                languageModelsVendor: typeof entry.language_models_vendor === 'string' && entry.language_models_vendor.trim()
+                    ? entry.language_models_vendor.trim()
+                    : undefined,
+                languageModelsGroupName: typeof entry.language_models_group_name === 'string' && entry.language_models_group_name.trim()
+                    ? entry.language_models_group_name.trim()
+                    : undefined,
+                configurationSchema: this.normalizeLanguageModelConfigurationSchema(entry.configuration_schema),
+                modelPickerCategory: this.normalizeModelPickerCategory(entry.model_picker_category),
             };
             return acc;
         }, {});
+    }
+
+    private normalizeLanguageModelConfigurationSchema(
+        schema: RemoteCatalogPayloadEntry['configuration_schema'],
+    ): LanguageModelConfigurationSchema | undefined {
+        if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+            return undefined;
+        }
+
+        return JSON.parse(JSON.stringify(schema)) as LanguageModelConfigurationSchema;
+    }
+
+    private normalizeModelPickerCategory(
+        category: RemoteCatalogPayloadEntry['model_picker_category'],
+    ): ModelPickerCategoryOption | undefined {
+        if (!category || typeof category !== 'object') {
+            return undefined;
+        }
+
+        const label = typeof category.label === 'string' && category.label.trim() ? category.label.trim() : '';
+        if (!label) {
+            return undefined;
+        }
+
+        return {
+            label,
+            order: typeof category.order === 'number' && Number.isFinite(category.order) ? category.order : 0,
+        };
+    }
+
+    private normalizeRequestLimitConfig(): void {
+        const normalized = this.config.maxRequests ?? this.config.maxCount;
+        if (normalized === undefined) {
+            return;
+        }
+        this.config.maxRequests = normalized;
+        this.config.maxCount = normalized;
     }
 
     private buildRuntimeModels(): ModelConfigOption[] {
@@ -1603,6 +2035,9 @@ export class AilyChatConfigService {
                 billingMultiplier: remoteModel.billingMultiplier ?? override?.billingMultiplier,
                 billingLabelOverride: remoteModel.billingLabelOverride ?? override?.billingLabelOverride,
                 billingDescription: remoteModel.billingDescription ?? override?.billingDescription,
+                languageModelsVendor: remoteModel.languageModelsVendor ?? override?.languageModelsVendor,
+                languageModelsGroupName: remoteModel.languageModelsGroupName ?? override?.languageModelsGroupName,
+                configurationSchema: remoteModel.configurationSchema ?? override?.configurationSchema,
                 contextWindowTokens: remoteModel.contextWindowTokens ?? override?.contextWindowTokens,
                 enabled: override?.enabled ?? true,
                 isCustom: false,
@@ -1795,6 +2230,8 @@ export class AilyChatConfigService {
      * 从旧版本配置迁移
      */
     migrateFromOldConfig(): void {
+        this.normalizeRequestLimitConfig();
+
         // 如果有旧的全局API配置且没有API列表，创建一个API配置
         if ((this.config.baseUrl || this.config.apiKey) && (!this.config.apiKeys || this.config.apiKeys.length === 0)) {
             if (this.config.baseUrl && this.config.apiKey) {
@@ -1846,18 +2283,20 @@ export class AilyChatConfigService {
     }
 }
 
-function normalizeLegacyPresetId(value: string | null | undefined): string | undefined {
+function normalizeKnownPresetId(value: string | null | undefined): string | undefined {
     switch (value) {
         case 'auto':
             return 'auto';
         case 'high':
             return 'auto-max';
         case 'medium':
-            return 'auto-balanced';
+        case 'auto-balanced':
+        case 'auto-balance':
+            return 'auto-balance';
         case 'low':
             return 'auto-fast';
         default:
-            return undefined;
+            return typeof value === 'string' && value.trim() ? value.trim() : undefined;
     }
 }
 
@@ -1866,7 +2305,7 @@ function resolveSavedPresetId(
     presets: readonly ModelPresetOption[],
 ): string | undefined {
     if (savedModel.presetId) {
-        return savedModel.presetId;
+        return normalizeKnownPresetId(savedModel.presetId);
     }
 
     const directPreset = typeof savedModel.model === 'string'
@@ -1876,7 +2315,7 @@ function resolveSavedPresetId(
         return directPreset;
     }
 
-    return normalizeLegacyPresetId(savedModel.model);
+    return normalizeKnownPresetId(savedModel.model);
 }
 
 function normalizeReasoningEfforts(value: string[] | null | undefined): ReasoningEffortOption[] | undefined {
