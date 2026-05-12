@@ -81,9 +81,9 @@ export class ChatSendCoordinator {
             Object.entries(payload.requestMetadata ?? {}).filter(([key]) => key !== 'agentId'),
           ),
           explicitAgentInvocation: buildExplicitAgentInvocationPayload({
-            targetAgent: typeof explicitAgentInvocation['targetAgent'] === 'string' ? explicitAgentInvocation['targetAgent'] : '',
-            strippedPrompt: typeof explicitAgentInvocation['strippedPrompt'] === 'string' ? explicitAgentInvocation['strippedPrompt'] : '',
-            originalText: typeof explicitAgentInvocation['originalText'] === 'string' ? explicitAgentInvocation['originalText'] : text,
+            targetAgent: typeof explicitAgentInvocation.targetAgent === 'string' ? explicitAgentInvocation.targetAgent : '',
+            strippedPrompt: typeof explicitAgentInvocation.strippedPrompt === 'string' ? explicitAgentInvocation.strippedPrompt : '',
+            originalText: typeof explicitAgentInvocation.originalText === 'string' ? explicitAgentInvocation.originalText : text,
             resourcesText: this.getResourcesText(),
             editFeedback: this.ctx.pendingEditFeedback,
             childRequest: explicitAgentInvocation.childRequest,
@@ -91,7 +91,7 @@ export class ChatSendCoordinator {
         }
       : payload.requestMetadata;
     const requestAgentId = explicitAgentInvocation && typeof explicitAgentInvocation === 'object'
-      ? (typeof explicitAgentInvocation['targetAgent'] === 'string' ? explicitAgentInvocation['targetAgent'] : undefined)
+      ? (typeof explicitAgentInvocation.targetAgent === 'string' ? explicitAgentInvocation.targetAgent : undefined)
       : (typeof requestMetadata?.agentId === 'string' ? requestMetadata.agentId : undefined);
     const userSelectedTools = this.getUserSelectedTools?.(
       requestAgentId,

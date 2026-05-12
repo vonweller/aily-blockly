@@ -57,6 +57,14 @@ export function extractUserTurnRoutingMetadata(
 
     const command = resolveCommand(subCommandMatch[1], 'subcommand', agentId);
     const strippedPrompt = afterAgent.slice(subCommandMatch[0].length).trimStart();
+    const childRequest = command
+      ? {
+        command,
+        commandKind: 'subcommand' as const,
+        parsedParts: [{ kind: 'subcommand' as const, command, text: `/${command.name}`, promptText: '' as const }],
+      }
+      : undefined;
+
     return {
       agentId,
       explicitAgentInvocation: {
@@ -65,15 +73,13 @@ export function extractUserTurnRoutingMetadata(
         strippedPrompt,
         originalText: trimmed,
         source: 'mention',
-        childRequest: {
-          command,
-          commandKind: 'slash',
-          parsedParts: [{ kind: 'slash', command, text: `/${command.name}`, promptText: `/${command.name}` }],
-        },
+        ...(childRequest ? { childRequest } : {}),
       },
       parsedParts: [
         { kind: 'agent', agentId, text: `@${agentId}`, promptText: '' },
-        { kind: 'subcommand', command, text: `/${command.name}`, promptText: '' },
+        ...(command
+          ? [{ kind: 'subcommand' as const, command, text: `/${command.name}`, promptText: '' as const }]
+          : []),
       ],
     };
   }

@@ -366,14 +366,21 @@ function isRequestQuotaUsageSnapshotExhausted(
 function readRequestQuotaStateQuotaSnapshot(
   quotaSnapshot: TurnResponseQuotaSnapshot,
 ): RequestQuotaServiceState {
+  const ext = quotaSnapshot as TurnResponseQuotaSnapshot & {
+    updatedAt?: string;
+    sourceInteractionId?: string;
+    chatQuotaExceeded?: boolean;
+    rateLimited?: boolean;
+    retryAfterMs?: number;
+  };
   return normalizeRequestQuotaServiceState({
-    ...(typeof quotaSnapshot.updatedAt === 'string' ? { updatedAt: quotaSnapshot.updatedAt } : {}),
-    ...(typeof quotaSnapshot.sourceInteractionId === 'string' ? { sourceInteractionId: quotaSnapshot.sourceInteractionId } : {}),
-    ...(typeof quotaSnapshot.chatQuotaExceeded === 'boolean' ? { chatQuotaExceeded: quotaSnapshot.chatQuotaExceeded } : {}),
-    ...(typeof quotaSnapshot.rateLimited === 'boolean' ? { rateLimited: quotaSnapshot.rateLimited } : {}),
+    ...(typeof ext.updatedAt === 'string' ? { updatedAt: ext.updatedAt } : {}),
+    ...(typeof ext.sourceInteractionId === 'string' ? { sourceInteractionId: ext.sourceInteractionId } : {}),
+    ...(typeof ext.chatQuotaExceeded === 'boolean' ? { chatQuotaExceeded: ext.chatQuotaExceeded } : {}),
+    ...(typeof ext.rateLimited === 'boolean' ? { rateLimited: ext.rateLimited } : {}),
     ...(typeof quotaSnapshot.errorCode === 'string' ? { errorCode: quotaSnapshot.errorCode } : {}),
-    ...(typeof quotaSnapshot.retryAfterMs === 'number' && Number.isFinite(quotaSnapshot.retryAfterMs)
-      ? { retryAfterMs: quotaSnapshot.retryAfterMs }
+    ...(typeof ext.retryAfterMs === 'number' && Number.isFinite(ext.retryAfterMs)
+      ? { retryAfterMs: ext.retryAfterMs }
       : {}),
     quotaSnapshots: normalizeQuotaSnapshotMap(quotaSnapshot.quotaSnapshots),
     rateLimitSnapshots: normalizeRateLimitSnapshotMap(quotaSnapshot.rateLimitSnapshots),

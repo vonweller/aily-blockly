@@ -172,18 +172,22 @@ function toDisplayQuotaFromTurnSidecar(quotaSnapshot: TurnResponseQuotaSnapshot)
   }
 
   const burst = quotaSnapshot.rateLimitSnapshots?.['burst_10m'];
-  if (isExhausted(burst) || quotaSnapshot.rateLimited) {
+  const extended = quotaSnapshot as TurnResponseQuotaSnapshot & {
+    rateLimited?: boolean;
+    retryAfterMs?: number;
+  };
+  if (isExhausted(burst) || extended.rateLimited === true) {
     return {
       kind: 'burst',
       errorCode: quotaSnapshot.errorCode,
-      retryAfterMs: typeof quotaSnapshot.retryAfterMs === 'number'
-        ? quotaSnapshot.retryAfterMs
+      retryAfterMs: typeof extended.retryAfterMs === 'number'
+        ? extended.retryAfterMs
         : getRetryAfterMs(burst?.resetAt),
       resetAt: burst?.resetAt,
     };
   }
 
-  return quotaSnapshot;
+  return null;
 }
 
 function findServiceQuotaSnapshot(serviceState: RequestQuotaServiceState | null): RequestQuotaDisplayQuota | null {

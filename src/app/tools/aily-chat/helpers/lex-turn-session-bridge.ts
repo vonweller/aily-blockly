@@ -257,7 +257,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
   startTurn(content: string, displayContent?: string, metadata?: LexTurnRequestMetadata): string | undefined {
     const agent = this.getAgent();
     if (!agent) return undefined;
-    const persistedRequestContext = agent.saveSession?.().requestContext as LexTurnRequestMetadata | undefined;
+    const persistedRequestContext = agent.saveSession?.().requestContext as unknown as LexTurnRequestMetadata | undefined;
     const effectiveMetadata = mergeResumedInteractionMetadata(
       agent.turnManager.activeTurn?.request.metadata ?? persistedRequestContext,
       metadata,
