@@ -97,10 +97,10 @@
   .interactive-input-part > .chat-input-notification-container .chat-input-notification {
     padding: 10px 16px 16px 16px;
     box-sizing: border-box;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--aily-chat-input-notice-border, rgba(255, 255, 255, 0.08));
     border-bottom: none;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
+    border-top-left-radius: var(--aily-chat-input-notice-radius, 5px);
+    border-top-right-radius: var(--aily-chat-input-notice-radius, 5px);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -108,18 +108,18 @@
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-info {
-    border-color: rgba(117, 190, 255, 0.42);
-    background: color-mix(in srgb, #75beff 6%, #252526);
+    border-color: var(--aily-chat-input-notice-info-border);
+    background: var(--aily-chat-input-notice-info-bg);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-warning {
-    border-color: rgba(204, 167, 0, 0.55);
-    background: color-mix(in srgb, #cca700 6%, #252526);
+    border-color: var(--aily-chat-input-notice-warning-border);
+    background: var(--aily-chat-input-notice-warning-bg);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-error {
-    border-color: rgba(241, 76, 76, 0.55);
-    background: color-mix(in srgb, #f14c4c 6%, #252526);
+    border-color: var(--aily-chat-input-notice-error-border);
+    background: var(--aily-chat-input-notice-error-bg);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification-header {
@@ -136,22 +136,22 @@
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-info .chat-input-notification-icon {
-    color: #75beff;
+    color: var(--aily-chat-viewer-state-info);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-warning .chat-input-notification-icon {
-    color: #cca700;
+    color: var(--aily-chat-viewer-state-warn);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification.severity-error .chat-input-notification-icon {
-    color: #f14c4c;
+    color: var(--aily-chat-viewer-state-error);
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification-title {
     font-size: 12px;
     font-weight: 600;
     line-height: 18px;
-    color: #cccccc;
+    color: var(--aily-chat-input-notice-title-fg, #cccccc);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -164,26 +164,26 @@
     font-size: 11px;
     line-height: 18px;
     white-space: nowrap;
-    color: #6a6a6a;
+    color: var(--aily-chat-input-notice-status-muted, #6a6a6a);
 
     &[data-tone='info'] {
-      color: #75beff;
+      color: var(--aily-chat-viewer-state-info);
     }
 
     &[data-tone='success'] {
-      color: #89d185;
+      color: var(--aily-chat-viewer-state-done);
     }
 
     &[data-tone='warning'] {
-      color: #cca700;
+      color: var(--aily-chat-viewer-state-warn);
     }
 
     &[data-tone='error'] {
-      color: #f14c4c;
+      color: var(--aily-chat-viewer-state-error);
     }
 
     &[data-tone='muted'] {
-      color: #6a6a6a;
+      color: var(--aily-chat-input-notice-status-muted, #6a6a6a);
     }
   }
 
@@ -197,7 +197,7 @@
   .interactive-input-part > .chat-input-notification-container .chat-input-notification-description {
     font-size: 12px;
     line-height: 18px;
-    color: #8e8e8e;
+    color: var(--aily-chat-input-notice-desc-fg, #8e8e8e);
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -219,18 +219,18 @@
     min-width: unset;
     width: auto;
     min-height: 24px;
-    border-radius: 4px;
+    border-radius: var(--aily-chat-input-notice-radius, 5px);
     border: none;
     background: transparent;
-    color: #cccccc;
+    color: var(--aily-chat-input-notice-action-fg, #cccccc);
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.15s ease, color 0.15s ease;
     opacity: 0.85;
 
     &:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.08);
+      color: var(--aily-chat-input-notice-action-hover-fg, #ffffff);
+      background: var(--aily-chat-input-notice-action-hover-bg, rgba(255, 255, 255, 0.08));
       opacity: 1;
     }
   }
@@ -241,9 +241,9 @@
     justify-content: center;
     width: 20px;
     height: 20px;
-    border-radius: 4px;
+    border-radius: var(--aily-chat-input-notice-radius, 5px);
     cursor: pointer;
-    color: #a0a0a0;
+    color: var(--aily-chat-input-notice-dismiss-fg, #a0a0a0);
     background: transparent;
     border: none;
     outline: none;
@@ -252,8 +252,8 @@
     transition: background 0.15s ease, color 0.15s ease;
 
     &:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.08);
+      color: var(--aily-chat-input-notice-dismiss-hover-fg, #ffffff);
+      background: var(--aily-chat-input-notice-dismiss-hover-bg, rgba(255, 255, 255, 0.08));
     }
 
     i {

@@ -34,7 +34,7 @@ import type { ChatTaskActionDetail, ChatTaskActionName } from '../../../helpers/
   `,
   styles: [`
     .ac-task {
-      border-radius: 8px; padding: 12px 16px; margin: 8px 0;
+      border-radius: 5px; padding: 12px 16px; margin: 8px 0;
       background-color: var(--aily-chat-viewer-task-bg, #2d2d2d); border: 1px solid var(--aily-chat-viewer-task-border, #404040);
       color: var(--aily-text-quaternary, #e0e0e0); overflow: hidden;
     }
@@ -50,7 +50,7 @@ import type { ChatTaskActionDetail, ChatTaskActionName } from '../../../helpers/
     .ac-task-done { display: block; padding: 4px 0 0 34px; font-size: 12px; color: var(--aily-text-disabled, #666666); }
     .ac-btn {
       display: inline-flex; align-items: center; gap: 6px;
-      padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500;
+      padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: 500;
       cursor: pointer; border: none; outline: none;
       transition: all 0.2s ease;
     }

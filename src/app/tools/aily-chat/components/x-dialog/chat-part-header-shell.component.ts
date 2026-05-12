@@ -69,7 +69,7 @@ import { CommonModule } from '@angular/common';
       min-width: 0;
       padding: 3px 4px;
       margin: 0;
-      border-radius: 4px;
+      border-radius: 5px;
       user-select: none;
       transition: background 0.15s;
     }
@@ -183,7 +183,7 @@ import { CommonModule } from '@angular/common';
       flex-shrink: 0;
       font-size: 10px;
       padding: 1px 5px;
-      border-radius: 999px;
+      border-radius: 5px;
       border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
       color: var(--chat-fg-muted, #6a6a6a);
       line-height: 1.2;
@@ -229,7 +229,7 @@ import { CommonModule } from '@angular/common';
       height: 22px;
       padding: 0;
       border: 1px solid transparent;
-      border-radius: 4px;
+      border-radius: 5px;
       background: transparent;
       color: var(--chat-fg-dim, #8e8e8e);
       display: inline-flex;
@@ -242,8 +242,8 @@ import { CommonModule } from '@angular/common';
 
     :host ::ng-deep button[header-actions]:hover {
       color: var(--chat-fg, #cccccc);
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(255,255,255,0.08);
+      background: var(--chat-bg-hover, rgba(255,255,255,0.06));
+      border-color: var(--chat-border-dim, rgba(255,255,255,0.08));
     }
 
     :host ::ng-deep button[header-actions] i {
@@ -260,7 +260,7 @@ import { CommonModule } from '@angular/common';
       height: 10px;
       border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));
-      border-bottom-left-radius: 4px;
+      border-bottom-left-radius: 5px;
       pointer-events: none;
     }
 

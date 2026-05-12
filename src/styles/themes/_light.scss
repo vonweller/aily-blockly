@@ -152,7 +152,7 @@
   --aily-chat-xdialog-msg-btn-hover-fg: var(--aily-text-secondary);
   --aily-chat-xdialog-msg-btn-active: var(--aily-color-accent);
   --aily-chat-xdialog-msg-divider: rgba(0, 0, 0, 0.12);
-  --aily-chat-xdialog-msg-model: var(--aily-text-disabled);
+  --aily-chat-xdialog-msg-model: var(--aily-text-secondary);
   --aily-chat-xdialog-loader-stripe: #a8a8a8;
   --aily-chat-xdialog-loader-track: #d0d0d0;
   --aily-chat-xdialog-editable-hover: var(--aily-highlight-bg);
@@ -228,6 +228,24 @@
   --aily-chat-viewer-dropdown-bg: #ececec;
   --aily-chat-viewer-dropdown-shadow: var(--aily-shadow-md);
   --aily-chat-viewer-divider-bg: var(--aily-border-secondary);
+  // ─── Aily Chat 输入区通知条（额度/状态）───
+  --aily-chat-input-notice-radius: 5px;
+  --aily-chat-input-notice-border: var(--aily-border-secondary);
+  --aily-chat-input-notice-title-fg: var(--aily-text-primary);
+  --aily-chat-input-notice-desc-fg: var(--aily-text-secondary);
+  --aily-chat-input-notice-status-muted: var(--aily-text-muted);
+  --aily-chat-input-notice-info-border: color-mix(in srgb, var(--aily-chat-viewer-state-info) 35%, var(--aily-border-secondary));
+  --aily-chat-input-notice-info-bg: color-mix(in srgb, var(--aily-chat-viewer-state-info) 11%, var(--aily-bg-elevated));
+  --aily-chat-input-notice-warning-border: color-mix(in srgb, var(--aily-chat-viewer-state-warn) 40%, var(--aily-border-secondary));
+  --aily-chat-input-notice-warning-bg: color-mix(in srgb, var(--aily-chat-viewer-state-warn) 12%, var(--aily-bg-elevated));
+  --aily-chat-input-notice-error-border: color-mix(in srgb, var(--aily-chat-viewer-state-error) 40%, var(--aily-border-secondary));
+  --aily-chat-input-notice-error-bg: color-mix(in srgb, var(--aily-chat-viewer-state-error) 10%, var(--aily-bg-elevated));
+  --aily-chat-input-notice-action-fg: var(--aily-text-secondary);
+  --aily-chat-input-notice-action-hover-fg: var(--aily-text-primary);
+  --aily-chat-input-notice-action-hover-bg: var(--aily-highlight-bg);
+  --aily-chat-input-notice-dismiss-fg: var(--aily-text-hint);
+  --aily-chat-input-notice-dismiss-hover-fg: var(--aily-text-primary);
+  --aily-chat-input-notice-dismiss-hover-bg: var(--aily-highlight-bg);
   --aily-chat-viewer-title-fg: var(--aily-text-primary);
   --aily-chat-viewer-reject-hover-fg: var(--aily-text-primary);
   --aily-chat-viewer-reject-hover-border: var(--aily-border-tertiary);

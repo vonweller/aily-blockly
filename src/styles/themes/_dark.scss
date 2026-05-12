@@ -214,6 +214,24 @@
   --aily-chat-viewer-dropdown-bg: #252526;
   --aily-chat-viewer-dropdown-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   --aily-chat-viewer-divider-bg: var(--aily-bg-tertiary);
+  // ─── Aily Chat 输入区通知条（额度/状态，紧贴输入框上方）───
+  --aily-chat-input-notice-radius: 5px;
+  --aily-chat-input-notice-border: rgba(255, 255, 255, 0.1);
+  --aily-chat-input-notice-title-fg: var(--aily-text-tertiary);
+  --aily-chat-input-notice-desc-fg: var(--aily-text-muted);
+  --aily-chat-input-notice-status-muted: var(--aily-text-disabled);
+  --aily-chat-input-notice-info-border: color-mix(in srgb, var(--aily-chat-viewer-state-info) 42%, transparent);
+  --aily-chat-input-notice-info-bg: color-mix(in srgb, var(--aily-chat-viewer-state-info) 7%, var(--aily-bg-card));
+  --aily-chat-input-notice-warning-border: color-mix(in srgb, var(--aily-chat-viewer-state-warn) 50%, transparent);
+  --aily-chat-input-notice-warning-bg: color-mix(in srgb, var(--aily-chat-viewer-state-warn) 7%, var(--aily-bg-card));
+  --aily-chat-input-notice-error-border: color-mix(in srgb, var(--aily-chat-viewer-state-error) 50%, transparent);
+  --aily-chat-input-notice-error-bg: color-mix(in srgb, var(--aily-chat-viewer-state-error) 7%, var(--aily-bg-card));
+  --aily-chat-input-notice-action-fg: var(--aily-text-tertiary);
+  --aily-chat-input-notice-action-hover-fg: var(--aily-text-primary);
+  --aily-chat-input-notice-action-hover-bg: rgba(255, 255, 255, 0.08);
+  --aily-chat-input-notice-dismiss-fg: var(--aily-text-hint);
+  --aily-chat-input-notice-dismiss-hover-fg: var(--aily-text-primary);
+  --aily-chat-input-notice-dismiss-hover-bg: rgba(255, 255, 255, 0.08);
   --aily-chat-viewer-title-fg: var(--aily-text-quaternary);
   --aily-chat-viewer-reject-hover-fg: var(--aily-text-quaternary);
   --aily-chat-viewer-reject-hover-border: var(--aily-border-tertiary);

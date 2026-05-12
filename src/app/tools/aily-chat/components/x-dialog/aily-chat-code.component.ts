@@ -180,7 +180,7 @@ const AILY_TYPES = [
       transition: opacity 0.2s;
       z-index: 1;
       border: 1px solid var(--aily-border-tertiary, #767676);
-      border-radius: 8px;
+      border-radius: 5px;
       padding: 3px;
       background: var(--aily-bg-tertiary, #333333);
     }
@@ -192,7 +192,7 @@ const AILY_TYPES = [
       height: 20px;
       padding: 0;
       border: none;
-      border-radius: 4px;
+      border-radius: 5px;
       background: transparent;
       color: var(--aily-text-muted, #bababa);
       cursor: pointer;

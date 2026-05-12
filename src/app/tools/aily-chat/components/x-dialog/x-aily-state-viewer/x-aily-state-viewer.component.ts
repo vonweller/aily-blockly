@@ -286,7 +286,7 @@ interface StateViewerData {
         background: transparent;
         color: inherit;
         text-align: left;
-        border-radius: 4px;
+        border-radius: 5px;
         cursor: default;
       }
       .ac-state-header.ac-state-header-clickable {
@@ -401,7 +401,7 @@ interface StateViewerData {
         /* \u5bf9\u9f50 think-viewer .ac-think-header \u98ce\u683c */
         padding: 3px 6px;
         border: 0;
-        border-radius: 4px;
+        border-radius: 5px;
         background: transparent;
         color: inherit;
         text-align: left;
@@ -480,7 +480,7 @@ interface StateViewerData {
         font-size: 11px;
         line-height: 1;
         padding: 3px 7px;
-        border-radius: 999px;
+        border-radius: 5px;
         background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
         border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
         color: var(--chat-fg-dim, #8e8e8e);
@@ -511,7 +511,7 @@ interface StateViewerData {
         padding: 6px 8px;
         margin-top: 2px;
         border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
-        border-radius: 4px;
+        border-radius: 5px;
       }
 
       .ac-state.ac-state-embedded .ac-subagent-body {
@@ -566,7 +566,7 @@ interface StateViewerData {
         padding: 4px 8px;
         margin-top: 2px;
         border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
-        border-radius: 4px;
+        border-radius: 5px;
       }
 
       .ac-state.ac-state-embedded .ac-state-detail {
@@ -630,7 +630,7 @@ interface StateViewerData {
         align-items: center;
         gap: 6px;
         padding: 3px 8px;
-        border-radius: 999px;
+        border-radius: 5px;
         font-size: 11px;
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -655,7 +655,7 @@ interface StateViewerData {
         flex-shrink: 0;
         padding: 4px 8px;
         border: 0;
-        border-radius: 999px;
+        border-radius: 5px;
         background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
         color: var(--chat-fg-dim, #8e8e8e);
         cursor: pointer;
@@ -691,7 +691,7 @@ interface StateViewerData {
         align-items: center;
         gap: 6px;
         padding: 3px 8px;
-        border-radius: 999px;
+        border-radius: 5px;
         border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
         background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
         color: var(--chat-fg-dim, #8e8e8e);
@@ -718,7 +718,7 @@ interface StateViewerData {
 
       .ac-state-filter-count {
         padding: 1px 5px;
-        border-radius: 999px;
+        border-radius: 5px;
         background: var(--chat-bg-deep, rgba(255,255,255,0.08));
       }
 
@@ -772,7 +772,7 @@ interface StateViewerData {
       .ac-state-output-group[data-group-kind='generic'] {
         padding: 10px;
         border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 8px;
+        border-radius: 5px;
         background: rgba(255,255,255,0.02);
       }
 
@@ -828,7 +828,7 @@ interface StateViewerData {
 
       .ac-state-list-meta-chip {
         padding: 2px 6px;
-        border-radius: 999px;
+        border-radius: 5px;
         border: 1px solid rgba(255,255,255,0.08);
         background: rgba(255,255,255,0.04);
         font-size: 10px;
@@ -849,7 +849,7 @@ interface StateViewerData {
       .ac-state-output-image-shell {
         margin-top: 6px;
         overflow: hidden;
-        border-radius: 8px;
+        border-radius: 5px;
         border: 1px solid rgba(255,255,255,0.08);
         background: rgba(255,255,255,0.015);
       }
@@ -868,7 +868,7 @@ interface StateViewerData {
         margin: 0;
         padding: 10px 12px;
         overflow-x: auto;
-        border-radius: 6px;
+        border-radius: 5px;
         border: 1px solid rgba(255,255,255,0.08);
         background: rgba(0,0,0,0.28);
       }
@@ -894,7 +894,7 @@ interface StateViewerData {
         flex-shrink: 0;
         font-size: 11px;
         padding: 1px 6px;
-        border-radius: 999px;
+        border-radius: 5px;
         background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
         border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.06));
         color: var(--chat-fg-dim, #8e8e8e);

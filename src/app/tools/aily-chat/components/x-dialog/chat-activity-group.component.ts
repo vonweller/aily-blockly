@@ -174,7 +174,7 @@ import {
       color: inherit;
       text-align: initial;
       cursor: pointer;
-      border-radius: 3px;
+      border-radius: 5px;
       transition: background 0.15s;
       min-height: 22px;
       line-height: unset;
