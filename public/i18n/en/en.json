@@ -2,6 +2,7 @@
     "MENU": {
         "MENU": "Menu",
         "PROJECT_NEW": "New Project",
+        "PROJECT_NEW_AILY_CODE": "New Aily Code Project",
         "PROJECT_OPEN": "Open Project",
         "PROJECT_SAVE": "Save Project",
         "PROJECT_SAVE_AS": "Save As",
@@ -738,5 +739,21 @@
         "TEXT_FILE": "Text Files",
         "ALL_FILES": "All Files",
         "EXPORT_SUCCESS": "Log data exported to "
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "New Aily Code Project",
+        "HINT": "Create an Aily Code project skeleton in the chosen directory (independent from Blockly projects).",
+        "NAME": "Project Name",
+        "NAME_PLACEHOLDER": "Enter project name",
+        "PATH": "Save Path",
+        "CREATE": "Create",
+        "CREATING": "Creating...",
+        "CANCEL": "Cancel",
+        "SUCCESS": "Aily Code project created",
+        "WARN_NAME_EMPTY": "Project name is required",
+        "WARN_PATH_EMPTY": "Save path is required",
+        "ERR_PATH_EXISTS": "A folder with the same name already exists",
+        "ERR_PATH_INVALID": "Save path contains invalid characters",
+        "ERR_CREATE_FAILED": "Failed to create project. Please try again."
     }
 }

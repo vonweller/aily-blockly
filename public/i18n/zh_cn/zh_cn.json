@@ -2,6 +2,7 @@
     "MENU": {
         "MENU": "菜单",
         "PROJECT_NEW": "新建项目",
+        "PROJECT_NEW_AILY_CODE": "新建 Aily Code 项目",
         "PROJECT_OPEN": "打开项目",
         "PROJECT_SAVE": "保存项目",
         "PROJECT_SAVE_AS": "另存为",
@@ -738,5 +739,21 @@
         "TEXT_FILE": "文本文件",
         "ALL_FILES": "所有文件",
         "EXPORT_SUCCESS": "日志数据已成功导出到"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "新建 Aily Code 项目",
+        "HINT": "在所选目录下生成符合 Aily Code 规范的项目骨架（与 Blockly 项目独立）。",
+        "NAME": "项目名",
+        "NAME_PLACEHOLDER": "请输入项目名",
+        "PATH": "保存路径",
+        "CREATE": "创建",
+        "CREATING": "创建中...",
+        "CANCEL": "取消",
+        "SUCCESS": "Aily Code 项目已创建",
+        "WARN_NAME_EMPTY": "请输入项目名",
+        "WARN_PATH_EMPTY": "请选择保存路径",
+        "ERR_PATH_EXISTS": "同名目录已存在，请更换项目名",
+        "ERR_PATH_INVALID": "保存路径包含非法字符",
+        "ERR_CREATE_FAILED": "创建失败，请稍后重试"
     }
 }

@@ -316,6 +316,8 @@ let heldProjectLockNormalized = null;
 
 /** 内嵌 coder：开发态挂 child/coder 的 Vite；生产态本地静态 child/coder/dist */
 let coderEmbedHttpServer = null;
+/** 防止并发多次进入启动逻辑（重复 spawn Vite） */
+let coderEmbedEnsureInFlight = null;
 
 const CODER_EMBED_VITE_PORT_MIN = 5174;
 const CODER_EMBED_VITE_PORT_RANGE = 24;
@@ -324,7 +326,7 @@ function getCoderEmbedPackageDir() {
   const childRoot = serve
     ? path.join(__dirname, "..", "child")
     : path.join(process.resourcesPath, "child");
-  return path.join(childRoot, "coder");
+  return path.join(childRoot, "aily-coder");
 }
 
 function getCoderEmbedDistPath() {
@@ -398,10 +400,7 @@ function coderEmbedMimeType(filePath) {
   return map[ext] || "application/octet-stream";
 }
 
-function ensureCoderEmbedServerStarted() {
-  if (coderEmbedHttpServer) {
-    return Promise.resolve(coderEmbedHttpServer.port);
-  }
+function ensureCoderEmbedServerStartedImpl() {
   if (serve) {
     const coderDir = getCoderEmbedPackageDir();
     const pkgJson = path.join(coderDir, "package.json");
@@ -561,6 +560,19 @@ function ensureCoderEmbedServerStarted() {
     });
     server.on("error", reject);
   });
+}
+
+function ensureCoderEmbedServerStarted() {
+  if (coderEmbedHttpServer) {
+    return Promise.resolve(coderEmbedHttpServer.port);
+  }
+  if (coderEmbedEnsureInFlight) {
+    return coderEmbedEnsureInFlight;
+  }
+  coderEmbedEnsureInFlight = ensureCoderEmbedServerStartedImpl().finally(() => {
+    coderEmbedEnsureInFlight = null;
+  });
+  return coderEmbedEnsureInFlight;
 }
 
 /** 主进程读取 i18n JSON：开发态在仓库 public；打包后 Angular 资源在 app.asar/renderer */
@@ -2013,6 +2025,7 @@ app.on("will-quit", () => {
     }
     coderEmbedHttpServer = null;
   }
+  coderEmbedEnsureInFlight = null;
 });
 
 // 在 macOS 上，当应用被激活时（如点击 Dock 图标），重新创建窗口

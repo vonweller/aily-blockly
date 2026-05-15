@@ -62,6 +62,12 @@ export let HEADER_MENU: IMenuItem[] = [
     icon: 'fa-light fa-file-circle-plus',
   },
   {
+    // 新建 Aily Code 项目（按 aily-code docs 第 3.1 节骨架创建，独立于 blockly 流程）
+    name: 'MENU.PROJECT_NEW_AILY_CODE',
+    action: 'project-new-aily-code',
+    icon: 'fa-light fa-microchip',
+  },
+  {
     name: 'MENU.PROJECT_OPEN',
     text: 'Ctrl + O',
     action: 'project-open',
@@ -159,6 +165,12 @@ export let GUIDE_MENU: IMenuItem[] = [
     action: 'project-new',
     data: { type: 'project-new', path: 'project-new', alwaysOnTop: true, width: 820, height: 550 },
     icon: 'fa-light fa-file-circle-plus',
+  },
+  {
+    // 新建 Aily Code 项目（与上方 blockly 流程独立）
+    name: 'MENU.PROJECT_NEW_AILY_CODE',
+    action: 'project-new-aily-code',
+    icon: 'fa-light fa-microchip',
   },
   {
     name: 'MENU.PROJECT_OPEN',
