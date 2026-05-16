@@ -39,6 +39,7 @@ import { MenuManagerService } from './services/menu-manager.service';
 import { ChatViewService } from './services/chat-view.service';
 import { ChatEngineService } from './services/chat-engine.service';
 import { EditCheckpointService } from './services/edit-checkpoint.service';
+import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-checkpoint-provider.service';
 import { ChatSessionShellCoordinator } from './helpers/chat-session-shell-coordinator';
 import { ChatSwitchShellCoordinator } from './helpers/chat-switch-shell-coordinator';
 import { ChatEditResourceShellCoordinator } from './helpers/chat-edit-resource-shell-coordinator';
@@ -108,6 +109,7 @@ export { ToolCallState };
     MenuManagerService,
     ChatViewService,
     EditCheckpointService,
+    GitWorkspaceCheckpointProviderService,
     ChatEngineService,
     ChatRuntimeInteractionHostService,
   ],
@@ -462,6 +464,16 @@ export class AilyChatComponent implements OnDestroy {
   dismissChatInputNotice(event?: MouseEvent): void {
     event?.stopPropagation();
     this.engine.chatInputNoticeStateService.dismissCurrentNotice();
+  }
+
+  async continueCurrentExecution(event?: MouseEvent): Promise<void> {
+    event?.stopPropagation();
+    try {
+      await this.engine.continueCurrentExecution();
+    } catch (error) {
+      console.warn('[AilyChatComponent] continue current execution failed:', error);
+      this.message.error('继续执行失败，请从最新状态重试');
+    }
   }
 
   getChatInputNoticeSeverityClass(notice: { tone?: string } | null | undefined): string {

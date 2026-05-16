@@ -312,6 +312,8 @@ export class ChatViewService {
   ): IMenuItem {
     const isCurrentModel = currentModel?.model === model.model && currentModel?.presetId === model.presetId;
     const configuredReasoningEffort = this.getConfiguredReasoningEffort(model);
+    const reasoningChildren = this.getReasoningEffortMenuItems(model)
+      .map((item) => this.createReasoningEffortItem(model, item));
     const displayModel = configuredReasoningEffort
       ? {
           ...model,
@@ -328,8 +330,37 @@ export class ChatViewService {
       tooltip: this.ailyChatConfigService.buildModelTooltip(displayModel, {
         description: this.buildPresetTooltipDescription(options),
       }),
+      children: reasoningChildren.length > 0 ? reasoningChildren : undefined,
       data: { model },
+      extra: {
+        hoverFlyout: this.buildModelHoverFlyout(model, displayModel, reasoningChildren, options),
+      },
       hideChildrenArrow: true,
+    };
+  }
+
+  private buildModelHoverFlyout(
+    model: NonNullable<ChatService['currentModel']>,
+    displayModel: NonNullable<ChatService['currentModel']>,
+    reasoningChildren: IMenuItem[],
+    options?: {
+      description?: string | null;
+      preferBillingMeta?: boolean;
+      disabled?: boolean;
+      disabledReason?: 'upgrade' | 'admin' | 'update';
+      requiredTier?: string;
+      minimumClientVersion?: string;
+    },
+  ) {
+    const description = this.buildPresetTooltipDescription(options);
+    const contextValue = this.ailyChatConfigService.getModelCapabilityContextWindowLabel(displayModel);
+
+    return {
+      title: model.name,
+      description,
+      contextLabel: contextValue && contextValue !== '自动检测' ? '上下文长度' : undefined,
+      contextValue: contextValue && contextValue !== '自动检测' ? contextValue : undefined,
+      sectionLabel: reasoningChildren.length > 0 ? '思考深度' : undefined,
     };
   }
 
@@ -458,6 +489,9 @@ export class ChatViewService {
           key: item.key,
           value: item.value,
         },
+      },
+      extra: {
+        detail: item.tooltip,
       },
     };
   }

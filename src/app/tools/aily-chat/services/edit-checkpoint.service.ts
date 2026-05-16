@@ -2,7 +2,8 @@
  * EditCheckpointService — Copilot-style 文件变更快照与回滚服务
  *
  * v2: 后端委托 aily-lex FileHistory 实现磁盘级备份/回滚，
- * 本服务仅负责 UI 协调（时间线游标、undo/redo、accept/reject、editsSummary）。
+ * 本服务仅负责 UI 协调（时间线游标、undo/redo、accept/reject、editsSummary），
+ * 以及 workspace checkpoint provider 的 wiring 与 timeline fallback-provider 组合。
  *
  * 核心设计：
  * - fileHistory: aily-lex FileHistory 实例，负责文件备份与磁盘回滚
@@ -31,6 +32,30 @@ import { EditingSessionTimelineService } from './editing-session-timeline.servic
 import { EditingTextDiffService } from './editing-text-diff.service';
 import { EditingTimelineRepository } from './editing-timeline-repository.service';
 import type { RequestEditSummary, RestorePlan } from './editing-timeline.types';
+import type { LiveHostSessionRecord } from './chat-history.service';
+
+export interface WorkspaceCheckpointDescriptor {
+  checkpointId: string;
+  requestId: string;
+  turnId?: string;
+  label: string;
+  additionalRepositoryRoots?: string[];
+}
+
+export type WorkspaceCheckpointPresentationMode = 'git' | 'compatibility' | 'unknown';
+
+export interface IWorkspaceCheckpointProvider {
+  setContext?(sessionId: string | null, workspaceRoot: string | null): void;
+  setFallbackProvider?(provider: IWorkspaceCheckpointProvider): void;
+  getPresentationMode?(): WorkspaceCheckpointPresentationMode;
+  completeCheckpoint?(descriptor: WorkspaceCheckpointDescriptor): Promise<void> | void;
+  clear?(): void;
+  createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<void> | void;
+  replaceCheckpoints(descriptors: readonly WorkspaceCheckpointDescriptor[]): Promise<void> | void;
+  buildRestorePlan(checkpointId: string): Promise<RestorePlan | null> | RestorePlan | null;
+  buildRedoPlan(checkpointId: string): Promise<RestorePlan | null> | RestorePlan | null;
+  applyRestorePlan?(plan: RestorePlan): Promise<RollbackResult | null> | RollbackResult | null;
+}
 
 // ============================
 // 类型定义
@@ -56,6 +81,7 @@ export interface TurnSnapshot {
   rounds?: TurnResponseTurn['rounds'];
   /** 本 turn 是否有文件变更 */
   hasFileEdits: boolean;
+  additionalRepositoryRoots?: string[];
   createdAt: number;
 }
 
@@ -63,6 +89,31 @@ export interface TurnSnapshot {
 export interface RollbackResult {
   rolledBackFiles: number;
   errors: string[];
+  rolledBackOnError?: boolean;
+  rollbackErrors?: string[];
+}
+
+export interface CheckpointRestoreRedoArtifact {
+  checkpointId: string;
+  turnResponses: TurnResponseTurn[];
+  redoPlan: RestorePlan | null;
+  hostRecord: LiveHostSessionRecord | null;
+}
+
+export interface EditCheckpointRebuildStateSnapshot {
+  initialFileContents: Map<string, string | null>;
+  timeline: TurnSnapshot[];
+  truncatedRequestBoundaries: TurnSnapshot[];
+  checkpointRestoreRedoArtifact: CheckpointRestoreRedoArtifact | null;
+  checkpointRestoreRedoRecoverable: boolean;
+  timelineIndex: number;
+  keptTimelineIndex: number;
+  pendingSnapshot: Map<string, string | null> | null;
+  currentTurnTrackedPaths: Set<string>;
+  currentTurnOperations: Map<string, 'create' | 'modify' | 'delete'>;
+  currentTurnBaselines: Map<string, string | null>;
+  currentTurnAdditionalRepositoryRoots: Set<string>;
+  isInTurn: boolean;
 }
 
 // ============================
@@ -81,6 +132,7 @@ export class EditCheckpointService {
 
   private timelineSessionId: string | null = null;
   private timelineWorkspaceRoot: string | null = null;
+  private workspaceCheckpointProvider: IWorkspaceCheckpointProvider | null = null;
 
   // ---- FileHistory (aily-lex) ----
   private fileHistory: FileHistory | null = null;
@@ -94,6 +146,13 @@ export class EditCheckpointService {
   setTimelineContext(sessionId: string | null | undefined, workspaceRoot: string | null | undefined): void {
     this.timelineSessionId = sessionId || null;
     this.timelineWorkspaceRoot = workspaceRoot || null;
+    this.workspaceCheckpointProvider?.setContext?.(this.timelineSessionId, this.timelineWorkspaceRoot);
+  }
+
+  setWorkspaceCheckpointProvider(provider: IWorkspaceCheckpointProvider | null): void {
+    this.workspaceCheckpointProvider = provider;
+    provider?.setFallbackProvider?.(this.createTimelineFallbackProvider());
+    provider?.setContext?.(this.timelineSessionId, this.timelineWorkspaceRoot);
   }
 
   /** 获取 FileHistory 引用 */
@@ -117,8 +176,11 @@ export class EditCheckpointService {
    */
   private truncatedRequestBoundaries: TurnSnapshot[] = [];
 
-  /** Restore 后临时保留的 canonical turnResponses，用于恢复被截断的聊天。 */
-  private checkpointRestoreRedoTurnResponses: TurnResponseTurn[] | null = null;
+  /** Restore 后临时保留的 checkpoint redo artifact，用于恢复被截断的聊天与对应 workspace plan。 */
+  private checkpointRestoreRedoArtifact: CheckpointRestoreRedoArtifact | null = null;
+
+  /** Restore redo carrier 是否仍处于可安全恢复的状态。 */
+  private checkpointRestoreRedoRecoverable = false;
 
   /** 当前在时间线中的位置 (-1 = 初始状态/所有 turn 均已 undo) */
   private timelineIndex: number = -1;
@@ -143,6 +205,9 @@ export class EditCheckpointService {
   /** 当前 turn 中各文件的操作类型 */
   private currentTurnOperations = new Map<string, 'create' | 'modify' | 'delete'>();
 
+  /** 当前 turn 命中的附加 git repository roots。 */
+  private currentTurnAdditionalRepositoryRoots = new Set<string>();
+
   /**
    * 本轮 AI 编辑前的磁盘基线（per-turn baseline）。
    * 每次 recordEdit 时捕获该文件此刻的磁盘内容，用于 getEditsSummary diff。
@@ -161,6 +226,14 @@ export class EditCheckpointService {
   summaryChanged$ = this.summarySubject.asObservable();
 
   publishSummary(summary: EditsSummary | null): void {
+    this.summarySubject.next(summary);
+  }
+
+  capturePublishedSummary(): EditsSummary | null {
+    return this.summarySubject.getValue();
+  }
+
+  restorePublishedSummary(summary: EditsSummary | null): void {
     this.summarySubject.next(summary);
   }
 
@@ -212,7 +285,8 @@ export class EditCheckpointService {
       this.timeline.splice(this.timelineIndex + 1);
     }
     this.truncatedRequestBoundaries = [];
-    this.checkpointRestoreRedoTurnResponses = null;
+    this.checkpointRestoreRedoArtifact = null;
+    this.checkpointRestoreRedoRecoverable = false;
     this.pendingSnapshot = null;
 
     if (!checkpointId) {
@@ -238,6 +312,7 @@ export class EditCheckpointService {
     this.currentTurnTrackedPaths.clear();
     this.currentTurnOperations.clear();
     this.currentTurnBaselines.clear();
+    this.currentTurnAdditionalRepositoryRoots.clear();
 
     // 预捕获所有已跟踪文件的当前磁盘态作为本轮基线
     const fs = AilyHost.get().fs;
@@ -283,6 +358,47 @@ export class EditCheckpointService {
 
     this.currentTurnTrackedPaths.add(filePath);
     this.currentTurnOperations.set(filePath, type);
+    this.captureCurrentTurnRepositoryRoot(filePath);
+  }
+
+  recordAdditionalRepositoryRoots(repositoryRoots: readonly string[] | undefined | null): void {
+    if (!repositoryRoots || repositoryRoots.length === 0) {
+      return;
+    }
+
+    const currentTurn = this.timeline[this.timelineIndex];
+    if (!currentTurn) {
+      return;
+    }
+
+    let changed = false;
+    for (const repositoryRoot of repositoryRoots) {
+      const normalizedRoot = normalizeCheckpointPath(repositoryRoot);
+      if (!normalizedRoot || this.currentTurnAdditionalRepositoryRoots.has(normalizedRoot)) {
+        continue;
+      }
+
+      this.currentTurnAdditionalRepositoryRoots.add(normalizedRoot);
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
+    this.persistTimelineCheckpoint(currentTurn);
+  }
+
+  recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void {
+    if (!paths || paths.length === 0) {
+      return;
+    }
+
+    const repositoryRoots = paths
+      .map(path => this.resolveGitRepositoryRoot(path))
+      .filter((path): path is string => !!path);
+    this.recordAdditionalRepositoryRoots(repositoryRoots);
   }
 
   /**
@@ -293,11 +409,18 @@ export class EditCheckpointService {
     if (!this.isInTurn) return;
     this.isInTurn = false;
 
-    if (this.currentTurnTrackedPaths.size > 0) {
-      const currentTurn = this.timeline[this.timelineIndex];
-      if (currentTurn) {
-        currentTurn.hasFileEdits = true;
-      }
+    const currentTurn = this.timeline[this.timelineIndex];
+    if (this.currentTurnTrackedPaths.size > 0 && currentTurn) {
+      currentTurn.hasFileEdits = true;
+    }
+
+    if (currentTurn?.checkpointId && currentTurn.turnId) {
+      currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
+      void Promise.resolve(this.getWorkspaceCheckpointProvider().completeCheckpoint?.(
+        this.toWorkspaceCheckpointDescriptor(currentTurn),
+      )).catch(error => {
+        console.warn('[EditCheckpoint] complete checkpoint failed:', error);
+      });
     }
   }
 
@@ -310,26 +433,234 @@ export class EditCheckpointService {
   get canRedo(): boolean {
     return this.timelineIndex < this.timeline.length - 1
       || this.pendingSnapshot !== null
-      || this.checkpointRestoreRedoTurnResponses !== null;
+      || this.hasRecoverableCheckpointRestoreRedoTurnResponses();
   }
 
   setCheckpointRestoreRedoTurnResponses(
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
   ): void {
-    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
-      this.checkpointRestoreRedoTurnResponses = null;
+    this.setCheckpointRestoreRedoArtifact(turnResponses && turnResponses.length > 0 ? {
+      checkpointId: this.getCheckpointIdFromTurnResponses(turnResponses) ?? 'unknown',
+      turnResponses,
+      redoPlan: null,
+      hostRecord: null,
+    } : null);
+  }
+
+  setCheckpointRestoreRedoArtifact(
+    artifact: {
+      checkpointId: string;
+      turnResponses: readonly TurnResponseTurn[];
+      redoPlan?: RestorePlan | null;
+      hostRecord?: LiveHostSessionRecord | null;
+    } | null | undefined,
+  ): void {
+    if (!artifact || !Array.isArray(artifact.turnResponses) || artifact.turnResponses.length === 0) {
+      this.checkpointRestoreRedoArtifact = null;
+      this.checkpointRestoreRedoRecoverable = false;
       return;
     }
 
-    this.checkpointRestoreRedoTurnResponses = [...turnResponses];
+    this.checkpointRestoreRedoArtifact = {
+      checkpointId: artifact.checkpointId,
+      turnResponses: artifact.turnResponses.map(turn => ({ ...turn })),
+      redoPlan: this.cloneRestorePlan(artifact.redoPlan ?? null),
+      hostRecord: this.cloneLiveHostSessionRecord(artifact.hostRecord ?? null),
+    };
+    this.checkpointRestoreRedoRecoverable = true;
+  }
+
+  async captureCheckpointRestoreRedoArtifact(
+    checkpointId: string,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    options?: {
+      hostRecord?: LiveHostSessionRecord | null;
+    },
+  ): Promise<CheckpointRestoreRedoArtifact | null> {
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      this.setCheckpointRestoreRedoArtifact(null);
+      return null;
+    }
+
+    const redoPlan = await this.getWorkspaceCheckpointProvider().buildRedoPlan(checkpointId);
+    const artifact: CheckpointRestoreRedoArtifact = {
+      checkpointId,
+      turnResponses: turnResponses.map(turn => ({ ...turn })),
+      redoPlan: this.cloneRestorePlan(redoPlan),
+      hostRecord: this.cloneLiveHostSessionRecord(options?.hostRecord ?? null),
+    };
+    this.setCheckpointRestoreRedoArtifact(artifact);
+    return this.getCheckpointRestoreRedoArtifact();
+  }
+
+  getCheckpointRestoreRedoArtifact(): CheckpointRestoreRedoArtifact | null {
+    return this.cloneCheckpointRestoreRedoArtifact(this.checkpointRestoreRedoArtifact);
   }
 
   getCheckpointRestoreRedoTurnResponses(): readonly TurnResponseTurn[] {
-    return this.checkpointRestoreRedoTurnResponses ? [...this.checkpointRestoreRedoTurnResponses] : [];
+    return this.checkpointRestoreRedoArtifact ? [...this.checkpointRestoreRedoArtifact.turnResponses] : [];
+  }
+
+  hasRecoverableCheckpointRestoreRedoTurnResponses(): boolean {
+    return this.checkpointRestoreRedoRecoverable
+      && (this.checkpointRestoreRedoArtifact?.turnResponses.length ?? 0) > 0;
+  }
+
+  markCheckpointRestoreRedoTurnResponsesUnrecoverable(): void {
+    if (!this.checkpointRestoreRedoArtifact || this.checkpointRestoreRedoArtifact.turnResponses.length === 0) {
+      this.checkpointRestoreRedoRecoverable = false;
+      return;
+    }
+
+    this.checkpointRestoreRedoRecoverable = false;
   }
 
   clearCheckpointRestoreRedoTurnResponses(): void {
-    this.checkpointRestoreRedoTurnResponses = null;
+    this.setCheckpointRestoreRedoArtifact(null);
+  }
+
+  captureRebuildState(): EditCheckpointRebuildStateSnapshot {
+    return {
+      initialFileContents: new Map(this.initialFileContents),
+      timeline: this.cloneTurnSnapshots(this.timeline),
+      truncatedRequestBoundaries: this.cloneTurnSnapshots(this.truncatedRequestBoundaries),
+      checkpointRestoreRedoArtifact: this.cloneCheckpointRestoreRedoArtifact(this.checkpointRestoreRedoArtifact),
+      checkpointRestoreRedoRecoverable: this.checkpointRestoreRedoRecoverable,
+      timelineIndex: this.timelineIndex,
+      keptTimelineIndex: this.keptTimelineIndex,
+      pendingSnapshot: this.pendingSnapshot ? new Map(this.pendingSnapshot) : null,
+      currentTurnTrackedPaths: new Set(this.currentTurnTrackedPaths),
+      currentTurnOperations: new Map(this.currentTurnOperations),
+      currentTurnBaselines: new Map(this.currentTurnBaselines),
+      currentTurnAdditionalRepositoryRoots: new Set(this.currentTurnAdditionalRepositoryRoots),
+      isInTurn: this.isInTurn,
+    };
+  }
+
+  async buildRebuildStateFromTurnResponses(
+    turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[],
+  ): Promise<EditCheckpointRebuildStateSnapshot> {
+    const currentState = this.captureRebuildState();
+    const fileHistorySnapshotsByTurnId = new Map<string, { trackedFileBackups: Record<string, unknown> }>();
+    if (this.fileHistory) {
+      try {
+        await this.fileHistory.load();
+        for (const snapshot of this.fileHistory.snapshots) {
+          if (snapshot.turnId && snapshot.turnId !== '__init__') {
+            fileHistorySnapshotsByTurnId.set(snapshot.turnId, snapshot);
+          }
+        }
+      } catch (err) {
+        console.warn('[EditCheckpoint] rebuildFromTurnResponses fileHistory load failed:', err);
+      }
+    }
+
+    const initialFileContents = new Map<string, string | null>();
+    const initId = this.fileHistory?.initialTurnId;
+    if (this.fileHistory && initId) {
+      for (const filePath of this.fileHistory.trackedFiles) {
+        const content = await this.fileHistory.readBackup(filePath, initId);
+        if (content !== undefined) {
+          initialFileContents.set(filePath, content);
+        }
+      }
+    }
+
+    const timeline = turnResponses.flatMap((turn, index) => {
+      const checkpointId = turn.request.metadata?.checkpointId;
+      if (!checkpointId) {
+        return [];
+      }
+
+      const fileHistorySnapshot = fileHistorySnapshotsByTurnId.get(turn.turnId);
+      const createdAt = turn.updatedAt
+        || turn.response?.updatedAt
+        || turn.createdAt
+        || turn.response?.createdAt
+        || Date.now();
+      return [{
+        checkpointId,
+        turnIndex: index,
+        turnStartListIndex: null,
+        responseStartListIndex: null,
+        turnId: turn.turnId,
+        requestContent: turn.request.content,
+        displayContent: turn.request.displayContent ?? turn.request.content,
+        lastRoundId: turn.rounds.at(-1)?.id,
+        rounds: turn.rounds,
+        hasFileEdits: !!fileHistorySnapshot && Object.keys(fileHistorySnapshot.trackedFileBackups ?? {}).length > 0,
+        createdAt,
+      } satisfies TurnSnapshot];
+    });
+
+    return {
+      ...currentState,
+      initialFileContents,
+      timeline,
+      truncatedRequestBoundaries: [],
+      timelineIndex: timeline.length - 1,
+      keptTimelineIndex: -1,
+      pendingSnapshot: null,
+      currentTurnTrackedPaths: new Set<string>(),
+      currentTurnOperations: new Map<string, 'create' | 'modify' | 'delete'>(),
+      currentTurnBaselines: new Map<string, string | null>(),
+      currentTurnAdditionalRepositoryRoots: new Set<string>(),
+      isInTurn: false,
+    };
+  }
+
+  async buildPublishedSummaryForRebuildState(
+    snapshot: EditCheckpointRebuildStateSnapshot,
+  ): Promise<EditsSummary | null> {
+    const previousState = this.captureRebuildState();
+    const previousSummary = this.capturePublishedSummary();
+
+    this.applyRebuildStateInternal(snapshot, { syncProjection: false });
+    try {
+      return await this.getEditsSummary();
+    } finally {
+      this.applyRebuildStateInternal(previousState, { syncProjection: false });
+      this.restorePublishedSummary(previousSummary);
+    }
+  }
+
+  applyRebuildState(snapshot: EditCheckpointRebuildStateSnapshot): void {
+    this.applyRebuildStateInternal(snapshot, { syncProjection: true });
+  }
+
+  applyRebuildStateWithSummary(
+    snapshot: EditCheckpointRebuildStateSnapshot,
+    summary: EditsSummary | null,
+  ): void {
+    this.applyRebuildStateInternal(snapshot, { syncProjection: true });
+    this.publishSummary(summary);
+  }
+
+  private applyRebuildStateInternal(
+    snapshot: EditCheckpointRebuildStateSnapshot,
+    options: { syncProjection: boolean },
+  ): void {
+    this.initialFileContents = new Map(snapshot.initialFileContents);
+    this.timeline = this.cloneTurnSnapshots(snapshot.timeline);
+    this.truncatedRequestBoundaries = this.cloneTurnSnapshots(snapshot.truncatedRequestBoundaries);
+    this.checkpointRestoreRedoArtifact = this.cloneCheckpointRestoreRedoArtifact(snapshot.checkpointRestoreRedoArtifact);
+    this.checkpointRestoreRedoRecoverable = snapshot.checkpointRestoreRedoRecoverable;
+    this.timelineIndex = snapshot.timelineIndex;
+    this.keptTimelineIndex = snapshot.keptTimelineIndex;
+    this.pendingSnapshot = snapshot.pendingSnapshot ? new Map(snapshot.pendingSnapshot) : null;
+    this.currentTurnTrackedPaths = new Set(snapshot.currentTurnTrackedPaths);
+    this.currentTurnOperations = new Map(snapshot.currentTurnOperations);
+    this.currentTurnBaselines = new Map(snapshot.currentTurnBaselines);
+    this.currentTurnAdditionalRepositoryRoots = new Set(snapshot.currentTurnAdditionalRepositoryRoots);
+    this.isInTurn = snapshot.isInTurn;
+    if (options.syncProjection) {
+      this.replaceTimelineCheckpointsFromSnapshots(this.timeline);
+      this.syncTimelinePointerFromSnapshots(this.timeline);
+    }
+  }
+
+  restoreRebuildState(snapshot: EditCheckpointRebuildStateSnapshot): void {
+    this.applyRebuildState(snapshot);
   }
 
   /**
@@ -491,73 +822,9 @@ export class EditCheckpointService {
   async rebuildFromTurnResponses(
     turnResponses: readonly Pick<TurnResponseTurn, 'turnId' | 'request' | 'rounds' | 'createdAt' | 'updatedAt' | 'response'>[],
   ): Promise<boolean> {
-    this.timeline = [];
-    this.truncatedRequestBoundaries = [];
-    this.checkpointRestoreRedoTurnResponses = null;
-    this.timelineIndex = -1;
-    this.keptTimelineIndex = -1;
-    this.pendingSnapshot = null;
-    this.currentTurnTrackedPaths.clear();
-    this.currentTurnOperations.clear();
-    this.currentTurnBaselines.clear();
-    this.isInTurn = false;
-
-    const fileHistorySnapshotsByTurnId = new Map<string, { trackedFileBackups: Record<string, unknown> }>();
-    if (this.fileHistory) {
-      try {
-        await this.fileHistory.load();
-        for (const snapshot of this.fileHistory.snapshots) {
-          if (snapshot.turnId && snapshot.turnId !== '__init__') {
-            fileHistorySnapshotsByTurnId.set(snapshot.turnId, snapshot);
-          }
-        }
-      } catch (err) {
-        console.warn('[EditCheckpoint] rebuildFromTurnResponses fileHistory load failed:', err);
-      }
-    }
-
-    this.initialFileContents.clear();
-    const initId = this.fileHistory?.initialTurnId;
-    if (this.fileHistory && initId) {
-      for (const filePath of this.fileHistory.trackedFiles) {
-        const content = await this.fileHistory.readBackup(filePath, initId);
-        if (content !== undefined) {
-          this.initialFileContents.set(filePath, content);
-        }
-      }
-    }
-
-    this.timeline = turnResponses.flatMap((turn, index) => {
-      const checkpointId = turn.request.metadata?.checkpointId;
-      if (!checkpointId) {
-        return [];
-      }
-
-      const fileHistorySnapshot = fileHistorySnapshotsByTurnId.get(turn.turnId);
-      const createdAt = turn.updatedAt
-        || turn.response?.updatedAt
-        || turn.createdAt
-        || turn.response?.createdAt
-        || Date.now();
-      return [{
-        checkpointId,
-        turnIndex: index,
-        turnStartListIndex: null,
-        responseStartListIndex: null,
-        turnId: turn.turnId,
-        requestContent: turn.request.content,
-        displayContent: turn.request.displayContent ?? turn.request.content,
-        lastRoundId: turn.rounds.at(-1)?.id,
-        rounds: turn.rounds,
-        hasFileEdits: !!fileHistorySnapshot && Object.keys(fileHistorySnapshot.trackedFileBackups ?? {}).length > 0,
-        createdAt,
-      } satisfies TurnSnapshot];
-    });
-    this.timelineIndex = this.timeline.length - 1;
-    this.replaceTimelineCheckpointsFromSnapshots(this.timeline);
-    this.syncTimelinePointerFromSnapshots(this.timeline);
-
-    return this.timeline.length > 0;
+    const snapshot = await this.buildRebuildStateFromTurnResponses(turnResponses);
+    this.applyRebuildState(snapshot);
+    return snapshot.timeline.length > 0;
   }
 
   // ==================== 截断（用于 restoreToCheckpoint / regenerate） ====================
@@ -580,35 +847,6 @@ export class EditCheckpointService {
     this.keptTimelineIndex = this.timeline.length - 1;
 
     return true;
-  }
-
-  async buildRestorePlanForCheckpoint(checkpointId: string): Promise<RestorePlan | null> {
-    const timelineService = this.getEditingSessionTimelineService();
-    if (!timelineService) {
-      return null;
-    }
-
-    const checkpoint = timelineService.getCheckpoint(checkpointId);
-    if (!checkpoint) {
-      return null;
-    }
-
-    return timelineService.buildPlanForEpoch(checkpointId, checkpoint.epoch);
-  }
-
-  async buildRedoPlanForCheckpoint(checkpointId: string): Promise<RestorePlan | null> {
-    const timelineService = this.getEditingSessionTimelineService();
-    if (!timelineService) {
-      return null;
-    }
-
-    const checkpoint = timelineService.getCheckpoint(checkpointId);
-    if (!checkpoint) {
-      return null;
-    }
-
-    const range = timelineService.getRequestEpochRange(checkpoint.requestId);
-    return timelineService.buildPlanForEpoch(checkpointId, range?.lastEpoch ?? checkpoint.epoch);
   }
 
   // ==================== 查询 ====================
@@ -668,11 +906,19 @@ export class EditCheckpointService {
     const summarySnapshot = checkpointId
       ? (this.getSnapshotByCheckpointId(checkpointId) ?? latestSnapshot)
       : latestSnapshot;
-    const summaryTurnId = summarySnapshot?.turnId;
 
     if (!checkpointId && this.keptTimelineIndex >= this.timelineIndex && this.currentTurnTrackedPaths.size === 0) {
       return null;
     }
+
+    if (!checkpointId) {
+      const sessionSummary = await this.getSessionDirtyEditsSummary(summarySnapshot);
+      if (sessionSummary) {
+        return sessionSummary;
+      }
+    }
+
+    const summaryTurnId = summarySnapshot?.turnId;
 
     if (summaryTurnId) {
       const requestSummary = await this.getTimelineRequestSummary(summaryTurnId);
@@ -738,7 +984,8 @@ export class EditCheckpointService {
     this.initialFileContents.clear();
     this.timeline = [];
     this.truncatedRequestBoundaries = [];
-    this.checkpointRestoreRedoTurnResponses = null;
+    this.checkpointRestoreRedoArtifact = null;
+    this.checkpointRestoreRedoRecoverable = false;
     this.timelineIndex = -1;
     this.keptTimelineIndex = -1;
     this.pendingSnapshot = null;
@@ -749,6 +996,8 @@ export class EditCheckpointService {
     this.fileHistory = null;
     this.timelineSessionId = null;
     this.timelineWorkspaceRoot = null;
+    this.workspaceCheckpointProvider?.clear?.();
+    this.workspaceCheckpointProvider = null;
   }
 
   // ==================== 内部辅助方法 ====================
@@ -774,6 +1023,7 @@ export class EditCheckpointService {
     const options = (fh as any)?._options as { sessionId?: string; cwd?: string } | undefined;
     this.timelineSessionId = options?.sessionId ?? this.timelineSessionId;
     this.timelineWorkspaceRoot = options?.cwd ?? this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    this.workspaceCheckpointProvider?.setContext?.(this.timelineSessionId, this.timelineWorkspaceRoot);
   }
 
   private getEditingDiffService(): EditingDiffService | null {
@@ -821,19 +1071,6 @@ export class EditCheckpointService {
     );
   }
 
-  async applyRestorePlan(plan: RestorePlan): Promise<RollbackResult> {
-    const applyService = this.getEditingFileApplyService();
-    if (!applyService) {
-      return { rolledBackFiles: 0, errors: ['缺少 timeline apply 上下文'] };
-    }
-
-    const result = await applyService.apply(plan);
-    return {
-      rolledBackFiles: result.appliedFiles,
-      errors: result.errors,
-    };
-  }
-
   private updateTimelinePointerForPlan(plan: RestorePlan, snapshot: TurnSnapshot | null): void {
     const timelineService = this.getEditingSessionTimelineService();
     if (!timelineService) {
@@ -875,35 +1112,116 @@ export class EditCheckpointService {
   }
 
   private persistTimelineCheckpoint(snapshot: TurnSnapshot): void {
-    const timelineService = this.getEditingSessionTimelineService();
-    if (!timelineService || !snapshot.checkpointId || !snapshot.turnId) {
+    if (!snapshot.checkpointId || !snapshot.turnId) {
       return;
     }
 
-    timelineService.createCheckpoint({
-      checkpointId: snapshot.checkpointId,
-      requestId: snapshot.turnId,
-      turnId: snapshot.turnId,
-      label: snapshot.displayContent ?? snapshot.requestContent ?? '',
+    void Promise.resolve(this.getWorkspaceCheckpointProvider().createCheckpoint(
+      this.toWorkspaceCheckpointDescriptor(snapshot),
+    )).catch(error => {
+      console.warn('[EditCheckpoint] create checkpoint failed:', error);
     });
   }
 
   private replaceTimelineCheckpointsFromSnapshots(snapshots: readonly TurnSnapshot[]): void {
-    const timelineService = this.getEditingSessionTimelineService();
-    if (!timelineService) {
-      return;
-    }
-
-    timelineService.replaceCheckpoints(
+    void Promise.resolve(this.getWorkspaceCheckpointProvider().replaceCheckpoints(
       snapshots
         .filter((snapshot): snapshot is TurnSnapshot & { turnId: string } => !!snapshot.checkpointId && !!snapshot.turnId)
-        .map(snapshot => ({
-          checkpointId: snapshot.checkpointId,
-          requestId: snapshot.turnId,
-          turnId: snapshot.turnId,
-          label: snapshot.displayContent ?? snapshot.requestContent ?? '',
-        })),
-    );
+        .map(snapshot => this.toWorkspaceCheckpointDescriptor(snapshot)),
+    )).catch(error => {
+      console.warn('[EditCheckpoint] replace checkpoints failed:', error);
+    });
+  }
+
+  private getWorkspaceCheckpointProvider(): IWorkspaceCheckpointProvider {
+    if (this.workspaceCheckpointProvider) {
+      return this.workspaceCheckpointProvider;
+    }
+
+    return this.createTimelineFallbackProvider();
+  }
+
+  private createTimelineFallbackProvider(): IWorkspaceCheckpointProvider {
+    return {
+      getPresentationMode: () => 'compatibility',
+      createCheckpoint: (descriptor: WorkspaceCheckpointDescriptor) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return;
+        }
+        timelineService.createCheckpoint({
+          checkpointId: descriptor.checkpointId,
+          requestId: descriptor.requestId,
+          turnId: descriptor.turnId,
+          label: descriptor.label,
+        });
+      },
+      replaceCheckpoints: (descriptors: readonly WorkspaceCheckpointDescriptor[]) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return;
+        }
+        timelineService.replaceCheckpoints(
+          descriptors.map(descriptor => ({
+            checkpointId: descriptor.checkpointId,
+            requestId: descriptor.requestId,
+            turnId: descriptor.turnId,
+            label: descriptor.label,
+          })),
+        );
+      },
+      buildRestorePlan: async (checkpointId: string) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+
+        const checkpoint = timelineService.getCheckpoint(checkpointId);
+        if (!checkpoint) {
+          return null;
+        }
+
+        return timelineService.buildPlanForEpoch(checkpointId, checkpoint.epoch);
+      },
+      buildRedoPlan: async (checkpointId: string) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+
+        const checkpoint = timelineService.getCheckpoint(checkpointId);
+        if (!checkpoint) {
+          return null;
+        }
+
+        const range = timelineService.getRequestEpochRange(checkpoint.requestId);
+        return timelineService.buildPlanForEpoch(checkpointId, range?.lastEpoch ?? checkpoint.epoch);
+      },
+      applyRestorePlan: async (plan: RestorePlan) => {
+        if (plan.applyMetadata?.kind === 'git-checkpoint') {
+          return {
+            rolledBackFiles: 0,
+            errors: ['git-backed checkpoint restore plan 无法由 workspace checkpoint provider 应用'],
+            rolledBackOnError: true,
+          };
+        }
+
+        const applyService = this.getEditingFileApplyService();
+        if (!applyService) {
+          return { rolledBackFiles: 0, errors: ['缺少 timeline apply 上下文'] };
+        }
+
+        const result = await applyService.apply(plan);
+        return {
+          rolledBackFiles: result.appliedFiles,
+          errors: result.errors,
+          ...(typeof result.rolledBackOnError === 'boolean'
+            ? { rolledBackOnError: result.rolledBackOnError }
+            : {}),
+          ...(result.rollbackErrors ? { rollbackErrors: result.rollbackErrors } : {}),
+        };
+      },
+    };
   }
 
   private async getTimelineRequestSummary(turnId: string): Promise<RequestEditSummary | null> {
@@ -914,16 +1232,56 @@ export class EditCheckpointService {
     return diffService.getRequestSummary(turnId);
   }
 
+  private async getSessionDirtyEditsSummary(
+    summarySnapshot: TurnSnapshot | undefined,
+  ): Promise<EditsSummary | null> {
+    const diffService = this.getEditingDiffService();
+    const timelineService = this.getEditingSessionTimelineService();
+    if (!diffService || !timelineService) {
+      return null;
+    }
+
+    const currentEpoch = timelineService.getCurrentEpoch();
+    const fromEpoch = this.getSessionSummaryStartEpoch(timelineService);
+    const summary = await diffService.getSummaryBetweenEpochs(fromEpoch, currentEpoch);
+    return this.toEditsSummaryFromStats(summary?.stats ?? [], summarySnapshot, summarySnapshot?.turnId);
+  }
+
+  private getSessionSummaryStartEpoch(
+    timelineService: EditingSessionTimelineService,
+  ): number {
+    if (this.keptTimelineIndex < 0) {
+      return 0;
+    }
+
+    const keptSnapshot = this.timeline[this.keptTimelineIndex];
+    if (!keptSnapshot?.turnId) {
+      return 0;
+    }
+
+    const range = timelineService.getRequestEpochRange(keptSnapshot.turnId);
+    return range?.lastEpoch ?? 0;
+  }
+
   private toEditsSummaryFromRequestSummary(
     summary: RequestEditSummary,
     snapshot: TurnSnapshot | undefined,
     checkpointId?: string,
   ): EditsSummary | null {
-    if (!summary.stats.length) {
+    return this.toEditsSummaryFromStats(summary.stats, snapshot, summary.requestId, checkpointId || summary.checkpointId);
+  }
+
+  private toEditsSummaryFromStats(
+    stats: RequestEditSummary['stats'],
+    snapshot: TurnSnapshot | undefined,
+    fallbackTurnId?: string,
+    checkpointId?: string,
+  ): EditsSummary | null {
+    if (!stats.length) {
       return null;
     }
 
-    const files = summary.stats.map(stat => ({
+    const files = stats.map(stat => ({
       path: this.getDisplayPath(stat.uri),
       fullPath: stat.uri,
       type: this.resolveSummaryFileType(stat.operationTypes),
@@ -941,8 +1299,8 @@ export class EditCheckpointService {
     );
 
     return {
-      checkpointId: checkpointId || snapshot?.checkpointId || summary.checkpointId || 'current',
-      turnContext: this.getTurnContextForSnapshot(snapshot, summary.requestId),
+      checkpointId: checkpointId || snapshot?.checkpointId || 'current',
+      turnContext: this.getTurnContextForSnapshot(snapshot, fallbackTurnId),
       fileCount: files.length,
       totalAdded: totals.totalAdded,
       totalRemoved: totals.totalRemoved,
@@ -1159,6 +1517,130 @@ export class EditCheckpointService {
     }
   }
 
+  private captureCurrentTurnRepositoryRoot(filePath: string): void {
+    const repositoryRoot = this.resolveGitRepositoryRoot(filePath);
+    this.recordAdditionalRepositoryRoots(repositoryRoot ? [repositoryRoot] : undefined);
+  }
+
+  private getCurrentTurnAdditionalRepositoryRoots(): string[] {
+    const workspaceRoot = this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    const normalizedWorkspaceRoot = workspaceRoot ? normalizeCheckpointPath(workspaceRoot) : null;
+    return [...this.currentTurnAdditionalRepositoryRoots]
+      .map(root => normalizeCheckpointPath(root))
+      .filter(root => !!root && root !== normalizedWorkspaceRoot)
+      .sort((left, right) => left.localeCompare(right));
+  }
+
+  private resolveGitRepositoryRoot(filePath: string): string | null {
+    const workspaceRoot = this.timelineWorkspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!workspaceRoot) {
+      return null;
+    }
+
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    let current = normalizeCheckpointPath(isAbsoluteCheckpointPath(filePath) ? filePath : pathUtil.join(workspaceRoot, filePath));
+
+    while (current) {
+      const gitMarker = normalizeCheckpointPath(pathUtil.join(current, '.git'));
+      if (fs.existsSync(gitMarker)) {
+        return current;
+      }
+
+      const parent = normalizeCheckpointPath(dirnameCheckpointPath(current));
+      if (!parent || parent === current) {
+        break;
+      }
+      current = parent;
+    }
+
+    return null;
+  }
+
+  private toWorkspaceCheckpointDescriptor(snapshot: TurnSnapshot): WorkspaceCheckpointDescriptor {
+    if (!snapshot.turnId) {
+      throw new Error('Turn snapshot is missing turnId for workspace checkpoint descriptor');
+    }
+
+    const additionalRepositoryRoots = snapshot.additionalRepositoryRoots
+      ?.map(root => normalizeCheckpointPath(root))
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right));
+    return {
+      checkpointId: snapshot.checkpointId,
+      requestId: snapshot.turnId,
+      turnId: snapshot.turnId,
+      label: snapshot.displayContent ?? snapshot.requestContent ?? '',
+      ...(additionalRepositoryRoots && additionalRepositoryRoots.length > 0 ? { additionalRepositoryRoots } : {}),
+    };
+  }
+
+  private cloneTurnSnapshots(snapshots: readonly TurnSnapshot[]): TurnSnapshot[] {
+    return snapshots.map(snapshot => ({
+      ...snapshot,
+      ...(snapshot.rounds ? { rounds: [...snapshot.rounds] } : {}),
+      ...(snapshot.additionalRepositoryRoots ? { additionalRepositoryRoots: [...snapshot.additionalRepositoryRoots] } : {}),
+    }));
+  }
+
+  private cloneCheckpointRestoreRedoArtifact(
+    artifact: CheckpointRestoreRedoArtifact | null | undefined,
+  ): CheckpointRestoreRedoArtifact | null {
+    if (!artifact) {
+      return null;
+    }
+
+    return {
+      checkpointId: artifact.checkpointId,
+      turnResponses: artifact.turnResponses.map(turn => ({ ...turn })),
+      redoPlan: this.cloneRestorePlan(artifact.redoPlan),
+      hostRecord: this.cloneLiveHostSessionRecord(artifact.hostRecord),
+    };
+  }
+
+  private cloneLiveHostSessionRecord(record: LiveHostSessionRecord | null | undefined): LiveHostSessionRecord | null {
+    if (!record) {
+      return null;
+    }
+
+    return JSON.parse(JSON.stringify(record)) as LiveHostSessionRecord;
+  }
+
+  private cloneRestorePlan(plan: RestorePlan | null | undefined): RestorePlan | null {
+    if (!plan) {
+      return null;
+    }
+
+    return {
+      checkpointId: plan.checkpointId,
+      epoch: plan.epoch,
+      files: plan.files.map(file => ({ ...file })),
+      ...(plan.applyMetadata ? { applyMetadata: { ...plan.applyMetadata } } : {}),
+    };
+  }
+
+  private getCheckpointIdFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): string | null {
+    const checkpointId = turnResponses.at(-1)?.request?.metadata?.checkpointId;
+    return typeof checkpointId === 'string' && checkpointId.length > 0 ? checkpointId : null;
+  }
+
+}
+
+function normalizeCheckpointPath(target: string): string {
+  return target.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+function dirnameCheckpointPath(target: string): string {
+  const normalized = normalizeCheckpointPath(target);
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return normalized;
+  }
+  return normalized.slice(0, lastSlash);
+}
+
+function isAbsoluteCheckpointPath(target: string): boolean {
+  return /^[A-Za-z]:\//.test(normalizeCheckpointPath(target)) || normalizeCheckpointPath(target).startsWith('/');
 }
 
 // ============================

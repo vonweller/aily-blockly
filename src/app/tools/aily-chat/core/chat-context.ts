@@ -27,7 +27,7 @@ import type { ChatHistoryService } from '../services/chat-history.service';
 import type { RepetitionDetectionService } from '../services/repetition-detection.service';
 import type { ContextBudgetFacade } from '../services/context-budget-facade';
 import type { AbsAutoSyncService } from '../services/abs-auto-sync.service';
-import type { EditCheckpointService } from '../services/edit-checkpoint.service';
+import type { EditCheckpointService, IWorkspaceCheckpointProvider } from '../services/edit-checkpoint.service';
 import type { ScrollManagerService } from '../services/scroll-manager.service';
 import type { ResourceManagerService } from '../services/resource-manager.service';
 import type { MenuManagerService } from '../services/menu-manager.service';
@@ -132,6 +132,7 @@ export interface IChatServiceAccess {
   readonly languageModelsService: AilyChatLanguageModelsService;
   readonly mcpService: McpService;
   readonly editCheckpointService: EditCheckpointService;
+  readonly workspaceCheckpointProvider?: IWorkspaceCheckpointProvider;
   readonly contextBudgetService: ContextBudgetFacade;
   readonly repetitionDetectionService: RepetitionDetectionService;
   readonly absAutoSyncService: AbsAutoSyncService;

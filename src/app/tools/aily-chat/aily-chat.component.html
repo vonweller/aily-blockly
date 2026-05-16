@@ -58,6 +58,7 @@
             [isWaiting]="vm.isWaiting"
             [turnContext]="item.turnContext"
             [turnResponse]="item.turnContext?.turnResponse ?? null"
+            [workspaceCheckpointPresentationMode]="vm.workspaceCheckpointPresentationMode"
             [exclusiveEditTurnId]="userMessageEditingTurnId"
             (editSessionOpened)="onUserMessageEditSessionOpened($event)"
             (editSessionClosed)="onUserMessageEditSessionClosed()"
@@ -116,6 +117,37 @@
                   class="chat-input-notification-action-button secondary"
                   (click)="openAuthQuotaUsage($event)">
                   {{ chatInputNotice.actionLabel }}
+                </button>
+              </div>
+              }
+            </div>
+            }
+          </div>
+        </div>
+        }
+        @if(vm.interactionBudgetSnapshot?.continueRequired) {
+        <div inputPartWidget class="chat-input-notification-container has-notification runtime-continue-notice-container">
+          <div
+            class="runtime-continue-input-notice chat-input-notification chat-status-widget severity-warning"
+            role="status"
+            aria-live="polite">
+            <div class="chat-input-notification-header">
+              <i class="chat-input-notification-icon fa-light fa-forward-step"></i>
+              <div class="chat-input-notification-title">{{ vm.interactionBudgetSnapshot?.continueTitle }}</div>
+            </div>
+            @if (vm.interactionBudgetSnapshot?.continueDescription || vm.interactionBudgetSnapshot?.continueActionLabel) {
+            <div class="chat-input-notification-body">
+              @if (vm.interactionBudgetSnapshot?.continueDescription) {
+              <div class="chat-input-notification-description">{{ vm.interactionBudgetSnapshot?.continueDescription }}</div>
+              }
+              @if(vm.interactionBudgetSnapshot?.continueActionLabel) {
+              <div class="chat-input-notification-actions">
+                <button
+                  type="button"
+                  class="chat-input-notification-action-button secondary"
+                  [disabled]="vm.isWaiting"
+                  (click)="continueCurrentExecution($event)">
+                  {{ vm.interactionBudgetSnapshot?.continueActionLabel }}
                 </button>
               </div>
               }
@@ -191,11 +223,6 @@
               (modeClick)="switchShellCoordinator.toggleModeMenu($event)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
-            @if(vm.hasReasoningEffortOptions && vm.currentReasoningEffortMenuItems.length > 0) {
-            <div class="btn mode ccenter reasoning-toggle" (click)="toggleReasoningMenu($event)">
-              <span class="reasoning-label">{{ vm.currentReasoningEffortDisplayLabel }}</span>
-            </div>
-            }
             <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
             @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
             <div class="token-budget-indicator ccenter"
@@ -265,6 +292,9 @@
               <ng-template #interactionBudgetTooltip>
                 <div style="font-size:11px;line-height:1.6;min-width:220px">
                   <div style="font-weight:600;margin-bottom:2px">{{ vm.interactionBudgetSnapshot.title }}</div>
+                  @if(vm.interactionBudgetSnapshot.descriptionText) {
+                  <div style="margin-bottom:4px;opacity:0.78">{{ vm.interactionBudgetSnapshot.descriptionText }}</div>
+                  }
                   @if(vm.interactionBudgetSnapshot.hardStopMessage) {
                   <div style="margin-bottom:4px;color:#e06c75">{{ vm.interactionBudgetSnapshot.hardStopMessage }}</div>
                   }
@@ -294,6 +324,7 @@
               }
             </div>
             }
+            <!-- 临时隐藏：shared auth quota 已迁移到用户中心中展示，先保留原块便于后续回滚。
             @if(vm.authQuotaSnapshot$ | async; as authQuotaSnapshot) {
             <div class="btn mode auth-quota-indicator ccenter"
               [class.warn]="authQuotaSnapshot.severity === 'warning'"
@@ -317,6 +348,7 @@
               </span>
             </div>
             }
+            -->
             @if(vm.requestQuotaSnapshot$ | async; as requestQuotaSnapshot) {
             <div class="btn mode request-quota-indicator ccenter"
               [class.warn]="requestQuotaSnapshot.severity === 'warning'"
@@ -384,11 +416,6 @@
 @if(menuManager.showActionMenu){
 <app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
-}
-
-@if(menuManager.showReasoningMenu){
-<app-menu class="reasoning-menu" [menuList]="vm.currentReasoningEffortMenuItems" [position]="menuManager.reasoningMenuPosition" [width]="220" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="handleReasoningMenuClick($event)"></app-menu>
 }
 
 

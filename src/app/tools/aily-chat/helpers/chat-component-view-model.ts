@@ -6,6 +6,7 @@ import type { ChatInputNotice } from '../services/chat-input-notice';
 import type { ContextBudgetSnapshot } from '../services/context-budget-snapshot';
 import type { InteractionBudgetSnapshot } from '../services/interaction-budget-snapshot';
 import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
+import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
 import type { HostRequestModel } from './host-turn-response-state';
@@ -30,6 +31,7 @@ interface ChatEngineViewLike {
   readonly currentModelChipLabel: string;
   readonly currentModelTooltip: string;
   readonly currentModelBillingLabel: string | undefined;
+  readonly workspaceCheckpointPresentationMode: WorkspaceCheckpointPresentationMode;
   readonly contextBudget$: Observable<ContextBudgetSnapshot>;
   readonly authQuotaSnapshot$: Observable<AuthQuotaSnapshot | null>;
   readonly chatInputNotice$: Observable<ChatInputNotice | null>;
@@ -158,6 +160,10 @@ export class ChatComponentViewModel {
 
   get currentModelBillingLabel(): string | undefined {
     return this.deps.engine.currentModelBillingLabel;
+  }
+
+  get workspaceCheckpointPresentationMode(): WorkspaceCheckpointPresentationMode {
+    return this.deps.engine.workspaceCheckpointPresentationMode;
   }
 
   get contextBudget$(): Observable<ContextBudgetSnapshot> {

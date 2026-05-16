@@ -2,6 +2,13 @@ import { AilyHost } from '../core/host';
 import { EditingContentStore } from './editing-content-store.service';
 import type { EditingFileApplyResult, RestorePlan } from './editing-timeline.types';
 
+type AppliedFileSnapshot = {
+  uri: string;
+  existed: boolean;
+  contentKind: 'text' | 'binary' | 'raw';
+  content: string | Uint8Array | unknown | null;
+};
+
 export class EditingFileApplyService {
   constructor(
     private readonly contentStore: EditingContentStore,
@@ -14,12 +21,14 @@ export class EditingFileApplyService {
     const pathUtil = AilyHost.get().path;
     let appliedFiles = 0;
     const errors: string[] = [];
+    const appliedSnapshots: AppliedFileSnapshot[] = [];
 
     for (const file of plan.files) {
       try {
         const currentExists = fs.existsSync(file.uri);
         if (!file.exists) {
           if (currentExists) {
+            appliedSnapshots.push(this.captureCurrentState(file.uri, 'raw'));
             fs.unlinkSync(file.uri);
             appliedFiles++;
           }
@@ -39,6 +48,7 @@ export class EditingFileApplyService {
           if (currentBytes && areBytesEqual(currentBytes, targetBytes)) {
             continue;
           }
+          appliedSnapshots.push(this.captureCurrentState(file.uri, 'binary'));
           (fs.writeFileSync as any)(file.uri, targetBytes);
           appliedFiles++;
           continue;
@@ -51,14 +61,93 @@ export class EditingFileApplyService {
         if (currentExists && currentContent === targetContent) {
           continue;
         }
+        appliedSnapshots.push(this.captureCurrentState(file.uri, 'text'));
         fs.writeFileSync(file.uri, targetContent, 'utf-8');
         appliedFiles++;
       } catch (error: any) {
         errors.push(`恢复 ${file.uri} 失败: ${error?.message || String(error)}`);
+        break;
       }
     }
 
-    return { appliedFiles, errors };
+    if (errors.length === 0) {
+      return { appliedFiles, errors };
+    }
+
+    const rollbackErrors = this.rollbackAppliedSnapshots(appliedSnapshots);
+
+    return {
+      appliedFiles: rollbackErrors.length === 0 ? 0 : appliedFiles,
+      errors,
+      rolledBackOnError: rollbackErrors.length === 0,
+      ...(rollbackErrors.length > 0 ? { rollbackErrors } : {}),
+    };
+  }
+
+  private captureCurrentState(filePath: string, contentKind: 'text' | 'binary' | 'raw'): AppliedFileSnapshot {
+    const fs = AilyHost.get().fs;
+    const exists = fs.existsSync(filePath);
+    if (!exists) {
+      return {
+        uri: filePath,
+        existed: false,
+        contentKind,
+        content: null,
+      };
+    }
+
+    return {
+      uri: filePath,
+      existed: true,
+      contentKind,
+      content: contentKind === 'binary'
+        ? normalizeBytes(fs.readFileSync(filePath))
+        : contentKind === 'text'
+          ? fs.readFileSync(filePath, 'utf-8')
+          : fs.readFileSync(filePath),
+    };
+  }
+
+  private rollbackAppliedSnapshots(snapshots: readonly AppliedFileSnapshot[]): string[] {
+    if (snapshots.length === 0) {
+      return [];
+    }
+
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    const rollbackErrors: string[] = [];
+
+    for (const snapshot of [...snapshots].reverse()) {
+      try {
+        if (!snapshot.existed) {
+          if (fs.existsSync(snapshot.uri)) {
+            fs.unlinkSync(snapshot.uri);
+          }
+          continue;
+        }
+
+        const dirPath = pathUtil.dirname(snapshot.uri);
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+
+        if (snapshot.contentKind === 'binary') {
+          (fs.writeFileSync as any)(snapshot.uri, snapshot.content ?? new Uint8Array());
+          continue;
+        }
+
+        if (snapshot.contentKind === 'raw') {
+          (fs.writeFileSync as any)(snapshot.uri, snapshot.content ?? '');
+          continue;
+        }
+
+        fs.writeFileSync(snapshot.uri, (snapshot.content as string) ?? '', 'utf-8');
+      } catch (error: any) {
+        rollbackErrors.push(`回滚 ${snapshot.uri} 失败: ${error?.message || String(error)}`);
+      }
+    }
+
+    return rollbackErrors;
   }
 }
 

@@ -24,6 +24,8 @@ import { HostSessionRestoreBridge } from './host-session-restore-bridge';
 import { HostSessionSaveBridge } from './host-session-save-bridge';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import type { ResourceItem } from '../core/chat-types';
+import type { HostResponseProjection } from './host-turn-response-state';
+import type { ChatListItem } from '../services/chat-history.service';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -120,8 +122,13 @@ export class SessionLifecycleHelper {
     this._viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
-  buildHostSessionRecord(): LiveHostSessionRecord | null {
-    return this._hostSessionSaveBridge.buildHostSessionRecord();
+  buildHostSessionRecord(options?: {
+    previousHostProjection?: HostResponseProjection | null;
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+    turnResponsesOverride?: readonly import('aily-lex/browser').TurnResponseTurn[];
+  }): LiveHostSessionRecord | null {
+    return this._hostSessionSaveBridge.buildHostSessionRecord(options);
   }
 
   async forkFromTurn(options: {
@@ -189,8 +196,11 @@ export class SessionLifecycleHelper {
 
   // ==================== 会话持久化 ====================
 
-  saveCurrentSession(): void {
-    if (this._hostSessionSaveBridge.saveCurrentSession()) {
+  saveCurrentSession(options?: {
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+  }): void {
+    if (this._hostSessionSaveBridge.saveCurrentSession(options)) {
       this.refreshHistoryList();
     }
   }

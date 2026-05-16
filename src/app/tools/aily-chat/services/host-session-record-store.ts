@@ -55,6 +55,27 @@ function cloneContinuationDiagnostics(
   };
 }
 
+function normalizeRoundSummary(summary: unknown): string | undefined {
+  return typeof summary === 'string' && summary.trim()
+    ? summary.trim()
+    : undefined;
+}
+
+function cloneTurnRound(round: TurnResponseTurn['rounds'][number]): TurnResponseTurn['rounds'][number] {
+  const summary = normalizeRoundSummary(round.summary);
+
+  return {
+    id: round.id,
+    assistantText: round.assistantText,
+    toolCalls: round.toolCalls.map(toolCall => ({
+      ...toolCall,
+      input: { ...toolCall.input },
+    })),
+    timestamp: round.timestamp,
+    ...(summary ? { summary } : {}),
+  };
+}
+
 export interface HostSessionRecordStoreOptions {
   projectChatDir: string;
   getGlobalChatDataDir: () => string;
@@ -221,7 +242,7 @@ export class HostSessionRecordStore {
     return {
       ...turn,
       request: { ...turn['request'] },
-      rounds: [...turn['rounds']],
+      rounds: turn['rounds'].map(round => cloneTurnRound(round)),
       ...(turn['usage'] ? { usage: { ...turn['usage'] } } : {}),
       response: {
         ...responseWithoutPersistedData,

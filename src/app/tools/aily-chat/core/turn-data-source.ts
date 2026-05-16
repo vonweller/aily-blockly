@@ -45,32 +45,6 @@ export interface ITurnDataSource {
   /** 从 Turn[] 构建消息 + TurnSpan 边界信息 */
   buildMessagesWithSpans(): { messages: any[]; turnSpans: TurnSpan[] };
 
-  /** 当前 Turn 历史版本号（用于摘要写回防竞态） */
+  /** 当前 Turn 历史版本号（供消费方判定消息/跨度快照是否已变化） */
   readonly revision: number;
-
-  /**
-   * 获取 Turn 0..turnIndex（含）的 ID 列表
-    * 用于 turn-summary-plan 中计算 coveredTurnIds
-   */
-  getCoveredTurnIds(upToTurnIndex: number): string[];
-
-  /**
-   * 获取指定 Turn 最后一个 ToolCallRound 的 ID
-   * 用于摘要锚定到具体 round
-   */
-  getAnchorRoundId(turnIndex: number): string | undefined;
-
-  /**
-   * 应用摘要压缩（写回 Turn 历史）
-   *
-   * @returns true 表示成功写回，false 表示数据不一致（过期/竞态）
-   */
-  applySummary(
-    coveredTurnIds: string[],
-    anchorTurnId: string,
-    summary: string,
-    source: 'background' | 'foreground',
-    anchorRoundId?: string,
-    historyRevision?: number,
-  ): boolean;
 }

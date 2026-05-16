@@ -6,6 +6,26 @@ import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-bui
 import { getTurnResponseParticipant } from '../core/turn-response-stream-contract';
 import { getTurnResponseResolvedModelName } from './turn-response-response-model';
 
+function mergeMaterializedTurnRequest(
+  snapshotRequest: TurnResponseTurn['request'],
+  liveRequest: TurnResponseTurn['request'],
+): TurnResponseTurn['request'] {
+  const displayContent = snapshotRequest.displayContent ?? liveRequest.displayContent;
+  const metadata = snapshotRequest.metadata ?? liveRequest.metadata;
+  const attachments = snapshotRequest.attachments ?? liveRequest.attachments;
+
+  return {
+    ...snapshotRequest,
+    ...(displayContent ? { displayContent } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(attachments
+      ? {
+        attachments: attachments.map(attachment => ({ ...attachment })),
+      }
+      : {}),
+  };
+}
+
 type LexRenderTurnMaterializerContext = Pick<IAgentLifecycle, 'isCancelled' | 'currentMessageSource'>;
 
 export class LexRenderTurnMaterializer {
@@ -45,7 +65,7 @@ export class LexRenderTurnMaterializer {
       ),
       snapshot: snapshotTurn
         ? {
-          request: snapshotTurn.request,
+          request: mergeMaterializedTurnRequest(snapshotTurn.request, currentTurn.request),
           rounds: snapshotTurn.rounds ?? [],
           usage: snapshotTurn.usage,
           createdAt: snapshotTurn.createdAt,

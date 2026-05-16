@@ -14,6 +14,7 @@ import {
 } from './host-turn-response-state';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import { projectTurnResponsesToHistory } from './turn-response-history-projector';
+import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
@@ -103,23 +104,23 @@ export class HostSessionRestoreBridge {
   async restore(hostRecord: HostSessionRecord): Promise<void> {
     this.restoreSessionMetadata(hostRecord);
 
-    const restoredLexSession = await this.ctx.lexStream.session.restore(
+    await this.ctx.lexStream.session.restore(
       this.ctx.sessionId,
       hostRecord.turnResponses,
     );
 
-    const turnResponses = this.resolveTurnResponsesForRestore(hostRecord) ?? [];
+    const restoredSnapshot = this.ctx.lexStream.session.snapshot?.() ?? null;
+    const turnResponses = this.resolveTurnResponsesForRestore(hostRecord, restoredSnapshot) ?? [];
     this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
-    const supportsTurnNativeRestore = turnResponses.length > 0;
     const hostResponseState = buildHostProjectionStateFromPersistedRecord({
       turnResponses,
     });
+    this.applyHostView(hostResponseState);
     if (this.ctx.restoreSharedHostProjectionState) {
       this.ctx.restoreSharedHostProjectionState(hostResponseState);
     } else {
       this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
     }
-    this.applyHostView(hostResponseState);
     this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
 
     // Restore context budget: prefer persisted lex-derived values over local estimate
@@ -143,13 +144,13 @@ export class HostSessionRestoreBridge {
       );
     } else {
       this.ctx.contextBudgetService?.refreshLocalEstimate(
-        restoredLexSession ? this.ctx.conversationMessages : [],
+        restoredSnapshot ? this.ctx.conversationMessages : [],
         this.ctx.lexStream.runtime.tools(),
       );
     }
 
     await this.restoreEditCheckpoints(hostResponseState.turnResponses);
-    this.finalizeRestoreUi(restoredLexSession);
+    this.finalizeRestoreUi(Boolean(restoredSnapshot));
   }
 
   private applyHostView(hostResponseState: Pick<HostResponseProjection, 'turnResponses' | 'chatList'>): void {
@@ -215,12 +216,13 @@ export class HostSessionRestoreBridge {
 
   private resolveTurnResponsesForRestore(
     hostRecord: HostSessionRecord,
+    restoredSnapshot: SessionSnapshot | null,
   ): TurnResponseTurn[] | null {
     if (!hostRecord.turnResponses?.length) {
       return null;
     }
 
-    return [...hostRecord.turnResponses];
+    return applySessionSnapshotRoundsToTurnResponses(hostRecord.turnResponses, restoredSnapshot);
   }
 
   private restorePendingRuntimeInteraction(turnResponses: readonly TurnResponseTurn[]): void {
@@ -309,6 +311,48 @@ export class HostSessionRestoreBridge {
       })
       .catch(() => undefined);
   }
+}
+
+function applySessionSnapshotRoundsToTurnResponses(
+  turnResponses: readonly TurnResponseTurn[],
+  sessionSnapshot: SessionSnapshot | null,
+): TurnResponseTurn[] {
+  if (turnResponses.length === 0 || !sessionSnapshot?.turns?.length) {
+    return [...turnResponses];
+  }
+
+  const snapshotTurnsById = new Map(sessionSnapshot.turns.map(turn => [turn.id, turn] as const));
+
+  return turnResponses.map((turn) => {
+    const snapshotTurn = snapshotTurnsById.get(turn.turnId);
+    if (!snapshotTurn) {
+      return turn;
+    }
+
+    return {
+      ...turn,
+      rounds: cloneSessionSnapshotRounds(snapshotTurn.rounds ?? [], turn.rounds ?? []),
+    };
+  });
+}
+
+function cloneSessionSnapshotRounds(
+  snapshotRounds: readonly NonNullable<SessionSnapshot['turns']>[number]['rounds'][number][],
+  fallbackRounds: TurnResponseTurn['rounds'],
+): TurnResponseTurn['rounds'] {
+  if (snapshotRounds.length === 0) {
+    return [...fallbackRounds];
+  }
+
+  return snapshotRounds.map((round) => {
+    const summary = normalizeTurnResponseSummaryPreview(round.summary);
+
+    return {
+      ...round,
+      toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
+      ...(summary ? { summary } : {}),
+    };
+  });
 }
 
 function findPendingQuestionPart(turnResponses: readonly TurnResponseTurn[]): QuestionPart | null {

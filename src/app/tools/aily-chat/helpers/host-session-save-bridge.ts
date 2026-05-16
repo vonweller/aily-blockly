@@ -6,9 +6,10 @@ import type {
   ISessionAccess,
   IChatViewAccess,
 } from '../core/chat-context';
-import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
+import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import type {
   LiveHostSessionRecord,
+  ChatListItem,
   PersistedHostResponseData,
   PersistedHostTurnResponse,
 } from '../services/chat-history.service';
@@ -22,7 +23,7 @@ import {
 import { createChatMessageHandle } from './chat-message-handle';
 import {
   cloneTurnResponseModelSidecar,
-  withExplicitAgentSummaryPreview,
+  normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
@@ -45,29 +46,42 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
 export class HostSessionSaveBridge {
   constructor(private readonly ctx: HostSessionSaveContext) {}
 
-  buildHostSessionRecord(previousHostProjection?: HostResponseProjection | null): LiveHostSessionRecord | null {
+  buildHostSessionRecord(options?: {
+    previousHostProjection?: HostResponseProjection | null;
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+    turnResponsesOverride?: readonly TurnResponseTurn[];
+    sessionSnapshotOverride?: SessionSnapshot | null;
+  }): LiveHostSessionRecord | null {
     if (!this.ctx.sessionId) {
       return null;
     }
 
     const projectPath = this.resolveProjectPath();
     const budgetSnapshot = this.ctx.contextBudgetService?.getSnapshot();
-    const currentHostProjection = this.ctx.hostResponseProjection ?? null;
-    const turnResponses = resolveTurnResponsesForSave(
-      this.ctx.lexStream.turnResponses,
-      currentHostProjection,
-      previousHostProjection ?? null,
+    const previousHostProjection = options?.previousHostProjection ?? null;
+    const currentHostProjection = options?.hostProjection ?? this.ctx.hostResponseProjection ?? null;
+    const sessionSnapshot = options?.sessionSnapshotOverride ?? this.ctx.lexStream.session?.snapshot?.() ?? null;
+    const turnResponses = applySessionSnapshotRoundsToTurnResponses(
+      resolveTurnResponsesForSave(
+        options?.turnResponsesOverride ?? this.ctx.lexStream.turnResponses,
+        currentHostProjection,
+        previousHostProjection,
+      ),
+      sessionSnapshot,
     );
     if (!hasHostResponseConversationContent(currentHostProjection ?? previousHostProjection ?? null) && turnResponses.length === 0) {
       return null;
     }
 
-    const visibleChatList = buildVisibleChatListForSave(
-      previousHostProjection?.chatList ?? [],
-      currentHostProjection?.chatList ?? [],
-      this.ctx.list,
-      this.ctx.partStore,
-    );
+    const visibleChatList = options?.visibleChatList
+      ? options.visibleChatList.map(message => ({ ...message })) as HostSessionSaveContext['list']
+      : buildVisibleChatListForSave(
+        previousHostProjection?.chatList ?? [],
+        currentHostProjection?.chatList ?? [],
+        this.ctx.list,
+        this.ctx.partStore,
+      );
     const canonicalTurnResponses = applyVisibleRequestDisplayContentToTurnResponses(
       visibleChatList,
       turnResponses,
@@ -108,7 +122,10 @@ export class HostSessionSaveBridge {
     return record;
   }
 
-  saveCurrentSession(): boolean {
+  saveCurrentSession(options?: {
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+  }): boolean {
     try {
       if (this.ctx.editCheckpointService?.getTotalEditCount() > 0) {
         try {
@@ -118,10 +135,15 @@ export class HostSessionSaveBridge {
         }
       }
 
-      this.ctx.lexStream.session.save();
+      const sessionSnapshot = this.ctx.lexStream.session?.save?.() ?? null;
       const previousHostProjection = this.ctx.hostResponseProjection ?? null;
       this.ctx.invalidateHostRequestGraph?.();
-      const record = this.buildHostSessionRecord(previousHostProjection);
+      const record = this.buildHostSessionRecord({
+        previousHostProjection,
+        hostProjection: options?.hostProjection,
+        visibleChatList: options?.visibleChatList,
+        sessionSnapshotOverride: sessionSnapshot,
+      });
       if (!record) {
         return false;
       }
@@ -335,6 +357,44 @@ function resolveTurnResponsesForSave(
   );
 }
 
+function applySessionSnapshotRoundsToTurnResponses(
+  turnResponses: readonly TurnResponseTurn[],
+  sessionSnapshot: SessionSnapshot | null,
+): TurnResponseTurn[] {
+  if (turnResponses.length === 0 || !sessionSnapshot?.turns?.length) {
+    return [...turnResponses];
+  }
+
+  const snapshotTurnsById = new Map(sessionSnapshot.turns.map(turn => [turn.id, turn] as const));
+
+  return turnResponses.map((turn) => {
+    const snapshotTurn = snapshotTurnsById.get(turn.turnId);
+    if (!snapshotTurn) {
+      return turn;
+    }
+
+    return {
+      ...turn,
+      rounds: cloneSessionSnapshotRounds(snapshotTurn.rounds ?? []),
+    };
+  });
+}
+
+function cloneSessionSnapshotRounds(
+  rounds: readonly NonNullable<SessionSnapshot['turns']>[number]['rounds'][number][],
+): TurnResponseTurn['rounds'] {
+  return rounds.map((round) => {
+    const { summary: _summary, ...roundWithoutSummary } = round;
+    const summary = normalizeTurnResponseSummaryPreview(round.summary);
+
+    return {
+      ...roundWithoutSummary,
+      toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
+      ...(summary ? { summary } : {}),
+    };
+  });
+}
+
 function mergeStableTurnResponsesForSave(
   previousTurnResponses: readonly TurnResponseTurn[],
   currentTurnResponses: readonly TurnResponseTurn[],
@@ -427,8 +487,7 @@ function normalizePersistedSlashCommand(
 }
 
 function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
-  const normalizedTurn = withExplicitAgentSummaryPreview(turn, { allowSubagentPartFallback: true });
-  const responseModel = cloneTurnResponseModelSidecar(normalizedTurn.responseModel);
+  const responseModel = cloneTurnResponseModelSidecar(turn.responseModel);
   const {
     slashCommand: _slashCommand,
     responseId: _responseId,
@@ -440,27 +499,27 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
     timeSpentWaiting: _timeSpentWaiting,
     completionTokens: _completionTokens,
     ...responseWithoutPersistedData
-  } = normalizedTurn.response as TurnResponseTurn['response'] & PersistedHostResponseData;
+  } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData;
 
   return {
-    ...normalizedTurn,
-    request: { ...normalizedTurn.request },
-    rounds: [...normalizedTurn.rounds],
-    ...(normalizedTurn.usage ? { usage: { ...normalizedTurn.usage } } : {}),
+    ...turn,
+    request: { ...turn.request },
+    rounds: cloneSessionSnapshotRounds(turn.rounds ?? []),
+    ...(turn.usage ? { usage: { ...turn.usage } } : {}),
     response: {
       ...responseWithoutPersistedData,
-      ...(normalizedTurn.response.usedContext
+      ...(turn.response.usedContext
         ? {
           usedContext: {
-            ...normalizedTurn.response.usedContext,
-            documents: normalizedTurn.response.usedContext.documents.map(document => ({
+            ...turn.response.usedContext,
+            documents: turn.response.usedContext.documents.map(document => ({
               ...document,
               ranges: document.ranges.map(range => ({ ...range })),
             })),
           },
         }
         : {}),
-      contentReferences: (normalizedTurn.response.contentReferences ?? []).map(reference => ({
+      contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
         ...reference,
         ...(reference.options
           ? {
@@ -472,9 +531,9 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
           }
           : {}),
       })),
-      codeCitations: (normalizedTurn.response.codeCitations ?? []).map(citation => ({ ...citation })),
-      progressMessages: (normalizedTurn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: [...normalizedTurn.response.parts],
+      codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
+      progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
+      parts: [...turn.response.parts],
     },
     ...(responseModel ? { responseModel } : {}),
   };

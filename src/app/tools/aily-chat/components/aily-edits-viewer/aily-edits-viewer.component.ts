@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, HostBinding } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { EditCheckpointService, EditsSummary, EditFileSummary } from '../../services/edit-checkpoint.service';
@@ -16,6 +16,14 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
   summary: EditsSummary | null = null;
   isExpanded = false;
   isAccepted = false;
+
+  @HostBinding('class.chat-editing-session-host')
+  readonly hostClass = true;
+
+  @HostBinding('class.has-summary')
+  get hasSummaryClass(): boolean {
+    return !!this.summary;
+  }
 
   private sub?: Subscription;
   private checkpointService = inject(EditCheckpointService);
@@ -72,6 +80,20 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
     return this.requestPreview
       ? `重新应用与“${this.requestPreview}”关联的文件变更`
       : '重做';
+  }
+
+  get summaryTitle(): string {
+    const fileCount = this.summary?.fileCount ?? 0;
+    return `已更改 ${fileCount} 个文件`;
+  }
+
+  onOverviewClick(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button')) {
+      return;
+    }
+
+    this.toggleExpanded();
   }
 
   toggleExpanded(): void {

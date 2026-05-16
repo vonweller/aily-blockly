@@ -68,22 +68,17 @@
   }
 
   .interactive-input-part:has(> .chat-input-notification-container.has-notification) .input-box,
-  .interactive-input-part:has(> .chat-todo-list-widget-container .chat-todo-list-widget.has-todos) .input-box,
-  .interactive-input-part:has(> .chat-editing-session .chat-editing-session-container) .input-box {
+  .interactive-input-part:has(> .chat-todo-list-widget-container > app-floating-todo.has-todos) .input-box,
+  .interactive-input-part:has(> .chat-editing-session > app-aily-edits-viewer.has-summary) .input-box {
     margin-top: 0;
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
 
-  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-todo-list-widget-container .chat-todo-list-widget,
-  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-editing-session .chat-editing-session-container {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-  }
-
-  .interactive-input-part > .chat-todo-list-widget-container:has(.chat-todo-list-widget.has-todos) + .chat-editing-session .chat-editing-session-container {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
+  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-todo-list-widget-container > app-floating-todo.has-todos,
+  .interactive-input-part > .chat-input-notification-container.has-notification + .chat-editing-session > app-aily-edits-viewer.has-summary,
+  .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) + .chat-editing-session > app-aily-edits-viewer.has-summary {
+    --aily-chat-widget-top-radius: 0px;
   }
 
   .interactive-input-part > .chat-input-notification-container {

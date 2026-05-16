@@ -1,14 +1,14 @@
 /**
- * EditActionsHelper — 编辑操作辅助类
+ * EditActionsHelper �?编辑操作辅助�?
  *
  * 封装所有与文件编辑检查点相关的操作：
- * - undo / redo / accept / reject 单文件操作
- * - restoreToCheckpoint（还原到指定对话检查点）
- * - editAndResendFromTurn（编辑并重发）
+ * - undo / redo / accept / reject 单文件操�?
+ * - restoreToCheckpoint（还原到指定对话检查点�?
+ * - editAndResendFromTurn（编辑并重发�?
  * - regenerateTurn（重新生成）
  * - ensureAbsExport / saveCheckpointToDisk / reloadAbsWorkspace（内部辅助）
  *
- * 从 ChatEngineService 中提取（Phase 4），减轻后者的体积。
+ * �?ChatEngineService 中提取（Phase 4），减轻后者的体积�?
  */
 
 import type {
@@ -19,9 +19,7 @@ import type {
   ISessionAccess,
 } from '../core/chat-context';
 import { AilyHost } from '../core/host';
-import { mkError, mkState } from '../core/chat-parts';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
-import type { ChatPart } from '../core/chat-parts';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { ResourceItem } from '../core/chat-types';
@@ -39,23 +37,49 @@ import {
 } from '../core/user-turn-action-target';
 import { extractUserTurnResources, mergeUserTurnResources } from './chat-user-turn-context';
 import type { ChatTaskActionDetail } from './chat-task-action-coordinator';
-import type { TurnSnapshot } from '../services/edit-checkpoint.service';
+import type { CheckpointRestoreRedoArtifact, TurnSnapshot } from '../services/edit-checkpoint.service';
+import type { IWorkspaceCheckpointProvider } from '../services/edit-checkpoint.service';
 import {
-  buildHostProjectionStateFromPersistedRecord,
-  buildTurnNativeRestoreChatList,
+  type HostResponseProjection,
   type HostTurnResponseState,
 } from './host-turn-response-state';
-import { projectTurnResponsesToHistory } from './turn-response-history-projector';
+import {
+  CheckpointReplayCoordinator,
+  type CheckpointRedoExecutionResult,
+} from './checkpoint-replay-coordinator';
+import { appendEditActionResult } from './edit-action-result-projection';
+import {
+  buildUndoActionResult,
+  type EditActionName,
+  type EditActionResultDescriptor,
+  type EditActionResultState,
+} from './edit-action-result-projection';
 
 export interface EditActionTurnTarget extends Partial<LegacyTurnInteractionMetadata>, Partial<DialogTurnContext> {}
+
+export interface RestoreCheckpointConfirmation {
+  requestCount: number;
+  fileCount: number;
+  fileLabel?: string;
+}
+
+type WorkspaceCheckpointAccess = Partial<Pick<
+  IWorkspaceCheckpointProvider,
+  'buildRestorePlan' | 'buildRedoPlan' | 'applyRestorePlan' | 'getPresentationMode'
+>>;
 
 type EditActionsContext = ChatViewWriteBridgeContext
   & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled' | 'pendingEditFeedback'>
   & Pick<ISessionAccess, 'sessionAllowedPaths' | 'conversationMessages'>
   & Pick<IProjectContext, 'getCurrentProjectPath'>
-  & Pick<IChatServiceAccess, 'absAutoSyncService' | 'editCheckpointService' | 'resourceManager' | 'message'>
+  & Pick<IChatServiceAccess, 'absAutoSyncService' | 'editCheckpointService' | 'workspaceCheckpointProvider' | 'resourceManager' | 'message'>
   & Pick<IChatCoordination, 'lexStream' | 'send' | 'session'>
   & {
+    workspaceCheckpointAccess?: WorkspaceCheckpointAccess;
+    confirmRestoreCheckpoint?(confirmation: RestoreCheckpointConfirmation): Promise<boolean> | boolean;
+    syncWorkspaceState?(): Promise<void> | void;
+    readonly hostResponseProjection?: HostResponseProjection | null;
+    restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
     replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
   };
 
@@ -68,8 +92,11 @@ type EditActionsViewWriteAccess = Pick<
 
 export class EditActionsHelper {
   private readonly viewWriteBridge: EditActionsViewWriteAccess;
+  private readonly checkpointReplayCoordinator: CheckpointReplayCoordinator;
 
   constructor(private ctx: EditActionsContext) {
+    this.ctx.syncWorkspaceState = this.reloadAbsWorkspace.bind(this);
+
     const viewWriteContext: EditActionsViewWriteContext = {
       get list() {
         return ctx.list;
@@ -109,12 +136,51 @@ export class EditActionsHelper {
       },
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
+    this.checkpointReplayCoordinator = new CheckpointReplayCoordinator(this.ctx, this.viewWriteBridge);
+  }
+
+  private getWorkspaceCheckpointAccess(): WorkspaceCheckpointAccess {
+    if (this.ctx.workspaceCheckpointAccess) {
+      return this.normalizeWorkspaceCheckpointAccess(this.ctx.workspaceCheckpointAccess);
+    }
+
+    return this.buildWorkspaceCheckpointAccessFromProvider(this.ctx.workspaceCheckpointProvider);
+  }
+
+  private buildWorkspaceCheckpointAccessFromProvider(
+    provider: IWorkspaceCheckpointProvider | null | undefined,
+  ): WorkspaceCheckpointAccess {
+    if (!provider) {
+      return {};
+    }
+
+    return this.normalizeWorkspaceCheckpointAccess(provider);
+  }
+
+  private normalizeWorkspaceCheckpointAccess(
+    access: WorkspaceCheckpointAccess,
+  ): WorkspaceCheckpointAccess {
+    const getPresentationMode = access.getPresentationMode?.bind(access);
+    const buildRestorePlan = access.buildRestorePlan?.bind(access);
+    const buildRedoPlan = access.buildRedoPlan?.bind(access);
+    const applyRestorePlan = access.applyRestorePlan?.bind(access);
+
+    return {
+      getPresentationMode,
+      buildRestorePlan,
+      buildRedoPlan,
+      applyRestorePlan,
+    };
+  }
+
+  private refreshWorkspaceCheckpointAccess(): void {
+    this.ctx.workspaceCheckpointAccess = this.getWorkspaceCheckpointAccess();
   }
 
   // ==================== 内部辅助 ====================
 
   /**
-   * 确保 absAutoSyncService 已初始化并执行导出
+   * 确保 absAutoSyncService 已初始化并执行导�?
    */
   ensureAbsExport(): void {
     const projectPath = this.ctx.getCurrentProjectPath()
@@ -129,8 +195,8 @@ export class EditActionsHelper {
   }
 
   /**
-   * Turn 开始前提交并持久化前一轮的 checkpoint 数据到磁盘。
-   * 确保前一轮的快照不因崩溃而丢失。
+   * Turn 开始前提交并持久化前一轮的 checkpoint 数据到磁盘�?
+   * 确保前一轮的快照不因崩溃而丢失�?
    */
   saveCheckpointToDisk(): void {
     if (this.ctx.editCheckpointService.getTotalEditCount() === 0) return;
@@ -142,7 +208,7 @@ export class EditActionsHelper {
   }
 
   /**
-   * 回滚/还原后重新同步 ABS 到 Blockly 工作区。
+   * 回滚/还原后重新同�?ABS �?Blockly 工作区�?
    */
   private async reloadAbsWorkspace(): Promise<void> {
     const projectPath = this.ctx.getCurrentProjectPath()
@@ -171,186 +237,52 @@ export class EditActionsHelper {
     }
   }
 
-  private appendEditActionResult(
-    action: 'undo' | 'redo' | 'restore',
-    summaryText: string,
-    state: 'done' | 'warn' | 'error' | 'info',
+  private async restoreCheckpointSnapshot(
+    snapshot: TurnSnapshot,
     options: {
-      fileCount?: number;
-      errorCount?: number;
-      detailMessage?: string;
+      turnId?: string;
+      listIndex?: number;
+      emitResultMessage?: boolean;
+      captureRedoTurns?: boolean;
+      truncateLiveTurnResponses?: boolean;
+      truncateChatTurn?: (turnId: string) => void;
     } = {},
-  ): void {
-      const parts: ChatPart[] = [
-      mkState(
-        `edit-action-${action}-${Date.now()}`,
-        summaryText,
-        state,
-        undefined,
-        undefined,
-        {
-          action,
-          fileCount: options.fileCount,
-          errorCount: options.errorCount,
-        },
-      ),
-    ];
+  ): Promise<boolean> {
+    this.refreshWorkspaceCheckpointAccess();
 
-    if (options.detailMessage) {
-      parts.push(mkError(options.detailMessage));
-    }
-
-    this.viewWriteBridge.appendAilyPartsMessageHandle(parts, { scroll: true });
-  }
-
-  private formatEditErrorDetail(errors: string[]): string | undefined {
-    if (errors.length === 0) return undefined;
-    const lines = errors.slice(0, 3).map((error, index) => `${index + 1}. ${error}`);
-    return `以下操作失败（最多显示 3 条）：\n${lines.join('\n')}`;
-  }
-
-  private truncateUiList(fromIndex: number | undefined, turnId?: string): void {
-    if (turnId && this.viewWriteBridge.truncateFromTurnId(turnId)) {
-      return;
-    }
-
-    if (typeof fromIndex === 'number') {
-      this.viewWriteBridge.truncateFrom(fromIndex);
-    }
-  }
-
-  private truncateLiveTurnResponsesFromTurnId(turnId: string | undefined): void {
-    if (!turnId || !this.ctx.lexStream.hydrateTurnResponses) {
-      return;
-    }
-
-    const liveTurnResponses = this.ctx.lexStream.turnResponses;
-    if (!Array.isArray(liveTurnResponses) || liveTurnResponses.length === 0) {
-      return;
-    }
-
-    const truncateIndex = liveTurnResponses.findIndex(turn => turn.turnId === turnId);
-    if (truncateIndex < 0) {
-      return;
-    }
-
-    this.ctx.lexStream.hydrateTurnResponses(liveTurnResponses.slice(0, truncateIndex));
-    this.ctx.invalidateHostRequestGraph?.();
-    this.ctx.triggerSyncDetectChanges();
-  }
-
-  private captureCheckpointRestoreRedoTurns(turnId: string | undefined): void {
-    const setRedoTurns = this.ctx.editCheckpointService.setCheckpointRestoreRedoTurnResponses?.bind(this.ctx.editCheckpointService);
-    if (!setRedoTurns) {
-      return;
-    }
-
-    const liveTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
-      ? this.ctx.lexStream.turnResponses
-      : [];
-
-    if (!turnId || liveTurnResponses.length === 0) {
-      setRedoTurns(null);
-      return;
-    }
-
-    const truncateIndex = liveTurnResponses.findIndex(turn => turn.turnId === turnId);
-    if (truncateIndex < 0) {
-      setRedoTurns(null);
-      return;
-    }
-
-    setRedoTurns(liveTurnResponses.slice());
-  }
-
-  private buildRedoActionSummary(fileCount: number, chatTurnCount: number): string {
-    const segments: string[] = [];
-
-    if (fileCount > 0) {
-      segments.push(`${fileCount} 个文件变更`);
-    }
-
-    if (chatTurnCount > 0) {
-      segments.push(`${chatTurnCount} 轮聊天`);
-    }
-
-    if (segments.length === 0) {
-      return '已重做还原前的状态';
-    }
-
-    return `已重做 ${segments.join('和')}`;
-  }
-
-  private async restoreCheckpointRedoChat(turnResponses: readonly TurnResponseTurn[]): Promise<void> {
-    const restoredLexSession = await this.ctx.lexStream.session.restore?.(
-      this.ctx.sessionId,
-      turnResponses,
-    );
-
-    this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
-
-    const hostResponseState = buildHostProjectionStateFromPersistedRecord({
-      turnResponses,
+    const {
+      turnId,
+      listIndex,
+      emitResultMessage = true,
+      captureRedoTurns = true,
+      truncateLiveTurnResponses = true,
+      truncateChatTurn,
+    } = options;
+    const truncatedTurnId = turnId ?? snapshot.turnId;
+    const restoreResult = await this.checkpointReplayCoordinator.restoreCheckpoint(snapshot.checkpointId, {
+      turnId: truncatedTurnId,
+      listIndex,
+      captureRedoTurns,
+      truncateLiveTurnResponses,
+      truncateChatTurn,
     });
-    this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
 
-    if (hostResponseState.turnResponses.length === 0) {
-      this.viewWriteBridge.restoreLegacyHistoryList(hostResponseState.chatList);
-    } else {
-      const turnIds = new Set(hostResponseState.turnResponses.map(turn => turn.turnId));
-      this.viewWriteBridge.restoreTurnNativeHistoryList(
-        buildTurnNativeRestoreChatList(hostResponseState.chatList, turnIds),
-        turnIds,
-      );
-      projectTurnResponsesToHistory(this.ctx, hostResponseState.turnResponses);
+    if (restoreResult.ok === false) {
+      console.warn('[restoreToCheckpoint] 回滚文件部分失败:', restoreResult.detailErrors);
+
+      if (emitResultMessage) {
+        this.checkpointReplayCoordinator.projectRestoreExecutionResult(restoreResult);
+      }
+      return false;
     }
 
-    await this.ctx.editCheckpointService.rebuildFromTurnResponses?.(hostResponseState.turnResponses);
-    this.ctx.editCheckpointService.clearCheckpointRestoreRedoTurnResponses?.();
-    this.ctx.editCheckpointService.publishCurrentSummary();
-    this.ctx.session.saveCurrentSession();
-
-    if (!restoredLexSession) {
-      console.warn('[redoEdits] lex session restore returned false while replaying checkpoint chat');
-    }
-  }
-
-  private getCheckpointIdFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): string | null {
-    const checkpointId = turnResponses.at(-1)?.request?.metadata?.checkpointId;
-    return typeof checkpointId === 'string' && checkpointId.length > 0 ? checkpointId : null;
-  }
-
-  private async applyCheckpointRedoFiles(turnResponses: readonly TurnResponseTurn[]) {
-    const checkpointId = this.getCheckpointIdFromTurnResponses(turnResponses);
-    const buildRedoPlan = this.ctx.editCheckpointService.buildRedoPlanForCheckpoint?.bind(this.ctx.editCheckpointService);
-    const applyRestorePlan = this.ctx.editCheckpointService.applyRestorePlan?.bind(this.ctx.editCheckpointService);
-
-    if (!checkpointId || !buildRedoPlan || !applyRestorePlan) {
-      return { rolledBackFiles: 0, errors: ['checkpoint redo timeline plan 不可用'] };
+    if (!emitResultMessage) {
+      return true;
     }
 
-    const restorePlan = await buildRedoPlan(checkpointId);
-    if (!restorePlan) {
-      return { rolledBackFiles: 0, errors: [`未找到检查点 redo plan: ${checkpointId}`] };
-    }
+    this.checkpointReplayCoordinator.projectRestoreExecutionResult(restoreResult);
 
-    return applyRestorePlan(restorePlan);
-  }
-
-  private async applyCheckpointRestoreFiles(checkpointId: string) {
-    const buildRestorePlan = this.ctx.editCheckpointService.buildRestorePlanForCheckpoint?.bind(this.ctx.editCheckpointService);
-    const applyRestorePlan = this.ctx.editCheckpointService.applyRestorePlan?.bind(this.ctx.editCheckpointService);
-
-    if (!buildRestorePlan || !applyRestorePlan) {
-      return { rolledBackFiles: 0, errors: ['checkpoint restore timeline plan 不可用'] };
-    }
-
-    const restorePlan = await buildRestorePlan(checkpointId);
-    if (!restorePlan) {
-      return { rolledBackFiles: 0, errors: [`未找到检查点 restore plan: ${checkpointId}`] };
-    }
-
-    return applyRestorePlan(restorePlan);
+    return true;
   }
 
   private toCanonicalTurnContext(target: EditActionTurnTarget | null | undefined): DialogTurnContext | null {
@@ -628,7 +560,7 @@ export class EditActionsHelper {
   // ==================== 编辑检查点操作 ====================
 
   /**
-   * 用户保留文件变更 — 将当前状态设为新基线，保存反馈状态
+   * 用户保留文件变更 �?将当前状态设为新基线，保存反馈状�?
    */
   onKeepEdits(detail?: ChatTaskActionDetail): void {
     const { fileCount, totalAdded, totalRemoved } = detail || {};
@@ -639,7 +571,7 @@ export class EditActionsHelper {
   }
 
   /**
-   * 撤销最近一轮的文件变更（Undo，不截断对话历史，支持 Redo）
+   * 撤销最近一轮的文件变更（Undo，不截断对话历史，支�?Redo�?
    */
   async undoLastEdits(): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
@@ -653,22 +585,7 @@ export class EditActionsHelper {
 
     this.ctx.pendingEditFeedback = `[用户撤销了上一轮的 ${rolledBackFiles} 个文件变更，文件已恢复到变更前的状态。后续操作请基于当前文件内容进行。]`;
 
-    if (errors.length > 0) {
-      this.appendEditActionResult(
-        'undo',
-        `已撤销 ${rolledBackFiles} 个文件变更，另有 ${errors.length} 个错误`,
-        'warn',
-        {
-          fileCount: rolledBackFiles,
-          errorCount: errors.length,
-          detailMessage: this.formatEditErrorDetail(errors),
-        },
-      );
-    } else {
-      this.appendEditActionResult('undo', `已撤销 ${rolledBackFiles} 个文件变更`, 'done', {
-        fileCount: rolledBackFiles,
-      });
-    }
+    appendEditActionResult(this.viewWriteBridge, 'undo', buildUndoActionResult(rolledBackFiles, errors));
 
     await this.reloadAbsWorkspace();
   }
@@ -679,63 +596,55 @@ export class EditActionsHelper {
   async redoEdits(): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
 
-    const checkpointRedoTurnResponses = this.ctx.editCheckpointService.getCheckpointRestoreRedoTurnResponses?.() ?? [];
-    const hasCheckpointRedoChat = checkpointRedoTurnResponses.length > 0;
+    this.refreshWorkspaceCheckpointAccess();
+
+    const checkpointRedoArtifact = this.ctx.editCheckpointService.getCheckpointRestoreRedoArtifact?.() ?? null;
+    const checkpointRedoTurnResponses = checkpointRedoArtifact?.hostRecord?.turnResponses
+      ?? checkpointRedoArtifact?.turnResponses
+      ?? this.ctx.editCheckpointService.getCheckpointRestoreRedoTurnResponses?.()
+      ?? [];
+    const hasCheckpointRedoChat = this.ctx.editCheckpointService.hasRecoverableCheckpointRestoreRedoTurnResponses?.()
+      ?? checkpointRedoTurnResponses.length > 0;
 
     if (!hasCheckpointRedoChat && !this.ctx.editCheckpointService.canRedo) {
       this.ctx.message.info('没有可重做的文件变更');
       return;
     }
 
-    const fileRedoResult = hasCheckpointRedoChat
-      ? await this.applyCheckpointRedoFiles(checkpointRedoTurnResponses)
-      : await this.ctx.editCheckpointService.redo();
-    const errors = [...fileRedoResult.errors];
+    const previousTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
+      ? [...this.ctx.lexStream.turnResponses]
+      : [];
 
     if (hasCheckpointRedoChat) {
-      try {
-        await this.restoreCheckpointRedoChat(checkpointRedoTurnResponses);
-      } catch (err: any) {
-        errors.push(err?.message || '恢复聊天历史失败');
+      const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpoint(
+        checkpointRedoArtifact,
+          checkpointRedoTurnResponses,
+          previousTurnResponses,
+        );
+      if (checkpointRedoResult.ok === false) {
+        this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
+        return;
       }
+
+      this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
+      return;
     }
 
+    const fileRedoResult = await this.ctx.editCheckpointService.redo();
+    const errors = [...fileRedoResult.errors];
     const rolledBackFiles = fileRedoResult.rolledBackFiles;
-    const chatTurnCount = hasCheckpointRedoChat ? checkpointRedoTurnResponses.length : 0;
 
-    this.ctx.pendingEditFeedback = hasCheckpointRedoChat
-      ? `[用户重新应用了 ${rolledBackFiles} 个文件变更，并恢复了 ${chatTurnCount} 轮聊天。]`
-      : `[用户重新应用了 ${rolledBackFiles} 个文件变更。]`;
+    this.checkpointReplayCoordinator.projectRedoFileApplyResult({
+      rolledBackFiles,
+      errors,
+    });
 
-    const summaryText = hasCheckpointRedoChat
-      ? this.buildRedoActionSummary(rolledBackFiles, chatTurnCount)
-      : `已重做 ${rolledBackFiles} 个文件变更`;
-
-    if (errors.length > 0) {
-      this.appendEditActionResult(
-        'redo',
-        `${summaryText}，另有 ${errors.length} 个错误`,
-        'warn',
-        {
-          fileCount: rolledBackFiles,
-          errorCount: errors.length,
-          detailMessage: this.formatEditErrorDetail(errors),
-        },
-      );
-    } else {
-      this.appendEditActionResult('redo', summaryText, 'done', {
-        fileCount: rolledBackFiles,
-      });
-    }
-
-    if (!hasCheckpointRedoChat) {
-      this.ctx.editCheckpointService.publishCurrentSummary();
-    }
+    this.ctx.editCheckpointService.publishCurrentSummary();
     await this.reloadAbsWorkspace();
   }
 
   /**
-   * 接受单个文件的 AI 编辑
+   * 接受单个文件�?AI 编辑
    */
   onAcceptFile(filePath: string): void {
     if (!filePath) return;
@@ -744,7 +653,7 @@ export class EditActionsHelper {
   }
 
   /**
-   * 拒绝单个文件的 AI 编辑（恢复到初始内容）
+   * 拒绝单个文件�?AI 编辑（恢复到初始内容�?
    */
   async onRejectFile(filePath: string): Promise<void> {
     if (!filePath) return;
@@ -763,56 +672,19 @@ export class EditActionsHelper {
       return false;
     }
 
-    const { rolledBackFiles, errors } = await this.applyCheckpointRestoreFiles(resolved.snapshot.checkpointId);
-    if (errors.length > 0) {
-      console.warn('[restoreToCheckpoint] 回滚文件部分失败:', errors);
+    const confirmed = await this.confirmRestoreCheckpoint(resolved.snapshot, resolved.turnId);
+    if (!confirmed) {
+      return false;
     }
 
-    await this.reloadAbsWorkspace();
-
-    this.ctx.editCheckpointService.truncateStateFromCheckpoint?.(resolved.snapshot.checkpointId);
-
-    const truncatedTurnId = resolved.turnId ?? resolved.snapshot.turnId;
-    this.captureCheckpointRestoreRedoTurns(truncatedTurnId);
-    if (truncatedTurnId) {
-      this.ctx.lexStream.turns.removeFrom(truncatedTurnId);
-      this.truncateLiveTurnResponsesFromTurnId(truncatedTurnId);
-    }
-
-    this.truncateUiList(resolved.listIndex, truncatedTurnId);
-
-    this.ctx.isCompleted = false;
-    this.ctx.isCancelled = false;
-    this.ctx.editCheckpointService.dismissSummary();
-    this.ctx.session.saveCurrentSession();
-
-    if (!emitResultMessage) {
-      return true;
-    }
-
-    if (errors.length > 0) {
-      this.appendEditActionResult(
-        'restore',
-        rolledBackFiles > 0
-          ? `已还原检查点，回滚了 ${rolledBackFiles} 个文件变更，另有 ${errors.length} 个错误`
-          : `已还原检查点，但有 ${errors.length} 个错误`,
-        'warn',
-        {
-          fileCount: rolledBackFiles,
-          errorCount: errors.length,
-          detailMessage: this.formatEditErrorDetail(errors),
-        },
-      );
-      return true;
-    }
-
-    if (rolledBackFiles > 0) {
-      this.appendEditActionResult('restore', `已还原检查点，回滚了 ${rolledBackFiles} 个文件变更`, 'done', {
-        fileCount: rolledBackFiles,
-      });
-    }
-
-    return true;
+    return this.restoreCheckpointSnapshot(resolved.snapshot, {
+      turnId: resolved.turnId,
+      listIndex: resolved.listIndex,
+      emitResultMessage,
+      truncateChatTurn: turnId => {
+        this.ctx.lexStream.turns.removeFrom(turnId);
+      },
+    });
   }
 
   async forkSessionFromTurn(target: EditActionTurnTarget | null | undefined): Promise<boolean> {
@@ -843,8 +715,69 @@ export class EditActionsHelper {
     });
   }
 
+  private async confirmRestoreCheckpoint(snapshot: TurnSnapshot, turnId: string | undefined): Promise<boolean> {
+    const confirmRestoreCheckpoint = this.ctx.confirmRestoreCheckpoint;
+    if (!confirmRestoreCheckpoint) {
+      return true;
+    }
+
+    const fileSummary = await this.getRestoreCheckpointFileSummary(snapshot.checkpointId);
+
+    return await confirmRestoreCheckpoint({
+      requestCount: this.getRestoreCheckpointRequestCount(turnId ?? snapshot.turnId),
+      fileCount: fileSummary.fileCount,
+      fileLabel: fileSummary.fileLabel,
+    });
+  }
+
+  private getRestoreCheckpointRequestCount(turnId: string | undefined): number {
+    const liveTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
+      ? this.ctx.lexStream.turnResponses
+      : [];
+
+    if (!turnId) {
+      return 1;
+    }
+
+    const turnIndex = liveTurnResponses.findIndex(turn => turn.turnId === turnId);
+    if (turnIndex < 0) {
+      return 1;
+    }
+
+    return Math.max(1, liveTurnResponses.length - turnIndex);
+  }
+
+  private async getRestoreCheckpointFileSummary(checkpointId: string): Promise<{ fileCount: number; fileLabel?: string; }> {
+    this.refreshWorkspaceCheckpointAccess();
+
+    try {
+      const restorePlan = await this.ctx.workspaceCheckpointAccess?.buildRestorePlan?.(checkpointId);
+      if (Array.isArray(restorePlan?.files)) {
+        return {
+          fileCount: restorePlan.files.length,
+          fileLabel: restorePlan.files.length === 1
+            ? AilyHost.get().path.basename(restorePlan.files[0].uri)
+            : undefined,
+        };
+      }
+    } catch (error) {
+      console.warn('[restoreToCheckpoint] failed to inspect restore plan for confirmation:', error);
+    }
+
+    try {
+      const editsSummary = await this.ctx.editCheckpointService.getEditsSummary?.(checkpointId);
+      if (typeof editsSummary?.fileCount === 'number') {
+        return { fileCount: editsSummary.fileCount };
+      }
+    } catch (error) {
+      console.warn('[restoreToCheckpoint] failed to inspect edits summary for confirmation:', error);
+    }
+
+    return { fileCount: 0 };
+  }
+
   /**
-   * 编辑并重新发送 — 回滚到指定消息的检查点 + 用新内容重新发送
+   * 编辑并重新发�?�?回滚到指定消息的检查点 + 用新内容重新发�?
    */
   async editAndResendFromTurn(target: EditActionTurnTarget | null | undefined, newText: string, resources: ResourceItem[]): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
@@ -873,8 +806,8 @@ export class EditActionsHelper {
   }
 
   /**
-   * 重新生成 — 回滚文件变更 + 截断对话历史 + 重新发送。
-   * 不传 target 时，默认重试最新一轮。
+   * 重新生成 �?回滚文件变更 + 截断对话历史 + 重新发送�?
+   * 不传 target 时，默认重试最新一轮�?
    */
   async regenerateTurn(target?: EditActionTurnTarget | null): Promise<void> {
     if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
@@ -920,27 +853,22 @@ export class EditActionsHelper {
       lastRoundId,
     });
 
-    // 2. 回滚文件变更并截断时间线
-    const { rolledBackFiles, errors } = await this.applyCheckpointRestoreFiles(snapshot.checkpointId);
-    if (errors.length > 0) {
-      console.warn('[Regenerate] 回滚文件部分失败:', errors);
+    // 2. 复用 restore checkpoint 语义处理 workspace owner；restartFrom 只负责聊天侧 turn truncate
+    const restored = await this.restoreCheckpointSnapshot(snapshot, {
+      turnId: snapshotTurnId,
+      listIndex: this.ctx.editCheckpointService.getResponseStartListIndexForSnapshot(snapshot) ?? undefined,
+      emitResultMessage: false,
+      captureRedoTurns: false,
+      truncateLiveTurnResponses: false,
+      truncateChatTurn: turnId => {
+        this.ctx.lexStream.turns.restartFrom(turnId);
+      },
+    });
+    if (!restored) {
+      return;
     }
-    if (rolledBackFiles > 0) {
-      console.log(`[Regenerate] 回滚了 ${rolledBackFiles} 个文件变更`);
-    }
 
-    this.ctx.editCheckpointService.truncateStateFromCheckpoint?.(snapshot.checkpointId);
-
-    // 3. Turn-native 截断
-    if (snapshotTurnId) {
-      this.ctx.lexStream.turns.restartFrom(snapshotTurnId);
-    }
-
-    // 4. 截断 UI list
-    const listCutIndex = this.ctx.editCheckpointService.getResponseStartListIndexForSnapshot(snapshot) ?? undefined;
-    this.truncateUiList(listCutIndex, snapshotTurnId);
-
-    // 5. 重新发起 turn
+    // 3. 重新发起 turn
     const msgs = this.ctx.conversationMessages;
     const fallbackUserMsg = displayContent ?? (
       msgs.length > 0 && msgs[msgs.length - 1].role === 'user'

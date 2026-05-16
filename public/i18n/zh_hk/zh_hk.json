@@ -283,6 +283,17 @@
         "SKIP_SAVE": "跳過儲存",
         "SAVE_AND_CONTINUE": "儲存並繼續"
     },
+    "CHECKPOINT_RESTORE_DIALOG": {
+        "TITLE_SINGLE": "要撤銷最近一次編輯嗎？",
+        "TITLE_MULTIPLE": "要撤銷 {{count}} 次編輯嗎？",
+        "MESSAGE_LAST_SINGLE_FILE": "這會移除你最近一次請求，並撤銷對 {{file}} 的編輯。要繼續嗎？",
+        "MESSAGE_MULTI_SINGLE_FILE": "這會移除此處之後的所有請求，並撤銷對 {{file}} 的編輯。要繼續嗎？",
+        "MESSAGE_LAST_MULTI_FILE": "這會移除你最近一次請求，並撤銷工作集中 {{count}} 個檔案的編輯。要繼續嗎？",
+        "MESSAGE_MULTI_FILE": "這會移除此處之後的所有請求，並撤銷工作集中 {{count}} 個檔案的編輯。要繼續嗎？",
+        "MESSAGE_LAST_NO_FILE": "這會移除你最近一次請求，並將對話還原到該位置。要繼續嗎？",
+        "MESSAGE_MULTI_NO_FILE": "這會移除此處之後的所有請求，並將對話還原到該位置。要繼續嗎？",
+        "CONFIRM": "是"
+    },
     "FEEDBACK_DIALOG": {
         "TITLE": "用戶反饋",
         "FEEDBACK_TYPE": "反饋類型",

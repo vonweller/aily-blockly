@@ -51,7 +51,7 @@ function buildQuotaInfoSnapshot(
     badgeText: unlimited ? 'Unlimited' : `${Math.round(quotaInfo.percentRemaining)}%`,
     severity,
     statusText: unlimited
-      ? `${planLabel} includes unlimited usage.`
+      ? buildUnlimitedStatusText(planLabel, quotaInfo)
       : `${quotaInfo.remaining} / ${quotaInfo.quota} ${getQuotaUsageLabel(quotaInfo)} remaining.`,
     detailText: buildDetailText(quotaInfo),
   };
@@ -59,8 +59,17 @@ function buildQuotaInfoSnapshot(
 
 function getQuotaUsageLabel(quotaInfo: AuthQuotaInfo): string {
   return quotaInfo.usageUnit === 'interactions'
-    ? 'interactions'
+    ? 'effective submissions'
     : 'tokens';
+}
+
+function buildUnlimitedStatusText(
+  planLabel: string,
+  quotaInfo: AuthQuotaInfo,
+): string {
+  return quotaInfo.usageUnit === 'interactions'
+    ? `${planLabel} includes unlimited effective submissions.`
+    : `${planLabel} includes unlimited usage.`;
 }
 
 export function createAuthQuotaExhaustedInputNoticeFromState(
@@ -111,7 +120,12 @@ function buildDetailText(
 function buildExhaustedSubtitle(
   quotaInfo: AuthQuotaInfo,
 ): string {
-  return appendQuotaResetLabel('Your monthly chat quota is exhausted.', quotaInfo.resetTime);
+  return appendQuotaResetLabel(
+    quotaInfo.usageUnit === 'interactions'
+      ? 'Your monthly effective submission quota is exhausted.'
+      : 'Your monthly chat quota is exhausted.',
+    quotaInfo.resetTime,
+  );
 }
 
 function buildApproachingSubtitle(
@@ -119,5 +133,5 @@ function buildApproachingSubtitle(
 ): string {
   return quotaInfo
     ? appendQuotaResetLabel(`${quotaInfo.remaining} / ${quotaInfo.quota} ${getQuotaUsageLabel(quotaInfo)} remaining.`, quotaInfo.resetTime)
-    : 'Your monthly chat quota is nearing its limit.';
+    : 'Your monthly effective submission quota is nearing its limit.';
 }

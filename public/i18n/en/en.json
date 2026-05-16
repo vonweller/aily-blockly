@@ -346,6 +346,17 @@
         "SKIP_SAVE": "Skip Save",
         "SAVE_AND_CONTINUE": "Save and Continue"
     },
+    "CHECKPOINT_RESTORE_DIALOG": {
+        "TITLE_SINGLE": "Do you want to undo your last edit?",
+        "TITLE_MULTIPLE": "Do you want to undo {{count}} edits?",
+        "MESSAGE_LAST_SINGLE_FILE": "This will remove your last request and undo the edits made to {{file}}. Do you want to proceed?",
+        "MESSAGE_MULTI_SINGLE_FILE": "This will remove all subsequent requests and undo edits made to {{file}}. Do you want to proceed?",
+        "MESSAGE_LAST_MULTI_FILE": "This will remove your last request and undo edits made to {{count}} files in your working set. Do you want to proceed?",
+        "MESSAGE_MULTI_FILE": "This will remove all subsequent requests and undo edits made to {{count}} files in your working set. Do you want to proceed?",
+        "MESSAGE_LAST_NO_FILE": "This will remove your last request and restore the chat to that point. Do you want to proceed?",
+        "MESSAGE_MULTI_NO_FILE": "This will remove all subsequent requests and restore the chat to that point. Do you want to proceed?",
+        "CONFIRM": "Yes"
+    },
     "FEEDBACK_DIALOG": {
         "TITLE": "User Feedback",
         "FEEDBACK_TYPE": "Feedback Type",

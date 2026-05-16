@@ -32,7 +32,10 @@
     } @else {
     <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item, $index)" (mousemove)="showSubMenu($event, item, $index)"
       (mouseleave)="hideSubMenu($event, $index)"
-      [attr.title]="item.tooltip || null"
+      nz-tooltip
+      [nzTooltipTitle]="hasHoverFlyout(item) ? null : getTooltipTitle(item.tooltip)"
+      nzTooltipOverlayClassName="aily-menu-item-tooltip"
+      nzTooltipPlacement="rightTop"
       [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuItem === item, 'current': item.current, 'section': item.action?.startsWith('section-'), 'section-toggle': isSectionToggle(item)}">
       @if(item.icon){
       <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
@@ -58,19 +61,55 @@
     }
   </div>
   <!-- 子菜单放在主菜单外部 -->
-  @if(activeSubmenuItem?.children) {
+  @if(shouldRenderSubmenu()) {
   <div class="submenu-box menu-box bborder" #submenuBox [ngClass]="{'show': activeSubmenuItem !== null}" [ngStyle]="{
       'left': submenuPosition.left, 
       'top': submenuPosition.top,
+      'width': submenuWidth,
       'max-height': submenuMaxHeight,
       'overflow-y': submenuOverflow
     }" (mouseenter)="keepSubMenuOpen()" (mouseleave)="hideSubMenu($event, 0)">
-    @for (subItem of activeSubmenuItem.children; track $index) {
-    <div class="menu-item ccenter" (click)="subItemClick($event,subItem)" style="padding-right: 25px;" [attr.title]="subItem.tooltip || null">
-      <div class="name ellipsis">{{ subItem.name }}</div>
-      @if(subItem.check){
-      <div class="check"><i class="fa-light fa-circle-check"></i></div>
+    @if(getSubmenuTitle(activeSubmenuItem) || hasSubmenuIntroContent(activeSubmenuItem)) {
+    <div class="submenu-detail">
+      @if(getSubmenuTitle(activeSubmenuItem)) {
+      <div class="submenu-detail-title">{{ getSubmenuTitle(activeSubmenuItem) }}</div>
       }
+      @if(hasSubmenuIntroContent(activeSubmenuItem)) {
+      <div class="submenu-detail-separator"></div>
+      <div class="submenu-detail-copy">
+        @for(line of getSubmenuDescriptionLines(activeSubmenuItem); track $index) {
+        <div class="submenu-detail-line">{{ line }}</div>
+        }
+        @if(getSubmenuContextValue(activeSubmenuItem)) {
+        <div class="submenu-context-group">
+          <div class="submenu-context-label">{{ getSubmenuContextLabel(activeSubmenuItem) }}</div>
+          <div class="submenu-context-value">{{ getSubmenuContextValue(activeSubmenuItem) }}</div>
+        </div>
+        }
+      </div>
+      }
+    </div>
+    }
+    @if(getSubmenuSectionLabel(activeSubmenuItem) && getSubmenuChildren(activeSubmenuItem).length > 0) {
+    <div class="submenu-detail-separator submenu-section-separator"></div>
+    <div class="submenu-section-label">{{ getSubmenuSectionLabel(activeSubmenuItem) }}</div>
+    }
+    @for (subItem of getSubmenuChildren(activeSubmenuItem); track $index) {
+    <div class="menu-item submenu-option" (click)="subItemClick($event,subItem)">
+      <div class="submenu-option-copy">
+        <div class="submenu-option-title-row">
+          <div class="submenu-option-inline-copy">
+            <div class="name ellipsis">{{ subItem.name }}</div>
+            @if(getSubmenuItemDetail(subItem)) {
+            <div class="submenu-option-separator" aria-hidden="true">-</div>
+            <div class="submenu-option-detail ellipsis">{{ getSubmenuItemDetail(subItem) }}</div>
+            }
+          </div>
+          @if(subItem.check){
+          <div class="check"><i class="fa-light fa-circle-check"></i></div>
+          }
+        </div>
+      </div>
     </div>
     }
   </div>

@@ -142,15 +142,30 @@ export interface ReconstructedFileState {
   sourceEpoch: number;
 }
 
+export interface GitCheckpointApplyTarget {
+  repositoryRoot: string;
+  targetRef: string;
+}
+
+export interface GitCheckpointRestoreApplyMetadata {
+  kind: 'git-checkpoint';
+  repositoryRoot: string;
+  targetRef: string;
+  additionalTargets?: GitCheckpointApplyTarget[];
+}
+
 export interface RestorePlan {
   checkpointId: string;
   epoch: number;
   files: ReconstructedFileState[];
+  applyMetadata?: GitCheckpointRestoreApplyMetadata;
 }
 
 export interface EditingFileApplyResult {
   appliedFiles: number;
   errors: string[];
+  rolledBackOnError?: boolean;
+  rollbackErrors?: string[];
 }
 
 export interface TimelineDiffChange {
@@ -176,6 +191,14 @@ export interface TimelineDiffCharChange {
 export interface RequestEditSummary {
   requestId: string;
   checkpointId?: string;
+  fileCount: number;
+  stats: TimelineDiffStat[];
+  hasBinaryEdits: boolean;
+  hasNotebookEdits: boolean;
+  hasRename: boolean;
+}
+
+export interface TimelineDiffSummary {
   fileCount: number;
   stats: TimelineDiffStat[];
   hasBinaryEdits: boolean;

@@ -22,7 +22,10 @@ import {
   type TurnResponseAssistantEntryProjection,
   type TurnResponseUserEntryProjection,
 } from '../core/turn-response-stream-contract';
-import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
+import {
+  cloneTurnResponseModelSidecar,
+  normalizeTurnResponseSummaryPreview,
+} from './turn-response-response-model';
 
 function applyHostStreamResponseProgressUpdate(
   baseTurn: TurnResponseTurn,
@@ -2085,24 +2088,48 @@ function buildOrderedHostResponseEntries(
 
 function projectTurnResponseForHostEntry(entry: HostTurnResponseEntry): TurnResponseTurn {
   const turn = entry.turnResponse!;
-  const summaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
-  const quotaSnapshot = turn.responseModel?.quotaSnapshot;
+  const responseModel = cloneProjectedTurnResponseModel(turn.responseModel);
   const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn as TurnResponseTurn & {
     responseModel?: unknown;
   };
   return {
     ...turnWithoutResponseModel,
-    ...(summaryPreview || quotaSnapshot
-      ? {
-          responseModel: {
-            ...(summaryPreview ? { summaryPreview } : {}),
-            ...(quotaSnapshot ? { quotaSnapshot: { ...quotaSnapshot } } : {}),
-          },
-        }
-      : {}),
+    rounds: cloneProjectedTurnRounds(turn.rounds ?? []),
+    ...(responseModel ? { responseModel } : {}),
     response: {
       ...turn.response,
+      parts: [...turn.response.parts],
     },
+  };
+}
+
+function cloneProjectedTurnRounds(
+  rounds: TurnResponseTurn['rounds'],
+): TurnResponseTurn['rounds'] {
+  return (rounds ?? []).map((round) => {
+    const summary = normalizeTurnResponseSummaryPreview(round.summary);
+
+    return {
+      ...round,
+      toolCalls: (round.toolCalls ?? []).map(toolCall => ({ ...toolCall })),
+      ...(summary ? { summary } : {}),
+    };
+  });
+}
+
+function cloneProjectedTurnResponseModel(
+  responseModel: TurnResponseTurn['responseModel'] | undefined,
+): TurnResponseTurn['responseModel'] | undefined {
+  const cloned = cloneTurnResponseModelSidecar(responseModel);
+  const quotaSnapshot = responseModel?.quotaSnapshot;
+
+  if (!cloned && !quotaSnapshot) {
+    return undefined;
+  }
+
+  return {
+    ...(cloned ?? {}),
+    ...(quotaSnapshot ? { quotaSnapshot: { ...quotaSnapshot } } : {}),
   };
 }
 

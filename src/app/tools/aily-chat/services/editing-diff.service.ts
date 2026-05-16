@@ -5,6 +5,7 @@ import type {
   ContentRef,
   EditingSessionTimelineState,
   RequestEditSummary,
+  TimelineDiffSummary,
   TimelineDiffChange,
   TimelineDiffCharChange,
   TimelineDiffStat,
@@ -101,6 +102,30 @@ export class EditingDiffService {
     );
   }
 
+  async getSummaryBetweenEpochs(fromEpoch: number, toEpoch: number): Promise<TimelineDiffSummary | null> {
+    const state = this.loadState();
+    if (!state || toEpoch < fromEpoch) {
+      return null;
+    }
+
+    const rangeOperations = state.operations
+      .filter(operation => operation.epoch > fromEpoch && operation.epoch <= toEpoch)
+      .sort((left, right) => left.epoch - right.epoch);
+    if (rangeOperations.length === 0) {
+      return null;
+    }
+
+    const uris = [...new Set(rangeOperations.map(operation => operation.uri))];
+    const stats = await this.buildDiffStats(
+      uris,
+      uri => this.resolveContentStateAtEpoch(state, uri, fromEpoch),
+      uri => this.resolveContentStateAtEpoch(state, uri, toEpoch),
+      rangeOperations,
+    );
+
+    return this.toTimelineDiffSummary(stats, rangeOperations);
+  }
+
   async getDiffForUrisAtEpoch(uris: string[], epoch: number): Promise<TimelineDiffStat[]> {
     const state = this.loadState();
     if (!state) {
@@ -129,6 +154,23 @@ export class EditingDiffService {
     return {
       requestId,
       ...(checkpointId ? { checkpointId } : {}),
+      fileCount: stats.length,
+      stats,
+      hasBinaryEdits: operations.some(operation => operation.contentKind === 'binary'),
+      hasNotebookEdits: operations.some(operation => operation.contentKind === 'notebook'),
+      hasRename: operations.some(operation => operation.type === 'rename'),
+    };
+  }
+
+  private toTimelineDiffSummary(
+    stats: TimelineDiffStat[],
+    operations: readonly TimelineFileOperation[],
+  ): TimelineDiffSummary | null {
+    if (stats.length === 0) {
+      return null;
+    }
+
+    return {
       fileCount: stats.length,
       stats,
       hasBinaryEdits: operations.some(operation => operation.contentKind === 'binary'),

@@ -2,6 +2,7 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 import {
   formatContinuationStopReason,
   getContinuationHardStopReasonMessage,
+  getContinuationStopReasonPresentation,
 } from '../core/continuation-stop-reason';
 
 export type InteractionBudgetSeverity = 'normal' | 'warning' | 'danger';
@@ -19,11 +20,16 @@ export interface InteractionBudgetSnapshotItem {
 export interface InteractionBudgetSnapshot {
   readonly title: string;
   readonly label: string;
+  readonly descriptionText?: string;
   readonly badgeText?: string;
   readonly severity: InteractionBudgetSeverity;
   readonly statusText?: string;
   readonly metadataText?: string;
   readonly hardStopMessage?: string;
+  readonly continueRequired?: boolean;
+  readonly continueTitle?: string;
+  readonly continueDescription?: string;
+  readonly continueActionLabel?: string;
   readonly items: readonly InteractionBudgetSnapshotItem[];
 }
 
@@ -52,6 +58,11 @@ export function createInteractionBudgetSnapshot(
   ].filter((item): item is InteractionBudgetSnapshotItem => item !== null);
 
   const hardStopReason = asString(continuation['hardStopReason']);
+  const pendingState = asRecord(continuation['pendingState']);
+  const pendingKind = asString(pendingState?.['kind']);
+  const stopReason = asString(continuation['stopReason']);
+  const continueRequired = pendingKind === 'continue';
+  const stopReasonPresentation = getContinuationStopReasonPresentation(stopReason);
   if (items.length === 0 && !hardStopReason) {
     return null;
   }
@@ -59,18 +70,28 @@ export function createInteractionBudgetSnapshot(
   const maxPercent = items.reduce((max, item) => Math.max(max, item.percent), 0);
   const severity: InteractionBudgetSeverity = hardStopReason
     ? 'danger'
-    : maxPercent >= 80
+    : continueRequired || maxPercent >= 80
       ? 'warning'
       : 'normal';
 
   return {
     title: 'Current execution budget',
     label: 'Execution',
-    badgeText: hardStopReason ? 'Stopped' : `${Math.round(maxPercent)}%`,
+    descriptionText: 'Tracks runtime pressure for the current execution chain only. It does not represent remaining quota.',
+    badgeText: hardStopReason ? 'Stopped' : continueRequired ? 'Continue' : `${Math.round(maxPercent)}%`,
     severity,
     statusText: buildStatusText(continuation),
     metadataText: buildMetadataText(budgets, continuation),
     hardStopMessage: getContinuationHardStopReasonMessage(hardStopReason),
+    ...(continueRequired
+      ? {
+          continueRequired: true,
+          continueTitle: '需要继续执行',
+          continueDescription: stopReasonPresentation?.detail
+            ?? '当前执行链已暂停自动续跑，请显式继续以启动新的执行链。',
+          continueActionLabel: '继续执行',
+        }
+      : {}),
     items,
   };
 }
@@ -217,6 +238,9 @@ function buildStatusText(continuation: ContinuationBudgetRecord): string | undef
   }
   if (pendingKind === 'confirmation') {
     return 'Status: waiting for confirmation';
+  }
+  if (pendingKind === 'continue') {
+    return 'Status: continue required';
   }
   if (status === 'running') {
     return 'Status: active';

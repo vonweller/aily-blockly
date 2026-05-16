@@ -2,6 +2,10 @@ import { parseTerminalPayload } from '../../../core/terminal-payload';
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
 import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
 import {
+  collectChangedFilesEntriesFromToolResultEntry,
+  isChangedFilesToolName,
+} from '../chat-changed-files-display';
+import {
   formatContinuationHardStopReason,
   formatContinuationStopReason,
   getContinuationStopReasonPresentation,
@@ -17,7 +21,7 @@ export interface StateDetailRow {
   note?: string;
   trailing?: string;
   tone?: StateTone;
-  outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code';
+  outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code' | 'changed-file';
   outputChannel?: 'stdout' | 'stderr';
   outputUri?: string;
   outputMimeType?: string;
@@ -1589,6 +1593,25 @@ function buildToolCallOutputRows(
   index: number,
   toolName: string | undefined,
 ): StateDetailRow[] {
+  if (isChangedFilesToolName(toolName)) {
+    const changedFiles = collectChangedFilesEntriesFromToolResultEntry(entry);
+    if (changedFiles.length > 0) {
+      const recordId = asString(entry['recordId']) || `tool-row-${index}`;
+      return changedFiles.map((changedFile, changedIndex) => ({
+        id: `${recordId}:changed-file:${changedIndex}`,
+        title: changedFile.name || changedFile.path,
+        subtitle: [
+          changedFile.directory,
+          changedFile.previousPath ? `来自 ${changedFile.previousPath}` : undefined,
+        ].filter(Boolean).join(' · ') || undefined,
+        trailing: changedFile.statusLabel,
+        tone: changedFile.tone,
+        outputKind: 'changed-file',
+        outputLabel: changedFile.statusBadge,
+      }));
+    }
+  }
+
   const resultContent = asToolResultContentArray(entry['resultContent']);
   if (resultContent.length > 0) {
     return buildToolCallOutputRowsFromContent(entry, resultContent, toolName);

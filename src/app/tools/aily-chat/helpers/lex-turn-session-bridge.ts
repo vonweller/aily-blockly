@@ -1,7 +1,6 @@
 import type { ITurnDataSource, TurnSpan } from '../core/turn-data-source';
 
 type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
-type LexCompactionAnchor = import('aily-lex/browser').CompactionAnchor;
 type LexTurnRequestMetadata = import('aily-lex/browser').TurnRequest['metadata'];
 
 interface LexApiMessage {
@@ -61,7 +60,6 @@ interface LexTurnManagerAccess {
   failTurn(reason: string): void;
   removeIncomplete(): boolean;
   removeFrom(turnIndex: number): void;
-  applyCompaction(anchor: LexCompactionAnchor, historyRevision?: number): void;
   toSnapshot(): LexSessionSnapshot;
 }
 
@@ -147,74 +145,6 @@ export class LexTurnSessionBridge implements ITurnDataSource {
 
   get revision(): number {
     return this.getAgent()?.turnManager.revision ?? 0;
-  }
-
-  getCoveredTurnIds(upToTurnIndex: number): string[] {
-    const agent = this.getAgent();
-    if (!agent) return [];
-    const turns = agent.turnManager.turns.get();
-    return turns.filter(t => t.index <= upToTurnIndex).map(t => t.id);
-  }
-
-  getAnchorRoundId(turnIndex: number): string | undefined {
-    const agent = this.getAgent();
-    if (!agent) return undefined;
-    const turns = agent.turnManager.turns.get();
-    const turn = turns.find(t => t.index === turnIndex);
-    return turn?.rounds.at(-1)?.id;
-  }
-
-  applySummary(
-    coveredTurnIds: string[],
-    anchorTurnId: string,
-    summary: string,
-    source: 'background' | 'foreground',
-    anchorRoundId?: string,
-    historyRevision?: number,
-  ): boolean {
-    const agent = this.getAgent();
-    if (!agent) return false;
-    const turns = agent.turnManager.turns.get();
-
-    const anchorTurn = turns.find(t => t.id === anchorTurnId);
-    if (!anchorTurn) return false;
-
-    const expectedIds = turns
-      .filter(t => t.index <= anchorTurn.index)
-      .map(t => t.id);
-    if (
-      coveredTurnIds.length !== expectedIds.length ||
-      !coveredTurnIds.every((id, i) => id === expectedIds[i])
-    ) {
-      console.warn('[LexStream] 跳过过期摘要写回：covered turn 列表与当前历史前缀不一致');
-      return false;
-    }
-
-    let roundIndex: number | undefined;
-    if (anchorRoundId) {
-      roundIndex = anchorTurn.rounds.findIndex(r => r.id === anchorRoundId);
-      if (roundIndex < 0) {
-        console.warn('[LexStream] 跳过过期摘要写回：anchorRoundId 在当前 turn 中不存在');
-        return false;
-      }
-    }
-
-    const anchor: LexCompactionAnchor = {
-      turnIndex: anchorTurn.index,
-      anchorRoundId,
-      roundIndex,
-      summary,
-      source,
-      timestamp: Date.now(),
-    };
-
-    try {
-      agent.turnManager.applyCompaction(anchor, historyRevision);
-      return true;
-    } catch (err) {
-      console.warn('[LexStream] 摘要写回失败:', err);
-      return false;
-    }
   }
 
   getCurrentTurnId(): string | undefined {

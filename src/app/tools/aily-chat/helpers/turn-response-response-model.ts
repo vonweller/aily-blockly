@@ -6,10 +6,48 @@ export function normalizeTurnResponseSummaryPreview(summaryPreview: string | nul
     : undefined;
 }
 
+export type TurnResponseRoundSummaryCarrier = NonNullable<NonNullable<TurnResponseTurn['responseModel']>['summary']>;
+
 function normalizeOptionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim()
     ? value.trim()
     : undefined;
+}
+
+function normalizeTurnResponseRoundSummarySource(
+  source: unknown,
+): TurnResponseRoundSummaryCarrier['source'] | undefined {
+  return source === 'background' || source === 'foreground' || source === 'heuristic'
+    ? source
+    : undefined;
+}
+
+export function cloneTurnResponseRoundSummaryCarrier(
+  summary: TurnResponseTurn['responseModel']['summary'] | undefined,
+): TurnResponseRoundSummaryCarrier | undefined {
+  const toolCallRoundId = normalizeOptionalText(summary?.toolCallRoundId);
+  const text = normalizeOptionalText(summary?.text);
+  const source = normalizeTurnResponseRoundSummarySource(summary?.source);
+
+  if (!toolCallRoundId || !text) {
+    return undefined;
+  }
+
+  return {
+    toolCallRoundId,
+    text,
+    ...(source ? { source } : {}),
+  };
+}
+
+export function cloneTurnResponseRoundSummaryCarriers(
+  summaries: TurnResponseTurn['responseModel']['summaries'] | undefined,
+): readonly TurnResponseRoundSummaryCarrier[] | undefined {
+  const cloned = (summaries ?? [])
+    .map(summary => cloneTurnResponseRoundSummaryCarrier(summary))
+    .filter((summary): summary is TurnResponseRoundSummaryCarrier => !!summary);
+
+  return cloned.length > 0 ? cloned : undefined;
 }
 
 export function getTurnResponseResolvedModelName(
@@ -51,15 +89,19 @@ export function cloneTurnResponseModelSidecar(
 
   const modelName = normalizeOptionalText(responseModel.modelName);
   const modelBillingLabel = normalizeOptionalText(responseModel.modelBillingLabel);
+  const summary = cloneTurnResponseRoundSummaryCarrier(responseModel.summary);
+  const summaries = cloneTurnResponseRoundSummaryCarriers(responseModel.summaries);
   const summaryPreview = normalizeTurnResponseSummaryPreview(responseModel.summaryPreview);
 
-  if (!responseModel.slashCommand && !responseModel.followups && !summaryPreview && !modelName && !modelBillingLabel) {
+  if (!responseModel.slashCommand && !responseModel.followups && !summary && !summaries && !summaryPreview && !modelName && !modelBillingLabel) {
     return undefined;
   }
 
   return {
     ...(responseModel.slashCommand ? { slashCommand: { ...responseModel.slashCommand } } : {}),
     ...(responseModel.followups ? { followups: responseModel.followups.map((followup: TurnResponseFollowup) => ({ ...followup })) } : {}),
+    ...(summary ? { summary } : {}),
+    ...(summaries ? { summaries } : {}),
     ...(summaryPreview ? { summaryPreview } : {}),
     ...(modelName ? { modelName } : {}),
     ...(modelBillingLabel ? { modelBillingLabel } : {}),
@@ -78,37 +120,11 @@ function hasExplicitAgentInvocationRequest(turn: TurnResponseTurn | null | undef
   return Boolean(turn?.request.metadata?.explicitAgentInvocation);
 }
 
-function hasSubagentToolCallPart(turn: TurnResponseTurn | null | undefined): boolean {
-  if (!turn) {
-    return false;
-  }
-
-  return turn.response.parts.some((part) => {
-    if (part.type !== 'tool_call') {
-      return false;
-    }
-
-    const metadata = part.metadata as Record<string, unknown> | undefined;
-    const toolSpecificData = metadata?.['toolSpecificData'] as Record<string, unknown> | undefined;
-    return Boolean(
-      metadata?.['subAgentInvocationId']
-      || toolSpecificData?.['kind'] === 'subagent'
-      || part.toolName === 'agent',
-    );
-  });
-}
-
 export function deriveExplicitAgentSummaryPreview(
   turn: TurnResponseTurn | null | undefined,
-  options?: {
-    allowSubagentPartFallback?: boolean;
-  },
 ): string | undefined {
-  const allowSubagentPartFallback = options?.allowSubagentPartFallback ?? false;
-  const shouldInspectSummary = hasExplicitAgentInvocationRequest(turn)
-    || (allowSubagentPartFallback && hasSubagentToolCallPart(turn));
 
-  if (!turn || !shouldInspectSummary) {
+  if (!turn || !hasExplicitAgentInvocationRequest(turn)) {
     return undefined;
   }
 
@@ -126,11 +142,8 @@ export function deriveExplicitAgentSummaryPreview(
 
 export function withExplicitAgentSummaryPreview(
   turn: TurnResponseTurn,
-  options?: {
-    allowSubagentPartFallback?: boolean;
-  },
 ): TurnResponseTurn {
-  const summaryPreview = deriveExplicitAgentSummaryPreview(turn, options);
+  const summaryPreview = deriveExplicitAgentSummaryPreview(turn);
   const currentSummaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
 
   if (summaryPreview === currentSummaryPreview) {

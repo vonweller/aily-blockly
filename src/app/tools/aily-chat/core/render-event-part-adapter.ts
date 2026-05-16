@@ -133,10 +133,7 @@ export class RenderEventPartAdapter {
         return true;
 
       case 'tool_call_progress':
-        // Progress data can be free-form; update text if string
-        if (typeof event.data === 'string') {
-          this._store.updateToolCallForHandle(this._findToolCallHandle(event.toolCallId, handle), event.toolCallId, 'doing', event.data);
-        }
+        this._applyToolCallProgress(handle, event);
         return true;
 
       case 'tool_call_end':
@@ -320,6 +317,50 @@ export class RenderEventPartAdapter {
     if (!child) return;
 
     this._store.upsertSubagentChildItemForHandle(handle, event.toolCallId, child);
+  }
+
+  private _applyToolCallProgress(
+    fallbackHandle: ChatPartStoreOpaqueHandle,
+    event: Extract<RenderEvent, { type: 'tool_call_progress' }>,
+  ): void {
+    const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle);
+    if (!toolHandle) {
+      return;
+    }
+
+    const toolPart = this._findToolCallPart(toolHandle, event.toolCallId);
+    const progressUpdate = normalizeToolCallProgressUpdate(event.data, toolPart?.toolName);
+    if (!progressUpdate) {
+      return;
+    }
+
+    const nextMetadata = buildToolCallProgressMetadataPatch({
+      toolCallId: event.toolCallId,
+      toolName: toolPart?.toolName,
+      timestamp: event.timestamp,
+      summary: progressUpdate.summary,
+      progress: progressUpdate.progress,
+      detail: progressUpdate.detail,
+      step: progressUpdate.step,
+      statusText: progressUpdate.statusText,
+      existingMetadata: toolPart?.metadata,
+    });
+
+    this._store.patchToolCallForHandle(toolHandle, event.toolCallId, {
+      state: 'doing',
+      ...(progressUpdate.summary ? { text: progressUpdate.summary } : {}),
+      metadata: nextMetadata,
+    });
+  }
+
+  private _findToolCallPart(
+    handle: ChatPartStoreOpaqueHandle,
+    toolCallId: string,
+  ): Extract<ReturnType<RenderEventPartStoreAccess['getPartsForHandle']>[number], { type: 'tool_call' }> | undefined {
+    return this._store.getPartsForHandle(handle).find(
+      (part): part is Extract<ReturnType<RenderEventPartStoreAccess['getPartsForHandle']>[number], { type: 'tool_call' }> =>
+        part.type === 'tool_call' && part.toolCallId === toolCallId,
+    );
   }
 
   private _findToolCallHandle(toolCallId: string, fallbackHandle: ChatPartStoreOpaqueHandle | null): ChatPartStoreOpaqueHandle | null {
@@ -661,6 +702,125 @@ function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { 
 
 function extractToolResultText(result: Extract<RenderEvent, { type: 'tool_call_end' }>['result']): string {
   return collectToolResultText(result);
+}
+
+function normalizeToolCallProgressUpdate(
+  data: unknown,
+  toolName?: string,
+): {
+  summary?: string;
+  progress?: number;
+  detail?: string;
+  step?: string;
+  statusText?: string;
+} | null {
+  if (typeof data === 'string') {
+    const summary = data.trim();
+    return summary ? { summary } : null;
+  }
+
+  if (typeof data === 'number' && Number.isFinite(data)) {
+    return {
+      summary: toolName ? `${toolName} still running...` : 'Tool still running...',
+      progress: data,
+    };
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+
+  const record = data as Record<string, unknown>;
+  const summary = firstMeaningfulString(record['message'], record['text'], record['status'], record['detail'], record['step']);
+  const detail = firstMeaningfulString(record['detail']);
+  const step = firstMeaningfulString(record['step']);
+  const statusText = firstMeaningfulString(record['status'], record['statusText']);
+  const progress = asNumber(record['progress']) ?? asNumber(record['percentage']);
+
+  if (!summary && progress == null && !detail && !step && !statusText) {
+    return null;
+  }
+
+  return {
+    summary: summary ?? (toolName ? `${toolName} still running...` : 'Tool still running...'),
+    ...(progress != null ? { progress } : {}),
+    ...(detail ? { detail } : {}),
+    ...(step ? { step } : {}),
+    ...(statusText ? { statusText } : {}),
+  };
+}
+
+function buildToolCallProgressMetadataPatch(input: {
+  toolCallId: string;
+  toolName?: string;
+  timestamp: number;
+  summary?: string;
+  progress?: number;
+  detail?: string;
+  step?: string;
+  statusText?: string;
+  existingMetadata?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const existingMetadata = asRecord(input.existingMetadata) ?? {};
+  const existingTimeline = asRecordArray(existingMetadata['timeline']);
+  const progressEntry: Record<string, unknown> = {
+    recordId: `${input.toolCallId}:progress`,
+    phase: 'progress',
+    ...(input.summary ? { summary: input.summary } : {}),
+    ...(input.progress != null ? { progress: input.progress } : {}),
+    ...((input.summary || input.detail || input.step || input.statusText || input.progress != null)
+      ? {
+          progressDetails: {
+            ...(input.summary ? { message: input.summary } : {}),
+            ...(input.detail ? { detail: input.detail } : {}),
+            ...(input.step ? { step: input.step } : {}),
+            ...(input.statusText ? { statusText: input.statusText } : {}),
+            ...(input.progress != null ? { progress: input.progress } : {}),
+          },
+        }
+      : {}),
+    timestamp: input.timestamp,
+  };
+
+  const timeline = mergeProgressTimeline(existingTimeline, progressEntry);
+
+  return {
+    ...existingMetadata,
+    ...(input.toolName ? { toolName: input.toolName } : {}),
+    phase: 'progress',
+    ...(input.progress != null ? { progress: input.progress } : {}),
+    timeline,
+  };
+}
+
+function mergeProgressTimeline(
+  existingTimeline: readonly Record<string, unknown>[],
+  progressEntry: Record<string, unknown>,
+): Record<string, unknown>[] {
+  if (existingTimeline.length === 0) {
+    return [{ ...progressEntry }];
+  }
+
+  const nextTimeline = existingTimeline.map(entry => ({ ...entry }));
+  const lastEntry = nextTimeline[nextTimeline.length - 1];
+  if (asString(lastEntry?.['recordId']) === asString(progressEntry['recordId'])) {
+    nextTimeline[nextTimeline.length - 1] = { ...progressEntry };
+    return nextTimeline;
+  }
+
+  nextTimeline.push({ ...progressEntry });
+  return nextTimeline;
+}
+
+function firstMeaningfulString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = asString(value);
+    if (text) {
+      return text;
+    }
+  }
+
+  return undefined;
 }
 
 function questionRequestToPart(event: Extract<RenderEvent, { type: 'question_request' }>) {

@@ -3,8 +3,6 @@
  */
 
 export type { IAilyTool, ToolContext, ToolSchema, ToolUseResult, ToolExecutionCallbacks } from './tool-types';
-export { buildTurnSummaryPlan, findTurnSummaryPreserveStartSpanIndex } from './turn-summary-plan';
-export type { TurnSummaryPlan, TurnSummaryPlanOptions } from './turn-summary-plan';
 
 // 工具审批系统
 export { generateApprovalMessage } from '../helpers/tool-approval-ui';

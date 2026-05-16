@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, inject, ChangeDetectorRef, ElementRef, ViewChild, ViewChildren, QueryList } from '@angular/core';
+import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges, inject, ChangeDetectorRef, ElementRef, ViewChild, ViewChildren, QueryList, HostBinding } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { TodoListSnapshot, TodoUpdateService } from '../../services/todoUpdate.service';
@@ -27,6 +27,18 @@ export class FloatingTodoComponent implements OnInit, OnDestroy, OnChanges {
   private userManuallyExpanded = false;
   private todoUpdateService = inject(TodoUpdateService);
   private cdr = inject(ChangeDetectorRef);
+
+  @HostBinding('class.chat-todo-widget-host')
+  readonly hostClass = true;
+
+  @HostBinding('class.has-todos')
+  get hasTodosClass(): boolean {
+    return this.hasTodos;
+  }
+
+  get hasTodos(): boolean {
+    return this.todoList.length > 0;
+  }
 
   ngOnInit() {
     // console.log('[TODO Panel] 初始化组件, sessionId:', this.sessionId);

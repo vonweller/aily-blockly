@@ -46,6 +46,7 @@ import { turnResponsePartToChatPart } from '../../core/turn-response-part-mapper
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
+import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
 
 const EMPTY_TURN_PARTS: readonly TurnResponsePart[] = [];
 const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
@@ -94,6 +95,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Input() isLastAily = false;
   @Input() isFirstUserTurn = false;
   @Input() showCheckpointRestore = false;
+  @Input() workspaceCheckpointPresentationMode: WorkspaceCheckpointPresentationMode = 'unknown';
   /** 当前会话 ID */
   @Input() sessionId = '';
   @Input()
@@ -382,14 +384,26 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return previewLabel ? `点击编辑 · ${previewLabel}` : '点击编辑';
   }
 
-  get checkpointActionLabel(): string {
-    if (this.isFirstUserTurn) {
-      return '重新开始';
+  private get isCheckpointCompatibilityMode(): boolean {
+    return this.workspaceCheckpointPresentationMode === 'compatibility';
+  }
+
+  private appendCheckpointModeHint(base: string): string {
+    if (!this.isCheckpointCompatibilityMode) {
+      return base;
     }
 
-    return this.roundCount > 0
-      ? `还原检查点 · ${this.roundCount} 轮`
-      : '还原检查点';
+    return `${base} 当前工作区未走 git-backed checkpoint 主路径，此入口仍处于 compatibility mode，不完全等同于 VS Code / Copilot 的真实恢复语义。`;
+  }
+
+  get checkpointActionLabel(): string {
+    const baseLabel = this.isFirstUserTurn
+      ? '重新开始'
+      : this.roundCount > 0
+        ? `还原检查点 · ${this.roundCount} 轮`
+        : '还原检查点';
+
+    return this.isCheckpointCompatibilityMode ? `${baseLabel} · 兼容模式` : baseLabel;
   }
 
   get forkSessionActionLabel(): string {
@@ -398,11 +412,11 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   get checkpointActionTitle(): string {
     if (this.isFirstUserTurn) {
-      return '清空当前对话并撤销全部更改';
+      return this.appendCheckpointModeHint('清空当前对话并撤销全部更改');
     }
 
     if (this.checkpointActionDisabled) {
-      return '该请求已被还原后的 disabled request boundary 接管，不能再次作为活动检查点使用';
+      return this.appendCheckpointModeHint('该请求已成为失活的历史边界，不能再次作为活动检查点使用；工作区是否还能恢复，请以单独的恢复入口状态为准');
     }
 
     const hints: string[] = [];
@@ -420,12 +434,12 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       hints.push('该轮请求包含额外上下文');
     }
 
-    return hints.length > 0 ? hints.join('，') : '还原到该轮检查点';
+    return this.appendCheckpointModeHint(hints.length > 0 ? hints.join('，') : '还原到该轮检查点');
   }
 
   get forkSessionActionTitle(): string {
     if (this.forkSessionActionDisabled) {
-      return '该请求已失活，不能再从这里分叉新会话';
+      return '该请求已失活，不能再从这里分叉新会话；这只影响聊天历史操作，工作区恢复状态请看单独的恢复入口';
     }
 
     const previewTitle = this.actionTurnPreviewTitle;
@@ -437,7 +451,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get checkpointRestoreStatusLabel(): string {
-    return '已还原检查点';
+    return this.isCheckpointCompatibilityMode ? '已还原检查点 · 兼容模式' : '已还原检查点';
   }
 
   get checkpointRestoreActionLabel(): string {
@@ -445,7 +459,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get checkpointRestoreActionTitle(): string {
-    return '重新应用已撤销的工作区更改和聊天';
+    return this.appendCheckpointModeHint('重新应用已撤销的工作区更改和聊天');
   }
 
   get userTurnMetadataLabel(): string | null {
@@ -481,10 +495,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
 
     if (this.role === 'user') {
-      return '该请求已经被还原到更早的检查点之后，当前只保留历史展示，不再作为活动请求参与后续操作。';
+      return '该请求已经被还原到更早的检查点之后，当前只保留历史展示，不再作为活动请求参与后续聊天操作；工作区是否还能恢复，请以单独的恢复入口状态为准。';
     }
 
-    return '该响应所属请求已经失活；当前仅保留历史展示，不能继续重新执行。';
+    return '该响应所属请求已经失活；当前仅保留历史展示，不能继续重新执行。工作区是否还能恢复，请以单独的恢复入口状态为准。';
   }
 
   get editContextHint(): string | null {
@@ -512,7 +526,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   get regenerateActionTitle(): string {
     if (this.regenerateActionDisabled) {
-      return '该请求已失活，不能重新执行';
+      return '该请求已失活，不能重新执行；这只影响聊天历史操作，工作区恢复状态请看单独的恢复入口';
     }
 
     const preview = this.buildPreviewText(

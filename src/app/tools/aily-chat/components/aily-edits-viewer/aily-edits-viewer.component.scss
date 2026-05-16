@@ -10,119 +10,190 @@
     backdrop-filter: blur(6px);
     border: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
     border-bottom: none;
-    border-radius: 8px 8px 0 0;
+    border-radius: var(--aily-chat-widget-top-radius, 8px) var(--aily-chat-widget-top-radius, 8px) 0 0;
     color: var(--aily-text-tertiary, #cccccc);
     display: flex;
     flex-direction: column;
     gap: 2px;
     overflow: hidden;
 
-    .edits-panel-header {
-        min-height: 22px;
-        padding: 0 3px;
-        user-select: none;
+    .chat-editing-session-overview {
         display: flex;
+        flex-direction: row;
         align-items: center;
         justify-content: space-between;
+        gap: 6px;
+        min-height: 22px;
+        padding-right: 3px;
+        user-select: none;
+        cursor: pointer;
 
-        &:hover {
-            background: var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.06));
-        }
-
-        .header-content {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
+        .working-set-title {
             flex: 1;
             min-width: 0;
 
-            .panel-icon {
-                font-size: 10px;
-                color: var(--aily-icon-color, #c5c5c5);
-                transition: transform 0.2s ease;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0;
+            padding: 0;
+            border: none;
+            border-radius: 2px;
+            background: transparent;
+            color: var(--aily-text-tertiary, #cccccc);
+            cursor: pointer;
 
-                &.expanded {
-                    transform: rotate(90deg);
-                }
+            &:focus {
+                outline: none;
+                box-shadow: none;
             }
 
-            .header-copy {
-                display: flex;
-                flex: 1;
-                min-width: 0;
-                flex-direction: column;
-                gap: 2px;
-            }
-
-            .panel-title {
-                font-size: 12px;
-                font-weight: 400;
-                color: var(--aily-text-tertiary, #cccccc);
-            }
-
-            .panel-subtitle {
-                font-size: 11px;
-                color: var(--aily-text-hint, #888);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
+            &:focus-visible {
+                outline: 1px solid var(--aily-color-accent, #007fd4);
+                outline-offset: -1px;
             }
         }
 
-        .header-actions {
+        .working-set-title-section {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding-left: 3px;
+            font-size: 12px;
+            line-height: 22px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .panel-icon {
+            flex-shrink: 0;
+            width: 16px;
+            font-size: 12px;
+            color: var(--aily-text-tertiary, #cccccc);
+            margin-right: 3px;
+            transition: transform 0.2s ease;
+
+            &.expanded {
+                transform: rotate(90deg);
+            }
+        }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 12px;
+            font-weight: 400;
+            line-height: 22px;
+            color: var(--aily-text-tertiary, #cccccc);
+        }
+
+        .panel-title-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .working-set-line-counts {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            flex-shrink: 0;
+            margin-left: 6px;
+        }
+
+        .chat-editing-session-actions {
             display: flex;
             align-items: center;
             gap: 6px;
+            flex-shrink: 0;
+            padding-right: 0;
+
+            .chat-editing-session-actions-group {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex-wrap: nowrap;
+            }
 
             .action-btn {
-                padding: 1px 10px;
-                border-radius: 3px;
-                font-size: 11px;
-                cursor: pointer;
+                min-width: unset;
+                width: fit-content;
+                padding: 3px 6px;
+                border-radius: 4px;
                 border: 1px solid transparent;
-                line-height: 20px;
+                font-size: 11px;
+                line-height: 14px;
+                cursor: pointer;
                 white-space: nowrap;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 
-                &.primary {
-                    background-color: var(--aily-color-primary, #0078d4);
-                    color: var(--aily-chat-viewer-on-primary, #fff);
-                    border-color: var(--aily-color-primary, #0078d4);
+                &:focus {
+                    outline: none;
+                    box-shadow: none;
+                }
+
+                &:focus-visible {
+                    outline: 1px solid var(--aily-color-accent, #007fd4);
+                    outline-offset: -1px;
+                }
+
+                &.secondary {
+                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
 
                     &:hover {
-                        background-color: var(--aily-color-link-hover, #1a8ae8);
+                        background: var(--vscode-button-secondaryHoverBackground, var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.08)));
+                        color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
                     }
                 }
 
-                &.icon-btn {
-                    padding: 1px 4px;
-                    background: transparent;
-                    color: var(--aily-icon-color, #c5c5c5);
-                    border: none;
-                    font-size: 13px;
-                    line-height: 20px;
+                &.text-btn {
+                    padding: 3px 6px;
+                }
 
-                    &:hover:not(:disabled) {
-                        background: var(--aily-bg-tertiary, #37373a);
-                        color: var(--aily-text-tertiary, #cccccc);
-                    }
+                &.keep-btn {
+                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                }
 
-                    &:disabled {
-                        opacity: 0.35;
-                        cursor: default;
-                    }
+                &.undo-btn {
+                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                }
+
+                &:disabled {
+                    opacity: 0.4;
+                    cursor: default;
                 }
             }
 
             .action-taken-text {
                 font-size: 11px;
                 color: var(--aily-text-hint, #888);
-                font-style: italic;
+            }
+
+            &.accepted-state {
+                padding-right: 2px;
             }
         }
     }
 
-    .edits-panel-content {
+    .chat-editing-session-list {
+        margin-top: 2px;
         max-height: 200px;
         overflow-y: auto;
         background: transparent;
@@ -143,19 +214,36 @@
         .file-entry {
             display: flex;
             align-items: center;
-            height: 22px;
-            padding: 0 3px 0 10px;
-            gap: 8px;
+            gap: 4px;
+            min-height: 22px;
+            padding: 0 3px;
             cursor: default;
             border-radius: 2px;
+            position: relative;
 
             &:hover {
                 background: var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.06));
             }
 
+            .file-main {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex: 1;
+                min-width: 0;
+            }
+
+            .file-copy {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                flex: 1;
+            }
+
             .file-icon {
+                width: 16px;
                 font-size: 11px;
-                width: 14px;
                 text-align: center;
                 flex-shrink: 0;
 
@@ -173,7 +261,6 @@
             }
 
             .file-path {
-                flex: 1;
                 min-width: 0;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -182,29 +269,55 @@
                 color: var(--aily-text-quaternary, #d4d4d4);
             }
 
+            .file-kind-badge {
+                flex-shrink: 0;
+                padding: 0 4px;
+                border-radius: 3px;
+                background: color-mix(in srgb, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)) 70%, transparent);
+                color: var(--aily-text-hint, #9b9b9b);
+                font-size: 10px;
+                line-height: 14px;
+            }
+
             .file-stats {
                 display: flex;
                 gap: 4px;
                 flex-shrink: 0;
                 font-size: 11px;
+                margin-left: auto;
+                margin-right: 6px;
             }
 
             .file-actions {
                 display: flex;
                 gap: 2px;
                 flex-shrink: 0;
+                width: 0;
+                padding-left: 0;
+                overflow: hidden;
                 opacity: 0;
-                transition: opacity 0.15s ease;
+                transition: width 0.15s ease, padding-left 0.15s ease, opacity 0.15s ease;
 
                 .file-action-btn {
-                    width: 18px;
-                    height: 18px;
+                    width: 16px;
+                    height: 16px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    border-radius: 3px;
+                    border: none;
+                    border-radius: 2px;
+                    background: transparent;
                     cursor: pointer;
                     font-size: 10px;
+
+                    &:focus {
+                        outline: none;
+                    }
+
+                    &:focus-visible {
+                        outline: 1px solid var(--aily-color-accent, #007fd4);
+                        outline-offset: -1px;
+                    }
 
                     &.accept {
                         color: var(--aily-color-success-alt, #3fb950);
@@ -225,6 +338,8 @@
             }
 
             &:hover .file-actions {
+                width: 34px;
+                padding-left: 5px;
                 opacity: 1;
             }
         }
@@ -242,7 +357,7 @@
 }
 
 /* 动画 */
-.edits-panel-content {
+.chat-editing-session-list {
     animation: slideDown 0.2s ease-out;
 }
 

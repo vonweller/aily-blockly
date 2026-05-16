@@ -16,6 +16,11 @@ import {
   type DetailSectionDescriptor,
 } from './x-aily-state-viewer/activity-detail-items';
 import {
+  buildChangedFilesDisplaySummary,
+  collectChangedFilesEntriesFromToolMetadata,
+  isChangedFilesToolName,
+} from './chat-changed-files-display';
+import {
   buildToolInvocationDisplaySummary,
   flattenToolInvocationDisplaySummary,
 } from '../../core/tool-invocation-formatter';
@@ -98,10 +103,10 @@ export function buildChatPartIdentity(part: ChatPart, index: number): string {
     return part.partId || `question-${index}`;
   }
   if (part.type === 'thinking') {
-    return `thinking-${part.isComplete ? 'done' : 'doing'}-${part.content.slice(0, 24)}`;
+    return `thinking-${index}`;
   }
   if (part.type === 'markdown') {
-    return `markdown-${part.content.slice(0, 24)}`;
+    return `markdown-${index}`;
   }
   return `error-${index}`;
 }
@@ -310,10 +315,20 @@ export function buildSubagentActivityItems(
 export function buildToolInvocationSummary(
   part: Pick<ToolCallPart, 'toolName' | 'text' | 'args' | 'metadata'>,
 ): ToolInvocationSummaryDisplay | undefined {
+  const metadata = asRecord(part.metadata) || null;
+  if (isChangedFilesToolName(part.toolName)) {
+    const changedFilesSummary = buildChangedFilesDisplaySummary(
+      collectChangedFilesEntriesFromToolMetadata(metadata),
+    );
+    if (changedFilesSummary) {
+      return changedFilesSummary;
+    }
+  }
+
   const summary = buildToolInvocationDisplaySummary({
     toolName: part.toolName,
     args: part.args,
-    metadata: asRecord(part.metadata) || null,
+    metadata,
   });
   return summary ? { label: summary.label, subtitle: summary.subtitle } : undefined;
 }
@@ -692,6 +707,7 @@ export function buildInvocationDetailDisplay(input: {
   const outputSections = sections.filter((section) => section.title === '工具输出');
   const historySections = sections.filter((section) => section.title !== '调用参数' && section.title !== '当前记录' && section.title !== '工具输出');
   const postConfirmation = input.postConfirmation === true;
+  const hasChangedFilesOutput = outputSections.some((section) => section.rows.some((row) => row.outputKind === 'changed-file'));
 
   return {
     progressSection,
@@ -699,8 +715,8 @@ export function buildInvocationDetailDisplay(input: {
     outputSections,
     historySections,
     hasWidgetSections: !!argsSection || outputSections.length > 0,
-    widgetTitle: postConfirmation ? '确认后执行' : '调用详情',
-    outputTitle: postConfirmation ? '确认后输出' : '输出',
+    widgetTitle: postConfirmation ? '确认后执行' : (hasChangedFilesOutput ? '文件变更' : '调用详情'),
+    outputTitle: postConfirmation ? '确认后输出' : (hasChangedFilesOutput ? '更改文件' : '输出'),
     postConfirmation,
   };
 }
@@ -942,11 +958,7 @@ function buildActivityToolSummaryCandidate(part: ToolCallPart | ConfirmationPart
     };
   }
 
-  const summary = buildToolInvocationDisplaySummary({
-    toolName: part.toolName,
-    args: part.args,
-    metadata: asRecord(part.metadata) || null,
-  });
+  const summary = buildToolInvocationSummary(part);
 
   return {
     toolName: normalizeToolName(part.toolName),

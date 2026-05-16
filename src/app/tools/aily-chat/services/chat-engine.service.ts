@@ -15,6 +15,7 @@ import { Injectable, ElementRef, NgZone, inject } from '@angular/core';
 import { Subscription, skip, distinctUntilChanged, combineLatest } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalService } from 'ng-zorro-antd/modal';
 
 import { ChatService, ChatTextOptions, ModelConfig } from './chat.service';
 import { McpService } from './mcp.service';
@@ -38,6 +39,7 @@ import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
+import { GitWorkspaceCheckpointProviderService } from './git-workspace-checkpoint-provider.service';
 import { ScrollManagerService } from './scroll-manager.service';
 import { ResourceManagerService } from './resource-manager.service';
 import { MenuManagerService } from './menu-manager.service';
@@ -45,7 +47,7 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
-import type { TurnRequest } from 'aily-lex/browser';
+import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 import { lexGenerateTitle } from '../core/lex-endpoint';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
@@ -65,9 +67,11 @@ import { ChatViewAdapter } from './chat-view-adapter';
 import { ChatPartStore } from '../core/chat-part-store';
 import type { IChatContext } from '../core/chat-context';
 import type { DialogTurnContext } from '../core/user-turn-action-target';
-import { EditActionsHelper } from '../helpers/edit-actions.helper';
+import { EditActionsHelper, type RestoreCheckpointConfirmation } from '../helpers/edit-actions.helper';
+import { applyCheckpointRestoreVisibility } from '../helpers/checkpoint-restore-visibility';
 import { UserInteractionHelper } from '../helpers/user-interaction.helper';
 import { type ChatDialogViewItem } from '../helpers/chat-dialog-view-items';
+import { UnsaveDialogComponent, type UnsaveDialogData } from '../../../main-window/components/unsave-dialog/unsave-dialog.component';
 import {
   applyHostResponseVoteToState,
   createLiveHostRequestGraphSource,
@@ -81,11 +85,13 @@ import {
 @Injectable()
 export class ChatEngineService implements IChatContext {
   private readonly chatViewState = inject(ChatViewService);
+  private readonly modal = inject(NzModalService);
 
   // ==================== Part-based 消息模型（Phase 1） ====================
   /** Part 存储：与 string-based list[] 并行工作，供 lex-stream 路径使用 */
   readonly partStore = new ChatPartStore();
   private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
+  private restoreCheckpointDialogOpen = false;
   private readonly messageDisplayContext = this.createMessageDisplayContext();
   private readonly userInteractionContext = this.createUserInteractionContext();
   private readonly editActionsContext = this.createEditActionsContext();
@@ -196,9 +202,16 @@ export class ChatEngineService implements IChatContext {
   }
 
   get dialogItems(): ChatDialogViewItem[] {
-    return this.hostResponseProjection
+    const dialogItems = this.hostResponseProjection
       ? [...this.hostResponseProjection.dialogItems]
       : [];
+    const canShowCheckpointRestore = this.editCheckpointService.hasRecoverableCheckpointRestoreRedoTurnResponses?.()
+      ?? (this.editCheckpointService.getCheckpointRestoreRedoTurnResponses?.() ?? []).length > 0;
+    return applyCheckpointRestoreVisibility(dialogItems, canShowCheckpointRestore);
+  }
+
+  get workspaceCheckpointPresentationMode() {
+    return this.workspaceCheckpointProvider.getPresentationMode?.() ?? 'compatibility';
   }
 
   get hostResponseProjection(): HostResponseProjection | null {
@@ -391,6 +404,18 @@ export class ChatEngineService implements IChatContext {
     return createInteractionBudgetSnapshot(this.hostResponseProjection?.turnResponses ?? []);
   }
 
+  async continueCurrentExecution(): Promise<void> {
+    const continuation = this.readLatestInteractionContinuation();
+    const pendingState = continuation?.pendingState && typeof continuation.pendingState === 'object'
+      ? continuation.pendingState as Record<string, unknown>
+      : null;
+    if ((typeof pendingState?.['kind'] === 'string' ? pendingState['kind'] : undefined) !== 'continue') {
+      return;
+    }
+
+    await this.resumeRestoredInteraction('继续', { kind: 'continue' });
+  }
+
   get requestQuotaSnapshot(): RequestQuotaSnapshot | null {
     return this.requestQuotaStateService.getRequestQuotaSnapshot();
   }
@@ -456,13 +481,148 @@ export class ChatEngineService implements IChatContext {
       getCurrentProjectPath: () => this.getCurrentProjectPath(),
       get absAutoSyncService() { return thisEngine.absAutoSyncService; },
       get editCheckpointService() { return thisEngine.editCheckpointService; },
+      get workspaceCheckpointProvider() { return thisEngine.workspaceCheckpointProvider; },
       get resourceManager() { return thisEngine.resourceManager; },
       get message() { return thisEngine.message; },
       get lexStream() { return thisEngine.lexStream; },
       get session() { return thisEngine.session; },
+      confirmRestoreCheckpoint: (confirmation) => thisEngine.confirmRestoreCheckpoint(confirmation),
+      get hostResponseProjection() { return thisEngine.hostResponseProjection; },
+      restoreSharedHostProjectionState: (state) => thisEngine.restoreSharedHostProjectionState(state),
       replaceSharedHostProjectionState: (state) => thisEngine.replaceSharedHostProjectionState(state),
       send: (sender, content, clear) => this.send(sender, content, clear),
     };
+  }
+
+  private async confirmRestoreCheckpoint(confirmation: RestoreCheckpointConfirmation): Promise<boolean> {
+    if (this.restoreCheckpointDialogOpen) {
+      return false;
+    }
+
+    const dialogData = this.buildRestoreCheckpointConfirmationDialogData(confirmation);
+
+    return new Promise<boolean>((resolve) => {
+      this.restoreCheckpointDialogOpen = true;
+
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: {
+          padding: '0',
+        },
+        nzWidth: '350px',
+        nzContent: UnsaveDialogComponent,
+        nzData: dialogData,
+      });
+
+      modalRef.afterClose.subscribe(result => {
+        this.restoreCheckpointDialogOpen = false;
+        resolve(result?.result === 'confirm');
+      });
+    });
+  }
+
+  private buildRestoreCheckpointConfirmationDialogData(
+    confirmation: RestoreCheckpointConfirmation,
+  ): UnsaveDialogData {
+    return {
+      title: confirmation.requestCount === 1
+        ? this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.TITLE_SINGLE',
+          'Do you want to undo your last edit?',
+        )
+        : this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.TITLE_MULTIPLE',
+          'Do you want to undo {{count}} edits?',
+          { count: confirmation.requestCount },
+        ),
+      text: this.buildRestoreCheckpointConfirmationMessage(confirmation),
+      buttons: [
+        {
+          text: this.translateRestoreCheckpointDialogText('UNSAVE_DIALOG.CANCEL', 'Cancel'),
+          type: 'default',
+          action: 'cancel',
+        },
+        {
+          text: this.translateRestoreCheckpointDialogText('CHECKPOINT_RESTORE_DIALOG.CONFIRM', 'Yes'),
+          type: 'primary',
+          danger: true,
+          action: 'confirm',
+        },
+      ],
+    };
+  }
+
+  private buildRestoreCheckpointConfirmationMessage(
+    confirmation: RestoreCheckpointConfirmation,
+  ): string {
+    const isLastRequest = confirmation.requestCount === 1;
+
+    if (confirmation.fileCount === 1 && confirmation.fileLabel) {
+      return isLastRequest
+        ? this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.MESSAGE_LAST_SINGLE_FILE',
+          'This will remove your last request and undo the edits made to {{file}}. Do you want to proceed?',
+          { file: confirmation.fileLabel },
+        )
+        : this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.MESSAGE_MULTI_SINGLE_FILE',
+          'This will remove all subsequent requests and undo edits made to {{file}}. Do you want to proceed?',
+          { file: confirmation.fileLabel },
+        );
+    }
+
+    if (confirmation.fileCount > 0) {
+      return isLastRequest
+        ? this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.MESSAGE_LAST_MULTI_FILE',
+          'This will remove your last request and undo edits made to {{count}} files in your working set. Do you want to proceed?',
+          { count: confirmation.fileCount },
+        )
+        : this.translateRestoreCheckpointDialogText(
+          'CHECKPOINT_RESTORE_DIALOG.MESSAGE_MULTI_FILE',
+          'This will remove all subsequent requests and undo edits made to {{count}} files in your working set. Do you want to proceed?',
+          { count: confirmation.fileCount },
+        );
+    }
+
+    return isLastRequest
+      ? this.translateRestoreCheckpointDialogText(
+        'CHECKPOINT_RESTORE_DIALOG.MESSAGE_LAST_NO_FILE',
+        'This will remove your last request and restore the chat to that point. Do you want to proceed?',
+      )
+      : this.translateRestoreCheckpointDialogText(
+        'CHECKPOINT_RESTORE_DIALOG.MESSAGE_MULTI_NO_FILE',
+        'This will remove all subsequent requests and restore the chat to that point. Do you want to proceed?',
+      );
+  }
+
+  private translateRestoreCheckpointDialogText(
+    key: string,
+    fallback: string,
+    params?: Record<string, string | number>,
+  ): string {
+    const translated = this.translate?.instant?.(key, params);
+    if (typeof translated === 'string' && translated !== key) {
+      return translated;
+    }
+
+    return this.interpolateRestoreCheckpointDialogText(fallback, params);
+  }
+
+  private interpolateRestoreCheckpointDialogText(
+    template: string,
+    params?: Record<string, string | number>,
+  ): string {
+    if (!params) {
+      return template;
+    }
+
+    return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, token: string) => {
+      const value = params[token];
+      return typeof value === 'undefined' ? '' : String(value);
+    });
   }
 
   private createSessionLifecycleContext(): ConstructorParameters<typeof SessionLifecycleHelper>[0] {
@@ -672,6 +832,7 @@ export class ChatEngineService implements IChatContext {
     public ngZone: NgZone,
     public absAutoSyncService: AbsAutoSyncService,
     public editCheckpointService: EditCheckpointService,
+    public workspaceCheckpointProvider: GitWorkspaceCheckpointProviderService,
     public translate: TranslateService,
     public message: NzMessageService,
     public scrollManager: ScrollManagerService,
@@ -680,6 +841,8 @@ export class ChatEngineService implements IChatContext {
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public requestQuotaStateService: RequestQuotaStateService,
   ) {
+    this.editCheckpointService.setWorkspaceCheckpointProvider(this.workspaceCheckpointProvider);
+
     // 初始化 viewAdapter（需要 ngZone 已注入）
     (this as any).viewAdapter = new ChatViewAdapter(
       () => this.list,
@@ -922,17 +1085,24 @@ Do not create non-existent boards and libraries.
     }
   }
 
-  private refreshAuthQuotaStateAfterSuccessfulTurn(): void {
-    void this.refreshAuthQuotaStateFromHost();
-  }
-
-  private async refreshAuthQuotaStateFromHost(): Promise<void> {
-    try {
-      await AilyHost.get().auth.refreshMe?.();
-    } catch (error) {
-      console.warn('[ChatEngine] refresh auth quota failed:', error);
+  private readLatestInteractionContinuation(): TurnResponseTurn['response']['continuation'] | undefined {
+    const turns = this.hostResponseProjection?.turnResponses ?? [];
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+      const continuation = turns[index]?.response?.continuation;
+      if (continuation) {
+        return continuation;
+      }
     }
 
+    return undefined;
+  }
+
+  private refreshAuthQuotaStateAfterSuccessfulTurn(): void {
+    // Successful turn responses already carry premium_interactions quota data.
+    // Avoid a second auth/me quota fetch on every send; user center refreshes on demand.
+  }
+
+  private refreshAuthQuotaStateFromHost(): void {
     this.authQuotaStateService.syncAuthSnapshotFromHost();
   }
 

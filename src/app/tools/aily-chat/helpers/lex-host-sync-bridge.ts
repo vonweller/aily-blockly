@@ -32,7 +32,13 @@ export class LexHostSyncBridge {
 
   recordFileToolEdit(toolName: string, input: any): void {
     const editType = LexHostSyncBridge.LEX_FILE_TOOL_TYPES[toolName];
-    if (!editType || !input) return;
+    if (!input) return;
+
+    if (toolName === 'run_terminal' && input.cwd) {
+      this.ctx.editCheckpointService.recordAdditionalRepositoryRootCandidates?.([input.cwd]);
+    }
+
+    if (!editType) return;
 
     if (toolName === 'multi_edit_file') {
       if (input.filePath) {

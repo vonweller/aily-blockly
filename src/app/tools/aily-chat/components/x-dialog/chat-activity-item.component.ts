@@ -512,6 +512,30 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
                                         }
                                       </div>
                                     </div>
+                                  } @else if (row.outputKind === 'changed-file') {
+                                    <div class="cag-item-invocation-output-subpart cag-item-invocation-output-changed-file" [attr.data-tone]="row.tone || 'neutral'">
+                                      <span class="cag-item-invocation-output-changed-file-code">{{ row.outputLabel || '?' }}</span>
+                                      <div class="cag-item-invocation-output-changed-file-body">
+                                        <div class="cag-item-invocation-output-changed-file-head">
+                                          <span class="cag-item-invocation-output-changed-file-title">{{ row.title }}</span>
+                                          @if (row.trailing) {
+                                            <span class="cag-item-invocation-output-changed-file-status">{{ row.trailing }}</span>
+                                          }
+                                        </div>
+                                        @if (row.subtitle) {
+                                          <div class="cag-item-invocation-output-changed-file-subtitle">{{ row.subtitle }}</div>
+                                        }
+                                        @if (row.note) {
+                                          <div class="cag-item-invocation-output-changed-file-note">
+                                            <x-markdown
+                                              [content]="row.note"
+                                              [components]="componentMap"
+                                              rootClassName="x-markdown-dark cag-item-markdown"
+                                            />
+                                          </div>
+                                        }
+                                      </div>
+                                    </div>
                                   } @else {
                                     <div class="cag-item-invocation-output-subpart cag-item-invocation-output-generic">
                                       <div class="cag-item-detail-row-head">
@@ -1311,6 +1335,11 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       padding: 0;
     }
 
+    .cag-item-invocation-output[data-output-kind='changed-file'] {
+      min-width: 0;
+      padding: 0;
+    }
+
     .cag-item-invocation-output[data-output-kind='terminal-command'] + .cag-item-invocation-output[data-output-kind='terminal-stream'],
     .cag-item-invocation-output[data-output-kind='terminal-stream'] + .cag-item-invocation-output[data-output-kind='terminal-stream'] {
       margin-top: 6px;
@@ -1318,8 +1347,21 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       border-top: 1px solid rgba(255,255,255,0.06);
     }
 
+    .cag-item-invocation-output[data-output-kind='changed-file'] + .cag-item-invocation-output[data-output-kind='changed-file'] {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+
     .cag-item-invocation-output[data-output-kind='terminal-command'] .cag-item-invocation-output-subpart,
     .cag-item-invocation-output[data-output-kind='terminal-stream'] .cag-item-invocation-output-subpart {
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      padding: 0;
+    }
+
+    .cag-item-invocation-output[data-output-kind='changed-file'] .cag-item-invocation-output-subpart {
       border: none;
       border-radius: 0;
       background: transparent;
@@ -1335,6 +1377,114 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       align-items: center;
       gap: 8px;
       min-height: 22px;
+    }
+
+    .cag-item-invocation-output-changed-file {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .cag-item-invocation-output-changed-file-code {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='info'] .cag-item-invocation-output-changed-file-code {
+      color: var(--chat-info, #75beff);
+      border-color: rgba(117, 190, 255, 0.18);
+      background: rgba(117, 190, 255, 0.08);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='success'] .cag-item-invocation-output-changed-file-code {
+      color: var(--chat-success, #89d185);
+      border-color: rgba(137, 209, 133, 0.2);
+      background: rgba(137, 209, 133, 0.08);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='warn'] .cag-item-invocation-output-changed-file-code {
+      color: var(--chat-warn, #cca700);
+      border-color: rgba(204, 167, 0, 0.22);
+      background: rgba(204, 167, 0, 0.08);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='error'] .cag-item-invocation-output-changed-file-code {
+      color: var(--chat-error, #f14c4c);
+      border-color: rgba(241, 76, 76, 0.22);
+      background: rgba(241, 76, 76, 0.08);
+    }
+
+    .cag-item-invocation-output-changed-file-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .cag-item-invocation-output-changed-file-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 22px;
+    }
+
+    .cag-item-invocation-output-changed-file-title {
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--chat-fg, #cccccc);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .cag-item-invocation-output-changed-file-status {
+      flex-shrink: 0;
+      font-size: 10px;
+      line-height: 1.2;
+      color: var(--chat-fg-muted, #6a6a6a);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='info'] .cag-item-invocation-output-changed-file-status {
+      color: var(--chat-info, #75beff);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='success'] .cag-item-invocation-output-changed-file-status {
+      color: var(--chat-success, #89d185);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='warn'] .cag-item-invocation-output-changed-file-status {
+      color: var(--chat-warn, #cca700);
+    }
+
+    .cag-item-invocation-output-changed-file[data-tone='error'] .cag-item-invocation-output-changed-file-status {
+      color: var(--chat-error, #f14c4c);
+    }
+
+    .cag-item-invocation-output-changed-file-subtitle {
+      margin-top: 1px;
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--chat-fg-dim, #8e8e8e);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .cag-item-invocation-output-changed-file-note {
+      margin-top: 3px;
+      min-width: 0;
     }
 
     .cag-item-invocation-output-image,

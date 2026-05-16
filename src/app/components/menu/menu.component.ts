@@ -12,13 +12,14 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TranslateModule } from '@ngx-translate/core';
+import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { IMenuItem } from '../../configs/menu.config';
 import { Router } from '@angular/router';
 import { PlatformService } from '../../services/platform.service';
 
 @Component({
   selector: 'app-menu',
-  imports: [CommonModule, FormsModule, TranslateModule],
+  imports: [CommonModule, FormsModule, TranslateModule, NzToolTipModule],
   templateUrl: './menu.component.html',
   styleUrl: './menu.component.scss',
 })
@@ -79,13 +80,21 @@ export class MenuComponent implements AfterViewChecked {
   globalFilterValue = '';
   private pendingGlobalFilterFocus = false;
   private pendingViewportAdjustment = false;
+  private pendingSubmenuGeometry = false;
 
   // 添加子菜单显示状态管理
   activeSubmenuItem: IMenuItem | null = null;
   submenuTimeout: any = null;
   submenuPosition = { left: '0px', top: '0px' };
+  submenuWidth = 'auto';
   submenuMaxHeight = 'none';
   submenuOverflow = 'visible';
+  private activeSubmenuAnchor: {
+    menuLeft: number;
+    menuRight: number;
+    itemTop: number;
+    itemHeight: number;
+  } | null = null;
 
   constructor(
     private router: Router,
@@ -99,6 +108,154 @@ export class MenuComponent implements AfterViewChecked {
       return text.replace(/Ctrl\/⌘|Ctrl/gi, '⌘');
     }
     return text.replace(/Ctrl\/⌘|⌘/g, 'Ctrl');
+  }
+
+  getTooltipTitle(tooltip: string | null | undefined): string | null {
+    if (typeof tooltip !== 'string') {
+      return null;
+    }
+
+    const normalizedTooltip = tooltip.trim();
+    return normalizedTooltip.length > 0 ? normalizedTooltip : null;
+  }
+
+  hasHoverFlyout(item: IMenuItem | null | undefined): boolean {
+    return !!item?.extra?.hoverFlyout;
+  }
+
+  private getHoverFlyoutData(item: IMenuItem | null | undefined): Record<string, unknown> | null {
+    const hoverFlyout = item?.extra?.hoverFlyout;
+    return hoverFlyout && typeof hoverFlyout === 'object'
+      ? hoverFlyout as Record<string, unknown>
+      : null;
+  }
+
+  getSubmenuTooltipTitle(item: IMenuItem | null | undefined): string | null {
+    return this.hasHoverFlyout(item)
+      ? this.getTooltipTitle(item?.tooltip)
+      : null;
+  }
+
+  getSubmenuTitle(item: IMenuItem | null | undefined): string {
+    const hoverFlyout = this.getHoverFlyoutData(item);
+    const explicitTitle = typeof hoverFlyout?.['title'] === 'string'
+      ? hoverFlyout['title'].trim()
+      : '';
+    if (explicitTitle) {
+      return explicitTitle;
+    }
+
+    return typeof item?.name === 'string' ? item.name : '';
+  }
+
+  getSubmenuSectionLabel(item: IMenuItem | null | undefined): string | null {
+    const hoverFlyout = this.getHoverFlyoutData(item);
+    const label = typeof hoverFlyout?.['sectionLabel'] === 'string'
+      ? hoverFlyout['sectionLabel'].trim()
+      : '';
+    return label.length > 0 ? label : null;
+  }
+
+  getSubmenuChildren(item: IMenuItem | null | undefined): IMenuItem[] {
+    return Array.isArray(item?.children) ? item.children : [];
+  }
+
+  hasSubmenuContent(item: IMenuItem | null | undefined): boolean {
+    return this.getSubmenuChildren(item).length > 0 || !!this.getSubmenuTooltipTitle(item);
+  }
+
+  shouldRenderSubmenu(): boolean {
+    return this.hasSubmenuContent(this.activeSubmenuItem);
+  }
+
+  getSubmenuDescriptionLines(item: IMenuItem | null | undefined): string[] {
+    const hoverFlyout = this.getHoverFlyoutData(item);
+    const explicitDescription = typeof hoverFlyout?.['description'] === 'string'
+      ? hoverFlyout['description'].trim()
+      : '';
+    if (explicitDescription) {
+      return this.splitDisplayLines(explicitDescription);
+    }
+
+    return this.getSubmenuTooltipLines(item)
+      .filter((line) => !this.isCapabilityLine(line));
+  }
+
+  hasSubmenuIntroContent(item: IMenuItem | null | undefined): boolean {
+    return this.getSubmenuDescriptionLines(item).length > 0 || !!this.getSubmenuContextValue(item);
+  }
+
+  getSubmenuContextLabel(item: IMenuItem | null | undefined): string | null {
+    const hoverFlyout = this.getHoverFlyoutData(item);
+    const explicitLabel = typeof hoverFlyout?.['contextLabel'] === 'string'
+      ? hoverFlyout['contextLabel'].trim()
+      : '';
+    if (explicitLabel) {
+      return explicitLabel;
+    }
+
+    return this.getSubmenuContextValue(item) ? '上下文长度' : null;
+  }
+
+  getSubmenuContextValue(item: IMenuItem | null | undefined): string | null {
+    const hoverFlyout = this.getHoverFlyoutData(item);
+    const explicitValue = typeof hoverFlyout?.['contextValue'] === 'string'
+      ? hoverFlyout['contextValue'].trim()
+      : '';
+    if (explicitValue) {
+      return explicitValue;
+    }
+
+    const capabilityTags = this.getSubmenuCapabilityTags(item);
+    return capabilityTags.length > 0 ? capabilityTags[0] : null;
+  }
+
+  getSubmenuItemDetail(item: IMenuItem | null | undefined): string | null {
+    const explicitDetail = typeof item?.extra?.detail === 'string'
+      ? item.extra.detail.trim()
+      : '';
+    if (explicitDetail) {
+      return explicitDetail;
+    }
+
+    return this.getTooltipTitle(item?.tooltip);
+  }
+
+  getSubmenuCapabilityLabel(item: IMenuItem | null | undefined): string | null {
+    const capabilityLine = this.getSubmenuTooltipLines(item)
+      .find((line) => this.isCapabilityLine(line));
+    if (!capabilityLine) {
+      return null;
+    }
+
+    const separatorIndex = capabilityLine.search(/[:：]/);
+    if (separatorIndex === -1) {
+      return '能力';
+    }
+
+    const label = capabilityLine.slice(0, separatorIndex).trim();
+    return label.length > 0 ? label : '能力';
+  }
+
+  getSubmenuCapabilityTags(item: IMenuItem | null | undefined): string[] {
+    const capabilityLine = this.getSubmenuTooltipLines(item)
+      .find((line) => this.isCapabilityLine(line));
+    if (!capabilityLine) {
+      return [];
+    }
+
+    const separatorIndex = capabilityLine.search(/[:：]/);
+    const value = separatorIndex === -1
+      ? capabilityLine.trim()
+      : capabilityLine.slice(separatorIndex + 1).trim();
+    if (!value) {
+      return [];
+    }
+
+    return value
+      .split(/\s*[·•]\s*/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
   }
 
   ngAfterViewInit(): void {
@@ -123,6 +280,10 @@ export class MenuComponent implements AfterViewChecked {
       this.globalFilterInput.nativeElement.focus();
       this.globalFilterInput.nativeElement.select();
       this.pendingGlobalFilterFocus = false;
+    }
+
+    if (this.pendingSubmenuGeometry) {
+      this.refineSubmenuPosition();
     }
 
     if (!this.pendingViewportAdjustment) {
@@ -170,6 +331,9 @@ export class MenuComponent implements AfterViewChecked {
 
   closeMenu() {
     this.activeSubmenuItem = null;
+    this.setSubmenuReady(false);
+    this.pendingSubmenuGeometry = false;
+    this.activeSubmenuAnchor = null;
     this.closeEvent.emit('');
   }
 
@@ -532,7 +696,7 @@ export class MenuComponent implements AfterViewChecked {
   }
   // 显示子菜单
   showSubMenu(event: MouseEvent, item: IMenuItem, index: number) {
-    if (!item?.children?.length) {
+    if (!this.hasSubmenuContent(item)) {
       if (this.activeSubmenuItem === item) {
         this.activeSubmenuItem = null;
       }
@@ -549,6 +713,7 @@ export class MenuComponent implements AfterViewChecked {
     }
 
     this.activeSubmenuItem = item;
+    this.setSubmenuReady(false);
     this.calculateSubmenuPosition(index);
   }
 
@@ -560,44 +725,133 @@ export class MenuComponent implements AfterViewChecked {
       const menuBoxElement = this.menuBox.nativeElement;
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();
+      const estimatedSubmenuWidth = this.estimateSubmenuWidth(this.activeSubmenuItem);
+      const estimatedSubmenuHeight = this.estimateSubmenuHeight(this.activeSubmenuItem);
 
-      // 子菜单与主菜单轻微贴合，减少 hover 过渡距离。
-      const left = menuBoxRect.right - 4;
-      const top = itemRect.top;
+      const left = this.resolveSubmenuLeft(menuBoxRect.left, menuBoxRect.right, estimatedSubmenuWidth);
+      const top = this.resolveSubmenuTop(itemRect.top, itemRect.height, estimatedSubmenuHeight);
+
+      this.activeSubmenuAnchor = {
+        menuLeft: menuBoxRect.left,
+        menuRight: menuBoxRect.right,
+        itemTop: itemRect.top,
+        itemHeight: itemRect.height,
+      };
+
+      this.submenuWidth = `${estimatedSubmenuWidth}px`;
+      this.submenuMaxHeight = 'none';
+      this.submenuOverflow = 'visible';
 
       this.submenuPosition = {
         left: left + 'px',
-        top: top - 2 + 'px'
+        top: top + 'px'
       };
-
-      // 计算子菜单高度
-      this.calculateSubmenuHeight(top);
+      this.pendingSubmenuGeometry = true;
     }
   }
 
-  // 计算子菜单最大高度
-  calculateSubmenuHeight(submenuTop: number) {
-    const windowHeight = window.innerHeight;
-    const submenuTopFromWindow = submenuTop;
+  private estimateSubmenuWidth(item: IMenuItem | null | undefined): number {
+    return this.hasHoverFlyout(item) ? 304 : 168;
+  }
 
-    // 预估子菜单项数量和高度
-    const submenuItems = this.activeSubmenuItem?.children || [];
-    const itemHeight = 28; // 每个菜单项高度
-    const padding = 8; // 上下padding (4px * 2)
-    const estimatedSubmenuHeight = submenuItems.length * itemHeight + padding;
+  private estimateSubmenuDetailHeight(item: IMenuItem | null | undefined): number {
+    const descriptionLines = this.getSubmenuDescriptionLines(item);
+    const hasContextValue = !!this.getSubmenuContextValue(item);
+    const titleHeight = this.getSubmenuTitle(item) ? 20 : 0;
+    const separatorHeight = this.hasSubmenuIntroContent(item) ? 11 : 0;
+    const descriptionHeight = descriptionLines.length > 0 ? descriptionLines.length * 18 + 4 : 0;
+    const contextHeight = hasContextValue ? 34 : 0;
+    return titleHeight + separatorHeight + descriptionHeight + contextHeight + 18;
+  }
 
-    // 计算最大可用高度 (窗口高度 - 子菜单顶部距离 - 底部预留空间)
-    const bottomPadding = 10; // 底部预留空间
-    const maxAvailableHeight = windowHeight - submenuTopFromWindow - bottomPadding;
+  private estimateSubmenuHeight(item: IMenuItem | null | undefined): number {
+    const submenuItems = this.getSubmenuChildren(item);
+    const detailHeight = this.estimateSubmenuDetailHeight(item);
+    const childrenHeight = submenuItems.reduce((total, subItem) => total + this.estimateSubmenuItemHeight(subItem), 0);
+    const sectionLabelHeight = this.getSubmenuSectionLabel(item) && submenuItems.length > 0 ? 28 : 0;
+    const separatorHeight = submenuItems.length > 0 && (detailHeight > 0 || this.getSubmenuTitle(item)) ? 9 : 0;
+    const verticalPadding = 10;
+    return detailHeight + sectionLabelHeight + separatorHeight + childrenHeight + verticalPadding;
+  }
 
-    // 如果预估高度超过最大可用高度,启用滚动
-    if (estimatedSubmenuHeight > maxAvailableHeight) {
-      this.submenuMaxHeight = maxAvailableHeight + 'px';
-      this.submenuOverflow = 'auto';
-    } else {
-      this.submenuMaxHeight = 'none';
-      this.submenuOverflow = 'visible';
+  private estimateSubmenuItemHeight(item: IMenuItem | null | undefined): number {
+    const detail = this.getSubmenuItemDetail(item);
+    const detailLines = detail ? this.splitDisplayLines(detail).length : 0;
+    return 32 + (detailLines > 0 ? detailLines * 16 + 6 : 0);
+  }
+
+  private resolveSubmenuLeft(menuLeft: number, menuRight: number, submenuWidth: number): number {
+    const viewportPadding = 8;
+    let left = menuRight - 4;
+    if (left + submenuWidth > window.innerWidth - viewportPadding) {
+      left = Math.max(viewportPadding, menuLeft - submenuWidth + 4);
     }
+    return left;
+  }
+
+  private resolveSubmenuTop(itemTop: number, itemHeight: number, submenuHeight: number): number {
+    const viewportPadding = 8;
+    const viewportHeight = window.innerHeight;
+    const itemCenter = itemTop + itemHeight / 2;
+    const preferredTop = Math.round(itemCenter - submenuHeight / 2);
+    const maxTop = Math.max(viewportPadding, viewportHeight - submenuHeight - viewportPadding);
+    return Math.min(maxTop, Math.max(viewportPadding, preferredTop));
+  }
+
+  private refineSubmenuPosition(): void {
+    const submenuElement = this.submenuBox?.nativeElement as HTMLElement | undefined;
+    if (!submenuElement || !this.activeSubmenuAnchor) {
+      this.pendingSubmenuGeometry = false;
+      return;
+    }
+
+    const submenuRect = submenuElement.getBoundingClientRect();
+    const left = this.resolveSubmenuLeft(
+      this.activeSubmenuAnchor.menuLeft,
+      this.activeSubmenuAnchor.menuRight,
+      submenuRect.width,
+    );
+    const top = this.resolveSubmenuTop(
+      this.activeSubmenuAnchor.itemTop,
+      this.activeSubmenuAnchor.itemHeight,
+      submenuRect.height,
+    );
+
+    submenuElement.style.left = `${left}px`;
+    submenuElement.style.top = `${top}px`;
+    submenuElement.style.maxHeight = 'none';
+    submenuElement.style.overflowY = 'visible';
+    this.setSubmenuReady(true);
+    this.pendingSubmenuGeometry = false;
+  }
+
+  private getSubmenuTooltipLines(item: IMenuItem | null | undefined): string[] {
+    const tooltip = this.getSubmenuTooltipTitle(item);
+    if (!tooltip) {
+      return [];
+    }
+
+    return this.splitDisplayLines(tooltip);
+  }
+
+  private splitDisplayLines(text: string): string[] {
+    return text
+      .split(/\r?\n+/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private isCapabilityLine(line: string): boolean {
+    return /^能力\s*[:：]/.test(line);
+  }
+
+  private setSubmenuReady(ready: boolean): void {
+    const submenuElement = this.submenuBox?.nativeElement as HTMLElement | undefined;
+    if (!submenuElement) {
+      return;
+    }
+
+    submenuElement.classList.toggle('ready', ready);
   }
 
   // 隐藏子菜单
@@ -605,6 +859,9 @@ export class MenuComponent implements AfterViewChecked {
     // 延时隐藏，给用户时间移动到子菜单
     this.submenuTimeout = setTimeout(() => {
       this.activeSubmenuItem = null;
+      this.setSubmenuReady(false);
+      this.pendingSubmenuGeometry = false;
+      this.activeSubmenuAnchor = null;
     }, 60);
   }
 

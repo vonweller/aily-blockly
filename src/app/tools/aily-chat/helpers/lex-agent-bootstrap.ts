@@ -42,10 +42,16 @@ import {
 } from 'aily-lex/host/blockly';
 import {
   createConversationTurnResponse,
+  GitAwareWorkspaceChangeCollector,
   type IHostToolProvider,
   type IToolContribution,
 } from 'aily-lex/browser';
-import { getTurnResponseResolvedModelName, normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
+import {
+  cloneTurnResponseRoundSummaryCarrier,
+  cloneTurnResponseRoundSummaryCarriers,
+  getTurnResponseResolvedModelName,
+  normalizeTurnResponseSummaryPreview,
+} from './turn-response-response-model';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -85,7 +91,7 @@ interface BootstrapLexAgentOptions {
 
 export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel'>
   & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService'>
+  & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'handleToolApproval'>;
 
 export interface BlocklyCompatibilityHostBinding {
@@ -843,12 +849,12 @@ export function buildLexEndpoint(
     },
     authStateFingerprintProvider: () => {
       const auth = AilyHost.get().auth;
-      return JSON.stringify({
+      return {
         isLoggedIn: auth?.isLoggedIn ?? false,
         token: auth?.token || '',
         userId: auth?.userInfo?.id ?? null,
         snapshot: auth?.getSnapshot?.() ?? null,
-      });
+      };
     },
     interactionBudget: buildInteractionBudgetConfig(apiConfig),
   });
@@ -939,7 +945,22 @@ export function bootstrapBlocklyLexAgent(
           ...(edits ? { edits } : {}),
         });
       },
-      reconcileWorktreeChanges: async (input: { turnId: string; filePaths: readonly string[] }) => {
+      reconcileWorktreeChanges: async (input: {
+        turnId: string;
+        filePaths: readonly string[];
+        repositoryRoots?: readonly string[];
+        changes?: readonly ({
+          filePath: string;
+          kind: 'create' | 'modify' | 'delete';
+          contentKind: 'text' | 'binary' | 'notebook';
+        } | {
+          filePath: string;
+          previousFilePath: string;
+          kind: 'rename';
+          contentKind: 'text' | 'binary' | 'notebook';
+        })[];
+      }) => {
+        ctx.editCheckpointService?.recordAdditionalRepositoryRoots?.(input.repositoryRoots);
         await editingTimelineRecorder.reconcileWorktreeChanges({
           ...input,
           readCurrentText: async (filePath: string) => {
@@ -949,10 +970,18 @@ export function bootstrapBlocklyLexAgent(
               return null;
             }
           },
+          readCurrentBytes: async (filePath: string) => {
+            try {
+              return normalizeHostBytes((AilyHost.get().fs.readFileSync as any)(filePath));
+            } catch {
+              return null;
+            }
+          },
           computeEdits: computeNormalizedTextEdits,
         });
       },
     };
+    runtimeExtensions['workspaceChangeCollector'] = new GitAwareWorkspaceChangeCollector();
   }
 
   let pendingNpmCommand: { command: string; isInstall: boolean; isUninstall: boolean } | null = null;
@@ -1420,6 +1449,8 @@ function buildTurnResponseLexSessionSnapshot(
     const persistedResponse = (turn.response ?? {}) as typeof turn.response & PersistedHostResponseData;
     const slashCommand = turn.responseModel?.slashCommand ?? persistedResponse.slashCommand;
     const followups = turn.responseModel?.followups ?? persistedResponse.followups;
+    const summary = cloneTurnResponseRoundSummaryCarrier(turn.responseModel?.summary);
+    const summaries = cloneTurnResponseRoundSummaryCarriers(turn.responseModel?.summaries);
     const summaryPreview = normalizeTurnResponseSummaryPreview(turn.responseModel?.summaryPreview);
     const modelName = getTurnResponseResolvedModelName(turn);
     const modelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
@@ -1446,6 +1477,9 @@ function buildTurnResponseLexSessionSnapshot(
         error: toolCall?.error,
       })),
       timestamp: round?.timestamp,
+      ...(normalizeTurnResponseSummaryPreview(round?.summary)
+        ? { summary: normalizeTurnResponseSummaryPreview(round?.summary) }
+        : {}),
     })),
     response: createConversationTurnResponse({
       participant: turn.response?.participant || 'assistant',
@@ -1458,11 +1492,13 @@ function buildTurnResponseLexSessionSnapshot(
       createdAt: turn.response?.createdAt ?? turn.createdAt ?? Date.now(),
       updatedAt: turn.response?.updatedAt ?? turn.updatedAt ?? turn.createdAt ?? Date.now(),
     }),
-    ...((slashCommand || followups || summaryPreview || modelName || modelBillingLabel)
+    ...((slashCommand || followups || summary || summaries || summaryPreview || modelName || modelBillingLabel)
       ? {
         responseModel: {
           ...(slashCommand ? { slashCommand } : {}),
           ...(followups ? { followups: followups.map(followup => ({ ...followup })) } : {}),
+          ...(summary ? { summary } : {}),
+          ...(summaries ? { summaries } : {}),
           ...(summaryPreview ? { summaryPreview } : {}),
           ...(modelName ? { modelName } : {}),
           ...(modelBillingLabel ? { modelBillingLabel } : {}),
@@ -1474,13 +1510,16 @@ function buildTurnResponseLexSessionSnapshot(
     });
   });
 
-  const interactionContinuation = clonePersistableInteractionContinuation(
-    turnResponses[turnResponses.length - 1]?.response?.continuation,
-  );
+  const normalizedLexTurns = applyPersistedRoundSummariesOnTurns(lexTurns, turnResponses);
+  const latestContinuation = turnResponses[turnResponses.length - 1]?.response?.continuation;
+
+  const interactionContinuation = shouldPersistInteractionContinuation(latestContinuation)
+    ? clonePersistableInteractionContinuation(latestContinuation)
+    : undefined;
 
   return {
     sessionId,
-    turns: lexTurns,
+    turns: normalizedLexTurns,
     ...(interactionContinuation ? {
       requestContext: {
         directToolReferences: [],
@@ -1493,13 +1532,129 @@ function buildTurnResponseLexSessionSnapshot(
   };
 }
 
-function clonePersistableInteractionContinuation(
-  continuation: import('aily-lex/browser').TurnResponseTurn['response']['continuation'] | undefined,
-): import('aily-lex/browser').SessionSnapshot['requestContext']['interactionContinuation'] | undefined {
-  if (!shouldPersistInteractionContinuation(continuation)) {
+interface PersistedRoundSummaryCarrier {
+  readonly anchorRoundId: string;
+  readonly summary: string;
+  readonly anchorTurnId?: string;
+  readonly roundIndex?: number;
+}
+
+function getLatestStructuredRoundSummaryForTurn(
+  turn: import('aily-lex/browser').TurnResponseTurn,
+): PersistedRoundSummaryCarrier | undefined {
+  const turnSummary = turn.responseModel?.summaries?.at(-1) ?? turn.responseModel?.summary;
+  const anchorRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
+    ? turnSummary.toolCallRoundId.trim()
+    : undefined;
+  const summary = normalizeTurnResponseSummaryPreview(turnSummary?.text);
+
+  if (!anchorRoundId || !summary) {
     return undefined;
   }
 
+  return {
+    anchorRoundId,
+    summary,
+  };
+}
+
+function collectDirectSummaryRoundIds(
+  turns: readonly import('aily-lex/browser').ConversationTurn[],
+): Set<string> {
+  const directSummaryRoundIds = new Set<string>();
+
+  for (const turn of turns) {
+    for (const round of turn.rounds) {
+      if (normalizeTurnResponseSummaryPreview(round.summary)) {
+        directSummaryRoundIds.add(round.id);
+      }
+    }
+  }
+
+  return directSummaryRoundIds;
+}
+
+function findPersistedRoundSummaryTarget(
+  turns: readonly import('aily-lex/browser').ConversationTurn[],
+  sourceTurnIndex: number,
+  carrier: PersistedRoundSummaryCarrier,
+): { turnIndex: number; roundIndex: number } | undefined {
+  const maxTurnIndex = Math.min(sourceTurnIndex, turns.length - 1);
+  if (maxTurnIndex < 0) {
+    return undefined;
+  }
+
+  for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
+    const roundIndex = turns[turnIndex].rounds.findIndex(round => round.id === carrier.anchorRoundId);
+    if (roundIndex >= 0) {
+      return { turnIndex, roundIndex };
+    }
+  }
+
+  if (!carrier.anchorTurnId || carrier.roundIndex === undefined || carrier.roundIndex < 0) {
+    return undefined;
+  }
+
+  for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex];
+    if (turn.id !== carrier.anchorTurnId) {
+      continue;
+    }
+
+    return carrier.roundIndex < turn.rounds.length
+      ? { turnIndex, roundIndex: carrier.roundIndex }
+      : undefined;
+  }
+
+  return undefined;
+}
+
+function applyPersistedRoundSummariesOnTurns(
+  turns: readonly import('aily-lex/browser').ConversationTurn[],
+  turnResponses: readonly import('aily-lex/browser').TurnResponseTurn[],
+): import('aily-lex/browser').ConversationTurn[] {
+  if (!turns.length || !turnResponses.length) {
+    return [...turns];
+  }
+
+  const turnsWithNormalizedSummaries = [...turns];
+  const directSummaryRoundIds = collectDirectSummaryRoundIds(turns);
+
+  for (let sourceTurnIndex = 0; sourceTurnIndex < turnResponses.length; sourceTurnIndex += 1) {
+    const carrier = getLatestStructuredRoundSummaryForTurn(turnResponses[sourceTurnIndex]);
+    if (!carrier) {
+      continue;
+    }
+
+    const target = findPersistedRoundSummaryTarget(turnsWithNormalizedSummaries, sourceTurnIndex, carrier);
+    if (!target) {
+      continue;
+    }
+
+    const targetTurn = turnsWithNormalizedSummaries[target.turnIndex];
+    const targetRound = targetTurn.rounds[target.roundIndex];
+    if (directSummaryRoundIds.has(targetRound.id)) {
+      continue;
+    }
+
+    const updatedRounds = [...targetTurn.rounds];
+    updatedRounds[target.roundIndex] = {
+      ...targetRound,
+      summary: carrier.summary,
+    };
+
+    turnsWithNormalizedSummaries[target.turnIndex] = {
+      ...targetTurn,
+      rounds: updatedRounds,
+    };
+  }
+
+  return turnsWithNormalizedSummaries;
+}
+
+function clonePersistableInteractionContinuation(
+  continuation: NonNullable<import('aily-lex/browser').TurnResponseTurn['response']['continuation']>,
+) {
   const budgets = continuation.budgets;
   const diagnostics = continuation.diagnostics;
 
@@ -1735,11 +1890,13 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     session: ExternalTerminalSession,
     command: string,
     cwd: string,
+    env?: Record<string, string>,
   ) => {
     const parts = parseShellCommand(command);
     const executable = parts.shift() ?? command;
+    const spawnOptions = env ? { cwd, streamId: session.id, env } : { cwd, streamId: session.id };
 
-    session.subscription = host.cmd.spawn(executable, parts, { cwd, streamId: session.id }, true).subscribe({
+    session.subscription = host.cmd.spawn(executable, parts, spawnOptions, true).subscribe({
       next: (data: any) => {
         switch (data?.type) {
           case 'stdout':
@@ -1795,7 +1952,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     });
   };
 
-  const start = async (command: string, opts?: { cwd?: string; timeout?: number }) => {
+  const start = async (command: string, opts?: { cwd?: string; timeout?: number; env?: Record<string, string> }) => {
     const id = `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
     let resolveReady!: () => void;
@@ -1816,7 +1973,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     };
 
     if (hasCmdService) {
-      attachCmdServiceSession(session, command, cwd);
+      attachCmdServiceSession(session, command, cwd, opts?.env);
     } else if (hasRawTerminal) {
       attachRawTerminalSession(session);
     }
@@ -1837,7 +1994,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
 
     try {
       if (hasRawTerminal) {
-        const result = await host.terminal.run({ command, cwd, streamId: id });
+        const result = await host.terminal.run({ command, cwd, streamId: id, env: opts?.env });
         session.pid = result?.pid;
         if (!result?.success) {
           session.stderr += result?.error ?? 'Terminal start failed';
@@ -1857,7 +2014,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
   };
 
   return {
-    exec: async (command: string, opts?: { cwd?: string; timeout?: number }) => {
+    exec: async (command: string, opts?: { cwd?: string; timeout?: number; env?: Record<string, string> }) => {
       const snapshot = await start(command, opts);
       const session = sessions.get(snapshot.id);
       if (session?.running) {
@@ -1962,4 +2119,19 @@ function parseShellCommand(command: string): string[] {
   }
 
   return result;
+}
+
+function normalizeHostBytes(content: unknown): Uint8Array {
+  if (content instanceof Uint8Array) {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return new Uint8Array(content);
+  }
+  if (content && typeof content === 'object' && 'buffer' in (content as any)) {
+    const view = content as { buffer: ArrayBufferLike; byteOffset?: number; byteLength?: number };
+    const byteLength = view.byteLength ?? ((view.buffer as ArrayBufferLike).byteLength - (view.byteOffset ?? 0));
+    return new Uint8Array(view.buffer, view.byteOffset ?? 0, byteLength);
+  }
+  return new Uint8Array();
 }

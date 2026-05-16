@@ -27,8 +27,28 @@ export interface EditingTimelineWriter {
 export interface EditingTimelineWorktreeReconcileInput {
   turnId: string;
   filePaths: readonly string[];
+  changes?: readonly EditingTimelineWorktreeChange[];
   readCurrentText: (filePath: string) => Promise<string | null>;
+  readCurrentBytes?: (filePath: string) => Promise<Uint8Array | null>;
   computeEdits?: (beforeContent: string, afterContent: string) => Promise<NormalizedTextEdit[] | undefined>;
+}
+
+export type EditingTimelineWorktreeChange = {
+  filePath: string;
+  kind: 'create' | 'modify' | 'delete';
+  contentKind: 'text' | 'binary' | 'notebook';
+} | {
+  filePath: string;
+  previousFilePath: string;
+  kind: 'rename';
+  contentKind: 'text' | 'binary' | 'notebook';
+};
+
+interface TimelineKnownFileState {
+  exists: boolean;
+  contentKind: 'text' | 'binary' | 'notebook';
+  textContent: string | null;
+  binaryContent: Uint8Array | null;
 }
 
 export class EditingTimelineRecordingBridge {
@@ -78,33 +98,51 @@ export class EditingTimelineRecordingBridge {
 
     const state = this.repository.load(this.sessionId, this.workspaceRoot)
       ?? this.repository.createEmptyState(this.sessionId, this.workspaceRoot);
-    const scope = state.requestScopes.find(value => value.requestId === input.turnId);
-    const candidatePaths = [...new Set([...(scope?.touchedUris ?? []), ...input.filePaths])];
-    if (candidatePaths.length === 0) {
+    const scope = this.ensureRequestScope(state, input.turnId, input.turnId);
+    const candidateChanges = this.buildWorktreeCandidates(scope.touchedUris, input);
+    if (candidateChanges.length === 0) {
       return;
     }
 
-    for (const filePath of candidatePaths) {
-      const known = this.readCurrentTextState(state, filePath, state.currentPointer.epoch);
-      if (known.contentKind !== 'text') {
+    for (const change of candidateChanges) {
+      if (change.kind === 'rename') {
+        await this.reconcileRenameWorktreeChange(state, scope, input, change);
         continue;
       }
 
-      const afterContent = await input.readCurrentText(filePath);
+      const known = this.readCurrentFileState(state, change.filePath, state.currentPointer.epoch);
+      const contentKind = change.contentKind ?? known.contentKind;
+
+      if (contentKind === 'binary') {
+        await this.reconcileBinaryWorktreeChange(input, change, known);
+        continue;
+      }
+
+      const afterContent = change.kind === 'delete'
+        ? null
+        : await input.readCurrentText(change.filePath);
       const existsAfter = afterContent !== null;
-      if (known.exists === existsAfter && known.content === afterContent) {
+      if (
+        known.exists === existsAfter
+        && known.contentKind === contentKind
+        && known.textContent === afterContent
+      ) {
         continue;
       }
 
-      const edits = known.content !== null && afterContent !== null && input.computeEdits
-        ? await input.computeEdits(known.content, afterContent)
+      const edits = contentKind === 'text'
+        && known.textContent !== null
+        && afterContent !== null
+        && input.computeEdits
+        ? await input.computeEdits(known.textContent, afterContent)
         : undefined;
 
       this.recordFileWrite({
         turnId: input.turnId,
-        filePath,
+        filePath: change.filePath,
         existedBefore: known.exists,
-        beforeContent: known.content,
+        contentKind,
+        beforeContent: known.textContent,
         afterContent,
         ...(edits && edits.length > 0 ? { edits } : {}),
       });
@@ -208,7 +246,10 @@ export class EditingTimelineRecordingBridge {
       };
     }
 
-    if (contentKind === 'text' && (event.afterContent === null || event.afterContent === undefined)) {
+    const deletedAfter = contentKind === 'binary'
+      ? event.afterBytes === null || event.afterBytes === undefined
+      : event.afterContent === null || event.afterContent === undefined;
+    if (deletedAfter) {
       return {
         operationId,
         requestId,
@@ -250,33 +291,50 @@ export class EditingTimelineRecordingBridge {
     return this.contentStore.putText(this.workspaceRoot, this.sessionId, textContent);
   }
 
-  private readCurrentTextState(
+  private readCurrentFileState(
     state: EditingSessionTimelineState,
     uri: string,
     epoch: number,
-  ): { exists: boolean; contentKind: 'text' | 'binary' | 'notebook'; content: string | null } {
+  ): TimelineKnownFileState {
     const operation = state.operations
       .filter(value => this.getTouchedUris(value).includes(uri) && value.epoch <= epoch)
       .sort((left, right) => right.epoch - left.epoch)[0];
     if (operation) {
       if (operation.type === 'delete') {
-        return { exists: false, contentKind: operation.contentKind, content: null };
+        return {
+          exists: false,
+          contentKind: operation.contentKind,
+          textContent: null,
+          binaryContent: null,
+        };
       }
       if (operation.type === 'rename') {
         if (uri === operation.fromUri) {
-          return { exists: false, contentKind: operation.contentKind, content: null };
+          return {
+            exists: false,
+            contentKind: operation.contentKind,
+            textContent: null,
+            binaryContent: null,
+          };
         }
-        return this.readCurrentTextState(state, operation.fromUri, operation.epoch - 1);
+        return this.readCurrentFileState(state, operation.fromUri, operation.epoch - 1);
       }
-      if (operation.contentKind !== 'text') {
-        return { exists: true, contentKind: operation.contentKind, content: null };
+
+      if (operation.contentKind === 'binary') {
+        return {
+          exists: true,
+          contentKind: 'binary',
+          textContent: null,
+          binaryContent: operation.afterRef ? this.contentStore.getBinary(this.workspaceRoot, this.sessionId, operation.afterRef) : new Uint8Array(),
+        };
       }
 
       const contentRef = operation.afterRef;
       return {
         exists: true,
-        contentKind: 'text',
-        content: contentRef ? this.contentStore.getText(this.workspaceRoot, this.sessionId, contentRef) : '',
+        contentKind: operation.contentKind,
+        textContent: contentRef ? this.contentStore.getText(this.workspaceRoot, this.sessionId, contentRef) : '',
+        binaryContent: null,
       };
     }
 
@@ -287,17 +345,171 @@ export class EditingTimelineRecordingBridge {
         .filter(value => value.uri === uri)
         .sort((left, right) => left.epoch - right.epoch)[0];
     if (!baseline) {
-      return { exists: false, contentKind: 'text', content: null };
+      return {
+        exists: false,
+        contentKind: 'text',
+        textContent: null,
+        binaryContent: null,
+      };
     }
-    if (baseline.contentKind !== 'text') {
-      return { exists: baseline.existed, contentKind: baseline.contentKind, content: null };
+
+    if (baseline.contentKind === 'binary') {
+      return {
+        exists: baseline.existed,
+        contentKind: 'binary',
+        textContent: null,
+        binaryContent: baseline.contentRef ? this.contentStore.getBinary(this.workspaceRoot, this.sessionId, baseline.contentRef) : null,
+      };
     }
 
     return {
       exists: baseline.existed,
-      contentKind: 'text',
-      content: baseline.contentRef ? this.contentStore.getText(this.workspaceRoot, this.sessionId, baseline.contentRef) : null,
+      contentKind: baseline.contentKind,
+      textContent: baseline.contentRef ? this.contentStore.getText(this.workspaceRoot, this.sessionId, baseline.contentRef) : null,
+      binaryContent: null,
     };
+  }
+
+  private buildWorktreeCandidates(
+    touchedUris: readonly string[],
+    input: EditingTimelineWorktreeReconcileInput,
+  ): EditingTimelineWorktreeChange[] {
+    const renamePaths = new Set<string>();
+    for (const change of input.changes ?? []) {
+      if (change.kind === 'rename') {
+        renamePaths.add(change.filePath);
+        renamePaths.add(change.previousFilePath);
+      }
+    }
+    const candidates = new Map<string, EditingTimelineWorktreeChange>();
+    for (const filePath of touchedUris) {
+      if (renamePaths.has(filePath)) {
+        continue;
+      }
+      candidates.set(filePath, {
+        filePath,
+        kind: 'modify',
+        contentKind: 'text',
+      });
+    }
+    for (const filePath of input.filePaths) {
+      if (renamePaths.has(filePath)) {
+        continue;
+      }
+      candidates.set(filePath, {
+        filePath,
+        kind: 'modify',
+        contentKind: candidates.get(filePath)?.contentKind ?? 'text',
+      });
+    }
+    for (const change of input.changes ?? []) {
+      candidates.set(change.filePath, change);
+    }
+    return Array.from(candidates.values());
+  }
+
+  private async reconcileRenameWorktreeChange(
+    state: EditingSessionTimelineState,
+    scope: TimelineRequestScope,
+    input: EditingTimelineWorktreeReconcileInput,
+    change: Extract<EditingTimelineWorktreeChange, { kind: 'rename' }>,
+  ): Promise<void> {
+    const knownFrom = this.readCurrentFileState(state, change.previousFilePath, state.currentPointer.epoch);
+    if (!knownFrom.exists) {
+      return;
+    }
+
+    const nextEpoch = state.epochCounter + 1;
+    state.operations.push({
+      operationId: `op:${input.turnId}:rename:${nextEpoch}`,
+      requestId: input.turnId,
+      epoch: nextEpoch,
+      uri: change.filePath,
+      contentKind: change.contentKind,
+      createdAt: this.now(),
+      type: 'rename',
+      fromUri: change.previousFilePath,
+      toUri: change.filePath,
+    });
+    scope.lastEpoch = nextEpoch;
+    scope.completedAt = this.now();
+    scope.status = 'completed';
+    if (!scope.touchedUris.includes(change.previousFilePath)) {
+      scope.touchedUris.push(change.previousFilePath);
+    }
+    if (!scope.touchedUris.includes(change.filePath)) {
+      scope.touchedUris.push(change.filePath);
+    }
+    state.currentPointer = {
+      epoch: nextEpoch,
+      requestId: input.turnId,
+    };
+    state.epochCounter = nextEpoch;
+    state.updatedAt = this.now();
+    this.repository.save(state);
+
+    if (change.contentKind === 'binary') {
+      const afterBytes = await input.readCurrentBytes?.(change.filePath) ?? null;
+      if (!areBytesEqual(knownFrom.binaryContent, afterBytes)) {
+        this.recordFileWrite({
+          turnId: input.turnId,
+          filePath: change.filePath,
+          existedBefore: true,
+          contentKind: 'binary',
+          beforeBytes: knownFrom.binaryContent,
+          afterBytes: afterBytes ?? undefined,
+        });
+      }
+      return;
+    }
+
+    const afterContent = await input.readCurrentText(change.filePath);
+    if (knownFrom.textContent === afterContent) {
+      return;
+    }
+
+    const edits = change.contentKind === 'text'
+      && knownFrom.textContent !== null
+      && afterContent !== null
+      && input.computeEdits
+      ? await input.computeEdits(knownFrom.textContent, afterContent)
+      : undefined;
+    this.recordFileWrite({
+      turnId: input.turnId,
+      filePath: change.filePath,
+      existedBefore: true,
+      contentKind: change.contentKind,
+      beforeContent: knownFrom.textContent,
+      afterContent,
+      ...(edits && edits.length > 0 ? { edits } : {}),
+    });
+  }
+
+  private async reconcileBinaryWorktreeChange(
+    input: EditingTimelineWorktreeReconcileInput,
+    change: EditingTimelineWorktreeChange,
+    known: TimelineKnownFileState,
+  ): Promise<void> {
+    const afterBytes = change.kind === 'delete'
+      ? null
+      : await input.readCurrentBytes?.(change.filePath) ?? null;
+    const existsAfter = afterBytes !== null;
+    if (
+      known.exists === existsAfter
+      && known.contentKind === 'binary'
+      && areBytesEqual(known.binaryContent, afterBytes)
+    ) {
+      return;
+    }
+
+    this.recordFileWrite({
+      turnId: input.turnId,
+      filePath: change.filePath,
+      existedBefore: known.exists,
+      contentKind: 'binary',
+      beforeBytes: known.binaryContent,
+      afterBytes: afterBytes ?? undefined,
+    });
   }
 
   private getTouchedUris(operation: TimelineFileOperation): string[] {
@@ -306,4 +518,22 @@ export class EditingTimelineRecordingBridge {
     }
     return [operation.uri];
   }
+}
+
+function areBytesEqual(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
