@@ -10,6 +10,20 @@ export interface AilyCodeNewProjectData {
   name: string;
   /** 项目保存的父目录（绝对路径），最终目录 = path + name。 */
   path: string;
+  /**
+   * 来自 Blockly 新建向导的步骤数据：开发板 npm 包名、显示名、包版本与开发框架，
+   * 用于预填 project.aci 的 target 字段（与纯名称+路径的快速创建兼容）。
+   */
+  wizardTarget?: {
+    /** 开发板在 npm/registry 中的一级包名（如 esp32duino） */
+    boardId: string;
+    /** 向导中展示的开发板昵称，便于用户在 .aci 中辨识 */
+    boardNickname: string;
+    /** 所选板卡包的 semver / tag */
+    boardPkgVersion: string;
+    /** Blockly 侧的 devmode，如 arduino、micropython */
+    framework: string;
+  };
 }
 
 /**
@@ -71,8 +85,9 @@ export class AilyCodeProjectService {
       // 4. 创建目录骨架（递归 mkdir）
       this.ensureDirs(projectPath);
 
-      // 5. 写入根目录文件
-      this.writeRootFiles(projectPath, safeName, rawName);
+      // 5. 写入根目录文件（若向导传入板卡上下文则带进 project.aci）
+      const wizardCtx = data.wizardTarget;
+      this.writeRootFiles(projectPath, safeName, rawName, wizardCtx);
 
       // 6. 写入 .aily/state 下的初始状态文件
       this.writeAilyStateFiles(projectPath);
@@ -146,9 +161,30 @@ export class AilyCodeProjectService {
    * 根目录用户可见文件：project.aci / aily.lock.json / package.json / README.md / .gitignore / src/main.cpp。
    * `.aily/generated/source-map.json` 等基础桥接占位也一并写入。
    */
-  private writeRootFiles(root: string, safeName: string, displayName: string): void {
+  private writeRootFiles(
+    root: string,
+    safeName: string,
+    displayName: string,
+    wizardTarget?: AilyCodeNewProjectData['wizardTarget']
+  ): void {
     const fs = window['fs'];
     const pathApi = window['path'];
+
+    // Blockly 向导：把用户选的板卡/npm 版本映射到 target，便于 IDE 后续解析
+    const hasWizard = !!(wizardTarget?.boardId && wizardTarget.boardPkgVersion);
+    const targetBlock = hasWizard
+      ? {
+          board: wizardTarget!.boardId,
+          chip: '',
+          framework: wizardTarget!.framework ?? '',
+          sdk: wizardTarget!.boardPkgVersion
+        }
+      : {
+          board: '',
+          chip: '',
+          framework: '',
+          sdk: ''
+        };
 
     const projectAci = {
       // 标识当前 .aci 文件的 schema，后续可由 IDE 校验
@@ -157,14 +193,9 @@ export class AilyCodeProjectService {
       name: safeName,
       nickname: displayName,
       version: '0.0.1',
-      description: '',
-      // 目标设备 / 框架占位：MVP 创建时不强制选择，留给后续板卡选择器写入
-      target: {
-        board: '',
-        chip: '',
-        framework: '',
-        sdk: ''
-      },
+      description: hasWizard ? `Blockly 向导：${wizardTarget!.boardNickname || wizardTarget!.boardId}` : '',
+      // 目标设备 / 框架：无向导时占位，可由后续板卡选择器写入
+      target: targetBlock,
       // 入口与源码根，文档 4.3/4.4 中冻结的两条约定
       entry: 'src/main.cpp',
       sourceRoots: ['src', 'components', 'include'],

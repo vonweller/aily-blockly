@@ -250,7 +250,9 @@
             "NEXT": "Next",
             "PREV": "Previous",
             "CREATE": "Create Project",
-            "CREATING": "Creating"
+            "CREATING": "Creating",
+            "CREATE_AILY_CODE": "Create Aily Code Project",
+            "CREATING_AILY_CODE": "Creating Aily Code Project"
         },
         "TEMPLATES": {
             "TITLE": "My Templates",

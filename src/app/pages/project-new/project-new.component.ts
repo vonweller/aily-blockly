@@ -24,6 +24,10 @@ import { debounceTime, takeUntil } from 'rxjs/operators';
 import { createBoardSearchIndex, searchBoards } from '../../utils/fuzzy-search.utils';
 import type { AnyOrama } from '@orama/orama';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { AilyCodeProjectService } from '../../services/aily-code-project.service';
+import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
+import { UnsaveDialogComponent } from '../../main-window/components/unsave-dialog/unsave-dialog.component';
 
 @Component({
   selector: 'app-project-new',
@@ -76,6 +80,11 @@ export class ProjectNewComponent implements OnDestroy {
   private destroy$ = new Subject<void>();
   private searchIndex: AnyOrama | null = null;
 
+  /** 第三步加载态：区分 Blockly 脚手架与 Aily Code 骨架的提示文案 */
+  creatingMode: 'blockly' | 'aily' | null = null;
+  /** 与 Aily Code 对话框一致：阻塞重复弹出未保存提示 */
+  private unsaveDialogOpen = false;
+
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
   }
@@ -105,7 +114,9 @@ export class ProjectNewComponent implements OnDestroy {
     private cloudService: CloudService,
     private cd: ChangeDetectorRef,
     private translate: TranslateService,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private ailyCodeProject: AilyCodeProjectService,
+    private nzModal: NzModalService
   ) {
     this.searchSubject.pipe(
       debounceTime(200),
@@ -320,6 +331,7 @@ export class ProjectNewComponent implements OnDestroy {
     if (this.checkPathInvalidChars()) {
       return;
     }
+    this.creatingMode = 'blockly';
     this.currentStep = 2;
 
     // 记录开发板使用次数
@@ -351,7 +363,124 @@ export class ProjectNewComponent implements OnDestroy {
 
     if (!success) {
       this.currentStep = 1;
+      this.creatingMode = null;
     }
+  }
+
+  /**
+   * Blockly 向导中收集的开发板上下文，传给 AilyCodeProjectService，
+   * 写入 project.aci.target，便于用户在 Aily Code 侧延续同一硬件选择。
+   */
+  private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
+    return {
+      boardId: this.newProjectData.board.name,
+      boardNickname: this.newProjectData.board.nickname,
+      boardPkgVersion: this.newProjectData.board.version,
+      framework: String(this.newProjectData.devmode ?? this.currentBoard?.mode?.[0] ?? 'arduino')
+    };
+  }
+
+  /** 主路由下创建 Aily Code 骨架：跳过 npm 模板，成功则与对话框一致地走 projectOpen */
+  async createAilyCodeProject(): Promise<void> {
+    if (await this.checkPathIsExist()) {
+      return;
+    }
+    if (this.checkPathInvalidChars()) {
+      return;
+    }
+
+    // 沿用 Blockly：记录开发板使用热度
+    this.configService.recordBoardUsage(this.newProjectData.board.name);
+    this.creatingMode = 'aily';
+    this.currentStep = 2;
+
+    const resultRef = await this.ailyCodeProject.projectNew({
+      name: String(this.newProjectData.name ?? '').trim(),
+      path: String(this.newProjectData.path ?? '').trim(),
+      wizardTarget: this.buildAilyWizardTarget()
+    });
+
+    if (!resultRef.ok) {
+      const map: Record<string, string> = {
+        NAME_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_NAME_EMPTY',
+        PATH_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_PATH_EMPTY',
+        PATH_EXISTS: 'AILYCODE_NEW_DIALOG.ERR_PATH_EXISTS'
+      };
+      const key = map[resultRef.error ?? ''] || 'AILYCODE_NEW_DIALOG.ERR_CREATE_FAILED';
+      this.message.error(this.translate.instant(key));
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    this.message.success(this.translate.instant('AILYCODE_NEW_DIALOG.SUCCESS'));
+
+    const projectPath = resultRef.projectPath;
+    if (!projectPath) {
+      this.creatingMode = null;
+      this.currentStep = 1;
+      return;
+    }
+
+    const canSwitch = await this.confirmSwitchWithUnsavedIfNeeded();
+    if (!canSwitch) {
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    await this.projectService.projectOpen(projectPath);
+  }
+
+  /** 若当前在主编辑器且存在未保存，弹窗对齐「打开项目」行为（与 AilyCodeNewDialog 一致） */
+  private isOnEditorRoute(): boolean {
+    const url = this.router.url;
+    return ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro'].some((r) => url.includes(r));
+  }
+
+  /** 切换到新工程前的未保存确认；取消则停在向导第一步 */
+  private async confirmSwitchWithUnsavedIfNeeded(): Promise<boolean> {
+    if (!this.isOnEditorRoute()) {
+      return true;
+    }
+    if (!(await this.projectService.hasUnsavedChanges())) {
+      return true;
+    }
+    if (this.unsaveDialogOpen) {
+      return false;
+    }
+    this.unsaveDialogOpen = true;
+    return new Promise<boolean>((resolve) => {
+      const ref = this.nzModal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzBodyStyle: { padding: '0' },
+        nzWidth: '350px',
+        nzContent: UnsaveDialogComponent,
+        nzData: { action: 'open' as const },
+      });
+      ref.afterClose.subscribe(async (res: { result?: string } | null) => {
+        this.unsaveDialogOpen = false;
+        if (!res) {
+          resolve(false);
+          return;
+        }
+        switch (res.result) {
+          case 'save':
+            await this.projectService.save();
+            resolve(true);
+            break;
+          case 'continue':
+            resolve(true);
+            break;
+          case 'cancel':
+          default:
+            resolve(false);
+            break;
+        }
+      });
+    });
   }
 
   private async findSelectedTemplateProject(): Promise<any> {

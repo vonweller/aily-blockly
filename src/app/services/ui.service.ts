@@ -320,6 +320,8 @@ export class UiService {
 }
 
 export interface WindowOpts {
+  /** 子窗口业务标识，如 settings-open / project-new，与 preload 路由一致 */
+  type?: string;
   path: string;
   data?: any;
   title?: string;

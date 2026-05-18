@@ -11,12 +11,14 @@ import { ConfigService } from '../../services/config.service';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { UiService } from '../../services/ui.service';
 import { PlatformService } from '../../services/platform.service';
 import { CloudService } from '../../tools/cloud-space/services/cloud.service';
 import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { AilyCodeProjectService } from '../../services/aily-code-project.service';
+import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
 
 @Component({
   selector: 'app-project-new',
@@ -61,6 +63,9 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   tagListRandom;
 
+  /** 向导第三步：Blockly 脚手架与 Aily Code 骨架共用 loading UI，用这个区分文案 */
+  creatingMode: 'blockly' | 'aily' | null = null;
+
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
   }
@@ -74,7 +79,9 @@ export class ProjectNewComponent {
     private platformService: PlatformService,
     private cloudService: CloudService,
     private cd: ChangeDetectorRef,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private ailyCodeProject: AilyCodeProjectService,
+    private translate: TranslateService
   ) { }
 
   get selectedTemplate(): CloudProjectTemplate | null {
@@ -106,6 +113,8 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.version = this.currentBoard.version;
     this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
+    // macOS：默认 Documents 路径无非法字符，仍统一跑一遍以保持与向导内「选择文件夹」一致
+    this.checkPathInvalidChars();
   }
 
   process(array) {
@@ -184,7 +193,19 @@ export class ProjectNewComponent {
     if (folderPath.slice(-1) !== pt) {
       this.newProjectData.path = folderPath + pt;
     }
-    // 在这里对返回的 folderPath 进行后续处理
+    this.checkPathInvalidChars();
+  }
+
+  /** macOS 下父路径非法字符（与主窗口 ProjectNewComponent 对齐） */
+  showIsPathPassed = false;
+  checkPathInvalidChars(): boolean {
+    if (!this.platformService.isMac()) {
+      this.showIsPathPassed = false;
+      return false;
+    }
+    const invalidChars = /[\s\0:\\*?^$!#%&()=+`~'"<>|\n\r]/;
+    this.showIsPathPassed = invalidChars.test(this.newProjectData.path);
+    return this.showIsPathPassed;
   }
 
   // 检查项目名称是否存在
@@ -198,6 +219,7 @@ export class ProjectNewComponent {
     } else {
       this.showIsExist = false;
     }
+    this.checkPathInvalidChars();
     return isExist;
   }
 
@@ -206,7 +228,14 @@ export class ProjectNewComponent {
     if (await this.checkPathIsExist()) {
       return;
     }
+    if (this.checkPathInvalidChars()) {
+      return;
+    }
+    this.creatingMode = 'blockly';
     this.currentStep = 2;
+
+    // 与主窗口一致：记录开发板使用频率
+    this.configService.recordBoardUsage(this.newProjectData.board.name);
 
     let success = false;
     let extractPath = '';
@@ -238,6 +267,69 @@ export class ProjectNewComponent {
     }
 
     this.currentStep = 1;
+    this.creatingMode = null;
+  }
+
+  /** 向导里收集的开发板信息写入 Aily Code 的 project.aci.target */
+  private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
+    return {
+      boardId: this.newProjectData.board.name,
+      boardNickname: this.newProjectData.board.nickname,
+      boardPkgVersion: this.newProjectData.board.version,
+      framework: String(this.currentBoard?.mode?.[0] ?? 'arduino')
+    };
+  }
+
+  /**
+   * 子窗口里创建 Aily Code 骨架并通过 IPC 让主窗口打开工程（与 Blockly 完成创建的路径一致）。
+   */
+  async createAilyCodeProject(): Promise<void> {
+    if (await this.checkPathIsExist()) {
+      return;
+    }
+    if (this.checkPathInvalidChars()) {
+      return;
+    }
+
+    this.configService.recordBoardUsage(this.newProjectData.board.name);
+    this.creatingMode = 'aily';
+    this.currentStep = 2;
+
+    const resultRef = await this.ailyCodeProject.projectNew({
+      name: String(this.newProjectData.name ?? '').trim(),
+      path: String(this.newProjectData.path ?? '').trim(),
+      wizardTarget: this.buildAilyWizardTarget()
+    });
+
+    if (!resultRef.ok) {
+      const map: Record<string, string> = {
+        NAME_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_NAME_EMPTY',
+        PATH_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_PATH_EMPTY',
+        PATH_EXISTS: 'AILYCODE_NEW_DIALOG.ERR_PATH_EXISTS'
+      };
+      const key = map[resultRef.error ?? ''] || 'AILYCODE_NEW_DIALOG.ERR_CREATE_FAILED';
+      this.message.error(this.translate.instant(key));
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    this.message.success(this.translate.instant('AILYCODE_NEW_DIALOG.SUCCESS'));
+
+    const projectPath = resultRef.projectPath;
+    if (!projectPath) {
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    this.uiService.updateFooterState({
+      state: 'done',
+      text: this.translate.instant('PROJECT.PROJECT_CREATED'),
+    });
+
+    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
+    this.uiService.closeWindow();
   }
 
   private async findSelectedTemplateProject(): Promise<any> {

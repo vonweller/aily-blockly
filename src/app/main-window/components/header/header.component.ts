@@ -14,7 +14,6 @@ import { IMenuItem } from '../../../configs/menu.config';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { UnsaveDialogComponent } from '../unsave-dialog/unsave-dialog.component';
-import { AilyCodeNewDialogComponent } from '../../../components/ailycode-new-dialog/ailycode-new-dialog.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { UpdateService } from '../../../services/update.service';
 import { Router } from '@angular/router';
@@ -441,8 +440,18 @@ export class HeaderComponent implements OnDestroy {
         this.uiService.openWindow(item.data);
         break;
       case 'project-new-aily-code':
-        // Aily Code 目录骨架与 blockly「新建项目」窗口独立；创建成功后在对话框内 projectOpen → code-editor-pro（内嵌 aily-coder）
-        this.openAilyCodeNewDialog();
+        // 与 Blockly 共用「新建项目」向导，在第二步点「创建 Aily Code 项目」
+        if (this.isLoaded()) {
+          const canContinue = await this.checkUnsavedChanges('new');
+          if (!canContinue) return;
+        }
+        this.uiService.openWindow({
+          type: 'project-new',
+          path: 'project-new',
+          alwaysOnTop: true,
+          width: 820,
+          height: 550
+        });
         break;
       case 'project-open':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -811,19 +820,6 @@ export class HeaderComponent implements OnDestroy {
       },
       nzWidth: '350px',
       nzContent: LoginDialogComponent
-    });
-  }
-
-  /** 打开 Aily Code 新建项目对话框（独立于 blockly 项目创建窗口） */
-  openAilyCodeNewDialog() {
-    this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: { padding: '0' },
-      nzWidth: '440px',
-      nzContent: AilyCodeNewDialogComponent,
-      nzMaskClosable: false,
     });
   }
 

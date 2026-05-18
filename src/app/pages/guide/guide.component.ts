@@ -13,9 +13,6 @@ import { CommonModule } from '@angular/common';
 import { OnboardingService } from '../../services/onboarding.service';
 import { GUIDE_ONBOARDING_CONFIG } from '../../configs/onboarding.config';
 import { ThemeService } from '../../services/theme.service';
-import { NzModalService } from 'ng-zorro-antd/modal';
-import { AilyCodeNewDialogComponent } from '../../components/ailycode-new-dialog/ailycode-new-dialog.component';
-
 @Component({
   selector: 'app-guide',
   imports: [TranslateModule, CommonModule],
@@ -93,7 +90,6 @@ export class GuideComponent implements OnInit, AfterViewInit {
     private configService: ConfigService,
     private onboardingService: OnboardingService,
     private themeService: ThemeService,
-    private modal: NzModalService,
   ) { }
 
   /**
@@ -226,8 +222,8 @@ export class GuideComponent implements OnInit, AfterViewInit {
         // this.uiService.openWindow(item.data);
         break;
       case 'project-new-aily-code':
-        // 与 blockly 新建窗口独立；成功后由对话框内打开 code-editor-pro（内嵌 aily-coder）
-        this.openAilyCodeNewDialog();
+        // 进入与 Blockly 相同的新建向导（第二步选创建 Aily Code）
+        this.router.navigate(['/main/project-new']);
         break;
       case 'project-open':
         this.openProject(item.data);
@@ -275,18 +271,5 @@ export class GuideComponent implements OnInit, AfterViewInit {
 
   openFeedback() {
     this.uiService.openFeedback();
-  }
-
-  /** 打开 Aily Code 新建项目对话框 */
-  openAilyCodeNewDialog() {
-    this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: { padding: '0' },
-      nzWidth: '440px',
-      nzContent: AilyCodeNewDialogComponent,
-      nzMaskClosable: false,
-    });
   }
 }

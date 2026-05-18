@@ -62,7 +62,7 @@ export let HEADER_MENU: IMenuItem[] = [
     icon: 'fa-light fa-file-circle-plus',
   },
   {
-    // 新建 Aily Code 项目（按 aily-code docs 第 3.1 节骨架创建，独立于 blockly 流程）
+    // 新建 Aily Code：打开与 Blockly 相同的向导窗口，第二步使用「创建 Aily Code 项目」按钮
     name: 'MENU.PROJECT_NEW_AILY_CODE',
     action: 'project-new-aily-code',
     icon: 'fa-light fa-microchip',
@@ -167,7 +167,7 @@ export let GUIDE_MENU: IMenuItem[] = [
     icon: 'fa-light fa-file-circle-plus',
   },
   {
-    // 新建 Aily Code 项目（与上方 blockly 流程独立）
+    // 新建 Aily Code：同上，向导内第二步创建 Aily Code 骨架项
     name: 'MENU.PROJECT_NEW_AILY_CODE',
     action: 'project-new-aily-code',
     icon: 'fa-light fa-microchip',

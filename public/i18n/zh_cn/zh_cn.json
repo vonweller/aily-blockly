@@ -250,7 +250,9 @@
             "NEXT": "下一步",
             "PREV": "上一步",
             "CREATE": "创建项目",
-            "CREATING": "正在创建"
+            "CREATING": "正在创建",
+            "CREATE_AILY_CODE": "创建 Aily Code 项目",
+            "CREATING_AILY_CODE": "正在创建 Aily Code 项目"
         },
         "TEMPLATES": {
             "TITLE": "我的模板",
