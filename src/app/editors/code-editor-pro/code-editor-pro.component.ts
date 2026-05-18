@@ -1,16 +1,27 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, ElementRef, OnInit, OnDestroy, ViewChild } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { Subscription } from 'rxjs';
 import { ProjectService } from '../../services/project.service';
 import { NotificationComponent } from '../../components/notification/notification.component';
 import { BuilderService } from '../code-editor/services/builder.service';
+import { BuilderService as TopBuilderService } from '../../services/builder.service';
 import { UploaderService } from '../../services/uploader.service';
 import { ElectronService } from '../../services/electron.service';
 import { ThemeService } from '../../services/theme.service';
 import { CodeEditorProProjectService } from './services/code-editor-pro-project.service';
+import { NpmService } from '../../services/npm.service';
+import { resolveActualMainHexLocation } from '../../utils/builder.utils';
+
+/** 与 child/aily-coder/src/hostEmbedContext.ts 中 channel 常量一致 */
+const AILY_CODER_HOST_CONTEXT_CHANNEL = 'aily-coder-host-context';
+/** 内嵌 Coder 请求在系统文件管理器中显示绝对路径 */
+const AILY_CODER_REVEAL_IN_OS_CHANNEL = 'aily-coder-reveal-in-os';
+/** Extension Host（Worker）无 window，用 BroadcastChannel 与宿主通信；须与 ailyViewExplorer 一致 */
+const AILY_EMBED_OS_REVEAL_CHANNEL = 'aily-embed-os-reveal';
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -19,6 +30,8 @@ import { CodeEditorProProjectService } from './services/code-editor-pro-project.
   styleUrl: './code-editor-pro.component.scss',
 })
 export class CodeEditorProComponent implements OnInit, OnDestroy {
+  @ViewChild('coderEmbedFrame') coderEmbedFrame?: ElementRef<HTMLIFrameElement>;
+
   coderEmbedSrc: SafeResourceUrl | null = null;
   coderEmbedError: string | null = null;
   /** 内嵌 iframe 打开的本地工程根路径（Electron postMessage FS 断言用） */
@@ -28,16 +41,23 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
 
   private readonly coderNativeFsBridgeListener = (ev: MessageEvent) => this.onCoderNativeFsMessage(ev);
 
+  /** Worker 内扩展通过 BroadcastChannel 请求访达/资源管理器高亮 */
+  private ailyOsRevealBc?: BroadcastChannel;
+  /** 订阅顶层 BuilderService 的编译完成事件，触发 main.hex 路径刷新 */
+  private buildFinishedSub?: Subscription;
+
   constructor(
     private projectService: ProjectService,
     private proProject: CodeEditorProProjectService,
     private activatedRoute: ActivatedRoute,
     private message: NzMessageService,
     private builderService: BuilderService,
+    private topBuilderService: TopBuilderService,
     private uploadService: UploaderService,
     private electronService: ElectronService,
     private sanitizer: DomSanitizer,
     private themeService: ThemeService,
+    private npmService: NpmService,
   ) {
     toObservable(this.themeService.theme)
       .pipe(takeUntilDestroyed())
@@ -49,6 +69,25 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     window.addEventListener('message', this.coderNativeFsBridgeListener);
+    try {
+      this.ailyOsRevealBc = new BroadcastChannel(AILY_EMBED_OS_REVEAL_CHANNEL);
+      this.ailyOsRevealBc.addEventListener('message', (ev: MessageEvent) => {
+        const p = ev.data as { absPath?: string };
+        if (typeof p?.absPath === 'string' && p.absPath) {
+          void this.runHostRevealInOs(p.absPath);
+        }
+      });
+    } catch {
+      /* 浏览器极旧环境无 BroadcastChannel */
+    }
+    // 编译完成后重写 hints + 推送 hostCtx，让 Coder 端 main.hex 节点立刻拿到真实绝对路径
+    this.buildFinishedSub = this.topBuilderService.buildFinishedSubject.subscribe(({ success }) => {
+      if (!success) return;
+      const root = this.coderEmbedWorkspaceRoot;
+      if (!root) return;
+      void this.writeCoderEmbedHints(root);
+      void this.pushAilyCoderHostContext(root);
+    });
     this.proProject.init();
     this.activatedRoute.queryParams.subscribe((params) => {
       if (params['path']) {
@@ -66,14 +105,23 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     window.history.pushState(null, '', window.location.href);
   }
 
+  /**
+   * npm 依赖检查/安装与内嵌编辑器并行启动；仅在对磁盘做一次「保证 package.json 可读」后再并行元数据与 iframe，避免纯 .ino 目录竞态。
+   */
   private async bootstrap(projectPath: string) {
     this.coderEmbedWorkspaceRoot = projectPath;
+    void this.ensureNpmDepsWithRetry(projectPath);
+    await this.ensureProjectPackageJsonExists(projectPath);
     await this.loadProject(projectPath);
     await this.initCoderEmbed(projectPath);
   }
 
   ngOnDestroy(): void {
     window.removeEventListener('message', this.coderNativeFsBridgeListener);
+    this.ailyOsRevealBc?.close();
+    this.ailyOsRevealBc = undefined;
+    this.buildFinishedSub?.unsubscribe();
+    this.buildFinishedSub = undefined;
     this.coderEmbedWorkspaceRoot = null;
     this.proProject.destroy();
     this.builderService.cancel();
@@ -81,20 +129,29 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     this.electronService.setTitle('aily blockly');
   }
 
-  async loadProject(projectPath: string) {
-    if (!this.electronService.exists(projectPath + '/package.json')) {
-      const fileList = this.electronService.readDir(projectPath);
-      if (this.hasFileWithExtension(fileList, '.ino')) {
-        const projectName = projectPath.split(/[/\\]/).filter(Boolean).pop() || '';
-        const packageData = {
-          version: '1.0.0',
-          name: projectName,
-          platform: 'arduino',
-        };
-        this.electronService.writeFile(projectPath + '/package.json', JSON.stringify(packageData));
-      }
+  /**
+   * 无 package.json 时从 .ino 生成最小 stub，再与 iframe 并行读盘，避免工作区先打开后才有 json。
+   */
+  private async ensureProjectPackageJsonExists(projectPath: string): Promise<void> {
+    if (this.electronService.exists(projectPath + '/package.json')) {
+      return;
     }
+    const fileList = this.electronService.readDir(projectPath);
+    if (this.hasFileWithExtension(fileList, '.ino')) {
+      const projectName = projectPath.split(/[/\\]/).filter(Boolean).pop() || '';
+      const packageData = {
+        version: '1.0.0',
+        name: projectName,
+        platform: 'arduino',
+      };
+      this.electronService.writeFile(projectPath + '/package.json', JSON.stringify(packageData));
+    }
+  }
 
+  /**
+   * 写入工程上下文并标为已加载（不含 npm；依赖安装由 bootstrap 中单独 void 启动）。
+   */
+  async loadProject(projectPath: string): Promise<void> {
     const packageJson = JSON.parse(this.electronService.readFile(`${projectPath}/package.json`));
     this.electronService.setTitle(`aily blockly - ${packageJson.name}`);
     this.projectService.currentPackageData = packageJson;
@@ -108,8 +165,24 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     this.projectService.stateSubject.next('loaded');
   }
 
+  /**
+   * 对当前嵌入工程跑依赖安装；切换工程后重试回调会放弃，避免误操作其它目录。
+   */
+  private async ensureNpmDepsWithRetry(projectPath: string): Promise<void> {
+    const run = async () => {
+      if (this.coderEmbedWorkspaceRoot !== projectPath) {
+        return;
+      }
+      await this.npmService.ensureProjectDependenciesInstalled(projectPath, {
+        onRetryInstall: () => void run(),
+      });
+    };
+    await run();
+  }
+
   private async initCoderEmbed(projectPath: string) {
     try {
+      await this.writeCoderEmbedHints(projectPath);
       let base: string;
       const api = (window as any).electronAPI;
       if (this.electronService.isElectron && api?.coderEmbed) {
@@ -126,10 +199,109 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
       }
       this.coderEmbedSrc = this.sanitizer.bypassSecurityTrustResourceUrl(u.toString());
       this.coderEmbedError = null;
+      // iframe (load) 里会 postMessage；此处若 iframe 已缓存瞬时完成，再补一发
+      setTimeout(() => void this.pushAilyCoderHostContext(projectPath), 0);
     } catch (e: any) {
       console.error(e);
       this.coderEmbedError = e?.message || String(e);
       this.message.error('无法启动内嵌代码编辑器：' + this.coderEmbedError);
+    }
+  }
+
+  /**
+   * iframe 每次加载完成后向 aily-coder 同步宿主上下文（构建目录等），避免依赖 ProjectService 竞态。
+   */
+  onCoderEmbedFrameLoad(): void {
+    const root = this.coderEmbedWorkspaceRoot;
+    if (root) {
+      void this.pushAilyCoderHostContext(root);
+    }
+  }
+
+  /**
+   * 写入内嵌 Coder 可读的路径提示。
+   * buildPath 与 mainHexAbs 都来自 resolveActualMainHexLocation，覆盖 aily-builder 把产物落到全局缓存目录的常见情况。
+   * 文件位于 .aily/下，仓库 .gitignore 已忽略 .aily/。
+   */
+  private async writeCoderEmbedHints(projectRoot: string): Promise<void> {
+    if (this.coderEmbedWorkspaceRoot !== projectRoot) {
+      return;
+    }
+    try {
+      const primaryBuildPath = await this.projectService.getBuildPath();
+      const pathApi = window['path'] as {
+        join: (...s: string[]) => string;
+        relative: (from: string, to: string) => string;
+        sep: string;
+      };
+      const fsAny = window['fs'] as { mkdirSync?: (p: string, o?: { recursive?: boolean }) => void };
+      const { abs: mainHexAbs, buildPath } = await resolveActualMainHexLocation(
+        projectRoot,
+        primaryBuildPath
+      );
+      let mainHexRelPath: string | undefined;
+      if (mainHexAbs) {
+        const relRaw = pathApi.relative(projectRoot, mainHexAbs);
+        mainHexRelPath =
+          relRaw.startsWith('..') || relRaw.includes('..')
+            ? undefined
+            : relRaw.split(pathApi.sep).join('/');
+      }
+      const ailyDir = pathApi.join(projectRoot, '.aily');
+      if (!this.electronService.exists(ailyDir) && typeof fsAny?.mkdirSync === 'function') {
+        fsAny.mkdirSync(ailyDir, { recursive: true });
+      }
+      const hintsPath = pathApi.join(projectRoot, '.aily', 'coder-embed-hints.json');
+      const payload = {
+        v: 1,
+        buildPath,
+        ...(mainHexAbs ? { mainHexAbs } : {}),
+        ...(mainHexRelPath ? { mainHexRelPath } : {}),
+      };
+      this.electronService.writeFile(hintsPath, JSON.stringify(payload, null, 2));
+    } catch (e) {
+      console.warn('[CodeEditorPro] writeCoderEmbedHints', e);
+    }
+  }
+
+  /**
+   * 将构建路径等注入内嵌 Coder；buildPath / mainHexAbsPath 与 hints 写入路径同源，避免 Coder 拿到错误的工程内虚拟路径。
+   */
+  private async pushAilyCoderHostContext(projectRoot: string): Promise<void> {
+    const win = this.coderEmbedFrame?.nativeElement?.contentWindow;
+    if (!win) {
+      return;
+    }
+    try {
+      const primaryBuildPath = await this.projectService.getBuildPath();
+      const pathApi = window['path'] as {
+        join: (...p: string[]) => string;
+        relative: (from: string, to: string) => string;
+        sep: string;
+      };
+      const { abs: mainHexAbs, buildPath } = await resolveActualMainHexLocation(
+        projectRoot,
+        primaryBuildPath
+      );
+      let mainHexRelPath: string | undefined;
+      if (mainHexAbs) {
+        const relRaw = pathApi.relative(projectRoot, mainHexAbs);
+        mainHexRelPath =
+          relRaw.startsWith('..') || relRaw.includes('..')
+            ? undefined
+            : relRaw.split(pathApi.sep).join('/');
+      }
+      const payload = {
+        v: 1 as const,
+        workspaceRoot: projectRoot,
+        buildPath,
+        ...(mainHexAbs ? { mainHexAbsPath: mainHexAbs } : {}),
+        ...(mainHexRelPath ? { mainHexRelPath } : {}),
+        meta: {},
+      };
+      win.postMessage({ channel: AILY_CODER_HOST_CONTEXT_CHANNEL, payload }, '*');
+    } catch (e) {
+      console.warn('[CodeEditorPro] postMessage host context 失败', e);
     }
   }
 
@@ -161,6 +333,99 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * 在访达中高亮路径：允许工程根内、getBuildPath() 推断目录、或 aily-builder 全局缓存目录下的产物。
+   * 同时校验 resolveActualMainHexLocation 找到的真实 main.hex 路径，覆盖产物落到 ~/Library/aily-builder 的常见情况。
+   */
+  private async resolvePathForRevealInOs(absPath: string): Promise<string | null> {
+    const pathApi = window['path'] as {
+      resolve?: (p: string) => string;
+      join: (...s: string[]) => string;
+      sep?: string;
+      getAilyBuilderBuildPath?: () => string;
+    };
+    const sep = pathApi.sep ?? '/';
+    const normalized = pathApi.resolve ? pathApi.resolve(absPath) : absPath;
+    try {
+      return this.assertPathInsideCoderEmbedRoot(normalized);
+    } catch {
+      /* 继续尝试构建产物目录 */
+    }
+    try {
+      const root = this.coderEmbedWorkspaceRoot;
+      const primaryBuild = await this.projectService.getBuildPath();
+      // primaryBuild 命中：与 dev-tool openCompileFolder 同源
+      const bpNorm = pathApi.resolve ? pathApi.resolve(primaryBuild) : primaryBuild;
+      if (normalized.startsWith(bpNorm + sep) || normalized === bpNorm) {
+        return normalized;
+      }
+      // 实际 main.hex 路径命中：覆盖 aily-builder 把产物落到全局缓存目录
+      if (root) {
+        const { abs, buildPath } = await resolveActualMainHexLocation(root, primaryBuild);
+        if (abs) {
+          const absNorm = pathApi.resolve ? pathApi.resolve(abs) : abs;
+          if (absNorm === normalized) {
+            return normalized;
+          }
+        }
+        const realBuildNorm = pathApi.resolve ? pathApi.resolve(buildPath) : buildPath;
+        if (normalized.startsWith(realBuildNorm + sep) || normalized === realBuildNorm) {
+          return normalized;
+        }
+      }
+      // 兜底：aily-builder 全局根下任何路径都放行（节点 absolutePath 由 IDE 自身写入，可信）
+      const globalRoot = pathApi.getAilyBuilderBuildPath?.();
+      if (globalRoot) {
+        const globalNorm = pathApi.resolve ? pathApi.resolve(globalRoot) : globalRoot;
+        if (normalized === globalNorm || normalized.startsWith(globalNorm + sep)) {
+          return normalized;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  /**
+   * postMessage / BroadcastChannel 统一入口：校验路径后 shell.showItemInFolder。
+   * 文件已生成 -> 定位并选中；尚未生成（如未编译的 main.hex）-> 回退打开父目录，避免「点击无反应」。
+   */
+  private async runHostRevealInOs(absPathRaw: string): Promise<void> {
+    const resolved = await this.resolvePathForRevealInOs(absPathRaw);
+    if (resolved == null) {
+      this.message.warning('无法在访达中显示：路径不在允许的工程或构建目录内');
+      return;
+    }
+    const fsApi = window['fs'] as { existsSync?: (p: string) => boolean } | undefined;
+    const pathApi = window['path'] as { dirname?: (p: string) => string } | undefined;
+    const electronShell = (
+      window as unknown as {
+        electronAPI?: { shell?: { showItemInFolder?: (p: string) => void } };
+      }
+    ).electronAPI?.shell;
+    const otherApi = (window as unknown as {
+      other?: { openByExplorer?: (p: string) => void };
+    }).other;
+    try {
+      if (fsApi?.existsSync?.(resolved)) {
+        electronShell?.showItemInFolder?.(resolved);
+        return;
+      }
+      // 文件不存在：尝试打开父目录，至少把用户带到「应该所在」的位置
+      const parent = pathApi?.dirname?.(resolved);
+      if (parent && fsApi?.existsSync?.(parent)) {
+        otherApi?.openByExplorer?.(parent);
+        this.message.info('目标文件尚未生成，已打开所在目录');
+        return;
+      }
+      this.message.warning('文件与所在目录均不存在，无法定位');
+    } catch (e) {
+      console.warn('[CodeEditorPro] showItemInFolder', e);
+      this.message.warning('无法在访达中显示');
+    }
+  }
+
   /** 将Coder iframe 请求的绝对路径规范到当前工程目录内 */
   private assertPathInsideCoderEmbedRoot(candidatePath: string): string {
     const root = this.coderEmbedWorkspaceRoot;
@@ -188,7 +453,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
       id?: number;
       op?: string;
       payload?: Record<string, unknown>;
+      absPath?: string;
     };
+    // 内嵌编辑器：在访达 / 资源管理器中高亮文件（工程根内或当前 getBuildPath 产物目录）
+    if (msg?.channel === AILY_CODER_REVEAL_IN_OS_CHANNEL) {
+      void this.runHostRevealInOs(String(msg.absPath ?? ''));
+      return;
+    }
     if (msg?.channel !== 'aily-coder-native-fs' || typeof msg.id !== 'number' || !msg.op) {
       return;
     }

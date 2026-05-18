@@ -1,6 +1,7 @@
 <div class="code-editor-pro">
     @if (coderEmbedSrc) {
-    <iframe class="coder-embed-frame" title="代码编辑器 Pro" [src]="coderEmbedSrc"></iframe>
+    <iframe #coderEmbedFrame class="coder-embed-frame" title="代码编辑器 Pro" [src]="coderEmbedSrc"
+        (load)="onCoderEmbedFrameLoad()"></iframe>
     } @else if (coderEmbedError) {
     <div class="coder-embed-fallback">
         <p>无法加载内嵌编辑器：{{ coderEmbedError }}</p>

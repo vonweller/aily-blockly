@@ -729,6 +729,7 @@
     },
     "NOTIFICATION": {
         "STOP": "终止",
+        "RETRY": "重试",
         "VIEW_DETAIL": "查看详情",
         "AI_PROCESS": "AI处理"
     },

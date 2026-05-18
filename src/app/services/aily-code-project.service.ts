@@ -11,8 +11,8 @@ export interface AilyCodeNewProjectData {
   /** 项目保存的父目录（绝对路径），最终目录 = path + name。 */
   path: string;
   /**
-   * 来自 Blockly 新建向导的步骤数据：开发板 npm 包名、显示名、包版本与开发框架，
-   * 用于预填 project.aci 的 target 字段（与纯名称+路径的快速创建兼容）。
+   * 来自 Blockly 新建向导的步骤数据：
+   * 驱动 `project.aci.target`，并写入与 `package.json` 对齐的 dependencies / boardDependencies / devmode。
    */
   wizardTarget?: {
     /** 开发板在 npm/registry 中的一级包名（如 esp32duino） */
@@ -38,13 +38,28 @@ export interface AilyCodeNewProjectResult {
 }
 
 /**
+ * 与 Blockly 模板根目录 package.json 同构的一组字段；
+ * project.aci 中与 npm 对齐的部分应与此保持一致（双写）。
+ */
+interface BlocklyAlignedPackageManifest {
+  name: string;
+  nickname: string;
+  version: string;
+  private: true;
+  description: string;
+  devmode?: string;
+  dependencies: Record<string, string>;
+  boardDependencies?: Record<string, string>;
+}
+
+/**
  * AilyCodeProjectService
  * ---------------------------------------------
  * 专门用于按照 aily-code docs/aily-code最终目录与生命周期设计.md 第 3.1 节
  * 推荐的目录结构创建一个全新的 aily-code 项目骨架。
  *
- * 设计原则（与 blockly 项目创建严格独立）：
- *   1. 不依赖 ConfigService / NpmService / 任何板卡或模板下载逻辑；
+ * 设计原则（与 blockly 工程落地独立，但字段与 Blockly package.json 口径对齐便于互操作）：
+ *   1. 不调用 ProjectService/NpmService 的安装逻辑；manifest 写入磁盘后可由用户在项目目录内自行 `npm install`；
  *   2. 不调用 projectService.projectOpen，避免触发 blockly 状态机；
  *   3. 仅依赖 PlatformService（路径分隔符）与 preload 暴露的 window['fs']、window['path']；
  *   4. 全部产物落地到用户选定的目录，绝不写入 AppData，便于团队协作 / Git 版本化。
@@ -158,6 +173,58 @@ export class AilyCodeProjectService {
   }
 
   /**
+   * 将向导里拿到的板卡包版本转成 npm/package.json 里常见的 semver 下限（ Blockly 多用 ^）。
+   */
+  private normalizeNpmDepRange(versionSpec: string): string {
+    const v = String(versionSpec ?? '').trim();
+    if (!v) {
+      return '*';
+    }
+    if (/^[\^~]|^>=|^<=|^>|^</.test(v) || v === '*' || v === 'latest') {
+      return v;
+    }
+    return `^${v}`;
+  }
+
+  /**
+   * 拼装与 Blockly 模板根目录 `package.json` 同构的一份清单；主板写入 `dependencies` 与 `boardDependencies`。
+   */
+  private buildBlocklyAlignedPackageManifest(
+    safeName: string,
+    displayName: string,
+    wizardTarget?: AilyCodeNewProjectData['wizardTarget']
+  ): BlocklyAlignedPackageManifest {
+    const hasBoard = !!(wizardTarget?.boardId && wizardTarget.boardPkgVersion);
+
+    let dependencies: Record<string, string> = {};
+    let boardDeps: Record<string, string> | undefined;
+
+    if (hasBoard && wizardTarget) {
+      const range = this.normalizeNpmDepRange(wizardTarget.boardPkgVersion);
+      dependencies = { [wizardTarget.boardId]: range };
+      boardDeps = { [wizardTarget.boardId]: range };
+    }
+
+    const description =
+      displayName.trim() ||
+      (hasBoard && wizardTarget ? `Blockly 向导：${wizardTarget.boardNickname || wizardTarget.boardId}` : '') ||
+      '';
+
+    return {
+      name: safeName,
+      nickname: displayName,
+      version: '0.0.1',
+      private: true,
+      description,
+      ...(hasBoard && String(wizardTarget?.framework ?? '').trim() !== ''
+        ? { devmode: wizardTarget!.framework }
+        : {}),
+      dependencies,
+      ...(boardDeps && Object.keys(boardDeps).length > 0 ? { boardDependencies: boardDeps } : {})
+    };
+  }
+
+  /**
    * 根目录用户可见文件：project.aci / aily.lock.json / package.json / README.md / .gitignore / src/main.cpp。
    * `.aily/generated/source-map.json` 等基础桥接占位也一并写入。
    */
@@ -186,23 +253,28 @@ export class AilyCodeProjectService {
           sdk: ''
         };
 
-    const projectAci = {
-      // 标识当前 .aci 文件的 schema，后续可由 IDE 校验
+    // 板卡选择与依赖声明对齐 Blockly 侧的 package.json 习惯；无向导时为最小 npm 占位
+    const pkg = this.buildBlocklyAlignedPackageManifest(safeName, displayName, wizardTarget);
+
+    // project.aci：IDE 专有字段之外，npm/Blockly 层与 package.json 同构，主板在 dependencies 与 boardDependencies 中声明
+    const projectAci: Record<string, unknown> = {
       $schema: 'https://aily.pro/schemas/project.aci.json',
-      // 项目身份
-      name: safeName,
-      nickname: displayName,
-      version: '0.0.1',
-      description: hasWizard ? `Blockly 向导：${wizardTarget!.boardNickname || wizardTarget!.boardId}` : '',
-      // 目标设备 / 框架：无向导时占位，可由后续板卡选择器写入
+      name: pkg.name,
+      nickname: pkg.nickname,
+      version: pkg.version,
+      private: pkg.private,
+      description: pkg.description,
+      ...(pkg.devmode != null && pkg.devmode !== ''
+        ? { devmode: pkg.devmode }
+        : {}),
+      dependencies: pkg.dependencies,
+      ...(Object.keys(pkg.boardDependencies || {}).length > 0
+        ? { boardDependencies: pkg.boardDependencies }
+        : {}),
       target: targetBlock,
-      // 入口与源码根，文档 4.3/4.4 中冻结的两条约定
       entry: 'src/main.cpp',
       sourceRoots: ['src', 'components', 'include'],
-      // 构建 profile 列表，对应 .aily/build/<profile>
       buildProfiles: ['debug', 'release', 'simulator'],
-      // 依赖与上传配置先留空，由后续编辑器/向导补充
-      dependencies: {},
       upload: {},
       monitor: { baudRate: 115200 }
     };
@@ -217,21 +289,15 @@ export class AilyCodeProjectService {
       fingerprint: ''
     };
 
-    // 根目录 package.json 仅作占位，不暴露 xpm 语义（详见 docs 9.1）
-    const rootPackageJson = {
-      name: safeName,
-      version: '0.0.1',
-      private: true,
-      description: displayName
-    };
+    // 根目录 package.json：与 project.aci 中 Blockly 对齐字段完全一致（磁盘双写，便于现有 npm/blockly 工具链）
 
-    // .aily/bridge/xpm/package.json 才是真正的 xpm 入口（由 IDE 接管）
+    // .aily/bridge/xpm/package.json：xpack 镜像根依赖（含所选主板 npm 包），供桥接脚本解析
     const bridgePackageJson = {
       name: `${safeName}-xpm`,
       version: '0.0.1',
       private: true,
       xpack: {
-        dependencies: {}
+        dependencies: { ...(pkg.dependencies || {}) }
       }
     };
 
@@ -285,7 +351,7 @@ export class AilyCodeProjectService {
 
     fs.writeFileSync(pathApi.join(root, 'project.aci'), JSON.stringify(projectAci, null, 2));
     fs.writeFileSync(pathApi.join(root, 'aily.lock.json'), JSON.stringify(ailyLock, null, 2));
-    fs.writeFileSync(pathApi.join(root, 'package.json'), JSON.stringify(rootPackageJson, null, 2));
+    fs.writeFileSync(pathApi.join(root, 'package.json'), JSON.stringify(pkg, null, 2));
     fs.writeFileSync(pathApi.join(root, 'README.md'), readme);
     fs.writeFileSync(pathApi.join(root, '.gitignore'), gitignore);
     fs.writeFileSync(pathApi.join(root, 'src', 'main.cpp'), mainCpp);

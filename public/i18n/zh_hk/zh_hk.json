@@ -647,6 +647,7 @@
     },
     "NOTIFICATION": {
         "STOP": "終止",
+        "RETRY": "重試",
         "VIEW_DETAIL": "查看詳情",
         "AI_PROCESS": "AI處理"
     },

@@ -8,7 +8,6 @@ import { ElectronService } from '../../services/electron.service';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { ConfigService } from '../../services/config.service';
 import { NpmService } from '../../services/npm.service';
-import { CmdService } from '../../services/cmd.service';
 import { BlocklyService } from './services/blockly.service';
 import { BlocklyComponent } from './components/blockly/blockly.component';
 import { _ProjectService } from './services/project.service';
@@ -60,7 +59,6 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     private message: NzMessageService,
     private configService: ConfigService,
     private npmService: NpmService,
-    private cmdService: CmdService,
     private projectService: ProjectService,
     private _projectService: _ProjectService,
     private _builderService: _BuilderService,
@@ -166,40 +164,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     // 暴露 ProjectService 到全局，供 generator.js 使用
     window['projectService'] = this.projectService;
 
-    if (!(await this.npmService.installedOk(projectPath))) {
-      // 终端进入项目目录，安装项目依赖
-      // this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS') });
-      setTimeout(() => {
-        this.noticeService.update({
-          title: this.translate.instant('NPM.INSTALLING_TITLE'),
-          text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
-          state: 'doing',
-          icon: 'fa-light fa-cubes',
-          showProgress: false,
-        });
-      }, 0);
-      const npmResult = await this.cmdService.runAsync(`npm install`, projectPath);
-      if (!(await this.npmService.installedOk(projectPath))) {
-        setTimeout(() => {
-          this.noticeService.update({
-            title: this.translate.instant('NPM.INSTALL_FAILED_TITLE'),
-            text: this.translate.instant('NPM.BOARD_DEPS_INSTALL_FAILED'),
-            detail: npmResult?.stderr || 'npm install 执行完成但依赖检查未通过',
-            state: 'error',
-            sendToLog: false,
-          });
-        }, 1000);
-        return;
-      }
-      setTimeout(() => {
-        this.noticeService.update({
-          title: this.translate.instant('NPM.INSTALL_COMPLETE_TITLE'),
-          text: this.translate.instant('NPM.DEPS_INSTALL_COMPLETE'),
-          state: 'done',
-          showProgress: false,
-          setTimeout: 3000,
-        });
-      }, 100);
+    // 与 Aily Code（code-editor-pro）共用：node_modules 不齐则 npm install
+    if (!(await this.npmService.ensureProjectDependenciesInstalled(projectPath))) {
+      return;
     }
     // 3. 加载开发板module中的board.json
     this.uiService.updateFooterState({

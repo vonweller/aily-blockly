@@ -55,3 +55,75 @@ export async function findFile(basePath: string, fileName: string, version: stri
 
     return filteredRes[0] || '';
 }
+
+/**
+ * 在编译输出目录中解析 main.hex：根目录直连后再递归查找（与烧录前解析产物一致）。
+ */
+export async function resolveMainHexAbsolutePath(buildPath: string): Promise<string | undefined> {
+  if (!buildPath?.trim()) {
+    return undefined;
+  }
+  if (!window['fs'].existsSync(buildPath)) {
+    return undefined;
+  }
+  const direct = window['path'].join(buildPath, 'main.hex');
+  if (window['fs'].existsSync(direct)) {
+    return direct;
+  }
+  const found = await findFile(buildPath, 'main.hex');
+  return found && found.length > 0 ? found : undefined;
+}
+
+/**
+ * aily-builder 实际子目录命名规则：`<basenameWithoutExt>_<md5(sourceAbs).slice(0,8)>`。
+ * 与 `getDefaultBuildPath` 区别：basename 去掉所有扩展名（兼容 .ino / .cpp 等多种入口）。
+ */
+export async function getAilyBuilderBuildDir(sketchFilePath: string): Promise<string> {
+  const md5 = (await window['tools'].calculateMD5(window['path'].resolve(sketchFilePath))).slice(0, 8);
+  const sketchName = window['path'].basename(sketchFilePath).replace(/\.[^.]+$/, '');
+  return window['path'].join(window['path'].getAilyBuilderBuildPath(), `${sketchName}_${md5}`);
+}
+
+/**
+ * 工程层面解析 main.hex 真实落点：优先项目预期 buildPath，否则按 aily-builder 实际命名回探缓存子目录。
+ * 候选 sketch 入口与 compile.js 一致：Aily Code -> `src/main.cpp`；纯 Blockly -> `.temp/sketch/sketch.ino`。
+ */
+export async function resolveActualMainHexLocation(
+  projectRoot: string,
+  primaryBuildPath: string
+): Promise<{ abs?: string; buildPath: string }> {
+  const fsApi = window['fs'] as { existsSync?: (p: string) => boolean } | undefined;
+  const pathApi = window['path'] as {
+    join: (...s: string[]) => string;
+    getAilyBuilderBuildPath?: () => string;
+  } | undefined;
+
+  // 候选1：项目首选 buildPath（与 dev-tool openCompileFolder 对齐）
+  const primaryHit = await resolveMainHexAbsolutePath(primaryBuildPath);
+  if (primaryHit) {
+    return { abs: primaryHit, buildPath: primaryBuildPath };
+  }
+
+  // 候选2：回探 aily-builder 全局缓存（覆盖 Aily Code 工程产物未落到 .aily/build 的常见情况）
+  const globalRoot = pathApi?.getAilyBuilderBuildPath?.();
+  if (globalRoot && fsApi?.existsSync?.(globalRoot) && pathApi) {
+    const sketchCandidates = [
+      pathApi.join(projectRoot, 'src', 'main.cpp'),
+      pathApi.join(projectRoot, '.temp', 'sketch', 'sketch.ino'),
+    ];
+    for (const sketchPath of sketchCandidates) {
+      if (!fsApi.existsSync?.(sketchPath)) continue;
+      try {
+        const candidateDir = await getAilyBuilderBuildDir(sketchPath);
+        const found = await resolveMainHexAbsolutePath(candidateDir);
+        if (found) {
+          return { abs: found, buildPath: candidateDir };
+        }
+      } catch {
+        /* 计算失败继续下一个候选 */
+      }
+    }
+  }
+
+  return { buildPath: primaryBuildPath };
+}

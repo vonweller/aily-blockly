@@ -1844,15 +1844,29 @@ export class ProjectService {
 
   /**
    * 获取当前项目的构建路径
+   * Aily Code（存在 project.aci）：固件落在 `.aily/build/<framework>/`，与 compile.js `--output-dir` 一致。
+   * 纯 Blockly：`AILY_BUILDER_BUILD_PATH`/sketch 哈希目录（沿用原逻辑）。
    * @returns 返回构建路径
    */
   async getBuildPath(): Promise<string> {
-    const sketchPath = window['path'].join(
-      this.currentProjectPath,
-      '.temp',
-      'sketch',
-      'sketch.ino'
-    );
+    const root = this.currentProjectPath;
+    const aciPath = window['path'].join(root, 'project.aci');
+    // 与 child/scripts/aily-code-project.js 中分段规则保持一致
+    if (window['path'].isExists(aciPath)) {
+      try {
+        const raw = window['fs'].readFileSync(aciPath, 'utf8');
+        const aci = JSON.parse(raw);
+        const frameworkRaw = aci?.target?.framework ?? aci?.devmode ?? 'arduino';
+        const fw = String(frameworkRaw || 'arduino').trim() || 'arduino';
+        const seg = fw.toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'arduino';
+        const outDir = window['path'].join(root, '.aily', 'build', seg);
+        return outDir;
+      } catch (e) {
+        console.warn('[getBuildPath] 解析 project.aci 失败，回退 Blockly 缓存路径:', e);
+      }
+    }
+
+    const sketchPath = window['path'].join(root, '.temp', 'sketch', 'sketch.ino');
     const sketchName = window['path'].basename(sketchPath, '.ino');
 
     // 为了避免不同项目的同名sketch冲突,使用项目路径的MD5哈希值

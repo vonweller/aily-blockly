@@ -56,6 +56,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isLinux: process.platform === "linux",
     lang: process.env.AILY_SYSTEM_LANG || 'zh-CN'
   },
+  /** 在访达 / 资源管理器中高亮真实路径（须为绝对路径） */
+  shell: {
+    showItemInFolder: (fullPath) => {
+      if (typeof fullPath !== "string" || !fullPath) {
+        return;
+      }
+      shell.showItemInFolder(fullPath);
+    },
+  },
   terminal: {
     init: (data) => ipcRenderer.invoke("terminal-create", data),
     getShell: () => ipcRenderer.invoke("terminal-get-shell"),

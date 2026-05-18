@@ -729,6 +729,7 @@
     },
     "NOTIFICATION": {
         "STOP": "Stop",
+        "RETRY": "Retry",
         "VIEW_DETAIL": "View Details",
         "AI_PROCESS": "AI Process"
     },

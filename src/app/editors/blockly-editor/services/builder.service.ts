@@ -870,7 +870,7 @@ export class _BuilderService {
           const boardName = boardModule.replace('@aily-project/board-', '');
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
 
-          // 更新配置文件中的 code（compile.js 会负责写入 sketch 文件）
+          // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Aily Code 写入 project.aci.entry）
           let buildConfig: any = {};
           if (window['path'].isExists(configFilePath)) {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));

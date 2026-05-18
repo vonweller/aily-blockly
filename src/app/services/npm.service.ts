@@ -687,6 +687,60 @@ export class NpmService {
   }
 
   /**
+   * Blockly / Aily Code 打开工程共用：package.json 声明的依赖与 node_modules 不一致时在项目目录执行 npm install，并用通知反馈进度。
+   * @param projectPath 项目根路径
+   * @param options.onRetryInstall 若设置，安装失败时通知条展示「重试」并调用此回调（由调用方再次传入本方法以复跑安装）
+   * @returns 依赖已就绪 true；安装失败 false
+   */
+  async ensureProjectDependenciesInstalled(
+    projectPath: string,
+    options?: { onRetryInstall?: () => void },
+  ): Promise<boolean> {
+    // 已完整安装则不再跑 npm install，缩短冷启动
+    if (await this.installedOk(projectPath)) {
+      return true;
+    }
+
+    // 与 Blockly 一致：下一帧再挂通知，避免变更检测/弹层偶发不同步
+    setTimeout(() => {
+      this.noticeService.update({
+        title: this.translate.instant('NPM.INSTALLING_TITLE'),
+        text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
+        state: 'doing',
+        icon: 'fa-light fa-cubes',
+        showProgress: false,
+      });
+    }, 0);
+
+    const npmResult = await this.cmdService.runAsync(`npm install`, projectPath);
+
+    if (!(await this.installedOk(projectPath))) {
+      setTimeout(() => {
+        this.noticeService.update({
+          title: this.translate.instant('NPM.INSTALL_FAILED_TITLE'),
+          text: this.translate.instant('NPM.BOARD_DEPS_INSTALL_FAILED'),
+          detail: npmResult?.stderr || 'npm install 执行完成但依赖检查未通过',
+          state: 'error',
+          sendToLog: false,
+          ...(options?.onRetryInstall ? { onRetry: options.onRetryInstall } : {}),
+        });
+      }, 1000);
+      return false;
+    }
+
+    setTimeout(() => {
+      this.noticeService.update({
+        title: this.translate.instant('NPM.INSTALL_COMPLETE_TITLE'),
+        text: this.translate.instant('NPM.DEPS_INSTALL_COMPLETE'),
+        state: 'done',
+        showProgress: false,
+        setTimeout: 3000,
+      });
+    }, 100);
+    return true;
+  }
+
+  /**
    * 库列表
    * @param data
    */

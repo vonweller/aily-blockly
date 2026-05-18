@@ -14,6 +14,10 @@ declare global {
       ipcRenderer: any;
       path: any;
       platform: any;
+      /** 系统文件管理器高亮（如访达、资源管理器） */
+      shell?: {
+        showItemInFolder: (fullPath: string) => void;
+      };
       terminal: any;
       iWindow: any;
       subWindow: any;
