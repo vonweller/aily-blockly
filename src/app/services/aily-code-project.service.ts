@@ -330,13 +330,16 @@ export class AilyCodeProjectService {
       ''
     ].join('\n');
 
-    // 最小可编译的 C++ 占位入口（不依赖具体 framework）
+    // Arduino 风格默认入口，与 Blockly 生成代码结构一致
     const mainCpp = [
-      '// Aily Code 默认源码入口',
-      '// 实际框架与运行逻辑由 project.aci 中的 target 配置驱动',
+      '#include <Arduino.h>',
       '',
-      'int main() {',
-      '    return 0;',
+      'void setup() {',
+      '  ',
+      '}',
+      '',
+      'void loop() {',
+      '  ',
       '}',
       ''
     ].join('\n');

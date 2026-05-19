@@ -20,7 +20,6 @@ import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { ConfigService } from '../../../services/config.service';
 import { AuthService } from '../../../services/auth.service';
-import { BoardSelectorDialogComponent } from '../board-selector-dialog/board-selector-dialog.component';
 import { LoginDialogComponent } from '../login-dialog/login-dialog.component';
 import { PlatformService } from '../../../services/platform.service';
 import { ProbeRsService } from '../../../services/probe-rs.service';
@@ -952,34 +951,7 @@ export class HeaderComponent implements OnDestroy {
   }
 
   async openBoardSelectorDialog() {
-    // 优先内存缓存，避免 await 远程 boards.json 阻塞弹窗
-    let boardList = this.configService.getBoardListForSelector();
-    if (!boardList.length) {
-      boardList = await this.configService.loadBoardList();
-    }
-
-    // 显示开发板选择对话框
-    this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: {
-        padding: '0',
-      },
-      nzWidth: '400px',
-      nzContent: BoardSelectorDialogComponent,
-      nzData: {
-        boardList: boardList
-      }
-    });
-
-    // // 处理对话框返回结果
-    // modalRef.afterClose.subscribe(result => {
-    //   if (result && result.result === 'confirm') {
-    //     // 开发板已经在对话框内切换完成，只需要更新UI
-    //     this.cd.detectChanges();
-    //   }
-    // });
+    await this.uiService.openBoardSelector();
   }
 
   appStoreBtn = {

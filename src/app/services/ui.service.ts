@@ -11,6 +11,8 @@ import { ProjectSettingDialogComponent } from '../components/project-setting-dia
 import { HistoryDialogComponent } from '../editors/blockly-editor/components/history-dialog/history-dialog.component';
 import { AuthService } from './auth.service';
 import { LogService } from './log.service';
+import { ConfigService } from './config.service';
+import { BoardSelectorDialogComponent } from '../main-window/components/board-selector-dialog/board-selector-dialog.component';
 
 @Injectable({
   providedIn: 'root',
@@ -53,6 +55,7 @@ export class UiService {
     private modal: NzModalService,
     private authService: AuthService,
     private logService: LogService,
+    private configService: ConfigService,
     private injector: Injector
   ) { }
 
@@ -315,6 +318,29 @@ export class UiService {
       if (result?.result === 'success') {
         console.log('反馈已提交:', result.data);
       }
+    });
+  }
+
+  /** 打开切换开发板弹窗（Header 菜单与 Aily View MCU 节点共用） */
+  async openBoardSelector(): Promise<void> {
+    // 优先内存缓存，避免 await 远程 boards.json 阻塞弹窗
+    let boardList = this.configService.getBoardListForSelector();
+    if (!boardList.length) {
+      boardList = await this.configService.loadBoardList();
+    }
+
+    this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: {
+        padding: '0',
+      },
+      nzWidth: '400px',
+      nzContent: BoardSelectorDialogComponent,
+      nzData: {
+        boardList,
+      },
     });
   }
 }
