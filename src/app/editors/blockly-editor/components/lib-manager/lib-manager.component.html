@@ -1,8 +1,10 @@
-<div class="lib-manager-box">
+<div class="lib-manager-box" [class.lib-manager-box--panel]="embedInPanel">
     <div class="header">
+        @if (!embedInPanel) {
         <div class="btn ccenter" (click)="back()" nz-tooltip [nzTooltipTitle]="'LIB_MANAGER.BACK' | translate">
             <i class="fa-regular fa-chevron-left"></i>
         </div>
+        }
         <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
             <input type="text" nz-input [placeholder]="'LIB_MANAGER.SEARCH_LIBRARY' | translate" [(ngModel)]="keyword"
                 (ngModelChange)="search()" />

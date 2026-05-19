@@ -28,6 +28,7 @@ import { UserCenterComponent } from '../tools/user-center/user-center.component'
 import { ModelStoreComponent } from '../tools/model-store/model-store.component';
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { OnboardingService } from '../services/onboarding.service';
+import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 
 @Component({
   selector: 'app-main-window',
@@ -53,7 +54,8 @@ import { OnboardingService } from '../services/onboarding.service';
     CloudSpaceComponent,
     UserCenterComponent,
     ModelStoreComponent,
-    OnboardingComponent
+    OnboardingComponent,
+    LibManagerToolComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',

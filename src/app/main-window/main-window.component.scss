@@ -36,6 +36,14 @@ app-guide {
   // display: block;
 }
 
+app-code-editor-pro {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .middle-box {
   width: 100%;
   height: 100%;
@@ -49,10 +57,17 @@ app-guide {
     ::ng-deep {
       .simplebar-content-wrapper {
         height: 100%;
+        overflow: hidden;
       }
 
       .simplebar-content {
         height: 100%;
+      }
+
+      /* 全高编辑器无需外侧纵向滚动条，避免右侧 ~11px 轨道在打开右侧面板时呈黑缝 */
+      .simplebar-track.simplebar-vertical {
+        display: none;
+        width: 0;
       }
     }
   }
@@ -177,6 +192,8 @@ nz-content {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 
 nz-content>div {
@@ -187,7 +204,6 @@ nz-content .resizable-box {
   flex: none;
 }
 
-nz-content,
 nz-header,
 ::ng-deep nz-sider>.ant-layout-sider-children {
   display: flex;
@@ -195,10 +211,19 @@ nz-header,
   justify-content: center;
 }
 
+/* 手柄须向左伸出 sider（left:-5px），否则会被 .right-box 全屏层挡住无法拖拽 */
+::ng-deep nz-sider.ant-layout-sider .nz-resizable-handle-left {
+  left: -5px;
+  width: 10px;
+  z-index: 20;
+}
+
 .sider-resize-line {
   height: 100%;
   width: 5px;
+  margin-left: 5px;
   border-right: 2px solid var(--aily-border-primary);
+  pointer-events: none;
 }
 
 .content-resize-line {

@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, OnDestroy, ViewChild } from '@angular/core';
+import { Component, ElementRef, OnInit, OnDestroy, AfterViewInit, ViewChild } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { CommonModule } from '@angular/common';
@@ -16,13 +16,19 @@ import { CodeEditorProProjectService } from './services/code-editor-pro-project.
 import { NpmService } from '../../services/npm.service';
 import { resolveActualMainHexLocation } from '../../utils/builder.utils';
 import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
+import { UiService } from '../../services/ui.service';
 
 /** 与 child/aily-coder/src/hostEmbedContext.ts 中 channel 常量一致 */
 const AILY_CODER_HOST_CONTEXT_CHANNEL = 'aily-coder-host-context';
 /** 内嵌 Coder 请求在系统文件管理器中显示绝对路径 */
 const AILY_CODER_REVEAL_IN_OS_CHANNEL = 'aily-coder-reveal-in-os';
+/** Aily View：Installed Libraries 展开/折叠时同步宿主库管理侧栏 */
+const AILY_CODER_OPEN_LIBRARY_MANAGER_CHANNEL = 'aily-coder-open-library-manager';
 /** Extension Host（Worker）无 window，用 BroadcastChannel 与宿主通信；须与 ailyViewExplorer 一致 */
 const AILY_EMBED_OS_REVEAL_CHANNEL = 'aily-embed-os-reveal';
+const AILY_EMBED_OPEN_LIBRARY_MANAGER_CHANNEL = 'aily-embed-open-library-manager';
+/** 与 child/aily-coder/src/embedLayoutSync.ts 一致 */
+const CODER_HOST_LAYOUT_REFRESH_CHANNEL = 'aily-coder-host-layout-refresh';
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -30,8 +36,12 @@ const AILY_EMBED_OS_REVEAL_CHANNEL = 'aily-embed-os-reveal';
   templateUrl: './code-editor-pro.component.html',
   styleUrl: './code-editor-pro.component.scss',
 })
-export class CodeEditorProComponent implements OnInit, OnDestroy {
+export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit {
   @ViewChild('coderEmbedFrame') coderEmbedFrame?: ElementRef<HTMLIFrameElement>;
+
+  private readonly onEmbedLayoutResize = () => this.requestCoderEmbedLayoutRefresh();
+
+  private embedHostResizeObserver?: ResizeObserver;
 
   coderEmbedSrc: SafeResourceUrl | null = null;
   coderEmbedError: string | null = null;
@@ -44,6 +54,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
 
   /** Worker 内扩展通过 BroadcastChannel 请求访达/资源管理器高亮 */
   private ailyOsRevealBc?: BroadcastChannel;
+  /** Worker 兜底：同步右上角库管理展开/收起 */
+  private ailyOpenLibManagerBc?: BroadcastChannel;
   /** 订阅顶层 BuilderService 的编译完成事件，触发 main.hex 路径刷新 */
   private buildFinishedSub?: Subscription;
 
@@ -59,6 +71,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     private sanitizer: DomSanitizer,
     private themeService: ThemeService,
     private npmService: NpmService,
+    private uiService: UiService,
   ) {
     toObservable(this.themeService.theme)
       .pipe(takeUntilDestroyed())
@@ -77,6 +90,15 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
         if (typeof p?.absPath === 'string' && p.absPath) {
           void this.runHostRevealInOs(p.absPath);
         }
+      });
+    } catch {
+      /* 浏览器极旧环境无 BroadcastChannel */
+    }
+    try {
+      this.ailyOpenLibManagerBc = new BroadcastChannel(AILY_EMBED_OPEN_LIBRARY_MANAGER_CHANNEL);
+      this.ailyOpenLibManagerBc.addEventListener('message', (ev: MessageEvent) => {
+        const open = (ev.data as { open?: boolean })?.open !== false;
+        this.syncHostLibraryManager(open);
       });
     } catch {
       /* 浏览器极旧环境无 BroadcastChannel */
@@ -111,6 +133,31 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     });
     window.history.replaceState(null, '', window.location.href);
     window.history.pushState(null, '', window.location.href);
+
+    // 右侧工具面板开关后通知 iframe 内 workbench 按新宽度重排
+    this.uiService.actionSubject.subscribe((e: { type?: string; action?: string }) => {
+      if (e?.type === 'tool') {
+        requestAnimationFrame(() => this.requestCoderEmbedLayoutRefresh());
+      }
+    });
+  }
+
+  ngAfterViewInit(): void {
+    window.addEventListener('resize', this.onEmbedLayoutResize);
+    const host = this.coderEmbedFrame?.nativeElement?.closest('.code-editor-pro') as HTMLElement | null;
+    if (host) {
+      this.embedHostResizeObserver = new ResizeObserver(() => this.requestCoderEmbedLayoutRefresh());
+      this.embedHostResizeObserver.observe(host);
+    }
+  }
+
+  /** 通知 iframe 内 workbench 按当前 iframe 宽度重排 */
+  private requestCoderEmbedLayoutRefresh(): void {
+    const win = this.coderEmbedFrame?.nativeElement?.contentWindow;
+    if (!win) {
+      return;
+    }
+    win.postMessage({ channel: CODER_HOST_LAYOUT_REFRESH_CHANNEL }, '*');
   }
 
   /**
@@ -125,9 +172,14 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.embedHostResizeObserver?.disconnect();
+    this.embedHostResizeObserver = undefined;
+    window.removeEventListener('resize', this.onEmbedLayoutResize);
     window.removeEventListener('message', this.coderNativeFsBridgeListener);
     this.ailyOsRevealBc?.close();
     this.ailyOsRevealBc = undefined;
+    this.ailyOpenLibManagerBc?.close();
+    this.ailyOpenLibManagerBc = undefined;
     this.buildFinishedSub?.unsubscribe();
     this.buildFinishedSub = undefined;
     this.coderEmbedWorkspaceRoot = null;
@@ -233,6 +285,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     if (root) {
       void this.pushAilyCoderHostContext(root);
     }
+    requestAnimationFrame(() => this.requestCoderEmbedLayoutRefresh());
   }
 
   /**
@@ -499,6 +552,15 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     return full;
   }
 
+  /** 与 Aily View 中 Installed Libraries 展开状态同步库管理侧栏 */
+  private syncHostLibraryManager(open: boolean): void {
+    if (open) {
+      this.uiService.openTool('lib-manager');
+    } else {
+      this.uiService.closeTool('lib-manager');
+    }
+  }
+
   private onCoderNativeFsMessage(ev: MessageEvent): void {
     const msg = ev.data as {
       channel?: string;
@@ -510,6 +572,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     // 内嵌编辑器：在访达 / 资源管理器中高亮文件（工程根内或当前 getBuildPath 产物目录）
     if (msg?.channel === AILY_CODER_REVEAL_IN_OS_CHANNEL) {
       void this.runHostRevealInOs(String(msg.absPath ?? ''));
+      return;
+    }
+    if (msg?.channel === AILY_CODER_OPEN_LIBRARY_MANAGER_CHANNEL) {
+      const open =
+        (msg as { open?: boolean }).open !== false;
+      this.syncHostLibraryManager(open);
       return;
     }
     if (msg?.channel !== 'aily-coder-native-fs' || typeof msg.id !== 'number' || !msg.op) {
