@@ -45,7 +45,7 @@
       [(ngModel)]="textFilter"
       (ngModelChange)="onFilterChanged()">
     <div class="chat-debug-flow-kind-filters">
-      @for (kind of ['userMessage', 'modelTurn', 'toolCall', 'generic', 'subagentInvocation', 'agentResponse']; track kind) {
+      @for (kind of kindFilterOrder; track kind) {
       <button
         type="button"
         class="chat-debug-flow-kind-chip"

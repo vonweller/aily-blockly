@@ -6,6 +6,10 @@ import {
   getHostSessionDebugEventTitle,
   type HostSessionDebugEvent,
   type HostSessionDebugResolvedEventContent,
+  type HostSessionDebugResolvedMessageContent,
+  type HostSessionDebugResolvedModelTurnContent,
+  type HostSessionDebugResolvedTextContent,
+  type HostSessionDebugResolvedToolCallContent,
 } from '../../services/host-session-debug-events';
 
 @Component({
@@ -41,5 +45,21 @@ export class AilyChatDebugDetailPanelComponent {
 
   get summary(): string | undefined {
     return this.event ? getHostSessionDebugEventDetails(this.event) : undefined;
+  }
+
+  get messageContent(): HostSessionDebugResolvedMessageContent | null {
+    return this.resolvedContent?.kind === 'message' ? this.resolvedContent : null;
+  }
+
+  get toolCallContent(): HostSessionDebugResolvedToolCallContent | null {
+    return this.resolvedContent?.kind === 'toolCall' ? this.resolvedContent : null;
+  }
+
+  get modelTurnContent(): HostSessionDebugResolvedModelTurnContent | null {
+    return this.resolvedContent?.kind === 'modelTurn' ? this.resolvedContent : null;
+  }
+
+  get textContent(): HostSessionDebugResolvedTextContent | null {
+    return this.resolvedContent?.kind === 'text' ? this.resolvedContent : null;
   }
 }

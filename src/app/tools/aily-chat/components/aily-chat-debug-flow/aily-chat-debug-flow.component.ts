@@ -86,6 +86,14 @@ export class AilyChatDebugFlowComponent implements AfterViewInit {
   selectedDetailTitle: string | null = null;
   textFilter = '';
   visibleLimit = AilyChatDebugFlowComponent.PAGE_SIZE;
+  readonly kindFilterOrder: readonly HostSessionDebugFlowNode['kind'][] = [
+    'userMessage',
+    'modelTurn',
+    'toolCall',
+    'generic',
+    'subagentInvocation',
+    'agentResponse',
+  ];
   readonly kindFilters: Record<HostSessionDebugFlowNode['kind'], boolean> = {
     userMessage: true,
     modelTurn: true,
