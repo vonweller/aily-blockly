@@ -26,10 +26,13 @@ const AILY_CODER_REVEAL_IN_OS_CHANNEL = 'aily-coder-reveal-in-os';
 const AILY_CODER_OPEN_LIBRARY_MANAGER_CHANNEL = 'aily-coder-open-library-manager';
 /** Aily View MCU 单击：请求宿主打开切换开发板弹窗 */
 const AILY_CODER_OPEN_BOARD_SELECTOR_CHANNEL = 'aily-coder-open-board-selector';
+/** Aily View：复制路径等写入系统剪贴板（iframe 内 Clipboard API 被 Permissions-Policy 禁用） */
+const AILY_CODER_CLIPBOARD_WRITE_CHANNEL = 'aily-coder-clipboard-write';
 /** Extension Host（Worker）无 window，用 BroadcastChannel 与宿主通信；须与 ailyViewExplorer 一致 */
 const AILY_EMBED_OS_REVEAL_CHANNEL = 'aily-embed-os-reveal';
 const AILY_EMBED_OPEN_LIBRARY_MANAGER_CHANNEL = 'aily-embed-open-library-manager';
 const AILY_EMBED_OPEN_BOARD_SELECTOR_CHANNEL = 'aily-embed-open-board-selector';
+const AILY_EMBED_CLIPBOARD_WRITE_CHANNEL = 'aily-embed-clipboard-write';
 /** 与 child/aily-coder/src/embedLayoutSync.ts 一致 */
 const CODER_HOST_LAYOUT_REFRESH_CHANNEL = 'aily-coder-host-layout-refresh';
 
@@ -61,6 +64,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   private ailyOpenLibManagerBc?: BroadcastChannel;
   /** Worker 兜底：Aily View MCU 打开切换开发板弹窗 */
   private ailyOpenBoardSelectorBc?: BroadcastChannel;
+  /** Worker 兜底：Aily View 复制路径写入系统剪贴板 */
+  private ailyClipboardWriteBc?: BroadcastChannel;
   /** 订阅顶层 BuilderService 的编译完成事件，触发 main.hex 路径刷新 */
   private buildFinishedSub?: Subscription;
 
@@ -112,6 +117,17 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       this.ailyOpenBoardSelectorBc = new BroadcastChannel(AILY_EMBED_OPEN_BOARD_SELECTOR_CHANNEL);
       this.ailyOpenBoardSelectorBc.addEventListener('message', () => {
         void this.uiService.openBoardSelector();
+      });
+    } catch {
+      /* 浏览器极旧环境无 BroadcastChannel */
+    }
+    try {
+      this.ailyClipboardWriteBc = new BroadcastChannel(AILY_EMBED_CLIPBOARD_WRITE_CHANNEL);
+      this.ailyClipboardWriteBc.addEventListener('message', (ev: MessageEvent) => {
+        const text = (ev.data as { text?: string })?.text;
+        if (typeof text === 'string') {
+          this.electronService.clipboardWriteText(text);
+        }
       });
     } catch {
       /* 浏览器极旧环境无 BroadcastChannel */
@@ -196,6 +212,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.ailyOpenLibManagerBc = undefined;
     this.ailyOpenBoardSelectorBc?.close();
     this.ailyOpenBoardSelectorBc = undefined;
+    this.ailyClipboardWriteBc?.close();
+    this.ailyClipboardWriteBc = undefined;
     this.buildFinishedSub?.unsubscribe();
     this.buildFinishedSub = undefined;
     this.coderEmbedWorkspaceRoot = null;
@@ -690,6 +708,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     }
     if (msg?.channel === AILY_CODER_OPEN_BOARD_SELECTOR_CHANNEL) {
       void this.uiService.openBoardSelector();
+      return;
+    }
+    if (msg?.channel === AILY_CODER_CLIPBOARD_WRITE_CHANNEL) {
+      const text = (msg as { text?: string }).text;
+      if (typeof text === 'string') {
+        this.electronService.clipboardWriteText(text);
+      }
       return;
     }
     if (msg?.channel !== 'aily-coder-native-fs' || typeof msg.id !== 'number' || !msg.op) {
