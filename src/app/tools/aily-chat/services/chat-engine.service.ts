@@ -649,6 +649,7 @@ export class ChatEngineService implements IChatContext {
       invalidateHostRequestGraph: () => this.invalidateHostRequestGraph(),
       triggerSyncDetectChanges: () => this.triggerSyncDetectChanges(),
       get sessionId() { return thisEngine.sessionId; },
+      set sessionId(value) { thisEngine.sessionId = value; },
       get chatHistoryService() { return thisEngine.chatHistoryService; },
       get currentModelName() { return thisEngine.currentModelName; },
       get currentMessageSource() { return thisEngine.currentMessageSource; },
