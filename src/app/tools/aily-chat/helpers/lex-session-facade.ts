@@ -1,4 +1,5 @@
 import type { SessionSnapshot } from 'aily-lex/browser';
+import type { HostSessionRecord } from '../services/chat-history.service';
 
 import type { LexSessionPersistenceBridge } from './lex-session-persistence-bridge';
 import type { LexSessionRestoreBridge } from './lex-session-restore-bridge';
@@ -24,7 +25,8 @@ export class LexSessionFacade {
   restore(
     sessionId: string,
     turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
+    hostRecord?: HostSessionRecord | null,
   ): Promise<boolean> {
-    return this.restoreBridge.restorePersistedSession(sessionId, turnResponses);
+    return this.restoreBridge.restorePersistedSession(sessionId, turnResponses, hostRecord ?? null);
   }
 }

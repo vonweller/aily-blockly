@@ -1,5 +1,6 @@
 import { AilyHost } from '../core/host';
 import type { TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
+import { cloneSessionRequestContextSnapshot } from '../helpers/turn-request-prompt-context';
 
 import type {
   HostSessionRecord,
@@ -23,6 +24,34 @@ function cloneContinuationBudgets(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function clonePersistedValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => clonePersistedValue(item)) as T;
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [key, clonePersistedValue(entryValue)]),
+    ) as T;
+  }
+
+  return value;
+}
+
+function normalizeActiveSkillNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const names = Array.from(new Set(
+    value
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map(entry => entry.trim()),
+  )).sort((left, right) => left.localeCompare(right));
+
+  return names.length > 0 ? names : undefined;
 }
 
 function cloneContinuationDiagnostics(
@@ -103,6 +132,8 @@ export class HostSessionRecordStore {
       mode: metadata.mode || 'agent',
       model: metadata.model ?? null,
       contextBudget: metadata.contextBudget,
+      requestContext: cloneSessionRequestContextSnapshot(metadata.requestContext),
+      activeSkillNames: normalizeActiveSkillNames(metadata.activeSkillNames),
       toolCallingIteration: metadata.toolCallingIteration || 0,
     };
   }
@@ -241,7 +272,13 @@ export class HostSessionRecordStore {
 
     return {
       ...turn,
-      request: { ...turn['request'] },
+      request: {
+        ...turn['request'],
+        ...(turn.request?.metadata ? { metadata: clonePersistedValue(turn.request.metadata) } : {}),
+        ...(Array.isArray(turn.request?.attachments)
+          ? { attachments: turn.request.attachments.map(attachment => clonePersistedValue(attachment)) }
+          : {}),
+      },
       rounds: turn['rounds'].map(round => cloneTurnRound(round)),
       ...(turn['usage'] ? { usage: { ...turn['usage'] } } : {}),
       response: {
@@ -271,7 +308,7 @@ export class HostSessionRecordStore {
         })),
         codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
         progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-        parts: [...turn.response.parts],
+        parts: turn.response.parts.map(part => clonePersistedValue(part)),
         ...(continuation
           ? {
               continuation: {
@@ -359,6 +396,8 @@ export class HostSessionRecordStore {
             messageCount: typeof metadata.contextBudget.messageCount === 'number' ? metadata.contextBudget.messageCount : 0,
           }
         : undefined,
+      requestContext: cloneSessionRequestContextSnapshot(metadata.requestContext),
+      activeSkillNames: normalizeActiveSkillNames(metadata.activeSkillNames),
       toolCallingIteration: typeof metadata.toolCallingIteration === 'number' ? metadata.toolCallingIteration : 0,
     };
   }

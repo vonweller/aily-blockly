@@ -152,11 +152,11 @@ describe('RenderEventPartAdapter', () => {
     }));
   });
 
-  it('should append a terminal part for run_terminal tool results', () => {
+  it('should append a terminal part for run_in_terminal tool results', () => {
     processCurrent({
       type: 'tool_call_begin',
       toolCallId: 'tc-terminal',
-      toolName: 'run_terminal',
+      toolName: 'run_in_terminal',
       input: { command: 'npm test' },
       timestamp: 1,
     });
@@ -164,7 +164,7 @@ describe('RenderEventPartAdapter', () => {
     processCurrent({
       type: 'tool_call_end',
       toolCallId: 'tc-terminal',
-      toolName: 'run_terminal',
+      toolName: 'run_in_terminal',
       resultText: 'status: success',
       result: {
         content: [{
@@ -662,6 +662,56 @@ describe('RenderEventPartAdapter', () => {
       }),
     ]);
     expect(store.getPartsForHandle(advancedHandle)).toEqual([]);
+  });
+
+  it('projects structured tool progress updates onto the live tool_call part', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-progress',
+      toolName: 'read_file',
+      input: { filePath: 'src/app/main.ts' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-progress',
+      data: {
+        message: 'Reading file',
+        detail: 'src/app/main.ts',
+        statusText: 'running',
+        progress: 42,
+      },
+      timestamp: 2,
+    } as RenderEvent);
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'tc-progress',
+        toolName: 'read_file',
+        state: 'doing',
+        text: 'Reading file',
+        metadata: jasmine.objectContaining({
+          toolName: 'read_file',
+          phase: 'progress',
+          progress: 42,
+          timeline: [jasmine.objectContaining({
+            recordId: 'tc-progress:progress',
+            phase: 'progress',
+            summary: 'Reading file',
+            progress: 42,
+            progressDetails: jasmine.objectContaining({
+              message: 'Reading file',
+              detail: 'src/app/main.ts',
+              statusText: 'running',
+              progress: 42,
+            }),
+            timestamp: 2,
+          })],
+        }),
+      }),
+    ]);
   });
 
   it('keeps subagent activity and completion on the originating handle after current handle advances', () => {

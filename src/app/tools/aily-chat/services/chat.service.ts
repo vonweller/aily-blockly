@@ -35,6 +35,7 @@ export class ChatService {
   currentMode = 'agent'; // 默认为代理模式
   currentModel: ModelConfig | null = null; // 当前模型，在构造函数中初始化
   resolvedActiveModel: ModelConfig | null = null;
+  private rateLimitAutoSwitchToAuto = false;
 
   currentSessionId = '';
   currentSessionTitle = '';
@@ -63,6 +64,7 @@ export class ChatService {
     ChatService.instance = this;
     // 从配置加载AI聊天模式
     this.loadChatMode();
+    this.loadRateLimitAutoSwitchToAuto();
     // 从配置加载AI模型
     this.loadChatModel();
 
@@ -86,6 +88,10 @@ export class ChatService {
     }
   }
 
+  private loadRateLimitAutoSwitchToAuto(): void {
+    this.rateLimitAutoSwitchToAuto = AilyHost.get().config.data?.aiChatRateLimitAutoSwitchToAuto === true;
+  }
+
   /**
    * 保存AI聊天模式到配置
    */
@@ -93,6 +99,19 @@ export class ChatService {
     this.currentMode = mode;
     const config = AilyHost.get().config;
     if (config.data) config.data.aiChatMode = mode;
+    config.save?.();
+  }
+
+  getRateLimitAutoSwitchToAutoEnabled(): boolean {
+    return this.rateLimitAutoSwitchToAuto;
+  }
+
+  setRateLimitAutoSwitchToAuto(enabled: boolean): void {
+    this.rateLimitAutoSwitchToAuto = enabled === true;
+    const config = AilyHost.get().config;
+    if (config.data) {
+      config.data.aiChatRateLimitAutoSwitchToAuto = this.rateLimitAutoSwitchToAuto;
+    }
     config.save?.();
   }
 

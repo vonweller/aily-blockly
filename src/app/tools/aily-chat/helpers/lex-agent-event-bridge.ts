@@ -5,11 +5,12 @@ import {
   type LexRuntimeHostSyncAccess,
   type LexRuntimePartProcessor,
 } from './lex-runtime-event-bridge';
+import type { LexHostSyncBridge } from './lex-host-sync-bridge';
 import { LexSessionDiagnosticsEventBridge } from './lex-session-diagnostics-event-bridge';
 import { LexStateEventBridge, type LexStatePartProcessor } from './lex-state-event-bridge';
 
 export type LexAgentPartProcessor = LexStatePartProcessor & LexRuntimePartProcessor;
-export type LexAgentHostSyncAccess = LexRuntimeHostSyncAccess;
+export type LexAgentHostSyncAccess = LexRuntimeHostSyncAccess & Pick<LexHostSyncBridge, 'applyHandoffEvent' | 'getCompactionMetricsSnapshot'>;
 type LexAgentLifecycleAccess = {
   ensureAilyMessage(): void;
   closeNativeThinking(): void;
@@ -47,7 +48,7 @@ export class LexAgentEventBridge {
     messageLifecycleBridge: LexAgentLifecycleAccess,
   ) {
     this.messageLifecycleBridge = messageLifecycleBridge;
-    this.stateEventBridge = new LexStateEventBridge(partProcessor, hostSyncBridge as any);
+    this.stateEventBridge = new LexStateEventBridge(partProcessor, hostSyncBridge);
     this.runtimeEventBridge = new LexRuntimeEventBridge(ctx, partProcessor, hostSyncBridge, messageLifecycleBridge);
     this.sessionDiagnosticsEventBridge = new LexSessionDiagnosticsEventBridge();
   }

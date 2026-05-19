@@ -381,6 +381,10 @@ export class AilyChatSettingsComponent implements OnInit {
     return this.ailyChatConfigService.getModelBillingLabel(model);
   }
 
+  getModelProviderContextManagementLabel(model: ModelConfigOption): string | undefined {
+    return this.ailyChatConfigService.getModelProviderContextManagementLabel(model);
+  }
+
   getPresetContextLabel(preset: ModelPresetOption): string | undefined {
     const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
     if (!resolvedPresetModel) {
@@ -394,6 +398,13 @@ export class AilyChatSettingsComponent implements OnInit {
   getPresetBillingLabel(preset: ModelPresetOption): string | undefined {
     const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
     return resolvedPresetModel ? this.ailyChatConfigService.getModelBillingLabel(resolvedPresetModel) : undefined;
+  }
+
+  getPresetProviderContextManagementLabel(preset: ModelPresetOption): string | undefined {
+    const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
+    return resolvedPresetModel
+      ? this.ailyChatConfigService.getModelProviderContextManagementLabel(resolvedPresetModel)
+      : undefined;
   }
 
   getPresetReasoningLabel(preset: ModelPresetOption): string | undefined {

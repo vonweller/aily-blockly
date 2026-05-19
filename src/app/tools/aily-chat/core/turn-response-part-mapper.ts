@@ -74,7 +74,8 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
       return {
         type: 'error',
         message: part.message,
-      };
+        ...(part.metadata ? { metadata: part.metadata } : {}),
+      } as TurnResponsePart;
     case 'question':
       return {
         type: 'question',
@@ -134,7 +135,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
     case 'state':
       return mkState(part.stateId, part.text, part.state, part.kind, part.progress, part.metadata);
     case 'error':
-      return mkError(part.message);
+      return mkError(part.message, 'error', readPartMetadata(part));
     case 'warning':
       return mkError(part.message, 'warning', part.metadata);
     case 'info':
@@ -217,4 +218,13 @@ function cloneQuestionAnswers(
       skipped: answer.skipped,
     }]),
   );
+}
+
+function readPartMetadata(part: unknown): Record<string, unknown> | undefined {
+  const metadata = part && typeof part === 'object' && !Array.isArray(part)
+    ? (part as { metadata?: unknown }).metadata
+    : undefined;
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : undefined;
 }

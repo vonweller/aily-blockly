@@ -1,5 +1,6 @@
 import { parseTerminalPayload } from '../../../core/terminal-payload';
 import type { ToolResultContentPart } from '../../../core/tool-result-content';
+import { isReadFileToolName } from '../../../core/tool-name-normalizer';
 import { buildToolInvocationDisplaySummary } from '../../../core/tool-invocation-formatter';
 import {
   collectChangedFilesEntriesFromToolResultEntry,
@@ -10,7 +11,7 @@ import {
   formatContinuationStopReason,
   getContinuationStopReasonPresentation,
 } from '../../../core/continuation-stop-reason';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { MetricsSnapshot, TurnResponseTurn } from 'aily-lex/browser';
 
 export type StateTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
 
@@ -799,7 +800,7 @@ export function buildInstructionDetailProjection(source: {
 }
 
 export function buildStandardStateViewerProjection(source: {
-  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction';
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction' | 'provider_context_management';
   id?: string;
   metadata?: Record<string, unknown> | null;
   preparedDetailSections?: readonly DetailSectionDescriptor[] | null;
@@ -995,7 +996,7 @@ function formatDiagnosticNumber(value: number): string {
 }
 
 function buildDefaultSummaryBadges(
-  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction',
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction' | 'provider_context_management',
   metadata: Record<string, unknown>,
 ): ActivitySummaryBadge[] {
   switch (kind) {
@@ -1013,11 +1014,13 @@ function buildDefaultSummaryBadges(
       return buildTaskAutonomySummaryBadges({ metadata });
     case 'compaction':
       return buildCompactionSummaryBadges({ metadata });
+    case 'provider_context_management':
+      return buildProviderContextManagementSummaryBadges({ metadata });
   }
 }
 
 function buildDefaultDetailSections(
-  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction',
+  kind: 'tool_call' | 'background_task' | 'agent_team' | 'task_graph' | 'task_scheduler' | 'task_autonomy' | 'compaction' | 'provider_context_management',
   id: string | undefined,
   metadata: Record<string, unknown>,
 ): DetailSectionDescriptor[] {
@@ -1035,6 +1038,8 @@ function buildDefaultDetailSections(
       return [];
     case 'compaction':
       return buildCompactionDetailSections({ id, metadata });
+    case 'provider_context_management':
+      return buildProviderContextManagementDetailSections({ id, metadata });
   }
 }
 
@@ -1288,6 +1293,9 @@ function buildCompactionSummaryBadges(source: {
   const badges: ActivitySummaryBadge[] = [];
   const level = asString(metadata['level']);
   const sourceKind = asString(metadata['source']);
+  const trigger = asString(metadata['trigger']);
+  const outcome = asString(metadata['outcome']);
+  const failureKind = asString(metadata['failureKind']);
   const messageCount = asNumber(metadata['messageCount']);
   const boundary = asRecord(metadata['boundary']);
   const anchorRoundId = asString(boundary?.['anchorRoundId']);
@@ -1298,6 +1306,15 @@ function buildCompactionSummaryBadges(source: {
   }
   if (sourceKind) {
     badges.push({ label: '来源', value: formatCompactionSource(sourceKind), tone: sourceKind === 'foreground' ? 'info' : 'neutral' });
+  }
+  if (trigger) {
+    badges.push({ label: '触发', value: formatCompactionTrigger(trigger), tone: 'neutral' });
+  }
+  if (outcome) {
+    badges.push({ label: '结果', value: formatCompactionOutcome(outcome), tone: outcome === 'noResult' ? 'warn' : 'info' });
+  }
+  if (failureKind) {
+    badges.push({ label: '失败', value: formatCompactionFailureKind(failureKind), tone: failureKind === 'transient' ? 'warn' : 'error' });
   }
   if (typeof messageCount === 'number' && messageCount > 0) {
     badges.push({ label: '收敛消息', value: String(messageCount), tone });
@@ -1321,6 +1338,9 @@ function buildCompactionDetailSections(source: {
   const sections: DetailSectionDescriptor[] = [];
   const level = asString(metadata['level']);
   const sourceKind = asString(metadata['source']);
+  const trigger = asString(metadata['trigger']);
+  const outcome = asString(metadata['outcome']);
+  const failureKind = asString(metadata['failureKind']);
   const summary = asString(metadata['summary']);
   const messageCount = asNumber(metadata['messageCount']);
   const boundary = asRecord(metadata['boundary']);
@@ -1328,6 +1348,7 @@ function buildCompactionDetailSections(source: {
   const anchorRoundId = asString(boundary?.['anchorRoundId']);
   const turnIndex = asNumber(boundary?.['turnIndex']);
   const roundIndex = asNumber(boundary?.['roundIndex']);
+  const compactionMetricsSnapshot = metadata['compactionMetricsSnapshot'] as MetricsSnapshot | undefined;
   const tone = toneFromCompactionLevel(level);
   const baseId = source.id || 'compaction';
 
@@ -1341,6 +1362,25 @@ function buildCompactionDetailSections(source: {
         note: summary,
         trailing: typeof messageCount === 'number' ? `${messageCount} 条` : undefined,
         tone,
+      }],
+    });
+  }
+
+  const orchestrationNotes = [
+    trigger ? `trigger: ${formatCompactionTrigger(trigger)}` : '',
+    outcome ? `outcome: ${formatCompactionOutcome(outcome)}` : '',
+    failureKind ? `failureKind: ${formatCompactionFailureKind(failureKind)}` : '',
+  ].filter(Boolean).join('\n');
+
+  if (orchestrationNotes) {
+    sections.push({
+      title: '调度结果',
+      rows: [{
+        id: `${baseId}:orchestration`,
+        title: formatCompactionOutcome(outcome) || '压缩调度',
+        subtitle: [formatCompactionSource(sourceKind), formatCompactionTrigger(trigger)].filter(Boolean).join(' · '),
+        note: orchestrationNotes,
+        tone: outcome === 'noResult' ? 'warn' : 'info',
       }],
     });
   }
@@ -1366,7 +1406,447 @@ function buildCompactionDetailSections(source: {
     });
   }
 
+  const metricsSection = compactionMetricsSnapshot
+    ? buildCompactionMetricsDetailSection(baseId, compactionMetricsSnapshot)
+    : undefined;
+  if (metricsSection) {
+    sections.push(metricsSection);
+  }
+
   return sections;
+}
+
+function buildCompactionMetricsDetailSection(baseId: string, snapshot: MetricsSnapshot): DetailSectionDescriptor | undefined {
+  const rows: StateDetailRow[] = [];
+
+  if (snapshot.timestamp) {
+    rows.push({
+      id: `${baseId}:metrics:timestamp`,
+      title: '采样时间',
+      note: snapshot.timestamp,
+      tone: 'neutral',
+    });
+  }
+
+  rows.push(...buildCompactionMetricSummaryRows(baseId, snapshot));
+
+  for (const [index, counter] of snapshot.counters.entries()) {
+    rows.push({
+      id: `${baseId}:metrics:counter:${index}`,
+      title: counter.name,
+      subtitle: ['计数器', formatMetricLabels(counter.labels)].filter(Boolean).join(' · '),
+      trailing: formatMetricNumber(counter.value),
+      tone: 'info',
+    });
+  }
+
+  for (const [index, histogram] of snapshot.histograms.entries()) {
+    rows.push({
+      id: `${baseId}:metrics:histogram:${index}`,
+      title: histogram.name,
+      subtitle: ['直方图', formatMetricLabels(histogram.labels)].filter(Boolean).join(' · '),
+      note: [
+        `count: ${formatMetricNumber(histogram.count)}`,
+        `avg: ${formatMetricNumber(histogram.avg)}`,
+        `p95: ${formatMetricNumber(histogram.p95)}`,
+        `max: ${formatMetricNumber(histogram.max)}`,
+      ].join('\n'),
+      trailing: `${formatMetricNumber(histogram.sum)} total`,
+      tone: 'neutral',
+    });
+  }
+
+  for (const [index, gauge] of snapshot.gauges.entries()) {
+    rows.push({
+      id: `${baseId}:metrics:gauge:${index}`,
+      title: gauge.name,
+      subtitle: ['Gauge', formatMetricLabels(gauge.labels)].filter(Boolean).join(' · '),
+      trailing: formatMetricNumber(gauge.value),
+      tone: 'neutral',
+    });
+  }
+
+  return rows.length > 0
+    ? {
+      title: '运行指标',
+      rows,
+    }
+    : undefined;
+}
+
+type MetricsCounterSnapshot = MetricsSnapshot['counters'][number];
+type MetricsHistogramSnapshot = MetricsSnapshot['histograms'][number];
+
+function buildCompactionMetricSummaryRows(baseId: string, snapshot: MetricsSnapshot): StateDetailRow[] {
+  const rows: StateDetailRow[] = [];
+  const totalPathSamples = sumMetricCounters(snapshot.counters, 'context_compaction_path_total');
+  const observedRoutingSamples = totalPathSamples + sumMetricCounters(snapshot.counters, 'context_compaction_provider_cleanup_total');
+  const backgroundStarted = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'started',
+  );
+  const backgroundCompleted = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'completed',
+  );
+  const backgroundCompletedSuccess = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'completed' && labels?.['outcome'] === 'success',
+  );
+  const backgroundCompletedFailed = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'completed' && labels?.['outcome'] === 'failed',
+  );
+  const backgroundApplied = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'applied' && labels?.['outcome'] === 'applied',
+  );
+  const backgroundNoResult = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_background_total',
+    labels => labels?.['phase'] === 'applied' && labels?.['outcome'] !== 'applied',
+  );
+  const backgroundWait = aggregateMetricHistograms(
+    snapshot.histograms,
+    'context_compaction_background_wait_duration_ms',
+  );
+  const inlineSummaries = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_path_total',
+    labels => labels?.['path'] === 'inline',
+  );
+  const providerCleanupHits = sumMetricCounters(snapshot.counters, 'context_compaction_provider_cleanup_total');
+  const foregroundFallbacks = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_path_total',
+    labels => labels?.['path'] === 'foreground' && labels?.['source'] === 'heuristic',
+  );
+  const reactiveFallbacks = sumMetricCounters(
+    snapshot.counters,
+    'context_compaction_path_total',
+    labels => labels?.['path'] === 'reactive',
+  );
+
+  if (backgroundStarted > 0 || backgroundCompleted > 0 || backgroundApplied > 0 || backgroundNoResult > 0) {
+    rows.push({
+      id: `${baseId}:metrics:summary:background`,
+      title: '后台摘要',
+      subtitle: 'started / completed / applied',
+      note: [
+        `started: ${formatMetricNumber(backgroundStarted)}`,
+        `completed: ${formatMetricNumber(backgroundCompleted)}`,
+        `completedSuccess: ${formatMetricNumber(backgroundCompletedSuccess)}`,
+        `completedFailed: ${formatMetricNumber(backgroundCompletedFailed)}`,
+        `applied: ${formatMetricNumber(backgroundApplied)}`,
+        `noResult: ${formatMetricNumber(backgroundNoResult)}`,
+      ].join('\n'),
+      trailing: `${formatMetricNumber(backgroundStarted)} / ${formatMetricNumber(backgroundCompleted)} / ${formatMetricNumber(backgroundApplied)}`,
+      tone: 'info',
+    });
+  }
+
+  if (backgroundWait) {
+    rows.push({
+      id: `${baseId}:metrics:summary:background-wait`,
+      title: '阻塞等待',
+      subtitle: 'context_compaction_background_wait_duration_ms',
+      note: [
+        `total: ${formatMetricNumber(backgroundWait.sum)} ms`,
+        `avg: ${formatMetricNumber(backgroundWait.avg)} ms`,
+        `max: ${formatMetricNumber(backgroundWait.max)} ms`,
+      ].join('\n'),
+      trailing: `${formatMetricNumber(backgroundWait.count)} 次`,
+      tone: 'warn',
+    });
+  }
+
+  if (inlineSummaries > 0) {
+    rows.push({
+      id: `${baseId}:metrics:summary:inline`,
+      title: 'Inline summarize 次数',
+      subtitle: 'context_compaction_path_total · path=inline',
+      note: `localPaths: ${formatMetricNumber(totalPathSamples)}`,
+      trailing: formatMetricNumber(inlineSummaries),
+      tone: 'info',
+    });
+  }
+
+  if (observedRoutingSamples > 0) {
+    rows.push({
+      id: `${baseId}:metrics:summary:provider-cleanup`,
+      title: 'Provider cleanup 命中率',
+      subtitle: 'provider cleanup / observed routing samples',
+      note: [
+        `providerCleanup: ${formatMetricNumber(providerCleanupHits)}`,
+        `observedRoutes: ${formatMetricNumber(observedRoutingSamples)}`,
+      ].join('\n'),
+      trailing: formatMetricPercentage(providerCleanupHits, observedRoutingSamples),
+      tone: providerCleanupHits > 0 ? 'info' : 'neutral',
+    });
+  }
+
+  if (totalPathSamples > 0) {
+    rows.push({
+      id: `${baseId}:metrics:summary:foreground-fallback`,
+      title: 'Foreground fallback 占比',
+      subtitle: 'heuristic foreground / local compaction paths',
+      note: [
+        `heuristicForeground: ${formatMetricNumber(foregroundFallbacks)}`,
+        `localPaths: ${formatMetricNumber(totalPathSamples)}`,
+      ].join('\n'),
+      trailing: formatMetricPercentage(foregroundFallbacks, totalPathSamples),
+      tone: foregroundFallbacks > 0 ? 'warn' : 'neutral',
+    });
+    rows.push({
+      id: `${baseId}:metrics:summary:reactive-fallback`,
+      title: 'Reactive fallback 占比',
+      subtitle: 'reactive / local compaction paths',
+      note: [
+        `reactive: ${formatMetricNumber(reactiveFallbacks)}`,
+        `localPaths: ${formatMetricNumber(totalPathSamples)}`,
+      ].join('\n'),
+      trailing: formatMetricPercentage(reactiveFallbacks, totalPathSamples),
+      tone: reactiveFallbacks > 0 ? 'warn' : 'neutral',
+    });
+  }
+
+  return rows;
+}
+
+function sumMetricCounters(
+  counters: readonly MetricsCounterSnapshot[],
+  name: string,
+  predicate?: (labels: Readonly<Record<string, string>> | undefined) => boolean,
+): number {
+  let total = 0;
+
+  for (const counter of counters) {
+    if (counter.name !== name) {
+      continue;
+    }
+    if (predicate && !predicate(counter.labels)) {
+      continue;
+    }
+    total += counter.value;
+  }
+
+  return total;
+}
+
+function aggregateMetricHistograms(
+  histograms: readonly MetricsHistogramSnapshot[],
+  name: string,
+  predicate?: (labels: Readonly<Record<string, string>> | undefined) => boolean,
+): { count: number; sum: number; avg: number; max: number } | undefined {
+  let count = 0;
+  let sum = 0;
+  let max = 0;
+  let matched = false;
+
+  for (const histogram of histograms) {
+    if (histogram.name !== name) {
+      continue;
+    }
+    if (predicate && !predicate(histogram.labels)) {
+      continue;
+    }
+    matched = true;
+    count += histogram.count;
+    sum += histogram.sum;
+    max = Math.max(max, histogram.max);
+  }
+
+  if (!matched) {
+    return undefined;
+  }
+
+  return {
+    count,
+    sum,
+    avg: count > 0 ? sum / count : 0,
+    max,
+  };
+}
+
+function formatMetricLabels(labels: Readonly<Record<string, string>> | undefined): string | undefined {
+  if (!labels) {
+    return undefined;
+  }
+
+  const entries = Object.entries(labels);
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return entries.map(([key, value]) => `${key}=${value}`).join(', ');
+}
+
+function formatMetricNumber(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  return value.toFixed(2).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+}
+
+function formatMetricPercentage(numerator: number, denominator: number): string {
+  if (denominator <= 0) {
+    return '0%';
+  }
+
+  return `${formatMetricNumber((numerator / denominator) * 100)}%`;
+}
+
+function buildProviderContextManagementSummaryBadges(source: {
+  metadata?: Record<string, unknown> | null;
+}): ActivitySummaryBadge[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const badges: ActivitySummaryBadge[] = [];
+  const kind = asString(metadata['kind']);
+  const responseType = asString(metadata['responseType']);
+  const editCount = asNumber(metadata['editCount']);
+  const clearedInputTokens = asNumber(metadata['clearedInputTokens']);
+  const clearedToolUses = asNumber(metadata['clearedToolUses']);
+  const clearedThinkingTurns = asNumber(metadata['clearedThinkingTurns']);
+  const hasEncryptedContent = metadata['hasEncryptedContent'] === true;
+
+  if (kind) {
+    badges.push({ label: 'Provider', value: formatProviderContextManagementKind(kind), tone: 'info' });
+  }
+  if (responseType) {
+    badges.push({ label: '结果', value: responseType, tone: 'neutral' });
+  }
+  if (typeof editCount === 'number' && editCount > 0) {
+    badges.push({ label: '编辑', value: String(editCount), tone: 'info' });
+  }
+  if (typeof clearedInputTokens === 'number' && clearedInputTokens > 0) {
+    badges.push({ label: 'Tokens', value: String(clearedInputTokens), tone: 'warn' });
+  }
+  if (typeof clearedToolUses === 'number' && clearedToolUses > 0) {
+    badges.push({ label: 'Tool Uses', value: String(clearedToolUses), tone: 'warn' });
+  }
+  if (typeof clearedThinkingTurns === 'number' && clearedThinkingTurns > 0) {
+    badges.push({ label: 'Thinking', value: String(clearedThinkingTurns), tone: 'warn' });
+  }
+  if (hasEncryptedContent) {
+    badges.push({ label: '载荷', value: '含加密上下文', tone: 'neutral' });
+  }
+
+  return badges;
+}
+
+function buildProviderContextManagementDetailSections(source: {
+  id?: string;
+  metadata?: Record<string, unknown> | null;
+}): DetailSectionDescriptor[] {
+  const metadata = asRecord(source.metadata);
+  if (!metadata) {
+    return [];
+  }
+
+  const kind = asString(metadata['kind']);
+  const responseType = asString(metadata['responseType']);
+  const responseId = asString(metadata['responseId']);
+  const hasEncryptedContent = metadata['hasEncryptedContent'] === true;
+  const editCount = asNumber(metadata['editCount']);
+  const clearedInputTokens = asNumber(metadata['clearedInputTokens']);
+  const clearedToolUses = asNumber(metadata['clearedToolUses']);
+  const clearedThinkingTurns = asNumber(metadata['clearedThinkingTurns']);
+  const appliedEdits = asRecordArray(metadata['appliedEdits']);
+  const baseId = source.id || 'provider-context-management';
+  const sections: DetailSectionDescriptor[] = [];
+
+  const summaryNotes = [
+    kind ? `provider: ${formatProviderContextManagementKind(kind)}` : '',
+    responseType ? `responseType: ${responseType}` : '',
+    responseId ? `responseId: ${responseId}` : '',
+    hasEncryptedContent ? 'encryptedContent: present' : '',
+    typeof editCount === 'number' ? `editCount: ${editCount}` : '',
+    typeof clearedInputTokens === 'number' && clearedInputTokens > 0 ? `clearedInputTokens: ${clearedInputTokens}` : '',
+    typeof clearedToolUses === 'number' && clearedToolUses > 0 ? `clearedToolUses: ${clearedToolUses}` : '',
+    typeof clearedThinkingTurns === 'number' && clearedThinkingTurns > 0 ? `clearedThinkingTurns: ${clearedThinkingTurns}` : '',
+  ].filter(Boolean).join('\n');
+
+  if (summaryNotes) {
+    sections.push({
+      title: '执行结果',
+      rows: [{
+        id: `${baseId}:summary`,
+        title: kind === 'responses' ? 'Responses 上下文压缩' : 'Provider 上下文清理',
+        subtitle: kind ? formatProviderContextManagementKind(kind) : undefined,
+        note: summaryNotes,
+        tone: kind === 'responses' ? 'info' : 'warn',
+      }],
+    });
+  }
+
+  const editRows = appliedEdits
+    .map((edit, index) => toProviderContextManagementEditRow(edit, `${baseId}:edit:${index}`))
+    .filter((row): row is StateDetailRow => !!row);
+
+  if (editRows.length > 0) {
+    sections.push({
+      title: 'Applied Edits',
+      rows: editRows,
+    });
+  }
+
+  return sections;
+}
+
+function toProviderContextManagementEditRow(edit: Record<string, unknown>, id: string): StateDetailRow | null {
+  const type = asString(edit['type']);
+  const clearedInputTokens = asNumber(edit['clearedInputTokens']);
+  const clearedToolUses = asNumber(edit['clearedToolUses']);
+  const clearedThinkingTurns = asNumber(edit['clearedThinkingTurns']);
+  const note = [
+    typeof clearedInputTokens === 'number' && clearedInputTokens > 0 ? `clearedInputTokens: ${clearedInputTokens}` : '',
+    typeof clearedToolUses === 'number' && clearedToolUses > 0 ? `clearedToolUses: ${clearedToolUses}` : '',
+    typeof clearedThinkingTurns === 'number' && clearedThinkingTurns > 0 ? `clearedThinkingTurns: ${clearedThinkingTurns}` : '',
+  ].filter(Boolean).join('\n');
+
+  if (!type && !note) {
+    return null;
+  }
+
+  return {
+    id,
+    title: formatProviderContextManagementEditType(type),
+    subtitle: type || undefined,
+    note: note || undefined,
+    tone: 'warn',
+  };
+}
+
+function formatProviderContextManagementKind(kind: string | undefined): string {
+  switch (kind) {
+    case 'responses':
+      return 'Responses';
+    case 'anthropic':
+      return 'Anthropic';
+    default:
+      return kind || 'Unknown';
+  }
+}
+
+function formatProviderContextManagementEditType(type: string | undefined): string {
+  switch (type) {
+    case 'clear_tool_uses_20250919':
+      return '清理旧工具调用';
+    case 'clear_thinking_20251015':
+      return '清理旧思考轨迹';
+    default:
+      return type || 'Provider edit';
+  }
 }
 
 function toTaskGraphRow(node: Record<string, unknown>, isCurrent: boolean): StateDetailRow {
@@ -1454,12 +1934,6 @@ function toToolCallTimelineRow(entry: Record<string, unknown>, index: number): S
     trailing: typeof progress === 'number' ? `${Math.round(progress)}%` : formatNarrativePhase(phase),
     tone: toneFromNarrativePhase(phase),
   };
-}
-
-function isReadFileToolName(toolName: string | undefined): boolean {
-  return (toolName || '')
-    .replace(/[^a-zA-Z0-9]/g, '')
-    .toLowerCase() === 'readfile';
 }
 
 function formatReadFileCompactLineSpan(start: unknown, end: unknown): string | undefined {
@@ -2731,10 +3205,39 @@ function formatCompactionLevel(level?: string): string {
 
 function formatCompactionSource(source?: string): string {
   const map: Record<string, string> = {
+    background: '后台摘要',
     foreground: '模型摘要',
     heuristic: '启发式摘要',
   };
   return map[source || ''] || (source || '来源未知');
+}
+
+function formatCompactionTrigger(trigger?: string): string {
+  const map: Record<string, string> = {
+    preRender: '预渲染消费',
+    budgetExceededWaited: '超限后等待后台摘要',
+    budgetExceededReady: '超限后复用已完成后台摘要',
+  };
+  return map[trigger || ''] || (trigger || '');
+}
+
+function formatCompactionOutcome(outcome?: string): string {
+  const map: Record<string, string> = {
+    applied: '已应用',
+    appliedButReRenderFailed: '已应用但重渲染仍超限',
+    noResult: '未产出可用结果',
+  };
+  return map[outcome || ''] || (outcome || '');
+}
+
+function formatCompactionFailureKind(kind?: string): string {
+  const map: Record<string, string> = {
+    budgetExceeded: '预算超限',
+    aborted: '已中止',
+    transient: '瞬时失败',
+    error: '一般错误',
+  };
+  return map[kind || ''] || (kind || '');
 }
 
 function formatLaunchKind(kind?: string): string {

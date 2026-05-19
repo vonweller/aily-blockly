@@ -25,6 +25,7 @@ import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
+import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-context';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentModel'>
@@ -115,6 +116,10 @@ export class HostSessionSaveBridge {
           toolResultsTokens: budgetSnapshot.toolResultsTokens,
           messageCount: budgetSnapshot.messageCount,
         } : undefined,
+        requestContext: cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext),
+        activeSkillNames: Array.isArray(sessionSnapshot?.activeSkillNames) && sessionSnapshot.activeSkillNames.length > 0
+          ? [...sessionSnapshot.activeSkillNames]
+          : undefined,
         toolCallingIteration: this.ctx.toolCallingIteration || 0,
       },
     };
@@ -533,10 +538,25 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
       })),
       codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
       progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: [...turn.response.parts],
+      parts: clonePersistableResponseParts(turn.response.parts),
     },
     ...(responseModel ? { responseModel } : {}),
   };
+}
+
+function clonePersistableResponseParts(
+  parts: TurnResponseTurn['response']['parts'],
+): TurnResponseTurn['response']['parts'] {
+  return parts
+    .filter(part => !isTransientRuntimeStatePart(part))
+    .map(part => ({ ...part }));
+}
+
+function isTransientRuntimeStatePart(
+  part: TurnResponseTurn['response']['parts'][number],
+): boolean {
+  return part.type === 'state'
+    && (part.kind === 'compaction' || part.kind === 'provider_context_management');
 }
 
 function persistResponseDataOnTurnResponses(

@@ -353,11 +353,15 @@ export class ChatViewService {
     },
   ) {
     const description = this.buildPresetTooltipDescription(options);
+    const providerContextManagementDetail = this.ailyChatConfigService.getModelProviderContextManagementDetail(displayModel);
     const contextValue = this.ailyChatConfigService.getModelCapabilityContextWindowLabel(displayModel);
+    const descriptionLines = [description, providerContextManagementDetail]
+      .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+      .join('\n');
 
     return {
       title: model.name,
-      description,
+      description: descriptionLines || undefined,
       contextLabel: contextValue && contextValue !== '自动检测' ? '上下文长度' : undefined,
       contextValue: contextValue && contextValue !== '自动检测' ? contextValue : undefined,
       sectionLabel: reasoningChildren.length > 0 ? '思考深度' : undefined,

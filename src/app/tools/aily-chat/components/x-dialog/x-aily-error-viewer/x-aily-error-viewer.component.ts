@@ -1,4 +1,4 @@
-import { Component, Input } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
   formatContinuationHardStopReason,
@@ -8,6 +8,14 @@ import {
 interface ErrorDiagnosticsRow {
   label: string;
   value: string;
+}
+
+export interface ErrorActionItem {
+  id: string;
+  label: string;
+  data?: unknown;
+  isSecondary?: boolean;
+  disabled?: boolean;
 }
 
 @Component({
@@ -27,6 +35,18 @@ interface ErrorDiagnosticsRow {
       </div>
       @if (displayMessage) {
         <p class="ac-error-msg">{{ displayMessage }}</p>
+      }
+      @if (actionItems.length > 0) {
+        <div class="ac-error-actions">
+          @for (actionItem of actionItems; track actionItem.id) {
+            <button
+              class="ac-error-action-btn"
+              type="button"
+              [disabled]="!!actionItem.disabled"
+              (click)="onAction(actionItem)"
+            >{{ actionItem.label }}</button>
+          }
+        </div>
       }
       @if (diagnosticRows.length > 0) {
         <div class="ac-error-meta">
@@ -59,6 +79,30 @@ interface ErrorDiagnosticsRow {
     .ac-error[data-sev="info"] .ac-error-title { color: var(--aily-chat-viewer-error-title-info); }
     .ac-error-time { font-size: 11px; color: var(--aily-chat-viewer-muted); flex-shrink: 0; }
     .ac-error-msg { padding: 6px 0 0 0; margin: 0; font-size: 12px; color: var(--aily-chat-viewer-muted); line-height: 1.6; width: 100%; white-space: pre-wrap; }
+    .ac-error-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .ac-error-action-btn {
+      min-height: 24px;
+      padding: 0 10px;
+      border-radius: 5px;
+      border: 1px solid transparent;
+      background: #0e639c;
+      color: #ffffff;
+      font-size: 12px;
+      line-height: 1.2;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ac-error-action-btn:hover { background: #1177bb; }
+    .ac-error-action-btn:disabled {
+      background: color-mix(in srgb, #0e639c 40%, transparent);
+      color: rgba(255,255,255,0.7);
+      cursor: not-allowed;
+    }
     .ac-error-meta {
       display: flex;
       flex-direction: column;
@@ -96,11 +140,18 @@ export class XAilyErrorViewerComponent {
     details?: unknown;
     metadata?: Record<string, unknown>;
     diagnostics?: Record<string, unknown>;
+    actions?: readonly ErrorActionItem[];
   } | null = null;
+
+  @Output() action = new EventEmitter<ErrorActionItem>();
 
   /** 优先使用顶层 message，其次 error.message */
   get displayMessage(): string {
     return this.data?.message ?? this.data?.error?.message ?? '';
+  }
+
+  get actionItems(): readonly ErrorActionItem[] {
+    return this.data?.actions ?? [];
   }
 
   get errorIconClass(): string {
@@ -135,6 +186,10 @@ export class XAilyErrorViewerComponent {
 
   fmtTime(ts: string): string {
     try { return new Date(ts).toLocaleString('zh-CN'); } catch { return ts; }
+  }
+
+  onAction(actionItem: ErrorActionItem): void {
+    this.action.emit(actionItem);
   }
 
   private readDiagnosticSource(value: unknown): Record<string, unknown> | null {

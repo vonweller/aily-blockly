@@ -19,6 +19,7 @@ import {
     SCHEMATIC_AGENT_LEGACY_ALIAS,
     SCHEMATIC_AGENT_TYPE,
 } from '../core/agent-identifiers';
+import { normalizeGovernanceToolName } from '../core/tool-name-normalizer';
 
 /**
  * 安全工作区配置项
@@ -44,6 +45,26 @@ export interface ApiKeyConfig {
  * 模型配置项
  */
 export type ReasoningEffortOption = 'low' | 'medium' | 'high' | 'xhigh';
+export type ProviderContextManagementMode = 'clear-thinking' | 'clear-tools' | 'clear-both';
+
+export type ProviderContextManagementSupport =
+    | {
+        kind: 'responses';
+        compactThresholdRatio?: number;
+    }
+    | {
+        kind: 'anthropic';
+        mode?: ProviderContextManagementMode;
+        thinkingEnabled?: boolean;
+        keepThinkingTurns?: number;
+        keepToolUses?: number;
+        toolUseTriggerInputTokens?: number;
+        clearToolInputs?: boolean;
+        excludeTools?: string[];
+    }
+    | {
+        kind: string;
+    };
 
 export interface ModelPresetOption {
     id: string;
@@ -60,6 +81,7 @@ export interface ModelPresetOption {
     requiredTier?: string;
     minimumClientVersion?: string;
     unavailableReason?: 'upgrade' | 'admin' | 'update';
+    providerContextManagementSupport?: ProviderContextManagementSupport;
     enabled: boolean;
 }
 
@@ -115,6 +137,19 @@ export interface ModelConfigOption {
     languageModelsVendor?: string; // VS Code-style language model vendor
     languageModelsGroupName?: string; // VS Code-style provider group name
     configurationSchema?: LanguageModelConfigurationSchema; // VS Code-style per-model configuration schema
+    providerContextManagementSupport?: ProviderContextManagementSupport; // provider-managed compaction capability from services catalog
+}
+
+interface RemoteProviderContextManagementSupportPayload {
+    kind?: string | null;
+    compact_threshold_ratio?: number | null;
+    mode?: string | null;
+    thinking_enabled?: boolean | null;
+    keep_thinking_turns?: number | null;
+    keep_tool_uses?: number | null;
+    tool_use_trigger_input_tokens?: number | null;
+    clear_tool_inputs?: boolean | null;
+    exclude_tools?: string[] | null;
 }
 
 interface RemoteCatalogPayloadEntry {
@@ -139,6 +174,7 @@ interface RemoteCatalogPayloadEntry {
     required_tier?: string | null;
     minimum_client_version?: string | null;
     unavailable_reason?: 'upgrade' | 'admin' | 'update' | null;
+    provider_context_management_support?: RemoteProviderContextManagementSupportPayload | null;
     model_picker_category?: {
         label?: string | null;
         order?: number | null;
@@ -175,6 +211,7 @@ interface RemoteModelCatalogEntry {
     requiredTier?: string;
     minimumClientVersion?: string;
     unavailableReason?: 'upgrade' | 'admin' | 'update';
+    providerContextManagementSupport?: ProviderContextManagementSupport;
     modelPickerCategory?: ModelPickerCategoryOption;
 }
 
@@ -738,7 +775,7 @@ export class AilyChatConfigService {
     }
 
     hasWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean {
-        const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
+        const normalizedToolName = normalizeGovernanceToolName(toolName);
         if (!normalizedToolName) {
             return false;
         }
@@ -750,7 +787,7 @@ export class AilyChatConfigService {
 
     addWorkspaceToolApprovalRule(projectPath: string | null | undefined, toolName: string): boolean {
         const normalizedProjectPath = normalizeProjectPermissionScope(projectPath);
-        const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
+        const normalizedToolName = normalizeGovernanceToolName(toolName);
         if (!normalizedProjectPath || !normalizedToolName) {
             return false;
         }
@@ -815,22 +852,22 @@ export class AilyChatConfigService {
      * 获取启用的工具列表
      */
     get enabledTools(): string[] {
-        return this.config.enabledTools ?? [];
+        return normalizeConfiguredToolNames(this.config.enabledTools);
     }
 
     set enabledTools(value: string[]) {
-        this.config.enabledTools = value;
+        this.config.enabledTools = normalizeConfiguredToolNames(value);
     }
 
     /**
      * 获取禁用的工具列表
      */
     get disabledTools(): string[] {
-        return this.config.disabledTools ?? [];
+        return normalizeConfiguredToolNames(this.config.disabledTools);
     }
 
     set disabledTools(value: string[]) {
-        this.config.disabledTools = value;
+        this.config.disabledTools = normalizeConfiguredToolNames(value);
     }
 
     /**
@@ -850,15 +887,15 @@ export class AilyChatConfigService {
             ?? this.config.agentTools?.[legacyAgentName];
         if (agentConfig) {
             return {
-                enabledTools: agentConfig.enabledTools ?? [],
-                disabledTools: agentConfig.disabledTools ?? []
+                enabledTools: normalizeConfiguredToolNames(agentConfig.enabledTools),
+                disabledTools: normalizeConfiguredToolNames(agentConfig.disabledTools)
             };
         }
         // 兼容旧版本：main agent 使用顶层的 enabledTools/disabledTools
         if (canonicalAgentName === MAIN_AGENT_TYPE) {
             return {
-                enabledTools: this.config.enabledTools ?? [],
-                disabledTools: this.config.disabledTools ?? []
+                enabledTools: normalizeConfiguredToolNames(this.config.enabledTools),
+                disabledTools: normalizeConfiguredToolNames(this.config.disabledTools)
             };
         }
         // 其他Agent默认返回空配置
@@ -872,10 +909,14 @@ export class AilyChatConfigService {
      */
     setAgentToolsConfig(agentName: string, config: AgentToolsConfig): void {
         const canonicalAgentName = normalizeAgentIdentifier(agentName);
+        const normalizedConfig: AgentToolsConfig = {
+            enabledTools: normalizeConfiguredToolNames(config.enabledTools),
+            disabledTools: normalizeConfiguredToolNames(config.disabledTools),
+        };
         if (!this.config.agentTools) {
             this.config.agentTools = {};
         }
-        this.config.agentTools[canonicalAgentName] = config;
+        this.config.agentTools[canonicalAgentName] = normalizedConfig;
         if (canonicalAgentName === MAIN_AGENT_TYPE && this.config.agentTools[MAIN_AGENT_LEGACY_ALIAS]) {
             delete this.config.agentTools[MAIN_AGENT_LEGACY_ALIAS];
         }
@@ -884,8 +925,8 @@ export class AilyChatConfigService {
         }
         // 同步更新顶层配置（兼容旧版本）
         if (canonicalAgentName === MAIN_AGENT_TYPE) {
-            this.config.enabledTools = config.enabledTools;
-            this.config.disabledTools = config.disabledTools;
+            this.config.enabledTools = normalizedConfig.enabledTools;
+            this.config.disabledTools = normalizedConfig.disabledTools;
         }
     }
 
@@ -1138,6 +1179,7 @@ export class AilyChatConfigService {
             enabled: true,
             isCustom: false,
             presetId: preset.id,
+            providerContextManagementSupport: preset.providerContextManagementSupport ?? resolvedModel?.providerContextManagementSupport,
             supportsReasoningEfforts,
             reasoningEffort: this.getDefaultReasoningEffortForModel({
                 family,
@@ -1366,6 +1408,11 @@ export class AilyChatConfigService {
             parts.push(reasoningLabel);
         }
 
+        const providerContextManagementLabel = this.getModelProviderContextManagementLabel(model);
+        if (providerContextManagementLabel) {
+            parts.push(providerContextManagementLabel);
+        }
+
         const billingLabel = this.getModelBillingLabel(model);
         if (billingLabel) {
             const billingDescription = model.billingDescription || canonicalModel?.billingDescription;
@@ -1419,6 +1466,61 @@ export class AilyChatConfigService {
         }
 
         return '自动检测';
+    }
+
+    resolveModelProviderContextManagementSupport(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): ProviderContextManagementSupport | undefined {
+        if (model?.providerContextManagementSupport) {
+            return model.providerContextManagementSupport;
+        }
+
+        return this.resolveCanonicalModelMetadata(model)?.providerContextManagementSupport;
+    }
+
+    getModelProviderContextManagementLabel(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): string | undefined {
+        const support = this.resolveModelProviderContextManagementSupport(model);
+        if (!support || typeof support.kind !== 'string' || !support.kind.trim()) {
+            return undefined;
+        }
+
+        return '上下文管理';
+    }
+
+    getModelProviderContextManagementDetail(
+        model: Partial<ModelConfigOption> | null | undefined,
+    ): string | undefined {
+        const support = this.resolveModelProviderContextManagementSupport(model);
+        if (!support || typeof support.kind !== 'string' || !support.kind.trim()) {
+            return undefined;
+        }
+
+        if (support.kind === 'responses') {
+            const compactThresholdRatio = 'compactThresholdRatio' in support ? support.compactThresholdRatio : undefined;
+            const thresholdRatio = typeof compactThresholdRatio === 'number'
+                && Number.isFinite(compactThresholdRatio)
+                && compactThresholdRatio > 0
+                && compactThresholdRatio <= 1
+                ? `${Math.round(compactThresholdRatio * 100)}%`
+                : undefined;
+            return thresholdRatio
+                ? `Provider 自动管理上下文，压缩阈值 ${thresholdRatio}`
+                : 'Provider 自动管理上下文';
+        }
+
+        if (support.kind === 'anthropic') {
+            const mode = 'mode' in support ? support.mode : undefined;
+            const modeLabel = mode === 'clear-thinking'
+                ? '清理思考内容'
+                : mode === 'clear-tools'
+                    ? '清理工具调用'
+                    : '清理思考与工具调用';
+            return `Provider 上下文管理：${modeLabel}`;
+        }
+
+        return 'Provider 自动管理上下文';
     }
 
     private resolveCanonicalModelMetadata(
@@ -1480,6 +1582,7 @@ export class AilyChatConfigService {
                 baseUrl: storedModel?.baseUrl,
                 apiKey: storedModel?.apiKey,
                 apiKeyId: storedModel?.apiKeyId,
+                providerContextManagementSupport: remoteCatalogEntry.providerContextManagementSupport ?? storedModel?.providerContextManagementSupport,
                 supportsReasoningEfforts: remoteCatalogEntry.supportsReasoningEfforts?.length
                     ? [...remoteCatalogEntry.supportsReasoningEfforts]
                     : storedModel?.supportsReasoningEfforts,
@@ -1520,6 +1623,11 @@ export class AilyChatConfigService {
         });
         if (capabilityParts.length > 0) {
             lines.push(`能力: ${capabilityParts.join(' · ')}`);
+        }
+
+        const providerContextManagementDetail = this.getModelProviderContextManagementDetail(model);
+        if (providerContextManagementDetail) {
+            lines.push(providerContextManagementDetail);
         }
 
         const billingLabel = this.getModelBillingLabel(model);
@@ -1753,6 +1861,7 @@ export class AilyChatConfigService {
             requiredTier: remotePreset.requiredTier,
             minimumClientVersion: remotePreset.minimumClientVersion,
             unavailableReason: remotePreset.unavailableReason,
+            providerContextManagementSupport: remotePreset.providerContextManagementSupport,
             enabled: typeof remotePreset.isUserSelectable === 'boolean'
                 ? remotePreset.isUserSelectable
                 : (fallbackPreset?.enabled ?? true),
@@ -1878,6 +1987,7 @@ export class AilyChatConfigService {
                     || entry.unavailable_reason === 'update'
                     ? entry.unavailable_reason
                     : undefined,
+                providerContextManagementSupport: this.normalizeProviderContextManagementSupport(entry.provider_context_management_support),
                 modelPickerCategory: this.normalizeModelPickerCategory(entry.model_picker_category),
             };
             return acc;
@@ -1953,10 +2063,69 @@ export class AilyChatConfigService {
                     ? entry.language_models_group_name.trim()
                     : undefined,
                 configurationSchema: this.normalizeLanguageModelConfigurationSchema(entry.configuration_schema),
+                providerContextManagementSupport: this.normalizeProviderContextManagementSupport(entry.provider_context_management_support),
                 modelPickerCategory: this.normalizeModelPickerCategory(entry.model_picker_category),
             };
             return acc;
         }, {});
+    }
+
+    private normalizeProviderContextManagementSupport(
+        value: RemoteProviderContextManagementSupportPayload | null | undefined,
+    ): ProviderContextManagementSupport | undefined {
+        if (!value || typeof value !== 'object' || typeof value.kind !== 'string' || !value.kind.trim()) {
+            return undefined;
+        }
+
+        const kind = value.kind.trim();
+        if (kind === 'responses') {
+            const compactThresholdRatio = typeof value.compact_threshold_ratio === 'number'
+                && Number.isFinite(value.compact_threshold_ratio)
+                && value.compact_threshold_ratio > 0
+                && value.compact_threshold_ratio <= 1
+                ? value.compact_threshold_ratio
+                : undefined;
+            return compactThresholdRatio !== undefined
+                ? { kind: 'responses', compactThresholdRatio }
+                : { kind: 'responses' };
+        }
+
+        if (kind === 'anthropic') {
+            const mode = value.mode === 'clear-thinking' || value.mode === 'clear-tools' || value.mode === 'clear-both'
+                ? value.mode
+                : undefined;
+            const keepThinkingTurns = typeof value.keep_thinking_turns === 'number'
+                && Number.isFinite(value.keep_thinking_turns)
+                && value.keep_thinking_turns >= 0
+                ? value.keep_thinking_turns
+                : undefined;
+            const keepToolUses = typeof value.keep_tool_uses === 'number'
+                && Number.isFinite(value.keep_tool_uses)
+                && value.keep_tool_uses >= 0
+                ? value.keep_tool_uses
+                : undefined;
+            const toolUseTriggerInputTokens = typeof value.tool_use_trigger_input_tokens === 'number'
+                && Number.isFinite(value.tool_use_trigger_input_tokens)
+                && value.tool_use_trigger_input_tokens >= 0
+                ? value.tool_use_trigger_input_tokens
+                : undefined;
+            const excludeTools = Array.isArray(value.exclude_tools)
+                ? value.exclude_tools.filter((tool): tool is string => typeof tool === 'string' && tool.trim().length > 0)
+                : undefined;
+
+            return {
+                kind: 'anthropic',
+                ...(mode ? { mode } : {}),
+                ...(typeof value.thinking_enabled === 'boolean' ? { thinkingEnabled: value.thinking_enabled } : {}),
+                ...(keepThinkingTurns !== undefined ? { keepThinkingTurns } : {}),
+                ...(keepToolUses !== undefined ? { keepToolUses } : {}),
+                ...(toolUseTriggerInputTokens !== undefined ? { toolUseTriggerInputTokens } : {}),
+                ...(typeof value.clear_tool_inputs === 'boolean' ? { clearToolInputs: value.clear_tool_inputs } : {}),
+                ...(excludeTools && excludeTools.length > 0 ? { excludeTools } : {}),
+            };
+        }
+
+        return { kind };
     }
 
     private normalizeLanguageModelConfigurationSchema(
@@ -2041,6 +2210,7 @@ export class AilyChatConfigService {
                 contextWindowTokens: remoteModel.contextWindowTokens ?? override?.contextWindowTokens,
                 enabled: override?.enabled ?? true,
                 isCustom: false,
+                providerContextManagementSupport: remoteModel.providerContextManagementSupport ?? override?.providerContextManagementSupport,
                 supportsReasoningEfforts: remoteModel.supportsReasoningEfforts?.length
                     ? [...remoteModel.supportsReasoningEfforts]
                     : override?.supportsReasoningEfforts,
@@ -2274,13 +2444,27 @@ export class AilyChatConfigService {
                     continue;
                 }
                 normalizedAgentTools[canonicalAgentName] = {
-                    enabledTools: agentConfig.enabledTools ?? [],
-                    disabledTools: agentConfig.disabledTools ?? [],
+                    enabledTools: normalizeConfiguredToolNames(agentConfig.enabledTools),
+                    disabledTools: normalizeConfiguredToolNames(agentConfig.disabledTools),
                 };
             }
             this.config.agentTools = normalizedAgentTools;
         }
+
+        this.config.enabledTools = normalizeConfiguredToolNames(this.config.enabledTools);
+        this.config.disabledTools = normalizeConfiguredToolNames(this.config.disabledTools);
     }
+}
+
+function normalizeConfiguredToolNames(value: readonly string[] | undefined): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return [...new Set(value.flatMap((item) => {
+        const normalizedToolName = normalizeGovernanceToolName(item);
+        return normalizedToolName ? [normalizedToolName] : [];
+    }))];
 }
 
 function normalizeKnownPresetId(value: string | null | undefined): string | undefined {
@@ -2405,7 +2589,7 @@ function normalizePermissionRuleInputs(value: PermissionRuleInput[] | undefined)
             return [];
         }
 
-        const normalizedToolName = typeof item.toolName === 'string' ? item.toolName.trim() : undefined;
+        const normalizedToolName = normalizeGovernanceToolName(item.toolName);
         const normalizedToolSource = typeof item.toolSource === 'string' ? item.toolSource.trim() : undefined;
         const normalizedSource = typeof item.source === 'string' ? item.source : undefined;
 

@@ -10,17 +10,32 @@ import {
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 
 import { ChatPart, MarkdownPart, ErrorPart, QuestionPart } from '../../core/chat-parts';
+import { AilyChatConfigService } from '../../services/aily-chat-config.service';
+import { isDefaultAutoPresetSelected } from '../../helpers/model-billing-label';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
-import { XAilyErrorViewerComponent } from './x-aily-error-viewer/x-aily-error-viewer.component';
+import { XAilyErrorViewerComponent, type ErrorActionItem } from './x-aily-error-viewer/x-aily-error-viewer.component';
 import { XAilyQuestionViewerComponent } from './x-aily-question-viewer/x-aily-question-viewer.component';
 import { ChatActivityGroupComponent } from './chat-activity-group.component';
 import { ChatStandaloneToolCallComponent } from './chat-standalone-tool-call.component';
 import { isGroupableActivityPart, isSubagentToolCall } from './chat-activity-group-projection';
 import { isProgressMessageDisplayPart, type ProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
+import { ChatEngineService } from '../../services/chat-engine.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
+import { ChatService, type ModelConfig } from '../../services/chat.service';
+
+interface ContinueOnErrorConfirmationData {
+  readonly copilotContinueOnError: true;
+}
+
+interface SwitchToAutoOnRateLimitConfirmationData {
+  readonly copilotSwitchToAutoOnRateLimit: true;
+  readonly alwaysSwitchToAuto: boolean;
+}
+
+type ErrorConfirmationData = ContinueOnErrorConfirmationData | SwitchToAutoOnRateLimitConfirmationData;
 
 @Component({
   selector: 'aily-chat-message-part-item',
@@ -60,7 +75,7 @@ import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-i
         <aily-chat-activity-group [parts]="getStandaloneActivityParts()" [doing]="doing" [sessionId]="sessionId" />
       }
       @case ('error') {
-        <x-aily-error-viewer [data]="getErrorData()" />
+        <x-aily-error-viewer [data]="getErrorData()" (action)="onErrorAction($event)" />
       }
       @case ('question') {
         @if (shouldRenderInlineQuestion()) {
@@ -140,6 +155,9 @@ export class ChatMessagePartItemComponent implements OnChanges {
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
 
   private readonly questionDataCache = new WeakMap<RenderableChatPart, any>();
+  private readonly chatEngine = inject(ChatEngineService, { optional: true });
+  private readonly chatService = inject(ChatService, { optional: true });
+  private readonly ailyChatConfigService = inject(AilyChatConfigService, { optional: true });
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -203,8 +221,10 @@ export class ChatMessagePartItemComponent implements OnChanges {
     severity?: ErrorPart['severity'];
     metadata?: Record<string, unknown>;
     diagnostics?: Record<string, unknown>;
+    actions?: readonly ErrorActionItem[];
   } {
     const errorPart = this.part as ErrorPart;
+    const metadata = isRecord(errorPart.metadata) ? errorPart.metadata : undefined;
     const continuation = this.turnResponse?.response?.continuation as unknown as Record<string, unknown> | undefined;
     const budgets = continuation?.['budgets'];
     const continuationDiagnostics = isRecord(continuation?.['diagnostics']) ? continuation['diagnostics'] : undefined;
@@ -242,12 +262,14 @@ export class ChatMessagePartItemComponent implements OnChanges {
       samePendingFingerprintCount: readNumberText(behavior?.['samePendingFingerprintCount']),
       lastProgressAtRound: readNumberText(behavior?.['lastProgressAtRound']),
     });
+    const actions = this.getErrorActions(metadata);
 
     return {
       message: errorPart.message,
       severity: errorPart.severity,
-      ...(isRecord(errorPart.metadata) ? { metadata: errorPart.metadata } : {}),
+      ...(metadata ? { metadata } : {}),
       ...(Object.keys(diagnostics).length > 0 ? { diagnostics } : {}),
+      ...(actions.length > 0 ? { actions } : {}),
     };
   }
 
@@ -292,6 +314,36 @@ export class ChatMessagePartItemComponent implements OnChanges {
     this.runtimeInteractionHost?.completeQuestion(this.sessionId, result);
   }
 
+  onErrorAction(action: ErrorActionItem): void {
+    void this.handleErrorAction(action);
+  }
+
+  private async handleErrorAction(action: ErrorActionItem): Promise<void> {
+    if (!this.chatEngine) {
+      return;
+    }
+
+    if (isSwitchToAutoOnRateLimitConfirmation(action.data)) {
+      const autoModel = this.resolveDefaultAutoModel();
+      if (!autoModel || this.isDefaultAutoModelSelected()) {
+        return;
+      }
+
+      if (action.data.alwaysSwitchToAuto) {
+        this.chatService.setRateLimitAutoSwitchToAuto(true);
+      }
+
+      await this.chatEngine.switchToModel(autoModel);
+    } else if (!isContinueOnErrorConfirmation(action.data)) {
+      return;
+    }
+
+    await this.chatEngine.submitInteractionActionRequest(
+      action.label,
+      this.buildErrorConfirmationInteractionAction(action),
+    );
+  }
+
   private hasActiveInlineQuestion(): boolean {
     if (!this.sessionId || this.part?.type !== 'question') {
       return false;
@@ -299,6 +351,89 @@ export class ChatMessagePartItemComponent implements OnChanges {
 
     const activeQuestion = this.runtimeInteractionHost?.getQuestionWidget(this.sessionId);
     return !!activeQuestion && activeQuestion.partId === (this.part as QuestionPart).partId;
+  }
+
+  private getErrorActions(metadata: Record<string, unknown> | undefined): readonly ErrorActionItem[] {
+    const errorDetails = isRecord(metadata?.['errorDetails']) ? metadata['errorDetails'] : undefined;
+    const confirmationButtons = Array.isArray(errorDetails?.['confirmationButtons'])
+      ? errorDetails['confirmationButtons']
+      : [];
+
+    return confirmationButtons
+      .map((button, index) => this.toErrorAction(button, index))
+      .filter((button): button is ErrorActionItem => button !== null);
+  }
+
+  private toErrorAction(value: unknown, index: number): ErrorActionItem | null {
+    if (!isRecord(value)) {
+      return null;
+    }
+
+    const label = readString(value['label']);
+    const data = this.readErrorConfirmationData(value);
+    if (!label || !data) {
+      return null;
+    }
+
+    if (isSwitchToAutoOnRateLimitConfirmation(data)) {
+      const autoModel = this.resolveDefaultAutoModel();
+      if (!autoModel || this.isDefaultAutoModelSelected()) {
+        return null;
+      }
+    }
+
+    return {
+      id: `error-action-${index}`,
+      label,
+      data,
+      ...(value['isSecondary'] === true ? { isSecondary: true } : {}),
+      ...(value['disabled'] === true ? { disabled: true } : {}),
+    };
+  }
+
+  private readErrorConfirmationData(value: Record<string, unknown>): ErrorConfirmationData | null {
+    const rawData = value['data'];
+    if (isContinueOnErrorConfirmation(rawData) || isSwitchToAutoOnRateLimitConfirmation(rawData)) {
+      return rawData;
+    }
+
+    const legacyAction = readString(value['action']);
+    switch (legacyAction) {
+      case 'switch_to_auto':
+        return { copilotSwitchToAutoOnRateLimit: true, alwaysSwitchToAuto: false };
+      case 'try_again':
+        return { copilotContinueOnError: true };
+      default:
+        return null;
+    }
+  }
+
+  private buildErrorConfirmationInteractionAction(action: ErrorActionItem): NonNullable<TurnRequest['metadata']>['interactionAction'] {
+    const confirmationData = action.data === undefined ? [] : [action.data];
+    return {
+      kind: 'confirmation',
+      payload: {
+        result: action.isSecondary === true ? 'rejected' : 'approved',
+        source: 'error_details',
+        ...(action.isSecondary === true
+          ? { rejectedConfirmationData: confirmationData }
+          : { acceptedConfirmationData: confirmationData }),
+      },
+    };
+  }
+
+  private isDefaultAutoModelSelected(): boolean {
+    return !!this.chatService?.currentModel && isDefaultAutoPresetSelected(this.chatService.currentModel);
+  }
+
+  private resolveDefaultAutoModel(): ModelConfig | null {
+    if (!this.ailyChatConfigService) {
+      return null;
+    }
+
+    return this.ailyChatConfigService.resolvePresetModel(
+      this.ailyChatConfigService.getDefaultModelPresetId(),
+    );
   }
 
 }
@@ -324,4 +459,14 @@ function compactRecord(record: Record<string, string | undefined>): Record<strin
   });
 
   return Object.fromEntries(entries);
+}
+
+function isContinueOnErrorConfirmation(value: unknown): value is ContinueOnErrorConfirmationData {
+  return isRecord(value) && value['copilotContinueOnError'] === true;
+}
+
+function isSwitchToAutoOnRateLimitConfirmation(value: unknown): value is SwitchToAutoOnRateLimitConfirmationData {
+  return isRecord(value)
+    && value['copilotSwitchToAutoOnRateLimit'] === true
+    && typeof value['alwaysSwitchToAuto'] === 'boolean';
 }

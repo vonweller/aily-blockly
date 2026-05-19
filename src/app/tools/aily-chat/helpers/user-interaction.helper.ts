@@ -10,6 +10,10 @@
  */
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
+import {
+  isTerminalCommandToolName,
+  normalizeReadSideToolName,
+} from '../core/tool-name-normalizer';
 import { AilyHost } from '../core/host';
 import { normalizeToolApprovalRequest } from './tool-approval-ui';
 import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from './tool-approval-ui';
@@ -34,10 +38,8 @@ type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
     >;
   };
 
-const TERMINAL_APPROVAL_TOOL_NAMES = new Set(['run_in_terminal', 'run_terminal']);
-
 function isTerminalApprovalTool(toolName: string): boolean {
-  return TERMINAL_APPROVAL_TOOL_NAMES.has(toolName);
+  return isTerminalCommandToolName(toolName);
 }
 
 function escapeRegExpCharacters(value: string): string {
@@ -235,7 +237,7 @@ export class UserInteractionHelper {
       return false;
     }
 
-    const toolName = request.toolName;
+    const toolName = normalizeReadSideToolName(request.toolName);
     const input = request.args && typeof request.args === 'object'
       ? request.args as Record<string, unknown>
       : {};
@@ -275,7 +277,7 @@ export class UserInteractionHelper {
   }
 
   private rememberApproval(request: ToolApprovalRequest, scope: ToolApprovalScope, actionId?: string): void {
-    const toolName = request.toolName;
+    const toolName = normalizeReadSideToolName(request.toolName);
     const input = request.args && typeof request.args === 'object'
       ? request.args as Record<string, unknown>
       : {};

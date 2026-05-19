@@ -28,10 +28,12 @@
  */
 
 import { Injectable, OnDestroy } from '@angular/core';
-import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
+import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore } from './chat-history-index-store';
+import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
+import { decodeHostSessionDebugExport, encodeHostSessionDebugExport, type HostSessionDebugExportEnvelope } from './host-session-debug-export';
 import { HostSessionAdoptionBridge } from './host-session-adoption-bridge';
 import { HostSessionPersistenceBridge } from './host-session-persistence-bridge';
 import { HostSessionRecordStore } from './host-session-record-store';
@@ -133,6 +135,8 @@ export interface SessionMetadata {
     toolResultsTokens?: number;
     messageCount?: number;
   };
+  requestContext?: NonNullable<SessionSnapshot['requestContext']>;
+  activeSkillNames?: readonly string[];
   /** 工具调用迭代次数 */
   toolCallingIteration: number;
 }
@@ -149,6 +153,16 @@ export interface LiveHostSessionRecord {
   turnResponses?: PersistedHostTurnResponse[];
   sidecar?: HostSessionSidecar;
   metadata: Partial<SessionMetadata> & { sessionId: string };
+}
+
+export interface ImportedDebugSessionRecord {
+  sessionId: string;
+  sourceSessionId: string;
+  title: string;
+  importedAt: number;
+  hostRecord: HostSessionRecord;
+  debugEvents: readonly HostSessionDebugEvent[];
+  debugCompanionFiles?: Readonly<Record<string, string>>;
 }
 
 export function countHostRecordMessages(record: Pick<HostSessionRecord, 'turnResponses'>): number {
@@ -184,6 +198,7 @@ export class ChatHistoryService implements OnDestroy {
   private readonly hostRecordStore: HostSessionRecordStore;
   private readonly hostSessionPersistenceBridge: HostSessionPersistenceBridge;
   private readonly hostSessionAdoptionBridge: HostSessionAdoptionBridge;
+  private readonly importedDebugSessions = new Map<string, ImportedDebugSessionRecord>();
 
   constructor() {
     this.hostRecordStore = new HostSessionRecordStore({
@@ -317,7 +332,104 @@ export class ChatHistoryService implements OnDestroy {
   * @returns HostSessionRecord 或 null（文件不存在/损坏）
    */
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {
+    const imported = this.importedDebugSessions.get(sessionId);
+    if (imported) {
+      return imported.hostRecord;
+    }
+
     return this.hostSessionPersistenceBridge.loadHostRecord(sessionId, projectPathHint);
+  }
+
+  exportDebugSnapshot(sessionId: string, projectPathHint?: string | null): Uint8Array | null {
+    this.ensureIndexLoaded();
+
+    const entry = this.index.find(item => item.sessionId === sessionId);
+    const record = this.hostSessionPersistenceBridge.loadHostRecord(sessionId, projectPathHint ?? entry?.projectPath ?? null);
+    if (!record) {
+      return null;
+    }
+
+    return encodeHostSessionDebugExport(record, entry);
+  }
+
+  decodeDebugSnapshot(data: Uint8Array): HostSessionDebugExportEnvelope | null {
+    return decodeHostSessionDebugExport(data);
+  }
+
+  importDebugSnapshot(data: Uint8Array): ImportedDebugSessionRecord | null {
+    const decoded = this.decodeDebugSnapshot(data);
+    if (!decoded) {
+      return null;
+    }
+
+    const importedAt = Date.now();
+    const sourceSessionId = decoded.session.sessionId || decoded.hostRecord.metadata.sessionId;
+    const sessionId = `import:${sourceSessionId}:${importedAt}`;
+    const title = decoded.session.title || decoded.hostRecord.metadata.title || 'Imported Debug Snapshot';
+    const metadata = this.hostRecordStore.createFullMetadata({
+      ...decoded.hostRecord.metadata,
+      sessionId,
+      title,
+      projectPath: null,
+      updatedAt: importedAt,
+    });
+    const hostRecord = this.hostRecordStore.createRecord(
+      metadata,
+      decoded.hostRecord.turnResponses,
+      decoded.hostRecord.sidecar,
+    );
+    const importedRecord: ImportedDebugSessionRecord = {
+      sessionId,
+      sourceSessionId,
+      title,
+      importedAt,
+      hostRecord,
+      debugEvents: this.retargetImportedDebugEvents(
+        Array.isArray(decoded.debug?.events) && decoded.debug.events.length > 0
+          ? decoded.debug.events
+          : buildHostSessionDebugEvents(hostRecord),
+        sessionId,
+      ),
+      ...(decoded.debug?.companionFiles ? { debugCompanionFiles: { ...decoded.debug.companionFiles } } : {}),
+    };
+
+    this.importedDebugSessions.set(sessionId, importedRecord);
+    return importedRecord;
+  }
+
+  getImportedDebugSnapshot(sessionId: string): ImportedDebugSessionRecord | null {
+    return this.importedDebugSessions.get(sessionId) ?? null;
+  }
+
+  clearImportedDebugSnapshot(sessionId: string): void {
+    this.importedDebugSessions.delete(sessionId);
+  }
+
+  listImportedDebugSnapshots(): readonly ImportedDebugSessionRecord[] {
+    return [...this.importedDebugSessions.values()]
+      .sort((left, right) => right.importedAt - left.importedAt);
+  }
+
+  private retargetImportedDebugEvents(
+    events: readonly HostSessionDebugEvent[],
+    sessionId: string,
+  ): HostSessionDebugEvent[] {
+    const idMap = new Map<string, string>();
+    const nextEvents = events.map((event, index) => {
+      const nextId = createHostSessionDebugEventId(sessionId, event.turnId, event.kind, index);
+      idMap.set(event.id, nextId);
+      return {
+        ...event,
+        id: nextId,
+        sessionId,
+        sequence: index,
+      };
+    });
+
+    return nextEvents.map(event => ({
+      ...event,
+      parentEventId: event.parentEventId ? idMap.get(event.parentEventId) : undefined,
+    }));
   }
 
   // =========================================================================

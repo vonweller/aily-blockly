@@ -1,6 +1,7 @@
 import { resolvePersistedLexSessionSnapshot } from './lex-agent-bootstrap';
 
 import type { AilyLexModule } from './lex-agent-bootstrap';
+import type { HostSessionRecord } from '../services/chat-history.service';
 
 type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
 
@@ -18,6 +19,7 @@ export class LexSessionRestoreBridge {
   async restorePersistedSession(
     sessionId: string,
     turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
+    hostRecord?: HostSessionRecord | null,
   ): Promise<boolean> {
     if (!await this.deps.ensureAgent(sessionId)) {
       return false;
@@ -34,6 +36,7 @@ export class LexSessionRestoreBridge {
       sessionId,
       cwd: this.deps.getCwd(),
       turnResponses,
+      hostRecord: hostRecord ?? undefined,
     });
 
     return snapshot ? this.deps.restoreSnapshot(snapshot) : false;

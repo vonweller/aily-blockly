@@ -20,6 +20,14 @@
       [nzTooltipTitle]="'AILY_CHAT.NEW_CHAT' | translate">
       <i class="fa-light fa-message-plus"></i>
     </div>
+    <div class="btn ccenter" (click)="openDebugBrowserHome()" nz-tooltip nzTooltipPlacement="bottom"
+      nzTooltipTitle="打开调试面板">
+      <i class="fa-light fa-bug"></i>
+    </div>
+    <div class="btn ccenter" (click)="sessionShellCoordinator.importDebugSnapshot()" nz-tooltip nzTooltipPlacement="bottom"
+      nzTooltipTitle="导入调试快照">
+      <i class="fa-light fa-file-arrow-up"></i>
+    </div>
     <!-- <div class="btn ccenter" (click)="toggleActionMenu($event)" nz-tooltip nzTooltipPlacement="bottom"
       nzTooltipTitle="Chat Actions">
       <i class="fa-light fa-bolt"></i>
@@ -34,6 +42,57 @@
 }
 <ng-template #windowBoxTemplate>
   <div class="window-box">
+    @if (debugBrowser.isOpen) {
+    @if (debugBrowser.isHomeVisible) {
+    <aily-chat-debug-home
+      [sessions]="debugBrowser.listImportedSessions()"
+      [activeSessionId]="debugBrowser.activeSessionId"
+      (closeRequested)="closeDebugBrowser()"
+      (importRequested)="sessionShellCoordinator.importDebugSnapshot()"
+      (sessionRequested)="openImportedDebugSession($event)"></aily-chat-debug-home>
+    } @else {
+    @if (debugBrowser.isFlowVisible && activeImportedDebugView) {
+    <aily-chat-debug-flow
+      [sessionTitle]="activeImportedDebugView.title"
+      [sessionId]="activeImportedDebugView.sessionId"
+      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
+      [importedAt]="activeImportedDebugView.importedAt"
+      [events]="activeImportedDebugEvents"
+      (overviewRequested)="openImportedDebugOverview()"
+      (homeRequested)="openDebugBrowserHome()"
+      (closeRequested)="closeDebugBrowser()"></aily-chat-debug-flow>
+    } @else if (debugBrowser.isCacheVisible && activeImportedDebugView) {
+    <aily-chat-debug-cache
+      [sessionTitle]="activeImportedDebugView.title"
+      [sessionId]="activeImportedDebugView.sessionId"
+      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
+      [importedAt]="activeImportedDebugView.importedAt"
+      [events]="activeImportedDebugEvents"
+      (overviewRequested)="openImportedDebugOverview()"
+      (homeRequested)="openDebugBrowserHome()"
+      (closeRequested)="closeDebugBrowser()"></aily-chat-debug-cache>
+    } @else if (debugBrowser.isLogsVisible && activeImportedDebugView) {
+    <aily-chat-debug-logs
+      [sessionTitle]="activeImportedDebugView.title"
+      [sessionId]="activeImportedDebugView.sessionId"
+      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
+      [importedAt]="activeImportedDebugView.importedAt"
+      [events]="activeImportedDebugEvents"
+      (overviewRequested)="openImportedDebugOverview()"
+      (homeRequested)="openDebugBrowserHome()"
+      (closeRequested)="closeDebugBrowser()"></aily-chat-debug-logs>
+    } @else if (activeImportedDebugView) {
+    <aily-chat-debug-viewer
+      [view]="activeImportedDebugView"
+      [debugEvents]="activeImportedDebugEvents"
+      (homeRequested)="openDebugBrowserHome()"
+      (logsRequested)="openImportedDebugLogs()"
+      (flowRequested)="openImportedDebugFlow()"
+      (cacheRequested)="openImportedDebugCache()"
+      (closeRequested)="closeDebugBrowser()"></aily-chat-debug-viewer>
+    }
+    }
+    } @else {
     <!-- 对话内容 -->
     <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
       @if(vm.hasConversationContent){
@@ -393,6 +452,7 @@
     </div>
     @if(vm.showSettings){
     <aily-chat-settings (close)="sessionShellCoordinator.closeSettings()" (saved)="sessionShellCoordinator.closeSettings()"></aily-chat-settings>
+    }
     }
   </div>
   <app-login></app-login>

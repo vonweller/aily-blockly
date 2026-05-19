@@ -24,6 +24,11 @@ import {
   buildToolInvocationDisplaySummary,
   flattenToolInvocationDisplaySummary,
 } from '../../core/tool-invocation-formatter';
+import {
+  isEditSummaryToolName,
+  isSearchSummaryToolName,
+  normalizeReadSideToolName,
+} from '../../core/tool-name-normalizer';
 import type {
   ActivityApprovalDisplayData,
   ActivityApprovalSummaryDisplayData,
@@ -1107,30 +1112,23 @@ function extractEditTarget(summary: ActivityToolSummaryCandidate): string | unde
 }
 
 function isThinkingSummaryTool(toolName: string): boolean {
-  return isSearchSummaryTool(toolName) || toolName === 'read_file' || toolName === 'lint' || isEditSummaryTool(toolName);
+  const normalizedToolName = normalizeToolName(toolName);
+  return isSearchSummaryTool(normalizedToolName)
+    || normalizedToolName === 'read_file'
+    || normalizedToolName === 'lint'
+    || isEditSummaryTool(normalizedToolName);
 }
 
 function isSearchSummaryTool(toolName: string): boolean {
-  return toolName === 'grep_search'
-    || toolName === 'grep_tool'
-    || toolName === 'file_search'
-    || toolName === 'glob_search'
-    || toolName === 'glob_tool'
-    || toolName === 'semantic_search'
-    || toolName === 'fetch_webpage'
-    || toolName === 'web_search';
+  return isSearchSummaryToolName(toolName);
 }
 
 function isEditSummaryTool(toolName: string): boolean {
-  return toolName === 'create_file'
-    || toolName === 'edit_file'
-    || toolName === 'replace_string_in_file'
-    || toolName === 'multi_replace_string_in_file'
-    || toolName === 'delete_file';
+  return isEditSummaryToolName(toolName);
 }
 
 function normalizeToolName(toolName: string): string {
-  return toolName.trim();
+  return normalizeReadSideToolName(toolName);
 }
 
 function uniqueValues(values: readonly string[]): string[] {

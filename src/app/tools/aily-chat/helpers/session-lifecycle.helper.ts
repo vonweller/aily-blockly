@@ -17,6 +17,7 @@ import type {
 import type { LiveHostSessionRecord } from '../services/chat-history.service';
 import type {
   HostSessionRecord,
+  ImportedDebugSessionRecord,
 } from '../services/chat-history.service';
 import { AilyHost } from '../core/host';
 import { SkillRegistry } from '../core/skill-registry';
@@ -129,6 +130,26 @@ export class SessionLifecycleHelper {
     turnResponsesOverride?: readonly import('aily-lex/browser').TurnResponseTurn[];
   }): LiveHostSessionRecord | null {
     return this._hostSessionSaveBridge.buildHostSessionRecord(options);
+  }
+
+  async importDebugSnapshot(data: Uint8Array): Promise<ImportedDebugSessionRecord | null> {
+    const imported = this.ctx.chatHistoryService.importDebugSnapshot?.(data) ?? null;
+    if (!imported) {
+      return null;
+    }
+
+    await this.switchToSession(imported.sessionId, imported.hostRecord);
+    return imported;
+  }
+
+  async openImportedDebugSnapshot(sessionId: string): Promise<boolean> {
+    const imported = this.ctx.chatHistoryService.getImportedDebugSnapshot?.(sessionId) ?? null;
+    if (!imported) {
+      return false;
+    }
+
+    await this.switchToSession(imported.sessionId, imported.hostRecord);
+    return true;
   }
 
   async forkFromTurn(options: {
@@ -281,7 +302,7 @@ export class SessionLifecycleHelper {
     }
 
     // Agent 就绪后设置 sessionId（send() 用 sessionId 作为就绪标志）
-    this.ctx.chatService.currentSessionId = pendingSessionId;
+    this.setActiveSessionId(pendingSessionId);
     this.ctx.chatService.currentSessionTitle = '';
     const _curPath = AilyHost.get().project.currentProjectPath;
     const _rootPath = AilyHost.get().project.projectRootPath;
@@ -327,7 +348,7 @@ export class SessionLifecycleHelper {
     try {
       // 清理旧的 lex agent
       this.ctx.lexStream.agent.dispose();
-      this.ctx.chatService.currentSessionId = '';
+      this.setActiveSessionId('');
       this.ctx.chatService.currentSessionTitle = '';
       this.ctx.chatService.currentSessionPath = '';
       this.ctx.isSessionStarting = false;
@@ -361,6 +382,11 @@ export class SessionLifecycleHelper {
 
   private createSessionId(): string {
     return `lex-${Date.now()}`;
+  }
+
+  private setActiveSessionId(sessionId: string): void {
+    this.ctx.sessionId = sessionId;
+    this.ctx.chatService.currentSessionId = sessionId;
   }
 
   private resolveCurrentProjectPath(): string | null {
@@ -409,7 +435,7 @@ export class SessionLifecycleHelper {
     this.ctx.activeToolExecutions = 0;
 
     this.ctx.lexStream.agent.dispose();
-    this.ctx.chatService.currentSessionId = '';
+    this.setActiveSessionId('');
     this.ctx.chatService.currentSessionTitle = '';
     this.ctx.chatService.currentSessionPath = '';
     this.ctx.isSessionStarting = false;
@@ -471,7 +497,7 @@ export class SessionLifecycleHelper {
       throw err;
     }
 
-    this.ctx.chatService.currentSessionId = sessionId;
+    this.setActiveSessionId(sessionId);
     this.ctx.chatService.currentSessionTitle = '';
     const _curPath = AilyHost.get().project.currentProjectPath;
     const _rootPath = AilyHost.get().project.projectRootPath;

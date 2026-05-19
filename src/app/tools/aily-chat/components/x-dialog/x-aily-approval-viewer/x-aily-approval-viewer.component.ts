@@ -2,6 +2,10 @@ import { Component, Input, OnChanges, SimpleChanges, ChangeDetectionStrategy, Ch
 import { CommonModule } from '@angular/common';
 import type { ToolApprovalAction, ToolApprovalScope } from '../../../helpers/tool-approval-ui';
 import { AILY_CONFIRMATION_RESULT_EVENT } from '../../../helpers/interaction-events';
+import {
+  isTerminalCommandToolName,
+  normalizeReadSideToolName,
+} from '../../../core/tool-name-normalizer';
 import { ChatCommandPreviewComponent } from '../chat-command-preview/chat-command-preview.component';
 import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } from '../chat-confirmation-actions/chat-confirmation-actions.component';
 import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.component';
@@ -269,7 +273,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.kind = this.data.kind === 'confirmation' ? 'confirmation' : 'approval';
       this.askId = this.data.askId || '';
       this.toolCallId = this.data.toolCallId || '';
-      this.toolName = this.data.toolName || '';
+      this.toolName = normalizeReadSideToolName(this.data.toolName || '');
       this.title = this.data.title || '确认操作';
       this.subtitle = this.data.subtitle || '';
       this.message = this.data.message || '';
@@ -306,7 +310,7 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       return args.command.trim();
     }
 
-    if ((toolName === 'send_to_terminal') && typeof args.command === 'string') {
+    if ((normalizeReadSideToolName(toolName) === 'send_to_terminal') && typeof args.command === 'string') {
       return args.command;
     }
 
@@ -318,11 +322,11 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       return '';
     }
 
-    if ((toolName === 'run_terminal' || toolName === 'run_in_terminal') && typeof args.goal === 'string' && args.goal.trim()) {
+    if (isTerminalCommandToolName(toolName) && typeof args.goal === 'string' && args.goal.trim()) {
       return `目标：${args.goal.trim()}`;
     }
 
-    if (toolName === 'execute_command' && typeof args.cwd === 'string' && args.cwd.trim()) {
+    if (normalizeReadSideToolName(toolName) === 'execute_command' && typeof args.cwd === 'string' && args.cwd.trim()) {
       return `工作目录：${args.cwd.trim()}`;
     }
 
@@ -338,15 +342,17 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       return message;
     }
 
-    if (toolName === 'run_terminal' || toolName === 'run_in_terminal') {
+    const normalizedToolName = normalizeReadSideToolName(toolName);
+
+    if (isTerminalCommandToolName(normalizedToolName)) {
       return '执行前请确认此终端命令。';
     }
 
-    if (toolName === 'execute_command') {
+    if (normalizedToolName === 'execute_command') {
       return '执行前请确认此命令。';
     }
 
-    if (toolName === 'start_background_command') {
+    if (normalizedToolName === 'start_background_command') {
       return '该命令将在后台持续运行。';
     }
 

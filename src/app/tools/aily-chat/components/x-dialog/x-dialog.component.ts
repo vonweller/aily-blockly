@@ -72,6 +72,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Input() role = 'user';
   @Input() content = '';
   @Input() doing = false;
+  @Input() readOnly = false;
   /** 当前消息对应的 turn-native 容器 */
   @Input()
   set turnResponse(value: TurnResponseTurn | null) {
@@ -204,11 +205,11 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   /** 是否可显示操作栏（非 doing 的最后一条 aily 消息） */
   get canShowActions(): boolean {
-    return this.isLastAily && !this.effectiveDoing && this.role === 'aily';
+    return !this.readOnly && this.isLastAily && !this.effectiveDoing && this.role === 'aily';
   }
 
   get canShowLimitActions(): boolean {
-    return this.role !== 'user' && !this.effectiveDoing;
+    return !this.readOnly && this.role !== 'user' && !this.effectiveDoing;
   }
 
   get showFooterActions(): boolean {
@@ -336,7 +337,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get canRenderCheckpointAnchor(): boolean {
-    return this.role === 'user' && !!this.actionTurnId;
+    return !this.readOnly && this.role === 'user' && !!this.actionTurnId;
   }
   
   get isCurrentStreamingResponse(): boolean {
@@ -349,7 +350,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   /** 是否可编辑用户消息（非 doing 的 user 消息） */
   get canEditUserMessage(): boolean {
-    return this.role === 'user' && !this.effectiveDoing && !this.isWaiting && !!this.actionTurnId && !this.isRequestDisabled;
+    return !this.readOnly && this.role === 'user' && !this.effectiveDoing && !this.isWaiting && !!this.actionTurnId && !this.isRequestDisabled;
   }
 
   get isRequestDisabled(): boolean {

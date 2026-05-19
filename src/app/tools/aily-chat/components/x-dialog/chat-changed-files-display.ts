@@ -1,3 +1,5 @@
+import { isChangedFilesToolName as isNormalizedChangedFilesToolName } from '../../core/tool-name-normalizer';
+
 export type ChangedFilesTone = 'info' | 'success' | 'warn' | 'error' | 'neutral';
 
 export interface ChangedFileDisplayEntry {
@@ -17,11 +19,7 @@ export interface ChangedFilesDisplaySummary {
 }
 
 export function isChangedFilesToolName(toolName: string | undefined): boolean {
-  if (!toolName) {
-    return false;
-  }
-
-  return normalizeToolName(toolName) === 'get_changed_files';
+  return isNormalizedChangedFilesToolName(toolName);
 }
 
 export function collectChangedFilesEntriesFromToolMetadata(
@@ -234,10 +232,6 @@ function splitPath(path: string): { name: string; directory?: string } {
 
 function normalizePath(path: string): string {
   return path.replace(/\\+/g, '/').trim();
-}
-
-function normalizeToolName(toolName: string): string {
-  return toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
 }
 
 function getStructuredResultText(value: unknown): string | undefined {

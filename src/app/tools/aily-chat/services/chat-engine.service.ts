@@ -47,7 +47,7 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
-import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
+import type { MetricsSnapshot, TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 import { lexGenerateTitle } from '../core/lex-endpoint';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
@@ -404,6 +404,10 @@ export class ChatEngineService implements IChatContext {
     return createInteractionBudgetSnapshot(this.hostResponseProjection?.turnResponses ?? []);
   }
 
+  get contextCompactionMetricsSnapshot(): MetricsSnapshot | null {
+    return this.lexStream.compactionMetricsSnapshot;
+  }
+
   async continueCurrentExecution(): Promise<void> {
     const continuation = this.readLatestInteractionContinuation();
     const pendingState = continuation?.pendingState && typeof continuation.pendingState === 'object'
@@ -414,6 +418,13 @@ export class ChatEngineService implements IChatContext {
     }
 
     await this.resumeRestoredInteraction('继续', { kind: 'continue' });
+  }
+
+  async submitInteractionActionRequest(
+    content: string,
+    interactionAction: NonNullable<TurnRequest['metadata']>['interactionAction'],
+  ): Promise<void> {
+    await this.resumeRestoredInteraction(content, interactionAction);
   }
 
   get requestQuotaSnapshot(): RequestQuotaSnapshot | null {
@@ -1041,6 +1052,8 @@ Do not create non-existent boards and libraries.
   // ==================== 消息发送 ====================
 
   async send(sender: string, content: string, clear: boolean = true): Promise<void> {
+    await maybeAutoSwitchToDefaultModelAfterRateLimit(this);
+
     const prepared = this.sendCoordinator.prepareSend(sender, content);
     if (!prepared) return;
 
@@ -1071,7 +1084,11 @@ Do not create non-existent boards and libraries.
       return;
     }
 
-    this.lexStream.turn.begin(content, content, { interactionAction });
+    this.lexStream.turn.begin(
+      content,
+      content,
+      this.sendCoordinator?.applyRuntimePromptContext?.({ interactionAction }) ?? { interactionAction },
+    );
     await this.lexStream.turn.run(content, content);
     this.acceptLiveRequestQuotaState();
     this.refreshAuthQuotaStateAfterSuccessfulTurn();
@@ -1243,4 +1260,73 @@ Do not create non-existent boards and libraries.
   rejectToolExecution(toolCallId: string, reason?: string): void {
     this.interaction.rejectToolExecution(toolCallId, reason);
   }
+}
+
+async function maybeAutoSwitchToDefaultModelAfterRateLimit(engine: {
+  chatService?: {
+    currentModel?: ModelConfig | null;
+    getRateLimitAutoSwitchToAutoEnabled?: () => boolean;
+  };
+  hostResponseProjection?: HostResponseProjection | null;
+  ailyChatConfigService?: {
+    getDefaultModelPresetId: () => string;
+    resolvePresetModel: (presetId: string) => ModelConfig | null;
+  };
+  switchToModel?: (model: ModelConfig) => Promise<void>;
+}): Promise<void> {
+  if (!engine.chatService?.getRateLimitAutoSwitchToAutoEnabled?.()) {
+    return;
+  }
+
+  if (isDefaultAutoPresetSelected(engine.chatService.currentModel)) {
+    return;
+  }
+
+  const latestErrorCode = readLatestErrorCode(engine.hostResponseProjection);
+  if (!latestErrorCode?.startsWith('user_model_rate_limited')) {
+    return;
+  }
+
+  const configService = engine.ailyChatConfigService;
+  if (!configService) {
+    return;
+  }
+
+  const autoModel = configService.resolvePresetModel(configService.getDefaultModelPresetId());
+  if (!autoModel || typeof engine.switchToModel !== 'function') {
+    return;
+  }
+
+  await engine.switchToModel(autoModel);
+}
+
+function readLatestErrorCode(hostProjection: HostResponseProjection | null | undefined): string | undefined {
+  const turns = hostProjection?.turnResponses;
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return undefined;
+  }
+
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const parts = turns[turnIndex]?.response?.parts;
+    if (!Array.isArray(parts)) {
+      continue;
+    }
+
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex] as {
+        type?: string;
+        metadata?: { errorDetails?: { code?: unknown } };
+      };
+      if (part?.type !== 'error') {
+        continue;
+      }
+
+      const errorCode = part.metadata?.errorDetails?.code;
+      if (typeof errorCode === 'string' && errorCode.trim().length > 0) {
+        return errorCode;
+      }
+    }
+  }
+
+  return undefined;
 }

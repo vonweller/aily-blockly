@@ -9,6 +9,10 @@ import {
   buildToolInvocationDisplaySummary,
   flattenToolInvocationDisplaySummary,
 } from '../core/tool-invocation-formatter';
+import {
+  isTerminalCommandToolName,
+  normalizeReadSideToolName,
+} from '../core/tool-name-normalizer';
 
 export interface ToolApprovalRequest {
   toolCallId: string;
@@ -77,8 +81,9 @@ export interface ToolApprovalResult {
 export type ToolApprovalCallback = (request: ToolApprovalRequest) => Promise<ToolApprovalResult>;
 
 export function getToolApprovalTitle(toolName: string | undefined, fallbackTitle?: string): string {
-  switch (toolName) {
-    case 'run_terminal':
+  const normalizedToolName = normalizeReadSideToolName(toolName);
+
+  switch (normalizedToolName) {
     case 'run_in_terminal':
       return '运行终端命令';
     case 'send_to_terminal':
@@ -88,14 +93,14 @@ export function getToolApprovalTitle(toolName: string | undefined, fallbackTitle
     default:
       return fallbackTitle && !fallbackTitle.startsWith('确认执行: ')
         ? fallbackTitle
-        : toolName
-          ? `确认执行 ${toolName}`
+        : normalizedToolName
+          ? `确认执行 ${normalizedToolName}`
           : (fallbackTitle || '确认操作');
   }
 }
 
 export function getToolApprovalSubtitle(toolName: string | undefined, source?: string): string | undefined {
-  const normalizedToolName = toolName?.trim();
+  const normalizedToolName = normalizeReadSideToolName(toolName) || undefined;
   const normalizedSource = source?.trim();
 
   if (normalizedToolName && normalizedSource) {
@@ -106,9 +111,7 @@ export function getToolApprovalSubtitle(toolName: string | undefined, source?: s
 }
 
 export function getToolApprovalActions(toolName: string | undefined): readonly ToolApprovalAction[] {
-  switch (toolName) {
-    case 'run_terminal':
-    case 'run_in_terminal':
+  if (isTerminalCommandToolName(toolName)) {
       return [
         {
           id: 'session',
@@ -133,24 +136,24 @@ export function getToolApprovalActions(toolName: string | undefined): readonly T
           isSecondary: true,
         },
       ];
-    default:
-      return [
-        {
-          id: 'session',
-          scope: 'session',
-          label: '在当前对话中自动运行此工具',
-          description: '同一工具的后续请求将不再重复询问。',
-          tooltip: '当前对话中的同类工具请求将自动执行。',
-        },
-        {
-          id: 'workspace',
-          scope: 'workspace',
-          label: '在当前工作区中自动运行此工具',
-          description: '把此工具加入当前工作区级 permission rule。',
-          tooltip: '当前工作区中的同类工具请求将自动执行。',
-        },
-      ];
   }
+
+  return [
+    {
+      id: 'session',
+      scope: 'session',
+      label: '在当前对话中自动运行此工具',
+      description: '同一工具的后续请求将不再重复询问。',
+      tooltip: '当前对话中的同类工具请求将自动执行。',
+    },
+    {
+      id: 'workspace',
+      scope: 'workspace',
+      label: '在当前工作区中自动运行此工具',
+      description: '把此工具加入当前工作区级 permission rule。',
+      tooltip: '当前工作区中的同类工具请求将自动执行。',
+    },
+  ];
 }
 
 function buildApprovalFallbackDetail(
@@ -209,33 +212,34 @@ export function generateApprovalMessage(
   args: any,
   metadata?: Record<string, unknown> | null,
 ): { title: string; message: string } {
-  switch (toolName) {
-    case 'run_terminal':
+  const normalizedToolName = normalizeReadSideToolName(toolName);
+
+  switch (normalizedToolName) {
     case 'run_in_terminal':
       return {
-        title: getToolApprovalTitle(toolName),
+        title: getToolApprovalTitle(normalizedToolName),
         message: `即将运行终端命令：\n${args?.command || '(未知命令)'}${args?.goal ? '\n目标：' + args.goal : ''}`,
       };
     case 'send_to_terminal':
       return {
-        title: getToolApprovalTitle(toolName),
+        title: getToolApprovalTitle(normalizedToolName),
         message: `即将向终端发送输入：\n${args?.command || '(空输入 / 回车)'}`,
       };
     case 'kill_terminal':
       return {
-        title: getToolApprovalTitle(toolName),
+        title: getToolApprovalTitle(normalizedToolName),
         message: `即将结束终端会话：${args?.id || args?.terminalId || '(未知终端)'}`,
       };
     default:
       {
-        const title = getToolApprovalTitle(toolName);
-        const detail = buildApprovalFallbackDetail(toolName, args, metadata);
+        const title = getToolApprovalTitle(normalizedToolName);
+        const detail = buildApprovalFallbackDetail(normalizedToolName, args, metadata);
         return {
           title,
           message: detail
-            ? `即将执行工具 ${toolName || '(未知工具)'}：\n${detail}`
-            : toolName
-              ? `即将执行工具 ${toolName}，请确认是否继续。`
+            ? `即将执行工具 ${normalizedToolName || '(未知工具)'}：\n${detail}`
+            : normalizedToolName
+              ? `即将执行工具 ${normalizedToolName}，请确认是否继续。`
               : '即将执行工具操作，请确认是否继续。',
         };
       }
@@ -255,14 +259,15 @@ export function normalizeToolApprovalPresentation(input: {
   args?: any;
   metadata?: Record<string, unknown> | null;
 }): NormalizedToolApprovalPresentation {
-  const fallback = generateApprovalMessage(input.toolName, input.args, input.metadata);
+  const normalizedToolName = normalizeReadSideToolName(input.toolName);
+  const fallback = generateApprovalMessage(normalizedToolName, input.args, input.metadata);
   const allowAutoConfirm = input.allowAutoConfirm !== false;
-  const defaultActions = allowAutoConfirm ? getToolApprovalActions(input.toolName) : [];
+  const defaultActions = allowAutoConfirm ? getToolApprovalActions(normalizedToolName) : [];
   const combinationActions = allowAutoConfirm ? buildApproveCombinationActions(input.approveCombination) : [];
 
   return {
     title: coalesceNonEmptyString(input.title, fallback.title) || fallback.title,
-    subtitle: coalesceNonEmptyString(input.subtitle, getToolApprovalSubtitle(input.toolName, input.source)),
+    subtitle: coalesceNonEmptyString(input.subtitle, getToolApprovalSubtitle(normalizedToolName, input.source)),
     message: coalesceNonEmptyString(input.message, fallback.message) || fallback.message,
     actions: input.actions ?? [...combinationActions, ...defaultActions],
     primaryScope: input.primaryScope ?? 'once',
@@ -273,8 +278,9 @@ export function normalizeToolApprovalPresentation(input: {
 }
 
 export function normalizeToolApprovalRequest(input: ToolApprovalRequest): ToolApprovalRequest {
+  const normalizedToolName = normalizeReadSideToolName(input.toolName);
   const normalized = normalizeToolApprovalPresentation({
-    toolName: input.toolName,
+    toolName: normalizedToolName,
     source: input.source,
     title: input.title,
     subtitle: input.subtitle,
@@ -288,6 +294,7 @@ export function normalizeToolApprovalRequest(input: ToolApprovalRequest): ToolAp
 
   return {
     ...input,
+    toolName: normalizedToolName,
     title: normalized.title,
     subtitle: normalized.subtitle,
     message: normalized.message,

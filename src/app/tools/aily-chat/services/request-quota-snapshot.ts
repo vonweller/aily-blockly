@@ -34,7 +34,7 @@ export function createRequestRateLimitInputNotice(
     title: type === 'session'
       ? `You've used ${percentUsed}% of your session rate limit.`
       : `You've used ${percentUsed}% of your weekly rate limit.`,
-    subtitle: formatQuotaResetLabel(resetAt) ?? buildRateLimitNoticeSubtitle(type, resetAt),
+    subtitle: buildRateLimitNoticeSubtitle(type, resetAt),
     tone: 'info',
     iconClass: 'fa-light fa-circle-info',
     autoDismissOnMessage: true,
@@ -187,7 +187,65 @@ function toDisplayQuotaFromTurnSidecar(quotaSnapshot: TurnResponseQuotaSnapshot)
     };
   }
 
-  return null;
+  return buildCodeOnlyDisplayQuotaFromTurnSidecar(quotaSnapshot);
+}
+
+function buildCodeOnlyDisplayQuotaFromTurnSidecar(
+  quotaSnapshot: TurnResponseQuotaSnapshot,
+): RequestQuotaDisplayQuota | null {
+  const extended = quotaSnapshot as TurnResponseQuotaSnapshot & {
+    retryAfterMs?: number;
+  };
+  const retryAfterMs = typeof extended.retryAfterMs === 'number'
+    ? extended.retryAfterMs
+    : undefined;
+  const normalizedErrorCode = normalizeRequestQuotaErrorCode(quotaSnapshot.errorCode);
+
+  switch (quotaSnapshot.kind) {
+    case 'premium_models':
+      return { kind: 'premium_models', errorCode: quotaSnapshot.errorCode };
+    case 'premium_interactions':
+      return { kind: 'premium_interactions', errorCode: quotaSnapshot.errorCode };
+    case 'monthly':
+      return { kind: 'monthly', errorCode: quotaSnapshot.errorCode };
+    case 'daily':
+      return { kind: 'daily', errorCode: quotaSnapshot.errorCode };
+    case 'session':
+      return { kind: 'session', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    case 'weekly':
+      return { kind: 'weekly', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    case 'burst':
+      return { kind: 'burst', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    default:
+      break;
+  }
+
+  switch (normalizedErrorCode) {
+    case 'billing_not_configured':
+    case 'overage_limit_reached':
+    case 'premium_model_quota_exceeded':
+      return { kind: 'premium_models', errorCode: quotaSnapshot.errorCode };
+    case 'interaction_monthly_quota_exceeded':
+    case 'quota_exceeded':
+    case 'free_quota_exceeded':
+      return { kind: 'monthly', errorCode: quotaSnapshot.errorCode };
+    case 'interaction_daily_limit_exceeded':
+      return { kind: 'daily', errorCode: quotaSnapshot.errorCode };
+    case 'interaction_session_rate_limited':
+    case 'user_global_rate_limited':
+    case 'user_model_rate_limited':
+      return { kind: 'session', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    case 'interaction_weekly_rate_limited':
+      return { kind: 'weekly', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    case 'interaction_burst_rate_limited':
+    case 'agent_mode_limit_exceeded':
+    case 'integration_rate_limited':
+    case 'model_overloaded':
+    case 'upstream_provider_rate_limit':
+      return { kind: 'burst', errorCode: quotaSnapshot.errorCode, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    default:
+      return null;
+  }
 }
 
 function findServiceQuotaSnapshot(serviceState: RequestQuotaServiceState | null): RequestQuotaDisplayQuota | null {
@@ -414,24 +472,24 @@ function buildRequestQuotaExceededNoticeTitle(
     case 'overage_limit_reached':
       return 'Additional premium requests are unavailable.';
     case 'premium_model_quota_exceeded':
-      return 'Premium model quota exceeded.';
+      return "You've reached your premium model quota.";
     case 'quota_exceeded':
     case 'free_quota_exceeded':
     case 'interaction_monthly_quota_exceeded':
-      return 'Monthly limit reached.';
+      return "You've reached your monthly interaction quota.";
     case 'interaction_daily_limit_exceeded':
-      return 'Daily limit reached.';
+      return "You've reached your daily interaction limit.";
     default:
       switch (quota.kind) {
         case 'premium_models':
-          return 'Premium model quota exceeded.';
+          return "You've reached your premium model quota.";
         case 'premium_interactions':
-          return 'Premium interactions quota exceeded.';
+          return "You've reached your premium interactions quota.";
         case 'daily':
-          return 'Daily limit reached.';
+          return "You've reached your daily interaction limit.";
         case 'monthly':
         default:
-          return 'Monthly limit reached.';
+          return "You've reached your monthly interaction quota.";
       }
   }
 }
@@ -446,24 +504,24 @@ function buildRequestQuotaExceededNoticeSubtitle(
     case 'overage_limit_reached':
       return appendQuotaResetLabel('You cannot accrue additional premium requests right now.', quota.resetAt);
     case 'premium_model_quota_exceeded':
-      return appendQuotaResetLabel('You have reached the premium model quota for the current period.', quota.resetAt);
+      return appendQuotaResetLabel('Try again after your premium model quota resets.', quota.resetAt);
     case 'interaction_daily_limit_exceeded':
-      return appendQuotaResetLabel('You have reached the daily interaction limit.', quota.resetAt);
+      return appendQuotaResetLabel('Try again after your daily limit resets.', quota.resetAt);
     case 'quota_exceeded':
     case 'free_quota_exceeded':
     case 'interaction_monthly_quota_exceeded':
-      return appendQuotaResetLabel('You have reached the monthly interaction quota.', quota.resetAt);
+      return appendQuotaResetLabel('Try again after your monthly quota resets.', quota.resetAt);
     default:
       switch (quota.kind) {
         case 'premium_models':
-          return appendQuotaResetLabel('You have reached the premium model quota for the current period.', quota.resetAt);
+          return appendQuotaResetLabel('Try again after your premium model quota resets.', quota.resetAt);
         case 'premium_interactions':
-          return appendQuotaResetLabel('You have reached the premium interactions quota for the current period.', quota.resetAt);
+          return appendQuotaResetLabel('Try again after your premium interactions quota resets.', quota.resetAt);
         case 'daily':
-          return appendQuotaResetLabel('You have reached the daily interaction limit.', quota.resetAt);
+          return appendQuotaResetLabel('Try again after your daily limit resets.', quota.resetAt);
         case 'monthly':
         default:
-          return appendQuotaResetLabel('You have reached the monthly interaction quota.', quota.resetAt);
+          return appendQuotaResetLabel('Try again after your monthly quota resets.', quota.resetAt);
       }
   }
 }
@@ -474,9 +532,9 @@ function buildRequestRateLimitedNoticeTitle(
 ): string {
   switch (normalizedErrorCode) {
     case 'agent_mode_limit_exceeded':
-      return 'You have reached the current agent mode rate limit.';
+      return "You've reached the current agent mode rate limit.";
     case 'user_global_rate_limited':
-      return 'You have reached the current global rate limit.';
+      return "You've hit your session rate limit.";
     case 'user_model_rate_limited':
       return "You've hit the rate limit for this model.";
     case 'integration_rate_limited':
@@ -487,9 +545,9 @@ function buildRequestRateLimitedNoticeTitle(
     default:
       switch (quota.kind) {
         case 'session':
-          return 'You have reached the current session rate limit.';
+          return "You've hit your session rate limit.";
         case 'weekly':
-          return 'You have reached the current weekly rate limit.';
+          return "You've reached your weekly rate limit.";
         case 'burst':
         default:
           return 'You are sending requests too quickly.';
@@ -506,28 +564,41 @@ function buildRequestRateLimitedNoticeSubtitle(
   if (retryAfter && resetLabel) {
     return `${retryAfter} ${resetLabel}`;
   }
+  const fallback = getRequestRateLimitedFallbackSubtitle(quota, normalizedErrorCode);
   if (resetLabel) {
-    return resetLabel;
+    return `${fallback} ${resetLabel}`;
   }
   if (retryAfter) {
     return retryAfter;
   }
 
+  return fallback;
+}
+
+function getRequestRateLimitedFallbackSubtitle(
+  quota: RequestQuotaDisplayQuota,
+  normalizedErrorCode: string | undefined,
+): string {
   switch (normalizedErrorCode) {
+    case 'agent_mode_limit_exceeded':
+      return 'Please wait for the agent mode limit to reset before trying again.';
+    case 'user_global_rate_limited':
+      return 'Please wait for your session rate limit to reset before trying again.';
+    case 'user_model_rate_limited':
+      return 'Please wait for this model rate limit to reset before trying again.';
     case 'integration_rate_limited':
-      return 'Please wait a moment and try again.';
     case 'model_overloaded':
     case 'upstream_provider_rate_limit':
       return 'Please wait a moment and try again.';
     default:
       switch (quota.kind) {
         case 'session':
-          return 'Wait for the session rate limit to reset and try again.';
+          return 'Please wait for your session rate limit to reset before trying again.';
         case 'weekly':
-          return 'Wait for the weekly rate limit to reset and try again.';
+          return 'Please wait for your weekly rate limit to reset before trying again.';
         case 'burst':
         default:
-          return 'Wait a moment before trying again.';
+          return 'Please wait a moment before trying again.';
       }
   }
 }

@@ -2,6 +2,10 @@ import type { IAgentLifecycle, IChatCoordination, ISessionAccess } from '../core
 import { buildUserTurnPayload, type UserTurnPayload } from './chat-user-turn-payload';
 import { buildExplicitAgentInvocationPayload } from './explicit-agent-invocation';
 import type { RequestUserSelectedTools } from './lex-agent-bootstrap';
+import {
+  applyTurnRequestPromptContextSnapshot,
+  captureTurnRequestPromptContextSnapshot,
+} from './turn-request-prompt-context';
 
 export interface PreparedUserSend extends UserTurnPayload {
   text: string;
@@ -102,13 +106,24 @@ export class ChatSendCoordinator {
           userSelectedTools,
         }
       : requestMetadata;
+    const requestMetadataWithPromptContext = this.applyRuntimePromptContext(finalRequestMetadata);
     this.ctx.pendingEditFeedback = null;
     this.ctx.msg.appendMessage('user', payload.displayText);
 
     return {
       text,
       ...payload,
-      ...(finalRequestMetadata ? { requestMetadata: finalRequestMetadata } : {}),
+      ...(requestMetadataWithPromptContext ? { requestMetadata: requestMetadataWithPromptContext } : {}),
     };
+  }
+
+  applyRuntimePromptContext(
+    requestMetadata?: UserTurnPayload['requestMetadata'],
+  ): UserTurnPayload['requestMetadata'] {
+    const snapshot = captureTurnRequestPromptContextSnapshot({
+      getSessionSnapshot: () => this.ctx.lexStream?.session?.snapshot?.() ?? null,
+    });
+
+    return applyTurnRequestPromptContextSnapshot(requestMetadata, snapshot);
   }
 }

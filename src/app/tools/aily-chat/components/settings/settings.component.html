@@ -35,6 +35,9 @@
                                         @if(getPresetBillingLabel(preset); as billingLabel) {
                                         <span class="model-meta-pill">{{ billingLabel }}</span>
                                         }
+                                        @if(getPresetProviderContextManagementLabel(preset); as providerContextManagementLabel) {
+                                        <span class="model-meta-pill">{{ providerContextManagementLabel }}</span>
+                                        }
                                         @if(getPresetReasoningLabel(preset); as reasoningLabel) {
                                         <span class="model-meta-pill">{{ reasoningLabel }}</span>
                                         }
@@ -103,6 +106,9 @@
                                         }
                                         @if(getModelBillingLabel(model); as billingLabel) {
                                         <span class="model-meta-pill">{{ billingLabel }}</span>
+                                        }
+                                        @if(getModelProviderContextManagementLabel(model); as providerContextManagementLabel) {
+                                        <span class="model-meta-pill">{{ providerContextManagementLabel }}</span>
                                         }
                                     </div>
                                     @if(model.description) {

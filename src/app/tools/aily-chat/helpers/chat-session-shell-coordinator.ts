@@ -65,6 +65,7 @@ export class ChatSessionShellCoordinator {
       saveCurrentSession: () => void;
       getHistory: () => void | Promise<void>;
       newChat: () => void | Promise<void>;
+      importDebugSnapshot: () => void | Promise<void>;
       refreshHistoryList: () => void;
       markForCheck: () => void;
       setCompleted: () => void;
@@ -121,6 +122,15 @@ export class ChatSessionShellCoordinator {
     }
 
     void this.callbacks.newChat();
+  }
+
+  importDebugSnapshot(): void {
+    if (this.deps.editCheckpointService.hasUnsavedEdits()) {
+      void this.confirmUnsavedEditsBeforeSwitch(() => this.callbacks.importDebugSnapshot());
+      return;
+    }
+
+    void this.callbacks.importDebugSnapshot();
   }
 
   private async confirmUnsavedEditsBeforeSwitch(onConfirm: () => void | Promise<void>): Promise<void> {

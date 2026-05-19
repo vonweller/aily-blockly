@@ -8,8 +8,10 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
+import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
+import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../core/tool-name-normalizer';
 import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
@@ -25,7 +27,7 @@ import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
-import type { PersistedHostResponseData } from '../services/chat-history.service';
+import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
 import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
@@ -45,6 +47,7 @@ import {
   GitAwareWorkspaceChangeCollector,
   type IHostToolProvider,
   type IToolContribution,
+  type IMetricsService,
 } from 'aily-lex/browser';
 import {
   cloneTurnResponseRoundSummaryCarrier,
@@ -52,6 +55,10 @@ import {
   getTurnResponseResolvedModelName,
   normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
+import {
+  cloneSessionRequestContextSnapshot,
+  readTurnRequestPromptContextSnapshot,
+} from './turn-request-prompt-context';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -63,6 +70,7 @@ export interface LexRuntimeModelConfig {
   presetId?: string;
   contextWindowTokens?: number;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+  providerContextManagementSupport?: ProviderContextManagementSupport;
 }
 
 export interface LexRuntimeApiConfig {
@@ -73,12 +81,14 @@ export interface LexRuntimeApiConfig {
 }
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
+const COPILOT_SUMMARIZER_PRESET_ID = 'auto-fast';
 
 interface ResolvePersistedLexSessionOptions {
   lex: AilyLexModule;
   sessionId: string;
   cwd?: string;
   turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[];
+  hostRecord?: HostSessionRecord | null;
 }
 
 interface BootstrapLexAgentOptions {
@@ -87,6 +97,7 @@ interface BootstrapLexAgentOptions {
   sessionId?: string;
   askHandler?: (askContext: any) => Promise<boolean>;
   onSubagentEvent?: (event: any) => void;
+  metrics?: IMetricsService;
 }
 
 export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel'>
@@ -149,6 +160,7 @@ type ToolCatalogSource = 'core' | 'contributed' | 'mcp';
 
 export interface RuntimeToolCatalogEntry {
   readonly name: string;
+  readonly runtimeName?: string;
   readonly description: string;
   readonly agents: readonly ToolConfigAgent[];
   readonly source: ToolCatalogSource;
@@ -182,7 +194,8 @@ function isToolEnabledForAgent(
   toolName: string,
 ): boolean {
   const config = configService.getAgentToolsConfig(agentName);
-  if (config?.disabledTools?.includes(toolName)) {
+  const normalizedToolName = normalizeGovernanceToolName(toolName);
+  if (config?.disabledTools?.includes(normalizedToolName)) {
     return false;
   }
 
@@ -264,6 +277,7 @@ function mergeRuntimeToolCatalogEntries(entries: readonly RuntimeToolCatalogEntr
 
     merged.set(entry.name, {
       name: entry.name,
+      runtimeName: existing.runtimeName ?? entry.runtimeName,
       description: existing.description || entry.description,
       source: existing.source,
       agents: nextAgents,
@@ -281,12 +295,14 @@ function mergeRuntimeToolCatalogEntries(entries: readonly RuntimeToolCatalogEntr
 }
 
 function getCatalogDescription(name: string): string {
-  return TOOL_SETTINGS_CATALOG.find(tool => tool.name === name)?.description || name;
+  const normalizedName = normalizeGovernanceToolName(name);
+  return TOOL_SETTINGS_CATALOG.find(tool => normalizeGovernanceToolName(tool.name) === normalizedName)?.description || name;
 }
 
 function getRuntimeCoreToolCatalogEntries(): RuntimeToolCatalogEntry[] {
   return [...LEX_CORE_SAFE_TOOLS].sort((left, right) => left.localeCompare(right)).map(toolName => ({
-    name: toolName,
+    name: normalizeGovernanceToolName(toolName),
+    runtimeName: toolName,
     description: getCatalogDescription(toolName),
     agents: [MAIN_AGENT_TYPE],
     source: 'core' as const,
@@ -296,8 +312,9 @@ function getRuntimeCoreToolCatalogEntries(): RuntimeToolCatalogEntry[] {
 function getRuntimeContributedToolCatalogEntries(cwd = ''): RuntimeToolCatalogEntry[] {
   const { toolProvider } = createBlocklyStandardHostBinding(cwd);
   return toolProvider.contributeTools().map(contribution => ({
-    name: contribution.name,
-    description: contribution.description || contribution.name,
+    name: normalizeGovernanceToolName(contribution.name),
+    runtimeName: contribution.name,
+    description: contribution.description || getCatalogDescription(contribution.name),
     agents: getContributionAgents(contribution),
     source: 'contributed' as const,
   }));
@@ -307,7 +324,8 @@ function getRuntimeMcpToolCatalogEntries(tools: readonly any[] | undefined): Run
   return (tools || []).map(tool => {
     const normalized = normalizeMcpTool(tool);
     return {
-      name: normalized.name,
+      name: normalizeGovernanceToolName(normalized.name),
+      runtimeName: normalized.name,
       description: normalized.description || normalized.name,
       agents: [MAIN_AGENT_TYPE],
       source: 'mcp' as const,
@@ -349,7 +367,8 @@ export function getUserSelectedToolsForRequest(
   const configService = resolveAgentToolConfigAccessor(ctx);
   const userSelectedTools: Record<string, boolean> = {};
   for (const entry of catalogEntries) {
-    userSelectedTools[entry.name] = isToolEnabledForAgent(configService, normalizedAgentId, entry.name);
+    const runtimeToolName = entry.runtimeName || toRuntimeGovernanceToolName(entry.name) || entry.name;
+    userSelectedTools[runtimeToolName] = isToolEnabledForAgent(configService, normalizedAgentId, entry.name);
   }
 
   return userSelectedTools;
@@ -785,18 +804,21 @@ export function getLexRuntimeLLMConfig(
 export async function resolvePersistedLexSessionSnapshot(
   options: ResolvePersistedLexSessionOptions,
 ): Promise<import('aily-lex/browser').SessionSnapshot | null> {
-  const { lex, sessionId, cwd = '', turnResponses } = options;
+  const { lex, sessionId, cwd = '', turnResponses, hostRecord } = options;
 
   try {
     const storedSnapshot = await loadStoredLexSessionSnapshot(lex, sessionId, cwd);
     if (storedSnapshot) {
-      return storedSnapshot as import('aily-lex/browser').SessionSnapshot;
+      const { compaction: _legacyCompaction, ...snapshotWithoutLegacyCompaction } = storedSnapshot as import('aily-lex/browser').SessionSnapshot & {
+        compaction?: unknown;
+      };
+      return snapshotWithoutLegacyCompaction as import('aily-lex/browser').SessionSnapshot;
     }
   } catch (err) {
     console.warn('[LexBootstrap] 读取标准 snapshot 失败:', err);
   }
 
-  const turnResponseSnapshot = buildTurnResponseLexSessionSnapshot(turnResponses, sessionId);
+  const turnResponseSnapshot = buildTurnResponseLexSessionSnapshot(turnResponses, sessionId, hostRecord ?? null);
   if (turnResponseSnapshot) {
     return turnResponseSnapshot;
   }
@@ -838,6 +860,7 @@ export function buildLexEndpoint(
   }
 
   const apiEndpoint = AilyHost.get().config?.apiEndpoint || '';
+  const providerContextManagementSupport = currentModel?.providerContextManagementSupport;
   return new lex.AilyServicesEndpoint({
     baseUrl: apiEndpoint,
     authTokenProvider: () => {
@@ -857,6 +880,7 @@ export function buildLexEndpoint(
       };
     },
     interactionBudget: buildInteractionBudgetConfig(apiConfig),
+    ...(providerContextManagementSupport ? { providerContextManagementSupport } : {}),
   });
 }
 
@@ -889,10 +913,21 @@ export function buildLexModelConfig(
   };
 }
 
+export function buildLexSummarizerModelConfig(
+  currentModel?: LexRuntimeModelConfig | null,
+  chatConfigService?: { resolvePresetModel?: (presetId: string | null | undefined) => LexRuntimeModelConfig | null } | null,
+  maxOutputTokens = 8192,
+): any {
+  const summarizerRuntimeModel = typeof chatConfigService?.resolvePresetModel === 'function'
+    ? chatConfigService.resolvePresetModel(COPILOT_SUMMARIZER_PRESET_ID) ?? currentModel
+    : currentModel;
+  return buildLexModelConfig(summarizerRuntimeModel, maxOutputTokens);
+}
+
 export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
 ): BlocklyLexAgentInstance {
-  const { ctx, lex, sessionId, askHandler, onSubagentEvent } = options;
+  const { ctx, lex, sessionId, askHandler, onSubagentEvent, metrics } = options;
   const cwd = ctx.prjPath || ctx.prjRootPath || '';
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd);
   attachBlocklyCompatibilityExtensions(adapter);
@@ -995,6 +1030,9 @@ export function bootstrapBlocklyLexAgent(
     host: adapter,
     endpoint: buildLexEndpoint(lex, ctx.currentModel, ctx.ailyChatConfigService),
     model: buildLexModelConfig(ctx.currentModel),
+    summarizerModel: buildLexSummarizerModelConfig(ctx.currentModel, ctx.ailyChatConfigService),
+    contextCompactionArchitecture: 'copilot',
+    copilotInlineSummarization: true,
     sessionId: sessionId || ctx.sessionId,
     sessionStorage,
     capabilities: adapter.capabilities,
@@ -1008,7 +1046,7 @@ export function bootstrapBlocklyLexAgent(
     hooks: {
       askHandler: askHandler ?? (async () => false),
       onBeforeToolExecution: async (toolName: string, input: Record<string, unknown>) => {
-        if (toolName !== 'run_terminal') return { action: 'allow' as const };
+        if (toolName !== 'run_in_terminal') return { action: 'allow' as const };
         const cmd = String(input['command'] || '');
         const isInstall = /\bnpm\s+(install|i|ci)\b/.test(cmd);
         const isUninstall = /\bnpm\s+uninstall\b/.test(cmd);
@@ -1024,7 +1062,7 @@ export function bootstrapBlocklyLexAgent(
         return { action: 'allow' as const };
       },
       onAfterToolExecution: async (toolName: string, result: unknown) => {
-        if (toolName !== 'run_terminal' || !pendingNpmCommand) return { action: 'continue' as const };
+        if (toolName !== 'run_in_terminal' || !pendingNpmCommand) return { action: 'continue' as const };
         const npmCmd = pendingNpmCommand;
         pendingNpmCommand = null;
         const isError = (result as any)?.isError ?? false;
@@ -1063,6 +1101,7 @@ export function bootstrapBlocklyLexAgent(
     permissionPolicy,
     permissionMode: 'default',
     terminalPolicy,
+    metrics,
   });
 
   attachBlocklyPostCreateExtensions(agent, adapter, onSubagentEvent);
@@ -1440,6 +1479,7 @@ function normalizeMcpTool(tool: any): any {
 function buildTurnResponseLexSessionSnapshot(
   turnResponses: readonly import('aily-lex/browser').TurnResponseTurn[] | undefined,
   sessionId: string,
+  hostRecord?: HostSessionRecord | null,
 ): import('aily-lex/browser').SessionSnapshot | null {
   if (!turnResponses?.length) {
     return null;
@@ -1512,24 +1552,60 @@ function buildTurnResponseLexSessionSnapshot(
 
   const normalizedLexTurns = applyPersistedRoundSummariesOnTurns(lexTurns, turnResponses);
   const latestContinuation = turnResponses[turnResponses.length - 1]?.response?.continuation;
+  const latestRequestSnapshot = findLatestTurnRequestPromptContextSnapshot(turnResponses);
 
   const interactionContinuation = shouldPersistInteractionContinuation(latestContinuation)
     ? clonePersistableInteractionContinuation(latestContinuation)
     : undefined;
+  const requestContext = cloneSessionRequestContextSnapshot(
+    hostRecord?.metadata?.requestContext
+    ?? latestRequestSnapshot?.requestContext,
+  );
+  const activeSkillNames = normalizeActiveSkillNames(
+    hostRecord?.metadata?.activeSkillNames
+    ?? latestRequestSnapshot?.activeSkillNames,
+  );
+  const normalizedRequestContext = interactionContinuation
+    ? {
+        ...(requestContext ?? {}),
+        interactionContinuation,
+      }
+    : requestContext;
 
   return {
     sessionId,
     turns: normalizedLexTurns,
-    ...(interactionContinuation ? {
-      requestContext: {
-        directToolReferences: [],
-        interactionContinuation,
-      },
-    } : {}),
+    ...(normalizedRequestContext ? { requestContext: normalizedRequestContext } : {}),
+    ...(activeSkillNames.length > 0 ? { activeSkillNames } : {}),
     revision: 0,
     createdAt: lexTurns[0]?.createdAt ?? Date.now(),
     updatedAt: turnResponses[turnResponses.length - 1]?.updatedAt ?? Date.now(),
   };
+}
+
+function findLatestTurnRequestPromptContextSnapshot(
+  turnResponses: readonly import('aily-lex/browser').TurnResponseTurn[],
+): ReturnType<typeof readTurnRequestPromptContextSnapshot> {
+  for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+    const snapshot = readTurnRequestPromptContextSnapshot(turnResponses[index]?.request?.metadata);
+    if (snapshot) {
+      return snapshot;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeActiveSkillNames(value: readonly string[] | undefined): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    value
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map(entry => entry.trim()),
+  )).sort((left, right) => left.localeCompare(right));
 }
 
 interface PersistedRoundSummaryCarrier {

@@ -32,7 +32,7 @@ import { LexRuntimeConfigBridge } from './lex-runtime-config-bridge';
 import { LexRenderEventBridge } from './lex-render-event-bridge';
 import { LexSessionRestoreBridge } from './lex-session-restore-bridge';
 import { LexSessionFacade } from './lex-session-facade';
-import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { IMetricsService, MetricsSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { IHostStreamListener } from './host-turn-response-state';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
@@ -94,6 +94,9 @@ export class LexOwnerFacade {
   private readonly _sessionFacade: LexOwnerSessionAccess;
   /** live turn-native 响应聚合器 */
   private readonly _renderEventBridge: LexOwnerRenderBridge;
+  /** host-owned compaction metrics reused across same-session agent rebuilds */
+  private _compactionMetricsService: IMetricsService | null = null;
+  private _compactionMetricsSessionId: string | null = null;
 
   get agent(): LexOwnerAgentAccess {
     return this._agentLifecycleBridge;
@@ -123,6 +126,13 @@ export class LexOwnerFacade {
     return this._sessionFacade;
   }
 
+  get compactionMetricsSnapshot(): MetricsSnapshot | null {
+    return this._compactionMetricsService?.snapshot()
+      ?? this._agentLifecycleBridge.getHandle()?.getMetricsSnapshot?.()
+      ?? this._agentLifecycleBridge.getAgent()?.getMetricsSnapshot?.()
+      ?? null;
+  }
+
   get turnResponses(): readonly TurnResponseTurn[] {
     return this._renderEventBridge.turnResponses;
   }
@@ -136,7 +146,9 @@ export class LexOwnerFacade {
   }
 
   async compactConversation(): Promise<boolean> {
-    const changed = await this._agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
+    const changed = await this._agentLifecycleBridge.getHandle()?.compactConversationOnDemand?.()
+      ?? await this._agentLifecycleBridge.getAgent()?.compactConversationOnDemand?.()
+      ?? await this._agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
       ?? await this._agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.()
       ?? false;
     this._flushPendingEvents();
@@ -170,6 +182,7 @@ export class LexOwnerFacade {
         ctx: this.ctx,
         lex,
         sessionId,
+        metrics: this._resolveCompactionMetricsService(lex, sessionId),
         askHandler: (askContext) => askConfirmationBridge.handleAskConfirmation(askContext),
         onSubagentEvent: (event) => this._uiEventBridge.processEvent(event, 'subagent'),
       }),
@@ -277,6 +290,15 @@ export class LexOwnerFacade {
 
   private _flushPendingEvents(): void {
     this._turnExecutionBridge.flushPendingEvents(this._sessionPersistenceBridge.drainPendingEvents());
+  }
+
+  private _resolveCompactionMetricsService(lex: AilyLexModule, sessionId: string): IMetricsService {
+    if (!this._compactionMetricsService || this._compactionMetricsSessionId !== sessionId) {
+      this._compactionMetricsService = new lex.InMemoryMetricsService();
+      this._compactionMetricsSessionId = sessionId;
+    }
+
+    return this._compactionMetricsService;
   }
 }
 

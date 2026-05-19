@@ -102,15 +102,18 @@ export class HostSessionRestoreBridge {
   }
 
   async restore(hostRecord: HostSessionRecord): Promise<void> {
-    this.restoreSessionMetadata(hostRecord);
+    const sanitizedHostRecord = sanitizeHostRecordForRestore(hostRecord);
+
+    this.restoreSessionMetadata(sanitizedHostRecord);
 
     await this.ctx.lexStream.session.restore(
       this.ctx.sessionId,
-      hostRecord.turnResponses,
+      sanitizedHostRecord.turnResponses,
+      sanitizedHostRecord,
     );
 
     const restoredSnapshot = this.ctx.lexStream.session.snapshot?.() ?? null;
-    const turnResponses = this.resolveTurnResponsesForRestore(hostRecord, restoredSnapshot) ?? [];
+    const turnResponses = this.resolveTurnResponsesForRestore(sanitizedHostRecord, restoredSnapshot) ?? [];
     this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
     const hostResponseState = buildHostProjectionStateFromPersistedRecord({
       turnResponses,
@@ -334,6 +337,63 @@ function applySessionSnapshotRoundsToTurnResponses(
       rounds: cloneSessionSnapshotRounds(snapshotTurn.rounds ?? [], turn.rounds ?? []),
     };
   });
+}
+
+function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessionRecord {
+  if (!hostRecord.turnResponses?.length) {
+    return hostRecord;
+  }
+
+  const hasTransientRuntimeState = hostRecord.turnResponses.some(turn =>
+    turn.response.parts.some(part => isTransientRuntimeStatePart(part)),
+  );
+  if (!hasTransientRuntimeState) {
+    return hostRecord;
+  }
+
+  return {
+    ...hostRecord,
+    turnResponses: hostRecord.turnResponses.map(turn => {
+      if (!turn.response.parts.some(part => isTransientRuntimeStatePart(part))) {
+        return turn;
+      }
+
+      return sanitizeTurnResponseForRestore(turn);
+    }),
+  };
+}
+
+function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTurn {
+  const clonedTurn = cloneJsonLikeValue(turn);
+
+  return {
+    ...clonedTurn,
+    response: {
+      ...clonedTurn.response,
+      parts: clonedTurn.response.parts.filter(part => !isTransientRuntimeStatePart(part)),
+    },
+  };
+}
+
+function cloneJsonLikeValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => cloneJsonLikeValue(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => [key, cloneJsonLikeValue(entryValue)]),
+    ) as T;
+  }
+
+  return value;
+}
+
+function isTransientRuntimeStatePart(
+  part: TurnResponseTurn['response']['parts'][number],
+): boolean {
+  return part.type === 'state'
+    && (part.kind === 'compaction' || part.kind === 'provider_context_management');
 }
 
 function cloneSessionSnapshotRounds(

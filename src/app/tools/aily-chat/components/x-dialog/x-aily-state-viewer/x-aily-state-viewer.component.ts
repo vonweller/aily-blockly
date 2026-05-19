@@ -1025,6 +1025,9 @@ export class XAilyStateViewerComponent implements OnChanges {
       case 'compaction':
         this.buildCompactionDetails(metadata);
         break;
+      case 'provider_context_management':
+        this.buildProviderContextManagementDetails(metadata);
+        break;
       default:
         break;
     }
@@ -1143,6 +1146,17 @@ export class XAilyStateViewerComponent implements OnChanges {
   private buildCompactionDetails(metadata: Record<string, unknown>): void {
     const projection = buildStandardStateViewerProjection({
       kind: 'compaction',
+      id: this.data?.id,
+      metadata,
+      preparedDetailSections: this.preparedDetailSections,
+    });
+    this.pushSummaryBadges(projection.badges);
+    this.pushDetailSections(projection.sections);
+  }
+
+  private buildProviderContextManagementDetails(metadata: Record<string, unknown>): void {
+    const projection = buildStandardStateViewerProjection({
+      kind: 'provider_context_management',
       id: this.data?.id,
       metadata,
       preparedDetailSections: this.preparedDetailSections,

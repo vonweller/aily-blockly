@@ -1,3 +1,5 @@
+import { normalizeReadSideToolName } from './tool-name-normalizer';
+
 export interface ToolInvocationDisplaySummary {
   label: string;
   subtitle?: string;
@@ -9,7 +11,7 @@ export function buildToolInvocationDisplaySummary(input: {
   metadata?: Record<string, unknown> | null;
   result?: any;
 }): ToolInvocationDisplaySummary | undefined {
-  const cleanToolName = cleanToolNamePrefix(input.toolName);
+  const cleanToolName = normalizeFormatterToolName(input.toolName);
   const args = inferToolArgs(input.args, cleanToolName, input.metadata);
 
   switch (cleanToolName) {
@@ -26,6 +28,8 @@ export function buildToolInvocationDisplaySummary(input: {
       return buildSemanticSearchSummary(args);
     case 'create_file':
       return buildPathSummary('Created', args);
+    case 'write_file':
+      return buildPathSummary('Updated', args);
     case 'create_folder':
     case 'create_directory':
       return buildPathSummary('Created', args, 'folder');
@@ -46,7 +50,6 @@ export function buildToolInvocationDisplaySummary(input: {
     case 'check_exists':
       return { label: `Checked ${formatPathLeaf(getPrimaryPath(args), args?.type === 'folder' ? 'folder' : 'path')}` };
     case 'run_in_terminal':
-    case 'run_terminal':
     case 'execute_command':
     case 'start_background_command':
       return buildCommandSummary('Ran', args);
@@ -641,6 +644,7 @@ function inferToolArgs(
 
   switch (toolName) {
     case 'read_file':
+    case 'write_file':
       return { filePath: argsSummary };
     case 'grep_search':
     case 'grep_tool':
@@ -659,7 +663,6 @@ function inferToolArgs(
     case 'create_folder':
       return { path: argsSummary };
     case 'run_in_terminal':
-    case 'run_terminal':
     case 'execute_command':
       return { command: argsSummary };
     default:
@@ -840,6 +843,13 @@ function formatFilterValue(value: unknown): string {
 
 function cleanToolNamePrefix(toolName: string): string {
   return toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;
+}
+
+function normalizeFormatterToolName(toolName: string): string {
+  const cleanToolName = cleanToolNamePrefix(toolName);
+  return normalizeReadSideToolName(cleanToolName) === 'run_in_terminal'
+    ? 'run_in_terminal'
+    : cleanToolName;
 }
 
 function splitToolName(toolName: string): string[] {

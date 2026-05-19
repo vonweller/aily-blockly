@@ -1,5 +1,6 @@
 import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
 import type { PartEventProcessor } from '../core/part-event-processor';
+import { isTerminalSessionToolName } from '../core/tool-name-normalizer';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
 
 export type LexRuntimePartProcessor = Pick<
@@ -27,14 +28,6 @@ type LexRuntimeLifecycleAccess = {
 const GENERIC_RUNTIME_ERROR_MESSAGE = 'Sorry, something went wrong.';
 
 export class LexRuntimeEventBridge {
-  private static readonly TERMINAL_TOOLS = new Set([
-    'run_terminal',
-    'get_terminal_output',
-    'send_to_terminal',
-    'kill_terminal',
-    'start_background_command',
-  ]);
-
   constructor(
     private readonly ctx: LexRuntimeEventContext,
     private readonly partProcessor: LexRuntimePartProcessor,
@@ -68,7 +61,7 @@ export class LexRuntimeEventBridge {
       case 'tool_call_end': {
         this.partProcessor.processToolCallEnd(event.toolCallId, event.toolName, event.result);
 
-        if (LexRuntimeEventBridge.TERMINAL_TOOLS.has(event.toolName)) {
+        if (isTerminalSessionToolName(event.toolName)) {
           this.partProcessor.processTerminalResult(event.toolCallId, event.result);
         }
         return true;

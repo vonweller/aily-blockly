@@ -50,6 +50,7 @@ import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coor
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
 import { ChatActionRegistry } from './helpers/chat-action-registry';
 import { ChatComponentViewModel } from './helpers/chat-component-view-model';
+import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helper';
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -62,13 +63,19 @@ import { BlocklyService } from '../../editors/blockly-editor/services/blockly.se
 import { TranslateModule } from '@ngx-translate/core';
 import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
+import { AilyChatDebugHomeComponent } from './components/aily-chat-debug-home/aily-chat-debug-home.component';
+import { AilyChatDebugCacheExplorerComponent } from './components/aily-chat-debug-cache/aily-chat-debug-cache.component';
+import { AilyChatDebugFlowComponent } from './components/aily-chat-debug-flow/aily-chat-debug-flow.component';
+import { AilyChatDebugLogsComponent } from './components/aily-chat-debug-logs/aily-chat-debug-logs.component';
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
+import { AilyChatDebugViewerComponent } from './components/aily-chat-debug-viewer/aily-chat-debug-viewer.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
 import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
 import { ChatHistoryService } from './services/chat-history.service';
+import { ChatDebugBrowserService } from './services/chat-debug-browser.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ThemeService } from '../../services/theme.service';
 
@@ -96,7 +103,12 @@ export { ToolCallState };
     AilyEditsViewerComponent,
     TranslateModule,
     LoginComponent,
+    AilyChatDebugHomeComponent,
+    AilyChatDebugCacheExplorerComponent,
+    AilyChatDebugFlowComponent,
+    AilyChatDebugLogsComponent,
     AilyChatSettingsComponent,
+    AilyChatDebugViewerComponent,
     ChatInputPartHostComponent,
     ChatContextToolbarComponent,
   ],
@@ -165,6 +177,7 @@ export class AilyChatComponent implements OnDestroy {
     private connectionGraphService: ConnectionGraphService,
     private repetitionDetectionService: RepetitionDetectionService,
     private chatHistoryService: ChatHistoryService,
+    public debugBrowser: ChatDebugBrowserService,
     private cdr: ChangeDetectorRef,
     private builderService: BuilderService,
     private themeService: ThemeService,
@@ -191,9 +204,19 @@ export class AilyChatComponent implements OnDestroy {
       chatService: this.chatService,
     }, {
       saveCurrentSession: () => this.engine.saveCurrentSession(),
-      getHistory: () => this.engine.getHistory(),
-      newChat: () => this.engine.newChat(),
-      refreshHistoryList: () => this.engine.refreshHistoryList(),
+      getHistory: () => {
+        this.closeDebugBrowser();
+        return this.engine.getHistory();
+      },
+      newChat: () => {
+        this.closeDebugBrowser();
+        return this.engine.newChat();
+      },
+      importDebugSnapshot: () => this.importDebugSnapshotFromDialog(),
+      refreshHistoryList: () => {
+        this.closeDebugBrowser();
+        return this.engine.refreshHistoryList();
+      },
       markForCheck: () => this.cdr.markForCheck(),
       setCompleted: () => {
         this.engine.isCompleted = true;
@@ -306,6 +329,74 @@ export class AilyChatComponent implements OnDestroy {
   ngAfterViewInit(): void {
     this.viewportShellCoordinator.initialize(this.chatContainer);
     this.scrollManager.handleContentHeightChange();
+  }
+
+  get activeImportedDebugView() {
+    return this.debugBrowser.activeImportedDebugView;
+  }
+
+  get activeImportedDebugEvents() {
+    return this.debugBrowser.activeImportedDebugEvents;
+  }
+
+  openDebugBrowserHome(): void {
+    this.debugBrowser.openHome();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugSession(sessionId: string): void {
+    if (!this.debugBrowser.openImportedSession(sessionId)) {
+      return;
+    }
+
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugOverview(): void {
+    this.debugBrowser.showOverview();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugLogs(): void {
+    this.debugBrowser.showLogs();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugFlow(): void {
+    this.debugBrowser.showFlow();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugCache(): void {
+    this.debugBrowser.showCache();
+    this.cdr.markForCheck();
+  }
+
+  private async importDebugSnapshotFromDialog(): Promise<void> {
+    const result = await importDebugSnapshotFromDialog({
+      dialog: AilyHost.get().dialog,
+      fs: AilyHost.get().fs,
+      importDebugSnapshot: (data) => this.chatHistoryService.importDebugSnapshot(data),
+    });
+
+    if (result.kind === 'failed') {
+      this.message.error('无法导入调试快照');
+      return;
+    }
+
+    if (result.kind === 'imported') {
+      this.debugBrowser.openImportedRecord(result.imported);
+      this.cdr.markForCheck();
+    }
+  }
+
+  closeDebugBrowser(): void {
+    if (!this.debugBrowser.isOpen) {
+      return;
+    }
+
+    this.debugBrowser.close();
+    this.cdr.markForCheck();
   }
 
   async handleManualCompaction(event?: MouseEvent): Promise<void> {

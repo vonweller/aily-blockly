@@ -1,5 +1,6 @@
 import type { StatePart } from '../core/chat-parts';
 import type { PartEventProcessor } from '../core/part-event-processor';
+import type { MetricsSnapshot } from 'aily-lex/browser';
 
 export type LexStatePartProcessor = Pick<
   PartEventProcessor,
@@ -8,6 +9,7 @@ export type LexStatePartProcessor = Pick<
 
 type LexStateHostSyncAccess = {
   applyHandoffEvent(event: { targetAgent?: string; reason?: string }): void;
+  getCompactionMetricsSnapshot(): MetricsSnapshot | null;
 };
 
 export class LexStateEventBridge {
@@ -179,6 +181,15 @@ export class LexStateEventBridge {
       ? event.summary.trim()
       : undefined;
     const messageCount = typeof event.messageCount === 'number' ? event.messageCount : undefined;
+    const outcome = typeof event.outcome === 'string' ? event.outcome : undefined;
+    const path = typeof event.path === 'string'
+      ? event.path
+      : event.level === 'reactive'
+        ? 'reactive'
+        : event.source === 'background'
+          ? 'background'
+          : 'foreground';
+    const compactionMetricsSnapshot = this.hostSyncBridge?.getCompactionMetricsSnapshot() ?? undefined;
     let text = '';
 
     switch (event.level) {
@@ -195,9 +206,19 @@ export class LexStateEventBridge {
         text = '历史摘要已再次压缩';
         break;
       case 'auto':
-        text = event.source === 'foreground'
-          ? '对话历史已写入模型摘要'
-          : '对话历史已写入启发式摘要';
+        if (path === 'background') {
+          text = outcome === 'noResult'
+            ? '后台摘要未产出可用结果'
+            : outcome === 'appliedButReRenderFailed'
+              ? '后台摘要已应用，但请求仍超出上下文预算'
+              : '后台摘要已应用到对话历史';
+        } else if (path === 'inline') {
+          text = '对话历史已写入当前轮模型摘要';
+        } else {
+          text = event.source === 'foreground'
+            ? '对话历史已写入模型摘要'
+            : '对话历史已写入启发式摘要';
+        }
         break;
       case 'reactive':
       default:
@@ -220,10 +241,15 @@ export class LexStateEventBridge {
         kind: 'compaction',
         metadata: {
           level: event.level,
+          path,
           source: event.source,
+          trigger: typeof event.trigger === 'string' ? event.trigger : undefined,
+          outcome,
+          failureKind: typeof event.failureKind === 'string' ? event.failureKind : undefined,
           summary,
           messageCount,
           boundary: event.boundary,
+          compactionMetricsSnapshot,
         },
       },
     );

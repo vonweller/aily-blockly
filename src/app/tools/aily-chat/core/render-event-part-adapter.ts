@@ -35,6 +35,7 @@ import {
   buildPendingToolCallApprovalMetadata,
   buildResolvedToolCallApprovalMetadata,
 } from './tool-call-approval';
+import { isTerminalSessionToolName, isTodoToolName } from './tool-name-normalizer';
 import { parseTerminalPayload } from './terminal-payload';
 import { buildToolResultMetadataPatch, collectToolResultText, extractRawToolResultPayloadText } from './tool-result-content';
 import {
@@ -83,17 +84,6 @@ function hasUsableStoreHandle(
 
 export class RenderEventPartAdapter {
   private readonly _store: RenderEventPartStoreAccess;
-  private static readonly TERMINAL_TOOLS = new Set([
-    'run_terminal',
-    'get_terminal_output',
-    'send_to_terminal',
-    'kill_terminal',
-    'start_background_command',
-  ]);
-  private static readonly TODO_TOOLS = new Set([
-    'todo_write_tool',
-    'manage_todo_list',
-  ]);
 
   constructor(store: RenderEventPartStoreAccess) {
     this._store = store;
@@ -385,7 +375,7 @@ export class RenderEventPartAdapter {
     const parts = this._store.getPartsForHandle(handle);
     for (let index = parts.length - 1; index >= 0; index -= 1) {
       const part = parts[index];
-      if (part.type !== 'tool_call' || !RenderEventPartAdapter.TODO_TOOLS.has(part.toolName)) {
+      if (part.type !== 'tool_call' || !isTodoToolName(part.toolName)) {
         continue;
       }
 
@@ -399,7 +389,7 @@ export class RenderEventPartAdapter {
   }
 
   private _appendTerminalPart(handle: ChatPartStoreOpaqueHandle, event: Extract<RenderEvent, { type: 'tool_call_end' }>): void {
-    if (!RenderEventPartAdapter.TERMINAL_TOOLS.has(event.toolName)) {
+    if (!isTerminalSessionToolName(event.toolName)) {
       return;
     }
 
