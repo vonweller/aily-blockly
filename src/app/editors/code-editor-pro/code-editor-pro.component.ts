@@ -15,6 +15,7 @@ import { ThemeService } from '../../services/theme.service';
 import { CodeEditorProProjectService } from './services/code-editor-pro-project.service';
 import { NpmService } from '../../services/npm.service';
 import { resolveActualMainHexLocation } from '../../utils/builder.utils';
+import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
 
 /** 与 child/aily-coder/src/hostEmbedContext.ts 中 channel 常量一致 */
 const AILY_CODER_HOST_CONTEXT_CHANNEL = 'aily-coder-host-context';
@@ -88,6 +89,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
       void this.writeCoderEmbedHints(root);
       void this.pushAilyCoderHostContext(root);
     });
+    // 切换主板后 boardDependencies 变化，刷新 Platform Packages 真实路径
+    this.projectService.boardChangeSubject.subscribe(() => {
+      const root = this.coderEmbedWorkspaceRoot;
+      if (!root) return;
+      void this.writeCoderEmbedHints(root);
+      void this.pushAilyCoderHostContext(root);
+    });
     this.proProject.init();
     this.activatedRoute.queryParams.subscribe((params) => {
       if (params['path']) {
@@ -106,13 +114,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * npm 依赖检查/安装与内嵌编辑器并行启动；仅在对磁盘做一次「保证 package.json 可读」后再并行元数据与 iframe，避免纯 .ino 目录竞态。
+   * 先 loadProject 设置 currentProjectPath，再安装依赖；最后启动 iframe（避免 installBoardDeps 读错工程路径）。
    */
   private async bootstrap(projectPath: string) {
     this.coderEmbedWorkspaceRoot = projectPath;
-    void this.ensureNpmDepsWithRetry(projectPath);
     await this.ensureProjectPackageJsonExists(projectPath);
     await this.loadProject(projectPath);
+    void this.ensureNpmDepsWithRetry(projectPath);
     await this.initCoderEmbed(projectPath);
   }
 
@@ -166,18 +174,27 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * 对当前嵌入工程跑依赖安装；切换工程后重试回调会放弃，避免误操作其它目录。
+   * 与 Blockly loadProject 对齐：工程依赖 await 检查；平台 sdk/tool 后台安装且已就绪则跳过。
    */
-  private async ensureNpmDepsWithRetry(projectPath: string): Promise<void> {
+  private ensureNpmDepsWithRetry(projectPath: string): void {
+    const refreshEmbedAfterDeps = () => {
+      if (this.coderEmbedWorkspaceRoot !== projectPath) {
+        return;
+      }
+      void this.writeCoderEmbedHints(projectPath);
+      void this.pushAilyCoderHostContext(projectPath);
+    };
+
     const run = async () => {
       if (this.coderEmbedWorkspaceRoot !== projectPath) {
         return;
       }
-      await this.npmService.ensureProjectDependenciesInstalled(projectPath, {
+      await this.npmService.ensureProjectAndBoardDeps(projectPath, {
         onRetryInstall: () => void run(),
+        onBoardDepsSettled: refreshEmbedAfterDeps,
       });
     };
-    await run();
+    void run();
   }
 
   private async initCoderEmbed(projectPath: string) {
@@ -252,11 +269,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
         fsAny.mkdirSync(ailyDir, { recursive: true });
       }
       const hintsPath = pathApi.join(projectRoot, '.aily', 'coder-embed-hints.json');
+      const platformPackages = await this.loadPlatformPackagesForEmbed();
       const payload = {
         v: 1,
         buildPath,
         ...(mainHexAbs ? { mainHexAbs } : {}),
         ...(mainHexRelPath ? { mainHexRelPath } : {}),
+        ...(platformPackages.length > 0 ? { platformPackages } : {}),
       };
       this.electronService.writeFile(hintsPath, JSON.stringify(payload, null, 2));
     } catch (e) {
@@ -291,17 +310,34 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
             ? undefined
             : relRaw.split(pathApi.sep).join('/');
       }
+      const platformPackages = await this.loadPlatformPackagesForEmbed();
+      const appDataPath = window['path'].getAppDataPath() as string;
       const payload = {
         v: 1 as const,
         workspaceRoot: projectRoot,
         buildPath,
+        appDataPath,
         ...(mainHexAbs ? { mainHexAbsPath: mainHexAbs } : {}),
         ...(mainHexRelPath ? { mainHexRelPath } : {}),
+        ...(platformPackages.length > 0 ? { platformPackages } : {}),
         meta: {},
       };
       win.postMessage({ channel: AILY_CODER_HOST_CONTEXT_CHANNEL, payload }, '*');
     } catch (e) {
       console.warn('[CodeEditorPro] postMessage host context 失败', e);
+    }
+  }
+
+  /** 从当前工程主板 boardDependencies 解析全局 sdk/tools 目录（供 Coder Platform Packages 树） */
+  private async loadPlatformPackagesForEmbed() {
+    try {
+      return await resolvePlatformPackagesForCurrentProject(async () => {
+        const pkg = await this.projectService.getBoardPackageJson();
+        return pkg?.boardDependencies;
+      });
+    } catch (e) {
+      console.warn('[CodeEditorPro] loadPlatformPackagesForEmbed', e);
+      return [];
     }
   }
 
@@ -381,6 +417,14 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
           return normalized;
         }
       }
+      // Platform Packages：全局 appdata/aily-project 下的 sdk、tools、compiler 目录
+      const appDataRoot = window['path'].getAppDataPath?.() as string | undefined;
+      if (appDataRoot) {
+        const appDataNorm = pathApi.resolve ? pathApi.resolve(appDataRoot) : appDataRoot;
+        if (normalized === appDataNorm || normalized.startsWith(appDataNorm + sep)) {
+          return normalized;
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -397,7 +441,10 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
       this.message.warning('无法在访达中显示：路径不在允许的工程或构建目录内');
       return;
     }
-    const fsApi = window['fs'] as { existsSync?: (p: string) => boolean } | undefined;
+    const fsApi = window['fs'] as {
+      existsSync?: (p: string) => boolean;
+      isDirectory?: (p: string) => boolean;
+    } | undefined;
     const pathApi = window['path'] as { dirname?: (p: string) => string } | undefined;
     const electronShell = (
       window as unknown as {
@@ -409,6 +456,11 @@ export class CodeEditorProComponent implements OnInit, OnDestroy {
     }).other;
     try {
       if (fsApi?.existsSync?.(resolved)) {
+        // 平台包等为目录：用资源管理器/Finder 打开文件夹；文件则高亮选中（同 main.hex）
+        if (fsApi.isDirectory?.(resolved)) {
+          otherApi?.openByExplorer?.(resolved);
+          return;
+        }
         electronShell?.showItemInFolder?.(resolved);
         return;
       }
