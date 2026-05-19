@@ -427,6 +427,16 @@ export class ConfigService {
     }
   }
 
+  /**
+   * 开发板选择弹窗：优先返回已缓存列表（启动时已加载 boards.json），避免每次打开都请求线上。
+   */
+  getBoardListForSelector(): any[] {
+    if (!this.boardList?.length) {
+      return [];
+    }
+    return this.sortBoardsByUsage([...this.boardList]);
+  }
+
   libraryList = [];
   libraryDict = {};
 

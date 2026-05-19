@@ -470,9 +470,9 @@ export class ProjectService {
   }
 
   /**
-   * 项目保存时复制主项目 package.json 到 temp 下
+   * 项目保存时复制主项目 package.json 到 temp 下（Blockly / Aily Code 共用）
    */
-  private async copyPackageJsonToTemp(projectPath: string): Promise<void> {
+  async copyPackageJsonToTemp(projectPath: string): Promise<void> {
     const mainPackagePath = window['path'].join(projectPath, 'package.json');
     const tempDir = window['path'].join(projectPath, '.temp');
     const tempPackagePath = window['path'].join(tempDir, 'package.json');
@@ -734,6 +734,22 @@ export class ProjectService {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
     }
     return JSON.parse(this.electronService.readFile(boardJsonPath));
+  }
+
+  /**
+   * 从工程 node_modules 主板包同步 board.json 到 currentBoardConfig。
+   * Blockly 在 loadProject 内设置；Aily Code（code-editor-pro）在依赖就绪后调用。
+   */
+  async syncCurrentBoardConfig(): Promise<boolean> {
+    try {
+      const boardJson = await this.getBoardJson();
+      this.currentBoardConfig = boardJson;
+      window['boardConfig'] = boardJson;
+      return true;
+    } catch (e) {
+      console.warn('同步开发板配置失败:', e);
+      return false;
+    }
   }
 
   // 获取开发板根目录路下得特殊配置文件，如 ESP32 需要的 partitions.csv

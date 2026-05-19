@@ -287,8 +287,10 @@ export class HeaderComponent implements OnDestroy {
         this.portListPosition = { x: 40, y: 40 };
       }
     }
-    let boardname = this.currentBoard.replace(' 2560', ' ').replace(' R3', '');
-    this.boardKeywords = [boardname];
+    // Aily Code 在 npm 主板包就绪前可能尚无 currentBoardConfig
+    const boardLabel = this.currentBoard ?? '';
+    const boardname = boardLabel.replace(' 2560', ' ').replace(' R3', '');
+    this.boardKeywords = boardname ? [boardname] : [];
     // 如果已有缓存列表，先展示旧数据，再后台刷新
     this.showPortList = true;
     this.getDevicePortList();
@@ -331,42 +333,38 @@ export class HeaderComponent implements OnDestroy {
       ];
     }
 
-    let core = this.projectService.currentBoardConfig['core'].toLowerCase();
+    const boardConfig = this.projectService.currentBoardConfig;
+    const coreRaw = boardConfig?.core;
+    if (coreRaw) {
+      const core = String(coreRaw).toLowerCase();
+      const boardType = boardConfig['type'];
+      const boardId =
+        typeof boardType === 'string' && boardType.includes(':')
+          ? boardType.split(':').pop()
+          : '';
 
-
-    // 添加ESP32相关配置选项
-    // console.log('core:' + core);
-    if (core.indexOf('esp32') > -1) {
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let esp32config = await this.projectService.updateEsp32ConfigMenu(board);
-      if (esp32config) {
-        portList0 = portList0.concat(esp32config)
+      // 添加ESP32相关配置选项
+      if (core.indexOf('esp32') > -1 && boardId) {
+        const esp32config = await this.projectService.updateEsp32ConfigMenu(boardId);
+        if (esp32config) {
+          portList0 = portList0.concat(esp32config);
+        }
       }
-      // console.log('ESP32配置选项:', esp32config);
-    }
-
-    // 添加STM32相关配置选项
-    else if (core.indexOf('stm32') > -1) {
-      // 异步检测调试探针，完成后更新缓存并重建列表
-      this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let stm32config = await this.projectService.updateStm32ConfigMenu(board);
-      if (stm32config) {
-        portList0 = portList0.concat(stm32config)
+      // 添加STM32相关配置选项
+      else if (core.indexOf('stm32') > -1 && boardId) {
+        this.detectProbes(generation, portList0, skipDetect);
+        const stm32config = await this.projectService.updateStm32ConfigMenu(boardId);
+        if (stm32config) {
+          portList0 = portList0.concat(stm32config);
+        }
       }
-    }
-
-    // 添加nRF5相关配置选项
-    else if (core.indexOf('nrf5') > -1) {
-      // 异步检测调试探针（nRF52）
-      this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let nrf5config = await this.projectService.updateNrf5ConfigMenu(board);
-      if (nrf5config) {
-        portList0 = portList0.concat(nrf5config)
+      // 添加nRF5相关配置选项
+      else if (core.indexOf('nrf5') > -1 && boardId) {
+        this.detectProbes(generation, portList0, skipDetect);
+        const nrf5config = await this.projectService.updateNrf5ConfigMenu(boardId);
+        if (nrf5config) {
+          portList0 = portList0.concat(nrf5config);
+        }
       }
     }
 
@@ -954,12 +952,14 @@ export class HeaderComponent implements OnDestroy {
   }
 
   async openBoardSelectorDialog() {
-    // 获取开发板列表
-    let boardList = await this.configService.loadBoardList();
-    console.log(boardList);
+    // 优先内存缓存，避免 await 远程 boards.json 阻塞弹窗
+    let boardList = this.configService.getBoardListForSelector();
+    if (!boardList.length) {
+      boardList = await this.configService.loadBoardList();
+    }
 
     // 显示开发板选择对话框
-    const modalRef = this.modal.create({
+    this.modal.create({
       nzTitle: null,
       nzFooter: null,
       nzClosable: false,

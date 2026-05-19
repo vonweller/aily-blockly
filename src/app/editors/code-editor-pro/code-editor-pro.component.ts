@@ -111,10 +111,11 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       void this.writeCoderEmbedHints(root);
       void this.pushAilyCoderHostContext(root);
     });
-    // 切换主板后 boardDependencies 变化，刷新 Platform Packages 真实路径
+    // 切换主板后 boardDependencies 变化，刷新 Platform Packages 与 Header 开发板名
     this.projectService.boardChangeSubject.subscribe(() => {
       const root = this.coderEmbedWorkspaceRoot;
       if (!root) return;
+      void this.syncBoardConfigForHeader();
       void this.writeCoderEmbedHints(root);
       void this.pushAilyCoderHostContext(root);
     });
@@ -223,6 +224,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.projectService.currentPackageData = packageJson;
     this.projectService.currentProjectPath = projectPath;
     this.projectService.stateSubject.next('loaded');
+    // 依赖已存在时尽早同步，供 Header 串口/开发板菜单使用
+    void this.syncBoardConfigForHeader();
+  }
+
+  /** 与 Blockly loadProject 一致：写入 ProjectService.currentBoardConfig */
+  private async syncBoardConfigForHeader(): Promise<void> {
+    await this.projectService.syncCurrentBoardConfig();
   }
 
   /**
@@ -233,6 +241,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       if (this.coderEmbedWorkspaceRoot !== projectPath) {
         return;
       }
+      void this.syncBoardConfigForHeader();
       void this.writeCoderEmbedHints(projectPath);
       void this.pushAilyCoderHostContext(projectPath);
     };
