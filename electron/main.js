@@ -358,8 +358,17 @@ async function findListeningCoderEmbedDevPort() {
 }
 
 function spawnCoderEmbedViteDevServer(coderDir) {
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  return spawn(npmCmd, ["run", "start"], {
+  // Windows 上直接 spawn npm.cmd 会 EINVAL（Node 22+）；与 electron/npm.js 一致需 shell: true
+  if (isWin32) {
+    return spawn("npm run start", {
+      cwd: coderDir,
+      env: process.env,
+      stdio: "inherit",
+      shell: true,
+      windowsHide: true,
+    });
+  }
+  return spawn("npm", ["run", "start"], {
     cwd: coderDir,
     env: process.env,
     stdio: "inherit",
@@ -1155,6 +1164,151 @@ function macosInstallEnv(childPath) {
   }
 }
 
+/** Windows 开发态：解压 child/windows 下的 node / aily-builder / probe-rs；生产包由安装器/其他机制解压 */
+function windowsInstallEnv(childPath) {
+  if (!serve) {
+    return;
+  }
+
+  const child_process = require("child_process");
+
+  function extractVersion(filename, keyword) {
+    if (keyword === "node") {
+      const match = filename.match(/node-v(\d+\.\d+\.\d+)/);
+      return match ? match[1] : null;
+    }
+    if (keyword === "aily-builder") {
+      const match = filename.match(/aily-builder-(\d+\.\d+\.\d+)/);
+      return match ? match[1] : null;
+    }
+    if (keyword === "probe-rs") {
+      const match = filename.match(/probe-rs-(\d+\.\d+\.\d+)/);
+      return match ? match[1] : null;
+    }
+    return null;
+  }
+
+  function compareSemver(version1, version2) {
+    if (!version1 || !version2) return 0;
+    const v1 = version1.replace(/^v/, "").split(".").map(Number);
+    const v2 = version2.replace(/^v/, "").split(".").map(Number);
+    while (v1.length < 3) v1.push(0);
+    while (v2.length < 3) v2.push(0);
+    if (v1[0] !== v2[0]) return v1[0] > v2[0] ? 1 : -1;
+    if (v1[1] !== v2[1]) return v1[1] > v2[1] ? 1 : -1;
+    if (v1[2] !== v2[2]) return v1[2] > v2[2] ? 1 : -1;
+    return 0;
+  }
+
+  function findLatestVersionFile(directory, keyword) {
+    try {
+      if (!fs.existsSync(directory)) return null;
+      const matchingFiles = fs.readdirSync(directory).filter(
+        (file) => file.startsWith(keyword) && file.endsWith(".7z"),
+      );
+      if (matchingFiles.length === 0) return null;
+      let latestFile = matchingFiles[0];
+      let latestVersion = extractVersion(latestFile, keyword);
+      for (let i = 1; i < matchingFiles.length; i++) {
+        const currentVersion = extractVersion(matchingFiles[i], keyword);
+        if (currentVersion && compareSemver(currentVersion, latestVersion) > 0) {
+          latestFile = matchingFiles[i];
+          latestVersion = currentVersion;
+        }
+      }
+      return path.join(directory, latestFile);
+    } catch (error) {
+      console.error(`查找${keyword}文件失败:`, error);
+      return null;
+    }
+  }
+
+  const z7Name = "7za.exe";
+  const z7Path = path.join(childPath, z7Name);
+  if (!fs.existsSync(z7Path)) {
+    const z7SourcePath = path.join(childPath, "windows", z7Name);
+    if (fs.existsSync(z7SourcePath)) {
+      try {
+        fs.copyFileSync(z7SourcePath, z7Path);
+        console.log("已复制 7za.exe 到 child 目录");
+      } catch (error) {
+        console.error("复制 7za.exe 失败:", error);
+      }
+    }
+  }
+
+  const sourceDir = path.join(childPath, "windows");
+  const nodeDir = path.join(childPath, "node");
+  const nodeBinDir = resolveWindowsNodeBinDir(childPath);
+  if (!fs.existsSync(path.join(nodeBinDir, "npm.cmd"))) {
+    const nodeZipPath = findLatestVersionFile(sourceDir, "node");
+    if (nodeZipPath && fs.existsSync(nodeZipPath) && fs.existsSync(z7Path)) {
+      try {
+        fs.mkdirSync(nodeDir, { recursive: true });
+        child_process.execSync(`"${z7Path}" x "${nodeZipPath}" -o"${nodeDir}" -y`, { stdio: "inherit" });
+        console.log(`安装解压 node: ${nodeZipPath} 成功`);
+      } catch (error) {
+        console.error(`安装解压 node: ${nodeZipPath} 失败:`, error);
+      }
+    } else {
+      console.error(`未找到 node 包或 7za: ${nodeZipPath}, ${z7Path}`);
+    }
+  }
+
+  const ailyBuilderPath = path.join(childPath, "aily-builder");
+  if (!fs.existsSync(ailyBuilderPath)) {
+    const ailyBuilderZipPath = findLatestVersionFile(sourceDir, "aily-builder");
+    if (ailyBuilderZipPath && fs.existsSync(ailyBuilderZipPath) && fs.existsSync(z7Path)) {
+      try {
+        fs.mkdirSync(ailyBuilderPath, { recursive: true });
+        child_process.execSync(`"${z7Path}" x "${ailyBuilderZipPath}" -o"${ailyBuilderPath}" -y`, {
+          stdio: "inherit",
+        });
+        console.log(`安装解压 aily-builder: ${ailyBuilderZipPath} 成功`);
+      } catch (error) {
+        console.error(`安装解压 aily-builder 失败:`, error);
+      }
+    }
+  }
+
+  const probeRsPath = path.join(childPath, "probe-rs");
+  if (!fs.existsSync(probeRsPath)) {
+    const probeRsZipPath = findLatestVersionFile(sourceDir, "probe-rs");
+    if (probeRsZipPath && fs.existsSync(probeRsZipPath) && fs.existsSync(z7Path)) {
+      try {
+        fs.mkdirSync(probeRsPath, { recursive: true });
+        child_process.execSync(`"${z7Path}" x "${probeRsZipPath}" -o"${probeRsPath}" -y`, { stdio: "inherit" });
+        console.log(`安装解压 probe-rs: ${probeRsZipPath} 成功`);
+      } catch (error) {
+        console.error(`安装解压 probe-rs 失败:`, error);
+      }
+    }
+  }
+}
+
+/** Windows 解压 node 后可能在 child/node/node-vX-win-x64/ 下 */
+function resolveWindowsNodeBinDir(childPath) {
+  const nodeRoot = path.join(childPath, "node");
+  if (!fs.existsSync(nodeRoot)) {
+    return nodeRoot;
+  }
+  if (fs.existsSync(path.join(nodeRoot, "npm.cmd"))) {
+    return nodeRoot;
+  }
+  try {
+    for (const name of fs.readdirSync(nodeRoot)) {
+      if (!name.startsWith("node-v")) continue;
+      const candidate = path.join(nodeRoot, name);
+      if (fs.statSync(candidate).isDirectory() && fs.existsSync(path.join(candidate, "npm.cmd"))) {
+        return candidate;
+      }
+    }
+  } catch (error) {
+    console.warn("resolveWindowsNodeBinDir:", error.message);
+  }
+  return nodeRoot;
+}
+
 // 路径转义
 function escapePath(path) {
   if (isWin32) {
@@ -1165,11 +1319,23 @@ function escapePath(path) {
 
 // 环境变量加载
 function loadEnv() {
+  const launcherPath = process.env.PATH || "";
   // 将child目录添加到环境变量PATH中
   const childPath = serve
     ? path.join(__dirname, "..", "child")
     : path.join(process.resourcesPath, "child");
-  const nodePath = path.join(childPath, isDarwin ? "node/bin" : "node");
+
+  if (isDarwin) {
+    macosInstallEnv(childPath);
+  } else if (isWin32 && serve) {
+    windowsInstallEnv(childPath);
+  }
+
+  const nodePath = isDarwin
+    ? path.join(childPath, "node/bin")
+    : isWin32
+      ? resolveWindowsNodeBinDir(childPath)
+      : path.join(childPath, "node");
 
   // 只保留PowerShell路径，移除其他系统PATH
   let customPath = nodePath + path.delimiter + childPath;
@@ -1209,7 +1375,17 @@ function loadEnv() {
   }
 
   // 完全替换PATH
-  process.env.PATH = customPath;  
+  process.env.PATH = customPath;
+
+  // Windows 开发态兜底：bundle node 仍未就绪时保留启动器 PATH 中的 npm
+  if (isWin32 && serve) {
+    const npmReady =
+      fs.existsSync(path.join(nodePath, "npm.cmd")) || fs.existsSync(path.join(nodePath, "npm"));
+    if (!npmReady && launcherPath) {
+      process.env.PATH = customPath + path.delimiter + launcherPath;
+      console.warn("[loadEnv] bundled npm 未找到，已追加启动器 PATH（开发态兜底）");
+    }
+  }
 
   // 读取config.json文件
   const configPath = path.join(__dirname, 'config', "config.json");
@@ -1247,10 +1423,6 @@ function loadEnv() {
   }
 
   registerAppDataResourceLockHandlers();
-
-  if (isDarwin) {
-    macosInstallEnv(childPath);
-  }
 
   // 检测并读取appdata_path目录下是否有config.json文件
   const userConfigPath = path.join(process.env.AILY_APPDATA_PATH, "config.json");

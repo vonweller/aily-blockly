@@ -153,20 +153,12 @@ class CommandManager {
       shell = true; // 使用系统默认 shell
     }
 
-    // 【核心修复】Windows 环境下的特殊处理
+    // Windows：npm/npx 用 shell:true + 命令名（非 npm.cmd），与 electron/npm.js 一致
     if (isWin32) {
-      // 1. 如果是 npm/npx 命令，强制加上 .cmd 后缀
-      // 只有这样，spawn 才能准确找到可执行文件，不再依赖 Shell 的智能猜测
-      if (command === 'npm') {
-        command = 'npm.cmd';
-      } else if (command === 'npx') {
-        command = 'npx.cmd';
-      }
-
-      // 2. 对于 .cmd 命令，使用 CMD (shell: true) 而非 PowerShell
-      // 因为 .cmd 本质是批处理，用 cmd.exe 运行是最原生、最稳的
-      // 同时也避开了 PowerShell 执行策略 (ExecutionPolicy) 的干扰
-      if (command.endsWith('.cmd') || command.endsWith('.bat')) {
+      if (command === 'npm' || command === 'npm.cmd' || command === 'npx' || command === 'npx.cmd') {
+        command = command.replace(/\.cmd$/i, '');
+        shell = true;
+      } else if (command.endsWith('.cmd') || command.endsWith('.bat')) {
         shell = true;
       }
     }
@@ -197,13 +189,24 @@ class CommandManager {
     console.log(`[CMD] 执行命令: ${fullCommand}`);
     console.log(`[CMD] 工作目录: ${cwd || process.cwd()}`);
     console.log(`[CMD] Shell: ${shell}`);
-    
-    const child = spawn(command, args, {
-      cwd: cwd || process.cwd(),
-      env: { ...process.env, ...env },
-      shell: shell,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+
+    const isWin32NpmFamily =
+      isWin32 && (command === 'npm' || command === 'npx');
+
+    const child = isWin32NpmFamily
+      ? spawn(fullCommand, {
+          cwd: cwd || process.cwd(),
+          env: { ...process.env, ...env },
+          shell: true,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+      : spawn(command, args, {
+          cwd: cwd || process.cwd(),
+          env: { ...process.env, ...env },
+          shell: shell,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
 
     const startedAt = Date.now();
     this.processes.set(streamId, {

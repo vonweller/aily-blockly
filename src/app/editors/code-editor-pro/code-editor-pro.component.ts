@@ -194,11 +194,13 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
    * 先 loadProject 设置 currentProjectPath，再安装依赖；最后启动 iframe（避免 installBoardDeps 读错工程路径）。
    */
   private async bootstrap(projectPath: string) {
-    this.coderEmbedWorkspaceRoot = projectPath;
-    await this.ensureProjectPackageJsonExists(projectPath);
-    await this.loadProject(projectPath);
-    void this.ensureNpmDepsWithRetry(projectPath);
-    await this.initCoderEmbed(projectPath);
+    const pathApi = window['path'] as { resolve?: (p: string) => string };
+    const resolved = pathApi.resolve ? pathApi.resolve(projectPath) : projectPath;
+    this.coderEmbedWorkspaceRoot = resolved;
+    await this.ensureProjectPackageJsonExists(resolved);
+    await this.loadProject(resolved);
+    void this.ensureNpmDepsWithRetry(resolved);
+    await this.initCoderEmbed(resolved);
   }
 
   ngOnDestroy(): void {
@@ -663,16 +665,18 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     if (!root?.trim()) {
       throw new Error('未初始化工程路径');
     }
-    const pathApi = window['path'] as { resolve?: (p: string) => string; normalize?: (p: string) => string; sep?: string };
+    const pathApi = window['path'] as {
+      resolve?: (p: string) => string;
+      relative?: (from: string, to: string) => string;
+      isAbsolute?: (p: string) => boolean;
+    };
     const resolvedRoot = pathApi.resolve ? pathApi.resolve(root) : root;
-    const resolvedCandidate = pathApi.normalize ? pathApi.normalize(candidatePath) : candidatePath;
-    const full = pathApi.resolve ? pathApi.resolve(resolvedCandidate) : resolvedCandidate;
-    const sep = pathApi.sep ?? '/';
-    const ok =
-      full === resolvedRoot ||
-      full.startsWith(resolvedRoot + sep) ||
-      full.toLowerCase().startsWith((resolvedRoot + sep).toLowerCase());
-    if (!ok) {
+    const full = pathApi.resolve ? pathApi.resolve(candidatePath) : candidatePath;
+    const rel = pathApi.relative ? pathApi.relative(resolvedRoot, full) : '';
+    const inside =
+      rel === '' ||
+      (!rel.startsWith('..') && !(pathApi.isAbsolute?.(rel) ?? false));
+    if (!inside) {
       throw new Error('路径不在当前工程目录内');
     }
     return full;
