@@ -60,6 +60,7 @@ aily-todos/*.json
 docs/performance-optimization.md
 /child/rg.exe
 /child/probe-rs
+/child/aily-coder/
 
 **/*.spec.ts
 **/__tests__/**/*
