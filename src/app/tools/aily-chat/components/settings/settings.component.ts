@@ -1,6 +1,7 @@
-import { Component, EventEmitter, Output, OnInit } from '@angular/core';
+import { Component, DestroyRef, EventEmitter, Output, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzMessageService } from 'ng-zorro-antd/message';
@@ -8,12 +9,15 @@ import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { TOOLS } from '../../tools/tools';
+import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE } from '../../core/agent-identifiers';
 import { ElectronService } from '../../../../services/electron.service';
-import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig } from '../../services/aily-chat-config.service';
+import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig, ModelPresetOption } from '../../services/aily-chat-config.service';
+import { ChatService } from '../../services/chat.service';
+import { McpService } from '../../services/mcp.service';
+import { getRuntimeToolSettingsCatalog, type RuntimeToolCatalogEntry } from '../../helpers/lex-agent-bootstrap';
 
 /** Agent 类型定义 */
-type AgentType = 'mainAgent' | 'schematicAgent';
+type AgentType = typeof MAIN_AGENT_TYPE | typeof SCHEMATIC_AGENT_TYPE;
 
 /** Agent 配置信息 */
 interface AgentConfig {
@@ -46,24 +50,34 @@ interface ToolConfig {
   styleUrl: './settings.component.scss'
 })
 export class AilyChatSettingsComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
 
   @Output() close = new EventEmitter<void>();
   @Output() saved = new EventEmitter<void>(); // 保存成功事件
 
-  // 最大循环次数
-  maxCount: number = 100;
+  // 最大请求数 / 最大工具调用轮数
+  maxRequests: number = 200;
 
   // 默认自动保存变更
   autoSaveEdits: boolean = false;
 
+  // Instruction folder 设置（每行一个路径）
+  userInstructionFoldersText = '';
+  projectInstructionFoldersText = '';
+
+  // Terminal runtime policy 设置
+  terminalAllowListText = '';
+  terminalDenyListText = '';
+  terminalInheritDefaultAllowList = true;
+
   // Agent 列表配置
   readonly agentConfigs: AgentConfig[] = [
-    { name: 'mainAgent', displayName: '主 Agent', description: '处理用户请求的主要Agent' },
-    { name: 'schematicAgent', displayName: '连线 Agent', description: '处理电路连线图相关任务的子Agent' }
+    { name: MAIN_AGENT_TYPE, displayName: '主 Agent', description: '处理用户请求的主要 Agent' },
+    { name: SCHEMATIC_AGENT_TYPE, displayName: '连线 Agent', description: '处理电路连线图相关任务的子 Agent' }
   ];
   
   // 当前选中的 Agent
-  selectedAgent: AgentType = 'mainAgent';
+  selectedAgent: AgentType = MAIN_AGENT_TYPE;
 
   // 按Agent分类的工具列表配置
   agentToolsMap: Map<AgentType, ToolConfig[]> = new Map();
@@ -76,6 +90,8 @@ export class AilyChatSettingsComponent implements OnInit {
   workspaceIndeterminate = false;
 
   // 模型管理
+  modelPresetList: ModelPresetOption[] = [];
+  defaultModelPresetId = '';
   modelList: ModelConfigOption[] = [];
   allModelsChecked = false;
   modelsIndeterminate = false;
@@ -134,10 +150,20 @@ export class AilyChatSettingsComponent implements OnInit {
     return this.modelList.filter(m => m.enabled).length;
   }
 
+  get modelCatalogStatusHint(): string | undefined {
+    return this.ailyChatConfigService.modelCatalogStatusHint;
+  }
+
+  get isModelCatalogUnavailable(): boolean {
+    return this.ailyChatConfigService.modelCatalogStatus === 'unavailable';
+  }
+
   constructor(
     private message: NzMessageService,
     private electronService: ElectronService,
-    private ailyChatConfigService: AilyChatConfigService
+    private ailyChatConfigService: AilyChatConfigService,
+    private chatService: ChatService,
+    private mcpService: McpService,
   ) {
   }
 
@@ -146,6 +172,11 @@ export class AilyChatSettingsComponent implements OnInit {
     this.initializeTools();
     this.loadWorkspaceOptions();
     this.loadModelList();
+    this.ailyChatConfigService.modelCatalogChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.loadModelList();
+      });
   }
 
   /**
@@ -153,8 +184,24 @@ export class AilyChatSettingsComponent implements OnInit {
    */
   private loadAllConfig() {
     // 加载配置
-    this.maxCount = this.ailyChatConfigService.maxCount;
+    this.maxRequests = this.ailyChatConfigService.maxRequests;
     this.autoSaveEdits = this.ailyChatConfigService.autoSaveEdits;
+    this.userInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.userInstructionFolders);
+    this.projectInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.projectInstructionFolders);
+    this.terminalAllowListText = this.formatFolderPaths(this.ailyChatConfigService.terminalAllowList ?? []);
+    this.terminalDenyListText = this.formatFolderPaths(this.ailyChatConfigService.terminalDenyList ?? []);
+    this.terminalInheritDefaultAllowList = this.ailyChatConfigService.terminalInheritDefaultAllowList ?? true;
+  }
+
+  private formatFolderPaths(paths: string[]): string {
+    return paths.join('\n');
+  }
+
+  private parseFolderPaths(text: string): string[] {
+    return text
+      .split(/\r?\n/)
+      .map(item => item.trim())
+      .filter(item => item.length > 0);
   }
 
   /**
@@ -169,6 +216,8 @@ export class AilyChatSettingsComponent implements OnInit {
    * 初始化工具列表 - 按Agent分类
    */
   private initializeTools() {
+    const toolCatalog = this.getToolCatalogEntries();
+
     // 为每个 Agent 初始化工具列表
     for (const agentConfig of this.agentConfigs) {
       const agentName = agentConfig.name;
@@ -179,8 +228,8 @@ export class AilyChatSettingsComponent implements OnInit {
       const savedDisabledTools = agentToolsConfig?.disabledTools || [];
       const hasStoredConfig = savedEnabledTools.length > 0 || savedDisabledTools.length > 0;
       
-      // 从 TOOLS 常量中筛选出属于该 Agent 的工具
-      const agentTools: ToolConfig[] = TOOLS
+      // 从独立 metadata catalog 中筛选出属于该 Agent 的工具
+      const agentTools: ToolConfig[] = toolCatalog
         .filter(tool => tool.agents && tool.agents.includes(agentName))
         .map(tool => {
           let enabled: boolean;
@@ -209,6 +258,10 @@ export class AilyChatSettingsComponent implements OnInit {
       this.agentToolsMap.set(agentName, agentTools);
       this.updateAgentAllChecked(agentName);
     }
+  }
+
+  private getToolCatalogEntries(): RuntimeToolCatalogEntry[] {
+    return getRuntimeToolSettingsCatalog({ mcpService: this.mcpService });
   }
 
   /**
@@ -284,8 +337,119 @@ export class AilyChatSettingsComponent implements OnInit {
    * 加载模型列表
    */
   private loadModelList() {
-    this.modelList = [...this.ailyChatConfigService.models].reverse();
+    this.modelPresetList = this.ailyChatConfigService.getUserVisibleModelPresets();
+    this.defaultModelPresetId = this.ailyChatConfigService.getDefaultModelPresetId();
+    this.modelList = this.sortModelList(this.ailyChatConfigService.models.filter(model => model.isCustom));
     this.updateModelsAllChecked();
+  }
+
+  private sortModelList(models: ModelConfigOption[]): ModelConfigOption[] {
+    const currentModel = this.chatService.currentModel;
+
+    return models
+      .map((model, index) => ({ model, index }))
+      .sort((left, right) => {
+        const leftCurrent = !!currentModel && !currentModel.presetId && currentModel.model === left.model.model;
+        const rightCurrent = !!currentModel && !currentModel.presetId && currentModel.model === right.model.model;
+        if (leftCurrent !== rightCurrent) {
+          return leftCurrent ? -1 : 1;
+        }
+
+        if (left.model.isCustom !== right.model.isCustom) {
+          return left.model.isCustom ? 1 : -1;
+        }
+
+        if (left.model.isCustom && right.model.isCustom) {
+          return left.model.name.localeCompare(right.model.name);
+        }
+
+        return left.index - right.index;
+      })
+      .map(({ model }) => model);
+  }
+
+  getModelContextLabel(model: ModelConfigOption): string | undefined {
+    const label = this.ailyChatConfigService.getModelCapabilityContextWindowLabel(model);
+    return label && label !== '自动检测' ? label : undefined;
+  }
+
+  getModelReasoningLabel(model: ModelConfigOption): string | undefined {
+    return this.ailyChatConfigService.getModelReasoningSummaryLabel(model);
+  }
+
+  getModelBillingLabel(model: ModelConfigOption): string | undefined {
+    return this.ailyChatConfigService.getModelBillingLabel(model);
+  }
+
+  getModelProviderContextManagementLabel(model: ModelConfigOption): string | undefined {
+    return this.ailyChatConfigService.getModelProviderContextManagementLabel(model);
+  }
+
+  getPresetContextLabel(preset: ModelPresetOption): string | undefined {
+    const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
+    if (!resolvedPresetModel) {
+      return undefined;
+    }
+
+    const label = this.ailyChatConfigService.getModelCapabilityContextWindowLabel(resolvedPresetModel);
+    return label && label !== '自动检测' ? label : undefined;
+  }
+
+  getPresetBillingLabel(preset: ModelPresetOption): string | undefined {
+    const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
+    return resolvedPresetModel ? this.ailyChatConfigService.getModelBillingLabel(resolvedPresetModel) : undefined;
+  }
+
+  getPresetProviderContextManagementLabel(preset: ModelPresetOption): string | undefined {
+    const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
+    return resolvedPresetModel
+      ? this.ailyChatConfigService.getModelProviderContextManagementLabel(resolvedPresetModel)
+      : undefined;
+  }
+
+  getPresetReasoningLabel(preset: ModelPresetOption): string | undefined {
+    const resolvedPresetModel = this.ailyChatConfigService.resolvePresetModel(preset.id);
+    return resolvedPresetModel
+      ? this.ailyChatConfigService.getModelReasoningSummaryLabel(resolvedPresetModel)
+      : undefined;
+  }
+
+  getPresetUnavailableTag(preset: ModelPresetOption): string | undefined {
+    if (preset.enabled) {
+      return undefined;
+    }
+
+    switch (preset.unavailableReason) {
+      case 'update':
+        return '需更新';
+      case 'admin':
+        return '管理员';
+      case 'upgrade':
+        return '需升级';
+      default:
+        return '不可用';
+    }
+  }
+
+  getPresetUnavailableHint(preset: ModelPresetOption): string | undefined {
+    if (preset.enabled) {
+      return undefined;
+    }
+
+    switch (preset.unavailableReason) {
+      case 'update':
+        return preset.minimumClientVersion
+          ? `升级客户端到 ${preset.minimumClientVersion} 或更高版本后可选`
+          : '升级客户端后可选';
+      case 'admin':
+        return '需要管理员权限后可选';
+      case 'upgrade':
+        return preset.requiredTier
+          ? `升级到 ${preset.requiredTier.toUpperCase()} 后可选`
+          : '升级套餐后可选';
+      default:
+        return undefined;
+    }
   }
 
   /**
@@ -450,8 +614,13 @@ export class AilyChatSettingsComponent implements OnInit {
 
   async onSave() {
     // 保存配置
-    this.ailyChatConfigService.maxCount = this.maxCount;
+    this.ailyChatConfigService.maxRequests = this.maxRequests;
     this.ailyChatConfigService.autoSaveEdits = this.autoSaveEdits;
+    this.ailyChatConfigService.userInstructionFolders = this.parseFolderPaths(this.userInstructionFoldersText);
+    this.ailyChatConfigService.projectInstructionFolders = this.parseFolderPaths(this.projectInstructionFoldersText);
+    this.ailyChatConfigService.terminalAllowList = this.parseFolderPaths(this.terminalAllowListText);
+    this.ailyChatConfigService.terminalDenyList = this.parseFolderPaths(this.terminalDenyListText);
+    this.ailyChatConfigService.terminalInheritDefaultAllowList = this.terminalInheritDefaultAllowList;
 
     // 保存每个Agent的工具配置
     for (const agentConfig of this.agentConfigs) {
@@ -485,9 +654,9 @@ export class AilyChatSettingsComponent implements OnInit {
   /**
    * 打开帮助链接
    */
-  openHelpUrl(type: 'maxCount' | 'workspace' | 'tools' | 'apiKey') {
+  openHelpUrl(type: 'maxRequests' | 'workspace' | 'tools' | 'apiKey') {
     const helpUrls = {
-      maxCount: 'https://example.com/help/max-count',
+      maxRequests: 'https://example.com/help/max-requests',
       workspace: 'https://example.com/help/workspace',
       tools: 'https://example.com/help/tools',
       apiKey: 'https://example.com/help/api-key'

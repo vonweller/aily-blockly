@@ -1,5 +1,5 @@
-import { ToolUseResult } from "./tools";
-import { CmdOutput, CmdService } from "../../../services/cmd.service";
+import type { ToolUseResult } from '../core/tool-types';
+import { CmdOutput, CmdService } from '../../../services/cmd.service';
 import { 
     CommandSecurity, 
     validateCommand, 

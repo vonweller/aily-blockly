@@ -10,6 +10,11 @@
 
   .title {
     padding-left: 10px;
+    gap: 8px;
+
+    .title-text {
+      min-width: 0;
+    }
   }
 
   .tool-btns {

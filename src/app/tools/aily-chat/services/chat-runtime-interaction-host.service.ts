@@ -1,0 +1,365 @@
+import { Injectable, signal } from '@angular/core';
+
+import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion } from '../core/ask-user';
+import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
+
+export interface RuntimeQuestionWidgetState {
+  readonly sessionId: string;
+  readonly partId: string;
+  readonly data: {
+    partId: string;
+    isHistory: false;
+    questions: AskUserQuestion[];
+    answers?: Record<string, AskUserAnswer>;
+  };
+}
+
+export interface RuntimeConfirmationDecision {
+  readonly approved: boolean;
+  readonly scope?: ToolApprovalScope;
+  readonly reason?: string;
+  readonly actionId?: string;
+  readonly sideEffectOnly?: boolean;
+}
+
+export interface RuntimeConfirmationWidgetState {
+  readonly sessionId: string;
+  readonly id: string;
+  readonly kind: 'approval' | 'confirmation';
+  readonly partId: string;
+  readonly askId?: string;
+  readonly toolCallId?: string;
+  readonly toolName?: string;
+  readonly data: {
+    kind: 'approval' | 'confirmation';
+    partId: string;
+    askId?: string;
+    toolCallId?: string;
+    toolName?: string;
+    title: string;
+    subtitle?: string;
+    message: string;
+    args?: Record<string, unknown>;
+    actions: readonly ToolApprovalAction[];
+    primaryScope: ToolApprovalScope;
+    resolved?: boolean;
+    approved?: boolean;
+    scope?: ToolApprovalScope;
+  };
+}
+
+type QuestionRuntimeEntry = RuntimeQuestionWidgetState & {
+  readonly resolve: (result: AskUserFullResponse | undefined) => void;
+};
+
+type ConfirmationRuntimeEntry = RuntimeConfirmationWidgetState & {
+  readonly resolve: (result: RuntimeConfirmationDecision) => void;
+  readonly onAction?: (actionId: string) => void;
+};
+
+@Injectable()
+export class ChatRuntimeInteractionHostService {
+  private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
+  private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
+  private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
+
+  getQuestionWidget(sessionId: string): RuntimeQuestionWidgetState | null {
+    return this._questionEntries()[sessionId] ?? null;
+  }
+
+  presentQuestion(sessionId: string, partId: string, questions: AskUserQuestion[]): Promise<AskUserFullResponse | undefined> {
+    this.clearQuestion(sessionId);
+
+    return new Promise<AskUserFullResponse | undefined>((resolve) => {
+      const current = this._questionEntries();
+      this._questionEntries.set({
+        ...current,
+        [sessionId]: {
+          sessionId,
+          partId,
+          resolve,
+          data: {
+            partId,
+            isHistory: false,
+            questions,
+          },
+        },
+      });
+    });
+  }
+
+  completeQuestion(sessionId: string, result: AskUserFullResponse | undefined): void {
+    const entry = this._questionEntries()[sessionId];
+    if (!entry) {
+      return;
+    }
+
+    entry.resolve(result);
+    this.deleteQuestionEntry(sessionId);
+  }
+
+  resolveQuestionCompat(sessionId: string, answer: string, wasFreeform: boolean): void {
+    const entry = this._questionEntries()[sessionId];
+    if (!entry) {
+      throw new Error('resolveAskUserResponse requires an active question partId.');
+    }
+
+    const firstQuestion = entry.data.questions[0];
+    const questionKey = firstQuestion?.question || 'unknown';
+    const answerRecord: AskUserAnswer = wasFreeform
+      ? { selected: [], freeText: answer, skipped: false }
+      : { selected: [answer], freeText: null, skipped: false };
+
+    this.completeQuestion(sessionId, {
+      answers: {
+        [questionKey]: answerRecord,
+      },
+    });
+  }
+
+  skipQuestion(sessionId: string): void {
+    const entry = this._questionEntries()[sessionId];
+    if (!entry) {
+      throw new Error('skipAskUserResponse requires an active question partId.');
+    }
+
+    const answers = Object.fromEntries(entry.data.questions.map((question) => [question.question, {
+      selected: [],
+      freeText: null,
+      skipped: true,
+    } satisfies AskUserAnswer]));
+
+    this.completeQuestion(sessionId, { answers });
+  }
+
+  clearQuestion(sessionId: string): void {
+    const entry = this._questionEntries()[sessionId];
+    if (!entry) {
+      return;
+    }
+
+    entry.resolve(undefined);
+    this.deleteQuestionEntry(sessionId);
+  }
+
+  getConfirmationQueue(sessionId: string): readonly RuntimeConfirmationWidgetState[] {
+    return this._confirmationEntries()[sessionId] ?? [];
+  }
+
+  getActiveConfirmationIndex(sessionId: string): number {
+    const queue = this.getConfirmationQueue(sessionId);
+    if (queue.length === 0) {
+      return 0;
+    }
+
+    const rawIndex = this._confirmationActiveIndices()[sessionId] ?? 0;
+    return Math.max(0, Math.min(rawIndex, queue.length - 1));
+  }
+
+  getActiveConfirmation(sessionId: string): RuntimeConfirmationWidgetState | null {
+    const queue = this.getConfirmationQueue(sessionId);
+    if (queue.length === 0) {
+      return null;
+    }
+
+    return queue[this.getActiveConfirmationIndex(sessionId)] ?? null;
+  }
+
+  navigateConfirmation(sessionId: string, delta: number): void {
+    const queue = this.getConfirmationQueue(sessionId);
+    if (queue.length <= 1) {
+      return;
+    }
+
+    const nextIndex = (this.getActiveConfirmationIndex(sessionId) + delta + queue.length) % queue.length;
+    this._confirmationActiveIndices.set({
+      ...this._confirmationActiveIndices(),
+      [sessionId]: nextIndex,
+    });
+  }
+
+  presentToolApproval(sessionId: string, request: ToolApprovalRequest): Promise<RuntimeConfirmationDecision> {
+    const actions = Array.isArray(request.actions) ? request.actions : [];
+    const primaryScope = request.primaryScope ?? 'once';
+
+    return this.enqueueConfirmation(sessionId, {
+      sessionId,
+      id: request.toolCallId,
+      kind: 'approval',
+      partId: request.toolCallId,
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      data: {
+        kind: 'approval',
+        partId: request.toolCallId,
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        title: request.title || '确认操作',
+        subtitle: request.subtitle,
+        message: request.message,
+        args: request.args,
+        actions,
+        primaryScope,
+      },
+    });
+  }
+
+  presentConfirmation(
+    sessionId: string,
+    confirmation: {
+      askId: string;
+      partId: string;
+      toolName?: string;
+      title: string;
+      subtitle?: string;
+      message: string;
+      args?: Record<string, unknown>;
+      actions: readonly ToolApprovalAction[];
+      primaryScope: ToolApprovalScope;
+      onAction?: (actionId: string) => void;
+    },
+  ): Promise<RuntimeConfirmationDecision> {
+    return this.enqueueConfirmation(sessionId, {
+      sessionId,
+      id: confirmation.partId,
+      kind: 'confirmation',
+      partId: confirmation.partId,
+      askId: confirmation.askId,
+      toolName: confirmation.toolName,
+      data: {
+        kind: 'confirmation',
+        partId: confirmation.partId,
+        askId: confirmation.askId,
+        toolName: confirmation.toolName,
+        title: confirmation.title,
+        subtitle: confirmation.subtitle,
+        message: confirmation.message,
+        args: confirmation.args,
+        actions: confirmation.actions,
+        primaryScope: confirmation.primaryScope,
+      },
+      onAction: confirmation.onAction,
+    });
+  }
+
+  triggerConfirmationAction(sessionId: string, id: string, actionId: string): void {
+    const queue = this._confirmationEntries()[sessionId];
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const target = queue.find(entry => entry.id === id);
+    target?.onAction?.(actionId);
+  }
+
+  approveActiveConfirmation(sessionId: string, scope: ToolApprovalScope, actionId?: string): void {
+    const active = this.getActiveConfirmation(sessionId);
+    if (!active) {
+      return;
+    }
+
+    this.resolveConfirmation(sessionId, active.id, {
+      approved: true,
+      scope,
+      actionId,
+    });
+  }
+
+  rejectActiveConfirmation(sessionId: string, reason = '用户拒绝执行'): void {
+    const active = this.getActiveConfirmation(sessionId);
+    if (!active) {
+      return;
+    }
+
+    this.resolveConfirmation(sessionId, active.id, {
+      approved: false,
+      reason,
+    });
+  }
+
+  resolveToolApproval(sessionId: string, toolCallId: string, result: RuntimeConfirmationDecision): void {
+    this.resolveConfirmation(sessionId, toolCallId, result);
+  }
+
+  resolveConfirmation(sessionId: string, id: string, result: RuntimeConfirmationDecision): void {
+    const queue = this._confirmationEntries()[sessionId];
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const targetIndex = queue.findIndex((entry) => entry.id === id);
+    if (targetIndex < 0) {
+      return;
+    }
+
+    const target = queue[targetIndex];
+    target.resolve(result);
+
+    const nextQueue = queue.filter((entry) => entry.id !== id);
+    const nextQueues = { ...this._confirmationEntries() };
+    if (nextQueue.length === 0) {
+      delete nextQueues[sessionId];
+    } else {
+      nextQueues[sessionId] = nextQueue;
+    }
+    this._confirmationEntries.set(nextQueues);
+
+    const nextIndices = { ...this._confirmationActiveIndices() };
+    if (nextQueue.length === 0) {
+      delete nextIndices[sessionId];
+    } else {
+      const currentIndex = this.getActiveConfirmationIndex(sessionId);
+      nextIndices[sessionId] = Math.max(0, Math.min(currentIndex, nextQueue.length - 1));
+    }
+    this._confirmationActiveIndices.set(nextIndices);
+  }
+
+  clearConfirmations(sessionId: string): void {
+    const queue = this._confirmationEntries()[sessionId];
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    for (const entry of queue) {
+      entry.resolve({ approved: false, reason: '用户拒绝执行' });
+    }
+
+    const nextQueues = { ...this._confirmationEntries() };
+    delete nextQueues[sessionId];
+    this._confirmationEntries.set(nextQueues);
+
+    const nextIndices = { ...this._confirmationActiveIndices() };
+    delete nextIndices[sessionId];
+    this._confirmationActiveIndices.set(nextIndices);
+  }
+
+  private enqueueConfirmation(
+    sessionId: string,
+    entry: RuntimeConfirmationWidgetState & { onAction?: (actionId: string) => void },
+  ): Promise<RuntimeConfirmationDecision> {
+    return new Promise<RuntimeConfirmationDecision>((resolve) => {
+      const currentQueues = this._confirmationEntries();
+      const currentQueue = currentQueues[sessionId] ?? [];
+      const nextQueue = currentQueue.filter((item) => item.id !== entry.id).concat({
+        ...entry,
+        resolve,
+      });
+
+      this._confirmationEntries.set({
+        ...currentQueues,
+        [sessionId]: nextQueue,
+      });
+
+      this._confirmationActiveIndices.set({
+        ...this._confirmationActiveIndices(),
+        [sessionId]: nextQueue.length - 1,
+      });
+    });
+  }
+
+  private deleteQuestionEntry(sessionId: string): void {
+    const current = { ...this._questionEntries() };
+    delete current[sessionId];
+    this._questionEntries.set(current);
+  }
+}

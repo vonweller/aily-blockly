@@ -2,22 +2,17 @@ import { Injectable } from '@angular/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { TranslateService } from '@ngx-translate/core';
+import type { IMenuItem } from '../../../configs/menu.config';
 import { ChatService } from './chat.service';
 import { ChatHistoryService } from './chat-history.service';
 import { AilyHost } from '../core/host';
 import { ChatRenameDialogComponent } from '../components/chat-rename-dialog/chat-rename-dialog.component';
 import { ChatDeleteDialogComponent } from '../components/chat-delete-dialog/chat-delete-dialog.component';
 
-export interface IMenuItem {
-  name: string;
-  action: string;
-  icon?: string;
-  data?: any;
-}
-
 export interface MenuPosition {
   x: number;
   y: number;
+  anchorBottom?: number;
 }
 
 /**
@@ -32,9 +27,13 @@ export class MenuManagerService {
   showHistoryList = false;
   showMode = false;
   showModelMenu = false;
+  showReasoningMenu = false;
+  showActionMenu = false;
   historyListPosition: MenuPosition = { x: 0, y: 0 };
   modeListPosition: MenuPosition = { x: 0, y: 0 };
   modelListPosition: MenuPosition = { x: 0, y: 0 };
+  reasoningMenuPosition: MenuPosition = { x: 0, y: 0 };
+  actionMenuPosition: MenuPosition = { x: 0, y: 0 };
   historyList: any[] = [];
 
   constructor(
@@ -49,6 +48,8 @@ export class MenuManagerService {
     this.showHistoryList = false;
     this.showMode = false;
     this.showModelMenu = false;
+    this.showReasoningMenu = false;
+    this.showActionMenu = false;
   }
 
   /** 打开/关闭历史记录面板 */
@@ -69,36 +70,170 @@ export class MenuManagerService {
       const menuHeight = 68;
       let x = rect.left;
       let y = rect.top - menuHeight - 1;
+      let anchorBottom: number | undefined = rect.top - 1;
       if (x < 0) x = rect.left;
-      if (y < 0) y = rect.bottom - 1;
-      this.modeListPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+      if (y < 0) {
+        y = rect.bottom - 1;
+        anchorBottom = undefined;
+      }
+      this.modeListPosition = { x: Math.max(0, x), y: Math.max(0, y), anchorBottom };
     } else {
       this.modeListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
     }
     event.preventDefault();
     event.stopPropagation();
+    this.showReasoningMenu = false;
     this.showModelMenu = false;
     this.showMode = !this.showMode;
   }
 
   /** 切换模型菜单的显示/隐藏 */
-  toggleModelMenu(event: MouseEvent, modelCount: number): void {
+  toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
-      const menuHeight = modelCount * 30 + 12;
+      const menuHeight = this.estimateMenuHeight(modelItems, { includeGlobalFilter: true });
+      const estimatedMenuWidth = 320;
       let x = rect.left;
       let y = rect.top - menuHeight - 1;
-      if (x < 0) x = rect.left;
-      if (y < 0) y = rect.bottom - 1;
-      this.modelListPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+      let anchorBottom: number | undefined = rect.top - 1;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < 8) {
+        y = Math.max(8, rect.bottom - 1);
+        anchorBottom = undefined;
+      }
+
+      this.modelListPosition = { x: Math.max(0, x), y: Math.max(0, y), anchorBottom };
     } else {
       this.modelListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
     }
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showReasoningMenu = false;
     this.showModelMenu = !this.showModelMenu;
+  }
+
+  toggleReasoningMenu(event: MouseEvent, reasoningItems: IMenuItem[]): void {
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const menuHeight = this.estimateMenuHeight(reasoningItems);
+      const estimatedMenuWidth = 220;
+      let x = rect.left;
+      let y = rect.bottom + 4;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y + menuHeight > window.innerHeight - 8) {
+        y = Math.max(8, rect.top - menuHeight - 4);
+      }
+
+      this.reasoningMenuPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+    } else {
+      this.reasoningMenuPosition = { x: window.innerWidth - 240, y: window.innerHeight - 280 };
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.showMode = false;
+    this.showModelMenu = false;
+    this.showActionMenu = false;
+    this.showReasoningMenu = !this.showReasoningMenu;
+  }
+
+  toggleActionMenu(event: MouseEvent, actionItems: IMenuItem[]): void {
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const menuHeight = this.estimateMenuHeight(actionItems);
+      const estimatedMenuWidth = 300;
+      let x = rect.left;
+      let y = rect.bottom + 4;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y + menuHeight > window.innerHeight - 8) {
+        y = Math.max(8, rect.top - menuHeight - 4);
+      }
+
+      this.actionMenuPosition = { x: Math.max(0, x), y: Math.max(0, y) };
+    } else {
+      this.actionMenuPosition = { x: window.innerWidth - 320, y: 72 };
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.showHistoryList = false;
+    this.showMode = false;
+    this.showModelMenu = false;
+    this.showActionMenu = !this.showActionMenu;
+  }
+
+  private estimateMenuHeight(items: IMenuItem[] | null | undefined, options?: { includeGlobalFilter?: boolean }): number {
+    if (!Array.isArray(items) || items.length === 0) {
+      return 40;
+    }
+
+    const collapsedSections: Record<string, boolean> = {};
+    for (const item of items) {
+      const action = typeof item?.action === 'string' ? item.action : '';
+      if (!action.startsWith('section-toggle-')) {
+        continue;
+      }
+
+      const sectionId = typeof item?.extra?.sectionId === 'string'
+        ? item.extra.sectionId
+        : action.slice('section-toggle-'.length);
+      if (!sectionId) {
+        continue;
+      }
+
+      collapsedSections[sectionId] = item.extra?.collapsed !== false;
+    }
+
+    let height = 8;
+    if (options?.includeGlobalFilter) {
+      height += 40;
+    }
+
+    for (const item of items) {
+      if (item?.sep) {
+        height += 6;
+        continue;
+      }
+
+      const scopedSectionId = typeof item?.extra?.section === 'string' ? item.extra.section : '';
+      if (scopedSectionId && collapsedSections[scopedSectionId]) {
+        continue;
+      }
+
+      if (typeof item?.action === 'string' && item.action.startsWith('section-')) {
+        if (item.action.startsWith('section-filter-') && options?.includeGlobalFilter) {
+          continue;
+        }
+        if (item.action.startsWith('section-toggle-')) {
+          height += 28;
+        } else if (item.action.startsWith('section-filter-')) {
+          height += 34;
+        } else {
+          height += 20;
+        }
+        continue;
+      }
+
+      height += 28;
+    }
+
+    return height + 8;
   }
 
   /**
@@ -109,8 +244,8 @@ export class MenuManagerService {
     e: { action: string; data: any },
     currentSessionId: string,
     callbacks: {
-      onGetHistory: () => void;
-      onNewChat: () => void;
+      onGetHistory: () => void | Promise<void>;
+      onNewChat: () => void | Promise<void>;
       onDetectChanges: () => void;
       onUpdateTitle: (title: string) => void;
       onRefreshHistory: () => void;
@@ -165,9 +300,9 @@ export class MenuManagerService {
             const _rootPath1 = AilyHost.get().project.projectRootPath;
             this.chatService.currentSessionPath = entry?.projectPath
               || (_curPath1 && _curPath1 !== _rootPath1 ? _curPath1 : '');
-            callbacks.onGetHistory();
+            void callbacks.onGetHistory();
           } else {
-            callbacks.onNewChat();
+            void callbacks.onNewChat();
           }
         }
       });
@@ -178,16 +313,16 @@ export class MenuManagerService {
    * 点击历史会话条目，切换到该会话
    * @returns true 表示执行了切换
    */
-  switchToSession(
+  async switchToSession(
     sessionId: string,
     currentSessionId: string,
     callbacks: {
       onSaveCurrentSession: () => void;
-      onGetHistory: () => void;
+      onGetHistory: () => void | Promise<void>;
       onSetCompleted: () => void;
       onSetServerSessionInactive: () => void;
     }
-  ): boolean {
+  ): Promise<boolean> {
     if (currentSessionId === sessionId) return false;
 
     callbacks.onSaveCurrentSession();
@@ -197,7 +332,7 @@ export class MenuManagerService {
     const _rootPath2 = AilyHost.get().project.projectRootPath;
     this.chatService.currentSessionPath = entry?.projectPath
       || (_curPath2 && _curPath2 !== _rootPath2 ? _curPath2 : '');
-    callbacks.onGetHistory();
+    await callbacks.onGetHistory();
     callbacks.onSetCompleted();
     callbacks.onSetServerSessionInactive();
     this.closeAll();

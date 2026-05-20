@@ -1206,8 +1206,10 @@ export class BlocklyService {
           console.log(`- delete Python generator for ${blockType}`);
           delete mpyGen.forBlock[blockType];
         }
-        if ((Blockly as any).JavaScript?.forBlock?.[blockType]) {
-          delete (Blockly as any).JavaScript.forBlock[blockType];
+        const legacyJavascriptGenerator = (globalThis as { Blockly?: { JavaScript?: { forBlock?: Record<string, unknown> } } }).Blockly?.JavaScript;
+        if (legacyJavascriptGenerator?.forBlock?.[blockType]) {
+          console.log(`- delete JavaScript generator for ${blockType}`);
+          delete legacyJavascriptGenerator.forBlock[blockType];
         }
       });
     }

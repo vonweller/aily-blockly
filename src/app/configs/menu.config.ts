@@ -15,10 +15,12 @@ export interface IMenuItem {
   children?: IMenuItem[],
   extra?: any,
   check?: boolean,
+  current?: boolean,
+  tooltip?: string,
+  hideChildrenArrow?: boolean,
   key?: string; // 用于标识编译和上传配置
   /** 行内操作按钮，如重命名/删除 */
   actions?: { icon: string; action: string; title?: string }[];
-  current?: boolean;
   /** 子菜单不使用单选勾选（如最近项目列表） */
   submenuNoRadio?: boolean;
 }

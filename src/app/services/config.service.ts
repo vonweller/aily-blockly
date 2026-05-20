@@ -332,6 +332,7 @@ export class ConfigService {
    */
   async setRegion(regionKey: string) {
     if (this.data.regions && this.data.regions[regionKey] && this.isRegionSelectable(regionKey)) {
+      const previousApiServer = this.getCurrentApiServer();
       this.data.region = regionKey;
       const regionConfig = this.data.regions[regionKey];
       
@@ -362,6 +363,10 @@ export class ConfigService {
       
       // 保存配置
       await this.save();
+
+      if (previousApiServer !== this.getCurrentApiServer()) {
+        this.configReloaded$.next();
+      }
     }
   }
 

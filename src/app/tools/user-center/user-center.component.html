@@ -36,7 +36,10 @@
                 </div>
                 <div class="content">
                     <span class="label">AI可用次数</span>
-                    <span class="value">{{ benefits?.ai_calls?.unlimited ? '♾️' : (benefits?.ai_calls?.used ?? 0) + '/' + (benefits?.ai_calls?.total ?? 0) }}</span>
+                    <span class="value">{{ aiAvailableValue }}</span>
+                    @if(aiAvailableMeta) {
+                    <span class="meta">{{ aiAvailableMeta }}</span>
+                    }
                 </div>
                 @if (!isProPlanSubscriber) {
                 <div class="action btn link" (click)="OpenUrl('/user/subscription')">

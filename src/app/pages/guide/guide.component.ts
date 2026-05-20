@@ -3,7 +3,7 @@ import { GUIDE_MENU } from '../../configs/menu.config';
 import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
-import { version } from '../../../../package.json';
+import packageJson from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../services/electron.service';
@@ -20,7 +20,7 @@ import { ThemeService } from '../../services/theme.service';
   styleUrl: './guide.component.scss'
 })
 export class GuideComponent implements OnInit, AfterViewInit {
-  version = version;
+  version = packageJson.version;
   guideMenu = GUIDE_MENU;
   showMenu = true;
 

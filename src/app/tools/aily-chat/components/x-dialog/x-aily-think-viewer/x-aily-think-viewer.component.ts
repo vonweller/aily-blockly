@@ -15,25 +15,26 @@ import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
 import { AilyChatCodeComponent } from '../aily-chat-code.component';
 import { getClosingTagsForOpenBlocks } from '../../../services/content-sanitizer.service';
 import { getThinkContent } from '../../../core/think-content-store';
-import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-markdown-external-links.directive';
 
 @Component({
   selector: 'x-aily-think-viewer',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, AilyMarkdownExternalLinksDirective],
+  imports: [CommonModule, XMarkdownComponent],
   template: `
-    <div class="ac-think" [class.expanded]="thinkExpanded">
+    <div class="ac-think" [class.expanded]="thinkExpanded" [class.streaming]="data?.isComplete === false">
       <div class="ac-think-header" (click)="thinkExpanded = !thinkExpanded">
         @if (data?.isComplete) {
           <i class="fa-light fa-circle-check ac-think-icon done"></i>
         } @else {
-          <i class="fa-duotone fa-solid fa-loader ac-think-icon loading ac-spin"></i>
+          <i class="fa-light fa-spinner-third ac-think-icon loading ac-spin"></i>
         }
-        <span>{{ data?.isComplete ? 'Think' : 'Thinking...' }}</span>
+        <span class="ac-think-label" [class.ac-think-shimmer]="data?.isComplete === false && !thinkExpanded">
+          {{ displayLabel }}
+        </span>
         <i class="fa-light fa-chevron-down ac-think-arrow"></i>
       </div>
       @if (thinkExpanded) {
-        <div class="ac-think-body" #thinkBody ailyMarkdownExternalLinks (scroll)="onThinkBodyScroll($event)">
+        <div class="ac-think-body" #thinkBody (scroll)="onThinkBodyScroll($event)">
           @if (markdownContent()) {
             <x-markdown
               [content]="markdownContent()"
@@ -48,80 +49,159 @@ import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-mar
   `,
   styles: [
     `
-      .ac-think {
-        border-radius: 5px;
-        padding: 5px 10px;
-        margin: 0;
-        overflow: hidden;
-        background-color: var(--aily-chat-viewer-card-bg, #3a3a3a);
-        color: var(--aily-chat-viewer-fg, #cccccc);
+      /*
+       * Think Viewer — 对齐 Copilot chatThinkingContent.css
+       * 使用 x-dialog 通过 DOM 传播的 --chat-* 变量
+       * 无独立背景面板，内嵌在 aily 响应区内
+       */
+      :host {
+        display: block;
+        width: 100%;
+        min-width: 0;
       }
+
+      /* ===== 外层容器：无背景面板（Copilot .chat-thinking-box 风格）=====  */
+      .ac-think {
+        position: relative;
+        margin: 2px 0;
+        color: var(--chat-fg, #ccc);
+      }
+
+      /* ===== 折叠头部（Copilot .monaco-button.monaco-icon-button 风格）===== */
       .ac-think-header {
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 0;
+        padding: 3px 4px;
         cursor: pointer;
         font-size: 13px;
+        color: var(--chat-fg-dim, #8e8e8e);
         user-select: none;
-        transition: background 0.2s;
+        border-radius: 5px;
+        transition: background 0.15s;
       }
       .ac-think-header:hover {
-        background: var(--aily-chat-viewer-overlay-soft, rgba(255, 255, 255, 0.05));
-        margin: -5px -10px;
-        padding: 5px 10px;
+        background: var(--chat-bg-hover, rgba(255,255,255,0.06));
       }
-      .ac-think-icon { flex-shrink: 0; margin-right: 5px; }
-      .ac-think-icon.loading { color: var(--aily-chat-viewer-state-info, #1890ff); }
-      .ac-think-icon.done { color: var(--aily-chat-viewer-state-done, #52c41a); }
+
+      /* 状态图标 */
+      .ac-think-icon {
+        flex-shrink: 0;
+        font-size: 12px;
+        width: 14px;
+        text-align: center;
+      }
+      .ac-think-icon.loading { color: var(--chat-info, #75beff); }
+      .ac-think-icon.done    { color: var(--chat-success, #89d185); }
+
+      /* 标签文字 */
+      .ac-think-label {
+        font-size: 13px;
+        color: var(--chat-fg-dim, #8e8e8e);
+        line-height: 1.4;
+      }
+
+      /* ===== Shimmer 扫光动画（Copilot chat-thinking-title-shimmer 对齐）===== */
+      @keyframes ac-think-shimmer {
+        0%   { background-position: 120% 0; }
+        100% { background-position: -120% 0; }
+      }
+      .ac-think-shimmer {
+        background: linear-gradient(90deg,
+          var(--chat-fg-dim, #8e8e8e) 0%,
+          var(--chat-fg-dim, #8e8e8e) 30%,
+          var(--chat-shimmer, #4fc3f7) 50%,
+          var(--chat-fg-dim, #8e8e8e) 70%,
+          var(--chat-fg-dim, #8e8e8e) 100%);
+        background-size: 400% 100%;
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: ac-think-shimmer 2s linear infinite;
+        will-change: background-position;
+      }
+
+      /* 展开箭头 */
       .ac-think-arrow {
         margin-left: auto;
         font-size: 10px;
-        color: var(--aily-chat-viewer-muted, #888888);
-        transition: transform 0.2s;
+        color: var(--chat-fg-muted, #6a6a6a);
+        transition: transform 0.15s ease;
       }
       .ac-think.expanded .ac-think-arrow {
         transform: rotate(180deg);
       }
+
+      /* ===== 展开体：左侧连接线（Copilot chain-of-thought ::before 风格）===== */
       .ac-think-body {
-        padding: 8px 2px;
-        margin: 5px -10px 0 0;
+        position: relative;
+        padding: 4px 2px 6px 20px;
+        margin-top: 2px;
         max-height: 200px;
         overflow-y: auto;
         overflow-x: hidden;
         scrollbar-width: thin;
-        scrollbar-color: var(--aily-chat-viewer-scrollbar, rgba(255, 255, 255, 0.2)) transparent;
+        scrollbar-color: var(--chat-border, rgba(255,255,255,0.10)) transparent;
         scrollbar-gutter: stable;
         user-select: text;
       }
+
+      /* 垂直连接线 */
+      .ac-think-body::before {
+        content: '';
+        position: absolute;
+        left: 9px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background-color: var(--chat-border, rgba(255,255,255,0.10));
+        mask-image: linear-gradient(to bottom,
+          transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+        -webkit-mask-image: linear-gradient(to bottom,
+          transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
+      }
+
+      /* Header → Body 弯曲连接弧 */
+      .ac-think-header::after {
+        content: none;
+      }
+      .ac-think.expanded .ac-think-header::after {
+        content: '';
+        position: absolute;
+        left: 9px;
+        top: 20px;
+        height: 10px;
+        width: 6px;
+        border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        border-bottom-left-radius: 4px;
+        pointer-events: none;
+      }
+      .ac-think.expanded {
+        position: relative;
+      }
+
+      /* Markdown 内容样式 */
       :host ::ng-deep .ac-think-body .x-markdown-dark {
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.5;
-        color: var(--aily-chat-viewer-subtle, #999999);
+        color: var(--chat-fg-dim, #8e8e8e);
         word-break: break-word;
         overflow-wrap: anywhere;
         white-space: normal;
         max-width: 100%;
         min-width: 0;
       }
-      :host ::ng-deep .ac-think-body .x-markdown-dark * {
-        max-width: 100%;
-      }
-      :host ::ng-deep .ac-think-body .x-markdown-dark p {
-        margin: 2px 0;
-      }
+      :host ::ng-deep .ac-think-body .x-markdown-dark * { max-width: 100%; }
+      :host ::ng-deep .ac-think-body .x-markdown-dark p { margin: 2px 0; }
       :host ::ng-deep .ac-think-body .x-markdown-dark h1,
       :host ::ng-deep .ac-think-body .x-markdown-dark h2,
       :host ::ng-deep .ac-think-body .x-markdown-dark h3,
       :host ::ng-deep .ac-think-body .x-markdown-dark h4 {
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
-        color: var(--aily-chat-viewer-think-heading, #bbbbbb);
+        color: var(--chat-fg, #ccc);
         margin: 4px 0 2px;
-      }
-      :host ::ng-deep .ac-think-body .x-markdown-dark h2 {
-        border-left: 4px solid var(--aily-chat-viewer-think-md-border, #3794ff);
-        padding-left: 6px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark ul,
       :host ::ng-deep .ac-think-body .x-markdown-dark ol {
@@ -139,17 +219,16 @@ import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-mar
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark th,
       :host ::ng-deep .ac-think-body .x-markdown-dark td {
-        padding: 4px 8px;
-        font-size: 12px;
+        padding: 3px 6px;
+        font-size: 11px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark blockquote {
-        margin: 4px 0;
-        padding: 2px 8px;
+        margin: 3px 0;
+        padding: 2px 6px;
       }
+
       @keyframes ac-spin {
-        to {
-          transform: rotate(360deg);
-        }
+        to { transform: rotate(360deg); }
       }
       .ac-spin {
         animation: ac-spin 0.8s linear infinite;
@@ -177,6 +256,45 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   /** 用户未主动上滚时跟随流式到底部 */
   private thinkStickToBottom = true;
   private readonly thinkScrollBottomThresholdPx = 48;
+
+  // ===== Title extraction & rotating phrases =====
+  private _extractedTitle = '';
+  private readonly _phrases = ['Thinking...', 'Reasoning...', 'Analyzing...', 'Considering...', 'Evaluating...'];
+  private _phraseIndex = 0;
+  private _phraseTimer: ReturnType<typeof setInterval> | null = null;
+  displayLabel = 'Thinking...';
+
+  /** 从 think 内容开头提取 **粗体标题** */
+  private _extractTitle(content: string): string {
+    if (!content) return '';
+    const match = content.match(/^\s*\*\*([^*]+)\*\*/);
+    return match ? match[1].trim() : '';
+  }
+
+  /** 更新显示标签：完成时显示提取的标题或 "Thought"，流式中显示旋转短语 */
+  private _updateLabel(): void {
+    if (this.data?.isComplete) {
+      this.displayLabel = this._extractedTitle || 'Thought';
+      this._stopPhraseRotation();
+    } else {
+      this.displayLabel = this._phrases[this._phraseIndex];
+    }
+  }
+
+  private _startPhraseRotation(): void {
+    if (this._phraseTimer) return;
+    this._phraseTimer = setInterval(() => {
+      this._phraseIndex = (this._phraseIndex + 1) % this._phrases.length;
+      this.displayLabel = this._phrases[this._phraseIndex];
+    }, 3000);
+  }
+
+  private _stopPhraseRotation(): void {
+    if (this._phraseTimer) {
+      clearInterval(this._phraseTimer);
+      this._phraseTimer = null;
+    }
+  }
 
   // ===== Throttle state =====
   private _pendingRaw: string | null = null;
@@ -214,19 +332,27 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
     this.thinkContent = raw;
 
+    // 提取标题（每次内容更新时尝试）
+    if (!this._extractedTitle && raw.length > 10) {
+      this._extractedTitle = this._extractTitle(raw);
+    }
+
     // ★ 关键修复：isComplete 变化时立即渲染（不做节流）
     if (this.data.isComplete === true && prevStreaming) {
       this._stopPolling();
       this._cancelThrottle();
       this._renderNow(raw, true);
       this.thinkExpanded = false;
+      this._updateLabel();
       return;
     }
 
     if (this.data.isComplete === true) {
       this._stopPolling();
+      this._updateLabel();
+      // ★ 修复：首次以 isComplete=true 渲染时（历史/finalize），必须调用 _renderNow
+      // 之前仅在 streaming→done 转换时渲染，直接 isComplete=true 时 raw 被计算但未渲染
       this._renderNow(raw, true);
-      this.thinkExpanded = false;
       return;
     }
 
@@ -234,6 +360,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       this.thinkExpanded = true;
       this.shouldScrollThink = true;
       this._scheduleRender(raw);
+      this._startPhraseRotation();
       // 启动轮询：v 字段已移除，x-markdown 不再驱动 ngOnChanges，需自行拉取 store
       this._startPolling();
     }
@@ -347,5 +474,6 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   ngOnDestroy(): void {
     this._cancelThrottle();
     this._stopPolling();
+    this._stopPhraseRotation();
   }
 }

@@ -1,0 +1,108 @@
+<div #panelRoot class="chat-debug-detail-panel" tabindex="-1">
+  <div class="chat-debug-detail-panel-header">
+    <div class="chat-debug-detail-panel-heading">
+      <div class="chat-debug-detail-panel-eyebrow">事件详情</div>
+      <div class="chat-debug-detail-panel-title">{{ title }}</div>
+      @if (event) {
+      <div class="chat-debug-detail-panel-meta">
+        {{ event.kind }}
+        @if (event.created > 0) {
+        · {{ event.created | date:'yyyy-MM-dd HH:mm:ss' }}
+        }
+      </div>
+      }
+    </div>
+    <button type="button" class="chat-debug-detail-panel-close" (click)="closeRequested.emit()">关闭</button>
+  </div>
+
+  <div class="chat-debug-detail-panel-body sscroll">
+    @if (messageContent; as content) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">{{ content.type === 'user' ? '用户消息' : '代理响应' }}</div>
+      <pre class="chat-debug-detail-panel-pre">{{ content.message }}</pre>
+    </div>
+    @for (section of content.sections; track section.name) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">{{ section.name }}</div>
+      <pre class="chat-debug-detail-panel-pre">{{ section.content }}</pre>
+    </div>
+    }
+    } @else {
+    @if (toolCallContent; as content) {
+    <div class="chat-debug-detail-panel-grid">
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">工具</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.toolName }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">结果</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.result || 'unknown' }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">耗时</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.durationInMillis ?? 0 }}ms</span>
+      </div>
+    </div>
+    @if (content.input) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">输入</div>
+      <pre class="chat-debug-detail-panel-pre">{{ content.input }}</pre>
+    </div>
+    }
+    @if (content.output) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">输出</div>
+      <pre class="chat-debug-detail-panel-pre">{{ content.output }}</pre>
+    </div>
+    }
+    } @else {
+    @if (modelTurnContent; as content) {
+    <div class="chat-debug-detail-panel-grid">
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">请求</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.requestName }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">模型</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.model || 'unknown' }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">状态</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.status || 'unknown' }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">输入 Tokens</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.inputTokens ?? 0 }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">输出 Tokens</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.outputTokens ?? 0 }}</span>
+      </div>
+      <div class="chat-debug-detail-panel-stat">
+        <span class="chat-debug-detail-panel-stat-label">缓存 Tokens</span>
+        <span class="chat-debug-detail-panel-stat-value">{{ content.cachedTokens ?? 0 }}</span>
+      </div>
+    </div>
+    @for (section of content.sections || []; track section.name) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">{{ section.name }}</div>
+      <pre class="chat-debug-detail-panel-pre">{{ section.content }}</pre>
+    </div>
+    }
+    } @else {
+    @if (textContent; as content) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">内容</div>
+      <pre class="chat-debug-detail-panel-pre">{{ content.text }}</pre>
+    </div>
+    } @else if (event) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">事件摘要</div>
+      <div class="chat-debug-detail-panel-fallback">{{ summary || title }}</div>
+    </div>
+    }
+    }
+    }
+    }
+  </div>
+</div>

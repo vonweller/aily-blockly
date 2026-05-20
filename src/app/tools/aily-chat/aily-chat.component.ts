@@ -2,20 +2,15 @@ import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, C
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
 import { XDialogComponent } from './components/x-dialog/x-dialog.component';
-import { DialogComponent } from './components/dialog/dialog.component';
-import { ChatRenameDialogComponent } from './components/chat-rename-dialog/chat-rename-dialog.component';
-import { ChatDeleteDialogComponent } from './components/chat-delete-dialog/chat-delete-dialog.component';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { ToolContainerComponent } from '../../components/tool-container/tool-container.component';
 import { UiService } from '../../services/ui.service';
-import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
+import { NzResizableModule } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
-import { ChatService, ModelConfig } from './services/chat.service';
+import { ChatService } from './services/chat.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { MenuComponent } from '../../components/menu/menu.component';
-import { IMenuItem } from '../../configs/menu.config';
 import { McpService } from './services/mcp.service';
 import { ProjectService } from '../../services/project.service';
 import { CmdService } from '../../services/cmd.service';
@@ -23,8 +18,7 @@ import { CrossPlatformCmdService } from '../../services/cross-platform-cmd.servi
 import { PlatformService } from '../../services/platform.service';
 import { ElectronService } from '../../services/electron.service';
 import { BuilderService } from '../../services/builder.service';
-import { FetchToolService } from './tools/fetchTool';
-import { WebSearchToolService } from './tools/webSearchTool';
+
 import {
   getActiveWorkspace,
   configureBlockTool,
@@ -36,27 +30,28 @@ import { ConnectionGraphService } from '../../services/connection-graph.service'
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../../services/config.service';
 import { AilyChatConfigService } from './services/aily-chat-config.service';
-import { MERMAID_DARK_THEME, MermaidCodeComponent, clearMermaidCache } from 'ngx-x-markdown';
-import './tools/registered/register-all';
+import { MERMAID_DARK_THEME, MermaidCodeComponent } from 'ngx-x-markdown';
 import { AilyHost } from './core/host';
 import { createElectronHostAdapter } from './adapters/electron-host-adapter';
-import {
-  formatSearchPattern as _formatSearchPattern,
-  getLastFolderName as _getLastFolderName,
-  getFileName as _getFileName,
-  getUrlDisplayName as _getUrlDisplayName,
-  getLibraryNickname as _getLibraryNickname,
-} from './services/tool-display.service';
-import {
-  splitContent as _splitContent,
-  getRandomString as _getRandomString,
-} from './services/ui-helpers.service';
 import { ScrollManagerService } from './services/scroll-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { MenuManagerService } from './services/menu-manager.service';
+import { ChatViewService } from './services/chat-view.service';
 import { ChatEngineService } from './services/chat-engine.service';
 import { EditCheckpointService } from './services/edit-checkpoint.service';
-import { UnsavedEditsDialogComponent } from './components/unsaved-edits-dialog/unsaved-edits-dialog.component';
+import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-checkpoint-provider.service';
+import { ChatSessionShellCoordinator } from './helpers/chat-session-shell-coordinator';
+import { ChatSwitchShellCoordinator } from './helpers/chat-switch-shell-coordinator';
+import { ChatEditResourceShellCoordinator } from './helpers/chat-edit-resource-shell-coordinator';
+import { ChatSurfaceShellCoordinator } from './helpers/chat-surface-shell-coordinator';
+import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordinator';
+import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
+import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
+import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
+import { ChatActionRegistry } from './helpers/chat-action-registry';
+import { ChatComponentViewModel } from './helpers/chat-component-view-model';
+import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helper';
+import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -65,16 +60,23 @@ import { AilyEditsViewerComponent } from './components/aily-edits-viewer/aily-ed
 import { TodoUpdateService } from './services/todoUpdate.service';
 import { ArduinoLintService } from './services/arduino-lint.service';
 import { BlocklyService } from '../../editors/blockly-editor/services/blockly.service';
-import { TranslateModule, TranslateService } from '@ngx-translate/core';
+import { TranslateModule } from '@ngx-translate/core';
 import { LoginComponent } from '../../components/login/login.component';
 import { NoticeService } from '../../services/notice.service';
+import { AilyChatDebugHomeComponent } from './components/aily-chat-debug-home/aily-chat-debug-home.component';
+import { AilyChatDebugCacheExplorerComponent } from './components/aily-chat-debug-cache/aily-chat-debug-cache.component';
+import { AilyChatDebugFlowComponent } from './components/aily-chat-debug-flow/aily-chat-debug-flow.component';
+import { AilyChatDebugLogsComponent } from './components/aily-chat-debug-logs/aily-chat-debug-logs.component';
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
+import { AilyChatDebugViewerComponent } from './components/aily-chat-debug-viewer/aily-chat-debug-viewer.component';
+import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
+import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
-import { ContextBudgetService } from './services/context-budget.service';
-import { SubagentSessionService } from './services/subagent-session.service';
 import { ChatHistoryService } from './services/chat-history.service';
+import { ChatDebugBrowserService } from './services/chat-debug-browser.service';
+import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ThemeService } from '../../services/theme.service';
 
 // 共享类型从 core/chat-types.ts 导入并重新导出（保持向后兼容）
@@ -101,65 +103,56 @@ export { ToolCallState };
     AilyEditsViewerComponent,
     TranslateModule,
     LoginComponent,
-    AilyChatSettingsComponent
+    AilyChatDebugHomeComponent,
+    AilyChatDebugCacheExplorerComponent,
+    AilyChatDebugFlowComponent,
+    AilyChatDebugLogsComponent,
+    AilyChatSettingsComponent,
+    AilyChatDebugViewerComponent,
+    ChatInputPartHostComponent,
+    ChatContextToolbarComponent,
   ],
   templateUrl: './aily-chat.component.html',
   styleUrl: './aily-chat.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  providers: [ScrollManagerService, ResourceManagerService, MenuManagerService, EditCheckpointService, ChatEngineService],
+  providers: [
+    ScrollManagerService,
+    ResourceManagerService,
+    MenuManagerService,
+    ChatViewService,
+    EditCheckpointService,
+    GitWorkspaceCheckpointProviderService,
+    ChatEngineService,
+    ChatRuntimeInteractionHostService,
+  ],
 })
 export class AilyChatComponent implements OnDestroy {
-  options = {
-    autoHide: true,
-    clickOnTrack: true,
-    scrollbarMinSize: 50,
-  };
-
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('chatList') chatList: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
+  @ViewChild(ChatInputPartHostComponent) inputPartHost?: ChatInputPartHostComponent;
+  @ViewChild('dialogsContent')
+  set dialogsContent(ref: ElementRef<HTMLElement> | undefined) {
+    this.observeDialogContent(ref?.nativeElement ?? null);
+  }
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
 
-  // ==================== Engine 状态代理（模板绑定） ====================
+  public readonly vm: ChatComponentViewModel;
+  public isManualCompacting = false;
+  public isComposerFocused = false;
 
-  get list() { return this.engine.list; }
-  set list(val) { this.engine.list = val; }
-
-  get isWaiting() { return this.engine.isWaiting; }
-
-  get isCompleted() { return this.engine.isCompleted; }
-  set isCompleted(val) { this.engine.isCompleted = val; }
-
-  get isLoggedIn() { return this.engine.isLoggedIn; }
-
-  get inputValue() { return this.engine.inputValue; }
-  set inputValue(val) { this.engine.inputValue = val; }
-
-  get sessionId() { return this.engine.sessionId; }
-
-  get sessionTitle() { return this.engine.sessionTitle; }
-
-  get currentMode() { return this.engine.currentMode; }
-
-  get currentModel() { return this.engine.currentModel; }
-
-  get currentModelName() { return this.engine.currentModelName; }
-
-  get contextBudget$() { return this.engine.contextBudget$; }
-
-  get contextBudgetSnapshot() { return this.engine.contextBudgetSnapshot; }
-
-  get debug() { return this.engine.debug; }
-
-  get prjPath() { return this.engine.prjPath; }
-
-  get prjRootPath() { return this.engine.prjRootPath; }
-
-  get currentUrl() { return this._currentUrl; }
-  private _currentUrl: string;
-
-  bottomHeight = 180;
-  showSettings = false;
+  public readonly sessionShellCoordinator: ChatSessionShellCoordinator;
+  public readonly switchShellCoordinator: ChatSwitchShellCoordinator;
+  public readonly editResourceShellCoordinator: ChatEditResourceShellCoordinator;
+  public readonly surfaceShellCoordinator: ChatSurfaceShellCoordinator;
+  public readonly submitShellCoordinator: ChatSubmitShellCoordinator;
+  public readonly composerShellCoordinator: ChatComposerShellCoordinator;
+  public readonly viewportShellCoordinator: ChatViewportShellCoordinator;
+  public readonly actionRegistry: ChatActionRegistry;
+  private readonly lifecycleCoordinator: ChatComponentLifecycleCoordinator;
+  private dialogsResizeObserver: ResizeObserver | null = null;
+  private observedDialogsElement: HTMLElement | null = null;
+  /** 用户消息重新编辑互斥：同时最多展开一条 */
+  userMessageEditingTurnId: string | undefined;
 
   constructor(
     private uiService: UiService,
@@ -169,392 +162,443 @@ export class AilyChatComponent implements OnDestroy {
     private cmdService: CmdService,
     private crossPlatformCmdService: CrossPlatformCmdService,
     private blocklyService: BlocklyService,
-    private fetchToolService: FetchToolService,
-    private webSearchToolService: WebSearchToolService,
-    private router: Router,
     private message: NzMessageService,
     private authService: AuthService,
     private modal: NzModalService,
     private configService: ConfigService,
+    private ailyChatConfigService: AilyChatConfigService,
     private todoUpdateService: TodoUpdateService,
     private arduinoLintService: ArduinoLintService,
-    private translate: TranslateService,
     private noticeService: NoticeService,
     private platformService: PlatformService,
     private electronService: ElectronService,
-    private ailyChatConfigService: AilyChatConfigService,
     private onboardingService: OnboardingService,
     private absAutoSyncService: AbsAutoSyncService,
     private connectionGraphService: ConnectionGraphService,
     private repetitionDetectionService: RepetitionDetectionService,
-    private contextBudgetService: ContextBudgetService,
-    private subagentSessionService: SubagentSessionService,
     private chatHistoryService: ChatHistoryService,
+    public debugBrowser: ChatDebugBrowserService,
     private cdr: ChangeDetectorRef,
     private builderService: BuilderService,
+    private themeService: ThemeService,
+    public runtimeInteractionHost: ChatRuntimeInteractionHostService,
     public engine: ChatEngineService,
     public scrollManager: ScrollManagerService,
     public resourceManager: ResourceManagerService,
     public menuManager: MenuManagerService,
-    private themeService: ThemeService,
+    public viewState: ChatViewService,
   ) {
+    this.vm = new ChatComponentViewModel({
+      engine: this.engine,
+      viewState: this.viewState,
+    });
     // 注册 OnPush CD 回调 — viewAdapter 每次 flush/appendImmediate 后调用 markForCheck
     this.engine.setCdCallback(() => this.cdr.markForCheck());
+    // 注册同步 detectChanges 回调 — 供 zone 外场景直接触发 CD（如 _ensureAilyMessage）
+    this.engine.setSyncDetectChanges(() => this.cdr.detectChanges());
+    this.sessionShellCoordinator = new ChatSessionShellCoordinator({
+      modal: this.modal,
+      menuManager: this.menuManager,
+      editCheckpointService: this.engine.editCheckpointService,
+      viewState: this.viewState,
+      chatService: this.chatService,
+    }, {
+      saveCurrentSession: () => this.engine.saveCurrentSession(),
+      getHistory: () => {
+        this.closeDebugBrowser();
+        return this.engine.getHistory();
+      },
+      newChat: () => {
+        this.closeDebugBrowser();
+        return this.engine.newChat();
+      },
+      importDebugSnapshot: () => this.importDebugSnapshotFromDialog(),
+      refreshHistoryList: () => {
+        this.closeDebugBrowser();
+        return this.engine.refreshHistoryList();
+      },
+      markForCheck: () => this.cdr.markForCheck(),
+      setCompleted: () => {
+        this.engine.isCompleted = true;
+      },
+    });
+    this.switchShellCoordinator = new ChatSwitchShellCoordinator({
+      menuManager: this.menuManager,
+      getCurrentMode: () => this.vm.currentMode,
+      getCurrentModel: () => this.vm.currentModel,
+    }, {
+      switchToMode: (mode) => this.engine.switchToMode(mode),
+      switchToModel: (model) => this.engine.switchToModel(model),
+      switchToModelConfiguration: (model, update) => this.engine.switchToModelConfiguration(model, update),
+    });
+    this.editResourceShellCoordinator = new ChatEditResourceShellCoordinator({
+      getDialog: () => AilyHost.get().dialog,
+      resolveTarget: ({ turnId }) => this.xDialogComponents?.find((dialog) => {
+          return dialog.role === 'user' && dialog.actionTurnId === turnId;
+      }),
+    });
+    this.surfaceShellCoordinator = new ChatSurfaceShellCoordinator({
+      editAndResendFromTurn: (target, newText, resources) => this.engine.editAndResendFromTurn(target, newText, resources),
+      closeTool: (toolId) => AilyHost.get().ui?.closeTool(toolId),
+      openUrl: (url) => this.electronService.openUrl(url),
+    });
+    this.submitShellCoordinator = new ChatSubmitShellCoordinator({
+      scrollManager: this.scrollManager,
+      resourceManager: this.resourceManager,
+      authQuota: this.engine.authQuotaStateService,
+      inputNotice: this.engine.chatInputNoticeStateService,
+      getSessionAllowedPaths: () => this.engine.sessionAllowedPaths,
+      getSessionId: () => this.vm.sessionId,
+      getInputValue: () => this.vm.inputValue,
+      isWaiting: () => this.vm.isWaiting,
+      stop: () => this.engine.stop(),
+      send: (text) => this.engine.send('user', text, true),
+    });
+    this.composerShellCoordinator = new ChatComposerShellCoordinator({
+      viewState: this.viewState,
+      getInputValue: () => this.vm.inputValue,
+      setInputValue: (value) => {
+        this.engine.inputValue = value;
+      },
+      isWaiting: () => this.vm.isWaiting,
+      submitCurrentInput: () => this.submitShellCoordinator.submitCurrentInput(),
+      getTextareaRef: () => this.chatTextarea,
+    });
+    this.viewportShellCoordinator = new ChatViewportShellCoordinator({
+      scrollManager: this.scrollManager,
+      viewState: this.viewState,
+      refreshHistoryList: () => this.engine.refreshHistoryList(),
+    });
+    this.actionRegistry = new ChatActionRegistry(() => ({
+      currentMode: this.vm.currentMode,
+      canRunManageModelsAction: () => Boolean(AilyHost.get().editor?.showTextDocument),
+      runManageModelsAction: () => this.runManageModelsAction(),
+      runFocusTodosViewAction: () => this.runFocusTodosViewAction(),
+      notifyManageModelsUnavailable: () => {
+        this.message.warning('当前宿主无法打开模型配置文件');
+      },
+    }));
+    this.lifecycleCoordinator = new ChatComponentLifecycleCoordinator({
+      isHostInitialized: () => AilyHost.isInitialized(),
+      initializeHost: () => {
+        AilyHost.init(createElectronHostAdapter({
+          projectService: this.projectService,
+          configService: this.configService,
+          authService: this.authService,
+          builderService: this.builderService,
+          platformService: this.platformService,
+          noticeService: this.noticeService,
+          blocklyService: this.blocklyService,
+          connectionGraphService: this.connectionGraphService,
+          cmdService: this.cmdService,
+          crossPlatformCmdService: this.crossPlatformCmdService,
+          absAutoSyncService: this.absAutoSyncService,
+          electronService: this.electronService,
+          uiService: this.uiService,
+          onboardingService: this.onboardingService,
+        }));
+        this.ailyChatConfigService.reloadRemoteModelCatalog('host_initialized');
+      },
+      loadMermaid: () => import('mermaid'),
+      setMermaidInstance: (instance) => {
+        const mode = this.themeService.theme();
+        const config =
+          mode === 'dark'
+            ? { startOnLoad: false, ...MERMAID_DARK_THEME }
+            : { startOnLoad: false, theme: 'default' as const };
+        MermaidCodeComponent.setMermaidInstance(instance, config);
+      },
+      exposeEditBlockTools: () => {
+        (window as any).editBlockTool = {
+          getActiveWorkspace,
+          configureBlockTool,
+          deleteBlockTool,
+          getWorkspaceOverviewTool,
+          queryBlockDefinitionTool,
+        };
+      },
+      initializeEngine: () => this.engine.init(this.chatTextarea),
+      destroyEngine: () => this.engine.destroy(),
+    });
   }
 
   ngOnInit() {
-    // 初始化宿主环境适配器
-    if (!AilyHost.isInitialized()) {
-      AilyHost.init(createElectronHostAdapter({
-        projectService: this.projectService,
-        configService: this.configService,
-        authService: this.authService,
-        builderService: this.builderService,
-        platformService: this.platformService,
-        noticeService: this.noticeService,
-        blocklyService: this.blocklyService,
-        connectionGraphService: this.connectionGraphService,
-        cmdService: this.cmdService,
-        crossPlatformCmdService: this.crossPlatformCmdService,
-        absAutoSyncService: this.absAutoSyncService,
-        fetchToolService: this.fetchToolService,
-        webSearchToolService: this.webSearchToolService,
-        electronService: this.electronService,
-        uiService: this.uiService,
-        onboardingService: this.onboardingService,
-      }));
-    }
-
-    // 初始化 路由 URL
-    this._currentUrl = this.router.url;
-
-    // 初始化 MermaidCodeComponent
-    import('mermaid').then(m => {
-      const mermaidConfig = this.themeService.theme() === 'dark'
-        ? { startOnLoad: false, ...MERMAID_DARK_THEME }
-        : { startOnLoad: false, theme: 'default' };
-      MermaidCodeComponent.setMermaidInstance(m.default, mermaidConfig);
-    });
-
-    // 设置全局工具引用，供测试和调试使用
-    (window as any)['editBlockTool'] = {
-      getActiveWorkspace,
-      configureBlockTool,
-      deleteBlockTool,
-      getWorkspaceOverviewTool,
-      queryBlockDefinitionTool,
-    };
-
-    // 初始化引擎（订阅、路径等）
-    this.engine.init(this.chatTextarea);
-  }
-
-  // ===== 编辑消息事件处理 =====
-
-  async onEditAndResend(event: { msgIndex: number; newText: string; resources: any[] }): Promise<void> {
-    await this.engine.editAndResendFromTurn(event.msgIndex, event.newText, event.resources);
-  }
-
-  onEditModeToggle(event: { event: MouseEvent; type: string }): void {
-    this.menuManager.toggleModeMenu(event.event);
-  }
-
-  onEditModelToggle(event: { event: MouseEvent; type: string }): void {
-    this.menuManager.toggleModelMenu(event.event, this.ModelList.length);
-  }
-
-  async onEditAddFile(msgIndex: number): Promise<void> {
-    const options = {
-      title: '选择文件',
-      properties: ['multiSelections'],
-      filters: [{ name: '所有文件', extensions: ['*'] }]
-    };
-    const result = await AilyHost.get().dialog.selectFiles(options);
-    if (!result.canceled && result.filePaths?.length > 0) {
-      const dialog = this.xDialogComponents?.find(d => d.msgIndex === msgIndex);
-      if (dialog) {
-        result.filePaths.forEach(path => {
-          const fileName = path.split(/[/\\]/).pop() || path;
-          dialog.addEditResource({ type: 'file', path, name: fileName });
-        });
-      }
-    }
-  }
-
-  async onEditAddFolder(msgIndex: number): Promise<void> {
-    const options = {
-      title: '选择文件夹',
-      properties: ['openDirectory']
-    };
-    const result = await AilyHost.get().dialog.selectFiles(options);
-    if (!result.canceled && result.filePaths?.length > 0) {
-      const dialog = this.xDialogComponents?.find(d => d.msgIndex === msgIndex);
-      if (dialog) {
-        const selectedPath = result.filePaths[0];
-        const folderName = selectedPath.split(/[/\\]/).pop() || selectedPath;
-        dialog.addEditResource({ type: 'folder', path: selectedPath, name: folderName });
-      }
-    }
+    this.lifecycleCoordinator.initialize();
   }
 
   ngAfterViewInit(): void {
-    this.scrollManager.setContainer(this.chatContainer);
-    this.engine.refreshHistoryList();
-    this.scrollManager.scrollToBottom();
+    this.viewportShellCoordinator.initialize(this.chatContainer);
+    this.scrollManager.handleContentHeightChange();
+  }
+
+  get activeImportedDebugView() {
+    return this.debugBrowser.activeImportedDebugView;
+  }
+
+  get activeImportedDebugEvents() {
+    return this.debugBrowser.activeImportedDebugEvents;
+  }
+
+  openDebugBrowserHome(): void {
+    this.debugBrowser.openHome();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugSession(sessionId: string): void {
+    if (!this.debugBrowser.openImportedSession(sessionId)) {
+      return;
+    }
+
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugOverview(): void {
+    this.debugBrowser.showOverview();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugLogs(): void {
+    this.debugBrowser.showLogs();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugFlow(): void {
+    this.debugBrowser.showFlow();
+    this.cdr.markForCheck();
+  }
+
+  openImportedDebugCache(): void {
+    this.debugBrowser.showCache();
+    this.cdr.markForCheck();
+  }
+
+  private async importDebugSnapshotFromDialog(): Promise<void> {
+    const result = await importDebugSnapshotFromDialog({
+      dialog: AilyHost.get().dialog,
+      fs: AilyHost.get().fs,
+      importDebugSnapshot: (data) => this.chatHistoryService.importDebugSnapshot(data),
+    });
+
+    if (result.kind === 'failed') {
+      this.message.error('无法导入调试快照');
+      return;
+    }
+
+    if (result.kind === 'imported') {
+      this.debugBrowser.openImportedRecord(result.imported);
+      this.cdr.markForCheck();
+    }
+  }
+
+  closeDebugBrowser(): void {
+    if (!this.debugBrowser.isOpen) {
+      return;
+    }
+
+    this.debugBrowser.close();
+    this.cdr.markForCheck();
+  }
+
+  async handleManualCompaction(event?: MouseEvent): Promise<void> {
+    event?.stopPropagation();
+
+    if (this.isManualCompacting || this.vm.isWaiting) {
+      return;
+    }
+
+    this.isManualCompacting = true;
+    this.cdr.markForCheck();
+
+    try {
+      const changed = await this.engine.compactConversation();
+      if (changed) {
+        this.engine.saveCurrentSession();
+        this.engine.refreshHistoryList();
+        this.message.success('对话已压缩');
+      } else {
+        this.message.info('当前没有可压缩的对话');
+      }
+    } catch (error) {
+      console.error('[AilyChat] 手动压缩对话失败:', error);
+      this.message.error('压缩对话失败');
+    } finally {
+      this.isManualCompacting = false;
+      this.cdr.markForCheck();
+    }
   }
 
   ngOnDestroy() {
-    this.engine.destroy();
+    this.disconnectDialogContentObserver();
+    this.lifecycleCoordinator.destroy();
   }
 
-  // ==================== UI 事件处理器 ====================
-
-  // --- @agent 自动补全 ---
-  showAgentSuggestions = false;
-  agentSuggestions: string[] = [];
-  private allAgents: string[] = [];
-
-  /** 处理输入变化，检测 @mention */
-  onInputChange(): void {
-    const val = this.engine.inputValue;
-    if (val.startsWith('@')) {
-      if (this.allAgents.length === 0) {
-        this.allAgents = SubagentSessionService.getAvailableAgents();
-      }
-      const query = val.slice(1).split(/\s/)[0].toLowerCase();
-      this.agentSuggestions = this.allAgents.filter(a => a.toLowerCase().startsWith(query));
-      this.showAgentSuggestions = this.agentSuggestions.length > 0 && !val.includes(' ');
-    } else {
-      this.showAgentSuggestions = false;
+  focusTodosView(): boolean {
+    if (!this.inputPartHost?.hasVisibleTodos()) {
+      return false;
     }
+
+    return this.inputPartHost.focusTodoList();
   }
 
-  /** 选中 agent 自动补全 */
-  selectAgent(agentName: string): void {
-    this.engine.inputValue = `@${agentName} `;
-    this.showAgentSuggestions = false;
-    setTimeout(() => {
-      if (this.chatTextarea?.nativeElement) {
-        this.chatTextarea.nativeElement.focus();
-      }
+  toggleTodosViewFocus(): boolean {
+    if (!this.inputPartHost?.hasVisibleTodos()) {
+      return false;
+    }
+
+    if (this.inputPartHost.isTodoListFocused()) {
+      this.chatTextarea?.nativeElement?.focus();
+      return true;
+    }
+
+    return this.inputPartHost.focusTodoList();
+  }
+
+  runFocusTodosViewAction(): boolean {
+    return runChatTodoFocusAction({
+      currentMode: this.vm.currentMode,
+      toggleTodosViewFocus: () => this.toggleTodosViewFocus(),
+      notifyUnavailable: () => this.message.info('当前没有可聚焦的 agent 待办事项'),
     });
   }
 
-  async sendButtonClick(): Promise<void> {
-    this.scrollManager.autoScrollEnabled = true;
-    this.scrollManager.scrollToBottom();
-    if (this.engine.isWaiting) {
-      this.engine.stop();
-      return;
-    }
-    await this.engine.send('user', this.engine.inputValue.trim(), true);
-    this.resourceManager.mergePathsTo(this.engine.sessionAllowedPaths);
-    this.resourceManager.items = [];
-    this.engine.inputValue = '';
-  }
-
-  async onKeyDown(event: KeyboardEvent) {
-    // @agent 补全交互：Enter 选中、Escape 关闭
-    if (this.showAgentSuggestions) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        this.selectAgent(this.agentSuggestions[0]);
-        return;
-      }
-      if (event.key === 'Escape') {
-        this.showAgentSuggestions = false;
-        event.preventDefault();
-        return;
-      }
+  runManageModelsAction(): boolean {
+    const targetPath = this.engine.languageModelsService.prepareConfigurationFile();
+    if (!targetPath) {
+      this.message.error('无法准备聊天模型配置文件');
+      return false;
     }
 
-    if (event.key === 'Enter') {
-      if (event.ctrlKey) {
-        const textarea = event.target as HTMLTextAreaElement;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        this.inputValue = this.inputValue.substring(0, start) + '\n' + this.inputValue.substring(end);
-        setTimeout(() => { textarea.selectionStart = textarea.selectionEnd = start + 1; }, 0);
-        event.preventDefault();
-      } else {
-        this.scrollManager.autoScrollEnabled = true;
-        this.scrollManager.scrollToBottom();
-        if (this.engine.isWaiting) return;
-        await this.engine.send('user', this.engine.inputValue.trim(), true);
-        this.resourceManager.mergePathsTo(this.engine.sessionAllowedPaths);
-        this.resourceManager.items = [];
-        this.engine.inputValue = '';
-        event.preventDefault();
-      }
-    }
-  }
+    const host = AilyHost.get();
+    const projectPath = host.project.currentProjectPath || host.project.projectRootPath;
+    const openResult = host.editor?.showTextDocument?.(targetPath, { projectPath });
 
-  async close() {
-    AilyHost.get().ui?.closeTool('aily-chat');
-  }
-
-  onContentResize({ height }: NzResizeEvent): void {
-    this.bottomHeight = height!;
-  }
-
-  menuClick(e) {
-    if (this.engine.editCheckpointService.hasUnsavedEdits()) {
-      this.confirmUnsavedEditsBeforeSwitch(() => {
-        this.doSwitchSession(e.sessionId);
-      });
-      return;
-    }
-    this.doSwitchSession(e.sessionId);
-  }
-
-  private doSwitchSession(sessionId: string) {
-    this.menuManager.switchToSession(sessionId, this.chatService.currentSessionId, {
-      onSaveCurrentSession: () => this.engine.saveCurrentSession(),
-      onGetHistory: () => this.engine.getHistory(),
-      onSetCompleted: () => { this.engine.isCompleted = true; },
-      onSetServerSessionInactive: () => this.engine.setServerSessionInactive(),
-    });
-  }
-
-  openHistoryChat() {
-    this.engine.refreshHistoryList();
-    this.menuManager.openHistoryChat();
-  }
-
-  historyActionClick(e: { action: string; data: any }) {
-    this.menuManager.historyActionClick(e, this.engine.sessionId, {
-      onGetHistory: () => this.engine.getHistory(),
-      onNewChat: () => this.engine.newChat(),
-      onDetectChanges: () => this.cdr.markForCheck(),
-      onUpdateTitle: (title: string) => { this.chatService.currentSessionTitle = title; },
-      onRefreshHistory: () => this.engine.refreshHistoryList(),
-    });
-  }
-
-  modeMenuClick(item: IMenuItem) {
-    if (item.data?.mode && item.data.mode !== this.currentMode) {
-      this.engine.switchToMode(item.data.mode);
-    }
-    this.menuManager.showMode = false;
-  }
-
-  modelMenuClick(item: IMenuItem) {
-    if (item.data?.model && item.data.model.model !== this.currentModel?.model) {
-      this.engine.switchToModel(item.data.model);
-    }
-    this.menuManager.showModelMenu = false;
-  }
-
-  openSettings(event) {
-    this.showSettings = !this.showSettings;
-  }
-
-  onSettingsSaved() {
-    this.showSettings = false;
-  }
-
-  newChat() {
-    if (this.engine.editCheckpointService.hasUnsavedEdits()) {
-      this.confirmUnsavedEditsBeforeSwitch(() => {
-        this.engine.newChat();
-      });
-      return;
-    }
-    this.engine.newChat();
-  }
-
-  /**
-   * 切换会话/新建会话前，提示用户处理未保留的文件变更。
-   * - 保留：acceptAllAsBaseline + 保存会话 + 继续
-   * - 放弃：撤销所有变更到初始状态 + 继续
-   * - 取消（关闭弹窗）：中止操作
-   */
-  private confirmUnsavedEditsBeforeSwitch(onConfirm: () => void): void {
-    const summary = this.engine.editCheckpointService.getEditsSummary();
-    if (!summary || summary.fileCount === 0) {
-      // 无实际文件变更差异 — 自动标记为已保留并继续
-      this.engine.editCheckpointService.acceptAllAsBaseline();
-      this.engine.editCheckpointService.dismissSummary();
-      onConfirm();
-      return;
-    }
-
-    const modalRef = this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: { padding: '0' },
-      nzWidth: 340,
-      nzContent: UnsavedEditsDialogComponent,
-      nzData: { fileCount: summary.fileCount },
-    });
-
-    modalRef.afterClose.subscribe((action: string | null) => {
-      if (action === 'keep') {
-        // 保留变更：accept as baseline + save
-        this.engine.editCheckpointService.acceptAllAsBaseline();
-        this.engine.editCheckpointService.dismissSummary();
-        this.engine.saveCurrentSession();
-        onConfirm();
-      } else if (action === 'discard') {
-        // 放弃变更：undo all back to initial state
-        while (this.engine.editCheckpointService.canUndo) {
-          this.engine.editCheckpointService.undo();
+    if (typeof (openResult as Promise<boolean> | undefined)?.then === 'function') {
+      void (openResult as Promise<boolean>).then((opened) => {
+        if (!opened) {
+          this.message.error('无法打开聊天模型配置文件');
         }
-        this.engine.editCheckpointService.dismissSummary();
-        this.engine.saveCurrentSession();
-        onConfirm();
-      }
-      // null = 取消（关闭弹窗），不做任何操作
+      }).catch((err) => {
+        console.error('打开聊天模型配置文件失败:', err);
+        this.message.error('无法打开聊天模型配置文件');
+      });
+      return true;
+    }
+
+    if (!openResult) {
+      this.message.error('无法打开聊天模型配置文件');
+      return false;
+    }
+
+    return true;
+  }
+
+  get actionMenuItems() {
+    return this.actionRegistry.getMenuItems();
+  }
+
+  toggleActionMenu(event: MouseEvent): void {
+    this.menuManager.toggleActionMenu(event, [...this.actionMenuItems]);
+  }
+
+  toggleReasoningMenu(event: MouseEvent): void {
+    this.menuManager.toggleReasoningMenu(event, [...this.vm.currentReasoningEffortMenuItems]);
+  }
+
+  handleActionMenuClick(item: { action?: string }): void {
+    this.menuManager.showActionMenu = false;
+    this.actionRegistry.runMenuAction(item);
+  }
+
+  handleReasoningMenuClick(item: { data?: { model?: unknown; modelConfiguration?: { key?: string; value: unknown } } }): void {
+    this.menuManager.showReasoningMenu = false;
+
+    const model = item?.data?.model;
+    const modelConfiguration = item?.data?.modelConfiguration;
+    if (!model || typeof modelConfiguration?.key !== 'string' || !modelConfiguration.key.trim()) {
+      return;
+    }
+
+    void this.engine.switchToModelConfiguration(model as Parameters<ChatEngineService['switchToModelConfiguration']>[0], {
+      key: modelConfiguration.key.trim(),
+      value: modelConfiguration.value,
     });
   }
 
-  // ==================== 模板辅助 ====================
-
-  get ModeList(): IMenuItem[] {
-    return [
-      {
-        name: this.translate.instant('AILY_CHAT.MODE_AGENT_FULL'),
-        action: 'agent-mode',
-        icon: 'fa-light fa-user-astronaut',
-        data: { mode: 'agent' }
-      },
-      {
-        name: this.translate.instant('AILY_CHAT.MODE_QA_FULL'),
-        action: 'qa-mode',
-        icon: 'fa-light fa-comment-smile',
-        data: { mode: 'qa' }
-      }
-    ];
+  setComposerFocusState(focused: boolean): void {
+    this.isComposerFocused = focused;
   }
 
-  get ModelList(): IMenuItem[] {
-    const enabledModels = this.ailyChatConfigService.getEnabledModels();
-    return enabledModels.map(model => ({
-      name: model.name,
-      action: 'select-model',
-      data: { model }
-    }));
+  onUserMessageEditSessionOpened(turnId: string): void {
+    this.userMessageEditingTurnId = turnId;
+    this.cdr.markForCheck();
   }
 
-  splitContent(content: any) { return _splitContent(content); }
-  getRandomString() { return _getRandomString(); }
-  getLastFolderName(path: string): string { return _getLastFolderName(path); }
-  getFileName(path: string): string { return _getFileName(path); }
-  getUrlDisplayName(url: string): string { return _getUrlDisplayName(url); }
-  async getLibraryNickname(path: string): Promise<string> { return _getLibraryNickname(path); }
-  formatSearchPattern(pattern: string, maxLength: number = 30): string { return _formatSearchPattern(pattern, maxLength); }
-  getProjectRootPath(): string { return AilyHost.get().project.projectRootPath; }
-  getCurrentProjectPath(): string { return this.engine.getCurrentProjectPath(); }
-  getCurrentProjectLibrariesPath(): string {
-    const cpp = this.getCurrentProjectPath();
-    return cpp !== '' ? cpp + '/node_modules/@aily-project' : '';
+  onUserMessageEditSessionClosed(): void {
+    this.userMessageEditingTurnId = undefined;
+    this.cdr.markForCheck();
   }
 
-  demandEdit() { }
+  closeChatSessionMenus(): void {
+    this.menuManager.closeAll();
+    this.cdr.markForCheck();
+  }
 
+  handleTodoFocusToggleShortcut(): void {
+    this.runFocusTodosViewAction();
+  }
 
-  openUrl(url: string = 'https://aily.pro/doc/ai-usage-guide') {
-    this.electronService.openUrl(url);
+  openAuthQuotaUsage(event?: MouseEvent): void {
+    event?.stopPropagation();
+    this.uiService.openTool('user-center');
+  }
+
+  dismissChatInputNotice(event?: MouseEvent): void {
+    event?.stopPropagation();
+    this.engine.chatInputNoticeStateService.dismissCurrentNotice();
+  }
+
+  async continueCurrentExecution(event?: MouseEvent): Promise<void> {
+    event?.stopPropagation();
+    try {
+      await this.engine.continueCurrentExecution();
+    } catch (error) {
+      console.warn('[AilyChatComponent] continue current execution failed:', error);
+      this.message.error('继续执行失败，请从最新状态重试');
+    }
+  }
+
+  getChatInputNoticeSeverityClass(notice: { tone?: string } | null | undefined): string {
+    switch (notice?.tone) {
+      case 'error':
+        return 'severity-error';
+      case 'warning':
+        return 'severity-warning';
+      default:
+        return 'severity-info';
+    }
+  }
+
+  private observeDialogContent(element: HTMLElement | null): void {
+    if (this.observedDialogsElement === element) {
+      return;
+    }
+
+    this.disconnectDialogContentObserver();
+    this.observedDialogsElement = element;
+
+    if (!element || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    this.dialogsResizeObserver = new ResizeObserver(() => {
+      this.scrollManager.handleContentHeightChange();
+    });
+    this.dialogsResizeObserver.observe(element);
+  }
+
+  private disconnectDialogContentObserver(): void {
+    this.dialogsResizeObserver?.disconnect();
+    this.dialogsResizeObserver = null;
+    this.observedDialogsElement = null;
   }
 }
