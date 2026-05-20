@@ -29,6 +29,7 @@ import { ModelStoreComponent } from '../tools/model-store/model-store.component'
 import { OnboardingComponent } from '../components/onboarding/onboarding.component';
 import { OnboardingService } from '../services/onboarding.service';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
+import { TranslateService } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-main-window',
@@ -91,6 +92,7 @@ export class MainWindowComponent {
     private uiService: UiService,
     private projectService: ProjectService,
     private message: NzMessageService,
+    private translate: TranslateService,
     private cd: ChangeDetectorRef,
     private updateService: UpdateService,
     private npmService: NpmService,
@@ -187,23 +189,23 @@ export class MainWindowComponent {
         case 'loading':
           // this.loaded = false;
           setTimeout(() => {
-            this.message.loading('Project Loading...');
+            this.message.loading(this.translate.instant('MAIN_WINDOW.PROJECT_LOADING'));
             // this.loaded = true;
           }, 20);
           break;
         case 'loaded':
           this.message.remove();
-          this.message.success('Project Loaded');
+          this.message.success(this.translate.instant('MAIN_WINDOW.PROJECT_LOADED'));
           break;
         case 'saving':
-          this.message.loading('Project Saving...');
+          this.message.loading(this.translate.instant('MAIN_WINDOW.PROJECT_SAVING'));
           break;
         case 'saved':
           this.message.remove();
-          this.message.success('Project Saved');
+          this.message.success(this.translate.instant('MAIN_WINDOW.PROJECT_SAVED'));
           break;
         case 'default':
-          // this.message.success('Project Closed');
+          // this.message.success(this.translate.instant('MAIN_WINDOW.PROJECT_CLOSED'));
           // this.loaded = false;
           break;
         default:

@@ -126,6 +126,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onReceive: (callback) => ipcRenderer.on("window-receive", callback),
     // 检查窗口是否为活动窗口
     isFocused: () => ipcRenderer.sendSync("window-is-focused"),
+    // 后台时需要用户注意时：闪烁任务栏 / Dock 弹跳等（见 main 进程 window-request-attention）
+    requestAttention: () => ipcRenderer.invoke('window-request-attention'),
     // 检查窗口是否最小化
     isMinimized: () => ipcRenderer.sendSync("window-is-minimized"),
     // 监听窗口获得焦点事件
@@ -277,7 +279,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   ble: {
-
+    onDeviceList: (callback) => {
+      const listener = (_event, devices) => {
+        console.log('[BLE:preload] device list from main:', Array.isArray(devices) ? devices.length : 'invalid', devices);
+        callback(devices);
+      };
+      ipcRenderer.on('ble-device-list', listener);
+      return () => ipcRenderer.removeListener('ble-device-list', listener);
+    },
+    selectDevice: (deviceId) => ipcRenderer.invoke('ble-select-device', deviceId),
+    setPreferredDevice: (deviceId) => ipcRenderer.invoke('ble-set-preferred-device', deviceId),
+    cancelDeviceRequest: () => ipcRenderer.invoke('ble-cancel-device-request'),
+    startDeviceListUpdates: () => ipcRenderer.invoke('ble-start-device-list-updates'),
+    stopDeviceListUpdates: () => ipcRenderer.invoke('ble-stop-device-list-updates'),
+    debugState: () => ipcRenderer.invoke('ble-debug-state'),
   },
   wifi: {
 

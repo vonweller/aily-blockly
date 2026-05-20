@@ -8,6 +8,7 @@
 import type { ChatEngineService } from '../services/chat-engine.service';
 import { ToolCallState } from '../core/chat-types';
 import { AilyHost } from '../core/host';
+import { notifyAwaitingUserFeedbackIfBackground } from './user-feedback-notify.helper';
 import { ToolRegistry } from '../core/tool-registry';
 import { toolRequiresApproval, requestToolApproval, approveToolForSession, enableSessionSafeMode } from '../core/tool-approval';
 import { SubagentSessionService } from '../services/subagent-session.service';
@@ -16,6 +17,9 @@ import { injectTodoReminder } from '../tools';
 import { getMemoryPromptSnippet } from '../tools/memoryTool';
 import {
   getPreferredHttpErrorMessage as _getPreferredHttpErrorMessage,
+  getQuotaExceededMessage as _getQuotaExceededMessage,
+  getQuotaUsageText as _getQuotaUsageText,
+  isQuotaExceededError as _isQuotaExceededError,
   isTransientNetworkError as _isTransientNetworkError,
   isLikelySessionLostError as _isLikelySessionLostError,
 } from '../services/http-error-handler.service';
@@ -193,6 +197,11 @@ export class StreamProcessorHelper {
                 const closingTags = this.engine.msg.getClosingTagsForOpenBlocks();
                 this.engine.msg.appendMessage('aily', `${closingTags}\n\`\`\`aily-state\n{\n  "status": "warning",\n  "text": "模型已经处理了一段时间，请问需要继续吗？",\n  "id": "repetition-check-${Date.now()}"\n}\n\`\`\`\n\n\`\`\`aily-button\n[{"text":"继续","action":"retry","type":"primary"}]\n\`\`\`\n\n`);
                 this.engine.stop();
+                // 需点击「继续」等按钮：后台窗口时用系统通知
+                notifyAwaitingUserFeedbackIfBackground(
+                  this.engine.translate.instant('AILY_CHAT.USER_FEEDBACK_NOTIFY_TITLE'),
+                  this.engine.translate.instant('AILY_CHAT.USER_FEEDBACK_NOTIFY_BODY'),
+                );
                 return;
               }
               // 大小软警告：不中断流，在流式内容中注入提示
@@ -243,6 +252,10 @@ export class StreamProcessorHelper {
               this.engine.msg.appendMessage('aily', `\n\n\n\`\`\`aily-state\n{\n  "state": "done",\n  "text": "${data.content}",\n  "id": "${data.id}"\n}\n\`\`\`\n\n\n`, messageSource);
             }
           } else if (data.type === 'error') {
+            if (_isQuotaExceededError(data)) {
+              this._emitQuotaExceededError(data, messageSource);
+              return;
+            }
             this.engine.viewAdapter.markLastMessageDone();
             const errorClosingTags = this.engine.msg.getClosingTagsForOpenBlocks();
             this.engine.msg.appendMessage('aily', `${errorClosingTags}\n\`\`\`aily-error\n{\n  "message": "${this.engine.msg.makeJsonSafe(data.message || '未知错误')}"\n}\n\`\`\`\n\n\`\`\`aily-button\n[{"text":"重试","action":"retry","type":"primary"}]\n\`\`\`\n\n`, messageSource);
@@ -711,6 +724,11 @@ export class StreamProcessorHelper {
 
   /** 向用户展示流错误信息并结束等待状态 */
   private _emitStreamError(err: any): void {
+    if (_isQuotaExceededError(err)) {
+      this._emitQuotaExceededError(err);
+      return;
+    }
+
     this.engine.viewAdapter.markLastMessageDone();
     const httpErrorText = _getPreferredHttpErrorMessage(err);
     const errorClosingTags = this.engine.msg.getClosingTagsForOpenBlocks();
@@ -718,6 +736,20 @@ export class StreamProcessorHelper {
     this.engine.ngZone.run(() => { this.engine.isWaiting = false; });
     this.engine.viewAdapter.markLastMessageDone();
     // 应用延迟的模型/模式切换
+    this.engine.applyPendingSwitch();
+  }
+
+  private _emitQuotaExceededError(err: any, messageSource?: string): void {
+    this.engine.viewAdapter.markLastMessageDone();
+    const baseMessage = _getQuotaExceededMessage(err);
+    const usageText = _getQuotaUsageText(err);
+    const text = usageText
+      ? `${baseMessage}，${usageText}`
+      : `${baseMessage}`;
+    const errorClosingTags = this.engine.msg.getClosingTagsForOpenBlocks();
+    this.engine.msg.appendMessage('aily', `${errorClosingTags}\n\`\`\`aily-state\n{\n  "state": "warn",\n  "text": "${this.engine.msg.makeJsonSafe(text)}",\n  "id": "quota-exceeded-${Date.now()}"\n}\n\`\`\`\n\n\`\`\`aily-button\n[{"text":"升级账户","action":"open-subscription","type":"primary"},{"text":"查看套餐","action":"open-user-center","type":"default"}]\n\`\`\`\n\n`, messageSource);
+    this.engine.ngZone.run(() => { this.engine.isWaiting = false; });
+    this.engine.viewAdapter.markLastMessageDone();
     this.engine.applyPendingSwitch();
   }
 }

@@ -861,27 +861,32 @@ function handleProtocol(url) {
 }
 
 // ipc handlers模块
-const { registerTerminalHandlers } = require("./terminal");
+const { registerTerminalHandlers, killAllTerminals, getActiveTerminals } = require("./terminal");
 const { registerWindowHandlers } = require("./window");
-const { registerNpmHandlers } = require("./npm");
+const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
-const { registerCmdHandlers } = require("./cmd");
+const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
 const { registerMCPHandlers } = require("./mcp");
+const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
 // debug模块
 const { initLogger, registerLoggerHandlers } = require("./logger");
 // tools
 const { registerToolsHandlers } = require("./tools");
 const { registerNotificationHandlers } = require("./notification");
 const { registerProbeRsHandlers } = require("./probe-rs");
+const { registerBleHandlers, registerWebBluetoothChooser } = require("./ble");
 
 let mainWindow;
 let userConf;
+let isProcessCleanupInProgress = false;
+let hasProcessCleanupCompleted = false;
 const DEFAULT_BUILD_FLAVOR = 'cn';
 const BUILD_FLAVOR_TO_OFFICIAL_REGION = {
   cn: 'cn',
   global: 'eu'
 };
 const OFFICIAL_REGION_KEYS = new Set(Object.values(BUILD_FLAVOR_TO_OFFICIAL_REGION));
+const ZIP_URL_REGION_KEYS = ['eu', 'cn'];
 
 function normalizeBuildFlavor(flavor) {
   if (typeof flavor !== 'string') {
@@ -953,6 +958,19 @@ function shouldFallbackToOfficialRegion(regionKey, officialRegion, regions = {})
   }
 
   return isOfficialRegion(regionKey, regions) && regionKey !== officialRegion;
+}
+
+function buildZipUrls(regions = {}) {
+  const urls = [];
+
+  for (const regionKey of ZIP_URL_REGION_KEYS) {
+    const resource = regions[regionKey] && regions[regionKey].resource;
+    if (typeof resource === 'string' && resource.trim()) {
+      urls.push(resource);
+    }
+  }
+
+  return JSON.stringify(urls);
 }
 let isRendererReady = false;
 
@@ -1228,6 +1246,8 @@ function loadEnv() {
     console.error("initLogger error: ", error);
   }
 
+  registerAppDataResourceLockHandlers();
+
   if (isDarwin) {
     macosInstallEnv(childPath);
   }
@@ -1386,6 +1406,8 @@ function loadEnv() {
   process.env.AILY_TOOLS_PATH = path.join(process.env.AILY_APPDATA_PATH, "tools");
   // 默认全局SDK路径
   process.env.AILY_SDK_PATH = path.join(process.env.AILY_APPDATA_PATH, "sdk");
+  // zip包下载镜像地址，eu优先，cn兜底
+  process.env.AILY_ZIP_URLS = buildZipUrls(conf.regions);
   // zip包下载地址
   process.env.AILY_ZIP_URL = regionConfig.resource;
   // API服务器地址
@@ -1465,6 +1487,54 @@ async function updateMainWindowWithPendingData() {
   }
 }
 
+function rectsOverlap(a, b) {
+  return !(
+    a.x + a.width <= b.x ||
+    a.x >= b.x + b.width ||
+    a.y + a.height <= b.y ||
+    a.y >= b.y + b.height
+  );
+}
+
+/** Windows：持久化坐标可能落在已移除的显示器上；electron-win-state 不会按当前屏幕校验。macOS 不处理。 */
+function ensureWinStateOnVisibleDisplay(winState) {
+  if (!isWin32) {
+    return;
+  }
+  const s = winState.state;
+  const w = Number(s.width);
+  const h = Number(s.height);
+  const x = Number(s.x);
+  const y = Number(s.y);
+  if (![w, h].every((n) => Number.isFinite(n) && n > 0) || ![x, y].every((n) => Number.isFinite(n))) {
+    return;
+  }
+  const winRect = { x, y, width: w, height: h };
+  const displays = screen.getAllDisplays();
+  const visible = displays.some((d) => rectsOverlap(winRect, d.workArea));
+  if (visible) {
+    return;
+  }
+  const wa = screen.getPrimaryDisplay().workArea;
+  let nw = w;
+  let nh = h;
+  if (nw > wa.width) {
+    nw = wa.width;
+  }
+  if (nh > wa.height) {
+    nh = wa.height;
+  }
+  s.width = nw;
+  s.height = nh;
+  s.x = Math.round(wa.x + Math.max(0, (wa.width - nw) / 2));
+  s.y = Math.round(wa.y + Math.max(0, (wa.height - nh) / 2));
+  try {
+    winState.saveState();
+  } catch (e) {
+    console.warn('修正窗口位置后保存状态失败:', e);
+  }
+}
+
 function createWindow() {
   // 检查是否为首次启动（没有窗口状态记录文件）
   const winStateFilePath = path.join(process.env.AILY_APPDATA_PATH, 'window-state.json');
@@ -1477,7 +1547,8 @@ function createWindow() {
       name: 'window-state',
       cwd: process.env.AILY_APPDATA_PATH,
     },
-  })
+  });
+  ensureWinStateOnVisibleDisplay(winState);
 
   mainWindow = new BrowserWindow({
     ...winState.winOptions,
@@ -1493,6 +1564,7 @@ function createWindow() {
       nodeIntegration: true,
       webSecurity: false,
       preload: path.join(__dirname, "preload.js"),
+      enableBlinkFeatures: 'WebBluetooth',
       // 启用 Web Serial API 支持
       // enableBlinkFeatures: 'Serial',
       // 禁用后台节流和页面可见性，避免在后台时停止渲染
@@ -1500,6 +1572,8 @@ function createWindow() {
       pageVisibility: true,
     },
   });
+
+  registerWebBluetoothChooser(mainWindow);
 
   mainWindow.setBounds(winState.state);
 
@@ -1627,6 +1701,7 @@ function createWindow() {
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);
   registerProbeRsHandlers(mainWindow);
+  registerBleHandlers();
 
   // 检查是否有待处理的OAuth回调
   // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件
@@ -1995,7 +2070,53 @@ app.on("window-all-closed", () => {
   }
 });
 
+function cleanupRegisteredChildProcesses() {
+  console.info('[PROC_TRACE][APP_CLEANUP_START]', {
+    cmd: getActiveCmdProcesses(),
+    npm: getActiveNpmProcesses(),
+    terminals: getActiveTerminals()
+  });
+
+  return Promise.allSettled([
+    killAllCmdProcesses(),
+    killAllNpmProcesses(),
+    killAllTerminals()
+  ]).then((results) => {
+    console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
+  });
+}
+
+app.on("before-quit", (event) => {
+  if (hasProcessCleanupCompleted) {
+    return;
+  }
+
+  event.preventDefault();
+  if (isProcessCleanupInProgress) {
+    return;
+  }
+
+  isProcessCleanupInProgress = true;
+  cleanupRegisteredChildProcesses()
+    .catch((error) => {
+      console.warn('[PROC_TRACE][APP_CLEANUP_ERROR]', error?.message || String(error));
+    })
+    .finally(() => {
+      hasProcessCleanupCompleted = true;
+      isProcessCleanupInProgress = false;
+      app.quit();
+    });
+});
+
 app.on("will-quit", () => {
+  console.info('[PROC_TRACE][APP_WILL_QUIT]', {
+    cmd: getActiveCmdProcesses(),
+    npm: getActiveNpmProcesses(),
+    terminals: getActiveTerminals()
+  });
+
+  releaseAllAppDataResourceLocks();
+
   if (heldProjectLockNormalized) {
     try {
       projectLock.releaseLock(heldProjectLockNormalized);
