@@ -80,7 +80,6 @@ const SCHEMATIC_SHARED_TOOLS = [
   'multi_edit_file',
   'delete_file',
   'get_errors',
-  'lint',
 ];
 
 export const SCHEMATIC_AGENT_TOOLS = [...SCHEMATIC_EXCLUSIVE_TOOLS, ...SCHEMATIC_SHARED_TOOLS] as const;

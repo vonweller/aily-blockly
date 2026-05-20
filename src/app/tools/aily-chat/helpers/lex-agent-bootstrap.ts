@@ -23,8 +23,6 @@ import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { askUserMany, askUserSingle } from '../core/ask-user';
 import { collectDiagnostics } from '../core/diagnostics';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
-import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
-import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
@@ -524,10 +522,7 @@ export function buildExternalHostAPI(): IExternalHostAPI {
   const contextSnapshotService = getBlocklyContextSnapshotService();
   (window as { path?: typeof host.path }).path = host.path;
   const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
-  const absFilePath = () => host.path.join(prjPath(), 'project.abs');
-  const abiFilePath = () => host.path.join(prjPath(), 'project.abi');
   const hasBuilder = typeof host.builder?.build === 'function';
-  const hasBlocklyBridge = !!(host.editor || host.absSync);
   const hasBoardSearch = !!(
     host.config?.getHardwareCategories
     || host.config?.getBoardsList
@@ -656,58 +651,6 @@ export function buildExternalHostAPI(): IExternalHostAPI {
           };
         },
       } : undefined,
-      blockly: hasBlocklyBridge ? {
-        exportAbs: async () => {
-          const result = await syncAbsFileHandler(
-            { operation: 'export' },
-            host.project as any,
-            host.electron as any,
-            host.absSync as any,
-          );
-          if (result.is_error) {
-            throw new Error(result.content);
-          }
-          return host.fs.readFileSync(absFilePath(), 'utf-8');
-        },
-        importAbs: async (content: string) => {
-          host.fs.writeFileSync(absFilePath(), content, 'utf-8');
-          const result = await syncAbsFileHandler(
-            { operation: 'import' },
-            host.project as any,
-            host.electron as any,
-            host.absSync as any,
-          );
-          return result.is_error
-            ? { success: false, errors: [result.content] }
-            : { success: true };
-        },
-        getAbsStatus: async () => {
-          const result = await syncAbsFileHandler(
-            { operation: 'status' },
-            host.project as any,
-            host.electron as any,
-            host.absSync as any,
-          );
-          return {
-            inSync: !result.is_error && host.fs.existsSync(absFilePath()) && host.fs.existsSync(abiFilePath()),
-            absPath: absFilePath(),
-            lastSync: Date.now(),
-          };
-        },
-        getWorkspaceOverview: async () => ({
-          structure: '',
-          generatedCode: host.editor?.getGeneratedCode?.() ?? '',
-          blockCount: host.editor?.getBlockDefinitions?.()?.length ?? 0,
-          complexity: 'unknown',
-        }),
-        analyzeBlocks: async (libraryId: string) => {
-          const result = await analyzeLibraryBlocksTool(host.project as any, { libraryNames: [libraryId] });
-          if (result.is_error) {
-            throw new Error(result.content);
-          }
-          return result.content;
-        },
-    } : undefined,
       boardSearch: hasBoardSearch ? {
         search: async (query: string, type?: string) => {
           try {

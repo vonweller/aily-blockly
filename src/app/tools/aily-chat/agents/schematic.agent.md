@@ -34,7 +34,6 @@ tools:
   - multi_edit_file
   - delete_file
   - get_errors
-  - lint
 messageInheritance: none
 model: inherit
 maxTurns: 25

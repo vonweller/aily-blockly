@@ -1,5 +1,6 @@
 import { AilyHost } from './host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
+import type { ContextSnapshot, WorkspaceArtifactsSnapshot } from 'aily-lex/browser';
 
 export interface BlocklyProjectLibraryInfo {
   name: string;
@@ -25,7 +26,7 @@ export interface BlocklyContextSnapshotMeta {
   invalidatedBy?: string;
 }
 
-export interface BlocklyContextSnapshot {
+export interface BlocklyContextSnapshot extends ContextSnapshot {
   meta: BlocklyContextSnapshotMeta;
   workspaceIdentity?: {
     cwd: string;
@@ -42,9 +43,8 @@ export interface BlocklyContextSnapshot {
     fqbn?: string;
   };
   libraryIndex?: readonly BlocklyProjectLibraryInfo[];
-  workspaceArtifacts?: {
-    absPath?: string;
-    generatedCodePath?: string;
+  workspaceArtifacts?: WorkspaceArtifactsSnapshot & {
+    mainEntryPath?: string;
   };
 }
 
@@ -102,8 +102,7 @@ export async function buildBlocklyContextSnapshot(
     ...(libraries.length > 0 ? { libraryIndex: libraries } : {}),
     ...(projectPath ? {
       workspaceArtifacts: {
-        absPath: `${projectPath}/project.abs`,
-        generatedCodePath: `${projectPath}/.temp/sketch/sketch.ino`,
+        mainEntryPath: `${projectPath}/src/main.cpp`,
       },
     } : {}),
   };
@@ -166,11 +165,8 @@ export function summarizeBlocklyContextSnapshot(
     }
   }
 
-  if (snapshot.workspaceArtifacts?.absPath) {
-    lines.push(`ABS source: ${snapshot.workspaceArtifacts.absPath}`);
-  }
-  if (snapshot.workspaceArtifacts?.generatedCodePath) {
-    lines.push(`Generated C++: ${snapshot.workspaceArtifacts.generatedCodePath}`);
+  if (snapshot.workspaceArtifacts?.mainEntryPath) {
+    lines.push(`Main source entry: ${snapshot.workspaceArtifacts.mainEntryPath}`);
   }
 
   return lines;
