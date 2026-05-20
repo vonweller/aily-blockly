@@ -678,6 +678,37 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     return full;
   }
 
+  /**
+   * 只读 native-fs：允许工程根、全局 aily-project（sdk/boards.txt 等），与 resolvePathForRevealInOs 策略一致。
+   */
+  private assertPathAllowedForCoderNativeFsRead(candidatePath: string): string {
+    const pathApi = window['path'] as {
+      resolve?: (p: string) => string;
+      normalize?: (p: string) => string;
+      sep?: string;
+      getAppDataPath?: () => string;
+    };
+    const sep = pathApi.sep ?? '/';
+    const normalized = pathApi.resolve ? pathApi.resolve(candidatePath) : candidatePath;
+    try {
+      return this.assertPathInsideCoderEmbedRoot(normalized);
+    } catch {
+      /* 继续校验全局平台包目录 */
+    }
+    const appDataRoot = pathApi.getAppDataPath?.();
+    if (appDataRoot) {
+      const appDataNorm = pathApi.resolve ? pathApi.resolve(appDataRoot) : appDataRoot;
+      if (
+        normalized === appDataNorm ||
+        normalized.startsWith(appDataNorm + sep) ||
+        normalized.toLowerCase().startsWith((appDataNorm + sep).toLowerCase())
+      ) {
+        return normalized;
+      }
+    }
+    throw new Error('路径不在允许的工程或平台包目录内');
+  }
+
   /** 与 Aily View 中 Installed Libraries 展开状态同步库管理侧栏 */
   private syncHostLibraryManager(open: boolean): void {
     if (open) {
@@ -772,7 +803,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
           break;
         }
         case 'nativeFsReadBinary': {
-          const abs = this.assertPathInsideCoderEmbedRoot(String(payload['path']));
+          const abs = this.assertPathAllowedForCoderNativeFsRead(String(payload['path']));
           const base64 = fsAny['readFileAsBase64'](abs) as string;
           this.replyCoderNativeFs(ev.source as Window, msg.id!, { base64 });
           break;
