@@ -365,7 +365,7 @@ export class ChatHistoryService implements OnDestroy {
     const importedAt = Date.now();
     const sourceSessionId = decoded.session.sessionId || decoded.hostRecord.metadata.sessionId;
     const sessionId = `import:${sourceSessionId}:${importedAt}`;
-    const title = decoded.session.title || decoded.hostRecord.metadata.title || 'Imported Debug Snapshot';
+    const title = resolveImportedDebugSnapshotTitle(decoded);
     const metadata = this.hostRecordStore.createFullMetadata({
       ...decoded.hostRecord.metadata,
       sessionId,
@@ -431,7 +431,6 @@ export class ChatHistoryService implements OnDestroy {
       parentEventId: event.parentEventId ? idMap.get(event.parentEventId) : undefined,
     }));
   }
-
   // =========================================================================
   // 公共 API - 孤儿会话领养（根目录 → 项目）
   // =========================================================================
@@ -698,4 +697,30 @@ export class ChatHistoryService implements OnDestroy {
     const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
     return normalize(a) === normalize(b);
   }
+}
+
+const IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE = 'Imported Debug Snapshot';
+
+function resolveImportedDebugSnapshotTitle(decoded: HostSessionDebugExportEnvelope): string {
+  return decoded.session.title
+    || decoded.hostRecord.metadata.title
+    || deriveImportedDebugSnapshotTitleFromEvents(decoded.debug.events)
+    || IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE;
+}
+
+function deriveImportedDebugSnapshotTitleFromEvents(events: readonly HostSessionDebugEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.kind !== 'userMessage') {
+      continue;
+    }
+
+    const title = event.message.trim();
+    if (!title) {
+      continue;
+    }
+
+    return title.length > 80 ? `${title.slice(0, 80)}...` : title;
+  }
+
+  return undefined;
 }

@@ -11,11 +11,12 @@ import {
   type HostSessionDebugResolvedEventContent,
 } from '../../services/host-session-debug-events';
 import { ChatDebugBrowserService } from '../../services/chat-debug-browser.service';
+import { AilyChatDebugBreadcrumbComponent } from '../aily-chat-debug-breadcrumb/aily-chat-debug-breadcrumb.component';
 
 @Component({
   selector: 'aily-chat-debug-logs',
   standalone: true,
-  imports: [CommonModule, AilyChatDebugDetailPanelComponent],
+  imports: [CommonModule, AilyChatDebugBreadcrumbComponent, AilyChatDebugDetailPanelComponent],
   templateUrl: './aily-chat-debug-logs.component.html',
   styleUrl: './aily-chat-debug-logs.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

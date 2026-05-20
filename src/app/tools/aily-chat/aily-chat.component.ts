@@ -75,7 +75,7 @@ import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
 import { ChatHistoryService } from './services/chat-history.service';
-import { ChatDebugBrowserService } from './services/chat-debug-browser.service';
+import { ChatDebugBrowserService, ChatDebugBrowserViewState } from './services/chat-debug-browser.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ThemeService } from '../../services/theme.service';
 
@@ -127,6 +127,14 @@ export { ToolCallState };
   ],
 })
 export class AilyChatComponent implements OnDestroy {
+  readonly debugBrowserViewState = {
+    Home: ChatDebugBrowserViewState.Home,
+    Overview: ChatDebugBrowserViewState.Overview,
+    Logs: ChatDebugBrowserViewState.Logs,
+    FlowChart: ChatDebugBrowserViewState.FlowChart,
+    CacheExplorer: ChatDebugBrowserViewState.CacheExplorer,
+  } as const;
+
   @ViewChild('chatContainer') chatContainer: ElementRef;
   @ViewChild('chatTextarea') chatTextarea: ElementRef;
   @ViewChild(ChatInputPartHostComponent) inputPartHost?: ChatInputPartHostComponent;
@@ -335,6 +343,10 @@ export class AilyChatComponent implements OnDestroy {
     return this.debugBrowser.activeImportedDebugView;
   }
 
+  get activeImportedResourceSummary() {
+    return this.debugBrowser.activeImportedResourceSummary;
+  }
+
   get activeImportedDebugEvents() {
     return this.debugBrowser.activeImportedDebugEvents;
   }
@@ -353,22 +365,22 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   openImportedDebugOverview(): void {
-    this.debugBrowser.showOverview();
+    this.debugBrowser.showView(ChatDebugBrowserViewState.Overview);
     this.cdr.markForCheck();
   }
 
   openImportedDebugLogs(): void {
-    this.debugBrowser.showLogs();
+    this.debugBrowser.showView(ChatDebugBrowserViewState.Logs);
     this.cdr.markForCheck();
   }
 
   openImportedDebugFlow(): void {
-    this.debugBrowser.showFlow();
+    this.debugBrowser.showView(ChatDebugBrowserViewState.FlowChart);
     this.cdr.markForCheck();
   }
 
   openImportedDebugCache(): void {
-    this.debugBrowser.showCache();
+    this.debugBrowser.showView(ChatDebugBrowserViewState.CacheExplorer);
     this.cdr.markForCheck();
   }
 

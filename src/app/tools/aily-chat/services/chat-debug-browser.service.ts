@@ -9,13 +9,30 @@ import {
 import type { ImportedDebugSessionRecord } from './chat-history.service';
 import { ChatHistoryService } from './chat-history.service';
 
+export enum ChatDebugBrowserViewState {
+  Home = 'home',
+  Overview = 'overview',
+  Logs = 'logs',
+  FlowChart = 'flowchart',
+  CacheExplorer = 'cache',
+}
+
+export interface ImportedDebugResourceSummary {
+  readonly sessionId: string;
+  readonly sourceSessionId: string;
+  readonly title: string;
+  readonly displayTitle: string;
+  readonly importedAt: number;
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class ChatDebugBrowserService {
   private isDebugBrowserOpen = false;
-  private currentSessionId: string | null = null;
-  private currentSubview: 'overview' | 'logs' | 'flow' | 'cache' = 'overview';
+  private currentViewState = ChatDebugBrowserViewState.Home;
+  private currentImportedResource: ImportedDebugSessionRecord | null = null;
+  private lastOpenedImportedSessionId: string | null = null;
 
   constructor(
     private readonly chatHistoryService: ChatHistoryService,
@@ -25,41 +42,33 @@ export class ChatDebugBrowserService {
     return this.isDebugBrowserOpen;
   }
 
-  get isHomeVisible(): boolean {
-    return this.isDebugBrowserOpen && !this.currentSessionId;
-  }
-
-  get isOverviewVisible(): boolean {
-    return this.isDebugBrowserOpen && !!this.currentSessionId && this.currentSubview === 'overview';
-  }
-
-  get isLogsVisible(): boolean {
-    return this.isDebugBrowserOpen && !!this.currentSessionId && this.currentSubview === 'logs';
-  }
-
-  get isFlowVisible(): boolean {
-    return this.isDebugBrowserOpen && !!this.currentSessionId && this.currentSubview === 'flow';
-  }
-
-  get isCacheVisible(): boolean {
-    return this.isDebugBrowserOpen && !!this.currentSessionId && this.currentSubview === 'cache';
+  get viewState(): ChatDebugBrowserViewState {
+    return this.currentViewState;
   }
 
   get activeSessionId(): string | null {
-    return this.currentSessionId;
+    return this.currentImportedResource?.sessionId ?? null;
+  }
+
+  get activeImportedResource(): ImportedDebugSessionRecord | null {
+    return this.currentImportedResource;
   }
 
   get activeImportedDebugView(): ImportedDebugSessionViewModel | null {
-    const currentSession = this.getActiveImportedSession();
+    const currentSession = this.currentImportedResource;
     return currentSession ? buildImportedDebugSessionViewModel(currentSession) : null;
   }
 
   get activeImportedDebugEvents(): readonly HostSessionDebugEvent[] {
-    return this.getActiveImportedSession()?.debugEvents ?? [];
+    return this.currentImportedResource?.debugEvents ?? [];
+  }
+
+  get activeImportedResourceSummary(): ImportedDebugResourceSummary | null {
+    return this.currentImportedResource ? summarizeImportedDebugResource(this.currentImportedResource) : null;
   }
 
   resolveActiveImportedDebugEventContent(eventId: string): HostSessionDebugResolvedEventContent | null {
-    const currentSession = this.getActiveImportedSession();
+    const currentSession = this.currentImportedResource;
     if (!currentSession) {
       return null;
     }
@@ -72,75 +81,96 @@ export class ChatDebugBrowserService {
     }) ?? null;
   }
 
-  listImportedSessions(): readonly ImportedDebugSessionRecord[] {
-    return this.chatHistoryService.listImportedDebugSnapshots();
+  listAvailableResources(): readonly ImportedDebugResourceSummary[] {
+    const resources = this.chatHistoryService.listImportedDebugSnapshots().map(summarizeImportedDebugResource);
+    return bubbleImportedResourcesToTop(resources, this.lastOpenedImportedSessionId, this.activeSessionId);
   }
 
   openHome(): void {
     this.isDebugBrowserOpen = true;
-    this.currentSessionId = null;
-    this.currentSubview = 'overview';
+    this.currentImportedResource = null;
+    this.currentViewState = ChatDebugBrowserViewState.Home;
   }
 
-  openImportedRecord(record: ImportedDebugSessionRecord): void {
+  openImportedRecord(
+    record: ImportedDebugSessionRecord,
+    viewState: ChatDebugBrowserViewState = ChatDebugBrowserViewState.Overview,
+  ): void {
     this.isDebugBrowserOpen = true;
-    this.currentSessionId = record.sessionId;
-    this.currentSubview = 'overview';
+    this.currentImportedResource = record;
+    this.lastOpenedImportedSessionId = record.sessionId;
+    this.currentViewState = viewState;
   }
 
-  openImportedSession(sessionId: string): boolean {
+  openImportedSession(
+    sessionId: string,
+    viewState: ChatDebugBrowserViewState = ChatDebugBrowserViewState.Overview,
+  ): boolean {
     const record = this.chatHistoryService.getImportedDebugSnapshot(sessionId);
     if (!record) {
       return false;
     }
 
-    this.openImportedRecord(record);
+    this.openImportedRecord(record, viewState);
     return true;
   }
 
   close(): void {
     this.isDebugBrowserOpen = false;
-    this.currentSessionId = null;
-    this.currentSubview = 'overview';
+    this.currentImportedResource = null;
+    this.currentViewState = ChatDebugBrowserViewState.Home;
   }
 
-  showOverview(): void {
-    if (!this.currentSessionId) {
+  showView(viewState: ChatDebugBrowserViewState): void {
+    if (viewState === ChatDebugBrowserViewState.Home) {
+      this.openHome();
       return;
     }
 
-    this.currentSubview = 'overview';
-  }
-
-  showLogs(): void {
-    if (!this.currentSessionId) {
-      return;
-    }
-
-    this.currentSubview = 'logs';
-  }
-
-  showFlow(): void {
-    if (!this.currentSessionId) {
-      return;
-    }
-
-    this.currentSubview = 'flow';
-  }
-
-  showCache(): void {
-    if (!this.currentSessionId) {
-      return;
-    }
-
-    this.currentSubview = 'cache';
-  }
-
-  private getActiveImportedSession(): ImportedDebugSessionRecord | null {
-    if (!this.currentSessionId) {
+    if (!this.currentImportedResource) {
       return null;
     }
 
-    return this.chatHistoryService.getImportedDebugSnapshot(this.currentSessionId);
+    this.currentViewState = viewState;
   }
+}
+
+function summarizeImportedDebugResource(record: ImportedDebugSessionRecord): ImportedDebugResourceSummary {
+  return {
+    sessionId: record.sessionId,
+    sourceSessionId: record.sourceSessionId,
+    title: record.title,
+    displayTitle: getImportedResourceDisplayTitle(record.title),
+    importedAt: record.importedAt,
+  };
+}
+
+function getImportedResourceDisplayTitle(title: string): string {
+  const normalizedTitle = title.trim();
+  return normalizedTitle ? `导入: ${normalizedTitle}` : '新聊天';
+}
+
+function bubbleImportedResourcesToTop(
+  resources: readonly ImportedDebugResourceSummary[],
+  lastOpenedSessionId: string | null,
+  activeSessionId: string | null,
+): readonly ImportedDebugResourceSummary[] {
+  const nextResources = [...resources];
+
+  const bubbleToTop = (sessionId: string | null) => {
+    if (!sessionId) {
+      return;
+    }
+
+    const index = nextResources.findIndex(resource => resource.sessionId === sessionId);
+    if (index > 0) {
+      const [resource] = nextResources.splice(index, 1);
+      nextResources.unshift(resource);
+    }
+  };
+
+  bubbleToTop(lastOpenedSessionId);
+  bubbleToTop(activeSessionId);
+
+  return nextResources;
 }

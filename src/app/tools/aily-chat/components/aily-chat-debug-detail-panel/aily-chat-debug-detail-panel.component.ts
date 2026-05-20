@@ -4,13 +4,20 @@ import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, Input, Ou
 import {
   getHostSessionDebugEventDetails,
   getHostSessionDebugEventTitle,
+  type HostSessionDebugCustomizationLogEntry,
   type HostSessionDebugEvent,
+  type HostSessionDebugResolvedCustomizationSummaryContent,
   type HostSessionDebugResolvedEventContent,
   type HostSessionDebugResolvedMessageContent,
   type HostSessionDebugResolvedModelTurnContent,
   type HostSessionDebugResolvedTextContent,
   type HostSessionDebugResolvedToolCallContent,
 } from '../../services/host-session-debug-events';
+
+interface CustomizationSectionViewModel {
+  readonly title: string;
+  readonly entries: readonly HostSessionDebugCustomizationLogEntry[];
+}
 
 @Component({
   selector: 'aily-chat-debug-detail-panel',
@@ -57,6 +64,45 @@ export class AilyChatDebugDetailPanelComponent {
 
   get modelTurnContent(): HostSessionDebugResolvedModelTurnContent | null {
     return this.resolvedContent?.kind === 'modelTurn' ? this.resolvedContent : null;
+  }
+
+  get customizationSummaryContent(): HostSessionDebugResolvedCustomizationSummaryContent | null {
+    return this.resolvedContent?.kind === 'customizationSummary' ? this.resolvedContent : null;
+  }
+
+  get customizationSummaryLine(): string | null {
+    const content = this.customizationSummaryContent;
+    if (!content) {
+      return null;
+    }
+
+    const base = `${content.counts.instructions} 条指令，${content.counts.skills} 个技能，${content.counts.agents} 个 Agent，${content.counts.hooks} 个 Hook，${content.counts.skipped} 条跳过`;
+    return typeof content.durationInMillis === 'number'
+      ? `${base}，耗时 ${content.durationInMillis.toFixed(1)}ms`
+      : base;
+  }
+
+  get customizationSections(): readonly CustomizationSectionViewModel[] {
+    const content = this.customizationSummaryContent;
+    if (!content) {
+      return [];
+    }
+
+    const instructionEntries = content.resolutionLogs.filter((entry) => {
+      return entry.category === 'applying' || entry.category === 'referenced';
+    });
+    const skillEntries = content.resolutionLogs.filter((entry) => entry.category === 'skill');
+    const agentEntries = content.resolutionLogs.filter((entry) => entry.category === 'custom-agent');
+    const hookEntries = content.resolutionLogs.filter((entry) => entry.category === 'hook');
+    const skippedEntries = content.resolutionLogs.filter((entry) => entry.category === 'skipped');
+
+    return [
+      { title: `指令 (${instructionEntries.length})`, entries: instructionEntries },
+      { title: `技能 (${skillEntries.length})`, entries: skillEntries },
+      { title: `Agents (${agentEntries.length})`, entries: agentEntries },
+      { title: `Hooks (${hookEntries.length})`, entries: hookEntries },
+      { title: `已跳过 (${skippedEntries.length})`, entries: skippedEntries },
+    ].filter((section) => section.entries.length > 0);
   }
 
   get textContent(): HostSessionDebugResolvedTextContent | null {

@@ -45,6 +45,7 @@ export interface HostSessionDebugCacheExplorerContent {
   readonly tools?: string;
   readonly inputMessages: readonly HostSessionDebugCacheInputMessage[];
   readonly requestShape: HostSessionDebugRequestShapeInfo;
+  readonly requestOptions?: string;
 }
 
 export interface HostSessionDebugEventCommon {
@@ -159,7 +160,32 @@ export interface HostSessionDebugResolvedModelTurnContent {
   readonly outputTokens?: number;
   readonly cachedTokens?: number;
   readonly totalTokens?: number;
+  readonly requestOptions?: string;
   readonly sections?: readonly HostSessionDebugMessageSection[];
+}
+
+export interface HostSessionDebugCustomizationLogEntry {
+  readonly category: 'applying' | 'skipped' | 'referenced' | 'skill' | 'custom-agent' | 'hook';
+  readonly name: string;
+  readonly source?: string;
+  readonly reference?: string;
+  readonly reason?: string;
+}
+
+export interface HostSessionDebugResolvedCustomizationSummaryContent {
+  readonly kind: 'customizationSummary';
+  readonly resolutionLogs: readonly HostSessionDebugCustomizationLogEntry[];
+  readonly counts: {
+    readonly instructions: number;
+    readonly skills: number;
+    readonly agents: number;
+    readonly hooks: number;
+    readonly skipped: number;
+  };
+  readonly durationInMillis?: number;
+  readonly hostId?: string;
+  readonly modelFamily?: string;
+  readonly capabilities?: readonly string[];
 }
 
 export interface HostSessionDebugResolvedTextContent {
@@ -171,6 +197,7 @@ export type HostSessionDebugResolvedEventContent =
   | HostSessionDebugResolvedMessageContent
   | HostSessionDebugResolvedToolCallContent
   | HostSessionDebugResolvedModelTurnContent
+  | HostSessionDebugResolvedCustomizationSummaryContent
   | HostSessionDebugResolvedTextContent;
 
 interface HostSessionDebugArtifacts {
@@ -482,6 +509,7 @@ function buildHostSessionDebugArtifacts(
       outputTokens: modelTurnEvent.outputTokens,
       cachedTokens: modelTurnEvent.cachedTokens,
       totalTokens: modelTurnEvent.totalTokens,
+      requestOptions: modelTurnSections.find(section => section.name === 'Request Options')?.content,
       sections: modelTurnSections,
     });
 
@@ -632,9 +660,11 @@ function mergeModelTurnSections(
 ): HostSessionDebugMessageSection[] {
   const existingInputMessages = sections.find(section => section.name === 'Input Messages');
   const existingRequestShape = sections.find(section => section.name === 'Request Shape');
+  const existingRequestOptions = sections.find(section => section.name === 'Request Options');
   const remainingSections = sections.filter(section => ![
     'Input Messages',
     'Request Shape',
+    'Request Options',
   ].includes(section.name));
 
   return [
@@ -643,6 +673,7 @@ function mergeModelTurnSections(
       : []),
     ...(existingInputMessages ? [existingInputMessages] : []),
     ...(existingRequestShape ? [existingRequestShape] : []),
+    ...(existingRequestOptions ? [existingRequestOptions] : []),
     ...(toolsContent
       ? [{ name: 'Tools', content: toolsContent }]
       : []),
@@ -733,6 +764,92 @@ function previewText(value: string | undefined, maxLength = 140): string | undef
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeInstructionSkipReason(diagnostic: Record<string, unknown>): string | undefined {
+  const skipReason = diagnostic['skipReason'];
+  switch (skipReason) {
+    case 'inactive':
+      return 'inactive';
+    case 'empty':
+      return 'empty';
+    case 'not_found':
+      return 'missing';
+    case 'overridden': {
+      const overriddenById = typeof diagnostic['overriddenById'] === 'string'
+        ? diagnostic['overriddenById'].trim()
+        : '';
+      return overriddenById ? `overridden by ${overriddenById}` : 'overridden';
+    }
+    default:
+      return undefined;
+  }
+}
+
+function buildInstructionCustomizationLogs(
+  snapshot: Record<string, unknown>,
+): HostSessionDebugCustomizationLogEntry[] {
+  const diagnostics = Array.isArray(snapshot['diagnostics'])
+    ? snapshot['diagnostics'].filter(isRecord)
+    : [];
+
+  return diagnostics.map((diagnostic) => {
+    const name = typeof diagnostic['name'] === 'string' && diagnostic['name'].trim().length > 0
+      ? diagnostic['name'].trim()
+      : 'unknown';
+    const source = typeof diagnostic['source'] === 'string' && diagnostic['source'].trim().length > 0
+      ? diagnostic['source'].trim()
+      : undefined;
+    const reference = typeof diagnostic['reference'] === 'string' && diagnostic['reference'].trim().length > 0
+      ? diagnostic['reference'].trim()
+      : undefined;
+    const reason = normalizeInstructionSkipReason(diagnostic);
+
+    return {
+      category: diagnostic['active'] === true ? 'applying' : 'skipped',
+      name,
+      ...(source ? { source } : {}),
+      ...(reference ? { reference } : {}),
+      ...(reason ? { reason } : {}),
+    } satisfies HostSessionDebugCustomizationLogEntry;
+  });
+}
+
+function buildInstructionCustomizationContent(
+  part: Extract<TurnResponsePart, { type: 'state' }>,
+): HostSessionDebugResolvedCustomizationSummaryContent | HostSessionDebugResolvedTextContent {
+  const snapshot = isRecord(part.metadata?.['snapshot']) ? part.metadata['snapshot'] : undefined;
+  if (!snapshot) {
+    return {
+      kind: 'text',
+      text: (typeof part.text === 'string' ? part.text.trim() : '') || 'No customization details captured.',
+    };
+  }
+
+  const hostId = typeof snapshot['hostId'] === 'string' ? snapshot['hostId'].trim() : '';
+  const modelFamily = typeof snapshot['modelFamily'] === 'string' ? snapshot['modelFamily'].trim() : '';
+  const capabilities = Array.isArray(snapshot['capabilities'])
+    ? snapshot['capabilities'].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+  const resolutionLogs = buildInstructionCustomizationLogs(snapshot);
+  return {
+    kind: 'customizationSummary',
+    resolutionLogs,
+    counts: {
+      instructions: resolutionLogs.filter((entry) => entry.category === 'applying' || entry.category === 'referenced').length,
+      skills: resolutionLogs.filter((entry) => entry.category === 'skill').length,
+      agents: resolutionLogs.filter((entry) => entry.category === 'custom-agent').length,
+      hooks: resolutionLogs.filter((entry) => entry.category === 'hook').length,
+      skipped: resolutionLogs.filter((entry) => entry.category === 'skipped').length,
+    },
+    ...(hostId ? { hostId } : {}),
+    ...(modelFamily ? { modelFamily } : {}),
+    ...(capabilities.length > 0 ? { capabilities } : {}),
+  };
+}
+
 function projectPartEvent(
   part: TurnResponsePart,
   context: {
@@ -749,6 +866,24 @@ function projectPartEvent(
 } | null {
   switch (part.type) {
     case 'state':
+      if (part.kind === 'instructions') {
+        return {
+          event: createDebugEvent({
+            sessionId: context.sessionId,
+            turnId: context.turnId,
+            sequence: context.sequence,
+            kind: 'generic',
+            created: context.created,
+            parentEventId: context.modelTurnEventId,
+            name: 'Resolve Customizations',
+            details: previewText(part.text, 180),
+            level: part.state === 'error' ? 'error' : (part.state === 'warn' ? 'warning' : 'info'),
+            category: 'customization',
+          }),
+          content: buildInstructionCustomizationContent(part),
+        };
+      }
+
       return {
         event: createDebugEvent({
           sessionId: context.sessionId,

@@ -20,7 +20,7 @@
       [nzTooltipTitle]="'AILY_CHAT.NEW_CHAT' | translate">
       <i class="fa-light fa-message-plus"></i>
     </div>
-    <div class="btn ccenter" (click)="openDebugBrowserHome()" nz-tooltip nzTooltipPlacement="bottom"
+    <!-- <div class="btn ccenter" (click)="openDebugBrowserHome()" nz-tooltip nzTooltipPlacement="bottom"
       nzTooltipTitle="打开调试面板">
       <i class="fa-light fa-bug"></i>
     </div>
@@ -28,7 +28,7 @@
       nzTooltipTitle="导入调试快照">
       <i class="fa-light fa-file-arrow-up"></i>
     </div>
-    <!-- <div class="btn ccenter" (click)="toggleActionMenu($event)" nz-tooltip nzTooltipPlacement="bottom"
+    <div class="btn ccenter" (click)="toggleActionMenu($event)" nz-tooltip nzTooltipPlacement="bottom"
       nzTooltipTitle="Chat Actions">
       <i class="fa-light fa-bolt"></i>
     </div> -->
@@ -43,46 +43,58 @@
 <ng-template #windowBoxTemplate>
   <div class="window-box">
     @if (debugBrowser.isOpen) {
-    @if (debugBrowser.isHomeVisible) {
+    @switch (debugBrowser.viewState) {
+    @case (debugBrowserViewState.Home) {
     <aily-chat-debug-home
-      [sessions]="debugBrowser.listImportedSessions()"
+      [sessions]="debugBrowser.listAvailableResources()"
       [activeSessionId]="debugBrowser.activeSessionId"
       (closeRequested)="closeDebugBrowser()"
       (importRequested)="sessionShellCoordinator.importDebugSnapshot()"
       (sessionRequested)="openImportedDebugSession($event)"></aily-chat-debug-home>
-    } @else {
-    @if (debugBrowser.isFlowVisible && activeImportedDebugView) {
+    }
+    @case (debugBrowserViewState.FlowChart) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-flow
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-flow>
-    } @else if (debugBrowser.isCacheVisible && activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.CacheExplorer) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-cache
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-cache>
-    } @else if (debugBrowser.isLogsVisible && activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.Logs) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-logs
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-logs>
-    } @else if (activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.Overview) {
+    @if (activeImportedDebugView && activeImportedResourceSummary) {
     <aily-chat-debug-viewer
+      [session]="activeImportedResourceSummary"
       [view]="activeImportedDebugView"
       [debugEvents]="activeImportedDebugEvents"
       (homeRequested)="openDebugBrowserHome()"
@@ -90,6 +102,7 @@
       (flowRequested)="openImportedDebugFlow()"
       (cacheRequested)="openImportedDebugCache()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-viewer>
+    }
     }
     }
     } @else {

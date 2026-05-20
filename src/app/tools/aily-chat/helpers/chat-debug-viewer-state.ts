@@ -4,10 +4,6 @@ import { buildHostProjectionStateFromPersistedRecord } from './host-turn-respons
 import type { ImportedDebugSessionRecord } from '../services/chat-history.service';
 
 export interface ImportedDebugSessionViewModel {
-  readonly sessionId: string;
-  readonly sourceSessionId: string;
-  readonly title: string;
-  readonly importedAt: number;
   readonly metadata: ImportedDebugSessionRecord['hostRecord']['metadata'];
   readonly turnCount: number;
   readonly messageCount: number;
@@ -20,10 +16,6 @@ export function buildImportedDebugSessionViewModel(
   const projection = buildHostProjectionStateFromPersistedRecord(record.hostRecord);
 
   return {
-    sessionId: record.sessionId,
-    sourceSessionId: record.sourceSessionId,
-    title: record.title,
-    importedAt: record.importedAt,
     metadata: record.hostRecord.metadata,
     turnCount: projection.turnResponses.length,
     messageCount: projection.dialogItems.length,

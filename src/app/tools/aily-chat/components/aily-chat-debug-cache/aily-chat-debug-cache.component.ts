@@ -10,6 +10,7 @@ import {
   type HostSessionDebugUserMessageEvent,
 } from '../../services/host-session-debug-events';
 import { ChatDebugBrowserService } from '../../services/chat-debug-browser.service';
+import { AilyChatDebugBreadcrumbComponent } from '../aily-chat-debug-breadcrumb/aily-chat-debug-breadcrumb.component';
 
 interface ChatDebugCacheGroup {
   readonly key: string;
@@ -45,6 +46,13 @@ interface ChatDebugCacheComponentRow {
   readonly available: boolean;
 }
 
+interface ChatDebugCacheOptionRow {
+  readonly key: string;
+  readonly previous?: string;
+  readonly current?: string;
+  readonly changed: boolean;
+}
+
 interface ChatDebugCacheDiffSummary {
   readonly breakReason: string;
   readonly firstDifferenceLabel?: string;
@@ -59,6 +67,7 @@ interface ChatDebugCacheComparison {
   readonly previous: ChatDebugCacheResolvedTurn | null;
   readonly previousSegments: readonly ChatDebugCacheSignatureSegment[];
   readonly currentSegments: readonly ChatDebugCacheSignatureSegment[];
+  readonly requestOptionRows: readonly ChatDebugCacheOptionRow[];
   readonly componentRows: readonly ChatDebugCacheComponentRow[];
   readonly summary: ChatDebugCacheDiffSummary;
 }
@@ -89,7 +98,7 @@ interface ChatDebugRequestShapeMetadata {
 @Component({
   selector: 'aily-chat-debug-cache',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, AilyChatDebugBreadcrumbComponent],
   templateUrl: './aily-chat-debug-cache.component.html',
   styleUrl: './aily-chat-debug-cache.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -276,14 +285,16 @@ function buildComparison(
     }
   }
 
+  const requestOptionRows = buildRequestOptionRows(previous, current);
   const componentRows = buildComponentRows(previous, current);
-  const summary = buildDiffSummary(previous, current, firstDifferenceLabel, identicalCount, changedCount, addedCount, removedCount);
+  const summary = buildDiffSummary(previous, current, firstDifferenceLabel, identicalCount, changedCount, addedCount, removedCount, requestOptionRows);
 
   return {
     current,
     previous,
     previousSegments,
     currentSegments,
+    requestOptionRows,
     componentRows,
     summary,
   };
@@ -371,9 +382,10 @@ function buildDiffSummary(
   changedCount: number,
   addedCount: number,
   removedCount: number,
+  requestOptionRows: readonly ChatDebugCacheOptionRow[],
 ): ChatDebugCacheDiffSummary {
   const breakReason = previous
-    ? resolveBreakReason(previous.cache, current.cache, firstDifferenceLabel)
+    ? resolveBreakReason(previous.cache, current.cache, firstDifferenceLabel, requestOptionRows)
     : '这是当前会话里的第一轮模型请求。';
 
   return {
@@ -390,6 +402,7 @@ function resolveBreakReason(
   previous: HostSessionDebugCacheExplorerContent,
   current: HostSessionDebugCacheExplorerContent,
   firstDifferenceLabel: string | undefined,
+  requestOptionRows: readonly ChatDebugCacheOptionRow[],
 ): string {
   if ((previous.system ?? '') !== (current.system ?? '')) {
     return '系统提示发生变化。';
@@ -400,8 +413,104 @@ function resolveBreakReason(
   if (firstDifferenceLabel) {
     return `${firstDifferenceLabel}发生变化。`;
   }
+  if (requestOptionRows.some(row => row.changed)) {
+    return '请求选项发生变化。';
+  }
 
   return '未检测到可见请求前缀差异。';
+}
+
+function buildRequestOptionRows(
+  previous: ChatDebugCacheResolvedTurn | null,
+  current: ChatDebugCacheResolvedTurn,
+): ChatDebugCacheOptionRow[] {
+  const previousOptions = previous ? resolveRequestOptions(previous) : {};
+  const currentOptions = resolveRequestOptions(current);
+  const keys = Array.from(new Set([...Object.keys(previousOptions), ...Object.keys(currentOptions)])).sort((left, right) => left.localeCompare(right));
+
+  return keys.map((key) => {
+    const previousValue = previousOptions[key];
+    const currentValue = currentOptions[key];
+    return {
+      key,
+      previous: formatRequestOptionValue(previousValue),
+      current: formatRequestOptionValue(currentValue),
+      changed: serializeRequestOptionValue(previousValue) !== serializeRequestOptionValue(currentValue),
+    };
+  });
+}
+
+function resolveRequestOptions(
+  turn: ChatDebugCacheResolvedTurn,
+): Record<string, unknown> {
+  const parsedOptions = parseRequestOptions(turn.cache.requestOptions);
+  return turn.event.model
+    ? { model: turn.event.model, ...parsedOptions }
+    : parsedOptions;
+}
+
+function parseRequestOptions(requestOptionsJson: string | undefined): Record<string, unknown> {
+  if (!requestOptionsJson) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(requestOptionsJson);
+  } catch {
+    return {};
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const flattened: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      for (const [nestedKey, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+        flattened[`${key}.${nestedKey}`] = nestedValue;
+      }
+      continue;
+    }
+
+    flattened[key] = value;
+  }
+
+  return flattened;
+}
+
+function serializeRequestOptionValue(value: unknown): string {
+  if (value === undefined) {
+    return '__undefined__';
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatRequestOptionValue(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return 'null';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function formatRequestShape(content: HostSessionDebugCacheExplorerContent): string {
@@ -437,6 +546,7 @@ function resolveCacheExplorerContent(
     const system = findSection(modelTurn.sections, 'System');
     const tools = findSection(modelTurn.sections, 'Tools');
     const requestShapeJson = findSection(modelTurn.sections, 'Request Shape');
+    const requestOptions = modelTurn.requestOptions ?? findSection(modelTurn.sections, 'Request Options');
     const rawInputMessages = parseInputMessages(findSection(modelTurn.sections, 'Input Messages'));
     const inputMessages = stripLeadingSystemMessages(rawInputMessages, system);
 
@@ -445,6 +555,7 @@ function resolveCacheExplorerContent(
       ...(tools ? { tools } : {}),
       inputMessages,
       requestShape: describeRequestShape(inputMessages, requestShapeJson),
+      ...(requestOptions ? { requestOptions } : {}),
     };
   }
 
