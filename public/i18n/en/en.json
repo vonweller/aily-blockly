@@ -334,6 +334,13 @@
         "WARNINGS": {
             "BETA_VERSION": "Beta version, unverified, use with caution",
             "TODO": "Device support coming soon"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "Project Type",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "Visual programming with drag-and-drop blocks",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "Code editor for professional embedded development"
         }
     },
     "LIB_MANAGER": {

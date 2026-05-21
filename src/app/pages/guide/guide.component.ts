@@ -222,8 +222,8 @@ export class GuideComponent implements OnInit, AfterViewInit {
         // this.uiService.openWindow(item.data);
         break;
       case 'project-new-aily-code':
-        // 进入与 Blockly 相同的新建向导（第二步选创建 Aily Code）
-        this.router.navigate(['/main/project-new']);
+        // 进入新建向导并预选 Coder 类别
+        this.router.navigate(['/main/project-new'], { queryParams: { category: 'coder' } });
         break;
       case 'project-open':
         this.openProject(item.data);

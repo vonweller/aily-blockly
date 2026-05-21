@@ -274,6 +274,13 @@
         "WARNINGS": {
             "BETA_VERSION": "Beta-Version, ungeprüft, mit Vorsicht verwenden",
             "TODO": "Geräteunterstützung kommt bald"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "Projekttyp",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "Visuelle Programmierung mit Drag-and-Drop-Blöcken",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "Code-Editor für professionelle Embedded-Entwicklung"
         }
     },
     "LIB_MANAGER": {

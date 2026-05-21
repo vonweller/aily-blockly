@@ -334,6 +334,13 @@
         "WARNINGS": {
             "BETA_VERSION": "内测版本，未经验证，谨慎使用",
             "TODO": "该设备支持即将上线"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "选择项目类型",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "图形化编程，拖拽积木块快速开发",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "代码编辑，专业嵌入式开发体验"
         }
     },
     "LIB_MANAGER": {

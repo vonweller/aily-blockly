@@ -274,6 +274,13 @@
         "WARNINGS": {
             "BETA_VERSION": "النسخة التجريبية، غير مؤكدة، استخدم بحذر",
             "TODO": "دعم هذا الجهاز قادم قريباً"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "نوع المشروع",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "برمجة مرئية باستخدام سحب وإفلات الكتل",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "محرر أكواد لتطوير الأنظمة المدمجة الاحترافي"
         }
     },
     "LIB_MANAGER": {

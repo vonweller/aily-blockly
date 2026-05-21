@@ -274,6 +274,13 @@
         "WARNINGS": {
             "BETA_VERSION": "Versão beta, não verificada, use com cautela",
             "TODO": "O suporte a este dispositivo estará disponível em breve"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "Tipo de projeto",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "Programação visual com blocos de arrastar e soltar",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "Editor de código para desenvolvimento embarcado profissional"
         }
     },
     "LIB_MANAGER": {

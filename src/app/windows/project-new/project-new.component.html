@@ -70,7 +70,41 @@
         } @else {
         <!-- 基本设定页面 -->
         <div class="right-inner">
-          <div class="item">
+          <div class="right-content">
+            <div class="project-category-selector">
+              <div class="category-title">{{ 'PROJECT_NEW.PROJECT_CATEGORY.TITLE' | translate }}</div>
+              <div class="category-cards">
+                <div class="category-card btn"
+                  [class.selected]="selectedProjectCategory === 'blockly'"
+                  (click)="selectProjectCategory('blockly')">
+                  <div class="category-icon blockly ccenter">
+                    <i class="fa-light fa-puzzle-piece"></i>
+                  </div>
+                  <div class="category-info">
+                    <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY' | translate }}</div>
+                    <div class="category-desc">{{ 'PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY_DESC' | translate }}</div>
+                  </div>
+                  <div class="category-check ccenter">
+                    <i class="fa-solid fa-circle-check"></i>
+                  </div>
+                </div>
+                <div class="category-card btn"
+                  [class.selected]="selectedProjectCategory === 'coder'"
+                  (click)="selectProjectCategory('coder')">
+                  <div class="category-icon coder ccenter">
+                    <i class="fa-light fa-code"></i>
+                  </div>
+                  <div class="category-info">
+                    <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.CODER' | translate }}</div>
+                    <div class="category-desc">{{ 'PROJECT_NEW.PROJECT_CATEGORY.CODER_DESC' | translate }}</div>
+                  </div>
+                  <div class="category-check ccenter">
+                    <i class="fa-solid fa-circle-check"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.BOARD' | translate }}:</div>
             <nz-input-group [nzSuffix]="suffixIconSearch">
               <input class="board" nz-input [(ngModel)]="newProjectData.board.name" [disabled]="true" />
@@ -84,7 +118,7 @@
               }
             </nz-select>
           </div>
-          @if (!isLoadingTemplates && myTemplateList.length > 0) {
+          @if (selectedProjectCategory === 'blockly' && !isLoadingTemplates && myTemplateList.length > 0) {
           <div class="item template-row">
             <div>{{ 'PROJECT_NEW.FORM.TEMPLATE' | translate }}:</div>
             <div class="template-select-box">
@@ -106,7 +140,7 @@
           }
           <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.PROJECT_NAME' | translate }}:</div>
-            <input nz-input [(ngModel)]="newProjectData.name" (ngModelChange)="checkPathIsExist()" />
+            <input nz-input [(ngModel)]="newProjectData.name" (ngModelChange)="onProjectNameChange()" />
             @if(showIsExist){
             <div class="error animate__animated animate__faster animate__fadeInDown">{{ 'PROJECT_NEW.FORM.NAME_EXISTS' |
               translate }}</div>
@@ -127,6 +161,7 @@
               translate }}</div>
             }
           </div>
+          </div>
         </div>
         }
       </div>
@@ -142,12 +177,8 @@
         <button nz-button nzType="default" (click)="currentStep = 0">
           {{ 'PROJECT_NEW.BUTTONS.PREV' | translate }}
         </button>
-        <button nz-button nzType="primary" [disabled]="showIsExist || showIsPathPassed" (click)="createProject()">
+        <button nz-button nzType="primary" [disabled]="showIsExist || showIsPathPassed" (click)="onCreateProject()">
           {{ 'PROJECT_NEW.BUTTONS.CREATE' | translate }}
-        </button>
-        <button nz-button nzType="default" nzGhost [disabled]="showIsExist || showIsPathPassed"
-          style="margin-left: 8px;" (click)="createAilyCodeProject()">
-          {{ 'PROJECT_NEW.BUTTONS.CREATE_AILY_CODE' | translate }}
         </button>
         }
         }

@@ -258,6 +258,13 @@
         "WARNINGS": {
             "BETA_VERSION": "베타 버전, 미검증, 주의해서 사용",
             "TODO": "이 장치 지원이 곧 출시됩니다"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "프로젝트 유형",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "드래그 앤 드롭 블록으로 하는 시각적 프로그래밍",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "전문 임베디드 개발을 위한 코드 편집기"
         }
     },
     "LIB_MANAGER": {

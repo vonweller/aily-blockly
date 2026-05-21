@@ -568,7 +568,7 @@ export class HeaderComponent implements OnDestroy {
         this.uiService.openWindow(item.data);
         break;
       case 'project-new-aily-code':
-        // 与 Blockly 共用「新建项目」向导，在第二步点「创建 Aily Code 项目」
+        // 与 Blockly 共用「新建项目」向导，预选 Coder 类别
         if (this.isLoaded()) {
           const canContinue = await this.checkUnsavedChanges('new');
           if (!canContinue) return;
@@ -578,7 +578,8 @@ export class HeaderComponent implements OnDestroy {
           path: 'project-new',
           alwaysOnTop: true,
           width: 820,
-          height: 550
+          height: 550,
+          data: { category: 'coder' }
         });
         break;
       case 'project-open':

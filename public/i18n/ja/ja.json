@@ -274,6 +274,13 @@
         "WARNINGS": {
             "BETA_VERSION": "ベータ版、未検証、注意して使用",
             "TODO": "このデバイスのサポートは近日公開予定"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "プロジェクトタイプ",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "ブロックをドラッグ＆ドロップするビジュアルプログラミング",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "プロフェッショナルな組み込み開発向けコードエディタ"
         }
     },
     "LIB_MANAGER": {

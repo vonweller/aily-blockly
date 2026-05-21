@@ -1,5 +1,6 @@
 import { ChangeDetectorRef, Component, OnDestroy } from '@angular/core';
 import { CommonModule, Location } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -80,6 +81,14 @@ export class ProjectNewComponent implements OnDestroy {
   private destroy$ = new Subject<void>();
   private searchIndex: AnyOrama | null = null;
 
+  /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
+  selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
+
+  /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
+  private isProjectNameManuallyEdited = false;
+  /** 程序写入推荐名时跳过 ngModelChange 的手动编辑标记 */
+  private isApplyingRecommendedName = false;
+
   /** 第三步加载态：区分 Blockly 脚手架与 Aily Code 骨架的提示文案 */
   creatingMode: 'blockly' | 'aily' | null = null;
   /** 与 Aily Code 对话框一致：阻塞重复弹出未保存提示 */
@@ -105,6 +114,7 @@ export class ProjectNewComponent implements OnDestroy {
 
   constructor(
     private router: Router,
+    private route: ActivatedRoute,
     private location: Location,
     private electronService: ElectronService,
     private projectService: ProjectService,
@@ -152,8 +162,52 @@ export class ProjectNewComponent implements OnDestroy {
     if (this.boardList.length > 0) {
       this.selectBoard(this.boardList[0]);
     }
-    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
     this.checkPathInvalidChars();
+
+    // 从菜单「新建 Aily Code 项目」进入时预选 Coder 类别
+    const category = this.route.snapshot.queryParamMap.get('category');
+    if (category === 'coder') {
+      this.selectedProjectCategory = 'coder';
+    }
+    this.applyRecommendedProjectName();
+  }
+
+  /** 按类别生成推荐项目名：Blockly → project_xxx，Coder → project_coder_xxx */
+  private applyRecommendedProjectName(): void {
+    if (this.isProjectNameManuallyEdited) {
+      return;
+    }
+    const prefix = this.selectedProjectCategory === 'coder' ? 'project_coder_' : 'project_';
+    this.isApplyingRecommendedName = true;
+    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, prefix);
+    this.isApplyingRecommendedName = false;
+    this.checkPathIsExist();
+  }
+
+  /** 项目名称输入变更：标记为手动编辑并校验路径 */
+  onProjectNameChange(): void {
+    if (!this.isApplyingRecommendedName) {
+      this.isProjectNameManuallyEdited = true;
+    }
+    this.checkPathIsExist();
+  }
+
+  /** 切换项目类别；Coder 不使用 Blockly 模板 */
+  selectProjectCategory(category: 'blockly' | 'coder'): void {
+    this.selectedProjectCategory = category;
+    if (category === 'coder') {
+      this.selectedTemplateName = '';
+    }
+    this.applyRecommendedProjectName();
+  }
+
+  /** 根据顶部所选类别创建对应类型项目 */
+  async onCreateProject(): Promise<void> {
+    if (this.selectedProjectCategory === 'coder') {
+      await this.createAilyCodeProject();
+      return;
+    }
+    await this.createProject();
   }
 
   process(array) {

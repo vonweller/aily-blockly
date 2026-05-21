@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { ChangeDetectorRef, Component, OnDestroy } from '@angular/core';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -63,8 +63,18 @@ export class ProjectNewComponent {
   boardList: any[] = [];
   tagListRandom;
 
+  /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
+  selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
+
+  /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
+  private isProjectNameManuallyEdited = false;
+  /** 程序写入推荐名时跳过 ngModelChange 的手动编辑标记 */
+  private isApplyingRecommendedName = false;
+
   /** 向导第三步：Blockly 脚手架与 Aily Code 骨架共用 loading UI，用这个区分文案 */
   creatingMode: 'blockly' | 'aily' | null = null;
+
+  private initDataCleanup: (() => void) | null = null;
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
@@ -112,9 +122,62 @@ export class ProjectNewComponent {
     this.newProjectData.board.nickname = this.currentBoard.nickname;
     this.newProjectData.board.name = this.currentBoard.name;
     this.newProjectData.board.version = this.currentBoard.version;
-    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
     // macOS：默认 Documents 路径无非法字符，仍统一跑一遍以保持与向导内「选择文件夹」一致
     this.checkPathInvalidChars();
+    this.applyRecommendedProjectName();
+
+    // 子窗口：从菜单「新建 Aily Code 项目」传入 category=coder
+    if (this.electronService.isElectron && window['subWindow']?.onInitData) {
+      this.initDataCleanup = window['subWindow'].onInitData((payload: { data?: { category?: string } }) => {
+        if (payload?.data?.category === 'coder') {
+          this.selectedProjectCategory = 'coder';
+          this.applyRecommendedProjectName();
+          this.cd.detectChanges();
+        }
+      });
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.initDataCleanup?.();
+  }
+
+  /** 按类别生成推荐项目名：Blockly → project_xxx，Coder → project_coder_xxx */
+  private applyRecommendedProjectName(): void {
+    if (this.isProjectNameManuallyEdited) {
+      return;
+    }
+    const prefix = this.selectedProjectCategory === 'coder' ? 'project_coder_' : 'project_';
+    this.isApplyingRecommendedName = true;
+    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, prefix);
+    this.isApplyingRecommendedName = false;
+    this.checkPathIsExist();
+  }
+
+  /** 项目名称输入变更：标记为手动编辑并校验路径 */
+  onProjectNameChange(): void {
+    if (!this.isApplyingRecommendedName) {
+      this.isProjectNameManuallyEdited = true;
+    }
+    this.checkPathIsExist();
+  }
+
+  /** 切换项目类别；Coder 不使用 Blockly 模板 */
+  selectProjectCategory(category: 'blockly' | 'coder'): void {
+    this.selectedProjectCategory = category;
+    if (category === 'coder') {
+      this.selectedTemplateName = '';
+    }
+    this.applyRecommendedProjectName();
+  }
+
+  /** 根据顶部所选类别创建对应类型项目 */
+  async onCreateProject(): Promise<void> {
+    if (this.selectedProjectCategory === 'coder') {
+      await this.createAilyCodeProject();
+      return;
+    }
+    await this.createProject();
   }
 
   process(array) {

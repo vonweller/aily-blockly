@@ -276,6 +276,13 @@
         "WARNINGS": {
             "BETA_VERSION": "內測版本，未經驗證，謹慎使用",
             "TODO": "該設備支持即將上線"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "選擇專案類型",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "圖形化編程，拖拽積木塊快速開發",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "代碼編輯，專業嵌入式開發體驗"
         }
     },
     "LIB_MANAGER": {
