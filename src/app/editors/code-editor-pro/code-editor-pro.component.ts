@@ -35,6 +35,8 @@ const AILY_EMBED_OPEN_BOARD_SELECTOR_CHANNEL = 'aily-embed-open-board-selector';
 const AILY_EMBED_CLIPBOARD_WRITE_CHANNEL = 'aily-embed-clipboard-write';
 /** 与 child/aily-coder/src/embedLayoutSync.ts 一致 */
 const CODER_HOST_LAYOUT_REFRESH_CHANNEL = 'aily-coder-host-layout-refresh';
+/** 宿主 → iframe：磁盘 watch 事件（与 parentBackedNativeFs.ts 一致） */
+const CODEMBED_NATIVE_FS_WATCH_EVENT = 'aily-coder-native-fs-watch-event';
 
 @Component({
   selector: 'app-code-editor-pro',
@@ -68,6 +70,9 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   private ailyClipboardWriteBc?: BroadcastChannel;
   /** 订阅顶层 BuilderService 的编译完成事件，触发 main.hex 路径刷新 */
   private buildFinishedSub?: Subscription;
+  /** 内嵌 Coder nativeFsWatchStart 注册的宿主 fs.watch 句柄 */
+  private coderEmbedFsWatchers = new Map<number, () => void>();
+  private coderEmbedFsWatchSeq = 0;
 
   constructor(
     private projectService: ProjectService,
@@ -218,6 +223,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.ailyClipboardWriteBc = undefined;
     this.buildFinishedSub?.unsubscribe();
     this.buildFinishedSub = undefined;
+    this.stopAllCoderEmbedFsWatchers();
     this.coderEmbedWorkspaceRoot = null;
     this.proProject.destroy();
     this.builderService.cancel();
@@ -527,6 +533,38 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     extension: string,
   ): boolean {
     return fileList.some((file) => file.name.toLowerCase().endsWith(extension.toLowerCase()));
+  }
+
+  /** 销毁 iframe 时关闭全部 nativeFsWatchStart 注册的 fs.watch */
+  private stopAllCoderEmbedFsWatchers(): void {
+    for (const dispose of this.coderEmbedFsWatchers.values()) {
+      dispose();
+    }
+    this.coderEmbedFsWatchers.clear();
+  }
+
+  /** 将宿主 fs.watch 事件推送给内嵌 Coder iframe */
+  private pushCoderNativeFsWatchEvent(
+    watchId: number,
+    event: { eventType?: string; filename?: string },
+  ): void {
+    const win = this.coderEmbedFrame?.nativeElement?.contentWindow;
+    if (!win) {
+      return;
+    }
+    try {
+      win.postMessage(
+        {
+          channel: CODEMBED_NATIVE_FS_WATCH_EVENT,
+          watchId,
+          eventType: event?.eventType,
+          filename: event?.filename,
+        },
+        '*',
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   private replyCoderNativeFs(
@@ -863,6 +901,44 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
             }
           }
           fsAny['renameSync'](from, to);
+          this.replyCoderNativeFs(ev.source as Window, msg.id!, {});
+          break;
+        }
+        case 'nativeFsWatchStart': {
+          const abs = this.assertPathInsideCoderEmbedRoot(String(payload['path']));
+          const recursive = !!payload['recursive'];
+          const fsWatch = fsAny['watch'] as
+            | ((
+                path: string,
+                cb: (ev: { eventType?: string; filename?: string }) => void,
+                options?: { recursive?: boolean },
+              ) => () => void)
+            | undefined;
+          if (typeof fsWatch !== 'function') {
+            replyErr(new Error('fs.watch 不可用'));
+            return;
+          }
+          const watchId = ++this.coderEmbedFsWatchSeq;
+          try {
+            const dispose = fsWatch(
+              abs,
+              (event) => this.pushCoderNativeFsWatchEvent(watchId, event),
+              { recursive },
+            );
+            this.coderEmbedFsWatchers.set(watchId, dispose);
+            this.replyCoderNativeFs(ev.source as Window, msg.id!, { watchId });
+          } catch (e: unknown) {
+            replyErr(e);
+          }
+          break;
+        }
+        case 'nativeFsWatchStop': {
+          const watchId = Number(payload['watchId']);
+          const dispose = this.coderEmbedFsWatchers.get(watchId);
+          if (dispose) {
+            dispose();
+            this.coderEmbedFsWatchers.delete(watchId);
+          }
           this.replyCoderNativeFs(ev.source as Window, msg.id!, {});
           break;
         }
