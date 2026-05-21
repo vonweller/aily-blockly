@@ -17,6 +17,7 @@ import { NpmService } from '../../services/npm.service';
 import { resolveActualBuildOutputs, type BuildArtifactV1 } from '../../utils/builder.utils';
 import { resolvePlatformPackagesForCurrentProject } from '../../utils/platform-packages.utils';
 import { UiService } from '../../services/ui.service';
+import { AiCoderDiffBridgeService } from '../../services/ai-coder-diff-bridge.service';
 
 /** 与 child/aily-coder/src/hostEmbedContext.ts 中 channel 常量一致 */
 const AILY_CODER_HOST_CONTEXT_CHANNEL = 'aily-coder-host-context';
@@ -87,6 +88,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     private themeService: ThemeService,
     private npmService: NpmService,
     private uiService: UiService,
+    private aiCoderDiffBridge: AiCoderDiffBridgeService,
   ) {
     toObservable(this.themeService.theme)
       .pipe(takeUntilDestroyed())
@@ -202,6 +204,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     const pathApi = window['path'] as { resolve?: (p: string) => string };
     const resolved = pathApi.resolve ? pathApi.resolve(projectPath) : projectPath;
     this.coderEmbedWorkspaceRoot = resolved;
+    this.aiCoderDiffBridge.setWorkspaceRoot(resolved);
     await this.ensureProjectPackageJsonExists(resolved);
     await this.loadProject(resolved);
     void this.ensureNpmDepsWithRetry(resolved);
@@ -224,6 +227,8 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.buildFinishedSub?.unsubscribe();
     this.buildFinishedSub = undefined;
     this.stopAllCoderEmbedFsWatchers();
+    this.aiCoderDiffBridge.registerEmbed(null);
+    this.aiCoderDiffBridge.setWorkspaceRoot(null);
     this.coderEmbedWorkspaceRoot = null;
     this.proProject.destroy();
     this.builderService.cancel();
@@ -331,7 +336,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
    * iframe 每次加载完成后向 aily-coder 同步宿主上下文（构建目录等），避免依赖 ProjectService 竞态。
    */
   onCoderEmbedFrameLoad(): void {
+    const frame = this.coderEmbedFrame?.nativeElement;
     const root = this.coderEmbedWorkspaceRoot;
+    if (root) {
+      this.aiCoderDiffBridge.setWorkspaceRoot(root);
+    }
+    this.aiCoderDiffBridge.registerEmbed(frame?.contentWindow ?? null);
     if (root) {
       void this.pushAilyCoderHostContext(root);
     }

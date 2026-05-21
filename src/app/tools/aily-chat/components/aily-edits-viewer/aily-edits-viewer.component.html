@@ -22,6 +22,12 @@
             <div class="chat-editing-session-actions-group primary-actions">
                 <button
                     type="button"
+                    class="action-btn secondary text-btn diff-btn"
+                    (click)="onOpenAllDiffs($event)"
+                    title="在编辑器中查看 Diff 对比"
+                    aria-label="在编辑器中查看 Diff 对比">Diff</button>
+                <button
+                    type="button"
                     class="action-btn secondary text-btn keep-btn"
                     (click)="onKeep()"
                     [title]="keepActionTitle"
@@ -45,7 +51,7 @@
         <div class="file-entry" *ngFor="let file of files; trackBy: trackByPath"
             [class.file-created]="file.type === 'create'"
             [class.file-deleted]="file.type === 'delete'">
-            <div class="file-main">
+            <div class="file-main" (click)="onPreviewFile(file, $event)" [title]="file.contentKind === 'text' ? '在编辑器中查看 Diff' : file.fullPath">
                 <i class="fas file-icon"
                     [class.fa-file-circle-plus]="file.type === 'create'"
                     [class.fa-file-pen]="file.type === 'modify'"

@@ -4,6 +4,8 @@ import { Subscription } from 'rxjs';
 import { EditCheckpointService, EditsSummary, EditFileSummary } from '../../services/edit-checkpoint.service';
 import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
 import { getInteractionDisplayContent } from '../../core/user-turn-action-target';
+import { AiCoderDiffBridgeService } from '../../../../services/ai-coder-diff-bridge.service';
+import type { AiEditDiffResultPayload } from '../../../../services/ai-coder-diff-channels';
 
 @Component({
   selector: 'app-aily-edits-viewer',
@@ -26,7 +28,9 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
   }
 
   private sub?: Subscription;
+  private diffResultSub?: Subscription;
   private checkpointService = inject(EditCheckpointService);
+  private diffBridge = inject(AiCoderDiffBridgeService);
 
   ngOnInit(): void {
     this.sub = this.checkpointService.summaryChanged$.subscribe(s => {
@@ -35,10 +39,14 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
         this.isAccepted = false;
       }
     });
+    this.diffResultSub = this.diffBridge.result$.subscribe(result => {
+      this.handleDiffEditorResult(result);
+    });
   }
 
   ngOnDestroy(): void {
     this.sub?.unsubscribe();
+    this.diffResultSub?.unsubscribe();
   }
 
   get files(): EditFileSummary[] {
@@ -115,6 +123,7 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
       detail,
     }));
     this.checkpointService.dismissSummary();
+    this.diffBridge.dismissPreview(this.summary?.checkpointId);
   }
 
   onUndo(): void {
@@ -123,6 +132,7 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
       bubbles: true,
       detail,
     }));
+    this.diffBridge.dismissPreview(this.summary?.checkpointId);
   }
 
   onRedo(): void {
@@ -139,6 +149,9 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
       bubbles: true,
       detail,
     }));
+    if (this.summary) {
+      this.diffBridge.dismissPreview(this.summary.checkpointId, { filePath: file.fullPath });
+    }
   }
 
   onRejectFile(file: EditFileSummary): void {
@@ -147,6 +160,85 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
       bubbles: true,
       detail,
     }));
+    if (this.summary) {
+      this.diffBridge.dismissPreview(this.summary.checkpointId, { filePath: file.fullPath });
+    }
+  }
+
+  onPreviewFile(file: EditFileSummary, event: MouseEvent): void {
+    event.stopPropagation();
+    if (!this.summary || file.contentKind !== 'text') {
+      return;
+    }
+    this.diffBridge.openSingleFile(
+      this.summary,
+      file,
+      (filePath) => this.checkpointService.getInitialContent(filePath),
+    );
+  }
+
+  onOpenAllDiffs(event: MouseEvent): void {
+    event.stopPropagation();
+    if (!this.summary) {
+      return;
+    }
+    this.openDiffPreview(this.summary);
+  }
+
+  private openDiffPreview(summary: EditsSummary): void {
+    this.diffBridge.openFromSummary(
+      summary,
+      (filePath) => this.checkpointService.getInitialContent(filePath),
+    );
+  }
+
+  private handleDiffEditorResult(result: AiEditDiffResultPayload): void {
+    if (this.summary && result.previewId !== this.summary.checkpointId) {
+      return;
+    }
+
+    switch (result.action) {
+      case 'acceptFile':
+        if (result.filePath) {
+          if (this.summary) {
+            this.onAcceptFile({ fullPath: result.filePath } as EditFileSummary);
+          } else {
+            this.diffBridge.dismissPreview(result.previewId, { filePath: result.filePath });
+          }
+        }
+        break;
+      case 'rejectFile':
+        if (result.filePath) {
+          if (this.summary) {
+            this.onRejectFile({ fullPath: result.filePath } as EditFileSummary);
+          } else {
+            document.dispatchEvent(new CustomEvent('aily-task-action', {
+              bubbles: true,
+              detail: { action: 'rejectFile', filePath: result.filePath } satisfies ChatTaskActionDetail,
+            }));
+            this.diffBridge.dismissPreview(result.previewId, { filePath: result.filePath });
+          }
+        }
+        break;
+      case 'acceptAll':
+        if (this.summary) {
+          this.onKeep();
+        } else {
+          this.diffBridge.dismissPreview(result.previewId);
+        }
+        break;
+      case 'rejectAll':
+        if (this.summary) {
+          this.onUndo();
+        } else {
+          document.dispatchEvent(new CustomEvent('aily-task-action', {
+            bubbles: true,
+            detail: { action: 'undoEdits' } satisfies ChatTaskActionDetail,
+          }));
+          this.diffBridge.dismissPreview(result.previewId);
+        }
+        break;
+    }
   }
 
   trackByPath(index: number, file: EditFileSummary): string {

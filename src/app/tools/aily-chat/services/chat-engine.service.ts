@@ -38,7 +38,9 @@ import { ConfigService } from '../../../services/config.service';
 import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
+import type { EditsSummary } from './edit-checkpoint.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
+import { AiCoderDiffBridgeService } from '../../../services/ai-coder-diff-bridge.service';
 import { GitWorkspaceCheckpointProviderService } from './git-workspace-checkpoint-provider.service';
 import { ScrollManagerService } from './scroll-manager.service';
 import { ResourceManagerService } from './resource-manager.service';
@@ -718,6 +720,7 @@ export class ChatEngineService implements IChatContext {
       get lexStream() { return thisEngine.lexStream; },
       openSettings: () => this.openSettings(),
       get editCheckpointService() { return thisEngine.editCheckpointService; },
+      triggerAiEditDiffPreview: (summary) => thisEngine.triggerAiEditDiffPreview(summary),
       get ngZone() { return thisEngine.ngZone; },
       get message() { return thisEngine.message; },
       get list() { return thisEngine.list; },
@@ -844,6 +847,7 @@ export class ChatEngineService implements IChatContext {
     public ngZone: NgZone,
     public absAutoSyncService: AbsAutoSyncService,
     public editCheckpointService: EditCheckpointService,
+    private aiCoderDiffBridge: AiCoderDiffBridgeService,
     public workspaceCheckpointProvider: GitWorkspaceCheckpointProviderService,
     public translate: TranslateService,
     public message: NzMessageService,
@@ -879,6 +883,21 @@ export class ChatEngineService implements IChatContext {
   /** 注册 OnPush CD 回调（由 component 调用 cdr.markForCheck） */
   setCdCallback(cb: () => void): void {
     this.viewAdapter.setCdCallback(cb);
+  }
+
+  /** AI 编辑完成后在内嵌 Coder 打开 DiffEditor 预览（与 autoSaveEdits / 摘要 UI 解耦） */
+  triggerAiEditDiffPreview(summary: EditsSummary | null): void {
+    const workspaceRoot = this.prjPath || this.prjRootPath;
+    if (workspaceRoot) {
+      this.aiCoderDiffBridge.setWorkspaceRoot(workspaceRoot);
+    }
+    if (!summary?.files?.length) {
+      return;
+    }
+    this.aiCoderDiffBridge.openFromSummary(
+      summary,
+      (filePath) => this.editCheckpointService.getInitialContent(filePath),
+    );
   }
 
   /**
