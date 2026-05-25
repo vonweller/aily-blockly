@@ -24,9 +24,9 @@
   border-radius: 5px;
   background: transparent;
   
-  &.chat-most-recent-response {
-    min-height: var(--chat-current-response-min-height, 0px);
-  }
+  // &.chat-most-recent-response {
+  //   min-height: var(--chat-current-response-min-height, 0px);
+  // }
 
   &.request-disabled {
     .content {

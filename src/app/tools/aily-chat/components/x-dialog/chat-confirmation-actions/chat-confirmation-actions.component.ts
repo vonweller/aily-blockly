@@ -57,6 +57,8 @@ export interface ChatConfirmationActionOption {
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
+      padding: 0 5px;
+      margin-bottom: 10px;
     }
     .cca-split-btn {
       display: flex;

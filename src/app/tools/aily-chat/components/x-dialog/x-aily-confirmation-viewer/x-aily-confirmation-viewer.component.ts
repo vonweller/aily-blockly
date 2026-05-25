@@ -128,6 +128,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
       word-break: break-word;
       overflow-wrap: break-word;
       white-space: pre-wrap;
+      padding: 0 5px;
     }
     .aa-command-block {
       margin-top: 0;
