@@ -262,9 +262,9 @@
         "PROJECT_CATEGORY": {
             "TITLE": "프로젝트 유형",
             "BLOCKLY": "Aily Blockly",
-            "BLOCKLY_DESC": "드래그 앤 드롭 블록으로 하는 시각적 프로그래밍",
+            "BLOCKLY_DESC": "시각적 프로그래밍, 드래그 앤 드롭으로 빠른 개발",
             "CODER": "Aily Coder",
-            "CODER_DESC": "전문 임베디드 개발을 위한 코드 편집기"
+            "CODER_DESC": "코드 편집, 전문 임베디드 개발 환경"
         }
     },
     "LIB_MANAGER": {

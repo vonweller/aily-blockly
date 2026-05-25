@@ -278,9 +278,9 @@
         "PROJECT_CATEGORY": {
             "TITLE": "プロジェクトタイプ",
             "BLOCKLY": "Aily Blockly",
-            "BLOCKLY_DESC": "ブロックをドラッグ＆ドロップするビジュアルプログラミング",
+            "BLOCKLY_DESC": "ビジュアルプログラミング、ブロックで素早く開発",
             "CODER": "Aily Coder",
-            "CODER_DESC": "プロフェッショナルな組み込み開発向けコードエディタ"
+            "CODER_DESC": "コード編集、プロフェッショナルな組み込み開発"
         }
     },
     "LIB_MANAGER": {

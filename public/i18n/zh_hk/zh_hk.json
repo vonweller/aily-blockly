@@ -278,7 +278,7 @@
             "TODO": "該設備支持即將上線"
         },
         "PROJECT_CATEGORY": {
-            "TITLE": "選擇專案類型",
+            "TITLE": "專案類型",
             "BLOCKLY": "Aily Blockly",
             "BLOCKLY_DESC": "圖形化編程，拖拽積木塊快速開發",
             "CODER": "Aily Coder",

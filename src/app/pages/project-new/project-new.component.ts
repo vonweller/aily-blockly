@@ -203,7 +203,7 @@ export class ProjectNewComponent implements OnDestroy {
 
   /** 在首个逗号处拆成两行展示项目类型描述（换行时不保留逗号） */
   splitCategoryDesc(text: string): string[] {
-    const commaIndex = text.search(/[,，]/);
+    const commaIndex = text.search(/[,，,\u060C、]/);
     if (commaIndex < 0) {
       return [text];
     }

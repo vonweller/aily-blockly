@@ -278,9 +278,9 @@
         "PROJECT_CATEGORY": {
             "TITLE": "Tipo de projeto",
             "BLOCKLY": "Aily Blockly",
-            "BLOCKLY_DESC": "Programação visual com blocos de arrastar e soltar",
+            "BLOCKLY_DESC": "Programação visual, desenvolvimento rápido com blocos",
             "CODER": "Aily Coder",
-            "CODER_DESC": "Editor de código para desenvolvimento embarcado profissional"
+            "CODER_DESC": "Edição de código, desenvolvimento embarcado profissional"
         }
     },
     "LIB_MANAGER": {

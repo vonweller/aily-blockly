@@ -338,9 +338,9 @@
         "PROJECT_CATEGORY": {
             "TITLE": "Project Type",
             "BLOCKLY": "Aily Blockly",
-            "BLOCKLY_DESC": "Visual programming with drag-and-drop blocks",
+            "BLOCKLY_DESC": "Visual programming, drag-and-drop blocks for rapid development",
             "CODER": "Aily Coder",
-            "CODER_DESC": "Code editor for professional embedded development"
+            "CODER_DESC": "Code editing, professional embedded development experience"
         }
     },
     "LIB_MANAGER": {
