@@ -74,6 +74,10 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   /** 内嵌 Coder nativeFsWatchStart 注册的宿主 fs.watch 句柄 */
   private coderEmbedFsWatchers = new Map<number, () => void>();
   private coderEmbedFsWatchSeq = 0;
+  /** 监听 .aily/build 与全局 aily-builder 缓存变更，编译产物增删后同步 hints / hostContext */
+  private disposeBuildOutputsWatch?: () => void;
+  private disposeGlobalBuildOutputsWatch?: () => void;
+  private buildOutputsWatchDebounce?: ReturnType<typeof setTimeout>;
 
   constructor(
     private projectService: ProjectService,
@@ -209,6 +213,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     await this.loadProject(resolved);
     void this.ensureNpmDepsWithRetry(resolved);
     await this.initCoderEmbed(resolved);
+    this.setupBuildOutputsWatch(resolved);
   }
 
   ngOnDestroy(): void {
@@ -227,6 +232,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.buildFinishedSub?.unsubscribe();
     this.buildFinishedSub = undefined;
     this.stopAllCoderEmbedFsWatchers();
+    this.stopBuildOutputsWatch();
     this.aiCoderDiffBridge.registerEmbed(null);
     this.aiCoderDiffBridge.setWorkspaceRoot(null);
     this.coderEmbedWorkspaceRoot = null;
@@ -553,6 +559,86 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.coderEmbedFsWatchers.clear();
   }
 
+  /** 关闭 .aily/build 与全局编译缓存目录监听 */
+  private stopBuildOutputsWatch(): void {
+    if (this.buildOutputsWatchDebounce != null) {
+      clearTimeout(this.buildOutputsWatchDebounce);
+      this.buildOutputsWatchDebounce = undefined;
+    }
+    this.disposeBuildOutputsWatch?.();
+    this.disposeBuildOutputsWatch = undefined;
+    this.disposeGlobalBuildOutputsWatch?.();
+    this.disposeGlobalBuildOutputsWatch = undefined;
+  }
+
+  /**
+   * 递归监听 `.aily/build` 与全局 aily-builder 编译缓存：产物落在编译环境目录时也能实时同步。
+   */
+  private setupBuildOutputsWatch(projectRoot: string): void {
+    this.stopBuildOutputsWatch();
+    const pathApi = window['path'] as {
+      join: (...s: string[]) => string;
+      getAilyBuilderBuildPath?: () => string;
+    };
+    const fsAny = window['fs'] as {
+      watch?: (
+        path: string,
+        cb: (ev: { eventType?: string; filename?: string }) => void,
+        options?: { recursive?: boolean },
+      ) => () => void;
+      existsSync?: (p: string) => boolean;
+      mkdirSync?: (p: string, o?: { recursive?: boolean }) => void;
+    };
+    if (typeof fsAny?.watch !== 'function') {
+      return;
+    }
+    const buildRoot = pathApi.join(projectRoot, '.aily', 'build');
+    const globalBuildRoot = pathApi.getAilyBuilderBuildPath?.() ?? '';
+    if (!fsAny.existsSync?.(buildRoot) && typeof fsAny.mkdirSync === 'function') {
+      try {
+        fsAny.mkdirSync(buildRoot, { recursive: true });
+      } catch {
+        /* 工程根只读等极端情况 */
+      }
+    }
+    const scheduleRefresh = (): void => {
+      if (this.coderEmbedWorkspaceRoot !== projectRoot) {
+        return;
+      }
+      if (this.buildOutputsWatchDebounce != null) {
+        clearTimeout(this.buildOutputsWatchDebounce);
+      }
+      this.buildOutputsWatchDebounce = setTimeout(() => {
+        this.buildOutputsWatchDebounce = undefined;
+        if (this.coderEmbedWorkspaceRoot !== projectRoot) {
+          return;
+        }
+        void this.writeCoderEmbedHints(projectRoot);
+        void this.pushAilyCoderHostContext(projectRoot);
+      }, 200);
+    };
+    try {
+      this.disposeBuildOutputsWatch = fsAny.watch(
+        buildRoot,
+        () => scheduleRefresh(),
+        { recursive: true },
+      );
+    } catch {
+      /* watch 不可用时仍依赖 compile 完成后的主动推送 */
+    }
+    if (globalBuildRoot && fsAny.existsSync?.(globalBuildRoot)) {
+      try {
+        this.disposeGlobalBuildOutputsWatch = fsAny.watch(
+          globalBuildRoot,
+          () => scheduleRefresh(),
+          { recursive: true },
+        );
+      } catch {
+        /* 全局缓存目录 watch 失败时仍依赖 buildFinished */
+      }
+    }
+  }
+
   /** 将宿主 fs.watch 事件推送给内嵌 Coder iframe */
   private pushCoderNativeFsWatchEvent(
     watchId: number,
@@ -731,6 +817,48 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   /**
+   * nativeFsStat：允许工程根、全局 aily-builder 编译缓存、全局 aily-project 平台包目录。
+   */
+  private assertPathAllowedForCoderNativeFsStat(candidatePath: string): string {
+    const pathApi = window['path'] as {
+      resolve?: (p: string) => string;
+      sep?: string;
+      getAppDataPath?: () => string;
+      getAilyBuilderBuildPath?: () => string;
+    };
+    const sep = pathApi.sep ?? '/';
+    const normalized = pathApi.resolve ? pathApi.resolve(candidatePath) : candidatePath;
+    try {
+      return this.assertPathInsideCoderEmbedRoot(normalized);
+    } catch {
+      /* 继续校验全局目录 */
+    }
+    const globalBuildRoot = pathApi.getAilyBuilderBuildPath?.();
+    if (globalBuildRoot) {
+      const globalNorm = pathApi.resolve ? pathApi.resolve(globalBuildRoot) : globalBuildRoot;
+      if (
+        normalized === globalNorm ||
+        normalized.startsWith(globalNorm + sep) ||
+        normalized.toLowerCase().startsWith((globalNorm + sep).toLowerCase())
+      ) {
+        return normalized;
+      }
+    }
+    const appDataRoot = pathApi.getAppDataPath?.();
+    if (appDataRoot) {
+      const appDataNorm = pathApi.resolve ? pathApi.resolve(appDataRoot) : appDataRoot;
+      if (
+        normalized === appDataNorm ||
+        normalized.startsWith(appDataNorm + sep) ||
+        normalized.toLowerCase().startsWith((appDataNorm + sep).toLowerCase())
+      ) {
+        return normalized;
+      }
+    }
+    throw new Error('路径不在允许的工程、编译缓存或平台包目录内');
+  }
+
+  /**
    * 只读 native-fs：允许工程根、全局 aily-project（sdk/boards.txt 等），与 resolvePathForRevealInOs 策略一致。
    */
   private assertPathAllowedForCoderNativeFsRead(candidatePath: string): string {
@@ -820,7 +948,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       }
       switch (msg.op) {
         case 'nativeFsStat': {
-          const abs = this.assertPathInsideCoderEmbedRoot(String(payload['path']));
+          const abs = this.assertPathAllowedForCoderNativeFsStat(String(payload['path']));
           if (!fsAny['existsSync'](abs)) {
             this.replyCoderNativeFs(ev.source as Window, msg.id!, {
               exists: false,
