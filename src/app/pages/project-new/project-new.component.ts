@@ -201,6 +201,17 @@ export class ProjectNewComponent implements OnDestroy {
     this.applyRecommendedProjectName();
   }
 
+  /** 在首个逗号处拆成两行展示项目类型描述（换行时不保留逗号） */
+  splitCategoryDesc(text: string): string[] {
+    const commaIndex = text.search(/[,，]/);
+    if (commaIndex < 0) {
+      return [text];
+    }
+    const head = text.slice(0, commaIndex).trimEnd();
+    const tail = text.slice(commaIndex + 1).trimStart();
+    return tail ? [head, tail] : [head];
+  }
+
   /** 根据顶部所选类别创建对应类型项目 */
   async onCreateProject(): Promise<void> {
     if (this.selectedProjectCategory === 'coder') {

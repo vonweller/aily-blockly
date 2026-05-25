@@ -180,12 +180,6 @@ export let GUIDE_MENU: IMenuItem[] = [
     icon: 'fa-light fa-file-circle-plus',
   },
   {
-    // 新建 Aily Code：同上，向导内第二步创建 Aily Code 骨架项
-    name: 'MENU.PROJECT_NEW_AILY_CODE',
-    action: 'project-new-aily-code',
-    icon: 'fa-light fa-microchip',
-  },
-  {
     name: 'MENU.PROJECT_OPEN',
     action: 'project-open',
     data: { type: 'explorer', data: 'project-open' },

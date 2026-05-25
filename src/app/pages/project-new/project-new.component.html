@@ -133,8 +133,8 @@
       <!-- 基本设定页面 -->
       <div class="right-inner">
         <div class="right-content">
-          <div class="project-category-selector">
-            <div class="category-title">{{ 'PROJECT_NEW.PROJECT_CATEGORY.TITLE' | translate }}</div>
+          <div class="item project-category-row">
+            <div>{{ 'PROJECT_NEW.PROJECT_CATEGORY.TITLE' | translate }}:</div>
             <div class="category-cards">
               <div class="category-card btn"
                 [class.selected]="selectedProjectCategory === 'blockly'"
@@ -144,7 +144,11 @@
                 </div>
                 <div class="category-info">
                   <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY' | translate }}</div>
-                  <div class="category-desc">{{ 'PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY_DESC' | translate }}</div>
+                  <div class="category-desc">
+                    @for (line of splitCategoryDesc('PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY_DESC' | translate); track $index) {
+                    <span>{{ line }}</span>
+                    }
+                  </div>
                 </div>
                 <div class="category-check ccenter">
                   <i class="fa-solid fa-circle-check"></i>
@@ -158,7 +162,11 @@
                 </div>
                 <div class="category-info">
                   <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.CODER' | translate }}</div>
-                  <div class="category-desc">{{ 'PROJECT_NEW.PROJECT_CATEGORY.CODER_DESC' | translate }}</div>
+                  <div class="category-desc">
+                    @for (line of splitCategoryDesc('PROJECT_NEW.PROJECT_CATEGORY.CODER_DESC' | translate); track $index) {
+                    <span>{{ line }}</span>
+                    }
+                  </div>
                 </div>
                 <div class="category-check ccenter">
                   <i class="fa-solid fa-circle-check"></i>

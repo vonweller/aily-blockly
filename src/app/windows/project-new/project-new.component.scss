@@ -255,20 +255,18 @@
   position: relative;
 }
 
-.project-category-selector {
-  margin-bottom: 20px;
-
-  .category-title {
-    font-size: 13px;
-    color: var(--aily-text-tertiary);
-    margin-bottom: 12px;
-    letter-spacing: 0.02em;
-  }
+.project-category-row {
+  align-items: flex-start !important;
+  height: auto !important;
+  min-height: 40px;
+  margin-bottom: 15px;
 
   .category-cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    flex: 1;
+    min-width: 0;
   }
 
   .category-card {
@@ -350,6 +348,10 @@
     font-size: 12px;
     color: var(--aily-text-tertiary);
     line-height: 1.45;
+
+    span {
+      display: block;
+    }
   }
 
   .category-check {
