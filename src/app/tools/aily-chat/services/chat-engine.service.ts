@@ -140,6 +140,9 @@ export class ChatEngineService implements IChatContext {
     receiveTextFromExternal: (text, options) => this.receiveTextFromExternal(text, options),
     showAiWritingNotice: (isWaiting) => this.showAiWritingNotice(isWaiting),
     handleTaskAction: (event) => this.handleTaskAction(event),
+    handleProjectActivation: (event) => {
+      void this.handleProjectActivation(event);
+    },
     flushPendingAutoSend: () => this.flushPendingAutoSend(),
     syncAuthQuotaState: () => this.authQuotaStateService.syncAuthSnapshotFromHost(),
     refreshRequestQuotaState: () => this.refreshRequestQuotaState(),
@@ -293,6 +296,7 @@ export class ChatEngineService implements IChatContext {
   /** 延迟切换：活跃请求期间暂存待切换的模型/模式，完成后自动应用 */
   _pendingModelSwitch: ModelConfig | null = null;
   _pendingModeSwitch: string | null = null;
+  private pendingProjectActivation: { path: string; previousPath?: string; reason?: string } | null = null;
 
   /** autoSend 消息在 sessionId 未就绪时的暂存区，startSession 完成后自动冲刷 */
   private _pendingAutoSendText: string | null = null;
@@ -684,6 +688,7 @@ export class ChatEngineService implements IChatContext {
       get currentModel() { return thisEngine.currentModel; },
       get prjPath() { return thisEngine.prjPath; },
       get prjRootPath() { return thisEngine.prjRootPath; },
+      get isLoggedIn() { return thisEngine.isLoggedIn; },
       get contextBudgetService() { return thisEngine.contextBudgetService; },
       get repetitionDetectionService() { return thisEngine.repetitionDetectionService; },
       get editCheckpointService() { return thisEngine.editCheckpointService; },
@@ -883,6 +888,27 @@ export class ChatEngineService implements IChatContext {
   /** 注册 OnPush CD 回调（由 component 调用 cdr.markForCheck） */
   setCdCallback(cb: () => void): void {
     this.viewAdapter.setCdCallback(cb);
+    this._markForCheckCallback = cb;
+  }
+
+  private _markForCheckCallback: (() => void) | null = null;
+
+  /** 触发视图刷新；force 时使用 detectChanges 立即同步渲染 */
+  requestViewUpdate(force = false): void {
+    const callback = force
+      ? (this._syncDetectChanges || this._markForCheckCallback)
+      : this._markForCheckCallback;
+    if (!callback) {
+      return;
+    }
+
+    this.ngZone.run(() => {
+      try {
+        callback();
+      } catch (error) {
+        console.warn('[ChatEngine] 触发视图刷新失败:', error);
+      }
+    });
   }
 
   /** AI 编辑完成后在内嵌 Coder 打开 DiffEditor 预览（与 autoSaveEdits / 摘要 UI 解耦） */
@@ -997,6 +1023,43 @@ export class ChatEngineService implements IChatContext {
     this.requestQuotaStateSubscription?.unsubscribe();
     this.requestQuotaStateSubscription = null;
     this.subscriptionCoordinator.cleanup();
+  }
+
+  private async handleProjectActivation(event: { path: string; previousPath?: string; reason?: string }): Promise<void> {
+    const projectPath = event?.path || '';
+    const rootPath = AilyHost.get().project.projectRootPath;
+    if (!projectPath || projectPath === rootPath) {
+      return;
+    }
+
+    if (event.reason === 'chat-tool-create') {
+      this.pendingProjectActivation = null;
+      this.chatService.currentSessionPath = projectPath;
+      this.chatHistoryService.reloadProjectIndex(projectPath);
+      this.session.refreshHistoryList();
+      this.requestViewUpdate(true);
+      return;
+    }
+
+    if (this.isWaiting && event?.reason !== 'new') {
+      this.pendingProjectActivation = event;
+      return;
+    }
+
+    if (event.reason === 'new') {
+      this.pendingProjectActivation = null;
+      await this.session.startNewProjectSession(projectPath, event.previousPath);
+      return;
+    }
+
+    if (event.reason === 'open') {
+      await this.session.loadLatestProjectSession(projectPath, event.previousPath);
+      return;
+    }
+
+    this.chatHistoryService.reloadProjectIndex(projectPath);
+    this.session.refreshHistoryList();
+    this.requestViewUpdate(true);
   }
 
   private flushPendingAutoSend(): void {
@@ -1230,6 +1293,15 @@ Do not create non-existent boards and libraries.
    * 在 turn 完成（finalizeStatelessTurn / stream complete / stop）后调用。
    */
   async applyPendingSwitch(): Promise<void> {
+    const pendingProjectActivation = this.pendingProjectActivation;
+    if (pendingProjectActivation) {
+      this.pendingProjectActivation = null;
+      this._pendingModelSwitch = null;
+      this._pendingModeSwitch = null;
+      await this.handleProjectActivation(pendingProjectActivation);
+      return;
+    }
+
     await this.switchCoordinator.applyPendingSwitch();
   }
 

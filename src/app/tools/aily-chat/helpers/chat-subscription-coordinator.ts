@@ -41,6 +41,7 @@ interface SubscriptionCallbacks {
   receiveTextFromExternal: (text: string, options?: ChatTextOptions) => void;
   showAiWritingNotice: (isWaiting: boolean) => void;
   handleTaskAction: (event: ChatTaskActionEvent) => void;
+  handleProjectActivation: (event: { path: string; previousPath?: string; reason?: string }) => void;
   flushPendingAutoSend: () => void;
   syncAuthQuotaState: () => void;
   refreshRequestQuotaState: () => Promise<void>;
@@ -65,6 +66,7 @@ export class ChatSubscriptionCoordinator {
   private blockSelectionSubscription: Subscription | null = null;
   private uiChatMessageSubscription: Subscription | null = null;
   private userInfoSubscription: Subscription | null = null;
+  private projectActivationSubscription: Subscription | null = null;
   private taskActionHandler: ((event: Event) => void) | null = null;
   private active = false;
   private lastKnownApiServer = '';
@@ -77,12 +79,11 @@ export class ChatSubscriptionCoordinator {
 
     this.ctx.hasInitializedForThisLogin = true;
     this.viewWriteBridge.clearChatView();
-    this.ctx.session.startSession().then(async () => {
-      await this.ctx.session.getHistory();
+    this.ctx.session.initializeSessionForCurrentProject().then(() => {
       this.ctx.interaction.checkFirstUsage();
       this.callbacks.flushPendingAutoSend();
     }).catch((err) => {
-      console.error('[ChatEngine] startSession 失败:', err);
+      console.error('[ChatEngine] initializeSessionForCurrentProject 失败:', err);
     });
   }
 
@@ -246,6 +247,13 @@ export class ChatSubscriptionCoordinator {
       }
     });
 
+    const projectActivation$ = (AilyHost.get().project as { projectActivation$?: import('rxjs').Observable<{ path: string; previousPath?: string; reason?: string }> }).projectActivation$;
+    if (projectActivation$?.subscribe) {
+      this.projectActivationSubscription = projectActivation$.subscribe((event) => {
+        this.callbacks.handleProjectActivation(event);
+      });
+    }
+
     this.loginStatusSubscription = authProvider?.isLoggedIn$?.subscribe(async isLoggedIn => {
       this.ctx.isLoggedIn = isLoggedIn;
 
@@ -333,6 +341,7 @@ export class ChatSubscriptionCoordinator {
     if (this.aiWritingSubscription) { this.aiWritingSubscription.unsubscribe(); this.aiWritingSubscription = null; }
     if (this.aiWaitingSubscription) { this.aiWaitingSubscription.unsubscribe(); this.aiWaitingSubscription = null; }
     if (this.projectPathSubscription) { this.projectPathSubscription.unsubscribe(); this.projectPathSubscription = null; }
+    if (this.projectActivationSubscription) { this.projectActivationSubscription.unsubscribe(); this.projectActivationSubscription = null; }
     if (this.configChangedSubscription) { this.configChangedSubscription.unsubscribe(); this.configChangedSubscription = null; }
     if (this.hostConfigReloadSubscription) { this.hostConfigReloadSubscription.unsubscribe(); this.hostConfigReloadSubscription = null; }
     if (this.blockSelectionSubscription) { this.blockSelectionSubscription.unsubscribe(); this.blockSelectionSubscription = null; }

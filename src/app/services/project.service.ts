@@ -35,6 +35,22 @@ interface ProjectPackageData {
   blocklyToolboxOrder?: string[];
 }
 
+export type ProjectActivationReason = 'new' | 'open' | 'reload' | 'chat-tool-create';
+
+export interface ProjectActivationEvent {
+  path: string;
+  previousPath: string;
+  reason: ProjectActivationReason;
+}
+
+interface ProjectOpenOptions {
+  reason?: ProjectActivationReason;
+}
+
+interface ProjectCreationOptions {
+  activationReason?: ProjectActivationReason;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -48,6 +64,9 @@ export class ProjectService {
   // 当前项目路径的订阅源
   private currentProjectPathSubject = new BehaviorSubject<string>('');
   currentProjectPath$ = this.currentProjectPathSubject.asObservable();
+
+  private projectActivationSubject = new Subject<ProjectActivationEvent>();
+  projectActivation$ = this.projectActivationSubject.asObservable();
 
   currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
@@ -64,6 +83,13 @@ export class ProjectService {
     this.currentProjectPathSubject.next(path);
   }
   currentBoardConfig: any;
+  isBoardSwitchInProgress = false;
+  isPackageJsonBoardWatcherActive = false;
+  private boardSwitchReloadWaiter: {
+    resolve: () => void;
+    reject: (error: any) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
   // STM32选择开发板时定义引脚使用
   currentStm32Config: { board: any, variant: any, variant_h: any } = { board: null, variant: null, variant_h: null };
 
@@ -89,9 +115,9 @@ export class ProjectService {
   async init() {
     if (this.electronService.isElectron) {
       window['ipcRenderer'].on('window-receive', async (event, message) => {
-        console.log('window-receive', message);
+        // console.log('window-receive', message);
         if (message.data.action == 'open-project') {
-          this.projectOpen(message.data.path);
+          this.projectOpen(message.data.path, { reason: this.parseProjectActivationReason(message.data.reason) });
         } else {
           return;
         }
@@ -135,6 +161,20 @@ export class ProjectService {
     return projectPath;
   }
 
+  private normalizeProjectPath(projectPath: string | null | undefined): string {
+    return String(projectPath || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+
+  private isSameProjectPath(leftPath: string | null | undefined, rightPath: string | null | undefined): boolean {
+    return this.normalizeProjectPath(leftPath) === this.normalizeProjectPath(rightPath);
+  }
+
+  private parseProjectActivationReason(reason: unknown): ProjectActivationReason | undefined {
+    return reason === 'new' || reason === 'open' || reason === 'reload' || reason === 'chat-tool-create'
+      ? reason
+      : undefined;
+  }
+
   private updateNewProjectPackageJson(
     projectPath: string,
     newProjectData: NewProjectData,
@@ -158,14 +198,17 @@ export class ProjectService {
       window['fs'].writeFileSync(`${projectPath}/package.json`, JSON.stringify(packageJson, null, 2));
   }
 
-  private async finishProjectCreation(projectPath: string): Promise<boolean> {
+  private async finishProjectCreation(projectPath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
     this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.PROJECT_CREATED') });
-    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
+    await window['iWindow'].send({
+      to: 'main',
+      data: { action: 'open-project', path: projectPath, reason: options.activationReason || 'new' }
+    });
     return true;
   }
 
   // 新建项目
-  async projectNew(newProjectData: NewProjectData): Promise<boolean> {
+  async projectNew(newProjectData: NewProjectData, options: ProjectCreationOptions = {}): Promise<boolean> {
     try {
       const separator = this.platformService.getPlatformSeparator();
       // console.log('newProjectData: ', newProjectData);
@@ -191,7 +234,7 @@ export class ProjectService {
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
       this.updateNewProjectPackageJson(projectPath, newProjectData);
-      return await this.finishProjectCreation(projectPath);
+      return await this.finishProjectCreation(projectPath, options);
 
       // if (closeWindow) {
       //   this.uiService.closeWindow();
@@ -203,7 +246,7 @@ export class ProjectService {
     }
   }
 
-  async projectNewFromTemplate(newProjectData: NewProjectData, templatePath: string): Promise<boolean> {
+  async projectNewFromTemplate(newProjectData: NewProjectData, templatePath: string, options: ProjectCreationOptions = {}): Promise<boolean> {
     try {
       const separator = this.platformService.getPlatformSeparator();
       const projectPath = this.buildProjectPath(newProjectData);
@@ -213,7 +256,7 @@ export class ProjectService {
       await this.crossPlatformCmdService.copyItem(`${templatePath}${separator}*`, projectPath, true, true);
 
       this.updateNewProjectPackageJson(projectPath, newProjectData, { removeCloudId: true });
-      return await this.finishProjectCreation(projectPath);
+      return await this.finishProjectCreation(projectPath, options);
     } catch (error) {
       this.message.error(this.translate.instant('PROJECT.CREATE_FAILED') + ": " + error.message);
       this.uiService.updateFooterState({ state: 'error', text: this.translate.instant('PROJECT.CREATE_FAILED') });
@@ -222,7 +265,9 @@ export class ProjectService {
   }
 
   // 打开项目
-  async projectOpen(projectPath = this.currentProjectPath) {
+  async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
+    const previousProjectPath = this.currentProjectPath;
+    const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
@@ -261,6 +306,11 @@ export class ProjectService {
 
     // 更新当前项目路径和包数据
     this.currentProjectPath = projectPath;
+    this.projectActivationSubject.next({
+      path: projectPath,
+      previousPath: previousProjectPath,
+      reason: activationReason,
+    });
 
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
@@ -1744,6 +1794,8 @@ export class ProjectService {
   }
 
   async changeBoard(boardInfo: { "name": string, "version": string }) {
+    this.isBoardSwitchInProgress = true;
+    let reloadPromise: Promise<void> | null = null;
     try {
       const separator = this.platformService.getPlatformSeparator();
       if (!this.currentProjectPath) {
@@ -1755,25 +1807,21 @@ export class ProjectService {
 
       // 记录开发板使用次数
       this.configService.recordBoardUsage(boardInfo.name);
-
-      // 1. 先获取项目package.json中的board依赖，如@aily-project/board-xxxx，然后npm uninstall移除这个board依赖
       const currentBoardModule = await this.getBoardModule();
-      if (currentBoardModule) {
-        console.log('卸载当前开发板模块:', currentBoardModule);
-        this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UNINSTALLING_CURRENT_BOARD') });
-        await this.cmdService.runAsyncChecked(`npm uninstall ${currentBoardModule}`, this.currentProjectPath);
-      }
-      // 2. npm install 安装boardInfo.name@boardInfo.version 到 appDataPath（与 projectNew 一致）
+
+      // 1. npm install 安装boardInfo.name@boardInfo.version 到 appDataPath（与 projectNew 一致）
       const appDataPath = window['path'].getAppDataPath();
       const newBoardPackage = `${boardInfo.name}@${boardInfo.version}`;
       console.log('安装新开发板模块:', newBoardPackage);
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.INSTALLING_NEW_BOARD') });
-      await this.cmdService.runAsyncChecked(`npm install ${newBoardPackage}`, this.currentProjectPath);
       await this.appDataResourceLock.runExclusive(`project:switch-board:install-appdata:${newBoardPackage}`, () =>
         this.cmdService.runAsyncChecked(`npm install ${newBoardPackage} --prefix "${appDataPath}"`)
       );
 
-      // 2.5. 获取新开发板的模板并更新package.json
+      // 2. 预安装到当前项目的 node_modules，但不写 package.json；最终 package.json 变更交给 watcher 处理。
+      await this.cmdService.runAsyncChecked(`npm install ${newBoardPackage} --no-save`, this.currentProjectPath);
+
+      // 3. 获取新开发板的模板并更新package.json
       console.log('更新项目配置文件...');
       this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UPDATING_PROJECT_CONFIG') });
 
@@ -1810,29 +1858,84 @@ export class ProjectService {
         };
 
         // 写入新的package.json
+        const shouldUsePackageJsonWatcher = this.isPackageJsonBoardWatcherActive;
+        reloadPromise = shouldUsePackageJsonWatcher ? this.waitForBoardSwitchReload() : null;
+        this.isBoardSwitchInProgress = false;
         window['fs'].writeFileSync(`${this.currentProjectPath}/package.json`, JSON.stringify(newPackageJson, null, 2));
         console.log('package.json 更新完成');
+
+        if (!shouldUsePackageJsonWatcher) {
+          await this.finishBoardSwitchWithoutPackageWatcher(currentBoardModule, boardInfo.name);
+        }
       } else {
-        console.warn('未找到新开发板的模板package.json，跳过配置更新');
+        throw new Error('未找到新开发板的模板package.json，无法更新项目配置');
       }
 
-      // 同步更新 temp 副本，防止 projectOpen 重新加载时被旧的 temp/package.json 覆盖
-      await this.copyPackageJsonToTemp(this.currentProjectPath);
-
-      // 3. 重新加载项目
-      console.log('重新加载项目...');
-      await this.projectOpen(this.currentProjectPath);
-
-      // 触发开发板变更事件
-      this.boardChangeSubject.next();
+      if (reloadPromise) {
+        await reloadPromise;
+      }
 
       this.uiService.updateFooterState({ state: 'done', text: this.translate.instant('PROJECT.BOARD_SWITCH_COMPLETE') });
       this.message.success(this.translate.instant('PROJECT.BOARD_SWITCH_SUCCESS'), { nzDuration: 3000 });
     } catch (error) {
+      this.rejectBoardSwitchReload(error);
       console.error('切换开发板失败:', error);
       this.message.error(this.translate.instant('PROJECT.BOARD_SWITCH_FAILED') + error.message);
       throw error;
+    } finally {
+      this.isBoardSwitchInProgress = false;
     }
+  }
+
+  /** 等待 Blockly 编辑器的 package.json watcher 完成开发板切换后的项目重载。 */
+  waitForBoardSwitchReload(timeoutMs = 180000): Promise<void> {
+    this.rejectBoardSwitchReload(new Error('新的开发板切换请求已开始'));
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.rejectBoardSwitchReload(new Error('等待开发板切换重载超时'));
+      }, timeoutMs);
+
+      this.boardSwitchReloadWaiter = { resolve, reject, timer };
+    });
+  }
+
+  /** 通知等待中的 changeBoard：watcher 驱动的项目重载已完成。 */
+  resolveBoardSwitchReload(): void {
+    const waiter = this.boardSwitchReloadWaiter;
+    if (!waiter) {
+      return;
+    }
+
+    clearTimeout(waiter.timer);
+    this.boardSwitchReloadWaiter = null;
+    waiter.resolve();
+  }
+
+  /** 通知等待中的 changeBoard：watcher 驱动的项目重载失败或被新的切换请求取代。 */
+  rejectBoardSwitchReload(error: any): void {
+    const waiter = this.boardSwitchReloadWaiter;
+    if (!waiter) {
+      return;
+    }
+
+    clearTimeout(waiter.timer);
+    this.boardSwitchReloadWaiter = null;
+    waiter.reject(error);
+  }
+
+  /** package.json watcher 不活跃时，使用原流程完成旧开发板卸载、temp 同步和项目重载。 */
+  private async finishBoardSwitchWithoutPackageWatcher(currentBoardModule: string | undefined, nextBoardModule: string): Promise<void> {
+    if (currentBoardModule && currentBoardModule !== nextBoardModule) {
+      console.log('卸载当前开发板模块:', currentBoardModule);
+      this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('PROJECT.UNINSTALLING_CURRENT_BOARD') });
+      await this.cmdService.runAsyncChecked(`npm uninstall ${currentBoardModule}`, this.currentProjectPath);
+    }
+
+    await this.copyPackageJsonToTemp(this.currentProjectPath);
+    console.log('重新加载项目...');
+    await this.projectOpen(this.currentProjectPath);
+    this.boardChangeSubject.next();
   }
 
   generateUniqueProjectName(prjPath, prefix = 'project_'): string {

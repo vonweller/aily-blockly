@@ -46,7 +46,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
   >
   & Pick<IChatViewAccess, 'menuManager'>
   & Pick<ISessionAccess, 'sessionTitle' | 'sessionAllowedPaths' | 'conversationMessages' | 'chatService'>
-  & Pick<IProjectContext, 'currentMode' | 'currentModel' | 'prjPath' | 'prjRootPath'>
+  & Pick<IProjectContext, 'currentMode' | 'currentModel' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
   & Pick<
     IChatServiceAccess,
     | 'contextBudgetService'
@@ -241,6 +241,150 @@ export class SessionLifecycleHelper {
       actions: historyActions,
       current: e.sessionId === this.ctx.sessionId,
     }));
+  }
+
+  private isSamePath(leftPath: string | null | undefined, rightPath: string | null | undefined): boolean {
+    const normalize = (value: string | null | undefined) => String(value || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return normalize(leftPath) === normalize(rightPath);
+  }
+
+  private getPersistableProjectPath(projectPath: string | null | undefined): string | null {
+    const rootPath = AilyHost.get().project.projectRootPath;
+    return projectPath && !this.isSamePath(projectPath, rootPath) ? projectPath : null;
+  }
+
+  private getCurrentSessionPersistPath(previousProjectPath?: string | null): string | null {
+    const cachedPath = this.ctx.chatService.currentSessionPath;
+    return this.getPersistableProjectPath(cachedPath) || this.getPersistableProjectPath(previousProjectPath);
+  }
+
+  private getLatestProjectSessionEntry(projectPath: string): { sessionId: string; title?: string } | null {
+    const rootPath = AilyHost.get().project.projectRootPath;
+    const entries = this.ctx.chatHistoryService.getHistoryList('current-project', projectPath, rootPath);
+    return entries[0] || null;
+  }
+
+  private clearClientSessionStateForProjectSwitch(): void {
+    this.ctx.interaction.resetApprovalState();
+    this.ctx.chatService.clearResolvedActiveModel?.();
+    this.ctx.lexStream.resetSessionState();
+    this._viewWriteBridge.clearChatView();
+    this.ctx.lexStream.turns.clear();
+    this.ctx.toolCallingIteration = 0;
+    this.ctx.contextBudgetService?.reset();
+    this.ctx.isWaiting = false;
+    this.ctx.isCompleted = false;
+    this.ctx.isCancelled = true;
+    this.ctx.editCheckpointService.clear();
+    this.ctx.editCheckpointService.dismissSummary();
+    this.ctx.scrollManager.setScrollLock(true);
+    if (this.ctx.messageSubscription) {
+      this.ctx.messageSubscription.unsubscribe();
+      this.ctx.messageSubscription = null;
+    }
+    this.ctx.activeToolExecutions = 0;
+  }
+
+  async startNewProjectSession(
+    projectPath: string,
+    previousProjectPath?: string | null,
+    currentAlreadySaved = false,
+  ): Promise<void> {
+    if (!projectPath || this.ctx.isSessionStarting) {
+      return;
+    }
+
+    if (!currentAlreadySaved) {
+      const persistPath = this.getCurrentSessionPersistPath(previousProjectPath);
+      if (persistPath) {
+        this.ctx.chatService.currentSessionPath = persistPath;
+      }
+      this.saveCurrentSession();
+    }
+
+    try {
+      await this.stopAndCloseSession(true);
+    } catch (error) {
+      console.warn('[SessionLifecycle] 切换项目前停止会话失败:', error);
+    }
+
+    this.clearClientSessionStateForProjectSwitch();
+    this.ctx.lexStream.agent.dispose();
+    this.setActiveSessionId('');
+    this.ctx.chatService.currentSessionTitle = '';
+    this.ctx.chatService.currentSessionPath = this.getPersistableProjectPath(projectPath) || '';
+    this.ctx.isSessionStarting = false;
+    this.ctx.hasInitializedForThisLogin = false;
+
+    if (this.ctx.isLoggedIn) {
+      await this.startSession();
+    }
+
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
+  }
+
+  async loadLatestProjectSession(projectPath: string, previousProjectPath?: string | null): Promise<boolean> {
+    if (!projectPath || this.ctx.isSessionStarting) {
+      return false;
+    }
+
+    const persistPath = this.getCurrentSessionPersistPath(previousProjectPath);
+    if (persistPath) {
+      this.ctx.chatService.currentSessionPath = persistPath;
+    }
+    this.saveCurrentSession();
+    this.ctx.chatHistoryService.reloadProjectIndex(projectPath);
+
+    const latestEntry = this.getLatestProjectSessionEntry(projectPath);
+    if (!latestEntry) {
+      await this.startNewProjectSession(projectPath, previousProjectPath, true);
+      return false;
+    }
+
+    const previousSessionId = this.ctx.sessionId;
+    if (previousSessionId && previousSessionId !== latestEntry.sessionId) {
+      try {
+        await this.stopAndCloseSession(true);
+      } catch (error) {
+        console.warn('[SessionLifecycle] 加载项目历史前关闭旧会话失败:', error);
+      }
+    }
+
+    this.clearClientSessionStateForProjectSwitch();
+    this.ctx.chatService.currentSessionTitle = latestEntry.title || '';
+    this.ctx.chatService.currentSessionPath = this.getPersistableProjectPath(projectPath) || '';
+    await this.startSessionWithId(latestEntry.sessionId);
+    await this.getHistory();
+    this.ctx.isCompleted = true;
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
+    return true;
+  }
+
+  async initializeSessionForCurrentProject(): Promise<void> {
+    const currentProjectPath = AilyHost.get().project.currentProjectPath;
+    const persistableProjectPath = this.getPersistableProjectPath(currentProjectPath);
+
+    if (persistableProjectPath) {
+      this.ctx.chatHistoryService.reloadProjectIndex(persistableProjectPath);
+      const latestEntry = this.getLatestProjectSessionEntry(persistableProjectPath);
+      if (latestEntry) {
+        this.clearClientSessionStateForProjectSwitch();
+        this.ctx.chatService.currentSessionTitle = latestEntry.title || '';
+        this.ctx.chatService.currentSessionPath = persistableProjectPath;
+        await this.startSessionWithId(latestEntry.sessionId);
+        await this.getHistory();
+        this.ctx.isCompleted = true;
+        this.refreshHistoryList();
+        this.ctx.triggerSyncDetectChanges();
+        return;
+      }
+    }
+
+    await this.startSession();
+    await this.getHistory();
+    this.ctx.triggerSyncDetectChanges();
   }
 
   // ==================== 会话启动 ====================
