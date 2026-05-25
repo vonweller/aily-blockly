@@ -137,6 +137,10 @@ export class MenuComponent implements AfterViewChecked {
   }
 
   getSubmenuTitle(item: IMenuItem | null | undefined): string {
+    if (!this.hasHoverFlyout(item)) {
+      return '';
+    }
+
     const hoverFlyout = this.getHoverFlyoutData(item);
     const explicitTitle = typeof hoverFlyout?.['title'] === 'string'
       ? hoverFlyout['title'].trim()
@@ -146,6 +150,25 @@ export class MenuComponent implements AfterViewChecked {
     }
 
     return typeof item?.name === 'string' ? item.name : '';
+  }
+
+  shouldShowSubmenuDetail(item: IMenuItem | null | undefined): boolean {
+    return this.hasHoverFlyout(item)
+      && (!!this.getSubmenuTitle(item) || this.hasSubmenuIntroContent(item));
+  }
+
+  shouldUseRichSubmenuOption(subItem: IMenuItem | null | undefined): boolean {
+    return !!this.getSubmenuItemDetail(subItem);
+  }
+
+  getSubmenuSimpleItemTitle(subItem: IMenuItem | null | undefined): string {
+    const text = typeof subItem?.text === 'string' ? subItem.text.trim() : '';
+    if (text) {
+      return text;
+    }
+
+    const path = typeof subItem?.data?.path === 'string' ? subItem.data.path.trim() : '';
+    return path;
   }
 
   getSubmenuSectionLabel(item: IMenuItem | null | undefined): string | null {
@@ -782,6 +805,10 @@ export class MenuComponent implements AfterViewChecked {
   }
 
   private estimateSubmenuDetailHeight(item: IMenuItem | null | undefined): number {
+    if (!this.shouldShowSubmenuDetail(item)) {
+      return 0;
+    }
+
     const descriptionLines = this.getSubmenuDescriptionLines(item);
     const hasContextValue = !!this.getSubmenuContextValue(item);
     const titleHeight = this.getSubmenuTitle(item) ? 20 : 0;
@@ -796,7 +823,7 @@ export class MenuComponent implements AfterViewChecked {
     const detailHeight = this.estimateSubmenuDetailHeight(item);
     const childrenHeight = submenuItems.reduce((total, subItem) => total + this.estimateSubmenuItemHeight(subItem), 0);
     const sectionLabelHeight = this.getSubmenuSectionLabel(item) && submenuItems.length > 0 ? 28 : 0;
-    const separatorHeight = submenuItems.length > 0 && (detailHeight > 0 || this.getSubmenuTitle(item)) ? 9 : 0;
+    const separatorHeight = submenuItems.length > 0 && detailHeight > 0 ? 9 : 0;
     const verticalPadding = 10;
     return detailHeight + sectionLabelHeight + separatorHeight + childrenHeight + verticalPadding;
   }

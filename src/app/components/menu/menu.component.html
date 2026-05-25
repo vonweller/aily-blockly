@@ -71,7 +71,7 @@
       'max-height': submenuMaxHeight,
       'overflow-y': submenuOverflow
     }" (mouseenter)="keepSubMenuOpen()" (mouseleave)="hideSubMenu($event, 0)">
-    @if(getSubmenuTitle(activeSubmenuItem) || hasSubmenuIntroContent(activeSubmenuItem)) {
+    @if(shouldShowSubmenuDetail(activeSubmenuItem)) {
     <div class="submenu-detail">
       @if(getSubmenuTitle(activeSubmenuItem)) {
       <div class="submenu-detail-title">{{ getSubmenuTitle(activeSubmenuItem) }}</div>
@@ -97,7 +97,9 @@
     <div class="submenu-section-label">{{ getSubmenuSectionLabel(activeSubmenuItem) }}</div>
     }
     @for (subItem of getSubmenuChildren(activeSubmenuItem); track $index) {
-    <div class="menu-item submenu-option" (click)="subItemClick($event,subItem)">
+    @if(shouldUseRichSubmenuOption(subItem)) {
+    <div class="menu-item submenu-option" (click)="subItemClick($event,subItem)"
+      [ngClass]="{ disabled: subItem.disabled }">
       <div class="submenu-option-copy">
         <div class="submenu-option-title-row">
           <div class="submenu-option-inline-copy">
@@ -113,6 +115,18 @@
         </div>
       </div>
     </div>
+    } @else {
+    <div class="menu-item ccenter submenu-simple-item" (click)="subItemClick($event,subItem)"
+      [title]="getSubmenuSimpleItemTitle(subItem)"
+      [ngClass]="{ disabled: subItem.disabled }">
+      <div class="text-wrapper">
+        <div class="name">{{ subItem.name }}</div>
+      </div>
+      @if(subItem.check){
+      <div class="check"><i class="fa-light fa-circle-check"></i></div>
+      }
+    </div>
+    }
     }
   </div>
   }

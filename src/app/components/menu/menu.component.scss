@@ -289,7 +289,7 @@
 // 独立的子菜单样式
 .submenu-box {
   min-width: 168px;
-  padding: 0;
+  padding: 4px 0;
   overflow: hidden;
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
@@ -390,6 +390,23 @@
     padding-top: 6px;
     padding-bottom: 6px;
     overflow: visible;
+  }
+
+  .menu-item.submenu-simple-item {
+    .text-wrapper {
+      flex: 1;
+      min-width: 0;
+      padding-right: 18px;
+    }
+
+    .name {
+      padding-right: 0;
+    }
+
+    .check {
+      position: absolute;
+      right: 5px;
+    }
   }
 
   .submenu-option-copy {
