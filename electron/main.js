@@ -1012,6 +1012,7 @@ function macosInstallEnv(childPath) {
     // node 格式：node-v22.21.0-darwin-arm64.7z → 22.21.0
     // aily-builder 格式：aily-builder-1.0.7.7z → 1.0.7
     // probe-rs 格式：probe-rs-0.31.0.7z → 0.31.0
+    // xpm 格式：xpm-0.23.2.7z → 0.23.2
     if (keyword === "node") {
       const match = filename.match(/node-v(\d+\.\d+\.\d+)/);
       return match ? match[1] : null;
@@ -1020,6 +1021,9 @@ function macosInstallEnv(childPath) {
       return match ? match[1] : null;
     } else if (keyword === "probe-rs") {
       const match = filename.match(/probe-rs-(\d+\.\d+\.\d+)/);
+      return match ? match[1] : null;
+    } else if (keyword === "xpm") {
+      const match = filename.match(/xpm-(\d+\.\d+\.\d+)/);
       return match ? match[1] : null;
     }
     return null;
@@ -1162,6 +1166,30 @@ function macosInstallEnv(childPath) {
       console.error(`未找到 ${probeRsName}: ${probeRsZipPath}，搜索目录: ${sourceDir}`);
     }
   }
+  const xpmName = "xpm";
+  const xpmPath = path.join(childPath, xpmName);
+  if (!fs.existsSync(xpmPath)) {
+    const sourceDir = path.join(childPath, serve ? "macos" : "");
+    const xpmZipPath = findLatestVersionFile(sourceDir, xpmName);
+    if (xpmZipPath && fs.existsSync(xpmZipPath)) {
+      if (!fs.existsSync(z7Path)) {
+        console.error(`解压 ${xpmName} 需要 7zz，但未找到: ${z7Path}`);
+      } else {
+        try {
+          const escapeXpmPath = escapePath(xpmPath);
+          const escapeXpmZipPath = escapePath(xpmZipPath);
+          const escapeZ7Path = escapePath(z7Path);
+          child_process.execSync(`mkdir -p ${escapeXpmPath} && ${escapeZ7Path} x ${escapeXpmZipPath} -o${escapeXpmPath} -t7z -y`, { stdio: 'inherit' });
+          console.log(`安装解压 ${xpmName}: ${xpmZipPath}成功！`);
+          if (!serve) fs.unlinkSync(xpmZipPath);
+        } catch (error) {
+          console.error(`安装解压 ${xpmName}: ${xpmZipPath}失败，错误码:`, error);
+        }
+      }
+    } else {
+      console.error(`未找到 ${xpmName}: ${xpmZipPath}，搜索目录: ${sourceDir}`);
+    }
+  }
 }
 
 /** Windows 开发态：解压 child/windows 下的 node / aily-builder / probe-rs；生产包由安装器/其他机制解压 */
@@ -1183,6 +1211,10 @@ function windowsInstallEnv(childPath) {
     }
     if (keyword === "probe-rs") {
       const match = filename.match(/probe-rs-(\d+\.\d+\.\d+)/);
+      return match ? match[1] : null;
+    }
+    if (keyword === "xpm") {
+      const match = filename.match(/xpm-(\d+\.\d+\.\d+)/);
       return match ? match[1] : null;
     }
     return null;
@@ -1283,6 +1315,85 @@ function windowsInstallEnv(childPath) {
         console.error(`安装解压 probe-rs 失败:`, error);
       }
     }
+  }
+
+  const xpmPath = path.join(childPath, "xpm");
+  if (!fs.existsSync(xpmPath)) {
+    const xpmZipPath = findLatestVersionFile(sourceDir, "xpm");
+    if (xpmZipPath && fs.existsSync(xpmZipPath) && fs.existsSync(z7Path)) {
+      try {
+        fs.mkdirSync(xpmPath, { recursive: true });
+        child_process.execSync(`"${z7Path}" x "${xpmZipPath}" -o"${xpmPath}" -y`, { stdio: "inherit" });
+        console.log(`安装解压 xpm: ${xpmZipPath} 成功`);
+      } catch (error) {
+        console.error(`安装解压 xpm 失败:`, error);
+      }
+    }
+  }
+}
+
+/** 原 xpm 包内 Unix 可能只有 xpm.js，需在就绪后补全 bin/xpm 启动脚本（Windows 自带 xpm.cmd） */
+function ensureXpmBinLaunchers(xpmBinDir) {
+  const xpmJs = path.join(xpmBinDir, "xpm.js");
+  if (!fs.existsSync(xpmJs) || isWin32) {
+    return;
+  }
+
+  const xpmLauncher = path.join(xpmBinDir, "xpm");
+  if (fs.existsSync(xpmLauncher)) {
+    return;
+  }
+
+  const content = [
+    "#!/bin/sh",
+    'basedir=$(dirname "$(echo "$0" | sed -e \'s,\\\\,/,g\')")',
+    'exec node "$basedir/xpm.js" "$@"',
+    "",
+  ].join("\n");
+  fs.writeFileSync(xpmLauncher, content, { mode: 0o755 });
+  try {
+    fs.chmodSync(xpmLauncher, 0o755);
+  } catch (error) {
+    console.warn("[loadEnv] 设置 xpm 可执行权限失败:", error.message || error);
+  }
+  console.log("[loadEnv] 已创建 xpm 启动脚本:", xpmLauncher);
+}
+
+/** 首次启动时在 child/xpm 安装生产依赖，供终端内 xpm 命令使用 */
+function ensureXpmDependencies(childPath, nodeBinDir) {
+  const xpmRoot = path.join(childPath, "xpm");
+  const xpmBinDir = path.join(xpmRoot, "bin");
+  if (!fs.existsSync(xpmBinDir)) {
+    console.warn("[loadEnv] xpm 未找到:", xpmBinDir);
+    return;
+  }
+
+  ensureXpmBinLaunchers(xpmBinDir);
+
+  const nodeModulesDir = path.join(xpmRoot, "node_modules");
+  if (fs.existsSync(nodeModulesDir)) {
+    return;
+  }
+
+  const npmCmd = isWin32
+    ? path.join(nodeBinDir, "npm.cmd")
+    : path.join(nodeBinDir, "npm");
+  if (!fs.existsSync(npmCmd)) {
+    console.warn("[loadEnv] npm 未就绪，跳过 xpm 依赖安装");
+    return;
+  }
+
+  console.log("[loadEnv] 正在安装 xpm 依赖...");
+  try {
+    const child_process = require("child_process");
+    child_process.execSync(`"${npmCmd}" install --omit=dev`, {
+      cwd: xpmRoot,
+      stdio: "inherit",
+      env: process.env,
+    });
+    console.log("[loadEnv] xpm 依赖安装完成");
+  } catch (error) {
+    console.error("[loadEnv] xpm 依赖安装失败:", error.message || error);
   }
 }
 
@@ -1570,6 +1681,10 @@ function loadEnv() {
   process.env.AILY_PROBE_RS_PATH = path.join(childPath, "probe-rs", "probe-rs" + (isWin32 ? ".exe" : ""));
   // aily builder path
   process.env.AILY_BUILDER_PATH = path.join(childPath, "aily-builder");
+  // xpm path
+  process.env.AILY_XPM_PATH = path.join(childPath, "xpm");
+  process.env.AILY_XPM_BIN_PATH = path.join(childPath, "xpm", "bin");
+  ensureXpmDependencies(childPath, nodePath);
   // 全局npm包路径
   process.env.AILY_NPM_PREFIX = process.env.AILY_APPDATA_PATH;
   // 默认全局编译器路径
@@ -1601,6 +1716,11 @@ function loadEnv() {
   const probeRsDir = path.join(childPath, 'probe-rs');
   if (fs.existsSync(probeRsDir)) {
     process.env.PATH = `${process.env.PATH}${path.delimiter}${probeRsDir}`;
+  }
+  // 将 xpm 添加到 PATH 中
+  const xpmBinDir = process.env.AILY_XPM_BIN_PATH;
+  if (xpmBinDir && fs.existsSync(xpmBinDir)) {
+    process.env.PATH = `${process.env.PATH}${path.delimiter}${xpmBinDir}`;
   }
 
   // 当前系统语言

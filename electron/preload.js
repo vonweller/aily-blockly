@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getAppDataPath: () => process.env.AILY_APPDATA_PATH,
     getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
     getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
+    getAilyXpmPath: () => process.env.AILY_XPM_PATH,
+    getAilyXpmBinPath: () => process.env.AILY_XPM_BIN_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => {
