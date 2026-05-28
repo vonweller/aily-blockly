@@ -306,12 +306,18 @@
             "READ_DOC": "文档",
             "ADD_BOARD": "添加开发板",
             "DEV": "dev",
+            "DEV_MODE": "开发模式",
+            "MODE_BLOCKLY": "Blockly",
+            "MODE_CODER": "Coder",
             "BY_BRAND": "按品牌",
             "BY_CORE": "按核心"
         },
         "FORM": {
             "DEVMODE": "开发框架",
             "BOARD": "开发板",
+            "PLATFORM": "硬件平台",
+            "PLATFORM_ARDUINO": "Arduino",
+            "PLATFORM_ESPIDF": "ESP-IDF",
             "TEMPLATE": "模板选择",
             "PROJECT_NAME": "项目名称",
             "SAVE_PATH": "保存路径",

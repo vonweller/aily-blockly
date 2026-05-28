@@ -252,12 +252,18 @@
             "READ_DOC": "閱讀文件",
             "ADD_BOARD": "新增開發板",
             "DEV": "dev",
+            "DEV_MODE": "開發模式",
+            "MODE_BLOCKLY": "Blockly",
+            "MODE_CODER": "Coder",
             "BY_BRAND": "按品牌",
             "BY_CORE": "按核心"
         },
         "FORM": {
             "DEVMODE": "開發框架",
             "BOARD": "開發板",
+            "PLATFORM": "硬體平台",
+            "PLATFORM_ARDUINO": "Arduino",
+            "PLATFORM_ESPIDF": "ESP-IDF",
             "PROJECT_NAME": "專案名稱",
             "SAVE_PATH": "儲存路徑",
             "NAME_EXISTS": "專案名稱已存在，請修改",

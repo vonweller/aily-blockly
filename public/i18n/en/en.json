@@ -306,12 +306,18 @@
             "READ_DOC": "Documentation",
             "ADD_BOARD": "Add Board",
             "DEV": "dev",
+            "DEV_MODE": "Dev Mode",
+            "MODE_BLOCKLY": "Blockly",
+            "MODE_CODER": "Coder",
             "BY_BRAND": "By Brand",
             "BY_CORE": "By Core"
         },
         "FORM": {
             "DEVMODE": "Development Framework",
             "BOARD": "Board",
+            "PLATFORM": "Hardware Platform",
+            "PLATFORM_ARDUINO": "Arduino",
+            "PLATFORM_ESPIDF": "ESP-IDF",
             "TEMPLATE": "Template",
             "PROJECT_NAME": "Project Name",
             "SAVE_PATH": "Save Path",

@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, OnDestroy } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild } from '@angular/core';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -19,6 +19,7 @@ import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
+import type { CoderHardwarePlatform } from '../../pages/project-new/project-new.component';
 
 @Component({
   selector: 'app-project-new',
@@ -37,6 +38,8 @@ import type { AilyCodeNewProjectData } from '../../services/aily-code-project.se
   styleUrl: './project-new.component.scss',
 })
 export class ProjectNewComponent {
+  @ViewChild('boardSearchInput') boardSearchInput?: ElementRef<HTMLInputElement>;
+
   currentStep = 0;
 
   myTemplateList: CloudProjectTemplate[] = [];
@@ -66,6 +69,13 @@ export class ProjectNewComponent {
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
 
+  /** Coder 新建：硬件平台（暂固定 Arduino / ESP-IDF） */
+  readonly coderPlatformOptions: { value: CoderHardwarePlatform; labelKey: string }[] = [
+    { value: 'arduino', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ARDUINO' },
+    { value: 'espidf', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ESPIDF' },
+  ];
+  selectedCoderPlatform: CoderHardwarePlatform = 'arduino';
+
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
   /** 程序写入推荐名时跳过 ngModelChange 的手动编辑标记 */
@@ -78,6 +88,22 @@ export class ProjectNewComponent {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
+  }
+
+  get searchShortcutHint(): string {
+    return this.platformService.isMac() ? '⌘K' : 'Ctrl+K';
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onGlobalKeydown(event: KeyboardEvent): void {
+    if (this.currentStep !== 0) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      this.boardSearchInput?.nativeElement?.focus();
+      this.boardSearchInput?.nativeElement?.select();
+    }
   }
 
   constructor(
@@ -113,15 +139,10 @@ export class ProjectNewComponent {
     }
     await this.configService.init();
     this._boardList = this.process(this.configService.boardList);
-    this.boardList = JSON.parse(JSON.stringify(this._boardList));
-    this.currentBoard = this.boardList[0];
 
     // 随机提取前五个
     this.tagListRandom = this.tagList.sort(() => Math.random() - 0.5).slice(0, 5);
 
-    this.newProjectData.board.nickname = this.currentBoard.nickname;
-    this.newProjectData.board.name = this.currentBoard.name;
-    this.newProjectData.board.version = this.currentBoard.version;
     // macOS：默认 Documents 路径无非法字符，仍统一跑一遍以保持与向导内「选择文件夹」一致
     this.checkPathInvalidChars();
     this.applyRecommendedProjectName();
@@ -132,10 +153,12 @@ export class ProjectNewComponent {
         if (payload?.data?.category === 'coder') {
           this.selectedProjectCategory = 'coder';
           this.applyRecommendedProjectName();
-          this.cd.detectChanges();
+          this.refreshBoardListForCurrentFilters();
         }
       });
     }
+
+    this.refreshBoardListForCurrentFilters();
   }
 
   ngOnDestroy(): void {
@@ -162,13 +185,41 @@ export class ProjectNewComponent {
     this.checkPathIsExist();
   }
 
-  /** 切换项目类别；Coder 不使用 Blockly 模板 */
+  /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
   selectProjectCategory(category: 'blockly' | 'coder'): void {
+    if (this.selectedProjectCategory === category) {
+      return;
+    }
     this.selectedProjectCategory = category;
     if (category === 'coder') {
       this.selectedTemplateName = '';
+      this.myTemplateList = [];
     }
     this.applyRecommendedProjectName();
+    this.refreshBoardListForCurrentFilters();
+  }
+
+  /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
+  private filterBoardsForCategory(list: any[]): any[] {
+    if (this.selectedProjectCategory !== 'coder') {
+      return list;
+    }
+    return list.filter(board => board.state !== 'todo');
+  }
+
+  private refreshBoardListForCurrentFilters(): void {
+    if (this.keyword) {
+      this.search(this.keyword);
+      return;
+    }
+
+    this.boardList = this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)));
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
+    }
+    this.cd.detectChanges();
   }
 
   /** 在首个逗号处拆成两行展示项目类型描述（换行时不保留逗号） */
@@ -204,9 +255,16 @@ export class ProjectNewComponent {
   search(keyword = this.keyword) {
     if (keyword) {
       keyword = keyword.replace(/\s/g, '').toLowerCase();
-      this.boardList = this._boardList.filter(item => item.fulltext.includes(keyword));
+      this.boardList = this.filterBoardsForCategory(
+        this._boardList.filter(item => item.fulltext.includes(keyword))
+      );
     } else {
-      this.boardList = JSON.parse(JSON.stringify(this._boardList));
+      this.boardList = this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)));
+    }
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
     }
   }
 
@@ -216,10 +274,21 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    this.loadMyTemplates(boardInfo.name);
+    if (this.selectedProjectCategory === 'blockly') {
+      this.loadMyTemplates(boardInfo.name);
+    } else {
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+    }
   }
 
   loadMyTemplates(boardName: string) {
+    if (this.selectedProjectCategory !== 'blockly') {
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+      this.isLoadingTemplates = false;
+      return;
+    }
     this.myTemplateList = [];
     this.selectedTemplateName = '';
     if (!boardName?.trim()) {
@@ -350,7 +419,7 @@ export class ProjectNewComponent {
       boardId: this.newProjectData.board.name,
       boardNickname: this.newProjectData.board.nickname,
       boardPkgVersion: this.newProjectData.board.version,
-      framework: String(this.currentBoard?.mode?.[0] ?? 'arduino')
+      framework: this.selectedCoderPlatform
     };
   }
 

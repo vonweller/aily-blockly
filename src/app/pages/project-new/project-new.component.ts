@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, OnDestroy } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild } from '@angular/core';
 import { CommonModule, Location } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -50,6 +50,8 @@ import { UnsaveDialogComponent } from '../../main-window/components/unsave-dialo
   styleUrl: './project-new.component.scss',
 })
 export class ProjectNewComponent implements OnDestroy {
+  @ViewChild('boardSearchInput') boardSearchInput?: ElementRef<HTMLInputElement>;
+
   currentStep = 0;
 
   listMode = 'brand'; // brand | core | function
@@ -84,6 +86,13 @@ export class ProjectNewComponent implements OnDestroy {
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
 
+  /** Coder 新建：硬件平台（暂固定 Arduino / ESP-IDF） */
+  readonly coderPlatformOptions: { value: CoderHardwarePlatform; labelKey: string }[] = [
+    { value: 'arduino', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ARDUINO' },
+    { value: 'espidf', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ESPIDF' },
+  ];
+  selectedCoderPlatform: CoderHardwarePlatform = 'arduino';
+
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
   /** 程序写入推荐名时跳过 ngModelChange 的手动编辑标记 */
@@ -96,6 +105,22 @@ export class ProjectNewComponent implements OnDestroy {
 
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl();
+  }
+
+  get searchShortcutHint(): string {
+    return this.platformService.isMac() ? '⌘K' : 'Ctrl+K';
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onGlobalKeydown(event: KeyboardEvent): void {
+    if (this.currentStep !== 0) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      this.boardSearchInput?.nativeElement?.focus();
+      this.boardSearchInput?.nativeElement?.select();
+    }
   }
 
   // 获取已定义的品牌列表（排除'all'和'other'）
@@ -156,20 +181,14 @@ export class ProjectNewComponent implements OnDestroy {
     // 按使用次数排序
     this._boardList = this.configService.sortBoardsByUsage(processedBoardList);
 
-    this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
-
-    // 使用 selectBoard 方法来初始化，确保触发 checkHasExamples
-    if (this.boardList.length > 0) {
-      this.selectBoard(this.boardList[0]);
-    }
-    this.checkPathInvalidChars();
-
     // 从菜单「新建 Aily Code 项目」进入时预选 Coder 类别
     const category = this.route.snapshot.queryParamMap.get('category');
     if (category === 'coder') {
       this.selectedProjectCategory = 'coder';
     }
     this.applyRecommendedProjectName();
+    this.refreshBoardListForCurrentFilters();
+    this.checkPathInvalidChars();
   }
 
   /** 按类别生成推荐项目名：Blockly → project_xxx，Coder → project_coder_xxx */
@@ -192,13 +211,53 @@ export class ProjectNewComponent implements OnDestroy {
     this.checkPathIsExist();
   }
 
-  /** 切换项目类别；Coder 不使用 Blockly 模板 */
+  /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
   selectProjectCategory(category: 'blockly' | 'coder'): void {
+    if (this.selectedProjectCategory === category) {
+      return;
+    }
     this.selectedProjectCategory = category;
     if (category === 'coder') {
       this.selectedTemplateName = '';
+      this.myTemplateList = [];
     }
     this.applyRecommendedProjectName();
+    this.refreshBoardListForCurrentFilters();
+  }
+
+  /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
+  private filterBoardsForCategory(list: any[]): any[] {
+    if (this.selectedProjectCategory !== 'coder') {
+      return list;
+    }
+    return list.filter(board => board.state !== 'todo');
+  }
+
+  private refreshBoardListForCurrentFilters(): void {
+    if (this.keyword) {
+      this.doSearch(this.keyword);
+      return;
+    }
+
+    if (this.listMode === 'brand' && this.selectedBrand) {
+      this.onBrandSelected(this.selectedBrand);
+      return;
+    }
+
+    if (this.listMode === 'core' && this.selectedCore) {
+      this.onCoreSelected(this.selectedCore);
+      return;
+    }
+
+    this.boardList = this.applyLocalization(
+      this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+    );
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
+    }
+    this.cd.detectChanges();
   }
 
   /** 在首个逗号处拆成两行展示项目类型描述（换行时不保留逗号） */
@@ -239,16 +298,22 @@ export class ProjectNewComponent implements OnDestroy {
   private doSearch(keyword: string) {
     if (!keyword) {
       // 恢复完整列表（已按使用次数排序）
-      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+      );
       if (this.boardList.length > 0) {
         this.selectBoard(this.boardList[0]);
+      } else {
+        this.currentBoard = null;
       }
       this.cd.detectChanges();
       return;
     }
 
     // 使用 Orama 进行模糊搜索
-    const localizedList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+    const localizedList = this.applyLocalization(
+      this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+    );
     this.searchIndex = createBoardSearchIndex(localizedList);
     const matchedNames = searchBoards(this.searchIndex, keyword);
 
@@ -293,11 +358,21 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.version = boardInfo.version;
     this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
     this.devmodes = boardInfo.mode;
-    this.checkHasExamples(boardInfo.name);
-    this.loadMyTemplates(boardInfo.name);
+    if (this.selectedProjectCategory === 'blockly') {
+      this.checkHasExamples(boardInfo.name);
+      this.loadMyTemplates(boardInfo.name);
+    } else {
+      this.hasExamples = false;
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+    }
   }
 
   checkHasExamples(boardName: string) {
+    if (this.selectedProjectCategory !== 'blockly') {
+      this.hasExamples = false;
+      return;
+    }
     this.hasExamples = false;
     this.cloudService.getPublicProjects(1, 1, '', '', boardName).subscribe(res => {
       if (res && res.status === 200 && res.data && res.data.total > 0) {
@@ -308,6 +383,12 @@ export class ProjectNewComponent implements OnDestroy {
   }
 
   loadMyTemplates(boardName: string) {
+    if (this.selectedProjectCategory !== 'blockly') {
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+      this.isLoadingTemplates = false;
+      return;
+    }
     this.myTemplateList = [];
     this.selectedTemplateName = '';
     if (!boardName?.trim()) {
@@ -441,7 +522,7 @@ export class ProjectNewComponent implements OnDestroy {
       boardId: this.newProjectData.board.name,
       boardNickname: this.newProjectData.board.nickname,
       boardPkgVersion: this.newProjectData.board.version,
-      framework: String(this.newProjectData.devmode ?? this.currentBoard?.mode?.[0] ?? 'arduino')
+      framework: this.selectedCoderPlatform
     };
   }
 
@@ -623,7 +704,9 @@ export class ProjectNewComponent implements OnDestroy {
           return !definedBrands.includes(boardBrand);
         });
         // 对过滤后的列表按使用次数排序
-        this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
+        this.boardList = this.applyLocalization(
+          this.filterBoardsForCategory(this.configService.sortBoardsByUsage(filteredBoardList))
+        );
       } else {
         // 普通品牌过滤
         let filteredBoardList = this._boardList.filter(board => {
@@ -632,7 +715,9 @@ export class ProjectNewComponent implements OnDestroy {
           return boardBrand === selectedBrandValue
         });
         // 对过滤后的列表按使用次数排序
-        this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
+        this.boardList = this.applyLocalization(
+          this.filterBoardsForCategory(this.configService.sortBoardsByUsage(filteredBoardList))
+        );
       }
 
       console.log('过滤后的开发板列表:', this.boardList);
@@ -645,7 +730,9 @@ export class ProjectNewComponent implements OnDestroy {
       }
     } else {
       // 如果选择"显示全部"或没有选中品牌，显示所有开发板（已按使用次数排序）
-      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+      );
       if (this.boardList.length > 0) {
         this.selectBoard(this.boardList[0]);
       }
@@ -683,7 +770,9 @@ export class ProjectNewComponent implements OnDestroy {
       }
 
       // 对过滤后的列表按使用次数排序
-      this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(this.configService.sortBoardsByUsage(filteredBoardList))
+      );
 
       console.log('按核心架构过滤后的开发板列表:', this.boardList);
 
@@ -695,7 +784,9 @@ export class ProjectNewComponent implements OnDestroy {
       }
     } else {
       // 如果选择"显示全部"或没有选中核心架构，显示所有开发板（已按使用次数排序）
-      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+      );
       if (this.boardList.length > 0) {
         this.selectBoard(this.boardList[0]);
       }
@@ -710,7 +801,9 @@ export class ProjectNewComponent implements OnDestroy {
       // 如果切换到核心架构模式，重置选择状态
       this.selectedCore = null;
       // 显示所有开发板
-      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+      );
       if (this.boardList.length > 0) {
         this.selectBoard(this.boardList[0]);
       }
@@ -718,7 +811,9 @@ export class ProjectNewComponent implements OnDestroy {
       // 如果切换到品牌模式，重置选择状态
       this.selectedBrand = null;
       // 显示所有开发板
-      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(this._boardList)));
+      this.boardList = this.applyLocalization(
+        this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)))
+      );
       if (this.boardList.length > 0) {
         this.selectBoard(this.boardList[0]);
       }
@@ -740,6 +835,9 @@ export class ProjectNewComponent implements OnDestroy {
   }
 }
 
+
+/** Coder 新建项目可选的硬件平台（暂固定两项） */
+export type CoderHardwarePlatform = 'arduino' | 'espidf';
 
 export interface BoardInfo {
   "name": string, // 开发板在仓库中的名称开发板名称

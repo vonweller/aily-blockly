@@ -16,25 +16,36 @@
         @if (currentStep == 0) {
         <div class="right-inner flex-start">
           <div class="search-box">
-            <nz-input-group [nzSuffix]="suffixIconSearch" [nzSize]="'small'">
-              <input nz-input [placeholder]="'PROJECT_NEW.BOARD.SEARCH' | translate" [(ngModel)]="keyword"
-                (ngModelChange)="search()" />
-            </nz-input-group>
-            <ng-template #suffixIconSearch>
-              @if(keyword.length > 0){
-              <i class="fa-light fa-xmark" (click)="keyword='';search()"></i>
-              } @else {
-              <i class="fa-light fa-search"></i>
-              }
-            </ng-template>
-            <!-- <div class="tag-list">
-              @for (tag of tagListRandom; track tag) {
-              <nz-tag (click)="keyword=tag;search()">{{ tag }}</nz-tag>
-              }
-            </div> -->
+            <div class="search-field">
+              <nz-input-group [nzPrefix]="prefixIconSearch" [nzSize]="'small'">
+                <input #boardSearchInput nz-input [placeholder]="'PROJECT_NEW.BOARD.SEARCH' | translate" [(ngModel)]="keyword"
+                  (ngModelChange)="search()" />
+              </nz-input-group>
+              <span class="search-shortcut">{{ searchShortcutHint }}</span>
+              <ng-template #prefixIconSearch>
+                <i class="fa-light fa-search"></i>
+              </ng-template>
+            </div>
+            <div class="dev-mode-group">
+              <span class="dev-mode-label">{{ 'PROJECT_NEW.BOARD.DEV_MODE' | translate }}:</span>
+              <div class="segmented-control dev-mode-control">
+                <button type="button" class="segment-btn"
+                  [class.active]="selectedProjectCategory === 'blockly'"
+                  (click)="selectProjectCategory('blockly')">
+                  <i class="fa-light fa-puzzle-piece"></i>
+                  {{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}
+                </button>
+                <button type="button" class="segment-btn"
+                  [class.active]="selectedProjectCategory === 'coder'"
+                  (click)="selectProjectCategory('coder')">
+                  <i class="fa-light fa-code"></i>
+                  {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
+                </button>
+              </div>
+            </div>
             <div class="btns">
-              <button nz-button nzType="primary" nzGhost nzSize="small" style="margin-right: 10px;" (click)="help()">
-                <i class="fa-light fa-question"></i>{{ 'PROJECT_NEW.BOARD.ADD_BOARD' | translate }}
+              <button nz-button nzType="primary" nzGhost nzSize="small" (click)="help()">
+                <i class="fa-light fa-plus"></i>{{ 'PROJECT_NEW.BOARD.ADD_BOARD' | translate }}
               </button>
             </div>
           </div>
@@ -64,6 +75,18 @@
               }
             </div>
             <div class="content">{{ currentBoard.description }}</div>
+            @if (selectedProjectCategory === 'coder') {
+            <div class="desc-footer">
+              <div class="coder-platform-field">
+                <span class="coder-platform-label">{{ 'PROJECT_NEW.FORM.PLATFORM' | translate }}</span>
+                <nz-select class="platform-select" nzSize="small" [(ngModel)]="selectedCoderPlatform">
+                  @for (opt of coderPlatformOptions; track opt.value) {
+                  <nz-option [nzValue]="opt.value" [nzLabel]="opt.labelKey | translate"></nz-option>
+                  }
+                </nz-select>
+              </div>
+            </div>
+            }
           </div>
           }
         </div>
@@ -71,47 +94,6 @@
         <!-- 基本设定页面 -->
         <div class="right-inner">
           <div class="right-content">
-            <div class="item project-category-row">
-              <div>{{ 'PROJECT_NEW.PROJECT_CATEGORY.TITLE' | translate }}:</div>
-              <div class="category-cards">
-                <div class="category-card btn"
-                  [class.selected]="selectedProjectCategory === 'blockly'"
-                  (click)="selectProjectCategory('blockly')">
-                  <div class="category-icon blockly ccenter">
-                    <i class="fa-light fa-puzzle-piece"></i>
-                  </div>
-                  <div class="category-info">
-                    <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY' | translate }}</div>
-                    <div class="category-desc">
-                      @for (line of splitCategoryDesc('PROJECT_NEW.PROJECT_CATEGORY.BLOCKLY_DESC' | translate); track $index) {
-                      <span>{{ line }}</span>
-                      }
-                    </div>
-                  </div>
-                  <div class="category-check ccenter">
-                    <i class="fa-solid fa-circle-check"></i>
-                  </div>
-                </div>
-                <div class="category-card btn"
-                  [class.selected]="selectedProjectCategory === 'coder'"
-                  (click)="selectProjectCategory('coder')">
-                  <div class="category-icon coder ccenter">
-                    <i class="fa-light fa-code"></i>
-                  </div>
-                  <div class="category-info">
-                    <div class="category-name">{{ 'PROJECT_NEW.PROJECT_CATEGORY.CODER' | translate }}</div>
-                    <div class="category-desc">
-                      @for (line of splitCategoryDesc('PROJECT_NEW.PROJECT_CATEGORY.CODER_DESC' | translate); track $index) {
-                      <span>{{ line }}</span>
-                      }
-                    </div>
-                  </div>
-                  <div class="category-check ccenter">
-                    <i class="fa-solid fa-circle-check"></i>
-                  </div>
-                </div>
-              </div>
-            </div>
             <div class="item">
             <div>{{ 'PROJECT_NEW.FORM.BOARD' | translate }}:</div>
             <nz-input-group [nzSuffix]="suffixIconSearch">
