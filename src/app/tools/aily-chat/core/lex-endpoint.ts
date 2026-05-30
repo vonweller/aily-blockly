@@ -55,6 +55,8 @@ export interface LexStatelessStreamOptions {
   llmConfig?: { apiKey: string; baseUrl: string } | null;
   requestContext?: {
     requestKind?: 'conversation' | 'utility';
+    interactionTypeOverride?: 'conversation-background';
+    userInitiatedRequest?: boolean;
   };
 }
 
@@ -84,8 +86,14 @@ export function lexStatelessStream(
           modelId: options?.modelId || 'default',
           maxOutputTokens: 4096,
         };
-        const requestContext = options?.requestContext?.requestKind
-          ? { requestKind: options.requestContext.requestKind }
+        const requestContext = options?.requestContext && (
+          options.requestContext.requestKind || options.requestContext.interactionTypeOverride
+        )
+          ? {
+            ...(options.requestContext.requestKind ? { requestKind: options.requestContext.requestKind } : {}),
+            ...(options.requestContext.interactionTypeOverride ? { interactionTypeOverride: options.requestContext.interactionTypeOverride } : {}),
+            ...(typeof options.requestContext.userInitiatedRequest === 'boolean' ? { userInitiatedRequest: options.requestContext.userInitiatedRequest } : {}),
+          }
           : undefined;
 
         for await (const chunk of endpoint.stream(messages, [], config, abortCtrl.signal, requestContext as any)) {

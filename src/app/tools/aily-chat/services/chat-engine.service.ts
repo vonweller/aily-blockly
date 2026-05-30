@@ -88,9 +88,9 @@ import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
 import type { MetricsSnapshot, TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
-import { lexGenerateTitle } from '../core/lex-endpoint';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
+import { ChatTitleRequestService } from '../helpers/chat-title-request.service';
 import { MessageDisplayHelper } from '../helpers/message-display.helper';
 import { SessionLifecycleHelper } from '../helpers/session-lifecycle.helper';
 import { getUserSelectedToolsForRequest } from '../helpers/lex-agent-bootstrap';
@@ -706,9 +706,10 @@ export class ChatEngineService implements IChatContext {
   readonly lexStream = new LexOwnerFacade(this.lexOwnerContext);
   readonly editActions = new EditActionsHelper(this.editActionsContext);
   readonly interaction = new UserInteractionHelper(this.userInteractionContext);
+  private readonly titleRequestService = new ChatTitleRequestService(() => this.lexStream.runtime.llmConfig());
   private readonly titleCoordinator = new ChatTitleCoordinator(
     this.titleCoordinatorContext,
-    lexGenerateTitle,
+    this.titleRequestService,
     (sessionId, title) => this.chatSessionItemsService.sessionItemController.updateManagedChatSessionItemTitle(sessionId, title),
   );
   private readonly sendCoordinator = new ChatSendCoordinator(

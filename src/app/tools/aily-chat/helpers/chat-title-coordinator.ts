@@ -4,9 +4,8 @@ import type {
   IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
-import type { LexStatelessStreamOptions } from '../core/lex-endpoint';
+import type { ChatTitleRequestProvider } from './chat-title-request.service';
 
-type AsyncTitleGenerator = (content: string, options?: LexStatelessStreamOptions) => Promise<string>;
 type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatCoordination, 'session' | 'lexStream'>
   & Pick<IAgentLifecycle, never>;
@@ -17,7 +16,7 @@ type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTi
 export class ChatTitleCoordinator {
   constructor(
     private readonly ctx: ChatTitleCoordinatorContext,
-    private readonly generateAsyncTitle: AsyncTitleGenerator,
+    private readonly titleRequestService: ChatTitleRequestProvider,
     private readonly syncManagedSessionTitle?: (sessionId: string, title: string) => void,
   ) {}
 
@@ -27,10 +26,7 @@ export class ChatTitleCoordinator {
     }
 
     const sessionId = this.ctx.sessionId;
-    this.generateAsyncTitle(content, {
-      requestContext: { requestKind: 'utility' },
-      llmConfig: this.ctx.lexStream.runtime.llmConfig(),
-    }).then(title => {
+    this.titleRequestService.generate(content).then(title => {
       if (title && sessionId === this.ctx.sessionId) {
         this.ctx.chatService.currentSessionTitle = title;
         this.ctx.chatHistoryService.updateTitle(sessionId, title);
