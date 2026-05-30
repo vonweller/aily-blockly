@@ -1,4 +1,4 @@
-import { normalizeReadSideToolName } from './tool-name-normalizer';
+import { normalizeReadSideToolName, toRuntimeGovernanceToolName } from './tool-name-normalizer';
 
 export interface ToolInvocationDisplaySummary {
   label: string;
@@ -342,10 +342,10 @@ function buildGetErrorsSummary(args: any): ToolInvocationDisplaySummary {
 
 function buildMemorySummary(args: any): ToolInvocationDisplaySummary {
   const command = asString(args?.command) || 'view';
-  const path = asString(args?.path);
+  const path = asString(args?.path) || asString(args?.old_path) || asString(args?.new_path);
   const actionMap: Record<string, string> = {
     view: 'Viewed',
-    create: 'Saved',
+    create: 'Created',
     str_replace: 'Updated',
     insert: 'Inserted into',
     delete: 'Deleted',
@@ -847,9 +847,10 @@ function cleanToolNamePrefix(toolName: string): string {
 
 function normalizeFormatterToolName(toolName: string): string {
   const cleanToolName = cleanToolNamePrefix(toolName);
-  return normalizeReadSideToolName(cleanToolName) === 'run_in_terminal'
+  const runtimeToolName = toRuntimeGovernanceToolName(cleanToolName) || cleanToolName;
+  return normalizeReadSideToolName(runtimeToolName) === 'run_in_terminal'
     ? 'run_in_terminal'
-    : cleanToolName;
+    : runtimeToolName;
 }
 
 function splitToolName(toolName: string): string[] {

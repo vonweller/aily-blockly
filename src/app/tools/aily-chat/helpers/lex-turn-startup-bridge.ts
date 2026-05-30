@@ -1,5 +1,6 @@
 import type { TurnRequest } from 'aily-lex/browser';
-import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
+import { readTurnRequestModeInfo, resolveTurnRequestModeCustomAgentTarget } from 'aily-lex/browser';
+import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess, ISessionAccess } from '../core/chat-context';
 import type { IProjectContext } from '../core/chat-context';
 import { MAIN_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 
@@ -7,9 +8,13 @@ type LexTurnStartupContext = Pick<
   IAgentLifecycle,
   'isCompleted' | 'isCancelled' | 'isWaiting' | 'currentMessageSource' | 'toolCallingIteration'
 > & Pick<IChatViewAccess, 'list' | 'scrollManager'>
+  & Pick<ISessionAccess, 'sessionId'>
   & Pick<IProjectContext, 'currentModel'>
   & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
-  & Pick<IChatCoordination, 'editActions'>;
+  & Pick<IChatCoordination, 'editActions'>
+  & {
+    resolveActiveRuntimeSessionId?(): string | null | undefined;
+  };
 
 /**
  * Handles host-side main-agent turn startup orchestration.
@@ -49,9 +54,14 @@ export class LexTurnStartupBridge {
     if (requestMetadata?.['explicitAgentInvocation']) {
       return MAIN_AGENT_TYPE;
     }
-    const agentId = typeof requestMetadata?.['agentId'] === 'string'
-      ? normalizeAgentIdentifier(requestMetadata['agentId'])
-      : '';
+    const modeInfo = readTurnRequestModeInfo(requestMetadata);
+    const requestRouting = requestMetadata?.['requestRouting'] && typeof requestMetadata['requestRouting'] === 'object' && !Array.isArray(requestMetadata['requestRouting'])
+      ? requestMetadata['requestRouting'] as { readonly customAgentTarget?: unknown }
+      : undefined;
+    const agentId = typeof requestRouting?.customAgentTarget === 'string'
+      ? normalizeAgentIdentifier(requestRouting.customAgentTarget)
+      : resolveTurnRequestModeCustomAgentTarget(modeInfo)
+        ?? '';
     return agentId || MAIN_AGENT_TYPE;
   }
 
@@ -85,8 +95,17 @@ export class LexTurnStartupBridge {
       ...(requestMetadata ?? {}),
     };
     const turnId = this.startTurn(userMessage, displayContent, nextRequestMetadata);
+    const activeRuntimeSessionId = typeof this.ctx.resolveActiveRuntimeSessionId === 'function'
+      ? this.ctx.resolveActiveRuntimeSessionId()?.trim()
+      : '';
+    const visibleSessionId = typeof this.ctx.sessionId === 'string'
+      ? this.ctx.sessionId.trim()
+      : '';
+    const isDetachedRuntimeOwner = !!activeRuntimeSessionId
+      && !!visibleSessionId
+      && activeRuntimeSessionId !== visibleSessionId;
 
-    if (turnId) {
+    if (turnId && !isDetachedRuntimeOwner) {
       this.attachTurnIdToLatestUserMessage(turnId);
     }
 
@@ -97,30 +116,34 @@ export class LexTurnStartupBridge {
     this.ctx.toolCallingIteration = 0;
     this.ctx.repetitionDetectionService.resetStreamTokens();
 
-    if (turnId) {
+    if (turnId && !isDetachedRuntimeOwner) {
       this.seedPendingTurn(turnId, userMessage, displayContent, nextRequestMetadata);
     }
 
-    this.ensureAilyMessage();
+    if (!isDetachedRuntimeOwner) {
+      this.ensureAilyMessage();
+    }
 
     this.ctx.editActions.ensureAbsExport();
     this.ctx.editCheckpointService.autoSaveEdits = this.ctx.ailyChatConfigService.autoSaveEdits;
     this.ctx.editActions.saveCheckpointToDisk();
 
     const conversationMessages = this.getConversationMessages();
-    const responseStartListIndex = this.ctx.list.length - 1;
-    const turnStartListIndex = responseStartListIndex > 0
-      ? responseStartListIndex - 1
-      : responseStartListIndex;
-    this.ctx.editCheckpointService.startTurn(
-      0,
-      turnStartListIndex,
-      responseStartListIndex,
-      turnId,
-      userMessage,
-      displayContent,
-      nextRequestMetadata.checkpointId,
-    );
+    if (!isDetachedRuntimeOwner) {
+      const responseStartListIndex = this.ctx.list.length - 1;
+      const turnStartListIndex = responseStartListIndex > 0
+        ? responseStartListIndex - 1
+        : responseStartListIndex;
+      this.ctx.editCheckpointService.startTurn(
+        0,
+        turnStartListIndex,
+        responseStartListIndex,
+        turnId,
+        userMessage,
+        displayContent,
+        nextRequestMetadata.checkpointId,
+      );
+    }
     if (this.shouldRefreshLocalEstimate()) {
       if (this.shouldKeepEmptyBudgetSnapshot(conversationMessages)) {
         this.ctx.contextBudgetService.reset();
@@ -131,7 +154,9 @@ export class LexTurnStartupBridge {
         );
       }
     }
-    this.ctx.scrollManager.setScrollLock(true);
+    if (!isDetachedRuntimeOwner) {
+      this.ctx.scrollManager.setScrollLock(true);
+    }
 
     return turnId;
   }

@@ -20,6 +20,7 @@ export interface StateDetailRow {
   title: string;
   subtitle?: string;
   note?: string;
+  reference?: string;
   trailing?: string;
   tone?: StateTone;
   outputKind?: 'default' | 'terminal-command' | 'terminal-stream' | 'text' | 'resource' | 'image' | 'code' | 'changed-file';
@@ -2725,7 +2726,7 @@ function formatInstructionFilterTitle(filter: InstructionDiagnosticFilter): stri
 
 function toInstructionDiagnosticRow(diagnostic: Record<string, unknown>, fallbackId?: string): StateDetailRow {
   const id = asString(diagnostic['id']) || `${fallbackId || 'instructions'}:diagnostic`;
-  const name = asString(diagnostic['logicalName']) || asString(diagnostic['name']) || id;
+  const name = formatInstructionDiagnosticTitle(diagnostic, id);
   const source = asString(diagnostic['source']);
   const reference = asString(diagnostic['reference']);
   const ownerId = asString(diagnostic['ownerId']);
@@ -2741,14 +2742,14 @@ function toInstructionDiagnosticRow(diagnostic: Record<string, unknown>, fallbac
     subtitle: [formatInstructionSource(source), ownerId ? `来源 ${ownerId}` : '', typeof priority === 'number' ? `优先级 ${priority}` : '']
       .filter(Boolean)
       .join(' · '),
-    note: buildInstructionDiagnosticNote(reference, activation, overriddenById, active, skipReason),
+    note: buildInstructionDiagnosticNote(activation, overriddenById, active, skipReason),
+    reference,
     trailing: active ? '已生效' : formatInstructionSkipReason(skipReason),
     tone: toneFromInstructionDiagnostic(active, skipReason),
   };
 }
 
 function buildInstructionDiagnosticNote(
-  reference: string | undefined,
   activation: Record<string, unknown> | undefined,
   overriddenById: string | undefined,
   active: boolean,
@@ -2759,14 +2760,51 @@ function buildInstructionDiagnosticNote(
   if (explanation) {
     notes.push(explanation);
   }
-  if (reference) {
-    notes.push(`位置: ${reference}`);
-  }
   const activationSummary = summarizeInstructionActivation(activation);
   if (activationSummary) {
     notes.push(`条件: ${activationSummary}`);
   }
   return notes.length > 0 ? notes.join('\n') : undefined;
+}
+
+function formatInstructionDiagnosticTitle(diagnostic: Record<string, unknown>, fallbackId: string): string {
+  const displayPath = asString(diagnostic['displayPath']);
+  if (displayPath) {
+    return `指令文件 ${displayPath}`;
+  }
+
+  const referenceLabel = formatInstructionReferenceLabel(asString(diagnostic['reference']));
+  if (referenceLabel) {
+    return `指令文件 ${referenceLabel}`;
+  }
+
+  const rawName = asString(diagnostic['name']);
+  if (rawName) {
+    return `指令文件 ${rawName}`;
+  }
+
+  const logicalName = asString(diagnostic['logicalName']);
+  return logicalName ? `指令文件 ${logicalName}` : `指令文件 ${fallbackId}`;
+}
+
+function formatInstructionReferenceLabel(reference: string | undefined): string | undefined {
+  if (!reference) {
+    return undefined;
+  }
+
+  const normalized = reference.replace(/\\/g, '/').trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const segments = normalized.split('/').filter(Boolean);
+  const fileName = segments.at(-1);
+  if (!fileName) {
+    return undefined;
+  }
+
+  const parent = segments.at(-2);
+  return parent === '.aily' ? `${parent}/${fileName}` : fileName;
 }
 
 function describeInstructionDiagnostic(

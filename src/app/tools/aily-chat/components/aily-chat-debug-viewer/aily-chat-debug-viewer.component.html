@@ -21,7 +21,12 @@
     @for (detail of sessionDetails; track detail.label) {
     <div class="chat-debug-viewer-detail-row">
       <span class="chat-debug-viewer-detail-label">{{ detail.label }}</span>
-      <span class="chat-debug-viewer-detail-value">{{ detail.value }}</span>
+      <span class="chat-debug-viewer-detail-main">
+        <span class="chat-debug-viewer-detail-value">{{ detail.value }}</span>
+        @if (detail.reference && canOpenReference(detail.reference)) {
+        <button type="button" class="chat-debug-viewer-detail-open" (click)="openReference(detail.reference, $event)">打开</button>
+        }
+      </span>
     </div>
     }
   </div>

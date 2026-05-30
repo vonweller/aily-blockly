@@ -1,5 +1,6 @@
 import type { ISessionAccess, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
 import type { MetricsSnapshot } from 'aily-lex/browser';
+import { resolveChatModeId } from '../core/chat-mode';
 import { normalizeReadSideToolName } from '../core/tool-name-normalizer';
 import { buildTodoListSemanticDataFromTodos } from '../services/todoUpdate.service';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
@@ -8,7 +9,10 @@ import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage
 type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'editCheckpointService' | 'ngZone' | 'message'>
   & Pick<IChatCoordination, 'lexStream'>
-  & Pick<IChatViewAccess, 'inputValue' | 'triggerSyncDetectChanges'>;
+  & Pick<IChatViewAccess, 'inputValue' | 'triggerSyncDetectChanges'>
+  & {
+    switchToMode?(mode: string): Promise<void>;
+  };
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type LexTodoItem = {
@@ -106,18 +110,35 @@ export class LexHostSyncBridge {
     this.applyLexTodos(sessionId, lexTodos);
   }
 
-  applyHandoffEvent(event: { targetAgent?: string; reason?: string }): void {
+  applyHandoffEvent(event: { targetAgent?: string; targetModeId?: string; reason?: string }): void {
     const targetAgent = typeof event.targetAgent === 'string' ? event.targetAgent.trim() : '';
-    if (!targetAgent) {
+    const targetModeId = resolveChatModeId(event.targetModeId);
+    if (!targetAgent && !targetModeId) {
       return;
     }
 
+    const targetLabel = targetModeId
+      ? `${targetAgent || targetModeId} 模式`
+      : targetAgent;
     const handoffMessage = event.reason
-      ? `代理请求切换到 ${targetAgent}: ${event.reason}`
-      : `代理请求切换到 ${targetAgent}`;
+      ? `代理请求切换到 ${targetLabel}: ${event.reason}`
+      : `代理请求切换到 ${targetLabel}`;
     const suggestedInput = `@${targetAgent} `;
 
     this.ctx.ngZone.run(() => {
+      if (targetModeId && this.ctx.switchToMode) {
+        void this.ctx.switchToMode(targetModeId).catch((error) => {
+          console.error('应用 handoff 模式切换失败:', error);
+        });
+
+        try {
+          this.ctx.message.info(handoffMessage);
+        } catch {
+          // ignore UI notification failures for host sync bridge
+        }
+        return;
+      }
+
       let prefilled = false;
 
       if ((this.ctx.inputValue || '').trim().length === 0) {

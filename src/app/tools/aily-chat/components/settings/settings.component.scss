@@ -511,3 +511,28 @@
     color: var(--aily-color-warning-alt, var(--aily-color-warning, #f7ce42));
   }
 }
+
+.custom-agent-visibility-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.custom-agent-visibility-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--aily-chat-viewer-border-soft, var(--aily-border-primary, #222427));
+  border-radius: 4px;
+  background: var(--aily-chat-viewer-card-bg, var(--aily-bg-tertiary, #3a3c3f));
+}
+
+.custom-agent-visibility-label {
+  color: var(--aily-text-primary, #ffffff);
+}
+
+.custom-agent-visibility-description {
+  font-size: 12px;
+  color: var(--aily-text-muted, #a5a5a5);
+}

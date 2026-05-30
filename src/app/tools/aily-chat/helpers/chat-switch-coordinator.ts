@@ -5,14 +5,21 @@ import type {
   IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
+import { normalizeAgentIdentifier } from '../core/agent-identifiers';
+import {
+  LEGACY_CHAT_PLAN_AGENT_TARGET,
+  isLegacyChatPlanModeValue,
+  resolveChatSurfaceModeId,
+} from '../core/chat-mode';
+import type { ChatSurfaceModeId } from '../core/chat-mode';
 import type { LanguageModelConfigurationUpdate } from '../services/aily-chat-language-models.service';
 import type { ModelConfig } from '../services/chat.service';
 
 type ChatSwitchCoordinatorContext = Pick<
   IAgentLifecycle,
-  'isWaiting' | '_pendingModelSwitch' | '_pendingModeSwitch'
+  'isWaiting' | '_pendingModelSwitch' | '_pendingModeSwitch' | '_pendingSwitchSessionId'
 > & Pick<IProjectContext, 'currentModel' | 'currentMode'>
-  & Pick<ISessionAccess, 'chatService' | 'conversationMessages'>
+  & Pick<ISessionAccess, 'chatService' | 'conversationMessages' | 'sessionId'>
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'languageModelsService' | 'message'>
   & Pick<IChatCoordination, 'lexStream'>;
 
@@ -21,6 +28,30 @@ type ChatSwitchCoordinatorContext = Pick<
  */
 export class ChatSwitchCoordinator {
   constructor(private readonly ctx: ChatSwitchCoordinatorContext) {}
+
+  private readPendingOwnerSessionId(): string | null {
+    const sessionId = typeof this.ctx._pendingSwitchSessionId === 'string'
+      ? this.ctx._pendingSwitchSessionId.trim()
+      : '';
+    return sessionId || null;
+  }
+
+  private readCurrentSessionId(): string | null {
+    const sessionId = typeof this.ctx.chatService.currentSessionId === 'string' && this.ctx.chatService.currentSessionId.trim().length > 0
+      ? this.ctx.chatService.currentSessionId.trim()
+      : typeof this.ctx.sessionId === 'string' && this.ctx.sessionId.trim().length > 0
+        ? this.ctx.sessionId.trim()
+        : '';
+    return sessionId || null;
+  }
+
+  private assignPendingSwitch(model: ModelConfig | null, mode: ChatSurfaceModeId | null): void {
+    this.ctx._pendingModelSwitch = model;
+    this.ctx._pendingModeSwitch = mode;
+    this.ctx._pendingSwitchSessionId = (model || mode)
+      ? this.readCurrentSessionId()
+      : null;
+  }
 
   private getConfigurationModelId(model: ModelConfig | null | undefined): string | undefined {
     const presetId = typeof model?.presetId === 'string' ? model.presetId.trim() : '';
@@ -73,8 +104,7 @@ export class ChatSwitchCoordinator {
 
     if (this.ctx.isWaiting) {
       this.ctx.chatService.saveChatModel(model);
-      this.ctx._pendingModelSwitch = model;
-      this.ctx._pendingModeSwitch = null;
+      this.assignPendingSwitch(model, null);
       this.ctx.message.info('模型将在当前对话完成后切换');
       return;
     }
@@ -123,8 +153,7 @@ export class ChatSwitchCoordinator {
 
     if (this.ctx.isWaiting) {
       this.ctx.chatService.saveChatModel(nextModel);
-      this.ctx._pendingModelSwitch = nextModel;
-      this.ctx._pendingModeSwitch = null;
+      this.assignPendingSwitch(nextModel, null);
       this.ctx.message.info(this.getPendingConfigurationMessage(normalizedUpdate));
       return;
     }
@@ -133,26 +162,104 @@ export class ChatSwitchCoordinator {
   }
 
   async switchToMode(mode: string): Promise<void> {
-    if (mode === this.ctx.currentMode) {
+    if (isLegacyChatPlanModeValue(mode)) {
+      await this.switchToCustomAgent({
+        modeId: LEGACY_CHAT_PLAN_AGENT_TARGET,
+        customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+      });
+      return;
+    }
+
+    const normalizedMode = resolveChatSurfaceModeId(mode);
+    if (!normalizedMode || normalizedMode === this.ctx.currentMode) {
       return;
     }
 
     if (this.ctx.isWaiting) {
-      this.ctx.chatService.saveChatMode(mode as 'agent' | 'ask');
-      this.ctx._pendingModeSwitch = mode;
-      this.ctx._pendingModelSwitch = null;
+      this.ctx.chatService.saveChatMode(normalizedMode);
+      this.ctx.chatService.clearCurrentCustomAgentTarget();
+      this.assignPendingSwitch(null, normalizedMode);
       this.ctx.message.info('模式将在当前对话完成后切换');
       return;
     }
 
-    await this.doSwitchMode(mode);
+    await this.doSwitchMode(normalizedMode);
   }
 
-  async applyPendingSwitch(): Promise<void> {
+  async switchToCustomAgent(selection: { readonly modeId?: string; readonly customAgentTarget?: string }): Promise<void> {
+    const normalizedModeId = typeof selection?.modeId === 'string'
+      ? selection.modeId.trim()
+      : '';
+    const normalizedAgentTarget = normalizeAgentIdentifier(selection?.customAgentTarget);
+    const resolvedMode = normalizedModeId
+      ? this.ctx.chatService.findResolvedModeById(normalizedModeId)
+        ?? this.ctx.chatService.findResolvedModeByName(normalizedModeId)
+      : undefined;
+    const effectiveModeId = resolvedMode && resolvedMode.kind === 'agent' && resolvedMode.isBuiltin !== true
+      ? resolvedMode.id.trim()
+      : normalizedModeId;
+    const effectiveAgentTarget = resolvedMode && resolvedMode.kind === 'agent' && resolvedMode.isBuiltin !== true
+      ? resolvedMode.customAgentTarget ?? normalizedAgentTarget
+      : normalizedAgentTarget;
+
+    if (!effectiveModeId && !effectiveAgentTarget) {
+      return;
+    }
+
+    if (
+      this.ctx.currentMode === 'agent'
+      && ((effectiveModeId && this.ctx.chatService.currentResolvedMode?.id === effectiveModeId)
+        || (!effectiveModeId && this.ctx.chatService.currentCustomAgentTarget === effectiveAgentTarget))
+    ) {
+      return;
+    }
+
+    if (effectiveModeId) {
+      this.ctx.chatService.setChatMode(effectiveModeId, true);
+    } else if (typeof this.ctx.chatService.saveSelectedMode === 'function') {
+      this.ctx.chatService.saveSelectedMode({
+        modeId: 'agent',
+        customAgentTarget: effectiveAgentTarget,
+      });
+    } else {
+      this.ctx.chatService.saveChatMode('agent');
+      this.ctx.chatService.saveCurrentCustomAgentTarget(effectiveAgentTarget);
+    }
+
+    if (this.ctx.isWaiting) {
+      this.assignPendingSwitch(null, null);
+      this.ctx.message.info('智能体选择已更新，将在下一条消息生效');
+      return;
+    }
+
+    try {
+      await this.ctx.lexStream.agent.ensureAgent();
+    } catch (err) {
+      console.error('切换智能体失败:', err);
+      this.ctx.chatService.setChatMode('agent', true);
+      return;
+    }
+
+    if (this.shouldRefreshLocalEstimate()) {
+      this.ctx.contextBudgetService?.refreshLocalEstimate(
+        this.ctx.conversationMessages,
+        this.ctx.lexStream.runtime.tools(),
+      );
+    }
+  }
+
+  async applyPendingSwitch(sessionId?: string | null): Promise<void> {
+    const pendingOwnerSessionId = this.readPendingOwnerSessionId();
+    const targetSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    if (pendingOwnerSessionId && targetSessionId && pendingOwnerSessionId !== targetSessionId) {
+      return;
+    }
+
     const pendingModel = this.ctx._pendingModelSwitch;
     const pendingMode = this.ctx._pendingModeSwitch;
-    this.ctx._pendingModelSwitch = null;
-    this.ctx._pendingModeSwitch = null;
+    this.assignPendingSwitch(null, null);
 
     if (pendingModel) {
       await this.doSwitchModel(pendingModel);
@@ -184,7 +291,13 @@ export class ChatSwitchCoordinator {
   }
 
   private async doSwitchMode(mode: string): Promise<void> {
-    this.ctx.chatService.saveChatMode(mode as 'agent' | 'ask');
+    const normalizedMode = resolveChatSurfaceModeId(mode);
+    if (!normalizedMode) {
+      return;
+    }
+
+    this.ctx.chatService.saveChatMode(normalizedMode);
+    this.ctx.chatService.clearCurrentCustomAgentTarget();
 
     try {
       await this.ctx.lexStream.agent.ensureAgent();

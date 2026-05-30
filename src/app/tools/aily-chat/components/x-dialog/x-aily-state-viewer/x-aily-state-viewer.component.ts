@@ -1,5 +1,6 @@
 import { Component, Input, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { AilyHost } from '../../../core/host';
 import {
   appendDetailSections,
   buildInstructionDetailProjection,
@@ -11,6 +12,7 @@ import {
   type StateDetailSection,
   type StateTone,
 } from './activity-detail-items';
+import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../../helpers/chat-artifact-reference';
 
 interface StateBadge {
   label: string;
@@ -160,6 +162,14 @@ interface StateViewerData {
                                 }
                               </div>
                             }
+                            @if (row.reference) {
+                              <div class="ac-state-list-reference-shell">
+                                <span class="ac-state-list-reference">{{ getResolvedReferenceLabel(row.reference) }}</span>
+                                @if (canOpenReference(row.reference)) {
+                                  <button type="button" class="ac-state-list-open" (click)="openReference(row.reference, $event)">打开</button>
+                                }
+                              </div>
+                            }
                             @if (getOutputResourceHref(row); as resourceHref) {
                               <a class="ac-state-list-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer">{{ resourceHref }}</a>
                             }
@@ -191,6 +201,14 @@ interface StateViewerData {
                             }
                             @if (row.outputMimeType) {
                               <span class="ac-state-list-meta-chip">{{ row.outputMimeType }}</span>
+                            }
+                          </div>
+                        }
+                        @if (row.reference) {
+                          <div class="ac-state-list-reference-shell">
+                            <span class="ac-state-list-reference">{{ getResolvedReferenceLabel(row.reference) }}</span>
+                            @if (canOpenReference(row.reference)) {
+                              <button type="button" class="ac-state-list-open" (click)="openReference(row.reference, $event)">打开</button>
                             }
                           </div>
                         }
@@ -836,6 +854,35 @@ interface StateViewerData {
         color: var(--chat-fg-dim, #8e8e8e);
       }
 
+      .ac-state-list-reference-shell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        margin-top: 4px;
+      }
+
+      .ac-state-list-reference {
+        min-width: 0;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--chat-fg-dim, #8e8e8e);
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+
+      .ac-state-list-open {
+        flex: 0 0 auto;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+        background: transparent;
+        color: var(--chat-fg, #cccccc);
+        font-size: 10px;
+        line-height: 1.2;
+        cursor: pointer;
+      }
+
       .ac-state-list-link {
         display: block;
         margin-top: 4px;
@@ -941,6 +988,7 @@ export class XAilyStateViewerComponent implements OnChanges {
   @Input() data: StateViewerData | null = null;
   @Input() embedded = false;
   @Input() bodyOnly = false;
+  @Input() sessionId = '';
   @Input() preparedDetailSections: readonly DetailSectionDescriptor[] | null = null;
 
   summaryBadges: StateBadge[] = [];
@@ -1260,6 +1308,44 @@ export class XAilyStateViewerComponent implements OnChanges {
 
   getOutputResourceHref(row: { outputKind?: string; outputUri?: string }): string | null {
     return row.outputKind === 'resource' && row.outputUri ? row.outputUri : null;
+  }
+
+  getResolvedReferenceLabel(reference: string): string {
+    const host = AilyHost.get();
+    return getBlocklyArtifactReferenceLabel(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.sessionId,
+    });
+  }
+
+  canOpenReference(reference: string): boolean {
+    return Boolean(this.resolveReferenceTarget(reference)?.absolutePath && AilyHost.get().editor?.showTextDocument);
+  }
+
+  openReference(reference: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const target = this.resolveReferenceTarget(reference);
+    const projectPath = this.getProjectPath();
+    if (!target || !projectPath) {
+      return;
+    }
+
+    void Promise.resolve(AilyHost.get().editor?.showTextDocument?.(target.absolutePath, { projectPath }));
+  }
+
+  private resolveReferenceTarget(reference: string) {
+    const host = AilyHost.get();
+    return resolveBlocklyArtifactReferenceTarget(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.sessionId,
+    });
+  }
+
+  private getProjectPath(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath || host.project.projectRootPath || '';
   }
 
 }

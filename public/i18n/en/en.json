@@ -418,6 +418,7 @@
         "TOKEN_COMPACTING": "Compressing…",
         "MODE_AGENT_FULL": "Agent Mode",
         "MODE_QA_FULL": "Q&A Mode",
+        "MODE_EDIT_FULL": "Edit Mode",
         "STOP_CURRENT_SESSION_FIRST": "Please stop the current session before creating a new one",
         "NO_HISTORY_SESSION": "No history session records",
         "MERMAID_SAVE_ARCH": "Save as architecture diagram",

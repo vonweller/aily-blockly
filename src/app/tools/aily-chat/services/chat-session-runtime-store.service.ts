@@ -1,0 +1,457 @@
+import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+
+import type { TurnResponseTurn } from 'aily-lex/browser';
+import {
+  DEFAULT_CHAT_SESSION_TYPE,
+  LOCAL_CHAT_SESSION_TYPE,
+  normalizeChatSessionType,
+} from '../core/chat-mode';
+import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import type { AuthQuotaInfo } from './auth-quota-state.service';
+import type { ChatInputNotice } from './chat-input-notice';
+import type { ContextBudgetSnapshot } from './context-budget-snapshot';
+import type { RequestQuotaSnapshot } from './request-quota-snapshot';
+import type { RequestQuotaServiceState } from './request-quota-state.service';
+
+export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'failed';
+
+export interface ChatSessionRuntimeCapabilities {
+  readonly canRunConcurrently: boolean;
+  readonly canContinueInPlace: boolean;
+  readonly supportsBackgroundPersistence: boolean;
+}
+
+export interface ChatSessionRuntimeDebugSummary {
+  readonly durableHostRecordPresent?: boolean;
+  readonly liveRuntimeOverlayPresent: boolean;
+  readonly pendingRequest: boolean;
+  readonly needsInput: boolean;
+  readonly attachedView: boolean;
+  readonly quotaOverlayPresent?: boolean;
+  readonly requestQuotaNotice?: boolean;
+  readonly authQuotaProjected?: boolean;
+  readonly contextBudgetOverlayPresent?: boolean;
+  readonly inputNoticeOverlayPresent?: boolean;
+  readonly lastExplicitInterruptAt?: number;
+  readonly lastExplicitDisposeAt?: number;
+  readonly lastViewDetachAt?: number;
+}
+
+export interface ChatSessionRuntimeQuotaOverlay {
+  readonly requestQuotaState?: RequestQuotaServiceState | null;
+  readonly requestQuotaSnapshot?: RequestQuotaSnapshot | null;
+  readonly requestInputNotice?: ChatInputNotice | null;
+  readonly authQuotaInfo?: AuthQuotaInfo | null;
+  readonly updatedAt: number;
+}
+
+export interface ChatSessionRuntimeViewOverlay {
+  readonly contextBudgetSnapshot?: ContextBudgetSnapshot | null;
+  readonly chatInputNotice?: ChatInputNotice | null;
+  readonly updatedAt: number;
+}
+
+export interface ChatSessionRuntimeState {
+  readonly turnResponses: readonly TurnResponseTurn[];
+  readonly hostProjectionState: HostTurnResponseState | null;
+  readonly status?: ChatSessionRuntimeStatus;
+  readonly description?: string;
+  readonly requestInProgress: boolean;
+  readonly attachedView: boolean;
+  readonly supportsInterruption: boolean;
+  readonly activeResponseHandle?: unknown;
+  readonly stopSession?: () => void;
+  readonly disposeSession?: () => void;
+  readonly capabilities?: ChatSessionRuntimeCapabilities;
+  readonly debugSummary?: ChatSessionRuntimeDebugSummary;
+  readonly quotaOverlay?: ChatSessionRuntimeQuotaOverlay;
+  readonly viewOverlay?: ChatSessionRuntimeViewOverlay;
+}
+
+export const DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES: ChatSessionRuntimeCapabilities = {
+  canRunConcurrently: true,
+  canContinueInPlace: false,
+  supportsBackgroundPersistence: true,
+};
+
+export interface ChatSessionRuntimeCapabilityOwner {
+  readonly sessionType?: unknown;
+  readonly providerTarget?: unknown;
+  readonly customAgentTarget?: unknown;
+  readonly remoteProviderHandle?: unknown;
+  readonly customModeSource?: unknown;
+  readonly sessionCustomizationProviderLabel?: unknown;
+  readonly sessionCustomizationProviderIconId?: unknown;
+}
+
+export function resolveChatSessionRuntimeCapabilities(
+  owner?: ChatSessionRuntimeCapabilityOwner | null,
+): ChatSessionRuntimeCapabilities {
+  const sessionType = normalizeChatSessionType(owner?.sessionType, DEFAULT_CHAT_SESSION_TYPE);
+  if (sessionType === LOCAL_CHAT_SESSION_TYPE) {
+    return { ...DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES };
+  }
+
+  return {
+    canRunConcurrently: false,
+    canContinueInPlace: false,
+    supportsBackgroundPersistence: true,
+  };
+}
+
+export function resolveChatSessionRuntimeConcurrencyScope(
+  owner?: ChatSessionRuntimeCapabilityOwner | null,
+): string | undefined {
+  const capabilities = resolveChatSessionRuntimeCapabilities(owner);
+  if (capabilities.canRunConcurrently) {
+    return undefined;
+  }
+
+  const sessionType = normalizeChatSessionType(owner?.sessionType, DEFAULT_CHAT_SESSION_TYPE);
+  const remoteProviderHandle = normalizeRuntimeConcurrencyScopeSegment(owner?.remoteProviderHandle);
+  const providerTarget = normalizeRuntimeConcurrencyScopeSegment(owner?.providerTarget);
+  const customAgentTarget = normalizeRuntimeConcurrencyScopeSegment(owner?.customAgentTarget);
+  const customModeSource = normalizeRuntimeConcurrencyScopeSegment(owner?.customModeSource);
+  const sessionCustomizationProviderLabel = normalizeRuntimeConcurrencyScopeSegment(owner?.sessionCustomizationProviderLabel);
+  const sessionCustomizationProviderIconId = normalizeRuntimeConcurrencyScopeSegment(owner?.sessionCustomizationProviderIconId);
+  return [
+    `session-type:${sessionType}`,
+    ...(remoteProviderHandle ? [`remote:${remoteProviderHandle}`] : []),
+    ...(!remoteProviderHandle && providerTarget ? [`target:${providerTarget}`] : []),
+    ...(customAgentTarget ? [`agent:${customAgentTarget}`] : []),
+    ...(customModeSource ? [`mode-source:${customModeSource}`] : []),
+    ...(sessionCustomizationProviderLabel ? [`customization:${sessionCustomizationProviderLabel}`] : []),
+    ...(sessionCustomizationProviderIconId ? [`customization-icon:${sessionCustomizationProviderIconId}`] : []),
+  ].join('|');
+}
+
+function normalizeRuntimeConcurrencyScopeSegment(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().replace(/[\\]+/g, '/').replace(/\s+/g, ' ');
+  return normalized.length > 0 ? normalized.toLowerCase() : undefined;
+}
+
+type ChatSessionRuntimeStatePatch = Omit<
+  Partial<ChatSessionRuntimeState>,
+  | 'turnResponses'
+  | 'hostProjectionState'
+  | 'status'
+  | 'description'
+  | 'activeResponseHandle'
+  | 'stopSession'
+  | 'disposeSession'
+  | 'capabilities'
+  | 'debugSummary'
+  | 'quotaOverlay'
+  | 'viewOverlay'
+> & {
+  readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
+  readonly hostProjectionState?: HostTurnResponseState | null | undefined;
+  readonly status?: ChatSessionRuntimeStatus | null | undefined;
+  readonly description?: string | null | undefined;
+  readonly activeResponseHandle?: unknown | null | undefined;
+  readonly stopSession?: (() => void) | null;
+  readonly disposeSession?: (() => void) | null;
+  readonly capabilities?: Partial<ChatSessionRuntimeCapabilities> | null | undefined;
+  readonly debugSummary?: Partial<ChatSessionRuntimeDebugSummary> | null | undefined;
+  readonly quotaOverlay?: ChatSessionRuntimeQuotaOverlay | null | undefined;
+  readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
+};
+
+@Injectable()
+export class ChatSessionRuntimeStoreService {
+  private readonly runtimeStates = new Map<string, ChatSessionRuntimeState>();
+  private readonly runtimeChangedSubject = new Subject<string | null>();
+
+  readonly runtimeChanged$ = this.runtimeChangedSubject.asObservable();
+
+  read(sessionId: string | null | undefined): ChatSessionRuntimeState | undefined {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    return normalizedSessionId
+      ? this.runtimeStates.get(normalizedSessionId)
+      : undefined;
+  }
+
+  readTurnResponses(sessionId: string | null | undefined): readonly TurnResponseTurn[] | undefined {
+    return this.read(sessionId)?.turnResponses;
+  }
+
+  readHostProjectionState(sessionId: string | null | undefined): HostTurnResponseState | null | undefined {
+    return this.read(sessionId)?.hostProjectionState;
+  }
+
+  getSessionIds(): readonly string[] {
+    return [...this.runtimeStates.keys()];
+  }
+
+  replaceRuntimeState(
+    sessionId: string | null | undefined,
+    state: ChatSessionRuntimeStatePatch,
+  ): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    const previousState = this.runtimeStates.get(normalizedSessionId);
+    const nextTurnResponses = Array.isArray(state.turnResponses)
+      ? [...state.turnResponses]
+      : previousState?.turnResponses ?? [];
+    const nextHostProjectionState = state.hostProjectionState !== undefined
+      ? state.hostProjectionState ?? null
+      : previousState?.hostProjectionState ?? null;
+    const nextRequestInProgress = typeof state.requestInProgress === 'boolean'
+      ? state.requestInProgress
+      : previousState?.requestInProgress ?? false;
+    const nextStatus = this.resolveNextStatus(state.status, previousState);
+    const nextDescription = this.resolveNextDescription(state.description, previousState);
+    const nextActiveResponseHandle = state.activeResponseHandle !== undefined
+      ? state.activeResponseHandle ?? undefined
+      : previousState?.activeResponseHandle;
+    const nextCapabilities = this.resolveNextCapabilities(state.capabilities, previousState);
+    const nextQuotaOverlay = state.quotaOverlay !== undefined
+      ? state.quotaOverlay ?? undefined
+      : previousState?.quotaOverlay;
+    const nextViewOverlay = state.viewOverlay !== undefined
+      ? state.viewOverlay ?? undefined
+      : previousState?.viewOverlay;
+    const nextState: ChatSessionRuntimeState = {
+      turnResponses: nextTurnResponses,
+      hostProjectionState: nextHostProjectionState,
+      ...(nextStatus ? { status: nextStatus } : {}),
+      ...(nextDescription ? { description: nextDescription } : {}),
+      requestInProgress: nextRequestInProgress,
+      attachedView: typeof state.attachedView === 'boolean'
+        ? state.attachedView
+        : previousState?.attachedView ?? false,
+      supportsInterruption: typeof state.supportsInterruption === 'boolean'
+        ? state.supportsInterruption
+        : previousState?.supportsInterruption ?? false,
+      ...(nextActiveResponseHandle !== undefined ? { activeResponseHandle: nextActiveResponseHandle } : {}),
+      ...(nextQuotaOverlay ? { quotaOverlay: this.cloneQuotaOverlay(nextQuotaOverlay) } : {}),
+      ...(nextViewOverlay ? { viewOverlay: this.cloneViewOverlay(nextViewOverlay) } : {}),
+      ...(typeof state.stopSession === 'function'
+        ? { stopSession: state.stopSession }
+        : state.stopSession === null
+          ? {}
+        : previousState?.stopSession
+          ? { stopSession: previousState.stopSession }
+          : {}),
+      ...(typeof state.disposeSession === 'function'
+        ? { disposeSession: state.disposeSession }
+        : state.disposeSession === null
+          ? {}
+        : previousState?.disposeSession
+          ? { disposeSession: previousState.disposeSession }
+          : {}),
+      capabilities: nextCapabilities,
+      debugSummary: this.resolveNextDebugSummary(state.debugSummary, previousState, {
+        requestInProgress: nextRequestInProgress,
+        attachedView: typeof state.attachedView === 'boolean'
+          ? state.attachedView
+          : previousState?.attachedView ?? false,
+        status: nextStatus,
+        hasLiveOverlay: nextRequestInProgress
+          || nextTurnResponses.length > 0
+          || !!nextHostProjectionState
+          || !!nextStatus
+          || !!nextDescription
+          || !!nextQuotaOverlay
+          || !!nextViewOverlay,
+        quotaOverlayPresent: !!nextQuotaOverlay,
+        requestQuotaNotice: !!nextQuotaOverlay?.requestInputNotice,
+        authQuotaProjected: !!nextQuotaOverlay?.authQuotaInfo,
+        contextBudgetOverlayPresent: !!nextViewOverlay?.contextBudgetSnapshot,
+        inputNoticeOverlayPresent: !!nextViewOverlay?.chatInputNotice,
+      }),
+    };
+
+    if (!nextState.requestInProgress
+      && nextState.turnResponses.length === 0
+      && !nextState.hostProjectionState
+      && !nextState.attachedView
+      && !nextState.status
+      && !nextState.description
+      && nextState.activeResponseHandle === undefined
+      && !nextState.quotaOverlay
+      && !nextState.viewOverlay) {
+      this.clearSession(normalizedSessionId);
+      return;
+    }
+
+    this.runtimeStates.set(normalizedSessionId, nextState);
+    this.runtimeChangedSubject.next(normalizedSessionId);
+  }
+
+  replaceTurnResponses(
+    sessionId: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): void {
+    this.replaceRuntimeState(sessionId, { turnResponses });
+  }
+
+  stopSession(sessionId: string | null | undefined): boolean {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const runtimeState = this.runtimeStates.get(normalizedSessionId);
+    if (!runtimeState?.supportsInterruption || typeof runtimeState.stopSession !== 'function') {
+      return false;
+    }
+
+    runtimeState.stopSession();
+    return true;
+  }
+
+  disposeSession(sessionId: string | null | undefined): boolean {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const runtimeState = this.runtimeStates.get(normalizedSessionId);
+    if (typeof runtimeState?.disposeSession !== 'function') {
+      return false;
+    }
+
+    runtimeState.disposeSession();
+    return true;
+  }
+
+  clearSession(sessionId: string | null | undefined): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    if (!this.runtimeStates.delete(normalizedSessionId)) {
+      return;
+    }
+
+    this.runtimeChangedSubject.next(normalizedSessionId);
+  }
+
+  clearAll(): void {
+    if (this.runtimeStates.size === 0) {
+      return;
+    }
+
+    this.runtimeStates.clear();
+    this.runtimeChangedSubject.next(null);
+  }
+
+  private normalizeSessionId(sessionId: string | null | undefined): string {
+    return typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+  }
+
+  private resolveNextStatus(
+    status: ChatSessionRuntimeStatus | null | undefined,
+    previousState: ChatSessionRuntimeState | undefined,
+  ): ChatSessionRuntimeStatus | undefined {
+    if (status === null) {
+      return undefined;
+    }
+
+    if (status) {
+      return status;
+    }
+
+    return previousState?.status;
+  }
+
+  private resolveNextDescription(
+    description: string | null | undefined,
+    previousState: ChatSessionRuntimeState | undefined,
+  ): string | undefined {
+    if (description === null) {
+      return undefined;
+    }
+
+    if (typeof description === 'string') {
+      const normalized = description.replace(/\s+/g, ' ').trim();
+      return normalized || undefined;
+    }
+
+    return previousState?.description;
+  }
+
+  private resolveNextCapabilities(
+    capabilities: Partial<ChatSessionRuntimeCapabilities> | null | undefined,
+    previousState: ChatSessionRuntimeState | undefined,
+  ): ChatSessionRuntimeCapabilities {
+    if (capabilities === null) {
+      return { ...DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES };
+    }
+
+    return {
+      ...DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
+      ...(previousState?.capabilities ?? {}),
+      ...(capabilities ?? {}),
+    };
+  }
+
+  private resolveNextDebugSummary(
+    debugSummary: Partial<ChatSessionRuntimeDebugSummary> | null | undefined,
+    previousState: ChatSessionRuntimeState | undefined,
+    liveState: {
+      readonly requestInProgress: boolean;
+      readonly attachedView: boolean;
+      readonly status?: ChatSessionRuntimeStatus;
+      readonly hasLiveOverlay: boolean;
+      readonly quotaOverlayPresent: boolean;
+      readonly requestQuotaNotice: boolean;
+      readonly authQuotaProjected: boolean;
+      readonly contextBudgetOverlayPresent: boolean;
+      readonly inputNoticeOverlayPresent: boolean;
+    },
+  ): ChatSessionRuntimeDebugSummary {
+    const previousSummary = previousState?.debugSummary;
+    return {
+      ...(previousSummary ?? {}),
+      ...(debugSummary ?? {}),
+      liveRuntimeOverlayPresent: liveState.hasLiveOverlay,
+      pendingRequest: liveState.requestInProgress,
+      needsInput: liveState.status === 'needs_input',
+      attachedView: liveState.attachedView,
+      quotaOverlayPresent: liveState.quotaOverlayPresent,
+      requestQuotaNotice: liveState.requestQuotaNotice,
+      authQuotaProjected: liveState.authQuotaProjected,
+      contextBudgetOverlayPresent: liveState.contextBudgetOverlayPresent,
+      inputNoticeOverlayPresent: liveState.inputNoticeOverlayPresent,
+    };
+  }
+
+  private cloneQuotaOverlay(overlay: ChatSessionRuntimeQuotaOverlay): ChatSessionRuntimeQuotaOverlay {
+    return {
+      ...(overlay.requestQuotaState ? { requestQuotaState: clonePlainObject(overlay.requestQuotaState) } : {}),
+      ...(overlay.requestQuotaSnapshot ? { requestQuotaSnapshot: clonePlainObject(overlay.requestQuotaSnapshot) } : {}),
+      ...(overlay.requestInputNotice ? { requestInputNotice: clonePlainObject(overlay.requestInputNotice) } : {}),
+      ...(overlay.authQuotaInfo ? { authQuotaInfo: clonePlainObject(overlay.authQuotaInfo) } : {}),
+      updatedAt: overlay.updatedAt,
+    };
+  }
+
+  private cloneViewOverlay(overlay: ChatSessionRuntimeViewOverlay): ChatSessionRuntimeViewOverlay {
+    return {
+      ...(overlay.contextBudgetSnapshot ? { contextBudgetSnapshot: clonePlainObject(overlay.contextBudgetSnapshot) } : {}),
+      ...(overlay.chatInputNotice ? { chatInputNotice: clonePlainObject(overlay.chatInputNotice) } : {}),
+      updatedAt: overlay.updatedAt,
+    };
+  }
+}
+
+function clonePlainObject<T>(value: T): T {
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  return JSON.parse(JSON.stringify(value)) as T;
+}

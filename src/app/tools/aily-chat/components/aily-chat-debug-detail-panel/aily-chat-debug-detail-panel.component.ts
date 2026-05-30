@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, Input, Output, ViewChild } from '@angular/core';
 
+import { AilyHost } from '../../core/host';
 import {
   getHostSessionDebugEventDetails,
   getHostSessionDebugEventTitle,
@@ -13,6 +14,7 @@ import {
   type HostSessionDebugResolvedTextContent,
   type HostSessionDebugResolvedToolCallContent,
 } from '../../services/host-session-debug-events';
+import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
 
 interface CustomizationSectionViewModel {
   readonly title: string;
@@ -107,5 +109,43 @@ export class AilyChatDebugDetailPanelComponent {
 
   get textContent(): HostSessionDebugResolvedTextContent | null {
     return this.resolvedContent?.kind === 'text' ? this.resolvedContent : null;
+  }
+
+  getReferenceDisplay(reference: string): string {
+    const host = AilyHost.get();
+    return getBlocklyArtifactReferenceLabel(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.event?.sessionId,
+    });
+  }
+
+  canOpenReference(reference: string): boolean {
+    return Boolean(this.resolveReferenceTarget(reference)?.absolutePath && AilyHost.get().editor?.showTextDocument);
+  }
+
+  openReference(reference: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const target = this.resolveReferenceTarget(reference);
+    const projectPath = this.getProjectPath();
+    if (!target || !projectPath) {
+      return;
+    }
+
+    void Promise.resolve(AilyHost.get().editor?.showTextDocument?.(target.absolutePath, { projectPath }));
+  }
+
+  private resolveReferenceTarget(reference: string) {
+    const host = AilyHost.get();
+    return resolveBlocklyArtifactReferenceTarget(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.event?.sessionId,
+    });
+  }
+
+  private getProjectPath(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath || host.project.projectRootPath || '';
   }
 }

@@ -145,6 +145,8 @@ export class LexRenderEventBridge {
     for (const turn of turnResponses) {
       this._turnResponses.set(turn.turnId, cloneTurnResponseTurn(turn));
     }
+
+    this.restoreHydratedCurrentTurn();
   }
 
   processInteractionEvent(event: Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' | 'question_request' }>): boolean {
@@ -196,7 +198,24 @@ export class LexRenderEventBridge {
 
   finalizeCurrentTurn(fallbackStatus: TurnResponseStatus = 'completed'): boolean {
     if (!this._currentTurn) {
-      return false;
+      const latestStreamingTurn = this.resolveLatestStreamingTurn();
+      if (!latestStreamingTurn) {
+        return false;
+      }
+
+      const finalizedTurn: TurnResponseTurn = {
+        ...latestStreamingTurn,
+        updatedAt: Date.now(),
+        response: {
+          ...latestStreamingTurn.response,
+          status: fallbackStatus,
+          updatedAt: Date.now(),
+        },
+      };
+      this._turnResponses.set(finalizedTurn.turnId, finalizedTurn);
+      this.ctx.invalidateHostRequestGraph();
+      this.ctx.triggerSyncDetectChanges();
+      return true;
     }
 
     this.syncCurrentTurn(Date.now(), fallbackStatus);
@@ -357,6 +376,34 @@ export class LexRenderEventBridge {
 
     return this._currentTurn.request.content === request.content
       && (this._currentTurn.request.displayContent ?? '') === (request.displayContent ?? '');
+  }
+
+  private resolveLatestStreamingTurn(): TurnResponseTurn | null {
+    let latest: TurnResponseTurn | null = null;
+    for (const turn of this._turnResponses.values()) {
+      if (turn.response.status !== 'streaming') {
+        continue;
+      }
+
+      if (!latest || turn.updatedAt > latest.updatedAt) {
+        latest = turn;
+      }
+    }
+
+    return latest;
+  }
+
+  private restoreHydratedCurrentTurn(): void {
+    const latestStreamingTurn = this.resolveLatestStreamingTurn();
+    if (!latestStreamingTurn) {
+      this._currentTurn = null;
+      this._currentTurnHasExecutionError = false;
+      return;
+    }
+
+    this._currentTurn = cloneTurnResponseTurn(latestStreamingTurn);
+    this._currentTurnHasExecutionError = false;
+    this._streamBuilder.hydrateTurn(this._currentTurn);
   }
 
   private resolveLiveFallbackStatus(): TurnResponseStatus {

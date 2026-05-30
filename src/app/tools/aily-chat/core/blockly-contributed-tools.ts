@@ -63,14 +63,10 @@ type BlocklyToolProviderOverrides = BlocklyWorkspaceToolOverrides;
 
 function createHandlers(overrides?: BlocklyToolProviderOverrides): Record<string, InvokeHandler> {
   return {
-    ...createBlocklyWorkspaceHandlers(overrides),
     ...createBlocklyProjectDiscoveryHandlers(),
+    ...createBlocklyWorkspaceHandlers(overrides),
     ...createBlocklyPlaceholderHandlers(),
   };
-}
-
-function appendWorkspaceContributions(contributions: IToolContribution[], hostAPI: IExternalHostAPI): void {
-  appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
 }
 
 function appendProjectContributions(contributions: IToolContribution[], hostAPI: IExternalHostAPI): void {
@@ -84,7 +80,7 @@ function appendDiscoveryContributions(contributions: IToolContribution[], hostAP
 function collectBlocklyContributions(hostAPI: IExternalHostAPI): IToolContribution[] {
   const contributions: IToolContribution[] = [];
 
-  appendWorkspaceContributions(contributions, hostAPI);
+  appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
   appendProjectContributions(contributions, hostAPI);
   appendDiscoveryContributions(contributions, hostAPI);
   appendLegacyHostContributions(contributions, hostAPI);

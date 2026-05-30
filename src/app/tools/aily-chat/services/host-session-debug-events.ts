@@ -6,6 +6,10 @@ import {
 } from 'aily-lex/browser';
 
 import type { HostSessionRecord } from './chat-history.service';
+import { resolveHostSessionInteractionActionSummary } from '../helpers/host-session-interaction-action';
+import { readPendingPlanReview } from '../helpers/host-session-restore-bridge';
+import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
+import { resolveHostSessionProviderOptions } from '../helpers/host-session-input-state';
 
 export type HostSessionDebugEventKind =
   | 'toolCall'
@@ -379,6 +383,95 @@ function buildHostSessionDebugArtifacts(
   const events: HostSessionDebugEvent[] = [];
   const resolvedContentById = new Map<string, HostSessionDebugResolvedEventContent>();
   let sequence = 0;
+  const sessionEventTurnId = (record.turnResponses?.[record.turnResponses.length - 1]?.turnId ?? '__session__').trim() || '__session__';
+  const sessionEventCreated = normalizeTimestamp(record.metadata?.updatedAt, record.metadata?.createdAt);
+  const requestRouting = resolveHostSessionRequestRoutingSummary(record);
+  const providerOptions = resolveHostSessionProviderOptions(record);
+  const interactionActionSummary = resolveHostSessionInteractionActionSummary(record);
+  const pendingPlanReview = readPendingPlanReview(record.metadata?.requestContext?.interactionContinuation);
+
+  if (providerOptions.folderPath || providerOptions.permissionMode !== 'default' || providerOptions.permissionLevel) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Session Provider Options',
+      details: formatProviderOptionsDetails(providerOptions),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(providerOptions, null, 2),
+    });
+  }
+
+  if (requestRouting.requestModeId || requestRouting.customAgentTarget || requestRouting.permissionLevel) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Request Routing',
+      details: formatRequestRoutingDetails(requestRouting),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(requestRouting, null, 2),
+    });
+  }
+
+  if (interactionActionSummary) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Interaction Action',
+      details: formatInteractionActionDetails(interactionActionSummary),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(interactionActionSummary, null, 2),
+    });
+  }
+
+  if (pendingPlanReview) {
+    const payload = {
+      id: pendingPlanReview.id,
+      title: pendingPlanReview.title,
+      ...(pendingPlanReview.planUri ? { planUri: pendingPlanReview.planUri } : {}),
+      canProvideFeedback: pendingPlanReview.canProvideFeedback,
+      actions: pendingPlanReview.actions.map(action => action.id),
+    };
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Pending Plan Review',
+      details: formatPendingPlanReviewDetails(payload),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(payload, null, 2),
+    });
+  }
 
   for (const turn of record.turnResponses ?? []) {
     const userMessageSections = buildMessageSections('request', turn.request.displayContent ?? turn.request.content);
@@ -601,6 +694,52 @@ function deriveDuration(start: number | undefined, end: number | undefined): num
   return Math.max(0, end - start);
 }
 
+function formatRequestRoutingDetails(
+  requestRouting: ReturnType<typeof resolveHostSessionRequestRoutingSummary>,
+): string {
+  return [
+    `selected=${requestRouting.selectedModeId}`,
+    requestRouting.requestModeId ? `request=${requestRouting.requestModeId}` : '',
+    requestRouting.customAgentTarget ? `customAgent=${requestRouting.customAgentTarget}` : '',
+    requestRouting.permissionLevel ? `permission=${requestRouting.permissionLevel}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatProviderOptionsDetails(
+  providerOptions: ReturnType<typeof resolveHostSessionProviderOptions>,
+): string {
+  return [
+    providerOptions.folderPath ? `folder=${providerOptions.folderPath}` : '',
+    `permissionMode=${providerOptions.permissionMode}`,
+    providerOptions.permissionLevel ? `permissionLevel=${providerOptions.permissionLevel}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatInteractionActionDetails(
+  interactionActionSummary: NonNullable<ReturnType<typeof resolveHostSessionInteractionActionSummary>>,
+): string {
+  return [
+    `kind=${interactionActionSummary.kind}`,
+    interactionActionSummary.result ? `result=${interactionActionSummary.result}` : '',
+    interactionActionSummary.actionId ? `action=${interactionActionSummary.actionId}` : '',
+    interactionActionSummary.sourceEvent ? `source=${interactionActionSummary.sourceEvent}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatPendingPlanReviewDetails(review: {
+  title: string;
+  planUri?: string;
+  canProvideFeedback: boolean;
+  actions: readonly string[];
+}): string {
+  return [
+    `title=${review.title}`,
+    review.planUri ? `plan=${review.planUri}` : '',
+    `feedback=${review.canProvideFeedback ? 'enabled' : 'disabled'}`,
+    review.actions.length > 0 ? `actions=${review.actions.join('|')}` : '',
+  ].filter(Boolean).join(', ');
+}
+
 function buildMessageSections(name: string, content: string | undefined): HostSessionDebugMessageSection[] {
   const text = typeof content === 'string' ? content.trim() : '';
   return text ? [{ name, content: text }] : [];
@@ -796,9 +935,7 @@ function buildInstructionCustomizationLogs(
     : [];
 
   return diagnostics.map((diagnostic) => {
-    const name = typeof diagnostic['name'] === 'string' && diagnostic['name'].trim().length > 0
-      ? diagnostic['name'].trim()
-      : 'unknown';
+    const name = formatInstructionCustomizationName(diagnostic);
     const source = typeof diagnostic['source'] === 'string' && diagnostic['source'].trim().length > 0
       ? diagnostic['source'].trim()
       : undefined;
@@ -815,6 +952,38 @@ function buildInstructionCustomizationLogs(
       ...(reason ? { reason } : {}),
     } satisfies HostSessionDebugCustomizationLogEntry;
   });
+}
+
+function formatInstructionCustomizationName(diagnostic: Record<string, unknown>): string {
+  const displayPath = typeof diagnostic['displayPath'] === 'string' ? diagnostic['displayPath'].trim() : '';
+  if (displayPath) {
+    return `指令文件 ${displayPath}`;
+  }
+
+  const reference = typeof diagnostic['reference'] === 'string' ? diagnostic['reference'].trim() : '';
+  const referenceLabel = formatInstructionCustomizationReference(reference);
+  if (referenceLabel) {
+    return `指令文件 ${referenceLabel}`;
+  }
+
+  const name = typeof diagnostic['name'] === 'string' ? diagnostic['name'].trim() : '';
+  return name ? `指令文件 ${name}` : '指令文件 unknown';
+}
+
+function formatInstructionCustomizationReference(reference: string): string | undefined {
+  if (!reference) {
+    return undefined;
+  }
+
+  const normalized = reference.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  const fileName = segments.at(-1);
+  if (!fileName) {
+    return undefined;
+  }
+
+  const parent = segments.at(-2);
+  return parent === '.aily' ? `${parent}/${fileName}` : fileName;
 }
 
 function buildInstructionCustomizationContent(

@@ -53,6 +53,9 @@ function buildEndpoint(
 export interface LexStatelessStreamOptions {
   modelId?: string;
   llmConfig?: { apiKey: string; baseUrl: string } | null;
+  requestContext?: {
+    requestKind?: 'conversation' | 'utility';
+  };
 }
 
 /**
@@ -81,8 +84,11 @@ export function lexStatelessStream(
           modelId: options?.modelId || 'default',
           maxOutputTokens: 4096,
         };
+        const requestContext = options?.requestContext?.requestKind
+          ? { requestKind: options.requestContext.requestKind }
+          : undefined;
 
-        for await (const chunk of endpoint.stream(messages, [], config, abortCtrl.signal)) {
+        for await (const chunk of endpoint.stream(messages, [], config, abortCtrl.signal, requestContext as any)) {
           if (abortCtrl.signal.aborted) return;
           if (chunk.type === 'text' && chunk.text) {
             observer.next({ type: 'ModelClientStreamingChunkEvent', content: chunk.text });

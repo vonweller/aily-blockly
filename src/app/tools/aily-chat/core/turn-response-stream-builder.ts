@@ -19,6 +19,7 @@ type IncrementalTurnResponseRuntime = Pick<
   | 'finalizeRunningParts'
   | 'reset'
   | 'process'
+  | 'hydrateTurnResponseParts'
   | 'collectTurnResponseParts'
   | 'projectPendingPartsTo'
   | 'drainTurnResponsePartChanges'
@@ -231,6 +232,30 @@ export class TurnResponseIncrementalBuilder {
   reset(): void {
     this.currentProjection = null;
     this.runtime.reset();
+  }
+
+  hydrateTurn(turn: TurnResponseTurn): void {
+    this.runtime.hydrateTurnResponseParts(turn.response.parts ?? []);
+    this.currentProjection = {
+      turnId: turn.turnId,
+      sourceTurnId: turn.turnId,
+      request: turn.request,
+      rounds: turn.rounds ?? [],
+      usage: turn.usage,
+      participant: turn.response.participant,
+      slashCommand: turn.responseModel?.slashCommand,
+      followups: turn.responseModel?.followups
+        ?? (turn.response as { followups?: readonly TurnResponseFollowup[] } | undefined)?.followups,
+      modelName: turn.responseModel?.modelName,
+      modelBillingLabel: turn.responseModel?.modelBillingLabel,
+      quotaSnapshot: turn.responseModel?.quotaSnapshot,
+      usedContext: turn.response.usedContext,
+      contentReferences: turn.response.contentReferences,
+      codeCitations: turn.response.codeCitations,
+      progressMessages: turn.response.progressMessages,
+      continuation: turn.response.continuation,
+      createdAt: turn.createdAt,
+    };
   }
 
   destroy(): void {

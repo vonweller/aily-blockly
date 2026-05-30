@@ -313,7 +313,7 @@ export class MenuComponent implements AfterViewChecked {
 
   actionClick(event: MouseEvent, action: { icon: string; action: string }, item: any) {
     event.stopPropagation();
-    this.actionClickEvent.emit({ action: action.action, data: item });
+    this.actionClickEvent.emit({ event, action: action.action, item });
   }
 
   handleDocumentClick = (event: MouseEvent) => {

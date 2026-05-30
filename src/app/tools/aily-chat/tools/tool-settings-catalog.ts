@@ -30,7 +30,8 @@ const PROJECT_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
   { name: 'clone_repository', description: '下载远程 Git 仓库源码。', agents: [MAIN_AGENT_TYPE] },
   { name: 'web_search', description: '执行联网搜索。', agents: [MAIN_AGENT_TYPE] },
   { name: 'todo_write_tool', description: '管理任务清单。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'memory', description: '读写会话或项目记忆。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'memory', description: '读写 /memories 下的 user、session、repo 记忆文件。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'resolve_memory_file_uri', description: '把 /memories 逻辑路径解析为真实文件 URI。', agents: [MAIN_AGENT_TYPE] },
   { name: 'get_errors', description: '收集项目中的诊断错误。', agents: [MAIN_AGENT_TYPE] },
 ];
 

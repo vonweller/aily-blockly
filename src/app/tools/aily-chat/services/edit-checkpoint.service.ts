@@ -947,6 +947,28 @@ export class EditCheckpointService {
     };
   }
 
+  getRequestEditsSummarySync(turnId: string): EditsSummary | null {
+    const normalizedTurnId = typeof turnId === 'string'
+      ? turnId.trim()
+      : '';
+    if (!normalizedTurnId) {
+      return null;
+    }
+
+    const diffService = this.getEditingDiffService();
+    if (!diffService) {
+      return null;
+    }
+
+    const summary = diffService.getRequestSummarySync(normalizedTurnId);
+    if (!summary) {
+      return null;
+    }
+
+    const snapshot = this.getSnapshotByTurnId(normalizedTurnId);
+    return this.toEditsSummaryFromRequestSummary(summary, snapshot, snapshot?.checkpointId);
+  }
+
   // ==================== 清理 ====================
 
   /**

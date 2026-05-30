@@ -5,6 +5,15 @@ type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
 type LexAgentCreationResult = BlocklyLexAgentInstance | AgentHandle;
 type LexSessionSnapshot = ReturnType<AgentHandle['saveSession']>;
 
+interface LexSessionRuntimeEntry {
+  readonly sessionId: string;
+  agent: BlocklyLexAgentInstance;
+  handle: AgentHandle | null;
+  configKey: string | null;
+  todoUnsubscribe: (() => void) | null;
+  abortController: AbortController | null;
+}
+
 function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
   return typeof (value as AgentHandle).chat === 'function'
     && typeof (value as AgentHandle).saveSession === 'function'
@@ -13,11 +22,9 @@ function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
 
 export class LexAgentLifecycleBridge {
   private _lex: AilyLexModule | null = null;
-  private _agent: BlocklyLexAgentInstance | null = null;
-  private _handle: AgentHandle | null = null;
-  private _abortController: AbortController | null = null;
+  private _activeSessionId: string | null = null;
   private _loadPromise: Promise<boolean> | null = null;
-  private _todoUnsubscribe: (() => void) | null = null;
+  private readonly _sessionEntries = new Map<string, LexSessionRuntimeEntry>();
 
   constructor(
     private readonly deps: {
@@ -35,20 +42,61 @@ export class LexAgentLifecycleBridge {
     },
   ) {}
 
-  getAgent(): BlocklyLexAgentInstance | null {
-    return this._agent;
+  private get activeEntry(): LexSessionRuntimeEntry | null {
+    return this.resolveEntry(this._activeSessionId);
   }
 
-  getHandle(): AgentHandle | null {
-    return this._handle;
+  getAgent(sessionId?: string | null): BlocklyLexAgentInstance | null {
+    return this.resolveEntry(sessionId)?.agent ?? null;
+  }
+
+  getHandle(sessionId?: string | null): AgentHandle | null {
+    return this.resolveEntry(sessionId)?.handle ?? null;
   }
 
   getLex(): AilyLexModule | null {
     return this._lex;
   }
 
-  setAbortController(controller: AbortController | null): void {
-    this._abortController = controller;
+  getSessionIds(): readonly string[] {
+    return [...this._sessionEntries.keys()];
+  }
+
+  saveSession(sessionId?: string | null): LexSessionSnapshot | null {
+    const entry = this.resolveEntry(sessionId);
+    return entry?.handle?.saveSession?.()
+      ?? entry?.agent.saveSession?.()
+      ?? null;
+  }
+
+  getSessionSnapshot(sessionId?: string | null): LexSessionSnapshot | null {
+    const entry = this.resolveEntry(sessionId);
+    return entry?.handle?.getSessionSnapshot?.()
+      ?? entry?.agent.getSessionSnapshot?.()
+      ?? null;
+  }
+
+  isConfiguredFor(sessionId?: string, configKey?: string): boolean {
+    const targetSessionId = sessionId || this.deps.getSessionId();
+    const entry = this._sessionEntries.get(targetSessionId);
+    if (!entry) {
+      return false;
+    }
+
+    if (typeof configKey === 'string') {
+      return entry.configKey === configKey;
+    }
+
+    return true;
+  }
+
+  setAbortController(sessionId: string | null | undefined, controller: AbortController | null): void {
+    const targetEntry = this.resolveEntry(sessionId);
+    if (!targetEntry) {
+      return;
+    }
+
+    targetEntry.abortController = controller;
   }
 
   async loadModule(): Promise<boolean> {
@@ -73,79 +121,162 @@ export class LexAgentLifecycleBridge {
     return this._loadPromise;
   }
 
-  async ensureAgent(sessionId?: string): Promise<boolean> {
+  async ensureAgent(sessionId?: string, configKey?: string): Promise<boolean> {
     if (!await this.loadModule()) {
       return false;
     }
 
     const lex = this._lex!;
     const targetSessionId = sessionId || this.deps.getSessionId();
-    const snapshotToRestore = this.captureLiveSessionSnapshot(targetSessionId);
-    this.disposeActiveAgent();
-    const created = this.deps.createAgent(lex, targetSessionId);
-    if (isAgentHandle(created)) {
-      this._handle = created;
-      this._agent = created.agent as BlocklyLexAgentInstance;
-    } else {
-      this._handle = null;
-      this._agent = created;
+    const normalizedConfigKey = typeof configKey === 'string' ? configKey : null;
+    const existingEntry = this._sessionEntries.get(targetSessionId) ?? null;
+
+    if (existingEntry) {
+      if (normalizedConfigKey !== null) {
+        if (existingEntry.configKey === normalizedConfigKey) {
+          this._activeSessionId = targetSessionId;
+          return true;
+        }
+      } else if (this._activeSessionId !== targetSessionId) {
+        this._activeSessionId = targetSessionId;
+        return true;
+      }
     }
+
+    const snapshotToRestore = this.captureLiveSessionSnapshot(existingEntry);
+    if (existingEntry) {
+      this.disposeSessionEntry(existingEntry);
+    }
+
+    const created = this.deps.createAgent(lex, targetSessionId);
+    const nextEntry = this.createSessionEntry(targetSessionId, created, normalizedConfigKey);
+    this._sessionEntries.set(targetSessionId, nextEntry);
+    this._activeSessionId = targetSessionId;
 
     if (snapshotToRestore) {
       try {
-        this.restoreLiveSessionSnapshot(snapshotToRestore);
+        this.restoreLiveSessionSnapshot(nextEntry, snapshotToRestore);
       } catch (error) {
         console.warn('[LexStream] restore rebuilt agent snapshot failed:', error);
       }
     }
 
-    this._todoUnsubscribe = this.deps.onAgentReady?.(this._agent, lex, this._todoUnsubscribe) ?? this._todoUnsubscribe;
+    nextEntry.todoUnsubscribe = this.deps.onAgentReady?.(nextEntry.agent, lex, nextEntry.todoUnsubscribe) ?? nextEntry.todoUnsubscribe;
     return true;
   }
 
-  stop(): void {
-    this._abortController?.abort();
-    this._abortController = null;
-    this._handle?.abort?.('用户取消');
-    if (!this._handle) {
-      this._agent?.abort?.('用户取消');
-    }
-  }
-
-  dispose(): void {
-    this.stop();
-    this._todoUnsubscribe?.();
-    this._todoUnsubscribe = null;
-    this.disposeActiveAgent();
-  }
-
-  private disposeActiveAgent(): void {
-    if (this._handle) {
-      this._handle.dispose();
-      this._handle = null;
-      this._agent = null;
+  stop(sessionId?: string): void {
+    const targetEntry = this.resolveEntry(sessionId);
+    if (!targetEntry) {
       return;
     }
 
-    this._agent?.dispose();
-    this._agent = null;
+    targetEntry.abortController?.abort();
+    targetEntry.abortController = null;
+
+    targetEntry.handle?.abort?.('用户取消');
+    if (!targetEntry.handle) {
+      targetEntry.agent.abort?.('用户取消');
+    }
   }
 
-  private captureLiveSessionSnapshot(targetSessionId: string): LexSessionSnapshot | null {
-    const snapshot = this._handle?.saveSession?.()
-      ?? this._agent?.saveSession?.()
+  dispose(sessionId?: string): void {
+    const targetSessionId = this.resolveSessionId(sessionId);
+    const targetEntry = this.resolveEntry(sessionId);
+    if (!targetEntry) {
+      if (!targetSessionId) {
+        this._activeSessionId = null;
+      }
+      return;
+    }
+
+    this.stop(targetEntry.sessionId);
+    this._sessionEntries.delete(targetEntry.sessionId);
+    this.disposeSessionEntry(targetEntry);
+    if (targetEntry.sessionId === this._activeSessionId) {
+      this._activeSessionId = null;
+    }
+  }
+
+  disposeAll(): void {
+    this.stop();
+    for (const entry of this._sessionEntries.values()) {
+      this.disposeSessionEntry(entry);
+    }
+    this._sessionEntries.clear();
+    this._activeSessionId = null;
+  }
+
+  private createSessionEntry(
+    sessionId: string,
+    created: LexAgentCreationResult,
+    configKey: string | null,
+  ): LexSessionRuntimeEntry {
+    if (isAgentHandle(created)) {
+      return {
+        sessionId,
+        agent: created.agent as BlocklyLexAgentInstance,
+        handle: created,
+        configKey,
+        todoUnsubscribe: null,
+        abortController: null,
+      };
+    }
+
+    return {
+      sessionId,
+      agent: created,
+      handle: null,
+      configKey,
+      todoUnsubscribe: null,
+      abortController: null,
+    };
+  }
+
+  private disposeSessionEntry(entry: LexSessionRuntimeEntry): void {
+    entry.abortController?.abort();
+    entry.abortController = null;
+    entry.todoUnsubscribe?.();
+    entry.todoUnsubscribe = null;
+
+    if (entry.handle) {
+      entry.handle.dispose();
+      return;
+    }
+
+    entry.agent.dispose();
+  }
+
+
+  private resolveSessionId(sessionId?: string | null): string | null {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : this._activeSessionId;
+    return targetSessionId ?? null;
+  }
+
+  private resolveEntry(sessionId?: string | null): LexSessionRuntimeEntry | null {
+    const targetSessionId = this.resolveSessionId(sessionId);
+    return targetSessionId
+      ? this._sessionEntries.get(targetSessionId) ?? null
+      : null;
+  }
+
+  private captureLiveSessionSnapshot(entry: LexSessionRuntimeEntry | null): LexSessionSnapshot | null {
+    const snapshot = entry?.handle?.saveSession?.()
+      ?? entry?.agent.saveSession?.()
       ?? null;
-    return snapshot?.sessionId === targetSessionId
+    return snapshot?.sessionId === entry?.sessionId
       ? snapshot
       : null;
   }
 
-  private restoreLiveSessionSnapshot(snapshot: LexSessionSnapshot): void {
-    if (this._handle?.restoreSession) {
-      this._handle.restoreSession(snapshot);
+  private restoreLiveSessionSnapshot(entry: LexSessionRuntimeEntry, snapshot: LexSessionSnapshot): void {
+    if (entry.handle?.restoreSession) {
+      entry.handle.restoreSession(snapshot);
       return;
     }
 
-    this._agent?.restoreSession?.(snapshot);
+    entry.agent.restoreSession?.(snapshot);
   }
 }

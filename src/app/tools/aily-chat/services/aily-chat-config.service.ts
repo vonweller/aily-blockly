@@ -16,6 +16,7 @@ import {
     MAIN_AGENT_LEGACY_ALIAS,
     MAIN_AGENT_TYPE,
     normalizeAgentIdentifier,
+    normalizeAgentIdentifiers,
     SCHEMATIC_AGENT_LEGACY_ALIAS,
     SCHEMATIC_AGENT_TYPE,
 } from '../core/agent-identifiers';
@@ -248,6 +249,12 @@ export interface LexTerminalPolicyConfig {
     inheritDefaultAllowList?: boolean;
 }
 
+export type ChatSessionViewerOrientationSetting = 'stacked' | 'sideBySide';
+
+function normalizeSessionViewerOrientationSetting(value: unknown): ChatSessionViewerOrientationSetting {
+    return value === 'stacked' ? 'stacked' : 'sideBySide';
+}
+
 export type WorkspacePermissionRulesByProject = Record<string, PermissionRuleInput[]>;
 export type WorkspaceApprovalCombinationsByProject = Record<string, string[]>;
 
@@ -277,6 +284,10 @@ export interface AilyChatConfig {
         schematicAgent?: AgentToolsConfig;
         [agentName: string]: AgentToolsConfig | undefined;
     };
+    /** 是否启用本地 memory tool（对齐 chat.tools.memory.enabled）。 */
+    memoryToolEnabled?: boolean;
+    /** 是否启用 Copilot-backed repository memory（对齐 chat.copilotMemory.enabled）。 */
+    copilotMemoryEnabled?: boolean;
     /** 安全工作区配置 */
     securityWorkspaces?: {
         /** 是否允许访问项目文件 */
@@ -298,10 +309,20 @@ export interface AilyChatConfig {
     summarizationThresholdRatio?: number;
     /** 默认自动保存变更（AI编辑完成后自动保留，不弹出变更面板） */
     autoSaveEdits?: boolean;
+    /** session viewer 布局偏好；对齐 VS Code chat.view.sessions.orientation。 */
+    sessionViewerOrientation?: ChatSessionViewerOrientationSetting;
     /** 用户级 instruction folders，扫描其中的 `*.instructions.md`。 */
     userInstructionFolders?: string[];
     /** 项目级 instruction folders，扫描其中的 `*.instructions.md`。 */
     projectInstructionFolders?: string[];
+    /** 用户级 agent folders，扫描其中的 `.agent.md` / legacy `.chatmode.md`。 */
+    userAgentFolders?: string[];
+    /** 项目级 agent folders，扫描其中的 `.agent.md` / legacy `.chatmode.md`。 */
+    projectAgentFolders?: string[];
+    /** 对齐 upstream ChatModes：若生产态已绑定 session customization item provider，则 custom agents 优先从该 source 读取。 */
+    useChatSessionCustomizationsForCustomAgents?: boolean;
+    /** 在 custom agent picker 中隐藏的 customAgentTarget 列表。 */
+    hiddenCustomAgentTargets?: string[];
     /** 追加到 lex terminal runtime policy 的 allow list。 */
     terminalAllowList?: string[];
     /** 强制要求确认的 terminal 命令规则。 */
@@ -359,6 +380,8 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     maxCount: 200,
     enabledTools: [],
     disabledTools: [],
+    memoryToolEnabled: true,
+    copilotMemoryEnabled: false,
     securityWorkspaces: {
         project: true,
         library: true
@@ -369,8 +392,13 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     compressionThresholdRatio: 0.5,
     summarizationThresholdRatio: 0.75,
     autoSaveEdits: true,
+    sessionViewerOrientation: 'sideBySide',
     userInstructionFolders: [],
-    projectInstructionFolders: []
+    projectInstructionFolders: [],
+    userAgentFolders: [],
+    projectAgentFolders: [],
+    useChatSessionCustomizationsForCustomAgents: false,
+    hiddenCustomAgentTargets: [],
 };
 
 /**
@@ -551,6 +579,9 @@ export class AilyChatConfigService {
      */
     updateConfig(updates: Partial<AilyChatConfig>): void {
         this.config = { ...this.config, ...updates };
+        if (updates.sessionViewerOrientation !== undefined) {
+            this.config.sessionViewerOrientation = normalizeSessionViewerOrientationSetting(updates.sessionViewerOrientation);
+        }
         if (updates.maxRequests !== undefined) {
             this.config.maxRequests = updates.maxRequests;
             this.config.maxCount = updates.maxRequests;
@@ -707,6 +738,14 @@ export class AilyChatConfigService {
         this.config.autoSaveEdits = value;
     }
 
+    get sessionViewerOrientation(): ChatSessionViewerOrientationSetting {
+        return normalizeSessionViewerOrientationSetting(this.config.sessionViewerOrientation);
+    }
+
+    set sessionViewerOrientation(value: ChatSessionViewerOrientationSetting) {
+        this.config.sessionViewerOrientation = normalizeSessionViewerOrientationSetting(value);
+    }
+
     get userInstructionFolders(): string[] {
         return normalizeInstructionFolderPaths(this.config.userInstructionFolders);
     }
@@ -721,6 +760,38 @@ export class AilyChatConfigService {
 
     set projectInstructionFolders(value: string[]) {
         this.config.projectInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
+    get userAgentFolders(): string[] {
+        return normalizeAgentFolderPaths(this.config.userAgentFolders);
+    }
+
+    set userAgentFolders(value: string[]) {
+        this.config.userAgentFolders = normalizeAgentFolderPaths(value);
+    }
+
+    get projectAgentFolders(): string[] {
+        return normalizeAgentFolderPaths(this.config.projectAgentFolders);
+    }
+
+    set projectAgentFolders(value: string[]) {
+        this.config.projectAgentFolders = normalizeAgentFolderPaths(value);
+    }
+
+    get useChatSessionCustomizationsForCustomAgents(): boolean {
+        return this.config.useChatSessionCustomizationsForCustomAgents === true;
+    }
+
+    set useChatSessionCustomizationsForCustomAgents(value: boolean) {
+        this.config.useChatSessionCustomizationsForCustomAgents = value === true;
+    }
+
+    get hiddenCustomAgentTargets(): string[] {
+        return normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
+    }
+
+    set hiddenCustomAgentTargets(value: string[]) {
+        this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(value);
     }
 
     get terminalAllowList(): string[] {
@@ -868,6 +939,22 @@ export class AilyChatConfigService {
 
     set disabledTools(value: string[]) {
         this.config.disabledTools = normalizeConfiguredToolNames(value);
+    }
+
+    get memoryToolEnabled(): boolean {
+        return this.config.memoryToolEnabled !== false;
+    }
+
+    set memoryToolEnabled(value: boolean) {
+        this.config.memoryToolEnabled = value !== false;
+    }
+
+    get copilotMemoryEnabled(): boolean {
+        return this.config.copilotMemoryEnabled === true;
+    }
+
+    set copilotMemoryEnabled(value: boolean) {
+        this.config.copilotMemoryEnabled = value === true;
     }
 
     /**
@@ -2453,6 +2540,7 @@ export class AilyChatConfigService {
 
         this.config.enabledTools = normalizeConfiguredToolNames(this.config.enabledTools);
         this.config.disabledTools = normalizeConfiguredToolNames(this.config.disabledTools);
+        this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
     }
 }
 
@@ -2552,6 +2640,14 @@ function normalizeInstructionFolderPaths(value: string[] | undefined): string[] 
         .filter((item): item is string => typeof item === 'string')
         .map(item => item.trim())
         .filter(item => item.length > 0);
+}
+
+function normalizeAgentFolderPaths(value: string[] | undefined): string[] {
+    return normalizeInstructionFolderPaths(value);
+}
+
+function normalizeCustomAgentTargets(value: readonly string[] | undefined): string[] {
+    return normalizeAgentIdentifiers(Array.isArray(value) ? [...value] : undefined);
 }
 
 function normalizeTerminalPermissionRules(value: string[] | undefined): string[] {

@@ -92,8 +92,18 @@ export function cloneTurnResponseModelSidecar(
   const summary = cloneTurnResponseRoundSummaryCarrier(responseModel.summary);
   const summaries = cloneTurnResponseRoundSummaryCarriers(responseModel.summaries);
   const summaryPreview = normalizeTurnResponseSummaryPreview(responseModel.summaryPreview);
+  const requestUsage = responseModel.requestUsage
+    && Number.isFinite(responseModel.requestUsage.promptTokens)
+    && responseModel.requestUsage.promptTokens >= 0
+    && Number.isFinite(responseModel.requestUsage.completionTokens)
+    && responseModel.requestUsage.completionTokens >= 0
+    ? {
+      promptTokens: responseModel.requestUsage.promptTokens,
+      completionTokens: responseModel.requestUsage.completionTokens,
+    }
+    : undefined;
 
-  if (!responseModel.slashCommand && !responseModel.followups && !summary && !summaries && !summaryPreview && !modelName && !modelBillingLabel) {
+  if (!responseModel.slashCommand && !responseModel.followups && !summary && !summaries && !summaryPreview && !modelName && !modelBillingLabel && !requestUsage) {
     return undefined;
   }
 
@@ -105,6 +115,7 @@ export function cloneTurnResponseModelSidecar(
     ...(summaryPreview ? { summaryPreview } : {}),
     ...(modelName ? { modelName } : {}),
     ...(modelBillingLabel ? { modelBillingLabel } : {}),
+    ...(requestUsage ? { requestUsage } : {}),
   };
 }
 
@@ -155,7 +166,7 @@ export function withExplicitAgentSummaryPreview(
     ...(summaryPreview ? { summaryPreview } : {}),
   };
 
-  if (!responseModel.slashCommand && !responseModel.followups && !responseModel.summaryPreview && !responseModel.modelName && !responseModel.modelBillingLabel) {
+  if (!responseModel.slashCommand && !responseModel.followups && !responseModel.summaryPreview && !responseModel.modelName && !responseModel.modelBillingLabel && !responseModel.requestUsage) {
     const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn as TurnResponseTurn & { responseModel?: TurnResponseTurn['responseModel'] };
     return turnWithoutResponseModel;
   }

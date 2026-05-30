@@ -252,6 +252,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readDir: (path) => ipcRenderer.invoke("fs-readDir", path),
     mkdir: (path, options) => ipcRenderer.invoke("fs-mkdir", path, options),
     unlink: (path) => ipcRenderer.invoke("fs-unlink", path),
+    watch: (path, listener, options = {}) => {
+      const watcher = require("fs").watch(
+        path,
+        {
+          persistent: options?.persistent !== false,
+          recursive: options?.recursive === true,
+        },
+        (eventType, filename) => {
+          if (typeof listener === 'function') {
+            listener(eventType, typeof filename === 'string' ? filename : filename?.toString?.() ?? null);
+          }
+        },
+      );
+
+      return {
+        close: () => watcher.close(),
+      };
+    },
   },
   glob: {
     // 同步版本 - 通过 IPC 在主进程执行

@@ -1,9 +1,11 @@
 import type { TurnRequest, TurnResponseTurn, SessionSnapshot } from 'aily-lex/browser';
+import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
 
 import type {
   IAgentLifecycle,
   IChatCoordination,
   IChatServiceAccess,
+  IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
 import {
@@ -15,16 +17,53 @@ import {
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import { projectTurnResponsesToHistory } from './turn-response-history-projector';
 import { normalizeTurnResponseSummaryPreview } from './turn-response-response-model';
+import {
+  resolveHostSessionModeDescriptorFromMetadata,
+  resolveHostSessionProviderOptions,
+  resolveHostSessionSelectedModeFromMetadata,
+} from './host-session-input-state';
+import { HostSessionContentProvider } from './host-session-content-provider';
+import type { HostSessionContent } from './host-session-content-provider';
+import { resolveHostSessionRequestRoutingSummary } from './host-session-request-routing';
+import { normalizeHostSessionRequestRoutingSummary } from './host-session-request-routing';
+import type { LexSessionStoredSnapshotState, ResolvedLexSessionRestorePlan } from './host-session-restore-resolver';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
+import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
+import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
 
 type LexInteractionAction = NonNullable<TurnRequest['metadata']>['interactionAction'];
 type LexTurnContinuation = NonNullable<TurnResponseTurn['response']['continuation']>;
 type LexSessionInteractionContinuation = NonNullable<
   NonNullable<SessionSnapshot['requestContext']>['interactionContinuation']
 >;
+
+const KNOWN_PLAN_REVIEW_ACTIONS: Readonly<Record<string, {
+  readonly label: string;
+  readonly description: string;
+  readonly permissionLevel?: 'autopilot';
+}>> = {
+  autopilot: {
+    label: 'Implement with Autopilot',
+    description: 'Auto-approve all tool calls and continue until the task is done.',
+    permissionLevel: 'autopilot',
+  },
+  autopilot_fleet: {
+    label: 'Implement with Autopilot Fleet',
+    description: 'Auto-approve all tool calls, including fleet management actions, and continue until the task is done.',
+    permissionLevel: 'autopilot',
+  },
+  interactive: {
+    label: 'Implement Plan',
+    description: 'Implement the plan, asking for input and approval for each action.',
+  },
+  exit_only: {
+    label: 'Approve Plan Only',
+    description: 'Approve the plan without executing it. I will implement it myself.',
+  },
+};
 
 function readInteractionPendingRecord(
   continuation: LexSessionInteractionContinuation | LexTurnContinuation | undefined,
@@ -34,11 +73,20 @@ function readInteractionPendingRecord(
 }
 type HostSessionRestoreContext = ChatViewWriteBridgeContext
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
+  & Pick<IProjectContext, 'currentMode'>
   & Pick<ISessionAccess, 'conversationMessages' | 'chatService'>
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService' | 'ailyChatConfigService' | 'runtimeInteractionHost'>
   & Pick<IChatCoordination, 'lexStream'>
   & {
-    resumeRestoredInteraction?(content: string, interactionAction: LexInteractionAction): Promise<void>;
+    readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    resumeRestoredInteraction?(
+      content: string,
+      interactionAction: LexInteractionAction,
+      options?: {
+        readonly sessionId?: string | null;
+        readonly requestMetadata?: TurnRequest['metadata'];
+      },
+    ): Promise<void>;
     restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
     replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
   };
@@ -50,6 +98,46 @@ type HostSessionRestoreViewWriteAccess = Pick<
   'restoreLegacyHistoryList' | 'restoreTurnNativeHistoryList'
 >;
 
+export interface RuntimeRestoreHostRecordRequest {
+  readonly target: {
+    readonly sessionId: string;
+    readonly sessionType: string;
+    readonly projectPath: string | null;
+    readonly inputState?: HostSessionContent['inputState'];
+  };
+  readonly sessionContent: HostSessionContent;
+  readonly hostRecord: HostSessionRecord | null;
+}
+
+export type HostSessionRestoreFailureKind =
+  | 'host-record-session-mismatch'
+  | 'restore-plan-resolution-failed'
+  | 'restore-plan-apply-failed';
+
+export interface HostSessionRestoreFailureDetails {
+  readonly kind: HostSessionRestoreFailureKind;
+  readonly sessionId: string;
+  readonly hostRecordSessionId?: string;
+  readonly storedSnapshotState?: LexSessionStoredSnapshotState;
+}
+
+export class HostSessionRestoreError extends Error {
+  readonly details: HostSessionRestoreFailureDetails;
+
+  constructor(message: string, details: HostSessionRestoreFailureDetails, cause?: unknown) {
+    super(message);
+    this.name = 'HostSessionRestoreError';
+    this.details = details;
+    if (cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
+export function readHostSessionRestoreFailureDetails(error: unknown): HostSessionRestoreFailureDetails | null {
+  return error instanceof HostSessionRestoreError ? error.details : null;
+}
+
 /**
  * Restores host-side persisted chat history back into the active UI/session state.
  *
@@ -58,6 +146,7 @@ type HostSessionRestoreViewWriteAccess = Pick<
  */
 export class HostSessionRestoreBridge {
   private readonly viewWriteBridge: HostSessionRestoreViewWriteAccess;
+  private readonly hostSessionContentProvider: HostSessionContentProvider;
 
   constructor(private readonly ctx: HostSessionRestoreContext) {
     const viewWriteContext: HostSessionRestoreViewWriteContext = {
@@ -99,61 +188,248 @@ export class HostSessionRestoreBridge {
       },
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
+    this.hostSessionContentProvider = new HostSessionContentProvider({
+      get sessionId() {
+        return ctx.sessionId;
+      },
+      get chatService() {
+        return ctx.chatService as any;
+      },
+      get chatHistoryService() {
+        return ctx.chatHistoryService as any;
+      },
+    });
   }
 
-  async restore(hostRecord: HostSessionRecord): Promise<void> {
+  async restore(
+    hostRecord: HostSessionRecord,
+    options: {
+      readonly isCurrent?: () => boolean;
+    } = {},
+  ): Promise<void> {
+    const isCurrent = options.isCurrent ?? (() => true);
     const sanitizedHostRecord = sanitizeHostRecordForRestore(hostRecord);
+    this.assertHostRecordMatchesActiveSession(sanitizedHostRecord);
 
     this.restoreSessionMetadata(sanitizedHostRecord);
 
-    await this.ctx.lexStream.session.restore(
-      this.ctx.sessionId,
-      sanitizedHostRecord.turnResponses,
-      sanitizedHostRecord,
-    );
+    let restorePlan: ResolvedLexSessionRestorePlan | null = null;
+    try {
+      restorePlan = await this.ctx.lexStream.session.resolveRestorePlan(
+        this.ctx.sessionId,
+        sanitizedHostRecord.turnResponses,
+        sanitizedHostRecord,
+      );
+    } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
+      throw this.createRestoreFailure(
+        'restore-plan-resolution-failed',
+        null,
+        error,
+      );
+    }
 
-    const restoredSnapshot = this.ctx.lexStream.session.snapshot?.() ?? null;
-    const turnResponses = this.resolveTurnResponsesForRestore(sanitizedHostRecord, restoredSnapshot) ?? [];
-    this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
-    const hostResponseState = buildHostProjectionStateFromPersistedRecord({
-      turnResponses,
+    if (!isCurrent()) {
+      return;
+    }
+
+    try {
+      const resolvedLexSnapshot = restorePlan?.snapshot ?? null;
+      const restoredLexSession = resolvedLexSnapshot
+        ? this.ctx.lexStream.session.restoreResolvedSnapshot(resolvedLexSnapshot)
+        : false;
+
+      const restoredSnapshot = restoredLexSession
+        ? this.ctx.lexStream.session.snapshot?.() ?? resolvedLexSnapshot
+        : null;
+      const turnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
+      this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
+      const hostResponseState = this.resolveRuntimeHostProjectionState(turnResponses)
+        ?? buildHostProjectionStateFromPersistedRecord({
+          turnResponses,
+        });
+      this.applyHostView(hostResponseState);
+      if (this.ctx.restoreSharedHostProjectionState) {
+        this.ctx.restoreSharedHostProjectionState(hostResponseState);
+      } else {
+        this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
+      }
+      this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
+
+      // Restore context budget: prefer persisted lex-derived values over local estimate
+      const savedBudget = hostRecord.metadata?.contextBudget;
+      if (savedBudget && savedBudget.maxContextTokens > 0 && savedBudget.currentTokens > 0) {
+        this.ctx.contextBudgetService?.applyLexBudgetEvent(
+          savedBudget.maxContextTokens,
+          savedBudget.currentTokens,
+          {
+            usagePercent: savedBudget.usagePercent,
+            systemTokens: savedBudget.systemTokens,
+            baseSystemTokens: savedBudget.baseSystemTokens,
+            instructionTokens: savedBudget.instructionTokens,
+            skillTokens: savedBudget.skillTokens,
+            toolsTokens: savedBudget.toolsTokens,
+            toolSourceTokens: savedBudget.toolSourceTokens,
+            messagesTokens: savedBudget.messagesTokens,
+            toolResultsTokens: savedBudget.toolResultsTokens,
+            messageCount: savedBudget.messageCount,
+          },
+        );
+      } else {
+        this.ctx.contextBudgetService?.refreshLocalEstimate(
+          restoredSnapshot ? this.ctx.conversationMessages : [],
+          this.ctx.lexStream.runtime.tools(),
+        );
+      }
+
+      await this.restoreEditCheckpoints(hostResponseState.turnResponses);
+      if (!isCurrent()) {
+        return;
+      }
+      this.finalizeRestoreUi(Boolean(restoredSnapshot));
+    } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
+      throw this.createRestoreFailure('restore-plan-apply-failed', restorePlan, error);
+    }
+  }
+
+  buildRuntimeRestoreHostRecord(request: RuntimeRestoreHostRecordRequest): HostSessionRecord | null {
+    const runtimeState = this.ctx.readSessionRuntimeState?.(request.target.sessionId);
+    if (!runtimeState) {
+      return null;
+    }
+
+    const baseHostRecord = request.hostRecord;
+    const baseMetadata = baseHostRecord?.metadata;
+    const providerOptions = request.sessionContent.providerOptions;
+    const projectPath = request.sessionContent.projectPathHint
+      ?? providerOptions.folderPath
+      ?? request.target.projectPath
+      ?? baseMetadata?.projectPath
+      ?? null;
+    const mode = typeof request.sessionContent.metadata?.mode === 'string'
+      ? normalizeChatSurfaceModeId(request.sessionContent.metadata.mode)
+      : baseMetadata?.mode ?? this.ctx.currentMode;
+    const requestRouting = request.sessionContent.metadata?.requestRouting
+      ? normalizeHostSessionRequestRoutingSummary(
+          request.sessionContent.metadata.requestRouting,
+          request.sessionContent.metadata.mode ?? this.ctx.currentMode,
+        )
+      : baseMetadata?.requestRouting;
+    const inputState = request.sessionContent.inputState
+      ?? baseMetadata?.inputState
+      ?? request.target.inputState;
+    const now = Date.now();
+
+    const runtimeTurnResponses = Array.isArray(runtimeState.turnResponses)
+      ? runtimeState.turnResponses
+      : [];
+    const fallbackTurnResponses = runtimeTurnResponses.length > 0
+      ? runtimeTurnResponses
+      : stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
+
+    return {
+      ...(baseHostRecord?.sidecar ? { sidecar: baseHostRecord.sidecar } : {}),
+      ...(baseHostRecord?.auxiliary ? { auxiliary: baseHostRecord.auxiliary } : {}),
+      turnResponses: [...fallbackTurnResponses],
+      metadata: {
+        sessionId: request.target.sessionId,
+        title: request.sessionContent.title ?? baseMetadata?.title ?? '',
+        sessionType: normalizeChatSessionType(
+          request.sessionContent.sessionType ?? baseMetadata?.sessionType ?? request.target.sessionType,
+          DEFAULT_CHAT_SESSION_TYPE,
+        ),
+        projectPath,
+        createdAt: baseMetadata?.createdAt ?? now,
+        updatedAt: now,
+        mode,
+        ...(baseMetadata?.modeDescriptor ? { modeDescriptor: baseMetadata.modeDescriptor } : {}),
+        ...(inputState ? { inputState } : {}),
+        ...(requestRouting ? { requestRouting } : {}),
+        ...(baseMetadata?.interactionActionSummary
+          ? { interactionActionSummary: baseMetadata.interactionActionSummary }
+          : {}),
+        model: baseMetadata?.model ?? this.ctx.currentModelName,
+        ...(baseMetadata?.contextBudget ? { contextBudget: baseMetadata.contextBudget } : {}),
+        ...(baseMetadata?.requestContext ? { requestContext: baseMetadata.requestContext } : {}),
+        ...(baseMetadata?.activeSkillNames ? { activeSkillNames: baseMetadata.activeSkillNames } : {}),
+        toolCallingIteration: baseMetadata?.toolCallingIteration ?? this.ctx.toolCallingIteration ?? 0,
+      },
+    };
+  }
+
+  async restoreCurrentSessionProjection(projectPathHint?: string | null): Promise<boolean> {
+    const sessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    if (!sessionId) {
+      return false;
+    }
+
+    const indexEntry = this.ctx.chatHistoryService.findEntry(sessionId) ?? null;
+    const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(sessionId, projectPathHint, {
+      metadataFallback: indexEntry,
     });
-    this.applyHostView(hostResponseState);
-    if (this.ctx.restoreSharedHostProjectionState) {
-      this.ctx.restoreSharedHostProjectionState(hostResponseState);
-    } else {
-      this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
-    }
-    this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
-
-    // Restore context budget: prefer persisted lex-derived values over local estimate
-    const savedBudget = hostRecord.metadata?.contextBudget;
-    if (savedBudget && savedBudget.maxContextTokens > 0 && savedBudget.currentTokens > 0) {
-      this.ctx.contextBudgetService?.applyLexBudgetEvent(
-        savedBudget.maxContextTokens,
-        savedBudget.currentTokens,
-        {
-          usagePercent: savedBudget.usagePercent,
-          systemTokens: savedBudget.systemTokens,
-          baseSystemTokens: savedBudget.baseSystemTokens,
-          instructionTokens: savedBudget.instructionTokens,
-          skillTokens: savedBudget.skillTokens,
-          toolsTokens: savedBudget.toolsTokens,
-          toolSourceTokens: savedBudget.toolSourceTokens,
-          messagesTokens: savedBudget.messagesTokens,
-          toolResultsTokens: savedBudget.toolResultsTokens,
-          messageCount: savedBudget.messageCount,
-        },
-      );
-    } else {
-      this.ctx.contextBudgetService?.refreshLocalEstimate(
-        restoredSnapshot ? this.ctx.conversationMessages : [],
-        this.ctx.lexStream.runtime.tools(),
-      );
+    const hostRecord = this.buildRuntimeRestoreHostRecord({
+      target: {
+        sessionId,
+        sessionType: sessionContent.sessionType,
+        projectPath: sessionContent.projectPathHint
+          ?? sessionContent.providerOptions.folderPath
+          ?? indexEntry?.projectPath
+          ?? null,
+        inputState: sessionContent.inputState,
+      },
+      sessionContent,
+      hostRecord: sessionContent.hostRecord,
+    }) ?? sessionContent.hostRecord;
+    if (!hostRecord) {
+      return false;
     }
 
-    await this.restoreEditCheckpoints(hostResponseState.turnResponses);
-    this.finalizeRestoreUi(Boolean(restoredSnapshot));
+    await this.restore(hostRecord);
+    return true;
+  }
+
+  private assertHostRecordMatchesActiveSession(hostRecord: HostSessionRecord): void {
+    const activeSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    const hostRecordSessionId = typeof hostRecord.metadata?.sessionId === 'string'
+      ? hostRecord.metadata.sessionId.trim()
+      : '';
+    if (!activeSessionId || !hostRecordSessionId || activeSessionId === hostRecordSessionId) {
+      return;
+    }
+
+    const details: HostSessionRestoreFailureDetails = {
+      kind: 'host-record-session-mismatch',
+      sessionId: activeSessionId,
+      hostRecordSessionId,
+    };
+    throw new HostSessionRestoreError(
+      `[HostSessionRestoreBridge] Restore target mismatch (${formatHostSessionRestoreFailureDetails(details)})`,
+      details,
+    );
+  }
+
+  private createRestoreFailure(
+    kind: HostSessionRestoreFailureKind,
+    restorePlan: ResolvedLexSessionRestorePlan | null,
+    cause: unknown,
+  ): HostSessionRestoreError {
+    const details: HostSessionRestoreFailureDetails = {
+      kind,
+      sessionId: typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '',
+      ...(restorePlan?.diagnostics?.storedSnapshotState
+        ? { storedSnapshotState: restorePlan.diagnostics.storedSnapshotState }
+        : {}),
+    };
+    return new HostSessionRestoreError(
+      `[HostSessionRestoreBridge] Restore failed (${formatHostSessionRestoreFailureDetails(details)}): ${toHostSessionRestoreErrorMessage(cause)}`,
+      details,
+      cause,
+    );
   }
 
   private applyHostView(hostResponseState: Pick<HostResponseProjection, 'turnResponses' | 'chatList'>): void {
@@ -171,14 +447,106 @@ export class HostSessionRestoreBridge {
     projectTurnResponsesToHistory(this.ctx, hostResponseState.turnResponses);
   }
 
+  private resolveRuntimeHostProjectionState(
+    turnResponses: readonly TurnResponseTurn[],
+  ): HostTurnResponseState | null {
+    const runtimeState = this.ctx.readSessionRuntimeState?.(this.ctx.sessionId);
+    const hostProjectionState = runtimeState?.hostProjectionState;
+    if (!hostProjectionState) {
+      return null;
+    }
+
+    return areHostProjectionTurnResponsesEquivalent(hostProjectionState.turnResponses, turnResponses)
+      ? hostProjectionState
+      : null;
+  }
+
   private restoreSessionMetadata(hostRecord: HostSessionRecord): void {
-    if (hostRecord.metadata?.title) {
-      this.ctx.chatService.currentSessionTitle = hostRecord.metadata.title;
-    } else {
-      const indexEntry = this.ctx.chatHistoryService.findEntry(this.ctx.sessionId);
-      if (indexEntry?.title) {
-        this.ctx.chatService.currentSessionTitle = indexEntry.title;
+    const indexEntry = this.ctx.chatHistoryService.findEntry(this.ctx.sessionId);
+    const sessionContent = this.hostSessionContentProvider.provideCurrentChatSessionContent(undefined, {
+      hostRecordOverride: hostRecord,
+      metadataFallback: indexEntry,
+    });
+    const sessionMetadata = {
+      mode: hostRecord.metadata?.mode ?? indexEntry?.mode,
+      modeDescriptor: hostRecord.metadata?.modeDescriptor ?? indexEntry?.modeDescriptor,
+      inputState: hostRecord.metadata?.inputState ?? indexEntry?.inputState,
+      requestRouting: hostRecord.metadata?.requestRouting ?? indexEntry?.requestRouting,
+      interactionActionSummary: hostRecord.metadata?.interactionActionSummary,
+      sessionType: hostRecord.metadata?.sessionType ?? indexEntry?.sessionType,
+      projectPath: hostRecord.metadata?.projectPath ?? indexEntry?.projectPath,
+    };
+
+    this.ctx.chatService.currentSessionTitle = sessionContent?.title ?? '';
+
+    const sessionType = normalizeChatSessionType(
+      sessionContent?.sessionType ?? sessionMetadata?.sessionType,
+      DEFAULT_CHAT_SESSION_TYPE,
+    );
+    const providerOptions = sessionContent?.providerOptions ?? resolveHostSessionProviderOptions(hostRecord);
+    this.ctx.chatService.applySessionIdentity({
+      sessionType,
+      providerOptions,
+      inputState: sessionContent?.inputState ?? sessionMetadata?.inputState,
+    });
+
+    const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
+      ? this.ctx.chatService.findResolvedModeById(modeId)
+      : undefined;
+    const hasSessionPickerMetadata = !!sessionMetadata?.modeDescriptor
+      || !!sessionMetadata?.inputState
+      || !!sessionMetadata?.requestRouting;
+    const mergedSelectedMode = hasSessionPickerMetadata
+      ? resolveHostSessionSelectedModeFromMetadata({
+          mode: sessionMetadata?.mode,
+          modeDescriptor: sessionMetadata?.modeDescriptor,
+          inputState: sessionMetadata?.inputState,
+          requestRouting: sessionMetadata?.requestRouting,
+        }, { resolveModeById })
+      : normalizeChatSelectedMode({
+          modeId: resolveHostSessionRequestRoutingSummary(hostRecord).selectedModeId,
+          customAgentTarget: resolveHostSessionRequestRoutingSummary(hostRecord).customAgentTarget,
+        });
+    const storedModeDescriptor = hasSessionPickerMetadata
+      ? resolveHostSessionModeDescriptorFromMetadata({
+          mode: sessionMetadata?.mode,
+          modeDescriptor: sessionMetadata?.modeDescriptor,
+          inputState: sessionMetadata?.inputState,
+          requestRouting: sessionMetadata?.requestRouting,
+        }, { resolveModeById })
+      : undefined;
+    const storedModeId = typeof storedModeDescriptor?.id === 'string' && storedModeDescriptor.id.trim().length > 0
+      ? storedModeDescriptor.id.trim()
+      : typeof sessionMetadata?.inputState?.mode?.id === 'string'
+        ? sessionMetadata.inputState.mode.id.trim()
+      : '';
+    if (storedModeId && typeof this.ctx.chatService.setChatMode === 'function') {
+      this.ctx.chatService.setChatMode(storedModeId, false);
+      if (mergedSelectedMode.modeId === 'agent'
+        && mergedSelectedMode.customAgentTarget
+        && this.ctx.chatService.currentCustomAgentTarget !== mergedSelectedMode.customAgentTarget
+        && typeof this.ctx.chatService.setSelectedMode === 'function') {
+        this.ctx.chatService.setSelectedMode(
+          {
+            modeId: mergedSelectedMode.modeId,
+            customAgentTarget: mergedSelectedMode.customAgentTarget,
+          },
+          { persist: false },
+        );
       }
+    } else if (typeof this.ctx.chatService.setSelectedMode === 'function') {
+      this.ctx.chatService.setSelectedMode(
+        {
+          modeId: mergedSelectedMode.modeId,
+          customAgentTarget: mergedSelectedMode.customAgentTarget,
+        },
+        { persist: false },
+      );
+    } else {
+      this.ctx.chatService.currentMode = mergedSelectedMode.modeId;
+      this.ctx.chatService.currentCustomAgentTarget = mergedSelectedMode.modeId === 'agent'
+        ? mergedSelectedMode.customAgentTarget
+        : undefined;
     }
 
     this.ctx.toolCallingIteration = hostRecord.metadata?.toolCallingIteration || 0;
@@ -217,17 +585,6 @@ export class HostSessionRestoreBridge {
     this.ctx.scrollManager.scrollToBottom('auto');
   }
 
-  private resolveTurnResponsesForRestore(
-    hostRecord: HostSessionRecord,
-    restoredSnapshot: SessionSnapshot | null,
-  ): TurnResponseTurn[] | null {
-    if (!hostRecord.turnResponses?.length) {
-      return null;
-    }
-
-    return applySessionSnapshotRoundsToTurnResponses(hostRecord.turnResponses, restoredSnapshot);
-  }
-
   private restorePendingRuntimeInteraction(turnResponses: readonly TurnResponseTurn[]): void {
     const interactionContinuation = this.ctx.lexStream.session.snapshot()?.requestContext?.interactionContinuation;
     const pending = readInteractionPendingRecord(interactionContinuation);
@@ -242,6 +599,11 @@ export class HostSessionRestoreBridge {
 
     if (pending['kind'] === 'confirmation') {
       this.restorePendingConfirmation(turnResponses, interactionContinuation!);
+      return;
+    }
+
+    if (pending['kind'] === 'plan_review') {
+      this.restorePendingPlanReview(interactionContinuation!);
     }
   }
 
@@ -274,6 +636,9 @@ export class HostSessionRestoreBridge {
           {
             kind: 'question_answer',
             payload: { answers: result.answers },
+          },
+          {
+            sessionId: this.ctx.sessionId,
           },
         );
       })
@@ -310,33 +675,70 @@ export class HostSessionRestoreBridge {
         await this.ctx.resumeRestoredInteraction?.(
           buildConfirmationResumeContent(confirmationPart, result.approved),
           buildConfirmationInteractionAction(continuation, confirmationPart, result),
+          {
+            sessionId: this.ctx.sessionId,
+          },
+        );
+      })
+      .catch(() => undefined);
+  }
+
+  private restorePendingPlanReview(
+    continuation: LexTurnContinuation,
+  ): void {
+    const pendingReview = readPendingPlanReview(continuation);
+    if (!pendingReview) {
+      return;
+    }
+
+    void this.ctx.runtimeInteractionHost.presentPlanReview(this.ctx.sessionId, pendingReview)
+      .then(async (result) => {
+        await this.ctx.resumeRestoredInteraction?.(
+          buildPlanReviewResumeContent(pendingReview, result),
+          buildPlanReviewInteractionAction(continuation, result),
+          {
+            sessionId: this.ctx.sessionId,
+          },
         );
       })
       .catch(() => undefined);
   }
 }
 
-function applySessionSnapshotRoundsToTurnResponses(
-  turnResponses: readonly TurnResponseTurn[],
-  sessionSnapshot: SessionSnapshot | null,
-): TurnResponseTurn[] {
-  if (turnResponses.length === 0 || !sessionSnapshot?.turns?.length) {
-    return [...turnResponses];
+function areHostProjectionTurnResponsesEquivalent(
+  left: readonly TurnResponseTurn[] | null | undefined,
+  right: readonly TurnResponseTurn[] | null | undefined,
+): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
   }
 
-  const snapshotTurnsById = new Map(sessionSnapshot.turns.map(turn => [turn.id, turn] as const));
-
-  return turnResponses.map((turn) => {
-    const snapshotTurn = snapshotTurnsById.get(turn.turnId);
-    if (!snapshotTurn) {
-      return turn;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftTurn = left[index];
+    const rightTurn = right[index];
+    if (leftTurn.turnId !== rightTurn.turnId || leftTurn.updatedAt !== rightTurn.updatedAt) {
+      return false;
     }
+  }
 
-    return {
-      ...turn,
-      rounds: cloneSessionSnapshotRounds(snapshotTurn.rounds ?? [], turn.rounds ?? []),
-    };
-  });
+  return true;
+}
+
+function formatHostSessionRestoreFailureDetails(details: HostSessionRestoreFailureDetails): string {
+  return [
+    `kind=${details.kind}`,
+    `sessionId=${details.sessionId || 'unknown'}`,
+    ...(details.hostRecordSessionId ? [`hostRecordSessionId=${details.hostRecordSessionId}`] : []),
+    ...(details.storedSnapshotState ? [`storedSnapshotState=${details.storedSnapshotState}`] : []),
+  ].join(', ');
+}
+
+function toHostSessionRestoreErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : 'unknown error';
 }
 
 function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessionRecord {
@@ -361,6 +763,18 @@ function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessio
       return sanitizeTurnResponseForRestore(turn);
     }),
   };
+}
+
+function stableDurableTurnResponsesForRuntimeRestore(
+  turnResponses: readonly TurnResponseTurn[],
+): readonly TurnResponseTurn[] {
+  return turnResponses.filter(turn => !isTransientTurnResponseStatus(turn.response.status));
+}
+
+function isTransientTurnResponseStatus(status: unknown): boolean {
+  return status === 'streaming'
+    || status === 'in_progress'
+    || status === 'pending';
 }
 
 function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTurn {
@@ -502,6 +916,116 @@ function buildConfirmationInteractionAction(
     kind: 'confirmation',
     payload,
   };
+}
+
+export function readPendingPlanReview(
+  continuation: LexSessionInteractionContinuation | LexTurnContinuation | undefined,
+): {
+  id: string;
+  title: string;
+  planUri?: string;
+  content: string;
+  actions: readonly RuntimePlanReviewAction[];
+  canProvideFeedback: boolean;
+} | null {
+  const pendingRecord = readInteractionPendingRecord(continuation);
+  if (pendingRecord?.['kind'] !== 'plan_review') {
+    return null;
+  }
+
+  const id = readNonEmptyString(pendingRecord['requestId']) ?? readNonEmptyString(pendingRecord['id']);
+  const content = readNonEmptyString(pendingRecord['content']);
+  const actions = Array.isArray(pendingRecord['actions'])
+    ? pendingRecord['actions'].map(toRuntimePlanReviewAction).filter((action): action is RuntimePlanReviewAction => !!action)
+    : [];
+
+  if (!id || !content || actions.length === 0) {
+    return null;
+  }
+
+  return {
+    id,
+    title: readNonEmptyString(pendingRecord['title']) ?? 'Review Plan',
+    ...(readNonEmptyString(pendingRecord['plan']) ?? readNonEmptyString(pendingRecord['planUri'])
+      ? { planUri: readNonEmptyString(pendingRecord['plan']) ?? readNonEmptyString(pendingRecord['planUri']) }
+      : {}),
+    content,
+    actions,
+    canProvideFeedback: pendingRecord['canProvideFeedback'] !== false,
+  };
+}
+
+function toRuntimePlanReviewAction(value: unknown): RuntimePlanReviewAction | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readNonEmptyString(value['id']);
+  const knownAction = id ? KNOWN_PLAN_REVIEW_ACTIONS[id] : undefined;
+  const label = knownAction?.label ?? readNonEmptyString(value['label']);
+  if (!id || !label) {
+    return null;
+  }
+
+  return {
+    id,
+    label,
+    ...((knownAction?.description ?? readNonEmptyString(value['description']))
+      ? { description: knownAction?.description ?? readNonEmptyString(value['description']) }
+      : {}),
+    ...(value['default'] === true ? { default: true } : {}),
+    ...((knownAction?.permissionLevel === 'autopilot' || value['permissionLevel'] === 'autopilot')
+      ? { permissionLevel: 'autopilot' as const }
+      : {}),
+  };
+}
+
+export function buildPlanReviewResumeContent(
+  review: { actions: readonly RuntimePlanReviewAction[] },
+  result: RuntimePlanReviewDecision,
+): string {
+  const actionLabel = typeof result.actionId === 'string' && result.actionId.length > 0
+    ? review.actions.find(action => action.id === result.actionId)?.label ?? result.actionId
+    : undefined;
+  const feedback = typeof result.feedback === 'string' ? result.feedback.trim() : '';
+
+  if (feedback.length > 0) {
+    return actionLabel
+      ? `已对计划提供反馈，并选择动作：${actionLabel}。`
+      : '已对计划提供反馈。';
+  }
+
+  if (result.approved) {
+    return actionLabel
+      ? `已批准计划并选择动作：${actionLabel}。`
+      : '已批准当前计划。';
+  }
+
+  return actionLabel
+    ? `已拒绝当前计划，原选择动作为：${actionLabel}。`
+    : '已拒绝当前计划。';
+}
+
+export function buildPlanReviewInteractionAction(
+  continuation: LexSessionInteractionContinuation | LexTurnContinuation,
+  result: RuntimePlanReviewDecision,
+): LexInteractionAction {
+  const pendingRecord = readInteractionPendingRecord(continuation);
+  const feedback = typeof result.feedback === 'string' ? result.feedback.trim() : '';
+
+  return {
+    kind: 'plan_review',
+    payload: {
+      result: result.approved ? 'approved' : 'rejected',
+      ...(typeof result.actionId === 'string' && result.actionId.length > 0 ? { actionId: result.actionId } : {}),
+      ...(feedback.length > 0 ? { feedback } : {}),
+      ...(readNonEmptyString(pendingRecord?.['sourceEvent']) ? { sourceEvent: readNonEmptyString(pendingRecord?.['sourceEvent']) } : {}),
+    },
+  };
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

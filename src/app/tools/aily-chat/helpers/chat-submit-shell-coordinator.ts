@@ -27,7 +27,8 @@ export class ChatSubmitShellCoordinator {
       getSessionId: () => string;
       getInputValue: () => string;
       isWaiting: () => boolean;
-      stop: () => void;
+      ensureSession?: () => Promise<boolean>;
+      stop: (sessionId?: string | null) => void;
       send: (text: string) => Promise<unknown>;
     },
   ) {}
@@ -36,7 +37,7 @@ export class ChatSubmitShellCoordinator {
     this.prepareForSubmit();
 
     if (this.deps.isWaiting()) {
-      this.deps.stop();
+      this.deps.stop(this.deps.getSessionId());
       return false;
     }
 
@@ -50,8 +51,15 @@ export class ChatSubmitShellCoordinator {
 
   private async submitPreparedInput(): Promise<boolean> {
     const text = this.deps.getInputValue().trim();
-    if (!this.deps.getSessionId() || !text || this.deps.isWaiting() || this.deps.authQuota.quotaExhausted) {
+    if (!text || this.deps.isWaiting() || this.deps.authQuota.quotaExhausted) {
       return false;
+    }
+
+    if (!this.deps.getSessionId()) {
+      const ensured = await this.deps.ensureSession?.();
+      if (ensured === false || !this.deps.getSessionId()) {
+        return false;
+      }
     }
 
     await this.deps.send(text);

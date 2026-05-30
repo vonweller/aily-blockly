@@ -2,6 +2,19 @@ import { readTurnRequestDebugArtifactsSnapshot } from 'aily-lex/browser';
 
 import type { HostSessionRecord, SessionIndexEntry } from './chat-history.service';
 import { buildHostSessionDebugEvents, type HostSessionDebugEvent } from './host-session-debug-events';
+import type { LexSessionStoredSnapshotState } from '../helpers/host-session-restore-resolver';
+import type { HostSessionRestoreFailureKind } from '../helpers/host-session-restore-bridge';
+import {
+  resolveHostSessionInputState,
+  resolveHostSessionModeDescriptor,
+  resolveHostSessionSelectedMode,
+  type HostSessionSelectedModeResolveOptions,
+} from '../helpers/host-session-input-state';
+import {
+  resolveHostSessionInteractionActionSummary,
+  type HostSessionInteractionActionSummary,
+} from '../helpers/host-session-interaction-action';
+import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
 
 export interface HostSessionDebugExportEnvelope {
   readonly kind: 'aily-chat-debug-export';
@@ -19,6 +32,12 @@ export interface HostSessionDebugExportEnvelope {
     readonly createdAt: number;
     readonly updatedAt: number;
     readonly mode: string;
+    readonly modeDescriptor?: NonNullable<HostSessionRecord['metadata']['modeDescriptor']>;
+    readonly inputState: NonNullable<HostSessionRecord['metadata']['inputState']>;
+    readonly requestModeId?: string;
+    readonly customAgentTarget?: string;
+    readonly permissionLevel?: string;
+    readonly interactionActionSummary?: HostSessionInteractionActionSummary;
     readonly model: string | null;
     readonly messageCount: number;
   };
@@ -26,16 +45,88 @@ export interface HostSessionDebugExportEnvelope {
   readonly debug: {
     readonly eventSource: 'derived-host-record';
     readonly events: readonly HostSessionDebugEvent[];
+    readonly dualPersistence?: HostSessionDebugDualPersistenceSummary;
+    readonly liveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
+    readonly restoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
+    readonly restoreFailure?: HostSessionRestoreFailureSummary;
     readonly companionFiles?: Readonly<Record<string, string>>;
   };
+}
+
+export interface HostSessionDebugDualPersistenceSummary {
+  readonly hostRecordPath: string;
+  readonly lexSnapshotPath: string;
+  readonly lexSnapshotPresent: boolean;
+  readonly hostTurnResponseCount: number;
+  readonly lexTurnCount?: number;
+  readonly hostPrimaryFields: readonly string[];
+  readonly lexPrimaryFields: readonly string[];
+  readonly hostAuxiliaryMirrors?: readonly string[];
+  readonly notes?: readonly string[];
+}
+
+export interface HostSessionDebugLiveRuntimeOverlaySummary {
+  readonly sessionId: string;
+  readonly status?: 'in_progress' | 'needs_input' | 'completed' | 'failed';
+  readonly pendingRequest: boolean;
+  readonly needsInput: boolean;
+  readonly attachedView: boolean;
+  readonly turnResponseCount: number;
+  readonly hostProjectionPresent: boolean;
+  readonly quotaOverlayPresent?: boolean;
+  readonly requestQuotaNotice?: boolean;
+  readonly authQuotaProjected?: boolean;
+  readonly contextBudgetOverlayPresent?: boolean;
+  readonly inputNoticeOverlayPresent?: boolean;
+  readonly capabilities?: {
+    readonly canRunConcurrently: boolean;
+    readonly canContinueInPlace: boolean;
+    readonly supportsBackgroundPersistence: boolean;
+  };
+  readonly lastExplicitInterruptAt?: number;
+  readonly lastExplicitDisposeAt?: number;
+  readonly lastViewDetachAt?: number;
+  readonly notes?: readonly string[];
+}
+
+export interface HostSessionRestoreDiagnosticsSummary {
+  readonly sessionId: string;
+  readonly lexSnapshotPath: string;
+  readonly storedSnapshotState: LexSessionStoredSnapshotState;
+  readonly storedSnapshotError?: string;
+  readonly notes?: readonly string[];
+}
+
+export interface HostSessionRestoreFailureSummary {
+  readonly sessionId: string;
+  readonly stage: 'session-start' | 'host-restore';
+  readonly projectPath: string | null;
+  readonly requestSource: string;
+  readonly hostRecordSource: string;
+  readonly metadataSource: string;
+  readonly restoreKind?: HostSessionRestoreFailureKind;
+  readonly hostRecordSessionId?: string;
+  readonly storedSnapshotState?: LexSessionStoredSnapshotState;
+  readonly errorMessage: string;
+  readonly notes?: readonly string[];
+}
+
+export interface HostSessionDebugExportAugmentation {
+  readonly companionFiles?: Readonly<Record<string, string>>;
+  readonly dualPersistence?: HostSessionDebugDualPersistenceSummary;
+  readonly liveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
+  readonly restoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
+  readonly restoreFailure?: HostSessionRestoreFailureSummary;
 }
 
 export function encodeHostSessionDebugExport(
   record: HostSessionRecord,
   entry?: SessionIndexEntry,
   exportedAt = new Date(),
+  options?: HostSessionSelectedModeResolveOptions,
+  augmentation?: HostSessionDebugExportAugmentation,
 ): Uint8Array {
-  const envelope = buildHostSessionDebugExportEnvelope(record, entry, exportedAt);
+  const envelope = buildHostSessionDebugExportEnvelope(record, entry, exportedAt, options, augmentation);
   return new TextEncoder().encode(JSON.stringify(envelope, null, 2));
 }
 
@@ -60,6 +151,18 @@ export function decodeHostSessionDebugExport(data: Uint8Array): HostSessionDebug
         events: Array.isArray(cloned.debug?.events)
           ? cloned.debug.events.map(event => ({ ...event }))
           : buildHostSessionDebugEvents(cloned.hostRecord),
+        ...(cloned.debug?.dualPersistence && typeof cloned.debug.dualPersistence === 'object'
+          ? { dualPersistence: { ...cloned.debug.dualPersistence } }
+          : {}),
+        ...(cloned.debug?.liveRuntimeOverlay && typeof cloned.debug.liveRuntimeOverlay === 'object'
+          ? { liveRuntimeOverlay: { ...cloned.debug.liveRuntimeOverlay } }
+          : {}),
+        ...(cloned.debug?.restoreDiagnostics && typeof cloned.debug.restoreDiagnostics === 'object'
+          ? { restoreDiagnostics: { ...cloned.debug.restoreDiagnostics } }
+          : {}),
+        ...(cloned.debug?.restoreFailure && typeof cloned.debug.restoreFailure === 'object'
+          ? { restoreFailure: { ...cloned.debug.restoreFailure } }
+          : {}),
         ...(cloned.debug?.companionFiles && typeof cloned.debug.companionFiles === 'object'
           ? { companionFiles: { ...cloned.debug.companionFiles } }
           : {}),
@@ -74,14 +177,54 @@ function buildHostSessionDebugExportEnvelope(
   record: HostSessionRecord,
   entry: SessionIndexEntry | undefined,
   exportedAt: Date,
+  options?: HostSessionSelectedModeResolveOptions,
+  augmentation?: HostSessionDebugExportAugmentation,
 ): HostSessionDebugExportEnvelope {
   const hostRecord = cloneJsonValue(record);
   const metadata = hostRecord.metadata;
+  const selectedMode = resolveHostSessionSelectedMode(hostRecord, options);
+  const modeDescriptor = resolveHostSessionModeDescriptor(hostRecord, options);
+  const inputState = resolveHostSessionInputState(hostRecord, options);
+  const requestRouting = resolveHostSessionRequestRoutingSummary(hostRecord);
+  const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
+  hostRecord.metadata = {
+    ...hostRecord.metadata,
+    mode: selectedMode.modeId,
+    modeDescriptor,
+    inputState,
+    requestRouting,
+    ...(interactionActionSummary ? { interactionActionSummary } : {}),
+  };
   const companionBundle = buildHostSessionDebugCompanionBundle(hostRecord);
   const debugEvents = attachCompanionFileRefsToDebugEvents(
     buildHostSessionDebugEvents(hostRecord),
     companionBundle.refsByTurnId,
   );
+  const companionFiles = {
+    ...companionBundle.companionFiles,
+    ...(augmentation?.companionFiles ? { ...augmentation.companionFiles } : {}),
+  };
+  const exportedDebugEvents = [...debugEvents];
+  if (augmentation?.dualPersistence) {
+    exportedDebugEvents.push(
+      buildDualPersistenceDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.dualPersistence),
+    );
+  }
+  if (augmentation?.liveRuntimeOverlay) {
+    exportedDebugEvents.push(
+      buildLiveRuntimeOverlayDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.liveRuntimeOverlay),
+    );
+  }
+  if (augmentation?.restoreDiagnostics) {
+    exportedDebugEvents.push(
+      buildRestoreDiagnosticsDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.restoreDiagnostics),
+    );
+  }
+  if (augmentation?.restoreFailure) {
+    exportedDebugEvents.push(
+      buildRestoreFailureDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.restoreFailure),
+    );
+  }
 
   return {
     kind: 'aily-chat-debug-export',
@@ -98,19 +241,192 @@ function buildHostSessionDebugExportEnvelope(
       projectName: entry?.projectName ?? null,
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
-      mode: metadata.mode,
+      mode: selectedMode.modeId,
+      ...(modeDescriptor ? { modeDescriptor } : {}),
+      inputState,
+      ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
+      ...(requestRouting.customAgentTarget ? { customAgentTarget: requestRouting.customAgentTarget } : {}),
+      ...(requestRouting.permissionLevel ? { permissionLevel: requestRouting.permissionLevel } : {}),
+      ...(interactionActionSummary ? { interactionActionSummary } : {}),
       model: metadata.model ?? null,
       messageCount: entry?.messageCount ?? countRecordMessages(hostRecord),
     },
     hostRecord,
     debug: {
       eventSource: 'derived-host-record',
-      events: debugEvents,
-      ...(Object.keys(companionBundle.companionFiles).length > 0
-        ? { companionFiles: companionBundle.companionFiles }
+      events: exportedDebugEvents,
+      ...(augmentation?.dualPersistence ? { dualPersistence: augmentation.dualPersistence } : {}),
+      ...(augmentation?.liveRuntimeOverlay ? { liveRuntimeOverlay: augmentation.liveRuntimeOverlay } : {}),
+      ...(augmentation?.restoreDiagnostics ? { restoreDiagnostics: augmentation.restoreDiagnostics } : {}),
+      ...(augmentation?.restoreFailure ? { restoreFailure: augmentation.restoreFailure } : {}),
+      ...(Object.keys(companionFiles).length > 0
+        ? { companionFiles }
         : {}),
     },
   };
+}
+
+function buildDualPersistenceDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionDebugDualPersistenceSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `dual-persistence:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Dual persistence boundary',
+    details: formatDualPersistenceDetails(summary),
+    level: 'info',
+    category: 'session',
+  };
+}
+
+function buildLiveRuntimeOverlayDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionDebugLiveRuntimeOverlaySummary,
+): HostSessionDebugEvent {
+  return {
+    id: `live-runtime-overlay:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Live runtime overlay',
+    details: formatLiveRuntimeOverlayDetails(summary),
+    level: summary.pendingRequest || summary.needsInput ? 'info' : 'trace',
+    category: 'session',
+  };
+}
+
+function buildRestoreDiagnosticsDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionRestoreDiagnosticsSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `restore-diagnostics:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Restore Diagnostics',
+    details: formatRestoreDiagnosticsDetails(summary),
+    level: summary.storedSnapshotState === 'load-failed' ? 'warning' : 'info',
+    category: 'session',
+  };
+}
+
+function buildRestoreFailureDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionRestoreFailureSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `restore-failure:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Restore Failure',
+    details: formatRestoreFailureDetails(summary),
+    level: 'error',
+    category: 'session',
+  };
+}
+
+function formatDualPersistenceDetails(summary: HostSessionDebugDualPersistenceSummary): string {
+  const lines = [
+    `host record: ${summary.hostRecordPath}`,
+    `lex snapshot: ${summary.lexSnapshotPath}${summary.lexSnapshotPresent ? '' : ' (missing)'}`,
+    `host turnResponses: ${summary.hostTurnResponseCount}`,
+    ...(typeof summary.lexTurnCount === 'number' ? [`lex turns: ${summary.lexTurnCount}`] : []),
+    `host primary: ${summary.hostPrimaryFields.join(', ')}`,
+    `lex primary: ${summary.lexPrimaryFields.join(', ')}`,
+    ...(summary.hostAuxiliaryMirrors?.length ? [`host mirrors: ${summary.hostAuxiliaryMirrors.join(', ')}`] : []),
+    ...(summary.notes?.length ? summary.notes.map(note => `note: ${note}`) : []),
+  ];
+  return lines.join('\n');
+}
+
+function formatLiveRuntimeOverlayDetails(summary: HostSessionDebugLiveRuntimeOverlaySummary): string {
+  const lines = [
+    `session: ${summary.sessionId}`,
+    `status: ${summary.status ?? 'none'}`,
+    `pendingRequest: ${summary.pendingRequest ? 'yes' : 'no'}`,
+    `needsInput: ${summary.needsInput ? 'yes' : 'no'}`,
+    `attachedView: ${summary.attachedView ? 'yes' : 'no'}`,
+    `turnResponses: ${summary.turnResponseCount}`,
+    `hostProjection: ${summary.hostProjectionPresent ? 'present' : 'absent'}`,
+  ];
+  if (typeof summary.quotaOverlayPresent === 'boolean') {
+    lines.push(`quotaOverlay: ${summary.quotaOverlayPresent ? 'present' : 'absent'}`);
+  }
+  if (typeof summary.requestQuotaNotice === 'boolean') {
+    lines.push(`requestQuotaNotice: ${summary.requestQuotaNotice ? 'yes' : 'no'}`);
+  }
+  if (typeof summary.authQuotaProjected === 'boolean') {
+    lines.push(`authQuotaProjected: ${summary.authQuotaProjected ? 'yes' : 'no'}`);
+  }
+  if (typeof summary.contextBudgetOverlayPresent === 'boolean') {
+    lines.push(`contextBudgetOverlay: ${summary.contextBudgetOverlayPresent ? 'present' : 'absent'}`);
+  }
+  if (typeof summary.inputNoticeOverlayPresent === 'boolean') {
+    lines.push(`inputNoticeOverlay: ${summary.inputNoticeOverlayPresent ? 'present' : 'absent'}`);
+  }
+  if (summary.capabilities) {
+    lines.push(
+      `capabilities: concurrent=${summary.capabilities.canRunConcurrently ? 'yes' : 'no'}, continueInPlace=${summary.capabilities.canContinueInPlace ? 'yes' : 'no'}, background=${summary.capabilities.supportsBackgroundPersistence ? 'yes' : 'no'}`,
+    );
+  }
+  if (summary.lastViewDetachAt) {
+    lines.push(`lastViewDetach: ${new Date(summary.lastViewDetachAt).toISOString()}`);
+  }
+  if (summary.lastExplicitInterruptAt) {
+    lines.push(`lastExplicitInterrupt: ${new Date(summary.lastExplicitInterruptAt).toISOString()}`);
+  }
+  if (summary.lastExplicitDisposeAt) {
+    lines.push(`lastExplicitDispose: ${new Date(summary.lastExplicitDisposeAt).toISOString()}`);
+  }
+  if (summary.notes?.length) {
+    lines.push(...summary.notes.map(note => `note: ${note}`));
+  }
+  return lines.join('\n');
+}
+
+function formatRestoreDiagnosticsDetails(summary: HostSessionRestoreDiagnosticsSummary): string {
+  const lines = [
+    `session: ${summary.sessionId}`,
+    `lex snapshot: ${summary.lexSnapshotPath}`,
+    `storedSnapshotState: ${summary.storedSnapshotState}`,
+    ...(summary.storedSnapshotError ? [`storedSnapshotError: ${summary.storedSnapshotError}`] : []),
+    ...(summary.notes?.length ? summary.notes.map(note => `note: ${note}`) : []),
+  ];
+  return lines.join('\n');
+}
+
+function formatRestoreFailureDetails(summary: HostSessionRestoreFailureSummary): string {
+  const lines = [
+    `session: ${summary.sessionId}`,
+    `stage: ${summary.stage}`,
+    `projectPath: ${summary.projectPath ?? 'unknown'}`,
+    `requestSource: ${summary.requestSource}`,
+    `hostRecordSource: ${summary.hostRecordSource}`,
+    `metadataSource: ${summary.metadataSource}`,
+    ...(summary.restoreKind ? [`restoreKind: ${summary.restoreKind}`] : []),
+    ...(summary.hostRecordSessionId ? [`hostRecordSessionId: ${summary.hostRecordSessionId}`] : []),
+    ...(summary.storedSnapshotState ? [`storedSnapshotState: ${summary.storedSnapshotState}`] : []),
+    `errorMessage: ${summary.errorMessage}`,
+    ...(summary.notes?.length ? summary.notes.map(note => `note: ${note}`) : []),
+  ];
+  return lines.join('\n');
 }
 
 function attachCompanionFileRefsToDebugEvents(

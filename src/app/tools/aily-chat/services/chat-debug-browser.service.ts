@@ -1,10 +1,12 @@
 import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
 
 import { buildImportedDebugSessionViewModel, type ImportedDebugSessionViewModel } from '../helpers/chat-debug-viewer-state';
 import {
   resolveHostSessionDebugEventContent,
   type HostSessionDebugEvent,
   type HostSessionDebugResolvedEventContent,
+  type HostSessionDebugResolvedTextContent,
 } from './host-session-debug-events';
 import type { ImportedDebugSessionRecord } from './chat-history.service';
 import { ChatHistoryService } from './chat-history.service';
@@ -33,10 +35,16 @@ export class ChatDebugBrowserService {
   private currentViewState = ChatDebugBrowserViewState.Home;
   private currentImportedResource: ImportedDebugSessionRecord | null = null;
   private lastOpenedImportedSessionId: string | null = null;
+  private readonly didChangeSubject = new Subject<void>();
+  readonly onDidChange = this.didChangeSubject.asObservable();
 
   constructor(
     private readonly chatHistoryService: ChatHistoryService,
-  ) {}
+  ) {
+    this.chatHistoryService.hostSessionChanged$?.subscribe((event) => {
+      this.handleHostSessionStoreChange(event);
+    });
+  }
 
   get isOpen(): boolean {
     return this.isDebugBrowserOpen;
@@ -73,6 +81,11 @@ export class ChatDebugBrowserService {
       return null;
     }
 
+    const importedAugmentationContent = resolveImportedDebugAugmentationContent(currentSession, eventId);
+    if (importedAugmentationContent) {
+      return importedAugmentationContent;
+    }
+
     return resolveHostSessionDebugEventContent(currentSession.hostRecord, eventId, {
       events: currentSession.debugEvents,
       readCompanionFile: currentSession.debugCompanionFiles
@@ -90,6 +103,7 @@ export class ChatDebugBrowserService {
     this.isDebugBrowserOpen = true;
     this.currentImportedResource = null;
     this.currentViewState = ChatDebugBrowserViewState.Home;
+    this.notifyDidChange();
   }
 
   openImportedRecord(
@@ -100,6 +114,7 @@ export class ChatDebugBrowserService {
     this.currentImportedResource = record;
     this.lastOpenedImportedSessionId = record.sessionId;
     this.currentViewState = viewState;
+    this.notifyDidChange();
   }
 
   openImportedSession(
@@ -119,6 +134,7 @@ export class ChatDebugBrowserService {
     this.isDebugBrowserOpen = false;
     this.currentImportedResource = null;
     this.currentViewState = ChatDebugBrowserViewState.Home;
+    this.notifyDidChange();
   }
 
   showView(viewState: ChatDebugBrowserViewState): void {
@@ -132,6 +148,36 @@ export class ChatDebugBrowserService {
     }
 
     this.currentViewState = viewState;
+    this.notifyDidChange();
+  }
+
+  private handleHostSessionStoreChange(event: { readonly sessionId: string; readonly scope: 'persisted' | 'imported'; readonly kind: 'updated' | 'deleted' }): void {
+    if (event.scope !== 'imported') {
+      return;
+    }
+
+    let didChange = this.isDebugBrowserOpen && this.currentViewState === ChatDebugBrowserViewState.Home;
+    if (this.currentImportedResource?.sessionId === event.sessionId) {
+      if (event.kind === 'deleted') {
+        this.currentImportedResource = null;
+        this.currentViewState = ChatDebugBrowserViewState.Home;
+        this.isDebugBrowserOpen = true;
+      } else {
+        this.currentImportedResource = this.chatHistoryService.getImportedDebugSnapshot(event.sessionId);
+        if (!this.currentImportedResource) {
+          this.currentViewState = ChatDebugBrowserViewState.Home;
+        }
+      }
+      didChange = true;
+    }
+
+    if (didChange) {
+      this.notifyDidChange();
+    }
+  }
+
+  private notifyDidChange(): void {
+    this.didChangeSubject.next();
   }
 }
 
@@ -173,4 +219,42 @@ function bubbleImportedResourcesToTop(
   bubbleToTop(activeSessionId);
 
   return nextResources;
+}
+
+function resolveImportedDebugAugmentationContent(
+  record: ImportedDebugSessionRecord,
+  eventId: string,
+): HostSessionDebugResolvedTextContent | null {
+  const event = record.debugEvents.find(candidate => candidate.id === eventId);
+  if (!event || event.kind !== 'generic') {
+    return null;
+  }
+
+  switch (event.name) {
+    case 'Dual persistence boundary':
+      return record.debugDualPersistence
+        ? buildImportedDebugSummaryTextContent(record.debugDualPersistence)
+        : null;
+    case 'Live runtime overlay':
+      return record.debugLiveRuntimeOverlay
+        ? buildImportedDebugSummaryTextContent(record.debugLiveRuntimeOverlay)
+        : null;
+    case 'Restore Diagnostics':
+      return record.debugRestoreDiagnostics
+        ? buildImportedDebugSummaryTextContent(record.debugRestoreDiagnostics)
+        : null;
+    case 'Restore Failure':
+      return record.debugRestoreFailure
+        ? buildImportedDebugSummaryTextContent(record.debugRestoreFailure)
+        : null;
+    default:
+      return null;
+  }
+}
+
+function buildImportedDebugSummaryTextContent(summary: unknown): HostSessionDebugResolvedTextContent {
+  return {
+    kind: 'text',
+    text: JSON.stringify(summary, null, 2),
+  };
 }

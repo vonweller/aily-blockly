@@ -2,9 +2,14 @@ import { DestroyRef, Injectable, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
-import { filter } from 'rxjs';
+import { filter, Subject } from 'rxjs';
 
 import { IMenuItem } from '../../../configs/menu.config';
+import { normalizeAgentIdentifier, normalizeAgentIdentifiers } from '../core/agent-identifiers';
+import {
+  CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_LABEL,
+  CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
+} from '../helpers/chat-configure-custom-agents-action';
 import {
   insertComposerLineBreak,
   resolveComposerKeyAction as _resolveComposerKeyAction,
@@ -13,21 +18,75 @@ import {
   type ComposerKeyAction,
   type ComposerLineBreakEdit,
 } from '../helpers/chat-composer-view';
-import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
+import { buildChatModelMenuState } from '../helpers/chat-model-menu-builder';
 import {
   AilyChatConfigService,
-  type ModelPickerControlOption,
-  type ModelPresetOption,
-  type ReasoningEffortOption,
 } from './aily-chat-config.service';
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
+import { ChatDebugBrowserService } from './chat-debug-browser.service';
+import { ChatSessionItemsService } from './chat-session-items.service';
+import { ChatSessionsControlService } from './chat-sessions-control.service';
 import { ChatService } from './chat.service';
+import { type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
+import {
+  createPlanChatResolvedMode,
+  isPlanChatResolvedMode,
+  resolveChatCurrentMode,
+  type ChatResolvedMode,
+  type ChatResolvedModeTarget,
+  type ChatSurfaceModeId,
+} from '../core/chat-mode';
+import type { ChatHostHeaderActionContext } from '../core/chat-host-header-actions';
+import type { ChatHostHeaderActionRequest } from '../core/chat-host-header-actions';
+import type { ChatSessionTitleActionContext, ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from '../core/chat-session-title-actions';
+import { ChatHostHeaderActionRegistry } from '../helpers/chat-host-header-action-registry';
+import { ChatSessionTitleActionRegistry } from '../helpers/chat-session-title-action-registry';
+import type { ChatSessionInventoryGroup } from '../helpers/chat-session-presentation';
 
-interface ModelMenuPresetEntry {
-  readonly presetId: string;
-  readonly sortName: string;
-  readonly enabled: boolean;
-  readonly item: IMenuItem;
+const BUILTIN_AGENT_PICKER_NAMES = new Set(['agent', 'ask', 'edit', 'qa']);
+
+export type ChatPaneSurface = 'chat' | 'blank-session' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
+
+export interface ChatPaneSessionListSurfaceModel {
+  readonly title: string;
+  readonly variant: 'sidebar' | 'entry';
+  readonly groups: readonly ChatSessionInventoryGroup[];
+  readonly hostClasses: readonly string[];
+}
+
+export interface ChatPaneSessionPickerSurfaceModel {
+  readonly groups: readonly ChatSessionInventoryGroup[];
+  readonly selectedSessionId: string;
+  readonly revealSessionId: string;
+  readonly position: MenuPosition;
+  readonly width: number;
+  readonly maxHeight: number;
+}
+
+export interface ChatPaneEntryInfoSurfaceModel {
+  readonly iconClass: string;
+  readonly titleKey: string;
+  readonly descriptionKey: string;
+  readonly actionLabelKey: string;
+  readonly hostClasses: readonly string[];
+}
+
+export interface ChatPaneStageSurfaceModel {
+  readonly paneSurface: 'chat' | 'blank-session' | 'entry' | 'welcome';
+  readonly showConversation: boolean;
+  readonly guideSurface: ChatPaneEntryInfoSurfaceModel | null;
+  readonly showSidebarSessionList: boolean;
+  readonly sidebarSessionListSurface: ChatPaneSessionListSurfaceModel | null;
+  readonly showStackedSessionList: boolean;
+  readonly stackedSessionListSurface: ChatPaneSessionListSurfaceModel | null;
+  readonly showSender: boolean;
+}
+
+interface ChatPaneChromeActionBindings {
+  readonly runNewChatAction: () => boolean;
+  readonly runToggleSettingsAction: () => boolean;
+  readonly runGoBackAction: () => boolean;
+  readonly runPickSessionAction: (event: MouseEvent) => boolean;
 }
 
 /**
@@ -46,15 +105,33 @@ export class ChatViewService {
   showSettings = false;
   showAgentSuggestions = false;
   agentSuggestions: string[] = [];
+  private readonly sessionViewModelChangedSubject = new Subject<void>();
+  private paneChromeActionBindings: ChatPaneChromeActionBindings | null = null;
 
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
   private readonly ailyChatConfigService = inject(AilyChatConfigService);
   private readonly languageModelsService = inject(AilyChatLanguageModelsService);
+  private readonly debugBrowser = inject(ChatDebugBrowserService);
+  private readonly chatSessionItemsService = inject(ChatSessionItemsService);
+  private readonly chatSessionsControlService = inject(ChatSessionsControlService);
   private readonly chatService = inject(ChatService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly hostHeaderActionRegistry = new ChatHostHeaderActionRegistry(() => ({
+    ...this.readHostHeaderActionContext(),
+    runNewChatAction: () => this.paneChromeActionBindings?.runNewChatAction() ?? false,
+    runToggleSettingsAction: () => this.paneChromeActionBindings?.runToggleSettingsAction() ?? false,
+  }));
+  private readonly sessionTitleActionRegistry = new ChatSessionTitleActionRegistry(() => ({
+    ...this.readSessionTitleActionContext({
+      hasConversationContent: this.hasConversationContent,
+    }),
+    runGoBackAction: () => this.paneChromeActionBindings?.runGoBackAction() ?? false,
+    runPickSessionAction: (event: MouseEvent) => this.paneChromeActionBindings?.runPickSessionAction(event) ?? false,
+  }));
 
-  private allAgents: string[] = [];
+  private availableCustomModes: ChatResolvedMode[] = [];
+  readonly sessionViewModelChanged$ = this.sessionViewModelChangedSubject.asObservable();
 
   constructor() {
     this.currentUrl = this.router.url;
@@ -66,154 +143,541 @@ export class ChatViewService {
       .subscribe((event) => {
         this.currentUrl = event.urlAfterRedirects;
       });
+
+    this.chatSessionsControlService.controlChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.refreshSessionViewModel();
+      });
+    this.chatService.sessionInputStateChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.refreshSessionViewModel();
+      });
+    this.chatService.sessionTitleChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.sessionViewModelChangedSubject.next();
+      });
+    this.debugBrowser.onDidChange
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.syncSessionViewerSuppression();
+        this.refreshSessionViewModel();
+      });
+
+    this.syncSessionViewerSuppression();
   }
 
   get isStandaloneWindow(): boolean {
     return this.currentUrl === '/aily-chat';
   }
 
+  get sessionListItems(): readonly ChatSessionListItem[] {
+    return this.chatSessionsControlService.sessionListItems;
+  }
+
+  get sessionSidebarMinWidth(): number {
+    return this.chatSessionsControlService.sessionSidebarMinWidth;
+  }
+
+  get sessionSidebarDefaultWidth(): number {
+    return this.chatSessionsControlService.sessionSidebarDefaultWidth;
+  }
+
+  get sessionSidebarResizeMinWidth(): number {
+    return this.chatSessionsControlService.sessionSidebarResizeMinWidth;
+  }
+
+  get sessionViewportWidth(): number {
+    return this.chatSessionsControlService.sessionViewportWidth;
+  }
+
+  get sessionSidebarWidth(): number {
+    return this.chatSessionsControlService.sessionSidebarWidth;
+  }
+
+  get sessionSidebarMaxWidth(): number {
+    return this.chatSessionsControlService.sessionSidebarMaxWidth;
+  }
+
+  get entrySessionItems(): ReadonlyArray<{ sessionId: string; title: string; current: boolean }> {
+    return this.sessionListItems.map(item => ({
+      sessionId: item.sessionId,
+      title: item.title,
+      current: item.current,
+    }));
+  }
+
+  get currentSessionTitle(): string {
+    return this.currentSessionViewItem?.title ?? this.chatService.currentSessionTitle;
+  }
+
+  get currentPaneTitle(): string {
+    switch (this.currentPaneSurface) {
+      case 'debug-session':
+        return this.debugBrowser.activeImportedResourceSummary?.displayTitle ?? '';
+      case 'chat':
+        return this.currentSessionTitle;
+      default:
+        return '';
+    }
+  }
+
+  get showSessionPicker(): boolean {
+    return this.chatSessionsControlService.showSessionPicker;
+  }
+
+  get sessionPickerPosition(): MenuPosition {
+    return this.chatSessionsControlService.sessionPickerPosition;
+  }
+
+  get selectedSessionId(): string {
+    return this.chatSessionsControlService.selectedSessionId;
+  }
+
+  get pickerRevealSessionId(): string {
+    return this.chatSessionsControlService.pickerRevealSessionId;
+  }
+
+  get sessionListGroups(): readonly ChatSessionInventoryGroup[] {
+    return this.chatSessionsControlService.sessionListGroups;
+  }
+
+  get sessionPickerGroups(): readonly ChatSessionInventoryGroup[] {
+    return this.chatSessionsControlService.sessionPickerGroups;
+  }
+
+  get sessionListDisplayMode(): 'hidden' | 'stacked' | 'sidebar' {
+    return this.chatSessionsControlService.sessionListDisplayMode;
+  }
+
+  get showSessionSidebar(): boolean {
+    return this.chatSessionsControlService.showSessionSidebar;
+  }
+
+  get showStackedSessionList(): boolean {
+    return this.chatSessionsControlService.showStackedSessionList;
+  }
+
+  get showLoginSurface(): boolean {
+    return this.chatSessionsControlService.showLoginSurface;
+  }
+
+  get showWelcomeSurface(): boolean {
+    return this.currentPaneSurface === 'welcome';
+  }
+
+  get hasConversationContent(): boolean {
+    return this.chatSessionsControlService.hasConversationContent;
+  }
+
+  get sessionTitleSurfaceModel(): ChatSessionTitleSurfaceModel {
+    return this.sessionTitleActionRegistry.getSurfaceModel(this.currentPaneTitle);
+  }
+
+  get isSessionTitleSurfaceClickEnabled(): boolean {
+    return this.currentPaneSurface === 'chat';
+  }
+
+  get hostHeaderActions() {
+    return this.hostHeaderActionRegistry.getActions();
+  }
+
+  get sidebarSessionListSurfaceModel(): ChatPaneSessionListSurfaceModel {
+    return this.buildSessionListSurfaceModel('sidebar');
+  }
+
+  get stackedSessionListSurfaceModel(): ChatPaneSessionListSurfaceModel {
+    return this.buildSessionListSurfaceModel('stacked');
+  }
+
+  get sessionPickerSurfaceModel(): ChatPaneSessionPickerSurfaceModel | null {
+    if (!this.showSessionPicker) {
+      return null;
+    }
+
+    return {
+      groups: this.sessionPickerGroups,
+      selectedSessionId: this.selectedSessionId,
+      revealSessionId: this.pickerRevealSessionId,
+      position: this.sessionPickerPosition,
+      width: 320,
+      maxHeight: 360,
+    };
+  }
+
+  get paneStageSurfaceModel(): ChatPaneStageSurfaceModel | null {
+    const paneSurface = this.currentPaneSurface;
+    if (paneSurface !== 'chat' && paneSurface !== 'blank-session' && paneSurface !== 'entry' && paneSurface !== 'welcome') {
+      return null;
+    }
+
+    const showSidebarSessionList = paneSurface !== 'welcome'
+      && this.showSessionSidebar;
+    const showStackedSessionList = paneSurface !== 'welcome'
+      && this.showStackedSessionList;
+
+    return {
+      paneSurface,
+      showConversation: paneSurface === 'chat',
+      guideSurface: this.buildGuideSurfaceModel(
+        paneSurface === 'entry' || paneSurface === 'welcome'
+          ? paneSurface
+          : null,
+      ),
+      showSidebarSessionList,
+      sidebarSessionListSurface: showSidebarSessionList ? this.buildSessionListSurfaceModel('sidebar') : null,
+      showStackedSessionList,
+      stackedSessionListSurface: showStackedSessionList ? this.buildSessionListSurfaceModel('stacked') : null,
+      showSender: paneSurface === 'chat' || paneSurface === 'blank-session' || paneSurface === 'entry',
+    };
+  }
+
+  get entryInfoSurfaceModel(): ChatPaneEntryInfoSurfaceModel | null {
+    return this.buildGuideSurfaceModel(this.currentPaneSurface === 'entry' ? 'entry' : null);
+  }
+
+  get currentPaneSurface(): ChatPaneSurface {
+    if (this.debugBrowser.isOpen) {
+      return this.debugBrowser.activeImportedResourceSummary ? 'debug-session' : 'debug-home';
+    }
+
+    if (this.showLoginSurface) {
+      return 'login';
+    }
+
+    if (this.chatSessionsControlService.showWelcomeSurface) {
+      return 'welcome';
+    }
+
+    if (!this.chatSessionsControlService.hasConversationContent) {
+      return 'entry';
+    }
+
+    return 'chat';
+  }
+
+  openSessionPicker(anchor?: MouseEvent | null): void {
+    this.chatSessionsControlService.openSessionPicker(anchor);
+  }
+
+  bindPaneChromeActions(bindings: ChatPaneChromeActionBindings): void {
+    this.paneChromeActionBindings = bindings;
+    this.refreshSessionViewModel();
+  }
+
+  runSessionTitleAction(request: ChatSessionTitleActionRequest): boolean {
+    return this.sessionTitleActionRegistry.runAction(request);
+  }
+
+  runHostHeaderAction(request: ChatHostHeaderActionRequest): boolean {
+    return this.hostHeaderActionRegistry.runAction(request);
+  }
+
+  closeSessionPicker(): void {
+    this.chatSessionsControlService.closeSessionPicker();
+  }
+
+  selectSession(sessionId: string): void {
+    this.chatSessionsControlService.selectSession(sessionId);
+  }
+
+  syncSessionViewerLayout(input: {
+    hasConversationContent: boolean;
+    isAuthenticated: boolean;
+  }): void {
+    this.chatSessionsControlService.syncViewerLayout({
+      hasConversationContent: input.hasConversationContent,
+      hasCurrentSession: this.hasCurrentSessionIdentity,
+      isAuthenticated: input.isAuthenticated,
+    });
+    this.syncSessionViewerSuppression();
+  }
+
+  readSessionListDisplayMode(hasConversationContent: boolean): 'hidden' | 'stacked' | 'sidebar' {
+    this.syncSessionViewerLayout({
+      hasConversationContent,
+      isAuthenticated: this.chatSessionsControlService.isAuthenticated,
+    });
+
+    return this.sessionListDisplayMode;
+  }
+
+  readSessionTitleActionContext(input: {
+    hasConversationContent: boolean;
+  }): ChatSessionTitleActionContext {
+    this.syncSessionViewerLayout({
+      hasConversationContent: input.hasConversationContent,
+      isAuthenticated: this.chatSessionsControlService.isAuthenticated,
+    });
+
+    return this.chatSessionsControlService.readSessionTitleActionContext({
+      isChatSurface: this.currentPaneSurface === 'chat',
+      isBlankSessionSurface: this.currentPaneSurface === 'blank-session',
+    });
+  }
+
+  readHostHeaderActionContext(): ChatHostHeaderActionContext {
+    return {
+      currentPaneSurface: this.currentPaneSurface,
+      showSettings: this.showSettings,
+    };
+  }
+
+  private syncSessionViewerSuppression(): void {
+    const suppressForSurface = this.currentPaneSurface !== 'chat'
+      && this.currentPaneSurface !== 'blank-session'
+      && this.currentPaneSurface !== 'entry';
+    this.chatSessionsControlService.setSessionViewerSuppressed(this.showSettings || suppressForSurface);
+  }
+
+  private buildSessionListSurfaceModel(displayMode: 'sidebar' | 'stacked'): ChatPaneSessionListSurfaceModel {
+    if (displayMode === 'sidebar') {
+      return {
+        title: 'Sessions',
+        variant: 'sidebar',
+        groups: this.sessionListGroups,
+        hostClasses: ['chat-session-sidebar-content'],
+      };
+    }
+
+    return {
+      title: 'Sessions',
+      variant: 'entry',
+      groups: this.sessionListGroups,
+      hostClasses: ['entry-session-control'],
+    };
+  }
+
+  private buildGuideSurfaceModel(surface: 'entry' | 'welcome' | null): ChatPaneEntryInfoSurfaceModel | null {
+    if (surface === 'entry') {
+      return {
+        iconClass: 'fa-light fa-star-christmas',
+        titleKey: 'AILY_CHAT.SERVICE_TITLE',
+        descriptionKey: 'AILY_CHAT.DISCLAIMER',
+        actionLabelKey: 'AILY_CHAT.USAGE_GUIDE',
+        hostClasses: ['guide-box', 'ccenter', 'entry-surface-guide'],
+      };
+    }
+
+    if (surface === 'welcome') {
+      return {
+        iconClass: 'fa-light fa-star-christmas',
+        titleKey: 'AILY_CHAT.SERVICE_TITLE',
+        descriptionKey: 'AILY_CHAT.DISCLAIMER',
+        actionLabelKey: 'AILY_CHAT.USAGE_GUIDE',
+        hostClasses: ['guide-box', 'ccenter', 'welcome-surface-guide'],
+      };
+    }
+
+    return null;
+  }
+
+  private refreshSessionViewModel(): void {
+    this.sessionViewModelChangedSubject.next();
+  }
+
+  private get currentSessionViewItem(): ChatSessionListItem | null {
+    return this.chatSessionItemsService.readCurrentSessionViewItem();
+  }
+
+  private get hasCurrentSessionIdentity(): boolean {
+    return this.currentSessionViewItem !== null
+      || this.chatService.currentSessionId.trim().length > 0
+      || this.chatService.hasBlankSessionShell === true;
+  }
+
+  private getCurrentResolvedMode(): ChatResolvedMode {
+    const currentResolvedMode = this.chatService.currentResolvedMode;
+    if (currentResolvedMode && typeof currentResolvedMode === 'object' && !Array.isArray(currentResolvedMode)) {
+      return currentResolvedMode;
+    }
+
+    if (this.chatService.currentMode === 'agent') {
+      const providerBackedMode = this.findAvailableCustomModeByAgentTarget(this.chatService.currentCustomAgentTarget);
+      if (providerBackedMode) {
+        return providerBackedMode;
+      }
+    }
+
+    return resolveChatCurrentMode({
+      modeId: this.chatService.currentMode,
+      customAgentTarget: this.chatService.currentCustomAgentTarget,
+    });
+  }
+
+  private findAvailableCustomModeByAgentTarget(agentTarget: string | null | undefined): ChatResolvedMode | undefined {
+    const normalizedAgentTarget = normalizeAgentIdentifier(agentTarget);
+    if (!normalizedAgentTarget) {
+      return undefined;
+    }
+
+    return this.getAvailableCustomModes().find((mode) =>
+      normalizeAgentIdentifier(mode.customAgentTarget ?? mode.name) === normalizedAgentTarget);
+  }
+
+  private getAvailableCustomModes(): readonly ChatResolvedMode[] {
+    const runtimeModes = Array.isArray(this.chatService.availableResolvedCustomModes)
+      ? this.chatService.availableResolvedCustomModes
+      : [];
+    return runtimeModes.length > 0 ? runtimeModes : this.availableCustomModes;
+  }
+
+  private getHiddenCustomAgentTargets(): Set<string> {
+    return new Set(normalizeAgentIdentifiers(this.ailyChatConfigService.hiddenCustomAgentTargets));
+  }
+
+  private getCurrentSessionCustomAgentTarget(): ChatResolvedModeTarget | undefined {
+    return typeof this.chatService.getCurrentSessionCustomAgentTarget === 'function'
+      ? this.chatService.getCurrentSessionCustomAgentTarget()
+      : undefined;
+  }
+
+  private getPlanMode(): ChatResolvedMode {
+    const availablePlanMode = this.getAvailableCustomModes().find((mode) => isPlanChatResolvedMode(mode));
+    if (availablePlanMode) {
+      return availablePlanMode;
+    }
+
+    const currentResolvedMode = this.getCurrentResolvedMode();
+    return isPlanChatResolvedMode(currentResolvedMode)
+      ? currentResolvedMode
+      : createPlanChatResolvedMode();
+  }
+
+  private isModeVisibleInCurrentPicker(
+    mode: ChatResolvedMode,
+    currentSessionCustomAgentTarget: ChatResolvedModeTarget | undefined,
+  ): boolean {
+    return !currentSessionCustomAgentTarget
+      || mode.target === undefined
+      || mode.target === 'undefined'
+      || mode.target === currentSessionCustomAgentTarget;
+  }
+
+  private getAvailableAgentTargets(): string[] {
+    const hiddenTargets = this.getHiddenCustomAgentTargets();
+    return [...new Set(this.getAvailableCustomModes()
+      .filter((mode) => mode.hidden !== true)
+      .filter((mode) => mode.enabled !== false)
+      .filter((mode) => mode.visibility?.userInvocable !== false)
+      .map((mode) => mode.customAgentTarget ?? mode.name)
+      .filter((target): target is string => Boolean(target))
+      .filter((target) => !hiddenTargets.has(target))
+      .filter((target) => !BUILTIN_AGENT_PICKER_NAMES.has(target.toLowerCase())))]
+      .sort((left, right) => left.localeCompare(right));
+  }
+
   get modeMenuItems(): IMenuItem[] {
-    return [
+    const currentResolvedMode = this.getCurrentResolvedMode();
+    const hiddenTargets = this.getHiddenCustomAgentTargets();
+    const currentSessionCustomAgentTarget = this.getCurrentSessionCustomAgentTarget();
+    const planMode = this.getPlanMode();
+    const planCustomAgentTarget = planMode.customAgentTarget ?? planMode.name;
+    const items: IMenuItem[] = [
       {
         name: this.translate.instant('AILY_CHAT.MODE_AGENT_FULL'),
         action: 'agent-mode',
         icon: 'fa-light fa-user-astronaut',
-        data: { mode: 'agent' },
-      },
-      {
-        name: this.translate.instant('AILY_CHAT.MODE_QA_FULL'),
-        action: 'qa-mode',
-        icon: 'fa-light fa-comment-smile',
-        data: { mode: 'qa' },
+        current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === 'agent',
+        data: { mode: 'agent' satisfies ChatSurfaceModeId },
       },
     ];
+
+    if (planCustomAgentTarget
+      && planMode.hidden !== true
+      && planMode.enabled !== false
+      && planMode.visibility?.userInvocable !== false
+      && !hiddenTargets.has(planCustomAgentTarget)
+      && this.isModeVisibleInCurrentPicker(planMode, currentSessionCustomAgentTarget)) {
+      items.push({
+        name: planMode.label,
+        action: 'plan-mode',
+        icon: 'fa-light fa-list-check',
+        current: isPlanChatResolvedMode(currentResolvedMode),
+        ...(planMode.description ? { tooltip: planMode.description } : {}),
+        data: {
+          mode: 'agent' satisfies ChatSurfaceModeId,
+          modeId: planMode.id,
+          customAgentTarget: planCustomAgentTarget,
+        },
+      });
+    }
+
+    if (!currentSessionCustomAgentTarget) {
+      items.push({
+        name: this.translate.instant('AILY_CHAT.MODE_QA_FULL'),
+        action: 'ask-mode',
+        icon: 'fa-light fa-comment-smile',
+        current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === 'ask',
+        data: { mode: 'ask' satisfies ChatSurfaceModeId },
+      });
+    }
+
+    const customAgentItems = this.getAvailableCustomModes()
+      .filter((mode) => {
+        const customAgentTarget = mode.customAgentTarget ?? mode.name;
+        return !mode.isBuiltin
+          && !isPlanChatResolvedMode(mode)
+          && mode.hidden !== true
+          && mode.enabled !== false
+          && mode.visibility?.userInvocable !== false
+            && this.isModeVisibleInCurrentPicker(mode, currentSessionCustomAgentTarget)
+          && Boolean(customAgentTarget)
+          && !hiddenTargets.has(customAgentTarget)
+          && !BUILTIN_AGENT_PICKER_NAMES.has(customAgentTarget.toLowerCase());
+      })
+      .map((mode) => {
+        const customAgentTarget = mode.customAgentTarget ?? mode.name;
+        return {
+        name: mode.label,
+        action: 'custom-agent-mode',
+        icon: 'fa-light fa-user-astronaut',
+        current: !currentResolvedMode.isBuiltin && currentResolvedMode.id === mode.id,
+        ...(mode.description ? { tooltip: mode.description } : {}),
+        data: {
+          mode: 'agent' satisfies ChatSurfaceModeId,
+          modeId: mode.id,
+          customAgentTarget,
+        },
+      } satisfies IMenuItem;
+      });
+
+    if (customAgentItems.length > 0) {
+      items.push({ sep: true }, ...customAgentItems);
+    }
+
+    items.push(
+      { sep: true },
+      {
+        name: CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_LABEL,
+        action: CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
+        icon: 'fa-light fa-gear',
+      },
+    );
+
+    return items;
   }
 
   get modelMenuItems(): IMenuItem[] {
-    const currentModel = this.chatService.currentModel;
-    const presets = this.ailyChatConfigService.getUserVisibleModelPresets();
-    const defaultPresetId = this.ailyChatConfigService.getDefaultModelPresetId();
-    const promotedPresetIds = this.getPromotedPresetIds(defaultPresetId);
-    const visiblePresetIds = new Set<string>();
-    const controlPresetEntries = this.ailyChatConfigService.getModelPickerControlPresets();
-
-    for (const [presetId, controlEntry] of Object.entries(controlPresetEntries)) {
-      if (controlEntry.featured && presetId !== defaultPresetId) {
-        promotedPresetIds.add(presetId);
-      }
-    }
-
-    const presetEntries = presets
-      .map((preset) => {
-        const isDefaultPreset = preset.id === defaultPresetId;
-        visiblePresetIds.add(preset.id);
-        const model = this.ailyChatConfigService.resolvePresetModel(preset.id);
-        if (!model) {
-          return null;
-        }
-
-        return {
-          presetId: preset.id,
-          sortName: preset.name,
-          enabled: preset.enabled,
-          item: this.createModelMenuItem(model, currentModel, {
-            description: preset.description,
-            preferBillingMeta: true,
-            disabled: isDefaultPreset ? false : !preset.enabled,
-            disabledReason: isDefaultPreset ? undefined : preset.unavailableReason,
-            requiredTier: isDefaultPreset ? undefined : preset.requiredTier,
-            minimumClientVersion: isDefaultPreset ? undefined : preset.minimumClientVersion,
-          }),
-        } satisfies ModelMenuPresetEntry;
-      })
-      .filter((entry): entry is ModelMenuPresetEntry => entry !== null);
-
-    const syntheticPromotedEntries = this.buildSyntheticPromotedEntries(
-      promotedPresetIds,
-      visiblePresetIds,
-      defaultPresetId,
-      currentModel,
-    );
-    const customModelEntries = this.getCustomModelMenuEntries(currentModel);
-    const autoEntry = presetEntries.find(entry => entry.presetId === defaultPresetId)
-      ?? this.getDefaultPresetMenuEntry(defaultPresetId, currentModel);
-    const promotedEntries = this.sortModelMenuPresetEntries(
-      [
-        ...presetEntries.filter(entry => entry.presetId !== defaultPresetId && promotedPresetIds.has(entry.presetId)),
-        ...syntheticPromotedEntries,
-      ],
-    );
-    const otherEntries = this.sortModelMenuPresetEntries(
-      [
-        ...presetEntries.filter(entry => entry.presetId !== defaultPresetId && !promotedPresetIds.has(entry.presetId)),
-        ...customModelEntries,
-      ],
-    );
-
-    const menuItems: IMenuItem[] = [];
-    if (autoEntry) {
-      menuItems.push(autoEntry.item);
-    }
-
-    if (promotedEntries.length > 0) {
-      if (menuItems.length > 0) {
-        menuItems.push({ sep: true });
-      }
-      menuItems.push(...promotedEntries.map(entry => ({
-        ...entry.item,
-        extra: {
-          ...entry.item.extra,
-          section: 'promoted-models',
-        },
-      })));
-    }
-
-    if (otherEntries.length > 0) {
-      if (menuItems.length > 0) {
-        menuItems.push({ sep: true });
-      }
-      menuItems.push(this.createModelMenuSectionToggle('其他模型', 'other-models'));
-      menuItems.push(...otherEntries.map(entry => ({
-        ...entry.item,
-        extra: {
-          ...entry.item.extra,
-          section: 'other-models',
-        },
-      })));
-    }
-
-    return menuItems;
+    return [...this.buildModelMenuState().modelMenuItems];
   }
 
   get currentReasoningEffortLabel(): string {
-    return this.ailyChatConfigService.getReasoningEffortLabel(
-      this.getConfiguredReasoningEffort(this.chatService.currentModel),
-    );
+    return this.buildModelMenuState().currentReasoningEffortLabel;
   }
 
   get currentReasoningEffortDisplayLabel(): string {
-    const currentAction = this.getCurrentReasoningEffortAction(this.chatService.currentModel);
-    if (currentAction) {
-      return this.normalizeConfigurationActionLabel(currentAction.label);
-    }
-
-    return this.ailyChatConfigService.getReasoningEffortDisplayLabel(
-      this.getConfiguredReasoningEffort(this.chatService.currentModel),
-    );
+    return this.buildModelMenuState().currentReasoningEffortDisplayLabel;
   }
 
   get hasReasoningEffortOptions(): boolean {
-    return this.getReasoningEffortMenuItems(this.chatService.currentModel).length > 0;
+    return this.buildModelMenuState().hasReasoningEffortOptions;
   }
 
   get currentReasoningEffortMenuItems(): IMenuItem[] {
-    const currentModel = this.chatService.currentModel;
-    if (!currentModel) {
-      return [];
-    }
-
-    return this.getReasoningEffortMenuItems(currentModel)
-      .map((item) => this.createReasoningEffortItem(currentModel, item));
+    return [...this.buildModelMenuState().currentReasoningEffortMenuItems];
   }
 
   get firstAgentSuggestion(): string | undefined {
@@ -252,8 +716,30 @@ export class ChatViewService {
     }
   }
 
+  setSessionViewportWidth(width: number): void {
+    this.chatSessionsControlService.setSessionViewportWidth(width);
+  }
+
+  setSessionSidebarWidth(width: number, options?: { persist?: boolean }): void {
+    this.chatSessionsControlService.setSessionSidebarWidth(width, options);
+  }
+
+  resolveSessionListDisplayMode(input: {
+    hasSessions: boolean;
+    hasConversationContent: boolean;
+    hasCurrentSession?: boolean;
+  }): 'hidden' | 'stacked' | 'sidebar' {
+    return this.chatSessionsControlService.resolveSessionListDisplayMode({
+      hasSessions: input.hasSessions,
+      hasConversationContent: input.hasConversationContent,
+      hasCurrentSession: input.hasCurrentSession === true,
+    });
+  }
+
   setSettingsVisible(visible: boolean): void {
     this.showSettings = visible;
+    this.syncSessionViewerSuppression();
+    this.refreshSessionViewModel();
   }
 
   openSettings(): void {
@@ -269,12 +755,32 @@ export class ChatViewService {
   }
 
   setAvailableAgents(agentNames: readonly string[]): void {
-    this.allAgents = [...new Set(
-      agentNames
-        .filter((agentName): agentName is string => typeof agentName === 'string')
-        .map(agentName => agentName.trim())
-        .filter(agentName => agentName.length > 0),
-    )].sort((left, right) => left.localeCompare(right));
+    this.availableCustomModes = normalizeAgentIdentifiers(agentNames)
+      .filter((agentName) => !BUILTIN_AGENT_PICKER_NAMES.has(agentName.toLowerCase()))
+      .sort((left, right) => left.localeCompare(right))
+      .map((agentName) => resolveChatCurrentMode({ modeId: 'agent', customAgentTarget: agentName }));
+  }
+
+  setAvailableAgentModes(agentModes: readonly ChatResolvedMode[]): void {
+    const nextModes = new Map<string, ChatResolvedMode>();
+    for (const agentMode of agentModes) {
+      const customAgentTarget = typeof agentMode.customAgentTarget === 'string' && agentMode.customAgentTarget.trim()
+        ? agentMode.customAgentTarget.trim()
+        : typeof agentMode.name === 'string' && agentMode.name.trim()
+          ? agentMode.name.trim()
+          : '';
+      if (!customAgentTarget || BUILTIN_AGENT_PICKER_NAMES.has(customAgentTarget.toLowerCase())) {
+        continue;
+      }
+
+      nextModes.set(customAgentTarget, {
+        ...agentMode,
+        customAgentTarget,
+      });
+    }
+
+    this.availableCustomModes = Array.from(nextModes.values())
+      .sort((left, right) => left.label.localeCompare(right.label));
   }
 
   updateAgentSuggestions(inputValue: string): void {
@@ -284,7 +790,8 @@ export class ChatViewService {
     }
 
     const query = inputValue.slice(1).split(/\s/)[0].toLowerCase();
-    this.agentSuggestions = this.allAgents.filter((agent) => agent.toLowerCase().startsWith(query));
+    this.agentSuggestions = this.getAvailableAgentTargets()
+      .filter((agentTarget) => agentTarget.toLowerCase().startsWith(query));
     this.showAgentSuggestions = this.agentSuggestions.length > 0 && !inputValue.includes(' ');
   }
 
@@ -298,386 +805,17 @@ export class ChatViewService {
     return `@${agentName} `;
   }
 
-  private createModelMenuItem(
-    model: NonNullable<ChatService['currentModel']>,
-    currentModel: NonNullable<ChatService['currentModel']> | null,
-    options?: {
-      description?: string | null;
-      preferBillingMeta?: boolean;
-      disabled?: boolean;
-      disabledReason?: 'upgrade' | 'admin' | 'update';
-      requiredTier?: string;
-      minimumClientVersion?: string;
-    },
-  ): IMenuItem {
-    const isCurrentModel = currentModel?.model === model.model && currentModel?.presetId === model.presetId;
-    const configuredReasoningEffort = this.getConfiguredReasoningEffort(model);
-    const reasoningChildren = this.getReasoningEffortMenuItems(model)
-      .map((item) => this.createReasoningEffortItem(model, item));
-    const displayModel = configuredReasoningEffort
-      ? {
-          ...model,
-          reasoningEffort: configuredReasoningEffort,
-        }
-      : model;
-
-    return {
-      name: model.name,
-      text: this.ailyChatConfigService.getModelMenuMeta(displayModel, { preferBilling: options?.preferBillingMeta ?? false }),
-      action: 'select-model',
-      current: isCurrentModel,
-      disabled: options?.disabled,
-      tooltip: this.ailyChatConfigService.buildModelTooltip(displayModel, {
-        description: this.buildPresetTooltipDescription(options),
-      }),
-      children: reasoningChildren.length > 0 ? reasoningChildren : undefined,
-      data: { model },
-      extra: {
-        hoverFlyout: this.buildModelHoverFlyout(model, displayModel, reasoningChildren, options),
-      },
-      hideChildrenArrow: true,
-    };
-  }
-
-  private buildModelHoverFlyout(
-    model: NonNullable<ChatService['currentModel']>,
-    displayModel: NonNullable<ChatService['currentModel']>,
-    reasoningChildren: IMenuItem[],
-    options?: {
-      description?: string | null;
-      preferBillingMeta?: boolean;
-      disabled?: boolean;
-      disabledReason?: 'upgrade' | 'admin' | 'update';
-      requiredTier?: string;
-      minimumClientVersion?: string;
-    },
-  ) {
-    const description = this.buildPresetTooltipDescription(options);
-    const providerContextManagementDetail = this.ailyChatConfigService.getModelProviderContextManagementDetail(displayModel);
-    const contextValue = this.ailyChatConfigService.getModelCapabilityContextWindowLabel(displayModel);
-    const descriptionLines = [description, providerContextManagementDetail]
-      .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
-      .join('\n');
-
-    return {
-      title: model.name,
-      description: descriptionLines || undefined,
-      contextLabel: contextValue && contextValue !== '自动检测' ? '上下文长度' : undefined,
-      contextValue: contextValue && contextValue !== '自动检测' ? contextValue : undefined,
-      sectionLabel: reasoningChildren.length > 0 ? '思考深度' : undefined,
-    };
-  }
-
-  private getReasoningEffortMenuItems(
-    model: NonNullable<ChatService['currentModel']> | null | undefined,
-  ) {
-    const modelId = this.getModelConfigurationId(model);
-    if (!model || !modelId || isDefaultAutoPresetSelected(model)) {
-      return [];
-    }
-
-    const schemaActions = this.languageModelsService.getModelConfigurationActions(modelId, { group: 'navigation' })
-      .filter((group) => group.key === 'reasoningEffort')
-      .flatMap((group) => group.actions)
-      .filter((action) => typeof action.value === 'string')
-      .map((action) => ({
-        ...action,
-        value: action.value as ReasoningEffortOption,
-      }));
-
-    return schemaActions;
-  }
-
-  private getModelConfigurationId(
-    model: NonNullable<ChatService['currentModel']> | null | undefined,
-  ): string {
-    return typeof model?.presetId === 'string' && model.presetId.trim()
-      ? model.presetId.trim()
-      : typeof model?.model === 'string'
-        ? model.model.trim()
-        : '';
-  }
-
-  private getCurrentReasoningEffortAction(
-    model: NonNullable<ChatService['currentModel']> | null | undefined,
-  ) {
-    return this.getReasoningEffortMenuItems(model).find((item) => item.checked);
-  }
-
-  private getConfiguredReasoningEffort(
-    model: NonNullable<ChatService['currentModel']> | null | undefined,
-  ): ReasoningEffortOption | undefined {
-    const checkedAction = this.getCurrentReasoningEffortAction(model);
-    if (checkedAction) {
-      return checkedAction.value;
-    }
-
-    return this.getStoredOrDefaultReasoningEffort(model);
-  }
-
-  private getStoredOrDefaultReasoningEffort(
-    model: NonNullable<ChatService['currentModel']> | null | undefined,
-  ): ReasoningEffortOption | undefined {
-    const modelId = this.getModelConfigurationId(model);
-    const configuredReasoningEffort = modelId
-      ? this.languageModelsService.getModelConfiguration(modelId)?.['reasoningEffort']
-      : undefined;
-    if (typeof configuredReasoningEffort === 'string') {
-      return configuredReasoningEffort as ReasoningEffortOption;
-    }
-
-    return this.ailyChatConfigService.resolveModelReasoningEffort(model, model?.reasoningEffort);
-  }
-
-  private normalizeConfigurationActionLabel(label: string): string {
-    return label.replace(/\s*\(default\)$/i, '');
-  }
-
-  private buildPresetTooltipDescription(options?: {
-    description?: string | null;
-    disabledReason?: 'upgrade' | 'admin' | 'update';
-    requiredTier?: string;
-    minimumClientVersion?: string;
-  }): string | undefined {
-    const description = typeof options?.description === 'string' && options.description.trim()
-      ? options.description.trim()
-      : undefined;
-
-    if (options?.disabledReason === 'upgrade') {
-      const requiredTier = typeof options.requiredTier === 'string' && options.requiredTier.trim()
-        ? options.requiredTier.trim().toUpperCase()
-        : 'PAID';
-      const upgradeMessage = `升级到 ${requiredTier} 后可用`;
-      return description ? `${description}\n\n${upgradeMessage}` : upgradeMessage;
-    }
-
-    if (options?.disabledReason === 'update') {
-      const minimumClientVersion = typeof options.minimumClientVersion === 'string' && options.minimumClientVersion.trim()
-        ? options.minimumClientVersion.trim()
-        : undefined;
-      const updateMessage = minimumClientVersion
-        ? `升级客户端到 ${minimumClientVersion} 或更高版本后可用`
-        : '升级客户端后可用';
-      return description ? `${description}\n\n${updateMessage}` : updateMessage;
-    }
-
-    if (options?.disabledReason === 'admin') {
-      const adminMessage = '需要管理员权限后可用';
-      return description ? `${description}\n\n${adminMessage}` : adminMessage;
-    }
-
-    return description;
-  }
-
-  private createReasoningEffortItem(
-    model: NonNullable<ChatService['currentModel']>,
-    item: {
-      key: string;
-      label: string;
-      tooltip?: string;
-      checked: boolean;
-      value: ReasoningEffortOption;
-    },
-  ): IMenuItem {
-    return {
-      name: item.label,
-      action: 'select-model',
-      check: item.checked,
-      tooltip: item.tooltip,
-      data: {
-        model: {
-          ...model,
-          reasoningEffort: item.value,
-        },
-        modelConfiguration: {
-          key: item.key,
-          value: item.value,
-        },
-      },
-      extra: {
-        detail: item.tooltip,
-      },
-    };
-  }
-
-  private getPromotedPresetIds(defaultPresetId: string): Set<string> {
-    const promotedPresetIds = new Set<string>();
-    const currentPresetId = typeof this.chatService.currentModel?.presetId === 'string'
-      ? this.chatService.currentModel.presetId.trim()
-      : '';
-
-    if (currentPresetId && currentPresetId !== defaultPresetId) {
-      promotedPresetIds.add(currentPresetId);
-    }
-
-    for (const presetId of this.chatService.getRecentModelPresetIds()) {
-      if (presetId && presetId !== defaultPresetId) {
-        promotedPresetIds.add(presetId);
-      }
-    }
-
-    return promotedPresetIds;
-  }
-
-  private buildSyntheticPromotedEntries(
-    promotedPresetIds: ReadonlySet<string>,
-    visiblePresetIds: ReadonlySet<string>,
-    defaultPresetId: string,
-    currentModel: NonNullable<ChatService['currentModel']> | null,
-  ): ModelMenuPresetEntry[] {
-    const syntheticEntries: ModelMenuPresetEntry[] = [];
-
-    for (const presetId of promotedPresetIds) {
-      if (!presetId || presetId === defaultPresetId || visiblePresetIds.has(presetId)) {
-        continue;
-      }
-
-      const preset = this.ailyChatConfigService.getModelPresetById(presetId);
-      const controlEntry = this.ailyChatConfigService.getModelPickerControlPresetById(presetId);
-      if (!preset && !controlEntry) {
-        continue;
-      }
-
-      const resolvedModel = this.ailyChatConfigService.resolvePresetModel(presetId);
-      const sortName = controlEntry?.label || preset?.name || presetId;
-
-      if (resolvedModel) {
-        const item = this.createModelMenuItem(resolvedModel, currentModel, {
-          description: preset?.description,
-          preferBillingMeta: true,
-          disabled: preset ? !preset.enabled : false,
-          disabledReason: preset?.unavailableReason,
-          requiredTier: preset?.requiredTier,
-          minimumClientVersion: preset?.minimumClientVersion,
-        });
-        item.name = sortName;
-        syntheticEntries.push({
-          presetId,
-          sortName,
-          enabled: preset?.enabled ?? true,
-          item,
-        });
-        continue;
-      }
-
-      if (controlEntry) {
-        syntheticEntries.push({
-          presetId,
-          sortName,
-          enabled: false,
-          item: this.createUnavailableModelMenuItem(controlEntry, {
-            description: preset?.description,
-            disabledReason: preset?.unavailableReason ?? this.resolveSyntheticUnavailableReason(controlEntry),
-            requiredTier: preset?.requiredTier,
-            minimumClientVersion: preset?.minimumClientVersion ?? controlEntry.minClientVersion,
-          }),
-        });
-      }
-    }
-
-    return syntheticEntries;
-  }
-
-  private getCustomModelMenuEntries(
-    currentModel: NonNullable<ChatService['currentModel']> | null,
-  ): ModelMenuPresetEntry[] {
-    return this.ailyChatConfigService.getEnabledModels()
-      .filter(model => model.isCustom)
-      .map((model) => ({
-        presetId: model.model,
-        sortName: model.name,
-        enabled: model.enabled,
-        item: this.createModelMenuItem(model, currentModel, {
-          description: model.description,
-        }),
-      }));
-  }
-
-  private getDefaultPresetMenuEntry(
-    defaultPresetId: string,
-    currentModel: NonNullable<ChatService['currentModel']> | null,
-  ): ModelMenuPresetEntry | undefined {
-    const defaultPreset = this.ailyChatConfigService.getModelPresetById(defaultPresetId);
-    const defaultModel = this.ailyChatConfigService.resolvePresetModel(defaultPresetId);
-    if (!defaultModel) {
-      return undefined;
-    }
-
-    return {
-      presetId: defaultPresetId,
-      sortName: defaultPreset?.name ?? defaultModel.name,
-      enabled: true,
-      item: this.createModelMenuItem(defaultModel, currentModel, {
-        description: defaultPreset?.description,
-        preferBillingMeta: true,
-        disabled: false,
-      }),
-    };
-  }
-
-  private createUnavailableModelMenuItem(
-    controlEntry: ModelPickerControlOption,
-    options?: {
-      description?: string;
-      disabledReason?: 'upgrade' | 'admin' | 'update';
-      requiredTier?: string;
-      minimumClientVersion?: string;
-    },
-  ): IMenuItem {
-    return {
-      name: controlEntry.label,
-      action: 'select-model',
-      disabled: true,
-      tooltip: this.buildPresetTooltipDescription(options),
-      hideChildrenArrow: true,
-    };
-  }
-
-  private resolveSyntheticUnavailableReason(controlEntry: ModelPickerControlOption): 'upgrade' | 'admin' | 'update' {
-    if (controlEntry.minClientVersion) {
-      return 'update';
-    }
-
-    return 'admin';
-  }
-
-  private sortModelMenuPresetEntries(entries: readonly ModelMenuPresetEntry[]): ModelMenuPresetEntry[] {
-    return [...entries].sort((left, right) => {
-      if (left.enabled !== right.enabled) {
-        return left.enabled ? -1 : 1;
-      }
-
-      return left.sortName.localeCompare(right.sortName);
+  private buildModelMenuState() {
+    return buildChatModelMenuState({
+      currentModel: this.chatService.currentModel,
+      recentModelPresetIds: typeof this.chatService.getRecentModelPresetIds === 'function'
+        ? this.chatService.getRecentModelPresetIds()
+        : [],
+      pinnedModelIds: typeof this.chatService.getPinnedModelIds === 'function'
+        ? this.chatService.getPinnedModelIds()
+        : [],
+      ailyChatConfigService: this.ailyChatConfigService,
+      languageModelsService: this.languageModelsService,
     });
-  }
-
-  private createModelMenuSection(name: string, action: string, sectionId?: string): IMenuItem {
-    return {
-      name,
-      action,
-      disabled: true,
-      extra: sectionId ? { sectionId } : undefined,
-    };
-  }
-
-  private createModelMenuSectionToggle(name: string, sectionId: string): IMenuItem {
-    return {
-      name,
-      action: `section-toggle-${sectionId}`,
-      extra: {
-        sectionId,
-        collapsed: true,
-      },
-    };
-  }
-
-  private createModelMenuSectionFilter(name: string, sectionId: string): IMenuItem {
-    return {
-      name,
-      action: `section-filter-${sectionId}`,
-      extra: {
-        sectionId,
-      },
-    };
   }
 }

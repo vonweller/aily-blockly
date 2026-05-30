@@ -7,8 +7,10 @@
  * 扫描来源（按优先级从低到高，同名后者覆盖前者）：
  * 0. Builtin Skills: ${rendererPath}/skills/          (随应用安装包分发，public/skills/)
  * 1. Global Skills:  ${AppDataPath}/aily-skills/      (用户全局自定义)
- * 2. Project Skills: ${projectRoot}/.aily/skills/     (项目专属)
- * 3. Cross-client:   ${projectRoot}/.agents/skills/   (规范推荐，跨客户端)
+ * 2. Claude Global:  ${userHome}/.claude/skills/      (Claude 全局 skills)
+ * 3. Project Skills: ${projectRoot}/.aily/skills/     (项目专属)
+ * 4. Cross-client:   ${projectRoot}/.agents/skills/   (规范推荐，跨客户端)
+ * 5. Claude Project: ${projectRoot}/.claude/skills/   (Claude 项目 skills)
  */
 
 import {
@@ -110,12 +112,13 @@ class SkillRegistryImpl {
   private _initialized = false;
   /** 会话级：Agent 主动激活的 skill 名称集合（通过 load_skill 加载，可通过 unload 卸载） */
   private _activatedSkills = new Set<string>();
+  private readonly _changeListeners = new Set<() => void>();
 
   // ========== 初始化 ==========
 
   /**
    * 扫描所有来源的 Skills。
-   * 扫描顺序：builtin → 全局 → 项目 .aily/skills/ → 项目 .agents/skills/
+  * 扫描顺序：builtin → 全局 aily-skills → 全局 .claude/skills → 项目 .aily/skills/ → 项目 .agents/skills/ → 项目 .claude/skills/
    * 同名 skill 后扫描的覆盖先扫描的（项目级优先于全局优先于内置）。
    */
   async initialize(projectRoot?: string): Promise<void> {
@@ -140,19 +143,32 @@ class SkillRegistryImpl {
       this.scanDirectory(globalDir, { type: 'global' });
     }
 
-    // 2. 加载项目 .aily/skills/
+    // 2. 加载 Claude 全局 skills（用户 home/.claude/skills）
+    const claudeGlobalDir = this.getClaudeGlobalSkillsDir();
+    if (claudeGlobalDir) {
+      this.scanDirectory(claudeGlobalDir, { type: 'global' });
+    }
+
+    // 3. 加载项目 .aily/skills/
     if (projectRoot) {
       const ailySkillsDir = host.path.join(projectRoot, '.aily', 'skills');
       this.scanDirectory(ailySkillsDir, { type: 'project', projectRoot });
     }
 
-    // 3. 加载项目 .agents/skills/（Agent Skills 规范跨客户端互操作目录）
+    // 4. 加载项目 .agents/skills/（Agent Skills 规范跨客户端互操作目录）
     if (projectRoot) {
       const agentsSkillsDir = host.path.join(projectRoot, '.agents', 'skills');
       this.scanDirectory(agentsSkillsDir, { type: 'project', projectRoot });
     }
 
+    // 5. 加载项目 .claude/skills/（Claude Code skills 目录）
+    if (projectRoot) {
+      const claudeSkillsDir = host.path.join(projectRoot, '.claude', 'skills');
+      this.scanDirectory(claudeSkillsDir, { type: 'project', projectRoot });
+    }
+
     this._initialized = true;
+    this.emitDidChange();
     console.log(`[SkillRegistry] 初始化完成, 发现 ${this.skills.size} 个 skills`);
   }
 
@@ -236,6 +252,14 @@ class SkillRegistryImpl {
     return host.path.join(appDataPath, 'aily-skills');
   }
 
+  /** Claude 全局 skills 目录：${userHome}/.claude/skills/ */
+  private getClaudeGlobalSkillsDir(): string | null {
+    const host = AilyHost.get();
+    const userHome = host.path?.getUserHome?.();
+    if (!userHome) return null;
+    return host.path.join(userHome, '.claude', 'skills');
+  }
+
   // ========== Skill 加载 ==========
 
   /**
@@ -283,6 +307,7 @@ class SkillRegistryImpl {
       };
 
       this.skills.set(metadata.name, skill);
+      this.emitDidChange();
       return skill;
     } catch (e) {
       console.warn(`[SkillRegistry] 从 URL 加载 skill 失败: ${url}`, e);
@@ -426,7 +451,11 @@ class SkillRegistryImpl {
     if (!skill) return false;
     // 确保内容已加载
     this.loadSkillContent(name);
+    const sizeBefore = this._activatedSkills.size;
     this._activatedSkills.add(name);
+    if (this._activatedSkills.size !== sizeBefore) {
+      this.emitDidChange();
+    }
     return true;
   }
 
@@ -438,7 +467,11 @@ class SkillRegistryImpl {
     const skill = this.skills.get(name);
     if (!skill) return false;
     if (skill.metadata.autoActivate) return false;
-    return this._activatedSkills.delete(name);
+    const didDelete = this._activatedSkills.delete(name);
+    if (didDelete) {
+      this.emitDidChange();
+    }
+    return didDelete;
   }
 
   /** 获取当前已激活的 skill 名称列表（含 auto-activate） */
@@ -449,7 +482,21 @@ class SkillRegistryImpl {
 
   /** 清除会话级激活状态（会话结束时调用） */
   clearSessionState(): void {
+    if (this._activatedSkills.size === 0) {
+      return;
+    }
+
     this._activatedSkills.clear();
+    this.emitDidChange();
+  }
+
+  onDidChange(listener: () => void): { dispose(): void } {
+    this._changeListeners.add(listener);
+    return {
+      dispose: () => {
+        this._changeListeners.delete(listener);
+      },
+    };
   }
 
   /**
@@ -490,6 +537,12 @@ class SkillRegistryImpl {
   /** 已注册 skill 数量 */
   get size(): number {
     return this.skills.size;
+  }
+
+  private emitDidChange(): void {
+    for (const listener of Array.from(this._changeListeners)) {
+      listener();
+    }
   }
 }
 

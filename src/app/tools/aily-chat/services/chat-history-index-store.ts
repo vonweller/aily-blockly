@@ -1,4 +1,23 @@
 import { AilyHost } from '../core/host';
+import { normalizeChatSurfaceModeId } from '../core/chat-mode';
+import {
+  normalizeHostSessionRequestRoutingSummary,
+  resolveHostSessionRequestRoutingSummary,
+} from '../helpers/host-session-request-routing';
+import {
+  normalizeHostSessionInteractionActionSummary,
+  resolveHostSessionInteractionActionSummary,
+} from '../helpers/host-session-interaction-action';
+import {
+  type HostSessionSelectedModeResolveOptions,
+  normalizeHostSessionInputStateFromMetadata,
+  resolveHostSessionModeDescriptor,
+  resolveHostSessionModeDescriptorFromMetadata,
+  resolveHostSessionInputState,
+  resolveHostSessionSummaryModeFromMetadata,
+  resolveHostSessionSelectedMode,
+  resolveHostSessionSelectedModeFromMetadata,
+} from '../helpers/host-session-input-state';
 
 import type { HostSessionRecord, ProjectIndexEntry, SessionIndexEntry } from './chat-history.service';
 import { countHostRecordMessages } from './chat-history.service';
@@ -12,6 +31,7 @@ export interface ChatHistoryIndexStoreOptions {
   extractProjectName: (projectPath: string | null) => string | null;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
   readHostRecord: (sessionId: string, projectPath: string | null) => HostSessionRecord | null;
+  resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
 }
 
 /**
@@ -52,7 +72,7 @@ export class ChatHistoryIndexStore {
       const globalDir = this.options.getGlobalAilyDir();
       const indexPath = this.options.joinPath(globalDir, this.options.indexFile);
       this.ensureDir(globalDir);
-      this.writeFileSync(indexPath, JSON.stringify(index, null, 2));
+      this.writeFileSync(indexPath, JSON.stringify(index.map((entry) => this.normalizeIndexEntry(entry)), null, 2));
       return true;
     } catch (error) {
       console.warn('[ChatHistory] 写入全局索引失败:', error);
@@ -69,7 +89,21 @@ export class ChatHistoryIndexStore {
     try {
       const projectEntries: ProjectIndexEntry[] = index
         .filter((entry) => this.options.isSamePath(entry.projectPath, prjPath))
-        .map(({ projectPath: _pp, projectName: _pn, ...rest }) => rest);
+        .map(({ projectPath: _pp, projectName: _pn, ...rest }) => {
+          const selectedMode = resolveHostSessionSummaryModeFromMetadata(rest);
+          const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(rest, this.getModeResolveOptions());
+          const inputState = normalizeHostSessionInputStateFromMetadata(rest, this.getModeResolveOptions());
+          const requestRouting = normalizeHostSessionRequestRoutingSummary(rest.requestRouting, selectedMode);
+          const interactionActionSummary = normalizeHostSessionInteractionActionSummary(rest.interactionActionSummary);
+          return {
+            ...rest,
+            mode: selectedMode.modeId,
+            modeDescriptor,
+            inputState,
+            requestRouting,
+            ...(interactionActionSummary ? { interactionActionSummary } : {}),
+          };
+        });
 
       if (projectEntries.length === 0) return;
 
@@ -95,7 +129,7 @@ export class ChatHistoryIndexStore {
       const parsed = JSON.parse(content);
       if (Array.isArray(parsed)) {
         console.log(`[ChatHistory] 全局索引已加载, ${parsed.length} 条记录`);
-        return parsed;
+        return parsed.map((entry) => this.normalizeIndexEntry(entry as SessionIndexEntry));
       }
     } catch (error) {
       console.warn('[ChatHistory] 加载全局索引失败:', error);
@@ -122,11 +156,11 @@ export class ChatHistoryIndexStore {
       }
 
       for (const entry of projectEntries) {
-        indexMap.set(entry.sessionId, {
+        indexMap.set(entry.sessionId, this.normalizeIndexEntry({
           ...entry,
           projectPath: prjPath,
           projectName,
-        });
+        }));
       }
 
       const merged = Array.from(indexMap.values());
@@ -167,6 +201,11 @@ export class ChatHistoryIndexStore {
           continue;
         }
 
+        const selectedMode = resolveHostSessionSelectedMode(data, this.getModeResolveOptions());
+        const modeDescriptor = resolveHostSessionModeDescriptor(data, this.getModeResolveOptions());
+        const requestRouting = resolveHostSessionRequestRoutingSummary(data);
+        const interactionActionSummary = resolveHostSessionInteractionActionSummary(data);
+
         indexMap.set(sessionId, {
           sessionId,
           title: data.metadata.title || '',
@@ -175,7 +214,11 @@ export class ChatHistoryIndexStore {
           createdAt: data.metadata.createdAt || Date.now(),
           updatedAt: data.metadata.updatedAt || Date.now(),
           messageCount: countHostRecordMessages(data),
-          mode: data.metadata.mode || 'agent',
+          mode: selectedMode.modeId,
+          modeDescriptor,
+          inputState: resolveHostSessionInputState(data, this.getModeResolveOptions()),
+          requestRouting,
+          ...(interactionActionSummary ? { interactionActionSummary } : {}),
           model: data.metadata.model ?? null,
           dataAvailable: true,
         });
@@ -214,9 +257,33 @@ export class ChatHistoryIndexStore {
     AilyHost.get().fs.writeFileSync(path, content, 'utf-8');
   }
 
+  private normalizeIndexEntry(entry: SessionIndexEntry): SessionIndexEntry {
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(entry);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(entry, this.getModeResolveOptions());
+    const inputState = normalizeHostSessionInputStateFromMetadata(entry, this.getModeResolveOptions());
+    const requestRouting = normalizeHostSessionRequestRoutingSummary(entry.requestRouting, selectedMode);
+    const interactionActionSummary = normalizeHostSessionInteractionActionSummary(entry.interactionActionSummary);
+
+    return {
+      ...entry,
+      mode: normalizeChatSurfaceModeId(selectedMode.modeId),
+      modeDescriptor,
+      inputState,
+      requestRouting,
+      ...(interactionActionSummary ? { interactionActionSummary } : {}),
+      model: entry.model ?? null,
+    };
+  }
+
   private ensureDir(dirPath: string): void {
     if (!this.fileExists(dirPath)) {
       AilyHost.get().fs.mkdirSync(dirPath, { recursive: true });
     }
+  }
+
+  private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
+    return this.options.resolveModeById
+      ? { resolveModeById: this.options.resolveModeById }
+      : undefined;
   }
 }

@@ -1094,7 +1094,10 @@ interface AppConfig {
   boardUsageCount?: Record<string, number>;
 
   /** AI聊天模式 */
-  aiChatMode?: 'agent' | 'ask';
+  aiChatMode?: 'agent' | 'ask' | 'edit';
+
+  /** AI聊天当前自定义智能体目标 */
+  aiChatCustomAgentTarget?: string;
 
   /** 串口监视器配置 */
   serialMonitor?: {

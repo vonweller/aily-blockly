@@ -59,6 +59,8 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
               [primaryDisabled]="primaryActionDisabled"
               [moreActionsTooltip]="moreActionsTooltip"
               [options]="approvalActionOptions"
+              [rejectLabel]="rejectButtonLabel"
+              [rejectTooltip]="rejectButtonTooltip"
               (approve)="onApproveFromActions($event)"
               (action)="onActionFromActions($event)"
               (reject)="onReject()"
@@ -174,6 +176,10 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   primaryScope: ToolApprovalScope = 'once';
   primaryButtonLabel = '允许';
   primaryActionValue = 'once';
+  customPrimaryButtonLabel = '';
+  customPrimaryButtonTooltip = '';
+  rejectButtonLabel = '跳过';
+  rejectButtonTooltip = '继续当前对话，但不执行此操作';
   collapsed = false;
 
   get hasMoreActions(): boolean {
@@ -231,6 +237,10 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   }
 
   get primaryButtonTooltip(): string {
+    if (this.customPrimaryButtonTooltip) {
+      return this.customPrimaryButtonTooltip;
+    }
+
     if (this.primaryScope === 'once') {
       return '允许这次执行';
     }
@@ -297,6 +307,14 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       this.approved = !!this.data.approved;
       this.approvalActions = Array.isArray(this.data.actions) ? this.data.actions : [];
       this.primaryScope = this.data.primaryScope || 'once';
+      this.customPrimaryButtonLabel = typeof this.data.primaryLabel === 'string' ? this.data.primaryLabel : '';
+      this.customPrimaryButtonTooltip = typeof this.data.primaryTooltip === 'string' ? this.data.primaryTooltip : '';
+      this.rejectButtonLabel = typeof this.data.rejectLabel === 'string' && this.data.rejectLabel.trim()
+        ? this.data.rejectLabel
+        : '跳过';
+      this.rejectButtonTooltip = typeof this.data.rejectTooltip === 'string' && this.data.rejectTooltip.trim()
+        ? this.data.rejectTooltip
+        : '继续当前对话，但不执行此操作';
       this.primaryButtonLabel = this.getPrimaryButtonLabel(this.primaryScope);
       this.primaryActionValue = this.getPrimaryActionValue(this.primaryScope);
       this.resolvedText = this.resolved ? this.formatResolvedText(this.approved, this.data.scope) : '';
@@ -393,6 +411,10 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
   }
 
   private getPrimaryButtonLabel(scope: ToolApprovalScope): string {
+    if (this.customPrimaryButtonLabel) {
+      return this.customPrimaryButtonLabel;
+    }
+
     if (this.kind === 'confirmation') {
       return '确认';
     }

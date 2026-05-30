@@ -88,6 +88,17 @@ export interface IDirent {
   isFile(): boolean;
 }
 
+export interface IFileWatchOptions {
+  recursive?: boolean;
+  persistent?: boolean;
+}
+
+export interface IFileWatchHandle {
+  close?(): void;
+  dispose?(): void;
+  unsubscribe?(): void;
+}
+
 export interface IFileSystem {
   readFileSync(path: string, encoding?: string): string;
   readFileAsBase64?(path: string): string;
@@ -116,6 +127,11 @@ export interface IFileSystem {
   readDir?(path: string): Promise<IDirent[]>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   unlink?(path: string): Promise<void>;
+  watch?(
+    path: string,
+    listener: (eventType: string, filename?: string | null) => void,
+    options?: IFileWatchOptions,
+  ): IFileWatchHandle | void;
 }
 
 // ============================================================
@@ -392,6 +408,13 @@ export interface IEditorProvider {
   getGeneratedCode?(): string;
   reloadAbiJson?(): void;
   getBlockDefinitions?(): any[];
+
+  registerTextDocumentContentProvider?(
+    scheme: string,
+    provider: {
+      provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+    },
+  ): { dispose(): void };
   
   // VS Code 风格的最小文本文件打开能力
   showTextDocument?(
@@ -406,6 +429,9 @@ export interface IEditorProvider {
       };
     },
   ): Promise<boolean> | boolean;
+
+  // VS Code 风格的最小文档读取能力，用于按 URI 解析只读/虚拟文档。
+  readTextDocument?(uri: string): Promise<string | undefined> | string | undefined;
 
   // Code 编辑器专属
   getCurrentFileContent?(): string;

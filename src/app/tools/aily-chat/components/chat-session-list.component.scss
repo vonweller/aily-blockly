@@ -1,0 +1,51 @@
+.session-list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 10px;
+  border: 1px solid var(--aily-border-secondary, rgba(255, 255, 255, 0.06));
+  background: var(--aily-chat-viewer-panel-raised, rgba(255, 255, 255, 0.02));
+  overflow: hidden;
+}
+
+.session-list-panel.entry {
+  width: 100%;
+  max-width: 420px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.session-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--aily-menu-separator, rgba(255, 255, 255, 0.08));
+}
+
+.session-list-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--aily-text-muted, #9d9d9d);
+}
+
+.session-list-new-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--aily-border-input, rgba(255, 255, 255, 0.08));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--aily-text-primary, #e0e0e0);
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--aily-highlight-bg, rgba(255, 255, 255, 0.08));
+  }
+}

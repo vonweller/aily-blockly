@@ -97,6 +97,11 @@ export class HostSessionPersistenceBridge {
   }
 
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {
+    const liveRecord = this.tryLoadLiveHostRecord(sessionId);
+    if (liveRecord) {
+      return liveRecord;
+    }
+
     const cached = this.sessionCache.get(sessionId);
     if (cached) {
       return cached;
@@ -173,7 +178,25 @@ export class HostSessionPersistenceBridge {
 
   private materializeHostRecord(record: LiveHostSessionRecord): HostSessionRecord {
     const fullMetadata = this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata));
-    return this.hostRecordStore.createRecord(fullMetadata, record.turnResponses, record.sidecar);
+    return this.hostRecordStore.createRecord(fullMetadata, record.turnResponses, record.sidecar, record.auxiliary);
+  }
+
+  private tryLoadLiveHostRecord(sessionId: string): HostSessionRecord | null {
+    if (!this.liveSessionProvider) {
+      return null;
+    }
+
+    try {
+      const liveRecord = this.liveSessionProvider();
+      if (!liveRecord || liveRecord.sessionId !== sessionId) {
+        return null;
+      }
+
+      return this.materializeHostRecord(liveRecord);
+    } catch (error) {
+      console.warn('[ChatHistory] 读取 live session 失败:', error);
+      return null;
+    }
   }
 
   private applyPendingTitle(metadata: SessionMetadata): SessionMetadata {

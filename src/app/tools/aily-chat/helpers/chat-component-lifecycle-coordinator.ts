@@ -7,7 +7,7 @@ export class ChatComponentLifecycleCoordinator {
       setMermaidInstance: (instance: any) => void;
       exposeEditBlockTools: () => void;
       initializeEngine: () => void;
-      destroyEngine: () => void;
+      detachEngineView: () => void;
     },
   ) {}
 
@@ -24,7 +24,7 @@ export class ChatComponentLifecycleCoordinator {
     this.deps.initializeEngine();
   }
 
-  destroy(): void {
-    this.deps.destroyEngine();
+  detachView(): void {
+    this.deps.detachEngineView();
   }
 }

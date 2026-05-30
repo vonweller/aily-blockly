@@ -4,12 +4,14 @@ import type { ModelConfig } from '../services/chat.service';
 import type { AuthQuotaSnapshot } from '../services/auth-quota-snapshot';
 import type { ChatInputNotice } from '../services/chat-input-notice';
 import type { ContextBudgetSnapshot } from '../services/context-budget-snapshot';
+import type { ChatContextUsagePromptTokenDetail, ChatContextUsageSnapshot } from '../services/context-usage-snapshot';
 import type { InteractionBudgetSnapshot } from '../services/interaction-budget-snapshot';
 import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
 import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
 import type { HostRequestModel } from './host-turn-response-state';
+import type { MenuPosition } from '../services/menu-manager.service';
 
 interface ChatEngineViewLike {
   readonly hostRequestModel: HostRequestModel | null;
@@ -22,6 +24,7 @@ interface ChatEngineViewLike {
   readonly sessionId: string;
   readonly sessionTitle: string;
   readonly currentMode: string;
+  readonly currentCustomAgentTarget: string | undefined;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
   readonly currentReasoningEffort: string | undefined;
@@ -38,6 +41,7 @@ interface ChatEngineViewLike {
   readonly authQuotaExhausted: boolean;
   readonly requestQuotaSnapshot$: Observable<RequestQuotaSnapshot | null>;
   readonly contextBudgetSnapshot: ContextBudgetSnapshot | null;
+  readonly contextUsageSnapshot: ChatContextUsageSnapshot | null;
   readonly interactionBudgetSnapshot: InteractionBudgetSnapshot | null;
   readonly requestQuotaSnapshot: RequestQuotaSnapshot | null;
   readonly debug: boolean;
@@ -50,6 +54,8 @@ interface ChatViewStateLike {
   readonly bottomHeight: number;
   readonly senderMinHeight: number;
   readonly senderMaxHeight: number;
+  readonly showSessionPicker: boolean;
+  readonly sessionPickerPosition: MenuPosition;
   readonly showSettings: boolean;
   readonly showAgentSuggestions: boolean;
   readonly agentSuggestions: readonly string[];
@@ -59,6 +65,33 @@ interface ChatViewStateLike {
   readonly currentReasoningEffortLabel: string;
   readonly currentReasoningEffortDisplayLabel: string;
   readonly hasReasoningEffortOptions: boolean;
+  openSessionPicker(anchor?: MouseEvent): void;
+  closeSessionPicker(): void;
+}
+
+interface ContextUsageDetailViewItem {
+  readonly label: string;
+  readonly contextPercentage: number;
+}
+
+interface ContextUsageDetailViewGroup {
+  readonly category: string;
+  readonly items: readonly ContextUsageDetailViewItem[];
+}
+
+export interface ChatContextUsageDisplay {
+  readonly snapshot: ChatContextUsageSnapshot;
+  readonly severity: 'normal' | 'warning' | 'error';
+  readonly percentage: number;
+  readonly percentageLabel: string;
+  readonly circleLabel: string;
+  readonly usedTokensLabel: string;
+  readonly totalTokensLabel: string;
+  readonly reservedWidth: number;
+  readonly showReservedWidth: boolean;
+  readonly strokeDashoffset: number;
+  readonly showWarningNotice: boolean;
+  readonly detailGroups: readonly ContextUsageDetailViewGroup[];
 }
 
 /**
@@ -68,6 +101,9 @@ interface ChatViewStateLike {
  * getters while preserving the existing engine/view-state ownership split.
  */
 export class ChatComponentViewModel {
+  private lastContextUsageSnapshot: ChatContextUsageSnapshot | null = null;
+  private lastContextUsageDisplay: ChatContextUsageDisplay | null = null;
+
   constructor(
     private readonly deps: {
       engine: ChatEngineViewLike;
@@ -118,8 +154,28 @@ export class ChatComponentViewModel {
     return this.deps.engine.sessionTitle;
   }
 
+  get showSessionPicker(): boolean {
+    return this.deps.viewState.showSessionPicker;
+  }
+
+  get sessionPickerPosition(): MenuPosition {
+    return this.deps.viewState.sessionPickerPosition;
+  }
+
+  openSessionPicker(anchor?: MouseEvent): void {
+    this.deps.viewState.openSessionPicker(anchor);
+  }
+
+  closeSessionPicker(): void {
+    this.deps.viewState.closeSessionPicker();
+  }
+
   get currentMode(): string {
     return this.deps.engine.currentMode;
+  }
+
+  get currentCustomAgentTarget(): string | undefined {
+    return this.deps.engine.currentCustomAgentTarget;
   }
 
   get currentModel(): ModelConfig {
@@ -190,6 +246,44 @@ export class ChatComponentViewModel {
     return this.deps.engine.contextBudgetSnapshot;
   }
 
+  get contextUsageSnapshot(): ChatContextUsageSnapshot | null {
+    return this.deps.engine.contextUsageSnapshot;
+  }
+
+  get contextUsageDisplay(): ChatContextUsageDisplay | null {
+    const snapshot = this.deps.engine.contextUsageSnapshot;
+    if (!snapshot || snapshot.totalContextWindow <= 0) {
+      this.lastContextUsageSnapshot = null;
+      this.lastContextUsageDisplay = null;
+      return null;
+    }
+
+    if (this.lastContextUsageSnapshot === snapshot && this.lastContextUsageDisplay) {
+      return this.lastContextUsageDisplay;
+    }
+
+    const percentage = clampContextUsagePercentage(snapshot.percentage);
+    const reservedWidth = getContextUsageReservedWidth(snapshot, percentage);
+    const display: ChatContextUsageDisplay = {
+      snapshot,
+      severity: percentage >= 90 ? 'error' : percentage >= 75 ? 'warning' : 'normal',
+      percentage,
+      percentageLabel: `${percentage.toFixed(0)}%`,
+      circleLabel: percentage.toFixed(0),
+      usedTokensLabel: formatContextUsageTokenCount(snapshot.usedTokens, 1),
+      totalTokensLabel: formatContextUsageTokenCount(snapshot.totalContextWindow, 0),
+      reservedWidth,
+      showReservedWidth: reservedWidth > 0,
+      strokeDashoffset: 87.965 * (1 - (percentage / 100)),
+      showWarningNotice: percentage >= 75,
+      detailGroups: buildContextUsageDetailGroups(snapshot.promptTokenDetails ?? [], percentage),
+    };
+
+    this.lastContextUsageSnapshot = snapshot;
+    this.lastContextUsageDisplay = display;
+    return display;
+  }
+
   get interactionBudgetSnapshot(): InteractionBudgetSnapshot | null {
     return this.deps.engine.interactionBudgetSnapshot;
   }
@@ -249,4 +343,70 @@ export class ChatComponentViewModel {
   get hasReasoningEffortOptions(): boolean {
     return this.deps.viewState.hasReasoningEffortOptions;
   }
+}
+
+function formatContextUsageTokenCount(count: number, decimals: number): string {
+  const mThreshold = 1000000 - 500 * Math.pow(10, -decimals);
+
+  if (count >= mThreshold) {
+    return `${(count / 1000000).toFixed(decimals)}M`;
+  }
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(decimals)}K`;
+  }
+
+  return count.toString();
+}
+
+function clampContextUsagePercentage(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function getContextUsageReservedWidth(snapshot: ChatContextUsageSnapshot, percentage: number): number {
+  if (typeof snapshot.outputBufferPercentage !== 'number' || snapshot.outputBufferPercentage <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100 - percentage, snapshot.outputBufferPercentage));
+}
+
+function buildContextUsageDetailGroups(
+  details: readonly ChatContextUsagePromptTokenDetail[],
+  percentage: number,
+): readonly ContextUsageDetailViewGroup[] {
+  if (details.length === 0) {
+    return [];
+  }
+
+  const categoryMap = new Map<string, Array<{ label: string; percentageOfPrompt: number }>>();
+  let totalPercentage = 0;
+
+  for (const detail of details) {
+    const items = categoryMap.get(detail.category) ?? [];
+    items.push({ label: detail.label, percentageOfPrompt: detail.percentageOfPrompt });
+    categoryMap.set(detail.category, items);
+    totalPercentage += detail.percentageOfPrompt;
+  }
+
+  if (totalPercentage < 100) {
+    categoryMap.set('Uncategorized', [{ label: 'Other', percentageOfPrompt: 100 - totalPercentage }]);
+  }
+
+  const groups: ContextUsageDetailViewGroup[] = [];
+  for (const [category, items] of categoryMap.entries()) {
+    const visibleItems = items
+      .map(item => ({
+        label: item.label,
+        contextPercentage: (item.percentageOfPrompt / 100) * percentage,
+      }))
+      .filter(item => item.contextPercentage >= 0.05);
+
+    if (visibleItems.length === 0) {
+      continue;
+    }
+
+    groups.push({ category, items: visibleItems });
+  }
+
+  return groups;
 }

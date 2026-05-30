@@ -58,6 +58,15 @@ export class ChatInputNoticeStateService implements OnDestroy {
     return this.inputNoticeSubject.getValue();
   }
 
+  acceptProjectedRuntimeNotice(notice: ChatInputNotice | null | undefined): void {
+    if (!notice) {
+      this.syncSourceNotification('request-quota', null);
+      return;
+    }
+
+    this.syncSourceNotification(notice.source, notice);
+  }
+
   dismissCurrentNotice(): void {
     const notice = this.getInputNotice();
     if (!notice) {

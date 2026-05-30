@@ -1,0 +1,70 @@
+@if (displayGroups.length > 0) {
+<div
+  [class.session-list-items]="isListVariant"
+  [class.session-picker-list]="isPickerVariant"
+  [class.sscroll]="isPickerVariant"
+  role="listbox"
+  [attr.aria-label]="listAriaLabel">
+  @for (group of displayGroups; track group.id) {
+  @if (group.label) {
+  <div [class.session-list-section-label]="isListVariant" [class.session-picker-section-label]="isPickerVariant">{{ group.label }}</div>
+  }
+  @for (item of group.items; track trackBySessionId($index, item)) {
+  <div
+    [class.session-list-row]="isListVariant"
+    [class.session-picker-row]="isPickerVariant"
+    [class.current]="item.current"
+    [class.selected]="isSelected(item)">
+    <button
+      type="button"
+      [class.session-list-item]="isListVariant"
+      [class.session-picker-item]="isPickerVariant"
+      [class.current]="isPickerVariant && item.current"
+      [class.selected]="isPickerVariant && isSelected(item)"
+      [attr.data-session-id]="item.sessionId"
+      role="option"
+      [attr.aria-selected]="isSelected(item)"
+      [attr.aria-current]="item.current ? 'true' : null"
+      (click)="selectItem(item)">
+      <div [class.session-list-copy]="isListVariant" [class.session-picker-copy]="isPickerVariant">
+        <div [class.session-list-item-title-row]="isListVariant" [class.session-picker-title-row]="isPickerVariant">
+          <span [class.session-list-item-title]="isListVariant" [class.session-picker-title]="isPickerVariant">{{ item.title }}</span>
+        </div>
+        @if (formatStatusMeta(item)) {
+        <div [class.session-list-item-meta-row]="isListVariant" [class.session-picker-meta-row]="isPickerVariant">
+          <div [class.session-list-item-detail-row]="isListVariant" [class.session-picker-detail-row]="isPickerVariant">
+            <div
+              [class.session-list-item-status]="isListVariant"
+              [class.session-picker-status]="isPickerVariant"
+              [class]="(isListVariant ? 'session-list-item-status' : 'session-picker-status') + ' status-' + statusClass(item.status)">
+              {{ formatStatusMeta(item) }}
+            </div>
+          </div>
+        </div>
+        }
+      </div>
+    </button>
+    @if (item.actions.length > 0) {
+    <div [class.session-list-actions]="isListVariant" [class.session-picker-actions]="isPickerVariant">
+      @for (action of item.actions; track action.action) {
+      <button
+        type="button"
+        [class.session-list-action]="isListVariant"
+        [class.session-picker-action]="isPickerVariant"
+        [class.active]="action.active === true"
+        [attr.data-session-action]="action.action"
+        [attr.aria-label]="action.title"
+        [title]="action.title"
+        (click)="triggerAction($event, action, item)">
+        <i [class]="action.icon"></i>
+      </button>
+      }
+    </div>
+    }
+  </div>
+  }
+  }
+</div>
+} @else {
+<div [class.session-list-empty]="isListVariant" [class.session-picker-empty]="isPickerVariant">{{ emptyLabel }}</div>
+}

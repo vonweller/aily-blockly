@@ -35,10 +35,11 @@
   </div>
 }
 <div class="acc-chip ccenter" (click)="modeClick.emit($event)">
-  @if (currentMode === 'agent') {
-    <i class="fa-light fa-user-astronaut"></i><span>{{ 'AILY_CHAT.MODE_AGENT' | translate }}</span>
-  } @else {
-    <i class="fa-light fa-comment-smile"></i><span>{{ 'AILY_CHAT.MODE_QA' | translate }}</span>
+  <i [class]="modeIconClass"></i>
+  @if (currentCustomAgentTarget && currentMode === 'agent') {
+    <span>{{ currentCustomAgentTarget }}</span>
+  } @else if (modeLabelKey) {
+    <span>{{ modeLabelKey | translate }}</span>
   }
 </div>
 @if (showModelChip) {

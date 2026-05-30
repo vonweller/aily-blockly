@@ -97,7 +97,6 @@ export class ChatEngineService implements IChatContext {
   private readonly titleCoordinator = new ChatTitleCoordinator(this.titleCoordinatorContext, lexGenerateTitle);
   private readonly sendCoordinator = new ChatSendCoordinator(
     this,
-    (content) => this.titleCoordinator.generate(content),
     () => this.resourceManager.getResourcesText(),
     (requestAgentId) => getUserSelectedToolsForRequest(
       {
@@ -632,11 +631,6 @@ export class ChatEngineService implements IChatContext {
     // 初始化 viewAdapter（需要 ngZone 已注入）
     (this as any).viewAdapter = new ChatViewAdapter(
       () => this.list,
-      (msg) => this.list.push(msg),
-      () => this.currentMessageSource,
-      () => this.currentModelName || undefined,
-      () => this.currentModelBillingLabel || undefined,
-      () => this._isWaiting,
       () => { if (this.sessionId) { this.chatHistoryService.markDirty(this.sessionId); } },
       this.ngZone,
       undefined, // cdCallback — 由 component 通过 setCdCallback 注入

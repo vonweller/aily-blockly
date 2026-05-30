@@ -150,7 +150,12 @@
             }
           </div>
           @if (entry.reference) {
-          <div class="chat-debug-detail-panel-list-reference">{{ entry.reference }}</div>
+          <div class="chat-debug-detail-panel-list-reference-shell">
+            <div class="chat-debug-detail-panel-list-reference">{{ getReferenceDisplay(entry.reference) }}</div>
+            @if (canOpenReference(entry.reference)) {
+            <button type="button" class="chat-debug-detail-panel-open" (click)="openReference(entry.reference, $event)">打开</button>
+            }
+          </div>
           }
         </div>
         }

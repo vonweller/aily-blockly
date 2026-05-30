@@ -16,6 +16,7 @@ import {
   hasHostResponseConversationContent,
   type HostResponseProjection,
 } from './host-turn-response-state';
+import { DEFAULT_CHAT_SESSION_TYPE } from '../core/chat-mode';
 import type { ChatTaskActionEvent } from './chat-task-action-coordinator';
 
 type ChatSubscriptionCoordinatorContext = ChatViewWriteBridgeContext
@@ -44,6 +45,7 @@ interface SubscriptionCallbacks {
   flushPendingAutoSend: () => void;
   syncAuthQuotaState: () => void;
   refreshRequestQuotaState: () => Promise<void>;
+  refreshSessionProviderOptionsSources: () => void;
   clearAuthQuotaState: () => void;
   clearRequestQuotaState: () => void;
 }
@@ -70,28 +72,21 @@ export class ChatSubscriptionCoordinator {
   private lastKnownApiServer = '';
   private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
 
-  private tryInitializeLoggedInSession(): void {
+  private async tryInitializeLoggedInSession(): Promise<void> {
     if (!this.isReadyForLoggedInSessionWork() || this.ctx.hasInitializedForThisLogin || this.ctx.isSessionStarting) {
       return;
     }
 
     this.ctx.hasInitializedForThisLogin = true;
-    this.viewWriteBridge.clearChatView();
-    this.ctx.session.startSession().then(async () => {
-      await this.ctx.session.getHistory();
-      this.ctx.interaction.checkFirstUsage();
-      this.callbacks.flushPendingAutoSend();
-    }).catch((err) => {
-      console.error('[ChatEngine] startSession 失败:', err);
-    });
+    await this.ctx.session.initializeEntryInventory({ restorePersistedTarget: false });
   }
 
-  private tryInitializeLoggedInSessionFromAuthRefresh(): void {
+  private async tryInitializeLoggedInSessionFromAuthRefresh(): Promise<void> {
     if (this.hasConversationHistory()) {
       return;
     }
 
-    this.tryInitializeLoggedInSession();
+    await this.tryInitializeLoggedInSession();
   }
 
   private isReadyForLoggedInSessionWork(): boolean {
@@ -190,16 +185,16 @@ export class ChatSubscriptionCoordinator {
         if (this.ctx.isLoggedIn) {
           void this.callbacks.refreshRequestQuotaState();
         }
-        this.tryInitializeLoggedInSessionFromAuthRefresh();
+        void this.tryInitializeLoggedInSessionFromAuthRefresh();
       }) ?? authProvider?.authSnapshot$?.subscribe(() => {
         this.callbacks.syncAuthQuotaState();
         if (this.ctx.isLoggedIn) {
           void this.callbacks.refreshRequestQuotaState();
         }
-        this.tryInitializeLoggedInSessionFromAuthRefresh();
+        void this.tryInitializeLoggedInSessionFromAuthRefresh();
       }) ?? null;
 
-      this.tryInitializeLoggedInSession();
+      void this.tryInitializeLoggedInSession();
     });
 
     this.aiWritingSubscription = AilyHost.get().blockly.aiWriting$.subscribe(this.callbacks.showAiWritingNotice);
@@ -244,13 +239,14 @@ export class ChatSubscriptionCoordinator {
       if (newPath && newPath !== rootPath) {
         this.ctx.absAutoSyncService.initialize(newPath);
       }
+      this.callbacks.refreshSessionProviderOptionsSources();
     });
 
     this.loginStatusSubscription = authProvider?.isLoggedIn$?.subscribe(async isLoggedIn => {
       this.ctx.isLoggedIn = isLoggedIn;
 
       if (isLoggedIn) {
-        this.tryInitializeLoggedInSession();
+        await this.tryInitializeLoggedInSession();
       }
 
       if (isLoggedIn) {
@@ -270,6 +266,7 @@ export class ChatSubscriptionCoordinator {
       this.ctx.isCompleted = false;
       this.ctx.isSessionStarting = false;
       this.ctx.chatService.currentSessionId = '';
+      this.ctx.chatService.currentSessionType = DEFAULT_CHAT_SESSION_TYPE;
       this.ctx.chatService.currentSessionPath = '';
       this.callbacks.clearAuthQuotaState();
       this.callbacks.clearRequestQuotaState();

@@ -11,8 +11,9 @@
  * - 工具执行由 lex 核心 + contributed tools (IHostToolProvider) 处理
  */
 
-import type { IChatCoordination, IChatServiceAccess } from '../core/chat-context';
+import type { IChatCoordination, IChatServiceAccess, ISessionAccess } from '../core/chat-context';
 import { PartEventProcessor } from '../core/part-event-processor';
+import { ChatPartStore } from '../core/chat-part-store';
 import {
   bootstrapBlocklyLexAgent,
   type BootstrapLexAgentContext,
@@ -34,6 +35,7 @@ import { LexSessionRestoreBridge } from './lex-session-restore-bridge';
 import { LexSessionFacade } from './lex-session-facade';
 import type { IMetricsService, MetricsSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { IHostStreamListener } from './host-turn-response-state';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
   readonly turnResponses: readonly TurnResponseTurn[];
@@ -43,7 +45,7 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   clearSessionState(): void;
 };
 
-type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'loadModule' | 'stop' | 'dispose' | 'getAgent' | 'getHandle'>;
+type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'isConfiguredFor' | 'loadModule' | 'stop' | 'dispose' | 'disposeAll' | 'getAgent' | 'getHandle' | 'getSessionIds'>;
 type LexOwnerConversationAccess = Pick<LexTurnSessionBridge, 'messages'>;
 type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuestionAnswers' | 'presentConfirmation' | 'resolveConfirmation' | 'presentToolCallApproval' | 'resolveToolCallApproval' | 'processEvent'>;
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
@@ -52,7 +54,7 @@ type LexOwnerTurnControlAccess = Pick<
   'currentId' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'complete' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
 >;
 type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
-type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'restore'>;
+type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;
 type LexOwnerMessageLifecycleAccess = Pick<LexMessageLifecycleBridge, 'resetTurnState' | 'currentMessageHandle'>;
 type LexOwnerExecutionAccess = Pick<LexTurnExecutionBridge, 'flushPendingEvents'>;
 type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendingEvents'>;
@@ -61,8 +63,20 @@ type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendin
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 
 type LexOwnerContext = BootstrapLexAgentContext
-  & Pick<IChatCoordination, 'lexStream' | 'openSettings' | 'syncRegisteredAgentNames'>
+  & Pick<IChatCoordination, 'lexStream' | 'openSettings' | 'syncCustomAgentProviderSource' | 'syncCustomAgentProviderModes' | 'syncRegisteredAgentNames'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
+  & Pick<ISessionAccess, 'sessionTitle' | 'chatService'>
+  & {
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
+    resolveActiveRuntimeSessionId?(): string | null | undefined;
+    syncExecutionRuntimeTurnResponses(
+      sessionId: string | null | undefined,
+      turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    ): void;
+    readSessionRuntimeState?(
+      sessionId: string | null | undefined,
+    ): { readonly turnResponses?: readonly TurnResponseTurn[] } | undefined;
+  }
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
   & ConstructorParameters<typeof LexUiEventBridge>[0]
@@ -176,7 +190,7 @@ export class LexOwnerFacade {
     const askConfirmationBridge = new LexAskConfirmationBridge(this.ctx);
     const hostSyncBridge = new LexHostSyncBridge(this.ctx);
     const agentLifecycleBridge = new LexAgentLifecycleBridge({
-      getSessionId: () => this.ctx.sessionId,
+      getSessionId: () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
       loadModule: () => import('aily-lex/browser'),
       createAgent: (lex, sessionId) => bootstrapBlocklyLexAgent({
         ctx: this.ctx,
@@ -189,9 +203,16 @@ export class LexOwnerFacade {
       onAgentReady: (agent, _lex, currentTodoUnsubscribe) => {
         this._flushPendingEvents();
 
-        this.ctx.syncRegisteredAgentNames?.(
-          agent.agentModeManager.getAll().map(definition => definition.agentType),
-        );
+        const registeredAgentModes = agent.agentModeManager.getAll();
+        if (this.ctx.syncCustomAgentProviderSource) {
+          this.ctx.syncCustomAgentProviderSource(agent.agentModeManager);
+        } else if (this.ctx.syncCustomAgentProviderModes) {
+          this.ctx.syncCustomAgentProviderModes(registeredAgentModes);
+        } else {
+          this.ctx.syncRegisteredAgentNames?.(
+            registeredAgentModes.map(definition => definition.agentType),
+          );
+        }
 
         try {
           const fileHistory = agentLifecycleBridge.getHandle()?.getFileHistory()
@@ -213,8 +234,8 @@ export class LexOwnerFacade {
     const runtimeConfigBridge = new LexRuntimeConfigBridge(this.ctx);
     this._runtimeConfigBridge = runtimeConfigBridge;
     const sessionPersistenceBridge = new LexSessionPersistenceBridge({
-      getHandle: () => agentLifecycleBridge.getHandle(),
-      getAgent: () => agentLifecycleBridge.getAgent(),
+      getHandle: (sessionId) => agentLifecycleBridge.getHandle(sessionId),
+      getAgent: (sessionId) => agentLifecycleBridge.getAgent(sessionId),
       flushPendingEvents: (events) => {
         this._turnExecutionBridge.flushPendingEvents(events);
       },
@@ -237,13 +258,11 @@ export class LexOwnerFacade {
     const messageLifecycleBridge = new LexMessageLifecycleBridge(
       this.ctx,
       partProcessor,
-      () => {
-        agentLifecycleBridge.setAbortController(null);
-      },
       async () => agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
         ?? await agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.()
         ?? false,
       (fallbackStatus) => this._renderEventBridge.finalizeCurrentTurn(fallbackStatus),
+      () => this._renderEventBridge.turnResponses,
     );
     this._messageLifecycleBridge = messageLifecycleBridge;
     const renderEventBridge = new LexRenderEventBridge(
@@ -272,10 +291,94 @@ export class LexOwnerFacade {
     const turnExecutionBridge = new LexTurnExecutionBridge(
       this.ctx,
       uiEventBridge,
-      (controller) => {
-        agentLifecycleBridge.setAbortController(controller);
+      (sessionId, controller) => {
+        agentLifecycleBridge.setAbortController(sessionId, controller);
       },
+      (sessionId) => {
+        agentLifecycleBridge.setAbortController(sessionId, null);
+      },
+      () => this.ctx.sessionId,
       () => turnControlBridge.currentRequestMetadata(),
+      (sessionId): HostSessionSaveTarget | null => {
+        const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+          ? sessionId.trim()
+          : '';
+        if (!targetSessionId) {
+          return null;
+        }
+
+        const runtimeScopedTarget = this.ctx.buildExecutionSaveTarget?.(targetSessionId);
+        if (runtimeScopedTarget) {
+          return runtimeScopedTarget;
+        }
+
+        const chatService = this.ctx.chatService;
+        if (!chatService) {
+          return null;
+        }
+
+        return {
+          sessionId: targetSessionId,
+          sessionTitle: this.ctx.sessionTitle || '',
+          sessionType: chatService.currentSessionType,
+          providerOptions: {
+            folderPath: chatService.currentSessionPath || null,
+            permissionMode: chatService.currentSessionPermissionMode,
+            ...(chatService.currentSessionPermissionLevel
+              ? { permissionLevel: chatService.currentSessionPermissionLevel }
+              : {}),
+          },
+          selectedMode: chatService.selectedMode,
+          resolvedMode: chatService.currentResolvedMode,
+          model: this.ctx.currentModel ? { ...this.ctx.currentModel } : null,
+        };
+      },
+      (sessionId) => agentLifecycleBridge.saveSession(sessionId),
+      (sessionId) => {
+        const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+        if (runtimeTurnResponses && runtimeTurnResponses.length > 0) {
+          return runtimeTurnResponses;
+        }
+        const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+        const currentSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+        if (!targetSessionId || targetSessionId === currentSessionId) {
+          return renderEventBridge.turnResponses.length > 0
+            ? renderEventBridge.turnResponses
+            : this.ctx.lexStream.turnResponses;
+        }
+        return [];
+      },
+      (sessionId, turnResponses) => {
+        this.ctx.syncExecutionRuntimeTurnResponses?.(sessionId, turnResponses);
+      },
+      (sessionId, seedTurnResponses) => {
+        const detachedPartStore = new ChatPartStore();
+        let detachedList: any[] = [];
+        const ownerCtx = this.ctx;
+        const detachedRenderEventBridge = new LexRenderEventBridge(
+          {
+            get partStore() { return detachedPartStore; },
+            get list() { return detachedList; },
+            set list(value) { detachedList = Array.isArray(value) ? value : []; },
+            invalidateHostRequestGraph: () => {},
+            triggerSyncDetectChanges: () => {},
+            get toolCallingIteration() { return ownerCtx.toolCallingIteration; },
+            set toolCallingIteration(value) { ownerCtx.toolCallingIteration = value; },
+            get isCancelled() { return ownerCtx.isCancelled; },
+            get currentMessageSource() { return ownerCtx.currentMessageSource; },
+            get contextBudgetService() { return ownerCtx.contextBudgetService; },
+          },
+          hostSyncBridge,
+          {
+            ensureAilyMessage: () => {},
+            get currentMessageHandle() { return null; },
+          },
+          () => agentLifecycleBridge.getSessionSnapshot(sessionId),
+        );
+        detachedRenderEventBridge.hydrateTurnResponses(seedTurnResponses);
+        return detachedRenderEventBridge;
+      },
+      () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
     );
     this._turnExecutionBridge = turnExecutionBridge;
     // Activate the RenderEvent path: wire the render bridge into execution

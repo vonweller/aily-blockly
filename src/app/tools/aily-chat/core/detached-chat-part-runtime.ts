@@ -26,6 +26,7 @@ type DetachedHostStreamChangeTracker = Pick<
 type DetachedRuntimeStore = RenderEventPartStoreAccess & Pick<
   ChatPartStore,
   | 'createDetachedHandle'
+  | 'addPartToHandle'
   | 'createChangeTracker'
   | 'clearMessageHandle'
   | 'destroy'
@@ -86,6 +87,18 @@ export class DetachedChatPartRuntime {
 
   collectTurnResponseParts(): TurnResponsePart[] {
     return this.getDetachedParts().map(chatPartToTurnResponsePart);
+  }
+
+  hydrateTurnResponseParts(parts: readonly TurnResponsePart[]): void {
+    this.reset();
+
+    for (const part of parts) {
+      this.store.addPartToHandle(this.detachedHandle, turnResponsePartToChatPart(part));
+    }
+
+    // Hydration is a baseline restore, not a live delta.
+    this.changeTracker.clear();
+    this.hostStreamChangeTracker.clear();
   }
 
   projectPendingPartsTo(

@@ -159,6 +159,24 @@
   word-break: break-word;
 }
 
+.chat-debug-detail-panel-list-reference-shell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-debug-detail-panel-open {
+  flex: 0 0 auto;
+  border: 1px solid var(--aily-border-primary, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--aily-text-primary, #e6edf3);
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .chat-debug-detail-panel-pre {
   margin: 0;
   padding: 10px 12px;

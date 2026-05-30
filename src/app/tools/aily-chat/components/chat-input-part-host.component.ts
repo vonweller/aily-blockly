@@ -29,7 +29,8 @@ import { FloatingTodoComponent } from './floating-todo/floating-todo.component';
     }
 
     .chat-question-carousel-widget-container,
-    .chat-tool-confirmation-carousel-container {
+    .chat-tool-confirmation-carousel-container,
+    .chat-plan-review-widget-container {
       width: 100%;
       display: flex;
       flex-direction: column;
