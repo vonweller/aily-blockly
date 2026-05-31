@@ -71,6 +71,99 @@ function readInteractionPendingRecord(
   const pending = continuation?.pendingState;
   return pending && typeof pending === 'object' ? pending : undefined;
 }
+
+function resolveRestoredSessionTitle(sessionContent?: HostSessionContent | null): string {
+  const persistedTitle = typeof sessionContent?.title === 'string'
+    ? sessionContent.title.trim()
+    : '';
+  if (isMeaningfulRestoredSessionTitle(persistedTitle)) {
+    return persistedTitle;
+  }
+
+  const fallbackDefaultTitle = deriveDefaultTitleFromTurnResponses(sessionContent?.hostRecord?.turnResponses);
+  return isMeaningfulRestoredSessionTitle(fallbackDefaultTitle)
+    ? fallbackDefaultTitle
+    : '';
+}
+
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly unknown[] | null | undefined): string {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function isMeaningfulRestoredSessionTitle(title: unknown): boolean {
+  if (typeof title !== 'string') {
+    return false;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  const normalizedLower = normalizedTitle.toLowerCase();
+  if (/^lex-\d{6,}$/i.test(normalizedTitle)) {
+    return false;
+  }
+  if (/^untitled(?:\s+chat)?(?:\s*\d+)?$/i.test(normalizedTitle)) {
+    return false;
+  }
+
+  return normalizedLower !== 'new session'
+    && normalizedLower !== 'new chat'
+    && normalizedTitle !== '新会话'
+    && normalizedTitle !== '新对话'
+    && normalizedTitle !== '无标题会话';
+}
 type HostSessionRestoreContext = ChatViewWriteBridgeContext
   & Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode'>
@@ -477,7 +570,7 @@ export class HostSessionRestoreBridge {
       projectPath: hostRecord.metadata?.projectPath ?? indexEntry?.projectPath,
     };
 
-    this.ctx.chatService.currentSessionTitle = sessionContent?.title ?? '';
+    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(sessionContent);
 
     const sessionType = normalizeChatSessionType(
       sessionContent?.sessionType ?? sessionMetadata?.sessionType,

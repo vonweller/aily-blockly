@@ -160,7 +160,7 @@ export const CHAT_SESSION_TITLE_ACTION_CONTRIBUTIONS: readonly ChatActionContrib
     label: 'Go Back',
     tooltip: 'Go Back',
     icon: 'fa-light fa-arrow-left',
-    when: "isChatSurface && hasConversationContent && hasCurrentSession && sessionListDisplayMode != 'sidebar'",
+    when: "isChatSurface && hasCurrentSession && sessionListDisplayMode != 'sidebar'",
     group: 'navigation',
     order: 1,
   },

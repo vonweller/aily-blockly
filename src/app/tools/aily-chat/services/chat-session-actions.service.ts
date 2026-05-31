@@ -131,9 +131,15 @@ export class ChatSessionActionsService {
       readonly disposeRuntime?: boolean;
     },
   ): Promise<void> {
-    const onConfirm = () => this.enterEntryInventory(callbacks, sessionId, {
-      disposeRuntime: options?.disposeRuntime,
-    });
+    const onConfirm = () => {
+      if (typeof options?.disposeRuntime === 'boolean') {
+        return this.enterEntryInventory(callbacks, sessionId, {
+          disposeRuntime: options.disposeRuntime,
+        });
+      }
+
+      return this.enterEntryInventory(callbacks, sessionId);
+    };
 
     if (editCheckpointService.hasUnsavedEdits()) {
       await this.confirmUnsavedEditsBeforeSwitch(editCheckpointService, callbacks.onSaveCurrentSession, onConfirm);
@@ -308,9 +314,14 @@ export class ChatSessionActionsService {
     sessionId?: string | null,
     options?: { readonly disposeRuntime?: boolean },
   ): Promise<void> {
-    await callbacks.onEnterEntryState(sessionId, {
-      disposeRuntime: options?.disposeRuntime,
-    });
+    if (typeof options?.disposeRuntime === 'boolean') {
+      await callbacks.onEnterEntryState(sessionId, {
+        disposeRuntime: options.disposeRuntime,
+      });
+      return;
+    }
+
+    await callbacks.onEnterEntryState(sessionId);
   }
 
   private resolveCurrentProjectPath(): string | null {

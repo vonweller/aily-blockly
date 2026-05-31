@@ -84,6 +84,7 @@ export class HostSessionSaveBridge {
     turnResponsesOverride?: readonly TurnResponseTurn[];
     sessionSnapshotOverride?: SessionSnapshot | null;
     target?: HostSessionSaveTarget | null;
+    allowPersistedLookup?: boolean;
   }): LiveHostSessionRecord | null {
     const saveTarget = normalizeHostSessionSaveTarget(options?.target);
     const sessionId = saveTarget?.sessionId ?? this.ctx.sessionId;
@@ -93,7 +94,13 @@ export class HostSessionSaveBridge {
 
     const projectPath = saveTarget?.providerOptions.folderPath ?? this.resolveProjectPath();
     const budgetSnapshot = this.ctx.contextBudgetService?.getSnapshot();
-    const persistedRecord = this.resolvePersistedRecord(saveTarget);
+    const allowPersistedLookup = options?.allowPersistedLookup !== false;
+    const persistedRecord = allowPersistedLookup
+      ? this.resolvePersistedRecord(saveTarget)
+        ?? (!saveTarget
+          ? this.loadPersistedRecord(sessionId, projectPath)
+          : null)
+      : null;
     const previousHostProjection = options?.previousHostProjection
       ?? this.buildPersistedProjection(persistedRecord)
       ?? null;
@@ -173,6 +180,14 @@ export class HostSessionSaveBridge {
       undefined,
       providerOptions.permissionLevel,
     );
+    const persistedTitle = typeof persistedRecord?.metadata?.title === 'string'
+      ? persistedRecord.metadata.title.trim()
+      : '';
+    const liveTitle = typeof saveTarget?.sessionTitle === 'string' && saveTarget.sessionTitle.trim().length > 0
+      ? saveTarget.sessionTitle.trim()
+      : typeof this.ctx.sessionTitle === 'string' && this.ctx.sessionTitle.trim().length > 0
+        ? this.ctx.sessionTitle.trim()
+        : '';
     const record: LiveHostSessionRecord = {
       sessionId,
       turnResponses: persistedTurnResponses,
@@ -186,7 +201,7 @@ export class HostSessionSaveBridge {
       },
       metadata: {
         sessionId,
-        title: saveTarget?.sessionTitle ?? this.ctx.sessionTitle ?? '',
+        title: liveTitle || persistedTitle,
         sessionType: normalizeChatSessionType(saveTarget?.sessionType ?? this.ctx.chatService.currentSessionType),
         projectPath,
         mode: selectedMode.modeId,
@@ -231,6 +246,35 @@ export class HostSessionSaveBridge {
     record.metadata.interactionActionSummary = resolvedInteractionActionSummary;
 
     return record;
+  }
+
+  buildLiveHostSessionRecord(options?: {
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+    turnResponsesOverride?: readonly TurnResponseTurn[];
+    sessionSnapshotOverride?: SessionSnapshot | null;
+  }): LiveHostSessionRecord | null {
+    return this.buildHostSessionRecord({
+      ...options,
+      allowPersistedLookup: false,
+      target: {
+        sessionId: this.ctx.sessionId,
+        sessionTitle: this.ctx.sessionTitle,
+        sessionType: this.ctx.chatService.currentSessionType,
+        providerOptions: {
+          folderPath: this.resolveProjectPath(),
+          permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+          ...(this.ctx.chatService.currentSessionPermissionLevel
+            ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
+            : {}),
+        },
+        selectedMode: this.ctx.chatService.selectedMode ?? {
+          modeId: this.ctx.currentMode,
+          customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
+        },
+        model: this.ctx.currentModel,
+      },
+    });
   }
 
   saveCurrentSession(options?: {
@@ -316,6 +360,10 @@ export class HostSessionSaveBridge {
       target.sessionId,
       target.providerOptions.folderPath,
     );
+  }
+
+  private loadPersistedRecord(sessionId: string, projectPath: string | null): HostSessionRecord | null {
+    return this.ctx.chatHistoryService.loadHostRecord?.(sessionId, projectPath ?? undefined) ?? null;
   }
 
   private buildPersistedProjection(record: HostSessionRecord | null): HostResponseProjection | null {

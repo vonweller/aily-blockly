@@ -227,13 +227,16 @@ function traceBackgroundSessionStatus(event: string, details: Record<string, unk
   if (!isBackgroundSessionTraceEnabled()) {
     return;
   }
-  console.info('[AilyChat][bg-session][status]', event, details);
+  // console.info('[AilyChat][bg-session][status]', event, details);
 }
 
 export class HostSessionItemController {
   private readonly hostSessionContentProvider: HostSessionContentProvider;
   private readonly managedItems = new Map<string, HostSessionManagedItem>();
   private readonly trackedInputStates = new Map<string, ChatSessionInputState>();
+  private readonly cachedListItems = new Map<string, { readonly key: string; readonly item: HostSessionListItem }>();
+  private readonly sessionListItemVersions = new Map<string, number>();
+  private globalListItemVersion = 0;
   private readonly itemsChangedSubject = new Subject<void>();
   readonly itemsChanged$: Observable<void> = this.itemsChangedSubject.asObservable();
 
@@ -249,26 +252,26 @@ export class HostSessionItemController {
 
     this.ctx.chatService.sessionInputStateChanged$?.subscribe(() => {
       this.refreshTrackedInputStates({ includePersistedReadonly: true });
-      this.notifyItemsChanged();
+      this.notifyItemsChanged(this.ctx.chatService.currentSessionId);
     });
 
     this.ctx.chatService.sessionProviderOptionsChanged$?.subscribe(() => {
       this.refreshTrackedInputStates();
-      this.notifyItemsChanged();
+      this.notifyItemsChanged(this.ctx.chatService.currentSessionId);
     });
 
     this.ctx.chatService.sessionTitleChanged$?.subscribe(() => {
       this.refreshCurrentManagedItemMetadata();
-      this.notifyItemsChanged();
+      this.notifyItemsChanged(this.ctx.chatService.currentSessionId);
     });
 
     this.ctx.chatHistoryService.hostSessionChanged$?.subscribe((event) => {
       this.handleHostSessionStoreChange(event);
-      this.notifyItemsChanged();
+      this.notifyItemsChanged(event.sessionId);
     });
 
-    this.ctx.chatSessionStateService?.sessionStateChanged$?.subscribe(() => {
-      this.notifyItemsChanged();
+    this.ctx.chatSessionStateService?.sessionStateChanged$?.subscribe((event: { readonly sessionId?: string }) => {
+      this.notifyItemsChanged(event.sessionId);
     });
   }
 
@@ -287,7 +290,7 @@ export class HostSessionItemController {
       mode: options.mode,
       requestRouting: options.requestRouting,
     }));
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
     return item;
   }
 
@@ -296,7 +299,7 @@ export class HostSessionItemController {
       ...seed,
       title: seed.title ?? this.resolveDefaultManagedTitle(),
     }));
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(seed.sessionId);
     return item;
   }
 
@@ -333,11 +336,12 @@ export class HostSessionItemController {
       title: normalizedTitle,
       updatedAt: Date.now(),
     });
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   deleteChatSessionItem(sessionId: string): void {
     const managedItem = this.managedItems.get(sessionId);
+    this.deleteCachedListItem(sessionId);
     this.managedItems.delete(sessionId);
     this.trackedInputStates.delete(sessionId);
     if (this.ctx.chatHistoryService.findEntry(sessionId)) {
@@ -345,7 +349,7 @@ export class HostSessionItemController {
     } else {
       this.ctx.chatSessionStateService?.clearSessionState(sessionId, managedItem?.projectPath ?? null);
     }
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   discardChatSessionItem(sessionId: string | null | undefined): void {
@@ -353,9 +357,10 @@ export class HostSessionItemController {
       return;
     }
 
+    this.deleteCachedListItem(sessionId);
     this.managedItems.delete(sessionId);
     this.trackedInputStates.delete(sessionId);
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   readHistoryItems(
@@ -406,6 +411,43 @@ export class HostSessionItemController {
       .sort((left, right) => this.compareListItems(left, right));
   }
 
+  readListItem(
+    sessionId: string,
+    filter: HistoryFilterMode = 'all',
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): HostSessionListItem | null {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    const persistedEntry = this.ctx.chatHistoryService.findEntry(normalizedSessionId);
+    let historyItem = persistedEntry
+      ? this.toHistoryItemFromSessionEntry(persistedEntry)
+      : this.resolveManagedHistoryItem(normalizedSessionId);
+
+    if (!historyItem
+      || !this.matchesHistoryFilterByProject(historyItem.projectPath, filter, projectPath, projectRootPath)) {
+      const indexedEntry = this.ctx.chatHistoryService
+        .getHistoryList(filter, projectPath, projectRootPath)
+        .find(entry => entry.sessionId === normalizedSessionId);
+      historyItem = indexedEntry
+        ? this.toHistoryItemFromSessionEntry(indexedEntry)
+        : historyItem;
+    }
+
+    if (!historyItem) {
+      return null;
+    }
+
+    if (!this.matchesHistoryFilterByProject(historyItem.projectPath, filter, projectPath, projectRootPath)) {
+      return null;
+    }
+
+    return this.toListItem(historyItem);
+  }
+
   setSessionArchived(
     sessionId: string,
     archived: boolean,
@@ -418,7 +460,7 @@ export class HostSessionItemController {
       archived,
       this.resolveSessionReadTrackingTime(sessionId, projectPath),
     );
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   setSessionPinned(
@@ -428,7 +470,7 @@ export class HostSessionItemController {
   ): void {
     const projectPath = this.resolveSessionStateProjectPath(sessionId, projectPathHint);
     this.ctx.chatSessionStateService?.setPinned(sessionId, projectPath, pinned);
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   setSessionRead(
@@ -443,7 +485,7 @@ export class HostSessionItemController {
       read,
       this.resolveSessionReadTrackingTime(sessionId, projectPath),
     );
-    this.notifyItemsChanged();
+    this.notifyItemsChanged(sessionId);
   }
 
   resolveSessionSwitchTarget(
@@ -796,12 +838,40 @@ export class HostSessionItemController {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): boolean {
+    return this.matchesHistoryFilterByProject(item.projectPath, filter, projectPath, projectRootPath);
+  }
+
+  private matchesHistoryFilterByProject(
+    itemProjectPath: string | null | undefined,
+    filter: HistoryFilterMode,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): boolean {
     if (filter !== 'current-project' || !projectPath) {
       return true;
     }
 
-    return this.isSamePath(item.projectPath, projectPath)
-      || (projectRootPath ? this.isSamePath(item.projectPath, projectRootPath) : false);
+    return this.isSamePath(itemProjectPath ?? null, projectPath)
+      || (projectRootPath ? this.isSamePath(itemProjectPath ?? null, projectRootPath) : false);
+  }
+
+  private resolveManagedHistoryItem(sessionId: string): HostSessionHistoryItemWithTimestamp | null {
+    const managedItem = this.managedItems.get(sessionId);
+    return managedItem ? this.toHistoryItem(managedItem) : null;
+  }
+
+  private toHistoryItemFromSessionEntry(entry: SessionIndexEntry): HostSessionHistoryItemWithTimestamp {
+    return this.toHistoryItem({
+      sessionId: entry.sessionId,
+      title: entry.title,
+      sessionType: entry.sessionType ?? DEFAULT_CHAT_SESSION_TYPE,
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      projectPath: entry.projectPath ?? null,
+      inputState: this.getChatSessionInputState(entry.sessionId, entry.projectPath ?? null),
+      mode: entry.mode,
+      requestRouting: entry.requestRouting,
+    });
   }
 
   private toHistoryItem(
@@ -811,7 +881,7 @@ export class HostSessionItemController {
     const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
       ? this.ctx.chatService.currentSessionTitle.trim()
       : '';
-    const title = isCurrent && currentTitle
+    const title = isCurrent && isMeaningfulManagedSessionTitle(currentTitle, item.sessionId)
       ? currentTitle
       : item.title;
     const selectedMode = isCurrent
@@ -840,13 +910,15 @@ export class HostSessionItemController {
   }
 
   private toListItem(item: HostSessionHistoryItem): HostSessionListItem {
+    const persistedEntry = this.ctx.chatHistoryService.findEntry(item.sessionId);
+    const cacheKey = this.buildDurableListItemCacheKey(item, persistedEntry);
+    const cached = this.cachedListItems.get(item.sessionId);
+    if (cached?.key === cacheKey) {
+      return cached.item;
+    }
+
     const hostRecord = this.ctx.chatHistoryService.loadHostRecord(item.sessionId, item.projectPath ?? null);
     const effectiveHostRecord = this.resolveEffectiveHostRecord(item, hostRecord);
-    const persistedEntry = this.ctx.chatHistoryService.findEntry(item.sessionId);
-    const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(item.sessionId, item.projectPath ?? null, {
-      hostRecordOverride: hostRecord ?? null,
-      metadataFallback: persistedEntry ?? null,
-    });
     const updatedAt = this.resolveListItemUpdatedAt(item, effectiveHostRecord, persistedEntry)
       ?? effectiveHostRecord?.metadata?.updatedAt
       ?? persistedEntry?.updatedAt
@@ -858,11 +930,11 @@ export class HostSessionItemController {
     const status = this.resolveListItemStatus(effectiveHostRecord, liveRuntimeState);
     const changes = this.resolveListItemChanges(effectiveHostRecord);
 
-    return {
+    const nextItem: HostSessionListItem = {
       ...item,
       description: this.resolveListItemDescription(item, effectiveHostRecord, updatedAt, liveRuntimeState),
       timing,
-      metadata: this.resolveListItemMetadata(item, sessionContent),
+      metadata: this.resolveListItemMetadata(item),
       archived: sessionState.archived,
       pinned: sessionState.pinned,
       read: sessionState.read,
@@ -871,6 +943,93 @@ export class HostSessionItemController {
       ...(status ? { status } : {}),
       ...(changes ? { changes } : {}),
     };
+
+    this.cachedListItems.set(item.sessionId, {
+      key: cacheKey,
+      item: nextItem,
+    });
+
+    return nextItem;
+  }
+
+  private buildDurableListItemCacheKey(
+    item: HostSessionHistoryItem,
+    persistedEntry: SessionIndexEntry | undefined,
+  ): string {
+    const runtimeStamp = this.buildRuntimeCacheStamp(item.sessionId);
+    const modeStamp = this.buildModeRoutingCacheStamp(item);
+    const currentSessionStamp = item.current ? this.buildCurrentSessionCacheStamp() : '';
+    const perSessionVersion = this.sessionListItemVersions.get(item.sessionId) ?? 0;
+    const persistedUpdatedAt = persistedEntry?.updatedAt ?? '';
+    const persistedMessageCount = persistedEntry?.messageCount ?? '';
+
+    return [
+      item.sessionId,
+      this.normalizePathForCache(item.projectPath ?? null),
+      item.createdAt,
+      item.current ? 1 : 0,
+      persistedUpdatedAt,
+      persistedMessageCount,
+      modeStamp,
+      runtimeStamp,
+      currentSessionStamp,
+      perSessionVersion,
+      this.globalListItemVersion,
+    ].join('::');
+  }
+
+  private buildRuntimeCacheStamp(sessionId: string): string {
+    const runtimeState = this.readLiveRuntimeState(sessionId);
+    const runtimeTurnResponses = runtimeState?.turnResponses;
+    const runtimeTurnCount = Array.isArray(runtimeTurnResponses) ? runtimeTurnResponses.length : 0;
+    const runtimeLastTurn = runtimeTurnCount > 0
+      ? this.readTurnUpdatedAt(runtimeTurnResponses[runtimeTurnCount - 1] as HostSessionTurnResponse)
+      : undefined;
+    const liveTurnResponses = this.readLiveTurnResponses(sessionId);
+    const liveTurnCount = Array.isArray(liveTurnResponses) ? liveTurnResponses.length : 0;
+    const liveLastTurn = liveTurnCount > 0
+      ? this.readTurnUpdatedAt(liveTurnResponses[liveTurnCount - 1] as HostSessionTurnResponse)
+      : undefined;
+    const runtimeDescription = this.normalizeListDescriptionText(runtimeState?.description) ?? '';
+
+    return [
+      runtimeState?.status ?? '',
+      runtimeState?.requestInProgress ? 1 : 0,
+      runtimeTurnCount,
+      runtimeLastTurn ?? '',
+      liveTurnCount,
+      liveLastTurn ?? '',
+      runtimeDescription,
+    ].join('|');
+  }
+
+  private buildModeRoutingCacheStamp(item: HostSessionHistoryItem): string {
+    return [
+      item.mode ?? '',
+      item.inputState?.mode?.id ?? '',
+      item.inputState?.mode?.kind ?? '',
+      item.requestRouting?.selectedModeId ?? '',
+      item.requestRouting?.requestModeId ?? '',
+      item.requestRouting?.customAgentTarget ?? '',
+    ].join('|');
+  }
+
+  private buildCurrentSessionCacheStamp(): string {
+    const title = this.readNonEmptyString(this.ctx.chatService.currentSessionTitle) ?? '';
+    const currentSelectedMode = this.resolveCurrentSelectedMode();
+
+    return [
+      this.ctx.chatService.currentSessionId ?? '',
+      this.normalizePathForCache(this.ctx.chatService.currentSessionPath ?? null),
+      this.ctx.chatService.currentSessionType ?? '',
+      title,
+      currentSelectedMode.modeId,
+      currentSelectedMode.customAgentTarget ?? '',
+    ].join('|');
+  }
+
+  private normalizePathForCache(path: string | null | undefined): string {
+    return (path ?? '').replace(/\\/g, '/').toLowerCase();
   }
 
   private resolveListItemState(
@@ -935,13 +1094,25 @@ export class HostSessionItemController {
   }
 
   private resolveListItemMetadata(
-    item: Pick<HostSessionHistoryItem, 'sessionType' | 'projectPath'>,
-    sessionContent: HostSessionContent,
+    item: Pick<HostSessionHistoryItem, 'sessionType' | 'projectPath' | 'inputState' | 'requestRouting'>,
   ): HostSessionListItemMetadata {
+    const providerOptions = item.inputState
+      ? resolveHostSessionProviderOptionsFromInputState(item.inputState, {
+          folderPath: item.projectPath ?? null,
+          permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+          permissionLevel: item.requestRouting?.permissionLevel,
+        })
+      : normalizeHostSessionProviderOptions({
+          folderPath: item.projectPath ?? null,
+          permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+          permissionLevel: item.requestRouting?.permissionLevel,
+        }, {
+          folderPath: item.projectPath ?? null,
+          permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+          permissionLevel: item.requestRouting?.permissionLevel,
+        });
     const workingDirectoryPath = this.readNonEmptyString(
-      sessionContent.providerOptions.folderPath
-      ?? sessionContent.projectPathHint
-      ?? item.projectPath,
+      providerOptions.folderPath ?? item.projectPath,
     );
     const projectLabel = this.describeProjectPath(workingDirectoryPath ?? item.projectPath ?? null);
 
@@ -1590,10 +1761,37 @@ export class HostSessionItemController {
   }
 
   private resolveDefaultManagedTitle(): string {
+    const currentSessionId = typeof this.ctx.chatService.currentSessionId === 'string'
+      ? this.ctx.chatService.currentSessionId.trim()
+      : '';
+    const currentSessionPath = typeof this.ctx.chatService.currentSessionPath === 'string'
+      ? this.ctx.chatService.currentSessionPath.trim()
+      : '';
     const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
       ? this.ctx.chatService.currentSessionTitle.trim()
       : '';
-    return currentTitle || '新对话';
+    if (isMeaningfulManagedSessionTitle(currentTitle, currentSessionId)) {
+      return currentTitle;
+    }
+
+    if (currentSessionId) {
+      const liveTurnResponses = this.ctx.readLiveSessionTurnResponses?.(currentSessionId);
+      const liveTitle = deriveDefaultTitleFromTurnResponses(liveTurnResponses);
+      if (isMeaningfulManagedSessionTitle(liveTitle, currentSessionId)) {
+        return liveTitle;
+      }
+
+      const persistedRecord = this.ctx.chatHistoryService.loadHostRecord(
+        currentSessionId,
+        currentSessionPath || null,
+      );
+      const persistedTitle = deriveDefaultTitleFromTurnResponses(persistedRecord?.turnResponses);
+      if (isMeaningfulManagedSessionTitle(persistedTitle, currentSessionId)) {
+        return persistedTitle;
+      }
+    }
+
+    return '';
   }
 
   private resolveCurrentSessionType(): ChatSessionType {
@@ -1689,12 +1887,15 @@ export class HostSessionItemController {
     }
 
     if (event.kind === 'deleted') {
+      this.deleteCachedListItem(event.sessionId);
       this.trackedInputStates.delete(event.sessionId);
       if (event.sessionId !== this.ctx.chatService.currentSessionId) {
         this.managedItems.delete(event.sessionId);
       }
       return;
     }
+
+    this.bumpSessionListItemVersion(event.sessionId);
 
     if (!this.trackedInputStates.has(event.sessionId) || event.sessionId === this.ctx.chatService.currentSessionId) {
       return;
@@ -1719,9 +1920,12 @@ export class HostSessionItemController {
     const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
       ? this.ctx.chatService.currentSessionTitle.trim()
       : '';
+    const nextTitle = isMeaningfulManagedSessionTitle(currentTitle, sessionId)
+      ? currentTitle
+      : managedItem.title;
     this.managedItems.set(sessionId, {
       ...managedItem,
-      title: currentTitle || managedItem.title,
+      title: nextTitle,
       projectPath: this.ctx.chatService.currentSessionPath || (managedItem.projectPath ?? null),
       sessionType: this.resolveCurrentSessionType(),
       inputState,
@@ -1742,7 +1946,128 @@ export class HostSessionItemController {
     this.updateManagedItemState(currentSessionId, currentState);
   }
 
-  private notifyItemsChanged(): void {
+  private bumpSessionListItemVersion(sessionId?: string | null): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      this.globalListItemVersion += 1;
+      return;
+    }
+
+    this.sessionListItemVersions.set(
+      normalizedSessionId,
+      (this.sessionListItemVersions.get(normalizedSessionId) ?? 0) + 1,
+    );
+  }
+
+  private deleteCachedListItem(sessionId?: string | null): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    this.cachedListItems.delete(normalizedSessionId);
+    this.sessionListItemVersions.delete(normalizedSessionId);
+  }
+
+  private notifyItemsChanged(sessionId?: string | null): void {
+    this.bumpSessionListItemVersion(sessionId);
     this.itemsChangedSubject.next();
   }
+}
+
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly HostSessionTurnResponse[] | null | undefined): string {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const requestTitle = deriveDefaultTitleFromRequest(request);
+    if (requestTitle) {
+      return requestTitle;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const directText = readRequestTextCandidate(request);
+  if (directText) {
+    return directText;
+  }
+
+  if (request && typeof request === 'object') {
+    const message = (request as { message?: unknown }).message;
+    const nestedMessageText = readRequestTextCandidate(message);
+    if (nestedMessageText) {
+      return nestedMessageText;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function isMeaningfulManagedSessionTitle(title: unknown, sessionId?: string): boolean {
+  if (typeof title !== 'string') {
+    return false;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  if (isPlaceholderManagedSessionTitle(normalizedTitle)) {
+    return false;
+  }
+
+  return !isTechnicalManagedSessionTitle(normalizedTitle, sessionId);
+}
+
+function isTechnicalManagedSessionTitle(title: string, sessionId?: string): boolean {
+  const normalizedTitle = title.trim();
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (normalizedSessionId && normalizedTitle === normalizedSessionId) {
+    return true;
+  }
+
+  return /^lex-\d{6,}$/i.test(normalizedTitle);
+}
+
+function isPlaceholderManagedSessionTitle(title: string): boolean {
+  const normalizedTitle = title.trim().toLowerCase();
+  if (!normalizedTitle) {
+    return true;
+  }
+
+  if (/^untitled(?:\s+chat)?(?:\s*\d+)?$/i.test(normalizedTitle)) {
+    return true;
+  }
+
+  return normalizedTitle === 'new chat'
+    || normalizedTitle === 'new session'
+    || normalizedTitle === '新对话'
+    || normalizedTitle === '新会话';
 }

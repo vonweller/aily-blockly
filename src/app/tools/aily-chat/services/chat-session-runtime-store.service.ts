@@ -16,6 +16,25 @@ import type { RequestQuotaServiceState } from './request-quota-state.service';
 
 export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'failed';
 
+export type ChatSessionRuntimeChangeReason =
+  | 'transcript'
+  | 'status'
+  | 'description'
+  | 'view'
+  | 'quota'
+  | 'debug'
+  | 'handle'
+  | 'state'
+  | 'clear'
+  | 'clearAll';
+
+export interface ChatSessionRuntimeChangedEvent {
+  readonly sessionId: string | null;
+  readonly reason: ChatSessionRuntimeChangeReason;
+  readonly listAffecting: boolean;
+  readonly highFrequency?: boolean;
+}
+
 export interface ChatSessionRuntimeCapabilities {
   readonly canRunConcurrently: boolean;
   readonly canContinueInPlace: boolean;
@@ -162,10 +181,27 @@ type ChatSessionRuntimeStatePatch = Omit<
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
 };
 
+export interface ChatSessionRuntimeChangeOptions {
+  readonly reason?: ChatSessionRuntimeChangeReason;
+  readonly listAffecting?: boolean;
+  readonly highFrequency?: boolean;
+}
+
+interface ChatSessionListFingerprint {
+  readonly requestInProgress: boolean;
+  readonly status?: ChatSessionRuntimeStatus;
+  readonly description?: string;
+  readonly attachedView: boolean;
+  readonly supportsInterruption: boolean;
+  readonly hasActiveResponseHandle: boolean;
+  readonly derivedTurnStatus?: ChatSessionRuntimeStatus;
+  readonly derivedTurnDescription?: string;
+}
+
 @Injectable()
 export class ChatSessionRuntimeStoreService {
   private readonly runtimeStates = new Map<string, ChatSessionRuntimeState>();
-  private readonly runtimeChangedSubject = new Subject<string | null>();
+  private readonly runtimeChangedSubject = new Subject<ChatSessionRuntimeChangedEvent>();
 
   readonly runtimeChanged$ = this.runtimeChangedSubject.asObservable();
 
@@ -191,6 +227,7 @@ export class ChatSessionRuntimeStoreService {
   replaceRuntimeState(
     sessionId: string | null | undefined,
     state: ChatSessionRuntimeStatePatch,
+    options?: ChatSessionRuntimeChangeOptions,
   ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
@@ -279,19 +316,26 @@ export class ChatSessionRuntimeStoreService {
       && nextState.activeResponseHandle === undefined
       && !nextState.quotaOverlay
       && !nextState.viewOverlay) {
-      this.clearSession(normalizedSessionId);
+      this.clearSession(normalizedSessionId, {
+        reason: options?.reason ?? 'clear',
+        listAffecting: options?.listAffecting,
+        highFrequency: options?.highFrequency,
+      });
       return;
     }
 
     this.runtimeStates.set(normalizedSessionId, nextState);
-    this.runtimeChangedSubject.next(normalizedSessionId);
+    this.emitRuntimeChanged(normalizedSessionId, previousState, nextState, options);
   }
 
   replaceTurnResponses(
     sessionId: string | null | undefined,
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
   ): void {
-    this.replaceRuntimeState(sessionId, { turnResponses });
+    this.replaceRuntimeState(sessionId, { turnResponses }, {
+      reason: 'transcript',
+      highFrequency: true,
+    });
   }
 
   stopSession(sessionId: string | null | undefined): boolean {
@@ -324,17 +368,25 @@ export class ChatSessionRuntimeStoreService {
     return true;
   }
 
-  clearSession(sessionId: string | null | undefined): void {
+  clearSession(
+    sessionId: string | null | undefined,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
       return;
     }
 
+    const previousState = this.runtimeStates.get(normalizedSessionId);
     if (!this.runtimeStates.delete(normalizedSessionId)) {
       return;
     }
 
-    this.runtimeChangedSubject.next(normalizedSessionId);
+    this.emitRuntimeChanged(normalizedSessionId, previousState, undefined, {
+      reason: options?.reason ?? 'clear',
+      listAffecting: options?.listAffecting,
+      highFrequency: options?.highFrequency,
+    });
   }
 
   clearAll(): void {
@@ -343,7 +395,204 @@ export class ChatSessionRuntimeStoreService {
     }
 
     this.runtimeStates.clear();
-    this.runtimeChangedSubject.next(null);
+    this.runtimeChangedSubject.next({
+      sessionId: null,
+      reason: 'clearAll',
+      listAffecting: true,
+    });
+  }
+
+  private emitRuntimeChanged(
+    sessionId: string,
+    previousState: ChatSessionRuntimeState | undefined,
+    nextState: ChatSessionRuntimeState | undefined,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): void {
+    const reason = this.resolveChangeReason(options?.reason, previousState, nextState);
+    const listAffecting = options?.listAffecting ?? this.didListFingerprintChange(previousState, nextState);
+    const highFrequency = options?.highFrequency === true || reason === 'transcript';
+    this.runtimeChangedSubject.next({
+      sessionId,
+      reason,
+      listAffecting,
+      ...(highFrequency ? { highFrequency: true } : {}),
+    });
+  }
+
+  private resolveChangeReason(
+    explicitReason: ChatSessionRuntimeChangeReason | undefined,
+    previousState: ChatSessionRuntimeState | undefined,
+    nextState: ChatSessionRuntimeState | undefined,
+  ): ChatSessionRuntimeChangeReason {
+    if (explicitReason) {
+      return explicitReason;
+    }
+
+    if (!nextState) {
+      return 'clear';
+    }
+
+    const previousStatus = previousState?.status;
+    const nextStatus = nextState.status;
+    if (previousStatus !== nextStatus) {
+      return 'status';
+    }
+
+    const previousDescription = this.normalizeDescription(previousState?.description);
+    const nextDescription = this.normalizeDescription(nextState.description);
+    if (previousDescription !== nextDescription) {
+      return 'description';
+    }
+
+    if (previousState?.attachedView !== nextState.attachedView) {
+      return 'view';
+    }
+
+    if (previousState?.requestInProgress !== nextState.requestInProgress
+      || previousState?.supportsInterruption !== nextState.supportsInterruption
+      || !!previousState?.activeResponseHandle !== !!nextState.activeResponseHandle) {
+      return 'handle';
+    }
+
+    if (!!previousState?.quotaOverlay !== !!nextState.quotaOverlay) {
+      return 'quota';
+    }
+
+    if (!!previousState?.viewOverlay !== !!nextState.viewOverlay) {
+      return 'view';
+    }
+
+    if (!!previousState?.debugSummary !== !!nextState.debugSummary) {
+      return 'debug';
+    }
+
+    return 'state';
+  }
+
+  private didListFingerprintChange(
+    previousState: ChatSessionRuntimeState | undefined,
+    nextState: ChatSessionRuntimeState | undefined,
+  ): boolean {
+    const previous = this.buildListFingerprint(previousState);
+    const next = this.buildListFingerprint(nextState);
+
+    return previous.requestInProgress !== next.requestInProgress
+      || previous.status !== next.status
+      || previous.description !== next.description
+      || previous.attachedView !== next.attachedView
+      || previous.supportsInterruption !== next.supportsInterruption
+      || previous.hasActiveResponseHandle !== next.hasActiveResponseHandle
+      || previous.derivedTurnStatus !== next.derivedTurnStatus
+      || previous.derivedTurnDescription !== next.derivedTurnDescription;
+  }
+
+  private buildListFingerprint(state: ChatSessionRuntimeState | undefined): ChatSessionListFingerprint {
+    return {
+      requestInProgress: state?.requestInProgress === true,
+      status: state?.status,
+      description: this.normalizeDescription(state?.description),
+      attachedView: state?.attachedView === true,
+      supportsInterruption: state?.supportsInterruption === true,
+      hasActiveResponseHandle: state?.activeResponseHandle !== undefined,
+      derivedTurnStatus: this.resolveStatusFromTurnResponses(state?.turnResponses),
+      derivedTurnDescription: this.resolveDescriptionFromTurnResponses(state?.turnResponses),
+    };
+  }
+
+  private resolveStatusFromTurnResponses(
+    turnResponses: readonly TurnResponseTurn[] | undefined,
+  ): ChatSessionRuntimeStatus | undefined {
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      return undefined;
+    }
+
+    const latest = turnResponses[turnResponses.length - 1];
+    const continuationStatus = this.readNonEmptyString(latest?.response?.continuation?.status);
+    const responseStatus = this.readNonEmptyString(latest?.response?.status);
+    const candidate = continuationStatus ?? responseStatus;
+
+    switch (candidate) {
+      case 'running':
+      case 'streaming':
+      case 'in_progress':
+        return 'in_progress';
+      case 'waiting_question':
+      case 'waiting_confirmation':
+      case 'waiting_tool_results':
+      case 'waiting_plan_review':
+      case 'plan_review':
+      case 'continue':
+      case 'needs_input':
+        return 'needs_input';
+      case 'hard_stopped':
+      case 'failed':
+      case 'error':
+        return 'failed';
+      case 'completed':
+      case 'cancelled':
+      case 'canceled':
+        return 'completed';
+      default:
+        return undefined;
+    }
+  }
+
+  private resolveDescriptionFromTurnResponses(
+    turnResponses: readonly TurnResponseTurn[] | undefined,
+  ): string | undefined {
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      return undefined;
+    }
+
+    const latest = turnResponses[turnResponses.length - 1];
+    const continuationStatus = this.readNonEmptyString(latest?.response?.continuation?.status);
+    if (continuationStatus === 'waiting_confirmation') {
+      const title = this.readWaitingPartTitle(latest, 'confirmation');
+      return title ? `Waiting for confirmation: ${title}` : 'Waiting for confirmation';
+    }
+    if (continuationStatus === 'waiting_question') {
+      const title = this.readWaitingPartTitle(latest, 'question');
+      return title ? `Waiting for answer: ${title}` : 'Waiting for answer';
+    }
+
+    return undefined;
+  }
+
+  private readWaitingPartTitle(
+    turn: TurnResponseTurn | undefined,
+    expectedType: 'confirmation' | 'question',
+  ): string | undefined {
+    const parts = Array.isArray(turn?.response?.parts)
+      ? turn.response.parts
+      : [];
+    for (let index = parts.length - 1; index >= 0; index--) {
+      const part = parts[index] as { type?: unknown; title?: unknown; message?: unknown };
+      if (part?.type !== expectedType) {
+        continue;
+      }
+
+      const title = this.readNonEmptyString(part.title) ?? this.readNonEmptyString(part.message);
+      if (title) {
+        return title;
+      }
+    }
+
+    return undefined;
+  }
+
+  private normalizeDescription(description: string | undefined): string | undefined {
+    return typeof description === 'string'
+      ? description.replace(/\s+/g, ' ').trim() || undefined
+      : undefined;
+  }
+
+  private readNonEmptyString(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : undefined;
   }
 
   private normalizeSessionId(sessionId: string | null | undefined): string {

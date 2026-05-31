@@ -192,7 +192,7 @@ function traceBackgroundSessionExecution(event: string, details: Record<string, 
   if (!isBackgroundSessionTraceEnabled()) {
     return;
   }
-  console.info('[AilyChat][bg-session][execution]', event, details);
+  // console.info('[AilyChat][bg-session][execution]', event, details);
 }
 
 type PendingPlanReview = NonNullable<ReturnType<typeof readPendingPlanReview>>;
@@ -706,7 +706,20 @@ export class ChatEngineService implements IChatContext {
   readonly lexStream = new LexOwnerFacade(this.lexOwnerContext);
   readonly editActions = new EditActionsHelper(this.editActionsContext);
   readonly interaction = new UserInteractionHelper(this.userInteractionContext);
-  private readonly titleRequestService = new ChatTitleRequestService(() => this.lexStream.runtime.llmConfig());
+  private readonly titleRequestService = new ChatTitleRequestService(() => {
+    const currentModel = this.chatService.currentModel as { isCustom?: boolean; apiKey?: string; baseUrl?: string } | null;
+    if (!currentModel?.isCustom) {
+      return null;
+    }
+
+    const apiKey = typeof currentModel.apiKey === 'string' ? currentModel.apiKey.trim() : '';
+    const baseUrl = typeof currentModel.baseUrl === 'string' ? currentModel.baseUrl.trim() : '';
+    if (!apiKey || !baseUrl) {
+      return null;
+    }
+
+    return { apiKey, baseUrl };
+  });
   private readonly titleCoordinator = new ChatTitleCoordinator(
     this.titleCoordinatorContext,
     this.titleRequestService,
@@ -1720,7 +1733,7 @@ export class ChatEngineService implements IChatContext {
       (shouldFollow) => this.scrollManager.scrollToBottomIfNeeded(shouldFollow, 'auto'),
     );
 
-    this.chatHistoryService.setLiveSessionProvider(() => this.session.buildHostSessionRecord());
+    this.chatHistoryService.setLiveSessionProvider(() => this.session.buildLiveHostSessionRecord());
 
     // H1: wire the cache as the host stream listener for incremental turn events.
     this.lexStream.setHostStreamListener(this.liveHostRequestGraphCache);
@@ -1792,7 +1805,6 @@ export class ChatEngineService implements IChatContext {
   invalidateHostRequestGraph(): void {
     this.liveHostRequestGraphCache.markDirty();
     this.captureActiveSessionRuntimeState();
-    this.chatSessionItemsService.refreshHistoryList();
   }
 
   private clearVisibleChatView(options: { detectChanges?: boolean } = {}): void {
@@ -2545,7 +2557,7 @@ export class ChatEngineService implements IChatContext {
         });
       }
       this.ensureBackgroundSessionCanRerun(currentSessionId);
-      this.chatSessionItemsService.refreshHistoryList();
+      this.chatSessionItemsService.scheduleSessionItemRefresh(currentSessionId, 'attach-running-runtime');
       return;
     }
 
@@ -2565,7 +2577,7 @@ export class ChatEngineService implements IChatContext {
         restored,
       });
       if (restored) {
-        this.chatSessionItemsService.refreshHistoryList();
+        this.chatSessionItemsService.scheduleSessionItemRefresh(currentSessionId, 'attach-restore');
       }
       return;
     }
@@ -2584,7 +2596,7 @@ export class ChatEngineService implements IChatContext {
           });
         }
         this.ensureBackgroundSessionCanRerun(currentSessionId);
-        this.chatSessionItemsService.refreshHistoryList();
+        this.chatSessionItemsService.scheduleSessionItemRefresh(currentSessionId, 'attach-runtime-view');
       }
       return;
     }
@@ -2599,7 +2611,7 @@ export class ChatEngineService implements IChatContext {
       restored,
     });
     if (restored) {
-      this.chatSessionItemsService.refreshHistoryList();
+      this.chatSessionItemsService.scheduleSessionItemRefresh(currentSessionId, 'attach-fallback-restore');
     }
   }
 
@@ -2819,7 +2831,7 @@ Do not create non-existent boards and libraries.
   }
 
   generateTitle(content: string): void {
-    this.titleCoordinator.generate(content);
+    void this.titleCoordinator.generate(content);
   }
 
   showAiWritingNotice(isWaiting: boolean): void {
@@ -3031,7 +3043,27 @@ Do not create non-existent boards and libraries.
 
       this.lexStream.turn.begin(prepared.llmText, prepared.displayText, prepared.requestMetadata);
       if (sender === 'user') {
-        this.titleCoordinator.generate(prepared.text);
+        const currentModel = this.chatService.currentModel as { model?: string; isCustom?: boolean; apiKey?: string; baseUrl?: string } | null;
+        const hasCustomCredentials = !!(
+          currentModel?.isCustom
+          && typeof currentModel.apiKey === 'string'
+          && currentModel.apiKey.trim().length > 0
+          && typeof currentModel.baseUrl === 'string'
+          && currentModel.baseUrl.trim().length > 0
+        );
+        console.info('[AilyChat][SendTitle]', {
+          event: 'before-title-flow',
+          sessionId: runtimeSessionId || this.chatService.currentSessionId,
+          displayTextLength: (prepared.displayText || prepared.text).trim().length,
+          requestTextLength: prepared.text.trim().length,
+          requestTextPreview: prepared.text.trim().slice(0, 120),
+          currentTitleBeforeSend: this.chatService.currentSessionTitle,
+          currentModelId: currentModel?.model ?? '',
+          currentModelIsCustom: currentModel?.isCustom === true,
+          titleRequestUsesCustomLlmPath: hasCustomCredentials,
+        });
+        this.applyDefaultSessionTitleIfNeeded(prepared.displayText || prepared.text);
+        void this.titleCoordinator.generate(prepared.text);
       }
       traceBackgroundSessionExecution('send-turn-begin', {
         runtimeSessionId,
@@ -3084,6 +3116,36 @@ Do not create non-existent boards and libraries.
     }
 
     await executeSend();
+  }
+
+  private applyDefaultSessionTitleIfNeeded(content: string): void {
+    const currentTitle = typeof this.chatService.currentSessionTitle === 'string'
+      ? this.chatService.currentSessionTitle
+      : '';
+    if (isMeaningfulRuntimeSessionTitle(currentTitle)) {
+      console.info('[AilyChat][SendTitle]', {
+        event: 'skip-default-title-existing-meaningful',
+        currentTitle,
+      });
+      return;
+    }
+
+    const firstUserMessageContent = readFirstUserMessageContent(this.conversationMessages);
+    const defaultTitle = deriveDefaultSessionTitle(firstUserMessageContent ?? content);
+    if (!defaultTitle) {
+      console.info('[AilyChat][SendTitle]', {
+        event: 'skip-default-title-empty',
+        contentLength: typeof content === 'string' ? content.trim().length : 0,
+      });
+      return;
+    }
+
+    this.chatService.currentSessionTitle = defaultTitle;
+    console.info('[AilyChat][SendTitle]', {
+      event: 'apply-default-title',
+      title: defaultTitle,
+      source: firstUserMessageContent ? 'first-user-message' : 'current-content',
+    });
   }
 
   private async maybeRewriteContentForTestSetup(
@@ -3718,6 +3780,72 @@ Do not create non-existent boards and libraries.
   rejectToolExecution(toolCallId: string, reason?: string): void {
     this.interaction.rejectToolExecution(toolCallId, reason);
   }
+}
+
+function deriveDefaultSessionTitle(content: unknown): string {
+  if (typeof content !== 'string') {
+    return '';
+  }
+
+  const normalizedContent = content.trim();
+  if (!normalizedContent) {
+    return '';
+  }
+
+  const firstLine = normalizedContent.split('\n')[0]?.trim() ?? '';
+  if (!firstLine) {
+    return '';
+  }
+
+  return firstLine.substring(0, 200);
+}
+
+function readFirstUserMessageContent(messages: unknown): string | undefined {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return undefined;
+  }
+
+  for (const message of messages) {
+    const role = typeof (message as { role?: unknown })?.role === 'string'
+      ? ((message as { role?: string }).role ?? '').trim().toLowerCase()
+      : '';
+    if (role !== 'user') {
+      continue;
+    }
+
+    const content = (message as { content?: unknown })?.content;
+    if (typeof content === 'string' && content.trim().length > 0) {
+      return content;
+    }
+  }
+
+  return undefined;
+}
+
+function isMeaningfulRuntimeSessionTitle(title: unknown): boolean {
+  if (typeof title !== 'string') {
+    return false;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  const loweredTitle = normalizedTitle.toLowerCase();
+  if (loweredTitle === 'new chat'
+    || loweredTitle === 'new session'
+    || loweredTitle === 'current session'
+    || loweredTitle === '新对话'
+    || loweredTitle === '新会话') {
+    return false;
+  }
+
+  if (/^untitled(?:\s+chat)?(?:\s*\d+)?$/i.test(normalizedTitle)) {
+    return false;
+  }
+
+  return !/^lex-\d{6,}$/i.test(normalizedTitle);
 }
 
 async function maybeAutoSwitchToDefaultModelAfterRateLimit(engine: {

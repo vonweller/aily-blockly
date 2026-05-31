@@ -187,10 +187,11 @@ export class LexMessageLifecycleBridge {
     }
 
     if (resolvedSaveTarget) {
-      const finalizedTurnResponses = this.readCurrentTurnResponses?.();
-      const candidateTurnResponses = Array.isArray(finalizedTurnResponses)
-        ? finalizedTurnResponses
-        : resolvedSaveTarget.turnResponses;
+      // Execution-owned save targets already carry the authoritative session-scoped
+      // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
+      const candidateTurnResponses = Array.isArray(resolvedSaveTarget.turnResponses)
+        ? resolvedSaveTarget.turnResponses
+        : this.readCurrentTurnResponses?.();
       if (Array.isArray(candidateTurnResponses)) {
         resolvedSaveTarget.turnResponses = this.normalizeTerminalTurnResponses(candidateTurnResponses);
       }

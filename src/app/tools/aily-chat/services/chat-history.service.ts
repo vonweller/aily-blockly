@@ -255,6 +255,12 @@ export class ChatHistoryService implements OnDestroy {
   private indexLoaded = false;
   /** 脏标记：索引有未保存的变更 */
   private indexDirty = false;
+  /** 索引版本号（每次索引语义变更 +1） */
+  private indexRevision = 0;
+  /** getHistoryList 缓存对应的索引版本号 */
+  private historyListCacheRevision = -1;
+  /** 按 filter/project 维度缓存已排序历史快照 */
+  private readonly historyListCache = new Map<string, SessionIndexEntry[]>();
   /** 定时兜底保存的 timer ID */
   private autoSaveTimer: any = null;
 
@@ -335,6 +341,14 @@ export class ChatHistoryService implements OnDestroy {
    */
   getHistoryList(filter: HistoryFilterMode = 'all', projectPath?: string | null, projectRootPath?: string | null): SessionIndexEntry[] {
     this.ensureIndexLoaded();
+    this.ensureHistoryListCacheRevision();
+
+    const cacheKey = this.buildHistoryListCacheKey(filter, projectPath, projectRootPath);
+    const cached = this.historyListCache.get(cacheKey);
+    if (cached) {
+      return [...cached];
+    }
+
     let result = [...this.index];
 
     if (filter === 'current-project' && projectPath) {
@@ -351,7 +365,8 @@ export class ChatHistoryService implements OnDestroy {
 
     // 按 updatedAt 降序
     result.sort((a, b) => b.updatedAt - a.updatedAt);
-    return result;
+    this.historyListCache.set(cacheKey, result);
+    return [...result];
   }
 
   /**
@@ -621,6 +636,7 @@ export class ChatHistoryService implements OnDestroy {
     );
     if (adopted === 0) return 0;
 
+    this.bumpIndexRevision();
     this.indexDirty = true;
     this.writeIndex();
     return adopted;
@@ -637,6 +653,7 @@ export class ChatHistoryService implements OnDestroy {
    */
   reloadProjectIndex(projectPath: string): void {
     this.index = this.indexStore.mergeProjectIndex(this.index, projectPath);
+    this.bumpIndexRevision();
   }
 
   // =========================================================================
@@ -660,6 +677,7 @@ export class ChatHistoryService implements OnDestroy {
     this.deleteSessionFile(sessionId, null);
 
     this.index = this.index.filter(e => e.sessionId !== sessionId);
+    this.bumpIndexRevision();
     this.indexDirty = true;
     this.writeIndex();
 
@@ -737,6 +755,7 @@ export class ChatHistoryService implements OnDestroy {
         dataAvailable: true,
       });
     }
+    this.bumpIndexRevision();
     this.indexDirty = true;
   }
 
@@ -751,6 +770,39 @@ export class ChatHistoryService implements OnDestroy {
     if (this.indexLoaded) return;
     this.indexLoaded = true;
     this.index = this.indexStore.loadMergedIndex().map((entry) => this.normalizeIndexEntry(entry));
+    this.bumpIndexRevision();
+  }
+
+  private bumpIndexRevision(): void {
+    this.indexRevision += 1;
+    this.invalidateHistoryListCache();
+  }
+
+  private invalidateHistoryListCache(): void {
+    this.historyListCache.clear();
+    this.historyListCacheRevision = this.indexRevision;
+  }
+
+  private ensureHistoryListCacheRevision(): void {
+    if (this.historyListCacheRevision === this.indexRevision) {
+      return;
+    }
+
+    this.historyListCache.clear();
+    this.historyListCacheRevision = this.indexRevision;
+  }
+
+  private buildHistoryListCacheKey(
+    filter: HistoryFilterMode,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): string {
+    const normalizePath = (value?: string | null) => (value ?? '').replace(/\\/g, '/').toLowerCase();
+    return [
+      filter,
+      normalizePath(projectPath),
+      normalizePath(projectRootPath),
+    ].join('|');
   }
 
   private normalizeIndexEntry(entry: SessionIndexEntry): SessionIndexEntry {

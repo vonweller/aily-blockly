@@ -86,7 +86,7 @@ function traceBackgroundSessionExecution(event: string, details: Record<string, 
   if (!isBackgroundSessionTraceEnabled()) {
     return;
   }
-  console.info('[AilyChat][bg-session][execution]', event, details);
+  // console.info('[AilyChat][bg-session][execution]', event, details);
 }
 
 /**

@@ -70,17 +70,28 @@ export class HostSessionPersistenceBridge {
   updateTitle(sessionId: string, title: string): void {
     this.options.ensureIndexLoaded();
     const entry = this.options.findIndexEntry(sessionId);
+    const now = Date.now();
 
     if (entry) {
       entry.title = title;
-      entry.updatedAt = Date.now();
+      entry.updatedAt = now;
       this.options.markIndexDirty();
 
       const cached = this.sessionCache.get(sessionId);
       if (cached) {
         cached.metadata.title = title;
-        cached.metadata.updatedAt = Date.now();
+        cached.metadata.updatedAt = now;
         this.hostRecordStore.write(sessionId, cached);
+      } else {
+        const persisted = this.hostRecordStore.read(sessionId, entry.projectPath ?? null);
+        if (persisted) {
+          persisted.metadata.title = title;
+          persisted.metadata.updatedAt = now;
+          this.sessionCache.set(sessionId, persisted);
+          this.hostRecordStore.write(sessionId, persisted);
+        } else {
+          this.pendingTitles.set(sessionId, title);
+        }
       }
 
       this.options.writeIndex();
@@ -88,8 +99,43 @@ export class HostSessionPersistenceBridge {
       return;
     }
 
-    this.pendingTitles.set(sessionId, title);
-    console.log(`[ChatHistory] 标题暂存(条目未创建): ${sessionId} → "${title}"`);
+    const fallbackRecord = this.tryLoadLiveHostRecord(sessionId)
+      ?? this.sessionCache.get(sessionId)
+      ?? null;
+    if (fallbackRecord) {
+      const nextRecord: HostSessionRecord = {
+        ...fallbackRecord,
+        metadata: {
+          ...fallbackRecord.metadata,
+          title,
+          updatedAt: now,
+        },
+      };
+      this.sessionCache.set(sessionId, nextRecord);
+      this.hostRecordStore.write(sessionId, nextRecord);
+
+      const messageCount = countHostRecordMessages(nextRecord);
+      this.options.upsertIndexEntry(sessionId, nextRecord.metadata, messageCount, true);
+      this.options.writeIndex();
+      console.log(`[ChatHistory] 标题已更新(补建条目): ${sessionId} → "${title}"`);
+      return;
+    }
+
+    // Upstream-aligned semantics: generated/custom titles are durable session metadata,
+    // even when no turn has been persisted yet.
+    const metadata = this.hostRecordStore.createFullMetadata({
+      sessionId,
+      title,
+      updatedAt: now,
+    });
+    const titleOnlyRecord = this.hostRecordStore.createRecord(metadata);
+    this.sessionCache.set(sessionId, titleOnlyRecord);
+    this.hostRecordStore.write(sessionId, titleOnlyRecord);
+    this.options.upsertIndexEntry(sessionId, metadata, 0, true);
+    this.options.writeIndex();
+    console.log(`[ChatHistory] 标题已更新(仅标题元数据): ${sessionId} → "${title}"`);
+    return;
+
   }
 
   markDirty(sessionId: string): void {
@@ -97,35 +143,48 @@ export class HostSessionPersistenceBridge {
   }
 
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {
-    const liveRecord = this.tryLoadLiveHostRecord(sessionId);
-    if (liveRecord) {
-      return liveRecord;
-    }
-
-    const cached = this.sessionCache.get(sessionId);
-    if (cached) {
-      return cached;
-    }
-
-    this.options.ensureIndexLoaded();
-    const entry = this.options.findIndexEntry(sessionId);
-    const primaryPath = entry?.projectPath || null;
-
-    const data = this.hostRecordStore.read(sessionId, primaryPath);
-    if (data) {
-      this.sessionCache.set(sessionId, data);
-      return data;
-    }
-
-    if (projectPathHint && !this.options.isSamePath(projectPathHint, primaryPath)) {
-      const fallbackData = this.hostRecordStore.read(sessionId, projectPathHint);
-      if (fallbackData) {
-        this.sessionCache.set(sessionId, fallbackData);
-        return fallbackData;
+    try {
+      const liveRecord = this.tryLoadLiveHostRecord(sessionId);
+      if (liveRecord) {
+        return liveRecord;
       }
-    }
 
-    return null;
+      const cached = this.sessionCache.get(sessionId);
+      if (cached) {
+        return cached;
+      }
+
+      this.options.ensureIndexLoaded();
+      const entry = this.options.findIndexEntry(sessionId);
+      const primaryPath = entry?.projectPath || null;
+
+      const data = this.hostRecordStore.read(sessionId, primaryPath);
+      if (data) {
+        const hydrated = this.applyPendingTitleToRecord(data);
+        if (hydrated !== data) {
+          this.hostRecordStore.write(sessionId, hydrated);
+        }
+        this.sessionCache.set(sessionId, hydrated);
+        return hydrated;
+      }
+
+      if (projectPathHint && !this.options.isSamePath(projectPathHint, primaryPath)) {
+        const fallbackData = this.hostRecordStore.read(sessionId, projectPathHint);
+        if (fallbackData) {
+          const hydrated = this.applyPendingTitleToRecord(fallbackData);
+          if (hydrated !== fallbackData) {
+            this.hostRecordStore.write(sessionId, hydrated);
+          }
+          this.sessionCache.set(sessionId, hydrated);
+          return hydrated;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.warn('[ChatHistory] 读取 session record 失败:', error);
+      return null;
+    }
   }
 
   flushAll(): void {
@@ -209,6 +268,23 @@ export class HostSessionPersistenceBridge {
     return {
       ...metadata,
       title: pendingTitle,
+    };
+  }
+
+  private applyPendingTitleToRecord(record: HostSessionRecord): HostSessionRecord {
+    const pendingTitle = this.pendingTitles.get(record.metadata.sessionId);
+    if (!pendingTitle) {
+      return record;
+    }
+
+    this.pendingTitles.delete(record.metadata.sessionId);
+    return {
+      ...record,
+      metadata: {
+        ...record.metadata,
+        title: pendingTitle,
+        updatedAt: Date.now(),
+      },
     };
   }
 }

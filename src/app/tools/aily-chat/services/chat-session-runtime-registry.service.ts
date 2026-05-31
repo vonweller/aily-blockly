@@ -5,6 +5,7 @@ import type { HostTurnResponseState } from '../helpers/host-turn-response-state'
 import {
   ChatSessionRuntimeStoreService,
   DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
+  type ChatSessionRuntimeChangeReason,
   type ChatSessionRuntimeCapabilities,
   type ChatSessionRuntimeDebugSummary,
   type ChatSessionRuntimeQuotaOverlay,
@@ -97,6 +98,8 @@ export class ChatSessionRuntimeRegistryService {
         : null,
       disposeSession: () => this.disposeSession(normalizedSessionId),
       capabilities: handle.capabilities,
+    }, {
+      reason: 'handle',
     });
   }
 
@@ -127,6 +130,8 @@ export class ChatSessionRuntimeRegistryService {
       disposeSession: () => this.disposeSession(normalizedSessionId),
       capabilities: handle.capabilities,
       debugSummary: patch.debugSummary,
+    }, {
+      reason: this.resolveProjectionChangeReason(patch),
     });
   }
 
@@ -152,6 +157,9 @@ export class ChatSessionRuntimeRegistryService {
         : null,
       disposeSession: () => this.disposeSession(normalizedSessionId),
       capabilities: handle.capabilities,
+    }, {
+      reason: 'transcript',
+      highFrequency: true,
     });
   }
 
@@ -161,7 +169,9 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, { attachedView: true });
+    this.runtimeStore.replaceRuntimeState(normalizedSessionId, { attachedView: true }, {
+      reason: 'view',
+    });
     return true;
   }
 
@@ -176,6 +186,8 @@ export class ChatSessionRuntimeRegistryService {
       debugSummary: {
         lastViewDetachAt: Date.now(),
       },
+    }, {
+      reason: 'view',
     });
     return true;
   }
@@ -211,6 +223,8 @@ export class ChatSessionRuntimeRegistryService {
       debugSummary: {
         lastExplicitDisposeAt: Date.now(),
       },
+    }, {
+      reason: 'handle',
     });
     this.handles.delete(normalizedSessionId);
     this.runtimeStore.clearSession(normalizedSessionId);
@@ -255,7 +269,44 @@ export class ChatSessionRuntimeRegistryService {
       stopSession: null,
       capabilities: previous?.capabilities ?? DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
       debugSummary,
+    }, {
+      reason: 'status',
     });
+  }
+
+  private resolveProjectionChangeReason(
+    patch: ChatSessionRuntimeProjectionPatch,
+  ): ChatSessionRuntimeChangeReason {
+    if (patch.status !== undefined) {
+      return 'status';
+    }
+    if (patch.description !== undefined) {
+      return 'description';
+    }
+    if (patch.attachedView !== undefined) {
+      return 'view';
+    }
+    if (patch.requestInProgress !== undefined
+      || patch.supportsInterruption !== undefined
+      || patch.activeResponseHandle !== undefined
+      || patch.stopSession !== undefined
+      || patch.disposeSession !== undefined) {
+      return 'handle';
+    }
+    if (patch.quotaOverlay !== undefined) {
+      return 'quota';
+    }
+    if (patch.viewOverlay !== undefined) {
+      return 'view';
+    }
+    if (patch.debugSummary !== undefined) {
+      return 'debug';
+    }
+    if (patch.turnResponses !== undefined || patch.hostProjectionState !== undefined) {
+      return 'transcript';
+    }
+
+    return 'state';
   }
 
   private upsertHandle(

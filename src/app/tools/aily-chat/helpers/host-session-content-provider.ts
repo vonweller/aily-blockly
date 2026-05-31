@@ -192,7 +192,9 @@ export class HostSessionContentProvider {
       projectPathHint: normalizedProjectPathHint,
       hostRecord: hostRecord ?? null,
       ...(normalizedMetadata ? { metadata: normalizedMetadata } : {}),
-      ...(normalizeSessionTitle(normalizedMetadata?.title) ? { title: normalizeSessionTitle(normalizedMetadata?.title) } : {}),
+      ...(normalizeSessionTitle(normalizedMetadata?.title, sessionId)
+        ? { title: normalizeSessionTitle(normalizedMetadata?.title, sessionId) }
+        : {}),
       providerOptions,
       ...(projectedInputState ? { inputState: projectedInputState } : {}),
     };
@@ -226,10 +228,27 @@ function normalizeProjectPathHint(projectPathHint?: string | null): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeSessionTitle(title: unknown): string | undefined {
-  return typeof title === 'string' && title.trim()
-    ? title.trim()
-    : undefined;
+function normalizeSessionTitle(title: unknown, sessionId?: string): string | undefined {
+  if (typeof title !== 'string') {
+    return undefined;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle || isTechnicalSessionTitle(normalizedTitle, sessionId)) {
+    return undefined;
+  }
+
+  return normalizedTitle;
+}
+
+function isTechnicalSessionTitle(title: string, sessionId?: string): boolean {
+  const normalizedTitle = title.trim();
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (normalizedSessionId && normalizedTitle === normalizedSessionId) {
+    return true;
+  }
+
+  return /^lex-\d{6,}$/i.test(normalizedTitle);
 }
 
 function resolveMergedSessionType(primary?: unknown, fallback?: unknown): ChatSessionType {
@@ -256,11 +275,11 @@ function mergeHostSessionContentMetadata(
   const interactionActionSummary = primary?.interactionActionSummary ?? fallback?.interactionActionSummary;
   const projectPath = normalizeProjectPathHint(primary?.projectPath as string | null | undefined)
     ?? normalizeProjectPathHint(fallback?.projectPath as string | null | undefined);
+  const mergedTitle = normalizeSessionTitle(primary?.title)
+    ?? normalizeSessionTitle(fallback?.title);
 
   return {
-    ...(normalizeSessionTitle(primary?.title)
-      ? { title: normalizeSessionTitle(primary?.title) }
-      : {}),
+    ...(mergedTitle ? { title: mergedTitle } : {}),
     sessionType: resolveMergedSessionType(primary?.sessionType, fallback?.sessionType),
     ...(projectPath ? { projectPath } : {}),
     ...((primary?.mode ?? fallback?.mode) !== undefined ? { mode: primary?.mode ?? fallback?.mode } : {}),

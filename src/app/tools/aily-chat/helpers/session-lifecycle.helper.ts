@@ -225,6 +225,15 @@ export class SessionLifecycleHelper {
     return this._hostSessionSaveBridge.buildHostSessionRecord(options);
   }
 
+  buildLiveHostSessionRecord(options?: {
+    hostProjection?: HostResponseProjection | null;
+    visibleChatList?: readonly ChatListItem[];
+    turnResponsesOverride?: readonly import('aily-lex/browser').TurnResponseTurn[];
+    sessionSnapshotOverride?: import('aily-lex/browser').SessionSnapshot | null;
+  }): LiveHostSessionRecord | null {
+    return this._hostSessionSaveBridge.buildLiveHostSessionRecord(options);
+  }
+
   async importDebugSnapshot(data: Uint8Array): Promise<ImportedDebugSessionRecord | null> {
     return this.ctx.chatHistoryService.importDebugSnapshot?.(data) ?? null;
   }
@@ -515,6 +524,10 @@ export class SessionLifecycleHelper {
     }
 
     await this._entryCoordinator.returnToEntryInventory(options);
+
+    if (targetSessionId) {
+      this.clearPersistedSessionEntryTarget(targetSessionId);
+    }
   }
 
   /** 简化的停止+清理（替代旧 stopAndCloseSession） */
@@ -540,7 +553,7 @@ export class SessionLifecycleHelper {
     if (currentSessionId) {
       this.ctx.detachSessionRuntimeView?.(currentSessionId);
     }
-    this.enterEntryState({
+    this.enterBlankSessionShell({
       sessionId: currentSessionId,
       disposeRuntime: false,
     });
@@ -573,7 +586,12 @@ export class SessionLifecycleHelper {
     );
     const hostRecord = sessionContent?.hostRecord ?? null;
     if (hostRecord) {
-      await this.ctx.restoreSessionHostRecord(hostRecord);
+      try {
+        await this.ctx.restoreSessionHostRecord(hostRecord);
+      } catch (error) {
+        console.warn('[SessionLifecycle] session history restore failed:', error);
+        this.ctx.message.warning('会话历史加载失败，已继续打开当前会话');
+      }
     } else {
       this.ctx.editCheckpointService?.clear();
       this.ctx.editCheckpointService?.dismissSummary();
@@ -629,7 +647,7 @@ export class SessionLifecycleHelper {
   }
 
   private resolveForkSourceRecord(): HostSessionRecord | LiveHostSessionRecord | null {
-    const liveRecord = this.buildHostSessionRecord();
+    const liveRecord = this.buildLiveHostSessionRecord();
     if (liveRecord?.sessionId === this.ctx.sessionId) {
       return liveRecord;
     }
@@ -798,7 +816,8 @@ export class SessionLifecycleHelper {
 
     this.throwIfSessionActivationSuperseded(activationRequestId);
     this.setActiveSessionId(sessionId);
-    this.ctx.chatService.currentSessionTitle = restoreRequest.sessionContent.title ?? '';
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
     this.applySessionType(restoreRequest.sessionContent.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
@@ -948,7 +967,8 @@ export class SessionLifecycleHelper {
     }
 
     this.setActiveSessionId(sessionId);
-    this.ctx.chatService.currentSessionTitle = sessionContent?.title ?? '';
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
     this.applySessionType(sessionContent?.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, sessionContent));
@@ -1078,4 +1098,111 @@ export class SessionLifecycleHelper {
   }
 
   resetChat(): Promise<void> { return this.newChat(); }
+}
+
+function resolveRestoredSessionTitle(
+  sessionContent?: HostSessionContent | null,
+  runtimeTurnResponses?: readonly unknown[] | null,
+): string {
+  const persistedTitle = typeof sessionContent?.title === 'string'
+    ? sessionContent.title.trim()
+    : '';
+  if (isMeaningfulRestoredSessionTitle(persistedTitle)) {
+    return persistedTitle;
+  }
+
+  const fallbackDefaultTitle = deriveDefaultTitleFromTurnResponses(
+    sessionContent?.hostRecord?.turnResponses,
+    runtimeTurnResponses,
+  );
+  return isMeaningfulRestoredSessionTitle(fallbackDefaultTitle)
+    ? fallbackDefaultTitle
+    : '';
+}
+
+function deriveDefaultTitleFromTurnResponses(
+  turnResponses: readonly unknown[] | null | undefined,
+  runtimeTurnResponses?: readonly unknown[] | null,
+): string {
+  const candidates = Array.isArray(turnResponses) && turnResponses.length > 0
+    ? turnResponses
+    : (Array.isArray(runtimeTurnResponses) ? runtimeTurnResponses : []);
+  if (candidates.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of candidates) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function isMeaningfulRestoredSessionTitle(title: unknown): boolean {
+  if (typeof title !== 'string') {
+    return false;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  const normalizedLower = normalizedTitle.toLowerCase();
+  if (/^lex-\d{6,}$/i.test(normalizedTitle)) {
+    return false;
+  }
+  if (/^untitled(?:\s+chat)?(?:\s*\d+)?$/i.test(normalizedTitle)) {
+    return false;
+  }
+
+  return normalizedLower !== 'new session'
+    && normalizedLower !== 'new chat'
+    && normalizedLower !== 'current session'
+    && normalizedLower !== 'chat'
+    && normalizedTitle !== '新会话'
+    && normalizedTitle !== '新对话'
+    && normalizedTitle !== '无标题会话';
 }

@@ -86,12 +86,18 @@ export class ChatSessionTitleActionRegistry {
     const normalizedTitle = typeof title === 'string' ? title : '';
     const navigationActions = this.getToolbarActions(CHAT_SESSION_TITLE_NAVIGATION_TOOLBAR_ID);
     const actions = this.getToolbarActions(CHAT_SESSION_TITLE_TOOLBAR_ID);
+    const navigationIconActions = navigationActions.filter(action => action.presentation !== 'title');
+    const titleAction = navigationActions.find(action => action.presentation === 'title') ?? null;
+    const shouldRender = normalizedTitle.trim().length > 0
+      || navigationIconActions.length > 0
+      || titleAction !== null
+      || actions.length > 0;
 
     return {
-      shouldRender: normalizedTitle.trim().length > 0,
+      shouldRender,
       title: normalizedTitle,
-      navigationIconActions: navigationActions.filter(action => action.presentation !== 'title'),
-      titleAction: navigationActions.find(action => action.presentation === 'title') ?? null,
+      navigationIconActions,
+      titleAction,
       actions,
     };
   }

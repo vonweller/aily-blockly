@@ -10,6 +10,7 @@ import type { ChatSessionTitleActionContext } from '../core/chat-session-title-a
 import { AilyChatConfigService, type ChatSessionViewerOrientationSetting } from './aily-chat-config.service';
 import { ChatSessionSelectionService } from './chat-session-selection.service';
 import { ChatSessionItemsService } from './chat-session-items.service';
+import type { ChatSessionListItemsDelta } from './chat-session-items.service';
 import { ChatService } from './chat.service';
 import { MenuManagerService, type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
 
@@ -54,14 +55,22 @@ export class ChatSessionsControlService {
     this._sessionSidebarWidth = this.normalizeRequestedSessionSidebarWidth(this._requestedSessionSidebarWidth);
     this._sessionSidebarMaxWidth = this.resolveSessionSidebarMaxWidth(this._sessionViewportWidth);
 
-    this.chatSessionItemsService.sessionListItemsChanged$
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => {
-        this.reconcileSelection();
-        if (!this.updateLayoutProjection()) {
-          this.controlChangedSubject.next();
-        }
-      });
+    const sessionListItemsDelta$ = (this.chatSessionItemsService as unknown as {
+      sessionListItemsDelta$?: { pipe: (...args: unknown[]) => { subscribe: (callback: (delta: ChatSessionListItemsDelta) => void) => unknown } };
+    }).sessionListItemsDelta$;
+    if (sessionListItemsDelta$) {
+      sessionListItemsDelta$
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe((delta: ChatSessionListItemsDelta) => {
+          this.handleSessionListItemsDelta(delta);
+        });
+    } else {
+      this.chatSessionItemsService.sessionListItemsChanged$
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => {
+          this.handleSessionListItemsDelta({ kind: 'full', affectsOrder: true });
+        });
+    }
 
     this.chatSessionSelectionService.selectedSessionIdChanged$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -85,6 +94,18 @@ export class ChatSessionsControlService {
       });
 
     this.reconcileSelection();
+  }
+
+  private handleSessionListItemsDelta(delta: ChatSessionListItemsDelta): void {
+    this.reconcileSelection();
+    if (delta.affectsOrder && !this.updateLayoutProjection()) {
+      this.controlChangedSubject.next();
+      return;
+    }
+
+    if (!delta.affectsOrder) {
+      this.controlChangedSubject.next();
+    }
   }
 
   get sessionListItems(): readonly ChatSessionListItem[] {

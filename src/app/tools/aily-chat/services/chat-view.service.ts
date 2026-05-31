@@ -107,6 +107,7 @@ export class ChatViewService {
   agentSuggestions: string[] = [];
   private readonly sessionViewModelChangedSubject = new Subject<void>();
   private paneChromeActionBindings: ChatPaneChromeActionBindings | null = null;
+  private lastPaneDiagnosticsKey = '';
 
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
@@ -210,7 +211,19 @@ export class ChatViewService {
   }
 
   get currentSessionTitle(): string {
-    return this.currentSessionViewItem?.title ?? this.chatService.currentSessionTitle;
+    const projectedTitle = this.currentSessionViewItem?.title;
+    const liveTitle = this.chatService.currentSessionTitle;
+    const currentSessionId = this.chatService.currentSessionId;
+
+    if (isMeaningfulSessionTitle(liveTitle, currentSessionId)) {
+      return liveTitle;
+    }
+
+    if (isMeaningfulSessionTitle(projectedTitle, currentSessionId)) {
+      return projectedTitle ?? '';
+    }
+
+    return '';
   }
 
   get currentPaneTitle(): string {
@@ -218,6 +231,7 @@ export class ChatViewService {
       case 'debug-session':
         return this.debugBrowser.activeImportedResourceSummary?.displayTitle ?? '';
       case 'chat':
+      case 'blank-session':
         return this.currentSessionTitle;
       default:
         return '';
@@ -277,7 +291,7 @@ export class ChatViewService {
   }
 
   get isSessionTitleSurfaceClickEnabled(): boolean {
-    return this.currentPaneSurface === 'chat';
+    return this.currentPaneSurface === 'chat' || this.currentPaneSurface === 'blank-session';
   }
 
   get hostHeaderActions() {
@@ -352,6 +366,9 @@ export class ChatViewService {
     }
 
     if (!this.chatSessionsControlService.hasConversationContent) {
+      if (this.hasCurrentSessionIdentity) {
+        return 'blank-session';
+      }
       return 'entry';
     }
 
@@ -412,9 +429,10 @@ export class ChatViewService {
       isAuthenticated: this.chatSessionsControlService.isAuthenticated,
     });
 
+    const paneSurface = this.currentPaneSurface;
     return this.chatSessionsControlService.readSessionTitleActionContext({
-      isChatSurface: this.currentPaneSurface === 'chat',
-      isBlankSessionSurface: this.currentPaneSurface === 'blank-session',
+      isChatSurface: paneSurface === 'chat' || paneSurface === 'blank-session',
+      isBlankSessionSurface: paneSurface === 'blank-session',
     });
   }
 
@@ -475,7 +493,35 @@ export class ChatViewService {
   }
 
   private refreshSessionViewModel(): void {
+    this.emitPaneDiagnostics();
     this.sessionViewModelChangedSubject.next();
+  }
+
+  private emitPaneDiagnostics(): void {
+    const paneSurface = this.currentPaneSurface;
+    const diagnostics = {
+      paneSurface,
+      hasConversationContent: this.chatSessionsControlService.hasConversationContent,
+      hasCurrentSessionIdentity: this.hasCurrentSessionIdentity,
+      hasCurrentSession: this.chatSessionsControlService.hasCurrentSession,
+      hasBlankSessionShell: this.chatService.hasBlankSessionShell === true,
+      currentSessionId: this.chatService.currentSessionId,
+      currentPaneTitle: this.currentPaneTitle,
+      liveSessionTitle: this.chatService.currentSessionTitle,
+      projectedSessionTitle: this.currentSessionViewItem?.title ?? '',
+      sessionListDisplayMode: this.chatSessionsControlService.sessionListDisplayMode,
+      titleSurfaceShouldRender: this.sessionTitleSurfaceModel.shouldRender,
+      titleSurfaceNavigationIconActionCount: this.sessionTitleSurfaceModel.navigationIconActions.length,
+      titleSurfaceHasTitleAction: this.sessionTitleSurfaceModel.titleAction !== null,
+      titleSurfaceActionCount: this.sessionTitleSurfaceModel.actions.length,
+    };
+    const key = JSON.stringify(diagnostics);
+    if (key === this.lastPaneDiagnosticsKey) {
+      return;
+    }
+
+    this.lastPaneDiagnosticsKey = key;
+    console.info('[AilyChat][PaneState]', diagnostics);
   }
 
   private get currentSessionViewItem(): ChatSessionListItem | null {
@@ -818,4 +864,45 @@ export class ChatViewService {
       languageModelsService: this.languageModelsService,
     });
   }
+}
+
+function isMeaningfulSessionTitle(title: unknown, sessionId?: string): boolean {
+  if (typeof title !== 'string') {
+    return false;
+  }
+
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  return !isTechnicalSessionTitle(normalizedTitle, sessionId)
+    && !isPlaceholderSessionTitle(normalizedTitle);
+}
+
+function isTechnicalSessionTitle(title: string, sessionId?: string): boolean {
+  const normalizedTitle = title.trim();
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (normalizedSessionId && normalizedTitle === normalizedSessionId) {
+    return true;
+  }
+
+  return /^lex-\d{6,}$/i.test(normalizedTitle);
+}
+
+function isPlaceholderSessionTitle(title: string): boolean {
+  const normalizedTitle = title.trim().toLowerCase();
+  if (!normalizedTitle) {
+    return true;
+  }
+
+  if (/^untitled(?:\s+chat)?(?:\s*\d+)?$/i.test(normalizedTitle)) {
+    return true;
+  }
+
+  return normalizedTitle === 'new chat'
+    || normalizedTitle === 'new session'
+    || normalizedTitle === 'current session'
+    || normalizedTitle === '新对话'
+    || normalizedTitle === '新会话';
 }

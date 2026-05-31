@@ -38,9 +38,9 @@ import { MenuManagerService } from './menu-manager.service';
 import { ChatMessage, ToolCallState, ResourceItem } from '../core/chat-types';
 import { AilyHost } from '../core/host';
 import { registerAskUserCallback, unregisterAskUserCallback } from '../core/ask-user';
-import { lexGenerateTitle } from '../core/lex-endpoint';
 
 import { ChatTitleCoordinator } from '../helpers/chat-title-coordinator';
+import { ChatTitleRequestService } from '../helpers/chat-title-request.service';
 import { MessageDisplayHelper } from '../helpers/message-display.helper';
 import { SessionLifecycleHelper } from '../helpers/session-lifecycle.helper';
 import { getUserSelectedToolsForRequest } from '../helpers/lex-agent-bootstrap';
@@ -94,7 +94,8 @@ export class ChatEngineService implements IChatContext {
   readonly lexStream = new LexOwnerFacade(this.lexOwnerContext);
   readonly editActions = new EditActionsHelper(this.editActionsContext);
   readonly interaction = new UserInteractionHelper(this.userInteractionContext);
-  private readonly titleCoordinator = new ChatTitleCoordinator(this.titleCoordinatorContext, lexGenerateTitle);
+  private readonly titleRequestService = new ChatTitleRequestService(() => this.lexStream.runtime.llmConfig());
+  private readonly titleCoordinator = new ChatTitleCoordinator(this.titleCoordinatorContext, this.titleRequestService);
   private readonly sendCoordinator = new ChatSendCoordinator(
     this,
     () => this.resourceManager.getResourcesText(),
@@ -638,7 +639,7 @@ export class ChatEngineService implements IChatContext {
       (shouldFollow) => this.scrollManager.scrollToBottomIfNeeded(shouldFollow, 'auto'),
     );
 
-    this.chatHistoryService.setLiveSessionProvider(() => this.session.buildHostSessionRecord());
+    this.chatHistoryService.setLiveSessionProvider(() => this.session.buildLiveHostSessionRecord());
 
     // H1: wire the cache as the host stream listener for incremental turn events.
     this.lexStream.setHostStreamListener(this.liveHostRequestGraphCache);
