@@ -17,6 +17,7 @@
         "DEBUG": "Depurar",
         "TERMINAL": "Terminal",
         "TOOL_SERIAL": "Herramienta Serial",
+        "FFS_MANAGER": "Gestor FFS",
         "SIMULATOR": "Simulador",
         "AI": "IA",
         "MODEL_STORE": "Tienda de Modelos",
@@ -166,7 +167,20 @@
         "CONTROLS_SWITCH_DEFAULT": "predeterminado",
         "CROSS_TAB_PASTE": "Pegar",
         "CROSS_TAB_PASTE_X_ELEMENTS": "Pegar %1 elementos",
-        "WORKSPACE_SELECT_ALL": "Seleccionar todos los bloques"
+        "WORKSPACE_SELECT_ALL": "Seleccionar todos los bloques",
+        "EXPLAIN_BLOCK": "Explicar con IA",
+        "ONBOARDING": {
+            "TOOLBOX_TITLE": "Caja de herramientas de bloques",
+            "TOOLBOX_DESC": "Aquí están las categorías de bloques. Haz clic en las distintas categorías para encontrar bloques de funciones y arrástralos al área de trabajo de la derecha para usarlos.",
+            "WORKSPACE_TITLE": "Área de trabajo",
+            "WORKSPACE_DESC": "Esta es tu área de programación. Puedes arrastrar y conectar bloques para crear programas. También puedes ampliar, reducir y mover el lienzo.",
+            "BUILD_TITLE": "Compilar programa",
+            "BUILD_DESC": "Cuando termines de unir los bloques, haz clic aquí para compilar el programa. Si la compilación se realiza correctamente, podrás ver el código generado.",
+            "UPLOAD_TITLE": "Cargar programa",
+            "UPLOAD_DESC": "Después de conectar la placa de desarrollo, haz clic aquí para cargar el programa en la placa y ejecutarlo.",
+            "LIB_MANAGER_TITLE": "Gestor de bibliotecas",
+            "LIB_MANAGER_DESC": "Haz clic aquí para abrir el gestor de bibliotecas. Puedes instalar y desinstalar bibliotecas de extensión para agregar más bloques a tu proyecto."
+        }
     },
     "APP_STORE": {
         "HEADER_INFO": "Las primeras {{count}} aplicaciones se mostrarán en la barra de herramientas",
@@ -179,6 +193,7 @@
         "CODE_DESC": "Ver código generado",
         "LIB_MANAGER_DESC": "Gestionar dependencias de biblioteca de proyecto",
         "SERIAL_DESC": "Herramienta de monitor serial",
+        "FFS_MANAGER_DESC": "Herramienta de gestión de particiones del sistema de archivos ESP32",
         "AI_DESC": "Asistente de IA",
         "MODEL_STORE_DESC": "Tienda de modelos de IA",
         "CLOUD_SPACE_DESC": "Espacio de almacenamiento en la nube",
@@ -213,6 +228,10 @@
             "BLOCKLY_MINIMAP": "Minimapa de Blockly",
             "COMPILATION_OPTIONS": "Opciones de Compilación",
             "REGION": "Región de servicio",
+            "RESOURCE_SOURCE": "Origen de recursos",
+            "RESOURCE_SOURCE_AUTO": "Automático",
+            "RESOURCE_SOURCE_PRIMARY": "Sitio principal",
+            "RESOURCE_SOURCE_MIRROR": "Sitio espejo",
             "REGION_TITLE": "Cambiar región de servicio",
             "REGION_DESC": "Deberá iniciar sesión de nuevo después de cambiar la región de servicio. ¿Continuar?",
             "REGION_CONFIRM": "Confirmar",
@@ -481,6 +500,39 @@
         "ERROR_SAVE_FAILED": "Error al guardar, por favor intente más tarde",
         "ERROR_LOAD_FAILED": "Error al cargar la configuración del proyecto"
     },
+    "USER_CENTER": {
+        "TITLE": "Centro de usuario",
+        "AVATAR_ALT": "Avatar del usuario",
+        "SETTINGS": "Configuración",
+        "LOGOUT": "Cerrar sesión",
+        "PLAN_LABEL": "Plan {{plan}}",
+        "AI_CALLS": "Usos de IA",
+        "AUTO_MODE": "modo automático",
+        "ADD_AI_CALLS": "Añadir usos",
+        "CLOUD_STORAGE": "Almacenamiento en la nube",
+        "ADD_STORAGE": "Añadir almacenamiento",
+        "IOT_DEVICES": "Dispositivos IoT",
+        "ADD_DEVICES": "Añadir dispositivos",
+        "POINTS": "Puntos de la cuenta",
+        "REDEEM_POINTS": "Canjear puntos",
+        "REGISTER_INCOMPLETE": "Completa toda la información de registro",
+        "REGISTER_SUCCESS": "Registro correcto",
+        "REGISTER_FAILED_NETWORK": "Error de registro, comprueba la conexión de red",
+        "REGISTER_FAILED": "Error de registro",
+        "LOGOUT_SUCCESS": "Sesión cerrada",
+        "LOGOUT_FAILED": "No se pudo cerrar sesión",
+        "SERVICE_UNAVAILABLE": "Servicio temporalmente no disponible",
+        "NICKNAME_REQUIRED": "El apodo no puede estar vacío",
+        "NICKNAME_SAVED": "Cambio de apodo guardado",
+        "NICKNAME_UPDATE_FAILED": "No se pudo actualizar el apodo, inténtalo más tarde",
+        "NICKNAME_SERVER_ERROR": "Error al actualizar el apodo, el servidor devolvió un error",
+        "GENERATING_LOGIN_LINK": "Generando enlace de inicio de sesión...",
+        "BROWSER_OPENED": "Navegador abierto, redirigiendo...",
+        "LOGIN_EXPIRED": "La sesión expiró, inicia sesión de nuevo",
+        "SSO_SERVER_ERROR": "Error del servidor, no se puede generar el enlace de inicio de sesión",
+        "SSO_NETWORK_FAILED": "Error de conexión de red, no se puede redirigir automáticamente",
+        "SSO_REDIRECT_FAILED": "Error de redirección, inténtalo más tarde"
+    },
     "FLOAT_SIDER": {
         "PROJECT_SETTINGS": "Configuración del Proyecto",
         "ARCH": "Diagrama de Arquitectura",
@@ -654,7 +706,13 @@
         "REGISTER": "Registrarse"
     },
     "COMMON": {
-        "FEATURE_COMING_SOON": "Función próximamente"
+        "FEATURE_COMING_SOON": "Función próximamente",
+        "ONBOARDING": {
+            "SKIP": "Saltar",
+            "PREV": "Anterior",
+            "NEXT": "Siguiente",
+            "DONE": "Listo"
+        }
     },
     "NPM": {
         "INSTALLING": "Instalando {{name}}...",
@@ -692,7 +750,8 @@
         "LOADING_BLOCKLY_LIB": "Cargando bibliotecas Blockly",
         "LOADING_LIB": "Cargando {{name}}",
         "LOADING_BLOCKLY_PROGRAM": "Cargando programa Blockly",
-        "PROJECT_LOAD_SUCCESS": "Proyecto cargado correctamente"
+        "PROJECT_LOAD_SUCCESS": "Proyecto cargado correctamente",
+        "EXPLAIN_BLOCK_PROMPT": "Explica qué hace este bloque, cómo funciona y cuál es su papel en el programa actual."
     },
     "PLAYGROUND": {
         "LOADING_EXAMPLE": "Cargando ejemplo...",

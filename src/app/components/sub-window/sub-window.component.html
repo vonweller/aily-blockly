@@ -1,6 +1,6 @@
 <div class="sub-window-box bborder">
   <div class="header" [class.darwin]="isMac" [class.full-screen]="isMacFullScreen">
-    <div class="title">
+    <div class="title" (dblclick)="maximize()">
       <span class="title-text">{{ title }}</span>
       <ng-content select="[title-extra]"></ng-content>
     </div>

@@ -22,11 +22,33 @@ export class UploaderService {
     return !type || type === 'serial';
   }
 
+  private async sendSerialMonitorUploadSignal(signal: string, port: any): Promise<void> {
+    // 让订阅方（serial-monitor / ffs-manager 等）把“释放串口”的
+    // Promise 推进 waitFor，这里等它们全部完成后再开始处理后续动作。
+    const waitFor: Promise<void>[] = [];
+    this.uiService.sendToolSignal(signal, { port, waitFor });
+    console.log(`[Uploader] ${signal} 发出，收到 ${waitFor.length} 个 waitFor Promise（port=${port}）`);
+    if (waitFor.length === 0) return;
+    try {
+      await Promise.all(waitFor);
+      console.log(`[Uploader] ${signal} 所有订阅方已完成释放`);
+    } catch (err) {
+      console.warn(`[Uploader] ${signal} 等待订阅方完成时报错:`, err);
+    }
+    // node-serialport 的 close 回调返回后，Windows 还要短暂窗口才会真正放开
+    // 独占句柄；这里给外部 esptool.exe 等 child_process 一点缓冲，避免
+    // "Could not open COMx, the port is busy" 报错。
+    if (signal === 'serial-monitor:disconnect') {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
   async upload() {
     const needSerialToggle = this.isSerialDevice;
+    const uploadPort = this.serialService.currentPort;
     try {
       if (needSerialToggle) {
-        this.uiService.sendToolSignal('serial-monitor:disconnect');
+        await this.sendSerialMonitorUploadSignal('serial-monitor:disconnect', uploadPort);
       }
       const timeout = this.serialService.currentPortInfo?.type === 'ble' ? 900000 : 300000;
       const feedback = await this.actionService.dispatchWithFeedback('upload-begin', {}, timeout).toPromise();
@@ -56,7 +78,7 @@ export class UploaderService {
       throw error;
     } finally {
       if (needSerialToggle) {
-        this.uiService.sendToolSignal('serial-monitor:connect');
+        await this.sendSerialMonitorUploadSignal('serial-monitor:connect', uploadPort);
       }
     }
   }
@@ -80,9 +102,10 @@ export class UploaderService {
    */
   async flashSoftdevice(softdeviceName: string, serialPort: string): Promise<{ success: boolean; message: string }> {
     const needSerialToggle = this.isSerialDevice;
+    const uploadPort = serialPort || this.serialService.currentPort;
     try {
       if (needSerialToggle) {
-        this.uiService.sendToolSignal('serial-monitor:disconnect');
+        this.sendSerialMonitorUploadSignal('serial-monitor:disconnect', uploadPort);
       }
       const result = await this.actionService.dispatchWithFeedback('flash-softdevice', {
         softdeviceName,
@@ -94,7 +117,7 @@ export class UploaderService {
         this.electronService.notify('烧录', message);
       }
       if (needSerialToggle) {
-        this.uiService.sendToolSignal('serial-monitor:connect');
+        this.sendSerialMonitorUploadSignal('serial-monitor:connect', uploadPort);
       }
       return result.data?.result || { success: false, message: '烧录失败' };
     } catch (error: any) {
@@ -102,7 +125,7 @@ export class UploaderService {
         this.electronService.notify('烧录', 'SoftDevice 烧录失败');
       }
       if (needSerialToggle) {
-        this.uiService.sendToolSignal('serial-monitor:connect');
+        this.sendSerialMonitorUploadSignal('serial-monitor:connect', uploadPort);
       }
       return { success: false, message: error.message || '烧录失败' };
     }

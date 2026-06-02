@@ -13,7 +13,7 @@ import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { UiService } from '../../services/ui.service';
 import { NzToolTipModule } from "ng-zorro-antd/tooltip";
-import { TranslateService } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
 import {
   AuthQuotaStateService,
@@ -31,14 +31,15 @@ import { formatQuotaResetMetaLabel } from '../aily-chat/services/chat-quota-rese
     NzButtonModule,
     NzProgressModule,
     NzInputModule,
-    NzToolTipModule
+    NzToolTipModule,
+    TranslateModule
   ],
   templateUrl: './user-center.component.html',
   styleUrl: './user-center.component.scss'
 })
 export class UserCenterComponent {
   currentUrl = '/user/settings';
-  windowInfo = '用户中心';
+  windowInfo = 'USER_CENTER.TITLE';
   @ViewChild('menuBox') menuBox: ElementRef;
   @ViewChild('nicknameInput') nicknameInput?: ElementRef<HTMLInputElement>;
 
@@ -168,7 +169,7 @@ export class UserCenterComponent {
 
   async onRegister() {
     if (!this.userInfo.username || !this.userInfo.password || !this.userInfo.email) {
-      this.message.warning('请填写完整的注册信息');
+      this.message.warning(this.t('USER_CENTER.REGISTER_INCOMPLETE', '请填写完整的注册信息'));
       return;
     }
 
@@ -183,7 +184,7 @@ export class UserCenterComponent {
 
       this.authService.register(registerData).subscribe({
         next: (response) => {
-          this.message.success(this.translate.instant('LOGIN.WECHAT_REGISTER_SUCCESS') || '注册成功');
+          this.message.success(this.t('USER_CENTER.REGISTER_SUCCESS', '注册成功'));
           this.isRegistering = false;
           // 清空密码，保留用户名用于登录
           this.userInfo.password = '';
@@ -191,7 +192,7 @@ export class UserCenterComponent {
         },
         error: (error) => {
           console.warn('注册错误:', error);
-          this.message.error(this.getAuthErrorMessage(error, '注册失败，请检查网络连接'));
+          this.message.error(this.getAuthErrorMessage(error, this.t('USER_CENTER.REGISTER_FAILED_NETWORK', '注册失败，请检查网络连接')));
         },
         complete: () => {
           this.isWaiting = false;
@@ -199,7 +200,7 @@ export class UserCenterComponent {
       });
     } catch (error) {
       console.warn('注册过程中出错:', error);
-      this.message.error(this.getAuthErrorMessage(error, '注册失败'));
+      this.message.error(this.getAuthErrorMessage(error, this.t('USER_CENTER.REGISTER_FAILED', '注册失败')));
       this.isWaiting = false;
     }
   }
@@ -214,10 +215,10 @@ export class UserCenterComponent {
     this.isWaiting = true;
     try {
       await this.authService.logout();
-      this.message.success('已退出登录');
+      this.message.success(this.t('USER_CENTER.LOGOUT_SUCCESS', '已退出登录'));
     } catch (error) {
       console.warn('退出登录失败:', error);
-      this.message.error('退出登录失败');
+      this.message.error(this.t('USER_CENTER.LOGOUT_FAILED', '退出登录失败'));
     } finally {
       this.isWaiting = false;
     }
@@ -234,7 +235,7 @@ export class UserCenterComponent {
   }
 
   more() {
-    this.message.warning('服务暂不可用');
+    this.message.warning(this.t('USER_CENTER.SERVICE_UNAVAILABLE', '服务暂不可用'));
   }
 
   close() {
@@ -272,8 +273,8 @@ export class UserCenterComponent {
 
     const nextNickname = this.editedNickname.trim();
     if (!nextNickname) {
-      this.nicknameError = '昵称不能为空';
-      this.message.warning('昵称不能为空');
+      this.nicknameError = this.t('USER_CENTER.NICKNAME_REQUIRED', '昵称不能为空');
+      this.message.warning(this.nicknameError);
       setTimeout(() => {
         this.nicknameInput?.nativeElement?.focus();
       });
@@ -295,13 +296,13 @@ export class UserCenterComponent {
         ...this.currentUser,
         nickname: nextNickname
       };
-      this.message.success('昵称修改已保存');
+      this.message.success(this.t('USER_CENTER.NICKNAME_SAVED', '昵称修改已保存'));
       this.isEditingNickname = false;
       this.editedNickname = '';
     } catch (error) {
       console.error('昵称更新失败:', error);
-      this.nicknameError = '昵称更新失败，请稍后重试';
-      this.message.error('昵称更新失败，请稍后重试');
+      this.nicknameError = this.t('USER_CENTER.NICKNAME_UPDATE_FAILED', '昵称更新失败，请稍后重试');
+      this.message.error(this.nicknameError);
     } finally {
       this.nicknameSaving = false;
     }
@@ -321,7 +322,7 @@ export class UserCenterComponent {
           // 昵称修改成功
           await this.authService.refreshMe();
         } else {
-          throw new Error('昵称修改失败，服务器返回错误');
+          throw new Error(this.t('USER_CENTER.NICKNAME_SERVER_ERROR', '昵称修改失败，服务器返回错误'));
         }
       },
       error: (error) => {
@@ -338,6 +339,24 @@ export class UserCenterComponent {
   get displayPlanName(): string {
     const subscriptionPlan = this.currentUser?.subscription_plan;
     return subscriptionPlan?.display_name || subscriptionPlan?.name || 'Free';
+  }
+
+  get displayPlanEndDate(): string {
+    const endDate = this.currentUser?.subscription_plan?.end_date;
+    if (!endDate) {
+      return '';
+    }
+    const parsed = new Date(endDate);
+    if (Number.isNaN(parsed.getTime())) {
+      return String(endDate);
+    }
+    const lang = this.translate.currentLang || this.translate.defaultLang || 'en';
+    const locale = lang.replace(/_/g, '-');
+    return parsed.toLocaleDateString(locale, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
   }
 
   get isProPlanSubscriber(): boolean {
@@ -413,7 +432,7 @@ export class UserCenterComponent {
 
     try {
       // 显示加载提示
-      const loadingMessage = this.message.loading('正在生成登录链接...', { nzDuration: 0 });
+      const loadingMessage = this.message.loading(this.t('USER_CENTER.GENERATING_LOGIN_LINK', '正在生成登录链接...'), { nzDuration: 0 });
 
       // 生成 SSO Token
       this.authService.generateSSOToken(path).subscribe({
@@ -422,25 +441,30 @@ export class UserCenterComponent {
 
           // 使用 Electron 打开浏览器
           this.electronService.openUrl(response.target_url);
-          this.message.success('已打开浏览器，正在跳转...');
+          this.message.success(this.t('USER_CENTER.BROWSER_OPENED', '已打开浏览器，正在跳转...'));
         },
         error: (error) => {
           loadingMessage.messageId && this.message.remove(loadingMessage.messageId);
           console.error('生成 SSO Token 失败:', error);
 
           if (error.status === 401) {
-            this.message.error('登录已过期，请重新登录');
+            this.message.error(this.t('USER_CENTER.LOGIN_EXPIRED', '登录已过期，请重新登录'));
           } else if (error.status === 500) {
-            this.message.error('服务器错误，无法生成登录链接');
+            this.message.error(this.t('USER_CENTER.SSO_SERVER_ERROR', '服务器错误，无法生成登录链接'));
           } else {
-            this.message.error('网络连接失败，无法自动跳转');
+            this.message.error(this.t('USER_CENTER.SSO_NETWORK_FAILED', '网络连接失败，无法自动跳转'));
           }
         }
       });
     } catch (error) {
       console.error('SSO 跳转失败:', error);
-      this.message.error('跳转失败，请稍后重试');
+      this.message.error(this.t('USER_CENTER.SSO_REDIRECT_FAILED', '跳转失败，请稍后重试'));
     }
+  }
+
+  private t(key: string, fallback: string): string {
+    const translated = this.translate.instant(key);
+    return translated === key ? fallback : translated;
   }
 
 

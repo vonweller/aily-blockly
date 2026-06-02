@@ -6,7 +6,7 @@ import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
 import { ProjectService } from './project.service';
 import { CmdService } from './cmd.service';
-import { WorkflowService } from './workflow.service';
+import { WorkflowService, ProcessState } from './workflow.service';
 import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { LogOptions, LogService } from './log.service';
@@ -266,29 +266,31 @@ export class NpmService {
   }
 
   async installBoardDeps() {
+    this.isInstalling = true;
+    const installStateStarted = this.workflowService.startInstall();
+
     try {
-      const projectPath = this.prjService.currentProjectPath;
       const boardModule = await this.prjService.getBoardModule();
-      // #region agent log
-      fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'post-fix',hypothesisId:'B,E',location:'npm.service.ts:installBoardDeps:entry',message:'installBoardDeps entry',data:{projectPath,boardModule,isAilyCode:projectPath?this.isAilyCodeProjectRoot(projectPath):false},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       if (boardModule) {
         const boardPackageJson = (await this.prjService.getBoardPackageJson()) || {};
         const boardDependencies = boardPackageJson.boardDependencies || {};
         if (Object.keys(boardDependencies).length > 0) {
-          await this.installBoardDependencies(boardPackageJson);
+          await this.installBoardDependencies(boardPackageJson, false);
         }
-      } else {
-        // #region agent log
-        fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'post-fix',hypothesisId:'B',location:'npm.service.ts:installBoardDeps:no-board',message:'boardModule missing, skip board deps and continue platform install',data:{projectPath},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
       }
       await this.installPlatformPackageForAilyCodeProject();
-    } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'C',location:'npm.service.ts:installBoardDeps:catch',message:'installBoardDeps error',data:{error:String((e as Error)?.message??e)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      console.error('[installBoardDeps]', e);
+      if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
+        this.workflowService.finishInstall(true);
+      }
+    } catch (error) {
+      const errorMessage = this.getNpmErrorMessage(error);
+      if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
+        this.workflowService.finishInstall(false, errorMessage);
+      }
+      console.error('[installBoardDeps]', error);
+    } finally {
+      this.isInstalling = false;
+      this.boardDependencyInstallProgress = undefined;
     }
   }
 
@@ -302,17 +304,11 @@ export class NpmService {
    */
   async installPlatformPackageForAilyCodeProject(): Promise<void> {
     const projectPath = this.prjService.currentProjectPath;
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'A,E',location:'npm.service.ts:installPlatform:entry',message:'installPlatformPackage entry',data:{projectPath,isAilyCode:projectPath?this.isAilyCodeProjectRoot(projectPath):false},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (!projectPath || !this.isAilyCodeProjectRoot(projectPath)) {
       return;
     }
 
     const platformRef = readPlatformRefFromProjectAci(projectPath);
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'A',location:'npm.service.ts:installPlatform:platformRef',message:'platformRef from project.aci',data:{platformRef},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (!platformRef?.packageName) {
       console.log('[installPlatformPackageForAilyCodeProject] 未配置 platform，跳过');
       return;
@@ -321,9 +317,6 @@ export class NpmService {
     await this.ensurePlatformNpmPackageInstalled(platformRef);
 
     const manifest = readPlatformManifestFromAppData(platformRef.packageName);
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'C,D',location:'npm.service.ts:installPlatform:afterInstall',message:'after ensurePlatformNpmPackageInstalled',data:{packageName:platformRef.packageName,manifestFound:!!manifest,runtimeDepCount:manifest?.runtimeDependencies?.length??0,appDataPath:window['path'].getAppDataPath()},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (!manifest?.runtimeDependencies?.length) {
       console.log('[installPlatformPackageForAilyCodeProject] platform.json 无 runtimeDependencies，跳过');
       return;
@@ -334,15 +327,11 @@ export class NpmService {
       return;
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'post-fix',hypothesisId:'F',location:'npm.service.ts:installPlatform:runtimeDeps',message:'install platform runtimeDependencies (sdk/toolchain/tool are separate npm packages from platform.json, NOT replacing platform)',data:{platformPackage:platformRef.packageName,runtimeDependencies:manifest.runtimeDependencies,boardDependencies},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
     await this.installBoardDependencies({
       name: manifest.id || platformRef.packageName,
       version: manifest.version || platformRef.version || '',
       boardDependencies,
-    });
+    }, false);
   }
 
   /** 安装 platform npm 包到 AppData（与 boardDependencies 包相同 prefix） */
@@ -381,23 +370,9 @@ export class NpmService {
 
     const installSpec = declaredVersion ? `${packageName}@${declaredVersion}` : packageName;
     const npmCmd = `npm install ${installSpec} --save-exact --prefix "${appDataPath}"`;
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'C,D',location:'npm.service.ts:ensurePlatform:beforeNpm',message:'about to npm install platform',data:{packageName,declaredVersion,installSpec,npmCmd,depPathPackageJsonExists:window['path'].isExists(depPathPackageJson),platformJsonExists:window['path'].isExists(`${depPath}/platform.json`)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    let npmResult: unknown;
-    try {
-      npmResult = await this.appDataResourceLock.runExclusive(`npm:install-platform:${packageName}`, () =>
-        window['npm'].run({ cmd: npmCmd }),
-      );
-    } catch (npmErr) {
-      // #region agent log
-      fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'C',location:'npm.service.ts:ensurePlatform:npmError',message:'npm install platform failed',data:{packageName,npmCmd,error:String((npmErr as Error)?.message??npmErr)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      throw npmErr;
-    }
-    // #region agent log
-    fetch('http://127.0.0.1:7422/ingest/4d98e020-993b-42f0-bdc8-ddf703655134',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'30bb61'},body:JSON.stringify({sessionId:'30bb61',runId:'pre-fix',hypothesisId:'C,D',location:'npm.service.ts:ensurePlatform:afterNpm',message:'npm install platform finished',data:{packageName,npmResultSnippet:String(npmResult??'').slice(0,500),platformJsonExistsAfter:window['path'].isExists(`${depPath}/platform.json`)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    await this.appDataResourceLock.runExclusive(`npm:install-platform:${packageName}`, () =>
+      window['npm'].run({ cmd: npmCmd }),
+    );
   }
 
   boardDependenciesChanged = false;
@@ -511,7 +486,7 @@ export class NpmService {
   }
 
   // 安装开发板依赖
-  async installBoardDependencies(packageJson: any) {
+  async installBoardDependencies(packageJson: any, manageInstallState: boolean = true) {
     const boardDependencies: Record<string, string> = packageJson.boardDependencies || {};
     if (await this.areBoardPlatformDepsReady(boardDependencies)) {
       console.log('[installBoardDependencies] 平台依赖已就绪，跳过');
@@ -519,11 +494,12 @@ export class NpmService {
     }
 
     try {
-      this.isInstalling = true;
+      if (manageInstallState) {
+        this.isInstalling = true;
+        this.workflowService.startInstall();
+      }
       this.boardDependenciesChanged = false;
       this.boardDependencyInstallProgress = undefined;
-
-      this.workflowService.startInstall();
       console.log('开始安装开发板依赖...');
       const appDataPath = window['path'].getAppDataPath();
       const platformBases = await this.getPlatformPathBases();
@@ -590,7 +566,9 @@ export class NpmService {
       }
 
       if (dependenciesToInstall.length === 0) {
-        this.workflowService.finishInstall(true);
+        if (manageInstallState && this.workflowService.currentState === ProcessState.INSTALLING) {
+          this.workflowService.finishInstall(true);
+        }
         return;
       }
 
@@ -641,7 +619,9 @@ export class NpmService {
         progress: 100,
         setTimeout: 3000
       });
-      this.workflowService.finishInstall(true);
+      if (manageInstallState && this.workflowService.currentState === ProcessState.INSTALLING) {
+        this.workflowService.finishInstall(true);
+      }
     } catch (error) {
       const errorMessage = this.getNpmErrorMessage(error);
       console.error('安装开发板依赖时出错:', error);
@@ -653,11 +633,15 @@ export class NpmService {
         detail: errorMessage,
         state: 'error'
       });
-      this.workflowService.finishInstall(false, errorMessage);
+      if (manageInstallState && this.workflowService.currentState === ProcessState.INSTALLING) {
+        this.workflowService.finishInstall(false, errorMessage);
+      }
       throw error;
     } finally {
       this.boardDependencyInstallProgress = undefined;
-      this.isInstalling = false;
+      if (manageInstallState) {
+        this.isInstalling = false;
+      }
     }
   }
 
