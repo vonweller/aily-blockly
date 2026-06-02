@@ -19,7 +19,12 @@ import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
-import type { CoderHardwarePlatform } from '../../pages/project-new/project-new.component';
+import type { CoderFramework } from '../../pages/project-new/project-new.component';
+import {
+  getCoderFrameworkOptions,
+  resolveCoderFrameworkOption,
+  resolveDefaultCoderFramework,
+} from '../../utils/coder-board.mapper';
 
 @Component({
   selector: 'app-project-new',
@@ -63,18 +68,28 @@ export class ProjectNewComponent {
   keyword = '';
   tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'emakefun', 'Raspberry Pi'];
   _boardList: any[] = [];
+  /** Blockly 模式开发板源（boards.json） */
+  private _blocklyBoardList: any[] = [];
+  /** Coder 模式开发板源（coder_board_index.json） */
+  private _coderBoardList: any[] = [];
   boardList: any[] = [];
   tagListRandom;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
 
-  /** Coder 新建：硬件平台（暂固定 Arduino / ESP-IDF） */
-  readonly coderPlatformOptions: { value: CoderHardwarePlatform; labelKey: string }[] = [
-    { value: 'arduino', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ARDUINO' },
-    { value: 'espidf', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ESPIDF' },
-  ];
-  selectedCoderPlatform: CoderHardwarePlatform = 'arduino';
+  /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
+  selectedCoderPlatform: CoderFramework = '';
+
+  get coderPlatformOptions(): { value: string; label: string }[] {
+    if (this.selectedProjectCategory !== 'coder' || !this.currentBoard) {
+      return [];
+    }
+    return getCoderFrameworkOptions(this.currentBoard).map((option) => ({
+      value: option.value,
+      label: this.getCoderFrameworkLabel(option.value),
+    }));
+  }
 
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
@@ -138,7 +153,13 @@ export class ProjectNewComponent {
       this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
     await this.configService.init();
-    this._boardList = this.process(this.configService.boardList);
+    this._blocklyBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.boardList)
+    );
+    this._coderBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.getCoderBoardList())
+    );
+    this.syncActiveBoardList();
 
     // 随机提取前五个
     this.tagListRandom = this.tagList.sort(() => Math.random() - 0.5).slice(0, 5);
@@ -152,6 +173,7 @@ export class ProjectNewComponent {
       this.initDataCleanup = window['subWindow'].onInitData((payload: { data?: { category?: string } }) => {
         if (payload?.data?.category === 'coder') {
           this.selectedProjectCategory = 'coder';
+          this.syncActiveBoardList();
           this.applyRecommendedProjectName();
           this.refreshBoardListForCurrentFilters();
         }
@@ -196,7 +218,15 @@ export class ProjectNewComponent {
       this.myTemplateList = [];
     }
     this.applyRecommendedProjectName();
+    this.syncActiveBoardList();
     this.refreshBoardListForCurrentFilters();
+  }
+
+  /** 根据当前项目类别切换开发板数据源 */
+  private syncActiveBoardList(): void {
+    this._boardList = this.selectedProjectCategory === 'coder'
+      ? this._coderBoardList
+      : this._blocklyBoardList;
   }
 
   /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
@@ -205,6 +235,20 @@ export class ProjectNewComponent {
       return list;
     }
     return list.filter(board => board.state !== 'todo');
+  }
+
+  getCoderFrameworkLabel(framework: string): string {
+    const key = `PROJECT_NEW.FORM.PLATFORM_${framework.toUpperCase().replace(/-/g, '_')}`;
+    const translated = this.translate.instant(key);
+    return translated !== key ? translated : framework;
+  }
+
+  private syncCoderPlatformSelection(boardInfo: any): void {
+    const defaultFramework = resolveDefaultCoderFramework(boardInfo);
+    const options = getCoderFrameworkOptions(boardInfo);
+    if (!options.some((option) => option.value === this.selectedCoderPlatform)) {
+      this.selectedCoderPlatform = defaultFramework;
+    }
   }
 
   private refreshBoardListForCurrentFilters(): void {
@@ -274,6 +318,9 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
+    if (this.selectedProjectCategory === 'coder') {
+      this.syncCoderPlatformSelection(boardInfo);
+    }
     if (this.selectedProjectCategory === 'blockly') {
       this.loadMyTemplates(boardInfo.name);
     } else {
@@ -415,11 +462,17 @@ export class ProjectNewComponent {
 
   /** 向导里收集的开发板信息写入 Aily Code 的 project.aci.target */
   private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
+    const framework = this.selectedCoderPlatform
+      || this.currentBoard?.defaultFramework
+      || 'arduino';
+    const platformOption = resolveCoderFrameworkOption(this.currentBoard, framework);
     return {
-      boardId: this.newProjectData.board.name,
+      boardPkgName: this.newProjectData.board.name,
+      targetBoardId: platformOption?.boardId || this.currentBoard?.boardId || '',
       boardNickname: this.newProjectData.board.nickname,
       boardPkgVersion: this.newProjectData.board.version,
-      framework: this.selectedCoderPlatform
+      framework,
+      platform: platformOption?.platform || this.currentBoard?.defaultPlatform || '',
     };
   }
 

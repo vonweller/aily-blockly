@@ -15,14 +15,20 @@ export interface AilyCodeNewProjectData {
    * 驱动 `project.aci.target`，并写入与 `package.json` 对齐的 dependencies / boardDependencies / devmode。
    */
   wizardTarget?: {
-    /** 开发板在 npm/registry 中的一级包名（如 esp32duino） */
-    boardId: string;
+    /** 开发板 npm 包名（写入 dependencies / boardDependencies） */
+    boardPkgName: string;
+    /** frameworkPlatforms 中的逻辑 boardId（如 unor4wifi），写入 target.board */
+    targetBoardId: string;
     /** 向导中展示的开发板昵称，便于用户在 .aci 中辨识 */
     boardNickname: string;
     /** 所选板卡包的 semver / tag */
     boardPkgVersion: string;
     /** Blockly 侧的 devmode，如 arduino、micropython */
     framework: string;
+    /** frameworkPlatforms 中对应 framework 的 platform npm 包名 */
+    platform?: string;
+    /** platform npm 包版本（可选；未指定则安装时解析 registry 最新） */
+    platformVersion?: string;
   };
 }
 
@@ -194,20 +200,20 @@ export class AilyCodeProjectService {
     displayName: string,
     wizardTarget?: AilyCodeNewProjectData['wizardTarget']
   ): BlocklyAlignedPackageManifest {
-    const hasBoard = !!(wizardTarget?.boardId && wizardTarget.boardPkgVersion);
+    const hasBoard = !!(wizardTarget?.boardPkgName && wizardTarget.boardPkgVersion);
 
     let dependencies: Record<string, string> = {};
     let boardDeps: Record<string, string> | undefined;
 
     if (hasBoard && wizardTarget) {
       const range = this.normalizeNpmDepRange(wizardTarget.boardPkgVersion);
-      dependencies = { [wizardTarget.boardId]: range };
-      boardDeps = { [wizardTarget.boardId]: range };
+      dependencies = { [wizardTarget.boardPkgName]: range };
+      boardDeps = { [wizardTarget.boardPkgName]: range };
     }
 
     const description =
       displayName.trim() ||
-      (hasBoard && wizardTarget ? `Blockly 向导：${wizardTarget.boardNickname || wizardTarget.boardId}` : '') ||
+      (hasBoard && wizardTarget ? `Blockly 向导：${wizardTarget.boardNickname || wizardTarget.boardPkgName}` : '') ||
       '';
 
     return {
@@ -238,13 +244,20 @@ export class AilyCodeProjectService {
     const pathApi = window['path'];
 
     // Blockly 向导：把用户选的板卡/npm 版本映射到 target，便于 IDE 后续解析
-    const hasWizard = !!(wizardTarget?.boardId && wizardTarget.boardPkgVersion);
+    const hasWizard = !!(wizardTarget?.boardPkgName && wizardTarget.boardPkgVersion);
     const targetBlock = hasWizard
       ? {
-          board: wizardTarget!.boardId,
+          board: String(wizardTarget!.targetBoardId ?? '').trim() || wizardTarget!.boardPkgName,
+          boardPackage: wizardTarget!.boardPkgName,
           chip: '',
           framework: wizardTarget!.framework ?? '',
-          sdk: wizardTarget!.boardPkgVersion
+          boardPackageVersion: wizardTarget!.boardPkgVersion,
+          ...(String(wizardTarget!.platform ?? '').trim() !== ''
+            ? { platform: String(wizardTarget!.platform).trim() }
+            : {}),
+          ...(String(wizardTarget!.platformVersion ?? '').trim() !== ''
+            ? { platformVersion: String(wizardTarget!.platformVersion).trim() }
+            : {}),
         }
       : {
           board: '',

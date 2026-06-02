@@ -23,6 +23,11 @@ import { SequentialImgDirective } from './sequential-img.directive';
 import { firstValueFrom, Subject } from 'rxjs';
 import { debounceTime, takeUntil } from 'rxjs/operators';
 import { createBoardSearchIndex, searchBoards } from '../../utils/fuzzy-search.utils';
+import {
+  getCoderFrameworkOptions,
+  resolveCoderFrameworkOption,
+  resolveDefaultCoderFramework,
+} from '../../utils/coder-board.mapper';
 import type { AnyOrama } from '@orama/orama';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { NzModalService } from 'ng-zorro-antd/modal';
@@ -77,6 +82,10 @@ export class ProjectNewComponent implements OnDestroy {
   keyword = '';
 
   _boardList: any[] = [];
+  /** Blockly 模式开发板源（boards.json） */
+  private _blocklyBoardList: any[] = [];
+  /** Coder 模式开发板源（coder_board_index.json） */
+  private _coderBoardList: any[] = [];
   boardList: any[] = [];
 
   private searchSubject = new Subject<string>();
@@ -86,12 +95,18 @@ export class ProjectNewComponent implements OnDestroy {
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
   selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
 
-  /** Coder 新建：硬件平台（暂固定 Arduino / ESP-IDF） */
-  readonly coderPlatformOptions: { value: CoderHardwarePlatform; labelKey: string }[] = [
-    { value: 'arduino', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ARDUINO' },
-    { value: 'espidf', labelKey: 'PROJECT_NEW.FORM.PLATFORM_ESPIDF' },
-  ];
-  selectedCoderPlatform: CoderHardwarePlatform = 'arduino';
+  /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
+  selectedCoderPlatform = '';
+
+  get coderPlatformOptions(): { value: string; label: string }[] {
+    if (this.selectedProjectCategory !== 'coder' || !this.currentBoard) {
+      return [];
+    }
+    return getCoderFrameworkOptions(this.currentBoard).map((option) => ({
+      value: option.value,
+      label: this.getCoderFrameworkLabel(option.value),
+    }));
+  }
 
   /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
   private isProjectNameManuallyEdited = false;
@@ -175,17 +190,20 @@ export class ProjectNewComponent implements OnDestroy {
 
     await this.configService.init();
 
-    // 先处理开发板列表数据
-    let processedBoardList = this.process(this.configService.boardList);
-
-    // 按使用次数排序
-    this._boardList = this.configService.sortBoardsByUsage(processedBoardList);
+    // 分别处理 Blockly / Coder 两套开发板数据源
+    this._blocklyBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.boardList)
+    );
+    this._coderBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.getCoderBoardList())
+    );
 
     // 从菜单「新建 Aily Code 项目」进入时预选 Coder 类别
     const category = this.route.snapshot.queryParamMap.get('category');
     if (category === 'coder') {
       this.selectedProjectCategory = 'coder';
     }
+    this.syncActiveBoardList();
     this.applyRecommendedProjectName();
     this.refreshBoardListForCurrentFilters();
     this.checkPathInvalidChars();
@@ -222,7 +240,15 @@ export class ProjectNewComponent implements OnDestroy {
       this.myTemplateList = [];
     }
     this.applyRecommendedProjectName();
+    this.syncActiveBoardList();
     this.refreshBoardListForCurrentFilters();
+  }
+
+  /** 根据当前项目类别切换开发板数据源 */
+  private syncActiveBoardList(): void {
+    this._boardList = this.selectedProjectCategory === 'coder'
+      ? this._coderBoardList
+      : this._blocklyBoardList;
   }
 
   /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
@@ -231,6 +257,28 @@ export class ProjectNewComponent implements OnDestroy {
       return list;
     }
     return list.filter(board => board.state !== 'todo');
+  }
+
+  /** 切换 framework 时同步 devmode，供创建项目使用 */
+  onCoderPlatformChange(): void {
+    this.newProjectData.devmode = this.selectedCoderPlatform;
+  }
+
+  /** 展示 framework 名称：有 i18n 则翻译，否则直接使用索引值 */
+  getCoderFrameworkLabel(framework: string): string {
+    const key = `PROJECT_NEW.FORM.PLATFORM_${framework.toUpperCase().replace(/-/g, '_')}`;
+    const translated = this.translate.instant(key);
+    return translated !== key ? translated : framework;
+  }
+
+  /** 选中开发板后，根据 frameworkPlatforms 重置可选平台 */
+  private syncCoderPlatformSelection(boardInfo: any): void {
+    const defaultFramework = resolveDefaultCoderFramework(boardInfo);
+    const options = getCoderFrameworkOptions(boardInfo);
+    if (!options.some((option) => option.value === this.selectedCoderPlatform)) {
+      this.selectedCoderPlatform = defaultFramework;
+    }
+    this.newProjectData.devmode = this.selectedCoderPlatform;
   }
 
   private refreshBoardListForCurrentFilters(): void {
@@ -356,7 +404,11 @@ export class ProjectNewComponent implements OnDestroy {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo._nickname || boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
+    if (this.selectedProjectCategory === 'coder') {
+      this.syncCoderPlatformSelection(boardInfo);
+    } else {
+      this.newProjectData.devmode = boardInfo.mode ? this.currentBoard.mode[0] : 'arduino';
+    }
     this.devmodes = boardInfo.mode;
     if (this.selectedProjectCategory === 'blockly') {
       this.checkHasExamples(boardInfo.name);
@@ -518,11 +570,18 @@ export class ProjectNewComponent implements OnDestroy {
    * 写入 project.aci.target，便于用户在 Aily Code 侧延续同一硬件选择。
    */
   private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
+    const framework = this.selectedCoderPlatform
+      || this.currentBoard?.defaultFramework
+      || this.newProjectData.devmode
+      || 'arduino';
+    const platformOption = resolveCoderFrameworkOption(this.currentBoard, framework);
     return {
-      boardId: this.newProjectData.board.name,
+      boardPkgName: this.newProjectData.board.name,
+      targetBoardId: platformOption?.boardId || this.currentBoard?.boardId || '',
       boardNickname: this.newProjectData.board.nickname,
       boardPkgVersion: this.newProjectData.board.version,
-      framework: this.selectedCoderPlatform
+      framework,
+      platform: platformOption?.platform || this.currentBoard?.defaultPlatform || '',
     };
   }
 
@@ -836,8 +895,8 @@ export class ProjectNewComponent implements OnDestroy {
 }
 
 
-/** Coder 新建项目可选的硬件平台（暂固定两项） */
-export type CoderHardwarePlatform = 'arduino' | 'espidf';
+/** Coder 新建项目可选的 framework 值（来自 coder_board_index.json） */
+export type CoderFramework = string;
 
 export interface BoardInfo {
   "name": string, // 开发板在仓库中的名称开发板名称

@@ -531,12 +531,11 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     }
   }
 
-  /** 从当前工程主板 boardDependencies 解析全局 sdk/tools 目录（供 Coder Platform Packages 树） */
+  /** 从当前工程有效平台依赖（主板 + platform runtimeDependencies）解析全局 sdk/tools 目录 */
   private async loadPlatformPackagesForEmbed() {
     try {
       return await resolvePlatformPackagesForCurrentProject(async () => {
-        const pkg = await this.projectService.getBoardPackageJson();
-        return pkg?.boardDependencies;
+        return this.projectService.getEffectiveBoardDependencies();
       });
     } catch (e) {
       console.warn('[CodeEditorPro] loadPlatformPackagesForEmbed', e);

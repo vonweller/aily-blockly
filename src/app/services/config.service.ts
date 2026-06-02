@@ -5,6 +5,7 @@ import { lastValueFrom, Subject, timeout } from 'rxjs';
 import { ElectronService } from './electron.service';
 import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api.config';
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
+import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../utils/coder-board.mapper';
 
 @Injectable({
   providedIn: 'root',
@@ -186,6 +187,7 @@ export class ConfigService {
     this.loadAndCacheBoardList(configFilePath);
     this.loadAndCacheLibraryList(configFilePath);
     this.loadAndCacheTagList(configFilePath);
+    this.loadAndCacheCoderBoardIndex(configFilePath);
     // ]);
 
     // 注意：boardIndex 和 libraryIndex（新格式索引）延迟到 AI 组件加载时再加载
@@ -622,6 +624,86 @@ export class ConfigService {
       return [];
     }
     return this.sortBoardsByUsage([...this.boardList]);
+  }
+
+  /** Coder 新建项目使用的开发板索引（由 coder_board_index.json 映射而来） */
+  coderBoardList: any[] = [];
+
+  private async loadAndCacheCoderBoardIndex(configFilePath: string): Promise<void> {
+    const localPath = `${configFilePath}/coder_board_index.json`;
+
+    try {
+      if (this.electronService.exists(localPath)) {
+        const entries = this.parseCoderBoardIndexEntries(this.electronService.readFile(localPath));
+        this.coderBoardList = mapCoderBoardIndexToBoardList(entries);
+        const remoteEntries = await this.loadCoderBoardIndexEntries();
+        if (remoteEntries.length > 0) {
+          this.coderBoardList = mapCoderBoardIndexToBoardList(remoteEntries);
+          this.writeCoderBoardIndexCache(localPath, remoteEntries);
+        }
+      } else {
+        const remoteEntries = await this.fetchCoderBoardIndexEntriesOrThrow();
+        this.coderBoardList = mapCoderBoardIndexToBoardList(remoteEntries);
+        this.writeCoderBoardIndexCache(localPath, remoteEntries);
+      }
+    } catch (error) {
+      console.error('[ConfigService] coder_board_index.json 加载失败，尝试从线上恢复:', error);
+      await this.reloadCoderBoardIndexFromRemote(localPath, error);
+    }
+
+    console.log(`[ConfigService] coderBoardList 加载完成，共 ${this.coderBoardList.length} 个开发板`);
+  }
+
+  private parseCoderBoardIndexEntries(raw: string): CoderBoardIndexEntry[] {
+    return this.parseArrayPayload(raw, 'coder_board_index.json 格式无效', 'boards') as CoderBoardIndexEntry[];
+  }
+
+  private writeCoderBoardIndexCache(localPath: string, entries: CoderBoardIndexEntry[]): void {
+    this.electronService.writeFile(localPath, JSON.stringify({ boards: entries }));
+  }
+
+  private async fetchCoderBoardIndexEntriesOrThrow(): Promise<CoderBoardIndexEntry[]> {
+    return this.fetchRemoteArrayOrThrow(
+      '/coder_board_index.json',
+      '线上 coder_board_index.json 格式无效',
+      'boards'
+    ) as Promise<CoderBoardIndexEntry[]>;
+  }
+
+  private async reloadCoderBoardIndexFromRemote(localPath: string, originalError: unknown): Promise<void> {
+    try {
+      const latestEntries = await this.fetchCoderBoardIndexEntriesOrThrow();
+      this.coderBoardList = mapCoderBoardIndexToBoardList(latestEntries);
+      this.writeCoderBoardIndexCache(localPath, latestEntries);
+      console.log('[ConfigService] 已使用线上最新 coder_board_index.json 覆盖本地缓存');
+    } catch (remoteError) {
+      this.coderBoardList = [];
+      const message = this.buildReloadFailureMessage(
+        'Coder 开发板列表',
+        'coder_board_index.json',
+        remoteError,
+        originalError
+      );
+      console.error('[ConfigService] 从线上恢复 coder_board_index.json 失败:', remoteError);
+      this.showDedupedError('coder-board-list', message);
+    }
+  }
+
+  async loadCoderBoardIndexEntries(): Promise<CoderBoardIndexEntry[]> {
+    try {
+      return await this.fetchCoderBoardIndexEntriesOrThrow();
+    } catch (error) {
+      console.error('Failed to load coder board index:', error);
+      return [];
+    }
+  }
+
+  /** Aily Code 新建向导：返回已映射、按使用次数排序的开发板列表 */
+  getCoderBoardList(): any[] {
+    if (!this.coderBoardList?.length) {
+      return [];
+    }
+    return this.sortBoardsByUsage([...this.coderBoardList]);
   }
 
   libraryList = [];

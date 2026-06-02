@@ -20,6 +20,10 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
+import {
+  readPlatformRefFromProjectAci,
+  resolveEffectiveBoardDependencies,
+} from '../utils/platform-runtime.utils';
 
 interface ProjectPackageData {
   name: string;
@@ -770,10 +774,42 @@ export class ProjectService {
     return macros.join(',');
   }
 
-  // 获取开发板名称
+  // 获取开发板名称（Blockly: @aily-project/board-*；Aily Code: @aily-project/coder-*）
   async getBoardModule() {
     const prjPackageJson = await this.getPackageJson();
-    return Object.keys(prjPackageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
+    const deps = Object.keys(prjPackageJson.dependencies || {});
+    const fromDeps =
+      deps.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? deps.find((dep) => dep.startsWith('@aily-project/coder-'));
+    if (fromDeps) {
+      return fromDeps;
+    }
+    const boardDeps = Object.keys(prjPackageJson.boardDependencies || {});
+    const fromBoardDeps =
+      boardDeps.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? boardDeps.find((dep) => dep.startsWith('@aily-project/coder-'));
+    if (fromBoardDeps) {
+      return fromBoardDeps;
+    }
+    if (this.currentProjectPath) {
+      const aciPath = `${this.currentProjectPath}/project.aci`;
+      if (window['fs'].existsSync(aciPath)) {
+        try {
+          const aci = JSON.parse(this.electronService.readFile(aciPath));
+          const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
+          if (boardPackage) {
+            return boardPackage;
+          }
+          const board = String(aci?.target?.board ?? '').trim();
+          if (board.startsWith('@aily-project/')) {
+            return board;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return undefined;
   }
 
   // 获取开发板模块的package.json
@@ -781,6 +817,23 @@ export class ProjectService {
     const boardModule = await this.getBoardModule();
     const boardPackageJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/package.json`;
     return JSON.parse(this.electronService.readFile(boardPackageJsonPath));
+  }
+
+  /**
+   * Aily Code：合并主板 boardDependencies 与 platform.json runtimeDependencies，
+   * 供 SDK 路径解析、Platform Packages 树与编译链使用。
+   */
+  async getEffectiveBoardDependencies(): Promise<Record<string, string>> {
+    try {
+      const boardPackageJson = await this.getBoardPackageJson();
+      const platformRef = readPlatformRefFromProjectAci(this.currentProjectPath);
+      return resolveEffectiveBoardDependencies(
+        boardPackageJson?.boardDependencies,
+        platformRef?.packageName,
+      );
+    } catch {
+      return {};
+    }
   }
 
   // 获取开发板配置文件board.json
@@ -881,17 +934,17 @@ export class ProjectService {
   // 获取开发板 SDK 路径
   async getSdkPath() {
     try {
-      const boardPackageJson = await this.getBoardPackageJson();
-      if (!boardPackageJson || !boardPackageJson.boardDependencies) {
+      const boardDependencies = await this.getEffectiveBoardDependencies();
+      if (!boardDependencies || Object.keys(boardDependencies).length === 0) {
         throw new Error('未找到开发板 SDK 路径');
       }
 
-      const sdkModule = Object.keys(boardPackageJson.boardDependencies).find(dep => dep.startsWith('@aily-project/sdk-'));
+      const sdkModule = Object.keys(boardDependencies).find(dep => dep.startsWith('@aily-project/sdk-'));
       if (!sdkModule) {
         throw new Error('未找到开发板 SDK 模块');
       }
 
-      const sdkVersion = boardPackageJson.boardDependencies[sdkModule];
+      const sdkVersion = boardDependencies[sdkModule];
       const sdkFileName = sdkModule.replace('@aily-project/sdk-', '') + '_' + sdkVersion;
       const appDataPath = window['path'].getAppDataPath()
       const sdkLibPath = this.electronService.pathJoin(appDataPath, 'sdk', `${sdkFileName}`);

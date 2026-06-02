@@ -120,9 +120,10 @@
               @if (selectedProjectCategory === 'coder') {
               <div class="coder-platform-field">
                 <span class="coder-platform-label">{{ 'PROJECT_NEW.FORM.PLATFORM' | translate }}</span>
-                <nz-select class="platform-select" nzSize="small" [(ngModel)]="selectedCoderPlatform">
+                <nz-select class="platform-select" nzSize="small" [(ngModel)]="selectedCoderPlatform"
+                  (ngModelChange)="onCoderPlatformChange()">
                   @for (opt of coderPlatformOptions; track opt.value) {
-                  <nz-option [nzValue]="opt.value" [nzLabel]="opt.labelKey | translate"></nz-option>
+                  <nz-option [nzValue]="opt.value" [nzLabel]="opt.label"></nz-option>
                   }
                 </nz-select>
               </div>
