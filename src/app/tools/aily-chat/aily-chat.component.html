@@ -1,37 +1,28 @@
 @if (vm.isStandaloneWindow) {
-<app-sub-window [title]="'AI ASSISTANT'" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
+<app-sub-window [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
+  <ng-container title-extra>
+    <aily-chat-session-title-control
+      [surface]="sessionTitleSurfaceModel"
+      [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
+      (actionRequested)="handleSessionTitleActionRequested($event)"
+      (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+  </ng-container>
+  <ng-container header-btns>
+    <ng-container *ngTemplateOutlet="hostHeaderActionsTemplate"></ng-container>
+  </ng-container>
   <ng-container *ngTemplateOutlet="windowBoxTemplate"></ng-container>
 </app-sub-window>
 } @else {
-<app-tool-container [title]="'AI ASSISTANT' | translate" (closeEvent)="surfaceShellCoordinator.close()">
+<app-tool-container [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" (closeEvent)="surfaceShellCoordinator.close()">
+  <ng-container title-extra>
+    <aily-chat-session-title-control
+      [surface]="sessionTitleSurfaceModel"
+      [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
+      (actionRequested)="handleSessionTitleActionRequested($event)"
+      (surfaceClicked)="focusChatInputFromTitleControl()"></aily-chat-session-title-control>
+  </ng-container>
   <ng-container header-btns>
-    <!-- <div class="btn ccenter" (click)="demandEdit()" nz-tooltip nzTooltipPlacement="bottom" nzTooltipTitle="需求管理">
-      <i class="fa-light fa-list-check"></i>
-    </div> -->
-    <div class="btn ccenter" [class.active]="vm.showSettings" (click)="sessionShellCoordinator.toggleSettings()" nz-tooltip nzTooltipPlacement="bottom"
-      [nzTooltipTitle]="'AILY_CHAT.SETTINGS' | translate">
-      <i class="fa-light fa-gear"></i>
-    </div>
-    <div class="btn ccenter" (click)="sessionShellCoordinator.openHistoryChat()" nz-tooltip nzTooltipPlacement="bottom"
-      [nzTooltipTitle]="'AILY_CHAT.HISTORY' | translate">
-      <i class="fa-light fa-clock-rotate-left"></i>
-    </div>
-    <div class="btn ccenter" (click)="sessionShellCoordinator.newChat()" nz-tooltip nzTooltipPlacement="bottom"
-      [nzTooltipTitle]="'AILY_CHAT.NEW_CHAT' | translate">
-      <i class="fa-light fa-message-plus"></i>
-    </div>
-    <div class="btn ccenter" (click)="openDebugBrowserHome()" nz-tooltip nzTooltipPlacement="bottom"
-      nzTooltipTitle="打开调试面板">
-      <i class="fa-light fa-bug"></i>
-    </div>
-    <div class="btn ccenter" (click)="sessionShellCoordinator.importDebugSnapshot()" nz-tooltip nzTooltipPlacement="bottom"
-      nzTooltipTitle="导入调试快照">
-      <i class="fa-light fa-file-arrow-up"></i>
-    </div>
-    <!-- <div class="btn ccenter" (click)="toggleActionMenu($event)" nz-tooltip nzTooltipPlacement="bottom"
-      nzTooltipTitle="Chat Actions">
-      <i class="fa-light fa-bolt"></i>
-    </div> -->
+    <ng-container *ngTemplateOutlet="hostHeaderActionsTemplate"></ng-container>
   </ng-container>
 
   <!-- 整个聊天区域的容器 -->
@@ -40,49 +31,90 @@
   </div>
 </app-tool-container>
 }
+<ng-template #hostHeaderActionsTemplate>
+  @for (action of hostHeaderActions; track action.id) {
+  <div
+    class="btn ccenter"
+    [class.active]="action.active === true"
+    [attr.data-host-header-action]="action.id"
+    [title]="action.tooltip"
+    (click)="handleHostHeaderActionRequested({ action, event: $event })">
+    <i [class]="action.iconClass"></i>
+  </div>
+  }
+</ng-template>
+<ng-template #sessionListTemplate let-surface="surface">
+  <aily-chat-session-list
+    [ngClass]="surface.hostClasses"
+    [groups]="surface.groups"
+    [loadState]="surface.loadState"
+    [items]="sessionListItems"
+    [selectedSessionId]="selectedSessionId"
+    [title]="surface.title"
+    [showNewSession]="false"
+    [variant]="surface.variant"
+    (selectSession)="handleSessionSelection($event)"
+    (actionClick)="handleSessionAction($event)"
+    (retryRequested)="handleSessionListRetry()"
+    (newSession)="requestNewChat()"></aily-chat-session-list>
+</ng-template>
 <ng-template #windowBoxTemplate>
-  <div class="window-box">
+  <div class="window-box" #windowBoxRoot
+    (keydown.control.n)="requestNewChat(); $event.preventDefault(); $event.stopPropagation()"
+    (keydown.meta.n)="requestNewChat(); $event.preventDefault(); $event.stopPropagation()">
     @if (debugBrowser.isOpen) {
-    @if (debugBrowser.isHomeVisible) {
+    @switch (debugBrowser.viewState) {
+    @case (debugBrowserViewState.Home) {
     <aily-chat-debug-home
-      [sessions]="debugBrowser.listImportedSessions()"
+      [sessions]="debugBrowser.listAvailableResources()"
       [activeSessionId]="debugBrowser.activeSessionId"
       (closeRequested)="closeDebugBrowser()"
-      (importRequested)="sessionShellCoordinator.importDebugSnapshot()"
+      (importRequested)="requestImportDebugSnapshot()"
       (sessionRequested)="openImportedDebugSession($event)"></aily-chat-debug-home>
-    } @else {
-    @if (debugBrowser.isFlowVisible && activeImportedDebugView) {
+    }
+    @case (debugBrowserViewState.FlowChart) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-flow
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-flow>
-    } @else if (debugBrowser.isCacheVisible && activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.CacheExplorer) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-cache
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-cache>
-    } @else if (debugBrowser.isLogsVisible && activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.Logs) {
+    @if (activeImportedResourceSummary) {
     <aily-chat-debug-logs
-      [sessionTitle]="activeImportedDebugView.title"
-      [sessionId]="activeImportedDebugView.sessionId"
-      [sourceSessionId]="activeImportedDebugView.sourceSessionId"
-      [importedAt]="activeImportedDebugView.importedAt"
+      [sessionTitle]="activeImportedResourceSummary.title"
+      [sessionId]="activeImportedResourceSummary.sessionId"
+      [sourceSessionId]="activeImportedResourceSummary.sourceSessionId"
+      [importedAt]="activeImportedResourceSummary.importedAt"
       [events]="activeImportedDebugEvents"
       (overviewRequested)="openImportedDebugOverview()"
       (homeRequested)="openDebugBrowserHome()"
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-logs>
-    } @else if (activeImportedDebugView) {
+    }
+    }
+    @case (debugBrowserViewState.Overview) {
+    @if (activeImportedDebugView && activeImportedResourceSummary) {
     <aily-chat-debug-viewer
+      [session]="activeImportedResourceSummary"
       [view]="activeImportedDebugView"
       [debugEvents]="activeImportedDebugEvents"
       (homeRequested)="openDebugBrowserHome()"
@@ -92,10 +124,35 @@
       (closeRequested)="closeDebugBrowser()"></aily-chat-debug-viewer>
     }
     }
+    }
+    } @else if (showLoginSurface) {
+    <div class="chat-login-surface">
+      <app-login></app-login>
+    </div>
     } @else {
-    <!-- 对话内容 -->
-    <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
-      @if(vm.hasConversationContent){
+    @if (paneStageSurfaceModel; as paneStageSurface) {
+    <div class="chat-main-layout" [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
+      @if (paneStageSurface.showSidebarSessionList) {
+      @if (paneStageSurface.sidebarSessionListSurface; as sidebarSessionSurface) {
+      <div
+        class="chat-session-sidebar"
+        nz-resizable
+        [style.width.px]="sessionSidebarWidth"
+        [nzMinWidth]="sessionSidebarResizeMinWidth"
+        [nzMaxWidth]="sessionSidebarMaxWidth"
+        (nzResize)="onSessionSidebarResize($event)"
+        (nzResizeEnd)="onSessionSidebarResizeEnd($event)">
+        <ng-container *ngTemplateOutlet="sessionListTemplate; context: { surface: sidebarSessionSurface }"></ng-container>
+        <nz-resize-handle nzDirection="right" nzCursorType="grid">
+          <div class="chat-session-sidebar-resize-handle"></div>
+        </nz-resize-handle>
+      </div>
+      }
+      }
+      <div class="chat-stage">
+        <!-- 对话内容 -->
+        <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
+      @if (paneStageSurface.showConversation) {
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs" #dialogsContent>
         @for(item of vm.dialogItems; track item.trackId){
@@ -131,15 +188,25 @@
           }
       </div>
       <!-- </ngx-simplebar> -->
-      }@else{
-      <div class="guide-box ccenter">
-        <i class="fa-light fa-star-christmas"></i>
-        <div class="title">{{ 'AILY_CHAT.SERVICE_TITLE' | translate }}</div>
-        <div class="text">{{ 'AILY_CHAT.DISCLAIMER' | translate }}</div>
-        <div class="btn link" (click)="surfaceShellCoordinator.openUrl()">{{ 'AILY_CHAT.USAGE_GUIDE' | translate }}</div>
-      </div>
+      } @else {
+        @if (paneStageSurface.guideSurface; as guideSurface) {
+        <div [ngClass]="guideSurface.hostClasses">
+          <i [class]="guideSurface.iconClass"></i>
+          <div class="title">{{ guideSurface.titleKey | translate }}</div>
+          <div class="text">{{ guideSurface.descriptionKey | translate }}</div>
+          <div class="entry-session-actions">
+            <div class="btn link" (click)="surfaceShellCoordinator.openUrl()">{{ guideSurface.actionLabelKey | translate }}</div>
+          </div>
+        </div>
+        }
       }
+        @if (paneStageSurface.showStackedSessionList) {
+        @if (paneStageSurface.stackedSessionListSurface; as stackedSessionSurface) {
+        <ng-container *ngTemplateOutlet="sessionListTemplate; context: { surface: stackedSessionSurface }"></ng-container>
+        }
+        }
     </div>
+    @if (paneStageSurface.showSender) {
     <!-- 发送部分 -->
     <div class="sender">
       <div class="s-box">
@@ -215,6 +282,8 @@
           </div>
         </div>
         }
+        <aily-chat-runtime-confirmation-carousel inputPartWidget class="chat-tool-confirmation-carousel-container" [sessionId]="vm.sessionId"></aily-chat-runtime-confirmation-carousel>
+        <aily-chat-runtime-plan-review inputPartWidget class="chat-plan-review-widget-container" [sessionId]="vm.sessionId"></aily-chat-runtime-plan-review>
         @if(!vm.showSettings){
         <div inputPartWidget class="chat-todo-list-widget-container">
           <app-floating-todo [sessionId]="vm.sessionId" [requestInProgress]="vm.isWaiting"></app-floating-todo>
@@ -273,6 +342,7 @@
             <aily-chat-context-toolbar
               [showAddList]="resourceManager.showAddList"
               [currentMode]="vm.currentMode"
+              [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
               [showModelChip]="vm.modelMenuItems.length > 0"
               [modelChipLabel]="vm.currentModelChipLabel"
               [modelBillingLabel]="vm.currentModelBillingLabel"
@@ -282,63 +352,106 @@
               (modeClick)="switchShellCoordinator.toggleModeMenu($event)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
-            <!-- Token 用量环形指示器（参考 Copilot Context Window 面板） -->
-            @if(vm.contextBudgetSnapshot && vm.contextBudgetSnapshot.maxContextTokens > 0) {
-            <div class="token-budget-indicator ccenter"
+            <!-- Context usage widget：按 Copilot / VS Code 的 widget/details 结构渲染 request-scoped usage -->
+            @if(vm.contextUsageDisplay; as contextUsage) {
+            <div class="token-budget-indicator chat-context-usage-widget ccenter"
+              nzNoAnimation
               nz-tooltip nzTooltipPlacement="top"
+              [nzTooltipMouseEnterDelay]="0"
+              [nzTooltipMouseLeaveDelay]="0"
               nzTooltipOverlayClassName="aily-chat-token-budget-tooltip-overlay"
-              [nzTooltipTitle]="tokenBudgetTooltip">
+              [nzTooltipTitle]="tokenBudgetTooltip"
+              [class.warning]="contextUsage.severity === 'warning'"
+              [class.error]="contextUsage.severity === 'error'"
+              tabindex="0"
+              role="button">
               <ng-template #tokenBudgetTooltip>
-                <div class="token-budget-tooltip-inner">
-                  <div class="token-budget-tooltip-title">{{ 'AILY_CHAT.TOKEN_CONTEXT_WINDOW' | translate }}</div>
-                  <div class="token-budget-tooltip-block">
-                    <div class="token-budget-tooltip-row">{{ (vm.contextBudgetSnapshot.currentTokens / 1000) | number:'1.1-1' }}K / {{ (vm.contextBudgetSnapshot.maxContextTokens / 1000) | number:'1.1-1' }}K tokens · {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}%</div>
-                    <div class="token-budget-tooltip-bar-track">
-                      <div
-                        class="token-budget-tooltip-bar-fill"
-                        [class.token-budget-tooltip-bar-fill--danger]="vm.contextBudgetSnapshot.usagePercent >= 75"
-                        [class.token-budget-tooltip-bar-fill--warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
-                        [class.token-budget-tooltip-bar-fill--ok]="vm.contextBudgetSnapshot.usagePercent < 50"
-                        [style.width.%]="vm.contextBudgetSnapshot.usagePercent"></div>
-                    </div>
+                <div class="chat-context-usage-details">
+                  <div class="context-usage-header">
+                    <div class="header">{{ 'AILY_CHAT.TOKEN_CONTEXT_WINDOW' | translate }}</div>
+                    @if(contextUsage.estimatedBadgeLabel) {
+                    <span class="context-usage-source-badge">{{ contextUsage.estimatedBadgeLabel }}</span>
+                    }
                   </div>
-                  <div class="token-budget-tooltip-section">{{ 'AILY_CHAT.TOKEN_SECTION_SYSTEM' | translate }}</div>
-                  <div><span class="token-budget-label-dot token-budget-label-dot--system">■</span> {{ 'AILY_CHAT.TOKEN_SYSTEM_INSTRUCTIONS' | translate }}: {{ (vm.contextBudgetSnapshot.systemTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.systemPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span class="token-budget-label-dot token-budget-label-dot--tools">■</span> {{ 'AILY_CHAT.TOKEN_TOOL_DEFINITIONS' | translate }}: {{ (vm.contextBudgetSnapshot.toolsTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.toolsPercent | number:'1.1-1' }}%)</span></div>
-                  <div class="token-budget-tooltip-section token-budget-tooltip-section--spaced">{{ 'AILY_CHAT.TOKEN_SECTION_USER_CONTEXT' | translate }}</div>
-                  @if(vm.contextBudgetSnapshot.contextTokens > 0) {
-                  <div><span class="token-budget-label-dot token-budget-label-dot--files">■</span> {{ 'AILY_CHAT.TOKEN_FILES' | translate }}: {{ (vm.contextBudgetSnapshot.contextTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.contextPercent | number:'1.1-1' }}%)</span></div>
+                  <div
+                    class="quota-indicator"
+                    [class.warning]="contextUsage.severity === 'warning'"
+                    [class.error]="contextUsage.severity === 'error'">
+                    <div class="quota-label">
+                      <span>{{ contextUsage.usedTokensLabel }} / {{ contextUsage.totalTokensLabel }} tokens</span>
+                      <span class="quota-value">{{ contextUsage.percentageLabel }}</span>
+                    </div>
+                    <div class="quota-bar">
+                      <div class="quota-bit" [style.width.%]="contextUsage.percentage"></div>
+                      @if(contextUsage.showReservedWidth) {
+                      <div class="quota-bit output-buffer" [style.width.%]="contextUsage.reservedWidth"></div>
+                      }
+                    </div>
+                    @if(contextUsage.showReservedWidth) {
+                    <div class="output-buffer-legend">
+                      <span class="output-buffer-swatch"></span>
+                      <span>Reserved for response</span>
+                    </div>
+                    }
+                  </div>
+                  <div class="context-usage-summary-list">
+                    @for(item of contextUsage.summaryItems; track item.label) {
+                    <div class="context-usage-summary-row">
+                      <span class="context-usage-summary-label">{{ item.label }}</span>
+                      <span class="context-usage-summary-value">{{ item.value }}</span>
+                    </div>
+                    }
+                  </div>
+                  @if(contextUsage.detailGroups.length > 0) {
+                  <div class="token-details-container">
+                    @for(group of contextUsage.detailGroups; track group.category) {
+                    <div class="token-category">
+                      <div class="token-category-header">{{ group.category }}</div>
+                      @for(item of group.items; track item.label) {
+                      <div class="token-detail-item">
+                        <span class="token-detail-label">{{ item.label }}</span>
+                        <span class="token-detail-value">{{ item.contextPercentage | number:'1.1-1' }}%</span>
+                      </div>
+                      }
+                    </div>
+                    }
+                  </div>
                   }
-                  <div><span class="token-budget-label-dot token-budget-label-dot--messages">■</span> {{ 'AILY_CHAT.TOKEN_MESSAGES' | translate }}: {{ (vm.contextBudgetSnapshot.messagesTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.messagesPercent | number:'1.1-1' }}%)</span></div>
-                  <div><span class="token-budget-label-dot token-budget-label-dot--tool-results">■</span> {{ 'AILY_CHAT.TOKEN_TOOL_RESULTS' | translate }}: {{ (vm.contextBudgetSnapshot.toolResultsTokens / 1000) | number:'1.1-1' }}K <span class="token-budget-tooltip-muted">({{ vm.contextBudgetSnapshot.toolResultsPercent | number:'1.1-1' }}%)</span></div>
-                  <div class="context-compact-row">
-                    <button
-                      type="button"
-                      class="context-compact-action"
-                      [disabled]="vm.isWaiting || isManualCompacting"
-                      (click)="handleManualCompaction($event)">
-                      {{ (isManualCompacting ? 'AILY_CHAT.TOKEN_COMPACTING' : 'AILY_CHAT.TOKEN_COMPACT_CHAT') | translate }}
-                    </button>
+                  @if(contextUsage.showWarningNotice) {
+                  <div class="description">Quality may decline as limit nears.</div>
+                  }
+                  <div class="actions-section">
+                    <div class="button-bar-container">
+                      <button
+                        type="button"
+                        class="context-compact-action"
+                        [disabled]="vm.isWaiting || isManualCompacting"
+                        (click)="handleManualCompaction($event)">
+                        {{ (isManualCompacting ? 'AILY_CHAT.TOKEN_COMPACTING' : 'AILY_CHAT.TOKEN_COMPACT_CHAT') | translate }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </ng-template>
-              <svg viewBox="0 0 24 24" class="token-ring">
-                <circle cx="12" cy="12" r="9" class="token-ring-track" fill="none" stroke-width="2.5"/>
-                <circle cx="12" cy="12" r="9" fill="none"
-                  class="token-ring-fill"
-                  [class.token-ring-fill--danger]="vm.contextBudgetSnapshot.usagePercent >= 75"
-                  [class.token-ring-fill--warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
-                  [class.token-ring-fill--ok]="vm.contextBudgetSnapshot.usagePercent < 50"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  [attr.stroke-dasharray]="56.549"
-                  [attr.stroke-dashoffset]="56.549 * (1 - vm.contextBudgetSnapshot.usagePercent / 100)"
-                  transform="rotate(-90 12 12)"/>
-              </svg>
-              <span class="token-percent"
-                [class.warn]="vm.contextBudgetSnapshot.usagePercent >= 50 && vm.contextBudgetSnapshot.usagePercent < 75"
-                [class.danger]="vm.contextBudgetSnapshot.usagePercent >= 75">
-                {{ vm.contextBudgetSnapshot.usagePercent | number:'1.0-0' }}
+              <span class="icon-container">
+                <svg viewBox="0 0 36 36" class="circular-progress" aria-hidden="true">
+                  <circle cx="18" cy="18" r="12" class="progress-bg" />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="12"
+                    class="progress-arc"
+                    [attr.stroke-dasharray]="87.965"
+                    [attr.stroke-dashoffset]="contextUsage.strokeDashoffset" />
+                </svg>
+                <span class="context-usage-label" aria-hidden="true">
+                  <span class="context-usage-percentage">
+                    {{ contextUsage.circleLabel }}
+                  </span>
+                </span>
+                @if(contextUsage.estimatedBadgeLabel) {
+                <span class="context-usage-badge" aria-hidden="true">est</span>
+                }
               </span>
             </div>
             }
@@ -431,6 +544,12 @@
               </span>
             </div>
             }
+            <div class="btn mode right2 permission-mode-indicator ccenter"
+              nz-tooltip nzTooltipPlacement="top"
+              [nzTooltipTitle]="vm.currentPermissionLabel"
+              (click)="togglePermissionMenu($event)">
+              <i [class]="permissionButtonIconClass"></i>
+            </div>
             <div class="btn right ccenter" [ngClass]="{'lloading':vm.isWaiting, 'disabled': vm.authQuotaExhausted && !vm.isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="vm.isWaiting ? ('AILY_CHAT.STOP' | translate) : (vm.authQuotaExhausted ? 'Auth quota exhausted' : ('AILY_CHAT.SEND' | translate))"
               (click)="submitShellCoordinator.handlePrimaryAction()">
@@ -450,17 +569,28 @@
         </aily-chat-input-part-host>
       </div>
     </div>
+    }
     @if(vm.showSettings){
-    <aily-chat-settings (close)="sessionShellCoordinator.closeSettings()" (saved)="sessionShellCoordinator.closeSettings()"></aily-chat-settings>
+    <aily-chat-settings (close)="closeSettings()" (saved)="closeSettings()"></aily-chat-settings>
+    }
+      </div>
+    </div>
     }
     }
   </div>
-  <app-login></app-login>
 </ng-template>
 
-@if (menuManager.showHistoryList) {
-<app-menu [menuList]="menuManager.historyList" [position]="menuManager.historyListPosition" [width]="300" [maxHeight]="360" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="sessionShellCoordinator.menuClick($event)" (actionClickEvent)="sessionShellCoordinator.historyActionClick($event)"></app-menu>
+@if (sessionPickerSurfaceModel; as sessionPickerSurface) {
+<aily-chat-session-picker
+  [groups]="sessionPickerSurface.groups"
+  [selectedSessionId]="sessionPickerSurface.selectedSessionId"
+  [revealSessionId]="sessionPickerSurface.revealSessionId"
+  [position]="sessionPickerSurface.position"
+  [width]="sessionPickerSurface.width"
+  [maxHeight]="sessionPickerSurface.maxHeight"
+  (closeRequested)="vm.closeSessionPicker()"
+  (selectSession)="handleSessionSelection($event)"
+  (actionClick)="handleSessionAction($event)"></aily-chat-session-picker>
 }
 
 @if(menuManager.showMode){
@@ -468,9 +598,19 @@
   (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)"></app-menu>
 }
 
+@if(menuManager.showPermissionMenu){
+<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="280" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="handlePermissionMenuClick($event)"></app-menu>
+}
+
 @if(menuManager.showModelMenu){
 <app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="320" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuSubItemClick($event)"></app-menu>
+  (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (actionClickEvent)="handleModelMenuActionClick($event)"></app-menu>
+}
+
+@if(menuManager.showReasoningMenu){
+<app-menu class="reasoning-menu" [menuList]="reasoningMenuItems.length > 0 ? reasoningMenuItems : vm.currentReasoningEffortMenuItems" [position]="menuManager.reasoningMenuPosition" [width]="220" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="handleReasoningMenuClick($event)" (subItemClickEvent)="handleReasoningMenuClick($event)"></app-menu>
 }
 
 @if(menuManager.showActionMenu){

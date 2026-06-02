@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
 
+import { AilyHost } from '../../core/host';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
 import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
@@ -22,6 +23,7 @@ import {
   type StateDetailRow,
   type InstructionDiagnosticFilter,
 } from './x-aily-state-viewer/activity-detail-items';
+import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
 import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../../services/chat-runtime-interaction-host.service';
 
 @Component({
@@ -219,6 +221,14 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
                           </div>
                           @if (row.subtitle) {
                             <div class="cag-item-detail-row-subtitle">{{ row.subtitle }}</div>
+                          }
+                          @if (row.reference) {
+                            <div class="cag-item-detail-row-reference-shell">
+                              <span class="cag-item-detail-row-reference">{{ getResolvedReferenceLabel(row.reference) }}</span>
+                              @if (canOpenReference(row.reference)) {
+                                <button type="button" class="cag-item-detail-row-open" (click)="openReference(row.reference, $event)">打开</button>
+                              }
+                            </div>
                           }
                           @if (row.note) {
                             <div class="cag-item-detail-row-note">
@@ -1876,6 +1886,35 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       min-width: 0;
     }
 
+    .cag-item-detail-row-reference-shell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin-top: 4px;
+    }
+
+    .cag-item-detail-row-reference {
+      min-width: 0;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 11px;
+      line-height: 1.35;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .cag-item-detail-row-open {
+      flex: 0 0 auto;
+      border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
+      border-radius: 999px;
+      background: transparent;
+      color: var(--chat-fg, #cccccc);
+      padding: 1px 8px;
+      cursor: pointer;
+      font-size: 10px;
+      line-height: 1.2;
+    }
+
     :host ::ng-deep .cag-item-markdown {
       font-size: 11px;
       line-height: 1.45;
@@ -2114,5 +2153,43 @@ export class ChatActivityItemComponent implements OnChanges {
     return section.rows.length > 0
       ? [{ id: `${section.title}:fallback`, kind: 'generic', rows: section.rows }]
       : [];
+  }
+
+  getResolvedReferenceLabel(reference: string): string {
+    const host = AilyHost.get();
+    return getBlocklyArtifactReferenceLabel(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.sessionId,
+    });
+  }
+
+  canOpenReference(reference: string): boolean {
+    return Boolean(this.resolveReferenceTarget(reference)?.absolutePath && AilyHost.get().editor?.showTextDocument);
+  }
+
+  openReference(reference: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const target = this.resolveReferenceTarget(reference);
+    const projectPath = this.getProjectPath();
+    if (!target || !projectPath) {
+      return;
+    }
+
+    void Promise.resolve(AilyHost.get().editor?.showTextDocument?.(target.absolutePath, { projectPath }));
+  }
+
+  private resolveReferenceTarget(reference: string) {
+    const host = AilyHost.get();
+    return resolveBlocklyArtifactReferenceTarget(host, reference, {
+      cwd: this.getProjectPath(),
+      sessionId: this.sessionId,
+    });
+  }
+
+  private getProjectPath(): string {
+    const host = AilyHost.get();
+    return host.project.currentProjectPath || host.project.projectRootPath || '';
   }
 }

@@ -54,6 +54,14 @@ export class EditingTextDiffService {
     });
   }
 
+  computeDiffSync(
+    original: string,
+    modified: string,
+    options: EditingTextDiffOptions,
+  ): EditingTextDiffResult {
+    return computeTextDiffSync(original, modified, options);
+  }
+
   dispose(): void {
     if (this.worker) {
       this.worker.terminate();

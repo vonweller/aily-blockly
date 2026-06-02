@@ -26,6 +26,7 @@
           </div>
         }
         @if (btn === "close") {
+          <ng-content select="[header-btns]"></ng-content>
           <div class="btn ccenter close" (click)="close()">
             <i class="fa-light fa-xmark"></i>
           </div>

@@ -428,6 +428,7 @@
         "TOKEN_COMPACTING": "압축 중…",
         "MODE_AGENT_FULL": "에이전트 모드",
         "MODE_QA_FULL": "Q&A 모드",
+        "MODE_EDIT_FULL": "편집 모드",
         "STOP_CURRENT_SESSION_FIRST": "새 세션을 생성하기 전에 먼저 현재 세션을 중지하세요",
         "NO_HISTORY_SESSION": "기록된 대화 기록이 없습니다",
         "MERMAID_SAVE_ARCH": "아키텍처 다이어그램으로 저장",

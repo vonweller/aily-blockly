@@ -16,6 +16,7 @@ import {
   hasHostResponseConversationContent,
   type HostResponseProjection,
 } from './host-turn-response-state';
+import { DEFAULT_CHAT_SESSION_TYPE } from '../core/chat-mode';
 import type { ChatTaskActionEvent } from './chat-task-action-coordinator';
 
 type ChatSubscriptionCoordinatorContext = ChatViewWriteBridgeContext
@@ -41,10 +42,10 @@ interface SubscriptionCallbacks {
   receiveTextFromExternal: (text: string, options?: ChatTextOptions) => void;
   showAiWritingNotice: (isWaiting: boolean) => void;
   handleTaskAction: (event: ChatTaskActionEvent) => void;
-  handleProjectActivation: (event: { path: string; previousPath?: string; reason?: string }) => void;
   flushPendingAutoSend: () => void;
   syncAuthQuotaState: () => void;
   refreshRequestQuotaState: () => Promise<void>;
+  refreshSessionProviderOptionsSources: () => void;
   clearAuthQuotaState: () => void;
   clearRequestQuotaState: () => void;
 }
@@ -66,33 +67,26 @@ export class ChatSubscriptionCoordinator {
   private blockSelectionSubscription: Subscription | null = null;
   private uiChatMessageSubscription: Subscription | null = null;
   private userInfoSubscription: Subscription | null = null;
-  private projectActivationSubscription: Subscription | null = null;
   private taskActionHandler: ((event: Event) => void) | null = null;
   private active = false;
   private lastKnownApiServer = '';
   private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
 
-  private tryInitializeLoggedInSession(): void {
+  private async tryInitializeLoggedInSession(): Promise<void> {
     if (!this.isReadyForLoggedInSessionWork() || this.ctx.hasInitializedForThisLogin || this.ctx.isSessionStarting) {
       return;
     }
 
     this.ctx.hasInitializedForThisLogin = true;
-    this.viewWriteBridge.clearChatView();
-    this.ctx.session.initializeSessionForCurrentProject().then(() => {
-      this.ctx.interaction.checkFirstUsage();
-      this.callbacks.flushPendingAutoSend();
-    }).catch((err) => {
-      console.error('[ChatEngine] initializeSessionForCurrentProject 失败:', err);
-    });
+    await this.ctx.session.initializeEntryInventory({ restorePersistedTarget: false });
   }
 
-  private tryInitializeLoggedInSessionFromAuthRefresh(): void {
+  private async tryInitializeLoggedInSessionFromAuthRefresh(): Promise<void> {
     if (this.hasConversationHistory()) {
       return;
     }
 
-    this.tryInitializeLoggedInSession();
+    await this.tryInitializeLoggedInSession();
   }
 
   private isReadyForLoggedInSessionWork(): boolean {
@@ -191,28 +185,28 @@ export class ChatSubscriptionCoordinator {
         if (this.ctx.isLoggedIn) {
           void this.callbacks.refreshRequestQuotaState();
         }
-        this.tryInitializeLoggedInSessionFromAuthRefresh();
+        void this.tryInitializeLoggedInSessionFromAuthRefresh();
       }) ?? authProvider?.authSnapshot$?.subscribe(() => {
         this.callbacks.syncAuthQuotaState();
         if (this.ctx.isLoggedIn) {
           void this.callbacks.refreshRequestQuotaState();
         }
-        this.tryInitializeLoggedInSessionFromAuthRefresh();
+        void this.tryInitializeLoggedInSessionFromAuthRefresh();
       }) ?? null;
 
-      this.tryInitializeLoggedInSession();
+      void this.tryInitializeLoggedInSession();
     });
 
     this.aiWritingSubscription = AilyHost.get().blockly.aiWriting$.subscribe(this.callbacks.showAiWritingNotice);
     this.aiWaitingSubscription = AilyHost.get().blockly.aiWaiting$.subscribe(this.callbacks.showAiWritingNotice);
 
     this.blockSelectionSubscription = combineLatest([
-      AilyHost.get().blockly.selectedBlockIdsSubject,
+      AilyHost.get().blockly.selectedBlockSubject,
       AilyHost.get().blockly.blockCodeMapSubject,
     ]).subscribe((results: any[]) => {
-      this.ctx.resourceManager.updateBlockContexts(
-        results[0] || [],
-        () => AilyHost.get().blockly.getSelectedBlockContextLabels(),
+      this.ctx.resourceManager.updateBlockContext(
+        results[0],
+        () => AilyHost.get().blockly.getSelectedBlockContextLabel(),
       );
     });
 
@@ -241,24 +235,22 @@ export class ChatSubscriptionCoordinator {
         }
       }
 
-      this.ctx.session.refreshHistoryList();
+      this.ctx.session.requestSessionListRefresh({
+        reason: 'project',
+        scope: 'full',
+        priority: 'normal',
+      });
       if (newPath && newPath !== rootPath) {
         this.ctx.absAutoSyncService.initialize(newPath);
       }
+      this.callbacks.refreshSessionProviderOptionsSources();
     });
-
-    const projectActivation$ = (AilyHost.get().project as { projectActivation$?: import('rxjs').Observable<{ path: string; previousPath?: string; reason?: string }> }).projectActivation$;
-    if (projectActivation$?.subscribe) {
-      this.projectActivationSubscription = projectActivation$.subscribe((event) => {
-        this.callbacks.handleProjectActivation(event);
-      });
-    }
 
     this.loginStatusSubscription = authProvider?.isLoggedIn$?.subscribe(async isLoggedIn => {
       this.ctx.isLoggedIn = isLoggedIn;
 
       if (isLoggedIn) {
-        this.tryInitializeLoggedInSession();
+        await this.tryInitializeLoggedInSession();
       }
 
       if (isLoggedIn) {
@@ -278,6 +270,7 @@ export class ChatSubscriptionCoordinator {
       this.ctx.isCompleted = false;
       this.ctx.isSessionStarting = false;
       this.ctx.chatService.currentSessionId = '';
+      this.ctx.chatService.currentSessionType = DEFAULT_CHAT_SESSION_TYPE;
       this.ctx.chatService.currentSessionPath = '';
       this.callbacks.clearAuthQuotaState();
       this.callbacks.clearRequestQuotaState();
@@ -341,7 +334,6 @@ export class ChatSubscriptionCoordinator {
     if (this.aiWritingSubscription) { this.aiWritingSubscription.unsubscribe(); this.aiWritingSubscription = null; }
     if (this.aiWaitingSubscription) { this.aiWaitingSubscription.unsubscribe(); this.aiWaitingSubscription = null; }
     if (this.projectPathSubscription) { this.projectPathSubscription.unsubscribe(); this.projectPathSubscription = null; }
-    if (this.projectActivationSubscription) { this.projectActivationSubscription.unsubscribe(); this.projectActivationSubscription = null; }
     if (this.configChangedSubscription) { this.configChangedSubscription.unsubscribe(); this.configChangedSubscription = null; }
     if (this.hostConfigReloadSubscription) { this.hostConfigReloadSubscription.unsubscribe(); this.hostConfigReloadSubscription = null; }
     if (this.blockSelectionSubscription) { this.blockSelectionSubscription.unsubscribe(); this.blockSelectionSubscription = null; }

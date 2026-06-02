@@ -23,13 +23,14 @@ import { FloatingTodoComponent } from './floating-todo/floating-todo.component';
       display: flex;
       flex: 1 1 auto;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px;
       min-height: 0;
       position: relative;
     }
 
     .chat-question-carousel-widget-container,
-    .chat-tool-confirmation-carousel-container {
+    .chat-tool-confirmation-carousel-container,
+    .chat-plan-review-widget-container {
       width: 100%;
       display: flex;
       flex-direction: column;

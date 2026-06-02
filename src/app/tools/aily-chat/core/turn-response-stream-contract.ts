@@ -57,6 +57,7 @@ export interface TurnResponseStreamProjection {
   readonly request: TurnResponseTurn['request'];
   readonly rounds: TurnResponseTurn['rounds'];
   readonly usage?: TurnResponseTurn['usage'];
+  readonly requestUsage?: NonNullable<TurnResponseTurn['responseModel']>['requestUsage'];
   readonly participant?: string;
   readonly slashCommand?: TurnResponseCommand;
   readonly followups?: readonly TurnResponseFollowup[];
@@ -307,6 +308,7 @@ export function buildTurnResponseTurn(
   const modelBillingLabel = typeof projection.modelBillingLabel === 'string' && projection.modelBillingLabel.trim()
     ? projection.modelBillingLabel.trim()
     : undefined;
+  const requestUsage = projection.requestUsage ?? getContinuationRequestUsage(projection.continuation);
   const quotaSnapshot = projection.quotaSnapshot
     ? {
       ...projection.quotaSnapshot,
@@ -343,7 +345,8 @@ export function buildTurnResponseTurn(
       || projection.followups !== undefined
       || modelName !== undefined
       || modelBillingLabel !== undefined
-      || quotaSnapshot !== undefined)
+      || quotaSnapshot !== undefined
+      || requestUsage !== undefined)
       ? {
         responseModel: {
           ...(projection.slashCommand !== undefined ? { slashCommand: projection.slashCommand } : {}),
@@ -351,6 +354,7 @@ export function buildTurnResponseTurn(
           ...(modelName !== undefined ? { modelName } : {}),
           ...(modelBillingLabel !== undefined ? { modelBillingLabel } : {}),
           ...(quotaSnapshot !== undefined ? { quotaSnapshot } : {}),
+          ...(requestUsage !== undefined ? { requestUsage } : {}),
         },
       }
       : {}),
@@ -394,5 +398,59 @@ function getContinuationModelBillingLabel(
   const modelBillingLabel = 'modelBillingLabel' in usage ? usage['modelBillingLabel'] : undefined;
   return typeof modelBillingLabel === 'string' && modelBillingLabel.trim()
     ? modelBillingLabel.trim()
+    : undefined;
+}
+
+function getContinuationRequestUsage(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): NonNullable<TurnResponseTurn['responseModel']>['requestUsage'] | undefined {
+  const diagnostics = continuation?.diagnostics;
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return undefined;
+  }
+
+  const usage = 'usage' in diagnostics ? diagnostics['usage'] : undefined;
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  const promptTokens = 'promptTokens' in usage ? usage['promptTokens'] : undefined;
+  const completionTokens = 'completionTokens' in usage ? usage['completionTokens'] : undefined;
+  const outputBuffer = 'outputBuffer' in usage ? usage['outputBuffer'] : undefined;
+  const promptTokenDetails = 'promptTokenDetails' in usage && Array.isArray(usage['promptTokenDetails'])
+    ? usage['promptTokenDetails']
+      .map(detail => {
+        if (!detail || typeof detail !== 'object') {
+          return undefined;
+        }
+
+        const category = typeof (detail as { category?: unknown }).category === 'string'
+          ? (detail as { category: string }).category.trim()
+          : '';
+        const label = typeof (detail as { label?: unknown }).label === 'string'
+          ? (detail as { label: string }).label.trim()
+          : '';
+        const percentageOfPrompt = typeof (detail as { percentageOfPrompt?: unknown }).percentageOfPrompt === 'number'
+          && Number.isFinite((detail as { percentageOfPrompt: number }).percentageOfPrompt)
+          && (detail as { percentageOfPrompt: number }).percentageOfPrompt >= 0
+          ? (detail as { percentageOfPrompt: number }).percentageOfPrompt
+          : undefined;
+
+        if (!category || !label || percentageOfPrompt === undefined) {
+          return undefined;
+        }
+
+        return { category, label, percentageOfPrompt };
+      })
+      .filter((detail): detail is NonNullable<NonNullable<TurnResponseTurn['responseModel']>['requestUsage']>['promptTokenDetails'][number] => !!detail)
+    : undefined;
+  return typeof promptTokens === 'number' && Number.isFinite(promptTokens) && promptTokens >= 0
+    && typeof completionTokens === 'number' && Number.isFinite(completionTokens) && completionTokens >= 0
+    ? {
+        promptTokens,
+        completionTokens,
+        ...(typeof outputBuffer === 'number' && Number.isFinite(outputBuffer) && outputBuffer > 0 ? { outputBuffer } : {}),
+        ...(promptTokenDetails?.length ? { promptTokenDetails } : {}),
+      }
     : undefined;
 }

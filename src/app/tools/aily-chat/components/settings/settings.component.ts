@@ -9,9 +9,9 @@ import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzSelectModule } from 'ng-zorro-antd/select';
-import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE } from '../../core/agent-identifiers';
+import { MAIN_AGENT_TYPE, normalizeAgentIdentifiers, SCHEMATIC_AGENT_TYPE } from '../../core/agent-identifiers';
 import { ElectronService } from '../../../../services/electron.service';
-import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig, ModelPresetOption } from '../../services/aily-chat-config.service';
+import { AilyChatConfigService, WorkspaceSecurityOption, ModelConfigOption, AgentToolsConfig, ModelPresetOption, type ChatSessionViewerOrientationSetting } from '../../services/aily-chat-config.service';
 import { ChatService } from '../../services/chat.service';
 import { McpService } from '../../services/mcp.service';
 import { getRuntimeToolSettingsCatalog, type RuntimeToolCatalogEntry } from '../../helpers/lex-agent-bootstrap';
@@ -32,6 +32,13 @@ interface ToolConfig {
   displayName: string;
   description: string;
   enabled: boolean;
+}
+
+interface CustomAgentVisibilityOption {
+  target: string;
+  label: string;
+  description?: string;
+  visible: boolean;
 }
 
 @Component({
@@ -61,14 +68,22 @@ export class AilyChatSettingsComponent implements OnInit {
   // 默认自动保存变更
   autoSaveEdits: boolean = false;
 
+  // Session viewer 布局偏好
+  sessionViewerOrientation: ChatSessionViewerOrientationSetting = 'sideBySide';
+
   // Instruction folder 设置（每行一个路径）
   userInstructionFoldersText = '';
   projectInstructionFoldersText = '';
+  userAgentFoldersText = '';
+  projectAgentFoldersText = '';
+  useChatSessionCustomizationsForCustomAgents = false;
 
   // Terminal runtime policy 设置
   terminalAllowListText = '';
   terminalDenyListText = '';
   terminalInheritDefaultAllowList = true;
+  customAgentVisibilityOptions: CustomAgentVisibilityOption[] = [];
+  private hiddenCustomAgentTargetsOutsideCatalog: string[] = [];
 
   // Agent 列表配置
   readonly agentConfigs: AgentConfig[] = [
@@ -158,6 +173,33 @@ export class AilyChatSettingsComponent implements OnInit {
     return this.ailyChatConfigService.modelCatalogStatus === 'unavailable';
   }
 
+  get isSessionCustomizationSourceActive(): boolean {
+    return this.chatService.activeCustomModeSource === 'sessionCustomization';
+  }
+
+  get activeSessionCustomizationProviderLabel(): string | undefined {
+    const label = this.chatService.activeSessionCustomizationProviderMetadata?.label;
+    return typeof label === 'string' && label.trim() ? label.trim() : undefined;
+  }
+
+  get activeSessionCustomizationProviderSupportsAgents(): boolean {
+    const supportedTypes = this.chatService.activeSessionCustomizationProviderMetadata?.supportedTypes;
+    if (!Array.isArray(supportedTypes) || supportedTypes.length === 0) {
+      return true;
+    }
+
+    return supportedTypes.includes('agent');
+  }
+
+  get activeSessionCustomizationProviderSupportedTypesLabel(): string | undefined {
+    const supportedTypes = this.chatService.activeSessionCustomizationProviderMetadata?.supportedTypes;
+    if (!Array.isArray(supportedTypes) || supportedTypes.length === 0) {
+      return undefined;
+    }
+
+    return supportedTypes.join(', ');
+  }
+
   constructor(
     private message: NzMessageService,
     private electronService: ElectronService,
@@ -177,6 +219,11 @@ export class AilyChatSettingsComponent implements OnInit {
       .subscribe(() => {
         this.loadModelList();
       });
+    this.chatService.runtimeModeCollection.onDidChange
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.loadCustomAgentVisibilityOptions();
+      });
   }
 
   /**
@@ -186,11 +233,104 @@ export class AilyChatSettingsComponent implements OnInit {
     // 加载配置
     this.maxRequests = this.ailyChatConfigService.maxRequests;
     this.autoSaveEdits = this.ailyChatConfigService.autoSaveEdits;
+    this.sessionViewerOrientation = this.ailyChatConfigService.sessionViewerOrientation;
     this.userInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.userInstructionFolders);
     this.projectInstructionFoldersText = this.formatFolderPaths(this.ailyChatConfigService.projectInstructionFolders);
+    this.userAgentFoldersText = this.formatFolderPaths(this.ailyChatConfigService.userAgentFolders);
+    this.projectAgentFoldersText = this.formatFolderPaths(this.ailyChatConfigService.projectAgentFolders);
+    this.useChatSessionCustomizationsForCustomAgents = this.ailyChatConfigService.useChatSessionCustomizationsForCustomAgents;
     this.terminalAllowListText = this.formatFolderPaths(this.ailyChatConfigService.terminalAllowList ?? []);
     this.terminalDenyListText = this.formatFolderPaths(this.ailyChatConfigService.terminalDenyList ?? []);
     this.terminalInheritDefaultAllowList = this.ailyChatConfigService.terminalInheritDefaultAllowList ?? true;
+    this.loadCustomAgentVisibilityOptions();
+  }
+
+  private loadCustomAgentVisibilityOptions(): void {
+    const providerEntries = this.isSessionCustomizationSourceActive
+      && Array.isArray(this.chatService.activeSessionCustomizationAgentEntries)
+      ? this.chatService.activeSessionCustomizationAgentEntries
+      : [];
+    const runtimeModes = Array.isArray(this.chatService.availableResolvedCustomModes)
+      ? this.chatService.availableResolvedCustomModes
+      : [];
+    const modeByTarget = new Map<string, { label: string; description?: string }>();
+
+    for (const entry of providerEntries) {
+      if (!this.isUserVisibleCustomAgentOptionSource(entry)) {
+        continue;
+      }
+
+      const target = typeof entry?.target === 'string' && entry.target.trim()
+        ? entry.target.trim()
+        : '';
+      if (!target) {
+        continue;
+      }
+
+      modeByTarget.set(target, {
+        label: typeof entry.label === 'string' && entry.label.trim() ? entry.label.trim() : target,
+        description: typeof entry.description === 'string' && entry.description.trim() ? entry.description.trim() : undefined,
+      });
+    }
+
+    for (const mode of runtimeModes) {
+      if (mode?.isBuiltin || !this.isUserVisibleCustomAgentOptionSource(mode)) {
+        continue;
+      }
+
+      const target = typeof mode?.customAgentTarget === 'string' && mode.customAgentTarget.trim()
+        ? mode.customAgentTarget.trim()
+        : typeof mode?.name === 'string' && mode.name.trim()
+          ? mode.name.trim()
+          : '';
+      if (!target) {
+        continue;
+      }
+
+      const existing = modeByTarget.get(target);
+      if (!existing) {
+        modeByTarget.set(target, {
+          label: typeof mode.label === 'string' && mode.label.trim() ? mode.label.trim() : target,
+          description: typeof mode.description === 'string' && mode.description.trim() ? mode.description.trim() : undefined,
+        });
+        continue;
+      }
+
+      modeByTarget.set(target, {
+        label: existing.label || (typeof mode.label === 'string' && mode.label.trim() ? mode.label.trim() : target),
+        description: existing.description
+          ?? (typeof mode.description === 'string' && mode.description.trim() ? mode.description.trim() : undefined),
+      });
+    }
+
+    const catalogTargets = normalizeAgentIdentifiers(Array.from(modeByTarget.keys()));
+    const hiddenTargets = normalizeAgentIdentifiers(this.ailyChatConfigService.hiddenCustomAgentTargets);
+    const hiddenTargetSet = new Set(hiddenTargets);
+
+    this.hiddenCustomAgentTargetsOutsideCatalog = hiddenTargets.filter(target => !catalogTargets.includes(target));
+    this.customAgentVisibilityOptions = catalogTargets
+      .map((target) => {
+        const modeMeta = modeByTarget.get(target);
+        return {
+          target,
+          label: modeMeta?.label ?? target,
+          visible: !hiddenTargetSet.has(target),
+          ...(modeMeta?.description ? { description: modeMeta.description } : {}),
+        };
+      })
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  private isUserVisibleCustomAgentOptionSource(
+    value: {
+      readonly hidden?: boolean;
+      readonly enabled?: boolean;
+      readonly visibility?: { readonly userInvocable?: boolean };
+    } | null | undefined,
+  ): boolean {
+    return value?.hidden !== true
+      && value?.enabled !== false
+      && value?.visibility?.userInvocable !== false;
   }
 
   private formatFolderPaths(paths: string[]): string {
@@ -261,7 +401,10 @@ export class AilyChatSettingsComponent implements OnInit {
   }
 
   private getToolCatalogEntries(): RuntimeToolCatalogEntry[] {
-    return getRuntimeToolSettingsCatalog({ mcpService: this.mcpService });
+    return getRuntimeToolSettingsCatalog({
+      ailyChatConfigService: this.ailyChatConfigService,
+      mcpService: this.mcpService,
+    });
   }
 
   /**
@@ -616,11 +759,21 @@ export class AilyChatSettingsComponent implements OnInit {
     // 保存配置
     this.ailyChatConfigService.maxRequests = this.maxRequests;
     this.ailyChatConfigService.autoSaveEdits = this.autoSaveEdits;
+    this.ailyChatConfigService.sessionViewerOrientation = this.sessionViewerOrientation;
     this.ailyChatConfigService.userInstructionFolders = this.parseFolderPaths(this.userInstructionFoldersText);
     this.ailyChatConfigService.projectInstructionFolders = this.parseFolderPaths(this.projectInstructionFoldersText);
+    this.ailyChatConfigService.userAgentFolders = this.parseFolderPaths(this.userAgentFoldersText);
+    this.ailyChatConfigService.projectAgentFolders = this.parseFolderPaths(this.projectAgentFoldersText);
+    this.ailyChatConfigService.useChatSessionCustomizationsForCustomAgents = this.useChatSessionCustomizationsForCustomAgents;
     this.ailyChatConfigService.terminalAllowList = this.parseFolderPaths(this.terminalAllowListText);
     this.ailyChatConfigService.terminalDenyList = this.parseFolderPaths(this.terminalDenyListText);
     this.ailyChatConfigService.terminalInheritDefaultAllowList = this.terminalInheritDefaultAllowList;
+    this.ailyChatConfigService.hiddenCustomAgentTargets = [
+      ...this.hiddenCustomAgentTargetsOutsideCatalog,
+      ...this.customAgentVisibilityOptions
+        .filter(option => !option.visible)
+        .map(option => option.target),
+    ];
 
     // 保存每个Agent的工具配置
     for (const agentConfig of this.agentConfigs) {

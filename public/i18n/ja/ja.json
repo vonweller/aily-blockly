@@ -440,6 +440,7 @@
         "TOKEN_COMPACTING": "圧縮中…",
         "MODE_AGENT_FULL": "エージェントモード",
         "MODE_QA_FULL": "Q&Aモード",
+        "MODE_EDIT_FULL": "編集モード",
         "STOP_CURRENT_SESSION_FIRST": "新しいセッションを作成する前に、現在のセッションを停止してください",
         "NO_HISTORY_SESSION": "履歴セッション記録がありません",
         "MERMAID_SAVE_ARCH": "構成図として保存",

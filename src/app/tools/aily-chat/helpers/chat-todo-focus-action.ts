@@ -1,3 +1,5 @@
+import { resolveChatSurfaceModeId } from '../core/chat-mode';
+
 export const CHAT_FOCUS_TODOS_ACTION_ID = 'workbench.action.chat.focusTodosView';
 export const CHAT_FOCUS_TODOS_ACTION_LABEL = 'Toggle Focus Between TODOs and Input';
 
@@ -8,7 +10,7 @@ interface ChatTodoFocusActionContext {
 }
 
 export function canRunChatTodoFocusAction(currentMode: string): boolean {
-  return currentMode === 'agent';
+  return resolveChatSurfaceModeId(currentMode) === 'agent';
 }
 
 export function runChatTodoFocusAction(context: ChatTodoFocusActionContext): boolean {

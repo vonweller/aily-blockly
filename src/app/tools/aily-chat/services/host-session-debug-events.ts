@@ -6,6 +6,12 @@ import {
 } from 'aily-lex/browser';
 
 import type { HostSessionRecord } from './chat-history.service';
+import { resolveHostSessionInteractionActionSummary } from '../helpers/host-session-interaction-action';
+import { readPendingPlanReview } from '../helpers/host-session-restore-bridge';
+import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
+import { resolveHostSessionProviderOptions } from '../helpers/host-session-input-state';
+
+type HostSessionDebugModelRouting = NonNullable<NonNullable<HostSessionRecord['turnResponses']>[number]['responseModel']>['modelRouting'];
 
 export type HostSessionDebugEventKind =
   | 'toolCall'
@@ -45,6 +51,7 @@ export interface HostSessionDebugCacheExplorerContent {
   readonly tools?: string;
   readonly inputMessages: readonly HostSessionDebugCacheInputMessage[];
   readonly requestShape: HostSessionDebugRequestShapeInfo;
+  readonly requestOptions?: string;
 }
 
 export interface HostSessionDebugEventCommon {
@@ -159,7 +166,32 @@ export interface HostSessionDebugResolvedModelTurnContent {
   readonly outputTokens?: number;
   readonly cachedTokens?: number;
   readonly totalTokens?: number;
+  readonly requestOptions?: string;
   readonly sections?: readonly HostSessionDebugMessageSection[];
+}
+
+export interface HostSessionDebugCustomizationLogEntry {
+  readonly category: 'applying' | 'skipped' | 'referenced' | 'skill' | 'custom-agent' | 'hook';
+  readonly name: string;
+  readonly source?: string;
+  readonly reference?: string;
+  readonly reason?: string;
+}
+
+export interface HostSessionDebugResolvedCustomizationSummaryContent {
+  readonly kind: 'customizationSummary';
+  readonly resolutionLogs: readonly HostSessionDebugCustomizationLogEntry[];
+  readonly counts: {
+    readonly instructions: number;
+    readonly skills: number;
+    readonly agents: number;
+    readonly hooks: number;
+    readonly skipped: number;
+  };
+  readonly durationInMillis?: number;
+  readonly hostId?: string;
+  readonly modelFamily?: string;
+  readonly capabilities?: readonly string[];
 }
 
 export interface HostSessionDebugResolvedTextContent {
@@ -171,6 +203,7 @@ export type HostSessionDebugResolvedEventContent =
   | HostSessionDebugResolvedMessageContent
   | HostSessionDebugResolvedToolCallContent
   | HostSessionDebugResolvedModelTurnContent
+  | HostSessionDebugResolvedCustomizationSummaryContent
   | HostSessionDebugResolvedTextContent;
 
 interface HostSessionDebugArtifacts {
@@ -352,6 +385,95 @@ function buildHostSessionDebugArtifacts(
   const events: HostSessionDebugEvent[] = [];
   const resolvedContentById = new Map<string, HostSessionDebugResolvedEventContent>();
   let sequence = 0;
+  const sessionEventTurnId = (record.turnResponses?.[record.turnResponses.length - 1]?.turnId ?? '__session__').trim() || '__session__';
+  const sessionEventCreated = normalizeTimestamp(record.metadata?.updatedAt, record.metadata?.createdAt);
+  const requestRouting = resolveHostSessionRequestRoutingSummary(record);
+  const providerOptions = resolveHostSessionProviderOptions(record);
+  const interactionActionSummary = resolveHostSessionInteractionActionSummary(record);
+  const pendingPlanReview = readPendingPlanReview(record.metadata?.requestContext?.interactionContinuation);
+
+  if (providerOptions.folderPath || providerOptions.permissionMode !== 'default' || providerOptions.permissionLevel || providerOptions.approvalsReviewer || providerOptions.approvalPolicy) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Session Provider Options',
+      details: formatProviderOptionsDetails(providerOptions),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(providerOptions, null, 2),
+    });
+  }
+
+  if (requestRouting.requestModeId || requestRouting.customAgentTarget || requestRouting.permissionLevel || requestRouting.approvalsReviewer || requestRouting.approvalPolicy) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Request Routing',
+      details: formatRequestRoutingDetails(requestRouting),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(requestRouting, null, 2),
+    });
+  }
+
+  if (interactionActionSummary) {
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Interaction Action',
+      details: formatInteractionActionDetails(interactionActionSummary),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(interactionActionSummary, null, 2),
+    });
+  }
+
+  if (pendingPlanReview) {
+    const payload = {
+      id: pendingPlanReview.id,
+      title: pendingPlanReview.title,
+      ...(pendingPlanReview.planUri ? { planUri: pendingPlanReview.planUri } : {}),
+      canProvideFeedback: pendingPlanReview.canProvideFeedback,
+      actions: pendingPlanReview.actions.map(action => action.id),
+    };
+    const event = createDebugEvent({
+      sessionId,
+      turnId: sessionEventTurnId,
+      sequence: sequence++,
+      kind: 'generic',
+      created: sessionEventCreated,
+      name: 'Pending Plan Review',
+      details: formatPendingPlanReviewDetails(payload),
+      level: 'info',
+      category: 'session',
+    });
+    events.push(event);
+    resolvedContentById.set(event.id, {
+      kind: 'text',
+      text: JSON.stringify(payload, null, 2),
+    });
+  }
 
   for (const turn of record.turnResponses ?? []) {
     const userMessageSections = buildMessageSections('request', turn.request.displayContent ?? turn.request.content);
@@ -404,6 +526,27 @@ function buildHostSessionDebugArtifacts(
       status: turn.response.status,
     });
     events.push(modelTurnEvent);
+
+    const modelRouting = turn.responseModel?.modelRouting;
+    if (modelRouting) {
+      const event = createDebugEvent({
+        sessionId,
+        turnId: turn.turnId,
+        sequence: sequence++,
+        kind: 'generic',
+        created: modelTurnCreated,
+        parentEventId: modelTurnEvent.id,
+        name: 'Auto model routing',
+        details: formatModelRoutingDetails(modelRouting),
+        level: 'info',
+        category: 'model',
+      });
+      events.push(event);
+      resolvedContentById.set(event.id, {
+        kind: 'text',
+        text: JSON.stringify(modelRouting, null, 2),
+      });
+    }
 
     for (const round of turn.rounds ?? []) {
       for (const toolCall of round.toolCalls ?? []) {
@@ -482,6 +625,7 @@ function buildHostSessionDebugArtifacts(
       outputTokens: modelTurnEvent.outputTokens,
       cachedTokens: modelTurnEvent.cachedTokens,
       totalTokens: modelTurnEvent.totalTokens,
+      requestOptions: modelTurnSections.find(section => section.name === 'Request Options')?.content,
       sections: modelTurnSections,
     });
 
@@ -573,6 +717,79 @@ function deriveDuration(start: number | undefined, end: number | undefined): num
   return Math.max(0, end - start);
 }
 
+function formatRequestRoutingDetails(
+  requestRouting: ReturnType<typeof resolveHostSessionRequestRoutingSummary>,
+): string {
+  return [
+    `selected=${requestRouting.selectedModeId}`,
+    requestRouting.requestModeId ? `request=${requestRouting.requestModeId}` : '',
+    requestRouting.customAgentTarget ? `customAgent=${requestRouting.customAgentTarget}` : '',
+    requestRouting.permissionLevel ? `permission=${requestRouting.permissionLevel}` : '',
+    requestRouting.approvalsReviewer ? `reviewer=${requestRouting.approvalsReviewer}` : '',
+    requestRouting.approvalPolicy ? `approvalPolicy=${requestRouting.approvalPolicy}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatModelRoutingDetails(modelRouting: HostSessionDebugModelRouting): string {
+  return [
+    modelRouting.requestedModel ? `requestedModel: ${modelRouting.requestedModel}` : '',
+    modelRouting.requestedPresetId ? `requestedPresetId: ${modelRouting.requestedPresetId}` : '',
+    modelRouting.selectedModel ? `selectedModel: ${modelRouting.selectedModel}` : '',
+    modelRouting.selectedPresetId ? `selectedPresetId: ${modelRouting.selectedPresetId}` : '',
+    modelRouting.selectedFamily ? `selectedFamily: ${modelRouting.selectedFamily}` : '',
+    modelRouting.routingMethod ? `routingMethod: ${modelRouting.routingMethod}` : '',
+    modelRouting.predictedLabel ? `predictedLabel: ${modelRouting.predictedLabel}` : '',
+    typeof modelRouting.confidence === 'number' ? `confidence: ${modelRouting.confidence}` : '',
+    typeof modelRouting.latencyMs === 'number' ? `latencyMs: ${modelRouting.latencyMs}` : '',
+    typeof modelRouting.candidateCount === 'number' ? `candidateCount: ${modelRouting.candidateCount}` : '',
+    Array.isArray(modelRouting.candidateModels) && modelRouting.candidateModels.length > 0
+      ? `candidateModels: ${modelRouting.candidateModels.join(', ')}`
+      : '',
+    typeof modelRouting.fallback === 'boolean' ? `fallback: ${modelRouting.fallback ? 'yes' : 'no'}` : '',
+    modelRouting.fallbackReason ? `fallbackReason: ${modelRouting.fallbackReason}` : '',
+    typeof modelRouting.stickyOverride === 'boolean' ? `stickyOverride: ${modelRouting.stickyOverride ? 'yes' : 'no'}` : '',
+    modelRouting.policyVersion ? `policyVersion: ${modelRouting.policyVersion}` : '',
+    modelRouting.modelBillingLabel ? `modelBillingLabel: ${modelRouting.modelBillingLabel}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function formatProviderOptionsDetails(
+  providerOptions: ReturnType<typeof resolveHostSessionProviderOptions>,
+): string {
+  return [
+    providerOptions.folderPath ? `folder=${providerOptions.folderPath}` : '',
+    `permissionMode=${providerOptions.permissionMode}`,
+    providerOptions.permissionLevel ? `permissionLevel=${providerOptions.permissionLevel}` : '',
+    providerOptions.approvalsReviewer ? `approvalsReviewer=${providerOptions.approvalsReviewer}` : '',
+    providerOptions.approvalPolicy ? `approvalPolicy=${providerOptions.approvalPolicy}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatInteractionActionDetails(
+  interactionActionSummary: NonNullable<ReturnType<typeof resolveHostSessionInteractionActionSummary>>,
+): string {
+  return [
+    `kind=${interactionActionSummary.kind}`,
+    interactionActionSummary.result ? `result=${interactionActionSummary.result}` : '',
+    interactionActionSummary.actionId ? `action=${interactionActionSummary.actionId}` : '',
+    interactionActionSummary.sourceEvent ? `source=${interactionActionSummary.sourceEvent}` : '',
+  ].filter(Boolean).join(', ');
+}
+
+function formatPendingPlanReviewDetails(review: {
+  title: string;
+  planUri?: string;
+  canProvideFeedback: boolean;
+  actions: readonly string[];
+}): string {
+  return [
+    `title=${review.title}`,
+    review.planUri ? `plan=${review.planUri}` : '',
+    `feedback=${review.canProvideFeedback ? 'enabled' : 'disabled'}`,
+    review.actions.length > 0 ? `actions=${review.actions.join('|')}` : '',
+  ].filter(Boolean).join(', ');
+}
+
 function buildMessageSections(name: string, content: string | undefined): HostSessionDebugMessageSection[] {
   const text = typeof content === 'string' ? content.trim() : '';
   return text ? [{ name, content: text }] : [];
@@ -632,9 +849,11 @@ function mergeModelTurnSections(
 ): HostSessionDebugMessageSection[] {
   const existingInputMessages = sections.find(section => section.name === 'Input Messages');
   const existingRequestShape = sections.find(section => section.name === 'Request Shape');
+  const existingRequestOptions = sections.find(section => section.name === 'Request Options');
   const remainingSections = sections.filter(section => ![
     'Input Messages',
     'Request Shape',
+    'Request Options',
   ].includes(section.name));
 
   return [
@@ -643,6 +862,7 @@ function mergeModelTurnSections(
       : []),
     ...(existingInputMessages ? [existingInputMessages] : []),
     ...(existingRequestShape ? [existingRequestShape] : []),
+    ...(existingRequestOptions ? [existingRequestOptions] : []),
     ...(toolsContent
       ? [{ name: 'Tools', content: toolsContent }]
       : []),
@@ -733,6 +953,122 @@ function previewText(value: string | undefined, maxLength = 140): string | undef
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeInstructionSkipReason(diagnostic: Record<string, unknown>): string | undefined {
+  const skipReason = diagnostic['skipReason'];
+  switch (skipReason) {
+    case 'inactive':
+      return 'inactive';
+    case 'empty':
+      return 'empty';
+    case 'not_found':
+      return 'missing';
+    case 'overridden': {
+      const overriddenById = typeof diagnostic['overriddenById'] === 'string'
+        ? diagnostic['overriddenById'].trim()
+        : '';
+      return overriddenById ? `overridden by ${overriddenById}` : 'overridden';
+    }
+    default:
+      return undefined;
+  }
+}
+
+function buildInstructionCustomizationLogs(
+  snapshot: Record<string, unknown>,
+): HostSessionDebugCustomizationLogEntry[] {
+  const diagnostics = Array.isArray(snapshot['diagnostics'])
+    ? snapshot['diagnostics'].filter(isRecord)
+    : [];
+
+  return diagnostics.map((diagnostic) => {
+    const name = formatInstructionCustomizationName(diagnostic);
+    const source = typeof diagnostic['source'] === 'string' && diagnostic['source'].trim().length > 0
+      ? diagnostic['source'].trim()
+      : undefined;
+    const reference = typeof diagnostic['reference'] === 'string' && diagnostic['reference'].trim().length > 0
+      ? diagnostic['reference'].trim()
+      : undefined;
+    const reason = normalizeInstructionSkipReason(diagnostic);
+
+    return {
+      category: diagnostic['active'] === true ? 'applying' : 'skipped',
+      name,
+      ...(source ? { source } : {}),
+      ...(reference ? { reference } : {}),
+      ...(reason ? { reason } : {}),
+    } satisfies HostSessionDebugCustomizationLogEntry;
+  });
+}
+
+function formatInstructionCustomizationName(diagnostic: Record<string, unknown>): string {
+  const displayPath = typeof diagnostic['displayPath'] === 'string' ? diagnostic['displayPath'].trim() : '';
+  if (displayPath) {
+    return `指令文件 ${displayPath}`;
+  }
+
+  const reference = typeof diagnostic['reference'] === 'string' ? diagnostic['reference'].trim() : '';
+  const referenceLabel = formatInstructionCustomizationReference(reference);
+  if (referenceLabel) {
+    return `指令文件 ${referenceLabel}`;
+  }
+
+  const name = typeof diagnostic['name'] === 'string' ? diagnostic['name'].trim() : '';
+  return name ? `指令文件 ${name}` : '指令文件 unknown';
+}
+
+function formatInstructionCustomizationReference(reference: string): string | undefined {
+  if (!reference) {
+    return undefined;
+  }
+
+  const normalized = reference.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  const fileName = segments.at(-1);
+  if (!fileName) {
+    return undefined;
+  }
+
+  const parent = segments.at(-2);
+  return parent === '.aily' ? `${parent}/${fileName}` : fileName;
+}
+
+function buildInstructionCustomizationContent(
+  part: Extract<TurnResponsePart, { type: 'state' }>,
+): HostSessionDebugResolvedCustomizationSummaryContent | HostSessionDebugResolvedTextContent {
+  const snapshot = isRecord(part.metadata?.['snapshot']) ? part.metadata['snapshot'] : undefined;
+  if (!snapshot) {
+    return {
+      kind: 'text',
+      text: (typeof part.text === 'string' ? part.text.trim() : '') || 'No customization details captured.',
+    };
+  }
+
+  const hostId = typeof snapshot['hostId'] === 'string' ? snapshot['hostId'].trim() : '';
+  const modelFamily = typeof snapshot['modelFamily'] === 'string' ? snapshot['modelFamily'].trim() : '';
+  const capabilities = Array.isArray(snapshot['capabilities'])
+    ? snapshot['capabilities'].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+  const resolutionLogs = buildInstructionCustomizationLogs(snapshot);
+  return {
+    kind: 'customizationSummary',
+    resolutionLogs,
+    counts: {
+      instructions: resolutionLogs.filter((entry) => entry.category === 'applying' || entry.category === 'referenced').length,
+      skills: resolutionLogs.filter((entry) => entry.category === 'skill').length,
+      agents: resolutionLogs.filter((entry) => entry.category === 'custom-agent').length,
+      hooks: resolutionLogs.filter((entry) => entry.category === 'hook').length,
+      skipped: resolutionLogs.filter((entry) => entry.category === 'skipped').length,
+    },
+    ...(hostId ? { hostId } : {}),
+    ...(modelFamily ? { modelFamily } : {}),
+    ...(capabilities.length > 0 ? { capabilities } : {}),
+  };
+}
+
 function projectPartEvent(
   part: TurnResponsePart,
   context: {
@@ -749,6 +1085,24 @@ function projectPartEvent(
 } | null {
   switch (part.type) {
     case 'state':
+      if (part.kind === 'instructions') {
+        return {
+          event: createDebugEvent({
+            sessionId: context.sessionId,
+            turnId: context.turnId,
+            sequence: context.sequence,
+            kind: 'generic',
+            created: context.created,
+            parentEventId: context.modelTurnEventId,
+            name: 'Resolve Customizations',
+            details: previewText(part.text, 180),
+            level: part.state === 'error' ? 'error' : (part.state === 'warn' ? 'warning' : 'info'),
+            category: 'customization',
+          }),
+          content: buildInstructionCustomizationContent(part),
+        };
+      }
+
       return {
         event: createDebugEvent({
           sessionId: context.sessionId,
@@ -818,6 +1172,13 @@ function projectPartEvent(
           text: previewText([part.description, part.resultText].filter(Boolean).join('\n\n'), 4000) ?? part.agentName,
         },
       };
+    case 'tool_call': {
+      const autoReviewProjection = projectAutoReviewEvent(part, context);
+      if (autoReviewProjection) {
+        return autoReviewProjection;
+      }
+      return null;
+    }
     case 'terminal':
       return {
         event: createDebugEvent({
@@ -900,4 +1261,94 @@ function sumChildItemDurations(part: Extract<TurnResponsePart, { type: 'subagent
   }
 
   return durations.reduce((sum, duration) => sum + duration, 0);
+}
+
+function projectAutoReviewEvent(
+  part: Extract<TurnResponsePart, { type: 'tool_call' }>,
+  context: {
+    sessionId: string;
+    turnId: string;
+    modelTurnEventId: string;
+    toolCallParentId: string;
+    created: number;
+    sequence: number;
+  },
+): {
+  event: HostSessionDebugEvent;
+  content?: HostSessionDebugResolvedEventContent;
+} | null {
+  const approval = readAutoReviewApprovalMetadata(part.metadata);
+  if (!approval) {
+    return null;
+  }
+
+  const startedAt = typeof approval['reviewStartedAt'] === 'number' ? approval['reviewStartedAt'] : undefined;
+  const completedAt = typeof approval['reviewCompletedAt'] === 'number' ? approval['reviewCompletedAt'] : undefined;
+  const created = completedAt ?? startedAt ?? context.created;
+  const durationInMillis = typeof startedAt === 'number' && typeof completedAt === 'number'
+    ? Math.max(0, completedAt - startedAt)
+    : undefined;
+  const status = typeof approval['reviewStatus'] === 'string' ? approval['reviewStatus'] : 'reviewing';
+  const riskLevel = typeof approval['reviewRiskLevel'] === 'string' ? approval['reviewRiskLevel'] : undefined;
+  const source = typeof approval['source'] === 'string' ? approval['source'] : undefined;
+  const message = typeof approval['message'] === 'string' ? approval['message'] : undefined;
+  const decisionSource = typeof approval['decisionSource'] === 'string' ? approval['decisionSource'] : undefined;
+  const eventName = status === 'reviewing' ? 'Auto Review' : 'Auto Review Result';
+  const details = [
+    `tool=${part.toolName}`,
+    `status=${status}`,
+    riskLevel ? `risk=${riskLevel}` : '',
+    source ? `source=${source}` : '',
+    typeof durationInMillis === 'number' ? `duration=${durationInMillis}ms` : '',
+  ].filter(Boolean).join(', ');
+  const payload = {
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    status,
+    ...(riskLevel ? { riskLevel } : {}),
+    ...(source ? { source } : {}),
+    ...(decisionSource ? { decisionSource } : {}),
+    ...(message ? { rationale: message } : {}),
+    ...(typeof startedAt === 'number' ? { reviewStartedAt: startedAt } : {}),
+    ...(typeof completedAt === 'number' ? { reviewCompletedAt: completedAt } : {}),
+    ...(typeof durationInMillis === 'number' ? { durationInMillis } : {}),
+  };
+
+  return {
+    event: createDebugEvent({
+      sessionId: context.sessionId,
+      turnId: context.turnId,
+      sequence: context.sequence,
+      kind: 'generic',
+      created,
+      parentEventId: context.toolCallParentId || context.modelTurnEventId,
+      name: eventName,
+      details,
+      level: status === 'approved' || status === 'reviewing' ? 'info' : (status === 'timedOut' ? 'warning' : 'error'),
+      category: 'approval',
+    }),
+    content: {
+      kind: 'text',
+      text: JSON.stringify(payload, null, 2),
+    },
+  };
+}
+
+function readAutoReviewApprovalMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  const root = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata
+    : null;
+  const approval = root && typeof root['approval'] === 'object' && !Array.isArray(root['approval'])
+    ? root['approval'] as Record<string, unknown>
+    : null;
+  if (!approval || approval['reviewer'] !== 'auto_review') {
+    return null;
+  }
+
+  const status = approval['reviewStatus'];
+  if (status !== 'reviewing' && status !== 'approved' && status !== 'denied' && status !== 'timedOut' && status !== 'aborted') {
+    return null;
+  }
+
+  return approval;
 }

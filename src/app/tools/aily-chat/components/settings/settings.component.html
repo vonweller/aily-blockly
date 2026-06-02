@@ -248,6 +248,56 @@
                         placeholder="例如：D:/project/.github/instructions"></textarea>
                 </div>
                 <div class="setting-block">
+                    <div class="setting-label">用户级 Agent Folders</div>
+                    <div class="setting-hint">每行一个路径，作为 `~/.copilot/agents`、`~/.claude/agents` 之外的补充 source。</div>
+                    <textarea nz-input rows="3" [(ngModel)]="userAgentFoldersText"
+                        placeholder="例如：D:/rules/user-agents"></textarea>
+                </div>
+                <div class="setting-block">
+                    <div class="setting-label">项目级 Agent Folders</div>
+                    <div class="setting-hint">每行一个路径，作为 `.github/agents`、`.claude/agents` 之外的补充 source。</div>
+                    <textarea nz-input rows="3" [(ngModel)]="projectAgentFoldersText"
+                        placeholder="例如：D:/project/.github/agents"></textarea>
+                </div>
+                <div class="setting-row">
+                    <label nz-checkbox [(ngModel)]="useChatSessionCustomizationsForCustomAgents">存在 session customization provider 时，custom agents 优先使用该 source</label>
+                    <span class="setting-hint">当前只切换 runtime owner；若生产态未绑定 provider，仍会回退本地 prompt/lex agent source。</span>
+                </div>
+                @if(activeSessionCustomizationProviderLabel) {
+                <div class="setting-block">
+                    <div class="setting-label">当前 Session Customization Provider</div>
+                    <div class="setting-hint">
+                        {{ activeSessionCustomizationProviderLabel }}
+                        @if(activeSessionCustomizationProviderSupportedTypesLabel) {
+                        <span>，支持类型：{{ activeSessionCustomizationProviderSupportedTypesLabel }}</span>
+                        }
+                        @if(!isSessionCustomizationSourceActive) {
+                        <span>；当前 custom agents 仍由 runtime custom-agent source 驱动。</span>
+                        }
+                    </div>
+                </div>
+                }
+                <div class="setting-block">
+                    <div class="setting-label">Custom Agent 可见性</div>
+                    <div class="setting-hint">Configure Custom Agents... 会打开此配置。取消勾选后，该 custom agent 将从 mode picker 和 &#64;agent suggestions 中隐藏。</div>
+                    @if(isSessionCustomizationSourceActive && activeSessionCustomizationProviderLabel && !activeSessionCustomizationProviderSupportsAgents) {
+                    <div class="setting-hint">当前 active provider 不支持 agent items，因此这一会话类型没有 provider-backed custom agent 可配置。</div>
+                    } @else if(customAgentVisibilityOptions.length > 0) {
+                    <div class="custom-agent-visibility-list">
+                        @for (option of customAgentVisibilityOptions; track option.target) {
+                        <label nz-checkbox [(ngModel)]="option.visible" class="custom-agent-visibility-item">
+                            <span class="custom-agent-visibility-label">{{ option.label }}</span>
+                            @if(option.description) {
+                            <span class="custom-agent-visibility-description">{{ option.description }}</span>
+                            }
+                        </label>
+                        }
+                    </div>
+                    } @else {
+                    <div class="setting-hint">当前会话尚未发现可配置的 custom agent。</div>
+                    }
+                </div>
+                <div class="setting-block">
                     <div class="setting-label">Terminal 自动放行规则</div>
                     <div class="setting-hint">每行一个规则。支持命令前缀，或 /^...$/i 形式的正则字面量。</div>
                     <textarea nz-input rows="3" [(ngModel)]="terminalAllowListText"
@@ -267,9 +317,15 @@
                     <label nz-checkbox [(ngModel)]="autoSaveEdits">默认自动保存变更</label>
                     <span class="setting-hint">AI编辑完成后自动保留变更，不弹出变更面板</span>
                 </div>
+                <div class="setting-block">
+                    <div class="setting-label">会话列表布局</div>
+                    <nz-select [(ngModel)]="sessionViewerOrientation" nzPlaceHolder="选择布局偏好">
+                        <nz-option nzValue="sideBySide" nzLabel="并排优先（默认）"></nz-option>
+                        <nz-option nzValue="stacked" nzLabel="始终堆叠"></nz-option>
+                    </nz-select>
+                </div>
                 <div>最大请求数（工具调用轮数） <i class="fa-light fa-circle-question help-icon" (click)="openHelpUrl('maxRequests')"></i>
                 </div>
-                <div class="setting-hint">对齐 VS Code 的 chat.agent.maxRequests（默认 200）：限制一次请求中代理最多还能继续发起多少轮工具调用与模型请求。</div>
                 <input nz-input [(ngModel)]="maxRequests" />
             </div>
         </div>

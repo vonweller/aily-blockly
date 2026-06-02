@@ -7,6 +7,7 @@ import type { ChatListItem } from '../services/chat-history.service';
 import type { ChatMessageHandle } from './chat-message-handle';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
 import type { RenderEvent } from 'aily-lex/browser';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import {
   LexAgentEventBridge,
   type LexAgentHostSyncAccess,
@@ -24,7 +25,7 @@ type LexUiEventLifecycleAccess = {
   ensureAilyMessage(): void;
   resetTurnState(): void;
   getCurrentTurnDraft(): LexTurnDraft;
-  finalize(): Promise<void>;
+  finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void>;
   readonly currentMessageHandle: ChatMessageHandle<ChatListItem> | null;
   closeNativeThinking(): void;
   startNativeThinking(): void;
@@ -166,8 +167,8 @@ export class LexUiEventBridge {
     }
   }
 
-  async finalizeTurn(): Promise<void> {
-    await this.messageLifecycleBridge.finalize();
+  async finalizeTurn(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
+    await this.messageLifecycleBridge.finalize(saveTarget);
   }
 
   appendLifecycleError(message: string): void {

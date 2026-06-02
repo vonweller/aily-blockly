@@ -237,6 +237,10 @@ export class ContextBudgetService {
     usedTokens: number,
     extra?: LexContextBudgetSnapshotExtra,
   ): void {
+    if (typeof maxTokens === 'number' && maxTokens > 0) {
+      this._maxContextTokens = maxTokens;
+    }
+
     this.contextBudgetViewService.applySnapshot(createLexContextBudgetSnapshot({
       maxTokens,
       usedTokens,

@@ -44,6 +44,9 @@ export function extractUserTurnRoutingMetadata(
     if (!subCommandMatch) {
       return {
         agentId,
+        requestRouting: {
+          customAgentTarget: agentId,
+        },
         explicitAgentInvocation: {
           kind: 'explicit-agent-invocation',
           targetAgent: agentId,
@@ -67,6 +70,9 @@ export function extractUserTurnRoutingMetadata(
 
     return {
       agentId,
+      requestRouting: {
+        customAgentTarget: agentId,
+      },
       explicitAgentInvocation: {
         kind: 'explicit-agent-invocation',
         targetAgent: agentId,

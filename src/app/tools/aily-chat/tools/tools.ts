@@ -3003,46 +3003,82 @@ IMPORTANT: update是全量替换，必须包含所有任务。只想添加新任
     // =============================================================================
     {
         name: 'memory',
-        description: `持久化记忆工具 — 跨会话保存和读取笔记、偏好、项目约定等信息。
+        description: `持久化记忆工具 — 管理 /memories 下的用户、会话和仓库记忆文件。
 
-两层作用域：
-- **project**: 项目记忆，存储在项目根目录的 aily.md 中。记录项目特定的约定、架构决策、常见问题等。
-- **global**: 全局记忆，跨项目持久化。记录用户偏好、通用模式、经验教训等。
+三层作用域：
+- **/memories/**: 用户级记忆，跨工作区与会话持久化。
+- **/memories/session/**: 当前会话记忆，仅作用于当前对话。
+- **/memories/repo/**: 当前仓库记忆，记录项目约定、结构与已验证事实。
 
-**何时使用：**
-- 用户明确要求"记住"某些偏好或约定时
-- 发现重要的项目模式/约定需要记录时
-- 遇到反复出现的问题，记录解决方案
-- 读取之前保存的上下文以提供连续的协助体验
+支持的操作与 Copilot memory 主干一致：view/create/str_replace/insert/delete/rename。
 
-**不要滥用：** 不要每次对话都写入，只记录真正有价值的持久化知识。`,
+不要把 instruction 文件或项目根 aily.md 当成 memory tool 的存储位置。`,
         input_schema: {
             type: 'object',
             properties: {
                 command: {
                     type: 'string',
-                    enum: ['read', 'write', 'append', 'replace', 'clear'],
-                    description: '操作命令: read=读取, write=覆写, append=追加, replace=精确替换, clear=清空'
+                    enum: ['view', 'create', 'str_replace', 'insert', 'delete', 'rename'],
+                    description: '操作命令: view=查看, create=创建, str_replace=精确替换, insert=按行插入, delete=删除, rename=重命名'
                 },
-                scope: {
+                path: {
                     type: 'string',
-                    enum: ['project', 'global'],
-                    description: '作用域: project=项目级(aily.md), global=全局级(跨项目)'
+                    description: 'memory 路径，必须使用 /memories/* 语义，例如 /memories/debugging.md、/memories/session/plan.md、/memories/repo/project-rules.md'
                 },
-                content: {
+                file_text: {
                     type: 'string',
-                    description: 'write/append 时的内容'
+                    description: 'create 时写入的新文件内容'
                 },
-                old_text: {
-                    type: 'string',
-                    description: 'replace 时要替换的旧文本'
+                view_range: {
+                    type: 'array',
+                    description: 'view 文件时可选的 1-based [startLine, endLine] 行范围',
+                    items: { type: 'number' },
+                    minItems: 2,
+                    maxItems: 2
                 },
-                new_text: {
+                old_str: {
                     type: 'string',
-                    description: 'replace 时的新文本'
+                    description: 'str_replace 时要精确匹配一次的旧文本'
+                },
+                new_str: {
+                    type: 'string',
+                    description: 'str_replace 时的新文本'
+                },
+                insert_line: {
+                    type: 'number',
+                    description: 'insert 时的 0-based 行号；0 表示插入到文件开头'
+                },
+                insert_text: {
+                    type: 'string',
+                    description: 'insert 时要插入的文本'
+                },
+                old_path: {
+                    type: 'string',
+                    description: 'rename 时的原始 memory 路径'
+                },
+                new_path: {
+                    type: 'string',
+                    description: 'rename 时的新 memory 路径；禁止跨 scope 重命名'
                 }
             },
-            required: ['command', 'scope']
+            required: ['command']
+        },
+        agents: ["mainAgent"]
+    },
+    {
+        name: 'resolve_memory_file_uri',
+        description: `将 /memories 路径解析为当前用户、会话或仓库记忆在本机上的真实文件 URI。
+
+    仅用于把 /memories/* 逻辑路径映射到真实文件 URI；它不读取或修改文件内容。`,
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: {
+                    type: 'string',
+                    description: '必须以 /memories/ 开头的 memory 路径，例如 /memories/session/plan.md 或 /memories/repo/project-rules.md'
+                }
+            },
+            required: ['path']
         },
         agents: ["mainAgent"]
     },

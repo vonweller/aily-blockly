@@ -16,6 +16,7 @@ import {
     MAIN_AGENT_LEGACY_ALIAS,
     MAIN_AGENT_TYPE,
     normalizeAgentIdentifier,
+    normalizeAgentIdentifiers,
     SCHEMATIC_AGENT_LEGACY_ALIAS,
     SCHEMATIC_AGENT_TYPE,
 } from '../core/agent-identifiers';
@@ -222,6 +223,12 @@ interface RemoteModelCatalog {
     pickerControlModelPresets: Record<string, ModelPickerControlOption>;
 }
 
+interface RemoteModelCatalogMetadata {
+    currentTier?: string;
+    catalogVersion?: string;
+    permissionsHash?: string;
+}
+
 interface RemoteModelCatalogResponse {
     status?: string;
     data?: {
@@ -229,6 +236,9 @@ interface RemoteModelCatalogResponse {
         model_presets?: Record<string, RemoteCatalogPayloadEntry>;
         user_visible_model_presets?: Record<string, RemoteCatalogPayloadEntry>;
         picker_control_model_presets?: Record<string, RemotePickerControlPayloadEntry>;
+        current_tier?: string | null;
+        catalog_version?: string | null;
+        permissions_hash?: string | null;
     };
 }
 
@@ -246,6 +256,12 @@ export interface LexTerminalPolicyConfig {
     allowList?: string[];
     denyList?: string[];
     inheritDefaultAllowList?: boolean;
+}
+
+export type ChatSessionViewerOrientationSetting = 'stacked' | 'sideBySide';
+
+function normalizeSessionViewerOrientationSetting(value: unknown): ChatSessionViewerOrientationSetting {
+    return value === 'stacked' ? 'stacked' : 'sideBySide';
 }
 
 export type WorkspacePermissionRulesByProject = Record<string, PermissionRuleInput[]>;
@@ -277,6 +293,10 @@ export interface AilyChatConfig {
         schematicAgent?: AgentToolsConfig;
         [agentName: string]: AgentToolsConfig | undefined;
     };
+    /** 是否启用本地 memory tool（对齐 chat.tools.memory.enabled）。 */
+    memoryToolEnabled?: boolean;
+    /** 是否启用 Copilot-backed repository memory（对齐 chat.copilotMemory.enabled）。 */
+    copilotMemoryEnabled?: boolean;
     /** 安全工作区配置 */
     securityWorkspaces?: {
         /** 是否允许访问项目文件 */
@@ -298,16 +318,34 @@ export interface AilyChatConfig {
     summarizationThresholdRatio?: number;
     /** 默认自动保存变更（AI编辑完成后自动保留，不弹出变更面板） */
     autoSaveEdits?: boolean;
+    /** session viewer 布局偏好；对齐 VS Code chat.view.sessions.orientation。 */
+    sessionViewerOrientation?: ChatSessionViewerOrientationSetting;
     /** 用户级 instruction folders，扫描其中的 `*.instructions.md`。 */
     userInstructionFolders?: string[];
     /** 项目级 instruction folders，扫描其中的 `*.instructions.md`。 */
     projectInstructionFolders?: string[];
+    /** 用户级 agent folders，扫描其中的 `.agent.md` / legacy `.chatmode.md`。 */
+    userAgentFolders?: string[];
+    /** 项目级 agent folders，扫描其中的 `.agent.md` / legacy `.chatmode.md`。 */
+    projectAgentFolders?: string[];
+    /** 用户级 skill folders，扫描其中的 `<skillName>/SKILL.md`。 */
+    userSkillFolders?: string[];
+    /** 项目级 skill folders，扫描其中的 `<skillName>/SKILL.md`。 */
+    projectSkillFolders?: string[];
+    /** 对齐 upstream ChatModes：若生产态已绑定 session customization item provider，则 custom agents 优先从该 source 读取。 */
+    useChatSessionCustomizationsForCustomAgents?: boolean;
+    /** 在 custom agent picker 中隐藏的 customAgentTarget 列表。 */
+    hiddenCustomAgentTargets?: string[];
     /** 追加到 lex terminal runtime policy 的 allow list。 */
     terminalAllowList?: string[];
     /** 强制要求确认的 terminal 命令规则。 */
     terminalDenyList?: string[];
     /** 是否继承 lex 内建 innocuous terminal allow list。 */
     terminalInheritDefaultAllowList?: boolean;
+    /** reviewed actions 的默认 reviewer。 */
+    approvalsReviewer?: 'user' | 'auto_review';
+    /** reviewed actions 的默认 approval policy。 */
+    approvalPolicy?: 'on_request' | 'never';
     /** 当前工作区维度持久化的 lex permission rules。键为规范化后的 projectPath。 */
     workspacePermissionRules?: WorkspacePermissionRulesByProject;
     /** 当前工作区维度持久化的 tool+arguments approval combination keys。 */
@@ -359,6 +397,8 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     maxCount: 200,
     enabledTools: [],
     disabledTools: [],
+    memoryToolEnabled: true,
+    copilotMemoryEnabled: false,
     securityWorkspaces: {
         project: true,
         library: true
@@ -369,8 +409,17 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     compressionThresholdRatio: 0.5,
     summarizationThresholdRatio: 0.75,
     autoSaveEdits: true,
+    sessionViewerOrientation: 'sideBySide',
     userInstructionFolders: [],
-    projectInstructionFolders: []
+    projectInstructionFolders: [],
+    userAgentFolders: [],
+    projectAgentFolders: [],
+    userSkillFolders: [],
+    projectSkillFolders: [],
+    useChatSessionCustomizationsForCustomAgents: false,
+    hiddenCustomAgentTargets: [],
+    approvalsReviewer: 'user',
+    approvalPolicy: 'on_request',
 };
 
 /**
@@ -391,9 +440,9 @@ export class AilyChatConfigService {
         userVisibleModelPresets: {},
         pickerControlModelPresets: {},
     };
+    private remoteModelCatalogMetadata: RemoteModelCatalogMetadata = {};
     private remoteModelCatalogStatus: 'loading' | 'ready' | 'unavailable' = 'loading';
     private remoteModelCatalogStatusHint = '正在加载远端 model catalog...';
-    private lastRemoteModelCatalogAuthKey: string | null = null;
     private authReadySubscription?: Subscription;
 
     /** 配置变更通知 Subject */
@@ -414,6 +463,18 @@ export class AilyChatConfigService {
 
     get hasRemoteModelCatalog(): boolean {
         return this.hasUsableRemoteModelCatalog();
+    }
+
+    get modelCatalogCurrentTier(): string | undefined {
+        return this.remoteModelCatalogMetadata.currentTier;
+    }
+
+    get modelCatalogVersion(): string | undefined {
+        return this.remoteModelCatalogMetadata.catalogVersion;
+    }
+
+    get modelCatalogPermissionsHash(): string | undefined {
+        return this.remoteModelCatalogMetadata.permissionsHash;
     }
 
     constructor(
@@ -442,11 +503,6 @@ export class AilyChatConfigService {
                         return;
                     }
 
-                    const authKey = this.getRemoteModelCatalogAuthKey(this.authService?.getAuthSnapshot?.());
-                    if (this.hasUsableRemoteModelCatalog() && authKey === this.lastRemoteModelCatalogAuthKey) {
-                        return;
-                    }
-
                     this.loadRemoteModelCatalog('auth_ready');
                 });
 
@@ -457,11 +513,6 @@ export class AilyChatConfigService {
             this.authReadySubscription = this.authService.authSnapshot$
                 .subscribe((authSnapshot) => {
                     if (!authSnapshot || !AilyHost.isInitialized()) {
-                        return;
-                    }
-
-                    const authKey = this.getRemoteModelCatalogAuthKey(authSnapshot);
-                    if (this.hasUsableRemoteModelCatalog() && authKey === this.lastRemoteModelCatalogAuthKey) {
                         return;
                     }
 
@@ -551,6 +602,9 @@ export class AilyChatConfigService {
      */
     updateConfig(updates: Partial<AilyChatConfig>): void {
         this.config = { ...this.config, ...updates };
+        if (updates.sessionViewerOrientation !== undefined) {
+            this.config.sessionViewerOrientation = normalizeSessionViewerOrientationSetting(updates.sessionViewerOrientation);
+        }
         if (updates.maxRequests !== undefined) {
             this.config.maxRequests = updates.maxRequests;
             this.config.maxCount = updates.maxRequests;
@@ -707,6 +761,14 @@ export class AilyChatConfigService {
         this.config.autoSaveEdits = value;
     }
 
+    get sessionViewerOrientation(): ChatSessionViewerOrientationSetting {
+        return normalizeSessionViewerOrientationSetting(this.config.sessionViewerOrientation);
+    }
+
+    set sessionViewerOrientation(value: ChatSessionViewerOrientationSetting) {
+        this.config.sessionViewerOrientation = normalizeSessionViewerOrientationSetting(value);
+    }
+
     get userInstructionFolders(): string[] {
         return normalizeInstructionFolderPaths(this.config.userInstructionFolders);
     }
@@ -721,6 +783,54 @@ export class AilyChatConfigService {
 
     set projectInstructionFolders(value: string[]) {
         this.config.projectInstructionFolders = normalizeInstructionFolderPaths(value);
+    }
+
+    get userAgentFolders(): string[] {
+        return normalizeAgentFolderPaths(this.config.userAgentFolders);
+    }
+
+    set userAgentFolders(value: string[]) {
+        this.config.userAgentFolders = normalizeAgentFolderPaths(value);
+    }
+
+    get projectAgentFolders(): string[] {
+        return normalizeAgentFolderPaths(this.config.projectAgentFolders);
+    }
+
+    set projectAgentFolders(value: string[]) {
+        this.config.projectAgentFolders = normalizeAgentFolderPaths(value);
+    }
+
+    get userSkillFolders(): string[] {
+        return normalizeSkillFolderPaths(this.config.userSkillFolders);
+    }
+
+    set userSkillFolders(value: string[]) {
+        this.config.userSkillFolders = normalizeSkillFolderPaths(value);
+    }
+
+    get projectSkillFolders(): string[] {
+        return normalizeSkillFolderPaths(this.config.projectSkillFolders);
+    }
+
+    set projectSkillFolders(value: string[]) {
+        this.config.projectSkillFolders = normalizeSkillFolderPaths(value);
+    }
+
+    get useChatSessionCustomizationsForCustomAgents(): boolean {
+        return this.config.useChatSessionCustomizationsForCustomAgents === true;
+    }
+
+    set useChatSessionCustomizationsForCustomAgents(value: boolean) {
+        this.config.useChatSessionCustomizationsForCustomAgents = value === true;
+    }
+
+    get hiddenCustomAgentTargets(): string[] {
+        return normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
+    }
+
+    set hiddenCustomAgentTargets(value: string[]) {
+        this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(value);
     }
 
     get terminalAllowList(): string[] {
@@ -747,6 +857,34 @@ export class AilyChatConfigService {
 
     set terminalInheritDefaultAllowList(value: boolean | undefined) {
         this.config.terminalInheritDefaultAllowList = value;
+    }
+
+    get approvalsReviewer(): 'user' | 'auto_review' {
+        return this.config.approvalsReviewer === 'auto_review'
+            ? 'auto_review'
+            : 'user';
+    }
+
+    set approvalsReviewer(value: 'user' | 'auto_review') {
+        this.config.approvalsReviewer = value === 'auto_review' ? 'auto_review' : 'user';
+    }
+
+    get approvalPolicy(): 'on_request' | 'never' {
+        return this.config.approvalPolicy === 'never'
+            ? 'never'
+            : 'on_request';
+    }
+
+    set approvalPolicy(value: 'on_request' | 'never') {
+        this.config.approvalPolicy = value === 'never' ? 'never' : 'on_request';
+    }
+
+    getLexApprovalsReviewer(): 'user' | 'auto_review' {
+        return this.approvalsReviewer;
+    }
+
+    getLexApprovalPolicy(): 'on_request' | 'never' {
+        return this.approvalPolicy;
     }
 
     getLexTerminalPolicy(): LexTerminalPolicyConfig | undefined {
@@ -868,6 +1006,22 @@ export class AilyChatConfigService {
 
     set disabledTools(value: string[]) {
         this.config.disabledTools = normalizeConfiguredToolNames(value);
+    }
+
+    get memoryToolEnabled(): boolean {
+        return this.config.memoryToolEnabled !== false;
+    }
+
+    set memoryToolEnabled(value: boolean) {
+        this.config.memoryToolEnabled = value !== false;
+    }
+
+    get copilotMemoryEnabled(): boolean {
+        return this.config.copilotMemoryEnabled === true;
+    }
+
+    set copilotMemoryEnabled(value: boolean) {
+        this.config.copilotMemoryEnabled = value === true;
     }
 
     /**
@@ -1038,6 +1192,10 @@ export class AilyChatConfigService {
             return remotePresetOptions;
         }
 
+        if (this.remoteModelCatalogStatus === 'ready') {
+            return [];
+        }
+
         return CORE_MODEL_PRESET_OPTIONS
             .filter(preset => preset.enabled)
             .map(preset => ({ ...preset }));
@@ -1106,7 +1264,7 @@ export class AilyChatConfigService {
         const contextWindowTokens = typeof options?.contextWindowTokens === 'number' && options.contextWindowTokens > 0
             ? options.contextWindowTokens
             : undefined;
-        const presetMatch = this.resolvePresetModel(normalizedModelName);
+        const presetMatch = this.resolvePresetDisplayModel(normalizedModelName);
         if (presetMatch) {
             return this.normalizeRuntimeModel({
                 ...presetMatch,
@@ -1147,7 +1305,7 @@ export class AilyChatConfigService {
         });
     }
 
-    resolvePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
+    resolvePresetDisplayModel(presetId: string | null | undefined): ModelConfigOption | null {
         const normalizedPresetId = normalizeKnownPresetId(presetId);
         if (!normalizedPresetId) {
             return null;
@@ -1188,6 +1346,24 @@ export class AilyChatConfigService {
         };
     }
 
+    resolveSelectablePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
+        const normalizedPresetId = normalizeKnownPresetId(presetId);
+        if (!normalizedPresetId) {
+            return null;
+        }
+
+        const preset = this.getModelPresetById(normalizedPresetId);
+        if (!preset?.enabled) {
+            return null;
+        }
+
+        return this.resolvePresetDisplayModel(normalizedPresetId);
+    }
+
+    resolvePresetModel(presetId: string | null | undefined): ModelConfigOption | null {
+        return this.resolvePresetDisplayModel(presetId);
+    }
+
     resolveSavedModel(savedModel: Partial<ModelConfigOption> | null | undefined): ModelConfigOption | null {
         if (!savedModel) {
             return null;
@@ -1203,7 +1379,7 @@ export class AilyChatConfigService {
             reasoningEffort: this.resolveModelReasoningEffort(model, savedModel.reasoningEffort),
         });
 
-        const presetModel = savedPreset?.enabled ? this.resolvePresetModel(normalizedSavedPresetId) : null;
+        const presetModel = savedPreset?.enabled ? this.resolveSelectablePresetModel(normalizedSavedPresetId) : null;
         if (presetModel && savedPreset?.enabled) {
             return mergeRuntimeFields(presetModel, resolvedSavedPresetId ?? presetModel.presetId);
         }
@@ -1213,7 +1389,7 @@ export class AilyChatConfigService {
             return mergeRuntimeFields(directModel);
         }
 
-        const defaultPresetModel = this.resolvePresetModel(this.getDefaultModelPresetId());
+        const defaultPresetModel = this.resolveSelectablePresetModel(this.getDefaultModelPresetId());
         if (defaultPresetModel) {
             return mergeRuntimeFields(defaultPresetModel, defaultPresetModel.presetId);
         }
@@ -1667,6 +1843,7 @@ export class AilyChatConfigService {
                         userVisibleModelPresets: {},
                         pickerControlModelPresets: {},
                     };
+                    this.remoteModelCatalogMetadata = {};
                     this.setRemoteModelCatalogStatus(
                         'unavailable',
                         `远端 model catalog 响应格式无效，暂时仅显示本地内置模型预设。请检查 ${ChatAPI.modelCatalog}`,
@@ -1680,8 +1857,8 @@ export class AilyChatConfigService {
                     return;
                 }
 
-                const modelIds = Object.keys(normalizedCatalog.models);
-                const presetIds = Object.keys(normalizedCatalog.modelPresets);
+                const modelIds = Object.keys(normalizedCatalog.catalog.models);
+                const presetIds = Object.keys(normalizedCatalog.catalog.modelPresets);
                 const modelMetadata = modelIds.reduce<Record<string, {
                     displayName?: string;
                     contextWindowTokens?: number;
@@ -1689,7 +1866,7 @@ export class AilyChatConfigService {
                     billingMultiplier?: number;
                     billingLabelOverride?: string;
                 }>>((acc, modelId) => {
-                    const entry = normalizedCatalog.models[modelId];
+                    const entry = normalizedCatalog.catalog.models[modelId];
                     acc[modelId] = {
                         displayName: entry.displayName,
                         contextWindowTokens: entry.contextWindowTokens,
@@ -1707,7 +1884,7 @@ export class AilyChatConfigService {
                     billingMultiplier?: number;
                     billingLabelOverride?: string;
                 }>>((acc, presetId) => {
-                    const entry = normalizedCatalog.modelPresets[presetId];
+                    const entry = normalizedCatalog.catalog.modelPresets[presetId];
                     acc[presetId] = {
                         model: entry.model,
                         displayName: entry.displayName,
@@ -1721,6 +1898,9 @@ export class AilyChatConfigService {
                 console.info('[AilyChatConfigService] 远端 model catalog 响应成功', {
                     url: ChatAPI.modelCatalog,
                     status: response.status,
+                    currentTier: normalizedCatalog.metadata.currentTier,
+                    catalogVersion: normalizedCatalog.metadata.catalogVersion,
+                    permissionsHash: normalizedCatalog.metadata.permissionsHash,
                     modelCount: modelIds.length,
                     presetCount: presetIds.length,
                     modelIds,
@@ -1729,8 +1909,9 @@ export class AilyChatConfigService {
                     presetMetadata,
                 });
 
-                this.remoteModelCatalog = normalizedCatalog;
-                if (this.hasUsableRemoteModelCatalog(normalizedCatalog)) {
+                this.remoteModelCatalog = normalizedCatalog.catalog;
+                this.remoteModelCatalogMetadata = normalizedCatalog.metadata;
+                if (this.hasUsableRemoteModelCatalog(normalizedCatalog.catalog)) {
                     this.setRemoteModelCatalogStatus('ready', undefined);
                 } else {
                     this.setRemoteModelCatalogStatus(
@@ -1752,6 +1933,7 @@ export class AilyChatConfigService {
                     userVisibleModelPresets: {},
                     pickerControlModelPresets: {},
                 };
+                this.remoteModelCatalogMetadata = {};
                 const isUnauthorized = error instanceof HttpErrorResponse
                     ? error.status === 401
                     : error?.status === 401;
@@ -1807,7 +1989,10 @@ export class AilyChatConfigService {
     }
 
     private hasUsableRemoteModelCatalog(catalog: RemoteModelCatalog = this.remoteModelCatalog): boolean {
-        return Object.keys(catalog.models).length > 0 || Object.keys(catalog.modelPresets).length > 0;
+        return Object.keys(catalog.models).length > 0
+            || Object.keys(catalog.modelPresets).length > 0
+            || Object.keys(catalog.userVisibleModelPresets).length > 0
+            || Object.keys(catalog.pickerControlModelPresets).length > 0;
     }
 
     private getRemoteModelCatalogRequestOptions(): { observe: 'response'; headers?: Record<string, string> } {
@@ -1824,26 +2009,12 @@ export class AilyChatConfigService {
         };
     }
 
-    private getRemoteModelCatalogAuthKey(
-        authSnapshot: { plan?: string; serviceTier?: string; subscriptionStatus?: string; groups?: readonly string[] } | null | undefined,
-    ): string {
-        const plan = typeof authSnapshot?.plan === 'string' ? authSnapshot.plan.trim() : '';
-        const serviceTier = typeof authSnapshot?.serviceTier === 'string' ? authSnapshot.serviceTier.trim() : '';
-        const subscriptionStatus = typeof authSnapshot?.subscriptionStatus === 'string' ? authSnapshot.subscriptionStatus.trim() : '';
-        const groups = Array.isArray(authSnapshot?.groups)
-            ? [...new Set(authSnapshot.groups
-                .filter((group): group is string => typeof group === 'string')
-                .map(group => group.trim())
-                .filter(group => group.length > 0))].sort().join(',')
-            : '';
-        return `${plan}|${serviceTier}|${subscriptionStatus}|${groups}`;
-    }
-
     private buildRemotePresetOption(
         presetId: string,
         remotePreset: RemoteModelCatalogEntry,
     ): ModelPresetOption {
         const fallbackPreset = CORE_MODEL_PRESET_OPTIONS.find(preset => preset.id === presetId);
+        const isDefaultAutoPreset = presetId === DEFAULT_MODEL_PRESET_ID;
         return {
             id: presetId,
             name: remotePreset.displayName || fallbackPreset?.name || presetId,
@@ -1862,7 +2033,9 @@ export class AilyChatConfigService {
             minimumClientVersion: remotePreset.minimumClientVersion,
             unavailableReason: remotePreset.unavailableReason,
             providerContextManagementSupport: remotePreset.providerContextManagementSupport,
-            enabled: typeof remotePreset.isUserSelectable === 'boolean'
+            enabled: isDefaultAutoPreset
+                ? true
+                : typeof remotePreset.isUserSelectable === 'boolean'
                 ? remotePreset.isUserSelectable
                 : (fallbackPreset?.enabled ?? true),
         };
@@ -1870,16 +2043,29 @@ export class AilyChatConfigService {
 
     private normalizeRemoteModelCatalog(
         payload: RemoteModelCatalogResponse['data'] | null | undefined,
-    ): RemoteModelCatalog | null {
+    ): { catalog: RemoteModelCatalog; metadata: RemoteModelCatalogMetadata } | null {
         if (!payload || typeof payload !== 'object') {
             return null;
         }
 
         return {
-            models: this.normalizeRemoteCatalogEntries(payload.models),
-            modelPresets: this.normalizeRemotePresetEntries(payload.model_presets),
-            userVisibleModelPresets: this.normalizeRemotePresetEntries(payload.user_visible_model_presets),
-            pickerControlModelPresets: this.normalizeRemotePickerControlEntries(payload.picker_control_model_presets),
+            catalog: {
+                models: this.normalizeRemoteCatalogEntries(payload.models),
+                modelPresets: this.normalizeRemotePresetEntries(payload.model_presets),
+                userVisibleModelPresets: this.normalizeRemotePresetEntries(payload.user_visible_model_presets),
+                pickerControlModelPresets: this.normalizeRemotePickerControlEntries(payload.picker_control_model_presets),
+            },
+            metadata: {
+                currentTier: typeof payload.current_tier === 'string' && payload.current_tier.trim()
+                    ? payload.current_tier.trim()
+                    : undefined,
+                catalogVersion: typeof payload.catalog_version === 'string' && payload.catalog_version.trim()
+                    ? payload.catalog_version.trim()
+                    : undefined,
+                permissionsHash: typeof payload.permissions_hash === 'string' && payload.permissions_hash.trim()
+                    ? payload.permissions_hash.trim()
+                    : undefined,
+            },
         };
     }
 
@@ -1894,6 +2080,10 @@ export class AilyChatConfigService {
             .map(([presetId]) => presetId);
         if (fallbackRemotePresetIds.length > 0) {
             return fallbackRemotePresetIds;
+        }
+
+        if (this.remoteModelCatalogStatus === 'ready') {
+            return [];
         }
 
         return CORE_MODEL_PRESET_OPTIONS
@@ -1911,13 +2101,29 @@ export class AilyChatConfigService {
     }
 
     private getRemoteModelPresetOptions(): ModelPresetOption[] {
-        if (Object.keys(this.remoteModelCatalog.modelPresets).length === 0) {
+        const mergedRemotePresetEntries = this.getMergedRemoteModelPresetEntries();
+        if (Object.keys(mergedRemotePresetEntries).length === 0) {
             return [];
         }
 
-        return Object.entries(this.remoteModelCatalog.modelPresets)
+        return Object.entries(mergedRemotePresetEntries)
             .filter(([presetId]) => !this.remoteModelCatalog.models[presetId])
             .map(([presetId, remotePreset]) => this.buildRemotePresetOption(presetId, remotePreset));
+    }
+
+    private getMergedRemoteModelPresetEntries(): Record<string, RemoteModelCatalogEntry> {
+        const mergedPresetEntries: Record<string, RemoteModelCatalogEntry> = {
+            ...this.remoteModelCatalog.modelPresets,
+        };
+
+        for (const [presetId, entry] of Object.entries(this.remoteModelCatalog.userVisibleModelPresets)) {
+            const existingEntry = mergedPresetEntries[presetId];
+            mergedPresetEntries[presetId] = existingEntry
+                ? { ...existingEntry, ...entry }
+                : { ...entry };
+        }
+
+        return mergedPresetEntries;
     }
 
     private normalizeRemotePresetEntries(
@@ -2453,6 +2659,9 @@ export class AilyChatConfigService {
 
         this.config.enabledTools = normalizeConfiguredToolNames(this.config.enabledTools);
         this.config.disabledTools = normalizeConfiguredToolNames(this.config.disabledTools);
+        this.config.userSkillFolders = normalizeSkillFolderPaths(this.config.userSkillFolders);
+        this.config.projectSkillFolders = normalizeSkillFolderPaths(this.config.projectSkillFolders);
+        this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
     }
 }
 
@@ -2552,6 +2761,18 @@ function normalizeInstructionFolderPaths(value: string[] | undefined): string[] 
         .filter((item): item is string => typeof item === 'string')
         .map(item => item.trim())
         .filter(item => item.length > 0);
+}
+
+function normalizeAgentFolderPaths(value: string[] | undefined): string[] {
+    return normalizeInstructionFolderPaths(value);
+}
+
+function normalizeSkillFolderPaths(value: string[] | undefined): string[] {
+    return normalizeInstructionFolderPaths(value);
+}
+
+function normalizeCustomAgentTargets(value: readonly string[] | undefined): string[] {
+    return normalizeAgentIdentifiers(Array.isArray(value) ? [...value] : undefined);
 }
 
 function normalizeTerminalPermissionRules(value: string[] | undefined): string[] {

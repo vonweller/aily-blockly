@@ -1,4 +1,10 @@
 <div class="chat-debug-cache">
+  <aily-chat-debug-breadcrumb
+    [sessionTitle]="sessionTitle"
+    [currentLabel]="'缓存探索'"
+    (homeRequested)="homeRequested.emit()"
+    (overviewRequested)="overviewRequested.emit()"></aily-chat-debug-breadcrumb>
+
   <div class="chat-debug-cache-header">
     <div class="chat-debug-cache-heading">
       <div class="chat-debug-cache-eyebrow">缓存探索</div>
@@ -8,8 +14,6 @@
       </div>
     </div>
     <div class="chat-debug-cache-actions">
-      <button type="button" class="chat-debug-cache-action secondary" (click)="homeRequested.emit()">会话列表</button>
-      <button type="button" class="chat-debug-cache-action secondary" (click)="overviewRequested.emit()">返回概览</button>
       <button type="button" class="chat-debug-cache-action" (click)="closeRequested.emit()">返回聊天</button>
     </div>
   </div>
@@ -123,6 +127,34 @@
           </div>
         </div>
       </div>
+
+      @if (currentComparison.requestOptionRows.length > 0) {
+      <div class="chat-debug-cache-section">
+        <div class="chat-debug-cache-section-title">请求选项</div>
+        <div class="chat-debug-cache-components">
+          @for (row of currentComparison.requestOptionRows; track row.key) {
+          <div class="chat-debug-cache-component" [class.changed]="row.changed">
+            <div class="chat-debug-cache-component-header">
+              <span>{{ row.key }}</span>
+              <span class="chat-debug-cache-component-state">{{ row.changed ? 'changed' : 'same' }}</span>
+            </div>
+            <div class="chat-debug-cache-component-columns">
+              @if (currentComparison.previous) {
+              <div class="chat-debug-cache-component-column">
+                <div class="chat-debug-cache-component-label">上一轮</div>
+                <pre>{{ row.previous || '—' }}</pre>
+              </div>
+              }
+              <div class="chat-debug-cache-component-column">
+                <div class="chat-debug-cache-component-label">{{ currentComparison.previous ? '当前轮' : '当前请求' }}</div>
+                <pre>{{ row.current || '—' }}</pre>
+              </div>
+            </div>
+          </div>
+          }
+        </div>
+      </div>
+      }
 
       <div class="chat-debug-cache-section">
         <div class="chat-debug-cache-section-title">组件对比</div>

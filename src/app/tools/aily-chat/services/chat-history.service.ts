@@ -27,16 +27,61 @@
  * @see Copilot 使用全局 globalStorageUri 不分项目，我们在此基础上加了 projectPath 标记
  */
 
-import { Injectable, OnDestroy } from '@angular/core';
+import { Injectable, OnDestroy, Optional } from '@angular/core';
+import { Subject } from 'rxjs';
 import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
+import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
-import { decodeHostSessionDebugExport, encodeHostSessionDebugExport, type HostSessionDebugExportEnvelope } from './host-session-debug-export';
+import {
+  decodeHostSessionDebugExport,
+  encodeHostSessionDebugExport,
+  type HostSessionDebugDualPersistenceSummary,
+  type HostSessionDebugExportAugmentation,
+  type HostSessionDebugExportEnvelope,
+  type HostSessionDebugLiveRuntimeOverlaySummary,
+  type HostSessionRestoreFailureSummary,
+  type HostSessionRestoreDiagnosticsSummary,
+} from './host-session-debug-export';
+import { resolveHostSessionRuntimeAuxiliary } from '../helpers/host-session-runtime-auxiliary';
 import { HostSessionAdoptionBridge } from './host-session-adoption-bridge';
 import { HostSessionPersistenceBridge } from './host-session-persistence-bridge';
 import { HostSessionRecordStore } from './host-session-record-store';
+import { ChatService } from './chat.service';
+import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
+import { ChatSessionStateService } from './chat-session-state.service';
+import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
+import {
+  normalizePersistedChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
+import {
+  DEFAULT_CHAT_SESSION_TYPE,
+  normalizeChatSessionType,
+  normalizeChatSurfaceModeId,
+  type ChatSessionInputState,
+  type ChatSessionModeDescriptor,
+  type ChatSessionType,
+  type ChatSurfaceModeId,
+} from '../core/chat-mode';
+import {
+  normalizeHostSessionRequestRoutingSummary,
+  type HostSessionRequestRoutingSummary,
+} from '../helpers/host-session-request-routing';
+import {
+  normalizeHostSessionInteractionActionSummary,
+  type HostSessionInteractionActionSummary,
+} from '../helpers/host-session-interaction-action';
+import {
+  type HostSessionSelectedModeResolveOptions,
+  normalizeHostSessionInputStateFromMetadata,
+  resolveHostSessionModeDescriptorFromMetadata,
+  resolveHostSessionSummaryModeFromMetadata,
+  resolveHostSessionSelectedModeFromMetadata,
+} from '../helpers/host-session-input-state';
+import type { SessionLifecycleRestoreErrorDetails } from '../helpers/session-lifecycle.helper';
 
 // ===== 类型定义 =====
 
@@ -44,6 +89,9 @@ import { HostSessionRecordStore } from './host-session-record-store';
 export interface SessionIndexEntry {
   sessionId: string;
   title: string;
+  titleSource?: PersistedChatSessionTitleSource;
+  defaultTitle?: string;
+  sessionType?: ChatSessionType;
   /** 创建此会话时的项目路径，null 表示无项目 */
   projectPath: string | null;
   /** 项目显示名称，null 表示无项目 */
@@ -51,7 +99,11 @@ export interface SessionIndexEntry {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
-  mode: string;
+  mode: ChatSurfaceModeId;
+  modeDescriptor?: ChatSessionModeDescriptor;
+  inputState?: ChatSessionInputState;
+  requestRouting?: HostSessionRequestRoutingSummary;
+  interactionActionSummary?: HostSessionInteractionActionSummary;
   model: string | null;
   /** 数据文件是否可用（项目路径被删除/移动时标记为 false） */
   dataAvailable?: boolean;
@@ -89,12 +141,34 @@ export interface HostSessionSidecar {
   response?: HostSessionResponseSidecar;
 }
 
+export interface HostSessionSkillInvocationTraceFile {
+  readonly path: string;
+  readonly uri: string;
+  readonly category?: string;
+}
+
+export interface HostSessionSkillInvocationTraceEntry {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly skillUri: string;
+  readonly mode: 'inline' | 'fork';
+  readonly relatedFiles: readonly HostSessionSkillInvocationTraceFile[];
+}
+
+export interface HostSessionRuntimeAuxiliary {
+  requestContext?: NonNullable<SessionSnapshot['requestContext']>;
+  activeSkillNames?: readonly string[];
+  skillInvocationTrace?: readonly HostSessionSkillInvocationTraceEntry[];
+}
+
 /** 单个会话的宿主持久化记录 */
 export interface HostSessionRecord {
   /** Copilot 风格的 turn/request/response 容器。 */
   turnResponses?: PersistedHostTurnResponse[];
   /** response-model sidecars that should not live inside response content turns. */
   sidecar?: HostSessionSidecar;
+  /** Runtime-only host mirrors that should not live in the primary session metadata contract. */
+  auxiliary?: HostSessionRuntimeAuxiliary;
   /** 会话元数据 */
   metadata: SessionMetadata;
 }
@@ -115,10 +189,17 @@ export interface ChatListItem {
 export interface SessionMetadata {
   sessionId: string;
   title: string;
+  titleSource?: PersistedChatSessionTitleSource;
+  defaultTitle?: string;
+  sessionType?: ChatSessionType;
   projectPath: string | null;
   createdAt: number;
   updatedAt: number;
-  mode: string;
+  mode: ChatSurfaceModeId;
+  modeDescriptor?: ChatSessionModeDescriptor;
+  inputState?: ChatSessionInputState;
+  requestRouting?: HostSessionRequestRoutingSummary;
+  interactionActionSummary?: HostSessionInteractionActionSummary;
   model: string | null;
   /** 上下文预算快照 */
   contextBudget?: {
@@ -152,6 +233,7 @@ export interface LiveHostSessionRecord {
   sessionId: string;
   turnResponses?: PersistedHostTurnResponse[];
   sidecar?: HostSessionSidecar;
+  auxiliary?: HostSessionRuntimeAuxiliary;
   metadata: Partial<SessionMetadata> & { sessionId: string };
 }
 
@@ -163,6 +245,44 @@ export interface ImportedDebugSessionRecord {
   hostRecord: HostSessionRecord;
   debugEvents: readonly HostSessionDebugEvent[];
   debugCompanionFiles?: Readonly<Record<string, string>>;
+  debugDualPersistence?: HostSessionDebugDualPersistenceSummary;
+  debugLiveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
+  debugRestoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
+  debugRestoreFailure?: HostSessionRestoreFailureSummary;
+}
+
+export interface SessionTitleUpdateOptions {
+  readonly source?: PersistedChatSessionTitleSource;
+}
+
+export interface HostSessionStoreChangeEvent {
+  readonly sessionId: string;
+  readonly scope: 'persisted' | 'imported';
+  readonly kind: 'updated' | 'deleted';
+}
+
+function resolveDurablePersistedTitleCandidate(
+  title: unknown,
+  source: unknown,
+  defaultTitle?: unknown,
+): { title: string; source?: PersistedChatSessionTitleSource } | null {
+  const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const normalizedSource = normalizePersistedChatSessionTitleSource(source);
+  if (normalizedSource) {
+    return {
+      title: normalizedTitle,
+      source: normalizedSource,
+    };
+  }
+
+  const normalizedDefaultTitle = typeof defaultTitle === 'string' ? defaultTitle.trim() : '';
+  return !normalizedDefaultTitle || normalizedTitle !== normalizedDefaultTitle
+    ? { title: normalizedTitle }
+    : null;
 }
 
 export function countHostRecordMessages(record: Pick<HostSessionRecord, 'turnResponses'>): number {
@@ -187,6 +307,12 @@ export class ChatHistoryService implements OnDestroy {
   private indexLoaded = false;
   /** 脏标记：索引有未保存的变更 */
   private indexDirty = false;
+  /** 索引版本号（每次索引语义变更 +1） */
+  private indexRevision = 0;
+  /** getHistoryList 缓存对应的索引版本号 */
+  private historyListCacheRevision = -1;
+  /** 按 filter/project 维度缓存已排序历史快照 */
+  private readonly historyListCache = new Map<string, SessionIndexEntry[]>();
   /** 定时兜底保存的 timer ID */
   private autoSaveTimer: any = null;
 
@@ -199,14 +325,24 @@ export class ChatHistoryService implements OnDestroy {
   private readonly hostSessionPersistenceBridge: HostSessionPersistenceBridge;
   private readonly hostSessionAdoptionBridge: HostSessionAdoptionBridge;
   private readonly importedDebugSessions = new Map<string, ImportedDebugSessionRecord>();
+  private readonly latestRestoreFailures = new Map<string, HostSessionRestoreFailureSummary>();
+  private readonly latestRestoreFailureImportedSessions = new Map<string, string>();
+  private readonly hostSessionChangedSubject = new Subject<HostSessionStoreChangeEvent>();
+  readonly hostSessionChanged$ = this.hostSessionChangedSubject.asObservable();
 
-  constructor() {
+  constructor(
+    @Optional() private readonly chatService?: ChatService,
+    @Optional() private readonly chatSessionEntryStateService?: ChatSessionEntryStateService,
+    @Optional() private readonly chatSessionStateService?: ChatSessionStateService,
+    @Optional() private readonly chatSessionRuntimeStore?: ChatSessionRuntimeStoreService,
+  ) {
     this.hostRecordStore = new HostSessionRecordStore({
       projectChatDir: this.PROJECT_CHAT_DIR,
       getGlobalChatDataDir: () => this.getGlobalChatDataDir(),
       getGlobalProjectRootPath: () => this.getGlobalProjectRootPath(),
       joinPath: (...parts) => this.joinPath(...parts),
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
+      resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
     });
     this.indexStore = new ChatHistoryIndexStore({
       indexFile: this.INDEX_FILE,
@@ -217,6 +353,7 @@ export class ChatHistoryService implements OnDestroy {
       extractProjectName: (projectPath) => this.extractProjectName(projectPath),
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
       readHostRecord: (sessionId, projectPath) => this.hostRecordStore.read(sessionId, projectPath),
+      resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
     });
     this.hostSessionPersistenceBridge = new HostSessionPersistenceBridge(this.hostRecordStore, {
       ensureIndexLoaded: () => this.ensureIndexLoaded(),
@@ -256,6 +393,14 @@ export class ChatHistoryService implements OnDestroy {
    */
   getHistoryList(filter: HistoryFilterMode = 'all', projectPath?: string | null, projectRootPath?: string | null): SessionIndexEntry[] {
     this.ensureIndexLoaded();
+    this.ensureHistoryListCacheRevision();
+
+    const cacheKey = this.buildHistoryListCacheKey(filter, projectPath, projectRootPath);
+    const cached = this.historyListCache.get(cacheKey);
+    if (cached) {
+      return [...cached];
+    }
+
     let result = [...this.index];
 
     if (filter === 'current-project' && projectPath) {
@@ -272,7 +417,8 @@ export class ChatHistoryService implements OnDestroy {
 
     // 按 updatedAt 降序
     result.sort((a, b) => b.updatedAt - a.updatedAt);
-    return result;
+    this.historyListCache.set(cacheKey, result);
+    return [...result];
   }
 
   /**
@@ -304,13 +450,19 @@ export class ChatHistoryService implements OnDestroy {
    */
   saveHostRecord(record: LiveHostSessionRecord): void {
     this.hostSessionPersistenceBridge.saveHostRecord(record);
+    if (record.sessionId) {
+      this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
+    }
   }
 
   /**
    * 仅更新索引中的标题（标题生成完成时调用，低 IO）
    */
-  updateTitle(sessionId: string, title: string): void {
-    this.hostSessionPersistenceBridge.updateTitle(sessionId, title);
+  updateTitle(sessionId: string, title: string, options?: SessionTitleUpdateOptions): void {
+    this.hostSessionPersistenceBridge.updateTitle(sessionId, title, options);
+    if (sessionId) {
+      this.emitHostSessionChanged({ sessionId, scope: 'persisted', kind: 'updated' });
+    }
   }
 
   /**
@@ -344,16 +496,74 @@ export class ChatHistoryService implements OnDestroy {
     this.ensureIndexLoaded();
 
     const entry = this.index.find(item => item.sessionId === sessionId);
-    const record = this.hostSessionPersistenceBridge.loadHostRecord(sessionId, projectPathHint ?? entry?.projectPath ?? null);
+    const resolvedProjectPath = projectPathHint ?? entry?.projectPath ?? null;
+    const record = this.hostSessionPersistenceBridge.loadHostRecord(sessionId, resolvedProjectPath);
     if (!record) {
       return null;
     }
 
-    return encodeHostSessionDebugExport(record, entry);
+    return encodeHostSessionDebugExport(
+      record,
+      entry,
+      undefined,
+      this.getModeResolveOptions(),
+      this.buildDebugExportAugmentation(record, resolvedProjectPath),
+    );
   }
 
   decodeDebugSnapshot(data: Uint8Array): HostSessionDebugExportEnvelope | null {
     return decodeHostSessionDebugExport(data);
+  }
+
+  captureRestoreFailureDebugSnapshot(
+    details: SessionLifecycleRestoreErrorDetails,
+    errorMessage?: string,
+  ): ImportedDebugSessionRecord | null {
+    this.ensureIndexLoaded();
+
+    const sessionId = details.diagnostics.sessionId;
+    const entry = this.index.find(item => item.sessionId === sessionId);
+    const resolvedProjectPath = details.diagnostics.projectPath ?? entry?.projectPath ?? null;
+    const summary = this.buildRestoreFailureSummary(details, errorMessage);
+    this.latestRestoreFailures.set(sessionId, summary);
+
+    const record = this.loadHostRecord(sessionId, resolvedProjectPath);
+    if (!record) {
+      return null;
+    }
+
+    const previousImportedSessionId = this.latestRestoreFailureImportedSessions.get(sessionId);
+    if (previousImportedSessionId) {
+      this.clearImportedDebugSnapshot(previousImportedSessionId);
+    }
+
+    const encoded = encodeHostSessionDebugExport(
+      record,
+      entry,
+      undefined,
+      this.getModeResolveOptions(),
+      this.buildDebugExportAugmentation(record, resolvedProjectPath),
+    );
+    const imported = this.importDebugSnapshot(encoded);
+    if (imported) {
+      this.latestRestoreFailureImportedSessions.set(sessionId, imported.sessionId);
+    }
+    return imported;
+  }
+
+  clearRecordedRestoreFailure(sessionId: string): void {
+    if (!sessionId) {
+      return;
+    }
+
+    this.latestRestoreFailures.delete(sessionId);
+    const importedSessionId = this.latestRestoreFailureImportedSessions.get(sessionId);
+    if (importedSessionId) {
+      this.clearImportedDebugSnapshot(importedSessionId);
+      return;
+    }
+
+    this.latestRestoreFailureImportedSessions.delete(sessionId);
   }
 
   importDebugSnapshot(data: Uint8Array): ImportedDebugSessionRecord | null {
@@ -365,7 +575,7 @@ export class ChatHistoryService implements OnDestroy {
     const importedAt = Date.now();
     const sourceSessionId = decoded.session.sessionId || decoded.hostRecord.metadata.sessionId;
     const sessionId = `import:${sourceSessionId}:${importedAt}`;
-    const title = decoded.session.title || decoded.hostRecord.metadata.title || 'Imported Debug Snapshot';
+    const title = resolveImportedDebugSnapshotTitle(decoded);
     const metadata = this.hostRecordStore.createFullMetadata({
       ...decoded.hostRecord.metadata,
       sessionId,
@@ -377,6 +587,7 @@ export class ChatHistoryService implements OnDestroy {
       metadata,
       decoded.hostRecord.turnResponses,
       decoded.hostRecord.sidecar,
+      decoded.hostRecord.auxiliary,
     );
     const importedRecord: ImportedDebugSessionRecord = {
       sessionId,
@@ -391,9 +602,14 @@ export class ChatHistoryService implements OnDestroy {
         sessionId,
       ),
       ...(decoded.debug?.companionFiles ? { debugCompanionFiles: { ...decoded.debug.companionFiles } } : {}),
+      ...(decoded.debug?.dualPersistence ? { debugDualPersistence: { ...decoded.debug.dualPersistence } } : {}),
+      ...(decoded.debug?.liveRuntimeOverlay ? { debugLiveRuntimeOverlay: { ...decoded.debug.liveRuntimeOverlay } } : {}),
+      ...(decoded.debug?.restoreDiagnostics ? { debugRestoreDiagnostics: { ...decoded.debug.restoreDiagnostics } } : {}),
+      ...(decoded.debug?.restoreFailure ? { debugRestoreFailure: { ...decoded.debug.restoreFailure } } : {}),
     };
 
     this.importedDebugSessions.set(sessionId, importedRecord);
+    this.emitHostSessionChanged({ sessionId, scope: 'imported', kind: 'updated' });
     return importedRecord;
   }
 
@@ -402,7 +618,18 @@ export class ChatHistoryService implements OnDestroy {
   }
 
   clearImportedDebugSnapshot(sessionId: string): void {
-    this.importedDebugSessions.delete(sessionId);
+    if (!this.importedDebugSessions.delete(sessionId)) {
+      return;
+    }
+
+    for (const [sourceSessionId, importedSessionId] of this.latestRestoreFailureImportedSessions.entries()) {
+      if (importedSessionId === sessionId) {
+        this.latestRestoreFailureImportedSessions.delete(sourceSessionId);
+        break;
+      }
+    }
+
+    this.emitHostSessionChanged({ sessionId, scope: 'imported', kind: 'deleted' });
   }
 
   listImportedDebugSnapshots(): readonly ImportedDebugSessionRecord[] {
@@ -431,7 +658,6 @@ export class ChatHistoryService implements OnDestroy {
       parentEventId: event.parentEventId ? idMap.get(event.parentEventId) : undefined,
     }));
   }
-
   // =========================================================================
   // 公共 API - 孤儿会话领养（根目录 → 项目）
   // =========================================================================
@@ -462,6 +688,7 @@ export class ChatHistoryService implements OnDestroy {
     );
     if (adopted === 0) return 0;
 
+    this.bumpIndexRevision();
     this.indexDirty = true;
     this.writeIndex();
     return adopted;
@@ -478,6 +705,7 @@ export class ChatHistoryService implements OnDestroy {
    */
   reloadProjectIndex(projectPath: string): void {
     this.index = this.indexStore.mergeProjectIndex(this.index, projectPath);
+    this.bumpIndexRevision();
   }
 
   // =========================================================================
@@ -501,10 +729,18 @@ export class ChatHistoryService implements OnDestroy {
     this.deleteSessionFile(sessionId, null);
 
     this.index = this.index.filter(e => e.sessionId !== sessionId);
+    this.bumpIndexRevision();
     this.indexDirty = true;
     this.writeIndex();
 
     this.hostSessionPersistenceBridge.clearSessionState(sessionId);
+    this.chatSessionEntryStateService?.clearSessionEntryTarget(sessionId, entry?.projectPath ?? null);
+    this.chatSessionStateService?.clearSessionState(sessionId, entry?.projectPath ?? null);
+    this.emitHostSessionChanged({ sessionId, scope: 'persisted', kind: 'deleted' });
+  }
+
+  private emitHostSessionChanged(event: HostSessionStoreChangeEvent): void {
+    this.hostSessionChangedSubject.next(event);
   }
 
   // =========================================================================
@@ -532,30 +768,57 @@ export class ChatHistoryService implements OnDestroy {
     messageCount: number,
     updateTimestamp: boolean = true,
   ): void {
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(metadata);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(metadata, this.getModeResolveOptions());
+    const inputState = normalizeHostSessionInputStateFromMetadata(metadata, this.getModeResolveOptions());
+    const requestRouting = normalizeHostSessionRequestRoutingSummary(metadata.requestRouting, selectedMode);
+    const interactionActionSummary = normalizeHostSessionInteractionActionSummary(metadata.interactionActionSummary);
     const existing = this.index.find(e => e.sessionId === sessionId);
+    const nextTitle = metadata.title || '';
+    const nextDefaultTitle = metadata.defaultTitle || undefined;
+    const nextDurableTitle = resolveDurablePersistedTitleCandidate(nextTitle, metadata.titleSource, nextDefaultTitle);
+    const existingDurableTitle = existing
+      ? resolveDurablePersistedTitleCandidate(existing.title, existing.titleSource, existing.defaultTitle)
+      : null;
+    const resolvedDurableTitle = nextDurableTitle ?? existingDurableTitle;
     if (existing) {
-      existing.title = metadata.title || existing.title;
+      existing.title = resolvedDurableTitle?.title ?? '';
+      existing.titleSource = resolvedDurableTitle?.source;
+      existing.defaultTitle = nextDefaultTitle;
+      existing.sessionType = normalizeChatSessionType(metadata.sessionType, existing.sessionType ?? DEFAULT_CHAT_SESSION_TYPE);
       if (updateTimestamp) {
         existing.updatedAt = metadata.updatedAt || Date.now();
       }
       existing.messageCount = messageCount;
-      existing.mode = metadata.mode || existing.mode;
+      existing.mode = selectedMode.modeId;
+      existing.modeDescriptor = modeDescriptor;
+      existing.inputState = inputState;
+      existing.requestRouting = requestRouting;
+      existing.interactionActionSummary = interactionActionSummary;
       existing.model = metadata.model ?? existing.model;
       existing.dataAvailable = true;
     } else {
       this.index.push({
         sessionId,
-        title: metadata.title || '',
+        title: resolvedDurableTitle?.title ?? '',
+        ...(resolvedDurableTitle?.source ? { titleSource: resolvedDurableTitle.source } : {}),
+        ...(nextDefaultTitle ? { defaultTitle: nextDefaultTitle } : {}),
+        sessionType: normalizeChatSessionType(metadata.sessionType),
         projectPath: metadata.projectPath ?? null,
         projectName: this.extractProjectName(metadata.projectPath),
         createdAt: metadata.createdAt || Date.now(),
         updatedAt: metadata.updatedAt || Date.now(),
         messageCount,
-        mode: metadata.mode || 'agent',
+        mode: selectedMode.modeId,
+        modeDescriptor,
+        inputState,
+        requestRouting,
+        ...(interactionActionSummary ? { interactionActionSummary } : {}),
         model: metadata.model ?? null,
         dataAvailable: true,
       });
     }
+    this.bumpIndexRevision();
     this.indexDirty = true;
   }
 
@@ -569,7 +832,58 @@ export class ChatHistoryService implements OnDestroy {
   private ensureIndexLoaded(): void {
     if (this.indexLoaded) return;
     this.indexLoaded = true;
-    this.index = this.indexStore.loadMergedIndex();
+    this.index = this.indexStore.loadMergedIndex().map((entry) => this.normalizeIndexEntry(entry));
+    this.bumpIndexRevision();
+  }
+
+  private bumpIndexRevision(): void {
+    this.indexRevision += 1;
+    this.invalidateHistoryListCache();
+  }
+
+  private invalidateHistoryListCache(): void {
+    this.historyListCache.clear();
+    this.historyListCacheRevision = this.indexRevision;
+  }
+
+  private ensureHistoryListCacheRevision(): void {
+    if (this.historyListCacheRevision === this.indexRevision) {
+      return;
+    }
+
+    this.historyListCache.clear();
+    this.historyListCacheRevision = this.indexRevision;
+  }
+
+  private buildHistoryListCacheKey(
+    filter: HistoryFilterMode,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): string {
+    const normalizePath = (value?: string | null) => (value ?? '').replace(/\\/g, '/').toLowerCase();
+    return [
+      filter,
+      normalizePath(projectPath),
+      normalizePath(projectRootPath),
+    ].join('|');
+  }
+
+  private normalizeIndexEntry(entry: SessionIndexEntry): SessionIndexEntry {
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(entry);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(entry, this.getModeResolveOptions());
+    const inputState = normalizeHostSessionInputStateFromMetadata(entry, this.getModeResolveOptions());
+    const requestRouting = normalizeHostSessionRequestRoutingSummary(entry.requestRouting, selectedMode);
+    const interactionActionSummary = normalizeHostSessionInteractionActionSummary(entry.interactionActionSummary);
+
+    return {
+      ...entry,
+      sessionType: normalizeChatSessionType(entry.sessionType),
+      mode: selectedMode.modeId,
+      modeDescriptor,
+      inputState,
+      requestRouting,
+      ...(interactionActionSummary ? { interactionActionSummary } : {}),
+    };
   }
 
   /**
@@ -580,6 +894,16 @@ export class ChatHistoryService implements OnDestroy {
       this.indexDirty = false;
     }
     this.indexStore.writeProjectIndex(this.index);
+  }
+
+  private resolveStoredModeById(modeId: string) {
+    return this.chatService?.runtimeModeCollection.findModeById(modeId);
+  }
+
+  private getModeResolveOptions(): HostSessionSelectedModeResolveOptions {
+    return {
+      resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
+    };
   }
 
   /**
@@ -636,6 +960,293 @@ export class ChatHistoryService implements OnDestroy {
       return AilyHost.get().fs.existsSync(path);
     } catch {
       return false;
+    }
+  }
+
+  private readFileText(path: string): string | null {
+    try {
+      return AilyHost.get().fs.readFileSync(path, 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  private buildDebugExportAugmentation(
+    record: HostSessionRecord,
+    projectPath: string | null,
+  ): HostSessionDebugExportAugmentation | undefined {
+    const restoreDiagnostics = this.buildRestoreDiagnosticsSummary(record, projectPath);
+    const restoreFailure = this.latestRestoreFailures.get(record.metadata.sessionId) ?? null;
+    const liveRuntimeOverlay = this.buildLiveRuntimeOverlaySummary(record);
+    const summary = this.buildDualPersistenceSummary(record, projectPath);
+    if (!summary && !restoreDiagnostics && !restoreFailure && !liveRuntimeOverlay) {
+      return undefined;
+    }
+
+    const companionFiles: Record<string, string> = {};
+    if (liveRuntimeOverlay) {
+      companionFiles['live_runtime_overlay.json'] = JSON.stringify(liveRuntimeOverlay, null, 2);
+    }
+    if (summary) {
+      companionFiles['dual_persistence_diagnostics.json'] = JSON.stringify(summary, null, 2);
+    }
+    if (restoreDiagnostics) {
+      companionFiles['restore_diagnostics.json'] = JSON.stringify(restoreDiagnostics, null, 2);
+    }
+    if (restoreFailure) {
+      companionFiles['restore_failure.json'] = JSON.stringify(restoreFailure, null, 2);
+    }
+    const lexSnapshotPath = restoreDiagnostics?.lexSnapshotPath ?? summary?.lexSnapshotPath;
+    const rawLexSnapshot = lexSnapshotPath ? this.readFileText(lexSnapshotPath) : undefined;
+    if (typeof rawLexSnapshot === 'string' && rawLexSnapshot.length > 0) {
+      companionFiles['lex_session_snapshot.json'] = rawLexSnapshot;
+    }
+
+    return {
+      ...(liveRuntimeOverlay ? { liveRuntimeOverlay } : {}),
+      ...(summary ? { dualPersistence: summary } : {}),
+      ...(restoreDiagnostics ? { restoreDiagnostics } : {}),
+      ...(restoreFailure ? { restoreFailure } : {}),
+      companionFiles,
+    };
+  }
+
+  private buildLiveRuntimeOverlaySummary(
+    record: HostSessionRecord,
+  ): HostSessionDebugLiveRuntimeOverlaySummary | null {
+    const sessionId = record.metadata.sessionId;
+    const runtimeState = this.chatSessionRuntimeStore?.read(sessionId);
+    if (!runtimeState) {
+      return null;
+    }
+
+    const debugSummary = runtimeState.debugSummary;
+    const quotaOverlay = runtimeState.quotaOverlay;
+    const viewOverlay = runtimeState.viewOverlay;
+    return {
+      sessionId,
+      ...(runtimeState.status ? { status: runtimeState.status } : {}),
+      pendingRequest: runtimeState.requestInProgress,
+      needsInput: runtimeState.status === 'needs_input' || debugSummary?.needsInput === true,
+      attachedView: runtimeState.attachedView,
+      ...(typeof debugSummary?.title === 'string' ? { title: debugSummary.title } : {}),
+      ...(typeof debugSummary?.titleSource === 'string' ? { titleSource: debugSummary.titleSource } : {}),
+      ...(typeof debugSummary?.titleRevision === 'number' && Number.isFinite(debugSummary.titleRevision)
+        ? { titleRevision: Math.floor(debugSummary.titleRevision) }
+        : {}),
+      turnResponseCount: runtimeState.turnResponses.length,
+      hostProjectionPresent: !!runtimeState.hostProjectionState,
+      quotaOverlayPresent: !!quotaOverlay || debugSummary?.quotaOverlayPresent === true,
+      requestQuotaNotice: !!quotaOverlay?.requestInputNotice || debugSummary?.requestQuotaNotice === true,
+      authQuotaProjected: !!quotaOverlay?.authQuotaInfo || debugSummary?.authQuotaProjected === true,
+      contextBudgetOverlayPresent: !!viewOverlay?.contextBudgetSnapshot || debugSummary?.contextBudgetOverlayPresent === true,
+      inputNoticeOverlayPresent: !!viewOverlay?.chatInputNotice || debugSummary?.inputNoticeOverlayPresent === true,
+      ...(runtimeState.capabilities ? { capabilities: { ...runtimeState.capabilities } } : {}),
+      ...(debugSummary?.lastViewDetachAt ? { lastViewDetachAt: debugSummary.lastViewDetachAt } : {}),
+      ...(debugSummary?.lastExplicitInterruptAt ? { lastExplicitInterruptAt: debugSummary.lastExplicitInterruptAt } : {}),
+      ...(debugSummary?.lastExplicitDisposeAt ? { lastExplicitDisposeAt: debugSummary.lastExplicitDisposeAt } : {}),
+      notes: [
+        'Live runtime overlay is sourced from ChatSessionRuntimeStoreService, not from the visible chat view.',
+        ...(typeof debugSummary?.titleSource === 'string'
+          ? ['Title/source/revision in this section describe the live runtime title snapshot, not durable hostRecord truth.']
+          : []),
+        ...(quotaOverlay
+          ? ['Quota/notice overlay belongs to the live runtime owner and is not durable hostRecord truth.']
+          : []),
+        ...(viewOverlay
+          ? ['Context budget/input notice view overlay belongs to the live runtime owner and is projected only when reattached.']
+          : []),
+      ],
+    };
+  }
+
+  private buildRestoreFailureSummary(
+    details: SessionLifecycleRestoreErrorDetails,
+    errorMessage?: string,
+  ): HostSessionRestoreFailureSummary {
+    const diagnostics = details.diagnostics;
+    const restoreFailure = details.restoreFailure;
+    const resolvedErrorMessage = errorMessage?.trim()
+      || (restoreFailure?.kind ? `[${restoreFailure.kind}] restore failed` : 'Session restore failed.');
+
+    return {
+      sessionId: diagnostics.sessionId,
+      stage: details.stage,
+      projectPath: diagnostics.projectPath ?? null,
+      requestSource: diagnostics.requestSource,
+      hostRecordSource: diagnostics.hostRecordSource,
+      metadataSource: diagnostics.metadataSource,
+      ...(restoreFailure?.kind ? { restoreKind: restoreFailure.kind } : {}),
+      ...(restoreFailure?.hostRecordSessionId ? { hostRecordSessionId: restoreFailure.hostRecordSessionId } : {}),
+      ...(restoreFailure?.storedSnapshotState ? { storedSnapshotState: restoreFailure.storedSnapshotState } : {}),
+      errorMessage: resolvedErrorMessage,
+      notes: [
+        'Restore failure kinds remain owned by the host-side restore bridge and resolver seam.',
+        'Pane-owned loadSession callbacks may notify the user, but debug/export should consume this structured summary instead of parsing message text.',
+      ],
+    };
+  }
+
+  private buildRestoreDiagnosticsSummary(
+    record: HostSessionRecord,
+    projectPath: string | null,
+  ): HostSessionRestoreDiagnosticsSummary | null {
+    if (!record.metadata.sessionId) {
+      return null;
+    }
+
+    const lexSnapshotPath = this.resolveLexSnapshotFilePath(record.metadata.sessionId, projectPath);
+    const rawLexSnapshot = this.readFileText(lexSnapshotPath);
+    const parsedLexSnapshot = rawLexSnapshot ? this.safeParseJson(rawLexSnapshot) : null;
+    const storedSnapshotState = rawLexSnapshot === undefined
+      ? 'missing'
+      : (parsedLexSnapshot ? 'loaded' : 'load-failed');
+    const storedSnapshotError = rawLexSnapshot !== undefined && !parsedLexSnapshot
+      ? 'Lex snapshot could not be parsed during debug export.'
+      : undefined;
+    const missingActiveSkillNames = this.resolveMissingRestoredSkillNames(record);
+    const notes = [
+      'Restore-plan diagnostics are owned by the host-side restore resolver and bridge seam.',
+      ...(storedSnapshotState === 'missing'
+        ? ['No lex auxiliary snapshot was present when the debug export was generated.']
+        : []),
+      ...(storedSnapshotState === 'load-failed'
+        ? ['The lex auxiliary snapshot existed but could not be read as a valid snapshot payload.']
+        : []),
+      ...(missingActiveSkillNames.length > 0
+        ? [`Restore degraded because persisted active skills are unavailable in the current registry: ${missingActiveSkillNames.join(', ')}.`]
+        : []),
+    ];
+
+    return {
+      sessionId: record.metadata.sessionId,
+      lexSnapshotPath,
+      storedSnapshotState,
+      ...(storedSnapshotError ? { storedSnapshotError } : {}),
+      ...(missingActiveSkillNames.length > 0 ? { missingActiveSkillNames } : {}),
+      notes,
+    };
+  }
+
+  private resolveMissingRestoredSkillNames(record: HostSessionRecord): string[] {
+    const activeSkillNames = resolveHostSessionRuntimeAuxiliary(record)?.activeSkillNames ?? [];
+    if (activeSkillNames.length === 0) {
+      return [];
+    }
+
+    return activeSkillNames.filter(name => !BlocklySkillRegistry.getSkillContext(name));
+  }
+
+  private buildDualPersistenceSummary(
+    record: HostSessionRecord,
+    projectPath: string | null,
+  ): HostSessionDebugDualPersistenceSummary | null {
+    if (!record.metadata.sessionId) {
+      return null;
+    }
+
+    const hostRecordPath = this.resolveHostRecordFilePath(record.metadata.sessionId, projectPath);
+    const lexSnapshotPath = this.resolveLexSnapshotFilePath(record.metadata.sessionId, projectPath);
+    const rawLexSnapshot = this.readFileText(lexSnapshotPath);
+    const parsedLexSnapshot = rawLexSnapshot ? this.safeParseJson(rawLexSnapshot) : null;
+    const indexEntry = this.index.find(entry => entry.sessionId === record.metadata.sessionId);
+    const runtimeAuxiliary = resolveHostSessionRuntimeAuxiliary(record);
+    const hostTitle = record.metadata.title || '';
+    const hostTitleSource = record.metadata.titleSource;
+    const hostDefaultTitle = record.metadata.defaultTitle || '';
+    const indexTitle = indexEntry?.title;
+    const indexTitleSource = indexEntry?.titleSource;
+    const indexDefaultTitle = indexEntry?.defaultTitle || '';
+    const displayTitle = hostTitle || indexTitle || hostDefaultTitle || indexDefaultTitle;
+    const displayTitleSource = (hostTitle || indexTitle)
+      ? (hostTitleSource ?? indexTitleSource ?? 'legacy-custom')
+      : (hostDefaultTitle || indexDefaultTitle ? 'default-first-request' : 'empty');
+    const hostAuxiliaryMirrors = [
+      ...(runtimeAuxiliary?.requestContext ? ['auxiliary.requestContext'] : []),
+      ...(runtimeAuxiliary?.activeSkillNames?.length ? ['auxiliary.activeSkillNames'] : []),
+    ];
+    const notes = [
+      'Host record remains the UI-visible durable transcript and metadata source.',
+      'Lex snapshot remains the FileSessionStorage-owned runtime snapshot used for auxiliary restore state.',
+      ...(hostAuxiliaryMirrors.length > 0
+        ? ['requestContext/activeSkillNames are currently mirrored onto host metadata for restore/debug continuity.']
+        : []),
+      ...(rawLexSnapshot && !parsedLexSnapshot
+        ? ['Lex snapshot exists but could not be parsed during debug export.']
+        : []),
+    ];
+
+    return {
+      hostRecordPath,
+      lexSnapshotPath,
+      lexSnapshotPresent: typeof rawLexSnapshot === 'string',
+      hostTurnResponseCount: record.turnResponses?.length ?? 0,
+      ...(parsedLexSnapshot && Array.isArray((parsedLexSnapshot as { turns?: unknown[] }).turns)
+        ? { lexTurnCount: (parsedLexSnapshot as { turns: unknown[] }).turns.length }
+        : {}),
+      displayTitle,
+      displayTitleSource,
+      hostTitle,
+      ...(hostTitleSource ? { hostTitleSource } : {}),
+      ...(hostDefaultTitle ? { hostDefaultTitle } : {}),
+      ...(indexTitle !== undefined ? { indexTitle } : {}),
+      ...(indexTitleSource ? { indexTitleSource } : {}),
+      ...(indexDefaultTitle ? { indexDefaultTitle } : {}),
+      hostPrimaryFields: [
+        'turnResponses',
+        'metadata.title',
+        'metadata.titleSource',
+        'metadata.defaultTitle',
+        'metadata.sessionType',
+        'metadata.projectPath',
+        'metadata.mode',
+        'metadata.modeDescriptor',
+        'metadata.inputState',
+        'metadata.requestRouting',
+        'metadata.interactionActionSummary',
+        'metadata.model',
+      ],
+      lexPrimaryFields: [
+        'turns',
+        'requestContext',
+        'activeSkillNames',
+        'todos',
+        'executionNarrative',
+        'revision',
+        'createdAt',
+        'updatedAt',
+      ],
+      ...(hostAuxiliaryMirrors.length > 0 ? { hostAuxiliaryMirrors } : {}),
+      notes,
+    };
+  }
+
+  private resolveHostRecordFilePath(sessionId: string, projectPath: string | null): string {
+    const projectFilePath = projectPath
+      ? this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.json`)
+      : null;
+    if (projectFilePath && this.fileExists(projectFilePath)) {
+      return projectFilePath;
+    }
+
+    return this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.json`);
+  }
+
+  private resolveLexSnapshotFilePath(sessionId: string, projectPath: string | null): string {
+    const encodedSessionId = encodeURIComponent(sessionId);
+    if (projectPath) {
+      return this.joinPath(projectPath, this.PROJECT_CHAT_DIR, 'lex-sessions', `${encodedSessionId}.json`);
+    }
+
+    const userHome = AilyHost.get().path?.getUserHome?.() || '';
+    return this.joinPath(userHome, '.aily', this.CHAT_DATA_DIR, 'lex-sessions', `${encodedSessionId}.json`);
+  }
+
+  private safeParseJson(raw: string): unknown | null {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
     }
   }
 
@@ -698,4 +1309,76 @@ export class ChatHistoryService implements OnDestroy {
     const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
     return normalize(a) === normalize(b);
   }
+}
+
+const IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE = 'Imported Debug Snapshot';
+
+function resolveImportedDebugSnapshotTitle(decoded: HostSessionDebugExportEnvelope): string {
+  return decoded.session.title
+    || decoded.session.defaultTitle
+    || decoded.hostRecord.metadata.title
+    || decoded.hostRecord.metadata.defaultTitle
+    || deriveImportedDebugSnapshotTitleFromHostRecord(decoded.hostRecord)
+    || deriveImportedDebugSnapshotTitleFromEvents(decoded.debug.events)
+    || IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE;
+}
+
+function deriveImportedDebugSnapshotTitleFromHostRecord(record: HostSessionRecord): string | undefined {
+  const turnResponses = record.turnResponses;
+  if (!Array.isArray(turnResponses)) {
+    return undefined;
+  }
+
+  for (const turnResponse of turnResponses) {
+    const title = readImportedDebugRequestTitle((turnResponse as { request?: unknown }).request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return undefined;
+}
+
+function readImportedDebugRequestTitle(request: unknown): string | undefined {
+  const text = typeof request === 'string'
+    ? request
+    : request && typeof request === 'object'
+      ? ((request as { messageText?: unknown }).messageText
+        ?? (request as { prompt?: unknown }).prompt
+        ?? (request as { text?: unknown }).text
+        ?? (request as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return undefined;
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const firstLine = normalized.split('\n')[0]?.trim() ?? '';
+  if (!firstLine) {
+    return undefined;
+  }
+
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}...` : firstLine;
+}
+
+function deriveImportedDebugSnapshotTitleFromEvents(events: readonly HostSessionDebugEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.kind !== 'userMessage') {
+      continue;
+    }
+
+    const title = event.message.trim();
+    if (!title) {
+      continue;
+    }
+
+    return title.length > 80 ? `${title.slice(0, 80)}...` : title;
+  }
+
+  return undefined;
 }

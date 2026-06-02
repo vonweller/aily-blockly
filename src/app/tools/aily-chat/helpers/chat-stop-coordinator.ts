@@ -15,10 +15,10 @@ type ChatStopCoordinatorContext = Pick<
   & Pick<IChatViewAccess, 'viewAdapter'>;
 
 /**
- * Coordinates host-side cleanup when the current turn is stopped.
+ * Coordinates host-side cleanup when the visible current turn is stopped.
  *
- * This keeps ChatEngineService.stop focused on shell delegation while the
- * cancel/finalize bookkeeping stays in one place.
+ * Detached runtime interruption is handled by the engine-owned session action
+ * owner so this coordinator can stay focused on the visible finalize path.
  */
 export class ChatStopCoordinator {
   constructor(private readonly ctx: ChatStopCoordinatorContext) {}
@@ -28,9 +28,9 @@ export class ChatStopCoordinator {
     return snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
   }
 
-  stop(): void {
+  stopVisibleSession(sessionId?: string): void {
     this.ctx.isCancelled = true;
-    this.ctx.lexStream.agent.stop();
+    this.ctx.lexStream.agent.stop(sessionId);
 
     if (this.ctx.messageSubscription) {
       this.ctx.messageSubscription.unsubscribe();
@@ -64,6 +64,6 @@ export class ChatStopCoordinator {
     this.ctx.isCompleted = true;
     this.ctx.session.saveCurrentSession();
 
-    void this.ctx.applyPendingSwitch();
+    void this.ctx.applyPendingSwitch(sessionId);
   }
 }

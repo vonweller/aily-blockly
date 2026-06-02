@@ -440,6 +440,7 @@
         "TOKEN_COMPACTING": "Compressing…",
         "MODE_AGENT_FULL": "Modo Agente",
         "MODE_QA_FULL": "Modo P&R",
+        "MODE_EDIT_FULL": "Modo Edición",
         "STOP_CURRENT_SESSION_FIRST": "Por favor, detenga la sesión actual antes de crear una nueva",
         "NO_HISTORY_SESSION": "No hay registros de sesiones históricas",
         "MERMAID_SAVE_ARCH": "Guardar como diagrama de arquitectura",

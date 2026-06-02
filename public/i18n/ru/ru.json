@@ -440,6 +440,7 @@
         "TOKEN_COMPACTING": "Compressing…",
         "MODE_AGENT_FULL": "Режим агента",
         "MODE_QA_FULL": "Режим вопрос-ответ",
+        "MODE_EDIT_FULL": "Режим редактирования",
         "STOP_CURRENT_SESSION_FIRST": "Пожалуйста, остановите текущий сеанс перед созданием нового",
         "NO_HISTORY_SESSION": "Нет записей сессий в истории",
         "MERMAID_SAVE_ARCH": "Сохранить как диаграмму архитектуры",

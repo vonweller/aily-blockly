@@ -109,8 +109,9 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return this._responseVote;
   }
   @Input() currentMode = 'agent';
+  @Input() currentCustomAgentTarget: string | undefined;
   @Input() currentModelName = '';
-  /** 与主输入区一致的模型展示文案（含推理档位等二级信息，如「模型 · Low」） */
+  /** 与主输入区一致的模型展示文案，PRU 下会附带当前配置描述。 */
   @Input() currentModelChipLabel = '';
   @Input() currentModelBillingLabel = '';
   /** 该消息创建时使用的模型名称 */

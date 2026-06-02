@@ -52,7 +52,13 @@ function buildEndpoint(
 
 export interface LexStatelessStreamOptions {
   modelId?: string;
+  signal?: AbortSignal;
   llmConfig?: { apiKey: string; baseUrl: string } | null;
+  requestContext?: {
+    requestKind?: 'conversation' | 'utility';
+    interactionTypeOverride?: 'conversation-background';
+    userInitiatedRequest?: boolean;
+  };
 }
 
 /**
@@ -67,6 +73,15 @@ export function lexStatelessStream(
 ): Observable<{ type: string; content?: string }> {
   return new Observable(observer => {
     const abortCtrl = new AbortController();
+    const externalSignal = options?.signal;
+    const onExternalAbort = () => abortCtrl.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        abortCtrl.abort();
+      } else {
+        externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+      }
+    }
 
     (async () => {
       try {
@@ -81,8 +96,19 @@ export function lexStatelessStream(
           modelId: options?.modelId || 'default',
           maxOutputTokens: 4096,
         };
+        const requestContext = options?.requestContext && (
+          options.requestContext.requestKind
+          || options.requestContext.interactionTypeOverride
+          || typeof options.requestContext.userInitiatedRequest === 'boolean'
+        )
+          ? {
+            ...(options.requestContext.requestKind ? { requestKind: options.requestContext.requestKind } : {}),
+            ...(options.requestContext.interactionTypeOverride ? { interactionTypeOverride: options.requestContext.interactionTypeOverride } : {}),
+            ...(typeof options.requestContext.userInitiatedRequest === 'boolean' ? { userInitiatedRequest: options.requestContext.userInitiatedRequest } : {}),
+          }
+          : undefined;
 
-        for await (const chunk of endpoint.stream(messages, [], config, abortCtrl.signal)) {
+        for await (const chunk of endpoint.stream(messages, [], config, abortCtrl.signal, requestContext as any)) {
           if (abortCtrl.signal.aborted) return;
           if (chunk.type === 'text' && chunk.text) {
             observer.next({ type: 'ModelClientStreamingChunkEvent', content: chunk.text });
@@ -94,7 +120,12 @@ export function lexStatelessStream(
       }
     })();
 
-    return () => abortCtrl.abort();
+    return () => {
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
+      abortCtrl.abort();
+    };
   });
 }
 
@@ -102,13 +133,54 @@ export function lexStatelessStream(
 // Title generation prompt (replicated from server /api/v1/generate_title)
 // ---------------------------------------------------------------------------
 
-const TITLE_GEN_PROMPT = `你的职责是根据用户提供的内容生成一个十五字以内合适的标题。
+const TITLE_GEN_PROMPT = `You are an expert in crafting ultra-compact titles for chatbot conversations.
+You are presented with a chat request and must reply with only a brief title.
 
-重要规则：
-1. 只返回JSON格式，不要输出任何思考过程或其他文字
-2. 返回格式必须是：{"title": "<生成的标题>"}
+Rules:
+1. Return title text only, no JSON, no markdown, no code fences
+2. Use sentence case, preserve product names and code symbols
+3. Aim for 3-6 words and keep it concise
+4. Do not include quotes, prefixes, or trailing punctuation`;
 
-请严格按照上述格式返回，直接输出JSON，不要添加任何额外说明。`;
+function sanitizeTitleText(raw: string): string {
+  let value = typeof raw === 'string' ? raw : '';
+  if (!value.trim()) {
+    return '';
+  }
+
+  // Drop hidden reasoning blocks emitted by some models.
+  value = value.replace(/\s*<think>[\s\S]*?<\/think>\s*/gi, ' ').trim();
+
+  // Accept JSON title shape if model still responds in legacy format.
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed.title === 'string') {
+      value = parsed.title;
+    }
+  } catch {
+    // Keep plain-text path.
+  }
+
+  value = value
+    .replace(/^```(?:json|text)?\s*/i, '')
+    .replace(/```$/i, '')
+    .replace(/^\s*title\s*[:：]\s*/i, '')
+    .replace(/^\s*["'“”‘’]|["'“”‘’]\s*$/g, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  // Reject assistant-style long prose to prevent title pollution.
+  if (!value || value.length > 40) {
+    return '';
+  }
+
+  if (/\b(当然|下面|我来|以下|可以|sorry|here is|let me|i can)\b/i.test(value)) {
+    return '';
+  }
+
+  return value.replace(/[\s.?!。！？;；:：]+$/g, '').trim();
+}
 
 /**
  * Generate a concise title for the given user message content.
@@ -126,29 +198,36 @@ export async function lexGenerateTitle(
 
   return new Promise<string>((resolve, reject) => {
     let text = '';
+    let settled = false;
+    const timeoutHandle = setTimeout(() => {
+      sub.unsubscribe();
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(sanitizeTitleText(text));
+    }, 30000);
+
     const sub = lexStatelessStream(messages, options).subscribe({
       next: data => { if (data.content) text += data.content; },
       complete: () => {
         sub.unsubscribe();
-        const trimmed = text.trim();
-        try {
-          resolve(JSON.parse(trimmed).title || trimmed);
-        } catch {
-          resolve(trimmed);
+        if (settled) {
+          return;
         }
+        settled = true;
+        clearTimeout(timeoutHandle);
+        resolve(sanitizeTitleText(text));
       },
-      error: err => { sub.unsubscribe(); reject(err); },
+      error: err => {
+        sub.unsubscribe();
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutHandle);
+        reject(err);
+      },
     });
-
-    // 30s timeout (same as server)
-    setTimeout(() => {
-      sub.unsubscribe();
-      if (text.trim()) {
-        try { resolve(JSON.parse(text.trim()).title || text.trim()); }
-        catch { resolve(text.trim()); }
-      } else {
-        reject(new Error('标题生成超时'));
-      }
-    }, 30000);
   });
 }

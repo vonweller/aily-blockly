@@ -1,13 +1,13 @@
-import { Injectable } from '@angular/core';
-import { NzMessageService } from 'ng-zorro-antd/message';
-import { NzModalService } from 'ng-zorro-antd/modal';
-import { TranslateService } from '@ngx-translate/core';
+import { Injectable, OnDestroy } from '@angular/core';
 import type { IMenuItem } from '../../../configs/menu.config';
-import { ChatService } from './chat.service';
-import { ChatHistoryService } from './chat-history.service';
-import { AilyHost } from '../core/host';
-import { ChatRenameDialogComponent } from '../components/chat-rename-dialog/chat-rename-dialog.component';
-import { ChatDeleteDialogComponent } from '../components/chat-delete-dialog/chat-delete-dialog.component';
+import type { ChatSessionInputState } from '../core/chat-mode';
+import type { ChatSessionTitleSource } from '../core/chat-session-title';
+import type { HostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
+import type {
+  HostSessionListItemChanges,
+  HostSessionListItemMetadata,
+  HostSessionListItemTiming,
+} from '../helpers/host-session-item-controller';
 
 export interface MenuPosition {
   x: number;
@@ -15,51 +15,69 @@ export interface MenuPosition {
   anchorBottom?: number;
 }
 
+export interface ChatSessionListAction {
+  readonly icon: string;
+  readonly action: string;
+  readonly title: string;
+  readonly active?: boolean;
+}
+
+export interface ChatSessionListItem {
+  readonly sessionId: string;
+  readonly title: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleDurable?: boolean;
+  readonly description: string;
+  readonly sessionType?: string;
+  readonly projectPath?: string | null;
+  readonly badge?: string;
+  readonly status?: string;
+  readonly timing?: HostSessionListItemTiming;
+  readonly metadata?: HostSessionListItemMetadata;
+  readonly changes?: HostSessionListItemChanges;
+  readonly mode?: string;
+  readonly requestRouting?: HostSessionRequestRoutingSummary;
+  readonly inputState?: ChatSessionInputState;
+  readonly archived?: boolean;
+  readonly pinned?: boolean;
+  readonly read?: boolean;
+  readonly markedUnread?: boolean;
+  readonly current: boolean;
+  readonly actions: readonly ChatSessionListAction[];
+}
+
+export type ChatSessionPickerAction = ChatSessionListAction;
+
 /**
  * 管理聊天界面的所有菜单/下拉面板状态：
- * - 历史记录列表
+ * - 会话列表
  * - 模式切换菜单
  * - 模型切换菜单
- * - 历史记录的重命名/删除操作
+ * - 会话的重命名/删除操作
  */
 @Injectable()
-export class MenuManagerService {
-  showHistoryList = false;
+export class MenuManagerService implements OnDestroy {
   showMode = false;
+  showPermissionMenu = false;
   showModelMenu = false;
   showReasoningMenu = false;
   showActionMenu = false;
-  historyListPosition: MenuPosition = { x: 0, y: 0 };
   modeListPosition: MenuPosition = { x: 0, y: 0 };
+  permissionMenuPosition: MenuPosition = { x: 0, y: 0 };
   modelListPosition: MenuPosition = { x: 0, y: 0 };
   reasoningMenuPosition: MenuPosition = { x: 0, y: 0 };
   actionMenuPosition: MenuPosition = { x: 0, y: 0 };
-  historyList: any[] = [];
 
-  constructor(
-    private chatService: ChatService,
-    private chatHistoryService: ChatHistoryService,
-    private message: NzMessageService,
-    private modal: NzModalService,
-    private translate: TranslateService,
-  ) {}
+  ngOnDestroy(): void {
+    return;
+  }
 
   closeAll(): void {
-    this.showHistoryList = false;
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showReasoningMenu = false;
     this.showActionMenu = false;
-  }
-
-  /** 打开/关闭历史记录面板 */
-  openHistoryChat(): void {
-    if (!this.historyList?.length) {
-      this.message.info(this.translate.instant('AILY_CHAT.NO_HISTORY_SESSION') || '没有历史会话记录');
-      return;
-    }
-    this.historyListPosition = { x: window.innerWidth - 302, y: 72 };
-    this.showHistoryList = !this.showHistoryList;
   }
 
   /** 切换模式菜单的显示/隐藏 */
@@ -82,9 +100,41 @@ export class MenuManagerService {
     }
     event.preventDefault();
     event.stopPropagation();
+    this.showPermissionMenu = false;
     this.showReasoningMenu = false;
     this.showModelMenu = false;
     this.showMode = !this.showMode;
+  }
+
+  togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void {
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const menuHeight = this.estimateMenuHeight(permissionItems);
+      const estimatedMenuWidth = 280;
+      let x = rect.left;
+      let y = rect.top - menuHeight - 1;
+      let anchorBottom: number | undefined = rect.top - 1;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < 8) {
+        y = Math.max(8, rect.bottom - 1);
+        anchorBottom = undefined;
+      }
+
+      this.permissionMenuPosition = { x: Math.max(0, x), y: Math.max(0, y), anchorBottom };
+    } else {
+      this.permissionMenuPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.showMode = false;
+    this.showReasoningMenu = false;
+    this.showModelMenu = false;
+    this.showPermissionMenu = !this.showPermissionMenu;
   }
 
   /** 切换模型菜单的显示/隐藏 */
@@ -114,6 +164,7 @@ export class MenuManagerService {
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showReasoningMenu = false;
     this.showModelMenu = !this.showModelMenu;
   }
@@ -143,6 +194,7 @@ export class MenuManagerService {
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showActionMenu = false;
     this.showReasoningMenu = !this.showReasoningMenu;
@@ -172,8 +224,8 @@ export class MenuManagerService {
 
     event.preventDefault();
     event.stopPropagation();
-    this.showHistoryList = false;
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showActionMenu = !this.showActionMenu;
   }
@@ -234,108 +286,5 @@ export class MenuManagerService {
     }
 
     return height + 8;
-  }
-
-  /**
-   * 历史记录行内操作（重命名/删除）
-   * @param callbacks 用于触发组件级行为的回调
-   */
-  historyActionClick(
-    e: { action: string; data: any },
-    currentSessionId: string,
-    callbacks: {
-      onGetHistory: () => void | Promise<void>;
-      onNewChat: () => void | Promise<void>;
-      onDetectChanges: () => void;
-      onUpdateTitle: (title: string) => void;
-      onRefreshHistory: () => void;
-    }
-  ): void {
-    const { action, data } = e;
-    const sessionId = data?.sessionId;
-    if (!sessionId) return;
-
-    if (action === 'rename-history') {
-      const modalRef = this.modal.create({
-        nzTitle: null,
-        nzFooter: null,
-        nzClosable: false,
-        nzBodyStyle: { padding: '0' },
-        nzWidth: 340,
-        nzContent: ChatRenameDialogComponent,
-        nzData: { currentName: data?.name || '' },
-      });
-      modalRef.afterClose.subscribe((result: { result: string } | null) => {
-        if (!result?.result) return;
-        this.chatHistoryService.updateTitle(sessionId, result.result);
-        if (sessionId === currentSessionId) {
-          callbacks.onUpdateTitle(result.result);
-        }
-        callbacks.onRefreshHistory();
-        callbacks.onDetectChanges();
-      });
-    } else if (action === 'delete-history') {
-      const name = data?.name || sessionId;
-      const modalRef = this.modal.create({
-        nzTitle: null,
-        nzFooter: null,
-        nzClosable: false,
-        nzBodyStyle: { padding: '0' },
-        nzWidth: 340,
-        nzContent: ChatDeleteDialogComponent,
-        nzData: { name },
-      });
-      modalRef.afterClose.subscribe((result: { confirmed: boolean } | null) => {
-        if (!result?.confirmed) return;
-        const isDeletingCurrent = sessionId === currentSessionId;
-        this.chatHistoryService.deleteSession(sessionId);
-        callbacks.onRefreshHistory();
-        callbacks.onDetectChanges();
-        if (isDeletingCurrent) {
-          const remaining = this.historyList[0];
-          if (remaining?.sessionId) {
-            this.chatService.currentSessionId = remaining.sessionId;
-            const entry = this.chatHistoryService.findEntry(remaining.sessionId);
-            const _curPath1 = AilyHost.get().project.currentProjectPath;
-            const _rootPath1 = AilyHost.get().project.projectRootPath;
-            this.chatService.currentSessionPath = entry?.projectPath
-              || (_curPath1 && _curPath1 !== _rootPath1 ? _curPath1 : '');
-            void callbacks.onGetHistory();
-          } else {
-            void callbacks.onNewChat();
-          }
-        }
-      });
-    }
-  }
-
-  /**
-   * 点击历史会话条目，切换到该会话
-   * @returns true 表示执行了切换
-   */
-  async switchToSession(
-    sessionId: string,
-    currentSessionId: string,
-    callbacks: {
-      onSaveCurrentSession: () => void;
-      onGetHistory: () => void | Promise<void>;
-      onSetCompleted: () => void;
-      onSetServerSessionInactive: () => void;
-    }
-  ): Promise<boolean> {
-    if (currentSessionId === sessionId) return false;
-
-    callbacks.onSaveCurrentSession();
-    this.chatService.currentSessionId = sessionId;
-    const entry = this.chatHistoryService.findEntry(sessionId);
-    const _curPath2 = AilyHost.get().project.currentProjectPath;
-    const _rootPath2 = AilyHost.get().project.projectRootPath;
-    this.chatService.currentSessionPath = entry?.projectPath
-      || (_curPath2 && _curPath2 !== _rootPath2 ? _curPath2 : '');
-    await callbacks.onGetHistory();
-    callbacks.onSetCompleted();
-    callbacks.onSetServerSessionInactive();
-    this.closeAll();
-    return true;
   }
 }

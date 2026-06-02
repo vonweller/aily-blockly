@@ -63,6 +63,9 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const wEnv = (window as any)['env'];
   const wMcp = (window as any)['mcp'];
   const wOs = (window as any)['os'];
+  const textDocumentContentProviders = new Map<string, {
+    provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+  }>();
 
   // ----- fs -----
   const fs: IFileSystem = {
@@ -123,6 +126,18 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     },
     mkdir: (path, options?) => wFs.mkdir(path, options),
     unlink: (path) => wFs.unlink(path),
+    watch: (watchPath, listener, options) => {
+      const handle = wFs.watch?.(watchPath, listener, options);
+      if (!handle) {
+        return undefined;
+      }
+
+      return {
+        close: () => handle.close?.(),
+        dispose: () => handle.dispose?.() ?? handle.close?.(),
+        unsubscribe: () => handle.unsubscribe?.() ?? handle.close?.(),
+      };
+    },
   };
 
   // ----- path -----
@@ -283,6 +298,21 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   let editor: IEditorProvider | undefined;
   if (deps.blocklyService || deps.uiService) {
     editor = {
+      registerTextDocumentContentProvider: (scheme, provider) => {
+        const normalizedScheme = normalizeTextDocumentProviderScheme(scheme);
+        if (!normalizedScheme || !provider || typeof provider.provideTextDocumentContent !== 'function') {
+          return { dispose() {} };
+        }
+
+        textDocumentContentProviders.set(normalizedScheme, provider);
+        return {
+          dispose() {
+            if (textDocumentContentProviders.get(normalizedScheme) === provider) {
+              textDocumentContentProviders.delete(normalizedScheme);
+            }
+          },
+        };
+      },
       showTextDocument: (targetPath, options) => {
         const projectPath = options?.projectPath?.trim()
           || deps.projectService?.currentProjectPath
@@ -292,6 +322,24 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
         }
 
         return deps.uiService.openCodeEditorFile(projectPath, targetPath, options?.selection);
+      },
+      readTextDocument: async (uri) => {
+        const registeredProvider = resolveRegisteredTextDocumentContentProvider(textDocumentContentProviders, uri);
+        if (registeredProvider) {
+          const content = await Promise.resolve(registeredProvider.provideTextDocumentContent(uri));
+          if (typeof content === 'string') {
+            return content;
+          }
+        }
+
+        const readTextDocument = deps.uiService?.readTextDocument
+          ?? deps.electronService?.readTextDocument
+          ?? (window as any)['editor']?.readTextDocument;
+        if (typeof readTextDocument !== 'function') {
+          return undefined;
+        }
+
+        return await Promise.resolve(readTextDocument(uri));
       },
       getWorkspaceXml: () => deps.blocklyService?.getWorkspaceXml?.(),
       loadWorkspace: (xml) => deps.blocklyService?.loadWorkspace?.(xml),
@@ -333,4 +381,31 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     ui: deps.uiService,
     onboarding: deps.onboardingService,
   };
+}
+
+function normalizeTextDocumentProviderScheme(scheme: string): string {
+  return typeof scheme === 'string' ? scheme.trim().toLowerCase() : '';
+}
+
+function getUriScheme(uri: string): string {
+  const match = typeof uri === 'string'
+    ? uri.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)
+    : null;
+  return match?.[1]?.toLowerCase() ?? '';
+}
+
+function resolveRegisteredTextDocumentContentProvider(
+  providers: ReadonlyMap<string, {
+    provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+  }>,
+  uri: string,
+): {
+  provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+} | undefined {
+  const scheme = getUriScheme(uri);
+  if (!scheme) {
+    return undefined;
+  }
+
+  return providers.get(scheme);
 }

@@ -3,6 +3,7 @@ import type { HostSessionRecord } from '../services/chat-history.service';
 
 import type { LexSessionPersistenceBridge } from './lex-session-persistence-bridge';
 import type { LexSessionRestoreBridge } from './lex-session-restore-bridge';
+import type { ResolvedLexSessionRestorePlan } from './host-session-restore-resolver';
 
 /**
  * Public session-facing owner that groups persistence and persisted restore
@@ -14,19 +15,32 @@ export class LexSessionFacade {
     private readonly restoreBridge: LexSessionRestoreBridge,
   ) {}
 
-  save(): SessionSnapshot | null {
-    return this.persistenceBridge.saveSession();
+  save(sessionId?: string | null): SessionSnapshot | null {
+    return this.persistenceBridge.saveSession(sessionId);
   }
 
-  snapshot(): SessionSnapshot | null {
-    return this.persistenceBridge.getSessionSnapshot();
+  snapshot(sessionId?: string | null): SessionSnapshot | null {
+    return this.persistenceBridge.getSessionSnapshot(sessionId);
   }
 
-  restore(
+  resolveRestorePlan(
+    sessionId: string,
+    turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
+    hostRecord?: HostSessionRecord | null,
+  ): Promise<ResolvedLexSessionRestorePlan | null> {
+    return this.restoreBridge.resolvePersistedRestorePlan(sessionId, turnResponses, hostRecord ?? null);
+  }
+
+  restoreResolvedSnapshot(snapshot: SessionSnapshot): boolean {
+    return this.restoreBridge.restoreResolvedSnapshot(snapshot);
+  }
+
+  async restore(
     sessionId: string,
     turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
     hostRecord?: HostSessionRecord | null,
   ): Promise<boolean> {
-    return this.restoreBridge.restorePersistedSession(sessionId, turnResponses, hostRecord ?? null);
+    const restorePlan = await this.resolveRestorePlan(sessionId, turnResponses, hostRecord ?? null);
+    return restorePlan?.snapshot ? this.restoreResolvedSnapshot(restorePlan.snapshot) : false;
   }
 }

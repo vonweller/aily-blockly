@@ -8,7 +8,7 @@ export type LexStatePartProcessor = Pick<
 >;
 
 type LexStateHostSyncAccess = {
-  applyHandoffEvent(event: { targetAgent?: string; reason?: string }): void;
+  applyHandoffEvent(event: { targetAgent?: string; targetModeId?: string; reason?: string }): void;
   getCompactionMetricsSnapshot(): MetricsSnapshot | null;
 };
 
@@ -64,8 +64,12 @@ export class LexStateEventBridge {
   private upsertHandoffState(event: any): void {
     const targetAgent = typeof event.targetAgent === 'string' && event.targetAgent.trim().length > 0
       ? event.targetAgent.trim()
-      : '未知代理';
-    let text = `代理请求切换到 ${targetAgent}`;
+      : '';
+    const targetModeId = typeof event.targetModeId === 'string' && event.targetModeId.trim().length > 0
+      ? event.targetModeId.trim().toLowerCase()
+      : '';
+    const targetLabel = targetAgent || (targetModeId ? `${targetModeId} 模式` : '未知代理');
+    let text = `代理请求切换到 ${targetLabel}`;
     if (typeof event.reason === 'string' && event.reason.trim().length > 0) {
       text += ` - ${this.summarizeText(event.reason, 80)}`;
     }
@@ -78,14 +82,16 @@ export class LexStateEventBridge {
         kind: 'handoff',
         metadata: {
           handoffId: event.handoffId,
-          targetAgent,
+          ...(targetAgent ? { targetAgent } : {}),
+          ...(targetModeId ? { targetModeId } : {}),
           reason: event.reason,
         },
       },
     );
 
     this.hostSyncBridge?.applyHandoffEvent({
-      targetAgent,
+      ...(targetAgent ? { targetAgent } : {}),
+      ...(targetModeId ? { targetModeId } : {}),
       reason: typeof event.reason === 'string' ? event.reason : undefined,
     });
   }

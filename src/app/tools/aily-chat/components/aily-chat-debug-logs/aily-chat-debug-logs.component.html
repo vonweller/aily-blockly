@@ -1,4 +1,10 @@
 <div class="chat-debug-logs">
+  <aily-chat-debug-breadcrumb
+    [sessionTitle]="sessionTitle"
+    [currentLabel]="'调试日志'"
+    (homeRequested)="homeRequested.emit()"
+    (overviewRequested)="overviewRequested.emit()"></aily-chat-debug-breadcrumb>
+
   <div class="chat-debug-logs-header">
     <div class="chat-debug-logs-heading">
       <div class="chat-debug-logs-eyebrow">调试日志</div>
@@ -8,8 +14,6 @@
       </div>
     </div>
     <div class="chat-debug-logs-actions">
-      <button type="button" class="chat-debug-logs-action secondary" (click)="homeRequested.emit()">会话列表</button>
-      <button type="button" class="chat-debug-logs-action secondary" (click)="overviewRequested.emit()">返回概览</button>
       <button type="button" class="chat-debug-logs-action" (click)="closeRequested.emit()">返回聊天</button>
     </div>
   </div>

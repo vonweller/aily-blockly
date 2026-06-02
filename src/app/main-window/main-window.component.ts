@@ -6,6 +6,7 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
+import { AILY_CHAT_RUNTIME_PROVIDERS } from '../tools/aily-chat/aily-chat.providers';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
@@ -62,6 +63,7 @@ import { TranslateService } from '@ngx-translate/core';
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
+  providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
 })
 export class MainWindowComponent {
   @ViewChild('logComponent') logComponent!: LogComponent;

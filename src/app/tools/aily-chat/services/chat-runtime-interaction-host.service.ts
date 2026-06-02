@@ -1,7 +1,10 @@
 import { Injectable, signal } from '@angular/core';
 
 import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion } from '../core/ask-user';
+import { AilyHost } from '../core/host';
+import type { IFileWatchHandle } from '../core/host-api';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
+import { resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
 
 export interface RuntimeQuestionWidgetState {
   readonly sessionId: string;
@@ -42,9 +45,43 @@ export interface RuntimeConfirmationWidgetState {
     args?: Record<string, unknown>;
     actions: readonly ToolApprovalAction[];
     primaryScope: ToolApprovalScope;
+    primaryLabel?: string;
+    primaryTooltip?: string;
+    rejectLabel?: string;
+    rejectTooltip?: string;
     resolved?: boolean;
     approved?: boolean;
     scope?: ToolApprovalScope;
+  };
+}
+
+export interface RuntimePlanReviewAction {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly default?: boolean;
+  readonly permissionLevel?: 'autopilot';
+}
+
+export interface RuntimePlanReviewDecision {
+  readonly approved: boolean;
+  readonly actionId?: string;
+  readonly feedback?: string;
+}
+
+export interface RuntimePlanReviewWidgetState {
+  readonly sessionId: string;
+  readonly id: string;
+  readonly data: {
+    title: string;
+    planUri?: string;
+    content: string;
+    actions: readonly RuntimePlanReviewAction[];
+    canProvideFeedback: boolean;
+    resolved?: boolean;
+    approved?: boolean;
+    actionId?: string;
+    feedback?: string;
   };
 }
 
@@ -57,11 +94,23 @@ type ConfirmationRuntimeEntry = RuntimeConfirmationWidgetState & {
   readonly onAction?: (actionId: string) => void;
 };
 
+type PlanReviewRuntimeEntry = RuntimePlanReviewWidgetState & {
+  readonly resolve: (result: RuntimePlanReviewDecision) => void;
+};
+
+interface PlanReviewFileSyncState {
+  readonly id: string;
+  readonly absolutePath: string;
+  readonly handle?: IFileWatchHandle | void;
+}
+
 @Injectable()
 export class ChatRuntimeInteractionHostService {
   private readonly _questionEntries = signal<Record<string, QuestionRuntimeEntry | undefined>>({});
   private readonly _confirmationEntries = signal<Record<string, readonly ConfirmationRuntimeEntry[] | undefined>>({});
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
+  private readonly _planReviewEntries = signal<Record<string, PlanReviewRuntimeEntry | undefined>>({});
+  private readonly _planReviewFileSyncs = new Map<string, PlanReviewFileSyncState>();
 
   getQuestionWidget(sessionId: string): RuntimeQuestionWidgetState | null {
     return this._questionEntries()[sessionId] ?? null;
@@ -165,6 +214,10 @@ export class ChatRuntimeInteractionHostService {
     return queue[this.getActiveConfirmationIndex(sessionId)] ?? null;
   }
 
+  getActivePlanReview(sessionId: string): RuntimePlanReviewWidgetState | null {
+    return this._planReviewEntries()[sessionId] ?? null;
+  }
+
   navigateConfirmation(sessionId: string, delta: number): void {
     const queue = this.getConfirmationQueue(sessionId);
     if (queue.length <= 1) {
@@ -216,6 +269,10 @@ export class ChatRuntimeInteractionHostService {
       args?: Record<string, unknown>;
       actions: readonly ToolApprovalAction[];
       primaryScope: ToolApprovalScope;
+      primaryLabel?: string;
+      primaryTooltip?: string;
+      rejectLabel?: string;
+      rejectTooltip?: string;
       onAction?: (actionId: string) => void;
     },
   ): Promise<RuntimeConfirmationDecision> {
@@ -237,8 +294,48 @@ export class ChatRuntimeInteractionHostService {
         args: confirmation.args,
         actions: confirmation.actions,
         primaryScope: confirmation.primaryScope,
+        primaryLabel: confirmation.primaryLabel,
+        primaryTooltip: confirmation.primaryTooltip,
+        rejectLabel: confirmation.rejectLabel,
+        rejectTooltip: confirmation.rejectTooltip,
       },
       onAction: confirmation.onAction,
+    });
+  }
+
+  presentPlanReview(
+    sessionId: string,
+    review: {
+      id: string;
+      title: string;
+      planUri?: string;
+      content: string;
+      actions: readonly RuntimePlanReviewAction[];
+      canProvideFeedback: boolean;
+    },
+  ): Promise<RuntimePlanReviewDecision> {
+    this.clearPlanReview(sessionId);
+    const content = this.resolvePlanReviewContentFromFile(sessionId, review.planUri, review.content);
+
+    return new Promise<RuntimePlanReviewDecision>((resolve) => {
+      const current = this._planReviewEntries();
+      this._planReviewEntries.set({
+        ...current,
+        [sessionId]: {
+          sessionId,
+          id: review.id,
+          data: {
+            title: review.title,
+            planUri: review.planUri,
+            content,
+            actions: review.actions,
+            canProvideFeedback: review.canProvideFeedback,
+          },
+          resolve,
+        },
+      });
+
+      this.installPlanReviewFileSync(sessionId, review.id, review.planUri);
     });
   }
 
@@ -333,6 +430,26 @@ export class ChatRuntimeInteractionHostService {
     this._confirmationActiveIndices.set(nextIndices);
   }
 
+  resolvePlanReview(sessionId: string, id: string, result: RuntimePlanReviewDecision): void {
+    const entry = this._planReviewEntries()[sessionId];
+    if (!entry || entry.id !== id) {
+      return;
+    }
+
+    entry.resolve(result);
+    this.deletePlanReviewEntry(sessionId);
+  }
+
+  clearPlanReview(sessionId: string): void {
+    const entry = this._planReviewEntries()[sessionId];
+    if (!entry) {
+      return;
+    }
+
+    entry.resolve({ approved: false });
+    this.deletePlanReviewEntry(sessionId);
+  }
+
   private enqueueConfirmation(
     sessionId: string,
     entry: RuntimeConfirmationWidgetState & { onAction?: (actionId: string) => void },
@@ -361,5 +478,126 @@ export class ChatRuntimeInteractionHostService {
     const current = { ...this._questionEntries() };
     delete current[sessionId];
     this._questionEntries.set(current);
+  }
+
+  private deletePlanReviewEntry(sessionId: string): void {
+    this.disposePlanReviewFileSync(sessionId);
+    const current = { ...this._planReviewEntries() };
+    delete current[sessionId];
+    this._planReviewEntries.set(current);
+  }
+
+  private installPlanReviewFileSync(sessionId: string, id: string, planUri: string | undefined): void {
+    this.disposePlanReviewFileSync(sessionId);
+
+    const absolutePath = this.resolvePlanReviewAbsolutePath(sessionId, planUri);
+    if (!absolutePath) {
+      return;
+    }
+
+    const host = AilyHost.get();
+    if (typeof host.fs?.watch !== 'function') {
+      this._planReviewFileSyncs.set(sessionId, { id, absolutePath });
+      return;
+    }
+
+    try {
+      const handle = host.fs.watch(
+        absolutePath,
+        () => {
+          this.refreshPlanReviewContentFromFile(sessionId, id, absolutePath);
+        },
+        { persistent: false },
+      );
+      this._planReviewFileSyncs.set(sessionId, { id, absolutePath, handle });
+    } catch {
+      this._planReviewFileSyncs.set(sessionId, { id, absolutePath });
+    }
+  }
+
+  private disposePlanReviewFileSync(sessionId: string): void {
+    const existing = this._planReviewFileSyncs.get(sessionId);
+    if (!existing) {
+      return;
+    }
+
+    const handle = existing.handle;
+    if (handle) {
+      handle.close?.();
+      handle.dispose?.();
+      handle.unsubscribe?.();
+    }
+    this._planReviewFileSyncs.delete(sessionId);
+  }
+
+  private refreshPlanReviewContentFromFile(sessionId: string, id: string, absolutePath: string): void {
+    const syncState = this._planReviewFileSyncs.get(sessionId);
+    if (!syncState || syncState.id !== id || syncState.absolutePath !== absolutePath) {
+      return;
+    }
+
+    const nextContent = this.readPlanReviewFileContent(absolutePath);
+    if (nextContent === undefined) {
+      return;
+    }
+
+    const entry = this._planReviewEntries()[sessionId];
+    if (!entry || entry.id !== id || entry.data.content === nextContent) {
+      return;
+    }
+
+    const currentEntries = this._planReviewEntries();
+    this._planReviewEntries.set({
+      ...currentEntries,
+      [sessionId]: {
+        ...entry,
+        data: {
+          ...entry.data,
+          content: nextContent,
+        },
+      },
+    });
+  }
+
+  private resolvePlanReviewContentFromFile(
+    sessionId: string,
+    planUri: string | undefined,
+    fallbackContent: string,
+  ): string {
+    const absolutePath = this.resolvePlanReviewAbsolutePath(sessionId, planUri);
+    if (!absolutePath) {
+      return fallbackContent;
+    }
+
+    return this.readPlanReviewFileContent(absolutePath) ?? fallbackContent;
+  }
+
+  private resolvePlanReviewAbsolutePath(sessionId: string, planUri: string | undefined): string | undefined {
+    if (!planUri) {
+      return undefined;
+    }
+
+    const host = AilyHost.get();
+    const cwd = host.project?.currentProjectPath || host.project?.projectRootPath;
+    return resolveBlocklyArtifactReferenceTarget(host, planUri, { cwd, sessionId })?.absolutePath;
+  }
+
+  private readPlanReviewFileContent(absolutePath: string): string | undefined {
+    const host = AilyHost.get();
+    try {
+      if (!host.fs?.existsSync?.(absolutePath)) {
+        return undefined;
+      }
+
+      const stat = host.fs?.statSync?.(absolutePath);
+      if (stat?.isFile && !stat.isFile()) {
+        return undefined;
+      }
+
+      const content = host.fs.readFileSync(absolutePath, 'utf-8');
+      return typeof content === 'string' ? content : String(content ?? '');
+    } catch {
+      return undefined;
+    }
   }
 }

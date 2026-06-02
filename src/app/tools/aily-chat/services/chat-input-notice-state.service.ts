@@ -58,6 +58,23 @@ export class ChatInputNoticeStateService implements OnDestroy {
     return this.inputNoticeSubject.getValue();
   }
 
+  syncExecutionModeNotice(context: {
+    permissionLevel?: string | null;
+    approvalsReviewer?: string | null;
+    approvalPolicy?: string | null;
+  }): void {
+    this.syncSourceNotification('mode-guidance', this.createExecutionModeNotice(context));
+  }
+
+  acceptProjectedRuntimeNotice(notice: ChatInputNotice | null | undefined): void {
+    if (!notice) {
+      this.syncSourceNotification('request-quota', null);
+      return;
+    }
+
+    this.syncSourceNotification(notice.source, notice);
+  }
+
   dismissCurrentNotice(): void {
     const notice = this.getInputNotice();
     if (!notice) {
@@ -94,6 +111,52 @@ export class ChatInputNoticeStateService implements OnDestroy {
       this.latestRequestState?.rateLimitSnapshots?.['weekly'],
       'weekly',
     );
+  }
+
+  private createExecutionModeNotice(context: {
+    permissionLevel?: string | null;
+    approvalsReviewer?: string | null;
+    approvalPolicy?: string | null;
+  }): ChatInputNotice | null {
+    const permissionLevel = typeof context.permissionLevel === 'string'
+      ? context.permissionLevel.trim().toLowerCase()
+      : '';
+    const approvalsReviewer = typeof context.approvalsReviewer === 'string'
+      ? context.approvalsReviewer.trim().toLowerCase()
+      : '';
+    const approvalPolicy = typeof context.approvalPolicy === 'string'
+      ? context.approvalPolicy.trim().toLowerCase()
+      : '';
+
+    const autopilotEnabled = permissionLevel === 'autopilot';
+    const autoReviewEnabled = approvalsReviewer === 'auto_review';
+    if (!autopilotEnabled && !autoReviewEnabled) {
+      return null;
+    }
+
+    if (autopilotEnabled) {
+      return {
+        id: `mode-guidance:autopilot:${autoReviewEnabled ? 'auto-review' : 'manual-review'}:${approvalPolicy || 'none'}`,
+        source: 'mode-guidance',
+        kind: 'mode-guidance',
+        title: 'Autopilot is enabled.',
+        subtitle: autoReviewEnabled
+          ? 'The agent can keep executing until completion. Auto Review only evaluates approval requests and does not guarantee allow.'
+          : 'The agent can keep executing until completion. Approval requests are still reviewed manually with the current reviewer setup.',
+        tone: 'warning',
+        iconClass: 'fa-light fa-triangle-exclamation',
+      };
+    }
+
+    return {
+      id: `mode-guidance:auto-review:${approvalPolicy || 'none'}`,
+      source: 'mode-guidance',
+      kind: 'mode-guidance',
+      title: 'Auto Review is enabled.',
+      subtitle: 'Auto Review only evaluates approval requests. It does not switch execution mode to Autopilot.',
+      tone: 'info',
+      iconClass: 'fa-light fa-circle-info',
+    };
   }
 
   private checkRateLimitThreshold(
@@ -224,5 +287,13 @@ function getNoticeSeverityRank(notice: ChatInputNotice): number {
 }
 
 function getNoticeSourcePriority(notice: ChatInputNotice): number {
-  return notice.source === 'auth-quota' ? 1 : 0;
+  if (notice.source === 'auth-quota') {
+    return 2;
+  }
+
+  if (notice.source === 'request-quota') {
+    return 1;
+  }
+
+  return 0;
 }

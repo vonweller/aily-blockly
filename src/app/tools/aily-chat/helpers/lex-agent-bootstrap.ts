@@ -8,6 +8,10 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
+import {
+  normalizeChatSessionPermissionMode,
+  type ChatSessionPermissionMode,
+} from '../core/chat-mode';
 import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
@@ -15,17 +19,29 @@ import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../cor
 import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
+import { createBlocklyAgentFileProvider } from '../core/blockly-agent-file-provider';
+import { createBlocklyInstructionFileProvider } from '../core/blockly-instruction-file-provider';
+import { createBlocklyClaudeHookCustomizationProvider } from '../core/blockly-claude-hook-customization-provider';
+import { createBlocklyHookCustomizationProvider } from '../core/blockly-hook-customization-provider';
+import { createBlocklyPluginCustomizationProvider } from '../core/blockly-plugin-customization-provider';
+import { createBlocklySkillCustomizationProvider } from '../core/blockly-skill-customization-provider';
+import {
+  createBlocklySessionCustomizationContentProvider,
+  createBlocklySessionCustomizationProviderBinding,
+  getBlocklySessionCustomizationContentProviderSchemes,
+} from '../core/blockly-session-customization-item-provider';
 import { createBlocklySlashCommandProvider } from '../core/blockly-slash-command-provider';
 import { createBlocklySubagentExtension } from '../core/blockly-subagent-extension';
-import { getBundledLexAgentFiles } from '../agents/bundled-lex-agent-files';
 import { BlocklySkillProvider } from '../core/blockly-skill-provider';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { askUserMany, askUserSingle } from '../core/ask-user';
 import { collectDiagnostics } from '../core/diagnostics';
+import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
+import { CopilotCliSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
 import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
@@ -46,6 +62,7 @@ import {
   type IHostToolProvider,
   type IToolContribution,
   type IMetricsService,
+  type ToolResultContent,
 } from 'aily-lex/browser';
 import {
   cloneTurnResponseRoundSummaryCarrier,
@@ -57,6 +74,11 @@ import {
   cloneSessionRequestContextSnapshot,
   readTurnRequestPromptContextSnapshot,
 } from './turn-request-prompt-context';
+import {
+  buildHostAuthoritativeLexRestorePlan,
+  type LexSessionStoredSnapshotState,
+  type ResolvedLexSessionRestorePlan,
+} from './host-session-restore-resolver';
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -101,7 +123,13 @@ interface BootstrapLexAgentOptions {
 export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
-  & Pick<IChatCoordination, 'handleToolApproval'>;
+  & Pick<IChatCoordination, 'handleToolApproval' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
+  & {
+    readonly currentSessionPath?: string | null;
+    readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
+    readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
+    readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
+  };
 
 export interface BlocklyCompatibilityHostBinding {
   hostAPI: IExternalHostAPI;
@@ -133,6 +161,7 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'get_changed_files',
   'fetch_webpage', 'clone_repository',
   'todo_manage',
+  'memory', 'resolve_memory_file_uri',
   'get_context',
   'ask_user',
   'get_errors',
@@ -191,12 +220,36 @@ function isToolEnabledForAgent(
   agentName: ToolConfigAgent,
   toolName: string,
 ): boolean {
-  const config = configService.getAgentToolsConfig(agentName);
+  const config = typeof configService.getAgentToolsConfig === 'function'
+    ? configService.getAgentToolsConfig(agentName)
+    : {
+      enabledTools: agentName === MAIN_AGENT_TYPE && Array.isArray(configService.enabledTools)
+        ? configService.enabledTools
+        : [],
+      disabledTools: agentName === MAIN_AGENT_TYPE && Array.isArray(configService.disabledTools)
+        ? configService.disabledTools
+        : [],
+    };
   const normalizedToolName = normalizeGovernanceToolName(toolName);
   if (config?.disabledTools?.includes(normalizedToolName)) {
     return false;
   }
 
+  return true;
+}
+
+function isCoreToolEnabledByHostConfig(
+  configService: AgentToolConfigAccessor,
+  toolName: string,
+): boolean {
+  const memoryToolEnabled = configService.memoryToolEnabled !== false;
+  const copilotMemoryEnabled = configService.copilotMemoryEnabled === true;
+  if (toolName === 'memory') {
+    return memoryToolEnabled || copilotMemoryEnabled;
+  }
+  if (toolName === 'resolve_memory_file_uri') {
+    return memoryToolEnabled;
+  }
   return true;
 }
 
@@ -210,7 +263,10 @@ export function getConfiguredCoreToolFilter(
   configService: AgentToolConfigAccessor,
 ): ReadonlySet<string> {
   return new Set(
-    [...LEX_CORE_SAFE_TOOLS].filter(toolName => isToolEnabledForAgent(configService, MAIN_AGENT_TYPE, toolName)),
+    [...LEX_CORE_SAFE_TOOLS].filter(toolName => {
+      return isCoreToolEnabledByHostConfig(configService, toolName)
+        && isToolEnabledForAgent(configService, MAIN_AGENT_TYPE, toolName);
+    }),
   );
 }
 
@@ -297,8 +353,11 @@ function getCatalogDescription(name: string): string {
   return TOOL_SETTINGS_CATALOG.find(tool => normalizeGovernanceToolName(tool.name) === normalizedName)?.description || name;
 }
 
-function getRuntimeCoreToolCatalogEntries(): RuntimeToolCatalogEntry[] {
-  return [...LEX_CORE_SAFE_TOOLS].sort((left, right) => left.localeCompare(right)).map(toolName => ({
+function getRuntimeCoreToolCatalogEntries(configService: AgentToolConfigAccessor): RuntimeToolCatalogEntry[] {
+  return [...LEX_CORE_SAFE_TOOLS]
+    .filter(toolName => isCoreToolEnabledByHostConfig(configService, toolName))
+    .sort((left, right) => left.localeCompare(right))
+    .map(toolName => ({
     name: normalizeGovernanceToolName(toolName),
     runtimeName: toolName,
     description: getCatalogDescription(toolName),
@@ -332,11 +391,12 @@ function getRuntimeMcpToolCatalogEntries(tools: readonly any[] | undefined): Run
 }
 
 export function getRuntimeToolSettingsCatalog(
-  ctx: Pick<IChatServiceAccess, 'mcpService'>,
+  ctx: RequestToolSelectionContext,
   cwd = '',
 ): RuntimeToolCatalogEntry[] {
+  const configService = resolveAgentToolConfigAccessor(ctx);
   return mergeRuntimeToolCatalogEntries([
-    ...getRuntimeCoreToolCatalogEntries(),
+    ...getRuntimeCoreToolCatalogEntries(configService),
     ...getRuntimeContributedToolCatalogEntries(cwd),
     ...getRuntimeMcpToolCatalogEntries(ctx.mcpService?.tools),
   ]);
@@ -398,8 +458,9 @@ function syncPersistedActiveSkills(
     registerSkill(skill: any): void;
   },
   activeSkillNames: readonly string[] | undefined,
-): void {
+): readonly string[] {
   const desired = new Set(activeSkillNames ?? []);
+  const missingSkills: string[] = [];
 
   for (const name of agent.getActiveSkillNames?.() ?? []) {
     if (desired.has(name)) {
@@ -411,10 +472,20 @@ function syncPersistedActiveSkills(
 
   for (const name of desired) {
     if (!BlocklySkillRegistry.activateSkill(name)) {
+      missingSkills.push(name);
       continue;
     }
-    registerBlocklySkillOnLexAgent(agent, name);
+    if (!registerBlocklySkillOnLexAgent(agent, name)) {
+      BlocklySkillRegistry.deactivateSkill(name);
+      missingSkills.push(name);
+    }
   }
+
+  if (missingSkills.length > 0) {
+    console.warn(`[LexBootstrap] restore degraded: missing persisted skills: ${missingSkills.join(', ')}`);
+  }
+
+  return missingSkills;
 }
 
 function resolvePlatformType(type?: string, isWindows?: boolean, isMacOS?: boolean): 'win32' | 'darwin' | 'linux' {
@@ -747,26 +818,41 @@ export function getLexRuntimeLLMConfig(
 export async function resolvePersistedLexSessionSnapshot(
   options: ResolvePersistedLexSessionOptions,
 ): Promise<import('aily-lex/browser').SessionSnapshot | null> {
+  const restorePlan = await resolvePersistedLexSessionRestorePlan(options);
+  return restorePlan.snapshot;
+}
+
+export async function resolvePersistedLexSessionRestorePlan(
+  options: ResolvePersistedLexSessionOptions,
+): Promise<ResolvedLexSessionRestorePlan> {
   const { lex, sessionId, cwd = '', turnResponses, hostRecord } = options;
 
+  let storedSnapshot: import('aily-lex/browser').SessionSnapshot | null = null;
+  let storedSnapshotState: LexSessionStoredSnapshotState = 'missing';
+  let storedSnapshotError: string | undefined;
+
   try {
-    const storedSnapshot = await loadStoredLexSessionSnapshot(lex, sessionId, cwd);
-    if (storedSnapshot) {
-      const { compaction: _legacyCompaction, ...snapshotWithoutLegacyCompaction } = storedSnapshot as import('aily-lex/browser').SessionSnapshot & {
-        compaction?: unknown;
-      };
-      return snapshotWithoutLegacyCompaction as import('aily-lex/browser').SessionSnapshot;
-    }
+    storedSnapshot = await loadStoredLexSessionSnapshot(lex, sessionId, cwd);
+    storedSnapshotState = storedSnapshot ? 'loaded' : 'missing';
   } catch (err) {
+    storedSnapshotState = 'load-failed';
+    storedSnapshotError = err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : 'unknown error';
     console.warn('[LexBootstrap] 读取标准 snapshot 失败:', err);
   }
 
-  const turnResponseSnapshot = buildTurnResponseLexSessionSnapshot(turnResponses, sessionId, hostRecord ?? null);
-  if (turnResponseSnapshot) {
-    return turnResponseSnapshot;
-  }
-
-  return null;
+  return buildHostAuthoritativeLexRestorePlan({
+    sessionId,
+    turnResponses,
+    hostRecord: hostRecord ?? null,
+    storedSnapshot,
+    storedSnapshotState,
+    ...(storedSnapshotError ? { storedSnapshotError } : {}),
+    buildTurnResponseSnapshot: buildTurnResponseLexSessionSnapshot,
+  });
 }
 
 export function getMainAgentHostTools(
@@ -871,7 +957,7 @@ export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, onSubagentEvent, metrics } = options;
-  const cwd = ctx.prjPath || ctx.prjRootPath || '';
+  const cwd = resolveLexRuntimeCwd(ctx);
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd);
   attachBlocklyCompatibilityExtensions(adapter);
   const contextSnapshotService = getBlocklyContextSnapshotService();
@@ -895,6 +981,8 @@ export function bootstrapBlocklyLexAgent(
     diagnostics: {
       getErrors: async (filePaths?: string[]) => collectDiagnostics(filePaths),
     },
+    memoryStorage: createBlocklyMemoryStorageExtension(cwd),
+    memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
   };
   if (cwd && (sessionId || ctx.sessionId)) {
     const editingTimelineRepository = new EditingTimelineRepository({
@@ -968,8 +1056,131 @@ export function bootstrapBlocklyLexAgent(
   // createAgent() remains the runtime owner for core tool registration,
   // prompt/skill assembly, and AgentExecutor/subagent execution.
   const terminalPolicy = ctx.ailyChatConfigService.getLexTerminalPolicy?.();
-  const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(ctx.prjPath || ctx.prjRootPath || '');
-  const agent = lex.createAgent({
+  const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(cwd || ctx.prjRootPath || ctx.prjPath || '');
+  const approvalsReviewer = ctx.currentSessionApprovalsReviewer
+    ?? ctx.ailyChatConfigService.getLexApprovalsReviewer?.();
+  const approvalPolicy = ctx.currentSessionApprovalPolicy
+    ?? ctx.ailyChatConfigService.getLexApprovalPolicy?.();
+  const agentFolderProjectRoot = cwd || ctx.prjRootPath || ctx.prjPath;
+  const projectAgentFileProvider = createBlocklyAgentFileProvider({
+    source: 'project',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+  });
+  const userAgentFileProvider = createBlocklyAgentFileProvider({
+    source: 'user',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+  });
+  const projectInstructionFileProvider = createBlocklyInstructionFileProvider({
+    source: 'project',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+  });
+  const userInstructionFileProvider = createBlocklyInstructionFileProvider({
+    source: 'user',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+  });
+  const claudeProjectInstructionFileProvider = createBlocklyInstructionFileProvider({
+    source: 'project',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+    profile: 'claude',
+  });
+  const claudeUserInstructionFileProvider = createBlocklyInstructionFileProvider({
+    source: 'user',
+    projectRootPath: agentFolderProjectRoot,
+    configSource: ctx.ailyChatConfigService,
+    profile: 'claude',
+  });
+  let agent: BlocklyLexAgentInstance | undefined;
+  const skillCustomizationProvider = createBlocklySkillCustomizationProvider();
+  const hookCustomizationProvider = createBlocklyHookCustomizationProvider({
+    getAgent: () => agent,
+  });
+  const claudeProjectHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
+    source: 'project',
+    projectRootPath: agentFolderProjectRoot,
+  });
+  const claudeUserHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
+    source: 'user',
+    projectRootPath: agentFolderProjectRoot,
+  });
+  const pluginCustomizationProvider = createBlocklyPluginCustomizationProvider({
+    getAgent: () => agent,
+  });
+  const runtimeAgentProvider = createBlocklyAgentProvider(ctx.ailyChatConfigService);
+  const sessionCustomizationProviderBindings = [
+    createBlocklySessionCustomizationProviderBinding([
+      { source: 'project', provider: projectAgentFileProvider },
+      { source: 'user', provider: userAgentFileProvider },
+    ], [
+      { source: 'host', provider: runtimeAgentProvider },
+    ], [
+      { source: 'project', provider: projectInstructionFileProvider },
+      { source: 'user', provider: userInstructionFileProvider },
+    ], [
+      { provider: skillCustomizationProvider },
+    ], [
+      { provider: hookCustomizationProvider },
+    ], [
+      { provider: pluginCustomizationProvider },
+    ], 'local'),
+    createBlocklySessionCustomizationProviderBinding([
+      { source: 'project', provider: projectAgentFileProvider },
+      { source: 'user', provider: userAgentFileProvider },
+    ], [
+      { source: 'host', provider: runtimeAgentProvider },
+    ], [
+      { source: 'project', provider: claudeProjectInstructionFileProvider },
+      { source: 'user', provider: claudeUserInstructionFileProvider },
+    ], [
+      { provider: skillCustomizationProvider },
+    ], [
+      { provider: claudeProjectHookCustomizationProvider },
+      { provider: claudeUserHookCustomizationProvider },
+    ], [], 'claude-code'),
+    createBlocklySessionCustomizationProviderBinding([
+      { source: 'project', provider: projectAgentFileProvider },
+      { source: 'user', provider: userAgentFileProvider },
+    ], [
+      { source: 'host', provider: runtimeAgentProvider },
+    ], [
+      { source: 'project', provider: projectInstructionFileProvider },
+      { source: 'user', provider: userInstructionFileProvider },
+    ], [
+      { provider: skillCustomizationProvider },
+    ], [
+      { provider: hookCustomizationProvider },
+    ], [
+      { provider: pluginCustomizationProvider },
+    ], 'copilotcli'),
+  ] as const;
+  const sessionCustomizationContentProvider = createBlocklySessionCustomizationContentProvider([
+    { source: 'host', provider: runtimeAgentProvider },
+  ], [
+    { provider: hookCustomizationProvider },
+  ], [
+    { provider: pluginCustomizationProvider },
+  ]);
+  const sessionCustomizationContentOwner = {
+    provideChatSessionCustomizationContent(uri: string) {
+      return sessionCustomizationContentProvider.provideTextDocumentContent(uri);
+    },
+  };
+  const sessionProviderOptionsSourceBindings = [
+    {
+      sessionType: 'copilotcli',
+      source: new CopilotCliSessionProviderOptionsSourceService(),
+    },
+  ] as const;
+
+  for (const scheme of getBlocklySessionCustomizationContentProviderSchemes()) {
+    AilyHost.get().editor?.registerTextDocumentContentProvider?.(scheme, sessionCustomizationContentProvider);
+  }
+
+  agent = lex.createAgent({
     host: adapter,
     endpoint: buildLexEndpoint(lex, ctx.currentModel, ctx.ailyChatConfigService),
     model: buildLexModelConfig(ctx.currentModel),
@@ -985,7 +1196,6 @@ export function bootstrapBlocklyLexAgent(
     extensions: runtimeExtensions,
     userInstructionFolders: ctx.ailyChatConfigService.userInstructionFolders.map(path => ({ path })),
     projectInstructionFolders: ctx.ailyChatConfigService.projectInstructionFolders.map(path => ({ path })),
-    projectAgentFiles: getBundledLexAgentFiles(),
     hooks: {
       askHandler: askHandler ?? (async () => false),
       onBeforeToolExecution: async (toolName: string, input: Record<string, unknown>) => {
@@ -1020,13 +1230,13 @@ export function bootstrapBlocklyLexAgent(
         return { action: 'continue' as const };
       },
     },
-    coreToolFilter: LEX_CORE_SAFE_TOOLS,
+    coreToolFilter: getConfiguredCoreToolFilter(ctx.ailyChatConfigService),
     additionalDeferredGroups: BLOCKLY_LEX_DEFERRED_GROUPS.map(g => ({
       id: g.id, label: g.label, description: g.description,
     })),
     toolProvider,
     skillProvider: new BlocklySkillProvider(),
-    agentProvider: createBlocklyAgentProvider(),
+    agentProvider: runtimeAgentProvider,
     slashCommandProvider: createBlocklySlashCommandProvider(),
     approvalHandler: async request => ctx.handleToolApproval({
       toolCallId: request.toolCallId,
@@ -1042,14 +1252,54 @@ export function bootstrapBlocklyLexAgent(
       args: request.input,
     }),
     permissionPolicy,
-    permissionMode: 'default',
+    permissionMode: normalizeChatSessionPermissionMode(ctx.currentSessionPermissionMode),
     terminalPolicy,
+    approvalsReviewer,
+    approvalPolicy,
+    strictAutoReview: approvalsReviewer === 'auto_review',
     metrics,
   });
+
+  agent.registerContributedAgentFiles?.(
+    projectAgentFileProvider,
+    {
+      source: 'project',
+      ownerId: 'blockly:project:agentFolders',
+    },
+  );
+  agent.registerContributedAgentFiles?.(
+    userAgentFileProvider,
+    {
+      source: 'user',
+      ownerId: 'blockly:user:agentFolders',
+    },
+  );
+  ctx.syncSessionCustomizationContentProvider?.(sessionCustomizationContentOwner);
+  if (ctx.syncSessionCustomizationProviders) {
+    ctx.syncSessionCustomizationProviders(sessionCustomizationProviderBindings);
+  } else {
+    ctx.syncSessionCustomizationProvider?.(sessionCustomizationProviderBindings[0] ?? null);
+  }
+  if (ctx.syncSessionProviderOptionsSources) {
+    ctx.syncSessionProviderOptionsSources(sessionProviderOptionsSourceBindings);
+  } else {
+    ctx.syncSessionProviderOptionsSource?.(sessionProviderOptionsSourceBindings[0] ?? null);
+  }
 
   attachBlocklyPostCreateExtensions(agent, adapter, onSubagentEvent);
 
   return agent;
+}
+
+function resolveLexRuntimeCwd(ctx: Pick<BootstrapLexAgentContext, 'currentSessionPath' | 'prjPath' | 'prjRootPath'>): string {
+  const sessionPath = typeof ctx.currentSessionPath === 'string'
+    ? ctx.currentSessionPath.trim()
+    : '';
+  if (sessionPath) {
+    return sessionPath;
+  }
+
+  return ctx.prjPath || ctx.prjRootPath || '';
 }
 
 function attachBlocklyPostCreateExtensions(
@@ -1057,22 +1307,52 @@ function attachBlocklyPostCreateExtensions(
   adapter: BlocklyHostAdapter,
   onSubagentEvent?: (event: any) => void,
 ): void {
+  const agentExecutor = createBlocklySubagentExtension(agent);
+
   adapter.registerExtension('skillManager', {
     search: (query: string) => {
       const results = BlocklySkillRegistry.searchSkills(query);
       const activated = new Set(BlocklySkillRegistry.getActivatedSkillNames());
       return results.map((r: any) => ({
         name: r.skill.metadata.name,
+        displayName: r.skill.metadata.displayName,
         description: r.skill.metadata.description,
         loaded: activated.has(r.skill.metadata.name),
+        userInvocable: r.skill.metadata.userInvocable !== false,
+        modelInvocable: r.skill.metadata.disableModelInvocation !== true && !!r.skill.metadata.description,
+        mode: r.skill.metadata.context || 'inline',
+        skillMdPath: r.skill.skillMdPath,
       }));
     },
+    listAvailable: () => {
+      const activated = new Set(BlocklySkillRegistry.getActivatedSkillNames());
+      return BlocklySkillRegistry.getAll().filter(skill => skill.origin?.type !== 'url').map(skill => ({
+        name: skill.metadata.name,
+        displayName: skill.metadata.displayName,
+        description: skill.metadata.description,
+        loaded: activated.has(skill.metadata.name),
+        userInvocable: skill.metadata.userInvocable !== false,
+        modelInvocable: skill.metadata.disableModelInvocation !== true && !!skill.metadata.description,
+        mode: skill.metadata.context || 'inline',
+        skillMdPath: skill.skillMdPath,
+      }));
+    },
+    getContext: (name: string) => BlocklySkillRegistry.getSkillContext(name),
     load: (name: string) => {
-      const ok = BlocklySkillRegistry.activateSkill(name);
-      if (ok) {
+      const skillContext = BlocklySkillRegistry.getSkillContext(name);
+      if (!skillContext) {
+        return null;
+      }
+
+      if (skillContext.mode === 'inline') {
+        const ok = BlocklySkillRegistry.activateSkill(name);
+        if (!ok) {
+          return null;
+        }
         registerBlocklySkillOnLexAgent(agent, name);
       }
-      return ok;
+
+      return skillContext;
     },
     unload: (name: string) => {
       const ok = BlocklySkillRegistry.deactivateSkill(name);
@@ -1081,18 +1361,61 @@ function attachBlocklyPostCreateExtensions(
       }
       return ok;
     },
-    listLoaded: () => {
-      const names = BlocklySkillRegistry.getActivatedSkillNames();
-      return names.map((name: string) => {
-        const skill = BlocklySkillRegistry.get(name);
-        return { name, description: skill?.metadata?.description || '' };
+    listLoaded: () => BlocklySkillRegistry.getLoadedSkillSummaries(),
+    runFork: async (name: string, task: string, context: {
+      toolCallId?: string;
+      trace?: any;
+      signal?: AbortSignal;
+      emitEvent?: (event: any) => void;
+    }): Promise<ToolResultContent> => {
+      const skillContext = BlocklySkillRegistry.getSkillContext(name);
+      if (!skillContext) {
+        return {
+          content: [{ type: 'text', text: `Skill "${name}" not found.` }],
+          isError: true,
+        };
+      }
+
+      const result = await agentExecutor.runSync({
+        prompt: buildForkSkillPrompt(skillContext, task),
+        description: `Run ${skillContext.name} skill`,
+        toolCallId: context.toolCallId,
+        trace: context.trace,
+        signal: context.signal,
+        inheritMessages: 'parent',
+        inheritDiscoveredTools: true,
+        onEvent: context.emitEvent,
       });
+
+      return buildForkSkillResult(skillContext, task, result.text);
+    },
+  });
+
+  adapter.registerExtension('workspaceReadAccess', {
+    getAdditionalReadRoots: () => {
+      const seen = new Set<string>();
+      const roots: string[] = [];
+
+      for (const skill of BlocklySkillRegistry.getAll()) {
+        if (skill.origin?.type === 'url') {
+          continue;
+        }
+
+        const baseDir = typeof skill.baseDir === 'string' ? skill.baseDir.trim() : '';
+        if (!baseDir || seen.has(baseDir)) {
+          continue;
+        }
+
+        seen.add(baseDir);
+        roots.push(baseDir);
+      }
+
+      return roots;
     },
   });
 
   // Re-expose the lex-owned AgentExecutor back to the host as an extension bridge.
   // This is UI/event wiring only, not a second subagent runtime inside blockly.
-  const agentExecutor = createBlocklySubagentExtension(agent);
   const origRunSync = agentExecutor.runSync.bind(agentExecutor);
   (agentExecutor as any).runSync = (subagentOptions: any) => {
     return origRunSync({
@@ -1109,6 +1432,87 @@ function attachBlocklyPostCreateExtensions(
     syncPersistedActiveSkills(agent, snapshot.activeSkillNames);
   };
   adapter.registerExtension('agentExecutor', agentExecutor);
+}
+
+function buildForkSkillPrompt(
+  skillContext: {
+    name: string;
+    displayName: string;
+    description: string;
+    body: string;
+    skillMdPath: string;
+    relatedFiles: readonly { path: string; category?: string }[];
+  },
+  task: string,
+): string {
+  const relatedFiles = skillContext.relatedFiles.length > 0
+    ? [
+        'Related files available inside the skill directory:',
+        ...skillContext.relatedFiles.map(file => `- ${file.path}${file.category ? ` (${file.category})` : ''}`),
+      ].join('\n')
+    : 'Related files: none listed.';
+
+  return [
+    `You are running the \"${skillContext.displayName || skillContext.name}\" skill as a forked subagent.`,
+    'Use the parent conversation as context, follow the skill instructions below, and complete the task directly.',
+    `<skill_instructions name="${skillContext.name}" uri="${skillContext.skillMdPath}">`,
+    skillContext.body,
+    '</skill_instructions>',
+    relatedFiles,
+    `Task:\n${task}`,
+  ].join('\n\n');
+}
+
+function buildForkSkillResult(
+  skillContext: {
+    name: string;
+    displayName: string;
+    description: string;
+    skillMdPath: string;
+    baseDir?: string;
+    relatedFiles: readonly { path: string; uri: string; category?: string }[];
+  },
+  task: string,
+  text: string,
+): ToolResultContent {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Result from the \"${skillContext.displayName || skillContext.name}\" skill for task \"${task}\":\n\n${text}`,
+      },
+      {
+        type: 'resource',
+        uri: skillContext.skillMdPath,
+        mimeType: 'text/markdown',
+        text: skillContext.displayName || skillContext.name,
+      },
+      ...skillContext.relatedFiles.slice(0, 40).map(file => ({
+        type: 'resource' as const,
+        uri: file.uri,
+        text: file.path,
+      })),
+    ],
+    metadata: {
+      kind: 'skill',
+      invocation: {
+        mode: 'fork',
+        task,
+      },
+      skill: {
+        name: skillContext.name,
+        displayName: skillContext.displayName,
+        description: skillContext.description,
+        skillMdPath: skillContext.skillMdPath,
+        baseDir: skillContext.baseDir,
+      },
+      relatedFiles: skillContext.relatedFiles.map(file => ({
+        path: file.path,
+        uri: file.uri,
+        category: file.category,
+      })),
+    },
+  };
 }
 
 function createBlocklySearchExtension(): {
@@ -1390,6 +1794,39 @@ function getLexSessionStorageRoot(): string {
     return host.path.join(projectPath, '.chat_history', 'lex-sessions');
   }
   return host.path.join(host.path.getUserHome(), '.aily', 'chat_history', 'lex-sessions');
+}
+
+function createBlocklyMemoryStorageExtension(cwd: string): {
+  getLayout(input: { cwd: string; sessionId: string }): {
+    userDir: string;
+    sessionRootDir: string;
+    sessionDir: string;
+    repoDir: string;
+  } | undefined;
+} {
+  return {
+    getLayout(input) {
+      return resolveBlocklyMemoryStorageLayout(AilyHost.get(), cwd || input.cwd, input.sessionId);
+    },
+  };
+}
+
+function createBlocklyMemoryFeatureConfigExtension(
+  configService: AgentToolConfigAccessor,
+): {
+  getMemoryFeatureFlags(): {
+    memoryToolEnabled: boolean;
+    copilotMemoryEnabled: boolean;
+  };
+} {
+  return {
+    getMemoryFeatureFlags() {
+      return {
+        memoryToolEnabled: configService.memoryToolEnabled !== false,
+        copilotMemoryEnabled: configService.copilotMemoryEnabled === true,
+      };
+    },
+  };
 }
 
 function getLLMConfig(

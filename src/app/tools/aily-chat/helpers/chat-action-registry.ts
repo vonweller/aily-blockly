@@ -1,4 +1,5 @@
 import type { IMenuItem } from '../../../configs/menu.config';
+import { CHAT_ACTION_MENU_SURFACE_ID } from '../core/chat-action-surfaces';
 
 import {
   CHAT_FOCUS_TODOS_ACTION_ID,
@@ -11,34 +12,61 @@ import {
   canRunChatManageModelsAction,
   runChatManageModelsAction,
 } from './chat-manage-models-action';
+import {
+  CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
+  CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_LABEL,
+} from './chat-configure-custom-agents-action';
+import {
+  CHAT_CLEAR_MEMORIES_ACTION_ID,
+  CHAT_CLEAR_MEMORIES_ACTION_LABEL,
+  runChatClearMemoriesAction,
+} from './chat-clear-memories-action';
+import {
+  CHAT_SHOW_MEMORIES_ACTION_ID,
+  runChatShowMemoriesAction,
+} from './chat-show-memories-action';
+import type { ChatActionWhenContextMap } from './chat-action-when';
+import {
+  bindChatActionContributions,
+  CHAT_ACTION_MENU_CONTRIBUTION_OWNER_ID,
+  readChatActionContributionsByOwner,
+  type BoundChatActionContribution,
+} from './chat-action-contributions';
+import {
+  ChatActionSurfaceRegistry,
+} from './chat-action-surface-registry';
 
 export interface ChatActionRegistryContext {
   readonly currentMode: string;
   canRunManageModelsAction(): boolean;
   runManageModelsAction(): boolean;
+  runShowMemoriesAction(): boolean;
+  runClearMemoriesAction(): boolean;
+  runConfigureCustomAgentsAction(): boolean;
   runFocusTodosViewAction(): boolean;
   notifyManageModelsUnavailable(): void;
 }
 
-interface ChatRegisteredAction {
-  readonly id: string;
-  readonly label: string;
-  readonly icon?: string;
-  readonly shortcutText?: string;
-  readonly showInMenu?: boolean;
-  isEnabled(context: ChatActionRegistryContext): boolean;
-  run(context: ChatActionRegistryContext): boolean;
+type ChatActionContextKeyMap = ChatActionWhenContextMap & {
+  readonly currentMode: string;
+  readonly canRunManageModelsAction: boolean;
+};
+
+type ChatActionSurfaceId = typeof CHAT_ACTION_MENU_SURFACE_ID;
+
+interface ChatRegisteredAction extends BoundChatActionContribution<
+  ChatActionRegistryContext,
+  ChatActionSurfaceId,
+  string,
+  undefined
+> {
 }
 
-const CHAT_REGISTERED_ACTIONS: readonly ChatRegisteredAction[] = [
+const CHAT_REGISTERED_ACTIONS: readonly ChatRegisteredAction[] = bindChatActionContributions([
+  ...readChatActionContributionsByOwner<ChatRegisteredAction>(CHAT_ACTION_MENU_CONTRIBUTION_OWNER_ID),
+], [
   {
     id: CHAT_MANAGE_MODELS_ACTION_ID,
-    label: CHAT_MANAGE_MODELS_ACTION_LABEL,
-    icon: 'fa-light fa-gear',
-    showInMenu: false,
-    isEnabled: context => canRunChatManageModelsAction({
-      canOpenLanguageModelsConfiguration: () => context.canRunManageModelsAction(),
-    }),
     run: context => runChatManageModelsAction({
       canOpenLanguageModelsConfiguration: () => context.canRunManageModelsAction(),
       openLanguageModelsConfiguration: () => context.runManageModelsAction(),
@@ -46,30 +74,53 @@ const CHAT_REGISTERED_ACTIONS: readonly ChatRegisteredAction[] = [
     }),
   },
   {
+    id: CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
+    run: context => context.runConfigureCustomAgentsAction(),
+  },
+  {
+    id: CHAT_SHOW_MEMORIES_ACTION_ID,
+    run: context => runChatShowMemoriesAction({
+      requestShowMemories: () => context.runShowMemoriesAction(),
+    }),
+  },
+  {
+    id: CHAT_CLEAR_MEMORIES_ACTION_ID,
+    run: context => runChatClearMemoriesAction({
+      requestClearMemories: () => context.runClearMemoriesAction(),
+    }),
+  },
+  {
     id: CHAT_FOCUS_TODOS_ACTION_ID,
-    label: CHAT_FOCUS_TODOS_ACTION_LABEL,
-    icon: 'fa-light fa-list-check',
-    shortcutText: 'Ctrl/⌘ + Shift + T',
-    isEnabled: context => canRunChatTodoFocusAction(context.currentMode),
     run: context => context.runFocusTodosViewAction(),
   },
-];
+]);
 
 export class ChatActionRegistry {
-  constructor(private readonly getContext: () => ChatActionRegistryContext) {}
+  private readonly surfaceRegistry: ChatActionSurfaceRegistry<
+    ChatActionRegistryContext,
+    ChatActionSurfaceId,
+    string,
+    undefined,
+    ChatRegisteredAction
+  >;
+
+  constructor(private readonly getContext: () => ChatActionRegistryContext) {
+    this.surfaceRegistry = new ChatActionSurfaceRegistry({
+      getContext,
+      descriptors: CHAT_REGISTERED_ACTIONS,
+      createContextKeyMap: context => this.createContextKeyMap(context),
+    });
+  }
 
   getMenuItems(): readonly IMenuItem[] {
-    const context = this.getContext();
-    return CHAT_REGISTERED_ACTIONS
-      .filter(action => action.showInMenu !== false)
-      .map(action => ({
-      name: action.label,
-      action: action.id,
-      icon: action.icon,
-      text: action.shortcutText,
-      disabled: !action.isEnabled(context),
-      tooltip: action.label,
-      data: { actionId: action.id },
+    return this.surfaceRegistry.getSurfaceEntries(CHAT_ACTION_MENU_SURFACE_ID).map(({ descriptor, enabled }) => ({
+      name: descriptor.label,
+      action: descriptor.id,
+      icon: descriptor.icon,
+      text: descriptor.shortcutText,
+      disabled: !enabled,
+      tooltip: descriptor.tooltip ?? descriptor.label,
+      data: { actionId: descriptor.id },
       }));
   }
 
@@ -79,16 +130,15 @@ export class ChatActionRegistry {
       return false;
     }
 
-    const action = CHAT_REGISTERED_ACTIONS.find(candidate => candidate.id === actionId);
-    if (!action) {
-      return false;
-    }
+    return this.surfaceRegistry.runActionById(actionId, undefined);
+  }
 
-    const context = this.getContext();
-    if (!action.isEnabled(context)) {
-      return false;
-    }
-
-    return action.run(context);
+  private createContextKeyMap(context: ChatActionRegistryContext): ChatActionContextKeyMap {
+    return {
+      currentMode: context.currentMode,
+      canRunManageModelsAction: canRunChatManageModelsAction({
+        canOpenLanguageModelsConfiguration: () => context.canRunManageModelsAction(),
+      }),
+    };
   }
 }

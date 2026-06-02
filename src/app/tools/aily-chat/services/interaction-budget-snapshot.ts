@@ -239,6 +239,9 @@ function buildStatusText(continuation: ContinuationBudgetRecord): string | undef
   if (pendingKind === 'confirmation') {
     return 'Status: waiting for confirmation';
   }
+  if (pendingKind === 'plan_review') {
+    return 'Status: waiting for plan review';
+  }
   if (pendingKind === 'continue') {
     return 'Status: continue required';
   }

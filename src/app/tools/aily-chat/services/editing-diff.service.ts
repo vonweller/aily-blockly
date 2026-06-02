@@ -52,6 +52,29 @@ export class EditingDiffService {
     return this.toRequestSummary(state, requestId, stats, requestOps);
   }
 
+  getRequestSummarySync(requestId: string): RequestEditSummary | null {
+    const state = this.loadState();
+    if (!state) {
+      return null;
+    }
+
+    const requestOps = state.operations
+      .filter(operation => operation.requestId === requestId)
+      .sort((left, right) => left.epoch - right.epoch);
+    if (requestOps.length === 0) {
+      return null;
+    }
+
+    const stats = this.buildDiffStatsSync(
+      requestOps.map(operation => operation.uri),
+      uri => this.getLatestBaselineForRequest(state, requestId, uri),
+      uri => this.getLatestOperationForRequest(state, requestId, uri),
+      requestOps,
+    );
+
+    return this.toRequestSummary(state, requestId, stats, requestOps);
+  }
+
   async getCheckpointSummary(checkpointId: string): Promise<RequestEditSummary | null> {
     const state = this.loadState();
     if (!state) {
@@ -209,6 +232,38 @@ export class EditingDiffService {
         } satisfies TimelineDiffStat;
       })
     );
+
+    return stats.filter((value): value is NonNullable<typeof value> => value !== null);
+  }
+
+  private buildDiffStatsSync(
+    uris: readonly string[],
+    beforeResolver: (uri: string) => ContentState,
+    afterResolver: (uri: string) => ContentState,
+    operations: readonly TimelineFileOperation[],
+  ): TimelineDiffStat[] {
+    const stats = [...new Set(uris)].map(uri => {
+      const before = beforeResolver(uri);
+      const after = afterResolver(uri);
+      if (before.kind !== 'text' || after.kind !== 'text') {
+        return this.createOpaqueDiffStat(uri, before, after, operations);
+      }
+
+      const diff = this.textDiffService.computeDiffSync(before.content, after.content, DEFAULT_DIFF_OPTIONS);
+      const changes = diff.changes.map(change => this.toTimelineDiffChange(change));
+      const counts = summarizeTimelineChanges(changes);
+      if (counts.addedLines === 0 && counts.removedLines === 0 && counts.changedLines === 0) {
+        return null;
+      }
+
+      return {
+        uri,
+        contentKind: 'text',
+        ...counts,
+        operationTypes: this.collectOperationTypes(operations, uri),
+        changes,
+      } satisfies TimelineDiffStat;
+    });
 
     return stats.filter((value): value is NonNullable<typeof value> => value !== null);
   }

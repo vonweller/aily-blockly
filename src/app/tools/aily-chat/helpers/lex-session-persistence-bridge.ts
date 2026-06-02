@@ -10,24 +10,24 @@ interface SessionPersistenceAgentLike {
 export class LexSessionPersistenceBridge {
   constructor(
     private readonly deps: {
-      getHandle?: () => AgentHandle | null;
-      getAgent: () => SessionPersistenceAgentLike | null;
+      getHandle?: (sessionId?: string | null) => AgentHandle | null;
+      getAgent: (sessionId?: string | null) => SessionPersistenceAgentLike | null;
       flushPendingEvents: (events: readonly any[]) => void;
     },
   ) {}
 
-  saveSession(): SessionSnapshot | null {
-    const snapshot = this.deps.getHandle?.()?.saveSession?.()
-      ?? this.deps.getAgent()?.saveSession?.()
+  saveSession(sessionId?: string | null): SessionSnapshot | null {
+    const snapshot = this.deps.getHandle?.(sessionId)?.saveSession?.()
+      ?? this.deps.getAgent(sessionId)?.saveSession?.()
       ?? null;
     this.flushPendingEvents();
     return snapshot;
   }
 
-  getSessionSnapshot(): SessionSnapshot | null {
-    const handle = this.deps.getHandle?.() ?? null;
+  getSessionSnapshot(sessionId?: string | null): SessionSnapshot | null {
+    const handle = this.deps.getHandle?.(sessionId) ?? null;
     return handle?.getSessionSnapshot()
-      ?? this.deps.getAgent()?.getSessionSnapshot?.()
+      ?? this.deps.getAgent(sessionId)?.getSessionSnapshot?.()
       ?? null;
   }
 

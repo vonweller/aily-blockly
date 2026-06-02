@@ -85,6 +85,12 @@
   cursor: pointer;
 }
 
+.chat-debug-home-item:focus-visible,
+.chat-debug-home-action:focus-visible {
+  outline: 2px solid rgba(88, 166, 255, 0.7);
+  outline-offset: 2px;
+}
+
 .chat-debug-home-item.active {
   border-color: rgba(88, 166, 255, 0.55);
 }
@@ -124,6 +130,10 @@
 .chat-debug-home-empty-text {
   font-size: 12px;
   line-height: 18px;
+}
+
+.chat-debug-home-show-more {
+  align-self: flex-start;
 }
 
 @media (max-width: 640px) {

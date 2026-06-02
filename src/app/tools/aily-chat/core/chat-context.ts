@@ -19,6 +19,7 @@ import type { NgZone } from '@angular/core';
 import type { TranslateService } from '@ngx-translate/core';
 import type { NzMessageService } from 'ng-zorro-antd/message';
 
+import type { ChatSurfaceModeId } from './chat-mode';
 import type { ChatService, ModelConfig } from '../services/chat.service';
 import type { McpService } from '../services/mcp.service';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
@@ -67,7 +68,8 @@ export interface IAgentLifecycle {
   currentMessageSource: string;
   messageSubscription: any;
   _pendingModelSwitch: ModelConfig | null;
-  _pendingModeSwitch: string | null;
+  _pendingModeSwitch: ChatSurfaceModeId | null;
+  _pendingSwitchSessionId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +116,7 @@ export interface IProjectContext {
   currentUserGroup: string[];
   isLoggedIn: boolean;
   debug: boolean;
-  readonly currentMode: string;
+  readonly currentMode: ChatSurfaceModeId;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
   readonly currentModelBillingLabel?: string;
@@ -155,12 +157,26 @@ export interface IChatCoordination {
   readonly editActions: EditActionsHelper;
   readonly interaction: UserInteractionHelper;
   openSettings(): void;
+  /** 将 lex runtime 的 custom-agent provider source 绑定给宿主 runtime mode owner。 */
+  syncCustomAgentProviderSource?(agentModeSource: unknown): void;
+  /** 将 session customization provider binding（metadata + itemProvider）绑定给宿主 runtime mode owner。 */
+  syncSessionCustomizationProvider?(providerBinding: unknown): void;
+  /** 将多个按 sessionType 分开的 session customization provider binding 绑定给宿主 runtime mode owner。 */
+  syncSessionCustomizationProviders?(providerBindings: readonly unknown[]): void;
+  /** 将 session customization content owner 绑定给宿主 runtime mode owner。 */
+  syncSessionCustomizationContentProvider?(contentProvider: unknown): void;
+  /** 将 session provider-options source 绑定给宿主 session/provider option owner。 */
+  syncSessionProviderOptionsSource?(sourceBinding: unknown): void;
+  /** 将多个按 sessionType 分开的 session provider-options source 绑定给宿主 session/provider option owner。 */
+  syncSessionProviderOptionsSources?(sourceBindings: readonly unknown[]): void;
+  /** 将 lex runtime 当前 custom-agent provider 暴露的 agent definition 列表同步给宿主 current mode resolver。 */
+  syncCustomAgentProviderModes?(agentModes: readonly unknown[]): void;
   /** 将 lex runtime 当前已注册 agent 列表同步给视图层。 */
   syncRegisteredAgentNames?(agentNames: readonly string[]): void;
   /** 发送消息 */
   send(sender: string, content: string, clear?: boolean): Promise<void>;
   /** 应用延迟的模型/模式切换 */
-  applyPendingSwitch(): Promise<void>;
+  applyPendingSwitch(sessionId?: string | null): Promise<void>;
   /** 工具审批桥接（委托到 interaction） */
   handleToolApproval(
     request: import('../helpers/tool-approval-ui').ToolApprovalRequest,

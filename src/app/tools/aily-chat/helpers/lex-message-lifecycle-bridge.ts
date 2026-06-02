@@ -1,21 +1,22 @@
 import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
 import type { ChatPart } from '../core/chat-parts';
-import type { TurnResponseStatus } from 'aily-lex/browser';
+import type { TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import type { ChatListItem } from '../services/chat-history.service';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import { ChatViewWriteBridge } from './chat-view-write-bridge';
 import type { ChatMessageHandle } from './chat-message-handle';
 import { findChatMessageHandleByMessage } from './chat-message-handle';
 
 type LexMessageLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
-import type { EditsSummary } from '../services/edit-checkpoint.service';
-
 type LexMessageLifecycleContext = LexMessageLifecycleViewWriteContext
-  & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted'>
+  & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled'>
   & Pick<IChatServiceAccess, 'editCheckpointService' | 'ailyChatConfigService'>
   & Pick<IChatCoordination, 'session' | 'applyPendingSwitch'>
-  & { triggerAiEditDiffPreview?(summary: EditsSummary | null): void };
+  & {
+    syncExecutionRuntimeState?(saveTarget?: HostSessionSaveTarget | null): void;
+  };
 
 type LexMessageLifecycleViewWriteAccess = Pick<
   ChatViewWriteBridge,
@@ -44,9 +45,9 @@ export class LexMessageLifecycleBridge {
   constructor(
     private readonly ctx: LexMessageLifecycleContext,
     private readonly partProcessor: { reset(): void; finalize?(): void },
-    private readonly clearAbortController: () => void,
     private readonly runFinalizeCompaction?: () => Promise<boolean> | boolean,
     private readonly finalizeCurrentTurnResponse?: (fallbackStatus?: TurnResponseStatus) => boolean,
+    private readonly readCurrentTurnResponses?: () => readonly TurnResponseTurn[] | null | undefined,
   ) {
     const viewWriteContext: LexMessageLifecycleViewWriteContext = {
       get list() {
@@ -155,19 +156,18 @@ export class LexMessageLifecycleBridge {
     this._currentMessage = handle.message;
   }
 
-  async finalize(): Promise<void> {
+  async finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
+    const resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
     this.closeNativeThinking();
     await this.partProcessor.finalize?.();
 
     this.ctx.editCheckpointService.commitCurrentTurn();
     if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
-      const summary = await this.ctx.editCheckpointService.getEditsSummary();
-      const autoSave = this.ctx.ailyChatConfigService.autoSaveEdits;
-      this.ctx.triggerAiEditDiffPreview?.(summary);
-      if (autoSave) {
+      if (this.ctx.ailyChatConfigService.autoSaveEdits) {
         this.ctx.editCheckpointService.acceptAllAsBaseline();
         this.ctx.editCheckpointService.dismissSummary();
       } else {
+        const summary = await this.ctx.editCheckpointService.getEditsSummary();
         this.ctx.editCheckpointService.publishSummary(summary);
       }
     }
@@ -186,18 +186,61 @@ export class LexMessageLifecycleBridge {
       console.warn('[LexStream] finalize current turn response failed:', error);
     }
 
-    this.ctx.session.saveCurrentSession();
+    if (resolvedSaveTarget) {
+      // Execution-owned save targets already carry the authoritative session-scoped
+      // turnResponses. Do not let visible-bridge snapshots overwrite detached owner truth.
+      const candidateTurnResponses = Array.isArray(resolvedSaveTarget.turnResponses)
+        ? resolvedSaveTarget.turnResponses
+        : this.readCurrentTurnResponses?.();
+      if (Array.isArray(candidateTurnResponses)) {
+        resolvedSaveTarget.turnResponses = this.normalizeTerminalTurnResponses(candidateTurnResponses);
+      }
+    }
+
+    this.ctx.session.saveCurrentSession(resolvedSaveTarget ? { target: resolvedSaveTarget } : undefined);
+    this.ctx.syncExecutionRuntimeState?.(resolvedSaveTarget);
 
     if (!AilyHost.get().electron?.isWindowFocused()) {
       AilyHost.get().electron?.notify('Aily', '对话已完成');
     }
 
-    await this.ctx.applyPendingSwitch();
+    await this.ctx.applyPendingSwitch(resolvedSaveTarget?.sessionId);
     this.ctx.ngZone.run(() => {
       this.ctx.isWaiting = false;
       this.ctx.isCompleted = true;
     });
-    this.clearAbortController();
+  }
+
+  private normalizeTerminalTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
+    const fallbackStatus: TurnResponseStatus = this.ctx.isCancelled ? 'cancelled' : 'completed';
+    let hasStreaming = false;
+    for (const turn of turnResponses) {
+      if (turn?.response?.status === 'streaming') {
+        hasStreaming = true;
+        break;
+      }
+    }
+
+    if (!hasStreaming) {
+      return [...turnResponses];
+    }
+
+    const now = Date.now();
+    return turnResponses.map((turn) => {
+      if (turn?.response?.status !== 'streaming') {
+        return turn;
+      }
+
+      return {
+        ...turn,
+        updatedAt: now,
+        response: {
+          ...turn.response,
+          status: fallbackStatus,
+          updatedAt: now,
+        },
+      };
+    });
   }
 
   private isToolBearingPart(part: ChatPart): boolean {

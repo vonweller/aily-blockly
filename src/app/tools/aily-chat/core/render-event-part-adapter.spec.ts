@@ -409,6 +409,56 @@ describe('RenderEventPartAdapter', () => {
     expect(parts.length).toBe(0);
   });
 
+  it('should project auto-review lifecycle onto tool-call approval metadata', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'review-1',
+      toolName: 'write_file',
+      input: { filePath: '/workspace/src/app.ts' },
+      timestamp: 0,
+    });
+
+    processCurrent({
+      type: 'approval_auto_review_start',
+      reviewId: 'review-review-1',
+      toolCallId: 'review-1',
+      toolName: 'write_file',
+      reason: 'strict auto-review required: default: safe write auto-allowed',
+      source: 'approval',
+      timestamp: 1,
+    });
+
+    let parts = store.getPartsForHandle(currentHandle);
+    expect((parts[0] as any).metadata?.approval).toEqual(jasmine.objectContaining({
+      toolCallId: 'review-1',
+      reviewer: 'auto_review',
+      reviewStatus: 'reviewing',
+      title: '自动审查中',
+    }));
+
+    processCurrent({
+      type: 'approval_auto_review_complete',
+      reviewId: 'review-review-1',
+      toolCallId: 'review-1',
+      toolName: 'write_file',
+      status: 'approved',
+      riskLevel: 'medium',
+      rationale: 'Patch only updates existing workspace files.',
+      source: 'approval',
+      timestamp: 2,
+    });
+
+    parts = store.getPartsForHandle(currentHandle);
+    expect((parts[0] as any).metadata?.approval).toEqual(jasmine.objectContaining({
+      toolCallId: 'review-1',
+      reviewer: 'auto_review',
+      reviewStatus: 'approved',
+      reviewRiskLevel: 'medium',
+      resolved: true,
+      result: 'approved',
+    }));
+  });
+
   it('should handle error notice', () => {
     processCurrent({
       type: 'error_notice',

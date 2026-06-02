@@ -15,8 +15,10 @@
 
 import type { IAgentCommandContribution, IAgentContribution, IHostAgentProvider } from 'aily-lex/browser';
 import { SCHEMATIC_AGENT_TYPE } from './agent-identifiers';
+import { normalizeGovernanceToolName } from './tool-name-normalizer';
 
 export { SCHEMATIC_AGENT_TYPE };
+export const BLOCKLY_HOST_AGENT_URI_SCHEME = 'aily-chat-agent';
 export const SCHEMATIC_AGENT_NAME = SCHEMATIC_AGENT_TYPE;
 export const SCHEMATIC_AGENT_MAX_TURNS = 25;
 export const SCHEMATIC_AGENT_MESSAGE_INHERITANCE = 'none' as const;
@@ -83,6 +85,17 @@ const SCHEMATIC_SHARED_TOOLS = [
 ];
 
 export const SCHEMATIC_AGENT_TOOLS = [...SCHEMATIC_EXCLUSIVE_TOOLS, ...SCHEMATIC_SHARED_TOOLS] as const;
+
+type AgentConfigChangeSubscription = { unsubscribe(): void };
+
+export interface BlocklyAgentProviderConfigSource {
+  readonly configChanged$: {
+    subscribe(listener: () => void): AgentConfigChangeSubscription;
+  };
+  getAgentToolsConfig(agentName: string): {
+    readonly disabledTools?: readonly string[];
+  } | null | undefined;
+}
 
 const SCHEMATIC_AGENT_COMMANDS: readonly IAgentCommandContribution[] = [
   {
@@ -221,11 +234,22 @@ When the user wants to modify an existing schematic:
 
 export const SCHEMATIC_AGENT_WHEN_TO_USE = 'Generate and validate circuit schematics / connection diagrams (连线图). Use only when the task explicitly involves wiring, pin assignment, or component connections. Do not use for programming help, ABS block/library analysis, code generation, or general project setup.';
 
+export function createBlocklyHostAgentUri(agentType: string): string {
+  const normalizedAgentType = typeof agentType === 'string' ? agentType.trim() : '';
+  const encodedAgentType = encodeURIComponent(normalizedAgentType || 'unknown');
+  return `${BLOCKLY_HOST_AGENT_URI_SCHEME}:/agents/${encodedAgentType}.agent.md`;
+}
+
 const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
   agentType: SCHEMATIC_AGENT_TYPE,
   name: 'Schematic Agent',
   whenToUse: SCHEMATIC_AGENT_WHEN_TO_USE,
   whenNotToUse: SCHEMATIC_AGENT_WHEN_NOT_TO_USE,
+  uri: createBlocklyHostAgentUri(SCHEMATIC_AGENT_TYPE),
+  modeInstructions: {
+    content: SCHEMATIC_PROMPT_BODY,
+    toolReferences: [],
+  },
   requiredContext: SCHEMATIC_AGENT_REQUIRED_CONTEXT,
   // Static system prompt — environment context is auto-injected by AgentExecutor
   // via the 'environment' extension (IEnvironmentProvider), no per-agent duplication needed.
@@ -239,6 +263,53 @@ const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
   disallowedPromptPatterns: [...SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS],
 };
 
+function getConfiguredAgentTools(
+  configSource: BlocklyAgentProviderConfigSource | undefined,
+  agentName: string,
+  tools: readonly string[],
+): string[] {
+  if (!configSource) {
+    return [...tools];
+  }
+
+  const disabledTools = new Set(
+    (configSource.getAgentToolsConfig(agentName)?.disabledTools ?? []).map(toolName => normalizeGovernanceToolName(toolName)),
+  );
+
+  return tools.filter(toolName => !disabledTools.has(normalizeGovernanceToolName(toolName)));
+}
+
+function buildBlocklyAgentContributions(
+  configSource?: BlocklyAgentProviderConfigSource,
+): IAgentContribution[] {
+  return [
+    {
+      ...SCHEMATIC_AGENT_CONTRIBUTION,
+      tools: getConfiguredAgentTools(configSource, SCHEMATIC_AGENT_TYPE, SCHEMATIC_AGENT_TOOLS),
+    },
+    // Future: SimulatorAgent, HardwareAgent, etc.
+  ];
+}
+
+function serializeBlocklyAgentContributions(contributions: readonly IAgentContribution[]): string {
+  return JSON.stringify(contributions);
+}
+
+function resolveBlocklyAgentProviderConfigSource(
+  configSource: BlocklyAgentProviderConfigSource | undefined,
+): BlocklyAgentProviderConfigSource | undefined {
+  if (!configSource || typeof configSource.getAgentToolsConfig !== 'function') {
+    return undefined;
+  }
+
+  const configChanged = configSource.configChanged$;
+  if (!configChanged || typeof configChanged.subscribe !== 'function') {
+    return undefined;
+  }
+
+  return configSource;
+}
+
 // ---------------------------------------------------------------------------
 // Provider Factory
 // ---------------------------------------------------------------------------
@@ -249,14 +320,39 @@ const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
  * Returns agent definitions that use explicit tool allowlists.
  * Explicit lists are matched by tool name in lex,
  * allowing domain agents to access tools not visible to the main agent.
+ *
+ * When a config source is provided, the provider mirrors upstream Ask/Plan
+ * custom-agent providers by recomputing contributions on config changes and
+ * firing `onAgentsChanged` only when the effective agent definition changes.
  */
-export function createBlocklyAgentProvider(): IHostAgentProvider {
+export function createBlocklyAgentProvider(configSource?: BlocklyAgentProviderConfigSource): IHostAgentProvider {
+  const liveConfigSource = resolveBlocklyAgentProviderConfigSource(configSource);
+  let contributionSignature = serializeBlocklyAgentContributions(buildBlocklyAgentContributions(liveConfigSource));
+
   return {
     contributeAgents(): IAgentContribution[] {
-      return [
-        SCHEMATIC_AGENT_CONTRIBUTION,
-        // Future: SimulatorAgent, HardwareAgent, etc.
-      ];
+      const contributions = buildBlocklyAgentContributions(liveConfigSource);
+      contributionSignature = serializeBlocklyAgentContributions(contributions);
+      return contributions;
     },
+    ...(liveConfigSource ? {
+      onAgentsChanged(listener: () => void) {
+        const subscription = liveConfigSource.configChanged$.subscribe(() => {
+          const nextSignature = serializeBlocklyAgentContributions(buildBlocklyAgentContributions(liveConfigSource));
+          if (nextSignature === contributionSignature) {
+            return;
+          }
+
+          contributionSignature = nextSignature;
+          listener();
+        });
+
+        return {
+          dispose() {
+            subscription.unsubscribe();
+          },
+        };
+      },
+    } : {}),
   };
 }

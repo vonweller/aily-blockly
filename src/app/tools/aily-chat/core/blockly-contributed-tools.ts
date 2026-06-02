@@ -23,6 +23,11 @@ import type { IExternalHostAPI } from 'aily-lex/host/blockly';
 // ---- 复用已有工具实现 ----
 import { appendLegacyHostContributions, invokeLegacyHostExternalTool, isLegacyHostExternalToolName } from './blockly-legacy-host-tools';
 import {
+  appendBlocklyWorkspaceContributions,
+  createBlocklyWorkspaceHandlers,
+  type BlocklyWorkspaceToolOverrides,
+} from './blockly-workspace-tools';
+import {
   appendBlocklyDiscoveryContributions,
   appendBlocklyProjectContributions,
   createBlocklyProjectDiscoveryHandlers,
@@ -54,9 +59,12 @@ function createDeferred(group: typeof BLOCKLY_LEX_DEFERRED_GROUPS[number]['id'],
 // Invoke Handlers
 // ---------------------------------------------------------------------------
 
-function createHandlers(): Record<string, InvokeHandler> {
+type BlocklyToolProviderOverrides = BlocklyWorkspaceToolOverrides;
+
+function createHandlers(overrides?: BlocklyToolProviderOverrides): Record<string, InvokeHandler> {
   return {
     ...createBlocklyProjectDiscoveryHandlers(),
+    ...createBlocklyWorkspaceHandlers(overrides),
     ...createBlocklyPlaceholderHandlers(),
   };
 }
@@ -72,6 +80,7 @@ function appendDiscoveryContributions(contributions: IToolContribution[], hostAP
 function collectBlocklyContributions(hostAPI: IExternalHostAPI): IToolContribution[] {
   const contributions: IToolContribution[] = [];
 
+  appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
   appendProjectContributions(contributions, hostAPI);
   appendDiscoveryContributions(contributions, hostAPI);
   appendLegacyHostContributions(contributions, hostAPI);
@@ -88,9 +97,9 @@ function collectBlocklyContributions(hostAPI: IExternalHostAPI): IToolContributi
  *
  * Detects available capabilities and only contributes applicable tools.
  */
-export function createBlocklyToolProvider(hostAPI: IExternalHostAPI): IHostToolProvider {
+export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, overrides?: BlocklyToolProviderOverrides): IHostToolProvider {
   const contributions = collectBlocklyContributions(hostAPI);
-  const handlers = createHandlers();
+  const handlers = createHandlers(overrides);
 
   return {
     contributeTools(): IToolContribution[] {

@@ -12,18 +12,27 @@
   </div>
 
   @if (sessions.length > 0) {
-  <div class="chat-debug-home-list" role="list" aria-label="Imported debug snapshots">
-    @for (session of sessions; track session.sessionId) {
+  <div class="chat-debug-home-list" role="list" aria-label="Imported debug snapshots" (keydown)="onListKeydown($event)">
+    @for (session of visibleSessions; track session.sessionId) {
     <button
+      #sessionButton
       type="button"
       class="chat-debug-home-item"
+      role="listitem"
       [class.active]="activeSessionId === session.sessionId"
+      [attr.aria-current]="activeSessionId === session.sessionId ? 'true' : null"
+      [attr.aria-label]="getSessionAriaLabel(session)"
       (click)="sessionRequested.emit(session.sessionId)">
-      <div class="chat-debug-home-item-title">{{ session.title }}</div>
+      <div class="chat-debug-home-item-title">{{ session.displayTitle }}</div>
       <div class="chat-debug-home-item-meta">源会话 {{ session.sourceSessionId }} · {{ session.importedAt | date:'yyyy-MM-dd HH:mm:ss' }}</div>
     </button>
     }
   </div>
+  @if (hasMoreSessions) {
+  <button type="button" class="chat-debug-home-action secondary chat-debug-home-show-more" (click)="showMore()">
+    显示更多 ({{ remainingSessionCount }})
+  </button>
+  }
   } @else {
   <div class="chat-debug-home-empty">
     <div class="chat-debug-home-empty-title">还没有导入的调试快照</div>

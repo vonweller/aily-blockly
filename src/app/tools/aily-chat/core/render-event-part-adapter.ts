@@ -206,6 +206,30 @@ export class RenderEventPartAdapter {
         }
         return true;
 
+      case 'approval_auto_review_start':
+        if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
+          const toolCallId = event.toolCallId;
+          this._store.patchToolCallForHandle(
+            this._findToolCallHandle(toolCallId, handle),
+            toolCallId,
+            approvalAutoReviewStartToToolCallPatch({ ...event, toolCallId }),
+          );
+          return true;
+        }
+        return false;
+
+      case 'approval_auto_review_complete':
+        if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
+          const toolCallId = event.toolCallId;
+          this._store.patchToolCallForHandle(
+            this._findToolCallHandle(toolCallId, handle),
+            toolCallId,
+            approvalAutoReviewCompleteToToolCallPatch({ ...event, toolCallId }),
+          );
+          return true;
+        }
+        return false;
+
       case 'approval_resolve':
         if (isToolExecutionApprovalEvent(event)) {
           this._store.patchToolCallForHandle(
@@ -877,6 +901,53 @@ function approvalResolveToToolCallPatch(
         toolCallId: event.toolCallId,
         result: event.result,
         scope: event.scope,
+      }),
+    },
+  };
+}
+
+function approvalAutoReviewStartToToolCallPatch(
+  event: Extract<RenderEvent, { type: 'approval_auto_review_start' }> & { toolCallId: string },
+): ToolCallPartPatch {
+  return {
+    text: event.reason,
+    metadata: {
+      approval: buildPendingToolCallApprovalMetadata({
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        title: '自动审查中',
+        message: event.reason,
+        source: event.source,
+        reviewer: 'auto_review',
+        reviewStatus: 'reviewing',
+        reviewStartedAt: event.timestamp,
+        args: undefined,
+        actions: [],
+        primaryScope: 'once',
+      }),
+    },
+  };
+}
+
+function approvalAutoReviewCompleteToToolCallPatch(
+  event: Extract<RenderEvent, { type: 'approval_auto_review_complete' }> & { toolCallId: string },
+): ToolCallPartPatch {
+  const approved = event.status === 'approved';
+  return {
+    ...(approved ? {} : { state: 'error' as const }),
+    metadata: {
+      approval: buildResolvedToolCallApprovalMetadata({
+        toolCallId: event.toolCallId,
+        result: approved ? 'approved' : 'rejected',
+        reviewer: 'auto_review',
+        reviewStatus: event.status,
+        reviewRiskLevel: event.riskLevel,
+        source: event.source,
+        reviewCompletedAt: event.timestamp,
+        decisionSource: approved ? 'auto_review' : 'auto_review',
+        title: approved ? '自动审查已允许' : (event.status === 'timedOut' ? '自动审查超时' : '自动审查已拒绝'),
+        message: event.rationale,
+        description: `风险等级：${event.riskLevel}`,
       }),
     },
   };

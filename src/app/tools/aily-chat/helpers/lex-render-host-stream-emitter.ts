@@ -52,6 +52,35 @@ function areTurnResponseCommandsEqual(
     && JSON.stringify(left.disambiguation ?? []) === JSON.stringify(right.disambiguation ?? []);
 }
 
+function areTurnResponseRequestUsagesEqual(
+  left: TurnResponseTurn['responseModel']['requestUsage'] | undefined,
+  right: TurnResponseTurn['responseModel']['requestUsage'] | undefined,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.promptTokens === right.promptTokens
+    && left.completionTokens === right.completionTokens
+    && left.outputBuffer === right.outputBuffer
+    && JSON.stringify(left.promptTokenDetails ?? []) === JSON.stringify(right.promptTokenDetails ?? []);
+}
+
+function toHostUsage(
+  requestUsage: NonNullable<TurnResponseTurn['responseModel']>['requestUsage'],
+): NonNullable<TurnResponseTurn['usage']> {
+  return {
+    inputTokens: requestUsage.promptTokens,
+    outputTokens: requestUsage.completionTokens,
+    ...(typeof requestUsage.outputBuffer === 'number' ? { outputBuffer: requestUsage.outputBuffer } : {}),
+    ...(requestUsage.promptTokenDetails?.length ? { promptTokenDetails: [...requestUsage.promptTokenDetails] } : {}),
+  };
+}
+
 export class LexRenderHostStreamEmitter {
   private _listener: IHostStreamListener | null = null;
 
@@ -160,6 +189,15 @@ export class LexRenderHostStreamEmitter {
       this.emitResponseItem(
         currentTurn.turnId,
         createHostStreamResponseStatusUpdateItem(currentTurn.response.status, currentTurn.updatedAt),
+      );
+    }
+
+    const previousRequestUsage = previousTurn.responseModel?.requestUsage;
+    const currentRequestUsage = currentTurn.responseModel?.requestUsage;
+    if (!areTurnResponseRequestUsagesEqual(previousRequestUsage, currentRequestUsage) && currentRequestUsage) {
+      this.emitResponseItem(
+        currentTurn.turnId,
+        createHostStreamUsageItem(toHostUsage(currentRequestUsage), currentTurn.updatedAt),
       );
     }
 

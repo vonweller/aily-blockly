@@ -34,11 +34,12 @@ import {
   type HostSessionDebugResolvedEventContent,
 } from '../../services/host-session-debug-events';
 import { ChatDebugBrowserService } from '../../services/chat-debug-browser.service';
+import { AilyChatDebugBreadcrumbComponent } from '../aily-chat-debug-breadcrumb/aily-chat-debug-breadcrumb.component';
 
 @Component({
   selector: 'aily-chat-debug-flow',
   standalone: true,
-  imports: [CommonModule, FormsModule, AilyChatDebugDetailPanelComponent],
+  imports: [CommonModule, FormsModule, AilyChatDebugBreadcrumbComponent, AilyChatDebugDetailPanelComponent],
   templateUrl: './aily-chat-debug-flow.component.html',
   styleUrl: './aily-chat-debug-flow.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

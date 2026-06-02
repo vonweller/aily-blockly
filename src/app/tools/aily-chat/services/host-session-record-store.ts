@@ -1,9 +1,42 @@
 import { AilyHost } from '../core/host';
+import {
+  isLegacyChatPlanModeValue,
+  LEGACY_CHAT_PLAN_AGENT_TARGET,
+  normalizeChatSessionType,
+} from '../core/chat-mode';
+import {
+  normalizeChatSessionTitleText,
+  normalizePersistedChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
 import type { TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
-import { cloneSessionRequestContextSnapshot } from '../helpers/turn-request-prompt-context';
+import {
+  hasHostSessionExplicitTurnRequestRouting,
+  normalizeHostSessionRequestRoutingSummary,
+  resolveHostSessionRequestRoutingSummary,
+} from '../helpers/host-session-request-routing';
+import {
+  normalizeHostSessionInteractionActionSummary,
+  resolveHostSessionInteractionActionSummary,
+} from '../helpers/host-session-interaction-action';
+import {
+  type HostSessionSelectedModeResolveOptions,
+  normalizeHostSessionInputStateFromMetadata,
+  resolveHostSessionModeDescriptor,
+  resolveHostSessionModeDescriptorFromMetadata,
+  resolveHostSessionInputState,
+  resolveHostSessionSummaryModeFromMetadata,
+  resolveHostSessionSelectedMode,
+  resolveHostSessionSelectedModeFromMetadata,
+} from '../helpers/host-session-input-state';
+import {
+  cloneHostSessionRuntimeAuxiliary,
+  stripLegacyRuntimeAuxiliaryFromMetadata,
+} from '../helpers/host-session-runtime-auxiliary';
 
 import type {
   HostSessionRecord,
+  HostSessionRuntimeAuxiliary,
   HostSessionSidecar,
   PersistedHostResponseData,
   PersistedHostTurnResponse,
@@ -38,20 +71,6 @@ function clonePersistedValue<T>(value: T): T {
   }
 
   return value;
-}
-
-function normalizeActiveSkillNames(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const names = Array.from(new Set(
-    value
-      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-      .map(entry => entry.trim()),
-  )).sort((left, right) => left.localeCompare(right));
-
-  return names.length > 0 ? names : undefined;
 }
 
 function cloneContinuationDiagnostics(
@@ -90,6 +109,97 @@ function normalizeRoundSummary(summary: unknown): string | undefined {
     : undefined;
 }
 
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly PersistedHostTurnResponse[] | undefined): string {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function normalizePersistedSessionTitleMetadata(
+  metadata: SessionMetadata,
+  turnResponses?: readonly PersistedHostTurnResponse[],
+): SessionMetadata {
+  const normalizedTitle = normalizeChatSessionTitleText(metadata.title);
+  const explicitSource = normalizePersistedChatSessionTitleSource(metadata.titleSource);
+  const derivedDefaultTitle = normalizeChatSessionTitleText(metadata.defaultTitle)
+    || deriveDefaultTitleFromTurnResponses(turnResponses as readonly PersistedHostTurnResponse[] | undefined);
+
+  let nextTitle = normalizedTitle;
+  let nextTitleSource: PersistedChatSessionTitleSource | undefined = explicitSource;
+  if (!nextTitleSource && nextTitle) {
+    if (derivedDefaultTitle && nextTitle === derivedDefaultTitle) {
+      nextTitle = '';
+    } else {
+      nextTitleSource = 'legacy-custom';
+    }
+  }
+
+  const nextMetadata: SessionMetadata = {
+    ...metadata,
+    title: nextTitle,
+  };
+  if (nextTitleSource && nextTitle) {
+    nextMetadata.titleSource = nextTitleSource;
+  } else {
+    delete nextMetadata.titleSource;
+  }
+  if (derivedDefaultTitle) {
+    nextMetadata.defaultTitle = derivedDefaultTitle;
+  } else {
+    delete nextMetadata.defaultTitle;
+  }
+
+  return nextMetadata;
+}
+
 function cloneTurnRound(round: TurnResponseTurn['rounds'][number]): TurnResponseTurn['rounds'][number] {
   const summary = normalizeRoundSummary(round.summary);
 
@@ -111,6 +221,7 @@ export interface HostSessionRecordStoreOptions {
   getGlobalProjectRootPath: () => string | null;
   joinPath: (...parts: string[]) => string;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
+  resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
 }
 
 /**
@@ -123,18 +234,43 @@ export class HostSessionRecordStore {
 
   createFullMetadata(metadata: Partial<SessionMetadata> & { sessionId: string }): SessionMetadata {
     const now = Date.now();
+    const sanitizedMetadata = stripLegacyRuntimeAuxiliaryFromMetadata(metadata);
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(sanitizedMetadata);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions());
     return {
-      sessionId: metadata.sessionId,
-      title: metadata.title || '',
-      projectPath: metadata.projectPath ?? null,
-      createdAt: metadata.createdAt || now,
+      sessionId: sanitizedMetadata.sessionId,
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
+      sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
+      projectPath: sanitizedMetadata.projectPath ?? null,
+      createdAt: sanitizedMetadata.createdAt || now,
       updatedAt: now,
-      mode: metadata.mode || 'agent',
-      model: metadata.model ?? null,
-      contextBudget: metadata.contextBudget,
-      requestContext: cloneSessionRequestContextSnapshot(metadata.requestContext),
-      activeSkillNames: normalizeActiveSkillNames(metadata.activeSkillNames),
-      toolCallingIteration: metadata.toolCallingIteration || 0,
+      mode: selectedMode.modeId,
+      modeDescriptor,
+      ...(sanitizedMetadata.inputState
+        ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }
+        : {}),
+      ...(sanitizedMetadata.requestRouting
+        ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
+        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
+          ? {
+              requestRouting: {
+                selectedModeId: 'agent',
+                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+              },
+            }
+        : {}),
+      ...(sanitizedMetadata.interactionActionSummary
+        ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
+        : {}),
+      model: sanitizedMetadata.model ?? null,
+      contextBudget: sanitizedMetadata.contextBudget,
+      toolCallingIteration: sanitizedMetadata.toolCallingIteration || 0,
     };
   }
 
@@ -142,9 +278,15 @@ export class HostSessionRecordStore {
     metadata: SessionMetadata,
     turnResponses?: PersistedHostTurnResponse[],
     sidecar?: HostSessionSidecar,
+    auxiliary?: HostSessionRuntimeAuxiliary,
   ): HostSessionRecord {
+    const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary(auxiliary ?? {
+      requestContext: metadata.requestContext,
+      activeSkillNames: metadata.activeSkillNames,
+    });
     const record: HostSessionRecord = {
-      metadata,
+      metadata: stripLegacyRuntimeAuxiliaryFromMetadata(metadata),
+      ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
     };
 
     const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
@@ -152,10 +294,31 @@ export class HostSessionRecordStore {
       record.turnResponses = normalizedTurnResponses;
     }
 
+    record.metadata = normalizePersistedSessionTitleMetadata(record.metadata, normalizedTurnResponses);
+
     const normalizedSidecar = this.normalizeSidecar(sidecar);
     if (normalizedSidecar) {
       record.sidecar = normalizedSidecar;
     }
+
+    const selectedMode = resolveHostSessionSelectedMode(record, this.getModeResolveOptions());
+    const requestRouting = hasHostSessionExplicitTurnRequestRouting(record.turnResponses)
+      ? resolveHostSessionRequestRoutingSummary(record)
+      : record.metadata.requestRouting
+        ? normalizeHostSessionRequestRoutingSummary(record.metadata.requestRouting, selectedMode)
+        : (selectedMode.customAgentTarget
+          ? ({ customAgentTarget: selectedMode.customAgentTarget } as SessionMetadata['requestRouting'])
+          : undefined);
+    const interactionActionSummary = resolveHostSessionInteractionActionSummary(record);
+    record.metadata.mode = selectedMode.modeId;
+    record.metadata.modeDescriptor = resolveHostSessionModeDescriptor(record, this.getModeResolveOptions());
+    record.metadata.inputState = resolveHostSessionInputState(record, this.getModeResolveOptions());
+    if (requestRouting) {
+      record.metadata.requestRouting = requestRouting;
+    } else {
+      delete record.metadata.requestRouting;
+    }
+    record.metadata.interactionActionSummary = interactionActionSummary;
 
     return record;
   }
@@ -235,6 +398,11 @@ export class HostSessionRecordStore {
       metadata: this.normalizeMetadata(raw.metadata, sessionId, projectPath),
     };
 
+    const runtimeAuxiliary = this.normalizeRuntimeAuxiliary(raw);
+    if (runtimeAuxiliary) {
+      hostRecord.auxiliary = runtimeAuxiliary;
+    }
+
     const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
     if (normalizedTurnResponses?.length) {
       hostRecord.turnResponses = normalizedTurnResponses;
@@ -244,6 +412,27 @@ export class HostSessionRecordStore {
     if (normalizedSidecar) {
       hostRecord.sidecar = normalizedSidecar;
     }
+
+    hostRecord.metadata = normalizePersistedSessionTitleMetadata(hostRecord.metadata, normalizedTurnResponses);
+
+    const selectedMode = resolveHostSessionSelectedMode(hostRecord, this.getModeResolveOptions());
+    const requestRouting = hasHostSessionExplicitTurnRequestRouting(hostRecord.turnResponses)
+      ? resolveHostSessionRequestRoutingSummary(hostRecord)
+      : hostRecord.metadata.requestRouting
+        ? normalizeHostSessionRequestRoutingSummary(hostRecord.metadata.requestRouting, selectedMode)
+        : (selectedMode.customAgentTarget
+          ? ({ customAgentTarget: selectedMode.customAgentTarget } as SessionMetadata['requestRouting'])
+          : undefined);
+    const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
+    hostRecord.metadata.mode = selectedMode.modeId;
+    hostRecord.metadata.modeDescriptor = resolveHostSessionModeDescriptor(hostRecord, this.getModeResolveOptions());
+    hostRecord.metadata.inputState = resolveHostSessionInputState(hostRecord, this.getModeResolveOptions());
+    if (requestRouting) {
+      hostRecord.metadata.requestRouting = requestRouting;
+    } else {
+      delete hostRecord.metadata.requestRouting;
+    }
+    hostRecord.metadata.interactionActionSummary = interactionActionSummary;
 
     return hostRecord;
   }
@@ -357,7 +546,10 @@ export class HostSessionRecordStore {
   private normalizeMetadata(raw: any, sessionId: string, projectPath: string | null): SessionMetadata {
     const now = Date.now();
     const metadata = raw && typeof raw === 'object' ? raw : {};
-    const rawToolSourceTokens = metadata.contextBudget?.toolSourceTokens;
+    const sanitizedMetadata = stripLegacyRuntimeAuxiliaryFromMetadata(metadata);
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(sanitizedMetadata);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions());
+    const rawToolSourceTokens = sanitizedMetadata.contextBudget?.toolSourceTokens;
     const toolSourceTokens = rawToolSourceTokens && typeof rawToolSourceTokens === 'object'
       ? Object.fromEntries(
           Object.entries(rawToolSourceTokens)
@@ -371,35 +563,71 @@ export class HostSessionRecordStore {
         )
       : {};
     return {
-      sessionId: typeof metadata.sessionId === 'string' && metadata.sessionId ? metadata.sessionId : sessionId,
-      title: typeof metadata.title === 'string' ? metadata.title : '',
-      projectPath: metadata.projectPath ?? projectPath ?? null,
-      createdAt: typeof metadata.createdAt === 'number' ? metadata.createdAt : now,
-      updatedAt: typeof metadata.updatedAt === 'number' ? metadata.updatedAt : now,
-      mode: typeof metadata.mode === 'string' && metadata.mode ? metadata.mode : 'agent',
-      model: typeof metadata.model === 'string' ? metadata.model : null,
-      contextBudget: metadata.contextBudget && typeof metadata.contextBudget === 'object'
+      sessionId: typeof sanitizedMetadata.sessionId === 'string' && sanitizedMetadata.sessionId ? sanitizedMetadata.sessionId : sessionId,
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
+      sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
+      projectPath: sanitizedMetadata.projectPath ?? projectPath ?? null,
+      createdAt: typeof sanitizedMetadata.createdAt === 'number' ? sanitizedMetadata.createdAt : now,
+      updatedAt: typeof sanitizedMetadata.updatedAt === 'number' ? sanitizedMetadata.updatedAt : now,
+      mode: selectedMode.modeId,
+      modeDescriptor: resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions()),
+      ...(sanitizedMetadata.inputState
+        ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }
+        : {}),
+      ...(sanitizedMetadata.requestRouting
+        ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
+        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
+          ? {
+              requestRouting: {
+                selectedModeId: 'agent',
+                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+              },
+            }
+        : {}),
+      ...(sanitizedMetadata.interactionActionSummary
+        ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
+        : {}),
+      model: typeof sanitizedMetadata.model === 'string' ? sanitizedMetadata.model : null,
+      contextBudget: sanitizedMetadata.contextBudget && typeof sanitizedMetadata.contextBudget === 'object'
         ? {
-            currentTokens: typeof metadata.contextBudget.currentTokens === 'number' ? metadata.contextBudget.currentTokens : 0,
-            maxContextTokens: typeof metadata.contextBudget.maxContextTokens === 'number'
-              ? metadata.contextBudget.maxContextTokens
+            currentTokens: typeof sanitizedMetadata.contextBudget.currentTokens === 'number' ? sanitizedMetadata.contextBudget.currentTokens : 0,
+            maxContextTokens: typeof sanitizedMetadata.contextBudget.maxContextTokens === 'number'
+              ? sanitizedMetadata.contextBudget.maxContextTokens
               : 0,
-            usagePercent: typeof metadata.contextBudget.usagePercent === 'number' ? metadata.contextBudget.usagePercent : 0,
-            systemTokens: typeof metadata.contextBudget.systemTokens === 'number' ? metadata.contextBudget.systemTokens : 0,
-            baseSystemTokens: typeof metadata.contextBudget.baseSystemTokens === 'number' ? metadata.contextBudget.baseSystemTokens : 0,
-            instructionTokens: typeof metadata.contextBudget.instructionTokens === 'number' ? metadata.contextBudget.instructionTokens : 0,
-            skillTokens: typeof metadata.contextBudget.skillTokens === 'number' ? metadata.contextBudget.skillTokens : 0,
-            toolsTokens: typeof metadata.contextBudget.toolsTokens === 'number' ? metadata.contextBudget.toolsTokens : 0,
+            usagePercent: typeof sanitizedMetadata.contextBudget.usagePercent === 'number' ? sanitizedMetadata.contextBudget.usagePercent : 0,
+            systemTokens: typeof sanitizedMetadata.contextBudget.systemTokens === 'number' ? sanitizedMetadata.contextBudget.systemTokens : 0,
+            baseSystemTokens: typeof sanitizedMetadata.contextBudget.baseSystemTokens === 'number' ? sanitizedMetadata.contextBudget.baseSystemTokens : 0,
+            instructionTokens: typeof sanitizedMetadata.contextBudget.instructionTokens === 'number' ? sanitizedMetadata.contextBudget.instructionTokens : 0,
+            skillTokens: typeof sanitizedMetadata.contextBudget.skillTokens === 'number' ? sanitizedMetadata.contextBudget.skillTokens : 0,
+            toolsTokens: typeof sanitizedMetadata.contextBudget.toolsTokens === 'number' ? sanitizedMetadata.contextBudget.toolsTokens : 0,
             toolSourceTokens,
-            messagesTokens: typeof metadata.contextBudget.messagesTokens === 'number' ? metadata.contextBudget.messagesTokens : 0,
-            toolResultsTokens: typeof metadata.contextBudget.toolResultsTokens === 'number' ? metadata.contextBudget.toolResultsTokens : 0,
-            messageCount: typeof metadata.contextBudget.messageCount === 'number' ? metadata.contextBudget.messageCount : 0,
+            messagesTokens: typeof sanitizedMetadata.contextBudget.messagesTokens === 'number' ? sanitizedMetadata.contextBudget.messagesTokens : 0,
+            toolResultsTokens: typeof sanitizedMetadata.contextBudget.toolResultsTokens === 'number' ? sanitizedMetadata.contextBudget.toolResultsTokens : 0,
+            messageCount: typeof sanitizedMetadata.contextBudget.messageCount === 'number' ? sanitizedMetadata.contextBudget.messageCount : 0,
           }
         : undefined,
-      requestContext: cloneSessionRequestContextSnapshot(metadata.requestContext),
-      activeSkillNames: normalizeActiveSkillNames(metadata.activeSkillNames),
-      toolCallingIteration: typeof metadata.toolCallingIteration === 'number' ? metadata.toolCallingIteration : 0,
+      toolCallingIteration: typeof sanitizedMetadata.toolCallingIteration === 'number' ? sanitizedMetadata.toolCallingIteration : 0,
     };
+  }
+
+  private normalizeRuntimeAuxiliary(raw: any): HostSessionRuntimeAuxiliary | undefined {
+    const record = raw && typeof raw === 'object' ? raw : {};
+    return cloneHostSessionRuntimeAuxiliary(record.auxiliary ?? {
+      requestContext: record.metadata?.requestContext,
+      activeSkillNames: record.metadata?.activeSkillNames,
+    });
+  }
+
+  private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
+    return this.options.resolveModeById
+      ? { resolveModeById: this.options.resolveModeById }
+      : undefined;
   }
 
   private hasFs(): boolean {

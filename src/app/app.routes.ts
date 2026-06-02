@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { AILY_CHAT_RUNTIME_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 
 export const routes: Routes = [
     {
@@ -86,6 +87,7 @@ export const routes: Routes = [
     },
     {
         path: "aily-chat",
+        providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
     },
     {
