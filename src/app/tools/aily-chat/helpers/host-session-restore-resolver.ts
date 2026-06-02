@@ -66,7 +66,7 @@ export function resolveHostAuthoritativeLexRestoreSnapshot(
   const hostActiveSkillNames = options.hostRecord ? resolveHostSessionActiveSkillNames(options.hostRecord) : undefined;
   const mergedRequestContext = hostRequestContext ?? hostSnapshot.requestContext ?? storedSnapshot.requestContext;
   const mergedActiveSkillNames = hostActiveSkillNames !== undefined
-    ? hostSnapshot.activeSkillNames
+    ? hostActiveSkillNames
     : (hostSnapshot.activeSkillNames?.length ? hostSnapshot.activeSkillNames : storedSnapshot.activeSkillNames);
 
   return {

@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatSessionInputState } from '../core/chat-mode';
+import type { ChatSessionTitleSource } from '../core/chat-session-title';
 import type { HostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
 import type {
   HostSessionListItemChanges,
@@ -24,6 +25,8 @@ export interface ChatSessionListAction {
 export interface ChatSessionListItem {
   readonly sessionId: string;
   readonly title: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleDurable?: boolean;
   readonly description: string;
   readonly sessionType?: string;
   readonly projectPath?: string | null;
@@ -55,10 +58,12 @@ export type ChatSessionPickerAction = ChatSessionListAction;
 @Injectable()
 export class MenuManagerService implements OnDestroy {
   showMode = false;
+  showPermissionMenu = false;
   showModelMenu = false;
   showReasoningMenu = false;
   showActionMenu = false;
   modeListPosition: MenuPosition = { x: 0, y: 0 };
+  permissionMenuPosition: MenuPosition = { x: 0, y: 0 };
   modelListPosition: MenuPosition = { x: 0, y: 0 };
   reasoningMenuPosition: MenuPosition = { x: 0, y: 0 };
   actionMenuPosition: MenuPosition = { x: 0, y: 0 };
@@ -69,6 +74,7 @@ export class MenuManagerService implements OnDestroy {
 
   closeAll(): void {
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showReasoningMenu = false;
     this.showActionMenu = false;
@@ -94,9 +100,41 @@ export class MenuManagerService implements OnDestroy {
     }
     event.preventDefault();
     event.stopPropagation();
+    this.showPermissionMenu = false;
     this.showReasoningMenu = false;
     this.showModelMenu = false;
     this.showMode = !this.showMode;
+  }
+
+  togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void {
+    const target = event.currentTarget as HTMLElement;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const menuHeight = this.estimateMenuHeight(permissionItems);
+      const estimatedMenuWidth = 280;
+      let x = rect.left;
+      let y = rect.top - menuHeight - 1;
+      let anchorBottom: number | undefined = rect.top - 1;
+
+      if (x + estimatedMenuWidth > window.innerWidth - 8) {
+        x = Math.max(8, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < 8) {
+        y = Math.max(8, rect.bottom - 1);
+        anchorBottom = undefined;
+      }
+
+      this.permissionMenuPosition = { x: Math.max(0, x), y: Math.max(0, y), anchorBottom };
+    } else {
+      this.permissionMenuPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.showMode = false;
+    this.showReasoningMenu = false;
+    this.showModelMenu = false;
+    this.showPermissionMenu = !this.showPermissionMenu;
   }
 
   /** 切换模型菜单的显示/隐藏 */
@@ -126,6 +164,7 @@ export class MenuManagerService implements OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showReasoningMenu = false;
     this.showModelMenu = !this.showModelMenu;
   }
@@ -155,6 +194,7 @@ export class MenuManagerService implements OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showActionMenu = false;
     this.showReasoningMenu = !this.showReasoningMenu;
@@ -185,6 +225,7 @@ export class MenuManagerService implements OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     this.showMode = false;
+    this.showPermissionMenu = false;
     this.showModelMenu = false;
     this.showActionMenu = !this.showActionMenu;
   }

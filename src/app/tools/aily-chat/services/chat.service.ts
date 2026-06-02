@@ -68,7 +68,16 @@ import {
   resolveHostSessionProviderOptionGroups,
   resolveHostSessionProviderOptionsFromInputState,
 } from '../helpers/host-session-input-state';
-import { getTurnResponseResolvedModelName } from '../helpers/turn-response-response-model';
+import {
+  getTurnResponseResolvedModelBillingLabel,
+  getTurnResponseResolvedModelName,
+} from '../helpers/turn-response-response-model';
+import {
+  isCustomSessionTitleSource,
+  normalizeChatSessionTitleSource,
+  type ChatSessionTitleCandidate,
+  type ChatSessionTitleSource,
+} from '../core/chat-session-title';
 
 // 使用 ModelConfigOption 作为统一的模型配置类型，保留 ModelConfig 别名以兼容旧代码
 export type ModelConfig = ModelConfigOption;
@@ -91,6 +100,8 @@ export interface ChatServiceSessionProviderOptions {
   readonly folderPath?: unknown;
   readonly permissionMode?: unknown;
   readonly permissionLevel?: unknown;
+  readonly approvalsReviewer?: unknown;
+  readonly approvalPolicy?: unknown;
 }
 
 export interface ChatServiceSessionIdentity {
@@ -125,6 +136,18 @@ function normalizeChatSessionPermissionLevel(value: unknown): string | undefined
   return normalizedValue || undefined;
 }
 
+function normalizeChatSessionApprovalsReviewer(value: unknown): 'user' | 'auto_review' | undefined {
+  return value === 'auto_review' || value === 'user'
+    ? value
+    : undefined;
+}
+
+function normalizeChatSessionApprovalPolicy(value: unknown): 'on_request' | 'never' | undefined {
+  return value === 'never' || value === 'on_request'
+    ? value
+    : undefined;
+}
+
 function disposeSessionProviderOptionsSourceSubscription(
   subscription: ChatSessionProviderOptionsSourceSubscription | null,
 ): void {
@@ -157,6 +180,8 @@ export class ChatService {
   private _currentSessionType: ChatSessionType = DEFAULT_CHAT_SESSION_TYPE;
   private _currentSessionPermissionMode: ChatSessionPermissionMode = DEFAULT_CHAT_SESSION_PERMISSION_MODE;
   private _currentSessionPermissionLevel: string | undefined;
+  private _currentSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
+  private _currentSessionApprovalPolicy: 'on_request' | 'never' | undefined;
   private _hasBlankSessionShell = false;
   private _newSessionFolderPath: string | undefined;
   private _newSessionPermissionMode: ChatSessionPermissionMode | undefined;
@@ -164,20 +189,26 @@ export class ChatService {
   private _newSessionProviderSelections: ChatServiceProviderSelectionState = {};
   private readonly sessionInputStateChangedSubject = new Subject<void>();
   private readonly sessionProviderOptionsChangedSubject = new Subject<void>();
-  private readonly sessionTitleChangedSubject = new Subject<void>();
+  private readonly sessionDisplayTitleChangedSubject = new Subject<void>();
+  private readonly sessionDurableTitleChangedSubject = new Subject<void>();
   private boundSessionProviderOptionsSources: readonly ChatSessionProviderOptionsSourceBinding[] = [];
   private boundSessionProviderOptionsSource: ChatSessionProviderOptionsSource | null = null;
   private boundSessionProviderOptionsSourceSubscription: ChatSessionProviderOptionsSourceSubscription | null = null;
   private sessionProviderOptionsSourceBindingGeneration = 0;
   private readonly runtimeModeService: ChatRuntimeModeService;
   private _currentSessionTitle = '';
+  private _currentSessionTitleSource: ChatSessionTitleSource = 'empty';
+  private _currentSessionTitleRevision = 0;
   currentModel: ModelConfig | null = null; // 当前模型，在构造函数中初始化
   resolvedActiveModel: ModelConfig | null = null;
+  resolvedActiveModelBillingLabel: string | undefined;
   private rateLimitAutoSwitchToAuto = false;
 
   readonly sessionInputStateChanged$ = this.sessionInputStateChangedSubject.asObservable();
   readonly sessionProviderOptionsChanged$ = this.sessionProviderOptionsChangedSubject.asObservable();
-  readonly sessionTitleChanged$ = this.sessionTitleChangedSubject.asObservable();
+  readonly sessionDisplayTitleChanged$ = this.sessionDisplayTitleChangedSubject.asObservable();
+  readonly sessionTitleChanged$ = this.sessionDisplayTitleChanged$;
+  readonly sessionDurableTitleChanged$ = this.sessionDurableTitleChangedSubject.asObservable();
 
   get currentSessionId(): string {
     return this._currentSessionId;
@@ -193,6 +224,8 @@ export class ChatService {
 
     this._currentSessionProviderSelections = {};
     this._currentSessionPermissionLevel = undefined;
+    this._currentSessionApprovalsReviewer = undefined;
+    this._currentSessionApprovalPolicy = undefined;
     this._currentSessionId = normalizedSessionId;
     if (normalizedSessionId.length > 0) {
       this._hasBlankSessionShell = false;
@@ -220,12 +253,71 @@ export class ChatService {
 
   set currentSessionTitle(title: string) {
     const normalizedTitle = typeof title === 'string' ? title : '';
-    if (this._currentSessionTitle === normalizedTitle) {
+    this.setCurrentSessionTitle({
+      text: normalizedTitle,
+      source: normalizedTitle ? 'legacy-custom' : 'empty',
+    });
+  }
+
+  get currentSessionTitleSource(): ChatSessionTitleSource {
+    return this._currentSessionTitleSource;
+  }
+
+  get currentSessionTitleRevision(): number {
+    return this._currentSessionTitleRevision;
+  }
+
+  readCurrentSessionTitleCandidate(): ChatSessionTitleCandidate {
+    return {
+      text: this._currentSessionTitle,
+      source: this._currentSessionTitleSource,
+      revision: this._currentSessionTitleRevision,
+    };
+  }
+
+  setCurrentSessionTitle(candidate: {
+    readonly text?: unknown;
+    readonly source?: unknown;
+    readonly revision?: unknown;
+  }): void {
+    const previousDurableIdentity = this.buildDurableSessionTitleIdentity(
+      this._currentSessionTitle,
+      this._currentSessionTitleSource,
+    );
+    const normalizedTitle = typeof candidate.text === 'string' ? candidate.text : '';
+    const normalizedSource = normalizedTitle
+      ? normalizeChatSessionTitleSource(candidate.source)
+      : 'empty';
+    const effectiveSource = normalizedTitle && normalizedSource !== 'empty'
+      ? normalizedSource
+      : 'empty';
+    const nextRevision = typeof candidate.revision === 'number' && Number.isFinite(candidate.revision)
+      ? Math.max(this._currentSessionTitleRevision + 1, Math.floor(candidate.revision))
+      : this._currentSessionTitleRevision + 1;
+
+    if (this._currentSessionTitle === normalizedTitle
+      && this._currentSessionTitleSource === effectiveSource) {
       return;
     }
 
     this._currentSessionTitle = normalizedTitle;
-    this.sessionTitleChangedSubject.next();
+    this._currentSessionTitleSource = effectiveSource;
+    this._currentSessionTitleRevision = nextRevision;
+    this.sessionDisplayTitleChangedSubject.next();
+
+    const nextDurableIdentity = this.buildDurableSessionTitleIdentity(
+      this._currentSessionTitle,
+      this._currentSessionTitleSource,
+    );
+    if (previousDurableIdentity !== nextDurableIdentity) {
+      this.sessionDurableTitleChangedSubject.next();
+    }
+  }
+
+  private buildDurableSessionTitleIdentity(title: string, source: ChatSessionTitleSource): string {
+    return title && isCustomSessionTitleSource(source)
+      ? `${source}\u0000${title}`
+      : '';
   }
 
   // 记录当前会话创建时的项目路径，用于确保历史记录保存到正确位置
@@ -288,6 +380,34 @@ export class ChatService {
     }
 
     this._currentSessionPermissionLevel = normalizedPermissionLevel;
+    this.notifySessionInputStateChanged();
+  }
+
+  get currentSessionApprovalsReviewer(): 'user' | 'auto_review' | undefined {
+    return this._currentSessionApprovalsReviewer;
+  }
+
+  set currentSessionApprovalsReviewer(approvalsReviewer: 'user' | 'auto_review' | undefined) {
+    const normalizedApprovalsReviewer = normalizeChatSessionApprovalsReviewer(approvalsReviewer);
+    if (this._currentSessionApprovalsReviewer === normalizedApprovalsReviewer) {
+      return;
+    }
+
+    this._currentSessionApprovalsReviewer = normalizedApprovalsReviewer;
+    this.notifySessionInputStateChanged();
+  }
+
+  get currentSessionApprovalPolicy(): 'on_request' | 'never' | undefined {
+    return this._currentSessionApprovalPolicy;
+  }
+
+  set currentSessionApprovalPolicy(approvalPolicy: 'on_request' | 'never' | undefined) {
+    const normalizedApprovalPolicy = normalizeChatSessionApprovalPolicy(approvalPolicy);
+    if (this._currentSessionApprovalPolicy === normalizedApprovalPolicy) {
+      return;
+    }
+
+    this._currentSessionApprovalPolicy = normalizedApprovalPolicy;
     this.notifySessionInputStateChanged();
   }
 
@@ -604,21 +724,31 @@ export class ChatService {
     this.currentSessionPermissionLevel = normalizeChatSessionPermissionLevel(permissionLevel);
   }
 
+  setCurrentSessionApprovalsReviewer(approvalsReviewer: unknown): void {
+    this.currentSessionApprovalsReviewer = normalizeChatSessionApprovalsReviewer(approvalsReviewer);
+  }
+
+  setCurrentSessionApprovalPolicy(approvalPolicy: unknown): void {
+    this.currentSessionApprovalPolicy = normalizeChatSessionApprovalPolicy(approvalPolicy);
+  }
+
   setCurrentSessionType(sessionType: unknown): void {
     this.currentSessionType = normalizeChatSessionType(sessionType);
   }
 
-  getCurrentSessionProviderOptions(): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string } {
+  getCurrentSessionProviderOptions(): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
     return {
       folderPath: this.currentSessionPath,
       permissionMode: this.currentSessionPermissionMode,
       ...(this.currentSessionPermissionLevel ? { permissionLevel: this.currentSessionPermissionLevel } : {}),
+      ...(this.currentSessionApprovalsReviewer ? { approvalsReviewer: this.currentSessionApprovalsReviewer } : {}),
+      ...(this.currentSessionApprovalPolicy ? { approvalPolicy: this.currentSessionApprovalPolicy } : {}),
     };
   }
 
   getNewSessionProviderOptions(
     fallback?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string } {
+  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
     const normalizedFallback = this.normalizeProviderOptionsInput(fallback);
     return normalizeHostSessionProviderOptions({
       folderPath: this._newSessionFolderPath,
@@ -784,7 +914,7 @@ export class ChatService {
 
   applySessionProviderOptions(
     providerOptions?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string } {
+  ): { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
     const folderPath = typeof providerOptions?.folderPath === 'string'
       ? providerOptions.folderPath.trim()
       : '';
@@ -795,15 +925,25 @@ export class ChatService {
     const permissionLevel = normalizeChatSessionPermissionLevel(
       providerOptions?.permissionLevel,
     ) ?? this.currentSessionPermissionLevel;
+    const approvalsReviewer = normalizeChatSessionApprovalsReviewer(providerOptions?.approvalsReviewer)
+      ?? this.currentSessionApprovalsReviewer
+      ?? this.ailyChatConfigService.getLexApprovalsReviewer?.();
+    const approvalPolicy = normalizeChatSessionApprovalPolicy(providerOptions?.approvalPolicy)
+      ?? this.currentSessionApprovalPolicy
+      ?? this.ailyChatConfigService.getLexApprovalPolicy?.();
 
     this.currentSessionPath = folderPath;
     this.currentSessionPermissionMode = permissionMode;
     this.currentSessionPermissionLevel = permissionLevel;
+    this.currentSessionApprovalsReviewer = approvalsReviewer;
+    this.currentSessionApprovalPolicy = approvalPolicy;
 
     return {
       folderPath,
       permissionMode,
       ...(permissionLevel ? { permissionLevel } : {}),
+      ...(approvalsReviewer ? { approvalsReviewer } : {}),
+      ...(approvalPolicy ? { approvalPolicy } : {}),
     };
   }
 
@@ -822,7 +962,7 @@ export class ChatService {
       this.currentSessionType = normalizeChatSessionType(identity.sessionType, this.currentSessionType);
     }
 
-    let normalizedProviderOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string } | undefined;
+    let normalizedProviderOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } | undefined;
     if (identity.providerOptions !== undefined) {
       normalizedProviderOptions = this.applySessionProviderOptions(identity.providerOptions);
     }
@@ -846,7 +986,7 @@ export class ChatService {
 
   private normalizeProviderOptionsInput(
     providerOptions?: ChatServiceSessionProviderOptions | null,
-  ): { folderPath?: string; permissionMode?: ChatSessionPermissionMode; permissionLevel?: string } {
+  ): { folderPath?: string; permissionMode?: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' } {
     return {
       ...(typeof providerOptions?.folderPath === 'string'
         ? { folderPath: providerOptions.folderPath.trim() }
@@ -857,13 +997,19 @@ export class ChatService {
       ...(providerOptions?.permissionLevel !== undefined
         ? { permissionLevel: normalizeChatSessionPermissionLevel(providerOptions.permissionLevel) }
         : {}),
+      ...(providerOptions?.approvalsReviewer !== undefined
+        ? { approvalsReviewer: normalizeChatSessionApprovalsReviewer(providerOptions.approvalsReviewer) }
+        : {}),
+      ...(providerOptions?.approvalPolicy !== undefined
+        ? { approvalPolicy: normalizeChatSessionApprovalPolicy(providerOptions.approvalPolicy) }
+        : {}),
     };
   }
 
   private buildProviderOptionGroupsForSessionType(
     sessionType: ChatSessionType,
     previousInputState: ChatSessionInputState | null | undefined,
-    providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string },
+    providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode; permissionLevel?: string; approvalsReviewer?: 'user' | 'auto_review'; approvalPolicy?: 'on_request' | 'never' },
     selectionState: ChatServiceProviderSelectionState,
     scope: 'current' | 'new',
   ): readonly ChatSessionProviderOptionGroup[] {
@@ -1643,6 +1789,7 @@ export class ChatService {
 
   clearResolvedActiveModel(): void {
     this.resolvedActiveModel = null;
+    this.resolvedActiveModelBillingLabel = undefined;
   }
 
   private isLegacyContextInfoSession(sessionId: string): boolean {
@@ -1671,6 +1818,7 @@ export class ChatService {
       contextInfo.model_name,
       { contextWindowTokens: contextInfo.model_context_limit },
     );
+    this.resolvedActiveModelBillingLabel = undefined;
 
     if (this.resolvedActiveModel) {
       this.contextBudgetService.updateModelContextSize(this.resolvedActiveModel);
@@ -1736,8 +1884,16 @@ export class ChatService {
   private syncResolvedActiveModelFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
     for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
       const modelName = getTurnResponseResolvedModelName(turnResponses[index]);
-      if (!modelName) {
+      const modelBillingLabel = getTurnResponseResolvedModelBillingLabel(turnResponses[index]);
+      if (!modelName && !modelBillingLabel) {
         continue;
+      }
+
+      this.resolvedActiveModelBillingLabel = modelBillingLabel;
+
+      if (!modelName) {
+        this.resolvedActiveModel = null;
+        return;
       }
 
       this.resolvedActiveModel = this.ailyChatConfigService.resolveRuntimeModelFromServerModelName(modelName);

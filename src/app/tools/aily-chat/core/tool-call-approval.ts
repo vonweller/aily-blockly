@@ -12,6 +12,12 @@ export interface ToolCallApprovalMetadata {
   message?: string;
   description?: string;
   source?: string;
+  reviewStartedAt?: number;
+  reviewCompletedAt?: number;
+  reviewer?: 'user' | 'auto_review';
+  reviewStatus?: 'reviewing' | 'approved' | 'denied' | 'timedOut' | 'aborted';
+  reviewRiskLevel?: 'low' | 'medium' | 'high';
+  decisionSource?: string;
   title?: string;
   subtitle?: string;
   actions?: readonly ToolApprovalAction[];
@@ -30,6 +36,12 @@ export interface ToolCallApprovalDisplayData {
   message: string;
   description?: string;
   args?: any;
+  reviewer?: 'user' | 'auto_review';
+  reviewStatus?: 'reviewing' | 'approved' | 'denied' | 'timedOut' | 'aborted';
+  reviewRiskLevel?: 'low' | 'medium' | 'high';
+  reviewStartedAt?: number;
+  reviewCompletedAt?: number;
+  decisionSource?: string;
   resolved?: boolean;
   approved?: boolean;
   scope?: ToolApprovalScope;
@@ -43,6 +55,12 @@ export function buildPendingToolCallApprovalMetadata(input: {
   message?: string;
   description?: string;
   source?: string;
+  reviewer?: 'user' | 'auto_review';
+  reviewStatus?: 'reviewing' | 'approved' | 'denied' | 'timedOut' | 'aborted';
+  reviewRiskLevel?: 'low' | 'medium' | 'high';
+  reviewStartedAt?: number;
+  reviewCompletedAt?: number;
+  decisionSource?: string;
   title?: string;
   subtitle?: string;
   actions?: readonly ToolApprovalAction[];
@@ -55,6 +73,12 @@ export function buildPendingToolCallApprovalMetadata(input: {
     message: input.message,
     description: input.description,
     source: input.source,
+    ...(typeof input.reviewStartedAt === 'number' ? { reviewStartedAt: input.reviewStartedAt } : {}),
+    ...(typeof input.reviewCompletedAt === 'number' ? { reviewCompletedAt: input.reviewCompletedAt } : {}),
+    reviewer: input.reviewer,
+    reviewStatus: input.reviewStatus,
+    reviewRiskLevel: input.reviewRiskLevel,
+    decisionSource: input.decisionSource,
     title: input.title,
     subtitle: input.subtitle,
     actions: input.actions?.map(action => ({ ...action })) || [],
@@ -68,12 +92,32 @@ export function buildResolvedToolCallApprovalMetadata(input: {
   toolCallId: string;
   result: 'approved' | 'rejected';
   scope?: ToolApprovalScope;
+  reviewer?: 'user' | 'auto_review';
+  reviewStatus?: 'approved' | 'denied' | 'timedOut' | 'aborted';
+  reviewRiskLevel?: 'low' | 'medium' | 'high';
+  source?: string;
+  reviewStartedAt?: number;
+  reviewCompletedAt?: number;
+  decisionSource?: string;
+  title?: string;
+  message?: string;
+  description?: string;
 }): ToolCallApprovalMetadata {
   return {
     toolCallId: input.toolCallId,
+    ...(input.reviewer ? { reviewer: input.reviewer } : {}),
+    ...(input.reviewStatus ? { reviewStatus: input.reviewStatus } : {}),
+    ...(input.reviewRiskLevel ? { reviewRiskLevel: input.reviewRiskLevel } : {}),
+    ...(input.source ? { source: input.source } : {}),
+    ...(typeof input.reviewStartedAt === 'number' ? { reviewStartedAt: input.reviewStartedAt } : {}),
+    ...(typeof input.reviewCompletedAt === 'number' ? { reviewCompletedAt: input.reviewCompletedAt } : {}),
+    ...(input.decisionSource ? { decisionSource: input.decisionSource } : {}),
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.message ? { message: input.message } : {}),
+    ...(input.description ? { description: input.description } : {}),
     resolved: true,
     result: input.result,
-    scope: input.scope,
+    ...(input.scope ? { scope: input.scope } : {}),
   };
 }
 
@@ -97,9 +141,9 @@ export function projectToolCallApprovalDisplayData(
   const normalized = normalizeToolApprovalPresentation({
     toolName: part.toolName,
     source,
-    title: asString(approval?.title),
+    title: asString(approval?.title) || resolveAutoReviewTitle(approval),
     subtitle: asString(approval?.subtitle),
-    message: asString(approval?.message),
+    message: asString(approval?.message) || resolveAutoReviewMessage(approval),
     actions: approval?.actions,
     primaryScope: asApprovalScope(approval?.primaryScope),
     args: approval?.args ?? part.args,
@@ -114,6 +158,12 @@ export function projectToolCallApprovalDisplayData(
     message: normalized.message,
     description: asString(approval?.description),
     args: normalized.args,
+    reviewer: approval?.reviewer,
+    reviewStatus: approval?.reviewStatus,
+    reviewRiskLevel: approval?.reviewRiskLevel,
+    reviewStartedAt: approval?.reviewStartedAt,
+    reviewCompletedAt: approval?.reviewCompletedAt,
+    decisionSource: approval?.decisionSource,
     resolved: approval?.resolved === true,
     approved: approval?.result === 'approved',
     scope: asApprovalScope(approval?.scope),
@@ -134,6 +184,24 @@ function asApprovalRecord(value: unknown): ToolCallApprovalMetadata | undefined 
     message: asString(record['message']),
     description: asString(record['description']),
     source: asString(record['source']),
+    reviewStartedAt: typeof record['reviewStartedAt'] === 'number' ? record['reviewStartedAt'] : undefined,
+    reviewCompletedAt: typeof record['reviewCompletedAt'] === 'number' ? record['reviewCompletedAt'] : undefined,
+    reviewer: record['reviewer'] === 'user' || record['reviewer'] === 'auto_review'
+      ? record['reviewer']
+      : undefined,
+    reviewStatus: record['reviewStatus'] === 'reviewing'
+      || record['reviewStatus'] === 'approved'
+      || record['reviewStatus'] === 'denied'
+      || record['reviewStatus'] === 'timedOut'
+      || record['reviewStatus'] === 'aborted'
+      ? record['reviewStatus']
+      : undefined,
+    reviewRiskLevel: record['reviewRiskLevel'] === 'low'
+      || record['reviewRiskLevel'] === 'medium'
+      || record['reviewRiskLevel'] === 'high'
+      ? record['reviewRiskLevel']
+      : undefined,
+    decisionSource: asString(record['decisionSource']),
     title: asString(record['title']),
     subtitle: asString(record['subtitle']),
     actions: asApprovalActions(record['actions']),
@@ -187,4 +255,36 @@ function asApprovalScope(value: unknown): ToolApprovalScope | undefined {
     return value;
   }
   return undefined;
+}
+
+function resolveAutoReviewTitle(approval: ToolCallApprovalMetadata | undefined): string | undefined {
+  if (approval?.reviewer !== 'auto_review') {
+    return undefined;
+  }
+
+  switch (approval.reviewStatus) {
+    case 'reviewing':
+      return '自动审查中';
+    case 'approved':
+      return approval.decisionSource === 'user_override' ? '人工覆写后已允许' : '自动审查已允许';
+    case 'timedOut':
+      return '自动审查超时';
+    case 'aborted':
+      return '自动审查已中止';
+    case 'denied':
+      return approval.decisionSource === 'user_override' ? '人工覆写已拒绝' : '自动审查已拒绝';
+    default:
+      return undefined;
+  }
+}
+
+function resolveAutoReviewMessage(approval: ToolCallApprovalMetadata | undefined): string | undefined {
+  if (approval?.reviewer !== 'auto_review') {
+    return undefined;
+  }
+
+  return approval.message
+    || (approval.reviewStatus === 'reviewing'
+      ? '正在根据确定性规则执行自动审查。'
+      : undefined);
 }

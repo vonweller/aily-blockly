@@ -24,6 +24,7 @@ import {
 } from './host-session-input-state';
 import { HostSessionContentProvider } from './host-session-content-provider';
 import type { HostSessionContent } from './host-session-content-provider';
+import { type ChatSessionTitleSource } from '../core/chat-session-title';
 import { resolveHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import { normalizeHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import type { LexSessionStoredSnapshotState, ResolvedLexSessionRestorePlan } from './host-session-restore-resolver';
@@ -39,6 +40,21 @@ type LexTurnContinuation = NonNullable<TurnResponseTurn['response']['continuatio
 type LexSessionInteractionContinuation = NonNullable<
   NonNullable<SessionSnapshot['requestContext']>['interactionContinuation']
 >;
+
+function applyCurrentSessionTitle(
+  chatService: {
+    currentSessionTitle?: string;
+    setCurrentSessionTitle?: (candidate: { text: string; source: ChatSessionTitleSource }) => void;
+  },
+  candidate: { text: string; source: ChatSessionTitleSource },
+): void {
+  if (typeof chatService.setCurrentSessionTitle === 'function') {
+    chatService.setCurrentSessionTitle(candidate);
+    return;
+  }
+
+  chatService.currentSessionTitle = candidate.text;
+}
 
 const KNOWN_PLAN_REVIEW_ACTIONS: Readonly<Record<string, {
   readonly label: string;
@@ -72,18 +88,27 @@ function readInteractionPendingRecord(
   return pending && typeof pending === 'object' ? pending : undefined;
 }
 
-function resolveRestoredSessionTitle(sessionContent?: HostSessionContent | null): string {
+function resolveRestoredSessionTitle(sessionContent?: HostSessionContent | null): { text: string; source: ChatSessionTitleSource } {
   const persistedTitle = typeof sessionContent?.title === 'string'
     ? sessionContent.title.trim()
     : '';
   if (isMeaningfulRestoredSessionTitle(persistedTitle)) {
-    return persistedTitle;
+    return {
+      text: persistedTitle,
+      source: 'restored-custom',
+    };
   }
 
   const fallbackDefaultTitle = deriveDefaultTitleFromTurnResponses(sessionContent?.hostRecord?.turnResponses);
   return isMeaningfulRestoredSessionTitle(fallbackDefaultTitle)
-    ? fallbackDefaultTitle
-    : '';
+    ? {
+      text: fallbackDefaultTitle,
+      source: 'default-first-request',
+    }
+    : {
+      text: '',
+      source: 'empty',
+    };
 }
 
 function deriveDefaultTitleFromTurnResponses(turnResponses: readonly unknown[] | null | undefined): string {
@@ -349,6 +374,10 @@ export class HostSessionRestoreBridge {
       } else {
         this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
       }
+      await this.ctx.chatService.syncResolvedActiveModelAfterSuccessfulTurn?.(
+        this.ctx.sessionId,
+        hostResponseState.turnResponses,
+      );
       this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
 
       // Restore context budget: prefer persisted lex-derived values over local estimate
@@ -570,7 +599,7 @@ export class HostSessionRestoreBridge {
       projectPath: hostRecord.metadata?.projectPath ?? indexEntry?.projectPath,
     };
 
-    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(sessionContent);
+    applyCurrentSessionTitle(this.ctx.chatService, resolveRestoredSessionTitle(sessionContent));
 
     const sessionType = normalizeChatSessionType(
       sessionContent?.sessionType ?? sessionMetadata?.sessionType,

@@ -26,7 +26,14 @@ type ChatSendCoordinatorContext = Pick<
   'isCancelled' | 'isCompleted' | 'isWaiting' | 'pendingUserInput' | 'activeToolExecutions' | 'pendingEditFeedback'
 > & Pick<ISessionAccess, 'sessionId'>
   & Pick<IProjectContext, 'currentMode'>
-  & { readonly currentCustomAgentTarget?: string; readonly currentSessionPermissionLevel?: string; readonly selectedMode?: ChatSelectedMode; readonly currentResolvedMode?: ChatResolvedMode }
+  & {
+    readonly currentCustomAgentTarget?: string;
+    readonly currentSessionPermissionLevel?: string;
+    readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
+    readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
+    readonly selectedMode?: ChatSelectedMode;
+    readonly currentResolvedMode?: ChatResolvedMode;
+  }
   & Pick<IChatCoordination, 'msg'>
   & Partial<Pick<IChatCoordination, 'lexStream'>>;
 
@@ -97,6 +104,14 @@ export class ChatSendCoordinator {
       && this.ctx.currentSessionPermissionLevel.trim().length > 0
       ? this.ctx.currentSessionPermissionLevel.trim()
       : undefined;
+    const currentSessionApprovalsReviewer = this.ctx.currentSessionApprovalsReviewer === 'auto_review'
+      || this.ctx.currentSessionApprovalsReviewer === 'user'
+      ? this.ctx.currentSessionApprovalsReviewer
+      : undefined;
+    const currentSessionApprovalPolicy = this.ctx.currentSessionApprovalPolicy === 'never'
+      || this.ctx.currentSessionApprovalPolicy === 'on_request'
+      ? this.ctx.currentSessionApprovalPolicy
+      : undefined;
     const existingModeInfo = requestMetadata?.modeInfo && typeof requestMetadata.modeInfo === 'object' && !Array.isArray(requestMetadata.modeInfo)
       ? requestMetadata.modeInfo as Record<string, unknown>
       : undefined;
@@ -106,10 +121,14 @@ export class ChatSendCoordinator {
       modeInfo: {
         ...modeInfo,
         ...(currentSessionPermissionLevel ? { permissionLevel: currentSessionPermissionLevel } : {}),
+        ...(currentSessionApprovalsReviewer ? { approvalsReviewer: currentSessionApprovalsReviewer } : {}),
+        ...(currentSessionApprovalPolicy ? { approvalPolicy: currentSessionApprovalPolicy } : {}),
         ...(existingModeInfo ?? {}),
       },
       requestRouting: {
         ...(currentSessionPermissionLevel ? { permissionLevel: currentSessionPermissionLevel } : {}),
+        ...(currentSessionApprovalsReviewer ? { approvalsReviewer: currentSessionApprovalsReviewer } : {}),
+        ...(currentSessionApprovalPolicy ? { approvalPolicy: currentSessionApprovalPolicy } : {}),
         ...(payloadRequestRouting ?? {}),
         modeId: selectedMode.modeId,
         ...(requestAgentId ? { customAgentTarget: requestAgentId } : {}),

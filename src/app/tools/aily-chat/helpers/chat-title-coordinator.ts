@@ -5,6 +5,11 @@ import type {
   ISessionAccess,
 } from '../core/chat-context';
 import type { ChatTitleRequestProvider } from './chat-title-request.service';
+import {
+  isResolvedSessionTitleSource,
+  normalizeChatSessionTitleSource,
+  normalizeChatSessionTitleText,
+} from '../core/chat-session-title';
 
 type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatCoordination, 'session' | 'lexStream'>
@@ -119,6 +124,37 @@ function isResolvedCustomSessionTitle(value: unknown, sessionId: string, default
   return normalizedValue !== normalizedDefaultTitle;
 }
 
+function readLegacyResolvedSessionTitle(
+  value: unknown,
+  sessionId: string,
+  defaultTitle: string,
+): string {
+  const normalizedValue = normalizeChatSessionTitleText(value);
+  if (!normalizedValue) {
+    return '';
+  }
+
+  return isResolvedCustomSessionTitle(normalizedValue, sessionId, defaultTitle)
+    ? normalizedValue
+    : '';
+}
+
+function readResolvedSessionTitleFromSource(
+  value: unknown,
+  source: unknown,
+  sessionId: string,
+  defaultTitle: string,
+): string {
+  const normalizedValue = normalizeChatSessionTitleText(value);
+  if (!normalizedValue) {
+    return '';
+  }
+
+  return isResolvedSessionTitleSource(source)
+    ? (isResolvedSessionTitle(normalizedValue, sessionId) ? normalizedValue : '')
+    : readLegacyResolvedSessionTitle(normalizedValue, sessionId, defaultTitle);
+}
+
 /**
  * Coordinates session title generation and persistence refresh.
  */
@@ -224,11 +260,18 @@ export class ChatTitleCoordinator {
           return;
         }
 
-        this.ctx.chatHistoryService.updateTitle(sessionId, title);
+        this.ctx.chatHistoryService.updateTitle(sessionId, title, { source: 'generated' });
         this.syncManagedSessionTitle?.(sessionId, title);
         this.sealedSessionTitles.add(sessionId);
         if (sessionId === normalizeSessionId(this.ctx.sessionId)) {
-          this.ctx.chatService.currentSessionTitle = title;
+          if (typeof this.ctx.chatService.setCurrentSessionTitle === 'function') {
+            this.ctx.chatService.setCurrentSessionTitle({
+              text: title,
+              source: 'generated',
+            });
+          } else {
+            this.ctx.chatService.currentSessionTitle = title;
+          }
         }
         this.logTitleDebug('title-applied', {
           sessionId,
@@ -280,15 +323,40 @@ export class ChatTitleCoordinator {
       persistedEntry?.projectPath ?? null,
     );
     const defaultTitle = this.readSessionDefaultTitle(sessionId, persistedRecord);
-    if (isResolvedCustomSessionTitle(persistedEntry?.title, sessionId, defaultTitle)) {
+
+    const currentSessionId = normalizeSessionId(this.ctx.sessionId);
+    if (sessionId === currentSessionId) {
+      const liveTitle = normalizeChatSessionTitleText(this.ctx.chatService.currentSessionTitle ?? this.ctx.sessionTitle);
+      const liveResolvedTitle = isResolvedSessionTitleSource(this.ctx.chatService.currentSessionTitleSource)
+        && isResolvedSessionTitle(liveTitle, sessionId)
+        ? liveTitle
+        : '';
+      if (liveResolvedTitle) {
+        return true;
+      }
+    }
+
+    const resolvedPersistedRecordTitle = readResolvedSessionTitleFromSource(
+      persistedRecord?.metadata?.title,
+      (persistedRecord?.metadata as { titleSource?: unknown } | undefined)?.titleSource,
+      sessionId,
+      defaultTitle,
+    );
+    if (resolvedPersistedRecordTitle) {
       return true;
     }
 
-    if (!persistedRecord) {
-      return false;
+    const resolvedPersistedEntryTitle = readResolvedSessionTitleFromSource(
+      persistedEntry?.title,
+      (persistedEntry as { titleSource?: unknown } | undefined)?.titleSource,
+      sessionId,
+      defaultTitle,
+    );
+    if (resolvedPersistedEntryTitle) {
+      return true;
     }
 
-    return isResolvedCustomSessionTitle(persistedRecord?.metadata?.title, sessionId, defaultTitle);
+    return false;
   }
 
   private readSessionDefaultTitle(sessionId: string, persistedRecord?: { turnResponses?: readonly unknown[] } | null): string {

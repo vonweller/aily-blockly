@@ -152,6 +152,12 @@ export class AilyChatDebugViewerComponent {
         value: restoreDiagnostics.storedSnapshotError,
       });
     }
+    if (restoreDiagnostics.missingActiveSkillNames?.length) {
+      rows.push({
+        label: 'Missing restored skills',
+        value: restoreDiagnostics.missingActiveSkillNames.join(' | '),
+      });
+    }
     if (restoreDiagnostics.notes?.length) {
       rows.push({
         label: 'Restore diagnostics notes',

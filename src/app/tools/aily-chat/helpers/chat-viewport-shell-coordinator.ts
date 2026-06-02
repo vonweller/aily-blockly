@@ -14,13 +14,13 @@ export class ChatViewportShellCoordinator {
     private readonly deps: {
       scrollManager: ScrollManagerLike;
       viewState: ViewStateLike;
-      refreshHistoryList: () => void;
+      requestSessionListSummaryLoad: () => void;
     },
   ) {}
 
   initialize(container: ElementRef): void {
     this.deps.scrollManager.setContainer(container);
-    this.deps.refreshHistoryList();
+    this.deps.requestSessionListSummaryLoad();
     this.deps.scrollManager.scrollToBottom();
   }
 

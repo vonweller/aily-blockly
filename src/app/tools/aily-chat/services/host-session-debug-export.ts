@@ -1,4 +1,5 @@
 import { readTurnRequestDebugArtifactsSnapshot } from 'aily-lex/browser';
+import type { ChatSessionTitleSource, PersistedChatSessionTitleSource } from '../core/chat-session-title';
 
 import type { HostSessionRecord, SessionIndexEntry } from './chat-history.service';
 import { buildHostSessionDebugEvents, type HostSessionDebugEvent } from './host-session-debug-events';
@@ -15,6 +16,7 @@ import {
   type HostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
 import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
+import { readLatestContextUsageSummary } from './context-usage-snapshot';
 
 export interface HostSessionDebugExportEnvelope {
   readonly kind: 'aily-chat-debug-export';
@@ -27,6 +29,10 @@ export interface HostSessionDebugExportEnvelope {
   readonly session: {
     readonly sessionId: string;
     readonly title: string;
+    readonly titleSource?: ChatSessionTitleSource;
+    readonly durableTitle?: string;
+    readonly durableTitleSource?: PersistedChatSessionTitleSource;
+    readonly defaultTitle?: string;
     readonly projectPath: string | null;
     readonly projectName: string | null;
     readonly createdAt: number;
@@ -37,6 +43,8 @@ export interface HostSessionDebugExportEnvelope {
     readonly requestModeId?: string;
     readonly customAgentTarget?: string;
     readonly permissionLevel?: string;
+    readonly approvalsReviewer?: 'user' | 'auto_review';
+    readonly approvalPolicy?: 'on_request' | 'never';
     readonly interactionActionSummary?: HostSessionInteractionActionSummary;
     readonly model: string | null;
     readonly messageCount: number;
@@ -45,6 +53,7 @@ export interface HostSessionDebugExportEnvelope {
   readonly debug: {
     readonly eventSource: 'derived-host-record';
     readonly events: readonly HostSessionDebugEvent[];
+    readonly contextUsage?: HostSessionDebugContextUsageSummary;
     readonly dualPersistence?: HostSessionDebugDualPersistenceSummary;
     readonly liveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
     readonly restoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
@@ -53,12 +62,28 @@ export interface HostSessionDebugExportEnvelope {
   };
 }
 
+export interface HostSessionDebugContextUsageSummary {
+  readonly usageSource: 'provider-final-only' | 'provider-request-update' | 'estimate';
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly usedTokens: number;
+  readonly outputBuffer?: number;
+}
+
 export interface HostSessionDebugDualPersistenceSummary {
   readonly hostRecordPath: string;
   readonly lexSnapshotPath: string;
   readonly lexSnapshotPresent: boolean;
   readonly hostTurnResponseCount: number;
   readonly lexTurnCount?: number;
+  readonly displayTitle?: string;
+  readonly displayTitleSource?: ChatSessionTitleSource;
+  readonly hostTitle?: string;
+  readonly hostTitleSource?: PersistedChatSessionTitleSource;
+  readonly hostDefaultTitle?: string;
+  readonly indexTitle?: string;
+  readonly indexTitleSource?: PersistedChatSessionTitleSource;
+  readonly indexDefaultTitle?: string;
   readonly hostPrimaryFields: readonly string[];
   readonly lexPrimaryFields: readonly string[];
   readonly hostAuxiliaryMirrors?: readonly string[];
@@ -71,6 +96,9 @@ export interface HostSessionDebugLiveRuntimeOverlaySummary {
   readonly pendingRequest: boolean;
   readonly needsInput: boolean;
   readonly attachedView: boolean;
+  readonly title?: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
   readonly turnResponseCount: number;
   readonly hostProjectionPresent: boolean;
   readonly quotaOverlayPresent?: boolean;
@@ -94,6 +122,7 @@ export interface HostSessionRestoreDiagnosticsSummary {
   readonly lexSnapshotPath: string;
   readonly storedSnapshotState: LexSessionStoredSnapshotState;
   readonly storedSnapshotError?: string;
+  readonly missingActiveSkillNames?: readonly string[];
   readonly notes?: readonly string[];
 }
 
@@ -151,6 +180,9 @@ export function decodeHostSessionDebugExport(data: Uint8Array): HostSessionDebug
         events: Array.isArray(cloned.debug?.events)
           ? cloned.debug.events.map(event => ({ ...event }))
           : buildHostSessionDebugEvents(cloned.hostRecord),
+        ...(cloned.debug?.contextUsage && typeof cloned.debug.contextUsage === 'object'
+          ? { contextUsage: { ...cloned.debug.contextUsage } }
+          : {}),
         ...(cloned.debug?.dualPersistence && typeof cloned.debug.dualPersistence === 'object'
           ? { dualPersistence: { ...cloned.debug.dualPersistence } }
           : {}),
@@ -187,6 +219,13 @@ function buildHostSessionDebugExportEnvelope(
   const inputState = resolveHostSessionInputState(hostRecord, options);
   const requestRouting = resolveHostSessionRequestRoutingSummary(hostRecord);
   const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
+  const durableTitle = metadata.title || entry?.title || '';
+  const durableTitleSource = metadata.titleSource ?? entry?.titleSource;
+  const defaultTitle = metadata.defaultTitle || entry?.defaultTitle || '';
+  const displayTitle = durableTitle || defaultTitle || '';
+  const titleSource: ChatSessionTitleSource = durableTitle
+    ? (durableTitleSource ?? 'legacy-custom')
+    : (defaultTitle ? 'default-first-request' : 'empty');
   hostRecord.metadata = {
     ...hostRecord.metadata,
     mode: selectedMode.modeId,
@@ -200,11 +239,17 @@ function buildHostSessionDebugExportEnvelope(
     buildHostSessionDebugEvents(hostRecord),
     companionBundle.refsByTurnId,
   );
+  const contextUsage = buildHostSessionDebugContextUsageSummary(hostRecord);
   const companionFiles = {
     ...companionBundle.companionFiles,
     ...(augmentation?.companionFiles ? { ...augmentation.companionFiles } : {}),
   };
   const exportedDebugEvents = [...debugEvents];
+  if (contextUsage) {
+    exportedDebugEvents.push(
+      buildContextUsageDebugEvent(hostRecord, exportedDebugEvents.length, contextUsage),
+    );
+  }
   if (augmentation?.dualPersistence) {
     exportedDebugEvents.push(
       buildDualPersistenceDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.dualPersistence),
@@ -236,7 +281,11 @@ function buildHostSessionDebugExportEnvelope(
     },
     session: {
       sessionId: metadata.sessionId,
-      title: metadata.title || entry?.title || '',
+      title: displayTitle,
+      titleSource,
+      durableTitle,
+      ...(durableTitleSource ? { durableTitleSource } : {}),
+      ...(defaultTitle ? { defaultTitle } : {}),
       projectPath: metadata.projectPath ?? entry?.projectPath ?? null,
       projectName: entry?.projectName ?? null,
       createdAt: metadata.createdAt,
@@ -247,6 +296,8 @@ function buildHostSessionDebugExportEnvelope(
       ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
       ...(requestRouting.customAgentTarget ? { customAgentTarget: requestRouting.customAgentTarget } : {}),
       ...(requestRouting.permissionLevel ? { permissionLevel: requestRouting.permissionLevel } : {}),
+      ...(requestRouting.approvalsReviewer ? { approvalsReviewer: requestRouting.approvalsReviewer } : {}),
+      ...(requestRouting.approvalPolicy ? { approvalPolicy: requestRouting.approvalPolicy } : {}),
       ...(interactionActionSummary ? { interactionActionSummary } : {}),
       model: metadata.model ?? null,
       messageCount: entry?.messageCount ?? countRecordMessages(hostRecord),
@@ -255,6 +306,7 @@ function buildHostSessionDebugExportEnvelope(
     debug: {
       eventSource: 'derived-host-record',
       events: exportedDebugEvents,
+      ...(contextUsage ? { contextUsage } : {}),
       ...(augmentation?.dualPersistence ? { dualPersistence: augmentation.dualPersistence } : {}),
       ...(augmentation?.liveRuntimeOverlay ? { liveRuntimeOverlay: augmentation.liveRuntimeOverlay } : {}),
       ...(augmentation?.restoreDiagnostics ? { restoreDiagnostics: augmentation.restoreDiagnostics } : {}),
@@ -264,6 +316,36 @@ function buildHostSessionDebugExportEnvelope(
         : {}),
     },
   };
+}
+
+function buildHostSessionDebugContextUsageSummary(
+  record: HostSessionRecord,
+): HostSessionDebugContextUsageSummary | null {
+  const usage = readLatestContextUsageSummary(record.turnResponses);
+  if (!usage) {
+    return null;
+  }
+
+  return {
+    usageSource: mapContextUsageSourceForDebugExport(usage.source),
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    usedTokens: usage.promptTokens + usage.completionTokens,
+    ...(typeof usage.outputBuffer === 'number' ? { outputBuffer: usage.outputBuffer } : {}),
+  };
+}
+
+function mapContextUsageSourceForDebugExport(
+  source: 'provider-request' | 'provider-turn-final' | 'estimate',
+): HostSessionDebugContextUsageSummary['usageSource'] {
+  switch (source) {
+    case 'provider-request':
+      return 'provider-request-update';
+    case 'provider-turn-final':
+      return 'provider-final-only';
+    default:
+      return 'estimate';
+  }
 }
 
 function buildDualPersistenceDebugEvent(
@@ -280,6 +362,25 @@ function buildDualPersistenceDebugEvent(
     created: record.metadata.updatedAt,
     name: 'Dual persistence boundary',
     details: formatDualPersistenceDetails(summary),
+    level: 'info',
+    category: 'session',
+  };
+}
+
+function buildContextUsageDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionDebugContextUsageSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `context-usage:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Context usage source',
+    details: formatContextUsageDetails(summary),
     level: 'info',
     category: 'session',
   };
@@ -318,7 +419,7 @@ function buildRestoreDiagnosticsDebugEvent(
     created: record.metadata.updatedAt,
     name: 'Restore Diagnostics',
     details: formatRestoreDiagnosticsDetails(summary),
-    level: summary.storedSnapshotState === 'load-failed' ? 'warning' : 'info',
+    level: summary.storedSnapshotState === 'load-failed' || !!summary.missingActiveSkillNames?.length ? 'warning' : 'info',
     category: 'session',
   };
 }
@@ -348,6 +449,17 @@ function formatDualPersistenceDetails(summary: HostSessionDebugDualPersistenceSu
     `lex snapshot: ${summary.lexSnapshotPath}${summary.lexSnapshotPresent ? '' : ' (missing)'}`,
     `host turnResponses: ${summary.hostTurnResponseCount}`,
     ...(typeof summary.lexTurnCount === 'number' ? [`lex turns: ${summary.lexTurnCount}`] : []),
+    ...(summary.displayTitleSource
+      ? [`display title: ${summary.displayTitle || '(empty)'} [${summary.displayTitleSource}]`]
+      : []),
+    ...(summary.hostTitle !== undefined
+      ? [`host durable title: ${summary.hostTitle || '(empty)'}${summary.hostTitleSource ? ` [${summary.hostTitleSource}]` : ''}`]
+      : []),
+    ...(summary.hostDefaultTitle ? [`host default title: ${summary.hostDefaultTitle}`] : []),
+    ...(summary.indexTitle !== undefined
+      ? [`index durable title: ${summary.indexTitle || '(empty)'}${summary.indexTitleSource ? ` [${summary.indexTitleSource}]` : ''}`]
+      : []),
+    ...(summary.indexDefaultTitle ? [`index default title: ${summary.indexDefaultTitle}`] : []),
     `host primary: ${summary.hostPrimaryFields.join(', ')}`,
     `lex primary: ${summary.lexPrimaryFields.join(', ')}`,
     ...(summary.hostAuxiliaryMirrors?.length ? [`host mirrors: ${summary.hostAuxiliaryMirrors.join(', ')}`] : []),
@@ -363,6 +475,9 @@ function formatLiveRuntimeOverlayDetails(summary: HostSessionDebugLiveRuntimeOve
     `pendingRequest: ${summary.pendingRequest ? 'yes' : 'no'}`,
     `needsInput: ${summary.needsInput ? 'yes' : 'no'}`,
     `attachedView: ${summary.attachedView ? 'yes' : 'no'}`,
+    ...(summary.titleSource
+      ? [`title: ${summary.title || '(empty)'} [${summary.titleSource}]${typeof summary.titleRevision === 'number' ? ` rev=${summary.titleRevision}` : ''}`]
+      : []),
     `turnResponses: ${summary.turnResponseCount}`,
     `hostProjection: ${summary.hostProjectionPresent ? 'present' : 'absent'}`,
   ];
@@ -401,12 +516,28 @@ function formatLiveRuntimeOverlayDetails(summary: HostSessionDebugLiveRuntimeOve
   return lines.join('\n');
 }
 
+function formatContextUsageDetails(summary: HostSessionDebugContextUsageSummary): string {
+  const lines = [
+    `usageSource: ${summary.usageSource}`,
+    `promptTokens: ${summary.promptTokens}`,
+    `completionTokens: ${summary.completionTokens}`,
+    `usedTokens: ${summary.usedTokens}`,
+  ];
+  if (typeof summary.outputBuffer === 'number') {
+    lines.push(`outputBuffer: ${summary.outputBuffer}`);
+  }
+  return lines.join('\n');
+}
+
 function formatRestoreDiagnosticsDetails(summary: HostSessionRestoreDiagnosticsSummary): string {
   const lines = [
     `session: ${summary.sessionId}`,
     `lex snapshot: ${summary.lexSnapshotPath}`,
     `storedSnapshotState: ${summary.storedSnapshotState}`,
     ...(summary.storedSnapshotError ? [`storedSnapshotError: ${summary.storedSnapshotError}`] : []),
+    ...(summary.missingActiveSkillNames?.length
+      ? [`missingActiveSkillNames: ${summary.missingActiveSkillNames.join(', ')}`]
+      : []),
     ...(summary.notes?.length ? summary.notes.map(note => `note: ${note}`) : []),
   ];
   return lines.join('\n');

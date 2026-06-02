@@ -1,6 +1,8 @@
 import {
+  buildTurnRequestPromptTokenDetails,
   readTurnRequestDebugArtifactsSnapshot,
   readTurnRequestDebugSectionsSnapshot,
+  readTurnRequestOutputBuffer,
   type TurnResponseTurn,
 } from 'aily-lex/browser';
 
@@ -19,8 +21,17 @@ export interface ChatContextUsageSnapshot {
   readonly usedTokens: number;
   readonly totalContextWindow: number;
   readonly percentage: number;
+  readonly source?: 'provider-request' | 'provider-turn-final' | 'estimate';
   readonly outputBuffer?: number;
   readonly outputBufferPercentage?: number;
+  readonly promptTokenDetails?: readonly ChatContextUsagePromptTokenDetail[];
+}
+
+export interface ChatContextUsageSummary {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly source: 'provider-request' | 'provider-turn-final' | 'estimate';
+  readonly outputBuffer?: number;
   readonly promptTokenDetails?: readonly ChatContextUsagePromptTokenDetail[];
 }
 
@@ -123,7 +134,7 @@ export function createChatContextUsageSnapshot(
     return null;
   }
 
-  const outputBuffer = readOutputBufferFromTurn(usageTurn);
+  const outputBuffer = requestUsage?.outputBuffer ?? readOutputBufferFromTurn(usageTurn);
   const usedTokens = promptTokens + completionTokens;
   const percentage = totalContextWindow > 0
     ? (usedTokens / totalContextWindow) * 100
@@ -131,7 +142,7 @@ export function createChatContextUsageSnapshot(
   const outputBufferPercentage = typeof outputBuffer === 'number'
     ? (Math.max(0, outputBuffer - completionTokens) / totalContextWindow) * 100
     : undefined;
-  const promptTokenDetails = buildPromptTokenDetails(usageTurn, promptTokens);
+  const promptTokenDetails = requestUsage?.promptTokenDetails ?? buildPromptTokenDetails(usageTurn, promptTokens);
 
   return {
     promptTokens,
@@ -139,6 +150,7 @@ export function createChatContextUsageSnapshot(
     usedTokens,
     totalContextWindow,
     percentage,
+    ...(requestUsage?.source ? { source: requestUsage.source } : {}),
     ...(typeof outputBuffer === 'number' ? { outputBuffer } : {}),
     ...(typeof outputBufferPercentage === 'number' ? { outputBufferPercentage } : {}),
     ...(promptTokenDetails.length > 0 ? { promptTokenDetails } : {}),
@@ -166,10 +178,37 @@ export function findLatestUsageTurn(
   return null;
 }
 
+export function readLatestContextUsageSummary(
+  turnResponses: readonly TurnResponseTurn[] | null | undefined,
+): ChatContextUsageSummary | null {
+  const usageTurn = findLatestUsageTurn(turnResponses);
+  if (!usageTurn) {
+    return null;
+  }
+
+  const requestUsage = readTurnRequestUsage(usageTurn);
+  if (!requestUsage) {
+    return null;
+  }
+
+  return {
+    promptTokens: requestUsage.promptTokens,
+    completionTokens: requestUsage.completionTokens,
+    source: requestUsage.source,
+    ...(typeof requestUsage.outputBuffer === 'number' ? { outputBuffer: requestUsage.outputBuffer } : {}),
+    ...(requestUsage.promptTokenDetails?.length ? { promptTokenDetails: requestUsage.promptTokenDetails } : {}),
+  };
+}
+
 function buildPromptTokenDetails(
   turn: TurnResponseTurn,
   promptTokens: number,
 ): ChatContextUsagePromptTokenDetail[] {
+  const sharedDetails = buildTurnRequestPromptTokenDetails(turn.request?.metadata, promptTokens, estimateTokenCount);
+  if (sharedDetails?.length) {
+    return [...sharedDetails];
+  }
+
   const counts = buildPromptDetailCountsFromTurn(turn);
   return toPromptTokenDetails(counts, promptTokens);
 }
@@ -358,6 +397,11 @@ function toPromptTokenDetails(
 }
 
 function readOutputBufferFromTurn(turn: TurnResponseTurn): number | undefined {
+  const sharedOutputBuffer = readTurnRequestOutputBuffer(turn.request?.metadata);
+  if (typeof sharedOutputBuffer === 'number') {
+    return sharedOutputBuffer;
+  }
+
   const requestOptionsSection = (readTurnRequestDebugSectionsSnapshot(turn.request?.metadata) ?? [])
     .find(section => section.name === 'Request Options');
   if (!requestOptionsSection?.content) {
@@ -385,12 +429,23 @@ function isFiniteNonNegative(value: unknown): value is number {
 
 function readTurnRequestUsage(
   turn: TurnResponseTurn | null | undefined,
-): { promptTokens: number; completionTokens: number } | undefined {
+): {
+  promptTokens: number;
+  completionTokens: number;
+  source: 'provider-request' | 'provider-turn-final' | 'estimate';
+  outputBuffer?: number;
+  promptTokenDetails?: readonly ChatContextUsagePromptTokenDetail[];
+} | undefined {
   const sidecarUsage = turn?.responseModel?.requestUsage;
   if (isFiniteNonNegative(sidecarUsage?.promptTokens) && isFiniteNonNegative(sidecarUsage?.completionTokens)) {
+    const outputBuffer = normalizePositiveNumber(sidecarUsage?.outputBuffer);
+    const promptTokenDetails = normalizePromptTokenDetails(sidecarUsage?.promptTokenDetails);
     return {
       promptTokens: sidecarUsage.promptTokens,
       completionTokens: sidecarUsage.completionTokens,
+      source: 'provider-request',
+      ...(typeof outputBuffer === 'number' ? { outputBuffer } : {}),
+      ...(promptTokenDetails.length > 0 ? { promptTokenDetails } : {}),
     };
   }
 
@@ -401,7 +456,7 @@ function readTurnRequestUsage(
       const promptTokens = 'promptTokens' in usage ? usage['promptTokens'] : undefined;
       const completionTokens = 'completionTokens' in usage ? usage['completionTokens'] : undefined;
       if (isFiniteNonNegative(promptTokens) && isFiniteNonNegative(completionTokens)) {
-        return { promptTokens, completionTokens };
+        return { promptTokens, completionTokens, source: 'provider-turn-final' };
       }
     }
   }
@@ -411,8 +466,35 @@ function readTurnRequestUsage(
     return {
       promptTokens: cumulativeUsage.inputTokens,
       completionTokens: cumulativeUsage.outputTokens,
+      source: 'provider-turn-final',
     };
   }
 
   return undefined;
+}
+
+function normalizePromptTokenDetails(
+  details: readonly ChatContextUsagePromptTokenDetail[] | undefined,
+): ChatContextUsagePromptTokenDetail[] {
+  return (details ?? [])
+    .map(detail => {
+      const category = typeof detail?.category === 'string' ? detail.category.trim() : '';
+      const label = typeof detail?.label === 'string' ? detail.label.trim() : '';
+      const percentageOfPrompt = typeof detail?.percentageOfPrompt === 'number'
+        && Number.isFinite(detail.percentageOfPrompt)
+        && detail.percentageOfPrompt >= 0
+        ? detail.percentageOfPrompt
+        : undefined;
+
+      if (!category || !label || percentageOfPrompt === undefined) {
+        return undefined;
+      }
+
+      return {
+        category,
+        label,
+        percentageOfPrompt,
+      };
+    })
+    .filter((detail): detail is ChatContextUsagePromptTokenDetail => !!detail);
 }

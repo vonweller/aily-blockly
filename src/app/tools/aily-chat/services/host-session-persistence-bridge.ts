@@ -1,14 +1,42 @@
 import { HostSessionRecordStore } from './host-session-record-store';
+import { normalizePersistedChatSessionTitleSource, type PersistedChatSessionTitleSource } from '../core/chat-session-title';
 
 import type {
   HostSessionRecord,
   LiveHostSessionRecord,
   SessionIndexEntry,
   SessionMetadata,
+  SessionTitleUpdateOptions,
 } from './chat-history.service';
 import { countHostRecordMessages } from './chat-history.service';
 
 type LiveSessionProvider = () => LiveHostSessionRecord | null;
+type PendingTitleUpdate = { title: string; source: PersistedChatSessionTitleSource };
+type DurablePersistedTitleCandidate = { title: string; source?: PersistedChatSessionTitleSource };
+
+function resolveDurablePersistedTitleCandidate(
+  title: unknown,
+  source: unknown,
+  defaultTitle?: unknown,
+): DurablePersistedTitleCandidate | null {
+  const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const normalizedSource = normalizePersistedChatSessionTitleSource(source);
+  if (normalizedSource) {
+    return {
+      title: normalizedTitle,
+      source: normalizedSource,
+    };
+  }
+
+  const normalizedDefaultTitle = typeof defaultTitle === 'string' ? defaultTitle.trim() : '';
+  return !normalizedDefaultTitle || normalizedTitle !== normalizedDefaultTitle
+    ? { title: normalizedTitle }
+    : null;
+}
 
 export interface HostSessionPersistenceBridgeOptions {
   ensureIndexLoaded: () => void;
@@ -28,7 +56,7 @@ export interface HostSessionPersistenceBridgeOptions {
 export class HostSessionPersistenceBridge {
   private readonly dirtySessionIds = new Set<string>();
   private readonly sessionCache = new Map<string, HostSessionRecord>();
-  private readonly pendingTitles = new Map<string, string>();
+  private readonly pendingTitles = new Map<string, PendingTitleUpdate>();
   private liveSessionProvider: LiveSessionProvider | null = null;
 
   constructor(
@@ -67,35 +95,43 @@ export class HostSessionPersistenceBridge {
     this.dirtySessionIds.delete(sessionId);
   }
 
-  updateTitle(sessionId: string, title: string): void {
+  updateTitle(sessionId: string, title: string, options?: SessionTitleUpdateOptions): void {
     this.options.ensureIndexLoaded();
     const entry = this.options.findIndexEntry(sessionId);
     const now = Date.now();
+    const nextTitle = typeof title === 'string' ? title.trim() : '';
+    if (!nextTitle) {
+      return;
+    }
+    const nextSource = normalizePersistedChatSessionTitleSource(options?.source) ?? 'legacy-custom';
 
     if (entry) {
-      entry.title = title;
+      entry.title = nextTitle;
+      entry.titleSource = nextSource;
       entry.updatedAt = now;
       this.options.markIndexDirty();
 
       const cached = this.sessionCache.get(sessionId);
       if (cached) {
-        cached.metadata.title = title;
+        cached.metadata.title = nextTitle;
+        cached.metadata.titleSource = nextSource;
         cached.metadata.updatedAt = now;
         this.hostRecordStore.write(sessionId, cached);
       } else {
         const persisted = this.hostRecordStore.read(sessionId, entry.projectPath ?? null);
         if (persisted) {
-          persisted.metadata.title = title;
+          persisted.metadata.title = nextTitle;
+          persisted.metadata.titleSource = nextSource;
           persisted.metadata.updatedAt = now;
           this.sessionCache.set(sessionId, persisted);
           this.hostRecordStore.write(sessionId, persisted);
         } else {
-          this.pendingTitles.set(sessionId, title);
+          this.pendingTitles.set(sessionId, { title: nextTitle, source: nextSource });
         }
       }
 
       this.options.writeIndex();
-      console.log(`[ChatHistory] 标题已更新: ${sessionId} → "${title}"`);
+      console.log(`[ChatHistory] 标题已更新: ${sessionId} → "${nextTitle}"`);
       return;
     }
 
@@ -107,7 +143,8 @@ export class HostSessionPersistenceBridge {
         ...fallbackRecord,
         metadata: {
           ...fallbackRecord.metadata,
-          title,
+          title: nextTitle,
+          titleSource: nextSource,
           updatedAt: now,
         },
       };
@@ -117,7 +154,7 @@ export class HostSessionPersistenceBridge {
       const messageCount = countHostRecordMessages(nextRecord);
       this.options.upsertIndexEntry(sessionId, nextRecord.metadata, messageCount, true);
       this.options.writeIndex();
-      console.log(`[ChatHistory] 标题已更新(补建条目): ${sessionId} → "${title}"`);
+      console.log(`[ChatHistory] 标题已更新(补建条目): ${sessionId} → "${nextTitle}"`);
       return;
     }
 
@@ -125,7 +162,8 @@ export class HostSessionPersistenceBridge {
     // even when no turn has been persisted yet.
     const metadata = this.hostRecordStore.createFullMetadata({
       sessionId,
-      title,
+      title: nextTitle,
+      titleSource: nextSource,
       updatedAt: now,
     });
     const titleOnlyRecord = this.hostRecordStore.createRecord(metadata);
@@ -133,7 +171,7 @@ export class HostSessionPersistenceBridge {
     this.hostRecordStore.write(sessionId, titleOnlyRecord);
     this.options.upsertIndexEntry(sessionId, metadata, 0, true);
     this.options.writeIndex();
-    console.log(`[ChatHistory] 标题已更新(仅标题元数据): ${sessionId} → "${title}"`);
+    console.log(`[ChatHistory] 标题已更新(仅标题元数据): ${sessionId} → "${nextTitle}"`);
     return;
 
   }
@@ -164,6 +202,7 @@ export class HostSessionPersistenceBridge {
         if (hydrated !== data) {
           this.hostRecordStore.write(sessionId, hydrated);
         }
+        this.syncIndexEntryFromRecord(sessionId, hydrated);
         this.sessionCache.set(sessionId, hydrated);
         return hydrated;
       }
@@ -175,6 +214,7 @@ export class HostSessionPersistenceBridge {
           if (hydrated !== fallbackData) {
             this.hostRecordStore.write(sessionId, hydrated);
           }
+          this.syncIndexEntryFromRecord(sessionId, hydrated);
           this.sessionCache.set(sessionId, hydrated);
           return hydrated;
         }
@@ -236,8 +276,59 @@ export class HostSessionPersistenceBridge {
   }
 
   private materializeHostRecord(record: LiveHostSessionRecord): HostSessionRecord {
-    const fullMetadata = this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata));
+    const fullMetadata = this.retainDurableTitle(
+      this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata)),
+    );
     return this.hostRecordStore.createRecord(fullMetadata, record.turnResponses, record.sidecar, record.auxiliary);
+  }
+
+  private retainDurableTitle(metadata: SessionMetadata): SessionMetadata {
+    const incomingTitle = resolveDurablePersistedTitleCandidate(
+      metadata.title,
+      metadata.titleSource,
+      metadata.defaultTitle,
+    );
+    if (incomingTitle) {
+      return {
+        ...metadata,
+        title: incomingTitle.title,
+        titleSource: incomingTitle.source,
+      };
+    }
+
+    const preservedTitle = this.readPersistedDurableTitle(metadata.sessionId);
+    if (preservedTitle) {
+      return {
+        ...metadata,
+        title: preservedTitle.title,
+        titleSource: preservedTitle.source,
+      };
+    }
+
+    if (!metadata.title && !metadata.titleSource) {
+      return metadata;
+    }
+
+    return {
+      ...metadata,
+      title: '',
+      titleSource: undefined,
+    };
+  }
+
+  private readPersistedDurableTitle(sessionId: string): DurablePersistedTitleCandidate | null {
+    const cached = this.sessionCache.get(sessionId);
+    const cachedTitle = resolveDurablePersistedTitleCandidate(
+      cached?.metadata.title,
+      cached?.metadata.titleSource,
+      cached?.metadata.defaultTitle,
+    );
+    if (cachedTitle) {
+      return cachedTitle;
+    }
+
+    const entry = this.options.findIndexEntry(sessionId);
+    return resolveDurablePersistedTitleCandidate(entry?.title, entry?.titleSource, entry?.defaultTitle);
   }
 
   private tryLoadLiveHostRecord(sessionId: string): HostSessionRecord | null {
@@ -259,21 +350,22 @@ export class HostSessionPersistenceBridge {
   }
 
   private applyPendingTitle(metadata: SessionMetadata): SessionMetadata {
-    const pendingTitle = this.pendingTitles.get(metadata.sessionId);
-    if (!pendingTitle) {
+    const pendingUpdate = this.pendingTitles.get(metadata.sessionId);
+    if (!pendingUpdate) {
       return metadata;
     }
 
     this.pendingTitles.delete(metadata.sessionId);
     return {
       ...metadata,
-      title: pendingTitle,
+      title: pendingUpdate.title,
+      titleSource: pendingUpdate.source,
     };
   }
 
   private applyPendingTitleToRecord(record: HostSessionRecord): HostSessionRecord {
-    const pendingTitle = this.pendingTitles.get(record.metadata.sessionId);
-    if (!pendingTitle) {
+    const pendingUpdate = this.pendingTitles.get(record.metadata.sessionId);
+    if (!pendingUpdate) {
       return record;
     }
 
@@ -282,9 +374,28 @@ export class HostSessionPersistenceBridge {
       ...record,
       metadata: {
         ...record.metadata,
-        title: pendingTitle,
+        title: pendingUpdate.title,
+        titleSource: pendingUpdate.source,
         updatedAt: Date.now(),
       },
     };
+  }
+
+  private syncIndexEntryFromRecord(sessionId: string, record: HostSessionRecord): void {
+    const entry = this.options.findIndexEntry(sessionId);
+    const nextTitle = record.metadata.title || '';
+    const nextTitleSource = record.metadata.titleSource;
+    const nextDefaultTitle = record.metadata.defaultTitle || '';
+    if (
+      entry
+      && entry.title === nextTitle
+      && (entry.titleSource ?? undefined) === nextTitleSource
+      && (entry.defaultTitle || '') === nextDefaultTitle
+    ) {
+      return;
+    }
+
+    this.options.upsertIndexEntry(sessionId, record.metadata, countHostRecordMessages(record), false);
+    this.options.writeIndex();
   }
 }

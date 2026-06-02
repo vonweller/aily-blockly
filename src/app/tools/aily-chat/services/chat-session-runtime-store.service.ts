@@ -7,6 +7,7 @@ import {
   LOCAL_CHAT_SESSION_TYPE,
   normalizeChatSessionType,
 } from '../core/chat-mode';
+import type { ChatSessionTitleSource } from '../core/chat-session-title';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
 import type { AuthQuotaInfo } from './auth-quota-state.service';
 import type { ChatInputNotice } from './chat-input-notice';
@@ -47,6 +48,9 @@ export interface ChatSessionRuntimeDebugSummary {
   readonly pendingRequest: boolean;
   readonly needsInput: boolean;
   readonly attachedView: boolean;
+  readonly title?: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
   readonly quotaOverlayPresent?: boolean;
   readonly requestQuotaNotice?: boolean;
   readonly authQuotaProjected?: boolean;

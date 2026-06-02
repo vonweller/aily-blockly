@@ -10,6 +10,7 @@ import type { ChatSessionTitleActionContext } from '../core/chat-session-title-a
 import { AilyChatConfigService, type ChatSessionViewerOrientationSetting } from './aily-chat-config.service';
 import { ChatSessionSelectionService } from './chat-session-selection.service';
 import { ChatSessionItemsService } from './chat-session-items.service';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type { ChatSessionListItemsDelta } from './chat-session-items.service';
 import { ChatService } from './chat.service';
 import { MenuManagerService, type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
@@ -18,6 +19,8 @@ const SESSION_SIDEBAR_WIDTH_CONFIG_KEY = 'aiChatSessionsSidebarWidth';
 
 @Injectable()
 export class ChatSessionsControlService {
+  private static readonly VISIBLE_DETAIL_HYDRATION_LIMIT = 12;
+
   readonly sessionSidebarDefaultWidth = 300;
   readonly sessionSidebarResizeMinWidth = 240;
   readonly sessionStageMinWidth = 300;
@@ -37,6 +40,10 @@ export class ChatSessionsControlService {
   private _sessionSidebarWidth = this.sessionSidebarDefaultWidth;
   private _sessionSidebarMaxWidth = this.sessionSidebarDefaultWidth;
   private _sessionListDisplayMode: 'hidden' | 'stacked' | 'sidebar' = 'stacked';
+  private pendingControlChangedFrameId: number | null = null;
+  private cachedSessionListGroups: { revision: string; groups: readonly ChatSessionInventoryGroup[] } | null = null;
+  private cachedSessionPickerItems: { revision: string; items: readonly ChatSessionListItem[] } | null = null;
+  private cachedSessionPickerGroups: { revision: string; groups: readonly ChatSessionInventoryGroup[] } | null = null;
   private readonly controlChangedSubject = new Subject<void>();
 
   readonly controlChanged$ = this.controlChangedSubject.asObservable();
@@ -72,6 +79,17 @@ export class ChatSessionsControlService {
         });
     }
 
+    const sessionInventoryChanged$ = (this.chatSessionItemsService as unknown as {
+      sessionInventoryChanged$?: { pipe: (...args: unknown[]) => { subscribe: (callback: () => void) => unknown } };
+    }).sessionInventoryChanged$;
+    if (sessionInventoryChanged$) {
+      sessionInventoryChanged$
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => {
+          this.handleSessionInventoryChanged();
+        });
+    }
+
     this.chatSessionSelectionService.selectedSessionIdChanged$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((sessionId) => {
@@ -84,6 +102,7 @@ export class ChatSessionsControlService {
         if (this._showSessionPicker) {
           this._pickerRevealSessionId = normalizedSessionId;
         }
+        this.invalidateGroupCaches();
         this.controlChangedSubject.next();
       });
 
@@ -93,31 +112,67 @@ export class ChatSessionsControlService {
         this.applyConfiguredSessionViewerOrientation(this.ailyChatConfigService.sessionViewerOrientation);
       });
 
+    this.destroyRef.onDestroy(() => {
+      this.cancelScheduledControlChanged();
+    });
+
     this.reconcileSelection();
   }
 
   private handleSessionListItemsDelta(delta: ChatSessionListItemsDelta): void {
-    this.reconcileSelection();
-    if (delta.affectsOrder && !this.updateLayoutProjection()) {
-      this.controlChangedSubject.next();
+    this.invalidateGroupCaches();
+
+    if (delta.kind === 'full' || delta.affectsOrder || !delta.sessionId || delta.sessionId === this._selectedSessionId || delta.sessionId === this.chatService.currentSessionId) {
+      this.reconcileSelection();
+    }
+
+    this.requestVisibleSessionDetails('state');
+    if (delta.affectsOrder && !this.updateLayoutProjection({ frameScheduled: true })) {
+      this.emitControlChanged(true);
       return;
     }
 
     if (!delta.affectsOrder) {
-      this.controlChangedSubject.next();
+      this.emitControlChanged(true);
     }
   }
 
+  private handleSessionInventoryChanged(): void {
+    this.cachedSessionPickerItems = null;
+    this.cachedSessionPickerGroups = null;
+    if (!this._showSessionPicker) {
+      return;
+    }
+
+    this.reconcileSelection();
+    this.requestVisibleSessionDetails('state');
+    this.emitControlChanged(true);
+  }
+
   get sessionListItems(): readonly ChatSessionListItem[] {
-    return this.chatSessionItemsService.sessionListItems;
+    return this.readDisplaySessionItems();
   }
 
   get sessionListGroups(): readonly ChatSessionInventoryGroup[] {
-    return groupChatSessionItemsByDate(this.sessionListItems, { includeArchived: true });
+    const revision = this.readSessionListItemsRevision();
+    if (this.cachedSessionListGroups?.revision === revision) {
+      return this.cachedSessionListGroups.groups;
+    }
+
+    const groups = groupChatSessionItemsByDate(this.sessionListItems, { includeArchived: true });
+    this.cachedSessionListGroups = { revision, groups };
+    return groups;
   }
 
   get sessionPickerGroups(): readonly ChatSessionInventoryGroup[] {
-    return groupChatSessionItemsByDate(this.sessionListItems, { includeArchived: false });
+    const revision = this.readSessionPickerItemsRevision();
+    if (this.cachedSessionPickerGroups?.revision === revision) {
+      return this.cachedSessionPickerGroups.groups;
+    }
+
+    const groups = groupChatSessionItemsByDate(this.readPickerDisplaySessionItems(), { includeArchived: false });
+    this.cachedSessionPickerGroups = { revision, groups };
+    return groups;
   }
 
   get showSessionPicker(): boolean {
@@ -318,13 +373,14 @@ export class ChatSessionsControlService {
   }
 
   openSessionPicker(anchor?: MouseEvent | null): void {
-    if (this.sessionListItems.length === 0) {
+    const pickerItems = this.readPickerDisplaySessionItems();
+    if (pickerItems.length === 0) {
       this.message.info(this.translate.instant('AILY_CHAT.NO_HISTORY_SESSION') || '没有历史会话记录');
       return;
     }
 
     this.menuManager.closeAll();
-    const preferredSessionId = this.resolvePreferredSessionId();
+    const preferredSessionId = this.resolvePreferredSessionId(pickerItems);
     if (preferredSessionId) {
       this._selectedSessionId = preferredSessionId;
       this._pickerRevealSessionId = preferredSessionId;
@@ -336,6 +392,7 @@ export class ChatSessionsControlService {
       this._pickerRevealSessionId = '';
     }
 
+    this.requestVisibleSessionDetails('state');
     this.controlChangedSubject.next();
   }
 
@@ -363,7 +420,11 @@ export class ChatSessionsControlService {
   }
 
   private reconcileSelection(): void {
-    const preferredSessionId = this.resolvePreferredSessionId();
+    const preferredSessionId = this.resolvePreferredSessionId(
+      this._showSessionPicker
+        ? this.readPickerDisplaySessionItems()
+        : this.readDisplaySessionItems(),
+    );
     this._selectedSessionId = preferredSessionId;
 
     if (!this._showSessionPicker) {
@@ -374,7 +435,9 @@ export class ChatSessionsControlService {
     this._pickerRevealSessionId = preferredSessionId;
   }
 
-  private updateLayoutProjection(): boolean {
+  private updateLayoutProjection(options?: { frameScheduled?: boolean }): boolean {
+    const layoutSpan = ChatPerformanceTracer.begin('session_list.layout_projection');
+    ChatPerformanceTracer.increment('session_list.layout_projection');
     const nextSidebarMaxWidth = this.resolveSessionSidebarMaxWidth(this._sessionViewportWidth);
     const nextSidebarWidth = this.resolveEffectiveSessionSidebarWidth(this._sessionViewportWidth, this._requestedSessionSidebarWidth);
     const nextDisplayMode = this.resolveSessionListDisplayMode({
@@ -386,14 +449,167 @@ export class ChatSessionsControlService {
     if (nextDisplayMode === this._sessionListDisplayMode
       && nextSidebarWidth === this._sessionSidebarWidth
       && nextSidebarMaxWidth === this._sessionSidebarMaxWidth) {
+      ChatPerformanceTracer.end(layoutSpan, 'session_list.layout_projection', 'unchanged');
       return false;
     }
 
     this._sessionListDisplayMode = nextDisplayMode;
     this._sessionSidebarWidth = nextSidebarWidth;
     this._sessionSidebarMaxWidth = nextSidebarMaxWidth;
-    this.controlChangedSubject.next();
+    this.requestVisibleSessionDetails('state');
+    this.emitControlChanged(options?.frameScheduled === true);
+    ChatPerformanceTracer.end(layoutSpan, 'session_list.layout_projection', nextDisplayMode);
     return true;
+  }
+
+  private emitControlChanged(frameScheduled = false): void {
+    if (!frameScheduled || typeof globalThis.requestAnimationFrame !== 'function') {
+      this.cancelScheduledControlChanged();
+      this.controlChangedSubject.next();
+      return;
+    }
+
+    if (this.pendingControlChangedFrameId !== null) {
+      return;
+    }
+
+    this.pendingControlChangedFrameId = globalThis.requestAnimationFrame(() => {
+      this.pendingControlChangedFrameId = null;
+      this.controlChangedSubject.next();
+    });
+  }
+
+  private cancelScheduledControlChanged(): void {
+    if (this.pendingControlChangedFrameId === null || typeof globalThis.cancelAnimationFrame !== 'function') {
+      this.pendingControlChangedFrameId = null;
+      return;
+    }
+
+    globalThis.cancelAnimationFrame(this.pendingControlChangedFrameId);
+    this.pendingControlChangedFrameId = null;
+  }
+
+  private invalidateGroupCaches(): void {
+    this.cachedSessionListGroups = null;
+    this.cachedSessionPickerItems = null;
+    this.cachedSessionPickerGroups = null;
+  }
+
+  private readDisplaySessionItems(): readonly ChatSessionListItem[] {
+    return this.prependProjectedTargetItems(this.chatSessionItemsService.sessionListItems, 'all');
+  }
+
+  private readPickerDisplaySessionItems(): readonly ChatSessionListItem[] {
+    const revision = this.readSessionPickerItemsRevision();
+    if (this.cachedSessionPickerItems?.revision === revision) {
+      return this.cachedSessionPickerItems.items;
+    }
+
+    const items = this.prependProjectedTargetItems(
+      this.chatSessionItemsService.readSessionSummaryViewItems(undefined, undefined, undefined, 'all'),
+      'all',
+    );
+    this.cachedSessionPickerItems = { revision, items };
+    return items;
+  }
+
+  private prependProjectedTargetItems(
+    baseItems: readonly ChatSessionListItem[],
+    filter: 'all' | 'current-project',
+  ): readonly ChatSessionListItem[] {
+    const projectedTargetIds = this.resolveProjectedTargetSessionIds();
+    if (projectedTargetIds.length === 0) {
+      return baseItems;
+    }
+
+    const knownSessionIds = new Set(baseItems.map(item => item.sessionId));
+    const projectedItems: ChatSessionListItem[] = [];
+    for (const sessionId of projectedTargetIds) {
+      if (knownSessionIds.has(sessionId)) {
+        continue;
+      }
+
+      const projectedItem = this.chatSessionItemsService.readOrProjectSessionSummary?.(sessionId, undefined, undefined, filter) ?? null;
+      if (!projectedItem) {
+        continue;
+      }
+
+      knownSessionIds.add(projectedItem.sessionId);
+      projectedItems.push(projectedItem);
+    }
+
+    if (projectedItems.length === 0) {
+      return baseItems;
+    }
+
+    return [...projectedItems, ...baseItems];
+  }
+
+  private resolveProjectedTargetSessionIds(): readonly string[] {
+    const targetSessionIds = new Set<string>();
+    const currentSessionId = typeof this.chatService.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (currentSessionId.length > 0) {
+      targetSessionIds.add(currentSessionId);
+    }
+
+    const selectedSessionId = this._selectedSessionId.trim();
+    if (selectedSessionId.length > 0) {
+      targetSessionIds.add(selectedSessionId);
+    }
+
+    const revealSessionId = this._pickerRevealSessionId.trim();
+    if (revealSessionId.length > 0) {
+      targetSessionIds.add(revealSessionId);
+    }
+
+    return [...targetSessionIds];
+  }
+
+  private readSessionListItemsRevision(): string {
+    return [
+      String(this.chatSessionItemsService.sessionListRevision),
+      this.chatService.currentSessionId?.trim?.() ?? '',
+      this._selectedSessionId.trim(),
+      this._pickerRevealSessionId.trim(),
+    ].join('|');
+  }
+
+  private readSessionPickerItemsRevision(): string {
+    const sessionInventoryRevision = (this.chatSessionItemsService as unknown as { sessionInventoryRevision?: number }).sessionInventoryRevision;
+    return [
+      String(sessionInventoryRevision ?? this.chatSessionItemsService.sessionListRevision),
+      this.chatService.currentSessionId?.trim?.() ?? '',
+      this._selectedSessionId.trim(),
+      this._pickerRevealSessionId.trim(),
+    ].join('|');
+  }
+
+  private requestVisibleSessionDetails(reason: ChatSessionListItemsDelta['kind'] extends never ? never : 'state'): void {
+    const sessionIds = this.resolveVisibleSessionIds();
+    if (sessionIds.length === 0) {
+      return;
+    }
+
+    this.chatSessionItemsService.requestSessionListRefresh({
+      reason,
+      scope: 'visible-details',
+      priority: 'after-paint',
+      sessionIds,
+      filter: this._showSessionPicker ? 'all' : 'current-project',
+    });
+  }
+
+  private resolveVisibleSessionIds(): readonly string[] {
+    const sourceItems = this._showSessionPicker
+      ? this.readPickerDisplaySessionItems().filter(item => item.archived !== true)
+      : this.sessionListItems;
+
+    return sourceItems
+      .slice(0, ChatSessionsControlService.VISIBLE_DETAIL_HYDRATION_LIMIT)
+      .map(item => item.sessionId)
+      .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0);
   }
 
   private readPersistedSessionSidebarWidth(): number {
@@ -453,8 +669,7 @@ export class ChatSessionsControlService {
     }
   }
 
-  private resolvePreferredSessionId(): string {
-    const items = this.sessionListItems;
+  private resolvePreferredSessionId(items: readonly ChatSessionListItem[] = this.sessionListItems): string {
     if (items.length === 0) {
       return '';
     }

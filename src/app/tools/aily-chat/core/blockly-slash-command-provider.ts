@@ -1,4 +1,5 @@
 import type { IHostSlashCommandProvider, ISlashCommandContribution } from 'aily-lex/browser';
+import { SkillRegistry } from './skill-registry';
 
 const BLOCKLY_SLASH_COMMANDS: readonly ISlashCommandContribution[] = [
   {
@@ -30,7 +31,21 @@ const BLOCKLY_SLASH_COMMANDS: readonly ISlashCommandContribution[] = [
 export function createBlocklySlashCommandProvider(): IHostSlashCommandProvider {
   return {
     contributeSlashCommands(): ISlashCommandContribution[] {
-      return [...BLOCKLY_SLASH_COMMANDS];
+      const skillCommands = SkillRegistry.getAll()
+        .filter(skill => skill.origin?.type !== 'url' && skill.metadata.userInvocable !== false)
+        .map<ISlashCommandContribution>(skill => ({
+          name: skill.metadata.name,
+          description: skill.metadata.description || `Invoke the ${skill.metadata.displayName || skill.metadata.name} skill.`,
+          sampleRequest: `/${skill.metadata.name} ${skill.metadata.context === 'fork' ? 'run this skill for the current task' : 'apply this skill to the current task'}`,
+          when: skill.metadata.context === 'fork'
+            ? `Use to run the ${skill.metadata.displayName || skill.metadata.name} skill as a forked subagent for the current task.`
+            : `Use to load the ${skill.metadata.displayName || skill.metadata.name} skill before handling the current task.`,
+        }));
+
+      return [...BLOCKLY_SLASH_COMMANDS, ...skillCommands];
+    },
+    onSlashCommandsChanged(listener) {
+      return SkillRegistry.onDidChange(listener);
     },
   };
 }

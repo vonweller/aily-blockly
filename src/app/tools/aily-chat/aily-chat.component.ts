@@ -49,6 +49,7 @@ import { ChatViewService } from './services/chat-view.service';
 import { ChatEngineService } from './services/chat-engine.service';
 import { EditCheckpointService } from './services/edit-checkpoint.service';
 import { GitWorkspaceCheckpointProviderService } from './services/git-workspace-checkpoint-provider.service';
+import { ChatPerformanceTracer } from './services/chat-perf-tracer';
 import { ChatSwitchShellCoordinator } from './helpers/chat-switch-shell-coordinator';
 import { ChatEditResourceShellCoordinator } from './helpers/chat-edit-resource-shell-coordinator';
 import { ChatSurfaceShellCoordinator } from './helpers/chat-surface-shell-coordinator';
@@ -86,6 +87,10 @@ import { ChatSessionListComponent } from './components/chat-session-list.compone
 import { ChatSessionPickerComponent } from './components/chat-session-picker.component';
 import { ChatSessionTitleControlComponent } from './components/chat-session-title-control.component';
 import { ChatContextToolbarComponent } from './components/chat-context-toolbar/chat-context-toolbar.component';
+import {
+  ChatPermissionConfirmDialogComponent,
+  type ChatPermissionConfirmDialogResult,
+} from './components/chat-permission-confirm-dialog.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
@@ -187,6 +192,7 @@ export class AilyChatComponent implements OnDestroy {
   private sessionViewportResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
   private observedSessionViewportElement: HTMLElement | null = null;
+  private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
   /** 用户消息重新编辑互斥：同时最多展开一条 */
@@ -227,6 +233,8 @@ export class AilyChatComponent implements OnDestroy {
     public menuManager: MenuManagerService,
     public viewState: ChatViewService,
   ) {
+    ChatPerformanceTracer.increment('entry_open.component_constructor');
+    ChatPerformanceTracer.mark('entry_open.component_constructor');
     this.vm = new ChatComponentViewModel({
       engine: this.engine,
       viewState: this.viewState,
@@ -260,6 +268,7 @@ export class AilyChatComponent implements OnDestroy {
       switchToMode: (mode) => this.engine.switchToMode(mode),
       switchToCustomAgent: (selection) => this.engine.switchToCustomAgent(selection),
       configureCustomAgents: () => this.viewState.openSettings(),
+      updatePermissionPreset: (preset) => this.updatePermissionPresetWithConfirmation(preset),
       switchToModel: (model) => this.engine.switchToModel(model),
       switchToModelConfiguration: (model, update) => this.engine.switchToModelConfiguration(model, update),
     });
@@ -300,7 +309,11 @@ export class AilyChatComponent implements OnDestroy {
     this.viewportShellCoordinator = new ChatViewportShellCoordinator({
       scrollManager: this.scrollManager,
       viewState: this.viewState,
-      refreshHistoryList: () => this.engine.refreshHistoryList(),
+      requestSessionListSummaryLoad: () => this.engine.requestSessionListRefresh({
+        reason: 'shell',
+        scope: 'summary',
+        priority: 'after-paint',
+      }),
     });
     this.memoryShellCoordinator = new ChatMemoryShellCoordinator({
       modal: this.modal,
@@ -395,14 +408,24 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngOnInit() {
+    ChatPerformanceTracer.increment('entry_open.component_ng_on_init');
+    ChatPerformanceTracer.mark('entry_open.component_ng_on_init');
     this.lifecycleCoordinator.initialize();
     this.syncSessionListDisplayState();
   }
 
   ngAfterViewInit(): void {
+    ChatPerformanceTracer.increment('entry_open.pane_setup_complete');
+    ChatPerformanceTracer.mark('entry_open.pane_setup_complete');
     this.viewportShellCoordinator.initialize(this.chatContainer);
     this.scrollManager.handleContentHeightChange();
     this.syncSessionListDisplayState();
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => {
+        ChatPerformanceTracer.increment('entry_open.first_stable_paint');
+        ChatPerformanceTracer.mark('entry_open.first_stable_paint');
+      });
+    }
   }
 
   get activeImportedDebugView() {
@@ -512,6 +535,10 @@ export class AilyChatComponent implements OnDestroy {
   handleHostHeaderActionRequested(request: ChatHostHeaderActionRequest): void {
     request.event.stopPropagation();
     this.viewState.runHostHeaderAction(request);
+  }
+
+  handleSessionListRetry(): void {
+    this.viewState.retrySessionListLoad();
   }
 
   openDebugBrowserHome(): void {
@@ -690,6 +717,49 @@ export class AilyChatComponent implements OnDestroy {
     return this.actionRegistry.getMenuItems();
   }
 
+  get permissionMenuItems(): IMenuItem[] {
+    const isAutoReview = this.engine.currentSessionApprovalsReviewer === 'auto_review';
+    const isFullAccess = this.engine.currentSessionPermissionMode === 'bypassPermissions';
+    const isDefault = !isAutoReview && !isFullAccess;
+
+    return [
+      {
+        name: '默认权限',
+        action: 'permission-default',
+        icon: 'fa-light fa-shield-check',
+        current: isDefault,
+        tooltip: '使用默认权限。',
+      },
+      {
+        name: '自动审查',
+        action: 'permission-auto-review',
+        icon: 'fa-light fa-robot',
+        current: isAutoReview,
+        tooltip: '将审批请求交给 Auto Review',
+      },
+      { sep: true },
+      {
+        name: '完全访问权限',
+        action: 'permission-full-access',
+        icon: 'fa-light fa-triangle-exclamation',
+        current: isFullAccess,
+        tooltip: '高风险：跳过权限拦截。仅在受控环境下使用。',
+      },
+    ];
+  }
+
+  get permissionButtonIconClass(): string {
+    if (this.engine.currentSessionPermissionMode === 'bypassPermissions') {
+      return 'fa-light fa-triangle-exclamation';
+    }
+
+    if (this.engine.currentSessionApprovalsReviewer === 'auto_review') {
+      return 'fa-light fa-robot';
+    }
+
+    return 'fa-light fa-shield-check';
+  }
+
   toggleActionMenu(event: MouseEvent): void {
     this.vm.closeSessionPicker();
     this.menuManager.toggleActionMenu(event, [...this.actionMenuItems]);
@@ -699,6 +769,109 @@ export class AilyChatComponent implements OnDestroy {
     this.vm.closeSessionPicker();
     this.reasoningMenuItems = [...this.vm.currentReasoningEffortMenuItems];
     this.menuManager.toggleReasoningMenu(event, [...this.reasoningMenuItems]);
+  }
+
+  togglePermissionMenu(event: MouseEvent): void {
+    this.switchShellCoordinator.togglePermissionMenu(event, this.permissionMenuItems);
+  }
+
+  handlePermissionMenuClick(item: IMenuItem): void {
+    this.switchShellCoordinator.permissionMenuClick(item);
+  }
+
+  private async updatePermissionPresetWithConfirmation(preset: string): Promise<void> {
+    const action = typeof preset === 'string' ? preset.trim() : '';
+    if (!action) {
+      return;
+    }
+
+    if (action !== 'permission-full-access') {
+      this.engine.applyComposerPermissionPreset(action);
+      this.notifyPermissionPresetApplied(action);
+      return;
+    }
+
+    const sessionId = this.resolvePermissionTargetSessionId();
+    if (sessionId && this.rememberedFullAccessSessions.has(sessionId)) {
+      this.engine.applyComposerPermissionPreset(action, sessionId);
+      this.notifyPermissionPresetApplied(action);
+      return;
+    }
+
+    const decision = await this.confirmFullAccessPermission();
+    if (!decision.confirmed) {
+      return;
+    }
+
+    if (decision.rememberForSession && sessionId) {
+      this.rememberedFullAccessSessions.add(sessionId);
+    }
+
+    this.engine.applyComposerPermissionPreset(action, sessionId);
+    this.notifyPermissionPresetApplied(action, { remembered: decision.rememberForSession });
+  }
+
+  private notifyPermissionPresetApplied(
+    action: string,
+    options?: {
+      remembered?: boolean;
+    },
+  ): void {
+    if (action === 'permission-auto-review') {
+      this.message.success('已切换为自动审查');
+      return;
+    }
+
+    if (action === 'permission-full-access') {
+      if (options?.remembered) {
+        this.message.success('已切换为完全访问权限（本会话已记住）');
+        return;
+      }
+
+      this.message.success('已切换为完全访问权限');
+      return;
+    }
+
+    this.message.success('已切换为默认审批/默认权限');
+  }
+
+  private resolvePermissionTargetSessionId(): string {
+    const engineSessionId = typeof this.engine.sessionId === 'string' ? this.engine.sessionId.trim() : '';
+    if (engineSessionId) {
+      return engineSessionId;
+    }
+
+    return typeof this.chatService.currentSessionId === 'string' ? this.chatService.currentSessionId.trim() : '';
+  }
+
+  private confirmFullAccessPermission(): Promise<ChatPermissionConfirmDialogResult> {
+    return new Promise<ChatPermissionConfirmDialogResult>((resolve) => {
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzMaskClosable: false,
+        nzKeyboard: false,
+        nzWidth: 420,
+        nzBodyStyle: { padding: '0' },
+        nzContent: ChatPermissionConfirmDialogComponent,
+        nzData: {
+          title: '启用完全访问权限',
+          message: '该设置会跳过权限拦截，允许执行高风险操作。请确认你正在受控环境中使用。',
+          riskNote: '建议仅用于你完全信任的仓库与会话。',
+          confirmLabel: '继续启用',
+          cancelLabel: '取消',
+          rememberLabel: '本会话内记住我的选择',
+        },
+      });
+
+      modalRef.afterClose.subscribe((result: ChatPermissionConfirmDialogResult | undefined) => {
+        resolve({
+          confirmed: !!result?.confirmed,
+          rememberForSession: !!result?.rememberForSession,
+        });
+      });
+    });
   }
 
   handleModelMenuActionClick(payload: {
@@ -837,7 +1010,14 @@ export class AilyChatComponent implements OnDestroy {
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {
-        this.chatService.currentSessionTitle = title;
+        if (typeof this.chatService.setCurrentSessionTitle === 'function') {
+          this.chatService.setCurrentSessionTitle({
+            text: title,
+            source: 'user',
+          });
+        } else {
+          this.chatService.currentSessionTitle = title;
+        }
       },
       onRefreshSessions: () => {
         this.closeDebugBrowser();

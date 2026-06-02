@@ -11,6 +11,8 @@ import { readPendingPlanReview } from '../helpers/host-session-restore-bridge';
 import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
 import { resolveHostSessionProviderOptions } from '../helpers/host-session-input-state';
 
+type HostSessionDebugModelRouting = NonNullable<NonNullable<HostSessionRecord['turnResponses']>[number]['responseModel']>['modelRouting'];
+
 export type HostSessionDebugEventKind =
   | 'toolCall'
   | 'modelTurn'
@@ -390,7 +392,7 @@ function buildHostSessionDebugArtifacts(
   const interactionActionSummary = resolveHostSessionInteractionActionSummary(record);
   const pendingPlanReview = readPendingPlanReview(record.metadata?.requestContext?.interactionContinuation);
 
-  if (providerOptions.folderPath || providerOptions.permissionMode !== 'default' || providerOptions.permissionLevel) {
+  if (providerOptions.folderPath || providerOptions.permissionMode !== 'default' || providerOptions.permissionLevel || providerOptions.approvalsReviewer || providerOptions.approvalPolicy) {
     const event = createDebugEvent({
       sessionId,
       turnId: sessionEventTurnId,
@@ -409,7 +411,7 @@ function buildHostSessionDebugArtifacts(
     });
   }
 
-  if (requestRouting.requestModeId || requestRouting.customAgentTarget || requestRouting.permissionLevel) {
+  if (requestRouting.requestModeId || requestRouting.customAgentTarget || requestRouting.permissionLevel || requestRouting.approvalsReviewer || requestRouting.approvalPolicy) {
     const event = createDebugEvent({
       sessionId,
       turnId: sessionEventTurnId,
@@ -524,6 +526,27 @@ function buildHostSessionDebugArtifacts(
       status: turn.response.status,
     });
     events.push(modelTurnEvent);
+
+    const modelRouting = turn.responseModel?.modelRouting;
+    if (modelRouting) {
+      const event = createDebugEvent({
+        sessionId,
+        turnId: turn.turnId,
+        sequence: sequence++,
+        kind: 'generic',
+        created: modelTurnCreated,
+        parentEventId: modelTurnEvent.id,
+        name: 'Auto model routing',
+        details: formatModelRoutingDetails(modelRouting),
+        level: 'info',
+        category: 'model',
+      });
+      events.push(event);
+      resolvedContentById.set(event.id, {
+        kind: 'text',
+        text: JSON.stringify(modelRouting, null, 2),
+      });
+    }
 
     for (const round of turn.rounds ?? []) {
       for (const toolCall of round.toolCalls ?? []) {
@@ -702,7 +725,32 @@ function formatRequestRoutingDetails(
     requestRouting.requestModeId ? `request=${requestRouting.requestModeId}` : '',
     requestRouting.customAgentTarget ? `customAgent=${requestRouting.customAgentTarget}` : '',
     requestRouting.permissionLevel ? `permission=${requestRouting.permissionLevel}` : '',
+    requestRouting.approvalsReviewer ? `reviewer=${requestRouting.approvalsReviewer}` : '',
+    requestRouting.approvalPolicy ? `approvalPolicy=${requestRouting.approvalPolicy}` : '',
   ].filter(Boolean).join(', ');
+}
+
+function formatModelRoutingDetails(modelRouting: HostSessionDebugModelRouting): string {
+  return [
+    modelRouting.requestedModel ? `requestedModel: ${modelRouting.requestedModel}` : '',
+    modelRouting.requestedPresetId ? `requestedPresetId: ${modelRouting.requestedPresetId}` : '',
+    modelRouting.selectedModel ? `selectedModel: ${modelRouting.selectedModel}` : '',
+    modelRouting.selectedPresetId ? `selectedPresetId: ${modelRouting.selectedPresetId}` : '',
+    modelRouting.selectedFamily ? `selectedFamily: ${modelRouting.selectedFamily}` : '',
+    modelRouting.routingMethod ? `routingMethod: ${modelRouting.routingMethod}` : '',
+    modelRouting.predictedLabel ? `predictedLabel: ${modelRouting.predictedLabel}` : '',
+    typeof modelRouting.confidence === 'number' ? `confidence: ${modelRouting.confidence}` : '',
+    typeof modelRouting.latencyMs === 'number' ? `latencyMs: ${modelRouting.latencyMs}` : '',
+    typeof modelRouting.candidateCount === 'number' ? `candidateCount: ${modelRouting.candidateCount}` : '',
+    Array.isArray(modelRouting.candidateModels) && modelRouting.candidateModels.length > 0
+      ? `candidateModels: ${modelRouting.candidateModels.join(', ')}`
+      : '',
+    typeof modelRouting.fallback === 'boolean' ? `fallback: ${modelRouting.fallback ? 'yes' : 'no'}` : '',
+    modelRouting.fallbackReason ? `fallbackReason: ${modelRouting.fallbackReason}` : '',
+    typeof modelRouting.stickyOverride === 'boolean' ? `stickyOverride: ${modelRouting.stickyOverride ? 'yes' : 'no'}` : '',
+    modelRouting.policyVersion ? `policyVersion: ${modelRouting.policyVersion}` : '',
+    modelRouting.modelBillingLabel ? `modelBillingLabel: ${modelRouting.modelBillingLabel}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 function formatProviderOptionsDetails(
@@ -712,6 +760,8 @@ function formatProviderOptionsDetails(
     providerOptions.folderPath ? `folder=${providerOptions.folderPath}` : '',
     `permissionMode=${providerOptions.permissionMode}`,
     providerOptions.permissionLevel ? `permissionLevel=${providerOptions.permissionLevel}` : '',
+    providerOptions.approvalsReviewer ? `approvalsReviewer=${providerOptions.approvalsReviewer}` : '',
+    providerOptions.approvalPolicy ? `approvalPolicy=${providerOptions.approvalPolicy}` : '',
   ].filter(Boolean).join(', ');
 }
 
@@ -1122,6 +1172,13 @@ function projectPartEvent(
           text: previewText([part.description, part.resultText].filter(Boolean).join('\n\n'), 4000) ?? part.agentName,
         },
       };
+    case 'tool_call': {
+      const autoReviewProjection = projectAutoReviewEvent(part, context);
+      if (autoReviewProjection) {
+        return autoReviewProjection;
+      }
+      return null;
+    }
     case 'terminal':
       return {
         event: createDebugEvent({
@@ -1204,4 +1261,94 @@ function sumChildItemDurations(part: Extract<TurnResponsePart, { type: 'subagent
   }
 
   return durations.reduce((sum, duration) => sum + duration, 0);
+}
+
+function projectAutoReviewEvent(
+  part: Extract<TurnResponsePart, { type: 'tool_call' }>,
+  context: {
+    sessionId: string;
+    turnId: string;
+    modelTurnEventId: string;
+    toolCallParentId: string;
+    created: number;
+    sequence: number;
+  },
+): {
+  event: HostSessionDebugEvent;
+  content?: HostSessionDebugResolvedEventContent;
+} | null {
+  const approval = readAutoReviewApprovalMetadata(part.metadata);
+  if (!approval) {
+    return null;
+  }
+
+  const startedAt = typeof approval['reviewStartedAt'] === 'number' ? approval['reviewStartedAt'] : undefined;
+  const completedAt = typeof approval['reviewCompletedAt'] === 'number' ? approval['reviewCompletedAt'] : undefined;
+  const created = completedAt ?? startedAt ?? context.created;
+  const durationInMillis = typeof startedAt === 'number' && typeof completedAt === 'number'
+    ? Math.max(0, completedAt - startedAt)
+    : undefined;
+  const status = typeof approval['reviewStatus'] === 'string' ? approval['reviewStatus'] : 'reviewing';
+  const riskLevel = typeof approval['reviewRiskLevel'] === 'string' ? approval['reviewRiskLevel'] : undefined;
+  const source = typeof approval['source'] === 'string' ? approval['source'] : undefined;
+  const message = typeof approval['message'] === 'string' ? approval['message'] : undefined;
+  const decisionSource = typeof approval['decisionSource'] === 'string' ? approval['decisionSource'] : undefined;
+  const eventName = status === 'reviewing' ? 'Auto Review' : 'Auto Review Result';
+  const details = [
+    `tool=${part.toolName}`,
+    `status=${status}`,
+    riskLevel ? `risk=${riskLevel}` : '',
+    source ? `source=${source}` : '',
+    typeof durationInMillis === 'number' ? `duration=${durationInMillis}ms` : '',
+  ].filter(Boolean).join(', ');
+  const payload = {
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    status,
+    ...(riskLevel ? { riskLevel } : {}),
+    ...(source ? { source } : {}),
+    ...(decisionSource ? { decisionSource } : {}),
+    ...(message ? { rationale: message } : {}),
+    ...(typeof startedAt === 'number' ? { reviewStartedAt: startedAt } : {}),
+    ...(typeof completedAt === 'number' ? { reviewCompletedAt: completedAt } : {}),
+    ...(typeof durationInMillis === 'number' ? { durationInMillis } : {}),
+  };
+
+  return {
+    event: createDebugEvent({
+      sessionId: context.sessionId,
+      turnId: context.turnId,
+      sequence: context.sequence,
+      kind: 'generic',
+      created,
+      parentEventId: context.toolCallParentId || context.modelTurnEventId,
+      name: eventName,
+      details,
+      level: status === 'approved' || status === 'reviewing' ? 'info' : (status === 'timedOut' ? 'warning' : 'error'),
+      category: 'approval',
+    }),
+    content: {
+      kind: 'text',
+      text: JSON.stringify(payload, null, 2),
+    },
+  };
+}
+
+function readAutoReviewApprovalMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  const root = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata
+    : null;
+  const approval = root && typeof root['approval'] === 'object' && !Array.isArray(root['approval'])
+    ? root['approval'] as Record<string, unknown>
+    : null;
+  if (!approval || approval['reviewer'] !== 'auto_review') {
+    return null;
+  }
+
+  const status = approval['reviewStatus'];
+  if (status !== 'reviewing' && status !== 'approved' && status !== 'denied' && status !== 'timedOut' && status !== 'aborted') {
+    return null;
+  }
+
+  return approval;
 }

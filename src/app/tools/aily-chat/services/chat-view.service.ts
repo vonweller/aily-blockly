@@ -24,7 +24,7 @@ import {
 } from './aily-chat-config.service';
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatDebugBrowserService } from './chat-debug-browser.service';
-import { ChatSessionItemsService } from './chat-session-items.service';
+import { ChatSessionItemsService, type ChatSessionListLoadState } from './chat-session-items.service';
 import { ChatSessionsControlService } from './chat-sessions-control.service';
 import { ChatService } from './chat.service';
 import { type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
@@ -36,6 +36,7 @@ import {
   type ChatResolvedModeTarget,
   type ChatSurfaceModeId,
 } from '../core/chat-mode';
+import { isCustomSessionTitleSource, normalizeChatSessionTitleSource, type ChatSessionDisplayTitle, type ChatSessionTitleSource } from '../core/chat-session-title';
 import type { ChatHostHeaderActionContext } from '../core/chat-host-header-actions';
 import type { ChatHostHeaderActionRequest } from '../core/chat-host-header-actions';
 import type { ChatSessionTitleActionContext, ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from '../core/chat-session-title-actions';
@@ -51,6 +52,7 @@ export interface ChatPaneSessionListSurfaceModel {
   readonly title: string;
   readonly variant: 'sidebar' | 'entry';
   readonly groups: readonly ChatSessionInventoryGroup[];
+  readonly loadState: ChatSessionListLoadState;
   readonly hostClasses: readonly string[];
 }
 
@@ -150,12 +152,17 @@ export class ChatViewService {
       .subscribe(() => {
         this.refreshSessionViewModel();
       });
+    this.chatSessionItemsService.sessionListLoadStateChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.refreshSessionViewModel();
+      });
     this.chatService.sessionInputStateChanged$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         this.refreshSessionViewModel();
       });
-    this.chatService.sessionTitleChanged$
+    (this.chatService.sessionDisplayTitleChanged$ ?? this.chatService.sessionTitleChanged$)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         this.sessionViewModelChangedSubject.next();
@@ -210,20 +217,31 @@ export class ChatViewService {
     }));
   }
 
-  get currentSessionTitle(): string {
-    const projectedTitle = this.currentSessionViewItem?.title;
-    const liveTitle = this.chatService.currentSessionTitle;
-    const currentSessionId = this.chatService.currentSessionId;
+  get currentSessionDisplayTitle(): ChatSessionDisplayTitle {
+    const projectedTitle = this.readProjectedCurrentSessionDisplayTitle();
+    const liveTitle = this.readLiveCurrentSessionDisplayTitle();
 
-    if (isMeaningfulSessionTitle(liveTitle, currentSessionId)) {
+    if (projectedTitle.text && (!liveTitle.text || !liveTitle.durable)) {
+      return projectedTitle;
+    }
+
+    if (liveTitle.text) {
       return liveTitle;
     }
 
-    if (isMeaningfulSessionTitle(projectedTitle, currentSessionId)) {
-      return projectedTitle ?? '';
+    if (projectedTitle.text) {
+      return projectedTitle;
     }
 
-    return '';
+    return {
+      text: '',
+      source: 'empty',
+      durable: false,
+    };
+  }
+
+  get currentSessionTitle(): string {
+    return this.currentSessionDisplayTitle.text;
   }
 
   get currentPaneTitle(): string {
@@ -232,7 +250,7 @@ export class ChatViewService {
         return this.debugBrowser.activeImportedResourceSummary?.displayTitle ?? '';
       case 'chat':
       case 'blank-session':
-        return this.currentSessionTitle;
+        return this.currentSessionDisplayTitle.text;
       default:
         return '';
     }
@@ -396,6 +414,10 @@ export class ChatViewService {
     this.chatSessionsControlService.closeSessionPicker();
   }
 
+  retrySessionListLoad(): void {
+    this.chatSessionItemsService.retryLastSessionListRefresh();
+  }
+
   selectSession(sessionId: string): void {
     this.chatSessionsControlService.selectSession(sessionId);
   }
@@ -456,6 +478,7 @@ export class ChatViewService {
         title: 'Sessions',
         variant: 'sidebar',
         groups: this.sessionListGroups,
+        loadState: this.chatSessionItemsService.sessionListLoadState,
         hostClasses: ['chat-session-sidebar-content'],
       };
     }
@@ -464,6 +487,7 @@ export class ChatViewService {
       title: 'Sessions',
       variant: 'entry',
       groups: this.sessionListGroups,
+      loadState: this.chatSessionItemsService.sessionListLoadState,
       hostClasses: ['entry-session-control'],
     };
   }
@@ -526,6 +550,66 @@ export class ChatViewService {
 
   private get currentSessionViewItem(): ChatSessionListItem | null {
     return this.chatSessionItemsService.readCurrentSessionViewItem();
+  }
+
+  private readProjectedCurrentSessionDisplayTitle(): ChatSessionDisplayTitle {
+    const projectedItem = this.currentSessionViewItem;
+    const currentSessionId = this.chatService.currentSessionId;
+    const projectedTitle = projectedItem?.title ?? '';
+    if (!isMeaningfulSessionTitle(projectedTitle, currentSessionId)) {
+      return {
+        text: '',
+        source: 'empty',
+        durable: false,
+      };
+    }
+
+    const projectedSource = typeof projectedItem?.titleSource === 'string'
+      ? normalizeChatSessionTitleSource(projectedItem.titleSource)
+      : (projectedItem?.titleDurable === true ? 'legacy-custom' : 'default-first-request');
+    const durable = projectedItem?.titleDurable === true || isCustomSessionTitleSource(projectedSource);
+
+    return {
+      text: projectedTitle,
+      source: durable ? (isCustomSessionTitleSource(projectedSource) ? projectedSource : 'legacy-custom') : projectedSource,
+      durable,
+    };
+  }
+
+  private readLiveCurrentSessionDisplayTitle(): ChatSessionDisplayTitle {
+    const liveTitle = this.chatService.currentSessionTitle;
+    const currentSessionId = this.chatService.currentSessionId;
+    if (!isMeaningfulSessionTitle(liveTitle, currentSessionId)) {
+      return {
+        text: '',
+        source: 'empty',
+        durable: false,
+      };
+    }
+
+    const liveTitleSource = this.readCurrentSessionTitleSource();
+    if (liveTitleSource === undefined) {
+      return {
+        text: liveTitle,
+        source: 'legacy-custom',
+        durable: true,
+      };
+    }
+
+    return {
+      text: liveTitle,
+      source: liveTitleSource,
+      durable: isCustomSessionTitleSource(liveTitleSource),
+    };
+  }
+
+  private readCurrentSessionTitleSource(): ChatSessionTitleSource | undefined {
+    const titleSource = (this.chatService as { readonly currentSessionTitleSource?: unknown }).currentSessionTitleSource;
+    if (typeof titleSource !== 'string') {
+      return undefined;
+    }
+
+    return normalizeChatSessionTitleSource(titleSource);
   }
 
   private get hasCurrentSessionIdentity(): boolean {

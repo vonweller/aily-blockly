@@ -1,5 +1,6 @@
 import { AilyHost } from '../core/host';
 import { normalizeChatSurfaceModeId } from '../core/chat-mode';
+import { normalizeChatSessionTitleText, normalizePersistedChatSessionTitleSource } from '../core/chat-session-title';
 import {
   normalizeHostSessionRequestRoutingSummary,
   resolveHostSessionRequestRoutingSummary,
@@ -209,6 +210,8 @@ export class ChatHistoryIndexStore {
         indexMap.set(sessionId, {
           sessionId,
           title: data.metadata.title || '',
+          ...(data.metadata.titleSource ? { titleSource: data.metadata.titleSource } : {}),
+          ...(data.metadata.defaultTitle ? { defaultTitle: data.metadata.defaultTitle } : {}),
           projectPath: prjPath,
           projectName,
           createdAt: data.metadata.createdAt || Date.now(),
@@ -264,8 +267,9 @@ export class ChatHistoryIndexStore {
     const requestRouting = normalizeHostSessionRequestRoutingSummary(entry.requestRouting, selectedMode);
     const interactionActionSummary = normalizeHostSessionInteractionActionSummary(entry.interactionActionSummary);
 
-    return {
+    const normalizedEntry: SessionIndexEntry = {
       ...entry,
+      title: normalizeChatSessionTitleText(entry.title),
       mode: normalizeChatSurfaceModeId(selectedMode.modeId),
       modeDescriptor,
       inputState,
@@ -273,6 +277,19 @@ export class ChatHistoryIndexStore {
       ...(interactionActionSummary ? { interactionActionSummary } : {}),
       model: entry.model ?? null,
     };
+
+    normalizedEntry.titleSource = normalizedEntry.title
+      ? normalizePersistedChatSessionTitleSource(entry.titleSource)
+      : undefined;
+    normalizedEntry.defaultTitle = normalizeChatSessionTitleText(entry.defaultTitle) || undefined;
+    if (!normalizedEntry.titleSource) {
+      delete normalizedEntry.titleSource;
+    }
+    if (!normalizedEntry.defaultTitle) {
+      delete normalizedEntry.defaultTitle;
+    }
+
+    return normalizedEntry;
   }
 
   private ensureDir(dirPath: string): void {

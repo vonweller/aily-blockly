@@ -438,7 +438,7 @@
 
       .right2 {
         position: absolute;
-        right: 42px;
+        right: 28px;
       }
 
       .right3 {
@@ -480,6 +480,18 @@
         i.actived {
           color: var(--aily-color-primary-alt, #4f77dd);
         }
+      }
+
+      .permission-mode-indicator {
+        width: 28px;
+      }
+
+      .permission-mode-indicator .fa-robot {
+        color: var(--aily-chat-viewer-state-info, #6cb6ff);
+      }
+
+      .permission-mode-indicator .fa-triangle-exclamation {
+        color: var(--aily-chat-viewer-state-warn, #e5c07b);
       }
     }
 
@@ -944,6 +956,75 @@
     line-height: 1;
     color: var(--aily-text-secondary);
   }
+
+  .context-usage-badge {
+    position: absolute;
+    right: -3px;
+    bottom: -2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 12px;
+    height: 10px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: rgba(229, 192, 123, 0.2);
+    color: #f4d48e;
+    font-size: 6px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+}
+
+.context-usage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-usage-source-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(229, 192, 123, 0.16);
+  color: #f4d48e;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.context-usage-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.context-usage-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.context-usage-summary-label {
+  color: var(--aily-text-secondary, rgba(255, 255, 255, 0.68));
+}
+
+.context-usage-summary-value {
+  color: var(--aily-text-primary, #fff);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .context-compact-action {

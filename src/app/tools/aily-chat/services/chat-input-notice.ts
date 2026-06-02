@@ -2,8 +2,8 @@ export type ChatInputNoticeTone = 'info' | 'warning' | 'error' | 'muted';
 
 export interface ChatInputNotice {
   readonly id: string;
-  readonly source: 'auth-quota' | 'request-quota';
-  readonly kind: 'exhausted' | 'approaching' | 'rate-limit';
+  readonly source: 'auth-quota' | 'request-quota' | 'mode-guidance';
+  readonly kind: 'exhausted' | 'approaching' | 'rate-limit' | 'mode-guidance';
   readonly title: string;
   readonly subtitle?: string;
   readonly tone: ChatInputNoticeTone;

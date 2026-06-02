@@ -1,4 +1,5 @@
 import type { AgentSource } from 'aily-lex/browser';
+import { AilyHost } from './host';
 
 export const BLOCKLY_HOST_PLUGIN_URI_SCHEME = 'aily-chat-plugin';
 
@@ -36,7 +37,7 @@ export interface BlocklyPluginCustomizationContribution {
   readonly uri: string;
   readonly name: string;
   readonly description?: string;
-  readonly source?: AgentSource | 'builtin';
+  readonly source?: AgentSource;
   readonly content?: string;
 }
 
@@ -88,9 +89,44 @@ function toPluginCustomizationContribution(
     uri,
     name: record.name,
     description: record.description,
-    source: record.source.kind === 'builtin' ? 'builtin' : undefined,
+    source: resolvePluginCustomizationSource(record),
     ...(fileBacked ? {} : { content: serializePluginAuditRecord(record) }),
   };
+}
+
+function resolvePluginCustomizationSource(record: PluginAuditRecordLike): AgentSource | undefined {
+  switch (record.source.kind) {
+    case 'builtin':
+      return 'built-in';
+    case 'package':
+      return 'plugin';
+    case 'file':
+      return classifyFileBackedPluginSource(record.source.location);
+    default:
+      return undefined;
+  }
+}
+
+function classifyFileBackedPluginSource(location: string | undefined): AgentSource | undefined {
+  const filePath = resolveFilesystemLocation(location);
+  if (!filePath) {
+    return undefined;
+  }
+
+  const host = AilyHost.get();
+  const normalizedFilePath = normalizeFilesystemLocation(filePath);
+  const projectRoot = normalizeFilesystemLocation(host.project?.projectRootPath ?? host.project?.currentProjectPath ?? '');
+  const userHome = normalizeFilesystemLocation(host.path?.getUserHome?.() ?? host.platform?.homedir?.() ?? '');
+
+  if (projectRoot && isEqualOrParentPath(normalizedFilePath, projectRoot)) {
+    return 'project';
+  }
+
+  if (userHome && isEqualOrParentPath(normalizedFilePath, userHome)) {
+    return 'user';
+  }
+
+  return undefined;
 }
 
 function resolvePluginCustomizationUri(
@@ -191,6 +227,40 @@ function serializeYamlInlineValue(value: unknown): string {
 
 function normalizeLocation(value: string | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveFilesystemLocation(value: string | undefined): string {
+  const normalized = normalizeLocation(value);
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('file://')) {
+    return decodeFileUri(normalized);
+  }
+
+  return looksLikeFilesystemPath(normalized) ? normalized : '';
+}
+
+function decodeFileUri(value: string): string {
+  const withoutScheme = value.replace(/^file:\/\//i, '');
+  if (withoutScheme.startsWith('/')) {
+    const windowsDriveMatch = withoutScheme.match(/^\/([a-zA-Z]:\/.*)$/);
+    if (windowsDriveMatch) {
+      return decodeURI(windowsDriveMatch[1]);
+    }
+  }
+
+  return decodeURI(withoutScheme);
+}
+
+function normalizeFilesystemLocation(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+  return /^[A-Za-z]:/.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function isEqualOrParentPath(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}/`);
 }
 
 function looksLikeFilesystemPath(value: string): boolean {

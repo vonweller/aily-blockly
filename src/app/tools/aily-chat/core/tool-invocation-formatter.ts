@@ -10,11 +10,14 @@ export function buildToolInvocationDisplaySummary(input: {
   args?: any;
   metadata?: Record<string, unknown> | null;
   result?: any;
+  state?: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval';
 }): ToolInvocationDisplaySummary | undefined {
   const cleanToolName = normalizeFormatterToolName(input.toolName);
   const args = inferToolArgs(input.args, cleanToolName, input.metadata);
 
   switch (cleanToolName) {
+    case 'load_skill':
+      return buildLoadSkillSummary(args, input.metadata, input.state);
     case 'read_file':
       return buildReadFileSummary(args, input.metadata);
     case 'grep_search':
@@ -364,6 +367,40 @@ function buildSubagentSummary(args: any): ToolInvocationDisplaySummary {
     label: `Ran ${truncateDisplayText(agentName, 48)}`,
     subtitle: description ? truncateDisplayText(description, 64) : undefined,
   };
+}
+
+function buildLoadSkillSummary(
+  args: any,
+  metadata?: Record<string, unknown> | null,
+  state?: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval',
+): ToolInvocationDisplaySummary {
+  const action = asString(args?.action)?.toLowerCase() || 'load';
+  const query = asString(args?.query);
+  const skillLabel = resolveSkillDisplayLabel(args, metadata);
+
+  switch (action) {
+    case 'search':
+      return {
+        label: 'Searched skills',
+        subtitle: query ? `for ${truncateDisplayText(query, 56)}` : undefined,
+      };
+    case 'list':
+      return { label: 'Listed loaded skills' };
+    case 'unload':
+      return {
+        label: skillLabel ? `Unloaded skill ${truncateDisplayText(skillLabel, 48)}` : 'Unloaded skill',
+      };
+    case 'load':
+    default: {
+      const mode = resolveLoadSkillMode(args, metadata);
+      const activeVerb = mode === 'fork' ? 'Running' : 'Loading';
+      const completedVerb = mode === 'fork' ? 'Ran' : 'Loaded';
+      const verb = state === 'doing' || state === 'pending_approval' ? activeVerb : completedVerb;
+      return {
+        label: skillLabel ? `${verb} skill ${truncateDisplayText(skillLabel, 48)}` : `${verb} skill`,
+      };
+    }
+  }
 }
 
 function buildSyncAbsSummary(args: any): ToolInvocationDisplaySummary {
@@ -1120,4 +1157,28 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function resolveSkillDisplayLabel(args: any, metadata?: Record<string, unknown> | null): string | undefined {
+  const skillMetadata = asRecord(metadata?.['skill']);
+  return asString(skillMetadata?.['displayName'])
+    || asString(skillMetadata?.['name'])
+    || asString(args?.name)
+    || asString(args?.skill);
+}
+
+function resolveLoadSkillMode(
+  args: any,
+  metadata?: Record<string, unknown> | null,
+): 'inline' | 'fork' {
+  const invocation = asRecord(metadata?.['invocation']);
+  const skillMetadata = asRecord(metadata?.['skill']);
+  const mode = asString(invocation?.['mode']) || asString(skillMetadata?.['mode']);
+  if (mode === 'fork') {
+    return 'fork';
+  }
+  if (mode === 'inline') {
+    return 'inline';
+  }
+  return asString(args?.task)?.trim() ? 'fork' : 'inline';
 }

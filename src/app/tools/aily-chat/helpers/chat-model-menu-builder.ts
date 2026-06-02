@@ -116,7 +116,9 @@ class ChatModelMenuBuilder {
           sortName: preset.name,
           enabled: preset.enabled,
           item: this.createModelMenuItem(model, currentModel, {
-            description: preset.description,
+            description: isDefaultPreset
+              ? this.buildDefaultAutoPresetDescription(preset.description)
+              : preset.description,
             preferBillingMeta: true,
             disabled: isDefaultPreset ? false : !preset.enabled,
             disabledReason: isDefaultPreset ? undefined : preset.unavailableReason,
@@ -696,11 +698,24 @@ class ChatModelMenuBuilder {
       sortName: defaultPreset?.name ?? defaultModel.name,
       enabled: true,
       item: this.createModelMenuItem(defaultModel, currentModel, {
-        description: defaultPreset?.description,
+        description: this.buildDefaultAutoPresetDescription(defaultPreset?.description),
         preferBillingMeta: true,
         disabled: false,
       }),
     };
+  }
+
+  private buildDefaultAutoPresetDescription(description: string | null | undefined): string {
+    const normalizedDescription = typeof description === 'string' ? description.trim() : '';
+    const autoRoutingDescription = 'Auto routing. The runtime keeps Auto as your selected preset and resolves a concrete model for each request.';
+
+    if (!normalizedDescription) {
+      return autoRoutingDescription;
+    }
+
+    return /auto\s*routing|automatic model selection/i.test(normalizedDescription)
+      ? normalizedDescription
+      : `${normalizedDescription}\n\n${autoRoutingDescription}`;
   }
 
   private createUnavailableModelMenuItem(

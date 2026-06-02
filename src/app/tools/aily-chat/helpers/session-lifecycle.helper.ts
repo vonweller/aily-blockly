@@ -51,6 +51,7 @@ import {
   buildHostSessionCurrentPickerRoutingSummary,
   normalizeHostSessionRequestRoutingSummary,
 } from './host-session-request-routing';
+import { type ChatSessionTitleSource } from '../core/chat-session-title';
 import { HostSessionItemController } from './host-session-item-controller';
 import type { HostSessionSwitchRestoreDiagnostics } from './host-session-item-controller';
 import {
@@ -61,8 +62,24 @@ import {
 } from './host-session-content-provider';
 import type { ChatSessionItemsService } from '../services/chat-session-items.service';
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
+
+function applyCurrentSessionTitle(
+  chatService: {
+    currentSessionTitle?: string;
+    setCurrentSessionTitle?: (candidate: { text: string; source: ChatSessionTitleSource }) => void;
+  },
+  candidate: { text: string; source: ChatSessionTitleSource },
+): void {
+  if (typeof chatService.setCurrentSessionTitle === 'function') {
+    chatService.setCurrentSessionTitle(candidate);
+    return;
+  }
+
+  chatService.currentSessionTitle = candidate.text;
+}
 
 type SessionLifecycleContext = ChatViewWriteBridgeContext
   & Pick<
@@ -94,7 +111,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
   >
   & Pick<IChatCoordination, 'interaction' | 'lexStream' | 'send' | 'session'>
   & {
-    readonly chatSessionItemsService?: Pick<ChatSessionItemsService, 'sessionItemController' | 'refreshHistoryList' | 'sessionListItems'>;
+    readonly chatSessionItemsService?: Pick<ChatSessionItemsService, 'sessionItemController' | 'refreshHistoryList' | 'requestSessionListRefresh' | 'loadInitialSummaries' | 'sessionListItems'>;
     readonly chatSessionEntryStateService?: Pick<
       ChatSessionEntryStateService,
       'readSessionEntryTarget' | 'setSessionEntryTarget' | 'clearSessionEntryTarget'
@@ -198,7 +215,7 @@ export class SessionLifecycleHelper {
       enterBlankSessionShell: (options) => this.enterBlankSessionShell(options),
       startSession: () => this.startSession(),
       restorePersistedSessionTarget: () => this.restorePersistedSessionTarget(),
-      refreshHistoryList: () => this.refreshHistoryList(),
+      requestSessionListRefresh: (input) => this.requestSessionListRefresh(input),
     });
   }
 
@@ -325,7 +342,13 @@ export class SessionLifecycleHelper {
     );
     const forkedProviderOptions = sourceSessionContent?.providerOptions ?? this.resolveCurrentSessionProviderOptions();
     const forkedInputState = buildHostSessionCurrentPickerInputState(selectedMode, forkedProviderOptions);
-    const forkedRequestRouting = buildHostSessionCurrentPickerRoutingSummary(selectedMode);
+    const forkedRequestRouting = buildHostSessionCurrentPickerRoutingSummary(
+      selectedMode,
+      undefined,
+      forkedProviderOptions.permissionLevel,
+      forkedProviderOptions.approvalsReviewer,
+      forkedProviderOptions.approvalPolicy,
+    );
     const forkedItem = this.hostSessionItemController.createForkedChatSessionItem({
       sessionId: forkedSessionId,
       title: this.buildForkedSessionTitle(
@@ -403,7 +426,52 @@ export class SessionLifecycleHelper {
       throw new Error('[SessionLifecycleHelper] ChatSessionItemsService.refreshHistoryList is required for shared session read-side');
     }
 
+    ChatPerformanceTracer.increment('session_list.sync_refresh_history');
+    ChatPerformanceTracer.mark('session_list.sync_refresh_history');
     sessionItemsService.refreshHistoryList(currentProjectPath, projectRootPath);
+  }
+
+  requestSessionListRefresh(input: {
+    reason: 'open' | 'entry' | 'reopen' | 'filter' | 'state' | 'runtime' | 'manual' | 'project' | 'service-created' | 'shell';
+    scope: 'summary' | 'visible-details' | 'full';
+    priority: 'after-paint' | 'normal' | 'idle';
+  }): void {
+    const currentProjectPath = AilyHost.get().project.currentProjectPath || AilyHost.get().project.projectRootPath;
+    const projectRootPath = AilyHost.get().project.projectRootPath;
+    const sessionItemsService = this.ctx.chatSessionItemsService as {
+      requestSessionListRefresh?: (request: {
+        reason: 'open' | 'entry' | 'reopen' | 'filter' | 'state' | 'runtime' | 'manual' | 'project' | 'service-created' | 'shell';
+        scope: 'summary' | 'visible-details' | 'full';
+        priority: 'after-paint' | 'normal' | 'idle';
+        projectPath?: string | null;
+        projectRootPath?: string | null;
+      }) => void;
+      loadInitialSummaries?: (limit?: number, projectPath?: string | null, projectRootPath?: string | null) => void;
+      refreshHistoryList?: (projectPath?: string | null, projectRootPath?: string | null) => void;
+    } | undefined;
+
+    if (typeof sessionItemsService?.requestSessionListRefresh === 'function') {
+      ChatPerformanceTracer.increment(`session_list.request.${input.scope}`);
+      ChatPerformanceTracer.mark('session_list.request_scheduled', `${input.reason}:${input.scope}:${input.priority}`);
+      sessionItemsService.requestSessionListRefresh({
+        ...input,
+        projectPath: currentProjectPath,
+        projectRootPath,
+      });
+      return;
+    }
+
+    if (input.scope === 'summary' && typeof sessionItemsService?.loadInitialSummaries === 'function') {
+      sessionItemsService.loadInitialSummaries(undefined, currentProjectPath, projectRootPath);
+      return;
+    }
+
+    if (typeof sessionItemsService?.refreshHistoryList === 'function') {
+      sessionItemsService.refreshHistoryList(currentProjectPath, projectRootPath);
+      return;
+    }
+
+    throw new Error('[SessionLifecycleHelper] ChatSessionItemsService session list refresh API is required for shared session read-side');
   }
 
   // ==================== 会话启动 ====================
@@ -427,7 +495,10 @@ export class SessionLifecycleHelper {
 
     // 初始化 Skills 系统（扫描全局 + 项目级 skills）
     const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
-    SkillRegistry.initialize(projectRoot).catch(err => {
+    SkillRegistry.initialize(projectRoot, {
+      userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
+      projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
+    }).catch(err => {
       console.warn('[AilyChat] Skills 初始化失败:', err);
     });
 
@@ -467,14 +538,18 @@ export class SessionLifecycleHelper {
 
     // Agent 就绪后设置 sessionId（send() 用 sessionId 作为就绪标志）
     this.setActiveSessionId(pendingSessionId);
-    this.ctx.chatService.currentSessionTitle = '';
+    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.applySessionProviderOptions(this.resolveCurrentProjectProviderOptions());
     this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
       projectPath: this.ctx.chatService.currentSessionPath || null,
     });
     this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId));
-    this.refreshHistoryList();
+    this.requestSessionListRefresh({
+      reason: 'state',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
     await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(pendingSessionId);
 
     this.ctx.isSessionStarting = false;
@@ -497,7 +572,7 @@ export class SessionLifecycleHelper {
     }
     this.setActiveSessionId('');
     this.ctx.chatService.hasBlankSessionShell = false;
-    this.ctx.chatService.currentSessionTitle = '';
+    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.ctx.chatService.currentSessionPath = '';
     this.ctx.chatService.clearResolvedActiveModel?.();
@@ -557,7 +632,11 @@ export class SessionLifecycleHelper {
       sessionId: currentSessionId,
       disposeRuntime: false,
     });
-    this.refreshHistoryList();
+    this.requestSessionListRefresh({
+      reason: 'entry',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
   }
 
   async ensureSessionReadyForSubmit(): Promise<boolean> {
@@ -794,7 +873,11 @@ export class SessionLifecycleHelper {
     this.throwIfSessionActivationSuperseded(activationRequestId);
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(restoreRequest.target.sessionId);
 
-    this.refreshHistoryList();
+    this.requestSessionListRefresh({
+      reason: 'reopen',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
   }
 
   private shouldReattachDetachedRuntimeSession(sessionId: string): boolean {
@@ -817,7 +900,10 @@ export class SessionLifecycleHelper {
     this.throwIfSessionActivationSuperseded(activationRequestId);
     this.setActiveSessionId(sessionId);
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
-    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    if (restoredTitle.source !== 'empty') {
+      applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
+    }
     this.applySessionType(restoreRequest.sessionContent.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
@@ -831,7 +917,11 @@ export class SessionLifecycleHelper {
     }
 
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
-    this.refreshHistoryList();
+    this.requestSessionListRefresh({
+      reason: 'reopen',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
   }
 
   private isCurrentSessionActivationRequest(activationRequestId: number): boolean {
@@ -855,7 +945,7 @@ export class SessionLifecycleHelper {
     });
 
     this.setActiveSessionId('');
-    this.ctx.chatService.currentSessionTitle = '';
+    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.ctx.chatService.currentSessionPath = '';
     this.ctx.isSessionStarting = false;
@@ -922,7 +1012,10 @@ export class SessionLifecycleHelper {
     SkillRegistry.clearSessionState();
 
     const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
-    SkillRegistry.initialize(projectRoot).catch(err => {
+    SkillRegistry.initialize(projectRoot, {
+      userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
+      projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
+    }).catch(err => {
       console.warn('[AilyChat] Skills 初始化失败:', err);
     });
 
@@ -968,7 +1061,10 @@ export class SessionLifecycleHelper {
 
     this.setActiveSessionId(sessionId);
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
-    this.ctx.chatService.currentSessionTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
+    const restoredTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
+    if (restoredTitle.source !== 'empty') {
+      applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
+    }
     this.applySessionType(sessionContent?.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, sessionContent));
@@ -1002,7 +1098,13 @@ export class SessionLifecycleHelper {
       providerOptions,
       inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
       mode: selectedMode.modeId,
-      requestRouting: buildHostSessionCurrentPickerRoutingSummary(selectedMode),
+      requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+        selectedMode,
+        undefined,
+        providerOptions.permissionLevel,
+        providerOptions.approvalsReviewer,
+        providerOptions.approvalPolicy,
+      ),
     };
   }
 
@@ -1103,12 +1205,15 @@ export class SessionLifecycleHelper {
 function resolveRestoredSessionTitle(
   sessionContent?: HostSessionContent | null,
   runtimeTurnResponses?: readonly unknown[] | null,
-): string {
+): { text: string; source: ChatSessionTitleSource } {
   const persistedTitle = typeof sessionContent?.title === 'string'
     ? sessionContent.title.trim()
     : '';
   if (isMeaningfulRestoredSessionTitle(persistedTitle)) {
-    return persistedTitle;
+    return {
+      text: persistedTitle,
+      source: 'restored-custom',
+    };
   }
 
   const fallbackDefaultTitle = deriveDefaultTitleFromTurnResponses(
@@ -1116,8 +1221,14 @@ function resolveRestoredSessionTitle(
     runtimeTurnResponses,
   );
   return isMeaningfulRestoredSessionTitle(fallbackDefaultTitle)
-    ? fallbackDefaultTitle
-    : '';
+    ? {
+      text: fallbackDefaultTitle,
+      source: 'default-first-request',
+    }
+    : {
+      text: '',
+      source: 'empty',
+    };
 }
 
 function deriveDefaultTitleFromTurnResponses(

@@ -64,6 +64,7 @@ import {
   type IHostToolProvider,
   type IToolContribution,
   type IMetricsService,
+  type ToolResultContent,
 } from 'aily-lex/browser';
 import {
   cloneTurnResponseRoundSummaryCarrier,
@@ -128,6 +129,8 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
   & {
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
+    readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
+    readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
   };
 
 export interface BlocklyCompatibilityHostBinding {
@@ -457,8 +460,9 @@ function syncPersistedActiveSkills(
     registerSkill(skill: any): void;
   },
   activeSkillNames: readonly string[] | undefined,
-): void {
+): readonly string[] {
   const desired = new Set(activeSkillNames ?? []);
+  const missingSkills: string[] = [];
 
   for (const name of agent.getActiveSkillNames?.() ?? []) {
     if (desired.has(name)) {
@@ -470,10 +474,20 @@ function syncPersistedActiveSkills(
 
   for (const name of desired) {
     if (!BlocklySkillRegistry.activateSkill(name)) {
+      missingSkills.push(name);
       continue;
     }
-    registerBlocklySkillOnLexAgent(agent, name);
+    if (!registerBlocklySkillOnLexAgent(agent, name)) {
+      BlocklySkillRegistry.deactivateSkill(name);
+      missingSkills.push(name);
+    }
   }
+
+  if (missingSkills.length > 0) {
+    console.warn(`[LexBootstrap] restore degraded: missing persisted skills: ${missingSkills.join(', ')}`);
+  }
+
+  return missingSkills;
 }
 
 function resolvePlatformType(type?: string, isWindows?: boolean, isMacOS?: boolean): 'win32' | 'darwin' | 'linux' {
@@ -1100,6 +1114,10 @@ export function bootstrapBlocklyLexAgent(
   // prompt/skill assembly, and AgentExecutor/subagent execution.
   const terminalPolicy = ctx.ailyChatConfigService.getLexTerminalPolicy?.();
   const permissionPolicy = ctx.ailyChatConfigService.getLexPermissionPolicy?.(cwd || ctx.prjRootPath || ctx.prjPath || '');
+  const approvalsReviewer = ctx.currentSessionApprovalsReviewer
+    ?? ctx.ailyChatConfigService.getLexApprovalsReviewer?.();
+  const approvalPolicy = ctx.currentSessionApprovalPolicy
+    ?? ctx.ailyChatConfigService.getLexApprovalPolicy?.();
   const agentFolderProjectRoot = cwd || ctx.prjRootPath || ctx.prjPath;
   const projectAgentFileProvider = createBlocklyAgentFileProvider({
     source: 'project',
@@ -1293,6 +1311,9 @@ export function bootstrapBlocklyLexAgent(
     permissionPolicy,
     permissionMode: normalizeChatSessionPermissionMode(ctx.currentSessionPermissionMode),
     terminalPolicy,
+    approvalsReviewer,
+    approvalPolicy,
+    strictAutoReview: approvalsReviewer === 'auto_review',
     metrics,
   });
 
@@ -1343,22 +1364,52 @@ function attachBlocklyPostCreateExtensions(
   adapter: BlocklyHostAdapter,
   onSubagentEvent?: (event: any) => void,
 ): void {
+  const agentExecutor = createBlocklySubagentExtension(agent);
+
   adapter.registerExtension('skillManager', {
     search: (query: string) => {
       const results = BlocklySkillRegistry.searchSkills(query);
       const activated = new Set(BlocklySkillRegistry.getActivatedSkillNames());
       return results.map((r: any) => ({
         name: r.skill.metadata.name,
+        displayName: r.skill.metadata.displayName,
         description: r.skill.metadata.description,
         loaded: activated.has(r.skill.metadata.name),
+        userInvocable: r.skill.metadata.userInvocable !== false,
+        modelInvocable: r.skill.metadata.disableModelInvocation !== true && !!r.skill.metadata.description,
+        mode: r.skill.metadata.context || 'inline',
+        skillMdPath: r.skill.skillMdPath,
       }));
     },
+    listAvailable: () => {
+      const activated = new Set(BlocklySkillRegistry.getActivatedSkillNames());
+      return BlocklySkillRegistry.getAll().filter(skill => skill.origin?.type !== 'url').map(skill => ({
+        name: skill.metadata.name,
+        displayName: skill.metadata.displayName,
+        description: skill.metadata.description,
+        loaded: activated.has(skill.metadata.name),
+        userInvocable: skill.metadata.userInvocable !== false,
+        modelInvocable: skill.metadata.disableModelInvocation !== true && !!skill.metadata.description,
+        mode: skill.metadata.context || 'inline',
+        skillMdPath: skill.skillMdPath,
+      }));
+    },
+    getContext: (name: string) => BlocklySkillRegistry.getSkillContext(name),
     load: (name: string) => {
-      const ok = BlocklySkillRegistry.activateSkill(name);
-      if (ok) {
+      const skillContext = BlocklySkillRegistry.getSkillContext(name);
+      if (!skillContext) {
+        return null;
+      }
+
+      if (skillContext.mode === 'inline') {
+        const ok = BlocklySkillRegistry.activateSkill(name);
+        if (!ok) {
+          return null;
+        }
         registerBlocklySkillOnLexAgent(agent, name);
       }
-      return ok;
+
+      return skillContext;
     },
     unload: (name: string) => {
       const ok = BlocklySkillRegistry.deactivateSkill(name);
@@ -1367,18 +1418,61 @@ function attachBlocklyPostCreateExtensions(
       }
       return ok;
     },
-    listLoaded: () => {
-      const names = BlocklySkillRegistry.getActivatedSkillNames();
-      return names.map((name: string) => {
-        const skill = BlocklySkillRegistry.get(name);
-        return { name, description: skill?.metadata?.description || '' };
+    listLoaded: () => BlocklySkillRegistry.getLoadedSkillSummaries(),
+    runFork: async (name: string, task: string, context: {
+      toolCallId?: string;
+      trace?: any;
+      signal?: AbortSignal;
+      emitEvent?: (event: any) => void;
+    }): Promise<ToolResultContent> => {
+      const skillContext = BlocklySkillRegistry.getSkillContext(name);
+      if (!skillContext) {
+        return {
+          content: [{ type: 'text', text: `Skill "${name}" not found.` }],
+          isError: true,
+        };
+      }
+
+      const result = await agentExecutor.runSync({
+        prompt: buildForkSkillPrompt(skillContext, task),
+        description: `Run ${skillContext.name} skill`,
+        toolCallId: context.toolCallId,
+        trace: context.trace,
+        signal: context.signal,
+        inheritMessages: 'parent',
+        inheritDiscoveredTools: true,
+        onEvent: context.emitEvent,
       });
+
+      return buildForkSkillResult(skillContext, task, result.text);
+    },
+  });
+
+  adapter.registerExtension('workspaceReadAccess', {
+    getAdditionalReadRoots: () => {
+      const seen = new Set<string>();
+      const roots: string[] = [];
+
+      for (const skill of BlocklySkillRegistry.getAll()) {
+        if (skill.origin?.type === 'url') {
+          continue;
+        }
+
+        const baseDir = typeof skill.baseDir === 'string' ? skill.baseDir.trim() : '';
+        if (!baseDir || seen.has(baseDir)) {
+          continue;
+        }
+
+        seen.add(baseDir);
+        roots.push(baseDir);
+      }
+
+      return roots;
     },
   });
 
   // Re-expose the lex-owned AgentExecutor back to the host as an extension bridge.
   // This is UI/event wiring only, not a second subagent runtime inside blockly.
-  const agentExecutor = createBlocklySubagentExtension(agent);
   const origRunSync = agentExecutor.runSync.bind(agentExecutor);
   (agentExecutor as any).runSync = (subagentOptions: any) => {
     return origRunSync({
@@ -1395,6 +1489,87 @@ function attachBlocklyPostCreateExtensions(
     syncPersistedActiveSkills(agent, snapshot.activeSkillNames);
   };
   adapter.registerExtension('agentExecutor', agentExecutor);
+}
+
+function buildForkSkillPrompt(
+  skillContext: {
+    name: string;
+    displayName: string;
+    description: string;
+    body: string;
+    skillMdPath: string;
+    relatedFiles: readonly { path: string; category?: string }[];
+  },
+  task: string,
+): string {
+  const relatedFiles = skillContext.relatedFiles.length > 0
+    ? [
+        'Related files available inside the skill directory:',
+        ...skillContext.relatedFiles.map(file => `- ${file.path}${file.category ? ` (${file.category})` : ''}`),
+      ].join('\n')
+    : 'Related files: none listed.';
+
+  return [
+    `You are running the \"${skillContext.displayName || skillContext.name}\" skill as a forked subagent.`,
+    'Use the parent conversation as context, follow the skill instructions below, and complete the task directly.',
+    `<skill_instructions name="${skillContext.name}" uri="${skillContext.skillMdPath}">`,
+    skillContext.body,
+    '</skill_instructions>',
+    relatedFiles,
+    `Task:\n${task}`,
+  ].join('\n\n');
+}
+
+function buildForkSkillResult(
+  skillContext: {
+    name: string;
+    displayName: string;
+    description: string;
+    skillMdPath: string;
+    baseDir?: string;
+    relatedFiles: readonly { path: string; uri: string; category?: string }[];
+  },
+  task: string,
+  text: string,
+): ToolResultContent {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Result from the \"${skillContext.displayName || skillContext.name}\" skill for task \"${task}\":\n\n${text}`,
+      },
+      {
+        type: 'resource',
+        uri: skillContext.skillMdPath,
+        mimeType: 'text/markdown',
+        text: skillContext.displayName || skillContext.name,
+      },
+      ...skillContext.relatedFiles.slice(0, 40).map(file => ({
+        type: 'resource' as const,
+        uri: file.uri,
+        text: file.path,
+      })),
+    ],
+    metadata: {
+      kind: 'skill',
+      invocation: {
+        mode: 'fork',
+        task,
+      },
+      skill: {
+        name: skillContext.name,
+        displayName: skillContext.displayName,
+        description: skillContext.description,
+        skillMdPath: skillContext.skillMdPath,
+        baseDir: skillContext.baseDir,
+      },
+      relatedFiles: skillContext.relatedFiles.map(file => ({
+        path: file.path,
+        uri: file.uri,
+        category: file.category,
+      })),
+    },
+  };
 }
 
 function createBlocklySearchExtension(): {

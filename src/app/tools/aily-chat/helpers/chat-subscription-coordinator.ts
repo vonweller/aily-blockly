@@ -235,7 +235,11 @@ export class ChatSubscriptionCoordinator {
         }
       }
 
-      this.ctx.session.refreshHistoryList();
+      this.ctx.session.requestSessionListRefresh({
+        reason: 'project',
+        scope: 'full',
+        priority: 'normal',
+      });
       if (newPath && newPath !== rootPath) {
         this.ctx.absAutoSyncService.initialize(newPath);
       }

@@ -24,7 +24,7 @@ export interface BlocklyHookCustomizationContribution {
   readonly uri: string;
   readonly name: string;
   readonly description?: string;
-  readonly source?: AgentSource | 'builtin' | 'plugin';
+  readonly source?: AgentSource;
   readonly content?: string;
 }
 
@@ -105,10 +105,10 @@ function createBlocklyHostHookUri(descriptor: HookCustomizationDescriptorLike): 
 
 function mapHookSourceToCustomizationSource(
   source: HookCustomizationSource,
-): AgentSource | 'builtin' | 'plugin' | undefined {
+): AgentSource | undefined {
   switch (source) {
     case 'builtin':
-      return 'builtin';
+      return 'built-in';
     case 'plugin':
       return 'plugin';
     case 'project':

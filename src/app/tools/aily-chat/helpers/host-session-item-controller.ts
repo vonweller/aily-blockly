@@ -1,7 +1,7 @@
 import type { TurnResponseTurn } from 'aily-lex/browser';
 import { Subject, type Observable } from 'rxjs';
 import type { EditCheckpointService } from '../services/edit-checkpoint.service';
-import type { ChatSessionStateService, ResolvedChatSessionState } from '../services/chat-session-state.service';
+import type { ChatSessionStateScopeSnapshot, ChatSessionStateService, PersistedChatSessionState, ResolvedChatSessionState } from '../services/chat-session-state.service';
 import type { PersistedChatSessionEntryTarget } from '../services/chat-session-entry-state.service';
 import {
   DEFAULT_CHAT_SELECTED_MODE,
@@ -17,6 +17,12 @@ import {
   normalizeChatSessionType,
   normalizeChatSurfaceModeId,
 } from '../core/chat-mode';
+import {
+  isCustomSessionTitleSource,
+  normalizeChatSessionTitleSource,
+  type ChatSessionDisplayTitle,
+  type ChatSessionTitleSource,
+} from '../core/chat-session-title';
 import type { ChatHistoryService, HistoryFilterMode, HostSessionRecord, HostSessionStoreChangeEvent, PersistedHostTurnResponse, SessionIndexEntry } from '../services/chat-history.service';
 import type { ChatService } from '../services/chat.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
@@ -36,12 +42,16 @@ import {
   type HostSessionContent,
   type HostSessionContentProviderContext,
 } from './host-session-content-provider';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 export interface HostSessionHistoryItem {
   readonly sessionId: string;
   readonly title: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleDurable?: boolean;
   readonly sessionType: ChatSessionType;
   readonly createdAt: number;
+  readonly updatedAt?: number;
   readonly current: boolean;
   readonly projectPath: string | null;
   readonly inputState?: ChatSessionInputState;
@@ -95,18 +105,33 @@ export interface HostSessionListItemChanges {
   readonly deletions: number;
 }
 
-export interface HostSessionListItem extends HostSessionHistoryItem {
-  readonly description: string;
+export interface SessionInventorySummary extends HostSessionHistoryItem {
   readonly badge?: string;
   readonly status?: HostSessionListItemStatus;
+  readonly description?: string;
   readonly timing: HostSessionListItemTiming;
   readonly metadata: HostSessionListItemMetadata;
-  readonly changes?: HostSessionListItemChanges;
   readonly archived: boolean;
   readonly pinned: boolean;
   readonly read: boolean;
   readonly markedUnread: boolean;
 }
+
+export interface SessionInventoryDetail {
+  readonly description?: string;
+  readonly changes?: HostSessionListItemChanges;
+}
+
+interface SessionInventorySummaryOrderInfo {
+  readonly timing: HostSessionListItemTiming;
+  readonly archived: boolean;
+  readonly pinned: boolean;
+  readonly status?: HostSessionListItemStatus;
+}
+
+export interface SessionInventoryDisplayItem extends SessionInventorySummary, SessionInventoryDetail {}
+
+export type HostSessionListItem = SessionInventoryDisplayItem;
 
 export interface HostSessionSwitchTarget {
   readonly sessionId: string;
@@ -148,6 +173,7 @@ export interface HostSessionEntryRestoreRequestOptions {
 export interface HostSessionManagedItemSeed {
   readonly sessionId: string;
   readonly title?: string;
+  readonly titleSource?: ChatSessionTitleSource;
   readonly sessionType?: ChatSessionType;
   readonly createdAt?: number;
   readonly updatedAt?: number;
@@ -160,6 +186,7 @@ export interface HostSessionManagedItemSeed {
 interface HostSessionManagedItem {
   readonly sessionId: string;
   readonly title: string;
+  readonly titleSource?: ChatSessionTitleSource;
   readonly sessionType: ChatSessionType;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -182,14 +209,20 @@ type HostSessionRecordLike = {
 };
 
 type HostSessionItemControllerContext = {
-  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionTitle' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
-    & Partial<Pick<ChatService, 'sessionTitleChanged$'>>;
+  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
+    & Partial<Pick<ChatService, 'currentSessionTitleSource'>>
+    & Partial<Pick<ChatService, 'sessionDisplayTitleChanged$' | 'sessionDurableTitleChanged$' | 'sessionTitleChanged$'>>;
   readonly chatHistoryService: Pick<ChatHistoryService, 'getHistoryList' | 'findEntry' | 'loadHostRecord' | 'updateTitle' | 'deleteSession'> & Partial<Pick<ChatHistoryService, 'hostSessionChanged$'>>;
   readonly editCheckpointService?: Pick<EditCheckpointService, 'getRequestEditsSummarySync'>;
-  readonly chatSessionStateService?: Pick<ChatSessionStateService, 'sessionStateChanged$' | 'resolveSessionState' | 'setArchived' | 'setPinned' | 'setRead' | 'clearSessionState'>;
+  readonly chatSessionStateService?: Pick<ChatSessionStateService, 'sessionStateChanged$' | 'resolveSessionState' | 'readScopeSnapshot' | 'setArchived' | 'setPinned' | 'setRead' | 'clearSessionState'>;
   readonly readLiveSessionTurnResponses?: (sessionId: string) => readonly TurnResponseTurn[] | null | undefined;
   readonly readLiveSessionRuntimeState?: (sessionId: string) => ChatSessionRuntimeState | null | undefined;
 };
+
+type HostSessionListItemStateResolver = (
+  item: Pick<HostSessionHistoryItem, 'sessionId' | 'projectPath'>,
+  timing: HostSessionListItemTiming,
+) => ResolvedChatSessionState;
 
 const BACKGROUND_SESSION_TRACE_FLAG = 'aily.chat.traceBackgroundSession';
 const BACKGROUND_SESSION_TRACE_GLOBAL_KEYS = [
@@ -234,11 +267,12 @@ export class HostSessionItemController {
   private readonly hostSessionContentProvider: HostSessionContentProvider;
   private readonly managedItems = new Map<string, HostSessionManagedItem>();
   private readonly trackedInputStates = new Map<string, ChatSessionInputState>();
+  private readonly cachedSummaryItems = new Map<string, { readonly key: string; readonly item: SessionInventorySummary }>();
   private readonly cachedListItems = new Map<string, { readonly key: string; readonly item: HostSessionListItem }>();
   private readonly sessionListItemVersions = new Map<string, number>();
   private globalListItemVersion = 0;
-  private readonly itemsChangedSubject = new Subject<void>();
-  readonly itemsChanged$: Observable<void> = this.itemsChangedSubject.asObservable();
+  private readonly itemsChangedSubject = new Subject<{ readonly sessionId: string | null }>();
+  readonly itemsChanged$: Observable<{ readonly sessionId: string | null }> = this.itemsChangedSubject.asObservable();
 
   constructor(private readonly ctx: HostSessionItemControllerContext) {
     const contentProviderContext: HostSessionContentProviderContext = {
@@ -260,9 +294,16 @@ export class HostSessionItemController {
       this.notifyItemsChanged(this.ctx.chatService.currentSessionId);
     });
 
-    this.ctx.chatService.sessionTitleChanged$?.subscribe(() => {
-      this.refreshCurrentManagedItemMetadata();
+    const displayTitleChanged$ = this.ctx.chatService.sessionDisplayTitleChanged$
+      ?? this.ctx.chatService.sessionTitleChanged$;
+    displayTitleChanged$?.subscribe(() => {
       this.notifyItemsChanged(this.ctx.chatService.currentSessionId);
+    });
+
+    const durableTitleChanged$ = this.ctx.chatService.sessionDurableTitleChanged$
+      ?? (this.ctx.chatService.sessionDisplayTitleChanged$ ? undefined : this.ctx.chatService.sessionTitleChanged$);
+    durableTitleChanged$?.subscribe(() => {
+      this.refreshCurrentManagedItemMetadata();
     });
 
     this.ctx.chatHistoryService.hostSessionChanged$?.subscribe((event) => {
@@ -314,7 +355,7 @@ export class HostSessionItemController {
     this.updateManagedChatSessionItemTitle(sessionId, normalizedTitle);
 
     if (this.ctx.chatHistoryService.findEntry(sessionId)) {
-      this.ctx.chatHistoryService.updateTitle(sessionId, normalizedTitle);
+      this.ctx.chatHistoryService.updateTitle(sessionId, normalizedTitle, { source: 'user' });
     }
   }
 
@@ -379,7 +420,7 @@ export class HostSessionItemController {
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
         projectPath: entry.projectPath ?? null,
-        inputState: this.getChatSessionInputState(entry.sessionId, entry.projectPath ?? null),
+        inputState: this.getChatSessionInputStateFromIndexEntry(entry),
         mode: entry.mode,
         requestRouting: entry.requestRouting,
       }));
@@ -397,8 +438,7 @@ export class HostSessionItemController {
     }
 
     return [...mergedItems.values()]
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(({ updatedAt: _updatedAt, ...item }) => item);
+      .sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
   readListItems(
@@ -406,9 +446,78 @@ export class HostSessionItemController {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): readonly HostSessionListItem[] {
-    return this.readHistoryItems(filter, projectPath, projectRootPath)
+    ChatPerformanceTracer.increment('session_list.read_list_items');
+    return this.readSummaryItems(filter, projectPath, projectRootPath)
       .map(item => this.toListItem(item))
       .sort((left, right) => this.compareListItems(left, right));
+  }
+
+  readSummaryItems(
+    filter: HistoryFilterMode = 'all',
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+    options: { readonly limit?: number; readonly cursor?: number } = {},
+  ): readonly SessionInventorySummary[] {
+    ChatPerformanceTracer.increment('session_list.read_summary_items');
+    const cursor = typeof options.cursor === 'number' && Number.isFinite(options.cursor)
+      ? Math.max(0, Math.floor(options.cursor))
+      : 0;
+    const limit = typeof options.limit === 'number' && Number.isFinite(options.limit)
+      ? Math.max(0, Math.floor(options.limit))
+      : undefined;
+
+    const stateResolver = this.createListItemStateResolver();
+    const historyItems = this.readHistoryItems(filter, projectPath, projectRootPath);
+
+    if (limit !== undefined) {
+      const selectedItems = this.selectSummaryHistoryWindow(historyItems, stateResolver, cursor, limit);
+      return selectedItems.map(item => this.toSummaryItem(item, stateResolver));
+    }
+
+    const summaries = historyItems
+      .map(item => this.toSummaryItem(item, stateResolver))
+      .sort((left, right) => this.compareListItems(left, right));
+
+    if (limit === undefined) {
+      return summaries.slice(cursor);
+    }
+
+    return summaries.slice(cursor, cursor + limit);
+  }
+
+  private selectSummaryHistoryWindow(
+    items: readonly HostSessionHistoryItem[],
+    stateResolver: HostSessionListItemStateResolver,
+    cursor: number,
+    limit: number,
+  ): readonly HostSessionHistoryItem[] {
+    if (limit <= 0 || items.length === 0) {
+      return [];
+    }
+
+    const windowSize = cursor + limit;
+    const selected: Array<{ readonly item: HostSessionHistoryItem; readonly order: SessionInventorySummaryOrderInfo }> = [];
+
+    for (const item of items) {
+      const order = this.buildSummaryOrderInfo(item, stateResolver);
+      const insertIndex = selected.findIndex(candidate => this.compareListItems(order, candidate.order) < 0);
+
+      if (insertIndex < 0) {
+        if (selected.length < windowSize) {
+          selected.push({ item, order });
+        }
+        continue;
+      }
+
+      selected.splice(insertIndex, 0, { item, order });
+      if (selected.length > windowSize) {
+        selected.pop();
+      }
+    }
+
+    return selected
+      .slice(cursor)
+      .map(candidate => candidate.item);
   }
 
   readListItem(
@@ -417,15 +526,27 @@ export class HostSessionItemController {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): HostSessionListItem | null {
+    const summary = this.readSummaryItem(sessionId, filter, projectPath, projectRootPath);
+    return summary ? this.toListItem(summary) : null;
+  }
+
+  readSummaryItem(
+    sessionId: string,
+    filter: HistoryFilterMode = 'all',
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): SessionInventorySummary | null {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
       return null;
     }
 
     const persistedEntry = this.ctx.chatHistoryService.findEntry(normalizedSessionId);
-    let historyItem = persistedEntry
+    const persistedHistoryItem = persistedEntry?.sessionId === normalizedSessionId
       ? this.toHistoryItemFromSessionEntry(persistedEntry)
-      : this.resolveManagedHistoryItem(normalizedSessionId);
+      : null;
+    const managedHistoryItem = this.resolveManagedHistoryItem(normalizedSessionId);
+    let historyItem = persistedHistoryItem ?? managedHistoryItem;
 
     if (!historyItem
       || !this.matchesHistoryFilterByProject(historyItem.projectPath, filter, projectPath, projectRootPath)) {
@@ -434,7 +555,7 @@ export class HostSessionItemController {
         .find(entry => entry.sessionId === normalizedSessionId);
       historyItem = indexedEntry
         ? this.toHistoryItemFromSessionEntry(indexedEntry)
-        : historyItem;
+        : managedHistoryItem ?? persistedHistoryItem;
     }
 
     if (!historyItem) {
@@ -442,10 +563,28 @@ export class HostSessionItemController {
     }
 
     if (!this.matchesHistoryFilterByProject(historyItem.projectPath, filter, projectPath, projectRootPath)) {
+      if (managedHistoryItem
+        && this.matchesHistoryFilterByProject(managedHistoryItem.projectPath, filter, projectPath, projectRootPath)) {
+        return this.toSummaryItem(managedHistoryItem);
+      }
       return null;
     }
 
-    return this.toListItem(historyItem);
+    return this.toSummaryItem(historyItem);
+  }
+
+  hydrateListItemDetail(
+    sessionId: string,
+    summary?: SessionInventorySummary | null,
+  ): HostSessionListItem | null {
+    ChatPerformanceTracer.increment('session_list.hydrate_detail_item');
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    const resolvedSummary = summary ?? this.readSummaryItem(normalizedSessionId);
+    return resolvedSummary ? this.toListItem(resolvedSummary) : null;
   }
 
   setSessionArchived(
@@ -749,7 +888,13 @@ export class HostSessionItemController {
     projectPathHint?: string | null,
   ): HostSessionRequestRoutingSummary | undefined {
     if (!sessionId || sessionId === this.ctx.chatService.currentSessionId) {
-      return buildHostSessionCurrentPickerRoutingSummary(this.resolveCurrentSelectedMode());
+      return buildHostSessionCurrentPickerRoutingSummary(
+        this.resolveCurrentSelectedMode(),
+        undefined,
+        this.ctx.chatService.currentSessionPermissionLevel,
+        this.ctx.chatService.currentSessionApprovalsReviewer,
+        this.ctx.chatService.currentSessionApprovalPolicy,
+      );
     }
 
     const managedItem = this.managedItems.get(sessionId);
@@ -816,7 +961,15 @@ export class HostSessionItemController {
       mode,
       ...(seed.requestRouting
         ? { requestRouting: seed.requestRouting }
-        : { requestRouting: buildHostSessionCurrentPickerRoutingSummary(selectedMode) }),
+        : {
+            requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+              selectedMode,
+              undefined,
+              this.ctx.chatService.currentSessionPermissionLevel,
+              this.ctx.chatService.currentSessionApprovalsReviewer,
+              this.ctx.chatService.currentSessionApprovalPolicy,
+            ),
+          }),
     };
 
     this.managedItems.set(item.sessionId, item);
@@ -864,13 +1017,44 @@ export class HostSessionItemController {
     return this.toHistoryItem({
       sessionId: entry.sessionId,
       title: entry.title,
+      ...(entry.titleSource ? { titleSource: entry.titleSource } : {}),
       sessionType: entry.sessionType ?? DEFAULT_CHAT_SESSION_TYPE,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
       projectPath: entry.projectPath ?? null,
-      inputState: this.getChatSessionInputState(entry.sessionId, entry.projectPath ?? null),
+      inputState: this.getChatSessionInputStateFromIndexEntry(entry),
       mode: entry.mode,
       requestRouting: entry.requestRouting,
+    });
+  }
+
+  private getChatSessionInputStateFromIndexEntry(entry: SessionIndexEntry): ChatSessionInputState {
+    return this.getOrCreateTrackedInputState(entry.sessionId, () => {
+      const canonicalEntry = this.ctx.chatHistoryService.findEntry(entry.sessionId) ?? entry;
+
+      if (canonicalEntry.inputState) {
+        return canonicalEntry.inputState;
+      }
+
+      const providerOptions = normalizeHostSessionProviderOptions({
+        folderPath: canonicalEntry.projectPath ?? null,
+        permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+        permissionLevel: canonicalEntry.requestRouting?.permissionLevel,
+      }, {
+        folderPath: canonicalEntry.projectPath ?? null,
+        permissionMode: this.ctx.chatService.currentSessionPermissionMode,
+        permissionLevel: canonicalEntry.requestRouting?.permissionLevel,
+      });
+      const selectedMode = normalizeChatSelectedMode({
+        modeId: normalizeChatSurfaceModeId(canonicalEntry.mode, DEFAULT_CHAT_SELECTED_MODE.modeId),
+        ...(canonicalEntry.requestRouting?.customAgentTarget
+          ? { customAgentTarget: canonicalEntry.requestRouting.customAgentTarget }
+          : {}),
+      });
+
+      return createChatSessionInputState(selectedMode, {
+        groups: buildHostSessionProviderOptionGroups(providerOptions),
+      });
     });
   }
 
@@ -878,12 +1062,16 @@ export class HostSessionItemController {
     item: HostSessionManagedItem | (Omit<HostSessionManagedItem, 'requestRouting'> & { requestRouting?: HostSessionRequestRoutingSummary }),
   ): HostSessionHistoryItemWithTimestamp {
     const isCurrent = item.sessionId === this.ctx.chatService.currentSessionId;
-    const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
-      ? this.ctx.chatService.currentSessionTitle.trim()
-      : '';
-    const title = isCurrent && isMeaningfulManagedSessionTitle(currentTitle, item.sessionId)
-      ? currentTitle
-      : item.title;
+    const currentDurableTitle = isCurrent
+      ? this.resolveCurrentSessionDurableTitleCandidate(item.sessionId)
+      : null;
+    const durableTitle = currentDurableTitle?.text || item.title;
+    const title = this.resolveDisplaySessionTitleCandidate(
+      item.sessionId,
+      durableTitle,
+      currentDurableTitle?.source ?? item.titleSource,
+      item.projectPath,
+    );
     const selectedMode = isCurrent
       ? this.resolveCurrentSelectedMode()
       : undefined;
@@ -893,7 +1081,9 @@ export class HostSessionItemController {
 
     return {
       sessionId: item.sessionId,
-      title,
+      title: title.text,
+      titleSource: title.source,
+      titleDurable: title.durable,
       sessionType: isCurrent ? this.resolveCurrentSessionType() : normalizeChatSessionType(item.sessionType, DEFAULT_CHAT_SESSION_TYPE),
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
@@ -903,36 +1093,55 @@ export class HostSessionItemController {
         : item.projectPath ?? null,
       ...(inputState ? { inputState } : {}),
       ...((isCurrent ? selectedMode?.modeId : item.mode) ? { mode: isCurrent ? selectedMode?.modeId : item.mode } : {}),
-      ...((isCurrent ? buildHostSessionCurrentPickerRoutingSummary(selectedMode ?? DEFAULT_CHAT_SELECTED_MODE) : item.requestRouting)
-        ? { requestRouting: isCurrent ? buildHostSessionCurrentPickerRoutingSummary(selectedMode ?? DEFAULT_CHAT_SELECTED_MODE) : item.requestRouting }
+      ...((isCurrent
+        ? buildHostSessionCurrentPickerRoutingSummary(
+            selectedMode ?? DEFAULT_CHAT_SELECTED_MODE,
+            undefined,
+            this.ctx.chatService.currentSessionPermissionLevel,
+            this.ctx.chatService.currentSessionApprovalsReviewer,
+            this.ctx.chatService.currentSessionApprovalPolicy,
+          )
+        : item.requestRouting)
+        ? {
+            requestRouting: isCurrent
+              ? buildHostSessionCurrentPickerRoutingSummary(
+                  selectedMode ?? DEFAULT_CHAT_SELECTED_MODE,
+                  undefined,
+                  this.ctx.chatService.currentSessionPermissionLevel,
+                  this.ctx.chatService.currentSessionApprovalsReviewer,
+                  this.ctx.chatService.currentSessionApprovalPolicy,
+                )
+              : item.requestRouting,
+          }
         : {}),
     };
   }
 
-  private toListItem(item: HostSessionHistoryItem): HostSessionListItem {
+  private toSummaryItem(
+    item: HostSessionHistoryItem,
+    stateResolver: HostSessionListItemStateResolver = (summaryItem, timing) => this.resolveListItemState(summaryItem, timing),
+  ): SessionInventorySummary {
     const persistedEntry = this.ctx.chatHistoryService.findEntry(item.sessionId);
     const cacheKey = this.buildDurableListItemCacheKey(item, persistedEntry);
-    const cached = this.cachedListItems.get(item.sessionId);
+    const cached = this.cachedSummaryItems.get(item.sessionId);
     if (cached?.key === cacheKey) {
       return cached.item;
     }
 
-    const hostRecord = this.ctx.chatHistoryService.loadHostRecord(item.sessionId, item.projectPath ?? null);
-    const effectiveHostRecord = this.resolveEffectiveHostRecord(item, hostRecord);
-    const updatedAt = this.resolveListItemUpdatedAt(item, effectiveHostRecord, persistedEntry)
-      ?? effectiveHostRecord?.metadata?.updatedAt
+    const liveRuntimeState = this.readLiveRuntimeState(item.sessionId);
+    const liveSummaryRecord = this.buildLiveSummaryRecord(item.sessionId, liveRuntimeState);
+    const updatedAt = this.readTurnUpdatedAt(this.getLatestTurnResponse(liveSummaryRecord))
+      ?? item.updatedAt
       ?? persistedEntry?.updatedAt
       ?? item.createdAt;
-    const liveRuntimeState = this.readLiveRuntimeState(item.sessionId);
-    const timing = this.resolveListItemTiming(item, effectiveHostRecord, updatedAt);
-    const sessionState = this.resolveListItemState(item, effectiveHostRecord, timing);
+    const timing = this.resolveListItemTiming(item, liveSummaryRecord, updatedAt);
+    const sessionState = stateResolver(item, timing);
     const badge = this.resolveListItemBadge(item);
-    const status = this.resolveListItemStatus(effectiveHostRecord, liveRuntimeState);
-    const changes = this.resolveListItemChanges(effectiveHostRecord);
+    const status = this.resolveListItemStatus(liveSummaryRecord, liveRuntimeState);
+    const description = this.resolveListItemDescription(item, liveSummaryRecord, updatedAt, liveRuntimeState);
 
-    const nextItem: HostSessionListItem = {
+    const nextItem: SessionInventorySummary = {
       ...item,
-      description: this.resolveListItemDescription(item, effectiveHostRecord, updatedAt, liveRuntimeState),
       timing,
       metadata: this.resolveListItemMetadata(item),
       archived: sessionState.archived,
@@ -940,6 +1149,65 @@ export class HostSessionItemController {
       read: sessionState.read,
       markedUnread: sessionState.markedUnread,
       ...(badge ? { badge } : {}),
+      ...(status ? { status } : {}),
+      ...(description ? { description } : {}),
+    };
+
+    this.cachedSummaryItems.set(item.sessionId, {
+      key: cacheKey,
+      item: nextItem,
+    });
+
+    return nextItem;
+  }
+
+  private buildSummaryOrderInfo(
+    item: HostSessionHistoryItem,
+    stateResolver: HostSessionListItemStateResolver,
+  ): SessionInventorySummaryOrderInfo {
+    const liveRuntimeState = this.readLiveRuntimeState(item.sessionId);
+    const liveSummaryRecord = this.buildLiveSummaryRecord(item.sessionId, liveRuntimeState);
+    const persistedEntry = this.ctx.chatHistoryService.findEntry(item.sessionId);
+    const updatedAt = this.readTurnUpdatedAt(this.getLatestTurnResponse(liveSummaryRecord))
+      ?? item.updatedAt
+      ?? persistedEntry?.updatedAt
+      ?? item.createdAt;
+    const timing = this.resolveListItemTiming(item, liveSummaryRecord, updatedAt);
+    const sessionState = stateResolver(item, timing);
+    const status = this.resolveListItemStatus(liveSummaryRecord, liveRuntimeState);
+
+    return {
+      timing,
+      archived: sessionState.archived,
+      pinned: sessionState.pinned,
+      ...(status ? { status } : {}),
+    };
+  }
+
+  private toListItem(item: SessionInventorySummary): HostSessionListItem {
+    const persistedEntry = this.ctx.chatHistoryService.findEntry(item.sessionId);
+    const cacheKey = this.buildDurableListItemCacheKey(item, persistedEntry);
+    const cached = this.cachedListItems.get(item.sessionId);
+    if (cached?.key === cacheKey) {
+      return cached.item;
+    }
+
+    ChatPerformanceTracer.increment('session_list.load_host_record');
+    const hostRecord = this.ctx.chatHistoryService.loadHostRecord(item.sessionId, item.projectPath ?? null);
+    const effectiveHostRecord = this.resolveEffectiveHostRecord(item, hostRecord);
+    const updatedAt = this.resolveListItemUpdatedAt(item, effectiveHostRecord, persistedEntry)
+      ?? effectiveHostRecord?.metadata?.updatedAt
+      ?? item.timing.updated
+      ?? item.createdAt;
+    const liveRuntimeState = this.readLiveRuntimeState(item.sessionId);
+    const timing = this.resolveListItemTiming(item, effectiveHostRecord, updatedAt);
+    const status = this.resolveListItemStatus(effectiveHostRecord, liveRuntimeState);
+    const changes = this.resolveListItemChanges(effectiveHostRecord);
+
+    const nextItem: HostSessionListItem = {
+      ...item,
+      timing,
+      description: this.resolveListItemDescription(item, effectiveHostRecord, updatedAt, liveRuntimeState),
       ...(status ? { status } : {}),
       ...(changes ? { changes } : {}),
     };
@@ -950,6 +1218,24 @@ export class HostSessionItemController {
     });
 
     return nextItem;
+  }
+
+  private buildLiveSummaryRecord(
+    sessionId: string,
+    liveRuntimeState?: ChatSessionRuntimeState,
+  ): HostSessionRecordLike | undefined {
+    const runtimeTurnResponses = Array.isArray(liveRuntimeState?.turnResponses) && liveRuntimeState.turnResponses.length > 0
+      ? liveRuntimeState.turnResponses
+      : undefined;
+    const liveTurnResponses = runtimeTurnResponses ?? this.readLiveTurnResponses(sessionId);
+
+    if (!Array.isArray(liveTurnResponses) || liveTurnResponses.length === 0) {
+      return undefined;
+    }
+
+    return {
+      turnResponses: liveTurnResponses as readonly HostSessionTurnResponse[],
+    };
   }
 
   private buildDurableListItemCacheKey(
@@ -965,6 +1251,9 @@ export class HostSessionItemController {
 
     return [
       item.sessionId,
+      item.title,
+      item.titleSource ?? '',
+      item.titleDurable ? 1 : 0,
       this.normalizePathForCache(item.projectPath ?? null),
       item.createdAt,
       item.current ? 1 : 0,
@@ -985,10 +1274,18 @@ export class HostSessionItemController {
     const runtimeLastTurn = runtimeTurnCount > 0
       ? this.readTurnUpdatedAt(runtimeTurnResponses[runtimeTurnCount - 1] as HostSessionTurnResponse)
       : undefined;
+    const runtimeLastStatus = runtimeTurnCount > 0
+      ? this.readNonEmptyString((runtimeTurnResponses[runtimeTurnCount - 1] as HostSessionTurnResponse)?.response?.continuation?.status)
+        ?? this.readNonEmptyString((runtimeTurnResponses[runtimeTurnCount - 1] as HostSessionTurnResponse)?.response?.status)
+      : undefined;
     const liveTurnResponses = this.readLiveTurnResponses(sessionId);
     const liveTurnCount = Array.isArray(liveTurnResponses) ? liveTurnResponses.length : 0;
     const liveLastTurn = liveTurnCount > 0
       ? this.readTurnUpdatedAt(liveTurnResponses[liveTurnCount - 1] as HostSessionTurnResponse)
+      : undefined;
+    const liveLastStatus = liveTurnCount > 0
+      ? this.readNonEmptyString((liveTurnResponses[liveTurnCount - 1] as HostSessionTurnResponse)?.response?.continuation?.status)
+        ?? this.readNonEmptyString((liveTurnResponses[liveTurnCount - 1] as HostSessionTurnResponse)?.response?.status)
       : undefined;
     const runtimeDescription = this.normalizeListDescriptionText(runtimeState?.description) ?? '';
 
@@ -997,8 +1294,10 @@ export class HostSessionItemController {
       runtimeState?.requestInProgress ? 1 : 0,
       runtimeTurnCount,
       runtimeLastTurn ?? '',
+      runtimeLastStatus ?? '',
       liveTurnCount,
       liveLastTurn ?? '',
+      liveLastStatus ?? '',
       runtimeDescription,
     ].join('|');
   }
@@ -1023,6 +1322,7 @@ export class HostSessionItemController {
       this.normalizePathForCache(this.ctx.chatService.currentSessionPath ?? null),
       this.ctx.chatService.currentSessionType ?? '',
       title,
+      this.readCurrentSessionTitleSource() ?? '',
       currentSelectedMode.modeId,
       currentSelectedMode.customAgentTarget ?? '',
     ].join('|');
@@ -1032,12 +1332,45 @@ export class HostSessionItemController {
     return (path ?? '').replace(/\\/g, '/').toLowerCase();
   }
 
+  private createListItemStateResolver(): HostSessionListItemStateResolver {
+    const readScopeSnapshot = this.ctx.chatSessionStateService?.readScopeSnapshot?.bind(this.ctx.chatSessionStateService);
+    if (!readScopeSnapshot) {
+      return (item, timing) => this.resolveListItemState(item, timing);
+    }
+
+    const scopeSnapshots = new Map<string, ChatSessionStateScopeSnapshot>();
+    return (item, timing) => {
+      const projectPath = this.resolveSessionStateProjectPath(item.sessionId, item.projectPath ?? null);
+      const scopeKey = this.normalizePathForCache(projectPath ?? null);
+      let scopeSnapshot = scopeSnapshots.get(scopeKey);
+      if (!scopeSnapshot) {
+        scopeSnapshot = readScopeSnapshot(projectPath);
+        scopeSnapshots.set(scopeKey, scopeSnapshot);
+      }
+
+      return this.resolveListItemStateFromPersistedState(
+        scopeSnapshot.sessions[item.sessionId],
+        timing,
+        scopeSnapshot.readDateBaseline,
+      );
+    };
+  }
+
   private resolveListItemState(
     item: Pick<HostSessionHistoryItem, 'sessionId' | 'projectPath'>,
-    record: HostSessionRecordLike | null | undefined,
     timing: HostSessionListItemTiming,
   ): ResolvedChatSessionState {
     const trackingTime = timing.lastRequestEnded ?? timing.updated ?? timing.created;
+    const projectPath = this.resolveSessionStateProjectPath(item.sessionId, item.projectPath ?? null);
+    const scopeSnapshot = this.ctx.chatSessionStateService?.readScopeSnapshot?.(projectPath);
+    if (scopeSnapshot) {
+      return this.resolveListItemStateFromPersistedState(
+        scopeSnapshot.sessions[item.sessionId],
+        timing,
+        scopeSnapshot.readDateBaseline,
+      );
+    }
+
     return this.ctx.chatSessionStateService?.resolveSessionState(item.sessionId, {
       projectPath: this.resolveSessionStateProjectPath(item.sessionId, item.projectPath ?? null),
       trackingTime,
@@ -1046,6 +1379,33 @@ export class HostSessionItemController {
       pinned: false,
       read: true,
       markedUnread: false,
+    };
+  }
+
+  private resolveListItemStateFromPersistedState(
+    persistedState: PersistedChatSessionState | undefined,
+    timing: HostSessionListItemTiming,
+    readDateBaseline: number,
+  ): ResolvedChatSessionState {
+    const archived = persistedState?.archived === true;
+    const pinned = persistedState?.pinned === true;
+    const markedUnread = persistedState?.read === -1;
+    const trackingTime = timing.lastRequestEnded ?? timing.updated ?? timing.created;
+
+    let read = archived;
+    if (!read) {
+      const readDate = Math.max(
+        typeof persistedState?.read === 'number' && persistedState.read !== -1 ? persistedState.read : 0,
+        readDateBaseline,
+      );
+      read = !markedUnread && readDate >= trackingTime - 2000;
+    }
+
+    return {
+      archived,
+      pinned,
+      read,
+      markedUnread,
     };
   }
 
@@ -1062,8 +1422,9 @@ export class HostSessionItemController {
       }
 
       const liveRecord = this.resolveLiveOverlayRecord(hostRecord, liveRuntimeState);
-      if (liveRecord) {
-        const liveDescription = this.buildCurrentLiveDescription(liveRecord);
+      const effectiveRecord = liveRecord ?? hostRecord;
+      if (effectiveRecord) {
+        const liveDescription = this.buildCurrentLiveDescription(effectiveRecord);
         if (liveDescription) {
           return liveDescription;
         }
@@ -1500,7 +1861,10 @@ export class HostSessionItemController {
     }
   }
 
-  private compareListItems(left: HostSessionListItem, right: HostSessionListItem): number {
+  private compareListItems(
+    left: Pick<SessionInventorySummary, 'archived' | 'pinned' | 'status' | 'timing'>,
+    right: Pick<SessionInventorySummary, 'archived' | 'pinned' | 'status' | 'timing'>,
+  ): number {
     if (!left.archived && right.archived) {
       return -1;
     }
@@ -1761,37 +2125,143 @@ export class HostSessionItemController {
   }
 
   private resolveDefaultManagedTitle(): string {
-    const currentSessionId = typeof this.ctx.chatService.currentSessionId === 'string'
-      ? this.ctx.chatService.currentSessionId.trim()
-      : '';
-    const currentSessionPath = typeof this.ctx.chatService.currentSessionPath === 'string'
-      ? this.ctx.chatService.currentSessionPath.trim()
+    return this.resolveCurrentSessionDurableTitle(this.ctx.chatService.currentSessionId);
+  }
+
+  private resolveCurrentSessionDurableTitle(sessionId: string | null | undefined): string {
+    return this.resolveCurrentSessionDurableTitleCandidate(sessionId)?.text ?? '';
+  }
+
+  private resolveCurrentSessionDurableTitleCandidate(sessionId: string | null | undefined): ChatSessionDisplayTitle | null {
+    const normalizedSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
       : '';
     const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
       ? this.ctx.chatService.currentSessionTitle.trim()
       : '';
-    if (isMeaningfulManagedSessionTitle(currentTitle, currentSessionId)) {
-      return currentTitle;
+    if (!isMeaningfulManagedSessionTitle(currentTitle, normalizedSessionId)) {
+      return null;
     }
 
-    if (currentSessionId) {
-      const liveTurnResponses = this.ctx.readLiveSessionTurnResponses?.(currentSessionId);
-      const liveTitle = deriveDefaultTitleFromTurnResponses(liveTurnResponses);
-      if (isMeaningfulManagedSessionTitle(liveTitle, currentSessionId)) {
-        return liveTitle;
-      }
-
-      const persistedRecord = this.ctx.chatHistoryService.loadHostRecord(
-        currentSessionId,
-        currentSessionPath || null,
-      );
-      const persistedTitle = deriveDefaultTitleFromTurnResponses(persistedRecord?.turnResponses);
-      if (isMeaningfulManagedSessionTitle(persistedTitle, currentSessionId)) {
-        return persistedTitle;
-      }
+    const source = this.readCurrentSessionTitleSource();
+    if (source === undefined) {
+      return {
+        text: currentTitle,
+        source: 'legacy-custom',
+        durable: true,
+      };
     }
 
-    return '';
+    if (source === 'empty') {
+      return {
+        text: currentTitle,
+        source: 'legacy-custom',
+        durable: true,
+      };
+    }
+
+    return isCustomSessionTitleSource(source)
+      ? {
+        text: currentTitle,
+        source,
+        durable: true,
+      }
+      : null;
+  }
+
+  private resolveDisplaySessionTitleCandidate(
+    sessionId: string,
+    durableTitle: string | null | undefined,
+    durableTitleSource: ChatSessionTitleSource | null | undefined,
+    projectPath: string | null | undefined,
+  ): ChatSessionDisplayTitle {
+    const normalizedDurableTitle = typeof durableTitle === 'string'
+      ? durableTitle.trim()
+      : '';
+    if (isMeaningfulManagedSessionTitle(normalizedDurableTitle, sessionId)) {
+      let normalizedSource = normalizeChatSessionTitleSource(durableTitleSource);
+      if (!isCustomSessionTitleSource(normalizedSource)) {
+        const persistedEntry = this.ctx.chatHistoryService.findEntry(sessionId);
+        const persistedEntryTitle = typeof persistedEntry?.title === 'string'
+          ? persistedEntry.title.trim()
+          : '';
+        const persistedEntrySource = normalizeChatSessionTitleSource(persistedEntry?.titleSource);
+        if (persistedEntryTitle === normalizedDurableTitle && isCustomSessionTitleSource(persistedEntrySource)) {
+          normalizedSource = persistedEntrySource;
+        }
+      }
+      return {
+        text: normalizedDurableTitle,
+        source: isCustomSessionTitleSource(normalizedSource) ? normalizedSource : 'legacy-custom',
+        durable: true,
+      };
+    }
+
+    const liveTurnResponses = this.ctx.readLiveSessionTurnResponses?.(sessionId);
+    const liveTitle = deriveDefaultTitleFromTurnResponses(liveTurnResponses);
+    if (isMeaningfulManagedSessionTitle(liveTitle, sessionId)) {
+      return {
+        text: liveTitle,
+        source: 'default-first-request',
+        durable: false,
+      };
+    }
+
+    const persistedEntry = this.ctx.chatHistoryService.findEntry(sessionId);
+    const persistedDefaultTitle = typeof persistedEntry?.defaultTitle === 'string'
+      ? persistedEntry.defaultTitle.trim()
+      : '';
+    if (isMeaningfulManagedSessionTitle(persistedDefaultTitle, sessionId)) {
+      return {
+        text: persistedDefaultTitle,
+        source: 'default-first-request',
+        durable: false,
+      };
+    }
+
+    const persistedRecord = this.shouldReadPersistedFallbackTitleFromHostRecord(persistedEntry)
+      ? this.ctx.chatHistoryService.loadHostRecord(sessionId, projectPath ?? null)
+      : null;
+    const persistedRecordDefaultTitle = typeof persistedRecord?.metadata?.defaultTitle === 'string'
+      ? persistedRecord.metadata.defaultTitle.trim()
+      : '';
+    const persistedTitle = persistedRecordDefaultTitle || deriveDefaultTitleFromTurnResponses(persistedRecord?.turnResponses);
+    if (isMeaningfulManagedSessionTitle(persistedTitle, sessionId)) {
+      return {
+        text: persistedTitle,
+        source: 'default-first-request',
+        durable: false,
+      };
+    }
+
+    return {
+      text: '',
+      source: 'empty',
+      durable: false,
+    };
+  }
+
+  private shouldReadPersistedFallbackTitleFromHostRecord(
+    persistedEntry: SessionIndexEntry | undefined,
+  ): boolean {
+    if (!persistedEntry) {
+      return true;
+    }
+
+    if (typeof persistedEntry.defaultTitle === 'string' && persistedEntry.defaultTitle.trim().length > 0) {
+      return false;
+    }
+
+    return (persistedEntry.messageCount ?? 0) > 0;
+  }
+
+  private readCurrentSessionTitleSource(): ChatSessionTitleSource | undefined {
+    const rawSource = (this.ctx.chatService as { readonly currentSessionTitleSource?: unknown }).currentSessionTitleSource;
+    if (rawSource === undefined || rawSource === null) {
+      return undefined;
+    }
+
+    return normalizeChatSessionTitleSource(rawSource);
   }
 
   private resolveCurrentSessionType(): ChatSessionType {
@@ -1917,11 +2387,9 @@ export class HostSessionItemController {
     }
 
     const selectedMode = this.resolveCurrentSelectedMode();
-    const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
-      ? this.ctx.chatService.currentSessionTitle.trim()
-      : '';
-    const nextTitle = isMeaningfulManagedSessionTitle(currentTitle, sessionId)
-      ? currentTitle
+    const currentDurableTitle = this.resolveCurrentSessionDurableTitle(sessionId);
+    const nextTitle = currentDurableTitle
+      ? currentDurableTitle
       : managedItem.title;
     this.managedItems.set(sessionId, {
       ...managedItem,
@@ -1930,7 +2398,13 @@ export class HostSessionItemController {
       sessionType: this.resolveCurrentSessionType(),
       inputState,
       mode: selectedMode.modeId,
-      requestRouting: buildHostSessionCurrentPickerRoutingSummary(selectedMode),
+      requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+        selectedMode,
+        undefined,
+        this.ctx.chatService.currentSessionPermissionLevel,
+        this.ctx.chatService.currentSessionApprovalsReviewer,
+        this.ctx.chatService.currentSessionApprovalPolicy,
+      ),
       updatedAt: Date.now(),
     });
   }
@@ -1965,13 +2439,16 @@ export class HostSessionItemController {
       return;
     }
 
+    this.cachedSummaryItems.delete(normalizedSessionId);
     this.cachedListItems.delete(normalizedSessionId);
     this.sessionListItemVersions.delete(normalizedSessionId);
   }
 
   private notifyItemsChanged(sessionId?: string | null): void {
     this.bumpSessionListItemVersion(sessionId);
-    this.itemsChangedSubject.next();
+    this.itemsChangedSubject.next({
+      sessionId: typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null,
+    });
   }
 }
 

@@ -9,6 +9,34 @@
     }
   </div>
 
+  <div class="session-list-body">
+    @if (showInlineErrorNotice) {
+    <div class="session-list-feedback session-list-feedback-inline" role="alert">
+      <div class="session-list-feedback-copy">Couldn't refresh sessions.</div>
+      @if (canRetry) {
+      <button type="button" class="session-list-retry-button" (click)="requestRetry()">Retry</button>
+      }
+    </div>
+    }
+
+    @if (showSkeleton) {
+    <div class="session-list-skeleton" role="status" aria-live="polite" aria-label="Loading sessions">
+      @for (row of skeletonRows; track row) {
+      <div class="session-list-skeleton-row">
+        <div class="session-list-skeleton-title"></div>
+        <div class="session-list-skeleton-meta"></div>
+      </div>
+      }
+    </div>
+    } @else if (showErrorState) {
+    <div class="session-list-feedback" role="alert">
+      <div class="session-list-feedback-title">Couldn't load sessions</div>
+      <div class="session-list-feedback-copy">The chat pane is still available. Try loading the session list again.</div>
+      @if (canRetry) {
+      <button type="button" class="session-list-retry-button" (click)="requestRetry()">Retry</button>
+      }
+    </div>
+    } @else {
   <aily-chat-session-entries
     [groups]="groups"
     [items]="items"
@@ -19,4 +47,6 @@
     variant="list"
     (selectSession)="selectSession.emit($event)"
     (actionClick)="actionClick.emit($event)"></aily-chat-session-entries>
+    }
+  </div>
 </section>

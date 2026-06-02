@@ -49,6 +49,20 @@ export class ChatSessionPickerComponent implements AfterViewInit, AfterViewCheck
 
   filterValue = '';
   private pendingRevealSessionId = '';
+  private cachedSourceGroups: {
+    groupsInput: readonly ChatSessionInventoryGroup[];
+    itemsInput: readonly ChatSessionListItem[];
+    groups: readonly ChatSessionInventoryGroup[];
+  } | null = null;
+  private cachedFilteredGroups: {
+    sourceGroups: readonly ChatSessionInventoryGroup[];
+    query: string;
+    groups: readonly ChatSessionInventoryGroup[];
+  } | null = null;
+  private cachedFilteredItems: {
+    groups: readonly ChatSessionInventoryGroup[];
+    items: readonly ChatSessionListItem[];
+  } | null = null;
 
   ngAfterViewInit(): void {
     setTimeout(() => {
@@ -69,29 +83,57 @@ export class ChatSessionPickerComponent implements AfterViewInit, AfterViewCheck
   }
 
   get sourceGroups(): readonly ChatSessionInventoryGroup[] {
-    if (this.groups.length > 0) {
-      return this.groups;
+    if (this.cachedSourceGroups?.groupsInput === this.groups && this.cachedSourceGroups.itemsInput === this.items) {
+      return this.cachedSourceGroups.groups;
     }
 
-    return groupChatSessionPickerItemsByDate(this.items);
+    const groups = this.groups.length > 0
+      ? this.groups
+      : groupChatSessionPickerItemsByDate(this.items);
+    this.cachedSourceGroups = {
+      groupsInput: this.groups,
+      itemsInput: this.items,
+      groups,
+    };
+    return groups;
   }
 
   get filteredGroups(): readonly ChatSessionInventoryGroup[] {
     const query = this.filterValue.trim().toLowerCase();
-    if (!query) {
-      return this.sourceGroups;
+    const sourceGroups = this.sourceGroups;
+    if (this.cachedFilteredGroups?.sourceGroups === sourceGroups && this.cachedFilteredGroups.query === query) {
+      return this.cachedFilteredGroups.groups;
     }
 
-    return this.sourceGroups
-      .map(group => ({
-        ...group,
-        items: group.items.filter(item => buildChatSessionSearchText(item).includes(query)),
-      }))
-      .filter(group => group.items.length > 0);
+    const groups = !query
+      ? sourceGroups
+      : sourceGroups
+        .map(group => ({
+          ...group,
+          items: group.items.filter(item => buildChatSessionSearchText(item).includes(query)),
+        }))
+        .filter(group => group.items.length > 0);
+
+    this.cachedFilteredGroups = {
+      sourceGroups,
+      query,
+      groups,
+    };
+    return groups;
   }
 
   get filteredItems(): readonly ChatSessionListItem[] {
-    return this.filteredGroups.flatMap(group => group.items);
+    const groups = this.filteredGroups;
+    if (this.cachedFilteredItems?.groups === groups) {
+      return this.cachedFilteredItems.items;
+    }
+
+    const items = groups.flatMap(group => group.items);
+    this.cachedFilteredItems = {
+      groups,
+      items,
+    };
+    return items;
   }
 
   trackBySessionId(_: number, item: ChatSessionListItem): string {

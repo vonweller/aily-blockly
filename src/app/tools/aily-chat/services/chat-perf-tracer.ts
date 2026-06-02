@@ -24,17 +24,54 @@ interface TraceEntry {
   detail?: string;
 }
 
+export interface ChatPerformanceTraceEntry {
+  readonly tag: string;
+  readonly phase: 'start' | 'end';
+  readonly t: number;
+  readonly detail?: string;
+}
+
+const ENTRY_OPEN_TRACE_FLAG = 'aily.chat.traceEntryOpenPerformance';
+const ENTRY_OPEN_TRACE_GLOBAL_KEYS = [
+  '__AILY_CHAT_TRACE_ENTRY_OPEN_PERFORMANCE__',
+  'AILY_CHAT_TRACE_ENTRY_OPEN_PERFORMANCE',
+  '__AILY_PERF_TRACE',
+  'AILY_PERF_TRACE',
+] as const;
+
 const MAX_LOG = 5000;
 const log: TraceEntry[] = [];
 /** 关键事件独立 buffer — 不被高频 streaming 事件覆盖 */
 const KEY_MAX = 500;
 const keyLog: TraceEntry[] = [];
+const counters = new Map<string, number>();
 /** 高频标签集 — 这些 tag 不写入 keyLog */
 const HIGH_FREQ_TAGS = new Set(['sse_chunk', 'preprocess_rAF_scheduled']);
 let seqId = 0;
 
+function parseTraceFlag(value: unknown): boolean {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
+  }
+  return false;
+}
+
 function isEnabled(): boolean {
-  try { return !!(globalThis as any).__AILY_PERF_TRACE; } catch { return false; }
+  try {
+    const runtime = globalThis as Record<string, unknown>;
+    for (const key of ENTRY_OPEN_TRACE_GLOBAL_KEYS) {
+      if (parseTraceFlag(runtime[key])) {
+        return true;
+      }
+    }
+    return parseTraceFlag(globalThis.localStorage?.getItem?.(ENTRY_OPEN_TRACE_FLAG));
+  } catch {
+    return false;
+  }
 }
 
 function isHighFreq(tag: string): boolean {
@@ -80,6 +117,34 @@ export class ChatPerformanceTracer {
   static mark(tag: string, detail?: string): void {
     if (!isEnabled()) return;
     pushEntry({ tag, phase: 'start', t: performance.now(), detail });
+  }
+
+  static increment(counter: string, delta = 1): void {
+    if (!isEnabled() || typeof counter !== 'string' || counter.trim().length === 0) {
+      return;
+    }
+    const normalizedDelta = Number.isFinite(delta) ? delta : 1;
+    counters.set(counter, (counters.get(counter) ?? 0) + normalizedDelta);
+  }
+
+  static snapshotCounters(): Record<string, number> {
+    return Object.fromEntries(counters.entries());
+  }
+
+  static snapshotEntries(options: { readonly keyOnly?: boolean; readonly tags?: readonly string[] } = {}): readonly ChatPerformanceTraceEntry[] {
+    const source = options.keyOnly ? keyLog : log;
+    const tagFilter = Array.isArray(options.tags) && options.tags.length > 0
+      ? new Set(options.tags)
+      : null;
+
+    return source
+      .filter(entry => !tagFilter || tagFilter.has(entry.tag))
+      .map(entry => ({
+        tag: entry.tag,
+        phase: entry.phase,
+        t: entry.t,
+        ...(entry.detail ? { detail: entry.detail } : {}),
+      }));
   }
 
   // ─── 输出与调试 ───
@@ -139,8 +204,21 @@ export class ChatPerformanceTracer {
     console.table(slow);
   }
 
+  static dumpCounters(): void {
+    const entries = [...counters.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .map(([counter, value]) => ({ counter, value }));
+
+    if (entries.length === 0) {
+      console.log('[PerfTracer] 无计数器记录');
+      return;
+    }
+
+    console.table(entries);
+  }
+
   /** 清空日志 */
-  static reset(): void { log.length = 0; keyLog.length = 0; seqId = 0; }
+  static reset(): void { log.length = 0; keyLog.length = 0; counters.clear(); seqId = 0; }
 }
 
 // 暴露到全局方便 Console 调用

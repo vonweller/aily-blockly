@@ -31,6 +31,7 @@ import { Injectable, OnDestroy, Optional } from '@angular/core';
 import { Subject } from 'rxjs';
 import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
+import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { ChatHistoryIndexStore } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
@@ -52,6 +53,10 @@ import { ChatService } from './chat.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
 import { ChatSessionStateService } from './chat-session-state.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
+import {
+  normalizePersistedChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
 import {
   DEFAULT_CHAT_SESSION_TYPE,
   normalizeChatSessionType,
@@ -84,6 +89,8 @@ import type { SessionLifecycleRestoreErrorDetails } from '../helpers/session-lif
 export interface SessionIndexEntry {
   sessionId: string;
   title: string;
+  titleSource?: PersistedChatSessionTitleSource;
+  defaultTitle?: string;
   sessionType?: ChatSessionType;
   /** 创建此会话时的项目路径，null 表示无项目 */
   projectPath: string | null;
@@ -134,9 +141,24 @@ export interface HostSessionSidecar {
   response?: HostSessionResponseSidecar;
 }
 
+export interface HostSessionSkillInvocationTraceFile {
+  readonly path: string;
+  readonly uri: string;
+  readonly category?: string;
+}
+
+export interface HostSessionSkillInvocationTraceEntry {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly skillUri: string;
+  readonly mode: 'inline' | 'fork';
+  readonly relatedFiles: readonly HostSessionSkillInvocationTraceFile[];
+}
+
 export interface HostSessionRuntimeAuxiliary {
   requestContext?: NonNullable<SessionSnapshot['requestContext']>;
   activeSkillNames?: readonly string[];
+  skillInvocationTrace?: readonly HostSessionSkillInvocationTraceEntry[];
 }
 
 /** 单个会话的宿主持久化记录 */
@@ -167,6 +189,8 @@ export interface ChatListItem {
 export interface SessionMetadata {
   sessionId: string;
   title: string;
+  titleSource?: PersistedChatSessionTitleSource;
+  defaultTitle?: string;
   sessionType?: ChatSessionType;
   projectPath: string | null;
   createdAt: number;
@@ -227,10 +251,38 @@ export interface ImportedDebugSessionRecord {
   debugRestoreFailure?: HostSessionRestoreFailureSummary;
 }
 
+export interface SessionTitleUpdateOptions {
+  readonly source?: PersistedChatSessionTitleSource;
+}
+
 export interface HostSessionStoreChangeEvent {
   readonly sessionId: string;
   readonly scope: 'persisted' | 'imported';
   readonly kind: 'updated' | 'deleted';
+}
+
+function resolveDurablePersistedTitleCandidate(
+  title: unknown,
+  source: unknown,
+  defaultTitle?: unknown,
+): { title: string; source?: PersistedChatSessionTitleSource } | null {
+  const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const normalizedSource = normalizePersistedChatSessionTitleSource(source);
+  if (normalizedSource) {
+    return {
+      title: normalizedTitle,
+      source: normalizedSource,
+    };
+  }
+
+  const normalizedDefaultTitle = typeof defaultTitle === 'string' ? defaultTitle.trim() : '';
+  return !normalizedDefaultTitle || normalizedTitle !== normalizedDefaultTitle
+    ? { title: normalizedTitle }
+    : null;
 }
 
 export function countHostRecordMessages(record: Pick<HostSessionRecord, 'turnResponses'>): number {
@@ -406,8 +458,8 @@ export class ChatHistoryService implements OnDestroy {
   /**
    * 仅更新索引中的标题（标题生成完成时调用，低 IO）
    */
-  updateTitle(sessionId: string, title: string): void {
-    this.hostSessionPersistenceBridge.updateTitle(sessionId, title);
+  updateTitle(sessionId: string, title: string, options?: SessionTitleUpdateOptions): void {
+    this.hostSessionPersistenceBridge.updateTitle(sessionId, title, options);
     if (sessionId) {
       this.emitHostSessionChanged({ sessionId, scope: 'persisted', kind: 'updated' });
     }
@@ -722,8 +774,17 @@ export class ChatHistoryService implements OnDestroy {
     const requestRouting = normalizeHostSessionRequestRoutingSummary(metadata.requestRouting, selectedMode);
     const interactionActionSummary = normalizeHostSessionInteractionActionSummary(metadata.interactionActionSummary);
     const existing = this.index.find(e => e.sessionId === sessionId);
+    const nextTitle = metadata.title || '';
+    const nextDefaultTitle = metadata.defaultTitle || undefined;
+    const nextDurableTitle = resolveDurablePersistedTitleCandidate(nextTitle, metadata.titleSource, nextDefaultTitle);
+    const existingDurableTitle = existing
+      ? resolveDurablePersistedTitleCandidate(existing.title, existing.titleSource, existing.defaultTitle)
+      : null;
+    const resolvedDurableTitle = nextDurableTitle ?? existingDurableTitle;
     if (existing) {
-      existing.title = metadata.title || existing.title;
+      existing.title = resolvedDurableTitle?.title ?? '';
+      existing.titleSource = resolvedDurableTitle?.source;
+      existing.defaultTitle = nextDefaultTitle;
       existing.sessionType = normalizeChatSessionType(metadata.sessionType, existing.sessionType ?? DEFAULT_CHAT_SESSION_TYPE);
       if (updateTimestamp) {
         existing.updatedAt = metadata.updatedAt || Date.now();
@@ -739,7 +800,9 @@ export class ChatHistoryService implements OnDestroy {
     } else {
       this.index.push({
         sessionId,
-        title: metadata.title || '',
+        title: resolvedDurableTitle?.title ?? '',
+        ...(resolvedDurableTitle?.source ? { titleSource: resolvedDurableTitle.source } : {}),
+        ...(nextDefaultTitle ? { defaultTitle: nextDefaultTitle } : {}),
         sessionType: normalizeChatSessionType(metadata.sessionType),
         projectPath: metadata.projectPath ?? null,
         projectName: this.extractProjectName(metadata.projectPath),
@@ -966,6 +1029,11 @@ export class ChatHistoryService implements OnDestroy {
       pendingRequest: runtimeState.requestInProgress,
       needsInput: runtimeState.status === 'needs_input' || debugSummary?.needsInput === true,
       attachedView: runtimeState.attachedView,
+      ...(typeof debugSummary?.title === 'string' ? { title: debugSummary.title } : {}),
+      ...(typeof debugSummary?.titleSource === 'string' ? { titleSource: debugSummary.titleSource } : {}),
+      ...(typeof debugSummary?.titleRevision === 'number' && Number.isFinite(debugSummary.titleRevision)
+        ? { titleRevision: Math.floor(debugSummary.titleRevision) }
+        : {}),
       turnResponseCount: runtimeState.turnResponses.length,
       hostProjectionPresent: !!runtimeState.hostProjectionState,
       quotaOverlayPresent: !!quotaOverlay || debugSummary?.quotaOverlayPresent === true,
@@ -979,6 +1047,9 @@ export class ChatHistoryService implements OnDestroy {
       ...(debugSummary?.lastExplicitDisposeAt ? { lastExplicitDisposeAt: debugSummary.lastExplicitDisposeAt } : {}),
       notes: [
         'Live runtime overlay is sourced from ChatSessionRuntimeStoreService, not from the visible chat view.',
+        ...(typeof debugSummary?.titleSource === 'string'
+          ? ['Title/source/revision in this section describe the live runtime title snapshot, not durable hostRecord truth.']
+          : []),
         ...(quotaOverlay
           ? ['Quota/notice overlay belongs to the live runtime owner and is not durable hostRecord truth.']
           : []),
@@ -1033,6 +1104,7 @@ export class ChatHistoryService implements OnDestroy {
     const storedSnapshotError = rawLexSnapshot !== undefined && !parsedLexSnapshot
       ? 'Lex snapshot could not be parsed during debug export.'
       : undefined;
+    const missingActiveSkillNames = this.resolveMissingRestoredSkillNames(record);
     const notes = [
       'Restore-plan diagnostics are owned by the host-side restore resolver and bridge seam.',
       ...(storedSnapshotState === 'missing'
@@ -1041,6 +1113,9 @@ export class ChatHistoryService implements OnDestroy {
       ...(storedSnapshotState === 'load-failed'
         ? ['The lex auxiliary snapshot existed but could not be read as a valid snapshot payload.']
         : []),
+      ...(missingActiveSkillNames.length > 0
+        ? [`Restore degraded because persisted active skills are unavailable in the current registry: ${missingActiveSkillNames.join(', ')}.`]
+        : []),
     ];
 
     return {
@@ -1048,8 +1123,18 @@ export class ChatHistoryService implements OnDestroy {
       lexSnapshotPath,
       storedSnapshotState,
       ...(storedSnapshotError ? { storedSnapshotError } : {}),
+      ...(missingActiveSkillNames.length > 0 ? { missingActiveSkillNames } : {}),
       notes,
     };
+  }
+
+  private resolveMissingRestoredSkillNames(record: HostSessionRecord): string[] {
+    const activeSkillNames = resolveHostSessionRuntimeAuxiliary(record)?.activeSkillNames ?? [];
+    if (activeSkillNames.length === 0) {
+      return [];
+    }
+
+    return activeSkillNames.filter(name => !BlocklySkillRegistry.getSkillContext(name));
   }
 
   private buildDualPersistenceSummary(
@@ -1064,7 +1149,18 @@ export class ChatHistoryService implements OnDestroy {
     const lexSnapshotPath = this.resolveLexSnapshotFilePath(record.metadata.sessionId, projectPath);
     const rawLexSnapshot = this.readFileText(lexSnapshotPath);
     const parsedLexSnapshot = rawLexSnapshot ? this.safeParseJson(rawLexSnapshot) : null;
+    const indexEntry = this.index.find(entry => entry.sessionId === record.metadata.sessionId);
     const runtimeAuxiliary = resolveHostSessionRuntimeAuxiliary(record);
+    const hostTitle = record.metadata.title || '';
+    const hostTitleSource = record.metadata.titleSource;
+    const hostDefaultTitle = record.metadata.defaultTitle || '';
+    const indexTitle = indexEntry?.title;
+    const indexTitleSource = indexEntry?.titleSource;
+    const indexDefaultTitle = indexEntry?.defaultTitle || '';
+    const displayTitle = hostTitle || indexTitle || hostDefaultTitle || indexDefaultTitle;
+    const displayTitleSource = (hostTitle || indexTitle)
+      ? (hostTitleSource ?? indexTitleSource ?? 'legacy-custom')
+      : (hostDefaultTitle || indexDefaultTitle ? 'default-first-request' : 'empty');
     const hostAuxiliaryMirrors = [
       ...(runtimeAuxiliary?.requestContext ? ['auxiliary.requestContext'] : []),
       ...(runtimeAuxiliary?.activeSkillNames?.length ? ['auxiliary.activeSkillNames'] : []),
@@ -1088,9 +1184,19 @@ export class ChatHistoryService implements OnDestroy {
       ...(parsedLexSnapshot && Array.isArray((parsedLexSnapshot as { turns?: unknown[] }).turns)
         ? { lexTurnCount: (parsedLexSnapshot as { turns: unknown[] }).turns.length }
         : {}),
+      displayTitle,
+      displayTitleSource,
+      hostTitle,
+      ...(hostTitleSource ? { hostTitleSource } : {}),
+      ...(hostDefaultTitle ? { hostDefaultTitle } : {}),
+      ...(indexTitle !== undefined ? { indexTitle } : {}),
+      ...(indexTitleSource ? { indexTitleSource } : {}),
+      ...(indexDefaultTitle ? { indexDefaultTitle } : {}),
       hostPrimaryFields: [
         'turnResponses',
         'metadata.title',
+        'metadata.titleSource',
+        'metadata.defaultTitle',
         'metadata.sessionType',
         'metadata.projectPath',
         'metadata.mode',
@@ -1209,9 +1315,55 @@ const IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE = 'Imported Debug Snapshot';
 
 function resolveImportedDebugSnapshotTitle(decoded: HostSessionDebugExportEnvelope): string {
   return decoded.session.title
+    || decoded.session.defaultTitle
     || decoded.hostRecord.metadata.title
+    || decoded.hostRecord.metadata.defaultTitle
+    || deriveImportedDebugSnapshotTitleFromHostRecord(decoded.hostRecord)
     || deriveImportedDebugSnapshotTitleFromEvents(decoded.debug.events)
     || IMPORTED_DEBUG_SNAPSHOT_FALLBACK_TITLE;
+}
+
+function deriveImportedDebugSnapshotTitleFromHostRecord(record: HostSessionRecord): string | undefined {
+  const turnResponses = record.turnResponses;
+  if (!Array.isArray(turnResponses)) {
+    return undefined;
+  }
+
+  for (const turnResponse of turnResponses) {
+    const title = readImportedDebugRequestTitle((turnResponse as { request?: unknown }).request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return undefined;
+}
+
+function readImportedDebugRequestTitle(request: unknown): string | undefined {
+  const text = typeof request === 'string'
+    ? request
+    : request && typeof request === 'object'
+      ? ((request as { messageText?: unknown }).messageText
+        ?? (request as { prompt?: unknown }).prompt
+        ?? (request as { text?: unknown }).text
+        ?? (request as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return undefined;
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const firstLine = normalized.split('\n')[0]?.trim() ?? '';
+  if (!firstLine) {
+    return undefined;
+  }
+
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}...` : firstLine;
 }
 
 function deriveImportedDebugSnapshotTitleFromEvents(events: readonly HostSessionDebugEvent[]): string | undefined {

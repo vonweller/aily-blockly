@@ -318,7 +318,7 @@ export function buildSubagentActivityItems(
 }
 
 export function buildToolInvocationSummary(
-  part: Pick<ToolCallPart, 'toolName' | 'text' | 'args' | 'metadata'>,
+  part: Pick<ToolCallPart, 'toolName' | 'text' | 'args' | 'metadata' | 'state'>,
 ): ToolInvocationSummaryDisplay | undefined {
   const metadata = asRecord(part.metadata) || null;
   if (isChangedFilesToolName(part.toolName)) {
@@ -334,6 +334,7 @@ export function buildToolInvocationSummary(
     toolName: part.toolName,
     args: part.args,
     metadata,
+    state: part.state,
   });
   return summary ? { label: summary.label, subtitle: summary.subtitle } : undefined;
 }

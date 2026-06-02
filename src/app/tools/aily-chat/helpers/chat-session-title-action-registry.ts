@@ -88,10 +88,7 @@ export class ChatSessionTitleActionRegistry {
     const actions = this.getToolbarActions(CHAT_SESSION_TITLE_TOOLBAR_ID);
     const navigationIconActions = navigationActions.filter(action => action.presentation !== 'title');
     const titleAction = navigationActions.find(action => action.presentation === 'title') ?? null;
-    const shouldRender = normalizedTitle.trim().length > 0
-      || navigationIconActions.length > 0
-      || titleAction !== null
-      || actions.length > 0;
+    const shouldRender = normalizedTitle.trim().length > 0;
 
     return {
       shouldRender,

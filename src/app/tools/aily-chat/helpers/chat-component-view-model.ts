@@ -24,6 +24,8 @@ interface ChatEngineViewLike {
   readonly sessionId: string;
   readonly sessionTitle: string;
   readonly currentMode: string;
+  readonly currentSessionPermissionMode: string;
+  readonly currentSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
   readonly currentCustomAgentTarget: string | undefined;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
@@ -79,14 +81,22 @@ interface ContextUsageDetailViewGroup {
   readonly items: readonly ContextUsageDetailViewItem[];
 }
 
+interface ContextUsageSummaryViewItem {
+  readonly label: string;
+  readonly value: string;
+}
+
 export interface ChatContextUsageDisplay {
   readonly snapshot: ChatContextUsageSnapshot;
   readonly severity: 'normal' | 'warning' | 'error';
+  readonly isEstimated: boolean;
+  readonly estimatedBadgeLabel?: string;
   readonly percentage: number;
   readonly percentageLabel: string;
   readonly circleLabel: string;
   readonly usedTokensLabel: string;
   readonly totalTokensLabel: string;
+  readonly summaryItems: readonly ContextUsageSummaryViewItem[];
   readonly reservedWidth: number;
   readonly showReservedWidth: boolean;
   readonly strokeDashoffset: number;
@@ -174,6 +184,18 @@ export class ChatComponentViewModel {
     return this.deps.engine.currentMode;
   }
 
+  get currentPermissionLabel(): string {
+    if (this.deps.engine.currentSessionPermissionMode === 'bypassPermissions') {
+      return '完全访问权限';
+    }
+
+    if (this.deps.engine.currentSessionApprovalsReviewer === 'auto_review') {
+      return '自动审查';
+    }
+
+    return '默认权限';
+  }
+
   get currentCustomAgentTarget(): string | undefined {
     return this.deps.engine.currentCustomAgentTarget;
   }
@@ -253,6 +275,9 @@ export class ChatComponentViewModel {
   get contextUsageDisplay(): ChatContextUsageDisplay | null {
     const snapshot = this.deps.engine.contextUsageSnapshot;
     if (!snapshot || snapshot.totalContextWindow <= 0) {
+      if (this.deps.engine.isWaiting && this.lastContextUsageDisplay) {
+        return this.lastContextUsageDisplay;
+      }
       this.lastContextUsageSnapshot = null;
       this.lastContextUsageDisplay = null;
       return null;
@@ -267,11 +292,14 @@ export class ChatComponentViewModel {
     const display: ChatContextUsageDisplay = {
       snapshot,
       severity: percentage >= 90 ? 'error' : percentage >= 75 ? 'warning' : 'normal',
+      isEstimated: snapshot.source === 'estimate',
+      ...(snapshot.source === 'estimate' ? { estimatedBadgeLabel: 'Estimated' } : {}),
       percentage,
       percentageLabel: `${percentage.toFixed(0)}%`,
       circleLabel: percentage.toFixed(0),
       usedTokensLabel: formatContextUsageTokenCount(snapshot.usedTokens, 1),
       totalTokensLabel: formatContextUsageTokenCount(snapshot.totalContextWindow, 0),
+      summaryItems: buildContextUsageSummaryItems(snapshot),
       reservedWidth,
       showReservedWidth: reservedWidth > 0,
       strokeDashoffset: 87.965 * (1 - (percentage / 100)),
@@ -409,4 +437,47 @@ function buildContextUsageDetailGroups(
   }
 
   return groups;
+}
+
+function buildContextUsageSummaryItems(
+  snapshot: ChatContextUsageSnapshot,
+): readonly ContextUsageSummaryViewItem[] {
+  const items: ContextUsageSummaryViewItem[] = [
+    {
+      label: 'Prompt tokens',
+      value: formatContextUsageTokenCount(snapshot.promptTokens, 1),
+    },
+    {
+      label: 'Completion tokens',
+      value: formatContextUsageTokenCount(snapshot.completionTokens, 1),
+    },
+    {
+      label: 'Usage source',
+      value: formatContextUsageSource(snapshot.source),
+    },
+  ];
+
+  if (typeof snapshot.outputBuffer === 'number' && snapshot.outputBuffer > 0) {
+    items.splice(2, 0, {
+      label: 'Reserved for response',
+      value: formatContextUsageTokenCount(snapshot.outputBuffer, 1),
+    });
+  }
+
+  return items;
+}
+
+function formatContextUsageSource(
+  source: ChatContextUsageSnapshot['source'],
+): string {
+  switch (source) {
+    case 'provider-request':
+      return 'Provider (request update)';
+    case 'provider-turn-final':
+      return 'Provider (turn final)';
+    case 'estimate':
+      return 'Estimated';
+    default:
+      return 'Provider';
+  }
 }

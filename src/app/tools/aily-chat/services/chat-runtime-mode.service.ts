@@ -26,7 +26,7 @@ export type ChatCustomModeSourceKind =
   | typeof CHAT_CUSTOM_MODE_SOURCE_SESSION_CUSTOMIZATION;
 
 export type ChatSessionCustomizationType = 'agent' | 'instructions' | 'skill' | 'hook' | 'plugins';
-export type ChatSessionCustomizationItemSource = AgentSource | 'builtin' | 'global' | 'url' | 'plugin';
+export type ChatSessionCustomizationItemSource = AgentSource | 'url';
 
 export interface ChatSessionCustomizationProviderMetadata {
   readonly label: string;

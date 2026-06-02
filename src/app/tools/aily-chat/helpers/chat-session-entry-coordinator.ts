@@ -1,3 +1,5 @@
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
+
 interface ChatSessionEntryCoordinatorContext {
   readonly isLoggedIn: boolean;
   readonly hasCurrentSession: boolean;
@@ -5,7 +7,7 @@ interface ChatSessionEntryCoordinatorContext {
   enterBlankSessionShell(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean }): void;
   startSession(): Promise<void>;
   restorePersistedSessionTarget(): Promise<boolean>;
-  refreshHistoryList(): void;
+  requestSessionListRefresh(input: { reason: 'entry' | 'reopen'; scope: 'summary' | 'full'; priority: 'after-paint' | 'normal' }): void;
 }
 
 export class ChatSessionEntryCoordinator {
@@ -13,6 +15,8 @@ export class ChatSessionEntryCoordinator {
 
   async initializeEntryInventory(options?: { readonly restorePersistedTarget?: boolean }): Promise<boolean> {
     this.ctx.enterEntryState();
+    ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
+    ChatPerformanceTracer.mark('entry_open.entry_shell_visible');
 
     const shouldRestorePersistedTarget = options?.restorePersistedTarget !== false;
     const restored = shouldRestorePersistedTarget
@@ -23,7 +27,7 @@ export class ChatSessionEntryCoordinator {
       : false;
 
     if (!restored) {
-      this.ctx.refreshHistoryList();
+      this.ctx.requestSessionListRefresh({ reason: 'entry', scope: 'summary', priority: 'after-paint' });
     }
 
     return restored;
@@ -31,14 +35,18 @@ export class ChatSessionEntryCoordinator {
 
   async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean } = {}): Promise<void> {
     this.ctx.enterEntryState(options);
+    ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
+    ChatPerformanceTracer.mark('entry_open.entry_shell_visible', 'return-to-entry');
 
     if (this.ctx.isLoggedIn) {
-      this.ctx.refreshHistoryList();
+      this.ctx.requestSessionListRefresh({ reason: 'entry', scope: 'summary', priority: 'after-paint' });
     }
   }
 
   async bootstrapNewSession(options: { resetInitialization?: boolean } = {}): Promise<boolean> {
     this.ctx.enterBlankSessionShell(options);
+    ChatPerformanceTracer.increment('entry_open.blank_shell_visible');
+    ChatPerformanceTracer.mark('entry_open.blank_shell_visible');
     await this.ctx.startSession();
     return this.ctx.hasCurrentSession;
   }

@@ -47,6 +47,7 @@
   <aily-chat-session-list
     [ngClass]="surface.hostClasses"
     [groups]="surface.groups"
+    [loadState]="surface.loadState"
     [items]="sessionListItems"
     [selectedSessionId]="selectedSessionId"
     [title]="surface.title"
@@ -54,6 +55,7 @@
     [variant]="surface.variant"
     (selectSession)="handleSessionSelection($event)"
     (actionClick)="handleSessionAction($event)"
+    (retryRequested)="handleSessionListRetry()"
     (newSession)="requestNewChat()"></aily-chat-session-list>
 </ng-template>
 <ng-template #windowBoxTemplate>
@@ -365,7 +367,12 @@
               role="button">
               <ng-template #tokenBudgetTooltip>
                 <div class="chat-context-usage-details">
-                  <div class="header">{{ 'AILY_CHAT.TOKEN_CONTEXT_WINDOW' | translate }}</div>
+                  <div class="context-usage-header">
+                    <div class="header">{{ 'AILY_CHAT.TOKEN_CONTEXT_WINDOW' | translate }}</div>
+                    @if(contextUsage.estimatedBadgeLabel) {
+                    <span class="context-usage-source-badge">{{ contextUsage.estimatedBadgeLabel }}</span>
+                    }
+                  </div>
                   <div
                     class="quota-indicator"
                     [class.warning]="contextUsage.severity === 'warning'"
@@ -384,6 +391,14 @@
                     <div class="output-buffer-legend">
                       <span class="output-buffer-swatch"></span>
                       <span>Reserved for response</span>
+                    </div>
+                    }
+                  </div>
+                  <div class="context-usage-summary-list">
+                    @for(item of contextUsage.summaryItems; track item.label) {
+                    <div class="context-usage-summary-row">
+                      <span class="context-usage-summary-label">{{ item.label }}</span>
+                      <span class="context-usage-summary-value">{{ item.value }}</span>
                     </div>
                     }
                   </div>
@@ -434,6 +449,9 @@
                     {{ contextUsage.circleLabel }}
                   </span>
                 </span>
+                @if(contextUsage.estimatedBadgeLabel) {
+                <span class="context-usage-badge" aria-hidden="true">est</span>
+                }
               </span>
             </div>
             }
@@ -526,6 +544,12 @@
               </span>
             </div>
             }
+            <div class="btn mode right2 permission-mode-indicator ccenter"
+              nz-tooltip nzTooltipPlacement="top"
+              [nzTooltipTitle]="vm.currentPermissionLabel"
+              (click)="togglePermissionMenu($event)">
+              <i [class]="permissionButtonIconClass"></i>
+            </div>
             <div class="btn right ccenter" [ngClass]="{'lloading':vm.isWaiting, 'disabled': vm.authQuotaExhausted && !vm.isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="vm.isWaiting ? ('AILY_CHAT.STOP' | translate) : (vm.authQuotaExhausted ? 'Auth quota exhausted' : ('AILY_CHAT.SEND' | translate))"
               (click)="submitShellCoordinator.handlePrimaryAction()">
@@ -572,6 +596,11 @@
 @if(menuManager.showMode){
 <app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)"></app-menu>
+}
+
+@if(menuManager.showPermissionMenu){
+<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="280" (closeEvent)="menuManager.closeAll()"
+  (itemClickEvent)="handlePermissionMenuClick($event)"></app-menu>
 }
 
 @if(menuManager.showModelMenu){

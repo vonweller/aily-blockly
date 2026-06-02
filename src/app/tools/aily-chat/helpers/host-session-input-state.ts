@@ -45,16 +45,24 @@ export interface HostSessionProviderOptions {
   readonly folderPath: string | null;
   readonly permissionMode: ChatSessionPermissionMode;
   readonly permissionLevel?: string;
+  readonly approvalsReviewer?: 'user' | 'auto_review';
+  readonly approvalPolicy?: 'on_request' | 'never';
 }
 
 export const HOST_SESSION_FOLDER_OPTION_ID = 'folder';
 export const HOST_SESSION_PERMISSION_MODE_OPTION_ID = 'permissionMode';
+export const HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID = 'approvalsReviewer';
 
 const HOST_SESSION_PERMISSION_MODE_ITEMS: readonly ChatSessionProviderOptionItem[] = [
   { id: 'default', name: 'Ask before edits', slashCommand: 'ask' },
   { id: 'acceptEdits', name: 'Edit automatically', slashCommand: 'edit' },
   { id: 'plan', name: 'Plan mode', slashCommand: 'plan' },
   { id: 'bypassPermissions', name: 'Bypass all permissions', slashCommand: 'yolo' },
+];
+
+const HOST_SESSION_APPROVALS_REVIEWER_ITEMS: readonly ChatSessionProviderOptionItem[] = [
+  { id: 'user', name: '人工审批 (User)' },
+  { id: 'auto_review', name: '自动审查 (Auto Review)' },
 ];
 
 interface HostSessionMetadataLike {
@@ -155,6 +163,7 @@ export function buildHostSessionProviderOptionGroups(
   }
 
   groups.push(createPermissionModeOptionGroup(providerOptions.permissionMode));
+  groups.push(createApprovalsReviewerOptionGroup(providerOptions.approvalsReviewer));
   return groups;
 }
 
@@ -189,6 +198,10 @@ export function normalizeHostSessionProviderOptions(
 ): HostSessionProviderOptions {
   const permissionLevel = normalizeHostSessionPermissionLevel(value?.permissionLevel)
     ?? normalizeHostSessionPermissionLevel(fallback?.permissionLevel);
+  const approvalsReviewer = normalizeHostSessionApprovalsReviewer(value?.approvalsReviewer)
+    ?? normalizeHostSessionApprovalsReviewer(fallback?.approvalsReviewer);
+  const approvalPolicy = normalizeHostSessionApprovalPolicy(value?.approvalPolicy)
+    ?? normalizeHostSessionApprovalPolicy(fallback?.approvalPolicy);
 
   return {
     folderPath: normalizeHostSessionFolderPath(value?.folderPath) ?? normalizeHostSessionFolderPath(fallback?.folderPath) ?? null,
@@ -197,6 +210,8 @@ export function normalizeHostSessionProviderOptions(
       normalizeChatSessionPermissionMode(fallback?.permissionMode, DEFAULT_CHAT_SESSION_PERMISSION_MODE),
     ),
     ...(permissionLevel ? { permissionLevel } : {}),
+    ...(approvalsReviewer ? { approvalsReviewer } : {}),
+    ...(approvalPolicy ? { approvalPolicy } : {}),
   };
 }
 
@@ -209,6 +224,8 @@ export function resolveHostSessionProviderOptionsFromMetadata(
     folderPath: normalizeHostSessionFolderPath(metadata?.projectPath),
     permissionMode: DEFAULT_CHAT_SESSION_PERMISSION_MODE,
     permissionLevel: requestRouting.permissionLevel,
+    approvalsReviewer: requestRouting.approvalsReviewer,
+    approvalPolicy: requestRouting.approvalPolicy,
   });
 }
 
@@ -219,8 +236,12 @@ export function resolveHostSessionProviderOptions(
 
   return normalizeHostSessionProviderOptions(
     resolveHostSessionProviderOptionsFromMetadata(record.metadata),
-    requestRouting.permissionLevel
-      ? { permissionLevel: requestRouting.permissionLevel }
+    requestRouting.permissionLevel || requestRouting.approvalsReviewer || requestRouting.approvalPolicy
+      ? {
+          ...(requestRouting.permissionLevel ? { permissionLevel: requestRouting.permissionLevel } : {}),
+          ...(requestRouting.approvalsReviewer ? { approvalsReviewer: requestRouting.approvalsReviewer } : {}),
+          ...(requestRouting.approvalPolicy ? { approvalPolicy: requestRouting.approvalPolicy } : {}),
+        }
       : undefined,
   );
 }
@@ -239,6 +260,11 @@ export function resolveHostSessionProviderOptionsFromInputState(
       normalizedFallback.permissionMode,
     ),
     ...(normalizedFallback.permissionLevel ? { permissionLevel: normalizedFallback.permissionLevel } : {}),
+    ...(normalizeHostSessionApprovalsReviewer(readSelectedGroupOptionId(inputState, HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID))
+      ?? normalizedFallback.approvalsReviewer
+      ? { approvalsReviewer: normalizeHostSessionApprovalsReviewer(readSelectedGroupOptionId(inputState, HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID)) ?? normalizedFallback.approvalsReviewer }
+      : {}),
+    ...(normalizedFallback.approvalPolicy ? { approvalPolicy: normalizedFallback.approvalPolicy } : {}),
   };
 }
 
@@ -246,9 +272,19 @@ export function createHostSessionProviderOptionsKey(
   value?: Partial<HostSessionProviderOptions> | null,
 ): string {
   const providerOptions = normalizeHostSessionProviderOptions(value);
-  return providerOptions.permissionLevel
-    ? `${providerOptions.folderPath ?? ''}::${providerOptions.permissionMode}::${providerOptions.permissionLevel}`
-    : `${providerOptions.folderPath ?? ''}::${providerOptions.permissionMode}`;
+  const segments = [
+    providerOptions.folderPath ?? '',
+    providerOptions.permissionMode,
+    providerOptions.permissionLevel ?? '',
+    providerOptions.approvalsReviewer ?? '',
+    providerOptions.approvalPolicy ?? '',
+  ];
+
+  while (segments.length > 2 && segments[segments.length - 1] === '') {
+    segments.pop();
+  }
+
+  return segments.join('::');
 }
 
 export function resolveHostSessionSelectedModeFromMetadata(
@@ -866,9 +902,25 @@ function createPermissionModeOptionGroup(
   return {
     id: HOST_SESSION_PERMISSION_MODE_OPTION_ID,
     name: 'Permission Mode',
-    description: 'Pick Permission Mode',
+    description: 'Execution mode. Autopilot keeps running tasks and is separate from approval review.',
     kind: 'permissions',
     items: HOST_SESSION_PERMISSION_MODE_ITEMS.map((item) => ({ ...item })),
+    selected: { ...selectedItem },
+  };
+}
+
+function createApprovalsReviewerOptionGroup(
+  approvalsReviewer: 'user' | 'auto_review' | undefined,
+): ChatSessionProviderOptionGroup {
+  const selectedItem = HOST_SESSION_APPROVALS_REVIEWER_ITEMS.find((item) => item.id === approvalsReviewer)
+    ?? HOST_SESSION_APPROVALS_REVIEWER_ITEMS[0];
+
+  return {
+    id: HOST_SESSION_APPROVALS_REVIEWER_OPTION_ID,
+    name: 'Approval Reviewer',
+    description: 'Safety reviewer for approval requests. Auto Review does not enable Autopilot execution.',
+    kind: 'permissions',
+    items: HOST_SESSION_APPROVALS_REVIEWER_ITEMS.map((item) => ({ ...item })),
     selected: { ...selectedItem },
   };
 }
@@ -936,4 +988,16 @@ function normalizeHostSessionPermissionLevel(value: unknown): string | undefined
     ? value.trim()
     : '';
   return normalizedValue || undefined;
+}
+
+function normalizeHostSessionApprovalsReviewer(value: unknown): 'user' | 'auto_review' | undefined {
+  return value === 'auto_review' || value === 'user'
+    ? value
+    : undefined;
+}
+
+function normalizeHostSessionApprovalPolicy(value: unknown): 'on_request' | 'never' | undefined {
+  return value === 'never' || value === 'on_request'
+    ? value
+    : undefined;
 }

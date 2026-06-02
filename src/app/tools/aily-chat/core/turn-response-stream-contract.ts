@@ -416,8 +416,41 @@ function getContinuationRequestUsage(
 
   const promptTokens = 'promptTokens' in usage ? usage['promptTokens'] : undefined;
   const completionTokens = 'completionTokens' in usage ? usage['completionTokens'] : undefined;
+  const outputBuffer = 'outputBuffer' in usage ? usage['outputBuffer'] : undefined;
+  const promptTokenDetails = 'promptTokenDetails' in usage && Array.isArray(usage['promptTokenDetails'])
+    ? usage['promptTokenDetails']
+      .map(detail => {
+        if (!detail || typeof detail !== 'object') {
+          return undefined;
+        }
+
+        const category = typeof (detail as { category?: unknown }).category === 'string'
+          ? (detail as { category: string }).category.trim()
+          : '';
+        const label = typeof (detail as { label?: unknown }).label === 'string'
+          ? (detail as { label: string }).label.trim()
+          : '';
+        const percentageOfPrompt = typeof (detail as { percentageOfPrompt?: unknown }).percentageOfPrompt === 'number'
+          && Number.isFinite((detail as { percentageOfPrompt: number }).percentageOfPrompt)
+          && (detail as { percentageOfPrompt: number }).percentageOfPrompt >= 0
+          ? (detail as { percentageOfPrompt: number }).percentageOfPrompt
+          : undefined;
+
+        if (!category || !label || percentageOfPrompt === undefined) {
+          return undefined;
+        }
+
+        return { category, label, percentageOfPrompt };
+      })
+      .filter((detail): detail is NonNullable<NonNullable<TurnResponseTurn['responseModel']>['requestUsage']>['promptTokenDetails'][number] => !!detail)
+    : undefined;
   return typeof promptTokens === 'number' && Number.isFinite(promptTokens) && promptTokens >= 0
     && typeof completionTokens === 'number' && Number.isFinite(completionTokens) && completionTokens >= 0
-    ? { promptTokens, completionTokens }
+    ? {
+        promptTokens,
+        completionTokens,
+        ...(typeof outputBuffer === 'number' && Number.isFinite(outputBuffer) && outputBuffer > 0 ? { outputBuffer } : {}),
+        ...(promptTokenDetails?.length ? { promptTokenDetails } : {}),
+      }
     : undefined;
 }

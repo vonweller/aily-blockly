@@ -32,6 +32,7 @@ interface TurnResponseIncrementalProjection {
   readonly request: TurnResponseTurn['request'];
   readonly rounds: TurnResponseTurn['rounds'];
   readonly usage?: TurnResponseTurn['usage'];
+  readonly requestUsage?: NonNullable<TurnResponseTurn['responseModel']>['requestUsage'];
   readonly participant?: string;
   readonly slashCommand?: TurnResponseCommand;
   readonly followups?: readonly TurnResponseFollowup[];
@@ -73,6 +74,7 @@ export interface TurnResponseIncrementalMaterializeOptions {
     readonly request?: TurnResponseTurn['request'];
     readonly rounds?: TurnResponseTurn['rounds'];
     readonly usage?: TurnResponseTurn['usage'];
+    readonly requestUsage?: NonNullable<TurnResponseTurn['responseModel']>['requestUsage'];
     readonly createdAt?: number;
     readonly continuation?: TurnResponseTurn['response']['continuation'];
     readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
@@ -157,6 +159,7 @@ export class TurnResponseIncrementalBuilder {
     const request = options.snapshot?.request ?? this.currentProjection.request;
     const rounds = options.snapshot?.rounds ?? this.currentProjection.rounds;
     const usage = options.usage ?? options.snapshot?.usage ?? this.currentProjection.usage;
+    const requestUsage = options.snapshot?.requestUsage ?? this.currentProjection.requestUsage;
     const participant = options.participant ?? this.currentProjection.participant;
     const createdAt = options.snapshot?.createdAt
       ?? this.currentProjection.createdAt
@@ -168,6 +171,7 @@ export class TurnResponseIncrementalBuilder {
       request,
       rounds,
       usage,
+      requestUsage,
       participant,
       slashCommand: this.currentProjection.slashCommand,
       followups: this.currentProjection.followups
@@ -195,6 +199,7 @@ export class TurnResponseIncrementalBuilder {
       request,
       rounds,
       usage,
+      requestUsage,
       participant,
       slashCommand: this.currentProjection.slashCommand,
       followups: this.currentProjection.followups,
@@ -242,6 +247,7 @@ export class TurnResponseIncrementalBuilder {
       request: turn.request,
       rounds: turn.rounds ?? [],
       usage: turn.usage,
+      requestUsage: turn.responseModel?.requestUsage,
       participant: turn.response.participant,
       slashCommand: turn.responseModel?.slashCommand,
       followups: turn.responseModel?.followups
@@ -304,6 +310,21 @@ export class TurnResponseIncrementalBuilder {
         this.currentProjection = {
           ...this.currentProjection,
           followups: event.value ? [...event.value] : undefined,
+        };
+        return true;
+      case 'usage':
+        if (event.scope !== 'request') {
+          return false;
+        }
+
+        this.currentProjection = {
+          ...this.currentProjection,
+          requestUsage: {
+            promptTokens: event.usage.inputTokens,
+            completionTokens: event.usage.outputTokens,
+            ...(typeof event.usage.outputBuffer === 'number' ? { outputBuffer: event.usage.outputBuffer } : {}),
+            ...(event.usage.promptTokenDetails?.length ? { promptTokenDetails: [...event.usage.promptTokenDetails] } : {}),
+          },
         };
         return true;
       default:

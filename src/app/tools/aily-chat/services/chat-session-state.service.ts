@@ -16,6 +16,11 @@ export interface ResolvedChatSessionState {
   readonly markedUnread: boolean;
 }
 
+export interface ChatSessionStateScopeSnapshot {
+  readonly readDateBaseline: number;
+  readonly sessions: Readonly<Record<string, PersistedChatSessionState>>;
+}
+
 interface PersistedChatSessionStateEnvelope {
   readonly version: 1;
   readonly readDateBaseline: number;
@@ -52,6 +57,14 @@ export class ChatSessionStateService {
 
     const scope = this.loadScope(projectPathHint ?? null);
     return { ...(scope.sessions[sessionId] ?? {}) };
+  }
+
+  readScopeSnapshot(projectPathHint?: string | null): ChatSessionStateScopeSnapshot {
+    const scope = this.loadScope(projectPathHint ?? null);
+    return {
+      readDateBaseline: scope.readDateBaseline,
+      sessions: scope.sessions,
+    };
   }
 
   resolveSessionState(

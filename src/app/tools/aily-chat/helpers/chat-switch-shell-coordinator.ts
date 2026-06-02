@@ -6,8 +6,10 @@ import type { ModelConfig } from '../services/chat.service';
 
 interface MenuManagerLike {
   showMode: boolean;
+  showPermissionMenu: boolean;
   showModelMenu: boolean;
   toggleModeMenu(event: MouseEvent): void;
+  togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void;
   toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void;
 }
 
@@ -35,6 +37,7 @@ export class ChatSwitchShellCoordinator {
       switchToMode: (mode: string) => void | Promise<void>;
       switchToCustomAgent: (selection: { readonly modeId?: string; readonly customAgentTarget?: string }) => void | Promise<void>;
       configureCustomAgents: () => void | Promise<void>;
+      updatePermissionPreset: (preset: string) => void | Promise<void>;
       switchToModel: (model: ModelConfig) => void | Promise<void>;
       switchToModelConfiguration: (
         model: ModelConfig,
@@ -51,6 +54,11 @@ export class ChatSwitchShellCoordinator {
   toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
     this.deps.viewState.closeSessionPicker();
     this.deps.menuManager.toggleModelMenu(event, modelItems);
+  }
+
+  togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void {
+    this.deps.viewState.closeSessionPicker();
+    this.deps.menuManager.togglePermissionMenu(event, permissionItems);
   }
 
   modeMenuClick(item: IMenuItem): void {
@@ -101,5 +109,15 @@ export class ChatSwitchShellCoordinator {
     if (model?.model && !isSameModelSelection(model, this.deps.getCurrentModel())) {
       void this.callbacks.switchToModel(model);
     }
+  }
+
+  permissionMenuClick(item: IMenuItem): void {
+    this.deps.menuManager.showPermissionMenu = false;
+    const action = typeof item.action === 'string' ? item.action.trim() : '';
+    if (!action) {
+      return;
+    }
+
+    void this.callbacks.updatePermissionPreset(action);
   }
 }

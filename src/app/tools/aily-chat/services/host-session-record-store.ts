@@ -4,6 +4,11 @@ import {
   LEGACY_CHAT_PLAN_AGENT_TARGET,
   normalizeChatSessionType,
 } from '../core/chat-mode';
+import {
+  normalizeChatSessionTitleText,
+  normalizePersistedChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
 import type { TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import {
   hasHostSessionExplicitTurnRequestRouting,
@@ -104,6 +109,97 @@ function normalizeRoundSummary(summary: unknown): string | undefined {
     : undefined;
 }
 
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly PersistedHostTurnResponse[] | undefined): string {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function normalizePersistedSessionTitleMetadata(
+  metadata: SessionMetadata,
+  turnResponses?: readonly PersistedHostTurnResponse[],
+): SessionMetadata {
+  const normalizedTitle = normalizeChatSessionTitleText(metadata.title);
+  const explicitSource = normalizePersistedChatSessionTitleSource(metadata.titleSource);
+  const derivedDefaultTitle = normalizeChatSessionTitleText(metadata.defaultTitle)
+    || deriveDefaultTitleFromTurnResponses(turnResponses as readonly PersistedHostTurnResponse[] | undefined);
+
+  let nextTitle = normalizedTitle;
+  let nextTitleSource: PersistedChatSessionTitleSource | undefined = explicitSource;
+  if (!nextTitleSource && nextTitle) {
+    if (derivedDefaultTitle && nextTitle === derivedDefaultTitle) {
+      nextTitle = '';
+    } else {
+      nextTitleSource = 'legacy-custom';
+    }
+  }
+
+  const nextMetadata: SessionMetadata = {
+    ...metadata,
+    title: nextTitle,
+  };
+  if (nextTitleSource && nextTitle) {
+    nextMetadata.titleSource = nextTitleSource;
+  } else {
+    delete nextMetadata.titleSource;
+  }
+  if (derivedDefaultTitle) {
+    nextMetadata.defaultTitle = derivedDefaultTitle;
+  } else {
+    delete nextMetadata.defaultTitle;
+  }
+
+  return nextMetadata;
+}
+
 function cloneTurnRound(round: TurnResponseTurn['rounds'][number]): TurnResponseTurn['rounds'][number] {
   const summary = normalizeRoundSummary(round.summary);
 
@@ -143,7 +239,13 @@ export class HostSessionRecordStore {
     const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions());
     return {
       sessionId: sanitizedMetadata.sessionId,
-      title: sanitizedMetadata.title || '',
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
       sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
       projectPath: sanitizedMetadata.projectPath ?? null,
       createdAt: sanitizedMetadata.createdAt || now,
@@ -191,6 +293,8 @@ export class HostSessionRecordStore {
     if (normalizedTurnResponses?.length) {
       record.turnResponses = normalizedTurnResponses;
     }
+
+    record.metadata = normalizePersistedSessionTitleMetadata(record.metadata, normalizedTurnResponses);
 
     const normalizedSidecar = this.normalizeSidecar(sidecar);
     if (normalizedSidecar) {
@@ -308,6 +412,8 @@ export class HostSessionRecordStore {
     if (normalizedSidecar) {
       hostRecord.sidecar = normalizedSidecar;
     }
+
+    hostRecord.metadata = normalizePersistedSessionTitleMetadata(hostRecord.metadata, normalizedTurnResponses);
 
     const selectedMode = resolveHostSessionSelectedMode(hostRecord, this.getModeResolveOptions());
     const requestRouting = hasHostSessionExplicitTurnRequestRouting(hostRecord.turnResponses)
@@ -458,7 +564,13 @@ export class HostSessionRecordStore {
       : {};
     return {
       sessionId: typeof sanitizedMetadata.sessionId === 'string' && sanitizedMetadata.sessionId ? sanitizedMetadata.sessionId : sessionId,
-      title: typeof sanitizedMetadata.title === 'string' ? sanitizedMetadata.title : '',
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
       sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
       projectPath: sanitizedMetadata.projectPath ?? projectPath ?? null,
       createdAt: typeof sanitizedMetadata.createdAt === 'number' ? sanitizedMetadata.createdAt : now,

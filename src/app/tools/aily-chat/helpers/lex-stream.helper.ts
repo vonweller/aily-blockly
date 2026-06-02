@@ -317,9 +317,17 @@ export class LexOwnerFacade {
           return null;
         }
 
+        const sessionTitleCandidate = typeof chatService.readCurrentSessionTitleCandidate === 'function'
+          ? chatService.readCurrentSessionTitleCandidate()
+          : {
+            text: this.ctx.sessionTitle || '',
+            source: chatService.currentSessionTitleSource,
+            revision: chatService.currentSessionTitleRevision,
+          };
+
         return {
           sessionId: targetSessionId,
-          sessionTitle: this.ctx.sessionTitle || '',
+          sessionTitleCandidate,
           sessionType: chatService.currentSessionType,
           providerOptions: {
             folderPath: chatService.currentSessionPath || null,

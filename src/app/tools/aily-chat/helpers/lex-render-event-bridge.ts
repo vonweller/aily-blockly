@@ -579,11 +579,12 @@ function cloneQuestionAnswers(answers: TurnResponseQuestionPart['answers']): Tur
 function isResponseModelRenderEvent(
   event: RenderEvent,
 ): event is Extract<RenderEvent, {
-  type: 'response_reference' | 'response_code_citation' | 'response_progress_message' | 'response_followups' | 'response_command'
+  type: 'response_reference' | 'response_code_citation' | 'response_progress_message' | 'response_followups' | 'response_command' | 'usage'
 }> {
   return event.type === 'response_reference'
     || event.type === 'response_code_citation'
     || event.type === 'response_progress_message'
     || event.type === 'response_followups'
-    || event.type === 'response_command';
+    || event.type === 'response_command'
+    || event.type === 'usage';
 }

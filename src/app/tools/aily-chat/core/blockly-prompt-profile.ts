@@ -23,6 +23,7 @@ import { PromptLayer } from 'aily-lex/types/prompt';
 import { SkillRegistry } from './skill-registry';
 import { AilyHost } from './host';
 import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+import { MAIN_AGENT_TYPE } from './agent-identifiers';
 
 export const BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT = {
   scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
@@ -121,9 +122,38 @@ const BLOCKLY_SKILLS_LISTING_SECTION: IPromptSection = {
   layer: PromptLayer.SessionContext,
   priority: 50,
   cacheable: false,
-  getContent: () => {
-    const listing = SkillRegistry.getSkillsListing();
+  getContent: (ctx) => {
+    const toolAwareCtx = ctx as PromptContext & { availableToolNames?: ReadonlySet<string> };
+    const listing = SkillRegistry.getSkillsListing(MAIN_AGENT_TYPE, {
+      availableToolNames: toolAwareCtx.availableToolNames,
+    });
     return listing || '';
+  },
+};
+
+const BLOCKLY_SKILL_COMMAND_SECTION: IPromptSection = {
+  id: 'blockly-skill-command',
+  layer: PromptLayer.ToolInstructions,
+  priority: 55,
+  cacheable: false,
+  getContent: (ctx) => {
+    const commandName = ctx.command?.name?.trim();
+    if (!commandName) {
+      return '';
+    }
+
+    const skillContext = SkillRegistry.getSkillContext(commandName);
+    if (!skillContext || skillContext.userInvocable === false) {
+      return '';
+    }
+
+    return [
+      `The current request explicitly selected the /${skillContext.name} skill command.`,
+      skillContext.mode === 'fork'
+        ? `Call load_skill with action=\"load\", name=\"${skillContext.name}\", and task set to the current user request so the skill runs as a forked subagent.`
+        : `Call load_skill with action=\"load\" and name=\"${skillContext.name}\" before continuing so the skill context is loaded for this turn.`,
+      `Skill file: ${skillContext.skillMdPath}`,
+    ].join('\n');
   },
 };
 
@@ -138,6 +168,7 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
     BLOCKLY_IDENTITY_SECTION,
     BLOCKLY_DOMAIN_SECTION,
     BLOCKLY_HARDWARE_SAFETY_SECTION,
+    BLOCKLY_SKILL_COMMAND_SECTION,
     BLOCKLY_SKILLS_LISTING_SECTION,
   ],
   cacheBreakpoint: PromptLayer.HostDomain,

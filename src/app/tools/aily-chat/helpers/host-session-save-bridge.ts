@@ -10,6 +10,7 @@ import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnRe
 import type {
   LiveHostSessionRecord,
   HostSessionRecord,
+  HostSessionSkillInvocationTraceEntry,
   ChatListItem,
   PersistedHostResponseData,
   PersistedHostTurnResponse,
@@ -17,6 +18,17 @@ import type {
 import { AilyHost } from '../core/host';
 import { normalizeChatSessionType, type ChatResolvedMode, type ChatSelectedMode, type ChatSessionType } from '../core/chat-mode';
 import type { ModelConfig } from '../services/chat.service';
+import {
+  getChatSessionTitleSourcePriority,
+  isCustomSessionTitleSource,
+  normalizeChatSessionTitleCandidate,
+  normalizeChatSessionTitleSource,
+  normalizeChatSessionTitleText,
+  normalizePersistedChatSessionTitleSource,
+  type ChatSessionTitleCandidate,
+  type ChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
 import {
   buildHostProjectionStateFromPersistedRecord,
   buildHostRequestModelFromCanonical,
@@ -58,7 +70,10 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
 
 export interface HostSessionSaveTarget {
   readonly sessionId: string;
-  readonly sessionTitle: string;
+  readonly sessionTitleCandidate?: ChatSessionTitleCandidate;
+  readonly sessionTitle?: string;
+  readonly sessionTitleSource?: ChatSessionTitleSource;
+  readonly sessionTitleRevision?: number;
   readonly sessionType: ChatSessionType;
   readonly providerOptions: HostSessionProviderOptions;
   readonly selectedMode: ChatSelectedMode;
@@ -168,6 +183,12 @@ export class HostSessionSaveBridge {
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
         : {}),
+      ...(this.ctx.chatService.currentSessionApprovalsReviewer
+        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
+        : {}),
+      ...(this.ctx.chatService.currentSessionApprovalPolicy
+        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
+        : {}),
     };
     const inputState = resolvedMode
       ? buildHostSessionCurrentPickerInputStateFromResolvedMode(resolvedMode, providerOptions)
@@ -179,15 +200,42 @@ export class HostSessionSaveBridge {
       selectedMode,
       undefined,
       providerOptions.permissionLevel,
+      providerOptions.approvalsReviewer,
+      providerOptions.approvalPolicy,
     );
-    const persistedTitle = typeof persistedRecord?.metadata?.title === 'string'
-      ? persistedRecord.metadata.title.trim()
+    const persistedTitle = normalizeChatSessionTitleText(persistedRecord?.metadata?.title);
+    const persistedTitleSource = normalizePersistedChatSessionTitleSource(persistedRecord?.metadata?.titleSource);
+    const persistedDefaultTitle = normalizeChatSessionTitleText(persistedRecord?.metadata?.defaultTitle);
+    const saveTargetTitleCandidate = normalizeChatSessionTitleCandidate(saveTarget?.sessionTitleCandidate);
+    const saveTargetTitle = saveTargetTitleCandidate.text;
+    const saveTargetTitleSource = saveTargetTitleCandidate.source;
+    const targetOwnsVisibleTitle = !saveTarget || saveTarget.sessionId === this.ctx.sessionId;
+    const liveTitle = targetOwnsVisibleTitle
+      ? normalizeChatSessionTitleText(this.ctx.sessionTitle)
       : '';
-    const liveTitle = typeof saveTarget?.sessionTitle === 'string' && saveTarget.sessionTitle.trim().length > 0
-      ? saveTarget.sessionTitle.trim()
-      : typeof this.ctx.sessionTitle === 'string' && this.ctx.sessionTitle.trim().length > 0
-        ? this.ctx.sessionTitle.trim()
-        : '';
+    const liveTitleSourceKnown = targetOwnsVisibleTitle
+      && typeof (this.ctx.chatService as { currentSessionTitleSource?: unknown }).currentSessionTitleSource === 'string';
+    const liveTitleSource = targetOwnsVisibleTitle
+      ? normalizeChatSessionTitleSource(this.ctx.chatService.currentSessionTitleSource)
+      : 'empty';
+    const durableTitle = resolveDurableSessionTitle({
+      persistedTitle,
+      persistedTitleSource,
+      saveTargetTitle,
+      saveTargetTitleSource,
+      liveTitle,
+      liveTitleSource,
+      liveTitleSourceKnown,
+    });
+    const defaultTitle = resolveDefaultSessionTitle({
+      persistedTurnResponses,
+      persistedDefaultTitle,
+      saveTargetTitle,
+      saveTargetTitleSource,
+      liveTitle,
+      liveTitleSource,
+    });
+    const skillInvocationTrace = deriveSkillInvocationTrace(currentTurnResponses);
     const record: LiveHostSessionRecord = {
       sessionId,
       turnResponses: persistedTurnResponses,
@@ -198,10 +246,15 @@ export class HostSessionSaveBridge {
         ...(Array.isArray(sessionSnapshot?.activeSkillNames) && sessionSnapshot.activeSkillNames.length > 0
           ? { activeSkillNames: [...sessionSnapshot.activeSkillNames] }
           : {}),
+        ...(skillInvocationTrace.length > 0
+          ? { skillInvocationTrace }
+          : {}),
       },
       metadata: {
         sessionId,
-        title: liveTitle || persistedTitle,
+        title: durableTitle.text,
+        ...(durableTitle.source ? { titleSource: durableTitle.source } : {}),
+        ...(defaultTitle ? { defaultTitle } : {}),
         sessionType: normalizeChatSessionType(saveTarget?.sessionType ?? this.ctx.chatService.currentSessionType),
         projectPath,
         mode: selectedMode.modeId,
@@ -227,7 +280,9 @@ export class HostSessionSaveBridge {
       },
     };
 
-    if (!record.auxiliary?.requestContext && !record.auxiliary?.activeSkillNames?.length) {
+    if (!record.auxiliary?.requestContext
+      && !record.auxiliary?.activeSkillNames?.length
+      && !record.auxiliary?.skillInvocationTrace?.length) {
       delete record.auxiliary;
     }
 
@@ -260,6 +315,8 @@ export class HostSessionSaveBridge {
       target: {
         sessionId: this.ctx.sessionId,
         sessionTitle: this.ctx.sessionTitle,
+        sessionTitleSource: this.ctx.chatService.currentSessionTitleSource,
+        sessionTitleRevision: this.ctx.chatService.currentSessionTitleRevision,
         sessionType: this.ctx.chatService.currentSessionType,
         providerOptions: {
           folderPath: this.resolveProjectPath(),
@@ -397,7 +454,13 @@ function normalizeHostSessionSaveTarget(target: HostSessionSaveTarget | null | u
 
   return {
     sessionId,
-    sessionTitle: typeof target?.sessionTitle === 'string' ? target.sessionTitle : '',
+    sessionTitleCandidate: normalizeChatSessionTitleCandidate(
+      target?.sessionTitleCandidate ?? {
+        text: target?.sessionTitle,
+        source: target?.sessionTitleSource,
+        revision: target?.sessionTitleRevision,
+      },
+    ),
     sessionType: normalizeChatSessionType(target?.sessionType),
     providerOptions: {
       folderPath: target?.providerOptions?.folderPath ?? null,
@@ -422,6 +485,128 @@ function normalizeHostSessionSaveTarget(target: HostSessionSaveTarget | null | u
     ...(Array.isArray(target?.turnResponses) ? { turnResponses: target.turnResponses.map(turn => cloneTurnResponse(turn)) } : {}),
     ...(typeof target?.toolCallingIteration === 'number' ? { toolCallingIteration: target.toolCallingIteration } : {}),
   };
+}
+
+function resolveDurableSessionTitle(input: {
+  persistedTitle: string;
+  persistedTitleSource?: PersistedChatSessionTitleSource;
+  saveTargetTitle: string;
+  saveTargetTitleSource: ChatSessionTitleSource;
+  liveTitle: string;
+  liveTitleSource: ChatSessionTitleSource;
+  liveTitleSourceKnown: boolean;
+}): { text: string; source?: PersistedChatSessionTitleSource } {
+  const {
+    persistedTitle,
+    persistedTitleSource,
+    saveTargetTitle,
+    saveTargetTitleSource,
+    liveTitle,
+    liveTitleSource,
+    liveTitleSourceKnown,
+  } = input;
+
+  const persistedEffectiveSource = persistedTitleSource ?? 'legacy-custom';
+
+  if (saveTargetTitle && isCustomSessionTitleSource(saveTargetTitleSource)) {
+    const normalizedSaveTargetSource = normalizePersistedChatSessionTitleSource(saveTargetTitleSource) ?? 'legacy-custom';
+    if (!persistedTitle || getChatSessionTitleSourcePriority(normalizedSaveTargetSource) >= getChatSessionTitleSourcePriority(persistedEffectiveSource)) {
+      return {
+        text: saveTargetTitle,
+        source: normalizedSaveTargetSource,
+      };
+    }
+  }
+
+  if (persistedTitle) {
+    return {
+      text: persistedTitle,
+      source: persistedEffectiveSource,
+    };
+  }
+
+  if (liveTitle && isCustomSessionTitleSource(liveTitleSource)) {
+    return {
+      text: liveTitle,
+      source: normalizePersistedChatSessionTitleSource(liveTitleSource) ?? 'legacy-custom',
+    };
+  }
+
+  return { text: '' };
+}
+
+function resolveDefaultSessionTitle(input: {
+  persistedTurnResponses: readonly PersistedHostTurnResponse[];
+  persistedDefaultTitle: string;
+  saveTargetTitle: string;
+  saveTargetTitleSource: ChatSessionTitleSource;
+  liveTitle: string;
+  liveTitleSource: ChatSessionTitleSource;
+}): string {
+  const derivedDefaultTitle = deriveDefaultTitleFromTurnResponses(input.persistedTurnResponses);
+  if (derivedDefaultTitle) {
+    return derivedDefaultTitle;
+  }
+
+  if (input.saveTargetTitle && input.saveTargetTitleSource === 'default-first-request') {
+    return input.saveTargetTitle;
+  }
+
+  if (input.liveTitle && input.liveTitleSource === 'default-first-request') {
+    return input.liveTitle;
+  }
+
+  return input.persistedDefaultTitle;
+}
+
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly PersistedHostTurnResponse[]): string {
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
 }
 
 function applyVisibleRequestDisplayContentToTurnResponses(
@@ -847,6 +1032,92 @@ function persistResponseDataOnTurnResponses(
       },
     } satisfies PersistedHostTurnResponse;
   });
+}
+
+function deriveSkillInvocationTrace(
+  turnResponses: readonly Pick<TurnResponseTurn, 'response'>[] | undefined,
+): HostSessionSkillInvocationTraceEntry[] {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return [];
+  }
+
+  const entries = new Map<string, HostSessionSkillInvocationTraceEntry>();
+
+  for (const turn of turnResponses) {
+    for (const part of turn.response.parts ?? []) {
+      if (part.type !== 'tool_call' || part.toolName !== 'load_skill') {
+        continue;
+      }
+
+      const entry = deriveSkillInvocationTraceEntry(part.toolCallId, part.metadata);
+      if (entry) {
+        entries.set(entry.toolCallId, entry);
+      }
+    }
+  }
+
+  return [...entries.values()];
+}
+
+function deriveSkillInvocationTraceEntry(
+  toolCallId: string,
+  metadata: Record<string, unknown> | undefined,
+): HostSessionSkillInvocationTraceEntry | null {
+  if (!metadata || metadata['kind'] !== 'skill') {
+    return null;
+  }
+
+  const skill = metadata['skill'];
+  const relatedFiles = metadata['relatedFiles'];
+  if (!skill || typeof skill !== 'object') {
+    return null;
+  }
+
+  const skillRecord = skill as {
+    name?: unknown;
+    skillUri?: unknown;
+    skillMdPath?: unknown;
+    mode?: unknown;
+  };
+  const normalizedToolCallId = typeof toolCallId === 'string' ? toolCallId.trim() : '';
+  const name = typeof skillRecord.name === 'string' ? skillRecord.name.trim() : '';
+  const skillUri = typeof skillRecord.skillUri === 'string'
+    ? skillRecord.skillUri.trim()
+    : (typeof skillRecord.skillMdPath === 'string' ? skillRecord.skillMdPath.trim() : '');
+  if (!normalizedToolCallId || !name || !skillUri) {
+    return null;
+  }
+
+  return {
+    toolCallId: normalizedToolCallId,
+    name,
+    skillUri,
+    mode: skillRecord.mode === 'fork' ? 'fork' : 'inline',
+    relatedFiles: Array.isArray(relatedFiles)
+      ? relatedFiles
+        .map(file => {
+          if (!file || typeof file !== 'object') {
+            return null;
+          }
+
+          const fileRecord = file as { path?: unknown; uri?: unknown; category?: unknown };
+          const path = typeof fileRecord.path === 'string' ? fileRecord.path.trim() : '';
+          const uri = typeof fileRecord.uri === 'string' ? fileRecord.uri.trim() : '';
+          if (!path || !uri) {
+            return null;
+          }
+
+          return {
+            path,
+            uri,
+            ...(typeof fileRecord.category === 'string' && fileRecord.category.trim().length > 0
+              ? { category: fileRecord.category.trim() }
+              : {}),
+          };
+        })
+        .filter((file): file is HostSessionSkillInvocationTraceEntry['relatedFiles'][number] => !!file)
+      : [],
+  };
 }
 
 function collectResponseSidecarFromProjection(

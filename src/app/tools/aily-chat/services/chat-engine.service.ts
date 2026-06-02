@@ -55,7 +55,7 @@ import {
 } from './request-quota-state.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
 import { ConfigService } from '../../../services/config.service';
-import { isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
+import { applyAutoDiscountToBillingLabel, isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 import {
   normalizeChatSelectedMode,
   resolveChatCurrentMode,
@@ -66,6 +66,10 @@ import {
   type ChatSessionPermissionMode,
   type ChatSurfaceModeId,
 } from '../core/chat-mode';
+import {
+  normalizeChatSessionTitleCandidate,
+  normalizeChatSessionTitleText,
+} from '../core/chat-session-title';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
@@ -949,9 +953,76 @@ export class ChatEngineService implements IChatContext {
 
   get currentMode() { return this.chatService.currentMode; }
 
+  get currentSessionPermissionMode() {
+    return this.resolveRuntimeSessionProviderOptions()?.permissionMode
+      ?? this.chatService.currentSessionPermissionMode;
+  }
+
   get currentSessionPermissionLevel() {
     return this.resolveRuntimeSessionProviderOptions()?.permissionLevel
       ?? this.chatService.currentSessionPermissionLevel;
+  }
+
+  get currentSessionApprovalsReviewer() {
+    return this.resolveRuntimeSessionProviderOptions()?.approvalsReviewer
+      ?? this.chatService.currentSessionApprovalsReviewer;
+  }
+
+  get currentSessionApprovalPolicy() {
+    return this.resolveRuntimeSessionProviderOptions()?.approvalPolicy
+      ?? this.chatService.currentSessionApprovalPolicy;
+  }
+
+  applyComposerPermissionPreset(action: string, sessionId?: string | null): void {
+    const normalizedAction = typeof action === 'string' ? action.trim() : '';
+    if (!normalizedAction) {
+      return;
+    }
+
+    const targetSessionId = this.resolveRuntimeSessionIdForOwner(sessionId);
+    const currentProviderOptions = this.resolveRuntimeSessionProviderOptions(targetSessionId);
+    let nextProviderOptions: HostSessionProviderOptions | null = null;
+
+    if (normalizedAction === 'permission-default') {
+      nextProviderOptions = normalizeHostSessionProviderOptions({
+        ...currentProviderOptions,
+        permissionMode: 'default',
+        permissionLevel: undefined,
+        approvalsReviewer: 'user',
+        approvalPolicy: 'on_request',
+      });
+    } else if (normalizedAction === 'permission-auto-review') {
+      nextProviderOptions = normalizeHostSessionProviderOptions({
+        ...currentProviderOptions,
+        permissionMode: 'default',
+        permissionLevel: undefined,
+        approvalsReviewer: 'auto_review',
+        approvalPolicy: 'on_request',
+      });
+    } else if (normalizedAction === 'permission-full-access') {
+      nextProviderOptions = normalizeHostSessionProviderOptions({
+        ...currentProviderOptions,
+        permissionMode: 'bypassPermissions',
+        permissionLevel: undefined,
+        approvalsReviewer: 'user',
+        approvalPolicy: 'on_request',
+      });
+    }
+
+    if (!nextProviderOptions) {
+      return;
+    }
+
+    this.rememberRuntimeSessionProviderOptions(targetSessionId, nextProviderOptions);
+    this.chatService.setCurrentSessionPermissionMode(nextProviderOptions.permissionMode);
+    this.chatService.setCurrentSessionPermissionLevel(nextProviderOptions.permissionLevel);
+    this.chatService.setCurrentSessionApprovalsReviewer?.(nextProviderOptions.approvalsReviewer);
+    this.chatService.setCurrentSessionApprovalPolicy?.(nextProviderOptions.approvalPolicy);
+    this.syncExecutionModeGuidanceNotice(
+      nextProviderOptions.permissionLevel,
+      nextProviderOptions.approvalsReviewer,
+      nextProviderOptions.approvalPolicy,
+    );
   }
 
   get currentCustomAgentTarget() { return this.chatService.currentCustomAgentTarget; }
@@ -985,7 +1056,7 @@ export class ChatEngineService implements IChatContext {
   }
 
   get currentModelChipLabel(): string {
-    const modelName = this.currentModelName;
+    const modelName = this.getCurrentModelChipBaseLabel();
     if (!modelName) {
       return '';
     }
@@ -996,6 +1067,22 @@ export class ChatEngineService implements IChatContext {
     }
 
     return modelName;
+  }
+
+  private getCurrentModelChipBaseLabel(): string {
+    const selectedModel = this.chatService.currentModel;
+    const resolvedModelName = typeof this.chatService.resolvedActiveModel?.name === 'string' && this.chatService.resolvedActiveModel.name.trim()
+      ? this.chatService.resolvedActiveModel.name.trim()
+      : '';
+
+    if (isDefaultAutoPresetSelected(selectedModel) && resolvedModelName) {
+      const selectedLabel = typeof selectedModel?.name === 'string' && selectedModel.name.trim()
+        ? selectedModel.name.trim()
+        : 'Auto';
+      return `${selectedLabel} -> ${resolvedModelName}`;
+    }
+
+    return this.currentModelName ?? '';
   }
 
   private getNavigationConfigurationSummary(model: { presetId?: string; model?: string } | null | undefined): string | undefined {
@@ -1031,6 +1118,13 @@ export class ChatEngineService implements IChatContext {
   }
 
   get currentModelBillingLabel(): string | undefined {
+    const resolvedBillingLabel = this.chatService.resolvedActiveModelBillingLabel;
+    if (resolvedBillingLabel) {
+      return isDefaultAutoPresetSelected(this.chatService.currentModel)
+        ? applyAutoDiscountToBillingLabel(resolvedBillingLabel)
+        : resolvedBillingLabel;
+    }
+
     return this.ailyChatConfigService.getModelBillingLabel(this.getSelectedDisplayModel());
   }
 
@@ -1565,6 +1659,8 @@ export class ChatEngineService implements IChatContext {
       get chatService() { return thisEngine.chatService; },
       get currentSessionPath() { return thisEngine.resolveRuntimeSessionProviderOptions()?.folderPath ?? thisEngine.chatService.currentSessionPath; },
       get currentSessionPermissionMode() { return thisEngine.resolveRuntimeSessionProviderOptions()?.permissionMode ?? thisEngine.chatService.currentSessionPermissionMode; },
+      get currentSessionApprovalsReviewer() { return thisEngine.resolveRuntimeSessionProviderOptions()?.approvalsReviewer ?? thisEngine.chatService.currentSessionApprovalsReviewer; },
+      get currentSessionApprovalPolicy() { return thisEngine.resolveRuntimeSessionProviderOptions()?.approvalPolicy ?? thisEngine.chatService.currentSessionApprovalPolicy; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
       get mcpService() { return thisEngine.mcpService; },
       buildExecutionSaveTarget: (sessionId) => thisEngine.buildExecutionSaveTarget(sessionId),
@@ -1737,6 +1833,12 @@ export class ChatEngineService implements IChatContext {
 
     // H1: wire the cache as the host stream listener for incremental turn events.
     this.lexStream.setHostStreamListener(this.liveHostRequestGraphCache);
+
+    this.syncExecutionModeGuidanceNotice(
+      this.chatService.currentSessionPermissionLevel,
+      this.chatService.currentSessionApprovalsReviewer,
+      this.chatService.currentSessionApprovalPolicy,
+    );
   }
 
   /** 注册 OnPush CD 回调（由 component 调用 cdr.markForCheck） */
@@ -1879,6 +1981,12 @@ export class ChatEngineService implements IChatContext {
         ...(this.chatService.currentSessionPermissionLevel
           ? { permissionLevel: this.chatService.currentSessionPermissionLevel }
           : {}),
+        ...(this.chatService.currentSessionApprovalsReviewer
+          ? { approvalsReviewer: this.chatService.currentSessionApprovalsReviewer }
+          : {}),
+        ...(this.chatService.currentSessionApprovalPolicy
+          ? { approvalPolicy: this.chatService.currentSessionApprovalPolicy }
+          : {}),
       };
     const rawProviderOptions = targetSessionId
       ? this.chatSessionItemsService?.sessionItemController?.getChatSessionProviderOptions?.(targetSessionId)
@@ -1976,18 +2084,31 @@ export class ChatEngineService implements IChatContext {
         findEntry?: (sessionId: string, projectPathHint?: string | null) => { title?: string } | null | undefined;
       }).findEntry?.(targetSessionId);
 
-    const fallbackTitle = targetSessionId === (this.chatService.currentSessionId ?? '').trim()
-      ? (this.sessionTitle || this.chatService.currentSessionTitle || '')
+    const persistedTitle = normalizeChatSessionTitleText(sessionEntry?.title);
+    const isCurrentSession = targetSessionId === (this.chatService.currentSessionId ?? '').trim();
+    const fallbackTitle = isCurrentSession
+      ? normalizeChatSessionTitleText(this.sessionTitle || this.chatService.currentSessionTitle || '')
       : '';
-    const sessionTitle = typeof sessionEntry?.title === 'string'
-      ? sessionEntry.title
-      : fallbackTitle;
+    const currentTitleCandidate = isCurrentSession
+      ? (typeof this.chatService.readCurrentSessionTitleCandidate === 'function'
+        ? this.chatService.readCurrentSessionTitleCandidate()
+        : normalizeChatSessionTitleCandidate({
+          text: this.chatService.currentSessionTitle,
+          source: this.chatService.currentSessionTitleSource,
+          revision: this.chatService.currentSessionTitleRevision,
+        }))
+      : normalizeChatSessionTitleCandidate(undefined);
+    const sessionTitleCandidate = normalizeChatSessionTitleCandidate({
+      text: persistedTitle || fallbackTitle,
+      source: persistedTitle ? 'restored-custom' : currentTitleCandidate.source,
+      revision: currentTitleCandidate.revision,
+    });
     const sessionType = this.chatSessionItemsService.sessionItemController.getChatSessionType?.(targetSessionId, projectPathHint)
       ?? this.chatService.currentSessionType;
 
     return {
       sessionId: targetSessionId,
-      sessionTitle,
+      sessionTitleCandidate,
       sessionType,
       providerOptions,
       selectedMode,
@@ -2286,6 +2407,15 @@ export class ChatEngineService implements IChatContext {
         pendingRequest: this._isWaiting,
         needsInput: false,
         attachedView: !!this.chatTextareaRef,
+        ...(typeof this.chatService?.currentSessionTitle === 'string'
+          ? { title: this.chatService.currentSessionTitle }
+          : {}),
+        ...(typeof this.chatService?.currentSessionTitleSource === 'string'
+          ? { titleSource: this.chatService.currentSessionTitleSource }
+          : {}),
+        ...(typeof this.chatService?.currentSessionTitleRevision === 'number' && Number.isFinite(this.chatService.currentSessionTitleRevision)
+          ? { titleRevision: Math.floor(this.chatService.currentSessionTitleRevision) }
+          : {}),
         contextBudgetOverlayPresent: !!viewOverlay?.contextBudgetSnapshot,
         inputNoticeOverlayPresent: !!viewOverlay?.chatInputNotice,
       },
@@ -2310,6 +2440,13 @@ export class ChatEngineService implements IChatContext {
       this as unknown as Record<string, unknown>,
       sessionId,
     );
+    const titleCandidate = normalizeChatSessionTitleCandidate(
+      saveTarget?.sessionTitleCandidate ?? {
+        text: saveTarget?.sessionTitle,
+        source: saveTarget?.sessionTitleSource,
+        revision: saveTarget?.sessionTitleRevision,
+      },
+    );
 
     const runtimeStatePatch = {
       turnResponses: Array.isArray(saveTarget?.turnResponses)
@@ -2328,6 +2465,9 @@ export class ChatEngineService implements IChatContext {
         pendingRequest: false,
         needsInput: false,
         attachedView: false,
+        ...(titleCandidate.text ? { title: titleCandidate.text } : {}),
+        ...(titleCandidate.text && titleCandidate.source !== 'empty' ? { titleSource: titleCandidate.source } : {}),
+        ...(titleCandidate.text ? { titleRevision: titleCandidate.revision } : {}),
       },
     };
     if (this.chatSessionRuntimeRegistry) {
@@ -2853,6 +2993,11 @@ Do not create non-existent boards and libraries.
 
   saveCurrentSession(): void { this.session.saveCurrentSession(); }
   refreshHistoryList(): void { this.session.refreshHistoryList(); }
+  requestSessionListRefresh(input: {
+    reason: 'open' | 'entry' | 'reopen' | 'filter' | 'state' | 'runtime' | 'manual' | 'project' | 'service-created' | 'shell';
+    scope: 'summary' | 'visible-details' | 'full';
+    priority: 'after-paint' | 'normal' | 'idle';
+  }): void { this.session.requestSessionListRefresh(input); }
   switchToSession(
     sessionId: string,
     options?: {
@@ -3122,10 +3267,12 @@ Do not create non-existent boards and libraries.
     const currentTitle = typeof this.chatService.currentSessionTitle === 'string'
       ? this.chatService.currentSessionTitle
       : '';
-    if (isMeaningfulRuntimeSessionTitle(currentTitle)) {
+    if (isMeaningfulRuntimeSessionTitle(currentTitle)
+      && this.chatService.currentSessionTitleSource !== 'default-first-request') {
       console.info('[AilyChat][SendTitle]', {
         event: 'skip-default-title-existing-meaningful',
         currentTitle,
+        currentSource: this.chatService.currentSessionTitleSource,
       });
       return;
     }
@@ -3140,7 +3287,14 @@ Do not create non-existent boards and libraries.
       return;
     }
 
-    this.chatService.currentSessionTitle = defaultTitle;
+    if (typeof this.chatService.setCurrentSessionTitle === 'function') {
+      this.chatService.setCurrentSessionTitle({
+        text: defaultTitle,
+        source: 'default-first-request',
+      });
+    } else {
+      this.chatService.currentSessionTitle = defaultTitle;
+    }
     console.info('[AilyChat][SendTitle]', {
       event: 'apply-default-title',
       title: defaultTitle,
@@ -3352,6 +3506,13 @@ Do not create non-existent boards and libraries.
 
     this.chatService.setCurrentSessionPermissionMode(state.providerOptions.permissionMode);
     this.chatService.setCurrentSessionPermissionLevel(state.providerOptions.permissionLevel);
+    this.chatService.setCurrentSessionApprovalsReviewer?.(state.providerOptions.approvalsReviewer);
+    this.chatService.setCurrentSessionApprovalPolicy?.(state.providerOptions.approvalPolicy);
+    this.syncExecutionModeGuidanceNotice(
+      state.providerOptions.permissionLevel,
+      state.providerOptions.approvalsReviewer,
+      state.providerOptions.approvalPolicy,
+    );
 
     if (state.selectedMode.customAgentTarget) {
       await this.switchToCustomAgent(state.selectedMode);
@@ -3457,6 +3618,13 @@ Do not create non-existent boards and libraries.
     }
     if (shouldProjectToVisibleOwner) {
       this.chatService.setCurrentSessionPermissionLevel(permissionLevel);
+      this.chatService.setCurrentSessionApprovalsReviewer?.(nextProviderOptions?.approvalsReviewer);
+      this.chatService.setCurrentSessionApprovalPolicy?.(nextProviderOptions?.approvalPolicy);
+      this.syncExecutionModeGuidanceNotice(
+        permissionLevel,
+        nextProviderOptions?.approvalsReviewer,
+        nextProviderOptions?.approvalPolicy,
+      );
     }
 
     if (!shouldStartImplementationAfterPlanReview(pendingReview, result)) {
@@ -3542,6 +3710,18 @@ Do not create non-existent boards and libraries.
     } catch {
       return;
     }
+  }
+
+  private syncExecutionModeGuidanceNotice(
+    permissionLevel: unknown,
+    approvalsReviewer: unknown,
+    approvalPolicy: unknown,
+  ): void {
+    this.chatInputNoticeStateService?.syncExecutionModeNotice?.({
+      permissionLevel: typeof permissionLevel === 'string' ? permissionLevel : null,
+      approvalsReviewer: typeof approvalsReviewer === 'string' ? approvalsReviewer : null,
+      approvalPolicy: typeof approvalPolicy === 'string' ? approvalPolicy : null,
+    });
   }
 
   private refreshAuthQuotaStateAfterSuccessfulTurn(sessionId?: string | null): void {

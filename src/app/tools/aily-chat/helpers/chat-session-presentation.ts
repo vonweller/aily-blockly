@@ -3,6 +3,7 @@ import {
   normalizeChatModeId,
   type ChatSessionInputState,
 } from '../core/chat-mode';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import { normalizeHostSessionListItemStatus, type HostSessionListItemStatus } from './host-session-item-controller';
 import type { ChatSessionListItem } from '../services/menu-manager.service';
 
@@ -155,6 +156,8 @@ export function groupChatSessionItemsByDate(
   items: readonly ChatSessionListItem[],
   options?: { includeArchived?: boolean },
 ): readonly ChatSessionInventoryGroup[] {
+  const groupingSpan = ChatPerformanceTracer.begin('session_list.grouping', `count=${items.length}`);
+  ChatPerformanceTracer.increment('session_list.grouping');
   const now = Date.now();
   const dayThreshold = 24 * 60 * 60 * 1000;
   const weekThreshold = 7 * dayThreshold;
@@ -202,7 +205,9 @@ export function groupChatSessionItemsByDate(
     }
   }
 
-  return buckets.filter(group => group.items.length > 0);
+  const groups = buckets.filter(group => group.items.length > 0);
+  ChatPerformanceTracer.end(groupingSpan, 'session_list.grouping', `groups=${groups.length}`);
+  return groups;
 }
 
 export function groupChatSessionPickerItemsByDate(items: readonly ChatSessionListItem[]): readonly ChatSessionPickerGroup[] {

@@ -60,7 +60,7 @@ export interface BlocklySessionCustomizationItem {
   readonly groupKey?: string;
   readonly badge?: string;
   readonly badgeTooltip?: string;
-  readonly source?: AgentSource | 'builtin' | 'global' | 'url' | 'plugin';
+  readonly source?: AgentSource | 'url';
 }
 
 export interface BlocklySessionCustomizationItemProvider {
@@ -455,19 +455,21 @@ function normalizeSkillContributionUri(skillPath: string): string {
   return normalized.startsWith('/') ? `file://${encoded}` : `file:///${encoded}`;
 }
 
-function mapSkillOriginToCustomizationSource(originType: 'builtin' | 'project' | 'global' | 'hub' | 'url'): AgentSource | 'builtin' | 'global' | 'url' {
+function mapSkillOriginToCustomizationSource(originType: 'builtin' | 'project' | 'user' | 'hub' | 'url'): AgentSource | 'url' {
   switch (originType) {
     case 'builtin':
-      return 'builtin';
-    case 'global':
-      return 'global';
+      return 'built-in';
+    case 'user':
+      return 'user';
     case 'project':
       return 'project';
+    case 'hub':
+      return 'plugin';
     case 'url':
       return 'url';
-    default:
-      return 'host';
   }
+
+  return 'host';
 }
 
 function normalizeFilesystemPath(value: string): string {
@@ -536,7 +538,7 @@ function buildInstructionFileCustomizationItem(
 }
 
 function buildSkillCustomizationItem(
-  skill: { readonly skillMdPath: string; readonly metadata: { readonly name: string; readonly description?: string }; readonly origin: { readonly type: 'builtin' | 'project' | 'global' | 'hub' | 'url' } },
+  skill: { readonly skillMdPath: string; readonly metadata: { readonly name: string; readonly description?: string }; readonly origin: { readonly type: 'builtin' | 'project' | 'user' | 'hub' | 'url' } },
   sessionType: string,
 ): BlocklySessionCustomizationItem | undefined {
   const uri = normalizeSkillContributionUri(skill.skillMdPath);

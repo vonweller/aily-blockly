@@ -319,6 +319,10 @@ export interface AilyChatConfig {
     userAgentFolders?: string[];
     /** 项目级 agent folders，扫描其中的 `.agent.md` / legacy `.chatmode.md`。 */
     projectAgentFolders?: string[];
+    /** 用户级 skill folders，扫描其中的 `<skillName>/SKILL.md`。 */
+    userSkillFolders?: string[];
+    /** 项目级 skill folders，扫描其中的 `<skillName>/SKILL.md`。 */
+    projectSkillFolders?: string[];
     /** 对齐 upstream ChatModes：若生产态已绑定 session customization item provider，则 custom agents 优先从该 source 读取。 */
     useChatSessionCustomizationsForCustomAgents?: boolean;
     /** 在 custom agent picker 中隐藏的 customAgentTarget 列表。 */
@@ -329,6 +333,10 @@ export interface AilyChatConfig {
     terminalDenyList?: string[];
     /** 是否继承 lex 内建 innocuous terminal allow list。 */
     terminalInheritDefaultAllowList?: boolean;
+    /** reviewed actions 的默认 reviewer。 */
+    approvalsReviewer?: 'user' | 'auto_review';
+    /** reviewed actions 的默认 approval policy。 */
+    approvalPolicy?: 'on_request' | 'never';
     /** 当前工作区维度持久化的 lex permission rules。键为规范化后的 projectPath。 */
     workspacePermissionRules?: WorkspacePermissionRulesByProject;
     /** 当前工作区维度持久化的 tool+arguments approval combination keys。 */
@@ -397,8 +405,12 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     projectInstructionFolders: [],
     userAgentFolders: [],
     projectAgentFolders: [],
+    userSkillFolders: [],
+    projectSkillFolders: [],
     useChatSessionCustomizationsForCustomAgents: false,
     hiddenCustomAgentTargets: [],
+    approvalsReviewer: 'user',
+    approvalPolicy: 'on_request',
 };
 
 /**
@@ -778,6 +790,22 @@ export class AilyChatConfigService {
         this.config.projectAgentFolders = normalizeAgentFolderPaths(value);
     }
 
+    get userSkillFolders(): string[] {
+        return normalizeSkillFolderPaths(this.config.userSkillFolders);
+    }
+
+    set userSkillFolders(value: string[]) {
+        this.config.userSkillFolders = normalizeSkillFolderPaths(value);
+    }
+
+    get projectSkillFolders(): string[] {
+        return normalizeSkillFolderPaths(this.config.projectSkillFolders);
+    }
+
+    set projectSkillFolders(value: string[]) {
+        this.config.projectSkillFolders = normalizeSkillFolderPaths(value);
+    }
+
     get useChatSessionCustomizationsForCustomAgents(): boolean {
         return this.config.useChatSessionCustomizationsForCustomAgents === true;
     }
@@ -818,6 +846,34 @@ export class AilyChatConfigService {
 
     set terminalInheritDefaultAllowList(value: boolean | undefined) {
         this.config.terminalInheritDefaultAllowList = value;
+    }
+
+    get approvalsReviewer(): 'user' | 'auto_review' {
+        return this.config.approvalsReviewer === 'auto_review'
+            ? 'auto_review'
+            : 'user';
+    }
+
+    set approvalsReviewer(value: 'user' | 'auto_review') {
+        this.config.approvalsReviewer = value === 'auto_review' ? 'auto_review' : 'user';
+    }
+
+    get approvalPolicy(): 'on_request' | 'never' {
+        return this.config.approvalPolicy === 'never'
+            ? 'never'
+            : 'on_request';
+    }
+
+    set approvalPolicy(value: 'on_request' | 'never') {
+        this.config.approvalPolicy = value === 'never' ? 'never' : 'on_request';
+    }
+
+    getLexApprovalsReviewer(): 'user' | 'auto_review' {
+        return this.approvalsReviewer;
+    }
+
+    getLexApprovalPolicy(): 'on_request' | 'never' {
+        return this.approvalPolicy;
     }
 
     getLexTerminalPolicy(): LexTerminalPolicyConfig | undefined {
@@ -2540,6 +2596,8 @@ export class AilyChatConfigService {
 
         this.config.enabledTools = normalizeConfiguredToolNames(this.config.enabledTools);
         this.config.disabledTools = normalizeConfiguredToolNames(this.config.disabledTools);
+        this.config.userSkillFolders = normalizeSkillFolderPaths(this.config.userSkillFolders);
+        this.config.projectSkillFolders = normalizeSkillFolderPaths(this.config.projectSkillFolders);
         this.config.hiddenCustomAgentTargets = normalizeCustomAgentTargets(this.config.hiddenCustomAgentTargets);
     }
 }
@@ -2643,6 +2701,10 @@ function normalizeInstructionFolderPaths(value: string[] | undefined): string[] 
 }
 
 function normalizeAgentFolderPaths(value: string[] | undefined): string[] {
+    return normalizeInstructionFolderPaths(value);
+}
+
+function normalizeSkillFolderPaths(value: string[] | undefined): string[] {
     return normalizeInstructionFolderPaths(value);
 }
 
