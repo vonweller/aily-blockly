@@ -103,7 +103,9 @@ export class ChatSwitchCoordinator {
     }
 
     if (this.ctx.isWaiting) {
-      this.ctx.chatService.saveChatModel(model);
+      if (this.ctx.chatService.saveChatModel(model) === false) {
+        return;
+      }
       this.assignPendingSwitch(model, null);
       this.ctx.message.info('模型将在当前对话完成后切换');
       return;
@@ -152,7 +154,9 @@ export class ChatSwitchCoordinator {
     }
 
     if (this.ctx.isWaiting) {
-      this.ctx.chatService.saveChatModel(nextModel);
+      if (this.ctx.chatService.saveChatModel(nextModel) === false) {
+        return;
+      }
       this.assignPendingSwitch(nextModel, null);
       this.ctx.message.info(this.getPendingConfigurationMessage(normalizedUpdate));
       return;
@@ -272,7 +276,9 @@ export class ChatSwitchCoordinator {
   }
 
   private async doSwitchModel(model: ModelConfig): Promise<void> {
-    this.ctx.chatService.saveChatModel(model);
+    if (this.ctx.chatService.saveChatModel(model) === false) {
+      return;
+    }
 
     try {
       await this.ctx.lexStream.agent.ensureAgent();

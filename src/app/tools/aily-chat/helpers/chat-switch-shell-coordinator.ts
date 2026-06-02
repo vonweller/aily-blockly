@@ -105,6 +105,10 @@ export class ChatSwitchShellCoordinator {
   modelMenuClick(item: IMenuItem): void {
     this.deps.menuManager.showModelMenu = false;
 
+    if (item.disabled) {
+      return;
+    }
+
     const model = item.data?.model as ModelConfig | undefined;
     if (model?.model && !isSameModelSelection(model, this.deps.getCurrentModel())) {
       void this.callbacks.switchToModel(model);

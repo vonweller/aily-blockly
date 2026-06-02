@@ -25,7 +25,7 @@ type ChatSendCoordinatorContext = Pick<
   IAgentLifecycle,
   'isCancelled' | 'isCompleted' | 'isWaiting' | 'pendingUserInput' | 'activeToolExecutions' | 'pendingEditFeedback'
 > & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IProjectContext, 'currentMode'>
+  & Pick<IProjectContext, 'currentMode' | 'currentModel'>
   & {
     readonly currentCustomAgentTarget?: string;
     readonly currentSessionPermissionLevel?: string;
@@ -149,7 +149,39 @@ export class ChatSendCoordinator {
   applyRuntimeRequestMetadata(
     requestMetadata?: UserTurnPayload['requestMetadata'],
   ): UserTurnPayload['requestMetadata'] {
-    return this.applyRuntimePromptContext(this.applyRuntimeModeMetadata(requestMetadata));
+    return this.applyRuntimePromptContext(
+      this.applyRuntimeModelRoutingMetadata(
+        this.applyRuntimeModeMetadata(requestMetadata),
+      ),
+    );
+  }
+
+  private applyRuntimeModelRoutingMetadata(
+    requestMetadata?: UserTurnPayload['requestMetadata'],
+  ): UserTurnPayload['requestMetadata'] {
+    const rawModelRouting = requestMetadata?.['modelRouting'];
+    const requestedModel = typeof this.ctx.currentModel?.model === 'string' && this.ctx.currentModel.model.trim().length > 0
+      ? this.ctx.currentModel.model.trim()
+      : undefined;
+    const requestedPresetId = typeof this.ctx.currentModel?.presetId === 'string' && this.ctx.currentModel.presetId.trim().length > 0
+      ? this.ctx.currentModel.presetId.trim()
+      : undefined;
+    const existingModelRouting = rawModelRouting && typeof rawModelRouting === 'object' && !Array.isArray(rawModelRouting)
+      ? rawModelRouting as Record<string, unknown>
+      : undefined;
+
+    if (!requestedModel && !requestedPresetId && !existingModelRouting) {
+      return requestMetadata;
+    }
+
+    return {
+      ...(requestMetadata ?? {}),
+      modelRouting: {
+        ...(requestedModel ? { requestedModel } : {}),
+        ...(requestedPresetId ? { requestedPresetId } : {}),
+        ...(existingModelRouting ?? {}),
+      },
+    };
   }
 
   prepareSend(sender: string, content: string): PreparedUserSend | null {

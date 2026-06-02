@@ -4036,7 +4036,7 @@ async function maybeAutoSwitchToDefaultModelAfterRateLimit(engine: {
   hostResponseProjection?: HostResponseProjection | null;
   ailyChatConfigService?: {
     getDefaultModelPresetId: () => string;
-    resolvePresetModel: (presetId: string) => ModelConfig | null;
+    resolveSelectablePresetModel: (presetId: string) => ModelConfig | null;
   };
   switchToModel?: (model: ModelConfig) => Promise<void>;
 }): Promise<void> {
@@ -4058,7 +4058,7 @@ async function maybeAutoSwitchToDefaultModelAfterRateLimit(engine: {
     return;
   }
 
-  const autoModel = configService.resolvePresetModel(configService.getDefaultModelPresetId());
+  const autoModel = configService.resolveSelectablePresetModel(configService.getDefaultModelPresetId());
   if (!autoModel || typeof engine.switchToModel !== 'function') {
     return;
   }

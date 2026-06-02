@@ -382,7 +382,6 @@ export class AilyChatComponent implements OnDestroy {
           uiService: this.uiService,
           onboardingService: this.onboardingService,
         }));
-        this.ailyChatConfigService.reloadRemoteModelCatalog('host_initialized');
       },
       loadMermaid: () => import('mermaid'),
       setMermaidInstance: (instance) => {
@@ -411,6 +410,7 @@ export class AilyChatComponent implements OnDestroy {
     ChatPerformanceTracer.increment('entry_open.component_ng_on_init');
     ChatPerformanceTracer.mark('entry_open.component_ng_on_init');
     this.lifecycleCoordinator.initialize();
+    this.ailyChatConfigService.reloadRemoteModelCatalog('chat_view_open');
     this.syncSessionListDisplayState();
   }
 

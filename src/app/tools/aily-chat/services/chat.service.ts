@@ -420,7 +420,7 @@ export class ChatService {
    */
   private textSubject = new ReplaySubject<ChatTextMessage | null>(1);
   private static instance: ChatService;
-  private static readonly maxRecentModelPresetIds = 3;
+  private static readonly maxRecentModelPresetIds = 5;
 
 
   constructor(
@@ -449,6 +449,7 @@ export class ChatService {
 
     this.ailyChatConfigService.modelCatalogChanged$.subscribe(() => {
       this.refreshCurrentModelRuntimeMetadata();
+      this.notifySessionInputStateChanged();
     });
   }
 
@@ -1549,7 +1550,7 @@ export class ChatService {
 
     // 如果没有保存模型或保存的模型不可用，优先回退到内置 Auto preset。
     if (!this.currentModel) {
-      this.currentModel = this.ailyChatConfigService.resolvePresetModel(
+      this.currentModel = this.ailyChatConfigService.resolveSelectablePresetModel(
         this.ailyChatConfigService.getDefaultModelPresetId(),
       );
     }
@@ -1575,10 +1576,13 @@ export class ChatService {
   /**
    * 保存AI模型到配置
    */
-  saveChatModel(model: ModelConfig, options?: { rememberRecent?: boolean }): void {
-    this.currentModel = this.applyPersistedLanguageModelConfiguration(
-      this.ailyChatConfigService.normalizeRuntimeModel(model),
-    );
+  saveChatModel(model: ModelConfig, options?: { rememberRecent?: boolean }): boolean {
+    const normalizedModel = this.resolveSelectableRuntimeModel(model);
+    if (!normalizedModel) {
+      return false;
+    }
+
+    this.currentModel = this.applyPersistedLanguageModelConfiguration(normalizedModel);
     this.clearResolvedActiveModel();
     this.contextBudgetService.updateModelContextSize(this.currentModel);
     const config = AilyHost.get().config;
@@ -1589,6 +1593,7 @@ export class ChatService {
       }
     }
     config.save?.();
+    return true;
   }
 
   getRecentModelPresetIds(): string[] {
@@ -1600,7 +1605,11 @@ export class ChatService {
     return [...new Set(rawRecentPresetIds
       .filter((presetId): presetId is string => typeof presetId === 'string')
       .map(presetId => presetId.trim())
-      .filter(presetId => presetId.length > 0 && presetId !== this.ailyChatConfigService.getDefaultModelPresetId()))]
+      .filter(presetId => presetId.length > 0 && presetId !== this.ailyChatConfigService.getDefaultModelPresetId())
+      .filter((presetId) => {
+        const preset = this.ailyChatConfigService.getModelPresetById(presetId);
+        return !preset || preset.enabled;
+      }))]
       .slice(0, ChatService.maxRecentModelPresetIds);
   }
 
@@ -1614,7 +1623,11 @@ export class ChatService {
     return [...new Set(rawPinnedModelIds
       .filter((modelId): modelId is string => typeof modelId === 'string')
       .map(modelId => modelId.trim())
-      .filter(modelId => modelId.length > 0 && modelId !== defaultPresetId))];
+      .filter(modelId => modelId.length > 0 && modelId !== defaultPresetId)
+      .filter((modelId) => {
+        const preset = this.ailyChatConfigService.getModelPresetById(modelId);
+        return !preset || preset.enabled;
+      }))];
   }
 
   pinModelId(modelId: string): void {
@@ -1674,11 +1687,36 @@ export class ChatService {
       }
     }
 
-    this.currentModel = this.ailyChatConfigService.resolvePresetModel(
+    this.currentModel = this.ailyChatConfigService.resolveSelectablePresetModel(
       this.ailyChatConfigService.getDefaultModelPresetId(),
     );
     this.refreshResolvedActiveModelRuntimeMetadata();
     this.contextBudgetService.updateModelContextSize(this.currentModel);
+  }
+
+  private resolveSelectableRuntimeModel(model: ModelConfig | null | undefined): ModelConfig | null {
+    if (!model) {
+      return null;
+    }
+
+    const explicitPresetId = typeof model.presetId === 'string' ? model.presetId.trim() : '';
+    const implicitPresetId = !explicitPresetId && typeof model.model === 'string'
+      ? this.ailyChatConfigService.getModelPresetById(model.model)?.id ?? ''
+      : '';
+    const presetId = explicitPresetId || implicitPresetId;
+    if (presetId) {
+      const selectablePresetModel = this.ailyChatConfigService.resolveSelectablePresetModel(presetId);
+      if (!selectablePresetModel) {
+        return null;
+      }
+
+      return this.ailyChatConfigService.normalizeRuntimeModel({
+        ...selectablePresetModel,
+        reasoningEffort: model.reasoningEffort ?? selectablePresetModel.reasoningEffort,
+      });
+    }
+
+    return this.ailyChatConfigService.normalizeRuntimeModel(model);
   }
 
   private refreshResolvedCurrentMode(): void {

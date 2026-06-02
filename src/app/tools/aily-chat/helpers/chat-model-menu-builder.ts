@@ -17,6 +17,7 @@ type ChatCurrentModel = NonNullable<ChatService['currentModel']>;
 interface ModelMenuPresetEntry {
   readonly presetId: string;
   readonly sortName: string;
+  readonly sortMultiplier?: number;
   readonly enabled: boolean;
   readonly item: IMenuItem;
 }
@@ -103,28 +104,39 @@ class ChatModelMenuBuilder {
     }
 
     const presetEntries = presets
-      .map((preset) => {
+      .map<ModelMenuPresetEntry | null>((preset) => {
         const isDefaultPreset = preset.id === defaultPresetId;
         visiblePresetIds.add(preset.id);
-        const model = this.deps.ailyChatConfigService.resolvePresetModel(preset.id);
-        if (!model) {
+        const displayModel = this.deps.ailyChatConfigService.resolvePresetDisplayModel(preset.id);
+        if (!displayModel) {
           return null;
+        }
+
+        const executableModel = preset.enabled
+          ? this.deps.ailyChatConfigService.resolveSelectablePresetModel(preset.id)
+          : null;
+
+        const item = this.createModelMenuItem(displayModel, currentModel, {
+          description: isDefaultPreset
+            ? this.buildDefaultAutoPresetDescription(preset.description)
+            : preset.description,
+          preferBillingMeta: true,
+          disabled: isDefaultPreset ? false : !preset.enabled,
+          disabledReason: isDefaultPreset ? undefined : preset.unavailableReason,
+          requiredTier: isDefaultPreset ? undefined : preset.requiredTier,
+          minimumClientVersion: isDefaultPreset ? undefined : preset.minimumClientVersion,
+        });
+        if (!executableModel) {
+          delete item.data;
+          item.actions = undefined;
         }
 
         return {
           presetId: preset.id,
           sortName: preset.name,
+          sortMultiplier: typeof displayModel.billingMultiplier === 'number' ? displayModel.billingMultiplier : undefined,
           enabled: preset.enabled,
-          item: this.createModelMenuItem(model, currentModel, {
-            description: isDefaultPreset
-              ? this.buildDefaultAutoPresetDescription(preset.description)
-              : preset.description,
-            preferBillingMeta: true,
-            disabled: isDefaultPreset ? false : !preset.enabled,
-            disabledReason: isDefaultPreset ? undefined : preset.unavailableReason,
-            requiredTier: isDefaultPreset ? undefined : preset.requiredTier,
-            minimumClientVersion: isDefaultPreset ? undefined : preset.minimumClientVersion,
-          }),
+          item,
         } satisfies ModelMenuPresetEntry;
       })
       .filter((entry): entry is ModelMenuPresetEntry => entry !== null);
@@ -628,11 +640,14 @@ class ChatModelMenuBuilder {
         continue;
       }
 
-      const resolvedModel = this.deps.ailyChatConfigService.resolvePresetModel(presetId);
+      const displayModel = this.deps.ailyChatConfigService.resolvePresetDisplayModel(presetId);
       const sortName = controlEntry?.label || preset?.name || presetId;
 
-      if (resolvedModel) {
-        const item = this.createModelMenuItem(resolvedModel, currentModel, {
+      if (displayModel) {
+        const executableModel = preset?.enabled !== false
+          ? this.deps.ailyChatConfigService.resolveSelectablePresetModel(presetId)
+          : null;
+        const item = this.createModelMenuItem(displayModel, currentModel, {
           description: preset?.description,
           preferBillingMeta: true,
           disabled: preset ? !preset.enabled : false,
@@ -640,10 +655,15 @@ class ChatModelMenuBuilder {
           requiredTier: preset?.requiredTier,
           minimumClientVersion: preset?.minimumClientVersion,
         });
+        if (!executableModel) {
+          delete item.data;
+          item.actions = undefined;
+        }
         item.name = sortName;
         syntheticEntries.push({
           presetId,
           sortName,
+          sortMultiplier: typeof displayModel.billingMultiplier === 'number' ? displayModel.billingMultiplier : undefined,
           enabled: preset?.enabled ?? true,
           item,
         });
@@ -654,6 +674,7 @@ class ChatModelMenuBuilder {
         syntheticEntries.push({
           presetId,
           sortName,
+          sortMultiplier: typeof preset?.billingMultiplier === 'number' ? preset.billingMultiplier : undefined,
           enabled: false,
           item: this.createUnavailableModelMenuItem(controlEntry, {
             description: preset?.description,
@@ -676,6 +697,7 @@ class ChatModelMenuBuilder {
       .map((model) => ({
         presetId: model.model,
         sortName: model.name,
+        sortMultiplier: typeof model.billingMultiplier === 'number' ? model.billingMultiplier : undefined,
         enabled: model.enabled,
         item: this.createModelMenuItem(model, currentModel, {
           description: model.description,
@@ -688,7 +710,7 @@ class ChatModelMenuBuilder {
     currentModel: ChatCurrentModel | null,
   ): ModelMenuPresetEntry | undefined {
     const defaultPreset = this.deps.ailyChatConfigService.getModelPresetById(defaultPresetId);
-    const defaultModel = this.deps.ailyChatConfigService.resolvePresetModel(defaultPresetId);
+    const defaultModel = this.deps.ailyChatConfigService.resolveSelectablePresetModel(defaultPresetId);
     if (!defaultModel) {
       return undefined;
     }
@@ -696,6 +718,7 @@ class ChatModelMenuBuilder {
     return {
       presetId: defaultPresetId,
       sortName: defaultPreset?.name ?? defaultModel.name,
+      sortMultiplier: typeof defaultModel.billingMultiplier === 'number' ? defaultModel.billingMultiplier : undefined,
       enabled: true,
       item: this.createModelMenuItem(defaultModel, currentModel, {
         description: this.buildDefaultAutoPresetDescription(defaultPreset?.description),
@@ -748,6 +771,16 @@ class ChatModelMenuBuilder {
     return [...entries].sort((left, right) => {
       if (left.enabled !== right.enabled) {
         return left.enabled ? -1 : 1;
+      }
+
+      const leftMultiplier = typeof left.sortMultiplier === 'number' && Number.isFinite(left.sortMultiplier)
+        ? left.sortMultiplier
+        : Number.NEGATIVE_INFINITY;
+      const rightMultiplier = typeof right.sortMultiplier === 'number' && Number.isFinite(right.sortMultiplier)
+        ? right.sortMultiplier
+        : Number.NEGATIVE_INFINITY;
+      if (leftMultiplier !== rightMultiplier) {
+        return rightMultiplier - leftMultiplier;
       }
 
       return left.sortName.localeCompare(right.sortName);
