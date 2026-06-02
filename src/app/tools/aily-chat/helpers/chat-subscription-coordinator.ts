@@ -204,7 +204,7 @@ export class ChatSubscriptionCoordinator {
       AilyHost.get().blockly.selectedBlockSubject,
       AilyHost.get().blockly.blockCodeMapSubject,
     ]).subscribe((results: any[]) => {
-      this.ctx.resourceManager.updateBlockContext(
+      this.ctx.resourceManager.updateBlockContexts(
         results[0],
         () => AilyHost.get().blockly.getSelectedBlockContextLabel(),
       );

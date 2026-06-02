@@ -496,24 +496,14 @@ export class SessionLifecycleHelper {
   }
 
   private clearClientSessionStateForProjectSwitch(): void {
-    this.ctx.interaction.resetApprovalState();
-    this.ctx.chatService.clearResolvedActiveModel?.();
-    this.ctx.lexStream.resetSessionState();
-    this._viewWriteBridge.clearChatView();
-    this.ctx.lexStream.turns.clear();
-    this.ctx.toolCallingIteration = 0;
-    this.ctx.contextBudgetService?.reset();
+    this.ctx.resetVisibleSessionProjection?.({
+      clearResolvedActiveModel: true,
+      clearTurns: true,
+      resetContextBudget: true,
+      clearEditSummary: true,
+      resetToolCallingIteration: true,
+    });
     this.ctx.isWaiting = false;
-    this.ctx.isCompleted = false;
-    this.ctx.isCancelled = true;
-    this.ctx.editCheckpointService.clear();
-    this.ctx.editCheckpointService.dismissSummary();
-    this.ctx.scrollManager.setScrollLock(true);
-    if (this.ctx.messageSubscription) {
-      this.ctx.messageSubscription.unsubscribe();
-      this.ctx.messageSubscription = null;
-    }
-    this.ctx.activeToolExecutions = 0;
   }
 
   async startNewProjectSession(
