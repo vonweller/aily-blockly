@@ -16,6 +16,7 @@ export class ScrollManagerService {
   private _exchangeRevealRequestId = 0;
   private _programmaticScrollRequestId = 0;
   private _ignoreNextScrollEvent = false;
+  private _followBottomAfterExchangeReveal = false;
   private readonly _pendingExchangeTimeouts = new Set<ReturnType<typeof setTimeout>>();
   private readonly _pendingScrollTimeouts = new Set<ReturnType<typeof setTimeout>>();
 
@@ -89,6 +90,14 @@ export class ScrollManagerService {
       && (this._lastAtBottom ?? this.isAtBottom(element));
 
     if (shouldFollow) {
+      if (this._pendingExchangeTimeouts.size > 0) {
+        this._followBottomAfterExchangeReveal = true;
+        this._lastTop = element.scrollTop;
+        this._lastHeight = currentHeight;
+        this._lastAtBottom = this._lastAtBottom ?? this.isAtBottom(element);
+        return;
+      }
+
       this.scrollToBottom('auto');
       return;
     }
@@ -108,6 +117,7 @@ export class ScrollManagerService {
     this.cancelPendingExchangeReveal();
     this.setScrollLock(true);
     this._programmaticScrollRequestId = 0;
+    this._followBottomAfterExchangeReveal = false;
 
     if (!element) {
       return;
@@ -127,6 +137,7 @@ export class ScrollManagerService {
       const latestUserDialog = this.findLatestUserDialog(element);
       if (!latestUserDialog) {
         if (attempts >= maxAttempts) {
+          this.flushQueuedFollowAfterExchangeReveal();
           return;
         }
 
@@ -141,6 +152,7 @@ export class ScrollManagerService {
       this._lastTop = targetTop;
       this._lastHeight = element.scrollHeight;
       this._lastAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 30;
+      this.flushQueuedFollowAfterExchangeReveal();
     };
 
     this.scheduleExchangeAttempt(attemptReveal, 0);
@@ -152,6 +164,7 @@ export class ScrollManagerService {
     this.cancelPendingBottomScroll();
     this._scrollRequestId++;
     this._programmaticScrollRequestId = 0;
+    this._followBottomAfterExchangeReveal = false;
     this.setScrollLock(true);
     this._lastTop = null;
     this._lastHeight = null;
@@ -165,6 +178,7 @@ export class ScrollManagerService {
     }
 
     if (this._pendingExchangeTimeouts.size > 0) {
+      this._followBottomAfterExchangeReveal = true;
       return;
     }
 
@@ -284,6 +298,17 @@ export class ScrollManagerService {
   private cancelPendingExchangeReveal(): void {
     this._pendingExchangeTimeouts.forEach((handle) => clearTimeout(handle));
     this._pendingExchangeTimeouts.clear();
+    this._followBottomAfterExchangeReveal = false;
+  }
+
+  private flushQueuedFollowAfterExchangeReveal(): void {
+    if (!this._followBottomAfterExchangeReveal || !this.scrollLock) {
+      this._followBottomAfterExchangeReveal = false;
+      return;
+    }
+
+    this._followBottomAfterExchangeReveal = false;
+    this.scrollToBottom('auto');
   }
 
   private cancelPendingBottomScroll(): void {

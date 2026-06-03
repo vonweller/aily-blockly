@@ -8,7 +8,10 @@ import {
   MAIN_AGENT_TYPE,
   normalizeAgentIdentifier,
 } from './agent-identifiers';
-import { cloneTurnResponseModelRouting } from '../helpers/turn-response-response-model';
+import {
+  cloneTurnResponseModelRouting,
+  getTurnResponseResolvedPresetId,
+} from '../helpers/turn-response-response-model';
 import {
   formatCompactBillingLabel,
   isAutoPresetIdentifier,
@@ -212,20 +215,17 @@ export function buildTurnResponseAssistantEntryProjection(
   const responseModelBillingLabel = typeof turn.responseModel?.modelBillingLabel === 'string' && turn.responseModel.modelBillingLabel.trim()
     ? turn.responseModel.modelBillingLabel.trim()
     : undefined;
-  const responseModelSelectedPresetId = typeof turn.responseModel?.modelRouting?.selectedPresetId === 'string' && turn.responseModel.modelRouting.selectedPresetId.trim()
-    ? turn.responseModel.modelRouting.selectedPresetId.trim()
-    : undefined;
+  const responseModelSelectedPresetId = getTurnResponseResolvedPresetId(turn);
   const continuationResolvedModelName = getContinuationResolvedModelName(turn.response.continuation);
   const continuationModelBillingLabel = getContinuationModelBillingLabel(turn.response.continuation);
   const requestModelPresetId = typeof requestMetadata?.['modelPresetId'] === 'string' && requestMetadata['modelPresetId'].trim()
     ? requestMetadata['modelPresetId'].trim()
     : undefined;
-  const resolvedPresetId = responseModelSelectedPresetId ?? requestModelPresetId;
-  const routedPresetDisplayName = responseModelSelectedPresetId && responseModelSelectedPresetId !== requestModelPresetId
+  const selectedPresetDisplayName = responseModelSelectedPresetId
     ? formatResolvedPresetDisplayName(responseModelSelectedPresetId)
     : undefined;
   const modelName = overrides.modelName
-    ?? routedPresetDisplayName
+    ?? selectedPresetDisplayName
     ?? continuationResolvedModelName
     ?? responseModelName
     ?? requestModelDisplayName;
