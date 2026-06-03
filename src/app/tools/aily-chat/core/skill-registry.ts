@@ -40,6 +40,7 @@ const IGNORED_SKILL_DIRECTORY_NAMES = new Set([
 interface SkillRegistryInitializeOptions {
   readonly projectSkillFolders?: readonly string[];
   readonly userSkillFolders?: readonly string[];
+  readonly debugSource?: string;
 }
 
 // ============================
@@ -198,9 +199,12 @@ class SkillRegistryImpl {
   private _activatedSkills = new Set<string>();
   private readonly _changeListeners = new Set<() => void>();
   private _watchSubscriptions = new Map<string, { close?(): void; dispose?(): void; unsubscribe?(): void } | void>();
+  private _watchTargetPaths = new Map<string, string>();
+  private _watchTargetRoots = new Map<string, string[]>();
   private _watchedProjectRoot: string | undefined;
   private _initializationOptions: SkillRegistryInitializeOptions = {};
   private _refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private _initializationSequence = 0;
 
   // ========== 初始化 ==========
 
@@ -210,9 +214,22 @@ class SkillRegistryImpl {
    * 同名 skill 后扫描的覆盖先扫描的（项目级优先于全局优先于内置）。
    */
   async initialize(projectRoot?: string, options: SkillRegistryInitializeOptions = {}): Promise<void> {
+    const initializationSequence = ++this._initializationSequence;
+    const startedAt = Date.now();
+    const debugSource = typeof options.debugSource === 'string' && options.debugSource.trim().length > 0
+      ? options.debugSource.trim()
+      : 'unspecified';
     this._watchedProjectRoot = projectRoot;
     this._initializationOptions = this.normalizeInitializationOptions(options);
     this.skills.clear();
+
+    console.info('[SkillRegistry][debug] initialize start', {
+      initializationSequence,
+      debugSource,
+      projectRoot: projectRoot ?? null,
+      activatedSkillCount: this._activatedSkills.size,
+      wasInitialized: this._initialized,
+    });
 
     const host = AilyHost.get();
     if (!host?.fs || !host?.path) {
@@ -284,8 +301,12 @@ class SkillRegistryImpl {
 
     this.refreshDiscoveryWatchers(projectRoot, host);
     this._initialized = true;
-    this.emitDidChange();
-    console.log(`[SkillRegistry] 初始化完成, 发现 ${this.skills.size} 个 skills`);
+    this.emitDidChange('initialize-complete');
+    console.log(`[SkillRegistry] 初始化完成, 发现 ${this.skills.size} 个 skills`, {
+      initializationSequence,
+      debugSource,
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   get isInitialized(): boolean {
@@ -380,6 +401,7 @@ class SkillRegistryImpl {
 
   private normalizeInitializationOptions(options: SkillRegistryInitializeOptions | undefined): SkillRegistryInitializeOptions {
     return {
+      debugSource: typeof options?.debugSource === 'string' ? options.debugSource : undefined,
       userSkillFolders: this.normalizeConfiguredFolderEntries(options?.userSkillFolders),
       projectSkillFolders: this.normalizeConfiguredFolderEntries(options?.projectSkillFolders),
     };
@@ -512,7 +534,7 @@ class SkillRegistryImpl {
       };
 
       this.skills.set(metadata.name, skill);
-      this.emitDidChange();
+      this.emitDidChange('load-from-url');
       return skill;
     } catch (e) {
       console.warn(`[SkillRegistry] 从 URL 加载 skill 失败: ${url}`, e);
@@ -806,7 +828,7 @@ class SkillRegistryImpl {
     const sizeBefore = this._activatedSkills.size;
     this._activatedSkills.add(name);
     if (this._activatedSkills.size !== sizeBefore) {
-      this.emitDidChange();
+      this.emitDidChange('activate-skill');
     }
     return true;
   }
@@ -821,7 +843,7 @@ class SkillRegistryImpl {
     if (skill.metadata.autoActivate) return false;
     const didDelete = this._activatedSkills.delete(name);
     if (didDelete) {
-      this.emitDidChange();
+      this.emitDidChange('deactivate-skill');
     }
     return didDelete;
   }
@@ -833,13 +855,22 @@ class SkillRegistryImpl {
   }
 
   /** 清除会话级激活状态（会话结束时调用） */
-  clearSessionState(): void {
+  clearSessionState(debugSource: string = 'unspecified'): void {
     if (this._activatedSkills.size === 0) {
+      console.info('[SkillRegistry][debug] clear session state skipped', {
+        debugSource,
+        activatedSkillCount: 0,
+      });
       return;
     }
 
+    const clearedSkillCount = this._activatedSkills.size;
     this._activatedSkills.clear();
-    this.emitDidChange();
+    console.info('[SkillRegistry][debug] clear session state', {
+      debugSource,
+      clearedSkillCount,
+    });
+    this.emitDidChange('clear-session-state');
   }
 
   onDidChange(listener: () => void): { dispose(): void } {
@@ -899,21 +930,32 @@ class SkillRegistryImpl {
 
     const watchTargets = this.collectDiscoveryWatchTargets(projectRoot, host);
     const nextTargetKeys = new Set<string>();
+    const nextWatchTargetPaths = new Map<string, string>();
+    const nextWatchTargetRoots = new Map<string, string[]>();
+    const createdTargetKeys = new Set<string>();
 
-    for (const targetPath of watchTargets) {
-      const targetKey = this.normalizeWatchTargetIdentity(targetPath, host);
+    for (const watchTarget of watchTargets) {
+      const targetKey = this.normalizeWatchTargetIdentity(watchTarget.watchPath, host);
       nextTargetKeys.add(targetKey);
-      if (this._watchSubscriptions.has(targetKey)) {
+      nextWatchTargetPaths.set(targetKey, watchTarget.watchPath);
+      const roots = nextWatchTargetRoots.get(targetKey) ?? [];
+      roots.push(watchTarget.discoveryRoot);
+      nextWatchTargetRoots.set(targetKey, roots);
+      if (this._watchSubscriptions.has(targetKey) || createdTargetKeys.has(targetKey)) {
         continue;
       }
 
       try {
-        const subscription = host.fs.watch(targetPath, () => {
+        const subscription = host.fs.watch(watchTarget.watchPath, (eventType?: string, filename?: string | null) => {
+          if (!this.shouldRefreshDiscoveryForWatchEvent(targetKey, eventType, filename, host)) {
+            return;
+          }
           this.scheduleDiscoveryRefresh();
         });
         if (subscription) {
           this._watchSubscriptions.set(targetKey, subscription);
         }
+        createdTargetKeys.add(targetKey);
       } catch {
         // Ignore unsupported watch failures; read-side initialize remains authoritative.
       }
@@ -927,9 +969,15 @@ class SkillRegistryImpl {
       this.disposeDiscoveryWatchSubscription(subscription);
       this._watchSubscriptions.delete(targetKey);
     }
+
+    this._watchTargetPaths = nextWatchTargetPaths;
+    this._watchTargetRoots = nextWatchTargetRoots;
   }
 
-  private collectDiscoveryWatchTargets(projectRoot: string | undefined, host: ReturnType<typeof AilyHost.get>): string[] {
+  private collectDiscoveryWatchTargets(
+    projectRoot: string | undefined,
+    host: ReturnType<typeof AilyHost.get>,
+  ): Array<{ watchPath: string; discoveryRoot: string }> {
     const roots: string[] = [];
     const builtinDir = this.getBuiltinSkillsDir();
     if (builtinDir) {
@@ -969,16 +1017,10 @@ class SkillRegistryImpl {
       host,
     ));
 
-    const watchTargets: string[] = [];
-    const seenTargets = new Set<string>();
+    const watchTargets: Array<{ watchPath: string; discoveryRoot: string }> = [];
     for (const rootPath of roots) {
       for (const targetPath of this.resolveWatchTargetsForDiscoveryRoot(rootPath, host)) {
-        const identity = this.normalizeWatchTargetIdentity(targetPath, host);
-        if (seenTargets.has(identity)) {
-          continue;
-        }
-        seenTargets.add(identity);
-        watchTargets.push(targetPath);
+        watchTargets.push({ watchPath: targetPath, discoveryRoot: rootPath });
       }
     }
 
@@ -1001,6 +1043,72 @@ class SkillRegistryImpl {
     }
 
     return targets;
+  }
+
+  private shouldRefreshDiscoveryForWatchEvent(
+    targetKey: string,
+    eventType: string | undefined,
+    filename: string | null | undefined,
+    host: ReturnType<typeof AilyHost.get>,
+  ): boolean {
+    const discoveryRoots = this._watchTargetRoots.get(targetKey) ?? [];
+    if (discoveryRoots.length === 0) {
+      return true;
+    }
+
+    const normalizedFilename = typeof filename === 'string'
+      ? normalizeSkillPath(filename).replace(/^\/+|\/+$/g, '').trim()
+      : '';
+    if (!normalizedFilename) {
+      return true;
+    }
+
+    const normalizedEventType = typeof eventType === 'string' ? eventType.trim().toLowerCase() : '';
+    return discoveryRoots.some(rootPath => {
+      const watchPath = this._watchPathForTargetKey(targetKey);
+      if (!watchPath) {
+        return true;
+      }
+
+      const relativeSegments = this.relativeDiscoverySegments(watchPath, rootPath, host);
+      if (relativeSegments.length === 0) {
+        return true;
+      }
+
+      const changedSegments = normalizedFilename.split('/').filter(segment => segment.length > 0);
+      if (changedSegments.length === 0) {
+        return true;
+      }
+
+      if (normalizedEventType === 'rename') {
+        return changedSegments[0] === relativeSegments[0];
+      }
+
+      return changedSegments[0] === relativeSegments[0];
+    });
+  }
+
+  private _watchPathForTargetKey(targetKey: string): string | null {
+    return this._watchTargetPaths.get(targetKey) ?? null;
+  }
+
+  private relativeDiscoverySegments(
+    watchPath: string,
+    rootPath: string,
+    host: ReturnType<typeof AilyHost.get>,
+  ): string[] {
+    const normalizedWatchPath = normalizeSkillPath(watchPath).replace(/\/+$|\/+$/g, '').trim();
+    const normalizedRootPath = normalizeSkillPath(rootPath).replace(/\/+$|\/+$/g, '').trim();
+    if (!normalizedWatchPath || !normalizedRootPath || normalizedWatchPath === normalizedRootPath) {
+      return [];
+    }
+
+    const relativePath = normalizeSkillPath(host.path.relative(watchPath, rootPath)).replace(/^\/+|\/+$/g, '').trim();
+    if (!relativePath || relativePath.startsWith('..')) {
+      return [];
+    }
+
+    return relativePath.split('/').filter(segment => segment.length > 0);
   }
 
   private findNearestExistingDirectory(rootPath: string, host: ReturnType<typeof AilyHost.get>): string | null {
@@ -1056,6 +1164,8 @@ class SkillRegistryImpl {
       this.disposeDiscoveryWatchSubscription(subscription);
     }
     this._watchSubscriptions.clear();
+    this._watchTargetPaths.clear();
+    this._watchTargetRoots.clear();
   }
 
   private disposeDiscoveryWatchSubscription(
@@ -1076,7 +1186,13 @@ class SkillRegistryImpl {
     subscription.close?.();
   }
 
-  private emitDidChange(): void {
+  private emitDidChange(reason: string): void {
+    console.info('[SkillRegistry][debug] emit change', {
+      reason,
+      listenerCount: this._changeListeners.size,
+      skillCount: this.skills.size,
+      activatedSkillCount: this._activatedSkills.size,
+    });
     for (const listener of Array.from(this._changeListeners)) {
       listener();
     }

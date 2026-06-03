@@ -161,6 +161,24 @@ export class BackgroundAgentService implements OnDestroy {
         model: buildLexModelConfig(this.chatService.currentModel),
         cwd: cwd || undefined,
         maxToolCallIterations: this.ailyChatConfigService.maxRequests,
+        extensions: {
+          sessionCompletionCoordinator: {
+            scheduleRequestCompleted: (input: {
+              sessionId: string;
+              turnId: string;
+              reason: string;
+              runWorkspaceFinalize: () => Promise<void>;
+              runSessionEndHooks: () => Promise<void>;
+            }) => {
+              void (async () => {
+                await input.runWorkspaceFinalize();
+                await input.runSessionEndHooks();
+              })().catch(error => {
+                console.warn('[BackgroundAgent] request-completed coordination failed:', error);
+              });
+            },
+          },
+        },
         toolProvider,
         coreToolFilter: BACKGROUND_AGENT_CORE_TOOLS,
       });

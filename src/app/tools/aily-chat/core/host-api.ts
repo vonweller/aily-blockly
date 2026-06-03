@@ -334,6 +334,8 @@ export interface IConfigProvider {
   getHardwareCategories?(): any[];
   /** 加载硬件索引数据（用于 AI 工具的开发板/库搜索） */
   loadHardwareIndexForAI?(): Promise<any>;
+  /** 在后台去重刷新硬件索引数据，不阻塞对话热路径 */
+  scheduleHardwareIndexRefreshForAI?(reason: string, options?: { force?: boolean }): void;
 
   /** 板卡索引数据（新版） */
   readonly boardIndex?: any[];

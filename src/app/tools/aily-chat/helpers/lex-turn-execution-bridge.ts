@@ -246,6 +246,7 @@ export class LexTurnExecutionBridge {
       sessionId: state.sessionId,
       hasDetachedSink: !!state.detachedRenderEventBridge,
     });
+    const finalizeStartedAt = Date.now();
     try {
       if (state.detachedRenderEventBridge?.finalizeCurrentTurn) {
         const finalized = state.detachedRenderEventBridge.finalizeCurrentTurn('completed');
@@ -255,6 +256,11 @@ export class LexTurnExecutionBridge {
         });
       }
       await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state));
+      console.info('[AilyChat][FinalizeDebug] finalizeTurnExecution completed', {
+        sessionId: state.sessionId,
+        elapsedMs: Date.now() - finalizeStartedAt,
+        hasDetachedSink: !!state.detachedRenderEventBridge,
+      });
     } finally {
       state.detachedRenderEventBridge = null;
       if (state.sessionId) {

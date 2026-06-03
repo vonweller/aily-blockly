@@ -55,7 +55,7 @@ import {
 } from './request-quota-state.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
 import { ConfigService } from '../../../services/config.service';
-import { applyAutoDiscountToBillingLabel, isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
+import { formatCompactBillingLabel, isDefaultAutoPresetSelected } from '../helpers/model-billing-label';
 import {
   normalizeChatSelectedMode,
   resolveChatCurrentMode,
@@ -1109,7 +1109,7 @@ export class ChatEngineService implements IChatContext {
     const resolvedBillingLabel = this.chatService.resolvedActiveModelBillingLabel;
     if (resolvedBillingLabel) {
       return isDefaultAutoPresetSelected(this.chatService.currentModel)
-        ? applyAutoDiscountToBillingLabel(resolvedBillingLabel)
+        ? formatCompactBillingLabel(resolvedBillingLabel)
         : resolvedBillingLabel;
     }
 
@@ -1643,6 +1643,7 @@ export class ChatEngineService implements IChatContext {
       get prjRootPath() { return thisEngine.prjRootPath; },
       get currentModel() { return thisEngine.currentModel; },
       get sessionId() { return thisEngine.sessionId; },
+      get chatSessionRuntimeRegistry() { return thisEngine.chatSessionRuntimeRegistry; },
       get sessionTitle() { return thisEngine.sessionTitle; },
       get chatService() { return thisEngine.chatService; },
       get currentSessionPath() { return thisEngine.resolveRuntimeSessionProviderOptions()?.folderPath ?? thisEngine.chatService.currentSessionPath; },
@@ -3144,6 +3145,7 @@ Do not create non-existent boards and libraries.
     }
 
     const executeSend = async () => {
+      const sendExecutionStartedAt = Date.now();
       const setupSuggestionService = (this as unknown as {
         chatSetupSuggestionService?: Pick<ChatSetupSuggestionService, 'inspectRequest' | 'markSuggestionPresented'>;
       }).chatSetupSuggestionService;
@@ -3167,11 +3169,25 @@ Do not create non-existent boards and libraries.
       const prepared = this.sendCoordinator.prepareSend(sender, effectiveContent);
       if (!prepared) return;
 
+      if (sender === 'user') {
+        this.configService.scheduleHardwareIndexRefreshForAI?.('chat-send-latest');
+      }
+
       const ensureBlankSessionRuntimeProviderOptions = (
         this as unknown as { ensureBlankSessionRuntimeProviderOptions?: (sessionId?: string | null) => Promise<void> }
       ).ensureBlankSessionRuntimeProviderOptions;
       if (typeof ensureBlankSessionRuntimeProviderOptions === 'function') {
+        const ensureRuntimeStartedAt = Date.now();
+        console.info('[AilyChat][SendDebug] before ensure runtime agent', {
+          runtimeSessionId: runtimeSessionId || null,
+          elapsedMs: ensureRuntimeStartedAt - sendExecutionStartedAt,
+        });
         await ensureBlankSessionRuntimeProviderOptions.call(this, runtimeSessionId);
+        console.info('[AilyChat][SendDebug] after ensure runtime agent', {
+          runtimeSessionId: runtimeSessionId || null,
+          durationMs: Date.now() - ensureRuntimeStartedAt,
+          elapsedMs: Date.now() - sendExecutionStartedAt,
+        });
       }
 
         if (sender === 'user') {
@@ -3230,12 +3246,32 @@ Do not create non-existent boards and libraries.
       traceBackgroundSessionExecution('send-turn-run-start', {
         runtimeSessionId,
       });
+      const turnRunStartedAt = Date.now();
+      console.info('[AilyChat][SendDebug] before turn.run', {
+        runtimeSessionId: runtimeSessionId || null,
+        elapsedMs: turnRunStartedAt - sendExecutionStartedAt,
+        requestTextLength: prepared.text.trim().length,
+        displayTextLength: (prepared.displayText || prepared.text).trim().length,
+      });
       await this.lexStream.turn.run(prepared.llmText, prepared.displayText);
+      console.info('[AilyChat][SendDebug] after turn.run', {
+        runtimeSessionId: runtimeSessionId || null,
+        durationMs: Date.now() - turnRunStartedAt,
+        elapsedMs: Date.now() - sendExecutionStartedAt,
+      });
       traceBackgroundSessionExecution('send-turn-run-finished', {
         runtimeSessionId,
       });
+      const postTurnStartedAt = Date.now();
+      console.info('[AilyChat][SendDebug] after turn.run before finalize side-effects', {
+        runtimeSessionId: runtimeSessionId || null,
+      });
       this.acceptLiveRequestQuotaState(runtimeSessionId);
       this.refreshAuthQuotaStateAfterSuccessfulTurn(runtimeSessionId);
+      console.info('[AilyChat][SendDebug] after quota side-effects', {
+        runtimeSessionId: runtimeSessionId || null,
+        durationMs: Date.now() - postTurnStartedAt,
+      });
 
       const syncSessionId = runtimeSessionId
         || (typeof this.chatService.currentSessionId === 'string' ? this.chatService.currentSessionId.trim() : '');
@@ -3251,6 +3287,10 @@ Do not create non-existent boards and libraries.
             ? runtimeTurnResponses
             : this.hostResponseProjection?.turnResponses ?? this.lexStream.turnResponses ?? [],
         );
+        console.info('[AilyChat][SendDebug] after resolved model sync', {
+          runtimeSessionId: runtimeSessionId || null,
+          durationMs: Date.now() - postTurnStartedAt,
+        });
         this.triggerSyncDetectChanges();
       }
 

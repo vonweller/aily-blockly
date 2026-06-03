@@ -15,6 +15,7 @@ export class ConfigService {
   private static readonly DEFAULT_BUILD_FLAVOR = 'cn';
   private static readonly DEFAULT_OFFICIAL_REGION = 'cn';
   private static readonly RESOURCE_REQUEST_TIMEOUT_MS = 8000;
+  private static readonly HARDWARE_INDEX_BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30000;
 
   data: AppConfig | any = {};
 
@@ -815,6 +816,10 @@ export class ConfigService {
   boardIndex: any[] = [];  // 新格式开发板索引
   libraryIndex: any[] = [];  // 新格式库索引
   private _hardwareIndexLoaded = false;  // 标记索引是否已加载
+  private hardwareIndexLoadPromise: Promise<void> | null = null;
+  private hardwareIndexBackgroundRefreshPromise: Promise<void> | null = null;
+  private hardwareIndexLastLoadedAt = 0;
+  private hardwareIndexLastRefreshScheduledAt = 0;
 
   /**
    * 为 AI 工具加载硬件索引数据（boardIndex 和 libraryIndex）
@@ -828,6 +833,52 @@ export class ConfigService {
       return;
     }
 
+    if (this.hardwareIndexLoadPromise) {
+      return this.hardwareIndexLoadPromise;
+    }
+
+    this.hardwareIndexLoadPromise = this.loadHardwareIndexForAIInternal();
+    try {
+      await this.hardwareIndexLoadPromise;
+    } finally {
+      this.hardwareIndexLoadPromise = null;
+    }
+  }
+
+  scheduleHardwareIndexRefreshForAI(reason: string, options: { readonly force?: boolean } = {}): void {
+    const normalizedReason = typeof reason === 'string' && reason.trim().length > 0
+      ? reason.trim()
+      : 'unspecified';
+    const now = Date.now();
+    if (!options.force) {
+      if (this.hardwareIndexBackgroundRefreshPromise) {
+        console.info('[ConfigService][debug] skip background hardware refresh while in flight', {
+          reason: normalizedReason,
+        });
+        return;
+      }
+
+      if (this.hardwareIndexLastRefreshScheduledAt > 0
+        && now - this.hardwareIndexLastRefreshScheduledAt < ConfigService.HARDWARE_INDEX_BACKGROUND_REFRESH_MIN_INTERVAL_MS) {
+        console.info('[ConfigService][debug] skip background hardware refresh due to min interval', {
+          reason: normalizedReason,
+          elapsedMs: now - this.hardwareIndexLastRefreshScheduledAt,
+        });
+        return;
+      }
+    }
+
+    this.hardwareIndexLastRefreshScheduledAt = now;
+    this.hardwareIndexBackgroundRefreshPromise = this.refreshHardwareIndexForAIInternal(normalizedReason)
+      .catch(error => {
+        console.warn('[ConfigService] 后台刷新 AI 硬件索引失败:', error);
+      })
+      .finally(() => {
+        this.hardwareIndexBackgroundRefreshPromise = null;
+      });
+  }
+
+  private async loadHardwareIndexForAIInternal(): Promise<void> {
     console.log('[ConfigService] 开始加载 AI 硬件索引...');
     const configFilePath = window['path'].getAppDataPath();
     
@@ -837,7 +888,34 @@ export class ConfigService {
     ]);
     
     this._hardwareIndexLoaded = true;
+    this.hardwareIndexLastLoadedAt = Date.now();
     console.log('[ConfigService] AI 硬件索引加载完成, boardIndex:', this.boardIndex?.length, 'libraryIndex:', this.libraryIndex?.length);
+  }
+
+  private async refreshHardwareIndexForAIInternal(reason: string): Promise<void> {
+    console.info('[ConfigService][debug] start background hardware refresh', {
+      reason,
+      alreadyLoaded: this._hardwareIndexLoaded,
+      lastLoadedAt: this.hardwareIndexLastLoadedAt || null,
+    });
+
+    if (!this._hardwareIndexLoaded) {
+      await this.loadHardwareIndexForAI();
+      return;
+    }
+
+    const configFilePath = window['path'].getAppDataPath();
+    await Promise.all([
+      this.loadAndCacheBoardIndex(configFilePath),
+      this.loadAndCacheLibraryIndex(configFilePath)
+    ]);
+
+    this.hardwareIndexLastLoadedAt = Date.now();
+    console.info('[ConfigService][debug] background hardware refresh finished', {
+      reason,
+      boardCount: this.boardIndex?.length ?? 0,
+      libraryCount: this.libraryIndex?.length ?? 0,
+    });
   }
 
   /**

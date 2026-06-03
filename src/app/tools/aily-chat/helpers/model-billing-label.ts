@@ -81,3 +81,17 @@ export function applyAutoDiscountToBillingLabel(label: string | null | undefined
 
   return formatTruncatedBillingMultiplierLabel(multiplier * AUTO_MODEL_DISCOUNT_FACTOR);
 }
+
+export function formatCompactBillingLabel(label: string | null | undefined): string | undefined {
+  if (typeof label !== 'string' || !label.trim()) {
+    return undefined;
+  }
+
+  const normalizedLabel = label.trim();
+  const multiplier = parseBillingMultiplierLabel(normalizedLabel);
+  if (multiplier === undefined) {
+    return normalizedLabel;
+  }
+
+  return formatTruncatedBillingMultiplierLabel(multiplier);
+}

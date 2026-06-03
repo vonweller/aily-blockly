@@ -1,7 +1,12 @@
 import { Injectable } from '@angular/core';
 
 import type { TurnResponseTurn } from 'aily-lex/browser';
+import { GitAwareWorkspaceChangeCollector } from 'aily-lex/browser';
+import { AilyHost } from '../core/host';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import { EditingContentStore } from './editing-content-store.service';
+import { EditingTimelineRepository } from './editing-timeline-repository.service';
+import { EditingTimelineRecordingBridge } from './editing-timeline-recording-bridge';
 import {
   ChatSessionRuntimeStoreService,
   DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
@@ -45,9 +50,25 @@ export interface ChatSessionRuntimeProjectionPatch extends ChatSessionRuntimeHan
   readonly debugSummary?: Partial<ChatSessionRuntimeDebugSummary> | null | undefined;
 }
 
+export interface ChatSessionLexPostTurnResources {
+  readonly cwd: string;
+  readonly editingTimelineRecorder: EditingTimelineRecordingBridge;
+  readonly workspaceChangeCollector: GitAwareWorkspaceChangeCollector;
+}
+
+export interface ChatSessionLexRequestCompletedInput {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly reason: string;
+  readonly runWorkspaceFinalize: () => Promise<void>;
+  readonly runSessionEndHooks: () => Promise<void>;
+}
+
 @Injectable()
 export class ChatSessionRuntimeRegistryService {
   private readonly handles = new Map<string, ChatSessionRuntimeHandle>();
+  private readonly lexPostTurnResources = new Map<string, ChatSessionLexPostTurnResources>();
+  private readonly pendingLexRequestCompletion = new Map<string, Promise<void>>();
 
   constructor(
     private readonly runtimeStore: ChatSessionRuntimeStoreService,
@@ -62,7 +83,72 @@ export class ChatSessionRuntimeRegistryService {
     return [...new Set([
       ...this.runtimeStore.getSessionIds(),
       ...this.handles.keys(),
+      ...this.lexPostTurnResources.keys(),
     ])];
+  }
+
+  getOrCreateLexPostTurnResources(
+    sessionId: string | null | undefined,
+    cwd: string | null | undefined,
+  ): ChatSessionLexPostTurnResources | undefined {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    const normalizedCwd = typeof cwd === 'string' ? cwd.trim() : '';
+    if (!normalizedSessionId || !normalizedCwd) {
+      return undefined;
+    }
+
+    const existing = this.lexPostTurnResources.get(normalizedSessionId);
+    if (existing && existing.cwd === normalizedCwd) {
+      return existing;
+    }
+
+    const nextResources: ChatSessionLexPostTurnResources = {
+      cwd: normalizedCwd,
+      editingTimelineRecorder: new EditingTimelineRecordingBridge(
+        new EditingTimelineRepository({
+          joinPath: (...parts) => AilyHost.get().path.join(...parts),
+        }),
+        new EditingContentStore({
+          joinPath: (...parts) => AilyHost.get().path.join(...parts),
+        }),
+        normalizedCwd,
+        normalizedSessionId,
+      ),
+      workspaceChangeCollector: new GitAwareWorkspaceChangeCollector(),
+    };
+
+    this.lexPostTurnResources.set(normalizedSessionId, nextResources);
+    return nextResources;
+  }
+
+  scheduleLexRequestCompleted(input: ChatSessionLexRequestCompletedInput): void {
+    const normalizedSessionId = this.normalizeSessionId(input.sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    const runCompletion = async (): Promise<void> => {
+      await input.runWorkspaceFinalize();
+      await input.runSessionEndHooks();
+    };
+
+    const previous = this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve();
+    const next = previous.then(runCompletion, runCompletion).finally(() => {
+      if (this.pendingLexRequestCompletion.get(normalizedSessionId) === next) {
+        this.pendingLexRequestCompletion.delete(normalizedSessionId);
+      }
+    });
+    this.pendingLexRequestCompletion.set(normalizedSessionId, next);
+  }
+
+  async awaitPendingLexRequestCompleted(sessionId?: string | null): Promise<void> {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (normalizedSessionId) {
+      await (this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve());
+      return;
+    }
+
+    await Promise.all([...this.pendingLexRequestCompletion.values()]);
   }
 
   canStartRequest(sessionId: string | null | undefined): boolean {
@@ -227,6 +313,8 @@ export class ChatSessionRuntimeRegistryService {
       reason: 'handle',
     });
     this.handles.delete(normalizedSessionId);
+    this.lexPostTurnResources.delete(normalizedSessionId);
+    this.pendingLexRequestCompletion.delete(normalizedSessionId);
     this.runtimeStore.clearSession(normalizedSessionId);
     return true;
   }
@@ -238,11 +326,15 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     this.handles.delete(normalizedSessionId);
+    this.lexPostTurnResources.delete(normalizedSessionId);
+    this.pendingLexRequestCompletion.delete(normalizedSessionId);
     this.runtimeStore.clearSession(normalizedSessionId);
   }
 
   clearAll(): void {
     this.handles.clear();
+    this.lexPostTurnResources.clear();
+    this.pendingLexRequestCompletion.clear();
     this.runtimeStore.clearAll();
   }
 

@@ -1,4 +1,5 @@
 import type { AgentHandle } from 'aily-lex/browser';
+import { setActiveBlocklySlashCommandSession } from '../core/blockly-slash-command-provider';
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -122,7 +123,13 @@ export class LexAgentLifecycleBridge {
   }
 
   async ensureAgent(sessionId?: string, configKey?: string): Promise<boolean> {
+    const startedAt = Date.now();
     if (!await this.loadModule()) {
+      console.info('[LexStream][debug] ensureAgent loadModule unavailable', {
+        requestedSessionId: sessionId ?? null,
+        requestedConfigKey: typeof configKey === 'string' ? configKey : null,
+        durationMs: Date.now() - startedAt,
+      });
       return false;
     }
 
@@ -131,19 +138,47 @@ export class LexAgentLifecycleBridge {
     const normalizedConfigKey = typeof configKey === 'string' ? configKey : null;
     const existingEntry = this._sessionEntries.get(targetSessionId) ?? null;
 
+    console.info('[LexStream][debug] ensureAgent start', {
+      targetSessionId,
+      requestedConfigKey: normalizedConfigKey,
+      activeSessionId: this._activeSessionId,
+      hasExistingEntry: !!existingEntry,
+      existingConfigKey: existingEntry?.configKey ?? null,
+    });
+
     if (existingEntry) {
       if (normalizedConfigKey !== null) {
         if (existingEntry.configKey === normalizedConfigKey) {
           this._activeSessionId = targetSessionId;
+          setActiveBlocklySlashCommandSession(targetSessionId);
+          console.info('[LexStream][debug] ensureAgent reused existing entry', {
+            targetSessionId,
+            reuseReason: 'config-match',
+            durationMs: Date.now() - startedAt,
+          });
           return true;
         }
       } else if (this._activeSessionId !== targetSessionId) {
         this._activeSessionId = targetSessionId;
+        setActiveBlocklySlashCommandSession(targetSessionId);
+        console.info('[LexStream][debug] ensureAgent reused existing entry', {
+          targetSessionId,
+          reuseReason: 'active-session-switch',
+          durationMs: Date.now() - startedAt,
+        });
         return true;
       }
     }
 
     const snapshotToRestore = this.captureLiveSessionSnapshot(existingEntry);
+    if (existingEntry) {
+      console.info('[LexStream][debug] ensureAgent rebuilding entry', {
+        targetSessionId,
+        previousConfigKey: existingEntry.configKey,
+        nextConfigKey: normalizedConfigKey,
+        hasSnapshotToRestore: !!snapshotToRestore,
+      });
+    }
     if (existingEntry) {
       this.disposeSessionEntry(existingEntry);
     }
@@ -152,6 +187,7 @@ export class LexAgentLifecycleBridge {
     const nextEntry = this.createSessionEntry(targetSessionId, created, normalizedConfigKey);
     this._sessionEntries.set(targetSessionId, nextEntry);
     this._activeSessionId = targetSessionId;
+    setActiveBlocklySlashCommandSession(targetSessionId);
 
     if (snapshotToRestore) {
       try {
@@ -162,6 +198,12 @@ export class LexAgentLifecycleBridge {
     }
 
     nextEntry.todoUnsubscribe = this.deps.onAgentReady?.(nextEntry.agent, lex, nextEntry.todoUnsubscribe) ?? nextEntry.todoUnsubscribe;
+    console.info('[LexStream][debug] ensureAgent ready', {
+      targetSessionId,
+      configKey: normalizedConfigKey,
+      restoredSnapshot: !!snapshotToRestore,
+      durationMs: Date.now() - startedAt,
+    });
     return true;
   }
 
@@ -195,6 +237,7 @@ export class LexAgentLifecycleBridge {
     this.disposeSessionEntry(targetEntry);
     if (targetEntry.sessionId === this._activeSessionId) {
       this._activeSessionId = null;
+      setActiveBlocklySlashCommandSession(null);
     }
   }
 
@@ -205,6 +248,7 @@ export class LexAgentLifecycleBridge {
     }
     this._sessionEntries.clear();
     this._activeSessionId = null;
+    setActiveBlocklySlashCommandSession(null);
   }
 
   private createSessionEntry(

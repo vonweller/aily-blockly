@@ -219,6 +219,24 @@ export class SessionLifecycleHelper {
     });
   }
 
+  private warmupHardwareIndexForAI(debugSource: string): void {
+    void (async () => {
+      try {
+        console.info('[SessionLifecycle][debug] warm hardware index in background', {
+          debugSource,
+        });
+        const config = AilyHost.get().config;
+        if (config.scheduleHardwareIndexRefreshForAI) {
+          config.scheduleHardwareIndexRefreshForAI(debugSource, { force: true });
+          return;
+        }
+        await config.loadHardwareIndexForAI?.();
+      } catch (err) {
+        console.warn('[AilyChat] 加载硬件索引失败:', err);
+      }
+    })();
+  }
+
   private get hostSessionItemController(): HostSessionItemController {
     const sessionItemsService = this.ctx.chatSessionItemsService;
     if (sessionItemsService?.sessionItemController) {
@@ -625,11 +643,12 @@ export class SessionLifecycleHelper {
     this.ctx.sessionAllowedPaths = [];
     this.ctx.repetitionDetectionService.resetAll();
     this.ctx.legacyActivatedDeferredTools.clear();
-    SkillRegistry.clearSessionState();
+    SkillRegistry.clearSessionState('startSession');
 
     // 初始化 Skills 系统（扫描全局 + 项目级 skills）
     const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
     SkillRegistry.initialize(projectRoot, {
+      debugSource: 'startSession',
       userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
       projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
     }).catch(err => {
@@ -639,11 +658,7 @@ export class SessionLifecycleHelper {
     if (!this.ctx.mcpInitialized) {
       this.ctx.mcpInitialized = true;
       await this.ctx.mcpService.init();
-      try {
-        await AilyHost.get().config.loadHardwareIndexForAI?.();
-      } catch (err) {
-        console.warn('[AilyChat] 加载硬件索引失败:', err);
-      }
+      this.warmupHardwareIndexForAI('startSession');
     }
 
     this.ctx.isCompleted = false;
@@ -1143,10 +1158,11 @@ export class SessionLifecycleHelper {
     this.ctx.sessionAllowedPaths = [];
     this.ctx.repetitionDetectionService.resetAll();
     this.ctx.legacyActivatedDeferredTools.clear();
-    SkillRegistry.clearSessionState();
+    SkillRegistry.clearSessionState(`startSessionWithId:${sessionId}`);
 
     const projectRoot = AilyHost.get().project?.currentProjectPath || AilyHost.get().project?.projectRootPath;
     SkillRegistry.initialize(projectRoot, {
+      debugSource: `startSessionWithId:${sessionId}`,
       userSkillFolders: this.ctx.ailyChatConfigService?.userSkillFolders,
       projectSkillFolders: this.ctx.ailyChatConfigService?.projectSkillFolders,
     }).catch(err => {
@@ -1156,11 +1172,7 @@ export class SessionLifecycleHelper {
     if (!this.ctx.mcpInitialized) {
       this.ctx.mcpInitialized = true;
       await this.ctx.mcpService.init();
-      try {
-        await AilyHost.get().config.loadHardwareIndexForAI?.();
-      } catch (err) {
-        console.warn('[AilyChat] 加载硬件索引失败:', err);
-      }
+      this.warmupHardwareIndexForAI(`startSessionWithId:${sessionId}`);
     }
 
     if (activationRequestId !== undefined) {

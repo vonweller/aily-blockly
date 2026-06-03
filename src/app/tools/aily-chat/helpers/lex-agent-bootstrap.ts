@@ -42,6 +42,7 @@ import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { CopilotCliSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
+import { ChatSessionRuntimeRegistryService } from '../services/chat-session-runtime-registry.service';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
 import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
@@ -125,6 +126,7 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'handleToolApproval' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
   & {
+    readonly chatSessionRuntimeRegistry?: ChatSessionRuntimeRegistryService;
     readonly currentSessionPath?: string | null;
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
@@ -985,15 +987,17 @@ export function bootstrapBlocklyLexAgent(
     memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
   };
   if (cwd && (sessionId || ctx.sessionId)) {
-    const editingTimelineRepository = new EditingTimelineRepository({
-      joinPath: (...parts) => AilyHost.get().path.join(...parts),
-    });
-    const editingContentStore = new EditingContentStore({
-      joinPath: (...parts) => AilyHost.get().path.join(...parts),
-    });
-    const editingTimelineRecorder = new EditingTimelineRecordingBridge(
-      editingTimelineRepository,
-      editingContentStore,
+    const lexPostTurnResources = ctx.chatSessionRuntimeRegistry?.getOrCreateLexPostTurnResources?.(
+      sessionId || ctx.sessionId,
+      cwd,
+    );
+    const editingTimelineRecorder = lexPostTurnResources?.editingTimelineRecorder ?? new EditingTimelineRecordingBridge(
+      new EditingTimelineRepository({
+        joinPath: (...parts) => AilyHost.get().path.join(...parts),
+      }),
+      new EditingContentStore({
+        joinPath: (...parts) => AilyHost.get().path.join(...parts),
+      }),
       cwd,
       sessionId || ctx.sessionId,
     );
@@ -1047,7 +1051,21 @@ export function bootstrapBlocklyLexAgent(
         });
       },
     };
-    runtimeExtensions['workspaceChangeCollector'] = new GitAwareWorkspaceChangeCollector();
+    runtimeExtensions['workspaceChangeCollector'] = lexPostTurnResources?.workspaceChangeCollector
+      ?? new GitAwareWorkspaceChangeCollector();
+    if (ctx.chatSessionRuntimeRegistry) {
+      runtimeExtensions['sessionCompletionCoordinator'] = {
+        scheduleRequestCompleted: (input: {
+          sessionId: string;
+          turnId: string;
+          reason: string;
+          runWorkspaceFinalize: () => Promise<void>;
+          runSessionEndHooks: () => Promise<void>;
+        }) => {
+          ctx.chatSessionRuntimeRegistry?.scheduleLexRequestCompleted(input);
+        },
+      };
+    }
   }
 
   let pendingNpmCommand: { command: string; isInstall: boolean; isUninstall: boolean } | null = null;
@@ -1237,7 +1255,7 @@ export function bootstrapBlocklyLexAgent(
     toolProvider,
     skillProvider: new BlocklySkillProvider(),
     agentProvider: runtimeAgentProvider,
-    slashCommandProvider: createBlocklySlashCommandProvider(),
+    slashCommandProvider: createBlocklySlashCommandProvider(sessionId),
     approvalHandler: async request => ctx.handleToolApproval({
       toolCallId: request.toolCallId,
       toolName: request.toolName,

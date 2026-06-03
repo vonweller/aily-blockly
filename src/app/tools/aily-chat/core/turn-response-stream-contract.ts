@@ -10,7 +10,7 @@ import {
 } from './agent-identifiers';
 import { cloneTurnResponseModelRouting } from '../helpers/turn-response-response-model';
 import {
-  applyAutoDiscountToBillingLabel,
+  formatCompactBillingLabel,
   isAutoPresetIdentifier,
   isDefaultAutoPresetIdentifier,
 } from '../helpers/model-billing-label';
@@ -239,7 +239,7 @@ export function buildTurnResponseAssistantEntryProjection(
     source: overrides.source ?? getTurnResponseParticipant(turn.response.participant),
     modelName,
     modelBillingLabel: isDefaultAutoPresetIdentifier(requestModelPresetId)
-      ? applyAutoDiscountToBillingLabel(modelBillingLabel)
+      ? formatCompactBillingLabel(modelBillingLabel)
       : modelBillingLabel,
   };
 }

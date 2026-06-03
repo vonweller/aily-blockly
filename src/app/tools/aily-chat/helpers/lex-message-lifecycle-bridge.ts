@@ -158,8 +158,22 @@ export class LexMessageLifecycleBridge {
 
   async finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
     const resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
+    const finalizeStartedAt = Date.now();
+    let stageStartedAt = finalizeStartedAt;
+    const logFinalizeStage = (stage: string): void => {
+      const now = Date.now();
+      console.info('[AilyChat][FinalizeDebug] finalize stage', {
+        sessionId: resolvedSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
+        stage,
+        stageMs: now - stageStartedAt,
+        elapsedMs: now - finalizeStartedAt,
+      });
+      stageStartedAt = now;
+    };
+
     this.closeNativeThinking();
     await this.partProcessor.finalize?.();
+    logFinalizeStage('part_processor_finalize');
 
     this.ctx.editCheckpointService.commitCurrentTurn();
     if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
@@ -171,6 +185,7 @@ export class LexMessageLifecycleBridge {
         this.ctx.editCheckpointService.publishSummary(summary);
       }
     }
+    logFinalizeStage('edit_checkpoint_finalize');
 
     this.ctx.viewAdapter.markLastMessageDone();
 
@@ -179,12 +194,14 @@ export class LexMessageLifecycleBridge {
     } catch (error) {
       console.warn('[LexStream] finalize-time compaction failed:', error);
     }
+    logFinalizeStage('finalize_compaction');
 
     try {
       this.finalizeCurrentTurnResponse?.('completed');
     } catch (error) {
       console.warn('[LexStream] finalize current turn response failed:', error);
     }
+    logFinalizeStage('finalize_current_turn_response');
 
     if (resolvedSaveTarget) {
       // Execution-owned save targets already carry the authoritative session-scoped
@@ -196,19 +213,24 @@ export class LexMessageLifecycleBridge {
         resolvedSaveTarget.turnResponses = this.normalizeTerminalTurnResponses(candidateTurnResponses);
       }
     }
+    logFinalizeStage('normalize_terminal_turn_responses');
 
     this.ctx.session.saveCurrentSession(resolvedSaveTarget ? { target: resolvedSaveTarget } : undefined);
     this.ctx.syncExecutionRuntimeState?.(resolvedSaveTarget);
+    logFinalizeStage('save_session_dispatch');
 
     if (!AilyHost.get().electron?.isWindowFocused()) {
       AilyHost.get().electron?.notify('Aily', '对话已完成');
     }
+    logFinalizeStage('notify_if_needed');
 
     await this.ctx.applyPendingSwitch(resolvedSaveTarget?.sessionId);
+    logFinalizeStage('apply_pending_switch');
     this.ctx.ngZone.run(() => {
       this.ctx.isWaiting = false;
       this.ctx.isCompleted = true;
     });
+    logFinalizeStage('mark_completed');
   }
 
   private normalizeTerminalTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {

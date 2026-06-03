@@ -1,6 +1,10 @@
 import type { IHostSlashCommandProvider, ISlashCommandContribution } from 'aily-lex/browser';
 import { SkillRegistry } from './skill-registry';
 
+const ACTIVE_SESSION_WATCHERS = new Map<string, Set<() => void>>();
+let activeSessionId: string | null = null;
+let skillRegistryChangeSubscription: { dispose(): void } | null = null;
+
 const BLOCKLY_SLASH_COMMANDS: readonly ISlashCommandContribution[] = [
   {
     name: 'fix',
@@ -28,7 +32,67 @@ const BLOCKLY_SLASH_COMMANDS: readonly ISlashCommandContribution[] = [
   },
 ];
 
-export function createBlocklySlashCommandProvider(): IHostSlashCommandProvider {
+function normalizeSessionId(sessionId?: string | null): string | null {
+  if (typeof sessionId !== 'string') {
+    return null;
+  }
+
+  const normalized = sessionId.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function ensureSkillRegistryWatcher(): void {
+  if (skillRegistryChangeSubscription) {
+    return;
+  }
+
+  skillRegistryChangeSubscription = SkillRegistry.onDidChange(() => {
+    console.info('[BlocklySlashCommandProvider][debug] skill registry changed', {
+      activeSessionId,
+      activeWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
+      sessionWatcherCount: ACTIVE_SESSION_WATCHERS.size,
+    });
+    notifyActiveSessionWatchers();
+  });
+}
+
+function notifySessionWatchers(sessionId: string | null): void {
+  if (!sessionId) {
+    return;
+  }
+
+  const watchers = ACTIVE_SESSION_WATCHERS.get(sessionId);
+  if (!watchers || watchers.size === 0) {
+    return;
+  }
+
+  for (const watcher of [...watchers]) {
+    watcher();
+  }
+}
+
+function notifyActiveSessionWatchers(): void {
+  notifySessionWatchers(activeSessionId);
+}
+
+export function setActiveBlocklySlashCommandSession(sessionId?: string | null): void {
+  const nextActiveSessionId = normalizeSessionId(sessionId);
+  if (nextActiveSessionId === activeSessionId) {
+    return;
+  }
+
+  console.info('[BlocklySlashCommandProvider][debug] active session updated', {
+    previousActiveSessionId: activeSessionId,
+    nextActiveSessionId,
+    previousWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
+    nextWatcherCount: nextActiveSessionId ? (ACTIVE_SESSION_WATCHERS.get(nextActiveSessionId)?.size ?? 0) : 0,
+  });
+  activeSessionId = nextActiveSessionId;
+}
+
+export function createBlocklySlashCommandProvider(sessionId?: string | null): IHostSlashCommandProvider {
+  const providerSessionId = normalizeSessionId(sessionId);
+
   return {
     contributeSlashCommands(): ISlashCommandContribution[] {
       const skillCommands = SkillRegistry.getAll()
@@ -45,7 +109,30 @@ export function createBlocklySlashCommandProvider(): IHostSlashCommandProvider {
       return [...BLOCKLY_SLASH_COMMANDS, ...skillCommands];
     },
     onSlashCommandsChanged(listener) {
-      return SkillRegistry.onDidChange(listener);
+      if (!providerSessionId) {
+        return SkillRegistry.onDidChange(listener);
+      }
+
+      ensureSkillRegistryWatcher();
+      let watchers = ACTIVE_SESSION_WATCHERS.get(providerSessionId);
+      if (!watchers) {
+        watchers = new Set<() => void>();
+        ACTIVE_SESSION_WATCHERS.set(providerSessionId, watchers);
+      }
+      watchers.add(listener);
+
+      return {
+        dispose() {
+          const sessionWatchers = ACTIVE_SESSION_WATCHERS.get(providerSessionId);
+          if (!sessionWatchers) {
+            return;
+          }
+          sessionWatchers.delete(listener);
+          if (sessionWatchers.size === 0) {
+            ACTIVE_SESSION_WATCHERS.delete(providerSessionId);
+          }
+        },
+      };
     },
   };
 }
