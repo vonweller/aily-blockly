@@ -1,6 +1,5 @@
 import type {
   IAgentLifecycle,
-  IChatCoordination,
   IChatServiceAccess,
   IChatViewAccess,
   ISessionAccess,
@@ -8,9 +7,12 @@ import type {
 
 type ChatConversationActionContext = Pick<IAgentLifecycle, 'isWaiting'>
   & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatCoordination, 'send'>
   & Pick<IChatServiceAccess, 'message'>
   & Pick<IChatViewAccess, 'scrollManager'>;
+
+interface ChatConversationActionCallbacks {
+  submitText: (text: string) => Promise<void> | void;
+}
 
 /**
  * Coordinates canned main-conversation follow-up actions.
@@ -19,7 +21,10 @@ type ChatConversationActionContext = Pick<IAgentLifecycle, 'isWaiting'>
  * preserving the existing user-visible prompts and scroll semantics.
  */
 export class ChatConversationActionCoordinator {
-  constructor(private readonly ctx: ChatConversationActionContext) {}
+  constructor(
+    private readonly ctx: ChatConversationActionContext,
+    private readonly callbacks: ChatConversationActionCallbacks,
+  ) {}
 
   async continueConversation(): Promise<void> {
     if (this.ctx.isWaiting) {
@@ -32,7 +37,7 @@ export class ChatConversationActionCoordinator {
     }
 
     this.ctx.scrollManager.startNewExchange?.();
-    await this.ctx.send('user', '请继续完成之前的任务。', false);
+    await this.callbacks.submitText('请继续完成之前的任务。');
   }
 
   async retryLastAction(): Promise<void> {
@@ -46,6 +51,6 @@ export class ChatConversationActionCoordinator {
     }
 
     this.ctx.scrollManager.startNewExchange?.();
-    await this.ctx.send('user', '请重试上次的操作。', false);
+    await this.callbacks.submitText('请重试上次的操作。');
   }
 }

@@ -119,6 +119,7 @@
   border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 
   .interactive-input-part > .chat-input-notification-container,
+  .interactive-input-part > .chat-pending-followup-widget-container,
   .interactive-input-part > .chat-todo-list-widget-container,
   .interactive-input-part > .chat-editing-session {
     width: 100%;
@@ -133,6 +134,7 @@
   }
 
   .interactive-input-part:has(> .chat-input-notification-container.has-notification) .input-box,
+  .interactive-input-part:has(> .chat-pending-followup-widget-container.has-pending) .input-box,
   .interactive-input-part:has(> .chat-todo-list-widget-container > app-floating-todo.has-todos) .input-box,
   .interactive-input-part:has(> .chat-editing-session > app-aily-edits-viewer.has-summary) .input-box {
     margin-top: 0;
@@ -148,6 +150,174 @@
 
   .interactive-input-part > .chat-input-notification-container {
     margin-bottom: -10px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container {
+    margin-bottom: -10px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget {
+    padding: 10px 16px 14px 16px;
+    box-sizing: border-box;
+    border: 1px solid var(--aily-chat-input-notice-border, rgba(255, 255, 255, 0.08));
+    border-bottom: none;
+    border-top-left-radius: var(--aily-chat-input-notice-radius, 5px);
+    border-top-right-radius: var(--aily-chat-input-notice-radius, 5px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    background: var(--aily-chat-viewer-panel-raised, rgba(255, 255, 255, 0.03));
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--aily-chat-input-notice-title-fg, #cccccc);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-clear-all,
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-edit,
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-run-next,
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-remove {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 16px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-clear-all,
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-run-next {
+    color: var(--aily-chat-viewer-state-info, #6cb6ff);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-edit {
+    color: var(--aily-chat-input-notice-title-fg, #cccccc);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-remove {
+    color: var(--aily-chat-viewer-state-warn, #e5c07b);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-section-title {
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    color: var(--aily-chat-input-notice-title-fg, #cccccc);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-section-count {
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--aily-chat-code-fg-muted, #6a6a6a);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-item[data-kind='steering'] {
+    background: rgba(108, 182, 255, 0.08);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-order {
+    color: var(--aily-chat-code-fg-muted, #6a6a6a);
+    font-size: 11px;
+    line-height: 16px;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-kind {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    line-height: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--aily-chat-code-fg-muted, #9aa0a6);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-kind[data-kind='steering'] {
+    border-color: rgba(108, 182, 255, 0.22);
+    color: var(--aily-chat-viewer-state-info, #6cb6ff);
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-text {
+    min-width: 0;
+    color: var(--aily-chat-input-notice-title-fg, #cccccc);
+    font-size: 12px;
+    line-height: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
   }
 
   .interactive-input-part > .chat-input-notification-container:not(.has-notification) {

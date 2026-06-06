@@ -22,6 +22,7 @@ import {
   resolveHostSessionProviderOptions,
   resolveHostSessionSelectedModeFromMetadata,
 } from './host-session-input-state';
+import { cloneHostSessionRuntimeAuxiliary } from './host-session-runtime-auxiliary';
 import { HostSessionContentProvider } from './host-session-content-provider';
 import type { HostSessionContent } from './host-session-content-provider';
 import { type ChatSessionTitleSource } from '../core/chat-session-title';
@@ -197,6 +198,10 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
   & Pick<IChatCoordination, 'lexStream'>
   & {
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    projectRestoredRuntimeAuxiliary?(
+      sessionId: string,
+      auxiliary: HostSessionRecord['auxiliary'] | null | undefined,
+    ): void;
     resumeRestoredInteraction?(
       content: string,
       interactionAction: LexInteractionAction,
@@ -378,6 +383,7 @@ export class HostSessionRestoreBridge {
         this.ctx.sessionId,
         hostResponseState.turnResponses,
       );
+      this.ctx.projectRestoredRuntimeAuxiliary?.(this.ctx.sessionId, sanitizedHostRecord.auxiliary);
       this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
 
       // Restore context budget: prefer persisted lex-derived values over local estimate
@@ -453,10 +459,15 @@ export class HostSessionRestoreBridge {
     const fallbackTurnResponses = runtimeTurnResponses.length > 0
       ? runtimeTurnResponses
       : stableDurableTurnResponsesForRuntimeRestore(baseHostRecord?.turnResponses ?? []);
+    const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
+      ...(baseHostRecord?.auxiliary ?? {}),
+      pendingFollowupRequests: runtimeState.pendingFollowupRequests,
+      yieldRequested: runtimeState.yieldRequested === true,
+    });
 
     return {
       ...(baseHostRecord?.sidecar ? { sidecar: baseHostRecord.sidecar } : {}),
-      ...(baseHostRecord?.auxiliary ? { auxiliary: baseHostRecord.auxiliary } : {}),
+      ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
       turnResponses: [...fallbackTurnResponses],
       metadata: {
         sessionId: request.target.sessionId,

@@ -9,13 +9,18 @@ import {
 } from '../core/chat-mode';
 import type { ChatSessionTitleSource } from '../core/chat-session-title';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import type { AuthQuotaInfo } from './auth-quota-state.service';
 import type { ChatInputNotice } from './chat-input-notice';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
 import type { RequestQuotaSnapshot } from './request-quota-snapshot';
 import type { RequestQuotaServiceState } from './request-quota-state.service';
 
-export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'failed';
+export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
+
+type ChatSessionRuntimeTracePhase = 'idle' | 'running' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
+
+const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
 export type ChatSessionRuntimeChangeReason =
   | 'transcript'
@@ -78,6 +83,8 @@ export interface ChatSessionRuntimeViewOverlay {
 export interface ChatSessionRuntimeState {
   readonly turnResponses: readonly TurnResponseTurn[];
   readonly hostProjectionState: HostTurnResponseState | null;
+  readonly pendingFollowupRequests?: readonly PendingFollowupRequest[];
+  readonly yieldRequested?: boolean;
   readonly status?: ChatSessionRuntimeStatus;
   readonly description?: string;
   readonly requestInProgress: boolean;
@@ -90,6 +97,33 @@ export interface ChatSessionRuntimeState {
   readonly debugSummary?: ChatSessionRuntimeDebugSummary;
   readonly quotaOverlay?: ChatSessionRuntimeQuotaOverlay;
   readonly viewOverlay?: ChatSessionRuntimeViewOverlay;
+}
+
+function resolveRuntimeTracePhase(
+  state: ChatSessionRuntimeState | undefined,
+): ChatSessionRuntimeTracePhase {
+  if (state?.requestInProgress === true) {
+    return 'running';
+  }
+
+  switch (state?.status) {
+    case 'needs_input':
+      return 'needs_input';
+    case 'completed':
+      return 'completed';
+    case 'cancelled':
+      return 'cancelled';
+    case 'failed':
+      return 'failed';
+    default:
+      return 'idle';
+  }
+}
+
+function isTerminalRuntimeStatus(
+  status: ChatSessionRuntimeStatus | undefined,
+): status is Extract<ChatSessionRuntimeStatus, 'completed' | 'cancelled' | 'failed'> {
+  return status === 'completed' || status === 'cancelled' || status === 'failed';
 }
 
 export const DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES: ChatSessionRuntimeCapabilities = {
@@ -174,6 +208,8 @@ type ChatSessionRuntimeStatePatch = Omit<
 > & {
   readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
   readonly hostProjectionState?: HostTurnResponseState | null | undefined;
+  readonly pendingFollowupRequests?: readonly PendingFollowupRequest[] | null | undefined;
+  readonly yieldRequested?: boolean | null | undefined;
   readonly status?: ChatSessionRuntimeStatus | null | undefined;
   readonly description?: string | null | undefined;
   readonly activeResponseHandle?: unknown | null | undefined;
@@ -245,14 +281,32 @@ export class ChatSessionRuntimeStoreService {
     const nextHostProjectionState = state.hostProjectionState !== undefined
       ? state.hostProjectionState ?? null
       : previousState?.hostProjectionState ?? null;
+    const nextPendingFollowupRequests = state.pendingFollowupRequests !== undefined
+      ? this.clonePendingFollowupRequests(state.pendingFollowupRequests ?? undefined)
+      : previousState?.pendingFollowupRequests;
+    const nextYieldRequested = state.yieldRequested !== undefined
+      ? state.yieldRequested === true
+      : previousState?.yieldRequested === true;
+    const resolvedNextStatus = this.resolveNextStatus(state.status, previousState, nextTurnResponses);
     const nextRequestInProgress = typeof state.requestInProgress === 'boolean'
       ? state.requestInProgress
-      : previousState?.requestInProgress ?? false;
-    const nextStatus = this.resolveNextStatus(state.status, previousState);
+      : isTerminalRuntimeStatus(resolvedNextStatus)
+        ? false
+        : previousState?.requestInProgress ?? false;
+    const nextStatus = !nextRequestInProgress && resolvedNextStatus === 'in_progress'
+      ? undefined
+      : resolvedNextStatus;
     const nextDescription = this.resolveNextDescription(state.description, previousState);
     const nextActiveResponseHandle = state.activeResponseHandle !== undefined
       ? state.activeResponseHandle ?? undefined
-      : previousState?.activeResponseHandle;
+      : nextRequestInProgress
+        ? previousState?.activeResponseHandle
+        : undefined;
+    const nextSupportsInterruption = typeof state.supportsInterruption === 'boolean'
+      ? state.supportsInterruption
+      : nextRequestInProgress
+        ? previousState?.supportsInterruption ?? false
+        : false;
     const nextCapabilities = this.resolveNextCapabilities(state.capabilities, previousState);
     const nextQuotaOverlay = state.quotaOverlay !== undefined
       ? state.quotaOverlay ?? undefined
@@ -263,15 +317,15 @@ export class ChatSessionRuntimeStoreService {
     const nextState: ChatSessionRuntimeState = {
       turnResponses: nextTurnResponses,
       hostProjectionState: nextHostProjectionState,
+      ...(nextPendingFollowupRequests?.length ? { pendingFollowupRequests: nextPendingFollowupRequests } : {}),
+      ...(nextYieldRequested ? { yieldRequested: true } : {}),
       ...(nextStatus ? { status: nextStatus } : {}),
       ...(nextDescription ? { description: nextDescription } : {}),
       requestInProgress: nextRequestInProgress,
       attachedView: typeof state.attachedView === 'boolean'
         ? state.attachedView
         : previousState?.attachedView ?? false,
-      supportsInterruption: typeof state.supportsInterruption === 'boolean'
-        ? state.supportsInterruption
-        : previousState?.supportsInterruption ?? false,
+      supportsInterruption: nextSupportsInterruption,
       ...(nextActiveResponseHandle !== undefined ? { activeResponseHandle: nextActiveResponseHandle } : {}),
       ...(nextQuotaOverlay ? { quotaOverlay: this.cloneQuotaOverlay(nextQuotaOverlay) } : {}),
       ...(nextViewOverlay ? { viewOverlay: this.cloneViewOverlay(nextViewOverlay) } : {}),
@@ -279,7 +333,7 @@ export class ChatSessionRuntimeStoreService {
         ? { stopSession: state.stopSession }
         : state.stopSession === null
           ? {}
-        : previousState?.stopSession
+        : nextSupportsInterruption && previousState?.stopSession
           ? { stopSession: previousState.stopSession }
           : {}),
       ...(typeof state.disposeSession === 'function'
@@ -314,6 +368,7 @@ export class ChatSessionRuntimeStoreService {
     if (!nextState.requestInProgress
       && nextState.turnResponses.length === 0
       && !nextState.hostProjectionState
+      && (!nextState.pendingFollowupRequests || nextState.pendingFollowupRequests.length === 0)
       && !nextState.attachedView
       && !nextState.status
       && !nextState.description
@@ -420,6 +475,40 @@ export class ChatSessionRuntimeStoreService {
       reason,
       listAffecting,
       ...(highFrequency ? { highFrequency: true } : {}),
+    });
+    this.traceRequestStateTransition(sessionId, previousState, nextState, reason);
+  }
+
+  private traceRequestStateTransition(
+    sessionId: string,
+    previousState: ChatSessionRuntimeState | undefined,
+    nextState: ChatSessionRuntimeState | undefined,
+    reason: ChatSessionRuntimeChangeReason,
+  ): void {
+    const from = resolveRuntimeTracePhase(previousState);
+    const to = resolveRuntimeTracePhase(nextState);
+    const previousStatus = previousState?.status ?? null;
+    const nextStatus = nextState?.status ?? null;
+    const previousRequestInProgress = previousState?.requestInProgress === true;
+    const nextRequestInProgress = nextState?.requestInProgress === true;
+
+    if (from === to
+      && previousStatus === nextStatus
+      && previousRequestInProgress === nextRequestInProgress) {
+      return;
+    }
+
+    console.info(REQUEST_STATE_TRACE_PREFIX, {
+      sessionId,
+      from,
+      to,
+      reason,
+      previousStatus,
+      nextStatus,
+      previousRequestInProgress,
+      nextRequestInProgress,
+      pendingCount: nextState?.pendingFollowupRequests?.length ?? 0,
+      attachedView: nextState?.attachedView === true,
     });
   }
 
@@ -532,9 +621,10 @@ export class ChatSessionRuntimeStoreService {
       case 'failed':
       case 'error':
         return 'failed';
-      case 'completed':
       case 'cancelled':
       case 'canceled':
+        return 'cancelled';
+      case 'completed':
         return 'completed';
       default:
         return undefined;
@@ -608,16 +698,19 @@ export class ChatSessionRuntimeStoreService {
   private resolveNextStatus(
     status: ChatSessionRuntimeStatus | null | undefined,
     previousState: ChatSessionRuntimeState | undefined,
+    turnResponses?: readonly TurnResponseTurn[] | undefined,
   ): ChatSessionRuntimeStatus | undefined {
+    const derivedStatus = this.resolveStatusFromTurnResponses(turnResponses ?? previousState?.turnResponses);
+
     if (status === null) {
-      return undefined;
+      return derivedStatus;
     }
 
     if (status) {
       return status;
     }
 
-    return previousState?.status;
+    return derivedStatus ?? previousState?.status;
   }
 
   private resolveNextDescription(
@@ -698,6 +791,20 @@ export class ChatSessionRuntimeStoreService {
       ...(overlay.chatInputNotice ? { chatInputNotice: clonePlainObject(overlay.chatInputNotice) } : {}),
       updatedAt: overlay.updatedAt,
     };
+  }
+
+  private clonePendingFollowupRequests(
+    requests: readonly PendingFollowupRequest[] | undefined,
+  ): readonly PendingFollowupRequest[] | undefined {
+    if (!Array.isArray(requests) || requests.length === 0) {
+      return undefined;
+    }
+
+    if (typeof globalThis.structuredClone === 'function') {
+      return globalThis.structuredClone(requests) as readonly PendingFollowupRequest[];
+    }
+
+    return JSON.parse(JSON.stringify(requests)) as readonly PendingFollowupRequest[];
   }
 }
 

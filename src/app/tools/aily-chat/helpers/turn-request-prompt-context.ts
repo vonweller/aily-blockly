@@ -97,14 +97,18 @@ export function cloneSessionRequestContextSnapshot(
       }))
     : undefined;
   const interactionContinuation = cloneInteractionContinuation(snapshot.interactionContinuation);
+  const requestId = typeof snapshot.requestId === 'string' && snapshot.requestId.trim().length > 0
+    ? snapshot.requestId.trim()
+    : undefined;
 
-  if (!directToolReferences && !interactionContinuation) {
+  if (!directToolReferences && !interactionContinuation && !requestId) {
     return undefined;
   }
 
   return {
     ...(directToolReferences ? { directToolReferences } : {}),
     ...(interactionContinuation ? { interactionContinuation } : {}),
+    ...(requestId ? { requestId } : {}),
   };
 }
 

@@ -28,6 +28,7 @@ export interface ChatSessionRowActionCallbacks {
   onSwitchSession: (sessionId: string, fallbackProjectPath?: string | null) => Promise<boolean>;
   onNewChat: () => void | Promise<void>;
   onEnterEntryState: (sessionId?: string | null) => void | Promise<void>;
+  onDeleteSessionRuntime?: (sessionId: string) => void | Promise<void>;
   onDetectChanges: () => void;
   onUpdateTitle: (title: string) => void;
   onRefreshSessions: () => void;
@@ -46,7 +47,7 @@ export interface ChatSessionCommandCallbacks {
 }
 
 export interface ChatSessionEntryCommandCallbacks {
-  onEnterEntryState: (sessionId?: string | null, options?: { disposeRuntime?: boolean }) => void | Promise<void>;
+  onEnterEntryState: (sessionId?: string | null) => void | Promise<void>;
 }
 
 export interface ChatSessionSwitchRequestCallbacks extends ChatSessionSwitchCallbacks {
@@ -126,20 +127,9 @@ export class ChatSessionActionsService {
     editCheckpointService: EditCheckpointServiceLike,
     callbacks: ChatSessionEntryCommandRequestCallbacks,
     sessionId?: string | null,
-    options?: {
-      readonly saveCurrentSession?: boolean;
-      readonly disposeRuntime?: boolean;
-    },
+    options?: { readonly saveCurrentSession?: boolean },
   ): Promise<void> {
-    const onConfirm = () => {
-      if (typeof options?.disposeRuntime === 'boolean') {
-        return this.enterEntryInventory(callbacks, sessionId, {
-          disposeRuntime: options.disposeRuntime,
-        });
-      }
-
-      return this.enterEntryInventory(callbacks, sessionId);
-    };
+    const onConfirm = () => this.enterEntryInventory(callbacks, sessionId);
 
     if (editCheckpointService.hasUnsavedEdits()) {
       await this.confirmUnsavedEditsBeforeSwitch(editCheckpointService, callbacks.onSaveCurrentSession, onConfirm);
@@ -228,37 +218,42 @@ export class ChatSessionActionsService {
       if (!result?.confirmed) {
         return;
       }
-      const isDeletingCurrent = sessionId === currentSessionId;
-      sessionItemController.deleteChatSessionItem(sessionId);
-      callbacks.onRefreshSessions();
-      callbacks.onDetectChanges();
-      if (!isDeletingCurrent) {
-        return;
-      }
 
-      const remaining = this.chatSessionItemsService.sessionListItems[0];
-      if (remaining?.sessionId) {
-        void this.switchToSession(
-          remaining.sessionId,
-          currentSessionId,
-          {
-            onSaveCurrentSession: () => undefined,
-            onSwitchSession: callbacks.onSwitchSession,
-            onSetCompleted: () => undefined,
-            onSetServerSessionInactive: () => undefined,
-          },
-          remaining,
-          {
-            saveCurrentSession: false,
-            discardCurrentSession: false,
-          },
-        ).catch(error => {
-          console.warn('[ChatSessionActionsService] failed to restore the fallback session after deletion:', error);
-        });
-        return;
-      }
+      void (async () => {
+        await callbacks.onDeleteSessionRuntime?.(sessionId);
 
-      void callbacks.onEnterEntryState(sessionId);
+        const isDeletingCurrent = sessionId === currentSessionId;
+        sessionItemController.deleteChatSessionItem(sessionId);
+        callbacks.onRefreshSessions();
+        callbacks.onDetectChanges();
+        if (!isDeletingCurrent) {
+          return;
+        }
+
+        const remaining = this.chatSessionItemsService.sessionListItems[0];
+        if (remaining?.sessionId) {
+          await this.switchToSession(
+            remaining.sessionId,
+            currentSessionId,
+            {
+              onSaveCurrentSession: () => undefined,
+              onSwitchSession: callbacks.onSwitchSession,
+              onSetCompleted: () => undefined,
+              onSetServerSessionInactive: () => undefined,
+            },
+            remaining,
+            {
+              saveCurrentSession: false,
+              discardCurrentSession: false,
+            },
+          );
+          return;
+        }
+
+        await callbacks.onEnterEntryState(sessionId);
+      })().catch(error => {
+        console.warn('[ChatSessionActionsService] failed to delete session cleanly:', error);
+      });
     });
   }
 
@@ -312,15 +307,7 @@ export class ChatSessionActionsService {
   async enterEntryInventory(
     callbacks: ChatSessionEntryCommandCallbacks,
     sessionId?: string | null,
-    options?: { readonly disposeRuntime?: boolean },
   ): Promise<void> {
-    if (typeof options?.disposeRuntime === 'boolean') {
-      await callbacks.onEnterEntryState(sessionId, {
-        disposeRuntime: options.disposeRuntime,
-      });
-      return;
-    }
-
     await callbacks.onEnterEntryState(sessionId);
   }
 

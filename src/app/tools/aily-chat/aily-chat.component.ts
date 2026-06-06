@@ -54,6 +54,8 @@ import { ChatSwitchShellCoordinator } from './helpers/chat-switch-shell-coordina
 import { ChatEditResourceShellCoordinator } from './helpers/chat-edit-resource-shell-coordinator';
 import { ChatSurfaceShellCoordinator } from './helpers/chat-surface-shell-coordinator';
 import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordinator';
+import { ChatRequestController } from './helpers/chat-request-controller';
+import type { ChatPendingRequestKind, PendingFollowupRequest } from './helpers/chat-pending-request';
 import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
@@ -91,6 +93,10 @@ import {
   ChatPermissionConfirmDialogComponent,
   type ChatPermissionConfirmDialogResult,
 } from './components/chat-permission-confirm-dialog.component';
+import {
+  ChatPendingRequestsDialogComponent,
+  type ChatPendingRequestsDialogResult,
+} from './components/chat-pending-requests-dialog.component';
 import { OnboardingService } from '../../services/onboarding.service';
 import { AbsAutoSyncService } from './services/abs-auto-sync.service';
 import { RepetitionDetectionService } from './services/repetition-detection.service';
@@ -113,6 +119,12 @@ import type { ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from
 import type { IMenuItem } from '../../configs/menu.config';
 export type { Tool, ResourceItem, ChatMessage, ToolCallInfo };
 export { ToolCallState };
+
+interface PendingFollowupSection {
+  readonly kind: ChatPendingRequestKind;
+  readonly title: string;
+  readonly requests: readonly PendingFollowupRequest[];
+}
 
 // import { reloadAbiJsonTool, reloadAbiJsonToolSimple } from './tools';
 
@@ -183,6 +195,7 @@ export class AilyChatComponent implements OnDestroy {
   public readonly editResourceShellCoordinator: ChatEditResourceShellCoordinator;
   public readonly surfaceShellCoordinator: ChatSurfaceShellCoordinator;
   public readonly submitShellCoordinator: ChatSubmitShellCoordinator;
+  private readonly requestController: ChatRequestController;
   public readonly composerShellCoordinator: ChatComposerShellCoordinator;
   public readonly viewportShellCoordinator: ChatViewportShellCoordinator;
   public readonly memoryShellCoordinator: ChatMemoryShellCoordinator;
@@ -195,6 +208,11 @@ export class AilyChatComponent implements OnDestroy {
   private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
+  private pendingFollowupEditState: {
+    readonly sessionId: string;
+    readonly requestId: string;
+    readonly kind: ChatPendingRequestKind;
+  } | null = null;
   /** 用户消息重新编辑互斥：同时最多展开一条 */
   userMessageEditingTurnId: string | undefined;
 
@@ -283,6 +301,17 @@ export class AilyChatComponent implements OnDestroy {
       closeTool: (toolId) => AilyHost.get().ui?.closeTool(toolId),
       openUrl: (url) => this.electronService.openUrl(url),
     });
+    this.requestController = new ChatRequestController({
+      sendNow: (text) => this.engine.submitUserText(text, { clearInput: true }),
+      queue: (text, sessionId, options) => this.engine.queueFollowupMessage(text, sessionId, options),
+      stop: (sessionId) => this.engine.stop(sessionId),
+      getPending: (sessionId) => this.engine.getPendingFollowupRequests?.(sessionId) ?? [],
+      hasPending: (sessionId) => this.engine.hasPendingFollowupRequests?.(sessionId) === true,
+      clearPending: (sessionId) => this.engine.clearPendingFollowupRequests?.(sessionId),
+      removePending: (sessionId, requestId) => this.engine.removePendingFollowupRequest?.(sessionId, requestId) === true,
+      runNext: (sessionId, requestId) => this.engine.sendPendingFollowupImmediately?.(sessionId, requestId) ?? Promise.resolve(false),
+      getActionState: (sessionId) => this.engine.getSessionActionState?.(sessionId),
+    });
     this.submitShellCoordinator = new ChatSubmitShellCoordinator({
       scrollManager: this.scrollManager,
       resourceManager: this.resourceManager,
@@ -291,10 +320,14 @@ export class AilyChatComponent implements OnDestroy {
       getSessionAllowedPaths: () => this.engine.sessionAllowedPaths,
       getSessionId: () => this.vm.sessionId,
       getInputValue: () => this.vm.inputValue,
-      isWaiting: () => this.vm.isWaiting,
+      isWaiting: () => this.requestController.getActionState(this.vm.sessionId).canStop,
       ensureSession: () => this.engine.ensureSessionReadyForSubmit(),
-      stop: (sessionId) => this.engine.stop(sessionId),
-      send: (text) => this.engine.send('user', text, true),
+      hasPendingRequests: () => this.hasPendingFollowupRequests(),
+      confirmPendingRequestsBeforeSend: () => this.confirmPendingFollowupRequestsBeforeSend(),
+      clearPendingRequests: () => this.requestController.clearPending(this.vm.sessionId),
+      queueSend: (text, sessionId, options) => this.requestController.queue(text, sessionId, options),
+      stop: (sessionId) => this.requestController.stop(sessionId, 'submit-shell'),
+      send: (text) => this.requestController.sendNow(text),
     });
     this.composerShellCoordinator = new ChatComposerShellCoordinator({
       viewState: this.viewState,
@@ -303,7 +336,8 @@ export class AilyChatComponent implements OnDestroy {
         this.engine.inputValue = value;
       },
       isWaiting: () => this.vm.isWaiting,
-      submitCurrentInput: () => this.submitShellCoordinator.submitCurrentInput(),
+      getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
+      submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
       getTextareaRef: () => this.chatTextarea,
     });
     this.viewportShellCoordinator = new ChatViewportShellCoordinator({
@@ -354,7 +388,6 @@ export class AilyChatComponent implements OnDestroy {
       runGoBackAction: () => {
         this.requestReturnToEntryInventory({
           saveCurrentSession: false,
-          disposeRuntime: false,
         });
         return true;
       },
@@ -404,6 +437,101 @@ export class AilyChatComponent implements OnDestroy {
       initializeEngine: () => this.engine.init(this.chatTextarea),
       detachEngineView: () => this.engine.detachView(),
     });
+  }
+
+  shouldShowStopPrimaryAction(): boolean {
+    return this.getCurrentSessionActionState().canStop;
+  }
+
+  shouldShowSendPrimaryAction(): boolean {
+    if (this.getCurrentPendingFollowupEditKind()) {
+      return true;
+    }
+
+    const actionState = this.getCurrentSessionActionState();
+    return actionState.canSend || actionState.canQueue || !actionState.canStop;
+  }
+
+  isSendPrimaryActionDisabled(): boolean {
+    if (this.vm.authQuotaExhausted) {
+      return true;
+    }
+
+    if (this.getCurrentPendingFollowupEditKind()) {
+      return !this.hasDraftInput();
+    }
+
+    const actionState = this.getCurrentSessionActionState();
+    return !actionState.canSend && !actionState.canQueue;
+  }
+
+  getSendPrimaryActionTooltip(): string {
+    if (this.vm.authQuotaExhausted) {
+      return 'Auth quota exhausted';
+    }
+
+    const pendingEditKind = this.getCurrentPendingFollowupEditKind();
+    if (pendingEditKind === 'steering') {
+      return 'Steer message (Alt+Enter to queue)';
+    }
+
+    if (pendingEditKind === 'queued') {
+      return 'Queue message (Alt+Enter to steer)';
+    }
+
+    const actionState = this.getCurrentSessionActionState();
+    if (actionState.canQueue) {
+      return actionState.canSteer
+        ? 'Send message (Alt+Enter to steer)'
+        : 'Send message';
+    }
+
+    return actionState.tooltip;
+  }
+
+  getSendPrimaryActionIconClass(): string {
+    if (this.getCurrentPendingFollowupEditKind() === 'steering') {
+      return 'fa-light fa-arrow-up';
+    }
+
+    return this.getCurrentSessionActionState().primaryIcon === 'queue'
+      ? 'fa-light fa-plus'
+      : 'fa-light fa-paper-plane';
+  }
+
+  async submitCurrentDraftAction(options?: { queueKind?: ChatPendingRequestKind }): Promise<boolean> {
+    if (this.isSendPrimaryActionDisabled()) {
+      return false;
+    }
+
+    const queueKind = options?.queueKind ?? this.getCurrentPendingFollowupEditKind() ?? undefined;
+    const submitted = await this.submitShellCoordinator.submitCurrentInput(
+      queueKind ? { queueKind } : undefined,
+    );
+
+    if (submitted) {
+      this.pendingFollowupEditState = null;
+      this.cdr.markForCheck();
+    }
+
+    return submitted;
+  }
+
+  private getCurrentSessionActionState() {
+    return this.requestController.getActionState(this.vm.sessionId);
+  }
+
+  private getCurrentPendingFollowupEditKind(): ChatPendingRequestKind | null {
+    const sessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
+    if (!sessionId || this.pendingFollowupEditState?.sessionId !== sessionId) {
+      return null;
+    }
+
+    return this.pendingFollowupEditState.kind;
+  }
+
+  private hasDraftInput(): boolean {
+    return this.vm.inputValue.trim().length > 0;
   }
 
   ngOnInit() {
@@ -874,6 +1002,145 @@ export class AilyChatComponent implements OnDestroy {
     });
   }
 
+  private hasPendingFollowupRequests(): boolean {
+    return this.requestController.hasPending(this.vm.sessionId);
+  }
+
+  getCurrentSessionPendingFollowupRequests(): readonly PendingFollowupRequest[] {
+    return this.requestController.getPending(this.vm.sessionId);
+  }
+
+  getCurrentSessionPendingFollowupSections(): readonly PendingFollowupSection[] {
+    const pendingRequests = this.getCurrentSessionPendingFollowupRequests();
+    const steering = pendingRequests.filter(request => request.kind === 'steering');
+    const queued = pendingRequests.filter(request => request.kind === 'queued');
+    const sections: PendingFollowupSection[] = [];
+
+    if (steering.length > 0) {
+      sections.push({ kind: 'steering', title: 'Steering', requests: steering });
+    }
+
+    if (queued.length > 0) {
+      sections.push({ kind: 'queued', title: 'Queued', requests: queued });
+    }
+
+    return sections;
+  }
+
+  getPendingFollowupDisplayText(request: PendingFollowupRequest): string {
+    const displayText = typeof request?.prepared?.displayText === 'string'
+      ? request.prepared.displayText.trim()
+      : '';
+    if (displayText) {
+      return displayText;
+    }
+
+    const content = typeof request?.content === 'string' ? request.content.trim() : '';
+    return content;
+  }
+
+  editPendingFollowup(request: PendingFollowupRequest): void {
+    const sessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
+    const editText = this.getPendingFollowupEditableText(request);
+    if (!sessionId || !editText) {
+      return;
+    }
+
+    if (!this.requestController.removePending(sessionId, request.id)) {
+      return;
+    }
+
+    this.pendingFollowupEditState = {
+      sessionId,
+      requestId: request.id,
+      kind: request.kind,
+    };
+    this.resourceManager.items = this.clonePendingFollowupResourceItems(request.prepared?.resourceItems);
+    this.engine.inputValue = editText;
+    this.composerShellCoordinator.updateSuggestions();
+    this.cdr.markForCheck();
+    this.focusComposerAfterPendingEdit();
+  }
+
+  clearCurrentSessionPendingFollowupRequests(): void {
+    this.requestController.clearPending(this.vm.sessionId);
+    this.cdr.markForCheck();
+  }
+
+  removePendingFollowup(requestId: string): void {
+    if (this.requestController.removePending(this.vm.sessionId, requestId)) {
+      this.cdr.markForCheck();
+    }
+  }
+
+  async runPendingFollowupNext(requestId: string): Promise<void> {
+    await this.requestController.runNext(this.vm.sessionId, requestId);
+    this.cdr.markForCheck();
+  }
+
+  private getPendingFollowupEditableText(request: PendingFollowupRequest): string {
+    const preparedText = typeof request?.prepared?.text === 'string'
+      ? request.prepared.text.trim()
+      : '';
+    if (preparedText) {
+      return preparedText;
+    }
+
+    const content = typeof request?.content === 'string' ? request.content.trim() : '';
+    return content;
+  }
+
+  private clonePendingFollowupResourceItems(items?: readonly ResourceItem[]): ResourceItem[] {
+    if (!Array.isArray(items) || items.length === 0) {
+      return [];
+    }
+
+    return items.map(item => ({ ...item }));
+  }
+
+  private focusComposerAfterPendingEdit(): void {
+    const focusComposer = () => {
+      this.chatTextarea?.nativeElement?.focus();
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => focusComposer());
+      return;
+    }
+
+    setTimeout(focusComposer, 0);
+  }
+
+  private confirmPendingFollowupRequestsBeforeSend(): Promise<'keep' | 'remove' | false> {
+    if (!this.hasPendingFollowupRequests()) {
+      return Promise.resolve('keep');
+    }
+
+    return new Promise<'keep' | 'remove' | false>((resolve) => {
+      const pendingCount = this.requestController.getPending(this.vm.sessionId).length;
+      const modalRef = this.modal.create({
+        nzTitle: null,
+        nzFooter: null,
+        nzClosable: false,
+        nzMaskClosable: false,
+        nzKeyboard: false,
+        nzWidth: 360,
+        nzBodyStyle: { padding: '0' },
+        nzContent: ChatPendingRequestsDialogComponent,
+        nzData: { count: pendingCount },
+      });
+
+      modalRef.afterClose.subscribe((result: ChatPendingRequestsDialogResult | null | undefined) => {
+        if (result === 'keep' || result === 'remove') {
+          resolve(result);
+          return;
+        }
+
+        resolve(false);
+      });
+    });
+  }
+
   handleModelMenuActionClick(payload: {
     event?: MouseEvent;
     action?: string;
@@ -969,14 +1236,13 @@ export class AilyChatComponent implements OnDestroy {
     void this.sessionActions.requestNewChat(this.engine.editCheckpointService, this.createSessionCommandCallbacks());
   }
 
-  requestReturnToEntryInventory(options?: { saveCurrentSession?: boolean; disposeRuntime?: boolean }): void {
+  requestReturnToEntryInventory(options?: { saveCurrentSession?: boolean }): void {
     void this.sessionActions.requestReturnToEntryInventory(
       this.engine.editCheckpointService,
       this.createSessionEntryCommandCallbacks(),
       this.chatService.currentSessionId,
       {
         saveCurrentSession: options?.saveCurrentSession,
-        disposeRuntime: options?.disposeRuntime,
       },
     );
   }
@@ -1007,6 +1273,10 @@ export class AilyChatComponent implements OnDestroy {
       onEnterEntryState: (sessionId?: string | null) => {
         this.closeDebugBrowser();
         return this.engine.returnToEntryInventory({ sessionId });
+      },
+      onDeleteSessionRuntime: (sessionId: string) => {
+        this.closeDebugBrowser();
+        this.engine.disposeSessionRuntime(sessionId);
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {
@@ -1040,11 +1310,10 @@ export class AilyChatComponent implements OnDestroy {
   private createSessionEntryCommandCallbacks() {
     return {
       onSaveCurrentSession: () => this.engine.saveCurrentSession(),
-      onEnterEntryState: (sessionId?: string | null, options?: { disposeRuntime?: boolean }) => {
+      onEnterEntryState: (sessionId?: string | null) => {
         this.closeDebugBrowser();
         return this.engine.returnToEntryInventory({
           sessionId,
-          disposeRuntime: options?.disposeRuntime,
         });
       },
     };

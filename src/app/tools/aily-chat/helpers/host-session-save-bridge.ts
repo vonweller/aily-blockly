@@ -54,7 +54,9 @@ import {
   resolveHostSessionRequestRoutingSummary,
 } from './host-session-request-routing';
 import { resolveHostSessionInteractionActionSummary } from './host-session-interaction-action';
+import { cloneHostSessionRuntimeAuxiliary } from './host-session-runtime-auxiliary';
 import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-context';
+import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentModel'>
@@ -65,6 +67,7 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & {
     readonly hostRequestModel?: HostRequestModel | null;
     readonly hostResponseProjection?: HostResponseProjection | null;
+    readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     invalidateHostRequestGraph?(): void;
   };
 
@@ -235,21 +238,19 @@ export class HostSessionSaveBridge {
       liveTitle,
       liveTitleSource,
     });
+    const runtimeState = this.ctx.readSessionRuntimeState?.(sessionId);
     const skillInvocationTrace = deriveSkillInvocationTrace(currentTurnResponses);
+    const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary({
+      requestContext: cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext),
+      activeSkillNames: Array.isArray(sessionSnapshot?.activeSkillNames) ? sessionSnapshot.activeSkillNames : undefined,
+      skillInvocationTrace,
+      pendingFollowupRequests: runtimeState?.pendingFollowupRequests,
+      yieldRequested: runtimeState?.yieldRequested === true,
+    });
     const record: LiveHostSessionRecord = {
       sessionId,
       turnResponses: persistedTurnResponses,
-      auxiliary: {
-        ...(cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext)
-          ? { requestContext: cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext) }
-          : {}),
-        ...(Array.isArray(sessionSnapshot?.activeSkillNames) && sessionSnapshot.activeSkillNames.length > 0
-          ? { activeSkillNames: [...sessionSnapshot.activeSkillNames] }
-          : {}),
-        ...(skillInvocationTrace.length > 0
-          ? { skillInvocationTrace }
-          : {}),
-      },
+      ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
       metadata: {
         sessionId,
         title: durableTitle.text,
@@ -279,12 +280,6 @@ export class HostSessionSaveBridge {
         toolCallingIteration: saveTarget?.toolCallingIteration ?? this.ctx.toolCallingIteration ?? 0,
       },
     };
-
-    if (!record.auxiliary?.requestContext
-      && !record.auxiliary?.activeSkillNames?.length
-      && !record.auxiliary?.skillInvocationTrace?.length) {
-      delete record.auxiliary;
-    }
 
     const resolvedRequestRouting = resolveHostSessionRequestRoutingSummary(
       record as unknown as Pick<import('../services/chat-history.service').HostSessionRecord, 'metadata' | 'turnResponses'>,
@@ -934,7 +929,7 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
     rounds: cloneSessionSnapshotRounds(turn.rounds ?? []),
     ...(turn.usage ? { usage: { ...turn.usage } } : {}),
     response: {
-      ...responseWithoutPersistedData,
+      ...sanitizeTransientPersistedResponseStatus(responseWithoutPersistedData),
       ...(turn.response.usedContext
         ? {
           usedContext: {
@@ -964,6 +959,24 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
     },
     ...(responseModel ? { responseModel } : {}),
   };
+}
+
+function sanitizeTransientPersistedResponseStatus(
+  response: TurnResponseTurn['response'],
+): TurnResponseTurn['response'] {
+  const nextResponse = { ...response } as TurnResponseTurn['response'] & {
+    continuation?: Record<string, unknown>;
+  };
+  const mutableResponse = nextResponse as unknown as Record<string, unknown>;
+  if (mutableResponse['status'] === 'in_progress') {
+    delete mutableResponse['status'];
+  }
+  if (nextResponse.continuation?.status === 'in_progress') {
+    const continuation = { ...nextResponse.continuation };
+    delete continuation.status;
+    nextResponse.continuation = continuation;
+  }
+  return nextResponse;
 }
 
 function clonePersistableResponseParts(

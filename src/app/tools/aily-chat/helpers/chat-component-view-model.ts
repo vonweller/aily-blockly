@@ -10,6 +10,7 @@ import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
 import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { ChatSessionActionState } from './chat-request-controller';
 import type { HostRequestModel } from './host-turn-response-state';
 import type { MenuPosition } from '../services/menu-manager.service';
 
@@ -18,6 +19,7 @@ interface ChatEngineViewLike {
   readonly dialogItems: readonly ChatDialogViewItem[];
   readonly partStore: ChatPartStore;
   readonly isWaiting: boolean;
+  readonly getSessionActionState?: (sessionId?: string | null) => ChatSessionActionState;
   readonly isCompleted: boolean;
   readonly isLoggedIn: boolean;
   readonly inputValue: string;
@@ -126,10 +128,12 @@ export class ChatComponentViewModel {
   }
 
   get hasConversationContent(): boolean {
-    return this.dialogItems.length > 0
-      || this.hostRequestModel !== null
-      || this.hostRequestModel?.response?.response != null
-      || this.hostRequestModel?.response?.entireResponse != null;
+    const dialogItems = this.dialogItems;
+    const hostRequestModel = this.hostRequestModel;
+    return dialogItems.length > 0
+      || hostRequestModel !== null
+      || hostRequestModel?.response?.response != null
+      || hostRequestModel?.response?.entireResponse != null;
   }
 
   get dialogItems(): readonly ChatDialogViewItem[] {
@@ -141,7 +145,7 @@ export class ChatComponentViewModel {
   }
 
   get isWaiting(): boolean {
-    return this.deps.engine.isWaiting;
+    return this.deps.engine.getSessionActionState?.(this.deps.engine.sessionId)?.canStop ?? this.deps.engine.isWaiting;
   }
 
   get isCompleted(): boolean {

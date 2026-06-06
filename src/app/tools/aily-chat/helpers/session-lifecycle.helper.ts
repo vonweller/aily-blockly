@@ -121,6 +121,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     captureActiveSessionRuntimeState?(): void;
     clearSessionRuntimeState?(sessionId?: string | null): void;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
     attachCurrentSessionView?(): Promise<void>;
     ensureBackgroundSessionCanRerun?(sessionId?: string | null): void;
@@ -150,6 +151,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
 
 const GENERIC_SESSION_START_ERROR_MESSAGE = 'Sorry, something went wrong.';
 type SessionSwitchRestoreStage = 'session-start' | 'host-restore';
+const ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX = '[AilyChat][EntryLifecycleGuard]';
 
 export interface SessionLifecycleRestoreErrorDetails {
   readonly stage: SessionSwitchRestoreStage;
@@ -655,18 +657,32 @@ export class SessionLifecycleHelper {
       console.warn('[AilyChat] Skills 初始化失败:', err);
     });
 
+    this.ctx.isCompleted = false;
+
+    // VS Code creates the ChatModel/sessionResource synchronously, then activates the default agent in the background.
+    // Keep our owner session id stable before any awaited provider/tool initialization so detach/save can target it.
+    const pendingSessionId = this.createSessionId();
+    const providerOptions = this.resolveCurrentProjectProviderOptions();
+    const providerOptionsKey = this.applySessionProviderOptions(providerOptions);
+    this.setActiveSessionId(pendingSessionId);
+    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
+    this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
+    this.applySessionProviderOptions(providerOptions);
+    this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
+      projectPath: this.ctx.chatService.currentSessionPath || null,
+    });
+    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId));
+    this.requestSessionListRefresh({
+      reason: 'state',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
+
     if (!this.ctx.mcpInitialized) {
       this.ctx.mcpInitialized = true;
       await this.ctx.mcpService.init();
       this.warmupHardwareIndexForAI('startSession');
     }
-
-    this.ctx.isCompleted = false;
-
-    // 先生成 sessionId，传给 agent（避免 agent 内部 sessionId 与 UI 不匹配）
-    // send() 仍然以 chatService.currentSessionId 非空作为就绪标志
-    const pendingSessionId = this.createSessionId();
-    const providerOptionsKey = this.applySessionProviderOptions(this.resolveCurrentProjectProviderOptions());
 
     // 初始化 aily-lex agent
     try {
@@ -685,20 +701,6 @@ export class SessionLifecycleHelper {
       throw err;
     }
 
-    // Agent 就绪后设置 sessionId（send() 用 sessionId 作为就绪标志）
-    this.setActiveSessionId(pendingSessionId);
-    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
-    this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
-    this.applySessionProviderOptions(this.resolveCurrentProjectProviderOptions());
-    this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
-      projectPath: this.ctx.chatService.currentSessionPath || null,
-    });
-    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId));
-    this.requestSessionListRefresh({
-      reason: 'state',
-      scope: 'summary',
-      priority: 'after-paint',
-    });
     await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(pendingSessionId);
 
     this.ctx.isSessionStarting = false;
@@ -716,8 +718,11 @@ export class SessionLifecycleHelper {
       clearEditSummary: true,
     });
 
-    if (options.disposeRuntime !== false) {
-      this.ctx.disposeSessionAction(currentSessionId);
+    if (options.disposeRuntime === true) {
+      console.warn(ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX, {
+        action: 'ignore-entry-dispose-runtime',
+        sessionId: currentSessionId || null,
+      });
     }
     this.setActiveSessionId('');
     this.ctx.chatService.hasBlankSessionShell = false;
@@ -742,12 +747,15 @@ export class SessionLifecycleHelper {
       ? options.sessionId.trim()
       : this.ctx.chatService.currentSessionId || this.ctx.sessionId;
 
-    if (options.disposeRuntime === false && targetSessionId) {
+    if (targetSessionId) {
       this.ctx.captureActiveSessionRuntimeState?.();
       this.ctx.detachSessionRuntimeView?.(targetSessionId);
     }
 
-    await this._entryCoordinator.returnToEntryInventory(options);
+    await this._entryCoordinator.returnToEntryInventory({
+      ...options,
+      disposeRuntime: false,
+    });
 
     if (targetSessionId) {
       this.clearPersistedSessionEntryTarget(targetSessionId);

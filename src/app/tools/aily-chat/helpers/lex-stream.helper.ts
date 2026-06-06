@@ -75,7 +75,10 @@ type LexOwnerContext = BootstrapLexAgentContext
     ): void;
     readSessionRuntimeState?(
       sessionId: string | null | undefined,
-    ): { readonly turnResponses?: readonly TurnResponseTurn[] } | undefined;
+    ): {
+      readonly turnResponses?: readonly TurnResponseTurn[];
+      readonly yieldRequested?: boolean;
+    } | undefined;
   }
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
@@ -387,6 +390,7 @@ export class LexOwnerFacade {
         return detachedRenderEventBridge;
       },
       () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
+      (sessionId) => this.ctx.readSessionRuntimeState?.(sessionId)?.yieldRequested === true,
     );
     this._turnExecutionBridge = turnExecutionBridge;
     // Activate the RenderEvent path: wire the render bridge into execution

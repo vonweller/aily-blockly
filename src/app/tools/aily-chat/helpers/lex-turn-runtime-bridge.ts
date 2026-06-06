@@ -60,7 +60,7 @@ function isUnambiguousRenderEventLike(event: unknown): event is RenderEvent {
 
 type AgentLifecycleAccess = {
   getHandle?(): Pick<AgentHandle, 'chat'> | null;
-  getAgent(): { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null;
+  getAgent(): { chat(userMessage: string, signal?: AbortSignal, options?: { readonly yieldRequested?: () => boolean }): AsyncIterable<any> } | null;
   getLex(): { RenderEventEmitter?: new () => {
     process(event: any): readonly RenderEvent[];
     finalize(): readonly RenderEvent[];
@@ -72,8 +72,8 @@ type TurnStartupAccess = {
 };
 
 type TurnExecutionAccess = {
-  runTurn(agent: { chat(userMessage: string, signal?: AbortSignal): AsyncIterable<any> } | null, userMessage: string): Promise<void>;
-  runTurnWithRenderEvents(source: { chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent> }, userMessage: string, displayContent?: string): Promise<void>;
+  runTurn(agent: { chat(userMessage: string, signal?: AbortSignal, options?: { readonly yieldRequested?: () => boolean }): AsyncIterable<any> } | null, userMessage: string): Promise<void>;
+  runTurnWithRenderEvents(source: { chat(message: string, signal?: AbortSignal, options?: { readonly yieldRequested?: () => boolean }): AsyncIterable<RenderEvent> }, userMessage: string, displayContent?: string): Promise<void>;
 };
 
 type TurnUiAccess = {
@@ -129,11 +129,15 @@ export class LexTurnRuntimeBridge {
       });
       const RenderEventEmitter = lex.RenderEventEmitter;
       const source = {
-        async *chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent> {
+        async *chat(
+          message: string,
+          signal?: AbortSignal,
+          options?: { readonly yieldRequested?: () => boolean },
+        ): AsyncIterable<RenderEvent> {
           const emitter = new RenderEventEmitter();
           let eventMode: 'unknown' | 'render' | 'agent' = 'unknown';
           try {
-            for await (const rawEvent of agent.chat(message, signal)) {
+            for await (const rawEvent of agent.chat(message, signal, options)) {
               if (eventMode === 'unknown') {
                 eventMode = isUnambiguousRenderEventLike(rawEvent) ? 'render' : 'agent';
                 traceBackgroundSessionExecution('emitter-bridge-first-event-shape', {

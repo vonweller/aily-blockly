@@ -8,6 +8,7 @@ import { HostSessionItemController } from '../helpers/host-session-item-controll
 import { ChatSessionStateService } from './chat-session-state.service';
 import type { ChatSessionRuntimeChangedEvent } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
+import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import type { ChatSessionListAction, ChatSessionListItem } from './menu-manager.service';
 import type {
@@ -87,6 +88,7 @@ export class ChatSessionItemsService implements OnDestroy {
     private readonly chatSessionRuntimeStore: ChatSessionRuntimeStoreService,
     @Optional() private readonly editCheckpointService: EditCheckpointService | null = null,
     @Optional() private readonly chatSessionStateService: ChatSessionStateService | null = null,
+    @Optional() private readonly chatSessionRuntimeRegistry: ChatSessionRuntimeRegistryService | null = null,
   ) {
     ChatPerformanceTracer.increment('session_list.service_created');
     ChatPerformanceTracer.mark('session_list.service_created');
@@ -96,7 +98,7 @@ export class ChatSessionItemsService implements OnDestroy {
       ...(this.editCheckpointService ? { editCheckpointService: this.editCheckpointService } : {}),
       ...(this.chatSessionStateService ? { chatSessionStateService: this.chatSessionStateService } : {}),
       readLiveSessionTurnResponses: (sessionId) => this.chatSessionRuntimeStore.readTurnResponses(sessionId),
-      readLiveSessionRuntimeState: (sessionId) => this.chatSessionRuntimeStore.read(sessionId),
+      readLiveSessionRuntimeState: (sessionId) => this.readLiveSessionRuntimeState(sessionId),
     });
     this.controllerSubscription.add(this.hostSessionItemController.itemsChanged$.subscribe((event) => {
       this.bumpSessionInventoryRevision();
@@ -119,6 +121,47 @@ export class ChatSessionItemsService implements OnDestroy {
 
   get sessionItemController(): HostSessionItemController {
     return this.hostSessionItemController;
+  }
+
+  private readLiveSessionRuntimeState(sessionId: string | null | undefined): ReturnType<ChatSessionRuntimeStoreService['read']> {
+    const runtimeState = this.chatSessionRuntimeStore.read(sessionId);
+    const activeHandle = this.chatSessionRuntimeRegistry?.readHandle(sessionId);
+    if (!activeHandle?.requestInProgress) {
+      if (this.chatSessionRuntimeRegistry && runtimeState) {
+        const hasStaleRuntimeGate = runtimeState.requestInProgress === true
+          || runtimeState.supportsInterruption === true
+          || runtimeState.status === 'in_progress'
+          || typeof runtimeState.stopSession === 'function'
+          || (runtimeState.activeResponseHandle !== undefined && runtimeState.activeResponseHandle !== null);
+        if (hasStaleRuntimeGate) {
+          const {
+            activeResponseHandle: _activeResponseHandle,
+            stopSession: _stopSession,
+            status,
+            ...rest
+          } = runtimeState;
+          return {
+            ...rest,
+            ...(status && status !== 'in_progress' ? { status } : {}),
+            requestInProgress: false,
+            supportsInterruption: false,
+          };
+        }
+      }
+      return runtimeState;
+    }
+
+    return {
+      ...(runtimeState ?? {
+        turnResponses: [],
+        hostProjectionState: null,
+        attachedView: false,
+      }),
+      requestInProgress: true,
+      status: runtimeState?.status ?? 'in_progress',
+      supportsInterruption: activeHandle.supportsInterruption,
+      activeResponseHandle: activeHandle.activeResponseHandle ?? runtimeState?.activeResponseHandle,
+    };
   }
 
   get sessionListItems(): ChatSessionListItem[] {

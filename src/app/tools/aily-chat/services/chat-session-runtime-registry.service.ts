@@ -4,6 +4,7 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 import { GitAwareWorkspaceChangeCollector } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
+import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import { EditingContentStore } from './editing-content-store.service';
 import { EditingTimelineRepository } from './editing-timeline-repository.service';
 import { EditingTimelineRecordingBridge } from './editing-timeline-recording-bridge';
@@ -39,9 +40,18 @@ export interface ChatSessionRuntimeHandlePatch {
   readonly disposeSession?: (() => void) | null;
 }
 
+export interface ChatSessionActiveRequestHandle extends ChatSessionRuntimeHandlePatch {
+  readonly requestInProgress: true;
+  readonly supportsInterruption: true;
+  readonly activeResponseHandle: unknown;
+  readonly stopSession: () => void;
+}
+
 export interface ChatSessionRuntimeProjectionPatch extends ChatSessionRuntimeHandlePatch {
   readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
   readonly hostProjectionState?: HostTurnResponseState | null | undefined;
+  readonly pendingFollowupRequests?: readonly PendingFollowupRequest[] | null | undefined;
+  readonly yieldRequested?: boolean | null | undefined;
   readonly status?: ChatSessionRuntimeStatus | null | undefined;
   readonly description?: string | null | undefined;
   readonly attachedView?: boolean | undefined;
@@ -161,6 +171,79 @@ export class ChatSessionRuntimeRegistryService {
     return handle.capabilities.canContinueInPlace;
   }
 
+  beginRequest(
+    sessionId: string | null | undefined,
+    handle: ChatSessionActiveRequestHandle,
+    projection?: Omit<ChatSessionRuntimeProjectionPatch, keyof ChatSessionRuntimeHandlePatch>,
+  ): void {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    const patch: ChatSessionRuntimeProjectionPatch = {
+      ...projection,
+      requestInProgress: true,
+      supportsInterruption: true,
+      activeResponseHandle: handle.activeResponseHandle,
+      stopSession: handle.stopSession,
+      ...(handle.disposeSession ? { disposeSession: handle.disposeSession } : {}),
+      ...(handle.capabilities ? { capabilities: handle.capabilities } : {}),
+      ...(handle.concurrencyScope !== undefined ? { concurrencyScope: handle.concurrencyScope } : {}),
+    };
+    this.projectRuntimeState(normalizedSessionId, patch);
+  }
+
+  completeRequest(
+    sessionId: string | null | undefined,
+    handleId?: unknown,
+    debugSummary?: Partial<ChatSessionRuntimeDebugSummary>,
+  ): boolean {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const previous = this.handles.get(normalizedSessionId);
+    if (!previous?.requestInProgress) {
+      return false;
+    }
+
+    if (handleId !== undefined && previous.activeResponseHandle !== handleId) {
+      return false;
+    }
+
+    this.markRequestComplete(normalizedSessionId, debugSummary);
+    return true;
+  }
+
+  cancelRequest(
+    sessionId: string | null | undefined,
+    options?: {
+      readonly source?: 'user' | 'system';
+      readonly handleId?: unknown;
+      readonly debugSummary?: Partial<ChatSessionRuntimeDebugSummary>;
+    },
+  ): boolean {
+    const normalizedSessionId = this.normalizeSessionId(sessionId);
+    const handle = this.readHandle(normalizedSessionId);
+    if (!normalizedSessionId || !handle?.supportsInterruption || typeof handle.stopSession !== 'function') {
+      return false;
+    }
+
+    if (options?.handleId !== undefined && handle.activeResponseHandle !== options.handleId) {
+      return false;
+    }
+
+    handle.stopSession();
+    return this.completeRequest(normalizedSessionId, handle.activeResponseHandle, {
+      ...(options?.debugSummary ?? {}),
+      ...(options?.source === 'user' || options?.source === undefined
+        ? { lastExplicitInterruptAt: Date.now() }
+        : {}),
+    });
+  }
+
   syncHandleState(
     sessionId: string | null | undefined,
     patch: ChatSessionRuntimeHandlePatch,
@@ -202,6 +285,8 @@ export class ChatSessionRuntimeRegistryService {
     this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
       turnResponses: patch.turnResponses,
       hostProjectionState: patch.hostProjectionState,
+      pendingFollowupRequests: patch.pendingFollowupRequests,
+      yieldRequested: patch.yieldRequested,
       status: patch.status,
       description: patch.description,
       quotaOverlay: patch.quotaOverlay,
@@ -279,17 +364,7 @@ export class ChatSessionRuntimeRegistryService {
   }
 
   stopSession(sessionId: string | null | undefined): boolean {
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    const handle = this.readHandle(normalizedSessionId);
-    if (!normalizedSessionId || !handle?.supportsInterruption || typeof handle.stopSession !== 'function') {
-      return false;
-    }
-
-    handle.stopSession();
-    this.markRequestComplete(normalizedSessionId, {
-      lastExplicitInterruptAt: Date.now(),
-    });
-    return true;
+    return this.cancelRequest(sessionId, { source: 'user' });
   }
 
   disposeSession(sessionId: string | null | undefined): boolean {
@@ -306,6 +381,7 @@ export class ChatSessionRuntimeRegistryService {
       stopSession: null,
       disposeSession: null,
       activeResponseHandle: null,
+      yieldRequested: false,
       debugSummary: {
         lastExplicitDisposeAt: Date.now(),
       },
@@ -356,6 +432,7 @@ export class ChatSessionRuntimeRegistryService {
     this.runtimeStore.replaceRuntimeState(sessionId, {
       status: null,
       requestInProgress: false,
+      yieldRequested: false,
       supportsInterruption: false,
       activeResponseHandle: null,
       stopSession: null,
@@ -407,28 +484,34 @@ export class ChatSessionRuntimeRegistryService {
   ): ChatSessionRuntimeHandle {
     const previous = this.handles.get(sessionId);
     const capabilities = this.resolveCapabilities(patch.capabilities, previous);
-    const activeResponseHandle = patch.activeResponseHandle !== undefined
-      ? patch.activeResponseHandle ?? undefined
-      : previous?.activeResponseHandle;
     const concurrencyScope = patch.concurrencyScope !== undefined
       ? patch.concurrencyScope ?? undefined
       : previous?.concurrencyScope;
+    const requestInProgress = typeof patch.requestInProgress === 'boolean'
+      ? patch.requestInProgress
+      : previous?.requestInProgress ?? false;
+    const supportsInterruption = typeof patch.supportsInterruption === 'boolean'
+      ? patch.supportsInterruption
+      : requestInProgress
+        ? previous?.supportsInterruption ?? false
+        : false;
+    const activeResponseHandle = patch.activeResponseHandle !== undefined
+      ? patch.activeResponseHandle ?? undefined
+      : requestInProgress
+        ? previous?.activeResponseHandle
+        : undefined;
     const next: ChatSessionRuntimeHandle = {
       sessionId,
       capabilities,
       ...(concurrencyScope ? { concurrencyScope } : {}),
-      requestInProgress: typeof patch.requestInProgress === 'boolean'
-        ? patch.requestInProgress
-        : previous?.requestInProgress ?? false,
-      supportsInterruption: typeof patch.supportsInterruption === 'boolean'
-        ? patch.supportsInterruption
-        : previous?.supportsInterruption ?? false,
+      requestInProgress,
+      supportsInterruption,
       ...(activeResponseHandle !== undefined ? { activeResponseHandle } : {}),
       ...(typeof patch.stopSession === 'function'
         ? { stopSession: patch.stopSession }
         : patch.stopSession === null
           ? {}
-          : previous?.stopSession
+          : supportsInterruption && previous?.stopSession
             ? { stopSession: previous.stopSession }
             : {}),
       ...(typeof patch.disposeSession === 'function'

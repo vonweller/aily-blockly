@@ -36,7 +36,9 @@ export class LexRenderProjectionSync {
       return;
     }
 
-    const partsChanged = this._hostProjectionBuilder.projectIncrementalParts(handle, source);
+    const partsChanged = this._hostProjectionBuilder.projectIncrementalParts(handle, source, {
+      syncContent: true,
+    });
     const metaChanged = this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn);
 
     if (partsChanged || metaChanged) {

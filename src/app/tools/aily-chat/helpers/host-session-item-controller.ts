@@ -59,7 +59,7 @@ export interface HostSessionHistoryItem {
   readonly requestRouting?: HostSessionRequestRoutingSummary;
 }
 
-export type HostSessionListItemStatus = 'completed' | 'in_progress' | 'needs_input' | 'failed';
+export type HostSessionListItemStatus = 'completed' | 'cancelled' | 'in_progress' | 'needs_input' | 'failed';
 
 export function normalizeHostSessionListItemStatus(status: string | null | undefined): HostSessionListItemStatus | undefined {
   switch (typeof status === 'string' ? status.trim() : '') {
@@ -79,6 +79,9 @@ export function normalizeHostSessionListItemStatus(status: string | null | undef
     case 'failed':
     case 'error':
       return 'failed';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
     case 'completed':
       return 'completed';
     default:
@@ -1852,10 +1855,11 @@ export class HostSessionItemController {
       case 'error':
         return 'failed';
       case 'completed':
+        return 'completed';
       case 'hard_stopped':
       case 'cancelled':
       case 'canceled':
-        return 'completed';
+        return 'cancelled';
       default:
         return undefined;
     }

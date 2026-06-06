@@ -92,7 +92,7 @@ export interface HostSessionDebugDualPersistenceSummary {
 
 export interface HostSessionDebugLiveRuntimeOverlaySummary {
   readonly sessionId: string;
-  readonly status?: 'in_progress' | 'needs_input' | 'completed' | 'failed';
+  readonly status?: 'in_progress' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
   readonly pendingRequest: boolean;
   readonly needsInput: boolean;
   readonly attachedView: boolean;

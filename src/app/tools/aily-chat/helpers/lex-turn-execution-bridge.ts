@@ -9,13 +9,17 @@ type LexTurnExecutionContext = Pick<
   'activeToolExecutions' | 'currentStatelessMode' | 'toolCallingIteration' | 'isCancelled' | 'isWaiting'
 > & Pick<IChatServiceAccess, 'ngZone'>;
 
+type LexTurnRunOptions = {
+  readonly yieldRequested?: () => boolean;
+};
+
 type LexChatAgent = {
-  chat(userMessage: string, signal: AbortSignal): AsyncIterable<any>;
+  chat(userMessage: string, signal: AbortSignal, options?: LexTurnRunOptions): AsyncIterable<any>;
 };
 
 /** An object that yields RenderEvent from chat (AgentHandle-like). */
 type RenderEventSource = {
-  chat(message: string, signal?: AbortSignal): AsyncIterable<RenderEvent>;
+  chat(message: string, signal?: AbortSignal, options?: LexTurnRunOptions): AsyncIterable<RenderEvent>;
 };
 
 type RenderEventSink = {
@@ -45,6 +49,7 @@ interface LexTurnExecutionRunState {
   readonly sessionId: string | null;
   readonly saveTarget: HostSessionSaveTarget | null;
   detachedRenderEventBridge: RenderEventSink | null;
+  activeTurnId: string | null;
   requestContent: string;
   requestDisplayContent?: string;
   requestMetadata?: TurnRequest['metadata'];
@@ -89,6 +94,32 @@ function traceBackgroundSessionExecution(event: string, details: Record<string, 
   // console.info('[AilyChat][bg-session][execution]', event, details);
 }
 
+function mergeExecutionTurnResponsesById(
+  ...sources: readonly (readonly TurnResponseTurn[] | null | undefined)[]
+): TurnResponseTurn[] {
+  const merged = new Map<string, TurnResponseTurn>();
+  for (const source of sources) {
+    if (!Array.isArray(source)) {
+      continue;
+    }
+    for (const turn of source) {
+      if (!turn?.turnId) {
+        continue;
+      }
+      merged.set(turn.turnId, cloneExecutionTurnResponse(turn));
+    }
+  }
+  return [...merged.values()].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+}
+
+function cloneExecutionTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
+  try {
+    return globalThis.structuredClone(turn);
+  } catch {
+    return JSON.parse(JSON.stringify(turn)) as TurnResponseTurn;
+  }
+}
+
 /**
  * Handles lex turn execution scheduling for the blockly host path.
  *
@@ -117,6 +148,7 @@ export class LexTurnExecutionBridge {
       seedTurnResponses: readonly TurnResponseTurn[],
     ) => RenderEventSink | null,
     private readonly getExecutionSessionId?: () => string | null | undefined,
+    private readonly readExecutionYieldRequested?: (sessionId: string | null | undefined) => boolean,
   ) {}
 
   /**
@@ -225,6 +257,7 @@ export class LexTurnExecutionBridge {
       sessionId,
       saveTarget: this.captureExecutionSaveTarget?.(sessionId) ?? null,
       detachedRenderEventBridge: null,
+      activeTurnId: null,
       requestContent,
       requestDisplayContent,
       requestMetadata: this.getCurrentRequestMetadata?.(),
@@ -338,8 +371,11 @@ export class LexTurnExecutionBridge {
     let eventCount = 0;
     let ignoredCrossSessionCancel = false;
     let cancelled = false;
-    for await (const event of source.chat(userMessage, signal)) {
+    for await (const event of source.chat(userMessage, signal, {
+      yieldRequested: () => this.isExecutionYieldRequested(state),
+    })) {
       eventCount += 1;
+      this.captureActiveRenderEventTurnId(state, event);
       if (eventCount === 1) {
         traceBackgroundSessionExecution('consume-render-events-first', {
           sessionId: state.sessionId,
@@ -414,7 +450,9 @@ export class LexTurnExecutionBridge {
     signal: AbortSignal,
   ): Promise<void> {
     let lastYieldTime = 0;
-    for await (const event of agent.chat(userMessage, signal)) {
+    for await (const event of agent.chat(userMessage, signal, {
+      yieldRequested: () => this.isExecutionYieldRequested(state),
+    })) {
       this.uiEventBridge.processEvent(event);
       traceBackgroundSessionExecution('legacy-agent-event', {
         type: event?.type,
@@ -489,21 +527,28 @@ export class LexTurnExecutionBridge {
 
     const executionSessionId = state.sessionId;
     if (!executionSessionId || this.isExecutionSessionVisible(executionSessionId)) {
-      if (state.detachedRenderEventBridge?.turnResponses?.length) {
+      if (state.detachedRenderEventBridge) {
+        const mergedTurnResponses = mergeExecutionTurnResponsesById(
+          this.readExecutionTurnResponses?.(executionSessionId),
+          state.detachedRenderEventBridge.turnResponses,
+        );
         traceBackgroundSessionExecution('reattach-visible-sink', {
           sessionId: executionSessionId ?? null,
-          replayedTurnResponses: state.detachedRenderEventBridge.turnResponses.length,
+          replayedTurnResponses: mergedTurnResponses.length,
         });
-        this._renderEventBridge.hydrateTurnResponses?.(state.detachedRenderEventBridge.turnResponses);
+        this._renderEventBridge.hydrateTurnResponses?.(mergedTurnResponses);
       }
       state.detachedRenderEventBridge = null;
       return this._renderEventBridge;
     }
 
     if (!state.detachedRenderEventBridge) {
-      const seedTurnResponses = this.readExecutionTurnResponses?.(executionSessionId)
-        ?? this._renderEventBridge.turnResponses
-        ?? [];
+      const executionTurnResponses = this.readExecutionTurnResponses?.(executionSessionId);
+      const visibleOwnerTurnResponses = this.readVisibleOwnerTurnResponses(state);
+      const seedTurnResponses = mergeExecutionTurnResponsesById(
+        executionTurnResponses,
+        visibleOwnerTurnResponses,
+      );
       traceBackgroundSessionExecution('detach-to-background-sink', {
         sessionId: executionSessionId,
         seedTurnResponses: seedTurnResponses.length,
@@ -523,6 +568,26 @@ export class LexTurnExecutionBridge {
     }
 
     return state.detachedRenderEventBridge ?? this._renderEventBridge;
+  }
+
+  private captureActiveRenderEventTurnId(state: LexTurnExecutionRunState, event: RenderEvent): void {
+    const turnId = (event as { turnId?: unknown }).turnId;
+    if (typeof turnId === 'string' && turnId.trim().length > 0) {
+      state.activeTurnId = turnId;
+    }
+  }
+
+  private readVisibleOwnerTurnResponses(state: LexTurnExecutionRunState): readonly TurnResponseTurn[] | undefined {
+    const visibleTurnResponses = this._renderEventBridge?.turnResponses;
+    if (!Array.isArray(visibleTurnResponses) || visibleTurnResponses.length === 0) {
+      return undefined;
+    }
+    if (!state.activeTurnId) {
+      return undefined;
+    }
+    return visibleTurnResponses.some(turn => turn.turnId === state.activeTurnId)
+      ? visibleTurnResponses
+      : undefined;
   }
 
   private isExecutionSessionVisible(executionSessionId: string): boolean {
@@ -549,5 +614,13 @@ export class LexTurnExecutionBridge {
     }
 
     return this.isExecutionSessionVisible(state.sessionId);
+  }
+
+  private isExecutionYieldRequested(state: LexTurnExecutionRunState): boolean {
+    if (!state.sessionId) {
+      return false;
+    }
+
+    return this.readExecutionYieldRequested?.(state.sessionId) === true;
   }
 }

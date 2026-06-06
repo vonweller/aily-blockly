@@ -1,6 +1,5 @@
 import type {
   IAgentLifecycle,
-  IChatCoordination,
   IChatServiceAccess,
   IChatViewAccess,
   ISessionAccess,
@@ -10,7 +9,6 @@ import type { ChatTextOptions } from '../services/chat.service';
 type ChatExternalInputContext = Pick<IAgentLifecycle, 'isWaiting'>
   & Pick<IChatViewAccess, 'inputValue' | 'scrollManager'>
   & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatCoordination, 'send'>
   & Pick<IChatServiceAccess, 'message'>;
 
 interface ExternalInputCallbacks {
@@ -19,6 +17,7 @@ interface ExternalInputCallbacks {
   undoLastEdits: () => Promise<void> | void;
   newChat: () => Promise<void> | void;
   queuePendingAutoSend: (text: string) => void;
+  submitText: (text: string, clearInput: boolean) => Promise<void> | void;
   focusInput: () => void;
   schedulePostInputWork: (work: () => void) => void;
 }
@@ -61,7 +60,7 @@ export class ChatExternalInputCoordinator {
 
       if (this.ctx.sessionId) {
         this.ctx.scrollManager.startNewExchange();
-        void this.ctx.send('user', this.ctx.inputValue, true);
+        void this.callbacks.submitText(this.ctx.inputValue, true);
       } else {
         this.callbacks.queuePendingAutoSend(this.ctx.inputValue);
       }
@@ -84,7 +83,7 @@ export class ChatExternalInputCoordinator {
         return;
       default:
         this.ctx.scrollManager.startNewExchange();
-        void this.ctx.send('user', text, false);
+        void this.callbacks.submitText(text, false);
     }
   }
 }

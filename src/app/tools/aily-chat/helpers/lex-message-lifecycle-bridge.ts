@@ -15,6 +15,7 @@ type LexMessageLifecycleContext = LexMessageLifecycleViewWriteContext
   & Pick<IChatServiceAccess, 'editCheckpointService' | 'ailyChatConfigService'>
   & Pick<IChatCoordination, 'session' | 'applyPendingSwitch'>
   & {
+    processPendingFollowupRequests?(sessionId?: string | null): Promise<boolean> | boolean;
     syncExecutionRuntimeState?(saveTarget?: HostSessionSaveTarget | null): void;
   };
 
@@ -231,6 +232,8 @@ export class LexMessageLifecycleBridge {
       this.ctx.isCompleted = true;
     });
     logFinalizeStage('mark_completed');
+
+    void this.ctx.processPendingFollowupRequests?.(resolvedSaveTarget?.sessionId ?? this.ctx.sessionId);
   }
 
   private normalizeTerminalTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {

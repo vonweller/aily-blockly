@@ -292,6 +292,71 @@
         <div inputPartWidget class="chat-editing-session">
           <app-aily-edits-viewer></app-aily-edits-viewer>
         </div>
+        @if(getCurrentSessionPendingFollowupRequests(); as pendingRequests) {
+        @if(pendingRequests.length > 0) {
+        <div inputPartWidget class="chat-pending-followup-widget-container has-pending">
+          <div class="chat-pending-followup-widget chat-status-widget" role="status" aria-live="polite">
+            <div class="chat-pending-followup-widget-header">
+              <div class="chat-pending-followup-widget-title">
+                <i class="fa-light fa-list-check"></i>
+                <span>已排队 {{ pendingRequests.length }} 条</span>
+              </div>
+              <button
+                type="button"
+                class="chat-pending-followup-clear-all"
+                (click)="clearCurrentSessionPendingFollowupRequests()">
+                清空
+              </button>
+            </div>
+            <div class="chat-pending-followup-sections">
+              @for(section of getCurrentSessionPendingFollowupSections(); track section.kind) {
+              <div class="chat-pending-followup-section" [attr.data-kind]="section.kind">
+                <div class="chat-pending-followup-section-header">
+                  <span class="chat-pending-followup-section-title">{{ section.title }}</span>
+                  <span class="chat-pending-followup-section-count">{{ section.requests.length }}</span>
+                </div>
+                <div class="chat-pending-followup-list">
+                  @for(request of section.requests; track request.id; let index = $index) {
+                  <div class="chat-pending-followup-item" [attr.data-kind]="request.kind">
+                    <div class="chat-pending-followup-item-main">
+                      <div class="chat-pending-followup-item-meta">
+                        <span class="chat-pending-followup-order">{{ index + 1 }}</span>
+                        <span class="chat-pending-followup-kind" [attr.data-kind]="request.kind">
+                          {{ request.kind === 'steering' ? 'Steering' : 'Queued' }}
+                        </span>
+                      </div>
+                      <div class="chat-pending-followup-text">{{ getPendingFollowupDisplayText(request) }}</div>
+                    </div>
+                    <div class="chat-pending-followup-actions">
+                      <button
+                        type="button"
+                        class="chat-pending-followup-edit"
+                        (click)="editPendingFollowup(request)">
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="chat-pending-followup-run-next"
+                        (click)="runPendingFollowupNext(request.id)">
+                        立即发送
+                      </button>
+                      <button
+                        type="button"
+                        class="chat-pending-followup-remove"
+                        (click)="removePendingFollowup(request.id)">
+                        移除
+                      </button>
+                    </div>
+                  </div>
+                  }
+                </div>
+              </div>
+              }
+            </div>
+          </div>
+        </div>
+        }
+        }
         <!-- 快捷发送栏 -->
         <!-- <div class="settings" style="padding: 0;">
           <div class="btns">
@@ -544,26 +609,37 @@
               </span>
             </div>
             }
-            <div class="btn mode right2 permission-mode-indicator ccenter"
+            <div class="btn mode permission-mode-indicator ccenter"
+              [class.right2]="!shouldShowStopPrimaryAction() || !shouldShowSendPrimaryAction()"
+              [class.right3]="shouldShowStopPrimaryAction() && shouldShowSendPrimaryAction()"
               nz-tooltip nzTooltipPlacement="top"
               [nzTooltipTitle]="vm.currentPermissionLabel"
               (click)="togglePermissionMenu($event)">
               <i [class]="permissionButtonIconClass"></i>
             </div>
-            <div class="btn right ccenter" [ngClass]="{'lloading':vm.isWaiting, 'disabled': vm.authQuotaExhausted && !vm.isWaiting}" nzTooltipPlacement="bottom" nz-tooltip
-              [nzTooltipTitle]="vm.isWaiting ? ('AILY_CHAT.STOP' | translate) : (vm.authQuotaExhausted ? 'Auth quota exhausted' : ('AILY_CHAT.SEND' | translate))"
-              (click)="submitShellCoordinator.handlePrimaryAction()">
-              @if(vm.isWaiting){
+            @if(shouldShowSendPrimaryAction()) {
+            <div class="btn ccenter"
+              [class.right]="!shouldShowStopPrimaryAction()"
+              [class.right2]="shouldShowStopPrimaryAction()"
+              [ngClass]="{'disabled': isSendPrimaryActionDisabled()}"
+              nzTooltipPlacement="bottom" nz-tooltip
+              [nzTooltipTitle]="getSendPrimaryActionTooltip()"
+              (click)="submitCurrentDraftAction()">
+              <i [class]="getSendPrimaryActionIconClass()"></i>
+            </div>
+            }
+            @if(shouldShowStopPrimaryAction()) {
+            <div class="btn right ccenter lloading" nzTooltipPlacement="bottom" nz-tooltip
+              [nzTooltipTitle]="'AILY_CHAT.STOP' | translate"
+              (click)="submitShellCoordinator.stopActiveRequest()">
               <div class="stop-box ccenter">
                 <i class="fa-light fa-stop"></i>
               </div>
               <div class="spinner-box ccenter">
                 <i class="fa-light fa-spinner-third"></i>
               </div>
-              }@else {
-              <i class="fa-light fa-paper-plane"></i>
-              }
             </div>
+            }
           </div>
         </div>
         </aily-chat-input-part-host>

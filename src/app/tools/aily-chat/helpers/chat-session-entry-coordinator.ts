@@ -14,7 +14,7 @@ export class ChatSessionEntryCoordinator {
   constructor(private readonly ctx: ChatSessionEntryCoordinatorContext) {}
 
   async initializeEntryInventory(options?: { readonly restorePersistedTarget?: boolean }): Promise<boolean> {
-    this.ctx.enterEntryState();
+    this.ctx.enterEntryState({ disposeRuntime: false });
     ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
     ChatPerformanceTracer.mark('entry_open.entry_shell_visible');
 

@@ -74,6 +74,7 @@ import {
   normalizeHostSessionInteractionActionSummary,
   type HostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
+import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
   type HostSessionSelectedModeResolveOptions,
   normalizeHostSessionInputStateFromMetadata,
@@ -159,6 +160,8 @@ export interface HostSessionRuntimeAuxiliary {
   requestContext?: NonNullable<SessionSnapshot['requestContext']>;
   activeSkillNames?: readonly string[];
   skillInvocationTrace?: readonly HostSessionSkillInvocationTraceEntry[];
+  pendingFollowupRequests?: readonly PendingFollowupRequest[];
+  yieldRequested?: boolean;
 }
 
 /** 单个会话的宿主持久化记录 */

@@ -82,6 +82,11 @@ export function formatChatSessionStatusMeta(item: ChatSessionListItem): string {
     return relative ? `Failed · ${relative}` : 'Failed';
   }
 
+  if (normalizedStatus === 'cancelled') {
+    const relative = formatRelativeTime(timing?.lastRequestEnded ?? timing?.updated ?? timing?.created);
+    return relative ? `Stopped · ${relative}` : 'Stopped';
+  }
+
   if (!timing) {
     return '';
   }
@@ -107,6 +112,8 @@ export function formatChatSessionStatus(status?: string): string {
       return '进行中';
     case 'needs_input':
       return '需要输入';
+    case 'cancelled':
+      return '已停止';
     case 'completed':
       return '已完成';
     case 'failed':
@@ -265,6 +272,8 @@ function formatChatSessionStatusDescription(status?: string): string {
       return 'Working...';
     case 'needs_input':
       return 'Input needed';
+    case 'cancelled':
+      return 'Stopped';
     case 'failed':
       return 'Failed';
     default:
@@ -288,6 +297,9 @@ function normalizeChatSessionStatus(status?: string): HostSessionListItemStatus 
 
 function formatDetailedChatSessionStatusLabel(status?: string): string {
   switch (typeof status === 'string' ? status.trim() : '') {
+    case 'cancelled':
+    case 'canceled':
+      return '已停止';
     case 'waiting_question':
       return '等待回答';
     case 'waiting_confirmation':
@@ -308,6 +320,9 @@ function formatDetailedChatSessionStatusLabel(status?: string): string {
 
 function formatDetailedChatSessionStatusDescription(status?: string): string {
   switch (typeof status === 'string' ? status.trim() : '') {
+    case 'cancelled':
+    case 'canceled':
+      return 'Stopped';
     case 'waiting_question':
       return 'Waiting for answer';
     case 'waiting_confirmation':

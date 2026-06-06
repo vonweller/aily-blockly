@@ -6,6 +6,7 @@ import type {
   HostSessionSkillInvocationTraceEntry,
   SessionMetadata,
 } from '../services/chat-history.service';
+import type { PendingFollowupRequest } from './chat-pending-request';
 import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-context';
 
 type SessionRequestContextSnapshot = NonNullable<SessionSnapshot['requestContext']>;
@@ -20,8 +21,14 @@ export function cloneHostSessionRuntimeAuxiliary(
   const requestContext = cloneSessionRequestContextSnapshot(auxiliary.requestContext);
   const activeSkillNames = normalizeActiveSkillNames(auxiliary.activeSkillNames);
   const skillInvocationTrace = normalizeSkillInvocationTrace(auxiliary.skillInvocationTrace);
+  const pendingFollowupRequests = clonePendingFollowupRequests(auxiliary.pendingFollowupRequests);
+  const yieldRequested = auxiliary.yieldRequested === true;
   const hasExplicitActiveSkillNames = Array.isArray(auxiliary.activeSkillNames);
-  if (!requestContext && !hasExplicitActiveSkillNames && !skillInvocationTrace) {
+  if (!requestContext
+    && !hasExplicitActiveSkillNames
+    && !skillInvocationTrace
+    && !pendingFollowupRequests?.length
+    && !yieldRequested) {
     return undefined;
   }
 
@@ -29,6 +36,8 @@ export function cloneHostSessionRuntimeAuxiliary(
     ...(requestContext ? { requestContext } : {}),
     ...(hasExplicitActiveSkillNames ? { activeSkillNames: activeSkillNames ?? [] } : {}),
     ...(skillInvocationTrace ? { skillInvocationTrace } : {}),
+    ...(pendingFollowupRequests?.length ? { pendingFollowupRequests } : {}),
+    ...(yieldRequested ? { yieldRequested: true } : {}),
   };
 }
 
@@ -146,4 +155,16 @@ function normalizeSkillInvocationTraceFile(
       ? { category: record.category.trim() }
       : {}),
   };
+}
+
+function clonePendingFollowupRequests(value: unknown): readonly PendingFollowupRequest[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return globalThis.structuredClone(value) as readonly PendingFollowupRequest[];
+  } catch {
+    return JSON.parse(JSON.stringify(value)) as readonly PendingFollowupRequest[];
+  }
 }

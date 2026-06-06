@@ -1,4 +1,5 @@
 import type { ComposerKeyAction } from './chat-composer-view';
+import type { ChatPendingRequestKind } from './chat-pending-request';
 
 interface ComposerViewStateLike {
   updateAgentSuggestions(inputValue: string): void;
@@ -6,10 +7,12 @@ interface ComposerViewStateLike {
   resolveComposerKeyAction(input: {
     key: string;
     ctrlKey: boolean;
+    altKey: boolean;
     inputValue: string;
     selectionStart: number;
     selectionEnd: number;
     isWaiting: boolean;
+    editingPendingKind?: ChatPendingRequestKind | null;
   }): ComposerKeyAction;
   hideAgentSuggestions(): void;
 }
@@ -25,14 +28,17 @@ export class ChatComposerShellCoordinator {
       getInputValue: () => string;
       setInputValue: (value: string) => void;
       isWaiting: () => boolean;
-      submitCurrentInput: () => Promise<unknown>;
+      getEditingPendingKind?: () => ChatPendingRequestKind | null | undefined;
+      submitCurrentInput: (options?: { queueKind?: ChatPendingRequestKind }) => Promise<unknown>;
       getTextareaRef: () => TextareaRefLike | undefined;
       schedule?: (work: () => void) => void;
     },
   ) {}
 
   updateSuggestions(): void {
-    this.deps.viewState.updateAgentSuggestions(this.deps.getInputValue());
+    if (typeof this.deps.viewState.updateAgentSuggestions === 'function') {
+      this.deps.viewState.updateAgentSuggestions(this.deps.getInputValue());
+    }
   }
 
   updateInputValue(value: string): void {
@@ -64,10 +70,12 @@ export class ChatComposerShellCoordinator {
     const composerAction = this.deps.viewState.resolveComposerKeyAction({
       key: event.key,
       ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
       inputValue,
       selectionStart: textarea?.selectionStart ?? inputValue.length,
       selectionEnd: textarea?.selectionEnd ?? inputValue.length,
       isWaiting: this.deps.isWaiting(),
+      editingPendingKind: this.deps.getEditingPendingKind?.() ?? null,
     });
 
     switch (composerAction.kind) {
@@ -88,7 +96,9 @@ export class ChatComposerShellCoordinator {
 
       case 'submit':
         event.preventDefault();
-        await this.deps.submitCurrentInput();
+        await this.deps.submitCurrentInput(
+          composerAction.queueKind ? { queueKind: composerAction.queueKind } : undefined,
+        );
         return;
 
       default:

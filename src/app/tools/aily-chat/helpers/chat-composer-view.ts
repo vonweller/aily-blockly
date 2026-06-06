@@ -1,3 +1,5 @@
+import type { ChatPendingRequestKind } from './chat-pending-request';
+
 export interface AgentSuggestionKeyAction {
   readonly kind: 'none' | 'select' | 'hide';
   readonly agentName?: string;
@@ -13,7 +15,7 @@ export type ComposerKeyAction =
   | { readonly kind: 'select-agent'; readonly agentName: string }
   | { readonly kind: 'hide-suggestions' }
   | { readonly kind: 'insert-line-break'; readonly value: string; readonly caret: number }
-  | { readonly kind: 'submit' };
+  | { readonly kind: 'submit'; readonly queueKind?: ChatPendingRequestKind };
 
 export function resolveAgentSuggestionKeyAction(
   key: string,
@@ -49,11 +51,13 @@ export function insertComposerLineBreak(
 export function resolveComposerKeyAction(input: {
   key: string;
   ctrlKey: boolean;
+  altKey: boolean;
   suggestions: readonly string[];
   inputValue: string;
   selectionStart: number;
   selectionEnd: number;
   isWaiting: boolean;
+  editingPendingKind?: ChatPendingRequestKind | null;
 }): ComposerKeyAction {
   const suggestionAction = resolveAgentSuggestionKeyAction(input.key, input.suggestions);
   if (suggestionAction.kind === 'select' && suggestionAction.agentName) {
@@ -79,8 +83,21 @@ export function resolveComposerKeyAction(input: {
     };
   }
 
+  if (input.editingPendingKind === 'queued' || input.editingPendingKind === 'steering') {
+    const queueKind: ChatPendingRequestKind = input.altKey
+      ? input.editingPendingKind === 'steering' ? 'queued' : 'steering'
+      : input.editingPendingKind;
+    return {
+      kind: 'submit',
+      queueKind,
+    };
+  }
+
   if (input.isWaiting) {
-    return { kind: 'none' };
+    return {
+      kind: 'submit',
+      queueKind: input.altKey ? 'steering' : 'queued',
+    };
   }
 
   return { kind: 'submit' };

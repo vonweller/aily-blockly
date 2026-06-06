@@ -825,6 +825,7 @@ export class ChatViewService {
   resolveComposerKeyAction(input: {
     key: string;
     ctrlKey: boolean;
+    altKey: boolean;
     inputValue: string;
     selectionStart: number;
     selectionEnd: number;
