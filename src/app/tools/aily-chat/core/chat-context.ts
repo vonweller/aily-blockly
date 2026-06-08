@@ -20,6 +20,7 @@ import type { TranslateService } from '@ngx-translate/core';
 import type { NzMessageService } from 'ng-zorro-antd/message';
 
 import type { ChatSurfaceModeId } from './chat-mode';
+import type { ChatAgentRuntimeMode, ChatAgentRuntimeModeSource } from './chat-agent-runtime-mode';
 import type { ChatService, ModelConfig } from '../services/chat.service';
 import type { McpService } from '../services/mcp.service';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
@@ -117,6 +118,8 @@ export interface IProjectContext {
   isLoggedIn: boolean;
   debug: boolean;
   readonly currentMode: ChatSurfaceModeId;
+  readonly currentAgentRuntimeMode: ChatAgentRuntimeMode;
+  readonly currentAgentRuntimeModeSource: ChatAgentRuntimeModeSource;
   readonly currentModel: ModelConfig;
   readonly currentModelName: string | undefined;
   readonly currentModelBillingLabel?: string;

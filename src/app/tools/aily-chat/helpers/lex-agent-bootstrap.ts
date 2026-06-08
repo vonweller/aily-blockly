@@ -15,6 +15,13 @@ import {
 import type { ProviderContextManagementSupport } from '../services/aily-chat-config.service';
 import { MAIN_AGENT_TYPE, SCHEMATIC_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 import { BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT, BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
+import { CODER_MAIN_AGENT_REQUIRED_CONTEXT, CODER_PROMPT_PROFILE } from '../core/coder-prompt-profile';
+import { UNBOUND_ROUTER_PROMPT_PROFILE, UNBOUND_ROUTER_REQUIRED_CONTEXT } from '../core/unbound-router-prompt-profile';
+import {
+  normalizeChatAgentRuntimeMode,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import { normalizeGovernanceToolName, toRuntimeGovernanceToolName } from '../core/tool-name-normalizer';
 import { getBlocklyContextSnapshotService } from '../core/blockly-context-snapshot-service';
 import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/blockly-contributed-tools';
@@ -64,6 +71,7 @@ import {
   type IToolContribution,
   type IMetricsService,
   type ToolResultContent,
+  type AgentRequiredContext,
 } from 'aily-lex/browser';
 import {
   cloneTurnResponseRoundSummaryCarrier,
@@ -121,7 +129,7 @@ interface BootstrapLexAgentOptions {
   metrics?: IMetricsService;
 }
 
-export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel'>
+export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRootPath' | 'currentModel' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'ailyChatConfigService' | 'mcpService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'handleToolApproval' | 'syncSessionCustomizationContentProvider' | 'syncSessionCustomizationProvider' | 'syncSessionCustomizationProviders' | 'syncSessionProviderOptionsSource' | 'syncSessionProviderOptionsSources'>
@@ -131,6 +139,11 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
+    selectAgentRuntimeMode?(
+      mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
+      source: ChatAgentRuntimeModeSource,
+      reason?: string,
+    ): void | Promise<void>;
   };
 
 export interface BlocklyCompatibilityHostBinding {
@@ -145,11 +158,48 @@ interface BlocklyStandardHostBinding {
   adapter: BlocklyHostAdapter;
 }
 
-const BLOCKLY_SUBAGENT_REQUIRED_CONTEXT = {
-  scopes: [...BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes],
-  strict: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.strict,
-  hydrateBeforeFirstModelCall: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.hydrateBeforeFirstModelCall,
-} as const;
+function createSubagentRequiredContext(requiredContext: AgentRequiredContext) {
+  return {
+    scopes: [...requiredContext.scopes],
+    strict: requiredContext.strict,
+    hydrateBeforeFirstModelCall: requiredContext.hydrateBeforeFirstModelCall,
+  } as const;
+}
+
+export function resolveRuntimePromptProfile(runtimeMode: ChatAgentRuntimeMode) {
+  switch (runtimeMode) {
+    case 'coder':
+      return CODER_PROMPT_PROFILE;
+    case 'blockly':
+      return BLOCKLY_PROMPT_PROFILE;
+    case 'unbound':
+    default:
+      return UNBOUND_ROUTER_PROMPT_PROFILE;
+  }
+}
+
+export function resolveRuntimeRequiredContext(runtimeMode: ChatAgentRuntimeMode): AgentRequiredContext {
+  switch (runtimeMode) {
+    case 'coder':
+      return CODER_MAIN_AGENT_REQUIRED_CONTEXT;
+    case 'blockly':
+      return BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT;
+    case 'unbound':
+    default:
+      return UNBOUND_ROUTER_REQUIRED_CONTEXT;
+  }
+}
+
+function resolveDeferredGroupsForRuntime(runtimeMode: ChatAgentRuntimeMode) {
+  if (runtimeMode !== 'blockly') {
+    return BLOCKLY_LEX_DEFERRED_GROUPS.filter(group =>
+      group.id === 'blockly-library-discovery'
+      || group.id === 'blockly-project-management',
+    );
+  }
+
+  return BLOCKLY_LEX_DEFERRED_GROUPS;
+}
 
 // Host/runtime boundary:
 // - this set only selects lex-owned core tools for the main agent
@@ -768,9 +818,22 @@ export function createBlocklyCompatibilityHostBinding(cwd = ''): BlocklyCompatib
   return createBlocklySearchCompatibilityHostBinding(cwd);
 }
 
-export function createBlocklyStandardHostBinding(cwd = ''): BlocklyStandardHostBinding {
+export function createBlocklyStandardHostBinding(
+  cwd = '',
+  options: {
+    readonly runtimeMode?: ChatAgentRuntimeMode;
+    readonly onRuntimeModeSelected?: (
+      mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
+      source: ChatAgentRuntimeModeSource,
+      reason?: string,
+    ) => void | Promise<void>;
+  } = {},
+): BlocklyStandardHostBinding {
   const hostAPI = buildExternalHostAPI();
-  const toolProvider = createBlocklyToolProvider(hostAPI);
+  const toolProvider = createBlocklyToolProvider(hostAPI, {
+    runtimeMode: normalizeChatAgentRuntimeMode(options.runtimeMode, 'blockly'),
+    onRuntimeModeSelected: options.onRuntimeModeSelected,
+  });
   const binding = createBlocklyHostBinding({ hostAPI, cwd, toolProvider });
   return {
     hostAPI,
@@ -960,15 +1023,27 @@ export function bootstrapBlocklyLexAgent(
 ): BlocklyLexAgentInstance {
   const { ctx, lex, sessionId, askHandler, onSubagentEvent, metrics } = options;
   const cwd = resolveLexRuntimeCwd(ctx);
-  const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd);
+  const agentRuntimeMode = normalizeChatAgentRuntimeMode(ctx.currentAgentRuntimeMode, cwd ? 'coder' : 'unbound');
+  const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
+  const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
+  const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
+  const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
+    runtimeMode: agentRuntimeMode,
+    onRuntimeModeSelected: ctx.selectAgentRuntimeMode,
+  });
   attachBlocklyCompatibilityExtensions(adapter);
   const contextSnapshotService = getBlocklyContextSnapshotService();
   const sessionStorage = createLexSessionStorage(lex, adapter.fs);
+  console.info('[LexBootstrap] agent runtime mode', {
+    runtimeMode: agentRuntimeMode,
+    promptHostId: promptProfile.hostId,
+    cwd: cwd || null,
+  });
 
   const runtimeExtensions: Record<string, unknown> = {
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
-      BLOCKLY_SUBAGENT_REQUIRED_CONTEXT,
+      subagentRequiredContext,
       'subagent-environment',
     ),
     contextSnapshot: contextSnapshotService,
@@ -1207,10 +1282,10 @@ export function bootstrapBlocklyLexAgent(
     copilotInlineSummarization: true,
     sessionId: sessionId || ctx.sessionId,
     sessionStorage,
-    capabilities: adapter.capabilities,
+    capabilities: new Set([...adapter.capabilities, `runtime:${agentRuntimeMode}`]),
     cwd: cwd || undefined,
     maxToolCallIterations: ctx.ailyChatConfigService.maxRequests,
-    promptProfile: BLOCKLY_PROMPT_PROFILE,
+    promptProfile,
     extensions: runtimeExtensions,
     userInstructionFolders: ctx.ailyChatConfigService.userInstructionFolders.map(path => ({ path })),
     projectInstructionFolders: ctx.ailyChatConfigService.projectInstructionFolders.map(path => ({ path })),
@@ -1249,7 +1324,7 @@ export function bootstrapBlocklyLexAgent(
       },
     },
     coreToolFilter: getConfiguredCoreToolFilter(ctx.ailyChatConfigService),
-    additionalDeferredGroups: BLOCKLY_LEX_DEFERRED_GROUPS.map(g => ({
+    additionalDeferredGroups: resolveDeferredGroupsForRuntime(agentRuntimeMode).map(g => ({
       id: g.id, label: g.label, description: g.description,
     })),
     toolProvider,

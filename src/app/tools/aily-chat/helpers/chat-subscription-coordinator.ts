@@ -62,6 +62,7 @@ export class ChatSubscriptionCoordinator {
   private aiWritingSubscription: Subscription | null = null;
   private aiWaitingSubscription: Subscription | null = null;
   private projectPathSubscription: Subscription | null = null;
+  private projectActivationSubscription: Subscription | null = null;
   private configChangedSubscription: Subscription | null = null;
   private hostConfigReloadSubscription: Subscription | null = null;
   private blockSelectionSubscription: Subscription | null = null;
@@ -70,6 +71,7 @@ export class ChatSubscriptionCoordinator {
   private taskActionHandler: ((event: Event) => void) | null = null;
   private active = false;
   private lastKnownApiServer = '';
+  private projectActivationSequence = 0;
   private readonly viewWriteBridge: ChatSubscriptionViewWriteAccess;
 
   private async tryInitializeLoggedInSession(): Promise<void> {
@@ -150,6 +152,65 @@ export class ChatSubscriptionCoordinator {
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
+  private isProjectPath(projectPath: string | null | undefined, rootPath: string | null | undefined): projectPath is string {
+    return !!projectPath && projectPath !== rootPath;
+  }
+
+  private async handleProjectScopeActivated(
+    projectPath: string,
+    previousProjectPath: string | null | undefined,
+    reason?: string,
+  ): Promise<void> {
+    const rootPath = AilyHost.get().project.projectRootPath;
+    if (!this.isProjectPath(projectPath, rootPath)) {
+      this.handleGlobalScopeActivated();
+      return;
+    }
+
+    const previousPath = previousProjectPath || this.ctx.prjPath || null;
+    this.ctx.prjPath = projectPath;
+    this.ctx.prjRootPath = rootPath;
+    this.ctx.chatHistoryService.reloadProjectIndex(projectPath);
+
+    const adopted = reason === 'chat-tool-create'
+      ? this.ctx.session.adoptActiveGlobalSessionToProject(projectPath, reason)
+      : false;
+
+    if (!adopted) {
+      if (this.ctx.isLoggedIn) {
+        await this.ctx.session.loadLatestProjectSession(projectPath, previousPath);
+      } else {
+        this.ctx.chatService.currentSessionPath = projectPath;
+      }
+    }
+
+    this.ctx.session.requestSessionListRefresh({
+      reason: 'project',
+      scope: 'full',
+      priority: 'normal',
+    });
+    this.ctx.absAutoSyncService.initialize(projectPath);
+    this.callbacks.refreshSessionProviderOptionsSources();
+  }
+
+  private async handleGlobalScopeActivated(): Promise<void> {
+    this.ctx.prjPath = '';
+    this.ctx.prjRootPath = AilyHost.get().project.projectRootPath;
+
+    if (this.ctx.isLoggedIn) {
+      await this.ctx.session.loadLatestGlobalSession();
+    } else {
+      this.ctx.session.enterBlankSessionShell({ projectPath: null });
+    }
+
+    this.ctx.session.requestSessionListRefresh({
+      reason: 'project',
+      scope: 'full',
+      priority: 'normal',
+    });
+    this.callbacks.refreshSessionProviderOptionsSources();
+  }
+
   setup(): void {
     this.active = true;
     this.lastKnownApiServer = this.normalizeApiServer(this.ctx.configService.getCurrentApiServer());
@@ -215,35 +276,34 @@ export class ChatSubscriptionCoordinator {
     };
     document.addEventListener('aily-task-action', this.taskActionHandler);
 
+    const projectActivation$ = AilyHost.get().project.projectActivation$;
+    this.projectActivationSubscription = projectActivation$?.subscribe((event: any) => {
+      this.projectActivationSequence += 1;
+      void this.handleProjectScopeActivated(event?.path || '', event?.previousPath || null, event?.reason);
+    }) ?? null;
+
     this.projectPathSubscription = AilyHost.get().project.currentProjectPath$.pipe(
       distinctUntilChanged(),
       skip(1),
     ).subscribe((newPath: string) => {
       const rootPath = AilyHost.get().project.projectRootPath;
-      this.ctx.prjPath = newPath === rootPath ? '' : newPath;
-      this.ctx.prjRootPath = rootPath;
-
-      if (newPath && newPath !== rootPath) {
-        this.ctx.chatService.currentSessionPath = newPath;
+      if (!this.isProjectPath(newPath, rootPath)) {
+        void this.handleGlobalScopeActivated();
+        return;
       }
 
-      if (newPath && newPath !== rootPath) {
-        this.ctx.chatHistoryService.reloadProjectIndex(newPath);
-        const adopted = this.ctx.chatHistoryService.adoptOrphanSessions(newPath, rootPath);
-        if (adopted > 0) {
-          console.log(`[ChatEngine] 项目切换，自动领养 ${adopted} 个孤儿会话到: ${newPath}`);
-        }
+      if (projectActivation$) {
+        const activationSequence = this.projectActivationSequence;
+        setTimeout(() => {
+          if (!this.active || this.projectActivationSequence !== activationSequence || this.ctx.prjPath === newPath) {
+            return;
+          }
+          void this.handleProjectScopeActivated(newPath, this.ctx.prjPath || null, 'open');
+        }, 0);
+        return;
       }
 
-      this.ctx.session.requestSessionListRefresh({
-        reason: 'project',
-        scope: 'full',
-        priority: 'normal',
-      });
-      if (newPath && newPath !== rootPath) {
-        this.ctx.absAutoSyncService.initialize(newPath);
-      }
-      this.callbacks.refreshSessionProviderOptionsSources();
+      void this.handleProjectScopeActivated(newPath, this.ctx.prjPath || null, 'open');
     });
 
     this.loginStatusSubscription = authProvider?.isLoggedIn$?.subscribe(async isLoggedIn => {
@@ -334,6 +394,7 @@ export class ChatSubscriptionCoordinator {
     if (this.aiWritingSubscription) { this.aiWritingSubscription.unsubscribe(); this.aiWritingSubscription = null; }
     if (this.aiWaitingSubscription) { this.aiWaitingSubscription.unsubscribe(); this.aiWaitingSubscription = null; }
     if (this.projectPathSubscription) { this.projectPathSubscription.unsubscribe(); this.projectPathSubscription = null; }
+    if (this.projectActivationSubscription) { this.projectActivationSubscription.unsubscribe(); this.projectActivationSubscription = null; }
     if (this.configChangedSubscription) { this.configChangedSubscription.unsubscribe(); this.configChangedSubscription = null; }
     if (this.hostConfigReloadSubscription) { this.hostConfigReloadSubscription.unsubscribe(); this.hostConfigReloadSubscription = null; }
     if (this.blockSelectionSubscription) { this.blockSelectionSubscription.unsubscribe(); this.blockSelectionSubscription = null; }

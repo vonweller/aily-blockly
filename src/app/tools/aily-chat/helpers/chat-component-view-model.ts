@@ -26,6 +26,7 @@ interface ChatEngineViewLike {
   readonly sessionId: string;
   readonly sessionTitle: string;
   readonly currentMode: string;
+  readonly currentAgentRuntimeMode: string;
   readonly currentSessionPermissionMode: string;
   readonly currentSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
   readonly currentCustomAgentTarget: string | undefined;
@@ -186,6 +187,10 @@ export class ChatComponentViewModel {
 
   get currentMode(): string {
     return this.deps.engine.currentMode;
+  }
+
+  get currentAgentRuntimeMode(): string {
+    return this.deps.engine.currentAgentRuntimeMode;
   }
 
   get currentPermissionLabel(): string {

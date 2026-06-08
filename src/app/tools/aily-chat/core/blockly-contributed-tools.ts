@@ -19,6 +19,11 @@
 
 import type { IToolContribution, IHostToolProvider, ToolResultContent } from 'aily-lex/browser';
 import type { IExternalHostAPI } from 'aily-lex/host/blockly';
+import {
+  normalizeChatAgentRuntimeMode,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from './chat-agent-runtime-mode';
 
 // ---- 复用已有工具实现 ----
 import { appendLegacyHostContributions, invokeLegacyHostExternalTool, isLegacyHostExternalToolName } from './blockly-legacy-host-tools';
@@ -61,12 +66,46 @@ function createDeferred(group: typeof BLOCKLY_LEX_DEFERRED_GROUPS[number]['id'],
 
 type BlocklyToolProviderOverrides = BlocklyWorkspaceToolOverrides;
 
-function createHandlers(overrides?: BlocklyToolProviderOverrides): Record<string, InvokeHandler> {
-  return {
+export interface BlocklyToolProviderOptions extends BlocklyWorkspaceToolOverrides {
+  readonly runtimeMode?: ChatAgentRuntimeMode;
+  readonly onRuntimeModeSelected?: (
+    mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
+    source: ChatAgentRuntimeModeSource,
+    reason?: string,
+  ) => void | Promise<void>;
+}
+
+function createHandlers(runtimeMode: ChatAgentRuntimeMode, options?: BlocklyToolProviderOptions): Record<string, InvokeHandler> {
+  const handlers: Record<string, InvokeHandler> = {
     ...createBlocklyProjectDiscoveryHandlers(),
-    ...createBlocklyWorkspaceHandlers(overrides),
     ...createBlocklyPlaceholderHandlers(),
   };
+
+  if (options?.onRuntimeModeSelected) {
+    handlers['selectRuntimeMode'] = async (input) => {
+      const mode = normalizeChatAgentRuntimeMode(input['mode'], 'unbound');
+      if (mode !== 'coder' && mode !== 'blockly') {
+        return error('selectRuntimeMode requires mode to be "coder" or "blockly".');
+      }
+
+      const confirmed = input['confirmed'] === true;
+      const source: ChatAgentRuntimeModeSource = confirmed ? 'router_confirmed' : 'user_selected';
+      const reason = typeof input['reason'] === 'string' ? input['reason'].trim() : '';
+      await options.onRuntimeModeSelected?.(mode, source, reason || undefined);
+      return {
+        content: [{
+          type: 'text',
+          text: `Runtime mode selected: ${mode}. Source: ${source}. The host will rebuild the agent with the ${mode} prompt and tool surface before the next user turn.`,
+        }],
+      };
+    };
+  }
+
+  if (runtimeMode === 'blockly') {
+    Object.assign(handlers, createBlocklyWorkspaceHandlers(options));
+  }
+
+  return handlers;
 }
 
 function appendProjectContributions(contributions: IToolContribution[], hostAPI: IExternalHostAPI): void {
@@ -77,15 +116,59 @@ function appendDiscoveryContributions(contributions: IToolContribution[], hostAP
   appendBlocklyDiscoveryContributions(contributions, hostAPI, createDeferred);
 }
 
-function collectBlocklyContributions(hostAPI: IExternalHostAPI): IToolContribution[] {
+function collectBlocklyContributions(hostAPI: IExternalHostAPI, runtimeMode: ChatAgentRuntimeMode): IToolContribution[] {
   const contributions: IToolContribution[] = [];
 
-  appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
   appendProjectContributions(contributions, hostAPI);
   appendDiscoveryContributions(contributions, hostAPI);
-  appendLegacyHostContributions(contributions, hostAPI);
+
+  if (runtimeMode === 'blockly') {
+    appendBlocklyWorkspaceContributions(contributions, hostAPI, createDeferred);
+    appendLegacyHostContributions(contributions, hostAPI);
+  }
 
   return contributions;
+}
+
+function appendRuntimeModeContribution(
+  contributions: IToolContribution[],
+  options?: BlocklyToolProviderOptions,
+): void {
+  if (!options?.onRuntimeModeSelected) {
+    return;
+  }
+
+  contributions.push({
+    name: 'selectRuntimeMode',
+    toolSet: 'runtime-routing',
+    description: 'Select coder or blockly runtime mode after user confirmation',
+    prompt: `Use this tool only after the user explicitly confirms whether this session should continue in coder mode or blockly mode.
+- Choose "coder" for source-code projects, C/C++ edits, build/debug tasks, and src/main.cpp workflows.
+- Choose "blockly" for ABS/Blockly visual programming, project.abs workflows, block generation, or syncAbs work.
+Set confirmed=true when the user made the choice in response to your runtime selection question.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['coder', 'blockly'],
+          description: 'Runtime mode selected by the user or by an unambiguous request.',
+        },
+        confirmed: {
+          type: 'boolean',
+          description: 'True when the user explicitly confirmed this runtime choice.',
+        },
+        reason: {
+          type: 'string',
+          description: 'Short reason for the selected runtime mode.',
+        },
+      },
+      required: ['mode'],
+    },
+    annotations: { readOnly: false },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main'],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -97,9 +180,11 @@ function collectBlocklyContributions(hostAPI: IExternalHostAPI): IToolContributi
  *
  * Detects available capabilities and only contributes applicable tools.
  */
-export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, overrides?: BlocklyToolProviderOverrides): IHostToolProvider {
-  const contributions = collectBlocklyContributions(hostAPI);
-  const handlers = createHandlers(overrides);
+export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: BlocklyToolProviderOptions): IHostToolProvider {
+  const runtimeMode = normalizeChatAgentRuntimeMode(options?.runtimeMode, 'blockly');
+  const contributions = collectBlocklyContributions(hostAPI, runtimeMode);
+  appendRuntimeModeContribution(contributions, options);
+  const handlers = createHandlers(runtimeMode, options);
 
   return {
     contributeTools(): IToolContribution[] {
@@ -112,7 +197,7 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, overrides?:
       host?: { getExtension<T>(id: string): T | undefined };
     }): Promise<ToolResultContent> {
       // External tools call handlers directly; no blockly-side runtime registry remains here.
-      if (isLegacyHostExternalToolName(toolName)) {
+      if (runtimeMode === 'blockly' && isLegacyHostExternalToolName(toolName)) {
         return invokeLegacyHostExternalTool(toolName, input as Record<string, unknown>, invocationContext);
       }
 

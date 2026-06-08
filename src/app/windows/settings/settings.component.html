@@ -33,6 +33,18 @@
                   }
                 </div>
               </div>
+              <div class="item">
+                <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
+                <nz-radio-group
+                  [ngModel]="developmentModePreference"
+                  (ngModelChange)="onDevelopmentModePreferenceChange($event)"
+                  [nzSize]="'small'"
+                  nzButtonStyle="solid">
+                  <label nz-radio-button nzValue="auto">{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_AUTO' | translate }}</label>
+                  <label nz-radio-button nzValue="blockly">{{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}</label>
+                  <label nz-radio-button nzValue="coder">{{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}</label>
+                </nz-radio-group>
+              </div>
             </div>
           </div>
 

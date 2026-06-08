@@ -9,6 +9,7 @@ export interface HostSessionAdoptionBridgeOptions {
   extractProjectName: (projectPath: string | null) => string | null;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
   deleteSessionFile: (sessionId: string, projectPath: string | null) => void;
+  deleteSessionFileOrThrow: (sessionId: string, projectPath: string | null) => void;
 }
 
 /**
@@ -47,6 +48,35 @@ export class HostSessionAdoptionBridge {
     return orphans.length;
   }
 
+  adoptSingleGlobalSession(
+    index: SessionIndexEntry[],
+    sessionCache: Map<string, HostSessionRecord>,
+    sessionId: string,
+    projectPath: string,
+    rootPath?: string | null,
+  ): boolean {
+    if (!sessionId || !projectPath) return false;
+
+    const entry = index.find(item => item.sessionId === sessionId);
+    if (!entry) return false;
+
+    const oldProjectPath = entry.projectPath;
+    const isGlobalEntry = oldProjectPath === null
+      || (rootPath
+        && this.options.isSamePath(oldProjectPath, rootPath)
+        && !this.options.isSamePath(rootPath, projectPath));
+    if (!isGlobalEntry) return false;
+
+    this.adoptEntry(
+      entry,
+      sessionCache,
+      projectPath,
+      this.options.extractProjectName(projectPath),
+      rootPath,
+    );
+    return true;
+  }
+
   private adoptEntry(
     entry: SessionIndexEntry,
     sessionCache: Map<string, HostSessionRecord>,
@@ -57,24 +87,73 @@ export class HostSessionAdoptionBridge {
     const oldProjectPath = entry.projectPath;
     const data = sessionCache.get(entry.sessionId)
       || this.hostRecordStore.read(entry.sessionId, oldProjectPath);
+    const previousEntry = JSON.parse(JSON.stringify(entry)) as SessionIndexEntry;
+    const previousRecord = data
+      ? JSON.parse(JSON.stringify(data)) as HostSessionRecord
+      : null;
 
     entry.projectPath = projectPath;
     entry.projectName = projectName;
     entry.updatedAt = Date.now();
 
-    if (data) {
-      data.metadata.projectPath = projectPath;
-      data.metadata.updatedAt = entry.updatedAt;
-      sessionCache.set(entry.sessionId, data);
+    try {
+      if (data) {
+        data.metadata.projectPath = projectPath;
+        data.metadata.updatedAt = entry.updatedAt;
+        sessionCache.set(entry.sessionId, data);
 
-      this.hostRecordStore.write(entry.sessionId, data);
-      this.options.deleteSessionFile(entry.sessionId, oldProjectPath);
-      if (oldProjectPath !== null) {
-        this.options.deleteSessionFile(entry.sessionId, null);
+        this.hostRecordStore.writeOrThrow(entry.sessionId, data);
+        this.options.deleteSessionFileOrThrow(entry.sessionId, oldProjectPath);
+        if (oldProjectPath !== null) {
+          this.options.deleteSessionFileOrThrow(entry.sessionId, null);
+        }
       }
+
+      this.migrateOrphanArch(entry.sessionId, projectPath, rootPath);
+    } catch (error) {
+      this.rollbackAdoption(entry, sessionCache, previousEntry, previousRecord, projectPath);
+      throw error;
+    }
+  }
+
+  private rollbackAdoption(
+    entry: SessionIndexEntry,
+    sessionCache: Map<string, HostSessionRecord>,
+    previousEntry: SessionIndexEntry,
+    previousRecord: HostSessionRecord | null,
+    adoptedProjectPath: string,
+  ): void {
+    entry.projectPath = previousEntry.projectPath ?? null;
+    entry.projectName = previousEntry.projectName;
+    entry.updatedAt = previousEntry.updatedAt;
+    entry.title = previousEntry.title;
+    entry.titleSource = previousEntry.titleSource;
+    entry.defaultTitle = previousEntry.defaultTitle;
+    entry.messageCount = previousEntry.messageCount;
+    entry.mode = previousEntry.mode;
+    entry.modeDescriptor = previousEntry.modeDescriptor;
+    entry.inputState = previousEntry.inputState;
+    entry.requestRouting = previousEntry.requestRouting;
+    entry.interactionActionSummary = previousEntry.interactionActionSummary;
+    entry.model = previousEntry.model;
+    entry.sessionType = previousEntry.sessionType;
+    entry.sessionScopeSchemaVersion = previousEntry.sessionScopeSchemaVersion;
+    entry.dataAvailable = previousEntry.dataAvailable;
+
+    if (!previousRecord) {
+      sessionCache.delete(entry.sessionId);
+      this.options.deleteSessionFile(entry.sessionId, adoptedProjectPath);
+      return;
     }
 
-    this.migrateOrphanArch(entry.sessionId, projectPath, rootPath);
+    sessionCache.set(entry.sessionId, previousRecord);
+    try {
+      this.hostRecordStore.writeOrThrow(entry.sessionId, previousRecord);
+    } catch (rollbackError) {
+      console.warn(`[ChatHistory] 回滚收养记录失败 (${entry.sessionId}):`, rollbackError);
+    }
+
+    this.options.deleteSessionFile(entry.sessionId, adoptedProjectPath);
   }
 
   private migrateOrphanArch(sessionId: string, projectPath: string, rootPath?: string | null): void {

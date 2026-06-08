@@ -10,6 +10,12 @@ import type { ChatSessionRuntimeChangedEvent } from './chat-session-runtime-stor
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
+import {
+  chatSessionScopeProjectPath,
+  isSameChatSessionScopePath,
+  normalizeChatSessionScopePath,
+  resolveChatSessionScopeFromProject,
+} from '../core/chat-session-scope';
 import type { ChatSessionListAction, ChatSessionListItem } from './menu-manager.service';
 import type {
   HostSessionHistoryItem,
@@ -209,7 +215,9 @@ export class ChatSessionItemsService implements OnDestroy {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): readonly ChatSessionListItem[] {
-    return this.readSessionListItems(projectPath, projectRootPath).map(item => this.toSessionListItem(item));
+    return this.readSessionListItems(projectPath, projectRootPath).map(item =>
+      this.toSessionListItem(item, projectPath, projectRootPath)
+    );
   }
 
   readSessionSummaryViewItems(
@@ -225,7 +233,7 @@ export class ChatSessionItemsService implements OnDestroy {
       resolvedProjectPath,
       resolvedProjectRootPath,
       { limit },
-    ).map(item => this.toSessionListItem(item));
+    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath));
     ChatPerformanceTracer.mark('session_list.summary_rows_projected', `count=${items.length},filter=${filter}${typeof limit === 'number' ? `,limit=${limit}` : ''}`);
     return items;
   }
@@ -242,16 +250,19 @@ export class ChatSessionItemsService implements OnDestroy {
     }
 
     const currentItem = this.readCachedSessionItem(currentSessionId);
-    if (currentItem) {
+    if (currentItem && this.isSessionItemInViewScope(currentItem, projectPath, projectRootPath)) {
       return currentItem;
     }
 
     const projectedSummary = this.readOrProjectSessionSummary(currentSessionId, projectPath, projectRootPath, 'all');
-    if (projectedSummary) {
+    if (projectedSummary && this.isSessionItemInViewScope(projectedSummary, projectPath, projectRootPath)) {
       return projectedSummary;
     }
 
-    return this._sessionListItems.find(item => item.current || item.sessionId === currentSessionId) ?? null;
+    return this._sessionListItems.find(item =>
+      (item.current || item.sessionId === currentSessionId)
+      && this.isSessionItemInViewScope(item, projectPath, projectRootPath)
+    ) ?? null;
   }
 
   readOrProjectSessionSummary(
@@ -276,7 +287,7 @@ export class ChatSessionItemsService implements OnDestroy {
       projectPath ?? this.resolveCurrentProjectPath(),
       projectRootPath ?? AilyHost.get().project.projectRootPath ?? null,
     );
-    return summaryItem ? this.toSessionListItem(summaryItem) : null;
+    return summaryItem ? this.toSessionListItem(summaryItem, projectPath, projectRootPath) : null;
   }
 
   loadInitialSummaries(
@@ -305,7 +316,7 @@ export class ChatSessionItemsService implements OnDestroy {
       resolvedProjectPath,
       resolvedProjectRootPath,
       { cursor, limit },
-    ).map(item => this.toSessionListItem(item));
+    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath));
     if (summaryItems.length === 0) {
       return;
     }
@@ -384,7 +395,7 @@ export class ChatSessionItemsService implements OnDestroy {
         continue;
       }
 
-      const nextItem = this.toSessionListItem(detailed);
+      const nextItem = this.toSessionListItem(detailed, resolvedProjectPath, resolvedProjectRootPath);
       const previousIndex = nextItems.findIndex(item => item.sessionId === sessionId);
       if (previousIndex < 0) {
         nextItems.push(nextItem);
@@ -490,7 +501,7 @@ export class ChatSessionItemsService implements OnDestroy {
       resolvedProjectPath,
       resolvedProjectRootPath,
     );
-    const nextItem = projectionItem ? this.toSessionListItem(projectionItem) : null;
+    const nextItem = projectionItem ? this.toSessionListItem(projectionItem, resolvedProjectPath, resolvedProjectRootPath) : null;
 
     const previousItems = this._sessionListItems;
     const previousIndex = previousItems.findIndex(item => item.sessionId === normalizedSessionId);
@@ -786,7 +797,11 @@ export class ChatSessionItemsService implements OnDestroy {
     return JSON.stringify(left) === JSON.stringify(right);
   }
 
-  private toSessionListItem(item: SessionListSourceLike): ChatSessionListItem {
+  private toSessionListItem(
+    item: SessionListSourceLike,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem {
     const fallbackTitle = typeof item?.title === 'string' && item.title.trim().length > 0
       ? item.title.trim()
       : (typeof item?.name === 'string' && item.name.trim().length > 0 ? item.name.trim() : this.resolveUntitledSessionFallback(item));
@@ -818,7 +833,7 @@ export class ChatSessionItemsService implements OnDestroy {
       pinned: item?.pinned === true,
       read: item?.read !== false,
       markedUnread: item?.markedUnread === true,
-      current: item?.current === true,
+      current: this.isCurrentScopedSessionItem(item, projectPath, projectRootPath),
       actions: Array.isArray(item?.actions) && item.actions.length > 0 ? item.actions : this.buildSessionActions(item),
     };
   }
@@ -927,11 +942,45 @@ export class ChatSessionItemsService implements OnDestroy {
   }
 
   private resolveCurrentProjectPath(): string | null {
-    const currentProjectPath = AilyHost.get().project.currentProjectPath;
-    const projectRootPath = AilyHost.get().project.projectRootPath;
-    return currentProjectPath && currentProjectPath !== projectRootPath
-      ? currentProjectPath
-      : projectRootPath || null;
+    return chatSessionScopeProjectPath(resolveChatSessionScopeFromProject(AilyHost.get().project));
+  }
+
+  private resolveViewProjectPath(projectPath?: string | null, projectRootPath?: string | null): string | null {
+    if (projectPath !== undefined || projectRootPath !== undefined) {
+      return chatSessionScopeProjectPath(resolveChatSessionScopeFromProject({
+        currentProjectPath: projectPath ?? null,
+        projectRootPath: projectRootPath ?? AilyHost.get().project.projectRootPath ?? null,
+      }));
+    }
+
+    return this.resolveCurrentProjectPath();
+  }
+
+  private isSessionItemInViewScope(
+    item: Pick<SessionListSourceLike, 'projectPath'> | null | undefined,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): boolean {
+    const viewProjectPath = this.resolveViewProjectPath(projectPath, projectRootPath);
+    const itemProjectPath = normalizeChatSessionScopePath(item?.projectPath);
+    const rootPath = normalizeChatSessionScopePath(projectRootPath ?? AilyHost.get().project.projectRootPath ?? null);
+
+    if (!viewProjectPath) {
+      return !itemProjectPath || isSameChatSessionScopePath(itemProjectPath, rootPath);
+    }
+
+    return isSameChatSessionScopePath(itemProjectPath, viewProjectPath);
+  }
+
+  private isCurrentScopedSessionItem(
+    item: SessionListSourceLike,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): boolean {
+    const itemSessionId = this.normalizeSessionId(item?.sessionId);
+    const currentSessionId = this.normalizeSessionId(this.chatService.currentSessionId);
+    return Boolean(itemSessionId && itemSessionId === currentSessionId
+      && this.isSessionItemInViewScope(item, projectPath, projectRootPath));
   }
 
   requestSessionListRefresh(request: SessionListRefreshRequest): void {

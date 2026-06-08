@@ -20,6 +20,7 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
+import { ChatService } from '../tools/aily-chat/services/chat.service';
 import {
   readPlatformRefFromProjectAci,
   resolveEffectiveBoardDependencies,
@@ -112,7 +113,16 @@ export class ProjectService {
     private noticeService: NoticeService,
     private modal: NzModalService,
     private appDataResourceLock: AppDataResourceLockService,
+    private chatService: ChatService,
   ) {
+  }
+
+  private hasBlockingChatRequest(): boolean {
+    return this.chatService?.isWaiting === true;
+  }
+
+  private warnBlockingChatRequest(): void {
+    this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用
@@ -272,6 +282,12 @@ export class ProjectService {
   async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
+
+    if (this.hasBlockingChatRequest()) {
+      this.warnBlockingChatRequest();
+      return false;
+    }
+
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
@@ -390,6 +406,11 @@ export class ProjectService {
   }
 
   async close() {
+    if (this.hasBlockingChatRequest()) {
+      this.warnBlockingChatRequest();
+      return false;
+    }
+
     if (this.electronService.isElectron && this.currentProjectPath && window['projectLock']) {
       try {
         await window['projectLock'].release(this.currentProjectPath);

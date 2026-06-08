@@ -496,7 +496,7 @@ export class ChatSessionsControlService {
   }
 
   private readDisplaySessionItems(): readonly ChatSessionListItem[] {
-    return this.prependProjectedTargetItems(this.chatSessionItemsService.sessionListItems, 'all');
+    return this.prependProjectedTargetItems(this.chatSessionItemsService.sessionListItems, 'current-project');
   }
 
   private readPickerDisplaySessionItems(): readonly ChatSessionListItem[] {
@@ -506,8 +506,8 @@ export class ChatSessionsControlService {
     }
 
     const items = this.prependProjectedTargetItems(
-      this.chatSessionItemsService.readSessionSummaryViewItems(undefined, undefined, undefined, 'all'),
-      'all',
+      this.chatSessionItemsService.readSessionSummaryViewItems(undefined, undefined, undefined, 'current-project'),
+      'current-project',
     );
     this.cachedSessionPickerItems = { revision, items };
     return items;
@@ -597,7 +597,7 @@ export class ChatSessionsControlService {
       scope: 'visible-details',
       priority: 'after-paint',
       sessionIds,
-      filter: this._showSessionPicker ? 'all' : 'current-project',
+      filter: 'current-project',
     });
   }
 

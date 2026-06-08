@@ -37,6 +37,11 @@ import {
 import { buildHostSessionCurrentPickerRoutingSummary, normalizeHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import type { HostSessionRequestRoutingSummary } from './host-session-request-routing';
 import {
+  isSameChatSessionScopePath,
+  normalizeChatSessionScopePath,
+} from '../core/chat-session-scope';
+import type { ChatAgentRuntimeMode, ChatAgentRuntimeModeSource } from '../core/chat-agent-runtime-mode';
+import {
   HostSessionContentProvider,
   resolveHostSessionProjectPathHint,
   type HostSessionContent,
@@ -54,6 +59,8 @@ export interface HostSessionHistoryItem {
   readonly updatedAt?: number;
   readonly current: boolean;
   readonly projectPath: string | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
   readonly inputState?: ChatSessionInputState;
   readonly mode?: ChatSurfaceModeId;
   readonly requestRouting?: HostSessionRequestRoutingSummary;
@@ -181,6 +188,8 @@ export interface HostSessionManagedItemSeed {
   readonly createdAt?: number;
   readonly updatedAt?: number;
   readonly projectPath?: string | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
   readonly inputState?: ChatSessionInputState;
   readonly mode?: ChatSurfaceModeId;
   readonly requestRouting?: HostSessionRequestRoutingSummary;
@@ -194,6 +203,8 @@ interface HostSessionManagedItem {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly projectPath: string | null;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
   readonly inputState: ChatSessionInputState;
   readonly mode: ChatSurfaceModeId;
   readonly requestRouting?: HostSessionRequestRoutingSummary;
@@ -212,7 +223,7 @@ type HostSessionRecordLike = {
 };
 
 type HostSessionItemControllerContext = {
-  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
+  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
     & Partial<Pick<ChatService, 'currentSessionTitleSource'>>
     & Partial<Pick<ChatService, 'sessionDisplayTitleChanged$' | 'sessionDurableTitleChanged$' | 'sessionTitleChanged$'>>;
   readonly chatHistoryService: Pick<ChatHistoryService, 'getHistoryList' | 'findEntry' | 'loadHostRecord' | 'updateTitle' | 'deleteSession'> & Partial<Pick<ChatHistoryService, 'hostSessionChanged$'>>;
@@ -330,6 +341,8 @@ export class HostSessionItemController {
       createdAt: options.createdAt,
       updatedAt: options.updatedAt,
       projectPath: options.projectPath ?? this.ctx.chatService.currentSessionPath ?? null,
+      agentRuntimeMode: options.agentRuntimeMode,
+      agentRuntimeModeSource: options.agentRuntimeModeSource,
       inputState: options.inputState,
       mode: options.mode,
       requestRouting: options.requestRouting,
@@ -423,6 +436,8 @@ export class HostSessionItemController {
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
         projectPath: entry.projectPath ?? null,
+        agentRuntimeMode: entry.agentRuntimeMode ?? entry.runtimeMode,
+        agentRuntimeModeSource: entry.agentRuntimeModeSource ?? entry.runtimeModeSource,
         inputState: this.getChatSessionInputStateFromIndexEntry(entry),
         mode: entry.mode,
         requestRouting: entry.requestRouting,
@@ -960,6 +975,8 @@ export class HostSessionItemController {
       createdAt,
       updatedAt: seed.updatedAt ?? createdAt,
       projectPath: seed.projectPath ?? null,
+      ...(seed.agentRuntimeMode ? { agentRuntimeMode: seed.agentRuntimeMode } : {}),
+      ...(seed.agentRuntimeModeSource ? { agentRuntimeModeSource: seed.agentRuntimeModeSource } : {}),
       inputState,
       mode,
       ...(seed.requestRouting
@@ -1003,12 +1020,20 @@ export class HostSessionItemController {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): boolean {
-    if (filter !== 'current-project' || !projectPath) {
+    if (filter !== 'current-project') {
       return true;
     }
 
-    return this.isSamePath(itemProjectPath ?? null, projectPath)
-      || (projectRootPath ? this.isSamePath(itemProjectPath ?? null, projectRootPath) : false);
+    const normalizedProjectPath = normalizeChatSessionScopePath(projectPath);
+    const normalizedProjectRootPath = normalizeChatSessionScopePath(projectRootPath);
+    const isGlobalScope = !normalizedProjectPath
+      || isSameChatSessionScopePath(normalizedProjectPath, normalizedProjectRootPath);
+
+    if (isGlobalScope) {
+      return itemProjectPath === null || itemProjectPath === undefined || normalizeChatSessionScopePath(itemProjectPath) === null;
+    }
+
+    return this.isSamePath(itemProjectPath ?? null, normalizedProjectPath);
   }
 
   private resolveManagedHistoryItem(sessionId: string): HostSessionHistoryItemWithTimestamp | null {
@@ -1025,6 +1050,8 @@ export class HostSessionItemController {
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
       projectPath: entry.projectPath ?? null,
+      agentRuntimeMode: entry.agentRuntimeMode ?? entry.runtimeMode,
+      agentRuntimeModeSource: entry.agentRuntimeModeSource ?? entry.runtimeModeSource,
       inputState: this.getChatSessionInputStateFromIndexEntry(entry),
       mode: entry.mode,
       requestRouting: entry.requestRouting,
@@ -1094,6 +1121,12 @@ export class HostSessionItemController {
       projectPath: isCurrent
         ? this.ctx.chatService.currentSessionPath || (item.projectPath ?? null)
         : item.projectPath ?? null,
+      ...((isCurrent ? this.ctx.chatService.currentAgentRuntimeMode : item.agentRuntimeMode)
+        ? { agentRuntimeMode: isCurrent ? this.ctx.chatService.currentAgentRuntimeMode : item.agentRuntimeMode }
+        : {}),
+      ...((isCurrent ? this.ctx.chatService.currentAgentRuntimeModeSource : item.agentRuntimeModeSource)
+        ? { agentRuntimeModeSource: isCurrent ? this.ctx.chatService.currentAgentRuntimeModeSource : item.agentRuntimeModeSource }
+        : {}),
       ...(inputState ? { inputState } : {}),
       ...((isCurrent ? selectedMode?.modeId : item.mode) ? { mode: isCurrent ? selectedMode?.modeId : item.mode } : {}),
       ...((isCurrent
@@ -2400,6 +2433,8 @@ export class HostSessionItemController {
       title: nextTitle,
       projectPath: this.ctx.chatService.currentSessionPath || (managedItem.projectPath ?? null),
       sessionType: this.resolveCurrentSessionType(),
+      agentRuntimeMode: this.ctx.chatService.currentAgentRuntimeMode ?? managedItem.agentRuntimeMode,
+      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource ?? managedItem.agentRuntimeModeSource,
       inputState,
       mode: selectedMode.modeId,
       requestRouting: buildHostSessionCurrentPickerRoutingSummary(

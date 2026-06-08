@@ -59,7 +59,7 @@ import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-contex
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
-  & Pick<IProjectContext, 'currentMode' | 'currentModel'>
+  & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
   & Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'lexStream'>
@@ -259,6 +259,8 @@ export class HostSessionSaveBridge {
         sessionType: normalizeChatSessionType(saveTarget?.sessionType ?? this.ctx.chatService.currentSessionType),
         projectPath,
         mode: selectedMode.modeId,
+        agentRuntimeMode: this.ctx.currentAgentRuntimeMode ?? this.ctx.chatService.currentAgentRuntimeMode,
+        agentRuntimeModeSource: this.ctx.currentAgentRuntimeModeSource ?? this.ctx.chatService.currentAgentRuntimeModeSource,
         modeDescriptor,
         inputState,
         requestRouting,

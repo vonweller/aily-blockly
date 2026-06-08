@@ -1,5 +1,12 @@
 import type { TurnRequest, TurnResponseTurn, SessionSnapshot } from 'aily-lex/browser';
 import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
+import {
+  normalizeChatAgentRuntimeMode,
+  readChatAgentRuntimeModeSourceFromMetadata,
+  readChatAgentRuntimeModeFromMetadata,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 
 import type {
   IAgentLifecycle,
@@ -226,6 +233,8 @@ export interface RuntimeRestoreHostRecordRequest {
     readonly sessionId: string;
     readonly sessionType: string;
     readonly projectPath: string | null;
+    readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+    readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
     readonly inputState?: HostSessionContent['inputState'];
   };
   readonly sessionContent: HostSessionContent;
@@ -480,6 +489,12 @@ export class HostSessionRestoreBridge {
         createdAt: baseMetadata?.createdAt ?? now,
         updatedAt: now,
         mode,
+        agentRuntimeMode: request.target.agentRuntimeMode
+          ?? baseMetadata?.agentRuntimeMode
+          ?? baseMetadata?.runtimeMode,
+        agentRuntimeModeSource: request.target.agentRuntimeModeSource
+          ?? baseMetadata?.agentRuntimeModeSource
+          ?? baseMetadata?.runtimeModeSource,
         ...(baseMetadata?.modeDescriptor ? { modeDescriptor: baseMetadata.modeDescriptor } : {}),
         ...(inputState ? { inputState } : {}),
         ...(requestRouting ? { requestRouting } : {}),
@@ -513,6 +528,10 @@ export class HostSessionRestoreBridge {
           ?? sessionContent.providerOptions.folderPath
           ?? indexEntry?.projectPath
           ?? null,
+        agentRuntimeMode: readChatAgentRuntimeModeFromMetadata(sessionContent.metadata)
+          ?? indexEntry?.agentRuntimeMode,
+        agentRuntimeModeSource: readChatAgentRuntimeModeSourceFromMetadata(sessionContent.metadata)
+          ?? indexEntry?.agentRuntimeModeSource,
         inputState: sessionContent.inputState,
       },
       sessionContent,
@@ -602,6 +621,10 @@ export class HostSessionRestoreBridge {
     });
     const sessionMetadata = {
       mode: hostRecord.metadata?.mode ?? indexEntry?.mode,
+      agentRuntimeMode: hostRecord.metadata?.agentRuntimeMode ?? indexEntry?.agentRuntimeMode,
+      runtimeMode: hostRecord.metadata?.runtimeMode ?? indexEntry?.runtimeMode,
+      agentRuntimeModeSource: hostRecord.metadata?.agentRuntimeModeSource ?? indexEntry?.agentRuntimeModeSource,
+      runtimeModeSource: hostRecord.metadata?.runtimeModeSource ?? indexEntry?.runtimeModeSource,
       modeDescriptor: hostRecord.metadata?.modeDescriptor ?? indexEntry?.modeDescriptor,
       inputState: hostRecord.metadata?.inputState ?? indexEntry?.inputState,
       requestRouting: hostRecord.metadata?.requestRouting ?? indexEntry?.requestRouting,
@@ -622,6 +645,16 @@ export class HostSessionRestoreBridge {
       providerOptions,
       inputState: sessionContent?.inputState ?? sessionMetadata?.inputState,
     });
+    this.ctx.chatService.setCurrentAgentRuntimeMode?.(
+      normalizeChatAgentRuntimeMode(
+        sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
+        this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
+      ),
+      sessionMetadata.agentRuntimeModeSource ?? sessionMetadata.runtimeModeSource ?? 'restored',
+    ) ?? (this.ctx.chatService.currentAgentRuntimeMode = normalizeChatAgentRuntimeMode(
+      sessionMetadata.agentRuntimeMode ?? sessionMetadata.runtimeMode,
+      this.ctx.chatService.currentAgentRuntimeMode ?? 'unbound',
+    ));
 
     const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
       ? this.ctx.chatService.findResolvedModeById(modeId)

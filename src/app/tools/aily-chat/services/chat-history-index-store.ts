@@ -35,17 +35,35 @@ export interface ChatHistoryIndexStoreOptions {
   resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
 }
 
+export interface ChatHistoryIndexLoadDiagnostics {
+  readonly projectIndexPatchedProjectPathCount: number;
+  readonly rebuiltProjectEntryCount: number;
+}
+
 /**
  * Host-side index persistence adapter for chat history.
  *
  * Keeps global/project index IO and project-index reconstruction out of ChatHistoryService.
  */
 export class ChatHistoryIndexStore {
+  private latestLoadDiagnostics: ChatHistoryIndexLoadDiagnostics = {
+    projectIndexPatchedProjectPathCount: 0,
+    rebuiltProjectEntryCount: 0,
+  };
+
   constructor(private readonly options: ChatHistoryIndexStoreOptions) {}
 
   loadMergedIndex(): SessionIndexEntry[] {
+    this.latestLoadDiagnostics = {
+      projectIndexPatchedProjectPathCount: 0,
+      rebuiltProjectEntryCount: 0,
+    };
     const globalIndex = this.loadGlobalIndex();
     return this.mergeProjectIndex(globalIndex);
+  }
+
+  getLatestLoadDiagnostics(): ChatHistoryIndexLoadDiagnostics {
+    return { ...this.latestLoadDiagnostics };
   }
 
   mergeProjectIndex(index: SessionIndexEntry[], projectPath?: string | null): SessionIndexEntry[] {
@@ -67,13 +85,8 @@ export class ChatHistoryIndexStore {
   }
 
   writeGlobalIndex(index: SessionIndexEntry[]): boolean {
-    if (!this.hasFs()) return false;
-
     try {
-      const globalDir = this.options.getGlobalAilyDir();
-      const indexPath = this.options.joinPath(globalDir, this.options.indexFile);
-      this.ensureDir(globalDir);
-      this.writeFileSync(indexPath, JSON.stringify(index.map((entry) => this.normalizeIndexEntry(entry)), null, 2));
+      this.writeGlobalIndexOrThrow(index);
       return true;
     } catch (error) {
       console.warn('[ChatHistory] 写入全局索引失败:', error);
@@ -82,39 +95,52 @@ export class ChatHistoryIndexStore {
   }
 
   writeProjectIndex(index: SessionIndexEntry[], projectPath?: string | null): void {
+    try {
+      this.writeProjectIndexOrThrow(index, projectPath);
+    } catch (error) {
+      console.warn('[ChatHistory] 写入项目索引失败:', error);
+    }
+  }
+
+  writeGlobalIndexOrThrow(index: SessionIndexEntry[]): void {
+    if (!this.hasFs()) return;
+
+    const globalDir = this.options.getGlobalAilyDir();
+    const indexPath = this.options.joinPath(globalDir, this.options.indexFile);
+    this.ensureDir(globalDir);
+    this.writeFileSync(indexPath, JSON.stringify(index.map((entry) => this.normalizeIndexEntry(entry)), null, 2));
+  }
+
+  writeProjectIndexOrThrow(index: SessionIndexEntry[], projectPath?: string | null): void {
     if (!this.hasFs()) return;
 
     const prjPath = projectPath ?? this.options.getCurrentProjectPath();
     if (!prjPath) return;
 
-    try {
-      const projectEntries: ProjectIndexEntry[] = index
-        .filter((entry) => this.options.isSamePath(entry.projectPath, prjPath))
-        .map(({ projectPath: _pp, projectName: _pn, ...rest }) => {
-          const selectedMode = resolveHostSessionSummaryModeFromMetadata(rest);
-          const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(rest, this.getModeResolveOptions());
-          const inputState = normalizeHostSessionInputStateFromMetadata(rest, this.getModeResolveOptions());
-          const requestRouting = normalizeHostSessionRequestRoutingSummary(rest.requestRouting, selectedMode);
-          const interactionActionSummary = normalizeHostSessionInteractionActionSummary(rest.interactionActionSummary);
-          return {
-            ...rest,
-            mode: selectedMode.modeId,
-            modeDescriptor,
-            inputState,
-            requestRouting,
-            ...(interactionActionSummary ? { interactionActionSummary } : {}),
-          };
-        });
+    const projectEntries: ProjectIndexEntry[] = index
+      .filter((entry) => this.options.isSamePath(entry.projectPath, prjPath))
+      .map(({ projectPath: _pp, projectName: _pn, ...rest }) => {
+        const selectedMode = resolveHostSessionSummaryModeFromMetadata(rest);
+        const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(rest, this.getModeResolveOptions());
+        const inputState = normalizeHostSessionInputStateFromMetadata(rest, this.getModeResolveOptions());
+        const requestRouting = normalizeHostSessionRequestRoutingSummary(rest.requestRouting, selectedMode);
+        const interactionActionSummary = normalizeHostSessionInteractionActionSummary(rest.interactionActionSummary);
+        return {
+          ...rest,
+          mode: selectedMode.modeId,
+          modeDescriptor,
+          inputState,
+          requestRouting,
+          ...(interactionActionSummary ? { interactionActionSummary } : {}),
+        };
+      });
 
-      if (projectEntries.length === 0) return;
+    if (projectEntries.length === 0) return;
 
-      const dir = this.options.joinPath(prjPath, this.options.projectChatDir);
-      this.ensureDir(dir);
-      const projectIndexPath = this.options.joinPath(dir, this.options.indexFile);
-      this.writeFileSync(projectIndexPath, JSON.stringify(projectEntries, null, 2));
-    } catch (error) {
-      console.warn('[ChatHistory] 写入项目索引失败:', error);
-    }
+    const dir = this.options.joinPath(prjPath, this.options.projectChatDir);
+    this.ensureDir(dir);
+    const projectIndexPath = this.options.joinPath(dir, this.options.indexFile);
+    this.writeFileSync(projectIndexPath, JSON.stringify(projectEntries, null, 2));
   }
 
   private loadGlobalIndex(): SessionIndexEntry[] {
@@ -157,6 +183,12 @@ export class ChatHistoryIndexStore {
       }
 
       for (const entry of projectEntries) {
+        if (!('projectPath' in (entry as Record<string, unknown>)) || !(entry as Record<string, unknown>)['projectPath']) {
+          this.latestLoadDiagnostics = {
+            ...this.latestLoadDiagnostics,
+            projectIndexPatchedProjectPathCount: this.latestLoadDiagnostics.projectIndexPatchedProjectPathCount + 1,
+          };
+        }
         indexMap.set(entry.sessionId, this.normalizeIndexEntry({
           ...entry,
           projectPath: prjPath,
@@ -230,6 +262,10 @@ export class ChatHistoryIndexStore {
 
       const rebuiltIndex = Array.from(indexMap.values());
       if (rebuilt > 0) {
+        this.latestLoadDiagnostics = {
+          ...this.latestLoadDiagnostics,
+          rebuiltProjectEntryCount: this.latestLoadDiagnostics.rebuiltProjectEntryCount + rebuilt,
+        };
         this.writeProjectIndex(rebuiltIndex, prjPath);
         console.log(`[ChatHistory] 已从数据文件重建项目索引 (${rebuilt} 条), 总计 ${rebuiltIndex.length} 条`);
       }

@@ -26,6 +26,22 @@ import {
   resolveDefaultCoderFramework,
 } from '../../utils/coder-board.mapper';
 
+export type ProjectCreationCategory = 'blockly' | 'coder';
+
+export function resolveInitialProjectCategory(
+  explicitCategory: unknown,
+  preferredCategory: unknown,
+  fallbackCategory: ProjectCreationCategory = 'blockly',
+): ProjectCreationCategory {
+  if (explicitCategory === 'blockly' || explicitCategory === 'coder') {
+    return explicitCategory;
+  }
+  if (preferredCategory === 'blockly' || preferredCategory === 'coder') {
+    return preferredCategory;
+  }
+  return fallbackCategory;
+}
+
 @Component({
   selector: 'app-project-new',
   imports: [
@@ -76,7 +92,7 @@ export class ProjectNewComponent {
   tagListRandom;
 
   /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
-  selectedProjectCategory: 'blockly' | 'coder' = 'blockly';
+  selectedProjectCategory: ProjectCreationCategory = 'blockly';
 
   /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
   selectedCoderPlatform: CoderFramework = '';
@@ -159,6 +175,10 @@ export class ProjectNewComponent {
     this._coderBoardList = this.configService.sortBoardsByUsage(
       this.process(this.configService.getCoderBoardList())
     );
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      undefined,
+      this.configService.getPreferredChatAgentRuntimeMode(),
+    );
     this.syncActiveBoardList();
 
     // 随机提取前五个
@@ -208,7 +228,7 @@ export class ProjectNewComponent {
   }
 
   /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
-  selectProjectCategory(category: 'blockly' | 'coder'): void {
+  selectProjectCategory(category: ProjectCreationCategory): void {
     if (this.selectedProjectCategory === category) {
       return;
     }

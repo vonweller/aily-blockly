@@ -33,6 +33,10 @@ import {
   cloneHostSessionRuntimeAuxiliary,
   stripLegacyRuntimeAuxiliaryFromMetadata,
 } from '../helpers/host-session-runtime-auxiliary';
+import {
+  readChatAgentRuntimeModeFromMetadata,
+  readChatAgentRuntimeModeSourceFromMetadata,
+} from '../core/chat-agent-runtime-mode';
 
 import type {
   HostSessionRecord,
@@ -248,9 +252,16 @@ export class HostSessionRecordStore {
         : {}),
       sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
       projectPath: sanitizedMetadata.projectPath ?? null,
+      sessionScopeSchemaVersion: 1,
       createdAt: sanitizedMetadata.createdAt || now,
       updatedAt: now,
       mode: selectedMode.modeId,
+      ...(readChatAgentRuntimeModeFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeMode: readChatAgentRuntimeModeFromMetadata(sanitizedMetadata) }
+        : {}),
+      ...(readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeModeSource: readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata) }
+        : {}),
       modeDescriptor,
       ...(sanitizedMetadata.inputState
         ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }
@@ -324,6 +335,14 @@ export class HostSessionRecordStore {
   }
 
   write(sessionId: string, data: HostSessionRecord): void {
+    try {
+      this.writeOrThrow(sessionId, data);
+    } catch (error) {
+      console.warn(`[ChatHistory] 写入宿主持久化记录失败 (${sessionId}):`, error);
+    }
+  }
+
+  writeOrThrow(sessionId: string, data: HostSessionRecord): void {
     if (!this.hasFs()) return;
 
     let projectPath = data.metadata.projectPath;
@@ -336,22 +355,18 @@ export class HostSessionRecordStore {
       }
     }
 
-    try {
-      if (projectPath) {
-        const dir = this.options.joinPath(projectPath, this.options.projectChatDir);
-        this.ensureDir(dir);
-        const filePath = this.options.joinPath(dir, `${sessionId}.json`);
-        this.writeFileSync(filePath, JSON.stringify(data, null, 2));
-        return;
-      }
-
-      const dir = this.options.getGlobalChatDataDir();
+    if (projectPath) {
+      const dir = this.options.joinPath(projectPath, this.options.projectChatDir);
       this.ensureDir(dir);
       const filePath = this.options.joinPath(dir, `${sessionId}.json`);
       this.writeFileSync(filePath, JSON.stringify(data, null, 2));
-    } catch (error) {
-      console.warn(`[ChatHistory] 写入宿主持久化记录失败 (${sessionId}):`, error);
+      return;
     }
+
+    const dir = this.options.getGlobalChatDataDir();
+    this.ensureDir(dir);
+    const filePath = this.options.joinPath(dir, `${sessionId}.json`);
+    this.writeFileSync(filePath, JSON.stringify(data, null, 2));
   }
 
   read(sessionId: string, projectPath: string | null): HostSessionRecord | null {
@@ -573,9 +588,16 @@ export class HostSessionRecordStore {
         : {}),
       sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
       projectPath: sanitizedMetadata.projectPath ?? projectPath ?? null,
+      sessionScopeSchemaVersion: 1,
       createdAt: typeof sanitizedMetadata.createdAt === 'number' ? sanitizedMetadata.createdAt : now,
       updatedAt: typeof sanitizedMetadata.updatedAt === 'number' ? sanitizedMetadata.updatedAt : now,
       mode: selectedMode.modeId,
+      ...(readChatAgentRuntimeModeFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeMode: readChatAgentRuntimeModeFromMetadata(sanitizedMetadata) }
+        : {}),
+      ...(readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeModeSource: readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata) }
+        : {}),
       modeDescriptor: resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions()),
       ...(sanitizedMetadata.inputState
         ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }

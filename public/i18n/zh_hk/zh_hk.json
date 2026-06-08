@@ -223,6 +223,10 @@
         "FIELDS": {
             "PROJECT_FOLDER": "專案資料夾",
             "LANGUAGE": "語言",
+            "DEVELOPMENT_MODE_PREFERENCE": "預設開發模式",
+            "DEVELOPMENT_MODE_AUTO": "自動判斷",
+            "DEVELOPMENT_MODE_PROMPT_TITLE": "選擇預設開發模式",
+            "DEVELOPMENT_MODE_PROMPT_DESC": "此選擇會用於下次新建專案，並在未開啟專案時決定 AI 助手預設進入 Blockly 或 Coder 模式。你也可以稍後在設定中修改。",
             "UI_THEME": "介面主題",
             "BLOCKLY_THEME": "Blockly主題",
             "BLOCKLY_MINIMAP": "Blockly縮略圖",

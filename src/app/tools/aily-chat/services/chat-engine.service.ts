@@ -23,6 +23,13 @@ import { AilyChatConfigService } from './aily-chat-config.service';
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatHistoryService } from './chat-history.service';
 import { MAIN_AGENT_TYPE } from '../core/agent-identifiers';
+import {
+  createChatAgentRuntimeModeConfigKey,
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import { RepetitionDetectionService } from './repetition-detection.service';
 import { ContextBudgetService } from './context-budget.service';
 import { ContextBudgetViewService } from './context-budget-view.service';
@@ -266,10 +273,12 @@ import { ChatTaskActionCoordinator, type ChatTaskActionEvent } from '../helpers/
 import { HostSessionRestoreBridge } from '../helpers/host-session-restore-bridge';
 import type { HostSessionSaveTarget } from '../helpers/host-session-save-bridge';
 import {
+  buildHostSessionCurrentPickerInputState,
   createHostSessionProviderOptionsKey,
   normalizeHostSessionProviderOptions,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
+import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
 import { ChatViewAdapter } from './chat-view-adapter';
 import { ChatPartStore } from '../core/chat-part-store';
 import type { IChatContext } from '../core/chat-context';
@@ -312,6 +321,12 @@ const BACKGROUND_SESSION_TRACE_GLOBAL_KEYS = [
   '__AILY_CHAT_TRACE_BACKGROUND_SESSION__',
   'AILY_CHAT_TRACE_BACKGROUND_SESSION',
 ] as const;
+
+function createAgentProviderOptionsKeyWithRuntime(providerOptionsKey: string, runtimeMode: unknown): string {
+  return providerOptionsKey.includes('::agent-runtime:')
+    ? providerOptionsKey
+    : `${providerOptionsKey}::${createChatAgentRuntimeModeConfigKey(normalizeChatAgentRuntimeMode(runtimeMode, 'unbound'))}`;
+}
 
 function parseBackgroundSessionTraceFlag(value: unknown): boolean {
   if (value === true || value === 1) {
@@ -906,9 +921,9 @@ export class ChatEngineService implements IChatContext {
 
       return {
         runtimeOwnerSessionId,
-        providerOptionsKey: createHostSessionProviderOptionsKey(
+        providerOptionsKey: createAgentProviderOptionsKeyWithRuntime(createHostSessionProviderOptionsKey(
           resolveRuntimeSessionProviderOptions.call(this, runtimeOwnerSessionId),
-        ),
+        ), this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode),
       };
     },
   );
@@ -1128,6 +1143,77 @@ export class ChatEngineService implements IChatContext {
   get sessionTitle() { return this.chatService.currentSessionTitle; }
 
   get currentMode() { return this.chatService.currentMode; }
+
+  get currentAgentRuntimeMode() { return this.chatService.currentAgentRuntimeMode; }
+
+  get currentAgentRuntimeModeSource() { return this.chatService.currentAgentRuntimeModeSource; }
+
+  selectAgentRuntimeMode(
+    mode: ChatAgentRuntimeMode | string | null | undefined,
+    source: ChatAgentRuntimeModeSource | string | null | undefined = 'user_selected',
+    reason?: string | null,
+  ): ChatAgentRuntimeMode {
+    const normalizedMode = normalizeChatAgentRuntimeMode(mode, this.currentAgentRuntimeMode);
+    const normalizedSource = normalizeChatAgentRuntimeModeSource(source, 'user_selected');
+    const previousMode = this.chatService.currentAgentRuntimeMode;
+    const previousSource = this.chatService.currentAgentRuntimeModeSource;
+    this.chatService.setCurrentAgentRuntimeMode(normalizedMode, normalizedSource);
+    const syncCurrentSessionEntryTargetRuntimeMode = (
+      this as unknown as { syncCurrentSessionEntryTargetRuntimeMode?: (sessionId?: string | null) => void }
+    ).syncCurrentSessionEntryTargetRuntimeMode
+      ?? ChatEngineService.prototype['syncCurrentSessionEntryTargetRuntimeMode'];
+    if (typeof syncCurrentSessionEntryTargetRuntimeMode === 'function') {
+      syncCurrentSessionEntryTargetRuntimeMode.call(this, this.chatService.currentSessionId || this.sessionId || null);
+    }
+    console.info('[AilyChat] agent runtime mode selected', {
+      previousMode,
+      previousSource,
+      mode: normalizedMode,
+      source: normalizedSource,
+      reason: typeof reason === 'string' ? reason : undefined,
+      sessionId: this.chatService.currentSessionId || this.sessionId || null,
+    });
+    return normalizedMode;
+  }
+
+  private syncCurrentSessionEntryTargetRuntimeMode(sessionId?: string | null): void {
+    const explicitSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const currentSessionId = explicitSessionId || (typeof this.chatService.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '');
+    if (!currentSessionId) {
+      return;
+    }
+
+    const resolveRuntimeSessionProviderOptions = (
+      this as unknown as { resolveRuntimeSessionProviderOptions?: (sessionId?: string | null) => HostSessionProviderOptions }
+    ).resolveRuntimeSessionProviderOptions
+      ?? ChatEngineService.prototype['resolveRuntimeSessionProviderOptions'];
+    const resolveRuntimeSelectedMode = (
+      this as unknown as { resolveRuntimeSelectedMode?: (sessionId?: string | null) => ChatSelectedMode }
+    ).resolveRuntimeSelectedMode
+      ?? ChatEngineService.prototype['resolveRuntimeSelectedMode'];
+    const providerOptions = resolveRuntimeSessionProviderOptions.call(this, currentSessionId);
+    const selectedMode = resolveRuntimeSelectedMode.call(this, currentSessionId);
+    const projectPath = providerOptions.folderPath ?? null;
+
+    this.chatSessionEntryStateService?.setSessionEntryTarget({
+      sessionId: currentSessionId,
+      projectPath,
+      providerOptions,
+      inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
+      mode: selectedMode.modeId,
+      agentRuntimeMode: this.chatService.currentAgentRuntimeMode,
+      agentRuntimeModeSource: this.chatService.currentAgentRuntimeModeSource,
+      requestRouting: buildHostSessionCurrentPickerRoutingSummary(
+        selectedMode,
+        undefined,
+        providerOptions.permissionLevel,
+        providerOptions.approvalsReviewer,
+        providerOptions.approvalPolicy,
+      ),
+    }, projectPath);
+  }
 
   get currentSessionPermissionMode() {
     return this.resolveRuntimeSessionProviderOptions()?.permissionMode
@@ -1718,6 +1804,8 @@ export class ChatEngineService implements IChatContext {
       get conversationMessages() { return thisEngine.conversationMessages; },
       get chatService() { return thisEngine.chatService; },
       get currentMode() { return thisEngine.currentMode; },
+      get currentAgentRuntimeMode() { return thisEngine.currentAgentRuntimeMode; },
+      get currentAgentRuntimeModeSource() { return thisEngine.currentAgentRuntimeModeSource; },
       get currentModel() { return thisEngine.currentModel; },
       get isLoggedIn() { return thisEngine.isLoggedIn; },
       get prjPath() { return thisEngine.prjPath; },
@@ -1727,6 +1815,7 @@ export class ChatEngineService implements IChatContext {
       get editCheckpointService() { return thisEngine.editCheckpointService; },
       get mcpService() { return thisEngine.mcpService; },
       get ailyChatConfigService() { return thisEngine.ailyChatConfigService; },
+      getDevelopmentModePreferenceRuntimeMode: () => thisEngine.configService?.getPreferredChatAgentRuntimeMode?.(),
       get runtimeInteractionHost() { return thisEngine.runtimeInteractionHost; },
       get resourceManager() { return thisEngine.resourceManager; },
       get message() { return thisEngine.message; },
@@ -1797,6 +1886,11 @@ export class ChatEngineService implements IChatContext {
       get prjPath() { return thisEngine.prjPath; },
       get prjRootPath() { return thisEngine.prjRootPath; },
       get currentModel() { return thisEngine.currentModel; },
+      get currentAgentRuntimeMode() { return thisEngine.currentAgentRuntimeMode; },
+      get currentAgentRuntimeModeSource() { return thisEngine.currentAgentRuntimeModeSource; },
+      selectAgentRuntimeMode: (mode, source, reason) => {
+        thisEngine.selectAgentRuntimeMode(mode, source, reason);
+      },
       get sessionId() { return thisEngine.sessionId; },
       get chatSessionRuntimeRegistry() { return thisEngine.chatSessionRuntimeRegistry; },
       get sessionTitle() { return thisEngine.sessionTitle; },
@@ -3003,10 +3097,14 @@ export class ChatEngineService implements IChatContext {
 
     await this.runWithRuntimeSessionOwner(runtimeOwnerSessionId, async () => {
       if (providerOptionsKey) {
-        if (this.lexStream.agent.isConfiguredFor?.(runtimeOwnerSessionId, providerOptionsKey)) {
-          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, providerOptionsKey);
+        const agentProviderOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+          providerOptionsKey,
+          this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+        );
+        if (this.lexStream.agent.isConfiguredFor?.(runtimeOwnerSessionId, agentProviderOptionsKey)) {
+          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, agentProviderOptionsKey);
         } else {
-          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, providerOptionsKey);
+          await this.lexStream.agent.ensureAgent(runtimeOwnerSessionId, agentProviderOptionsKey);
         }
       } else {
         await this.ensureRuntimeAgentForSession(runtimeOwnerSessionId);
@@ -3718,14 +3816,6 @@ export class ChatEngineService implements IChatContext {
     this.prjRootPath = AilyHost.get().project.projectRootPath;
     this.refreshSessionProviderOptionsSources();
 
-    // 初始化时：如果项目已打开，立即执行孤儿领养（订阅的 skip(1) 会跳过初始值）
-    if (this.prjPath) {
-      const adopted = this.chatHistoryService.adoptOrphanSessions(this.prjPath, this.prjRootPath);
-      if (adopted > 0) {
-        console.log(`[ChatEngine] 初始化时领养 ${adopted} 个孤儿会话到: ${this.prjPath}`);
-      }
-    }
-
     // 注册 ask_user 回调：在聊天界面显示全部问题并等待用户回答
     registerAskUserCallback((questions) => this.interaction.handleAskUser(questions));
 
@@ -3962,7 +4052,10 @@ Do not create non-existent boards and libraries.
       targetSessionId,
       resolveRuntimeSessionProviderOptions.call(this, targetSessionId),
     ) ?? resolveRuntimeSessionProviderOptions.call(this, targetSessionId);
-    const providerOptionsKey = createHostSessionProviderOptionsKey(normalizedProviderOptions);
+    const providerOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+      createHostSessionProviderOptionsKey(normalizedProviderOptions),
+      this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+    );
     if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
       return;
     }
@@ -4000,7 +4093,10 @@ Do not create non-existent boards and libraries.
       targetSessionId,
       resolveRuntimeSessionProviderOptions.call(this, targetSessionId),
     ) ?? resolveRuntimeSessionProviderOptions.call(this, targetSessionId);
-    const providerOptionsKey = createHostSessionProviderOptionsKey(normalizedProviderOptions);
+    const providerOptionsKey = createAgentProviderOptionsKeyWithRuntime(
+      createHostSessionProviderOptionsKey(normalizedProviderOptions),
+      this.currentAgentRuntimeMode ?? this.chatService?.currentAgentRuntimeMode,
+    );
     if (this.lexStream.agent.isConfiguredFor?.(targetSessionId, providerOptionsKey)) {
       await this.lexStream.agent.ensureAgent(targetSessionId, providerOptionsKey);
       return;

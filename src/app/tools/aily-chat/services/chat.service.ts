@@ -79,6 +79,13 @@ import {
   type ChatSessionTitleCandidate,
   type ChatSessionTitleSource,
 } from '../core/chat-session-title';
+import {
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
+import { auditLogService } from './audit-log.service';
 
 // 使用 ModelConfigOption 作为统一的模型配置类型，保留 ModelConfig 别名以兼容旧代码
 export type ModelConfig = ModelConfigOption;
@@ -178,6 +185,8 @@ export class ChatService {
 
   private _currentModeId = DEFAULT_CHAT_RESOLVED_MODE.id;
   private _currentResolvedMode: ChatResolvedMode = DEFAULT_CHAT_RESOLVED_MODE;
+  private _currentAgentRuntimeMode: ChatAgentRuntimeMode = 'unbound';
+  private _currentAgentRuntimeModeSource: ChatAgentRuntimeModeSource = 'fallback';
   private _currentSessionId = '';
   private _currentSessionPath = '';
   private _currentSessionType: ChatSessionType = DEFAULT_CHAT_SESSION_TYPE;
@@ -542,6 +551,61 @@ export class ChatService {
 
   set currentMode(mode: ChatSurfaceModeId) {
     this.setChatMode(mode, false);
+  }
+
+  get currentAgentRuntimeMode(): ChatAgentRuntimeMode {
+    return this._currentAgentRuntimeMode;
+  }
+
+  set currentAgentRuntimeMode(mode: ChatAgentRuntimeMode | string | null | undefined) {
+    this._currentAgentRuntimeMode = normalizeChatAgentRuntimeMode(mode, 'unbound');
+  }
+
+  get currentAgentRuntimeModeSource(): ChatAgentRuntimeModeSource {
+    return this._currentAgentRuntimeModeSource;
+  }
+
+  set currentAgentRuntimeModeSource(source: ChatAgentRuntimeModeSource | string | null | undefined) {
+    this._currentAgentRuntimeModeSource = normalizeChatAgentRuntimeModeSource(source, 'fallback');
+  }
+
+  setCurrentAgentRuntimeMode(
+    mode: ChatAgentRuntimeMode | string | null | undefined,
+    source: ChatAgentRuntimeModeSource | string | null | undefined = this._currentAgentRuntimeModeSource,
+  ): ChatAgentRuntimeMode {
+    const previousMode = this._currentAgentRuntimeMode;
+    const previousSource = this._currentAgentRuntimeModeSource;
+    const nextMode = normalizeChatAgentRuntimeMode(mode, 'unbound');
+    const nextSource = normalizeChatAgentRuntimeModeSource(source, 'fallback');
+    this._currentAgentRuntimeMode = nextMode;
+    this._currentAgentRuntimeModeSource = nextSource;
+    this.recordRuntimeModeTelemetry(previousMode, previousSource, nextMode, nextSource);
+    return this._currentAgentRuntimeMode;
+  }
+
+  private recordRuntimeModeTelemetry(
+    previousMode: ChatAgentRuntimeMode,
+    previousSource: ChatAgentRuntimeModeSource,
+    mode: ChatAgentRuntimeMode,
+    source: ChatAgentRuntimeModeSource,
+  ): void {
+    if (previousMode === mode && previousSource === source) {
+      return;
+    }
+
+    auditLogService.logSuccess({
+      operation: 'setRuntimeMode',
+      tool: 'chatRuntimeMode',
+      target: mode,
+      sessionId: this.currentSessionId || undefined,
+      riskLevel: 'low',
+      metadata: {
+        previousMode,
+        previousSource,
+        mode,
+        source,
+      },
+    });
   }
 
   get currentCustomAgentTarget(): string | undefined {

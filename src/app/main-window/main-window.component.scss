@@ -18,28 +18,15 @@ iframe {
   }
 }
 
-// .content {
-//   overflow: hidden;
-//   position: relative;
-// }
-
-
-app-blockly-editor {
+app-blockly-editor,
+app-guide,
+app-code-editor-pro {
   width: 100%;
   height: 100%;
-  // display: block;
-}
-
-app-guide {
-  width: 100%;
-  height: 100%;
-  // display: block;
 }
 
 app-code-editor-pro {
   display: block;
-  width: 100%;
-  height: 100%;
   min-width: 0;
   min-height: 0;
 }
@@ -64,7 +51,6 @@ app-code-editor-pro {
         height: 100%;
       }
 
-      /* 全高编辑器无需外侧纵向滚动条，避免右侧 ~11px 轨道在打开右侧面板时呈黑缝 */
       .simplebar-track.simplebar-vertical {
         display: none;
         width: 0;
@@ -211,7 +197,6 @@ nz-header,
   justify-content: center;
 }
 
-/* 手柄须向左伸出 sider（left:-5px），否则会被 .right-box 全屏层挡住无法拖拽 */
 ::ng-deep nz-sider.ant-layout-sider .nz-resizable-handle-left {
   left: -5px;
   width: 10px;

@@ -2,6 +2,12 @@ import { Injectable } from '@angular/core';
 
 import type { ChatSessionInputState, ChatSurfaceModeId } from '../core/chat-mode';
 import { normalizeChatSurfaceModeId } from '../core/chat-mode';
+import {
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
+  type ChatAgentRuntimeMode,
+  type ChatAgentRuntimeModeSource,
+} from '../core/chat-agent-runtime-mode';
 import { AilyHost } from '../core/host';
 import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
 import { normalizeHostSessionProviderOptions } from '../helpers/host-session-input-state';
@@ -14,6 +20,10 @@ export interface PersistedChatSessionEntryTarget {
   readonly providerOptions?: HostSessionProviderOptions;
   readonly inputState?: ChatSessionInputState;
   readonly mode?: ChatSurfaceModeId;
+  readonly agentRuntimeMode?: ChatAgentRuntimeMode;
+  readonly runtimeMode?: ChatAgentRuntimeMode;
+  readonly agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
+  readonly runtimeModeSource?: ChatAgentRuntimeModeSource;
   readonly requestRouting?: HostSessionRequestRoutingSummary | null;
 }
 
@@ -166,6 +176,14 @@ export class ChatSessionEntryStateService {
     const mode = typeof raw.mode === 'string' && raw.mode.trim().length > 0
       ? normalizeChatSurfaceModeId(raw.mode)
       : undefined;
+    const rawAgentRuntimeMode = raw.agentRuntimeMode ?? raw.runtimeMode;
+    const agentRuntimeMode = typeof rawAgentRuntimeMode === 'string' && rawAgentRuntimeMode.trim().length > 0
+      ? normalizeChatAgentRuntimeMode(rawAgentRuntimeMode)
+      : undefined;
+    const rawAgentRuntimeModeSource = raw.agentRuntimeModeSource ?? raw.runtimeModeSource;
+    const agentRuntimeModeSource = typeof rawAgentRuntimeModeSource === 'string' && rawAgentRuntimeModeSource.trim().length > 0
+      ? normalizeChatAgentRuntimeModeSource(rawAgentRuntimeModeSource)
+      : undefined;
     const providerOptions = this.normalizeProviderOptions(raw.providerOptions, projectPath);
     const inputState = this.cloneJsonValue(raw.inputState);
     const requestRouting = this.normalizeRequestRouting(raw.requestRouting, mode ?? 'agent');
@@ -176,6 +194,8 @@ export class ChatSessionEntryStateService {
       ...(providerOptions ? { providerOptions } : {}),
       ...(inputState ? { inputState } : {}),
       ...(mode ? { mode } : {}),
+      ...(agentRuntimeMode ? { agentRuntimeMode } : {}),
+      ...(agentRuntimeModeSource ? { agentRuntimeModeSource } : {}),
       ...(requestRouting ? { requestRouting } : {}),
     };
   }

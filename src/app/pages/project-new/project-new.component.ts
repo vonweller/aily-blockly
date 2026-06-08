@@ -200,8 +200,13 @@ export class ProjectNewComponent implements OnDestroy {
 
     // 从菜单「新建 Aily Code 项目」进入时预选 Coder 类别
     const category = this.route.snapshot.queryParamMap.get('category');
-    if (category === 'coder') {
-      this.selectedProjectCategory = 'coder';
+    if (category === 'coder' || category === 'blockly') {
+      this.selectedProjectCategory = category;
+    } else {
+      const preferredCategory = this.configService.getPreferredChatAgentRuntimeMode();
+      if (preferredCategory) {
+        this.selectedProjectCategory = preferredCategory;
+      }
     }
     this.syncActiveBoardList();
     this.applyRecommendedProjectName();

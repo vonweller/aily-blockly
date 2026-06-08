@@ -141,9 +141,11 @@ export class LexAgentLifecycleBridge {
     console.info('[LexStream][debug] ensureAgent start', {
       targetSessionId,
       requestedConfigKey: normalizedConfigKey,
+      requestedRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
       activeSessionId: this._activeSessionId,
       hasExistingEntry: !!existingEntry,
       existingConfigKey: existingEntry?.configKey ?? null,
+      existingRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry?.configKey ?? null),
     });
 
     if (existingEntry) {
@@ -176,6 +178,8 @@ export class LexAgentLifecycleBridge {
         targetSessionId,
         previousConfigKey: existingEntry.configKey,
         nextConfigKey: normalizedConfigKey,
+        previousRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry.configKey),
+        nextRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
         hasSnapshotToRestore: !!snapshotToRestore,
       });
     }
@@ -201,6 +205,7 @@ export class LexAgentLifecycleBridge {
     console.info('[LexStream][debug] ensureAgent ready', {
       targetSessionId,
       configKey: normalizedConfigKey,
+      runtimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
       restoredSnapshot: !!snapshotToRestore,
       durationMs: Date.now() - startedAt,
     });
@@ -323,4 +328,13 @@ export class LexAgentLifecycleBridge {
 
     entry.agent.restoreSession?.(snapshot);
   }
+}
+
+function extractRuntimeModeFromConfigKey(configKey: string | null | undefined): string | null {
+  if (!configKey) {
+    return null;
+  }
+
+  const match = configKey.match(/(?:^|::)agent-runtime:([^:]+)/);
+  return match?.[1] ?? null;
 }

@@ -1,5 +1,13 @@
 import { readTurnRequestDebugArtifactsSnapshot } from 'aily-lex/browser';
 import type { ChatSessionTitleSource, PersistedChatSessionTitleSource } from '../core/chat-session-title';
+import {
+  normalizeChatAgentRuntimeMode,
+  normalizeChatAgentRuntimeModeSource,
+  type ChatAgentRuntimeMode,
+} from '../core/chat-agent-runtime-mode';
+import { BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
+import { CODER_PROMPT_PROFILE } from '../core/coder-prompt-profile';
+import { UNBOUND_ROUTER_PROMPT_PROFILE } from '../core/unbound-router-prompt-profile';
 
 import type { HostSessionRecord, SessionIndexEntry } from './chat-history.service';
 import { buildHostSessionDebugEvents, type HostSessionDebugEvent } from './host-session-debug-events';
@@ -18,6 +26,21 @@ import {
 import { resolveHostSessionRequestRoutingSummary } from '../helpers/host-session-request-routing';
 import { readLatestContextUsageSummary } from './context-usage-snapshot';
 
+const ABS_ONLY_TOOL_NAMES = new Set([
+  'syncAbs',
+  'lint',
+  'analyzeLibrary',
+  'generate_schematic',
+  'get_pinmap_summary',
+  'get_component_catalog',
+  'get_project_context',
+  'validate_schematic',
+  'get_current_schematic',
+  'generate_pinmap',
+  'save_pinmap',
+  'save_arch',
+]);
+
 export interface HostSessionDebugExportEnvelope {
   readonly kind: 'aily-chat-debug-export';
   readonly version: 1;
@@ -34,10 +57,17 @@ export interface HostSessionDebugExportEnvelope {
     readonly durableTitleSource?: PersistedChatSessionTitleSource;
     readonly defaultTitle?: string;
     readonly projectPath: string | null;
+    readonly sessionScopeKind: 'global' | 'project';
+    readonly sessionProjectPath: string | null;
+    readonly listScopeKey: string;
+    readonly storagePath?: string;
     readonly projectName: string | null;
     readonly createdAt: number;
     readonly updatedAt: number;
     readonly mode: string;
+    readonly runtimeMode?: ChatAgentRuntimeMode;
+    readonly runtimeModeSource?: string;
+    readonly promptProfileId?: string;
     readonly modeDescriptor?: NonNullable<HostSessionRecord['metadata']['modeDescriptor']>;
     readonly inputState: NonNullable<HostSessionRecord['metadata']['inputState']>;
     readonly requestModeId?: string;
@@ -140,12 +170,46 @@ export interface HostSessionRestoreFailureSummary {
   readonly notes?: readonly string[];
 }
 
+interface HostSessionRuntimeModeDebugSummary {
+  readonly runtimeMode: ChatAgentRuntimeMode;
+  readonly runtimeModeSource: string;
+  readonly developmentModePreference?: HostSessionDevelopmentModePreferenceSummary;
+  readonly promptProfileId: string;
+  readonly promptSectionIds: readonly string[];
+  readonly availableToolNames: readonly string[];
+  readonly usedToolNames: readonly string[];
+  readonly hasAvailableToolsSnapshot: boolean;
+  readonly toolFiltering: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+interface HostSessionScopeDebugSummary {
+  readonly sessionScopeKind: 'global' | 'project';
+  readonly sessionProjectPath: string | null;
+  readonly listScopeKey: string;
+  readonly storagePath?: string;
+  readonly entryProjectPath: string | null;
+  readonly metadataProjectPath: string | null;
+  readonly notes?: readonly string[];
+}
+
+export interface HostSessionDevelopmentModePreferenceSummary {
+  readonly preference: string;
+  readonly source?: string;
+  readonly updatedAt?: number;
+  readonly promptedAt?: number;
+}
+
 export interface HostSessionDebugExportAugmentation {
   readonly companionFiles?: Readonly<Record<string, string>>;
+  readonly developmentModePreference?: HostSessionDevelopmentModePreferenceSummary;
   readonly dualPersistence?: HostSessionDebugDualPersistenceSummary;
   readonly liveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
   readonly restoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
   readonly restoreFailure?: HostSessionRestoreFailureSummary;
+  readonly scopeDiagnostics?: {
+    readonly notes?: readonly string[];
+  };
 }
 
 export function encodeHostSessionDebugExport(
@@ -219,6 +283,11 @@ function buildHostSessionDebugExportEnvelope(
   const inputState = resolveHostSessionInputState(hostRecord, options);
   const requestRouting = resolveHostSessionRequestRoutingSummary(hostRecord);
   const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
+  const runtimeMode = normalizeChatAgentRuntimeMode(metadata.agentRuntimeMode ?? metadata.runtimeMode, 'unbound');
+  const runtimeModeSource = normalizeChatAgentRuntimeModeSource(
+    metadata.agentRuntimeModeSource ?? metadata.runtimeModeSource,
+    'fallback',
+  );
   const durableTitle = metadata.title || entry?.title || '';
   const durableTitleSource = metadata.titleSource ?? entry?.titleSource;
   const defaultTitle = metadata.defaultTitle || entry?.defaultTitle || '';
@@ -226,6 +295,22 @@ function buildHostSessionDebugExportEnvelope(
   const titleSource: ChatSessionTitleSource = durableTitle
     ? (durableTitleSource ?? 'legacy-custom')
     : (defaultTitle ? 'default-first-request' : 'empty');
+  const sessionProjectPath = metadata.projectPath ?? entry?.projectPath ?? null;
+  const sessionScopeKind = sessionProjectPath ? 'project' : 'global';
+  const listScopeKey = sessionProjectPath ? `project:${sessionProjectPath}` : 'global';
+  const scopeDebugSummary: HostSessionScopeDebugSummary = {
+    sessionScopeKind,
+    sessionProjectPath,
+    listScopeKey,
+    ...(augmentation?.dualPersistence?.hostRecordPath
+      ? { storagePath: augmentation.dualPersistence.hostRecordPath }
+      : {}),
+    entryProjectPath: entry?.projectPath ?? null,
+    metadataProjectPath: metadata.projectPath ?? null,
+    ...(augmentation?.scopeDiagnostics?.notes?.length
+      ? { notes: [...augmentation.scopeDiagnostics.notes] }
+      : {}),
+  };
   hostRecord.metadata = {
     ...hostRecord.metadata,
     mode: selectedMode.modeId,
@@ -250,6 +335,20 @@ function buildHostSessionDebugExportEnvelope(
       buildContextUsageDebugEvent(hostRecord, exportedDebugEvents.length, contextUsage),
     );
   }
+  const runtimeModeDebugSummary = buildRuntimeModeDebugSummary(
+    hostRecord,
+    runtimeMode,
+    runtimeModeSource,
+    augmentation?.developmentModePreference,
+    getPromptProfileIdForRuntimeMode(runtimeMode),
+    companionFiles,
+  );
+  exportedDebugEvents.push(
+    buildSessionScopeDebugEvent(hostRecord, exportedDebugEvents.length, scopeDebugSummary),
+  );
+  exportedDebugEvents.push(
+    buildRuntimeModeDebugEvent(hostRecord, exportedDebugEvents.length, runtimeModeDebugSummary),
+  );
   if (augmentation?.dualPersistence) {
     exportedDebugEvents.push(
       buildDualPersistenceDebugEvent(hostRecord, exportedDebugEvents.length, augmentation.dualPersistence),
@@ -286,11 +385,20 @@ function buildHostSessionDebugExportEnvelope(
       durableTitle,
       ...(durableTitleSource ? { durableTitleSource } : {}),
       ...(defaultTitle ? { defaultTitle } : {}),
-      projectPath: metadata.projectPath ?? entry?.projectPath ?? null,
+      projectPath: sessionProjectPath,
+      sessionScopeKind,
+      sessionProjectPath,
+      listScopeKey,
+      ...(augmentation?.dualPersistence?.hostRecordPath
+        ? { storagePath: augmentation.dualPersistence.hostRecordPath }
+        : {}),
       projectName: entry?.projectName ?? null,
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
       mode: selectedMode.modeId,
+      runtimeMode,
+      runtimeModeSource,
+      promptProfileId: getPromptProfileIdForRuntimeMode(runtimeMode),
       ...(modeDescriptor ? { modeDescriptor } : {}),
       inputState,
       ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
@@ -316,6 +424,26 @@ function buildHostSessionDebugExportEnvelope(
         : {}),
     },
   };
+}
+
+function getPromptProfileIdForRuntimeMode(runtimeMode: ChatAgentRuntimeMode): string {
+  return getPromptProfileForRuntimeMode(runtimeMode).hostId;
+}
+
+function getPromptSectionIdsForRuntimeMode(runtimeMode: ChatAgentRuntimeMode): readonly string[] {
+  return getPromptProfileForRuntimeMode(runtimeMode).sections.map(section => section.id);
+}
+
+function getPromptProfileForRuntimeMode(runtimeMode: ChatAgentRuntimeMode) {
+  switch (runtimeMode) {
+    case 'coder':
+      return CODER_PROMPT_PROFILE;
+    case 'blockly':
+      return BLOCKLY_PROMPT_PROFILE;
+    case 'unbound':
+    default:
+      return UNBOUND_ROUTER_PROMPT_PROFILE;
+  }
 }
 
 function buildHostSessionDebugContextUsageSummary(
@@ -381,6 +509,44 @@ function buildContextUsageDebugEvent(
     created: record.metadata.updatedAt,
     name: 'Context usage source',
     details: formatContextUsageDetails(summary),
+    level: 'info',
+    category: 'session',
+  };
+}
+
+function buildRuntimeModeDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionRuntimeModeDebugSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `runtime-mode:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Runtime mode diagnostics',
+    details: formatRuntimeModeDebugDetails(summary),
+    level: summary.warnings.length > 0 ? 'warning' : 'info',
+    category: 'runtime-mode',
+  };
+}
+
+function buildSessionScopeDebugEvent(
+  record: HostSessionRecord,
+  sequence: number,
+  summary: HostSessionScopeDebugSummary,
+): HostSessionDebugEvent {
+  return {
+    id: `session-scope:${record.metadata.sessionId}:${sequence}`,
+    sequence,
+    sessionId: record.metadata.sessionId,
+    turnId: '__session__',
+    kind: 'generic',
+    created: record.metadata.updatedAt,
+    name: 'Session scope diagnostics',
+    details: formatSessionScopeDebugDetails(summary),
     level: 'info',
     category: 'session',
   };
@@ -514,6 +680,212 @@ function formatLiveRuntimeOverlayDetails(summary: HostSessionDebugLiveRuntimeOve
     lines.push(...summary.notes.map(note => `note: ${note}`));
   }
   return lines.join('\n');
+}
+
+function buildRuntimeModeDebugSummary(
+  record: HostSessionRecord,
+  runtimeMode: ChatAgentRuntimeMode,
+  runtimeModeSource: string,
+  developmentModePreference: HostSessionDevelopmentModePreferenceSummary | undefined,
+  promptProfileId: string,
+  companionFiles: Readonly<Record<string, string>>,
+): HostSessionRuntimeModeDebugSummary {
+  const tools = collectRuntimeModeToolNames(record, companionFiles);
+  const warnings: string[] = [];
+  if (runtimeMode === 'blockly'
+    && tools.hasAvailableToolsSnapshot
+    && !tools.availableToolNames.includes('syncAbs')) {
+    warnings.push('Blockly runtime does not expose syncAbs; check hostAPI or runtime:blockly capability wiring.');
+  }
+
+  if (runtimeMode === 'coder') {
+    const leakedAbsTools = [...new Set([...tools.availableToolNames, ...tools.usedToolNames])]
+      .filter((toolName) => ABS_ONLY_TOOL_NAMES.has(toolName));
+    if (leakedAbsTools.length > 0) {
+      warnings.push(`Coder runtime exposes ABS-only tools: ${leakedAbsTools.join(', ')}`);
+    }
+  }
+
+  return {
+    runtimeMode,
+    runtimeModeSource,
+    ...(developmentModePreference ? { developmentModePreference } : {}),
+    promptProfileId,
+    promptSectionIds: getPromptSectionIdsForRuntimeMode(runtimeMode),
+    availableToolNames: tools.availableToolNames,
+    usedToolNames: tools.usedToolNames,
+    hasAvailableToolsSnapshot: tools.hasAvailableToolsSnapshot,
+    toolFiltering: buildRuntimeModeToolFilteringNotes(runtimeMode, tools.availableToolNames),
+    warnings,
+  };
+}
+
+function buildRuntimeModeToolFilteringNotes(
+  runtimeMode: ChatAgentRuntimeMode,
+  availableToolNames: readonly string[],
+): readonly string[] {
+  const availableAbsTools = availableToolNames.filter(toolName => ABS_ONLY_TOOL_NAMES.has(toolName));
+  const hiddenAbsTools = [...ABS_ONLY_TOOL_NAMES].filter(toolName => !availableToolNames.includes(toolName)).sort();
+
+  switch (runtimeMode) {
+    case 'blockly':
+      return [
+        'runtime:blockly capability is active; ABS workspace tools are eligible when the host API provides them.',
+        availableAbsTools.length > 0
+          ? `ABS tools enabled: ${availableAbsTools.sort().join(', ')}`
+          : 'ABS tools enabled: none observed in available tools snapshot',
+      ];
+    case 'coder':
+      return [
+        'runtime:coder capability is active; ABS-only tools should be hidden by runtimeModes/requiredCapabilities.',
+        `ABS-only tools expected hidden: ${hiddenAbsTools.join(', ')}`,
+      ];
+    case 'unbound':
+    default:
+      return [
+        'runtime:unbound capability is active; mutation tools stay hidden until selectRuntimeMode confirms coder or blockly.',
+        'selectRuntimeMode remains available so the router can persist the confirmed runtime mode.',
+      ];
+  }
+}
+
+function collectRuntimeModeToolNames(
+  record: HostSessionRecord,
+  companionFiles: Readonly<Record<string, string>>,
+): {
+  readonly availableToolNames: readonly string[];
+  readonly usedToolNames: readonly string[];
+  readonly hasAvailableToolsSnapshot: boolean;
+} {
+  const availableToolNames = new Set<string>();
+  const usedToolNames = new Set<string>();
+  let hasAvailableToolsSnapshot = false;
+
+  for (const [fileName, content] of Object.entries(companionFiles)) {
+    if (!fileName.startsWith('tools_')) {
+      continue;
+    }
+
+    hasAvailableToolsSnapshot = true;
+    for (const toolName of extractToolNamesFromToolsContent(content)) {
+      availableToolNames.add(toolName);
+    }
+  }
+
+  for (const turn of record.turnResponses ?? []) {
+    for (const round of turn.rounds ?? []) {
+      for (const toolCall of round.toolCalls ?? []) {
+        const toolName = normalizeToolName(toolCall.toolName || toolCall.id);
+        if (toolName) {
+          usedToolNames.add(toolName);
+        }
+      }
+    }
+  }
+
+  return {
+    availableToolNames: [...availableToolNames].sort(),
+    usedToolNames: [...usedToolNames].sort(),
+    hasAvailableToolsSnapshot,
+  };
+}
+
+function extractToolNamesFromToolsContent(content: string): string[] {
+  const toolNames = new Set<string>();
+  try {
+    collectToolNamesFromParsedValue(JSON.parse(content), toolNames);
+  } catch {
+    collectToolNamesFromText(content, toolNames);
+  }
+  return [...toolNames].sort();
+}
+
+function collectToolNamesFromParsedValue(value: unknown, toolNames: Set<string>, parentKey = ''): void {
+  if (value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = normalizeToolName(value);
+    if (normalized && isToolNameKey(parentKey)) {
+      toolNames.add(normalized);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectToolNamesFromParsedValue(item, toolNames, parentKey));
+    return;
+  }
+
+  if (typeof value === 'object') {
+    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+      collectToolNamesFromParsedValue(item, toolNames, key);
+    });
+  }
+}
+
+function collectToolNamesFromText(content: string, toolNames: Set<string>): void {
+  const patterns = [
+    /"(?:name|toolName|tool_name)"\s*:\s*"([^"]+)"/g,
+    /\b(?:name|toolName|tool_name)\s*[:=]\s*([A-Za-z_][\w-]*)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      const toolName = normalizeToolName(match[1]);
+      if (toolName) {
+        toolNames.add(toolName);
+      }
+    }
+  }
+}
+
+function isToolNameKey(key: string): boolean {
+  return key === 'name' || key === 'toolName' || key === 'tool_name';
+}
+
+function normalizeToolName(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z_][\w-]*$/.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
+function formatRuntimeModeDebugDetails(summary: HostSessionRuntimeModeDebugSummary): string {
+  return [
+    `runtimeMode: ${summary.runtimeMode}`,
+    `runtimeModeSource: ${summary.runtimeModeSource}`,
+    ...(summary.developmentModePreference
+      ? [
+        `developmentModePreference: ${summary.developmentModePreference.preference}`,
+        `developmentModePreferenceSource: ${summary.developmentModePreference.source ?? 'unset'}`,
+      ]
+      : []),
+    `promptProfileId: ${summary.promptProfileId}`,
+    `promptSectionIds: ${formatList(summary.promptSectionIds)}`,
+    `toolFiltering: ${summary.toolFiltering.join(' | ')}`,
+    `availableToolNames: ${summary.hasAvailableToolsSnapshot ? formatList(summary.availableToolNames) : 'unavailable'}`,
+    `usedToolNames: ${formatList(summary.usedToolNames)}`,
+    ...(summary.warnings.length > 0
+      ? [`warnings: ${summary.warnings.join(' | ')}`]
+      : ['warnings: none']),
+  ].join('\n');
+}
+
+function formatSessionScopeDebugDetails(summary: HostSessionScopeDebugSummary): string {
+  return [
+    `sessionScopeKind: ${summary.sessionScopeKind}`,
+    `sessionProjectPath: ${summary.sessionProjectPath ?? 'none'}`,
+    `listScopeKey: ${summary.listScopeKey}`,
+    `storagePath: ${summary.storagePath ?? 'unavailable'}`,
+    `metadataProjectPath: ${summary.metadataProjectPath ?? 'none'}`,
+    `entryProjectPath: ${summary.entryProjectPath ?? 'none'}`,
+    ...(summary.notes?.length ? summary.notes.map(note => `note: ${note}`) : []),
+  ].join('\n');
+}
+
+function formatList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(', ') : 'none';
 }
 
 function formatContextUsageDetails(summary: HostSessionDebugContextUsageSummary): string {

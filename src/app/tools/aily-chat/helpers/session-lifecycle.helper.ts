@@ -40,6 +40,10 @@ import type { ChatListItem } from '../services/chat-history.service';
 import type { ChatSelectedMode } from '../core/chat-mode';
 import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
 import {
+  chatSessionScopeProjectPath,
+  resolveChatSessionScopeFromProject,
+} from '../core/chat-session-scope';
+import {
   buildHostSessionCurrentPickerInputState,
   createHostSessionProviderOptionsKey,
   normalizeHostSessionProviderOptions,
@@ -51,6 +55,11 @@ import {
   buildHostSessionCurrentPickerRoutingSummary,
   normalizeHostSessionRequestRoutingSummary,
 } from './host-session-request-routing';
+import {
+  createChatAgentRuntimeModeConfigKey,
+  resolveChatAgentRuntimeModeForProject,
+  type ChatAgentRuntimeMode,
+} from '../core/chat-agent-runtime-mode';
 import { type ChatSessionTitleSource } from '../core/chat-session-title';
 import { HostSessionItemController } from './host-session-item-controller';
 import type { HostSessionSwitchRestoreDiagnostics } from './host-session-item-controller';
@@ -96,7 +105,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     | 'legacyActivatedDeferredTools'
   >
   & Pick<ISessionAccess, 'sessionTitle' | 'sessionAllowedPaths' | 'conversationMessages' | 'chatService'>
-  & Pick<IProjectContext, 'currentMode' | 'currentModel' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
+  & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel' | 'prjPath' | 'prjRootPath' | 'isLoggedIn'>
   & Pick<
     IChatServiceAccess,
     | 'contextBudgetService'
@@ -120,6 +129,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     readonly hostResponseProjection?: import('./host-turn-response-state').HostResponseProjection | null;
     captureActiveSessionRuntimeState?(): void;
     clearSessionRuntimeState?(sessionId?: string | null): void;
+    getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
@@ -436,7 +446,8 @@ export class SessionLifecycleHelper {
   }
 
   refreshHistoryList(): void {
-    const currentProjectPath = AilyHost.get().project.currentProjectPath || AilyHost.get().project.projectRootPath;
+    const currentScope = resolveChatSessionScopeFromProject(AilyHost.get().project);
+    const currentProjectPath = chatSessionScopeProjectPath(currentScope);
     const projectRootPath = AilyHost.get().project.projectRootPath;
     const sessionItemsService = this.ctx.chatSessionItemsService as {
       refreshHistoryList?: (projectPath?: string | null, projectRootPath?: string | null) => void;
@@ -456,7 +467,8 @@ export class SessionLifecycleHelper {
     scope: 'summary' | 'visible-details' | 'full';
     priority: 'after-paint' | 'normal' | 'idle';
   }): void {
-    const currentProjectPath = AilyHost.get().project.currentProjectPath || AilyHost.get().project.projectRootPath;
+    const currentScope = resolveChatSessionScopeFromProject(AilyHost.get().project);
+    const currentProjectPath = chatSessionScopeProjectPath(currentScope);
     const projectRootPath = AilyHost.get().project.projectRootPath;
     const sessionItemsService = this.ctx.chatSessionItemsService as {
       requestSessionListRefresh?: (request: {
@@ -515,6 +527,12 @@ export class SessionLifecycleHelper {
     return entries[0] || null;
   }
 
+  private getLatestGlobalSessionEntry(): { sessionId: string; title?: string } | null {
+    const rootPath = AilyHost.get().project.projectRootPath;
+    const entries = this.ctx.chatHistoryService.getHistoryList('current-project', null, rootPath);
+    return entries[0] || null;
+  }
+
   private clearClientSessionStateForProjectSwitch(): void {
     this.ctx.resetVisibleSessionProjection?.({
       clearResolvedActiveModel: true,
@@ -524,6 +542,30 @@ export class SessionLifecycleHelper {
       resetToolCallingIteration: true,
     });
     this.ctx.isWaiting = false;
+  }
+
+  private async activateFreshScopeSession(projectPath: string | null): Promise<void> {
+    const persistableProjectPath = this.getPersistableProjectPath(projectPath);
+
+    this.resetForSessionActivation();
+    this.ctx.chatService.currentSessionPath = persistableProjectPath || '';
+    this.ctx.hasInitializedForThisLogin = false;
+
+    if (this.ctx.isLoggedIn) {
+      await this.startSession();
+    }
+
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
+  }
+
+  private async activateBlankScopeShell(projectPath: string | null): Promise<void> {
+    const persistableProjectPath = this.getPersistableProjectPath(projectPath);
+
+    this.resetForSessionActivation();
+    this.enterBlankSessionShell({ projectPath: persistableProjectPath });
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
   }
 
   async startNewProjectSession(
@@ -543,26 +585,7 @@ export class SessionLifecycleHelper {
       this.saveCurrentSession();
     }
 
-    try {
-      await this.stopAndCloseSession(true);
-    } catch (error) {
-      console.warn('[SessionLifecycle] 切换项目前停止会话失败:', error);
-    }
-
-    this.clearClientSessionStateForProjectSwitch();
-    this.ctx.lexStream.agent.dispose();
-    this.setActiveSessionId('');
-    this.ctx.chatService.currentSessionTitle = '';
-    this.ctx.chatService.currentSessionPath = this.getPersistableProjectPath(projectPath) || '';
-    this.ctx.isSessionStarting = false;
-    this.ctx.hasInitializedForThisLogin = false;
-
-    if (this.ctx.isLoggedIn) {
-      await this.startSession();
-    }
-
-    this.refreshHistoryList();
-    this.ctx.triggerSyncDetectChanges();
+    await this.activateFreshScopeSession(projectPath);
   }
 
   async loadLatestProjectSession(projectPath: string, previousProjectPath?: string | null): Promise<boolean> {
@@ -583,21 +606,61 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    const previousSessionId = this.ctx.sessionId;
-    if (previousSessionId && previousSessionId !== latestEntry.sessionId) {
-      try {
-        await this.stopAndCloseSession(true);
-      } catch (error) {
-        console.warn('[SessionLifecycle] 加载项目历史前关闭旧会话失败:', error);
-      }
+    await this.switchToSession(latestEntry.sessionId, {
+      fallbackProjectPath: this.getPersistableProjectPath(projectPath),
+    });
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
+    return true;
+  }
+
+  async loadLatestGlobalSession(): Promise<boolean> {
+    if (this.ctx.isSessionStarting) {
+      return false;
     }
 
-    this.clearClientSessionStateForProjectSwitch();
-    this.ctx.chatService.currentSessionTitle = latestEntry.title || '';
-    this.ctx.chatService.currentSessionPath = this.getPersistableProjectPath(projectPath) || '';
-    await this.startSessionWithId(latestEntry.sessionId);
-    await this.getHistory();
-    this.ctx.isCompleted = true;
+    this.saveCurrentSession();
+
+    const latestEntry = this.getLatestGlobalSessionEntry();
+    if (!latestEntry) {
+      await this.activateBlankScopeShell(null);
+      return false;
+    }
+
+    await this.switchToSession(latestEntry.sessionId, {
+      fallbackProjectPath: null,
+    });
+    this.refreshHistoryList();
+    this.ctx.triggerSyncDetectChanges();
+    return true;
+  }
+
+  adoptActiveGlobalSessionToProject(projectPath: string, reason = 'chat-tool-create'): boolean {
+    const sessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const targetProjectPath = this.getPersistableProjectPath(projectPath);
+    if (!sessionId || !targetProjectPath) {
+      return false;
+    }
+
+    if (this.getPersistableProjectPath(this.ctx.chatService.currentSessionPath)) {
+      return false;
+    }
+
+    this.saveCurrentSession();
+    const adopted = this.ctx.chatHistoryService.adoptGlobalSessionToProject(
+      sessionId,
+      targetProjectPath,
+      AilyHost.get().project.projectRootPath,
+      reason,
+    );
+    if (!adopted) {
+      return false;
+    }
+
+    this.ctx.chatService.currentSessionPath = targetProjectPath;
+    const providerOptions = this.resolveCurrentProjectProviderOptions();
+    this.applySessionProviderOptions(providerOptions);
+    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(sessionId));
     this.refreshHistoryList();
     this.ctx.triggerSyncDetectChanges();
     return true;
@@ -663,13 +726,19 @@ export class SessionLifecycleHelper {
     // Keep our owner session id stable before any awaited provider/tool initialization so detach/save can target it.
     const pendingSessionId = this.createSessionId();
     const providerOptions = this.resolveCurrentProjectProviderOptions();
-    const providerOptionsKey = this.applySessionProviderOptions(providerOptions);
+    const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions);
+    const providerOptionsKey = this.createAgentProviderOptionsKey(
+      this.applySessionProviderOptions(providerOptions),
+      agentRuntimeMode,
+    );
     this.setActiveSessionId(pendingSessionId);
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.applySessionProviderOptions(providerOptions);
     this.hostSessionItemController.createNewChatSessionItem(pendingSessionId, {
       projectPath: this.ctx.chatService.currentSessionPath || null,
+      agentRuntimeMode,
+      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
     });
     this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId));
     this.requestSessionListRefresh({
@@ -711,9 +780,12 @@ export class SessionLifecycleHelper {
     this.ctx.disposeSessionAction(this.ctx.chatService.currentSessionId || this.ctx.sessionId);
   }
 
-  enterEntryState(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean } = {}): void {
+  enterEntryState(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): void {
     const explicitSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
     const currentSessionId = explicitSessionId || this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const explicitProjectPath = typeof options.projectPath === 'string' && options.projectPath.trim().length > 0
+      ? options.projectPath.trim()
+      : null;
     this.ctx.resetVisibleSessionProjection({
       clearEditSummary: true,
     });
@@ -728,7 +800,7 @@ export class SessionLifecycleHelper {
     this.ctx.chatService.hasBlankSessionShell = false;
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
-    this.ctx.chatService.currentSessionPath = '';
+    this.ctx.chatService.currentSessionPath = explicitProjectPath ?? '';
     this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.isSessionStarting = false;
 
@@ -737,12 +809,12 @@ export class SessionLifecycleHelper {
     }
   }
 
-  enterBlankSessionShell(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean } = {}): void {
+  enterBlankSessionShell(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): void {
     this.enterEntryState(options);
     this.ctx.chatService.hasBlankSessionShell = true;
   }
 
-  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean } = {}): Promise<void> {
+  async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): Promise<void> {
     const targetSessionId = typeof options.sessionId === 'string' && options.sessionId.trim().length > 0
       ? options.sessionId.trim()
       : this.ctx.chatService.currentSessionId || this.ctx.sessionId;
@@ -776,6 +848,8 @@ export class SessionLifecycleHelper {
   async newChat(): Promise<void> {
     if (this.ctx.isSessionStarting) return;
     const currentSessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const currentScope = resolveChatSessionScopeFromProject(AilyHost.get().project);
+    const nextProjectPath = chatSessionScopeProjectPath(currentScope);
     this.saveCurrentSession();
     this.ctx.captureActiveSessionRuntimeState?.();
     if (currentSessionId && !this.hasSessionRuntimeState(currentSessionId)) {
@@ -788,6 +862,7 @@ export class SessionLifecycleHelper {
     this.enterBlankSessionShell({
       sessionId: currentSessionId,
       disposeRuntime: false,
+      projectPath: nextProjectPath,
     });
     this.requestSessionListRefresh({
       reason: 'entry',
@@ -850,9 +925,7 @@ export class SessionLifecycleHelper {
   }
 
   private resolveCurrentProjectPath(): string | null {
-    return AilyHost.get().project.currentProjectPath
-      || AilyHost.get().project.projectRootPath
-      || null;
+    return chatSessionScopeProjectPath(resolveChatSessionScopeFromProject(AilyHost.get().project));
   }
 
   private resolveCurrentSessionProjectPath(): string | null {
@@ -924,8 +997,9 @@ export class SessionLifecycleHelper {
     optionsOrHostRecordOverride?: SessionLifecycleSwitchOptions | HostSessionRecord | null,
   ): Promise<boolean> {
     const switchOptions = this.normalizeSwitchOptions(optionsOrHostRecordOverride);
+    const entryProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
     const restoreRequest = this.hostSessionItemController.resolveSessionSwitchRestoreRequest(sessionId, {
-      fallbackProjectPath: switchOptions.fallbackProjectPath ?? this.resolveCurrentProjectPath(),
+      fallbackProjectPath: switchOptions.fallbackProjectPath ?? entryProjectPath ?? this.resolveCurrentProjectPath(),
       hostRecordOverride: switchOptions.hostRecordOverride,
     });
 
@@ -1058,9 +1132,7 @@ export class SessionLifecycleHelper {
     this.setActiveSessionId(sessionId);
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
     const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
-    if (restoredTitle.source !== 'empty') {
-      applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
-    }
+    applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
     this.applySessionType(restoreRequest.sessionContent.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
@@ -1188,7 +1260,11 @@ export class SessionLifecycleHelper {
     }
 
     this.ctx.isCompleted = false;
-    const providerOptionsKey = this.applySessionProviderOptions(providerOptions);
+    const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions, sessionContent?.metadata);
+    const providerOptionsKey = this.createAgentProviderOptionsKey(
+      this.applySessionProviderOptions(providerOptions),
+      agentRuntimeMode,
+    );
 
     try {
       const agentReady = await this.ctx.lexStream.agent.ensureAgent(sessionId, providerOptionsKey);
@@ -1216,9 +1292,7 @@ export class SessionLifecycleHelper {
     this.setActiveSessionId(sessionId);
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
     const restoredTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
-    if (restoredTitle.source !== 'empty') {
-      applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
-    }
+    applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
     this.applySessionType(sessionContent?.sessionType);
     this.applySessionProviderOptions(providerOptions);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, sessionContent));
@@ -1231,7 +1305,7 @@ export class SessionLifecycleHelper {
       return false;
     }
     const restoreRequest = this.hostSessionItemController.resolveSessionEntryRestoreRequest(target, {
-      fallbackProjectPath: this.resolveCurrentProjectPath(),
+      fallbackProjectPath: target.projectPath ?? this.resolveCurrentProjectPath(),
     });
 
     await this.activateSessionFromRestoreRequest(restoreRequest, {
@@ -1252,6 +1326,8 @@ export class SessionLifecycleHelper {
       providerOptions,
       inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
       mode: selectedMode.modeId,
+      agentRuntimeMode: this.ctx.chatService.currentAgentRuntimeMode,
+      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
       requestRouting: buildHostSessionCurrentPickerRoutingSummary(
         selectedMode,
         undefined,
@@ -1291,6 +1367,8 @@ export class SessionLifecycleHelper {
       providerOptions,
       inputState: sessionContent?.inputState,
       mode: typeof metadata?.mode === 'string' ? normalizeChatSurfaceModeId(metadata.mode) : undefined,
+      agentRuntimeMode: this.ctx.chatService.currentAgentRuntimeMode,
+      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
       requestRouting: metadata?.requestRouting
         ? normalizeHostSessionRequestRoutingSummary(metadata.requestRouting, metadata?.mode ?? this.ctx.currentMode)
         : undefined,
@@ -1316,12 +1394,9 @@ export class SessionLifecycleHelper {
   }
 
   private resolveCurrentProjectProviderOptions(): HostSessionProviderOptions {
-    const currentProjectPath = AilyHost.get().project.currentProjectPath;
-    const projectRootPath = AilyHost.get().project.projectRootPath;
+    const scope = resolveChatSessionScopeFromProject(AilyHost.get().project);
     return {
-      folderPath: currentProjectPath && currentProjectPath !== projectRootPath
-        ? currentProjectPath
-        : null,
+      folderPath: chatSessionScopeProjectPath(scope),
       permissionMode: this.ctx.chatService.currentSessionPermissionMode,
       ...(this.ctx.chatService.currentSessionPermissionLevel
         ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
@@ -1342,6 +1417,39 @@ export class SessionLifecycleHelper {
   private applySessionProviderOptions(providerOptions: HostSessionProviderOptions): string {
     const normalizedProviderOptions = this.ctx.chatService.applySessionProviderOptions(providerOptions);
     return createHostSessionProviderOptionsKey(normalizedProviderOptions);
+  }
+
+  private applyAgentRuntimeMode(
+    providerOptions: HostSessionProviderOptions,
+    metadata?: HostSessionContentMetadataSource | null,
+  ): ChatAgentRuntimeMode {
+    const resolution = resolveChatAgentRuntimeModeForProject({
+      projectPath: providerOptions.folderPath ?? this.resolveCurrentProjectPath(),
+      metadata,
+      userPreferenceMode: this.ctx.getDevelopmentModePreferenceRuntimeMode?.(),
+      fallback: providerOptions.folderPath ? 'coder' : 'unbound',
+      requireExistingProjectPath: Boolean(metadata && providerOptions.folderPath),
+    });
+    if (typeof this.ctx.chatService.setCurrentAgentRuntimeMode === 'function') {
+      this.ctx.chatService.setCurrentAgentRuntimeMode(resolution.mode, resolution.source);
+    } else {
+      this.ctx.chatService.currentAgentRuntimeMode = resolution.mode;
+      this.ctx.chatService.currentAgentRuntimeModeSource = resolution.source;
+    }
+    console.info('[SessionLifecycle] agent runtime mode resolved', {
+      mode: resolution.mode,
+      source: resolution.source,
+      reason: resolution.reason,
+      projectPath: resolution.projectPath,
+    });
+    return resolution.mode;
+  }
+
+  private createAgentProviderOptionsKey(
+    providerOptionsKey: string,
+    agentRuntimeMode: ChatAgentRuntimeMode = this.ctx.chatService.currentAgentRuntimeMode,
+  ): string {
+    return `${providerOptionsKey}::${createChatAgentRuntimeModeConfigKey(agentRuntimeMode)}`;
   }
 
   private applySessionType(sessionType: unknown): void {

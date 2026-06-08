@@ -14,10 +14,15 @@ import type { EditingTimelineWriter } from '../services/editing-timeline-recordi
 import { error, fromToolResult, text, type InvokeHandler } from './blockly-contributed-tool-runtime';
 
 type DeferredFactory = (group: string, reason: string) => { group: string; reason: string };
+type RuntimeScopedToolContribution = IToolContribution & {
+  readonly toolSet?: string;
+  readonly runtimeModes?: readonly string[];
+};
 
-function makeProjectContribution(createDeferred: DeferredFactory): IToolContribution {
+function makeProjectContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
   return {
     name: 'project',
+    toolSet: 'blockly-project',
     description: 'Manage the current project (create, reload, switch board, configure)',
     prompt: `Use this tool to manage the current project. Actions:
 - "create": Create a new project (requires name and board)
@@ -43,14 +48,16 @@ Note: Basic project info (path, board, libraries) is already in the environment 
       required: ['action'],
     },
     annotations: { readOnly: false },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
     agentScope: ['main'],
     deferred: createDeferred('blockly-project-management', '项目创建、切板与配置通常按需使用'),
   };
 }
 
-function makeBuildProjectContribution(createDeferred: DeferredFactory): IToolContribution {
+function makeBuildProjectContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
   return {
     name: 'buildProject',
+    toolSet: 'blockly-project',
     description: 'Build/compile the current project',
     prompt: `Use this tool to compile the current project. Returns the build output including any errors.
 Set verbose to true for detailed compiler output.`,
@@ -61,14 +68,16 @@ Set verbose to true for detailed compiler output.`,
       },
     },
     annotations: { readOnly: false },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
     agentScope: ['main'],
     deferred: createDeferred('blockly-project-management', '构建属于按需执行的低频宿主能力'),
   };
 }
 
-function makeBoardSearchContribution(createDeferred: DeferredFactory): IToolContribution {
+function makeBoardSearchContribution(createDeferred: DeferredFactory): RuntimeScopedToolContribution {
   return {
     name: 'boardSearch',
+    toolSet: 'blockly-discovery',
     description: 'Search for development boards and libraries',
     prompt: `Use this tool to find development boards and libraries by keyword or filter.
 - Search by name, description, or tags
@@ -86,6 +95,7 @@ function makeBoardSearchContribution(createDeferred: DeferredFactory): IToolCont
       required: ['action'],
     },
     annotations: { readOnly: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
     agentScope: ['main', 'SchematicAgent'],
     deferred: createDeferred('blockly-library-discovery', '开发板与库搜索只在特定查询场景下需要'),
   };

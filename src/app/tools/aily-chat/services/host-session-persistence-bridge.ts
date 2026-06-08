@@ -148,30 +148,24 @@ export class HostSessionPersistenceBridge {
           updatedAt: now,
         },
       };
+      const messageCount = countHostRecordMessages(nextRecord);
+      if (messageCount === 0) {
+        this.pendingTitles.set(sessionId, { title: nextTitle, source: nextSource });
+        console.log(`[ChatHistory] 标题已暂存(等待首轮消息): ${sessionId} → "${nextTitle}"`);
+        return;
+      }
+
       this.sessionCache.set(sessionId, nextRecord);
       this.hostRecordStore.write(sessionId, nextRecord);
 
-      const messageCount = countHostRecordMessages(nextRecord);
       this.options.upsertIndexEntry(sessionId, nextRecord.metadata, messageCount, true);
       this.options.writeIndex();
       console.log(`[ChatHistory] 标题已更新(补建条目): ${sessionId} → "${nextTitle}"`);
       return;
     }
 
-    // Upstream-aligned semantics: generated/custom titles are durable session metadata,
-    // even when no turn has been persisted yet.
-    const metadata = this.hostRecordStore.createFullMetadata({
-      sessionId,
-      title: nextTitle,
-      titleSource: nextSource,
-      updatedAt: now,
-    });
-    const titleOnlyRecord = this.hostRecordStore.createRecord(metadata);
-    this.sessionCache.set(sessionId, titleOnlyRecord);
-    this.hostRecordStore.write(sessionId, titleOnlyRecord);
-    this.options.upsertIndexEntry(sessionId, metadata, 0, true);
-    this.options.writeIndex();
-    console.log(`[ChatHistory] 标题已更新(仅标题元数据): ${sessionId} → "${nextTitle}"`);
+    this.pendingTitles.set(sessionId, { title: nextTitle, source: nextSource });
+    console.log(`[ChatHistory] 标题已暂存(等待会话持久化): ${sessionId} → "${nextTitle}"`);
     return;
 
   }
@@ -246,8 +240,12 @@ export class HostSessionPersistenceBridge {
       }
 
       if (hostRecord) {
+        const messageCount = countHostRecordMessages(hostRecord);
+        if (messageCount === 0) {
+          continue;
+        }
         this.hostRecordStore.write(sessionId, hostRecord);
-        this.options.upsertIndexEntry(sessionId, hostRecord.metadata, countHostRecordMessages(hostRecord));
+        this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount);
       }
     }
     this.dirtySessionIds.clear();

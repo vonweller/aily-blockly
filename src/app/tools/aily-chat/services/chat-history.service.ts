@@ -31,13 +31,21 @@ import { Injectable, OnDestroy, Optional } from '@angular/core';
 import { Subject } from 'rxjs';
 import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
+import type { ChatAgentRuntimeMode, ChatAgentRuntimeModeSource } from '../core/chat-agent-runtime-mode';
+import {
+  chatSessionScopeProjectPath,
+  isSameChatSessionScopePath,
+  normalizeChatSessionScopePath,
+  type ChatSessionScope,
+} from '../core/chat-session-scope';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { EditCheckpointService } from './edit-checkpoint.service';
-import { ChatHistoryIndexStore } from './chat-history-index-store';
+import { ChatHistoryIndexStore, type ChatHistoryIndexLoadDiagnostics } from './chat-history-index-store';
 import { buildHostSessionDebugEvents, createHostSessionDebugEventId, type HostSessionDebugEvent } from './host-session-debug-events';
 import {
   decodeHostSessionDebugExport,
   encodeHostSessionDebugExport,
+  type HostSessionDevelopmentModePreferenceSummary,
   type HostSessionDebugDualPersistenceSummary,
   type HostSessionDebugExportAugmentation,
   type HostSessionDebugExportEnvelope,
@@ -82,6 +90,7 @@ import {
   resolveHostSessionSummaryModeFromMetadata,
   resolveHostSessionSelectedModeFromMetadata,
 } from '../helpers/host-session-input-state';
+import { ConfigService } from '../../../services/config.service';
 import type { SessionLifecycleRestoreErrorDetails } from '../helpers/session-lifecycle.helper';
 
 // ===== 类型定义 =====
@@ -95,12 +104,17 @@ export interface SessionIndexEntry {
   sessionType?: ChatSessionType;
   /** 创建此会话时的项目路径，null 表示无项目 */
   projectPath: string | null;
+  sessionScopeSchemaVersion?: number;
   /** 项目显示名称，null 表示无项目 */
   projectName: string | null;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
   mode: ChatSurfaceModeId;
+  agentRuntimeMode?: ChatAgentRuntimeMode;
+  runtimeMode?: ChatAgentRuntimeMode;
+  agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
+  runtimeModeSource?: ChatAgentRuntimeModeSource;
   modeDescriptor?: ChatSessionModeDescriptor;
   inputState?: ChatSessionInputState;
   requestRouting?: HostSessionRequestRoutingSummary;
@@ -196,9 +210,14 @@ export interface SessionMetadata {
   defaultTitle?: string;
   sessionType?: ChatSessionType;
   projectPath: string | null;
+  sessionScopeSchemaVersion?: number;
   createdAt: number;
   updatedAt: number;
   mode: ChatSurfaceModeId;
+  agentRuntimeMode?: ChatAgentRuntimeMode;
+  runtimeMode?: ChatAgentRuntimeMode;
+  agentRuntimeModeSource?: ChatAgentRuntimeModeSource;
+  runtimeModeSource?: ChatAgentRuntimeModeSource;
   modeDescriptor?: ChatSessionModeDescriptor;
   inputState?: ChatSessionInputState;
   requestRouting?: HostSessionRequestRoutingSummary;
@@ -330,6 +349,15 @@ export class ChatHistoryService implements OnDestroy {
   private readonly importedDebugSessions = new Map<string, ImportedDebugSessionRecord>();
   private readonly latestRestoreFailures = new Map<string, HostSessionRestoreFailureSummary>();
   private readonly latestRestoreFailureImportedSessions = new Map<string, string>();
+  private latestIndexLoadDiagnostics: ChatHistoryIndexLoadDiagnostics & {
+    readonly normalizedEntryCount: number;
+    readonly rootPathToNullCount: number;
+  } = {
+    normalizedEntryCount: 0,
+    rootPathToNullCount: 0,
+    projectIndexPatchedProjectPathCount: 0,
+    rebuiltProjectEntryCount: 0,
+  };
   private readonly hostSessionChangedSubject = new Subject<HostSessionStoreChangeEvent>();
   readonly hostSessionChanged$ = this.hostSessionChangedSubject.asObservable();
 
@@ -338,6 +366,7 @@ export class ChatHistoryService implements OnDestroy {
     @Optional() private readonly chatSessionEntryStateService?: ChatSessionEntryStateService,
     @Optional() private readonly chatSessionStateService?: ChatSessionStateService,
     @Optional() private readonly chatSessionRuntimeStore?: ChatSessionRuntimeStoreService,
+    @Optional() private readonly configService?: ConfigService,
   ) {
     this.hostRecordStore = new HostSessionRecordStore({
       projectChatDir: this.PROJECT_CHAT_DIR,
@@ -374,6 +403,7 @@ export class ChatHistoryService implements OnDestroy {
       extractProjectName: (projectPath) => this.extractProjectName(projectPath),
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
       deleteSessionFile: (sessionId, projectPath) => this.deleteSessionFile(sessionId, projectPath),
+      deleteSessionFileOrThrow: (sessionId, projectPath) => this.deleteSessionFileOrThrow(sessionId, projectPath),
     });
     this.startAutoSave();
   }
@@ -404,24 +434,39 @@ export class ChatHistoryService implements OnDestroy {
       return [...cached];
     }
 
-    let result = [...this.index];
+    let result = this.index.filter(entry => this.isListableHistoryEntry(entry));
 
-    if (filter === 'current-project' && projectPath) {
-      result = result.filter(e =>
-        // // 1. 无项目时创建的会话（projectPath === null）
-        // e.projectPath === null
-        // // 2. 属于当前项目的会话
-        // || this.isSamePath(e.projectPath, projectPath)
-        // // 3. 保存在根目录下的孤儿会话（无项目时 currentProjectPath === projectRootPath）
-        // || (projectRootPath && this.isSamePath(e.projectPath, projectRootPath))
-        this.isSamePath(e.projectPath, projectPath)
-      );
+    if (filter === 'current-project') {
+      const normalizedProjectPath = normalizeChatSessionScopePath(projectPath);
+      const normalizedProjectRootPath = normalizeChatSessionScopePath(projectRootPath);
+      const isGlobalScope = !normalizedProjectPath
+        || isSameChatSessionScopePath(normalizedProjectPath, normalizedProjectRootPath);
+      result = isGlobalScope
+        ? result.filter(e => e.projectPath === null)
+        : result.filter(e => this.isSamePath(e.projectPath, normalizedProjectPath));
     }
 
     // 按 updatedAt 降序
     result.sort((a, b) => b.updatedAt - a.updatedAt);
     this.historyListCache.set(cacheKey, result);
     return [...result];
+  }
+
+  private isListableHistoryEntry(entry: SessionIndexEntry): boolean {
+    if ((entry.messageCount ?? 0) > 0) {
+      return true;
+    }
+
+    const title = (entry.title || entry.defaultTitle || '').trim().toLowerCase();
+    return Boolean(title
+      && title !== '新会话'
+      && title !== '新对话'
+      && title !== 'new session'
+      && title !== 'new chat');
+  }
+
+  getHistoryListForScope(scope: ChatSessionScope): SessionIndexEntry[] {
+    return this.getHistoryList('current-project', chatSessionScopeProjectPath(scope), scope.projectRootPath);
   }
 
   /**
@@ -697,6 +742,55 @@ export class ChatHistoryService implements OnDestroy {
     return adopted;
   }
 
+  adoptGlobalSessionToProject(
+    sessionId: string,
+    projectPath: string,
+    rootPath?: string | null,
+    reason = 'session-scope-adoption',
+  ): boolean {
+    const normalizedProjectPath = this.normalizePersistedProjectPath(projectPath);
+    if (!sessionId || !normalizedProjectPath) return false;
+    this.ensureIndexLoaded();
+
+    const rollbackSnapshot = this.captureSingleSessionAdoptionSnapshot(sessionId);
+
+    try {
+      const adopted = this.hostSessionAdoptionBridge.adoptSingleGlobalSession(
+        this.index,
+        this.hostSessionPersistenceBridge.getSessionCache(),
+        sessionId,
+        normalizedProjectPath,
+        rootPath,
+      );
+      if (!adopted) return false;
+
+      this.bumpIndexRevision();
+      this.indexDirty = true;
+      this.writeIndexOrThrow(normalizedProjectPath);
+      this.indexDirty = false;
+      this.emitHostSessionChanged({ sessionId, scope: 'persisted', kind: 'updated' });
+      console.log('[ChatHistory] session-scope-adoption', {
+        sessionId,
+        oldScope: 'global',
+        newScope: 'project',
+        projectPath: normalizedProjectPath,
+        reason,
+      });
+      return true;
+    } catch (error) {
+      console.warn('[ChatHistory] session-scope-adoption rollback', {
+        sessionId,
+        projectPath: normalizedProjectPath,
+        reason,
+        error,
+      });
+      if (rollbackSnapshot) {
+        this.restoreSingleSessionAdoptionSnapshot(rollbackSnapshot, normalizedProjectPath);
+      }
+      return false;
+    }
+  }
+
   // =========================================================================
   // 公共 API - 项目切换时重新加载项目索引
   // =========================================================================
@@ -776,6 +870,7 @@ export class ChatHistoryService implements OnDestroy {
     const inputState = normalizeHostSessionInputStateFromMetadata(metadata, this.getModeResolveOptions());
     const requestRouting = normalizeHostSessionRequestRoutingSummary(metadata.requestRouting, selectedMode);
     const interactionActionSummary = normalizeHostSessionInteractionActionSummary(metadata.interactionActionSummary);
+    const normalizedMetadataProjectPath = this.normalizePersistedProjectPath(metadata.projectPath);
     const existing = this.index.find(e => e.sessionId === sessionId);
     const nextTitle = metadata.title || '';
     const nextDefaultTitle = metadata.defaultTitle || undefined;
@@ -799,6 +894,9 @@ export class ChatHistoryService implements OnDestroy {
       existing.requestRouting = requestRouting;
       existing.interactionActionSummary = interactionActionSummary;
       existing.model = metadata.model ?? existing.model;
+      existing.projectPath = normalizedMetadataProjectPath;
+      existing.projectName = this.extractProjectName(normalizedMetadataProjectPath);
+      existing.sessionScopeSchemaVersion = metadata.sessionScopeSchemaVersion ?? 1;
       existing.dataAvailable = true;
     } else {
       this.index.push({
@@ -807,8 +905,9 @@ export class ChatHistoryService implements OnDestroy {
         ...(resolvedDurableTitle?.source ? { titleSource: resolvedDurableTitle.source } : {}),
         ...(nextDefaultTitle ? { defaultTitle: nextDefaultTitle } : {}),
         sessionType: normalizeChatSessionType(metadata.sessionType),
-        projectPath: metadata.projectPath ?? null,
-        projectName: this.extractProjectName(metadata.projectPath),
+        projectPath: normalizedMetadataProjectPath,
+        sessionScopeSchemaVersion: metadata.sessionScopeSchemaVersion ?? 1,
+        projectName: this.extractProjectName(normalizedMetadataProjectPath),
         createdAt: metadata.createdAt || Date.now(),
         updatedAt: metadata.updatedAt || Date.now(),
         messageCount,
@@ -835,7 +934,25 @@ export class ChatHistoryService implements OnDestroy {
   private ensureIndexLoaded(): void {
     if (this.indexLoaded) return;
     this.indexLoaded = true;
-    this.index = this.indexStore.loadMergedIndex().map((entry) => this.normalizeIndexEntry(entry));
+    let rootPathToNullCount = 0;
+    const mergedIndex = this.indexStore.loadMergedIndex();
+    this.index = mergedIndex.map((entry) => {
+      const normalized = this.normalizeIndexEntry(entry);
+      if (entry.projectPath !== null && normalized.projectPath === null) {
+        rootPathToNullCount += 1;
+      }
+      return normalized;
+    });
+    this.latestIndexLoadDiagnostics = {
+      normalizedEntryCount: this.index.length,
+      rootPathToNullCount,
+      ...this.indexStore.getLatestLoadDiagnostics(),
+    };
+    if (this.latestIndexLoadDiagnostics.rootPathToNullCount > 0
+      || this.latestIndexLoadDiagnostics.projectIndexPatchedProjectPathCount > 0
+      || this.latestIndexLoadDiagnostics.rebuiltProjectEntryCount > 0) {
+      console.info('[ChatHistory] session scope migration', this.latestIndexLoadDiagnostics);
+    }
     this.bumpIndexRevision();
   }
 
@@ -871,15 +988,36 @@ export class ChatHistoryService implements OnDestroy {
     ].join('|');
   }
 
+  private normalizePersistedProjectPath(projectPath: string | null | undefined): string | null {
+    const normalizedProjectPath = normalizeChatSessionScopePath(projectPath);
+    if (!normalizedProjectPath) {
+      return null;
+    }
+
+    let projectRootPath: string | null = null;
+    try {
+      projectRootPath = normalizeChatSessionScopePath(AilyHost.get().project?.projectRootPath);
+    } catch {
+      projectRootPath = null;
+    }
+    return isSameChatSessionScopePath(normalizedProjectPath, projectRootPath)
+      ? null
+      : normalizedProjectPath;
+  }
+
   private normalizeIndexEntry(entry: SessionIndexEntry): SessionIndexEntry {
     const selectedMode = resolveHostSessionSummaryModeFromMetadata(entry);
     const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(entry, this.getModeResolveOptions());
     const inputState = normalizeHostSessionInputStateFromMetadata(entry, this.getModeResolveOptions());
     const requestRouting = normalizeHostSessionRequestRoutingSummary(entry.requestRouting, selectedMode);
     const interactionActionSummary = normalizeHostSessionInteractionActionSummary(entry.interactionActionSummary);
+    const normalizedProjectPath = this.normalizePersistedProjectPath(entry.projectPath);
 
     return {
       ...entry,
+      projectPath: normalizedProjectPath,
+      projectName: this.extractProjectName(normalizedProjectPath),
+      sessionScopeSchemaVersion: entry.sessionScopeSchemaVersion ?? 1,
       sessionType: normalizeChatSessionType(entry.sessionType),
       mode: selectedMode.modeId,
       modeDescriptor,
@@ -897,6 +1035,11 @@ export class ChatHistoryService implements OnDestroy {
       this.indexDirty = false;
     }
     this.indexStore.writeProjectIndex(this.index);
+  }
+
+  private writeIndexOrThrow(projectPath?: string | null): void {
+    this.indexStore.writeGlobalIndexOrThrow(this.index);
+    this.indexStore.writeProjectIndexOrThrow(this.index, projectPath);
   }
 
   private resolveStoredModeById(modeId: string) {
@@ -928,6 +1071,83 @@ export class ChatHistoryService implements OnDestroy {
         }
       }
     } catch { }
+  }
+
+  private deleteSessionFileOrThrow(sessionId: string, projectPath: string | null): void {
+    if (!this.hasFs()) return;
+
+    if (projectPath) {
+      const filePath = this.joinPath(projectPath, this.PROJECT_CHAT_DIR, `${sessionId}.json`);
+      if (this.fileExists(filePath)) {
+        AilyHost.get().fs.unlinkSync(filePath);
+      }
+      return;
+    }
+
+    const filePath = this.joinPath(this.getGlobalChatDataDir(), `${sessionId}.json`);
+    if (this.fileExists(filePath)) {
+      AilyHost.get().fs.unlinkSync(filePath);
+    }
+  }
+
+  private captureSingleSessionAdoptionSnapshot(sessionId: string): {
+    readonly entry: SessionIndexEntry;
+    readonly record: HostSessionRecord | null;
+    readonly hadCachedRecord: boolean;
+  } | null {
+    const entry = this.index.find(item => item.sessionId === sessionId);
+    if (!entry) {
+      return null;
+    }
+
+    const sessionCache = this.hostSessionPersistenceBridge.getSessionCache();
+    const cachedRecord = sessionCache.get(sessionId) ?? null;
+    const record = cachedRecord ?? this.hostRecordStore.read(sessionId, entry.projectPath ?? null);
+    return {
+      entry: JSON.parse(JSON.stringify(entry)) as SessionIndexEntry,
+      record: record ? JSON.parse(JSON.stringify(record)) as HostSessionRecord : null,
+      hadCachedRecord: cachedRecord !== null,
+    };
+  }
+
+  private restoreSingleSessionAdoptionSnapshot(snapshot: {
+    readonly entry: SessionIndexEntry;
+    readonly record: HostSessionRecord | null;
+    readonly hadCachedRecord: boolean;
+  }, adoptedProjectPath: string | null): void {
+    const existing = this.index.find(item => item.sessionId === snapshot.entry.sessionId);
+    if (existing) {
+      Object.assign(existing, JSON.parse(JSON.stringify(snapshot.entry)) as SessionIndexEntry);
+    } else {
+      this.index.push(JSON.parse(JSON.stringify(snapshot.entry)) as SessionIndexEntry);
+    }
+
+    const sessionCache = this.hostSessionPersistenceBridge.getSessionCache();
+    if (snapshot.record) {
+      if (snapshot.hadCachedRecord) {
+        sessionCache.set(snapshot.entry.sessionId, JSON.parse(JSON.stringify(snapshot.record)) as HostSessionRecord);
+      } else {
+        sessionCache.delete(snapshot.entry.sessionId);
+      }
+
+      try {
+        this.hostRecordStore.writeOrThrow(snapshot.entry.sessionId, JSON.parse(JSON.stringify(snapshot.record)) as HostSessionRecord);
+      } catch (error) {
+        console.warn('[ChatHistory] 恢复 session-scope-adoption 宿主持久化记录失败:', error);
+      }
+    } else {
+      sessionCache.delete(snapshot.entry.sessionId);
+    }
+
+    try {
+      this.deleteSessionFile(snapshot.entry.sessionId, adoptedProjectPath);
+    } catch {
+      // best effort cleanup of the partially adopted record
+    }
+
+    this.indexDirty = true;
+    this.bumpIndexRevision();
+    this.writeIndex();
   }
 
   // =========================================================================
@@ -978,11 +1198,18 @@ export class ChatHistoryService implements OnDestroy {
     record: HostSessionRecord,
     projectPath: string | null,
   ): HostSessionDebugExportAugmentation | undefined {
+    const scopeDiagnosticsNotes = this.buildScopeDiagnosticsNotes(record, projectPath);
     const restoreDiagnostics = this.buildRestoreDiagnosticsSummary(record, projectPath);
     const restoreFailure = this.latestRestoreFailures.get(record.metadata.sessionId) ?? null;
     const liveRuntimeOverlay = this.buildLiveRuntimeOverlaySummary(record);
     const summary = this.buildDualPersistenceSummary(record, projectPath);
-    if (!summary && !restoreDiagnostics && !restoreFailure && !liveRuntimeOverlay) {
+    const developmentModePreference = this.buildDevelopmentModePreferenceSummary();
+    if (!summary
+      && !restoreDiagnostics
+      && !restoreFailure
+      && !liveRuntimeOverlay
+      && !developmentModePreference
+      && scopeDiagnosticsNotes.length === 0) {
       return undefined;
     }
 
@@ -999,6 +1226,9 @@ export class ChatHistoryService implements OnDestroy {
     if (restoreFailure) {
       companionFiles['restore_failure.json'] = JSON.stringify(restoreFailure, null, 2);
     }
+    if (developmentModePreference) {
+      companionFiles['development_mode_preference.json'] = JSON.stringify(developmentModePreference, null, 2);
+    }
     const lexSnapshotPath = restoreDiagnostics?.lexSnapshotPath ?? summary?.lexSnapshotPath;
     const rawLexSnapshot = lexSnapshotPath ? this.readFileText(lexSnapshotPath) : undefined;
     if (typeof rawLexSnapshot === 'string' && rawLexSnapshot.length > 0) {
@@ -1007,11 +1237,87 @@ export class ChatHistoryService implements OnDestroy {
 
     return {
       ...(liveRuntimeOverlay ? { liveRuntimeOverlay } : {}),
+      ...(developmentModePreference ? { developmentModePreference } : {}),
       ...(summary ? { dualPersistence: summary } : {}),
       ...(restoreDiagnostics ? { restoreDiagnostics } : {}),
       ...(restoreFailure ? { restoreFailure } : {}),
+      ...(scopeDiagnosticsNotes.length > 0 ? { scopeDiagnostics: { notes: scopeDiagnosticsNotes } } : {}),
       companionFiles,
     };
+  }
+
+  private buildDevelopmentModePreferenceSummary(): HostSessionDevelopmentModePreferenceSummary | null {
+    const config = this.configService?.data;
+    const preference = this.configService?.getDevelopmentModePreference?.();
+    if (!preference) {
+      return null;
+    }
+
+    return {
+      preference,
+      ...(typeof config?.developmentModePreferenceSource === 'string'
+        ? { source: config.developmentModePreferenceSource }
+        : {}),
+      ...(typeof config?.developmentModePreferenceUpdatedAt === 'number'
+        ? { updatedAt: config.developmentModePreferenceUpdatedAt }
+        : {}),
+      ...(typeof config?.developmentModePreferencePromptedAt === 'number'
+        ? { promptedAt: config.developmentModePreferencePromptedAt }
+        : {}),
+    };
+  }
+
+  private buildScopeDiagnosticsNotes(record: HostSessionRecord, projectPath: string | null): string[] {
+    const notes: string[] = [];
+    const diagnostics = this.latestIndexLoadDiagnostics;
+
+    if (diagnostics.rootPathToNullCount > 0
+      || diagnostics.projectIndexPatchedProjectPathCount > 0
+      || diagnostics.rebuiltProjectEntryCount > 0) {
+      notes.push(
+        `session scope migration counts: normalizedEntries=${diagnostics.normalizedEntryCount}, rootPathToNull=${diagnostics.rootPathToNullCount}, projectIndexPatchedProjectPath=${diagnostics.projectIndexPatchedProjectPathCount}, rebuiltProjectEntries=${diagnostics.rebuiltProjectEntryCount}.`,
+      );
+    }
+
+    const rootPath = this.getGlobalProjectRootPath();
+    const globalVisibleEntries = this.getHistoryList('current-project', null, rootPath);
+    const hiddenProjectEntries = this.index.filter((entry) => entry.projectPath !== null).length;
+    if (globalVisibleEntries.length === 0 && hiddenProjectEntries > 0) {
+      notes.push(`Global scope list is empty; ${hiddenProjectEntries} project-scoped entries are currently hidden by the scope filter.`);
+    }
+
+    const resolvedProjectPath = projectPath ?? record.metadata.projectPath ?? null;
+    if (resolvedProjectPath) {
+      const matchingEntry = this.index.find((entry) => (
+        entry.sessionId === record.metadata.sessionId && this.isSamePath(entry.projectPath, resolvedProjectPath)
+      ));
+      const projectDataFileCount = this.countProjectSessionDataFiles(resolvedProjectPath);
+      if (!matchingEntry && projectDataFileCount > 0) {
+        notes.push(`Project scope list is empty, but ${projectDataFileCount} session data file(s) exist under ${resolvedProjectPath}/.chat_history; check index merge or projectPath normalization.`);
+      }
+    }
+
+    return notes;
+  }
+
+  private countProjectSessionDataFiles(projectPath: string): number {
+    if (!this.hasFs()) {
+      return 0;
+    }
+
+    try {
+      const chatDir = this.joinPath(projectPath, this.PROJECT_CHAT_DIR);
+      if (!this.fileExists(chatDir)) {
+        return 0;
+      }
+
+      const files = AilyHost.get().fs.readdirSync(chatDir);
+      return Array.isArray(files)
+        ? files.filter((file: string) => typeof file === 'string' && file.endsWith('.json') && file !== this.INDEX_FILE).length
+        : 0;
+    } catch {
+      return 0;
+    }
   }
 
   private buildLiveRuntimeOverlaySummary(

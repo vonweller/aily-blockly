@@ -7,6 +7,10 @@ import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
 import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../utils/coder-board.mapper';
 
+export const DEVELOPMENT_MODE_PREFERENCES = ['auto', 'coder', 'blockly'] as const;
+export type DevelopmentModePreference = typeof DEVELOPMENT_MODE_PREFERENCES[number];
+export type DevelopmentModePreferenceSource = 'onboarding' | 'settings' | 'migration';
+
 @Injectable({
   providedIn: 'root',
 })
@@ -104,6 +108,59 @@ export class ConfigService {
     setToolWebUrl(this.data.regions[regionKey].tool_web);
   }
 
+  normalizeDevelopmentModePreference(value: unknown): DevelopmentModePreference {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if ((DEVELOPMENT_MODE_PREFERENCES as readonly string[]).includes(normalized)) {
+        return normalized as DevelopmentModePreference;
+      }
+    }
+
+    return 'auto';
+  }
+
+  getDevelopmentModePreference(): DevelopmentModePreference {
+    return this.normalizeDevelopmentModePreference(this.data?.developmentModePreference);
+  }
+
+  async setDevelopmentModePreference(
+    preference: unknown,
+    source: DevelopmentModePreferenceSource = 'settings',
+    options: { save?: boolean } = {},
+  ): Promise<DevelopmentModePreference> {
+    const normalized = this.normalizeDevelopmentModePreference(preference);
+    this.data.developmentModePreference = normalized;
+    this.data.developmentModePreferenceSource = source;
+    this.data.developmentModePreferenceUpdatedAt = Date.now();
+    console.info('[ConfigService] development mode preference updated', {
+      preference: normalized,
+      source,
+    });
+    this.configReloaded$.next();
+
+    if (options.save !== false) {
+      await this.save();
+    }
+
+    return normalized;
+  }
+
+  async markDevelopmentModePreferencePrompted(options: { save?: boolean } = {}): Promise<void> {
+    this.data.developmentModePreferencePromptedAt = Date.now();
+    if (options.save !== false) {
+      await this.save();
+    }
+  }
+
+  shouldPromptDevelopmentModePreference(): boolean {
+    return this.getDevelopmentModePreference() === 'auto';
+  }
+
+  getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' | undefined {
+    const preference = this.getDevelopmentModePreference();
+    return preference === 'coder' || preference === 'blockly' ? preference : undefined;
+  }
+
   async init() {
     if (!this.electronService.isElectron) {
       console.log('[ConfigService] 非Electron环境，跳过数据加载，直接标记就绪');
@@ -148,6 +205,7 @@ export class ConfigService {
 
     // 合并用户配置和默认配置
     this.data = { ...this.data, ...userConfData };
+    this.data.developmentModePreference = this.normalizeDevelopmentModePreference(this.data.developmentModePreference);
     this.data.build_flavor = this.normalizeBuildFlavor(this.data.build_flavor);
     this.data.official_region = this.resolveOfficialRegionKey();
 
@@ -1385,6 +1443,18 @@ interface AppConfig {
 
   /** 项目默认路径 */
   project_path: string;
+
+  /** 用户默认开发模式偏好：auto 表示自动判断 */
+  developmentModePreference?: DevelopmentModePreference;
+
+  /** 开发模式偏好来源 */
+  developmentModePreferenceSource?: DevelopmentModePreferenceSource;
+
+  /** 开发模式偏好更新时间 */
+  developmentModePreferenceUpdatedAt?: number;
+
+  /** 开发模式偏好首次提示时间 */
+  developmentModePreferencePromptedAt?: number;
 
   /** 打包版型 */
   build_flavor?: string;

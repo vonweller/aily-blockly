@@ -260,6 +260,10 @@
         "FIELDS": {
             "PROJECT_FOLDER": "Project Folder",
             "LANGUAGE": "Language",
+            "DEVELOPMENT_MODE_PREFERENCE": "Default Dev Mode",
+            "DEVELOPMENT_MODE_AUTO": "Auto",
+            "DEVELOPMENT_MODE_PROMPT_TITLE": "Choose Default Dev Mode",
+            "DEVELOPMENT_MODE_PROMPT_DESC": "This choice is used for new projects and lets the AI assistant start directly in Blockly or Coder mode when no project is open. You can change it later in Settings.",
             "UI_THEME": "UI Theme",
             "BLOCKLY_THEME": "Blockly Theme",
             "BLOCKLY_MINIMAP": "Blockly Minimap",

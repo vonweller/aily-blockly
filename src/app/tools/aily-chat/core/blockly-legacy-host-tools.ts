@@ -18,6 +18,11 @@ import {
 
 const LEGACY_HOST_EXTERNAL_TOOL_NAMES = LEGACY_HOST_EXTERNAL_TOOLS.map(tool => tool.name);
 const LEGACY_HOST_EXTERNAL_TOOL_NAME_SET = new Set<string>(LEGACY_HOST_EXTERNAL_TOOL_NAMES);
+type RuntimeScopedToolContribution = IToolContribution & {
+  readonly toolSet?: string;
+  readonly runtimeModes?: readonly string[];
+  readonly requiredCapabilities?: readonly string[];
+};
 
 function text(s: string): ToolResultContent {
   return { content: [{ type: 'text', text: s }] };
@@ -27,16 +32,19 @@ function error(s: string): ToolResultContent {
   return { content: [{ type: 'text', text: `Error: ${s}` }], isError: true };
 }
 
-function makeLegacyContribution(name: string): IToolContribution | null {
+function makeLegacyContribution(name: string): RuntimeScopedToolContribution | null {
   const legacy = LEGACY_HOST_EXTERNAL_TOOLS.find(tool => tool.name === name);
   if (!legacy) return null;
 
   return {
     name: legacy.name,
+    toolSet: 'blockly-legacy',
     description: legacy.description || name,
     prompt: '',
     inputSchema: legacy.input_schema || { type: 'object', properties: {} },
     annotations: { readOnly: false },
+    runtimeModes: ['blockly'],
+    requiredCapabilities: ['runtime:blockly'],
     agentScope: legacy.agents?.length ? normalizeAgentIdentifiers(legacy.agents) : undefined,
     deferred: name === 'save_arch'
       ? { group: 'blockly-architecture', reason: '保存架构图属于低频主代理工具' }

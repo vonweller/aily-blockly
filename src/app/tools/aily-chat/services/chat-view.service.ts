@@ -37,6 +37,8 @@ import {
   type ChatSurfaceModeId,
 } from '../core/chat-mode';
 import { isCustomSessionTitleSource, normalizeChatSessionTitleSource, type ChatSessionDisplayTitle, type ChatSessionTitleSource } from '../core/chat-session-title';
+import { isSameChatSessionScopePath, normalizeChatSessionScopePath } from '../core/chat-session-scope';
+import { AilyHost } from '../core/host';
 import type { ChatHostHeaderActionContext } from '../core/chat-host-header-actions';
 import type { ChatHostHeaderActionRequest } from '../core/chat-host-header-actions';
 import type { ChatSessionTitleActionContext, ChatSessionTitleActionRequest, ChatSessionTitleSurfaceModel } from '../core/chat-session-title-actions';
@@ -218,6 +220,14 @@ export class ChatViewService {
   }
 
   get currentSessionDisplayTitle(): ChatSessionDisplayTitle {
+    if (!this.hasActiveSessionTitleOwner) {
+      return {
+        text: '',
+        source: 'empty',
+        durable: false,
+      };
+    }
+
     const projectedTitle = this.readProjectedCurrentSessionDisplayTitle();
     const liveTitle = this.readLiveCurrentSessionDisplayTitle();
 
@@ -250,7 +260,8 @@ export class ChatViewService {
         return this.debugBrowser.activeImportedResourceSummary?.displayTitle ?? '';
       case 'chat':
       case 'blank-session':
-        return this.currentSessionDisplayTitle.text;
+        return this.currentSessionDisplayTitle.text
+          || (!this.hasActiveSessionTitleOwner ? this.readDefaultPaneTitle() : '');
       default:
         return '';
     }
@@ -616,6 +627,30 @@ export class ChatViewService {
     return this.currentSessionViewItem !== null
       || this.chatService.currentSessionId.trim().length > 0
       || this.chatService.hasBlankSessionShell === true;
+  }
+
+  private get hasActiveSessionTitleOwner(): boolean {
+    return this.currentSessionViewItem !== null
+      || this.chatService.currentSessionId.trim().length > 0;
+  }
+
+  private readDefaultPaneTitle(): string {
+    const host = AilyHost.get();
+    const projectPath = normalizeChatSessionScopePath(host.project?.currentProjectPath);
+    const projectRootPath = normalizeChatSessionScopePath(host.project?.projectRootPath);
+    const isProjectScope = !!projectPath && !isSameChatSessionScopePath(projectPath, projectRootPath);
+    if (isProjectScope) {
+      return readNonEmptyString(host.project?.projectName)
+        || readPathBasename(projectPath)
+        || this.readGlobalDefaultPaneTitle();
+    }
+
+    return this.readGlobalDefaultPaneTitle();
+  }
+
+  private readGlobalDefaultPaneTitle(): string {
+    const translated = this.translate.instant('AILY_CHAT.SERVICE_TITLE');
+    return readNonEmptyString(translated) || 'Aily Chat';
   }
 
   private getCurrentResolvedMode(): ChatResolvedMode {
@@ -990,4 +1025,18 @@ function isPlaceholderSessionTitle(title: string): boolean {
     || normalizedTitle === 'current session'
     || normalizedTitle === '新对话'
     || normalizedTitle === '新会话';
+}
+
+function readNonEmptyString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function readPathBasename(path: string): string {
+  const normalizedPath = path.trim().replace(/[\\/]+$/g, '');
+  if (!normalizedPath) {
+    return '';
+  }
+
+  const parts = normalizedPath.split(/[\\/]+/g);
+  return parts[parts.length - 1]?.trim() ?? '';
 }

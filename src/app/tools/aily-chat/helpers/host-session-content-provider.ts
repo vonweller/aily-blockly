@@ -25,6 +25,10 @@ export interface HostSessionContentMetadataSource {
   readonly sessionType?: unknown;
   readonly projectPath?: unknown;
   readonly mode?: unknown;
+  readonly agentRuntimeMode?: unknown;
+  readonly runtimeMode?: unknown;
+  readonly agentRuntimeModeSource?: unknown;
+  readonly runtimeModeSource?: unknown;
   readonly modeDescriptor?: {
     readonly id?: unknown;
     readonly kind?: unknown;
