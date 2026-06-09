@@ -20,7 +20,6 @@ import { Router } from '@angular/router';
 import { ElectronService } from '../../../services/electron.service';
 import { ConfigService } from '../../../services/config.service';
 import { AuthService } from '../../../services/auth.service';
-import { BoardSelectorDialogComponent } from '../board-selector-dialog/board-selector-dialog.component';
 import { LoginDialogComponent } from '../login-dialog/login-dialog.component';
 import { PlatformService } from '../../../services/platform.service';
 import { ProbeRsService } from '../../../services/probe-rs.service';
@@ -359,8 +358,10 @@ export class HeaderComponent implements OnInit, OnDestroy {
         this.portListPosition = { x: 40, y: 40 };
       }
     }
-    let boardname = (this.currentBoard || '').replace(' 2560', ' ').replace(' R3', '');
-    this.boardKeywords = [boardname];
+    // Aily Code 在 npm 主板包就绪前可能尚无 currentBoardConfig
+    const boardLabel = this.currentBoard ?? '';
+    const boardname = boardLabel.replace(' 2560', ' ').replace(' R3', '');
+    this.boardKeywords = boardname ? [boardname] : [];
     // 如果已有缓存列表，先展示旧数据，再后台刷新
     this.showPortList = true;
     this.getDevicePortList();
@@ -445,40 +446,38 @@ export class HeaderComponent implements OnInit, OnDestroy {
       ];
     }
 
+    const boardConfig = this.projectService.currentBoardConfig;
+    const coreRaw = boardConfig?.core;
+    if (coreRaw) {
+      const boardCore = String(coreRaw).toLowerCase();
+      const boardType = boardConfig['type'];
+      const boardId =
+        typeof boardType === 'string' && boardType.includes(':')
+          ? boardType.split(':').pop()
+          : '';
 
-    // 添加ESP32相关配置选项
-    // console.log('core:' + core);
-    if (isEsp32Core) {
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let esp32config = await this.projectService.updateEsp32ConfigMenu(board);
-      if (esp32config) {
-        portList0 = portList0.concat(esp32config)
+      // 添加ESP32相关配置选项
+      if (this.isEsp32Core(boardCore) && boardId) {
+        const esp32config = await this.projectService.updateEsp32ConfigMenu(boardId);
+        if (esp32config) {
+          portList0 = portList0.concat(esp32config);
+        }
       }
-      // console.log('ESP32配置选项:', esp32config);
-    }
-
-    // 添加STM32相关配置选项
-    else if (core.indexOf('stm32') > -1) {
-      // 异步检测调试探针，完成后更新缓存并重建列表
-      this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let stm32config = await this.projectService.updateStm32ConfigMenu(board);
-      if (stm32config) {
-        portList0 = portList0.concat(stm32config)
+      // 添加STM32相关配置选项
+      else if (boardCore.indexOf('stm32') > -1 && boardId) {
+        this.detectProbes(generation, portList0, skipDetect);
+        const stm32config = await this.projectService.updateStm32ConfigMenu(boardId);
+        if (stm32config) {
+          portList0 = portList0.concat(stm32config);
+        }
       }
-    }
-
-    // 添加nRF5相关配置选项
-    else if (core.indexOf('nrf5') > -1) {
-      // 异步检测调试探针（nRF52）
-      this.detectProbes(generation, portList0, skipDetect);
-      let temp = this.projectService.currentBoardConfig['type'].split(':');
-      let board = temp[temp.length - 1];
-      let nrf5config = await this.projectService.updateNrf5ConfigMenu(board);
-      if (nrf5config) {
-        portList0 = portList0.concat(nrf5config)
+      // 添加nRF5相关配置选项
+      else if (boardCore.indexOf('nrf5') > -1 && boardId) {
+        this.detectProbes(generation, portList0, skipDetect);
+        const nrf5config = await this.projectService.updateNrf5ConfigMenu(boardId);
+        if (nrf5config) {
+          portList0 = portList0.concat(nrf5config);
+        }
       }
     }
 
@@ -574,6 +573,21 @@ export class HeaderComponent implements OnInit, OnDestroy {
           if (!canContinue) return;
         }
         this.uiService.openWindow(item.data);
+        break;
+      case 'project-new-aily-code':
+        // 与 Blockly 共用「新建项目」向导，预选 Coder 类别
+        if (this.isLoaded()) {
+          const canContinue = await this.checkUnsavedChanges('new');
+          if (!canContinue) return;
+        }
+        this.uiService.openWindow({
+          type: 'project-new',
+          path: 'project-new',
+          alwaysOnTop: true,
+          width: 820,
+          height: 550,
+          data: { category: 'coder' }
+        });
         break;
       case 'project-open':
         if (this.isLoaded()) { // 只在已加载项目时检查
@@ -998,9 +1012,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
     return currentCore === normalizedAppCore || currentCore.split(':').includes(normalizedAppCore);
   }
 
-  // 判断路由是否为 ['/main/blockly-editor', '/main/code-editor']中的一个，如果是返回true
+  // 判断路由是否为 ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']中的一个，如果是返回true
   isLoaded() {
-    for (const router of ['/main/blockly-editor', '/main/code-editor']) {
+    for (const router of ['/main/blockly-editor', '/main/code-editor', '/main/code-editor-pro']) {
       if (this.router.url.indexOf(router) > -1) {
         return true;
       }
@@ -1169,32 +1183,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
   }
 
   async openBoardSelectorDialog() {
-    // 获取开发板列表
-    let boardList = await this.configService.loadBoardList();
-    console.log(boardList);
-
-    // 显示开发板选择对话框
-    const modalRef = this.modal.create({
-      nzTitle: null,
-      nzFooter: null,
-      nzClosable: false,
-      nzBodyStyle: {
-        padding: '0',
-      },
-      nzWidth: '400px',
-      nzContent: BoardSelectorDialogComponent,
-      nzData: {
-        boardList: boardList
-      }
-    });
-
-    // // 处理对话框返回结果
-    // modalRef.afterClose.subscribe(result => {
-    //   if (result && result.result === 'confirm') {
-    //     // 开发板已经在对话框内切换完成，只需要更新UI
-    //     this.cd.detectChanges();
-    //   }
-    // });
+    await this.uiService.openBoardSelector();
   }
 
   appStoreBtn = {

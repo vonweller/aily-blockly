@@ -20,6 +20,11 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { NzModalRef, NzModalService } from 'ng-zorro-antd/modal';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
+import { ChatService } from '../tools/aily-chat/services/chat.service';
+import {
+  readPlatformRefFromProjectAci,
+  resolveEffectiveBoardDependencies,
+} from '../utils/platform-runtime.utils';
 
 interface ProjectPackageData {
   name: string;
@@ -108,7 +113,16 @@ export class ProjectService {
     private noticeService: NoticeService,
     private modal: NzModalService,
     private appDataResourceLock: AppDataResourceLockService,
+    private chatService: ChatService,
   ) {
+  }
+
+  private hasBlockingChatRequest(): boolean {
+    return this.chatService?.isWaiting === true;
+  }
+
+  private warnBlockingChatRequest(): void {
+    this.message.warning('AI 对话正在处理中，请先停止当前请求后再切换或关闭项目。');
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用
@@ -268,6 +282,12 @@ export class ProjectService {
   async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
+
+    if (this.hasBlockingChatRequest()) {
+      this.warnBlockingChatRequest();
+      return false;
+    }
+
     await this.close();
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
@@ -323,7 +343,7 @@ export class ProjectService {
       });
     } else {
       // 打开代码编辑器
-      this.router.navigate(['/main/code-editor'], {
+      this.router.navigate(['/main/code-editor-pro'], {
         queryParams: {
           path: projectPath
         },
@@ -386,6 +406,11 @@ export class ProjectService {
   }
 
   async close() {
+    if (this.hasBlockingChatRequest()) {
+      this.warnBlockingChatRequest();
+      return false;
+    }
+
     if (this.electronService.isElectron && this.currentProjectPath && window['projectLock']) {
       try {
         await window['projectLock'].release(this.currentProjectPath);
@@ -530,9 +555,9 @@ export class ProjectService {
   }
 
   /**
-   * 项目保存时复制主项目 package.json 到 temp 下
+   * 项目保存时复制主项目 package.json 到 temp 下（Blockly / Aily Code 共用）
    */
-  private async copyPackageJsonToTemp(projectPath: string): Promise<void> {
+  async copyPackageJsonToTemp(projectPath: string): Promise<void> {
     const mainPackagePath = window['path'].join(projectPath, 'package.json');
     const tempDir = window['path'].join(projectPath, '.temp');
     const tempPackagePath = window['path'].join(tempDir, 'package.json');
@@ -770,10 +795,42 @@ export class ProjectService {
     return macros.join(',');
   }
 
-  // 获取开发板名称
+  // 获取开发板名称（Blockly: @aily-project/board-*；Aily Code: @aily-project/coder-*）
   async getBoardModule() {
     const prjPackageJson = await this.getPackageJson();
-    return Object.keys(prjPackageJson.dependencies).find(dep => dep.startsWith('@aily-project/board-'));
+    const deps = Object.keys(prjPackageJson.dependencies || {});
+    const fromDeps =
+      deps.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? deps.find((dep) => dep.startsWith('@aily-project/coder-'));
+    if (fromDeps) {
+      return fromDeps;
+    }
+    const boardDeps = Object.keys(prjPackageJson.boardDependencies || {});
+    const fromBoardDeps =
+      boardDeps.find((dep) => dep.startsWith('@aily-project/board-'))
+      ?? boardDeps.find((dep) => dep.startsWith('@aily-project/coder-'));
+    if (fromBoardDeps) {
+      return fromBoardDeps;
+    }
+    if (this.currentProjectPath) {
+      const aciPath = `${this.currentProjectPath}/project.aci`;
+      if (window['fs'].existsSync(aciPath)) {
+        try {
+          const aci = JSON.parse(this.electronService.readFile(aciPath));
+          const boardPackage = String(aci?.target?.boardPackage ?? '').trim();
+          if (boardPackage) {
+            return boardPackage;
+          }
+          const board = String(aci?.target?.board ?? '').trim();
+          if (board.startsWith('@aily-project/')) {
+            return board;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return undefined;
   }
 
   // 获取开发板模块的package.json
@@ -781,6 +838,23 @@ export class ProjectService {
     const boardModule = await this.getBoardModule();
     const boardPackageJsonPath = `${this.currentProjectPath}/node_modules/${boardModule}/package.json`;
     return JSON.parse(this.electronService.readFile(boardPackageJsonPath));
+  }
+
+  /**
+   * Aily Code：合并主板 boardDependencies 与 platform.json runtimeDependencies，
+   * 供 SDK 路径解析、Platform Packages 树与编译链使用。
+   */
+  async getEffectiveBoardDependencies(): Promise<Record<string, string>> {
+    try {
+      const boardPackageJson = await this.getBoardPackageJson();
+      const platformRef = readPlatformRefFromProjectAci(this.currentProjectPath);
+      return resolveEffectiveBoardDependencies(
+        boardPackageJson?.boardDependencies,
+        platformRef?.packageName,
+      );
+    } catch {
+      return {};
+    }
   }
 
   // 获取开发板配置文件board.json
@@ -794,6 +868,22 @@ export class ProjectService {
       throw new Error('开发板配置文件不存在: ' + boardJsonPath);
     }
     return JSON.parse(this.electronService.readFile(boardJsonPath));
+  }
+
+  /**
+   * 从工程 node_modules 主板包同步 board.json 到 currentBoardConfig。
+   * Blockly 在 loadProject 内设置；Aily Code（code-editor-pro）在依赖就绪后调用。
+   */
+  async syncCurrentBoardConfig(): Promise<boolean> {
+    try {
+      const boardJson = await this.getBoardJson();
+      this.currentBoardConfig = boardJson;
+      window['boardConfig'] = boardJson;
+      return true;
+    } catch (e) {
+      console.warn('同步开发板配置失败:', e);
+      return false;
+    }
   }
 
   // 获取开发板根目录路下得特殊配置文件，如 ESP32 需要的 partitions.csv
@@ -865,17 +955,17 @@ export class ProjectService {
   // 获取开发板 SDK 路径
   async getSdkPath() {
     try {
-      const boardPackageJson = await this.getBoardPackageJson();
-      if (!boardPackageJson || !boardPackageJson.boardDependencies) {
+      const boardDependencies = await this.getEffectiveBoardDependencies();
+      if (!boardDependencies || Object.keys(boardDependencies).length === 0) {
         throw new Error('未找到开发板 SDK 路径');
       }
 
-      const sdkModule = Object.keys(boardPackageJson.boardDependencies).find(dep => dep.startsWith('@aily-project/sdk-'));
+      const sdkModule = Object.keys(boardDependencies).find(dep => dep.startsWith('@aily-project/sdk-'));
       if (!sdkModule) {
         throw new Error('未找到开发板 SDK 模块');
       }
 
-      const sdkVersion = boardPackageJson.boardDependencies[sdkModule];
+      const sdkVersion = boardDependencies[sdkModule];
       const sdkFileName = sdkModule.replace('@aily-project/sdk-', '') + '_' + sdkVersion;
       const appDataPath = window['path'].getAppDataPath()
       const sdkLibPath = this.electronService.pathJoin(appDataPath, 'sdk', `${sdkFileName}`);
@@ -1959,15 +2049,29 @@ export class ProjectService {
 
   /**
    * 获取当前项目的构建路径
+   * Aily Code（存在 project.aci）：固件落在 `.aily/build/<framework>/`，与 compile.js `--output-dir` 一致。
+   * 纯 Blockly：`AILY_BUILDER_BUILD_PATH`/sketch 哈希目录（沿用原逻辑）。
    * @returns 返回构建路径
    */
   async getBuildPath(): Promise<string> {
-    const sketchPath = window['path'].join(
-      this.currentProjectPath,
-      '.temp',
-      'sketch',
-      'sketch.ino'
-    );
+    const root = this.currentProjectPath;
+    const aciPath = window['path'].join(root, 'project.aci');
+    // 与 child/scripts/aily-code-project.js 中分段规则保持一致
+    if (window['path'].isExists(aciPath)) {
+      try {
+        const raw = window['fs'].readFileSync(aciPath, 'utf8');
+        const aci = JSON.parse(raw);
+        const frameworkRaw = aci?.target?.framework ?? aci?.devmode ?? 'arduino';
+        const fw = String(frameworkRaw || 'arduino').trim() || 'arduino';
+        const seg = fw.toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'arduino';
+        const outDir = window['path'].join(root, '.aily', 'build', seg);
+        return outDir;
+      } catch (e) {
+        console.warn('[getBuildPath] 解析 project.aci 失败，回退 Blockly 缓存路径:', e);
+      }
+    }
+
+    const sketchPath = window['path'].join(root, '.temp', 'sketch', 'sketch.ino');
     const sketchName = window['path'].basename(sketchPath, '.ino');
 
     // 为了避免不同项目的同名sketch冲突,使用项目路径的MD5哈希值

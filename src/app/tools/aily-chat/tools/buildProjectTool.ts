@@ -1,6 +1,6 @@
-import { ToolUseResult } from "./tools";
+import type { ToolUseResult } from '../core/tool-types';
 import { BuilderService } from "../../../services/builder.service";
-import { setLastBuildErrors, clearLastBuildErrors } from './getErrorsTool';
+import { setLastBuildErrors, clearLastBuildErrors } from '../core/diagnostics';
 
 interface BuildProjectInput {
     /** 是否仅做预编译检查（更快，但不生成完整产物） */

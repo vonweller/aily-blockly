@@ -4,6 +4,16 @@ import { AilyHost } from '../core/host';
 // Arduino 代码检查器
 declare const arduinoGenerator: any;
 
+function createLintCodeFingerprint(code: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < code.length; index += 1) {
+    hash ^= code.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 /**
  * Lint 检测模式
  */
@@ -127,6 +137,14 @@ export class ArduinoLintService {
       
       // 像 BuilderService 一样，在方法开始时统一赋值项目路径
       this.currentProjectPath = this.projectService.currentProjectPath;
+
+      console.info('[ArduinoLintService] checkSyntax start', {
+        projectPath: this.currentProjectPath,
+        mode,
+        format,
+        length: code.length,
+        fingerprint: createLintCodeFingerprint(code),
+      });
 
       // console.log(`🔍 开始 Arduino 语法检查 (模式: ${mode}, 格式: ${format})...`);
 
@@ -255,6 +273,11 @@ export class ArduinoLintService {
 
       // 高效写入代码到 sketch.ino 文件（覆盖模式，无需预先删除）
       await AilyHost.get().fs.writeFileSync(sketchFilePath, code);
+      console.info('[ArduinoLintService] lint sketch prepared', {
+        sketchFilePath,
+        length: code.length,
+        fingerprint: createLintCodeFingerprint(code),
+      });
       // console.log(`✅ 写入代码到: ${sketchFilePath} (${code.length} 字符)`);
 
       // console.log(`✅ 临时环境准备完成，复用项目 .temp 目录: ${tempPath}`);

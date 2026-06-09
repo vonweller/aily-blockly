@@ -166,7 +166,7 @@ export const APP_LIST: AppItem[] = [
     action: 'tool-open',
     data: { type: 'tool', data: 'lib-manager' },
     icon: 'fa-light fa-books',
-    router: ['/main/code-editor'],
+    router: ['/main/code-editor', '/main/code-editor-pro'],
     enabled: true
   },
   {

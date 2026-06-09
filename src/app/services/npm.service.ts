@@ -11,6 +11,16 @@ import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
 import { LogOptions, LogService } from './log.service';
 import { satisfies, valid, gt, minVersion, coerce } from 'semver';
+import {
+  resolvePlatformPackageDirOnDisk,
+  resolvePlatformPackageEntries,
+} from '../utils/platform-packages.utils';
+import {
+  PlatformPackageRef,
+  readPlatformManifestFromAppData,
+  readPlatformRefFromProjectAci,
+  runtimeDependenciesToBoardDependencies,
+} from '../utils/platform-runtime.utils';
 import { AppDataResourceLockService } from './appdata-resource-lock.service';
 
 @Injectable({
@@ -242,14 +252,36 @@ export class NpmService {
     return `${appDataPath}/node_modules/${board.name}/template/package.json`;
   }
 
+  /** Blockly / Aily Code 共用：工程 npm 就绪后后台检查主板平台依赖（与 blockly-editor loadProject 一致） */
+  ensureProjectAndBoardDeps(
+    projectPath: string,
+    options?: { onRetryInstall?: () => void; onBoardDepsSettled?: () => void },
+  ): Promise<boolean> {
+    return this.ensureProjectDependenciesInstalled(projectPath, options).then((ok) => {
+      if (!ok) {
+        return false;
+      }
+      void this.installBoardDeps()
+        .then(() => options?.onBoardDepsSettled?.())
+        .catch((err) => console.error('install board dependencies error', err));
+      return true;
+    });
+  }
+
   async installBoardDeps() {
     this.isInstalling = true;
     const installStateStarted = this.workflowService.startInstall();
 
     try {
-      const boardPackageJson = await this.prjService.getBoardPackageJson() || {};
-      // console.log("boardPackageJson: ", boardPackageJson);
-      await this.installBoardDependencies(boardPackageJson, false);
+      const boardModule = await this.prjService.getBoardModule();
+      if (boardModule) {
+        const boardPackageJson = (await this.prjService.getBoardPackageJson()) || {};
+        const boardDependencies = boardPackageJson.boardDependencies || {};
+        if (Object.keys(boardDependencies).length > 0) {
+          await this.installBoardDependencies(boardPackageJson, false);
+        }
+      }
+      await this.installPlatformPackageForAilyCodeProject();
       if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
         this.workflowService.finishInstall(true);
       }
@@ -258,11 +290,92 @@ export class NpmService {
       if (installStateStarted && this.workflowService.currentState === ProcessState.INSTALLING) {
         this.workflowService.finishInstall(false, errorMessage);
       }
-      throw error;
+      console.error('[installBoardDeps]', error);
     } finally {
       this.isInstalling = false;
       this.boardDependencyInstallProgress = undefined;
     }
+  }
+
+  private isAilyCodeProjectRoot(projectPath: string): boolean {
+    return window['path'].isExists(window['path'].join(projectPath, 'project.aci'));
+  }
+
+  /**
+   * Aily Code：将 frameworkPlatforms.platform 对应 npm 包安装到 AppData，
+   * 再按 platform.json 的 runtimeDependencies 安装 sdk / compiler / tool（与 Blockly 一致）。
+   */
+  async installPlatformPackageForAilyCodeProject(): Promise<void> {
+    const projectPath = this.prjService.currentProjectPath;
+    if (!projectPath || !this.isAilyCodeProjectRoot(projectPath)) {
+      return;
+    }
+
+    const platformRef = readPlatformRefFromProjectAci(projectPath);
+    if (!platformRef?.packageName) {
+      console.log('[installPlatformPackageForAilyCodeProject] 未配置 platform，跳过');
+      return;
+    }
+
+    await this.ensurePlatformNpmPackageInstalled(platformRef);
+
+    const manifest = readPlatformManifestFromAppData(platformRef.packageName);
+    if (!manifest?.runtimeDependencies?.length) {
+      console.log('[installPlatformPackageForAilyCodeProject] platform.json 无 runtimeDependencies，跳过');
+      return;
+    }
+
+    const boardDependencies = runtimeDependenciesToBoardDependencies(manifest.runtimeDependencies);
+    if (Object.keys(boardDependencies).length === 0) {
+      return;
+    }
+
+    await this.installBoardDependencies({
+      name: manifest.id || platformRef.packageName,
+      version: manifest.version || platformRef.version || '',
+      boardDependencies,
+    }, false);
+  }
+
+  /** 安装 platform npm 包到 AppData（与 boardDependencies 包相同 prefix） */
+  private async ensurePlatformNpmPackageInstalled(platformRef: PlatformPackageRef): Promise<void> {
+    const appDataPath = window['path'].getAppDataPath();
+    const packageName = String(platformRef.packageName ?? '').trim();
+    if (!packageName) {
+      return;
+    }
+
+    const declaredVersion = String(platformRef.version ?? '').trim();
+    const depPath = `${appDataPath}/node_modules/${packageName}`;
+    const depPathPackageJson = `${depPath}/package.json`;
+
+    if (window['path'].isExists(depPathPackageJson)) {
+      try {
+        const installed = JSON.parse(window['fs'].readFileSync(depPathPackageJson, 'utf8'));
+        if (!declaredVersion || this.depVersionSatisfiesDecl(installed.version, declaredVersion)) {
+          if (window['path'].isExists(`${depPath}/platform.json`)) {
+            console.log(`[ensurePlatformNpmPackageInstalled] ${packageName} 已安装，跳过`);
+            return;
+          }
+        }
+      } catch {
+        /* 继续安装 */
+      }
+    }
+
+    this.noticeService.update({
+      title: this.translate.instant('NPM.INSTALLING_TITLE'),
+      text: this.translate.instant('NPM.INSTALLING', { name: packageName }),
+      state: 'doing',
+      showProgress: false,
+      setTimeout: 300000,
+    });
+
+    const installSpec = declaredVersion ? `${packageName}@${declaredVersion}` : packageName;
+    const npmCmd = `npm install ${installSpec} --save-exact --prefix "${appDataPath}"`;
+    await this.appDataResourceLock.runExclusive(`npm:install-platform:${packageName}`, () =>
+      window['npm'].run({ cmd: npmCmd }),
+    );
   }
 
   boardDependenciesChanged = false;
@@ -317,8 +430,72 @@ export class NpmService {
     }
   }
 
+  /** 与 preprocess / Platform Packages 树一致：sdk、tools 下的解压目录 */
+  private async getPlatformPathBases(): Promise<{
+    sdkBase: string;
+    compilersBase: string;
+    toolsBase: string;
+  }> {
+    const [sdkBase, compilersBase, toolsBase] = await Promise.all([
+      window['env'].get('AILY_SDK_PATH') as Promise<string>,
+      window['env'].get('AILY_COMPILERS_PATH') as Promise<string>,
+      window['env'].get('AILY_TOOLS_PATH') as Promise<string>,
+    ]);
+    return { sdkBase, compilersBase, toolsBase };
+  }
+
+  private isPlatformPackageOnDisk(
+    packageName: string,
+    version: string,
+    bases: { sdkBase: string; compilersBase: string; toolsBase: string },
+  ): boolean {
+    return !!resolvePlatformPackageDirOnDisk(packageName, version, bases);
+  }
+
+  /**
+   * npm 版本 + sdk/tools 解压目录均满足主板 boardDependencies 声明时返回 true（与 Blockly 跳过已安装逻辑一致）。
+   */
+  private async areBoardPlatformDepsReady(
+    boardDependencies: Record<string, string>,
+  ): Promise<boolean> {
+    const keys = Object.keys(boardDependencies);
+    if (keys.length === 0) {
+      return true;
+    }
+    const appDataPath = window['path'].getAppDataPath();
+    const platformBases = await this.getPlatformPathBases();
+    for (const key of keys) {
+      const versionStr = String(boardDependencies[key] ?? '').trim();
+      if (!versionStr) {
+        return false;
+      }
+      const depPathPackageJson = `${appDataPath}/node_modules/${key}/package.json`;
+      if (!window['path'].isExists(depPathPackageJson)) {
+        return false;
+      }
+      try {
+        const depPackageJson = JSON.parse(window['fs'].readFileSync(depPathPackageJson));
+        if (!this.depVersionSatisfiesDecl(depPackageJson.version, versionStr)) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+      if (!this.isPlatformPackageOnDisk(key, versionStr, platformBases)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // 安装开发板依赖
   async installBoardDependencies(packageJson: any, manageInstallState: boolean = true) {
+    const boardDependencies: Record<string, string> = packageJson.boardDependencies || {};
+    if (await this.areBoardPlatformDepsReady(boardDependencies)) {
+      console.log('[installBoardDependencies] 平台依赖已就绪，跳过');
+      return;
+    }
+
     try {
       if (manageInstallState) {
         this.isInstalling = true;
@@ -327,9 +504,8 @@ export class NpmService {
       this.boardDependenciesChanged = false;
       this.boardDependencyInstallProgress = undefined;
       console.log('开始安装开发板依赖...');
-      // const appDataPath = this.configService.data.appdata_path[this.configService.data.platform].replace('%HOMEPATH%', window['path'].getUserHome());
       const appDataPath = window['path'].getAppDataPath();
-      const boardDependencies = packageJson.boardDependencies || {};
+      const platformBases = await this.getPlatformPathBases();
       const dependenciesToInstall: BoardDependencyToInstall[] = [];
       this.traceToAppLog('DEPS_START', {
         packageName: packageJson?.name || '',
@@ -337,22 +513,46 @@ export class NpmService {
         dependencyCount: Object.keys(boardDependencies).length
       });
 
-      // console.log("boardDependencies: ", boardDependencies);
-
       for (const [key, version] of Object.entries(boardDependencies)) {
         const declaredVersion = String(version);
         const depPath = `${appDataPath}/node_modules/${key}`;
         const depPathPackageJson = `${depPath}/package.json`;
         let installedVersionWhenMismatch: string | undefined;
-        // 检查依赖是否已经安装
+        const versionStr = String(version);
+
+        // npm 包版本满足声明时，仍须检查 sdk/tools 解压目录（postinstall 可能未跑）
         if (window['path'].isExists(depPathPackageJson)) {
           const depPackageJson = JSON.parse(window['fs'].readFileSync(depPathPackageJson));
-          if (this.depVersionSatisfiesDecl(depPackageJson.version, declaredVersion)) {
-            console.log(`依赖 ${key} 已安装，版本满足声明 (${depPackageJson.version} satisfies ${version})`);
-            this.traceToAppLog('DEP_SKIP', { name: key, declaredVersion, installedVersion: depPackageJson.version });
-            continue;
+          if (this.depVersionSatisfiesDecl(depPackageJson.version, versionStr)) {
+            const platformOnDisk = this.isPlatformPackageOnDisk(key, versionStr, platformBases);
+            if (platformOnDisk) {
+              console.log(`依赖 ${key} 已安装且平台目录存在`);
+              this.traceToAppLog('DEP_SKIP', { name: key, declaredVersion: versionStr, installedVersion: depPackageJson.version, platformReady: true });
+              continue;
+            }
+            const platformPath = resolvePlatformPackageEntries({ [key]: versionStr }, platformBases)[0]
+              ?.absolutePath;
+            console.log(`依赖 ${key} npm 已满足但平台目录缺失，尝试 postinstall: ${platformPath}`);
+            this.boardDependenciesChanged = true;
+            this.noticeService.update({
+              title: this.translate.instant('NPM.INSTALLING_TITLE'),
+              text: this.translate.instant('NPM.INSTALLING_DEPENDENCY', { name: key }),
+              state: 'doing',
+              showProgress: false,
+              setTimeout: 300000
+            });
+            try {
+              await this.cmdService.runAsync('npm run postinstall', depPath);
+              if (this.isPlatformPackageOnDisk(key, versionStr, platformBases)) {
+                this.traceToAppLog('DEP_SKIP', { name: key, declaredVersion: versionStr, installedVersion: depPackageJson.version, platformReady: true, afterPostinstall: true });
+                continue;
+              }
+            } catch (error) {
+              console.warn(`依赖 ${key} postinstall 失败，将重新 npm install:`, error);
+            }
+          } else {
+            installedVersionWhenMismatch = depPackageJson.version;
           }
-          installedVersionWhenMismatch = depPackageJson.version;
         }
 
         const needUninstallForDowngrade =
@@ -800,6 +1000,60 @@ export class NpmService {
       console.log(`[installedOk] 检查异常，耗时: ${elapsed}ms`, err);
       return false;
     }
+  }
+
+  /**
+   * Blockly / Aily Code 打开工程共用：package.json 声明的依赖与 node_modules 不一致时在项目目录执行 npm install，并用通知反馈进度。
+   * @param projectPath 项目根路径
+   * @param options.onRetryInstall 若设置，安装失败时通知条展示「重试」并调用此回调（由调用方再次传入本方法以复跑安装）
+   * @returns 依赖已就绪 true；安装失败 false
+   */
+  async ensureProjectDependenciesInstalled(
+    projectPath: string,
+    options?: { onRetryInstall?: () => void },
+  ): Promise<boolean> {
+    // 已完整安装则不再跑 npm install，缩短冷启动
+    if (await this.installedOk(projectPath)) {
+      return true;
+    }
+
+    // 与 Blockly 一致：下一帧再挂通知，避免变更检测/弹层偶发不同步
+    setTimeout(() => {
+      this.noticeService.update({
+        title: this.translate.instant('NPM.INSTALLING_TITLE'),
+        text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
+        state: 'doing',
+        icon: 'fa-light fa-cubes',
+        showProgress: false,
+      });
+    }, 0);
+
+    const npmResult = await this.cmdService.runAsync(`npm install`, projectPath);
+
+    if (!(await this.installedOk(projectPath))) {
+      setTimeout(() => {
+        this.noticeService.update({
+          title: this.translate.instant('NPM.INSTALL_FAILED_TITLE'),
+          text: this.translate.instant('NPM.BOARD_DEPS_INSTALL_FAILED'),
+          detail: npmResult?.stderr || 'npm install 执行完成但依赖检查未通过',
+          state: 'error',
+          sendToLog: false,
+          ...(options?.onRetryInstall ? { onRetry: options.onRetryInstall } : {}),
+        });
+      }, 1000);
+      return false;
+    }
+
+    setTimeout(() => {
+      this.noticeService.update({
+        title: this.translate.instant('NPM.INSTALL_COMPLETE_TITLE'),
+        text: this.translate.instant('NPM.DEPS_INSTALL_COMPLETE'),
+        state: 'done',
+        showProgress: false,
+        setTimeout: 3000,
+      });
+    }, 100);
+    return true;
   }
 
   /**

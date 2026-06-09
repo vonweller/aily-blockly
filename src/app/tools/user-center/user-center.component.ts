@@ -16,6 +16,11 @@ import { NzToolTipModule } from "ng-zorro-antd/tooltip";
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { resolveTranslatedApiErrorMessage } from '../../utils/api-error.utils';
 import { ToolI18nService } from '../../services/tool-i18n.service';
+import {
+  AuthQuotaStateService,
+  type AuthQuotaInfo,
+} from '../aily-chat/services/auth-quota-state.service';
+import { formatQuotaResetMetaLabel } from '../aily-chat/services/chat-quota-reset-label';
 
 @Component({
   selector: 'app-user-center',
@@ -42,6 +47,7 @@ export class UserCenterComponent {
   private destroy$ = new Subject<void>();
   private message = inject(NzMessageService);
   private authService = inject(AuthService);
+  private authQuotaStateService = inject(AuthQuotaStateService);
   private electronService = inject(ElectronService);
   private translate = inject(TranslateService);
 
@@ -62,6 +68,7 @@ export class UserCenterComponent {
   quotaUsagePercent = 0;
 
   benefits: any = null;
+  authQuotaInfo: AuthQuotaInfo | null = null;
 
   constructor(
     private uiService: UiService,
@@ -73,17 +80,35 @@ export class UserCenterComponent {
   async ngOnInit() {
     await this.toolI18n.load('user-center');
 
+    const wasLoggedInBeforeSync = this.authService.isLoggedIn;
+
     // 首先检查并同步登录状态
     await this.checkAndSyncAuthStatus();
+    this.authQuotaStateService.syncAuthSnapshotFromHost();
+
+    let previousLoginState = this.authService.isLoggedIn;
 
     // 监听登录状态
     this.authService.isLoggedIn$
       .pipe(takeUntil(this.destroy$))
       .subscribe(isLoggedIn => {
-        if (isLoggedIn) {
+        if (isLoggedIn && !previousLoginState) {
           this.refreshMe();
           this.refreshBenefits();
         }
+        previousLoginState = isLoggedIn;
+      });
+
+    this.authService.authSnapshot$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((authSnapshot) => {
+        this.authQuotaStateService.acceptAuthSnapshot(authSnapshot);
+      });
+
+    this.authQuotaStateService.quotaInfo$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((quotaInfo) => {
+        this.authQuotaInfo = quotaInfo;
       });
 
     // 监听用户信息
@@ -94,6 +119,13 @@ export class UserCenterComponent {
         this.currentUser = userInfo;
         this.calculateQuotaUsagePercent();
       });
+
+    if (this.authService.isLoggedIn) {
+      if (wasLoggedInBeforeSync) {
+        this.refreshMe();
+      }
+      this.refreshBenefits();
+    }
 
     // 由于app.component已经设置了全局OAuth监听器，这里不需要再设置
     // 但是我们可以监听AuthService的登录状态变化来处理UI状态
@@ -118,13 +150,6 @@ export class UserCenterComponent {
       console.warn('刷新用户信息失败:', error);
     });
   }
-
-
-  ngAfterViewInit(): void {
-    this.refreshMe();
-    this.refreshBenefits();
-  }
-
   refreshBenefits() {
     if (!this.authService.isLoggedIn) return;
     this.authService.getBenefits()
@@ -350,6 +375,32 @@ export class UserCenterComponent {
 
   get quotaRemainingPercent(): number {
     return Math.max(0, 100 - this.quotaUsagePercent);
+  }
+
+  get aiAvailableValue(): string {
+    if (this.authQuotaInfo) {
+      const unlimited = this.authQuotaInfo.unlimited === true || this.authQuotaInfo.quota < 0;
+      if (unlimited) {
+        return '♾️';
+      }
+
+      const remaining = Math.max(0, this.authQuotaInfo.remaining);
+      const quota = Math.max(0, this.authQuotaInfo.quota);
+      const unitSuffix = this.authQuotaInfo.usageUnit === 'interactions' ? '次' : ' tokens';
+      return `${remaining}/${quota}${unitSuffix}`;
+    }
+
+    return this.benefits?.ai_calls?.unlimited
+      ? '♾️'
+      : `${this.benefits?.ai_calls?.used ?? 0}/${this.benefits?.ai_calls?.total ?? 0}`;
+  }
+
+  get aiAvailableMeta(): string | null {
+    if (!this.authQuotaInfo) {
+      return null;
+    }
+
+    return formatQuotaResetMetaLabel(this.authQuotaInfo.resetTime) ?? null;
   }
 
   private calculateQuotaUsagePercent(): void {

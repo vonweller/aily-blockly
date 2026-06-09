@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, exec, execSync } = require('child_process');
 const os = require('os');
+const ailyCodeProject = require('./aily-code-project');
 
 // 简单的日志工具
 const logger = {
@@ -61,6 +62,10 @@ async function main() {
     const tempPath = path.join(currentProjectPath, '.temp');
     const sketchPath = path.join(tempPath, 'sketch');
     const sketchFilePath = path.join(sketchPath, 'sketch.ino');
+    // Aily Code： Blockly 生成的入口落在 project.aci.entry（默认 src/main.cpp），与纯 Blockly 的 .temp/sketch 区分
+    const compileSourcePath = ailyCodeProject.isAilyCodeProjectRoot(currentProjectPath)
+        ? ailyCodeProject.resolveCompileSourcePath(currentProjectPath)
+        : sketchFilePath;
     const librariesPath = path.join(tempPath, 'libraries');
     
     const compilerPath = path.join(appDataPath, 'compiler');
@@ -111,8 +116,9 @@ async function main() {
         mkdirp(sketchPath);
         mkdirp(librariesPath);
 
-        // 2. 生成sketch文件
-        fs.writeFileSync(sketchFilePath, code);
+        // 2. 生成源码：Aily Code 写入 entry 所指文件； Blockly 仍为 .temp/sketch/sketch.ino
+        mkdirp(path.dirname(compileSourcePath));
+        fs.writeFileSync(compileSourcePath, code);
 
         // 3. 处理库文件
         const libsPath = [];
@@ -277,7 +283,7 @@ async function main() {
             `"${path.join(ailyBuilderPath, 'index.js')}"`,
             'preprocess',
             // `...parseArgs(compilerParam)`,
-            `"${sketchFilePath}"`,
+            `"${compileSourcePath}"`,
             '--board', `"${boardType}"`,
             '--libraries-path', `"${librariesPath}"`,
             '--sdk-path', `"${fullSdkPath}"`,

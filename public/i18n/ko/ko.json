@@ -272,6 +272,13 @@
         "WARNINGS": {
             "BETA_VERSION": "베타 버전, 미검증, 주의해서 사용",
             "TODO": "이 장치 지원이 곧 출시됩니다"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "프로젝트 유형",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "시각적 프로그래밍, 드래그 앤 드롭으로 빠른 개발",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "코드 편집, 전문 임베디드 개발 환경"
         }
     },
     "LIB_MANAGER": {
@@ -383,6 +390,58 @@
         "IMAGE_UPLOAD_FAILED": "이미지 업로드 실패, 다시 시도해 주세요",
         "ATTACH_HINT": "드래그 & 드롭, 붙여넣기 또는",
         "SELECT_FILE": "파일 선택"
+    },
+    "AILY_CHAT": {
+        "TITLE": "AI 어시스턴트",
+        "SETTINGS": "AI 설정",
+        "HISTORY": "채팅 기록",
+        "NEW_CHAT": "새 채팅",
+        "SERVICE_TITLE": "ai assistant service",
+        "DISCLAIMER": "AI 응답은 참고용이며 정확하지 않을 수 있습니다. 소프트웨어 개발자의 의견을 대표하지 않으며, 사용자는 정보를 직접 확인해야 합니다.",
+        "USAGE_GUIDE": "AI 사용법 알아보기",
+        "ADD_CONTEXT": "컨텍스트 추가",
+        "ADD_FILE": "파일 추가",
+        "ADD_FOLDER": "폴더 추가",
+        "ADD_WEBSITE": "웹사이트 추가",
+        "MODE_AGENT": "에이전트",
+        "MODE_QA": "Q&A",
+        "SEND": "전송",
+        "STOP": "중지",
+        "TOKEN_CONTEXT_WINDOW": "컨텍스트 윈도우",
+        "TOKEN_SECTION_SYSTEM": "시스템",
+        "TOKEN_SECTION_USER_CONTEXT": "사용자 컨텍스트",
+        "TOKEN_SYSTEM_INSTRUCTIONS": "시스템 지시문",
+        "TOKEN_TOOL_DEFINITIONS": "도구 정의",
+        "TOKEN_FILES": "파일",
+        "TOKEN_MESSAGES": "메시지",
+        "TOKEN_TOOL_RESULTS": "도구 결과",
+        "TOKEN_COMPACT_CHAT": "대화 압축",
+        "TOKEN_COMPACTING": "압축 중…",
+        "MODE_AGENT_FULL": "에이전트 모드",
+        "MODE_QA_FULL": "Q&A 모드",
+        "MODE_EDIT_FULL": "편집 모드",
+        "STOP_CURRENT_SESSION_FIRST": "새 세션을 생성하기 전에 먼저 현재 세션을 중지하세요",
+        "NO_HISTORY_SESSION": "기록된 대화 기록이 없습니다",
+        "MERMAID_SAVE_ARCH": "아키텍처 다이어그램으로 저장",
+        "MERMAID_ARCH_OVERWRITE_TITLE": "덮어쓰기 확인",
+        "MERMAID_ARCH_OVERWRITE_CONTENT": "프로젝트 디렉토리에 아키텍처 다이어그램 파일이 이미 있습니다. 덮어쓰시겠습니까?",
+        "MERMAID_ARCH_CONFIRM": "확인",
+        "MERMAID_ARCH_CANCEL": "취소",
+        "MERMAID_COPY_FAILED": "복사 실패",
+        "MERMAID_SAVE_FAILED": "저장 실패",
+        "CLICK_TO_EDIT": "클릭하여 편집",
+        "USER_FEEDBACK_NOTIFY_TITLE": "AI 도우미에서 입력이 필요합니다",
+        "USER_FEEDBACK_NOTIFY_BODY": "AI 도우미에서 처리할 작업이 있습니다. 채팅을 열고 확인·답변 또는 화면 안내에 따라 다음 단계를 완료하세요.",
+        "ONBOARDING": {
+            "STEP1_TITLE": "입력 상자",
+            "STEP1_DESC": "여기에 질문이나 AI가 도와줄 작업을 입력하세요. Enter로 전송, Ctrl+Enter로 줄바꿈",
+            "STEP2_TITLE": "컨텍스트 추가",
+            "STEP2_DESC": "여기를 클릭하여 파일이나 폴더를 컨텍스트로 추가하면 AI가 귀하의 요구를 더 잘 이해할 수 있습니다",
+            "STEP3_TITLE": "모드 전환",
+            "STEP3_DESC": "에이전트 모드는 작업을 자동으로 실행할 수 있습니다(코드 작성, 오류 수정 등). Q&A 모드는 질문에만 답변합니다",
+            "STEP4_TITLE": "전송/중지",
+            "STEP4_DESC": "클릭하여 메시지 전송, AI가 응답 중일 때 중지 가능"
+        }
     },
     "PROJECT_SETTING_DIALOG": {
         "TITLE": "프로젝트 설정",
@@ -625,7 +684,24 @@
     },
     "NOTIFICATION": {
         "STOP": "중지",
+        "RETRY": "다시 시도",
         "VIEW_DETAIL": "상세 보기",
         "AI_PROCESS": "AI 처리"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "새 Aily Code 프로젝트",
+        "HINT": "선택한 디렉터리에 Aily Code 규격 프로젝트 골격을 생성합니다(Blockly 프로젝트와 독립).",
+        "NAME": "프로젝트 이름",
+        "NAME_PLACEHOLDER": "프로젝트 이름을 입력하세요",
+        "PATH": "저장 경로",
+        "CREATE": "만들기",
+        "CREATING": "만드는 중...",
+        "CANCEL": "취소",
+        "SUCCESS": "Aily Code 프로젝트가 생성되었습니다",
+        "WARN_NAME_EMPTY": "프로젝트 이름을 입력하세요",
+        "WARN_PATH_EMPTY": "저장 경로를 선택하세요",
+        "ERR_PATH_EXISTS": "같은 이름의 폴더가 이미 있습니다",
+        "ERR_PATH_INVALID": "저장 경로에 잘못된 문자가 포함되어 있습니다",
+        "ERR_CREATE_FAILED": "프로젝트 생성에 실패했습니다. 다시 시도해 주세요."
     }
 }

@@ -4,6 +4,7 @@ import * as Blockly from 'blockly';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
 import { parse as parseJavaScript } from 'acorn';
+import { javascriptGenerator } from 'blockly/javascript';
 import { ElectronService } from '../../../services/electron.service';
 import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generators/arduino/arduino';
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
@@ -1336,8 +1337,12 @@ export class BlocklyService {
         if (mpyGen?.forBlock?.[blockType]) {
           delete mpyGen.forBlock[blockType];
         }
-        if ((Blockly as any).JavaScript?.forBlock?.[blockType]) {
-          delete (Blockly as any).JavaScript.forBlock[blockType];
+        if (javascriptGenerator?.forBlock?.[blockType]) {
+          delete javascriptGenerator.forBlock[blockType];
+        }
+        const legacyJavascriptGenerator = (globalThis as { Blockly?: { JavaScript?: { forBlock?: Record<string, unknown> } } }).Blockly?.JavaScript;
+        if (legacyJavascriptGenerator?.forBlock?.[blockType]) {
+          delete legacyJavascriptGenerator.forBlock[blockType];
         }
       }
       this.blockDefinitionsMap.delete(blockType);
@@ -1430,8 +1435,11 @@ export class BlocklyService {
           console.log(`- delete Python generator for ${blockType}`);
           delete mpyGen.forBlock[blockType];
         }
-        if ((Blockly as any).JavaScript?.forBlock?.[blockType]) {
-          delete (Blockly as any).JavaScript.forBlock[blockType];
+        const legacyJavascriptGenerator = javascriptGenerator
+          ?? (globalThis as { Blockly?: { JavaScript?: { forBlock?: Record<string, unknown> } } }).Blockly?.JavaScript;
+        if (legacyJavascriptGenerator?.forBlock?.[blockType]) {
+          console.log(`- delete JavaScript generator for ${blockType}`);
+          delete legacyJavascriptGenerator.forBlock[blockType];
         }
       });
     }

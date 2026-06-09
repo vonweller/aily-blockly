@@ -1,0 +1,12 @@
+<div class="code-editor-pro">
+    @if (coderEmbedSrc) {
+    <iframe #coderEmbedFrame class="coder-embed-frame" title="代码编辑器 Pro" [src]="coderEmbedSrc"
+        (load)="onCoderEmbedFrameLoad()"></iframe>
+    } @else if (coderEmbedError) {
+    <div class="coder-embed-fallback">
+        <p>无法加载内嵌编辑器：{{ coderEmbedError }}</p>
+        <p class="hint">Electron 请确认已构建 child/coder（dist 在 child/coder/dist）；浏览器开发时可执行 <code>cd child/coder && npm run start</code>（默认 127.0.0.1:5174）。</p>
+    </div>
+    }
+</div>
+<app-notification></app-notification>

@@ -10,6 +10,10 @@
  *   - 可选子接口（如 editor、mcp）通过 `?` 标记，非 Blockly 宿主可不实现
  */
 
+import type { Observable } from 'rxjs';
+
+import type { AuthSnapshot, AuthUserInfo } from './auth-snapshot';
+
 // ============================================================
 // 顶层宿主接口
 // ============================================================
@@ -54,10 +58,6 @@ export interface IAilyHostAPI {
   readonly cmd?: any;
   /** ABS 自动同步服务（可选） */
   readonly absSync?: any;
-  /** HTTP 请求服务（可选） */
-  readonly fetch?: any;
-  /** 网页搜索服务（可选） */
-  readonly webSearch?: any;
   /** 跨平台命令服务（可选 — createDirectory / linkItem 等） */
   readonly crossPlatformCmd?: any;
   /** 通知服务透传（可选 — update / clear 等完整 NoticeService 透传） */
@@ -66,8 +66,6 @@ export interface IAilyHostAPI {
   readonly electron?: any;
   /** UI 服务透传（可选 — updateFooterState / closeTool 等） */
   readonly ui?: any;
-  /** 鉴权服务透传（可选 — Observable 订阅用，initializeAuth / isLoggedIn$ / userInfo$ 等） */
-  readonly authFull?: any;
   /** 新手引导服务透传（可选 — start 等） */
   readonly onboarding?: any;
 }
@@ -88,6 +86,17 @@ export interface IDirent {
   name: string;
   isDirectory(): boolean;
   isFile(): boolean;
+}
+
+export interface IFileWatchOptions {
+  recursive?: boolean;
+  persistent?: boolean;
+}
+
+export interface IFileWatchHandle {
+  close?(): void;
+  dispose?(): void;
+  unsubscribe?(): void;
 }
 
 export interface IFileSystem {
@@ -118,6 +127,11 @@ export interface IFileSystem {
   readDir?(path: string): Promise<IDirent[]>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   unlink?(path: string): Promise<void>;
+  watch?(
+    path: string,
+    listener: (eventType: string, filename?: string | null) => void,
+    options?: IFileWatchOptions,
+  ): IFileWatchHandle | void;
 }
 
 // ============================================================
@@ -273,11 +287,23 @@ export interface IProjectProvider {
 
 export interface IAuthProvider {
   readonly isLoggedIn: boolean;
+  readonly isLoggedIn$?: Observable<boolean>;
+  /** 宿主侧稳定认证状态变更事件；触发时当前 snapshot 已可回读 */
+  readonly authChanged$?: Observable<void>;
   readonly token: string;
-  readonly userInfo?: any;
+  readonly userInfo?: AuthUserInfo | null;
+  readonly userInfo$?: Observable<AuthUserInfo | null>;
+  /** 宿主侧归一化 auth snapshot 变化流 */
+  readonly authSnapshot$?: Observable<AuthSnapshot | null>;
   getAuthHeaders(): Record<string, string>;
+  /** 初始化宿主侧认证状态 */
+  initializeAuth?(): Promise<void>;
   /** 异步获取鉴权 token（刷新后的最新 token） */
   getToken?(): Promise<string>;
+  /** 获取宿主侧归一化 auth snapshot（如 plan / tier / status） */
+  getSnapshot?(): AuthSnapshot | null;
+  /** 主动刷新宿主侧 auth/me 快照 */
+  refreshMe?(): Promise<unknown>;
   /** 触发登录流程（可选，GUI 环境实现） */
   promptLogin?(): Promise<boolean>;
 }
@@ -308,6 +334,8 @@ export interface IConfigProvider {
   getHardwareCategories?(): any[];
   /** 加载硬件索引数据（用于 AI 工具的开发板/库搜索） */
   loadHardwareIndexForAI?(): Promise<any>;
+  /** 在后台去重刷新硬件索引数据，不阻塞对话热路径 */
+  scheduleHardwareIndexRefreshForAI?(reason: string, options?: { force?: boolean }): void;
 
   /** 板卡索引数据（新版） */
   readonly boardIndex?: any[];
@@ -384,6 +412,30 @@ export interface IEditorProvider {
   getGeneratedCode?(): string;
   reloadAbiJson?(): void;
   getBlockDefinitions?(): any[];
+
+  registerTextDocumentContentProvider?(
+    scheme: string,
+    provider: {
+      provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+    },
+  ): { dispose(): void };
+  
+  // VS Code 风格的最小文本文件打开能力
+  showTextDocument?(
+    path: string,
+    options?: {
+      projectPath?: string;
+      selection?: {
+        lineNumber?: number;
+        column?: number;
+        line?: number;
+        character?: number;
+      };
+    },
+  ): Promise<boolean> | boolean;
+
+  // VS Code 风格的最小文档读取能力，用于按 URI 解析只读/虚拟文档。
+  readTextDocument?(uri: string): Promise<string | undefined> | string | undefined;
 
   // Code 编辑器专属
   getCurrentFileContent?(): string;

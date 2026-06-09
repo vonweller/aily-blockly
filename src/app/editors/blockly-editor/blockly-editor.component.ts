@@ -201,40 +201,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     // 暴露 ProjectService 到全局，供 generator.js 使用
     window['projectService'] = this.projectService;
 
-    if (!(await this.npmService.installedOk(projectPath))) {
-      // 终端进入项目目录，安装项目依赖
-      // this.uiService.updateFooterState({ state: 'doing', text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS') });
-      setTimeout(() => {
-        this.noticeService.update({
-          title: this.translate.instant('NPM.INSTALLING_TITLE'),
-          text: this.translate.instant('BLOCKLY_EDITOR.INSTALLING_DEPS'),
-          state: 'doing',
-          icon: 'fa-light fa-cubes',
-          showProgress: false,
-        });
-      }, 0);
-      const npmResult = await this.cmdService.runAsyncChecked(`npm install`, projectPath);
-      if (!(await this.npmService.installedOk(projectPath))) {
-        setTimeout(() => {
-          this.noticeService.update({
-            title: this.translate.instant('NPM.INSTALL_FAILED_TITLE'),
-            text: this.translate.instant('NPM.BOARD_DEPS_INSTALL_FAILED'),
-            detail: npmResult?.stderr || 'npm install 执行完成但依赖检查未通过',
-            state: 'error',
-            sendToLog: false,
-          });
-        }, 1000);
-        return;
-      }
-      setTimeout(() => {
-        this.noticeService.update({
-          title: this.translate.instant('NPM.INSTALL_COMPLETE_TITLE'),
-          text: this.translate.instant('NPM.DEPS_INSTALL_COMPLETE'),
-          state: 'done',
-          showProgress: false,
-          setTimeout: 3000,
-        });
-      }, 100);
+    // 与 Aily Code（code-editor-pro）共用：node_modules 不齐则 npm install
+    if (!(await this.npmService.ensureProjectDependenciesInstalled(projectPath))) {
+      return;
     }
     // 3. 加载开发板module中的board.json
     this.uiService.updateFooterState({
@@ -306,6 +275,12 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
 
     this.startPackageJsonDependencyWatch(projectPath);
     this.localLibrarySyncService.start(projectPath);
+    // 项目加载完成后自动生成 sketch.ino，供 AI 工具和代码预览使用（无需触发完整编译）
+    setTimeout(() => {
+      this._builderService.generateAndWriteSketchIno().catch(e => {
+        console.warn('[loadProject] 自动生成 sketch.ino 失败:', e);
+      });
+    }, 600); // 等待 Blockly 渲染完成（debounce 500ms + 余量）
 
     // 检查是否需要显示新手引导
     this.checkBlocklyOnboarding();

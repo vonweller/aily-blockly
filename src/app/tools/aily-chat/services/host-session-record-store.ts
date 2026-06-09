@@ -1,0 +1,680 @@
+import { AilyHost } from '../core/host';
+import {
+  isLegacyChatPlanModeValue,
+  LEGACY_CHAT_PLAN_AGENT_TARGET,
+  normalizeChatSessionType,
+} from '../core/chat-mode';
+import {
+  normalizeChatSessionTitleText,
+  normalizePersistedChatSessionTitleSource,
+  type PersistedChatSessionTitleSource,
+} from '../core/chat-session-title';
+import type { TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
+import {
+  hasHostSessionExplicitTurnRequestRouting,
+  normalizeHostSessionRequestRoutingSummary,
+  resolveHostSessionRequestRoutingSummary,
+} from '../helpers/host-session-request-routing';
+import {
+  normalizeHostSessionInteractionActionSummary,
+  resolveHostSessionInteractionActionSummary,
+} from '../helpers/host-session-interaction-action';
+import {
+  type HostSessionSelectedModeResolveOptions,
+  normalizeHostSessionInputStateFromMetadata,
+  resolveHostSessionModeDescriptor,
+  resolveHostSessionModeDescriptorFromMetadata,
+  resolveHostSessionInputState,
+  resolveHostSessionSummaryModeFromMetadata,
+  resolveHostSessionSelectedMode,
+  resolveHostSessionSelectedModeFromMetadata,
+} from '../helpers/host-session-input-state';
+import {
+  cloneHostSessionRuntimeAuxiliary,
+  stripLegacyRuntimeAuxiliaryFromMetadata,
+} from '../helpers/host-session-runtime-auxiliary';
+import {
+  readChatAgentRuntimeModeFromMetadata,
+  readChatAgentRuntimeModeSourceFromMetadata,
+} from '../core/chat-agent-runtime-mode';
+
+import type {
+  HostSessionRecord,
+  HostSessionRuntimeAuxiliary,
+  HostSessionSidecar,
+  PersistedHostResponseData,
+  PersistedHostTurnResponse,
+  SessionMetadata,
+} from './chat-history.service';
+
+function cloneContinuationBudgets(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): Record<string, unknown> | undefined {
+  const budgets = (continuation as (TurnResponseTurn['response']['continuation'] & {
+    budgets?: Record<string, unknown>;
+  }) | undefined)?.budgets;
+
+  return budgets && typeof budgets === 'object'
+    ? { ...budgets }
+    : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function clonePersistedValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => clonePersistedValue(item)) as T;
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [key, clonePersistedValue(entryValue)]),
+    ) as T;
+  }
+
+  return value;
+}
+
+function cloneContinuationDiagnostics(
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): Record<string, unknown> | undefined {
+  const diagnostics = (continuation as (TurnResponseTurn['response']['continuation'] & {
+    diagnostics?: Record<string, unknown>;
+  }) | undefined)?.diagnostics;
+
+  if (!isRecord(diagnostics)) {
+    return undefined;
+  }
+
+  const identity = isRecord(diagnostics['identity']) ? { ...diagnostics['identity'] } : undefined;
+  const trace = isRecord(diagnostics['trace']) ? { ...diagnostics['trace'] } : undefined;
+  const usage = isRecord(diagnostics['usage']) ? { ...diagnostics['usage'] } : undefined;
+  const runtime = isRecord(diagnostics['runtime']) ? { ...diagnostics['runtime'] } : undefined;
+  const budget = isRecord(diagnostics['budget']) ? { ...diagnostics['budget'] } : undefined;
+  const outcome = isRecord(diagnostics['outcome']) ? { ...diagnostics['outcome'] } : undefined;
+  const behavior = isRecord(diagnostics['behavior']) ? { ...diagnostics['behavior'] } : undefined;
+
+  return {
+    ...(identity ? { identity } : {}),
+    ...(trace ? { trace } : {}),
+    ...(usage ? { usage } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(budget ? { budget } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...(behavior ? { behavior } : {}),
+  };
+}
+
+function normalizeRoundSummary(summary: unknown): string | undefined {
+  return typeof summary === 'string' && summary.trim()
+    ? summary.trim()
+    : undefined;
+}
+
+function deriveDefaultTitleFromTurnResponses(turnResponses: readonly PersistedHostTurnResponse[] | undefined): string {
+  if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+    return '';
+  }
+
+  for (const turnResponse of turnResponses) {
+    const request = (turnResponse as { request?: unknown })?.request;
+    const title = deriveDefaultTitleFromRequest(request);
+    if (title) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
+function deriveDefaultTitleFromRequest(request: unknown): string {
+  const direct = readRequestTextCandidate(request);
+  if (direct) {
+    return direct;
+  }
+
+  if (request && typeof request === 'object') {
+    const nested = readRequestTextCandidate((request as { message?: unknown }).message);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return '';
+}
+
+function readRequestTextCandidate(candidate: unknown): string {
+  const text = typeof candidate === 'string'
+    ? candidate
+    : candidate && typeof candidate === 'object'
+      ? ((candidate as { messageText?: unknown }).messageText
+        ?? (candidate as { prompt?: unknown }).prompt
+        ?? (candidate as { text?: unknown }).text
+        ?? (candidate as { content?: unknown }).content)
+      : undefined;
+
+  if (typeof text !== 'string') {
+    return '';
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized.split('\n')[0]?.trim().substring(0, 200) ?? '';
+}
+
+function normalizePersistedSessionTitleMetadata(
+  metadata: SessionMetadata,
+  turnResponses?: readonly PersistedHostTurnResponse[],
+): SessionMetadata {
+  const normalizedTitle = normalizeChatSessionTitleText(metadata.title);
+  const explicitSource = normalizePersistedChatSessionTitleSource(metadata.titleSource);
+  const derivedDefaultTitle = normalizeChatSessionTitleText(metadata.defaultTitle)
+    || deriveDefaultTitleFromTurnResponses(turnResponses as readonly PersistedHostTurnResponse[] | undefined);
+
+  let nextTitle = normalizedTitle;
+  let nextTitleSource: PersistedChatSessionTitleSource | undefined = explicitSource;
+  if (!nextTitleSource && nextTitle) {
+    if (derivedDefaultTitle && nextTitle === derivedDefaultTitle) {
+      nextTitle = '';
+    } else {
+      nextTitleSource = 'legacy-custom';
+    }
+  }
+
+  const nextMetadata: SessionMetadata = {
+    ...metadata,
+    title: nextTitle,
+  };
+  if (nextTitleSource && nextTitle) {
+    nextMetadata.titleSource = nextTitleSource;
+  } else {
+    delete nextMetadata.titleSource;
+  }
+  if (derivedDefaultTitle) {
+    nextMetadata.defaultTitle = derivedDefaultTitle;
+  } else {
+    delete nextMetadata.defaultTitle;
+  }
+
+  return nextMetadata;
+}
+
+function cloneTurnRound(round: TurnResponseTurn['rounds'][number]): TurnResponseTurn['rounds'][number] {
+  const summary = normalizeRoundSummary(round.summary);
+
+  return {
+    id: round.id,
+    assistantText: round.assistantText,
+    toolCalls: round.toolCalls.map(toolCall => ({
+      ...toolCall,
+      input: { ...toolCall.input },
+    })),
+    timestamp: round.timestamp,
+    ...(summary ? { summary } : {}),
+  };
+}
+
+export interface HostSessionRecordStoreOptions {
+  projectChatDir: string;
+  getGlobalChatDataDir: () => string;
+  getGlobalProjectRootPath: () => string | null;
+  joinPath: (...parts: string[]) => string;
+  isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
+  resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
+}
+
+/**
+ * Host-side persistence adapter for chat history records.
+ *
+ * Keeps host record disk IO and compatibility normalization out of ChatHistoryService.
+ */
+export class HostSessionRecordStore {
+  constructor(private readonly options: HostSessionRecordStoreOptions) {}
+
+  createFullMetadata(metadata: Partial<SessionMetadata> & { sessionId: string }): SessionMetadata {
+    const now = Date.now();
+    const sanitizedMetadata = stripLegacyRuntimeAuxiliaryFromMetadata(metadata);
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(sanitizedMetadata);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions());
+    return {
+      sessionId: sanitizedMetadata.sessionId,
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
+      sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
+      projectPath: sanitizedMetadata.projectPath ?? null,
+      sessionScopeSchemaVersion: 1,
+      createdAt: sanitizedMetadata.createdAt || now,
+      updatedAt: now,
+      mode: selectedMode.modeId,
+      ...(readChatAgentRuntimeModeFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeMode: readChatAgentRuntimeModeFromMetadata(sanitizedMetadata) }
+        : {}),
+      ...(readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeModeSource: readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata) }
+        : {}),
+      modeDescriptor,
+      ...(sanitizedMetadata.inputState
+        ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }
+        : {}),
+      ...(sanitizedMetadata.requestRouting
+        ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
+        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
+          ? {
+              requestRouting: {
+                selectedModeId: 'agent',
+                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+              },
+            }
+        : {}),
+      ...(sanitizedMetadata.interactionActionSummary
+        ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
+        : {}),
+      model: sanitizedMetadata.model ?? null,
+      contextBudget: sanitizedMetadata.contextBudget,
+      toolCallingIteration: sanitizedMetadata.toolCallingIteration || 0,
+    };
+  }
+
+  createRecord(
+    metadata: SessionMetadata,
+    turnResponses?: PersistedHostTurnResponse[],
+    sidecar?: HostSessionSidecar,
+    auxiliary?: HostSessionRuntimeAuxiliary,
+  ): HostSessionRecord {
+    const runtimeAuxiliary = cloneHostSessionRuntimeAuxiliary(auxiliary ?? {
+      requestContext: metadata.requestContext,
+      activeSkillNames: metadata.activeSkillNames,
+    });
+    const record: HostSessionRecord = {
+      metadata: stripLegacyRuntimeAuxiliaryFromMetadata(metadata),
+      ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
+    };
+
+    const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
+    if (normalizedTurnResponses?.length) {
+      record.turnResponses = normalizedTurnResponses;
+    }
+
+    record.metadata = normalizePersistedSessionTitleMetadata(record.metadata, normalizedTurnResponses);
+
+    const normalizedSidecar = this.normalizeSidecar(sidecar);
+    if (normalizedSidecar) {
+      record.sidecar = normalizedSidecar;
+    }
+
+    const selectedMode = resolveHostSessionSelectedMode(record, this.getModeResolveOptions());
+    const requestRouting = hasHostSessionExplicitTurnRequestRouting(record.turnResponses)
+      ? resolveHostSessionRequestRoutingSummary(record)
+      : record.metadata.requestRouting
+        ? normalizeHostSessionRequestRoutingSummary(record.metadata.requestRouting, selectedMode)
+        : (selectedMode.customAgentTarget
+          ? ({ customAgentTarget: selectedMode.customAgentTarget } as SessionMetadata['requestRouting'])
+          : undefined);
+    const interactionActionSummary = resolveHostSessionInteractionActionSummary(record);
+    record.metadata.mode = selectedMode.modeId;
+    record.metadata.modeDescriptor = resolveHostSessionModeDescriptor(record, this.getModeResolveOptions());
+    record.metadata.inputState = resolveHostSessionInputState(record, this.getModeResolveOptions());
+    if (requestRouting) {
+      record.metadata.requestRouting = requestRouting;
+    } else {
+      delete record.metadata.requestRouting;
+    }
+    record.metadata.interactionActionSummary = interactionActionSummary;
+
+    return record;
+  }
+
+  write(sessionId: string, data: HostSessionRecord): void {
+    try {
+      this.writeOrThrow(sessionId, data);
+    } catch (error) {
+      console.warn(`[ChatHistory] 写入宿主持久化记录失败 (${sessionId}):`, error);
+    }
+  }
+
+  writeOrThrow(sessionId: string, data: HostSessionRecord): void {
+    if (!this.hasFs()) return;
+
+    let projectPath = data.metadata.projectPath;
+    if (projectPath) {
+      const rootPath = this.options.getGlobalProjectRootPath();
+      if (rootPath && this.options.isSamePath(projectPath, rootPath)) {
+        console.warn(`[ChatHistory] 检测到 projectPath 等于 projectRootPath，降级为全局兜底: ${projectPath}`);
+        projectPath = null;
+        data.metadata.projectPath = null;
+      }
+    }
+
+    if (projectPath) {
+      const dir = this.options.joinPath(projectPath, this.options.projectChatDir);
+      this.ensureDir(dir);
+      const filePath = this.options.joinPath(dir, `${sessionId}.json`);
+      this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      return;
+    }
+
+    const dir = this.options.getGlobalChatDataDir();
+    this.ensureDir(dir);
+    const filePath = this.options.joinPath(dir, `${sessionId}.json`);
+    this.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  }
+
+  read(sessionId: string, projectPath: string | null): HostSessionRecord | null {
+    if (!this.hasFs()) return null;
+
+    const paths: string[] = [];
+    if (projectPath) {
+      paths.push(this.options.joinPath(projectPath, this.options.projectChatDir, `${sessionId}.json`));
+    }
+    paths.push(this.options.joinPath(this.options.getGlobalChatDataDir(), `${sessionId}.json`));
+
+    for (const filePath of paths) {
+      try {
+        if (!this.fileExists(filePath)) {
+          continue;
+        }
+
+        const content = this.readFileSync(filePath);
+        const parsed = JSON.parse(content);
+
+        if (Array.isArray(parsed)) {
+          console.warn(`[ChatHistory] 忽略旧版 chatList-only 宿主持久化记录 (${filePath})`);
+          continue;
+        }
+
+        if (parsed.metadata && Array.isArray(parsed.turnResponses)) {
+          return this.normalizeRecord(parsed, sessionId, projectPath);
+        }
+      } catch (error) {
+        console.warn(`[ChatHistory] 读取宿主持久化记录失败 (${filePath}):`, error);
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeRecord(raw: any, sessionId: string, projectPath: string | null): HostSessionRecord | null {
+    if (!raw || !Array.isArray(raw.turnResponses)) {
+      return null;
+    }
+
+    const turnResponses = raw.turnResponses;
+    const hostRecord: HostSessionRecord = {
+      metadata: this.normalizeMetadata(raw.metadata, sessionId, projectPath),
+    };
+
+    const runtimeAuxiliary = this.normalizeRuntimeAuxiliary(raw);
+    if (runtimeAuxiliary) {
+      hostRecord.auxiliary = runtimeAuxiliary;
+    }
+
+    const normalizedTurnResponses = this.normalizeTurnResponses(turnResponses);
+    if (normalizedTurnResponses?.length) {
+      hostRecord.turnResponses = normalizedTurnResponses;
+    }
+
+    const normalizedSidecar = this.normalizeSidecar(raw.sidecar);
+    if (normalizedSidecar) {
+      hostRecord.sidecar = normalizedSidecar;
+    }
+
+    hostRecord.metadata = normalizePersistedSessionTitleMetadata(hostRecord.metadata, normalizedTurnResponses);
+
+    const selectedMode = resolveHostSessionSelectedMode(hostRecord, this.getModeResolveOptions());
+    const requestRouting = hasHostSessionExplicitTurnRequestRouting(hostRecord.turnResponses)
+      ? resolveHostSessionRequestRoutingSummary(hostRecord)
+      : hostRecord.metadata.requestRouting
+        ? normalizeHostSessionRequestRoutingSummary(hostRecord.metadata.requestRouting, selectedMode)
+        : (selectedMode.customAgentTarget
+          ? ({ customAgentTarget: selectedMode.customAgentTarget } as SessionMetadata['requestRouting'])
+          : undefined);
+    const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
+    hostRecord.metadata.mode = selectedMode.modeId;
+    hostRecord.metadata.modeDescriptor = resolveHostSessionModeDescriptor(hostRecord, this.getModeResolveOptions());
+    hostRecord.metadata.inputState = resolveHostSessionInputState(hostRecord, this.getModeResolveOptions());
+    if (requestRouting) {
+      hostRecord.metadata.requestRouting = requestRouting;
+    } else {
+      delete hostRecord.metadata.requestRouting;
+    }
+    hostRecord.metadata.interactionActionSummary = interactionActionSummary;
+
+    return hostRecord;
+  }
+
+  private normalizeTurnResponses(turnResponses?: readonly PersistedHostTurnResponse[]): PersistedHostTurnResponse[] | undefined {
+    return turnResponses?.length ? turnResponses.map(turn => this.cloneTurnResponse(turn)) : undefined;
+  }
+
+  private cloneTurnResponse(turn: PersistedHostTurnResponse): PersistedHostTurnResponse {
+    const {
+      followups,
+      responseId,
+      responseMarkdownInfo,
+      modelState,
+      vote,
+      timestamp,
+      elapsedMs,
+      timeSpentWaiting,
+      completionTokens,
+      continuation,
+      ...responseWithoutPersistedData
+    } = turn.response as TurnResponseTurn['response'] & PersistedHostResponseData & {
+      followups?: readonly TurnResponseFollowup[];
+      continuation?: TurnResponseTurn['response']['continuation'];
+    };
+
+    return {
+      ...turn,
+      request: {
+        ...turn['request'],
+        ...(turn.request?.metadata ? { metadata: clonePersistedValue(turn.request.metadata) } : {}),
+        ...(Array.isArray(turn.request?.attachments)
+          ? { attachments: turn.request.attachments.map(attachment => clonePersistedValue(attachment)) }
+          : {}),
+      },
+      rounds: turn['rounds'].map(round => cloneTurnRound(round)),
+      ...(turn['usage'] ? { usage: { ...turn['usage'] } } : {}),
+      response: {
+        ...responseWithoutPersistedData,
+        ...(turn.response.usedContext
+          ? {
+            usedContext: {
+              ...turn.response.usedContext,
+              documents: turn.response.usedContext.documents.map(document => ({
+                ...document,
+                ranges: document.ranges.map(range => ({ ...range })),
+              })),
+            },
+          }
+          : {}),
+        contentReferences: (turn.response.contentReferences ?? []).map(reference => ({
+          ...reference,
+          ...(reference.options
+            ? {
+              options: {
+                ...reference.options,
+                ...(reference.options.status ? { status: { ...reference.options.status } } : {}),
+                ...(reference.options.diffMeta ? { diffMeta: { ...reference.options.diffMeta } } : {}),
+              },
+            }
+            : {}),
+        })),
+        codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
+        progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
+        parts: turn.response.parts.map(part => clonePersistedValue(part)),
+        ...(continuation
+          ? {
+              continuation: {
+                ...continuation,
+                ...(cloneContinuationBudgets(continuation) ? { budgets: cloneContinuationBudgets(continuation) } : {}),
+                ...(cloneContinuationDiagnostics(continuation) ? { diagnostics: cloneContinuationDiagnostics(continuation) } : {}),
+                ...(continuation.pendingState ? { pendingState: { ...continuation.pendingState } } : {}),
+              },
+            }
+          : {}),
+        ...(typeof responseId === 'string' && responseId.length > 0 ? { responseId } : {}),
+        ...(Array.isArray(responseMarkdownInfo)
+          ? {
+              responseMarkdownInfo: responseMarkdownInfo
+                .filter(info => !!info && typeof info.suggestionId === 'string' && info.suggestionId.length > 0)
+                .map(info => ({ suggestionId: info.suggestionId })),
+            }
+          : {}),
+        ...(Array.isArray(followups) ? { followups: followups.map(followup => ({ ...followup })) } : {}),
+        ...(modelState && typeof modelState.value === 'number' ? { modelState: { ...modelState } } : {}),
+        ...(vote === 0 || vote === 1 ? { vote } : {}),
+        ...(typeof timestamp === 'number' ? { timestamp } : {}),
+        ...(typeof elapsedMs === 'number' ? { elapsedMs } : {}),
+        ...(typeof timeSpentWaiting === 'number' ? { timeSpentWaiting } : {}),
+        ...(typeof completionTokens === 'number' ? { completionTokens } : {}),
+      },
+    } satisfies PersistedHostTurnResponse;
+  }
+
+  private normalizeSidecar(sidecar: HostSessionSidecar | undefined): HostSessionSidecar | undefined {
+    const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
+      ? [...sidecar.response.compatMessages]
+      : undefined;
+
+    if (!compatMessages?.length) {
+      return undefined;
+    }
+
+    return {
+      response: {
+        ...(compatMessages?.length ? { compatMessages } : {}),
+      },
+    };
+  }
+
+  private normalizeMetadata(raw: any, sessionId: string, projectPath: string | null): SessionMetadata {
+    const now = Date.now();
+    const metadata = raw && typeof raw === 'object' ? raw : {};
+    const sanitizedMetadata = stripLegacyRuntimeAuxiliaryFromMetadata(metadata);
+    const selectedMode = resolveHostSessionSummaryModeFromMetadata(sanitizedMetadata);
+    const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions());
+    const rawToolSourceTokens = sanitizedMetadata.contextBudget?.toolSourceTokens;
+    const toolSourceTokens = rawToolSourceTokens && typeof rawToolSourceTokens === 'object'
+      ? Object.fromEntries(
+          Object.entries(rawToolSourceTokens)
+            .filter((entry): entry is [string, number] => (
+              typeof entry[0] === 'string'
+              && entry[0].length > 0
+              && typeof entry[1] === 'number'
+              && Number.isFinite(entry[1])
+              && entry[1] > 0
+            )),
+        )
+      : {};
+    return {
+      sessionId: typeof sanitizedMetadata.sessionId === 'string' && sanitizedMetadata.sessionId ? sanitizedMetadata.sessionId : sessionId,
+      title: normalizeChatSessionTitleText(sanitizedMetadata.title),
+      ...(normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource)
+        ? { titleSource: normalizePersistedChatSessionTitleSource(sanitizedMetadata.titleSource) }
+        : {}),
+      ...(normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle)
+        ? { defaultTitle: normalizeChatSessionTitleText(sanitizedMetadata.defaultTitle) }
+        : {}),
+      sessionType: normalizeChatSessionType(sanitizedMetadata.sessionType),
+      projectPath: sanitizedMetadata.projectPath ?? projectPath ?? null,
+      sessionScopeSchemaVersion: 1,
+      createdAt: typeof sanitizedMetadata.createdAt === 'number' ? sanitizedMetadata.createdAt : now,
+      updatedAt: typeof sanitizedMetadata.updatedAt === 'number' ? sanitizedMetadata.updatedAt : now,
+      mode: selectedMode.modeId,
+      ...(readChatAgentRuntimeModeFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeMode: readChatAgentRuntimeModeFromMetadata(sanitizedMetadata) }
+        : {}),
+      ...(readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata)
+        ? { agentRuntimeModeSource: readChatAgentRuntimeModeSourceFromMetadata(sanitizedMetadata) }
+        : {}),
+      modeDescriptor: resolveHostSessionModeDescriptorFromMetadata(sanitizedMetadata, this.getModeResolveOptions()),
+      ...(sanitizedMetadata.inputState
+        ? { inputState: normalizeHostSessionInputStateFromMetadata(sanitizedMetadata, this.getModeResolveOptions()) }
+        : {}),
+      ...(sanitizedMetadata.requestRouting
+        ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
+        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
+          ? {
+              requestRouting: {
+                selectedModeId: 'agent',
+                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+              },
+            }
+        : {}),
+      ...(sanitizedMetadata.interactionActionSummary
+        ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
+        : {}),
+      model: typeof sanitizedMetadata.model === 'string' ? sanitizedMetadata.model : null,
+      contextBudget: sanitizedMetadata.contextBudget && typeof sanitizedMetadata.contextBudget === 'object'
+        ? {
+            currentTokens: typeof sanitizedMetadata.contextBudget.currentTokens === 'number' ? sanitizedMetadata.contextBudget.currentTokens : 0,
+            maxContextTokens: typeof sanitizedMetadata.contextBudget.maxContextTokens === 'number'
+              ? sanitizedMetadata.contextBudget.maxContextTokens
+              : 0,
+            usagePercent: typeof sanitizedMetadata.contextBudget.usagePercent === 'number' ? sanitizedMetadata.contextBudget.usagePercent : 0,
+            systemTokens: typeof sanitizedMetadata.contextBudget.systemTokens === 'number' ? sanitizedMetadata.contextBudget.systemTokens : 0,
+            baseSystemTokens: typeof sanitizedMetadata.contextBudget.baseSystemTokens === 'number' ? sanitizedMetadata.contextBudget.baseSystemTokens : 0,
+            instructionTokens: typeof sanitizedMetadata.contextBudget.instructionTokens === 'number' ? sanitizedMetadata.contextBudget.instructionTokens : 0,
+            skillTokens: typeof sanitizedMetadata.contextBudget.skillTokens === 'number' ? sanitizedMetadata.contextBudget.skillTokens : 0,
+            toolsTokens: typeof sanitizedMetadata.contextBudget.toolsTokens === 'number' ? sanitizedMetadata.contextBudget.toolsTokens : 0,
+            toolSourceTokens,
+            messagesTokens: typeof sanitizedMetadata.contextBudget.messagesTokens === 'number' ? sanitizedMetadata.contextBudget.messagesTokens : 0,
+            toolResultsTokens: typeof sanitizedMetadata.contextBudget.toolResultsTokens === 'number' ? sanitizedMetadata.contextBudget.toolResultsTokens : 0,
+            messageCount: typeof sanitizedMetadata.contextBudget.messageCount === 'number' ? sanitizedMetadata.contextBudget.messageCount : 0,
+          }
+        : undefined,
+      toolCallingIteration: typeof sanitizedMetadata.toolCallingIteration === 'number' ? sanitizedMetadata.toolCallingIteration : 0,
+    };
+  }
+
+  private normalizeRuntimeAuxiliary(raw: any): HostSessionRuntimeAuxiliary | undefined {
+    const record = raw && typeof raw === 'object' ? raw : {};
+    return cloneHostSessionRuntimeAuxiliary(record.auxiliary ?? {
+      requestContext: record.metadata?.requestContext,
+      activeSkillNames: record.metadata?.activeSkillNames,
+    });
+  }
+
+  private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
+    return this.options.resolveModeById
+      ? { resolveModeById: this.options.resolveModeById }
+      : undefined;
+  }
+
+  private hasFs(): boolean {
+    return typeof window !== 'undefined' && !!AilyHost.get().fs;
+  }
+
+  private fileExists(path: string): boolean {
+    try {
+      return AilyHost.get().fs.existsSync(path);
+    } catch {
+      return false;
+    }
+  }
+
+  private readFileSync(path: string): string {
+    return AilyHost.get().fs.readFileSync(path, 'utf-8');
+  }
+
+  private writeFileSync(path: string, content: string): void {
+    AilyHost.get().fs.writeFileSync(path, content, 'utf-8');
+  }
+
+  private ensureDir(dirPath: string): void {
+    if (!this.fileExists(dirPath)) {
+      AilyHost.get().fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+}

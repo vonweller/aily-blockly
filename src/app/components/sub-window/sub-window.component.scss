@@ -38,8 +38,13 @@
   padding-left: 10px;
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-grow: 1;
   -webkit-app-region: drag;
+
+  .title-text {
+    min-width: 0;
+  }
 }
 
 .win-btns {

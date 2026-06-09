@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild } from '@angular/core';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -11,12 +11,36 @@ import { ConfigService } from '../../services/config.service';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NpmService } from '../../services/npm.service';
 import { NzTagModule } from 'ng-zorro-antd/tag';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { UiService } from '../../services/ui.service';
 import { PlatformService } from '../../services/platform.service';
 import { CloudService } from '../../tools/cloud-space/services/cloud.service';
 import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { AilyCodeProjectService } from '../../services/aily-code-project.service';
+import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
+import type { CoderFramework } from '../../pages/project-new/project-new.component';
+import {
+  getCoderFrameworkOptions,
+  resolveCoderFrameworkOption,
+  resolveDefaultCoderFramework,
+} from '../../utils/coder-board.mapper';
+
+export type ProjectCreationCategory = 'blockly' | 'coder';
+
+export function resolveInitialProjectCategory(
+  explicitCategory: unknown,
+  preferredCategory: unknown,
+  fallbackCategory: ProjectCreationCategory = 'blockly',
+): ProjectCreationCategory {
+  if (explicitCategory === 'blockly' || explicitCategory === 'coder') {
+    return explicitCategory;
+  }
+  if (preferredCategory === 'blockly' || preferredCategory === 'coder') {
+    return preferredCategory;
+  }
+  return fallbackCategory;
+}
 
 @Component({
   selector: 'app-project-new',
@@ -35,6 +59,8 @@ import { NzMessageService } from 'ng-zorro-antd/message';
   styleUrl: './project-new.component.scss',
 })
 export class ProjectNewComponent {
+  @ViewChild('boardSearchInput') boardSearchInput?: ElementRef<HTMLInputElement>;
+
   currentStep = 0;
 
   myTemplateList: CloudProjectTemplate[] = [];
@@ -58,11 +84,57 @@ export class ProjectNewComponent {
   keyword = '';
   tagList = ['Arduino', 'ESP32', 'WiFiduino', 'XIAO', 'Seeed', 'OpenJumper', 'seekfree', 'keyesrobot', 'emakefun', 'Raspberry Pi'];
   _boardList: any[] = [];
+  /** Blockly 模式开发板源（boards.json） */
+  private _blocklyBoardList: any[] = [];
+  /** Coder 模式开发板源（coder_board_index.json） */
+  private _coderBoardList: any[] = [];
   boardList: any[] = [];
   tagListRandom;
 
+  /** 基本设定页：Blockly 图形化 / Coder 代码编辑 */
+  selectedProjectCategory: ProjectCreationCategory = 'blockly';
+
+  /** Coder 新建：当前开发板可选的 framework（来自 frameworkPlatforms） */
+  selectedCoderPlatform: CoderFramework = '';
+
+  get coderPlatformOptions(): { value: string; label: string }[] {
+    if (this.selectedProjectCategory !== 'coder' || !this.currentBoard) {
+      return [];
+    }
+    return getCoderFrameworkOptions(this.currentBoard).map((option) => ({
+      value: option.value,
+      label: this.getCoderFrameworkLabel(option.value),
+    }));
+  }
+
+  /** 用户是否手动修改过项目名；未修改时随类别切换自动推荐名称 */
+  private isProjectNameManuallyEdited = false;
+  /** 程序写入推荐名时跳过 ngModelChange 的手动编辑标记 */
+  private isApplyingRecommendedName = false;
+
+  /** 向导第三步：Blockly 脚手架与 Aily Code 骨架共用 loading UI，用这个区分文案 */
+  creatingMode: 'blockly' | 'aily' | null = null;
+
+  private initDataCleanup: (() => void) | null = null;
+
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
+  }
+
+  get searchShortcutHint(): string {
+    return this.platformService.isMac() ? '⌘K' : 'Ctrl+K';
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onGlobalKeydown(event: KeyboardEvent): void {
+    if (this.currentStep !== 0) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      this.boardSearchInput?.nativeElement?.focus();
+      this.boardSearchInput?.nativeElement?.select();
+    }
   }
 
   constructor(
@@ -74,7 +146,9 @@ export class ProjectNewComponent {
     private platformService: PlatformService,
     private cloudService: CloudService,
     private cd: ChangeDetectorRef,
-    private message: NzMessageService
+    private message: NzMessageService,
+    private ailyCodeProject: AilyCodeProjectService,
+    private translate: TranslateService
   ) { }
 
   get selectedTemplate(): CloudProjectTemplate | null {
@@ -95,17 +169,141 @@ export class ProjectNewComponent {
       this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
     await this.configService.init();
-    this._boardList = this.process(this.configService.boardList);
-    this.boardList = JSON.parse(JSON.stringify(this._boardList));
-    this.currentBoard = this.boardList[0];
+    this._blocklyBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.boardList)
+    );
+    this._coderBoardList = this.configService.sortBoardsByUsage(
+      this.process(this.configService.getCoderBoardList())
+    );
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      undefined,
+      this.configService.getPreferredChatAgentRuntimeMode(),
+    );
+    this.syncActiveBoardList();
 
     // 随机提取前五个
     this.tagListRandom = this.tagList.sort(() => Math.random() - 0.5).slice(0, 5);
 
-    this.newProjectData.board.nickname = this.currentBoard.nickname;
-    this.newProjectData.board.name = this.currentBoard.name;
-    this.newProjectData.board.version = this.currentBoard.version;
-    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, 'project_');
+    // macOS：默认 Documents 路径无非法字符，仍统一跑一遍以保持与向导内「选择文件夹」一致
+    this.checkPathInvalidChars();
+    this.applyRecommendedProjectName();
+
+    // 子窗口：从菜单「新建 Aily Code 项目」传入 category=coder
+    if (this.electronService.isElectron && window['subWindow']?.onInitData) {
+      this.initDataCleanup = window['subWindow'].onInitData((payload: { data?: { category?: string } }) => {
+        if (payload?.data?.category === 'coder') {
+          this.selectedProjectCategory = 'coder';
+          this.syncActiveBoardList();
+          this.applyRecommendedProjectName();
+          this.refreshBoardListForCurrentFilters();
+        }
+      });
+    }
+
+    this.refreshBoardListForCurrentFilters();
+  }
+
+  ngOnDestroy(): void {
+    this.initDataCleanup?.();
+  }
+
+  /** 按类别生成推荐项目名：Blockly → project_xxx，Coder → project_coder_xxx */
+  private applyRecommendedProjectName(): void {
+    if (this.isProjectNameManuallyEdited) {
+      return;
+    }
+    const prefix = this.selectedProjectCategory === 'coder' ? 'project_coder_' : 'project_';
+    this.isApplyingRecommendedName = true;
+    this.newProjectData.name = this.projectService.generateUniqueProjectName(this.newProjectData.path, prefix);
+    this.isApplyingRecommendedName = false;
+    this.checkPathIsExist();
+  }
+
+  /** 项目名称输入变更：标记为手动编辑并校验路径 */
+  onProjectNameChange(): void {
+    if (!this.isApplyingRecommendedName) {
+      this.isProjectNameManuallyEdited = true;
+    }
+    this.checkPathIsExist();
+  }
+
+  /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
+  selectProjectCategory(category: ProjectCreationCategory): void {
+    if (this.selectedProjectCategory === category) {
+      return;
+    }
+    this.selectedProjectCategory = category;
+    if (category === 'coder') {
+      this.selectedTemplateName = '';
+      this.myTemplateList = [];
+    }
+    this.applyRecommendedProjectName();
+    this.syncActiveBoardList();
+    this.refreshBoardListForCurrentFilters();
+  }
+
+  /** 根据当前项目类别切换开发板数据源 */
+  private syncActiveBoardList(): void {
+    this._boardList = this.selectedProjectCategory === 'coder'
+      ? this._coderBoardList
+      : this._blocklyBoardList;
+  }
+
+  /** Coder 模式下隐藏尚未支持的开发板（state=todo） */
+  private filterBoardsForCategory(list: any[]): any[] {
+    if (this.selectedProjectCategory !== 'coder') {
+      return list;
+    }
+    return list.filter(board => board.state !== 'todo');
+  }
+
+  getCoderFrameworkLabel(framework: string): string {
+    const key = `PROJECT_NEW.FORM.PLATFORM_${framework.toUpperCase().replace(/-/g, '_')}`;
+    const translated = this.translate.instant(key);
+    return translated !== key ? translated : framework;
+  }
+
+  private syncCoderPlatformSelection(boardInfo: any): void {
+    const defaultFramework = resolveDefaultCoderFramework(boardInfo);
+    const options = getCoderFrameworkOptions(boardInfo);
+    if (!options.some((option) => option.value === this.selectedCoderPlatform)) {
+      this.selectedCoderPlatform = defaultFramework;
+    }
+  }
+
+  private refreshBoardListForCurrentFilters(): void {
+    if (this.keyword) {
+      this.search(this.keyword);
+      return;
+    }
+
+    this.boardList = this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)));
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
+    }
+    this.cd.detectChanges();
+  }
+
+  /** 在首个逗号处拆成两行展示项目类型描述（换行时不保留逗号） */
+  splitCategoryDesc(text: string): string[] {
+    const commaIndex = text.search(/[,，,\u060C、]/);
+    if (commaIndex < 0) {
+      return [text];
+    }
+    const head = text.slice(0, commaIndex).trimEnd();
+    const tail = text.slice(commaIndex + 1).trimStart();
+    return tail ? [head, tail] : [head];
+  }
+
+  /** 根据顶部所选类别创建对应类型项目 */
+  async onCreateProject(): Promise<void> {
+    if (this.selectedProjectCategory === 'coder') {
+      await this.createAilyCodeProject();
+      return;
+    }
+    await this.createProject();
   }
 
   process(array) {
@@ -121,9 +319,16 @@ export class ProjectNewComponent {
   search(keyword = this.keyword) {
     if (keyword) {
       keyword = keyword.replace(/\s/g, '').toLowerCase();
-      this.boardList = this._boardList.filter(item => item.fulltext.includes(keyword));
+      this.boardList = this.filterBoardsForCategory(
+        this._boardList.filter(item => item.fulltext.includes(keyword))
+      );
     } else {
-      this.boardList = JSON.parse(JSON.stringify(this._boardList));
+      this.boardList = this.filterBoardsForCategory(JSON.parse(JSON.stringify(this._boardList)));
+    }
+    if (this.boardList.length > 0) {
+      this.selectBoard(this.boardList[0]);
+    } else {
+      this.currentBoard = null;
     }
   }
 
@@ -133,10 +338,24 @@ export class ProjectNewComponent {
     this.newProjectData.board.name = boardInfo.name;
     this.newProjectData.board.nickname = boardInfo.nickname;
     this.newProjectData.board.version = boardInfo.version;
-    this.loadMyTemplates(boardInfo.name);
+    if (this.selectedProjectCategory === 'coder') {
+      this.syncCoderPlatformSelection(boardInfo);
+    }
+    if (this.selectedProjectCategory === 'blockly') {
+      this.loadMyTemplates(boardInfo.name);
+    } else {
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+    }
   }
 
   loadMyTemplates(boardName: string) {
+    if (this.selectedProjectCategory !== 'blockly') {
+      this.myTemplateList = [];
+      this.selectedTemplateName = '';
+      this.isLoadingTemplates = false;
+      return;
+    }
     this.myTemplateList = [];
     this.selectedTemplateName = '';
     if (!boardName?.trim()) {
@@ -184,7 +403,19 @@ export class ProjectNewComponent {
     if (folderPath.slice(-1) !== pt) {
       this.newProjectData.path = folderPath + pt;
     }
-    // 在这里对返回的 folderPath 进行后续处理
+    this.checkPathInvalidChars();
+  }
+
+  /** macOS 下父路径非法字符（与主窗口 ProjectNewComponent 对齐） */
+  showIsPathPassed = false;
+  checkPathInvalidChars(): boolean {
+    if (!this.platformService.isMac()) {
+      this.showIsPathPassed = false;
+      return false;
+    }
+    const invalidChars = /[\s\0:\\*?^$!#%&()=+`~'"<>|\n\r]/;
+    this.showIsPathPassed = invalidChars.test(this.newProjectData.path);
+    return this.showIsPathPassed;
   }
 
   // 检查项目名称是否存在
@@ -198,6 +429,7 @@ export class ProjectNewComponent {
     } else {
       this.showIsExist = false;
     }
+    this.checkPathInvalidChars();
     return isExist;
   }
 
@@ -206,7 +438,14 @@ export class ProjectNewComponent {
     if (await this.checkPathIsExist()) {
       return;
     }
+    if (this.checkPathInvalidChars()) {
+      return;
+    }
+    this.creatingMode = 'blockly';
     this.currentStep = 2;
+
+    // 与主窗口一致：记录开发板使用频率
+    this.configService.recordBoardUsage(this.newProjectData.board.name);
 
     let success = false;
     let extractPath = '';
@@ -238,6 +477,75 @@ export class ProjectNewComponent {
     }
 
     this.currentStep = 1;
+    this.creatingMode = null;
+  }
+
+  /** 向导里收集的开发板信息写入 Aily Code 的 project.aci.target */
+  private buildAilyWizardTarget(): NonNullable<AilyCodeNewProjectData['wizardTarget']> {
+    const framework = this.selectedCoderPlatform
+      || this.currentBoard?.defaultFramework
+      || 'arduino';
+    const platformOption = resolveCoderFrameworkOption(this.currentBoard, framework);
+    return {
+      boardPkgName: this.newProjectData.board.name,
+      targetBoardId: platformOption?.boardId || this.currentBoard?.boardId || '',
+      boardNickname: this.newProjectData.board.nickname,
+      boardPkgVersion: this.newProjectData.board.version,
+      framework,
+      platform: platformOption?.platform || this.currentBoard?.defaultPlatform || '',
+    };
+  }
+
+  /**
+   * 子窗口里创建 Aily Code 骨架并通过 IPC 让主窗口打开工程（与 Blockly 完成创建的路径一致）。
+   */
+  async createAilyCodeProject(): Promise<void> {
+    if (await this.checkPathIsExist()) {
+      return;
+    }
+    if (this.checkPathInvalidChars()) {
+      return;
+    }
+
+    this.configService.recordBoardUsage(this.newProjectData.board.name);
+    this.creatingMode = 'aily';
+    this.currentStep = 2;
+
+    const resultRef = await this.ailyCodeProject.projectNew({
+      name: String(this.newProjectData.name ?? '').trim(),
+      path: String(this.newProjectData.path ?? '').trim(),
+      wizardTarget: this.buildAilyWizardTarget()
+    });
+
+    if (!resultRef.ok) {
+      const map: Record<string, string> = {
+        NAME_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_NAME_EMPTY',
+        PATH_EMPTY: 'AILYCODE_NEW_DIALOG.WARN_PATH_EMPTY',
+        PATH_EXISTS: 'AILYCODE_NEW_DIALOG.ERR_PATH_EXISTS'
+      };
+      const key = map[resultRef.error ?? ''] || 'AILYCODE_NEW_DIALOG.ERR_CREATE_FAILED';
+      this.message.error(this.translate.instant(key));
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    this.message.success(this.translate.instant('AILYCODE_NEW_DIALOG.SUCCESS'));
+
+    const projectPath = resultRef.projectPath;
+    if (!projectPath) {
+      this.currentStep = 1;
+      this.creatingMode = null;
+      return;
+    }
+
+    this.uiService.updateFooterState({
+      state: 'done',
+      text: this.translate.instant('PROJECT.PROJECT_CREATED'),
+    });
+
+    await window['iWindow'].send({ to: 'main', data: { action: 'open-project', path: projectPath } });
+    this.uiService.closeWindow();
   }
 
   private async findSelectedTemplateProject(): Promise<any> {

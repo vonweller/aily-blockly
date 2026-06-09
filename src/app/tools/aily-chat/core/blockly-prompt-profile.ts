@@ -1,0 +1,149 @@
+/*---------------------------------------------------------------------------------------------
+ *  Blockly Prompt Profile — host-specific prompt sections for aily-blockly.
+ *
+ *  This profile is defined in aily-blockly (not aily-lex) to follow the core
+ *  principle: "lex is an agent runtime, not a repository for IDE domain knowledge."
+ *
+ *  When blockly tools/features change, only this file needs to be updated —
+ *  no aily-lex release is required.
+ *
+ *  Usage:
+ *    import { BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
+ *
+ *    const agent = new lex.AilyLexAgent({
+ *      host: adapter,
+ *      endpoint,
+ *      model: modelConfig,
+ *      promptProfile: BLOCKLY_PROMPT_PROFILE,
+ *    });
+ *--------------------------------------------------------------------------------------------*/
+
+import type { IPromptProfile, IPromptSection } from 'aily-lex/types/prompt';
+import { PromptLayer } from 'aily-lex/types/prompt';
+import { AilyHost } from './host';
+import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-service';
+import {
+  appendStandardPromptEnv,
+  collectRuntimePromptFileContext,
+  createHardwareSafetySection,
+  createSkillCommandSection,
+  createSkillsListingSection,
+} from './runtime-prompt-shared';
+
+export const BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT = {
+  scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
+  strict: true,
+  hydrateBeforeFirstModelCall: true,
+} as const;
+
+const BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS = {
+  maxLibraries: 24,
+  maxReadmeRefs: 16,
+  maxLibrariesWithoutReadme: 16,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Identity Override — aily-blockly specific
+// ---------------------------------------------------------------------------
+
+const BLOCKLY_IDENTITY_SECTION: IPromptSection = {
+  id: 'blockly-identity',
+  layer: PromptLayer.Identity,
+  priority: 200, // higher than built-in identity (100), appears first
+  cacheable: true,
+  tag: 'agentIdentity',
+  getContent: () => BLOCKLY_IDENTITY_PROMPT,
+};
+
+const BLOCKLY_IDENTITY_PROMPT = `You are an interactive AI assistant specializing in aily blockly development, and your name is Aily.
+You can assist users with various embedded software engineering tasks, including project analysis, development board selection, library management, code generation with blockly, and library conversion.
+You are knowledgeable about microcontrollers (ESP32, Arduino, STM32), sensors, actuators, electronic circuits, and the ABS hardware control syntax.`;
+
+// ---------------------------------------------------------------------------
+// Domain Knowledge — blockly/hardware specific
+// ---------------------------------------------------------------------------
+
+const BLOCKLY_DOMAIN_SECTION: IPromptSection = {
+  id: 'blockly-domain',
+  layer: PromptLayer.HostDomain,
+  priority: 100,
+  cacheable: true,
+  tag: 'domain',
+  getContent: () => BLOCKLY_DOMAIN_PROMPT,
+};
+
+const BLOCKLY_DOMAIN_PROMPT = `You are working inside Aily Blockly, a visual block programming IDE for embedded systems.
+
+Key concepts:
+- **ABS (Aily Block Syntax)**: A domain-specific language that compiles to Arduino C++ code. Users build programs by connecting visual blocks.
+- **Projects**: Each project targets a specific development board and contains an ABS workspace, libraries, and build configuration.
+- **Libraries**: Reusable component packages that extend blockly with new blocks for sensors, actuators, and communication modules.
+- **Development Boards**: ESP32, Arduino Uno/Mega/Nano, STM32, and other MCU boards with specific pin mappings and capabilities.
+- **Build Pipeline**: ABS workspace → ABS transpiler → Arduino C++ → Compiler → Firmware binary → Flash to board.
+
+When helping users:
+- Prefer ABS block-based solutions over raw C++ code unless explicitly asked for code.
+- Always consider the target board's pin constraints and peripheral availability.
+- Validate library compatibility with the selected board before recommending them.
+- For hardware-related changes (flashing firmware, changing pin configurations), confirm with the user first.
+
+Reading & editing the program:
+- The ABS source file is at \`{projectPath}/project.abs\` — use \`read_file\` to read it directly.
+- The generated C++ is at \`{projectPath}/.temp/sketch/sketch.ino\` — use \`read_file\` to inspect generated code.
+- To modify the program: use \`syncAbs action="export"\` to sync workspace → .abs file, then \`read_file\` / \`edit_file\` on project.abs, then \`syncAbs action="import"\` to apply changes back to the workspace.
+- Use \`lint\` to check the generated C++ for syntax errors (fast, ast-grep based — like a quick compile check).
+- Use \`analyzeLibrary\` to inspect what blocks a library provides.
+
+Tool usage efficiency:
+- The environment section above already contains the project path, board, installed library list, and available readme_ai.md paths. Do NOT call any tool just to obtain this basic information.
+- Do not re-fetch information you already obtained in a previous turn. Summarize key findings at the end of each response to preserve context across turns.`;
+
+// ---------------------------------------------------------------------------
+// Hardware Safety — blockly-specific safety rules
+// ---------------------------------------------------------------------------
+
+const BLOCKLY_HARDWARE_SAFETY_PROMPT = `When working with hardware:
+- Always confirm before flashing firmware to a connected board.
+- Warn users about potential pin conflicts (e.g., using a pin for both I2C and GPIO).
+- Verify power supply requirements before recommending external components.
+- Be cautious with motor drivers, high-power components, and battery circuits — incorrect wiring can damage hardware.
+- When generating ABS blocks that control actuators, default to safe initial values (e.g., motors at 0 speed).`;
+const BLOCKLY_HARDWARE_SAFETY_SECTION = createHardwareSafetySection('blockly-hardware-safety', BLOCKLY_HARDWARE_SAFETY_PROMPT);
+const BLOCKLY_SKILL_COMMAND_SECTION = createSkillCommandSection('blockly-skill-command');
+const BLOCKLY_SKILLS_LISTING_SECTION = createSkillsListingSection('blockly-skills-listing');
+
+// ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
+  hostId: 'blockly',
+  requiredContext: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT,
+  sections: [
+    BLOCKLY_IDENTITY_SECTION,
+    BLOCKLY_DOMAIN_SECTION,
+    BLOCKLY_HARDWARE_SAFETY_SECTION,
+    BLOCKLY_SKILL_COMMAND_SECTION,
+    BLOCKLY_SKILLS_LISTING_SECTION,
+  ],
+  cacheBreakpoint: PromptLayer.HostDomain,
+  getContext: async () => {
+    const host = AilyHost.get();
+    const contextSnapshotService = getBlocklyContextSnapshotService();
+    const envExtra = [...await contextSnapshotService.getSummary({
+      scopes: BLOCKLY_MAIN_AGENT_REQUIRED_CONTEXT.scopes,
+      reason: 'main-agent-prompt',
+      summaryOptions: BLOCKLY_MAIN_AGENT_SUMMARY_OPTIONS,
+    })];
+    const fileContext = collectRuntimePromptFileContext(host, ['project.abs', '.temp/sketch/sketch.ino']);
+    const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
+
+    return {
+      platform: platformType,
+      sessionDate: new Date().toLocaleDateString(),
+      envExtra,
+      activeFilePath: fileContext.activeFilePath,
+      filePaths: fileContext.filePaths,
+    };
+  },
+};

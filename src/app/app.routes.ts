@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { AILY_CHAT_RUNTIME_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 
 export const routes: Routes = [
     {
@@ -49,6 +50,10 @@ export const routes: Routes = [
             {
                 path: 'code-editor',
                 loadComponent: () => import('./editors/code-editor/code-editor.component').then(m => m.CodeEditorComponent)
+            },
+            {
+                path: 'code-editor-pro',
+                loadComponent: () => import('./editors/code-editor-pro/code-editor-pro.component').then(m => m.CodeEditorProComponent)
             }
         ]
     },
@@ -111,6 +116,7 @@ export const routes: Routes = [
     },
     {
         path: "aily-chat",
+        providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
     },
     {

@@ -284,6 +284,13 @@
         "WARNINGS": {
             "BETA_VERSION": "النسخة التجريبية، غير مؤكدة، استخدم بحذر",
             "TODO": "دعم هذا الجهاز قادم قريباً"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "نوع المشروع",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "برمجة مرئية، تطوير سريع بسحب وإفلات الكتل",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "تحرير الأكواد، تجربة تطوير احترافية للأنظمة المدمجة"
         }
     },
     "LIB_MANAGER": {
@@ -395,6 +402,58 @@
         "IMAGE_UPLOAD_FAILED": "فشل رفع الصورة، يرجى المحاولة مرة أخرى",
         "ATTACH_HINT": "إرفاق الملفات عن طريق السحب والإفلات أو اللصق أو",
         "SELECT_FILE": "اختيار الملفات"
+    },
+    "AILY_CHAT": {
+        "TITLE": "مساعد الذكاء الاصطناعي",
+        "SETTINGS": "إعدادات الذكاء الاصطناعي",
+        "HISTORY": "سجل المحادثة",
+        "NEW_CHAT": "محادثة جديدة",
+        "SERVICE_TITLE": "ai assistant service",
+        "DISCLAIMER": "ردود الذكاء الاصطناعي للمرجعية فقط وقد لا تكون دقيقة. لا تمثل آراء مطوري البرامج. يجب على المستخدمين التحقق من المعلومات بأنفسهم.",
+        "USAGE_GUIDE": "تعرف على استخدام الذكاء الاصطناعي",
+        "ADD_CONTEXT": "إضافة سياق",
+        "ADD_FILE": "إضافة ملف",
+        "ADD_FOLDER": "إضافة مجلد",
+        "ADD_WEBSITE": "إضافة موقع ويب",
+        "MODE_AGENT": "وكيل",
+        "MODE_QA": "سؤال وجواب",
+        "SEND": "إرسال",
+        "STOP": "إيقاف",
+        "TOKEN_CONTEXT_WINDOW": "Context window",
+        "TOKEN_SECTION_SYSTEM": "System",
+        "TOKEN_SECTION_USER_CONTEXT": "User context",
+        "TOKEN_SYSTEM_INSTRUCTIONS": "System instructions",
+        "TOKEN_TOOL_DEFINITIONS": "Tool definitions",
+        "TOKEN_FILES": "Files",
+        "TOKEN_MESSAGES": "Messages",
+        "TOKEN_TOOL_RESULTS": "Tool results",
+        "TOKEN_COMPACT_CHAT": "Compress conversation",
+        "TOKEN_COMPACTING": "Compressing…",
+        "MODE_AGENT_FULL": "وضع الوكيل",
+        "MODE_QA_FULL": "وضع سؤال وجواب",
+        "MODE_EDIT_FULL": "وضع التحرير",
+        "STOP_CURRENT_SESSION_FIRST": "يرجى إيقاف الجلسة الحالية أولاً قبل إنشاء جلسة جديدة",
+        "NO_HISTORY_SESSION": "لا توجد سجلات جلسات سابقة",
+        "MERMAID_SAVE_ARCH": "حفظ كرسم بياني للهيكل",
+        "MERMAID_ARCH_OVERWRITE_TITLE": "تأكيد الاستبدال",
+        "MERMAID_ARCH_OVERWRITE_CONTENT": "يوجد ملف الرسم البياني للهيكل بالفعل في مجلد المشروع. هل تريد الاستبدال؟",
+        "MERMAID_ARCH_CONFIRM": "تأكيد",
+        "MERMAID_ARCH_CANCEL": "إلغاء",
+        "MERMAID_COPY_FAILED": "فشل النسخ",
+        "MERMAID_SAVE_FAILED": "فشل الحفظ",
+        "CLICK_TO_EDIT": "انقر للتعديل",
+        "USER_FEEDBACK_NOTIFY_TITLE": "مساعد الذكاء الاصطناعي يحتاج إلى تعاملك",
+        "USER_FEEDBACK_NOTIFY_BODY": "مساعد الذكاء الاصطناعي ينتظر إجراءً منك. افتح المحادثة وأكمل التأكيد أو الإجابة أو الخطوة الموضحة على الشاشة.",
+        "ONBOARDING": {
+            "STEP1_TITLE": "مربع الإدخال",
+            "STEP1_DESC": "اكتب هنا أسئلتك أو المهام التي تحتاج مساعدة الذكاء الاصطناعي فيها. اضغط Enter للإرسال، Ctrl+Enter لسطر جديد",
+            "STEP2_TITLE": "إضافة سياق",
+            "STEP2_DESC": "انقر هنا لإضافة ملفات أو مجلدات كسياق لمساعدة الذكاء الاصطناعي على فهم احتياجاتك بشكل أفضل",
+            "STEP3_TITLE": "تبديل الوضع",
+            "STEP3_DESC": "وضع الوكيل يمكنه تنفيذ المهام تلقائياً (كتابة الكود، إصلاح الأخطاء). وضع سؤال وجواب يجيب على الأسئلة فقط",
+            "STEP4_TITLE": "إرسال/إيقاف",
+            "STEP4_DESC": "انقر لإرسال الرسالة، أو الإيقاف عندما يستجيب الذكاء الاصطناعي"
+        }
     },
     "PROJECT_SETTING_DIALOG": {
         "TITLE": "إعدادات المشروع",
@@ -637,7 +696,24 @@
     },
     "NOTIFICATION": {
         "STOP": "إيقاف",
+        "RETRY": "إعادة المحاولة",
         "VIEW_DETAIL": "عرض التفاصيل",
         "AI_PROCESS": "معالجة AI"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "مشروع Aily Code جديد",
+        "HINT": "إنشاء هيكل مشروع Aily Code في المجلد المختار (مستقل عن مشاريع Blockly).",
+        "NAME": "اسم المشروع",
+        "NAME_PLACEHOLDER": "أدخل اسم المشروع",
+        "PATH": "مسار الحفظ",
+        "CREATE": "إنشاء",
+        "CREATING": "جارٍ الإنشاء...",
+        "CANCEL": "إلغاء",
+        "SUCCESS": "تم إنشاء مشروع Aily Code",
+        "WARN_NAME_EMPTY": "يرجى إدخال اسم المشروع",
+        "WARN_PATH_EMPTY": "يرجى اختيار مسار الحفظ",
+        "ERR_PATH_EXISTS": "مجلد بنفس الاسم موجود بالفعل",
+        "ERR_PATH_INVALID": "مسار الحفظ يحتوي على أحرف غير صالحة",
+        "ERR_CREATE_FAILED": "فشل إنشاء المشروع. يرجى المحاولة مرة أخرى."
     }
 }

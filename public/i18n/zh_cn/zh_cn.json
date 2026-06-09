@@ -2,6 +2,7 @@
     "MENU": {
         "MENU": "菜单",
         "PROJECT_NEW": "新建项目",
+        "PROJECT_NEW_AILY_CODE": "新建 Aily Code 项目",
         "PROJECT_OPEN": "打开项目",
         "RECENT_PROJECTS": "最近的项目",
         "RECENT_PROJECTS_EMPTY": "暂无最近打开的项目",
@@ -244,6 +245,10 @@
         "FIELDS": {
             "PROJECT_FOLDER": "项目文件夹",
             "LANGUAGE": "语言",
+            "DEVELOPMENT_MODE_PREFERENCE": "默认开发模式",
+            "DEVELOPMENT_MODE_AUTO": "自动判断",
+            "DEVELOPMENT_MODE_PROMPT_TITLE": "选择默认开发模式",
+            "DEVELOPMENT_MODE_PROMPT_DESC": "该选择会用于下次新建项目，并在未打开项目时决定 AI 助手默认进入 Blockly 或 Coder 模式。你也可以稍后在设置中修改。",
             "UI_THEME": "界面主题",
             "BLOCKLY_THEME": "Blockly主题",
             "BLOCKLY_MINIMAP": "Blockly缩略图",
@@ -294,12 +299,18 @@
             "READ_DOC": "文档",
             "ADD_BOARD": "添加开发板",
             "DEV": "dev",
+            "DEV_MODE": "开发模式",
+            "MODE_BLOCKLY": "Blockly",
+            "MODE_CODER": "Coder",
             "BY_BRAND": "按品牌",
             "BY_CORE": "按核心"
         },
         "FORM": {
             "DEVMODE": "开发框架",
             "BOARD": "开发板",
+            "PLATFORM": "硬件平台",
+            "PLATFORM_ARDUINO": "Arduino",
+            "PLATFORM_ESPIDF": "ESP-IDF",
             "TEMPLATE": "模板选择",
             "PROJECT_NAME": "项目名称",
             "SAVE_PATH": "保存路径",
@@ -312,7 +323,9 @@
             "NEXT": "下一步",
             "PREV": "上一步",
             "CREATE": "创建项目",
-            "CREATING": "正在创建"
+            "CREATING": "正在创建",
+            "CREATE_AILY_CODE": "创建 Aily Code 项目",
+            "CREATING_AILY_CODE": "正在创建 Aily Code 项目"
         },
         "TEMPLATES": {
             "TITLE": "我的模板",
@@ -324,6 +337,13 @@
         "WARNINGS": {
             "BETA_VERSION": "内测版本，未经验证，谨慎使用",
             "TODO": "该设备支持即将上线"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "项目类型",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "图形化编程，拖拽积木块快速开发",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "代码编辑，专业嵌入式开发体验"
         }
     },
     "LIB_MANAGER": {
@@ -409,6 +429,17 @@
         "SKIP_SAVE": "跳过保存",
         "SAVE_AND_CONTINUE": "保存并继续"
     },
+    "CHECKPOINT_RESTORE_DIALOG": {
+        "TITLE_SINGLE": "要撤销最近一次编辑吗？",
+        "TITLE_MULTIPLE": "要撤销 {{count}} 次编辑吗？",
+        "MESSAGE_LAST_SINGLE_FILE": "这会移除你最近一次请求，并撤销对 {{file}} 的编辑。要继续吗？",
+        "MESSAGE_MULTI_SINGLE_FILE": "这会移除此处之后的所有请求，并撤销对 {{file}} 的编辑。要继续吗？",
+        "MESSAGE_LAST_MULTI_FILE": "这会移除你最近一次请求，并撤销工作集中 {{count}} 个文件的编辑。要继续吗？",
+        "MESSAGE_MULTI_FILE": "这会移除此处之后的所有请求，并撤销工作集中 {{count}} 个文件的编辑。要继续吗？",
+        "MESSAGE_LAST_NO_FILE": "这会移除你最近一次请求，并将对话还原到该位置。要继续吗？",
+        "MESSAGE_MULTI_NO_FILE": "这会移除此处之后的所有请求，并将对话还原到该位置。要继续吗？",
+        "CONFIRM": "是"
+    },
     "FEEDBACK_DIALOG": {
         "TITLE": "用户反馈",
         "FEEDBACK_TYPE": "反馈类型",
@@ -441,6 +472,58 @@
         "IMAGE_UPLOAD_FAILED": "图片上传失败，请重试",
         "ATTACH_HINT": "拖放、粘贴或",
         "SELECT_FILE": "选择图片"
+    },
+    "AILY_CHAT": {
+        "TITLE": "AI助手",
+        "SETTINGS": "AI设置",
+        "HISTORY": "历史会话",
+        "NEW_CHAT": "新建会话",
+        "SERVICE_TITLE": "ai assistant service",
+        "DISCLAIMER": "AI的回复仅能作为参考，不一定正确，也不代表本软件开发者的意见，使用者需自行辨别",
+        "USAGE_GUIDE": "了解AI用法",
+        "ADD_CONTEXT": "添加上下文",
+        "ADD_FILE": "添加文件",
+        "ADD_FOLDER": "添加文件夹",
+        "ADD_WEBSITE": "添加网站",
+        "MODE_AGENT": "代理",
+        "MODE_QA": "问答",
+        "SEND": "发送",
+        "STOP": "停止",
+        "TOKEN_CONTEXT_WINDOW": "上下文窗口",
+        "TOKEN_SECTION_SYSTEM": "系统",
+        "TOKEN_SECTION_USER_CONTEXT": "用户上下文",
+        "TOKEN_SYSTEM_INSTRUCTIONS": "系统指令",
+        "TOKEN_TOOL_DEFINITIONS": "工具定义",
+        "TOKEN_FILES": "文件",
+        "TOKEN_MESSAGES": "消息",
+        "TOKEN_TOOL_RESULTS": "工具结果",
+        "TOKEN_COMPACT_CHAT": "压缩对话",
+        "TOKEN_COMPACTING": "压缩中…",
+        "MODE_AGENT_FULL": "代理模式",
+        "MODE_QA_FULL": "问答模式",
+        "MODE_EDIT_FULL": "编辑模式",
+        "STOP_CURRENT_SESSION_FIRST": "请先停止当前会话，再新建",
+        "NO_HISTORY_SESSION": "没有历史会话记录",
+        "MERMAID_SAVE_ARCH": "保存为框架图",
+        "MERMAID_ARCH_OVERWRITE_TITLE": "覆盖确认",
+        "MERMAID_ARCH_OVERWRITE_CONTENT": "项目目录下已存在框架图文件，是否覆盖？",
+        "MERMAID_ARCH_CONFIRM": "确认",
+        "MERMAID_ARCH_CANCEL": "取消",
+        "MERMAID_COPY_FAILED": "复制失败",
+        "MERMAID_SAVE_FAILED": "保存失败",
+        "CLICK_TO_EDIT": "点击编辑",
+        "USER_FEEDBACK_NOTIFY_TITLE": "AI 助手需要你的操作",
+        "USER_FEEDBACK_NOTIFY_BODY": "AI 助手有待您处理的操作，请打开对话并完成确认、作答或界面指示的后续步骤。",
+        "ONBOARDING": {
+            "STEP1_TITLE": "输入框",
+            "STEP1_DESC": "在这里输入你想问的问题或需要AI帮助完成的任务，按 Enter 发送，Ctrl+Enter 换行",
+            "STEP2_TITLE": "添加上下文",
+            "STEP2_DESC": "点击这里可以添加文件或文件夹作为上下文，帮助AI更好地理解你的需求",
+            "STEP3_TITLE": "模式切换",
+            "STEP3_DESC": "代理模式可以自动执行任务（如编写代码、修复错误），问答模式仅回答问题",
+            "STEP4_TITLE": "发送/停止",
+            "STEP4_DESC": "点击发送消息，AI正在回复时可点击停止"
+        }
     },
     "PROJECT_SETTING_DIALOG": {
         "TITLE": "项目设置",
@@ -707,7 +790,24 @@
     },
     "NOTIFICATION": {
         "STOP": "终止",
+        "RETRY": "重试",
         "VIEW_DETAIL": "查看详情",
         "AI_PROCESS": "AI处理"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "新建 Aily Code 项目",
+        "HINT": "在所选目录下生成符合 Aily Code 规范的项目骨架（与 Blockly 项目独立）。",
+        "NAME": "项目名",
+        "NAME_PLACEHOLDER": "请输入项目名",
+        "PATH": "保存路径",
+        "CREATE": "创建",
+        "CREATING": "创建中...",
+        "CANCEL": "取消",
+        "SUCCESS": "Aily Code 项目已创建",
+        "WARN_NAME_EMPTY": "请输入项目名",
+        "WARN_PATH_EMPTY": "请选择保存路径",
+        "ERR_PATH_EXISTS": "同名目录已存在，请更换项目名",
+        "ERR_PATH_INVALID": "保存路径包含非法字符",
+        "ERR_CREATE_FAILED": "创建失败，请稍后重试"
     }
 }

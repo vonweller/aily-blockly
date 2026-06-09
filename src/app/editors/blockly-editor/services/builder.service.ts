@@ -502,6 +502,39 @@ export class _BuilderService {
   }
 
   /**
+   * 从当前工作区生成并写入 sketch.ino 文件（不触发完整预编译）
+   * 在项目打开时调用，确保 sketch.ino 文件可供 AI 工具和代码预览读取
+   */
+  async generateAndWriteSketchIno(): Promise<void> {
+    try {
+      const workspace = this.blocklyService.workspace;
+      if (!workspace) return;
+
+      const code = arduinoGenerator.workspaceToCode(workspace);
+      if (!code) return;
+
+      const currentProjectPath = this.projectService.currentProjectPath;
+      if (!currentProjectPath) return;
+
+      const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
+      const sketchPath = this.electronService.pathJoin(tempPath, 'sketch');
+      const sketchFilePath = this.electronService.pathJoin(sketchPath, 'sketch.ino');
+
+      if (!window['path'].isExists(tempPath)) {
+        await this.crossPlatformCmdService.createDirectory(tempPath, true);
+      }
+      if (!window['path'].isExists(sketchPath)) {
+        await this.crossPlatformCmdService.createDirectory(sketchPath, true);
+      }
+
+      window['fs'].writeFileSync(sketchFilePath, code);
+      console.log('[Builder] sketch.ino 已自动生成:', sketchFilePath);
+    } catch (error) {
+      console.warn('[Builder] 自动生成 sketch.ino 失败:', error);
+    }
+  }
+
+  /**
    * 运行预编译脚本（同步等待完成）
    */
   private async runPreprocess(): Promise<void> {
@@ -940,7 +973,7 @@ export class _BuilderService {
           const boardName = boardModule.replace('@aily-project/board-', '');
           const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
 
-          // 更新配置文件中的 code（compile.js 会负责写入 sketch 文件）
+          // 更新配置文件中的 code（compile.js：Blockly 写入 sketch.ino；Aily Code 写入 project.aci.entry）
           let buildConfig: any = {};
           if (window['path'].isExists(configFilePath)) {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));

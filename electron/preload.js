@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getAppDataPath: () => process.env.AILY_APPDATA_PATH,
     getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
     getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
+    getAilyXpmPath: () => process.env.AILY_XPM_PATH,
+    getAilyXpmBinPath: () => process.env.AILY_XPM_BIN_PATH,
     getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
     isExists: (path) => existsSync(path),
     getElectronPath: () => {
@@ -56,6 +58,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     isMacOS: process.platform === "darwin",
     isLinux: process.platform === "linux",
     lang: process.env.AILY_SYSTEM_LANG || 'zh-CN'
+  },
+  /** 在访达 / 资源管理器中高亮真实路径（须为绝对路径） */
+  shell: {
+    showItemInFolder: (fullPath) => {
+      if (typeof fullPath !== "string" || !fullPath) {
+        return;
+      }
+      shell.showItemInFolder(fullPath);
+    },
   },
   terminal: {
     init: (data) => ipcRenderer.invoke("terminal-create", data),
@@ -166,6 +177,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     release: (projectPath) => ipcRenderer.invoke("project-lock-release", { projectPath }),
     focusProcess: (pid) => ipcRenderer.invoke("project-lock-focus", { pid }),
   },
+  coderEmbed: {
+    getBaseUrl: () => ipcRenderer.invoke("coder-embed-get-base-url"),
+  },
   subWindow: (() => {
     // 立即监听 window-init-data，缓存数据，避免 Angular 组件注册监听前数据丢失
     let _cachedInitData = null;
@@ -271,6 +285,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
     readDir: (path) => ipcRenderer.invoke("fs-readDir", path),
     mkdir: (path, options) => ipcRenderer.invoke("fs-mkdir", path, options),
     unlink: (path) => ipcRenderer.invoke("fs-unlink", path),
+    watch: (path, listener, options = {}) => {
+      const watcher = require("fs").watch(
+        path,
+        {
+          persistent: options?.persistent !== false,
+          recursive: options?.recursive === true,
+        },
+        (eventType, filename) => {
+          if (typeof listener === 'function') {
+            listener(eventType, typeof filename === 'string' ? filename : filename?.toString?.() ?? null);
+          }
+        },
+      );
+
+      return {
+        close: () => watcher.close(),
+      };
+    },
   },
   glob: {
     // 同步版本 - 通过 IPC 在主进程执行

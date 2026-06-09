@@ -6,6 +6,7 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
+import { AILY_CHAT_RUNTIME_PROVIDERS } from '../tools/aily-chat/aily-chat.providers';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
@@ -32,6 +33,7 @@ import { OnboardingComponent } from '../components/onboarding/onboarding.compone
 import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
+import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 
 @Component({
   selector: 'app-main-window',
@@ -60,10 +62,13 @@ import { isChildTool } from '../configs/tool.config';
     UserCenterComponent,
     ModelStoreComponent,
     OnboardingComponent,
-    TranslateModule
+    TranslateModule,
+    OnboardingComponent,
+    LibManagerToolComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
+  providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
 })
 export class MainWindowComponent {
   @ViewChild('logComponent') logComponent!: LogComponent;
@@ -95,6 +100,7 @@ export class MainWindowComponent {
   // 新手引导相关
   showOnboarding = false;
   onboardingConfig = null;
+  private developmentModePreferencePromptOpen = false;
 
   constructor(
     private uiService: UiService,
@@ -136,7 +142,7 @@ export class MainWindowComponent {
     });
 
     // 语言设置变化后，重新加载项目
-    window['ipcRenderer'].on('setting-changed', async (event, data) => {
+    window['ipcRenderer']?.on?.('setting-changed', async (event, data) => {
       await this.configService.load();
       if (data.action == 'language-changed' && this.router.url.includes('/main/blockly-editor')) {
         console.log('mainwindow setLanguage', data);
@@ -145,6 +151,59 @@ export class MainWindowComponent {
           this.projectService.projectOpen();
         }, 100);
       }
+    });
+
+    setTimeout(() => {
+      void this.promptDevelopmentModePreferenceIfNeeded();
+    }, 0);
+  }
+
+  private async promptDevelopmentModePreferenceIfNeeded(): Promise<void> {
+    if (this.developmentModePreferencePromptOpen) {
+      return;
+    }
+
+    if (!this.configService.data || Object.keys(this.configService.data).length === 0) {
+      await this.configService.init();
+    }
+
+    if (!this.configService.shouldPromptDevelopmentModePreference()) {
+      return;
+    }
+
+    this.developmentModePreferencePromptOpen = true;
+
+    let modalRef: any;
+    const selectPreference = async (preference: 'coder' | 'blockly') => {
+      await this.configService.setDevelopmentModePreference(preference, 'onboarding');
+      modalRef?.close(preference);
+    };
+
+    modalRef = this.modal.create({
+      nzTitle: this.translate.instant('SETTINGS.FIELDS.DEVELOPMENT_MODE_PROMPT_TITLE'),
+      nzContent: this.translate.instant('SETTINGS.FIELDS.DEVELOPMENT_MODE_PROMPT_DESC'),
+      nzClosable: true,
+      nzMaskClosable: false,
+      nzWidth: '420px',
+      nzClassName: 'development-mode-preference-modal',
+      nzFooter: [
+        {
+          label: this.translate.instant('PROJECT_NEW.BOARD.MODE_BLOCKLY'),
+          type: 'primary',
+          onClick: () => selectPreference('blockly'),
+        },
+        {
+          label: this.translate.instant('PROJECT_NEW.BOARD.MODE_CODER'),
+          onClick: () => selectPreference('coder'),
+        },
+      ],
+    });
+
+    modalRef.afterClose.subscribe(async (preference: 'coder' | 'blockly' | undefined) => {
+      if (preference !== 'coder' && preference !== 'blockly') {
+        await this.configService.markDevelopmentModePreferencePrompted();
+      }
+      this.developmentModePreferencePromptOpen = false;
     });
   }
 

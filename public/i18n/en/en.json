@@ -2,6 +2,7 @@
     "MENU": {
         "MENU": "Menu",
         "PROJECT_NEW": "New Project",
+        "PROJECT_NEW_AILY_CODE": "New Aily Code Project",
         "PROJECT_OPEN": "Open Project",
         "RECENT_PROJECTS": "Recent Projects",
         "RECENT_PROJECTS_EMPTY": "No recent projects",
@@ -250,6 +251,10 @@
         "FIELDS": {
             "PROJECT_FOLDER": "Project Folder",
             "LANGUAGE": "Language",
+            "DEVELOPMENT_MODE_PREFERENCE": "Default Dev Mode",
+            "DEVELOPMENT_MODE_AUTO": "Auto",
+            "DEVELOPMENT_MODE_PROMPT_TITLE": "Choose Default Dev Mode",
+            "DEVELOPMENT_MODE_PROMPT_DESC": "This choice is used for new projects and lets the AI assistant start directly in Blockly or Coder mode when no project is open. You can change it later in Settings.",
             "UI_THEME": "UI Theme",
             "BLOCKLY_THEME": "Blockly Theme",
             "BLOCKLY_MINIMAP": "Blockly Minimap",
@@ -299,12 +304,18 @@
             "READ_DOC": "Documentation",
             "ADD_BOARD": "Add Board",
             "DEV": "dev",
+            "DEV_MODE": "Dev Mode",
+            "MODE_BLOCKLY": "Blockly",
+            "MODE_CODER": "Coder",
             "BY_BRAND": "By Brand",
             "BY_CORE": "By Core"
         },
         "FORM": {
             "DEVMODE": "Development Framework",
             "BOARD": "Board",
+            "PLATFORM": "Hardware Platform",
+            "PLATFORM_ARDUINO": "Arduino",
+            "PLATFORM_ESPIDF": "ESP-IDF",
             "TEMPLATE": "Template",
             "PROJECT_NAME": "Project Name",
             "SAVE_PATH": "Save Path",
@@ -317,7 +328,9 @@
             "NEXT": "Next",
             "PREV": "Previous",
             "CREATE": "Create Project",
-            "CREATING": "Creating"
+            "CREATING": "Creating",
+            "CREATE_AILY_CODE": "Create Aily Code Project",
+            "CREATING_AILY_CODE": "Creating Aily Code Project"
         },
         "TEMPLATES": {
             "TITLE": "My Templates",
@@ -329,6 +342,13 @@
         "WARNINGS": {
             "BETA_VERSION": "Beta version, unverified, use with caution",
             "TODO": "Device support coming soon"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "Project Type",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "Visual programming, drag-and-drop blocks for rapid development",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "Code editing, professional embedded development experience"
         }
     },
     "LIB_MANAGER": {
@@ -414,6 +434,17 @@
         "SKIP_SAVE": "Skip Save",
         "SAVE_AND_CONTINUE": "Save and Continue"
     },
+    "CHECKPOINT_RESTORE_DIALOG": {
+        "TITLE_SINGLE": "Do you want to undo your last edit?",
+        "TITLE_MULTIPLE": "Do you want to undo {{count}} edits?",
+        "MESSAGE_LAST_SINGLE_FILE": "This will remove your last request and undo the edits made to {{file}}. Do you want to proceed?",
+        "MESSAGE_MULTI_SINGLE_FILE": "This will remove all subsequent requests and undo edits made to {{file}}. Do you want to proceed?",
+        "MESSAGE_LAST_MULTI_FILE": "This will remove your last request and undo edits made to {{count}} files in your working set. Do you want to proceed?",
+        "MESSAGE_MULTI_FILE": "This will remove all subsequent requests and undo edits made to {{count}} files in your working set. Do you want to proceed?",
+        "MESSAGE_LAST_NO_FILE": "This will remove your last request and restore the chat to that point. Do you want to proceed?",
+        "MESSAGE_MULTI_NO_FILE": "This will remove all subsequent requests and restore the chat to that point. Do you want to proceed?",
+        "CONFIRM": "Yes"
+    },
     "FEEDBACK_DIALOG": {
         "TITLE": "User Feedback",
         "FEEDBACK_TYPE": "Feedback Type",
@@ -446,6 +477,58 @@
         "IMAGE_UPLOAD_FAILED": "Image upload failed, please try again",
         "ATTACH_HINT": "Attach files by dragging & dropping, pasting, or",
         "SELECT_FILE": "select files"
+    },
+    "AILY_CHAT": {
+        "TITLE": "AI Assistant",
+        "SETTINGS": "AI Settings",
+        "HISTORY": "Chat History",
+        "NEW_CHAT": "New Chat",
+        "SERVICE_TITLE": "ai assistant service",
+        "DISCLAIMER": "AI responses are for reference only and may not be accurate. They do not represent the views of the software developers. Users should verify the information themselves.",
+        "USAGE_GUIDE": "Learn AI Usage",
+        "ADD_CONTEXT": "Add Context",
+        "ADD_FILE": "Add File",
+        "ADD_FOLDER": "Add Folder",
+        "ADD_WEBSITE": "Add Website",
+        "MODE_AGENT": "Agent",
+        "MODE_QA": "Q&A",
+        "SEND": "Send",
+        "STOP": "Stop",
+        "TOKEN_CONTEXT_WINDOW": "Context window",
+        "TOKEN_SECTION_SYSTEM": "System",
+        "TOKEN_SECTION_USER_CONTEXT": "User context",
+        "TOKEN_SYSTEM_INSTRUCTIONS": "System instructions",
+        "TOKEN_TOOL_DEFINITIONS": "Tool definitions",
+        "TOKEN_FILES": "Files",
+        "TOKEN_MESSAGES": "Messages",
+        "TOKEN_TOOL_RESULTS": "Tool results",
+        "TOKEN_COMPACT_CHAT": "Compress conversation",
+        "TOKEN_COMPACTING": "Compressing…",
+        "MODE_AGENT_FULL": "Agent Mode",
+        "MODE_QA_FULL": "Q&A Mode",
+        "MODE_EDIT_FULL": "Edit Mode",
+        "STOP_CURRENT_SESSION_FIRST": "Please stop the current session before creating a new one",
+        "NO_HISTORY_SESSION": "No history session records",
+        "MERMAID_SAVE_ARCH": "Save as architecture diagram",
+        "MERMAID_ARCH_OVERWRITE_TITLE": "Overwrite confirmation",
+        "MERMAID_ARCH_OVERWRITE_CONTENT": "Architecture diagram file already exists in project directory. Overwrite?",
+        "MERMAID_ARCH_CONFIRM": "Confirm",
+        "MERMAID_ARCH_CANCEL": "Cancel",
+        "MERMAID_COPY_FAILED": "Copy failed",
+        "MERMAID_SAVE_FAILED": "Save failed",
+        "CLICK_TO_EDIT": "Click to edit",
+        "USER_FEEDBACK_NOTIFY_TITLE": "AI assistant needs your input",
+        "USER_FEEDBACK_NOTIFY_BODY": "The AI assistant awaits your action. Open the chat and complete the pending confirmation, response, or on-screen step.",
+        "ONBOARDING": {
+            "STEP1_TITLE": "Input Box",
+            "STEP1_DESC": "Type your questions or tasks here for AI assistance. Press Enter to send, Ctrl+Enter for new line",
+            "STEP2_TITLE": "Add Context",
+            "STEP2_DESC": "Click here to add files or folders as context to help AI better understand your needs",
+            "STEP3_TITLE": "Mode Switch",
+            "STEP3_DESC": "Agent mode can execute tasks automatically (create code, fix bug). Q&A mode only answers questions",
+            "STEP4_TITLE": "Send/Stop",
+            "STEP4_DESC": "Click to send message, or stop when AI is responding"
+        }
     },
     "PROJECT_SETTING_DIALOG": {
         "TITLE": "Project Settings",
@@ -712,7 +795,24 @@
     },
     "NOTIFICATION": {
         "STOP": "Stop",
+        "RETRY": "Retry",
         "VIEW_DETAIL": "View Details",
         "AI_PROCESS": "AI Process"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "New Aily Code Project",
+        "HINT": "Create an Aily Code project skeleton in the chosen directory (independent from Blockly projects).",
+        "NAME": "Project Name",
+        "NAME_PLACEHOLDER": "Enter project name",
+        "PATH": "Save Path",
+        "CREATE": "Create",
+        "CREATING": "Creating...",
+        "CANCEL": "Cancel",
+        "SUCCESS": "Aily Code project created",
+        "WARN_NAME_EMPTY": "Project name is required",
+        "WARN_PATH_EMPTY": "Save path is required",
+        "ERR_PATH_EXISTS": "A folder with the same name already exists",
+        "ERR_PATH_INVALID": "Save path contains invalid characters",
+        "ERR_CREATE_FAILED": "Failed to create project. Please try again."
     }
 }

@@ -3,7 +3,7 @@ import { GUIDE_MENU } from '../../configs/menu.config';
 import { UiService } from '../../services/ui.service';
 import { ProjectService } from '../../services/project.service';
 import { ConfigService } from '../../services/config.service';
-import { version } from '../../../../package.json';
+import packageJson from '../../../../package.json';
 import { TranslateModule } from '@ngx-translate/core';
 import { Router } from '@angular/router';
 import { ElectronService } from '../../services/electron.service';
@@ -22,7 +22,7 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
   styleUrl: './guide.component.scss'
 })
 export class GuideComponent implements OnInit, AfterViewInit {
-  version = version;
+  version = packageJson.version;
   guideMenu = GUIDE_MENU;
   showMenu = true;
   private readonly guidePageDefaultUrl: SafeResourceUrl;
@@ -236,6 +236,10 @@ export class GuideComponent implements OnInit, AfterViewInit {
       case 'project-new':
         this.router.navigate(['/main/project-new']);
         // this.uiService.openWindow(item.data);
+        break;
+      case 'project-new-aily-code':
+        // 进入新建向导并预选 Coder 类别
+        this.router.navigate(['/main/project-new'], { queryParams: { category: 'coder' } });
         break;
       case 'project-open':
         this.openProject(item.data);

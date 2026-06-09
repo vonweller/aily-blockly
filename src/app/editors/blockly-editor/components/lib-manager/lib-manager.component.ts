@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, EventEmitter, OnDestroy, Output } from '@angular/core';
+import { ChangeDetectorRef, Component, EventEmitter, Input, OnDestroy, Output } from '@angular/core';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
@@ -43,6 +43,9 @@ import type { AnyOrama } from '@orama/orama';
   styleUrl: './lib-manager.component.scss'
 })
 export class LibManagerComponent implements OnDestroy {
+
+  /** 嵌入主窗口右侧工具栏时为 true（非 Blockly 全屏遮罩） */
+  @Input() embedInPanel = false;
 
   @Output() close = new EventEmitter();
 

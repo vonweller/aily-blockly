@@ -243,8 +243,8 @@ export class IframeComponent implements OnInit, OnDestroy {
               showProgress: false,
             });
             // this.backgroundAgent.generateSchematic();
-            // this.uiService.openAndSendToChat('@schematicAgent 生成项目连线图', { autoSend: true });
-            this.sendToChat('@schematicAgent 生成项目连线图');
+            // this.uiService.openAndSendToChat('@SchematicAgent 生成项目连线图', { autoSend: true });
+            this.sendToChat('@SchematicAgent 生成项目连线图');
             // this.sendToMain('generate-graph-data');
           },
           regenerateGraphData: () => {
@@ -558,7 +558,7 @@ export class IframeComponent implements OnInit, OnDestroy {
       state: 'doing',
       showProgress: false,
     });
-    this.sendToChat('@schematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
+    this.sendToChat('@SchematicAgent 请根据当前项目的引脚配置和组件信息，重新生成连线图方案。');
   }
 
   /**

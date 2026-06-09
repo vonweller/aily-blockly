@@ -284,6 +284,13 @@
         "WARNINGS": {
             "BETA_VERSION": "Бета-версия, не проверена, используйте с осторожностью",
             "TODO": "Поддержка этого устройства скоро появится"
+        },
+        "PROJECT_CATEGORY": {
+            "TITLE": "Тип проекта",
+            "BLOCKLY": "Aily Blockly",
+            "BLOCKLY_DESC": "Визуальное программирование, быстрая разработка с блоками",
+            "CODER": "Aily Coder",
+            "CODER_DESC": "Редактирование кода, профессиональная встроенная разработка"
         }
     },
     "LIB_MANAGER": {
@@ -395,6 +402,58 @@
         "IMAGE_UPLOAD_FAILED": "Ошибка загрузки изображения, попробуйте снова",
         "ATTACH_HINT": "Прикрепите файлы перетаскиванием, вставкой или",
         "SELECT_FILE": "выберите файлы"
+    },
+    "AILY_CHAT": {
+        "TITLE": "ИИ-ассистент",
+        "SETTINGS": "Настройки ИИ",
+        "HISTORY": "История чата",
+        "NEW_CHAT": "Новый чат",
+        "SERVICE_TITLE": "ai assistant service",
+        "DISCLAIMER": "Ответы ИИ предоставляются только для справки и могут быть неточными. Они не представляют мнения разработчиков программного обеспечения. Пользователи должны проверять информацию самостоятельно.",
+        "USAGE_GUIDE": "Узнать об использовании ИИ",
+        "ADD_CONTEXT": "Добавить контекст",
+        "ADD_FILE": "Добавить файл",
+        "ADD_FOLDER": "Добавить папку",
+        "ADD_WEBSITE": "Добавить веб-сайт",
+        "MODE_AGENT": "Агент",
+        "MODE_QA": "Вопрос-Ответ",
+        "SEND": "Отправить",
+        "STOP": "Остановить",
+        "TOKEN_CONTEXT_WINDOW": "Context window",
+        "TOKEN_SECTION_SYSTEM": "System",
+        "TOKEN_SECTION_USER_CONTEXT": "User context",
+        "TOKEN_SYSTEM_INSTRUCTIONS": "System instructions",
+        "TOKEN_TOOL_DEFINITIONS": "Tool definitions",
+        "TOKEN_FILES": "Files",
+        "TOKEN_MESSAGES": "Messages",
+        "TOKEN_TOOL_RESULTS": "Tool results",
+        "TOKEN_COMPACT_CHAT": "Compress conversation",
+        "TOKEN_COMPACTING": "Compressing…",
+        "MODE_AGENT_FULL": "Режим агента",
+        "MODE_QA_FULL": "Режим вопрос-ответ",
+        "MODE_EDIT_FULL": "Режим редактирования",
+        "STOP_CURRENT_SESSION_FIRST": "Пожалуйста, остановите текущий сеанс перед созданием нового",
+        "NO_HISTORY_SESSION": "Нет записей сессий в истории",
+        "MERMAID_SAVE_ARCH": "Сохранить как диаграмму архитектуры",
+        "MERMAID_ARCH_OVERWRITE_TITLE": "Подтверждение перезаписи",
+        "MERMAID_ARCH_OVERWRITE_CONTENT": "Файл диаграммы архитектуры уже существует в директории проекта. Перезаписать?",
+        "MERMAID_ARCH_CONFIRM": "Подтвердить",
+        "MERMAID_ARCH_CANCEL": "Отмена",
+        "MERMAID_COPY_FAILED": "Ошибка копирования",
+        "MERMAID_SAVE_FAILED": "Ошибка сохранения",
+        "CLICK_TO_EDIT": "Нажмите для редактирования",
+        "USER_FEEDBACK_NOTIFY_TITLE": "Ассистенту ИИ нужен ваш ответ",
+        "USER_FEEDBACK_NOTIFY_BODY": "ИИ-ассистент ждёт вашего действия. Откройте чат и завершите подтверждение, ответ или шаг, указанный на экране.",
+        "ONBOARDING": {
+            "STEP1_TITLE": "Поле ввода",
+            "STEP1_DESC": "Введите здесь ваши вопросы или задачи для помощи ИИ. Нажмите Enter для отправки, Ctrl+Enter для новой строки",
+            "STEP2_TITLE": "Добавить контекст",
+            "STEP2_DESC": "Нажмите здесь, чтобы добавить файлы или папки в качестве контекста, чтобы ИИ лучше понял ваши потребности",
+            "STEP3_TITLE": "Переключение режима",
+            "STEP3_DESC": "Режим агента может автоматически выполнять задачи (писать код, исправлять ошибки). Режим вопрос-ответ только отвечает на вопросы",
+            "STEP4_TITLE": "Отправить/Остановить",
+            "STEP4_DESC": "Нажмите для отправки сообщения или остановки, когда ИИ отвечает"
+        }
     },
     "PROJECT_SETTING_DIALOG": {
         "TITLE": "Настройки Проекта",
@@ -637,7 +696,24 @@
     },
     "NOTIFICATION": {
         "STOP": "Остановить",
+        "RETRY": "Повторить",
         "VIEW_DETAIL": "Подробнее",
         "AI_PROCESS": "Обработка AI"
+    },
+    "AILYCODE_NEW_DIALOG": {
+        "TITLE": "Новый проект Aily Code",
+        "HINT": "Создаёт каркас проекта Aily Code в выбранной папке (независимо от проектов Blockly).",
+        "NAME": "Имя проекта",
+        "NAME_PLACEHOLDER": "Введите имя проекта",
+        "PATH": "Путь сохранения",
+        "CREATE": "Создать",
+        "CREATING": "Создание...",
+        "CANCEL": "Отмена",
+        "SUCCESS": "Проект Aily Code создан",
+        "WARN_NAME_EMPTY": "Введите имя проекта",
+        "WARN_PATH_EMPTY": "Выберите путь сохранения",
+        "ERR_PATH_EXISTS": "Папка с таким именем уже существует",
+        "ERR_PATH_INVALID": "Путь сохранения содержит недопустимые символы",
+        "ERR_CREATE_FAILED": "Не удалось создать проект. Попробуйте снова."
     }
 }

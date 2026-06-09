@@ -1,16 +1,9 @@
 import { Injectable } from '@angular/core';
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AilyHost } from '../core/host';
+import type { ResourceItem } from '../core/chat-types';
 import { getResourcesText as _getResourcesText } from './ui-helpers.service';
-
-export interface ResourceItem {
-  type: 'file' | 'folder' | 'url' | 'block';
-  path?: string;
-  url?: string;
-  name: string;
-  blockContext?: string;
-  blockId?: string;
-}
+import { pickFileResources, pickFolderResource } from '../helpers/chat-resource-picker';
 
 /**
  * 管理 AI 对话的附件资源（文件、文件夹、URL、块上下文）。
@@ -27,35 +20,21 @@ export class ResourceManagerService {
   }
 
   async addFile(): Promise<void> {
-    const options = {
-      title: '选择文件或文件夹',
-      properties: ['multiSelections'],
-      filters: [{ name: '所有文件', extensions: ['*'] }]
-    };
-    const result = await AilyHost.get().dialog.selectFiles(options);
-    if (!result.canceled && result.filePaths?.length > 0) {
-      result.filePaths.forEach(path => {
-        const exists = this.items.some(item => item.type === 'file' && item.path === path);
-        if (!exists) {
-          const fileName = path.split(/[/\\]/).pop() || path;
-          this.items.push({ type: 'file', path, name: fileName });
-        }
-      });
+    const resources = await pickFileResources(AilyHost.get().dialog);
+    for (const item of resources) {
+      const exists = this.items.some((resource) => resource.type === 'file' && resource.path === item.path);
+      if (!exists) {
+        this.items.push(item);
+      }
     }
   }
 
   async addFolder(): Promise<void> {
-    const options = {
-      title: '选择文件夹',
-      properties: ['openDirectory']
-    };
-    const result = await AilyHost.get().dialog.selectFiles(options);
-    if (!result.canceled && result.filePaths?.length > 0) {
-      const selectedPath = result.filePaths[0];
-      const exists = this.items.some(item => item.type === 'folder' && item.path === selectedPath);
+    const item = await pickFolderResource(AilyHost.get().dialog);
+    if (item) {
+      const exists = this.items.some((resource) => resource.type === 'folder' && resource.path === item.path);
       if (!exists) {
-        const folderName = selectedPath.split(/[/\\]/).pop() || selectedPath;
-        this.items.push({ type: 'folder', path: selectedPath, name: folderName });
+        this.items.push(item);
       }
     }
   }

@@ -11,6 +11,8 @@ import { ProjectSettingDialogComponent } from '../components/project-setting-dia
 import { AuthService } from './auth.service';
 import { LogService } from './log.service';
 import { getChildToolConfig } from '../configs/tool.config';
+import { ConfigService } from './config.service';
+import { BoardSelectorDialogComponent } from '../main-window/components/board-selector-dialog/board-selector-dialog.component';
 
 @Injectable({
   providedIn: 'root',
@@ -55,6 +57,7 @@ export class UiService {
     private modal: NzModalService,
     private authService: AuthService,
     private logService: LogService,
+    private configService: ConfigService,
     private injector: Injector
   ) { }
 
@@ -261,6 +264,50 @@ export class UiService {
     }, 100);
   }
 
+  openCodeEditorFile(
+    projectPath: string,
+    filePath: string,
+    position?: {
+      lineNumber?: number;
+      column?: number;
+      line?: number;
+      character?: number;
+    },
+  ): Promise<boolean> {
+    const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
+    const normalizedFilePath = typeof filePath === 'string' ? filePath.trim() : '';
+    if (!normalizedProjectPath || !normalizedFilePath) {
+      return Promise.resolve(false);
+    }
+
+    const lineNumber = typeof position?.lineNumber === 'number'
+      ? position.lineNumber
+      : typeof position?.line === 'number'
+        ? position.line + 1
+        : undefined;
+    const column = typeof position?.column === 'number'
+      ? position.column
+      : typeof position?.character === 'number'
+        ? position.character + 1
+        : undefined;
+
+    const queryParams: Record<string, string | number> = {
+      path: normalizedProjectPath,
+      openFile: normalizedFilePath,
+    };
+    if (typeof lineNumber === 'number' && Number.isFinite(lineNumber) && lineNumber > 0) {
+      queryParams['lineNumber'] = lineNumber;
+    }
+    if (typeof column === 'number' && Number.isFinite(column) && column > 0) {
+      queryParams['column'] = column;
+    }
+
+    return this.router.navigate(['/main/code-editor'], {
+      queryParams,
+      replaceUrl: true,
+    });
+  }
+
   // 判断某个工具是否打开
   isToolOpen(name: string): boolean {
     return this.openToolList.includes(name) || this.isToolWindowOpen(name);
@@ -323,7 +370,7 @@ export class UiService {
   // 更新footer右下角的状态
   updateFooterState(state: ActionState) {
     // 判断当前url是否是main-window
-    if (this.isMainWindow) {
+    if (this.isMainWindow || !window['ipcRenderer']?.send) {
       this.stateSubject.next(state);
     } else {
       window['ipcRenderer'].send('state-update', state);
@@ -376,9 +423,34 @@ export class UiService {
       }
     });
   }
+
+  /** 打开切换开发板弹窗（Header 菜单与 Aily View MCU 节点共用） */
+  async openBoardSelector(): Promise<void> {
+    // 优先内存缓存，避免 await 远程 boards.json 阻塞弹窗
+    let boardList = this.configService.getBoardListForSelector();
+    if (!boardList.length) {
+      boardList = await this.configService.loadBoardList();
+    }
+
+    this.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: {
+        padding: '0',
+      },
+      nzWidth: '400px',
+      nzContent: BoardSelectorDialogComponent,
+      nzData: {
+        boardList,
+      },
+    });
+  }
 }
 
 export interface WindowOpts {
+  /** 子窗口业务标识，如 settings-open / project-new，与 preload 路由一致 */
+  type?: string;
   path: string;
   data?: any;
   title?: string;

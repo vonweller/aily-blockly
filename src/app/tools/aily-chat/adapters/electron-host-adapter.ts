@@ -43,8 +43,6 @@ export interface ElectronAdapterDeps {
   cmdService?: any;
   crossPlatformCmdService?: any;
   absAutoSyncService?: any;
-  fetchToolService?: any;
-  webSearchToolService?: any;
   electronService?: any;
   uiService?: any;
   onboardingService?: any;
@@ -65,6 +63,9 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const wEnv = (window as any)['env'];
   const wMcp = (window as any)['mcp'];
   const wOs = (window as any)['os'];
+  const textDocumentContentProviders = new Map<string, {
+    provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+  }>();
 
   // ----- fs -----
   const fs: IFileSystem = {
@@ -125,6 +126,18 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     },
     mkdir: (path, options?) => wFs.mkdir(path, options),
     unlink: (path) => wFs.unlink(path),
+    watch: (watchPath, listener, options) => {
+      const handle = wFs.watch?.(watchPath, listener, options);
+      if (!handle) {
+        return undefined;
+      }
+
+      return {
+        close: () => handle.close?.(),
+        dispose: () => handle.dispose?.() ?? handle.close?.(),
+        unsubscribe: () => handle.unsubscribe?.() ?? handle.close?.(),
+      };
+    },
   };
 
   // ----- path -----
@@ -190,17 +203,44 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     tmpdir: () => wOs?.tmpdir?.() ?? '',
   };
 
-  // ----- project (直接透传 Angular 服务，保留完整 API 供 handler 使用) -----
-  const project: IProjectProvider = deps.projectService ?? {} as IProjectProvider;
+  // ----- project (映射 Angular ProjectService → IProjectProvider) -----
+  const rawProjectService = deps.projectService;
+  const project: IProjectProvider = rawProjectService ? Object.create(rawProjectService, {
+    // ProjectService 使用 currentBoardConfig.name，映射到 IProjectProvider.currentBoard
+    currentBoard: {
+      get() { return rawProjectService.currentBoardConfig?.name ?? rawProjectService.currentBoard; },
+      enumerable: true,
+    },
+    // ProjectService 使用 currentPackageData.name，映射到 IProjectProvider.projectName
+    projectName: {
+      get() { return rawProjectService.currentPackageData?.name ?? rawProjectService.projectName; },
+      enumerable: true,
+    },
+    // 同步读取 package.json（用于 prompt context 注入）
+    getPackageJsonSync: {
+      value() {
+        try { return rawProjectService.currentPackageData ?? undefined; }
+        catch { return undefined; }
+      },
+      enumerable: true,
+    },
+  }) : {} as IProjectProvider;
 
   // ----- auth -----
   // ----- auth (映射 getToken2 → getToken) -----
   const auth: IAuthProvider = {
     get isLoggedIn() { return deps.authService?.isLoggedIn ?? false; },
+    get isLoggedIn$() { return deps.authService?.isLoggedIn$; },
+    get authChanged$() { return deps.authService?.authChanged$; },
     get token() { return deps.authService?.token ?? ''; },
     get userInfo() { return deps.authService?.userInfo; },
+    get userInfo$() { return deps.authService?.userInfo$; },
+    get authSnapshot$() { return deps.authService?.authSnapshot$; },
     getAuthHeaders: () => deps.authService?.getAuthHeaders?.() ?? {},
+    initializeAuth: () => deps.authService?.initializeAuth?.() ?? Promise.resolve(),
     getToken: () => deps.authService?.getToken2?.() ?? Promise.resolve(''),
+    getSnapshot: () => deps.authService?.getAuthSnapshot?.() ?? null,
+    refreshMe: () => deps.authService?.refreshMe?.() ?? Promise.resolve(null),
     promptLogin: () => deps.authService?.promptLogin?.() ?? Promise.resolve(false),
   };
 
@@ -222,6 +262,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     getLibrariesList: () => deps.configService?.getLibrariesList?.(),
     getHardwareCategories: () => deps.configService?.getHardwareCategories?.(),
     loadHardwareIndexForAI: () => deps.configService?.loadHardwareIndexForAI?.(),
+    scheduleHardwareIndexRefreshForAI: (reason: string, options?: { force?: boolean }) => deps.configService?.scheduleHardwareIndexRefreshForAI?.(reason, options),
     get boardIndex() { return (deps.configService as any)?.boardIndex; },
     get boardList() { return (deps.configService as any)?.boardList; },
     get boardDict() { return (deps.configService as any)?.boardDict; },
@@ -256,8 +297,51 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
 
   // ----- editor (可选) -----
   let editor: IEditorProvider | undefined;
-  if (deps.blocklyService) {
+  if (deps.blocklyService || deps.uiService) {
     editor = {
+      registerTextDocumentContentProvider: (scheme, provider) => {
+        const normalizedScheme = normalizeTextDocumentProviderScheme(scheme);
+        if (!normalizedScheme || !provider || typeof provider.provideTextDocumentContent !== 'function') {
+          return { dispose() {} };
+        }
+
+        textDocumentContentProviders.set(normalizedScheme, provider);
+        return {
+          dispose() {
+            if (textDocumentContentProviders.get(normalizedScheme) === provider) {
+              textDocumentContentProviders.delete(normalizedScheme);
+            }
+          },
+        };
+      },
+      showTextDocument: (targetPath, options) => {
+        const projectPath = options?.projectPath?.trim()
+          || deps.projectService?.currentProjectPath
+          || deps.projectService?.projectRootPath;
+        if (!deps.uiService?.openCodeEditorFile || !projectPath || !targetPath?.trim()) {
+          return false;
+        }
+
+        return deps.uiService.openCodeEditorFile(projectPath, targetPath, options?.selection);
+      },
+      readTextDocument: async (uri) => {
+        const registeredProvider = resolveRegisteredTextDocumentContentProvider(textDocumentContentProviders, uri);
+        if (registeredProvider) {
+          const content = await Promise.resolve(registeredProvider.provideTextDocumentContent(uri));
+          if (typeof content === 'string') {
+            return content;
+          }
+        }
+
+        const readTextDocument = deps.uiService?.readTextDocument
+          ?? deps.electronService?.readTextDocument
+          ?? (window as any)['editor']?.readTextDocument;
+        if (typeof readTextDocument !== 'function') {
+          return undefined;
+        }
+
+        return await Promise.resolve(readTextDocument(uri));
+      },
       getWorkspaceXml: () => deps.blocklyService?.getWorkspaceXml?.(),
       loadWorkspace: (xml) => deps.blocklyService?.loadWorkspace?.(xml),
       getGeneratedCode: () => deps.blocklyService?.getGeneratedCode?.(),
@@ -295,10 +379,34 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     notice: deps.noticeService,
     electron: deps.electronService,
     absSync: deps.absAutoSyncService,
-    fetch: deps.fetchToolService,
-    webSearch: deps.webSearchToolService,
     ui: deps.uiService,
-    authFull: deps.authService,
     onboarding: deps.onboardingService,
   };
+}
+
+function normalizeTextDocumentProviderScheme(scheme: string): string {
+  return typeof scheme === 'string' ? scheme.trim().toLowerCase() : '';
+}
+
+function getUriScheme(uri: string): string {
+  const match = typeof uri === 'string'
+    ? uri.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)
+    : null;
+  return match?.[1]?.toLowerCase() ?? '';
+}
+
+function resolveRegisteredTextDocumentContentProvider(
+  providers: ReadonlyMap<string, {
+    provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+  }>,
+  uri: string,
+): {
+  provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
+} | undefined {
+  const scheme = getUriScheme(uri);
+  if (!scheme) {
+    return undefined;
+  }
+
+  return providers.get(scheme);
 }
