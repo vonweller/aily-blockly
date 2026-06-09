@@ -1,6 +1,5 @@
 import { ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild } from '@angular/core';
 import { CommonModule, Location } from '@angular/common';
-import { ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzInputModule } from 'ng-zorro-antd/input';
@@ -154,7 +153,6 @@ export class ProjectNewComponent implements OnDestroy {
 
   constructor(
     private router: Router,
-    private route: ActivatedRoute,
     private location: Location,
     private electronService: ElectronService,
     private projectService: ProjectService,
@@ -198,16 +196,7 @@ export class ProjectNewComponent implements OnDestroy {
       this.process(this.configService.getCoderBoardList())
     );
 
-    // 从菜单「新建 Aily Code 项目」进入时预选 Coder 类别
-    const category = this.route.snapshot.queryParamMap.get('category');
-    if (category === 'coder' || category === 'blockly') {
-      this.selectedProjectCategory = category;
-    } else {
-      const preferredCategory = this.configService.getPreferredChatAgentRuntimeMode();
-      if (preferredCategory) {
-        this.selectedProjectCategory = preferredCategory;
-      }
-    }
+    this.selectedProjectCategory = this.configService.getPreferredChatAgentRuntimeMode();
     this.syncActiveBoardList();
     this.applyRecommendedProjectName();
     this.refreshBoardListForCurrentFilters();
@@ -232,21 +221,6 @@ export class ProjectNewComponent implements OnDestroy {
       this.isProjectNameManuallyEdited = true;
     }
     this.checkPathIsExist();
-  }
-
-  /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
-  selectProjectCategory(category: 'blockly' | 'coder'): void {
-    if (this.selectedProjectCategory === category) {
-      return;
-    }
-    this.selectedProjectCategory = category;
-    if (category === 'coder') {
-      this.selectedTemplateName = '';
-      this.myTemplateList = [];
-    }
-    this.applyRecommendedProjectName();
-    this.syncActiveBoardList();
-    this.refreshBoardListForCurrentFilters();
   }
 
   /** 根据当前项目类别切换开发板数据源 */

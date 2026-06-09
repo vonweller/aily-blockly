@@ -1077,7 +1077,6 @@ function installChildEnv(childPath, options) {
     // node 格式：node-v22.21.0-darwin-arm64.7z → 22.21.0
     // aily-builder 格式：aily-builder-1.0.7.7z → 1.0.7
     // probe-rs 格式：probe-rs-0.31.0.7z → 0.31.0
-    // xpm 格式：xpm-0.23.2.7z → 0.23.2
     if (keyword === "node") {
       const match = filename.match(/node-v(\d+\.\d+\.\d+)/);
       return match ? match[1] : null;
@@ -1086,9 +1085,6 @@ function installChildEnv(childPath, options) {
       return match ? match[1] : null;
     } else if (keyword === "probe-rs") {
       const match = filename.match(/probe-rs-(\d+\.\d+\.\d+)/);
-      return match ? match[1] : null;
-    } else if (keyword === "xpm") {
-      const match = filename.match(/xpm-(\d+\.\d+\.\d+)/);
       return match ? match[1] : null;
     }
     return null;
@@ -1766,12 +1762,6 @@ function loadEnv() {
   } else {
     runInstallEnv(childPath);
   }
-  // 将 xpm 添加到 PATH 中
-  const xpmBinDir = process.env.AILY_XPM_BIN_PATH;
-  if (xpmBinDir && fs.existsSync(xpmBinDir)) {
-    process.env.PATH = `${process.env.PATH}${path.delimiter}${xpmBinDir}`;
-  }
-
   // 当前系统语言
   process.env.AILY_SYSTEM_LANG = app.getLocale();
 

@@ -237,10 +237,6 @@ export class GuideComponent implements OnInit, AfterViewInit {
         this.router.navigate(['/main/project-new']);
         // this.uiService.openWindow(item.data);
         break;
-      case 'project-new-aily-code':
-        // 进入新建向导并预选 Coder 类别
-        this.router.navigate(['/main/project-new'], { queryParams: { category: 'coder' } });
-        break;
       case 'project-open':
         this.openProject(item.data);
         break;

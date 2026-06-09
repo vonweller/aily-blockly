@@ -22,7 +22,7 @@
                 <div>{{ 'SETTINGS.FIELDS.PROJECT_FOLDER' | translate }}:</div>
                 <input nz-input [(ngModel)]="configData.project_path" [disabled]="true" />
               </div>
-              <div class="item">
+              <div class="item lang-item">
                 <div>{{ 'SETTINGS.FIELDS.LANGUAGE' | translate }}:</div>
                 <div class="langs">
                   @for(lang of langList; track lang) {
@@ -33,17 +33,24 @@
                   }
                 </div>
               </div>
-              <div class="item">
+              <div class="item development-mode-item">
                 <div>{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_PREFERENCE' | translate }}:</div>
-                <nz-radio-group
-                  [ngModel]="developmentModePreference"
-                  (ngModelChange)="onDevelopmentModePreferenceChange($event)"
-                  [nzSize]="'small'"
-                  nzButtonStyle="solid">
-                  <label nz-radio-button nzValue="auto">{{ 'SETTINGS.FIELDS.DEVELOPMENT_MODE_AUTO' | translate }}</label>
-                  <label nz-radio-button nzValue="blockly">{{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}</label>
-                  <label nz-radio-button nzValue="coder">{{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}</label>
-                </nz-radio-group>
+                <div class="development-mode-buttons">
+                  <button
+                    nz-button
+                    nzSize="small"
+                    [nzType]="developmentModePreference === 'blockly' ? 'primary' : 'default'"
+                    (click)="onDevelopmentModePreferenceChange('blockly')">
+                    {{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}
+                  </button>
+                  <button
+                    nz-button
+                    nzSize="small"
+                    [nzType]="developmentModePreference === 'coder' ? 'primary' : 'default'"
+                    (click)="onDevelopmentModePreferenceChange('coder')">
+                    {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

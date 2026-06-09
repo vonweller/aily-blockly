@@ -146,8 +146,6 @@ export class AilyCodeProjectService {
       join(root, '.aily', 'generated', 'cpp'),
       join(root, '.aily', 'generated', 'headers'),
       join(root, '.aily', 'bridge'),
-      join(root, '.aily', 'bridge', 'xpm'),
-      join(root, '.aily', 'bridge', 'xpm', 'xpacks'),
       join(root, '.aily', 'bridge', 'cmake'),
       join(root, '.aily', 'build'),
       join(root, '.aily', 'build', 'debug'),
@@ -304,16 +302,6 @@ export class AilyCodeProjectService {
 
     // 根目录 package.json：与 project.aci 中 Blockly 对齐字段完全一致（磁盘双写，便于现有 npm/blockly 工具链）
 
-    // .aily/bridge/xpm/package.json：xpack 镜像根依赖（含所选主板 npm 包），供桥接脚本解析
-    const bridgePackageJson = {
-      name: `${safeName}-xpm`,
-      version: '0.0.1',
-      private: true,
-      xpack: {
-        dependencies: { ...(pkg.dependencies || {}) }
-      }
-    };
-
     const readme = [
       `# ${displayName}`,
       '',
@@ -372,10 +360,6 @@ export class AilyCodeProjectService {
     fs.writeFileSync(pathApi.join(root, '.gitignore'), gitignore);
     fs.writeFileSync(pathApi.join(root, 'src', 'main.cpp'), mainCpp);
 
-    fs.writeFileSync(
-      pathApi.join(root, '.aily', 'bridge', 'xpm', 'package.json'),
-      JSON.stringify(bridgePackageJson, null, 2)
-    );
     fs.writeFileSync(
       pathApi.join(root, '.aily', 'generated', 'source-map.json'),
       JSON.stringify(sourceMap, null, 2)

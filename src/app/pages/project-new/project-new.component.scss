@@ -79,19 +79,6 @@
     min-width: 0;
     margin-left: 12px;
 
-    .dev-mode-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-shrink: 0;
-
-      .dev-mode-label {
-        font-size: 13px;
-        color: var(--aily-text-tertiary);
-        white-space: nowrap;
-      }
-    }
-
     .btns {
       position: static;
       margin-left: auto;
@@ -141,11 +128,6 @@
       &:not(.active):hover {
         color: var(--aily-text-primary);
       }
-    }
-
-    &.dev-mode-control .segment-btn.active {
-      background: var(--aily-color-primary);
-      color: #fff;
     }
 
     &.view-mode-control .segment-btn.active {
@@ -254,14 +236,6 @@
             }
           }
 
-          &.platform-select {
-            width: 240px;
-            margin-left: 0;
-
-            ::ng-deep nz-select-top-control {
-              border-radius: 2px;
-            }
-          }
         }
 
         .error {
@@ -432,38 +406,6 @@
       gap: 16px;
       flex-shrink: 0;
       min-height: 40px;
-
-      &.has-platform {
-        justify-content: space-between;
-        padding-top: 8px;
-        margin-top: 4px;
-        border-top: 1px solid var(--aily-border-active);
-      }
-    }
-
-    .coder-platform-field {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-shrink: 0;
-
-      .coder-platform-label {
-        font-size: 12px;
-        color: var(--aily-text-tertiary);
-        white-space: nowrap;
-        line-height: 1;
-      }
-
-      .platform-select {
-        width: 172px;
-
-        ::ng-deep {
-          .ant-select-selector {
-            background: var(--aily-bg-input) !important;
-            border-color: var(--aily-border-secondary) !important;
-          }
-        }
-      }
     }
 
     .next {
@@ -578,6 +520,23 @@
   position: relative;
 }
 
+.platform-row {
+  .platform-select-box {
+    flex: 1;
+    min-width: 0;
+  }
+
+  nz-select {
+    width: 100% !important;
+    margin-left: 0 !important;
+    background: var(--aily-bg-input);
+
+    ::ng-deep nz-select-top-control {
+      border-radius: 2px;
+    }
+  }
+}
+
 .template-row {
   align-items: flex-start !important;
   height: auto !important;
@@ -586,12 +545,19 @@
   .template-select-box {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-width: 0;
     width: calc(100% - 120px);
   }
 
   nz-select {
     width: 100% !important;
     margin-left: 0 !important;
+    background: var(--aily-bg-input);
+
+    ::ng-deep nz-select-top-control {
+      border-radius: 2px;
+    }
   }
 
   .template-selected-description {

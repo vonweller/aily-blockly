@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, HostListener, ViewChild } from '@angular/core';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -27,20 +27,6 @@ import {
 } from '../../utils/coder-board.mapper';
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
-
-export function resolveInitialProjectCategory(
-  explicitCategory: unknown,
-  preferredCategory: unknown,
-  fallbackCategory: ProjectCreationCategory = 'blockly',
-): ProjectCreationCategory {
-  if (explicitCategory === 'blockly' || explicitCategory === 'coder') {
-    return explicitCategory;
-  }
-  if (preferredCategory === 'blockly' || preferredCategory === 'coder') {
-    return preferredCategory;
-  }
-  return fallbackCategory;
-}
 
 @Component({
   selector: 'app-project-new',
@@ -115,8 +101,6 @@ export class ProjectNewComponent {
   /** 向导第三步：Blockly 脚手架与 Aily Code 骨架共用 loading UI，用这个区分文案 */
   creatingMode: 'blockly' | 'aily' | null = null;
 
-  private initDataCleanup: (() => void) | null = null;
-
   get resourceUrl() {
     return this.configService.getCurrentResourceUrl() + '/imgs/boards/';
   }
@@ -175,10 +159,7 @@ export class ProjectNewComponent {
     this._coderBoardList = this.configService.sortBoardsByUsage(
       this.process(this.configService.getCoderBoardList())
     );
-    this.selectedProjectCategory = resolveInitialProjectCategory(
-      undefined,
-      this.configService.getPreferredChatAgentRuntimeMode(),
-    );
+    this.selectedProjectCategory = this.configService.getPreferredChatAgentRuntimeMode();
     this.syncActiveBoardList();
 
     // 随机提取前五个
@@ -188,23 +169,7 @@ export class ProjectNewComponent {
     this.checkPathInvalidChars();
     this.applyRecommendedProjectName();
 
-    // 子窗口：从菜单「新建 Aily Code 项目」传入 category=coder
-    if (this.electronService.isElectron && window['subWindow']?.onInitData) {
-      this.initDataCleanup = window['subWindow'].onInitData((payload: { data?: { category?: string } }) => {
-        if (payload?.data?.category === 'coder') {
-          this.selectedProjectCategory = 'coder';
-          this.syncActiveBoardList();
-          this.applyRecommendedProjectName();
-          this.refreshBoardListForCurrentFilters();
-        }
-      });
-    }
-
     this.refreshBoardListForCurrentFilters();
-  }
-
-  ngOnDestroy(): void {
-    this.initDataCleanup?.();
   }
 
   /** 按类别生成推荐项目名：Blockly → project_xxx，Coder → project_coder_xxx */
@@ -225,21 +190,6 @@ export class ProjectNewComponent {
       this.isProjectNameManuallyEdited = true;
     }
     this.checkPathIsExist();
-  }
-
-  /** 切换项目类别；Coder 不使用 Blockly 模板，并刷新可选开发板列表 */
-  selectProjectCategory(category: ProjectCreationCategory): void {
-    if (this.selectedProjectCategory === category) {
-      return;
-    }
-    this.selectedProjectCategory = category;
-    if (category === 'coder') {
-      this.selectedTemplateName = '';
-      this.myTemplateList = [];
-    }
-    this.applyRecommendedProjectName();
-    this.syncActiveBoardList();
-    this.refreshBoardListForCurrentFilters();
   }
 
   /** 根据当前项目类别切换开发板数据源 */

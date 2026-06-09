@@ -26,23 +26,6 @@
                 <i class="fa-light fa-search"></i>
               </ng-template>
             </div>
-            <div class="dev-mode-group">
-              <span class="dev-mode-label">{{ 'PROJECT_NEW.BOARD.DEV_MODE' | translate }}:</span>
-              <div class="segmented-control dev-mode-control">
-                <button type="button" class="segment-btn"
-                  [class.active]="selectedProjectCategory === 'blockly'"
-                  (click)="selectProjectCategory('blockly')">
-                  <i class="fa-light fa-puzzle-piece"></i>
-                  {{ 'PROJECT_NEW.BOARD.MODE_BLOCKLY' | translate }}
-                </button>
-                <button type="button" class="segment-btn"
-                  [class.active]="selectedProjectCategory === 'coder'"
-                  (click)="selectProjectCategory('coder')">
-                  <i class="fa-light fa-code"></i>
-                  {{ 'PROJECT_NEW.BOARD.MODE_CODER' | translate }}
-                </button>
-              </div>
-            </div>
             <div class="btns">
               <button nz-button nzType="primary" nzGhost nzSize="small" (click)="help()">
                 <i class="fa-light fa-plus"></i>{{ 'PROJECT_NEW.BOARD.ADD_BOARD' | translate }}
@@ -75,18 +58,6 @@
               }
             </div>
             <div class="content">{{ currentBoard.description }}</div>
-            @if (selectedProjectCategory === 'coder') {
-            <div class="desc-footer">
-              <div class="coder-platform-field">
-                <span class="coder-platform-label">{{ 'PROJECT_NEW.FORM.PLATFORM' | translate }}</span>
-                <nz-select class="platform-select" nzSize="small" [(ngModel)]="selectedCoderPlatform">
-                  @for (opt of coderPlatformOptions; track opt.value) {
-                  <nz-option [nzValue]="opt.value" [nzLabel]="opt.label"></nz-option>
-                  }
-                </nz-select>
-              </div>
-            </div>
-            }
           </div>
           }
         </div>
@@ -151,6 +122,18 @@
               translate }}</div>
             }
           </div>
+          @if (selectedProjectCategory === 'coder') {
+          <div class="item platform-row">
+            <div>{{ 'PROJECT_NEW.FORM.PLATFORM' | translate }}:</div>
+            <div class="platform-select-box">
+              <nz-select [(ngModel)]="selectedCoderPlatform">
+                @for (opt of coderPlatformOptions; track opt.value) {
+                <nz-option [nzValue]="opt.value" [nzLabel]="opt.label"></nz-option>
+                }
+              </nz-select>
+            </div>
+          </div>
+          }
           </div>
         </div>
         }

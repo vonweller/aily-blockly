@@ -7,7 +7,7 @@ import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
 import { mapCoderBoardIndexToBoardList, type CoderBoardIndexEntry } from '../utils/coder-board.mapper';
 
-export const DEVELOPMENT_MODE_PREFERENCES = ['auto', 'coder', 'blockly'] as const;
+export const DEVELOPMENT_MODE_PREFERENCES = ['coder', 'blockly'] as const;
 export type DevelopmentModePreference = typeof DEVELOPMENT_MODE_PREFERENCES[number];
 export type DevelopmentModePreferenceSource = 'onboarding' | 'settings' | 'migration';
 
@@ -111,12 +111,15 @@ export class ConfigService {
   normalizeDevelopmentModePreference(value: unknown): DevelopmentModePreference {
     if (typeof value === 'string') {
       const normalized = value.trim().toLowerCase();
+      if (normalized === 'auto') {
+        return 'blockly';
+      }
       if ((DEVELOPMENT_MODE_PREFERENCES as readonly string[]).includes(normalized)) {
         return normalized as DevelopmentModePreference;
       }
     }
 
-    return 'auto';
+    return 'blockly';
   }
 
   getDevelopmentModePreference(): DevelopmentModePreference {
@@ -153,12 +156,11 @@ export class ConfigService {
   }
 
   shouldPromptDevelopmentModePreference(): boolean {
-    return this.getDevelopmentModePreference() === 'auto';
+    return !this.data?.developmentModePreferenceSource && !this.data?.developmentModePreferencePromptedAt;
   }
 
-  getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' | undefined {
-    const preference = this.getDevelopmentModePreference();
-    return preference === 'coder' || preference === 'blockly' ? preference : undefined;
+  getPreferredChatAgentRuntimeMode(): 'coder' | 'blockly' {
+    return this.getDevelopmentModePreference() === 'coder' ? 'coder' : 'blockly';
   }
 
   async init() {
@@ -1444,7 +1446,7 @@ interface AppConfig {
   /** 项目默认路径 */
   project_path: string;
 
-  /** 用户默认开发模式偏好：auto 表示自动判断 */
+  /** 用户默认开发模式偏好：blockly 或 coder */
   developmentModePreference?: DevelopmentModePreference;
 
   /** 开发模式偏好来源 */

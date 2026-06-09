@@ -67,12 +67,6 @@ export let HEADER_MENU: IMenuItem[] = [
     icon: 'fa-light fa-file-circle-plus',
   },
   {
-    // 新建 Aily Code：打开与 Blockly 相同的向导窗口，第二步使用「创建 Aily Code 项目」按钮
-    name: 'MENU.PROJECT_NEW_AILY_CODE',
-    action: 'project-new-aily-code',
-    icon: 'fa-light fa-microchip',
-  },
-  {
     name: 'MENU.PROJECT_OPEN',
     text: 'Ctrl + O',
     action: 'project-open',

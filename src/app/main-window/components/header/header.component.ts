@@ -574,21 +574,6 @@ export class HeaderComponent implements OnInit, OnDestroy {
         }
         this.uiService.openWindow(item.data);
         break;
-      case 'project-new-aily-code':
-        // 与 Blockly 共用「新建项目」向导，预选 Coder 类别
-        if (this.isLoaded()) {
-          const canContinue = await this.checkUnsavedChanges('new');
-          if (!canContinue) return;
-        }
-        this.uiService.openWindow({
-          type: 'project-new',
-          path: 'project-new',
-          alwaysOnTop: true,
-          width: 820,
-          height: 550,
-          data: { category: 'coder' }
-        });
-        break;
       case 'project-open':
         if (this.isLoaded()) { // 只在已加载项目时检查
           const canContinue = await this.checkUnsavedChanges('open');
