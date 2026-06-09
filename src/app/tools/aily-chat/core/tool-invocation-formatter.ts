@@ -385,19 +385,25 @@ function buildLoadSkillSummary(
         subtitle: query ? `for ${truncateDisplayText(query, 56)}` : undefined,
       };
     case 'list':
-      return { label: 'Listed loaded skills' };
+      return { label: 'Listed session skills' };
     case 'unload':
       return {
-        label: skillLabel ? `Unloaded skill ${truncateDisplayText(skillLabel, 48)}` : 'Unloaded skill',
+        label: skillLabel ? `Removed session skill ${truncateDisplayText(skillLabel, 48)}` : 'Removed session skill',
       };
     case 'load':
     default: {
       const mode = resolveLoadSkillMode(args, metadata);
+      const scope = resolveLoadSkillScope(metadata);
       const activeVerb = mode === 'fork' ? 'Running' : 'Loading';
       const completedVerb = mode === 'fork' ? 'Ran' : 'Loaded';
       const verb = state === 'doing' || state === 'pending_approval' ? activeVerb : completedVerb;
+      const suffix = mode === 'fork'
+        ? ''
+        : scope === 'session'
+          ? ' for the session'
+          : ' for this turn';
       return {
-        label: skillLabel ? `${verb} skill ${truncateDisplayText(skillLabel, 48)}` : `${verb} skill`,
+        label: skillLabel ? `${verb} skill ${truncateDisplayText(skillLabel, 48)}${suffix}` : `${verb} skill${suffix}`,
       };
     }
   }
@@ -1181,4 +1187,13 @@ function resolveLoadSkillMode(
     return 'inline';
   }
   return asString(args?.task)?.trim() ? 'fork' : 'inline';
+}
+
+function resolveLoadSkillScope(
+  metadata?: Record<string, unknown> | null,
+): 'request' | 'session' {
+  const invocation = asRecord(metadata?.['invocation']);
+  const skillMetadata = asRecord(metadata?.['skill']);
+  const scope = asString(invocation?.['scope']) || asString(skillMetadata?.['scope']);
+  return scope === 'session' ? 'session' : 'request';
 }

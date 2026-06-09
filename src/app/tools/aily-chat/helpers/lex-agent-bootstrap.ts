@@ -46,6 +46,8 @@ import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
+import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
+import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { CopilotCliSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
@@ -652,6 +654,8 @@ export function buildExternalHostAPI(): IExternalHostAPI {
     || host.config?.boardIndex
     || host.config?.boardList
   );
+  const hasBlocklyWorkspace = !!(host.absSync || host.editor || prjPath());
+  const hasLibraryAnalysis = !!(host.project && host.fs && prjPath());
   const terminal = createExternalTerminal(host, prjPath);
 
   return {
@@ -797,6 +801,71 @@ export function buildExternalHostAPI(): IExternalHostAPI {
         },
         getBoardParameters: async () => ({}),
       } : undefined,
+    blockly: hasBlocklyWorkspace || hasLibraryAnalysis ? {
+      exportAbs: async () => {
+        const result = await syncAbsFileHandler(
+          { operation: 'export' },
+          host.project as any,
+          host.electron as any,
+          host.absSync as any,
+        );
+        if (result.is_error) {
+          throw new Error(result.content);
+        }
+        return result.metadata?.absPreview ?? result.content;
+      },
+      importAbs: async (content: string) => {
+        if (typeof content === 'string' && content.trim().length > 0 && host.project?.currentProjectPath && host.fs?.writeFileSync) {
+          host.fs.writeFileSync(host.path.join(host.project.currentProjectPath, 'project.abs'), content);
+        }
+        const result = await syncAbsFileHandler(
+          { operation: 'import' },
+          host.project as any,
+          host.electron as any,
+          host.absSync as any,
+        );
+        return {
+          success: !result.is_error,
+          ...(result.is_error ? { errors: [result.content] } : {}),
+        };
+      },
+      getAbsStatus: async () => {
+        const result = await syncAbsFileHandler(
+          { operation: 'status' },
+          host.project as any,
+          host.electron as any,
+          host.absSync as any,
+        );
+        return {
+          inSync: !result.is_error,
+          ...(host.project?.currentProjectPath
+            ? { absPath: host.path.join(host.project.currentProjectPath, 'project.abs') }
+            : {}),
+        };
+      },
+      getWorkspaceOverview: async () => {
+        const generatedCode = host.editor?.getGeneratedCode?.() || '';
+        return {
+          structure: generatedCode ? 'generated-code-available' : 'workspace-structure-unavailable',
+          generatedCode,
+          blockCount: Array.isArray(host.editor?.getBlockDefinitions?.()) ? host.editor.getBlockDefinitions().length : 0,
+          complexity: generatedCode.trim() ? 'unknown' : 'empty',
+        };
+      },
+      analyzeBlocks: async (libraryId: string) => {
+        const result = await analyzeLibraryBlocksTool(
+          host.project as any,
+          {
+            libraryNames: [libraryId],
+            mode: 'analysis',
+          },
+        );
+        if (result.is_error) {
+          throw new Error(result.content);
+        }
+        return result.content;
+      },
+    } : undefined,
     connectionGraph: host.connectionGraph,
     config: host.config,
       auth: host.auth ? {
@@ -834,6 +903,14 @@ export function createBlocklyStandardHostBinding(
     runtimeMode: normalizeChatAgentRuntimeMode(options.runtimeMode, 'blockly'),
     onRuntimeModeSelected: options.onRuntimeModeSelected,
   });
+  // Debug log kept for future skill/tool registration verification.
+  // console.info('[LexBootstrap][ToolDebug] contributed tool definitions', toolProvider.contributeTools().map(tool => ({
+  //   name: tool.name,
+  //   runtimeModes: (tool as any).runtimeModes ?? null,
+  //   requiredCapabilities: (tool as any).requiredCapabilities ?? null,
+  //   agentScope: (tool as any).agentScope ?? null,
+  //   deferred: (tool as any).deferred ?? null,
+  // })));
   const binding = createBlocklyHostBinding({ hostAPI, cwd, toolProvider });
   return {
     hostAPI,
@@ -1437,14 +1514,6 @@ function attachBlocklyPostCreateExtensions(
         return null;
       }
 
-      if (skillContext.mode === 'inline') {
-        const ok = BlocklySkillRegistry.activateSkill(name);
-        if (!ok) {
-          return null;
-        }
-        registerBlocklySkillOnLexAgent(agent, name);
-      }
-
       return skillContext;
     },
     unload: (name: string) => {
@@ -1590,6 +1659,7 @@ function buildForkSkillResult(
       kind: 'skill',
       invocation: {
         mode: 'fork',
+        scope: 'request',
         task,
       },
       skill: {
@@ -1598,6 +1668,7 @@ function buildForkSkillResult(
         description: skillContext.description,
         skillMdPath: skillContext.skillMdPath,
         baseDir: skillContext.baseDir,
+        scope: 'request',
       },
       relatedFiles: skillContext.relatedFiles.map(file => ({
         path: file.path,
@@ -2035,8 +2106,7 @@ function buildTurnResponseLexSessionSnapshot(
     ?? latestRequestSnapshot?.requestContext,
   );
   const activeSkillNames = normalizeActiveSkillNames(
-    hostRecord?.metadata?.activeSkillNames
-    ?? latestRequestSnapshot?.activeSkillNames,
+    hostRecord?.metadata?.activeSkillNames,
   );
   const normalizedRequestContext = interactionContinuation
     ? {

@@ -6,11 +6,9 @@ import type {
 type SessionRequestContextSnapshot = NonNullable<SessionSnapshot['requestContext']>;
 
 export const REQUEST_CONTEXT_SNAPSHOT_METADATA_KEY = 'requestContextSnapshot';
-export const ACTIVE_SKILL_NAMES_SNAPSHOT_METADATA_KEY = 'activeSkillNamesSnapshot';
 
 export interface TurnRequestPromptContextSnapshot {
   readonly requestContext?: SessionRequestContextSnapshot;
-  readonly activeSkillNames?: readonly string[];
 }
 
 export interface PromptContextSnapshotSource {
@@ -22,18 +20,13 @@ export function captureTurnRequestPromptContextSnapshot(
 ): TurnRequestPromptContextSnapshot | undefined {
   const sessionSnapshot = source.getSessionSnapshot?.() ?? null;
   const requestContext = cloneSessionRequestContextSnapshot(sessionSnapshot?.requestContext);
-  const activeSkillNames = normalizeSkillNames(
-    sessionSnapshot?.activeSkillNames
-    ?? [],
-  );
 
-  if (!requestContext && activeSkillNames.length === 0) {
+  if (!requestContext) {
     return undefined;
   }
 
   return {
     ...(requestContext ? { requestContext } : {}),
-    ...(activeSkillNames.length > 0 ? { activeSkillNames } : {}),
   };
 }
 
@@ -46,12 +39,10 @@ export function applyTurnRequestPromptContextSnapshot(
   }
 
   const requestContext = cloneSessionRequestContextSnapshot(snapshot.requestContext);
-  const activeSkillNames = normalizeSkillNames(snapshot.activeSkillNames ?? []);
 
   return {
     ...(metadata ?? {}),
     ...(requestContext ? { [REQUEST_CONTEXT_SNAPSHOT_METADATA_KEY]: requestContext } : {}),
-    ...(activeSkillNames.length > 0 ? { [ACTIVE_SKILL_NAMES_SNAPSHOT_METADATA_KEY]: activeSkillNames } : {}),
   };
 }
 
@@ -66,15 +57,13 @@ export function readTurnRequestPromptContextSnapshot(
   const requestContext = cloneSessionRequestContextSnapshot(
     asSessionRequestContextSnapshot(record[REQUEST_CONTEXT_SNAPSHOT_METADATA_KEY]),
   );
-  const activeSkillNames = normalizeSkillNames(record[ACTIVE_SKILL_NAMES_SNAPSHOT_METADATA_KEY]);
 
-  if (!requestContext && activeSkillNames.length === 0) {
+  if (!requestContext) {
     return undefined;
   }
 
   return {
     ...(requestContext ? { requestContext } : {}),
-    ...(activeSkillNames.length > 0 ? { activeSkillNames } : {}),
   };
 }
 
@@ -100,8 +89,9 @@ export function cloneSessionRequestContextSnapshot(
   const requestId = typeof snapshot.requestId === 'string' && snapshot.requestId.trim().length > 0
     ? snapshot.requestId.trim()
     : undefined;
+  const requestedSkillNames = normalizeSkillNames(snapshot.requestedSkillNames ?? []);
 
-  if (!directToolReferences && !interactionContinuation && !requestId) {
+  if (!directToolReferences && !interactionContinuation && !requestId && requestedSkillNames.length === 0) {
     return undefined;
   }
 
@@ -109,6 +99,7 @@ export function cloneSessionRequestContextSnapshot(
     ...(directToolReferences ? { directToolReferences } : {}),
     ...(interactionContinuation ? { interactionContinuation } : {}),
     ...(requestId ? { requestId } : {}),
+    ...(requestedSkillNames.length > 0 ? { requestedSkillNames } : {}),
   };
 }
 

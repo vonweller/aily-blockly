@@ -167,6 +167,7 @@ export interface HostSessionSkillInvocationTraceEntry {
   readonly name: string;
   readonly skillUri: string;
   readonly mode: 'inline' | 'fork';
+  readonly scope: 'request' | 'session';
   readonly relatedFiles: readonly HostSessionSkillInvocationTraceFile[];
 }
 
@@ -1478,7 +1479,7 @@ export class ChatHistoryService implements OnDestroy {
       'Host record remains the UI-visible durable transcript and metadata source.',
       'Lex snapshot remains the FileSessionStorage-owned runtime snapshot used for auxiliary restore state.',
       ...(hostAuxiliaryMirrors.length > 0
-        ? ['requestContext/activeSkillNames are currently mirrored onto host metadata for restore/debug continuity.']
+        ? ['Host auxiliary runtime metadata is mirrored onto the host record for restore/debug continuity.']
         : []),
       ...(rawLexSnapshot && !parsedLexSnapshot
         ? ['Lex snapshot exists but could not be parsed during debug export.']

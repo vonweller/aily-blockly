@@ -10,6 +10,7 @@ import {
 } from '../core/chat-mode';
 import type { ResourceItem } from '../core/chat-types';
 import type { IAgentLifecycle, IChatCoordination, IProjectContext, ISessionAccess } from '../core/chat-context';
+import { SkillRegistry } from '../core/skill-registry';
 import { buildUserTurnPayload, type UserTurnPayload } from './chat-user-turn-payload';
 import { buildExplicitAgentInvocationPayload } from './explicit-agent-invocation';
 import type { RequestUserSelectedTools } from './lex-agent-bootstrap';
@@ -430,13 +431,40 @@ export class ChatSendCoordinator {
         }
       : snapshot?.requestContext;
 
-    const nextSnapshot = requestContext || snapshot?.activeSkillNames?.length
+    const requestedSkillNames = resolveRequestedSkillNames(requestMetadata);
+    const nextRequestContext = requestContext || requestedSkillNames.length > 0
       ? {
-          ...(requestContext ? { requestContext } : {}),
-          ...(snapshot?.activeSkillNames?.length ? { activeSkillNames: snapshot.activeSkillNames } : {}),
+          ...(requestContext ? { ...requestContext } : {}),
+          ...(requestedSkillNames.length > 0 ? { requestedSkillNames } : {}),
+        }
+      : requestContext;
+
+    const nextSnapshot = nextRequestContext
+      ? {
+          ...(nextRequestContext ? { requestContext: nextRequestContext } : {}),
         }
       : snapshot;
 
     return applyTurnRequestPromptContextSnapshot(requestMetadata, nextSnapshot);
   }
+}
+
+function resolveRequestedSkillNames(
+  requestMetadata?: UserTurnPayload['requestMetadata'],
+): string[] {
+  const commandKind = requestMetadata?.commandKind;
+  const commandName = typeof requestMetadata?.command?.name === 'string'
+    ? requestMetadata.command.name.trim()
+    : '';
+
+  if (commandKind !== 'slash' || !commandName) {
+    return [];
+  }
+
+  const skillContext = SkillRegistry.getSkillContext(commandName);
+  if (!skillContext || skillContext.userInvocable === false) {
+    return [];
+  }
+
+  return [skillContext.name];
 }

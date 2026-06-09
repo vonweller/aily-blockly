@@ -19,8 +19,8 @@ based on real conversion cases (ArduinoJson, OneButton, MQTT/PubSubClient, DHT, 
 
 ### Prerequisites
 
-1. Use `get_context` to check if a project exists and get `projectPath` and `appDataPath`.
-2. If no project exists, use `create_project` to create one first, then re-run `get_context` to obtain `projectPath`.
+1. Use the existing environment/project context first to determine whether a project is already open.
+2. If no project exists, use `project` with `action="create"` to create one, then continue with the new project path.
 
 ### ⚠️ CRITICAL: Library Working Directory
 
@@ -48,7 +48,7 @@ Do NOT attempt to bypass by using terminal commands (mkdir, echo, Out-File, etc.
    - `toolbox.json` — Toolbox configuration
    - `package.json` — Library metadata
 
-4. **Copy Source Files**: Use `execute_command` to copy the Arduino source:
+4. **Copy Source Files**: Use `run_terminal` to copy the Arduino source:
    - If `src/` folder exists → copy to `<projectPath>/<library-name>/src/<library-name>/`
    - If no `src/` folder → copy `.c`, `.cpp`, `.h`, `.hpp` files to `<projectPath>/<library-name>/src/<library-name>/`
 

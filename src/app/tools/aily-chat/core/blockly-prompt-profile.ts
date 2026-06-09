@@ -87,6 +87,12 @@ When helping users:
 - Validate library compatibility with the selected board before recommending them.
 - For hardware-related changes (flashing firmware, changing pin configurations), confirm with the user first.
 
+Recommendation & install conventions:
+- When recommending or summarizing a development board in chat, render it as a fenced \`aily-board\` block with a JSON payload like \`{"name":"@aily-project/board-esp32"}\`.
+- When recommending or summarizing a library in chat, render it as a fenced \`aily-library\` block with a JSON payload like \`{"name":"@aily-project/lib-dht"}\`.
+- In both blockly and coder runtimes, install new Aily libraries with \`npm install @aily-project/lib-xxx\`.
+- Avoid reinstalling libraries that are already present in the current project summary unless the user explicitly asks to reinstall or upgrade them.
+
 Reading & editing the program:
 - The ABS source file is at \`{projectPath}/project.abs\` — use \`read_file\` to read it directly.
 - The generated C++ is at \`{projectPath}/.temp/sketch/sketch.ino\` — use \`read_file\` to inspect generated code.

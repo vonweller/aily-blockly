@@ -76,30 +76,36 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
     },
     {
         name: 'load_skill',
-        description: `激活或卸载领域技能。激活后的技能内容会持久注入到每轮请求中，直到卸载。
+        description: `管理领域技能。search/list 用于发现可用 skill；load/unload 按名称管理当前会话的 skill 状态。
     当前 lex 路径中的 load_skill 由 lex core + blockly skill provider 协同实现；这里保留兼容 schema，供旧 blockly catalog / prompt 注入复用。
 使用示例：
-- load_skill({query: "abs-syntax"}) — 激活 ABS 语法参考技能
-- load_skill({query: "abs-syntax", action: "unload"}) — 卸载技能
-- load_skill({url: "https://example.com/SKILL.md"}) — 从 URL 加载并激活`,
+- load_skill({action: "load", name: "abs-syntax"}) — 加载 ABS 语法 skill；返回 SKILL.md 上下文和 related files
+- load_skill({action: "search", query: "abs"}) — 搜索可用 skill；这是可选发现步骤，不是 load 前置条件
+- load_skill({action: "list"}) — 列出当前已加载 skill
+- load_skill({action: "unload", name: "abs-syntax"}) — 卸载已加载 skill
+- load_skill({action: "load", name: "review-rules", task: "Review the latest changes."}) — 运行 fork-mode skill`,
         input_schema: {
             type: 'object',
             properties: {
-                query: {
-                    type: 'string',
-                    description: '技能名称或搜索关键词'
-                },
                 action: {
                     type: 'string',
-                    enum: ['load', 'unload'],
-                    description: '操作类型：load（激活，默认）或 unload（卸载）'
+                    enum: ['search', 'load', 'unload', 'list'],
+                    description: '操作类型：search（搜索），load（加载），unload（卸载），list（列出已加载）'
                 },
-                url: {
+                query: {
                     type: 'string',
-                    description: '直接从 URL 加载 SKILL.md 文件（一次性使用）'
+                    description: '搜索关键词（仅 search 使用）'
+                },
+                name: {
+                    type: 'string',
+                    description: 'skill 名称（load/unload 使用）'
+                },
+                task: {
+                    type: 'string',
+                    description: 'fork-mode skill 的可选任务描述；未传时默认使用当前用户请求'
                 }
             },
-            required: ['query']
+            required: ['action']
         },
         agents: ["mainAgent"]
     },

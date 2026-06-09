@@ -110,6 +110,7 @@ function normalizeSkillInvocationTraceEntry(value: unknown): HostSessionSkillInv
     name?: unknown;
     skillUri?: unknown;
     mode?: unknown;
+    scope?: unknown;
     relatedFiles?: unknown;
   };
   const toolCallId = typeof record.toolCallId === 'string' ? record.toolCallId.trim() : '';
@@ -130,6 +131,7 @@ function normalizeSkillInvocationTraceEntry(value: unknown): HostSessionSkillInv
     name,
     skillUri,
     mode: record.mode === 'fork' ? 'fork' : 'inline',
+    scope: record.scope === 'session' ? 'session' : 'request',
     relatedFiles,
   };
 }

@@ -22,10 +22,13 @@ import {
   type SkillRelatedFile,
   type LoadedSkillSummary,
 } from './skill-types';
+import { normalizeAgentIdentifiers } from './agent-identifiers';
 import { AilyHost } from './host';
 
 const MAX_SKILL_RELATED_FILES = 50;
 const MAX_SKILL_RELATED_DEPTH = 5;
+const SKILL_LISTING_CHAR_BUDGET = 15000;
+const SKILL_LISTING_TRUNCATED_NAMES_BUDGET = 5000;
 const SKILL_DISCOVERY_REFRESH_DEBOUNCE_MS = 100;
 const IGNORED_SKILL_DIRECTORY_NAMES = new Set([
   '.git',
@@ -166,6 +169,7 @@ function parseSimpleYaml(yaml: string): SkillMetadata {
   const disableModelInvocation = parseFrontmatterBoolean(topLevel['disable-model-invocation'] ?? topLevel['disableModelInvocation']);
   const targets = parseFrontmatterList(topLevel['target'] ?? topLevel['targets'] ?? topLevel['session-type'] ?? topLevel['sessionType']);
   const parseList = (s?: string) => parseFrontmatterList(s);
+  const parsedAgents = normalizeAgentIdentifiers(parseList(m['agents']));
 
   return {
     name: parsedName,
@@ -176,7 +180,7 @@ function parseSimpleYaml(yaml: string): SkillMetadata {
     metadata: Object.keys(m).length > 0 ? m : undefined,
     version: m['version'],
     scope: m['scope'] as any,
-    agents: parseList(m['agents']),
+    agents: parsedAgents.length > 0 ? parsedAgents : undefined,
     autoActivate: m['auto-activate'] === 'true',
     tags: parseList(m['tags']),
     author: m['author'],
@@ -195,7 +199,7 @@ function parseSimpleYaml(yaml: string): SkillMetadata {
 class SkillRegistryImpl {
   private skills = new Map<string, IAilySkill>();
   private _initialized = false;
-  /** 会话级：Agent 主动激活的 skill 名称集合（通过 load_skill 加载，可通过 unload 卸载） */
+  /** 会话级：仅 restore / persisted keep-path 会写入的 session skills，不再作为 inline load_skill 默认主路径。 */
   private _activatedSkills = new Set<string>();
   private readonly _changeListeners = new Set<() => void>();
   private _watchSubscriptions = new Map<string, { close?(): void; dispose?(): void; unsubscribe?(): void } | void>();
@@ -240,8 +244,7 @@ class SkillRegistryImpl {
     }
 
     // 0. 加载内置 skills（随安装包分发，优先级最低）
-    const builtinDir = this.getBuiltinSkillsDir();
-    if (builtinDir) {
+    for (const builtinDir of this.getBuiltinSkillsDirs()) {
       this.scanDirectory(builtinDir, { type: 'builtin' });
     }
 
@@ -369,22 +372,33 @@ class SkillRegistryImpl {
   // ========== 目录工具 ==========
 
   /**
-   * 内置 skills 目录：
-   * - 打包后：resources/app/electron/../renderer/skills/
-   * - 开发模式回退：electron/../public/skills/
+   * 内置 skills 目录。Angular 会把 public/skills 打进 renderer/skills；
+   * 本地开发、dist 预览和 Electron 打包路径都作为候选目录处理。
    */
-  private getBuiltinSkillsDir(): string | null {
+  private getBuiltinSkillsDirs(): string[] {
     const host = AilyHost.get();
     const electronPath = host.path?.getElectronPath?.();
-    if (!electronPath) return null;
+    if (!electronPath) return [];
 
-    const prodDir = host.path.join(electronPath, '..', 'renderer', 'skills');
-    if (host.fs.existsSync(prodDir)) return prodDir;
+    const candidates = [
+      host.path.join(electronPath, '..', 'renderer', 'skills'),
+      host.path.join(electronPath, '..', 'dist', 'aily-blockly', 'browser', 'skills'),
+      host.path.join(electronPath, '..', 'public', 'skills'),
+    ];
+    const seen = new Set<string>();
+    const directories: string[] = [];
 
-    const devDir = host.path.join(electronPath, '..', 'public', 'skills');
-    if (host.fs.existsSync(devDir)) return devDir;
+    for (const candidate of candidates) {
+      const identity = this.normalizeWatchTargetIdentity(candidate, host);
+      if (!identity || seen.has(identity) || !host.fs.existsSync(candidate)) {
+        continue;
+      }
 
-    return null;
+      seen.add(identity);
+      directories.push(candidate);
+    }
+
+    return directories;
   }
 
   /** Child tool skills live under child/tools/<tool-id>/skill/<skill-name>/SKILL.md. */
@@ -760,35 +774,91 @@ class SkillRegistryImpl {
   /**
    * 搜索 skills（三级策略，同 deferred tools 模式）。
    * 1. 精确名称匹配
-   * 2. 标签/描述关键词匹配
-   * 3. 模糊匹配
+   * 2. 关键词打分匹配（名称/标签优先于描述）
+   * 3. 无匹配时返回空结果
    */
   searchSkills(query: string, agentName?: string): SkillSearchResult[] {
-    const q = query.toLowerCase();
+    const q = query.toLowerCase().trim();
+    if (!q) {
+      return [];
+    }
     let candidates = agentName
       ? this.getSkillsForAgent(agentName)
       : this.getAll().filter(skill => this.isTrustedSkillSource(skill));
 
     // 1. 精确名称匹配
-    const exact = candidates.filter(s => s.metadata.name === q);
+    const exact = candidates.filter(s => {
+      const name = s.metadata.name.toLowerCase();
+      const displayName = s.metadata.displayName?.toLowerCase();
+      return name === q || displayName === q;
+    });
     if (exact.length > 0) {
       return exact.map(skill => ({ skill, matchType: 'exact' as const }));
     }
 
-    // 2. 标签匹配
-    const tagMatches = candidates.filter(s =>
-      s.metadata.tags?.some(t => t.toLowerCase().includes(q))
-    );
-    if (tagMatches.length > 0) {
-      return tagMatches.map(skill => ({ skill, matchType: 'tag' as const }));
-    }
+    const queryTokens = tokenizeSkillSearchQuery(q);
+    const scored = candidates
+      .map(skill => {
+        const name = skill.metadata.name.toLowerCase();
+        const displayName = skill.metadata.displayName?.toLowerCase() ?? '';
+        const description = skill.metadata.description.toLowerCase();
+        const tags = (skill.metadata.tags ?? []).map(tag => tag.toLowerCase());
+        let score = 0;
+        let matchType: SkillSearchResult['matchType'] = 'fuzzy';
 
-    // 3. 名称/描述模糊匹配
-    const fuzzy = candidates.filter(s =>
-      s.metadata.name.toLowerCase().includes(q) ||
-      s.metadata.description.toLowerCase().includes(q)
-    );
-    return fuzzy.map(skill => ({ skill, matchType: 'fuzzy' as const }));
+        if (name.includes(q) || displayName.includes(q)) {
+          score += 80;
+          matchType = 'exact';
+        }
+
+        if (tags.some(tag => tag === q || tag.includes(q))) {
+          score += 40;
+          if (matchType !== 'exact') {
+            matchType = 'tag';
+          }
+        }
+
+        for (const token of queryTokens) {
+          if (name === token || displayName === token) {
+            score += 60;
+            matchType = 'exact';
+            continue;
+          }
+          if (name.includes(token) || displayName.includes(token)) {
+            score += 25;
+            if (matchType !== 'exact') {
+              matchType = 'fuzzy';
+            }
+          }
+          if (tags.some(tag => tag === token)) {
+            score += 20;
+            if (matchType !== 'exact') {
+              matchType = 'tag';
+            }
+            continue;
+          }
+          if (tags.some(tag => tag.includes(token))) {
+            score += 12;
+            if (matchType !== 'exact') {
+              matchType = 'tag';
+            }
+          }
+          if (description.includes(token)) {
+            score += 8;
+          }
+        }
+
+        return score > 0 ? { skill, matchType, score } : null;
+      })
+      .filter((entry): entry is { skill: IAilySkill; matchType: SkillSearchResult['matchType']; score: number } => !!entry)
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+        return left.skill.metadata.name.localeCompare(right.skill.metadata.name);
+      });
+
+    return scored.map(({ skill, matchType }) => ({ skill, matchType }));
   }
 
   /**
@@ -819,7 +889,7 @@ class SkillRegistryImpl {
       && s.metadata.disableModelInvocation !== true);
     if (listable.length === 0) return '';
 
-    const entries = listable.map(skill => {
+    const allEntries = listable.map(skill => {
         const context = this.getSkillContext(skill.metadata.name);
         const flags = [
           `user-invocable: ${context?.userInvocable === false ? 'false' : 'true'}`,
@@ -829,6 +899,42 @@ class SkillRegistryImpl {
         ];
         return `- ${skill.metadata.name}: ${skill.metadata.description} (${flags.join(', ')})`;
       });
+
+    const entries: string[] = [];
+    let truncatedAtIndex = allEntries.length;
+    let charCount = 0;
+
+    for (let i = 0; i < allEntries.length; i += 1) {
+      const entry = allEntries[i];
+      const entryLength = entry.length + 1;
+      if (hasLoadSkillTool && charCount + entryLength > SKILL_LISTING_CHAR_BUDGET) {
+        truncatedAtIndex = i;
+        break;
+      }
+      charCount += entryLength;
+      entries.push(entry);
+    }
+
+    if (truncatedAtIndex < listable.length) {
+      const truncatedSkills = listable.slice(truncatedAtIndex);
+      const names: string[] = [];
+      let nameListLength = 0;
+      for (const skill of truncatedSkills) {
+        const addition = (names.length > 0 ? 2 : 0) + skill.metadata.name.length;
+        if (nameListLength + addition > SKILL_LISTING_TRUNCATED_NAMES_BUDGET) {
+          break;
+        }
+        nameListLength += addition;
+        names.push(skill.metadata.name);
+      }
+      const remaining = truncatedSkills.length - names.length;
+      const nameList = names.join(', ');
+      if (nameList) {
+        entries.push(remaining > 0
+          ? `Additional skills available (invoke by name): ${nameList}... and ${remaining} more`
+          : `Additional skills available (invoke by name): ${nameList}`);
+      }
+    }
 
     if (entries.length === 0) {
       return '';
@@ -849,8 +955,8 @@ class SkillRegistryImpl {
   // ========== 会话级激活/卸载 ==========
 
   /**
-   * 激活一个 skill（Agent 通过 load_skill 调用）。
-   * 激活后其内容会通过 getActiveSkillsContent() 持久注入到每轮请求中。
+    * 激活一个 session-scoped skill。
+    * 当前仅 restore / persisted keep-path 应调用这里；inline `load_skill` 不再默认写入该集合。
    */
   activateSkill(name: string): boolean {
     const skill = this.skills.get(name);
@@ -866,7 +972,7 @@ class SkillRegistryImpl {
   }
 
   /**
-   * 卸载一个 Agent 主动加载的 skill。
+    * 卸载一个 session-scoped skill。
    * auto-activate 的 skill 不可卸载（始终活跃）。
    */
   deactivateSkill(name: string): boolean {
@@ -1011,8 +1117,7 @@ class SkillRegistryImpl {
     host: ReturnType<typeof AilyHost.get>,
   ): Array<{ watchPath: string; discoveryRoot: string }> {
     const roots: string[] = [];
-    const builtinDir = this.getBuiltinSkillsDir();
-    if (builtinDir) {
+    for (const builtinDir of this.getBuiltinSkillsDirs()) {
       roots.push(builtinDir);
     }
 
@@ -1252,7 +1357,7 @@ function buildSkillsListingInstruction(input: {
   readonly hasReadFileTool: boolean;
 }): string {
   if (input.hasLoadSkillTool) {
-    return 'Call load_skill with the skill name before starting the related task. The tool returns the skill\'s SKILL.md context plus related files; read related files on demand with read_file.';
+    return 'Review the listed skills first and directly call load_skill with action="load" and the exact skill name when one clearly matches the task. Use action="search" only as a fallback when no currently listed skill clearly fits or when you need to discover an additional skill. Searching does not load a skill; after search, you must call load_skill again with action="load" and an exact name before claiming a skill is loaded.';
   }
 
   if (input.hasReadFileTool) {
@@ -1260,4 +1365,12 @@ function buildSkillsListingInstruction(input: {
   }
 
   return 'When a listed skill applies to the request, treat it as a blocking requirement and defer the task until the required skill instructions become readable in the current tool set.';
+}
+
+function tokenizeSkillSearchQuery(query: string): string[] {
+  const tokens = query.match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  const normalized = tokens
+    .map(token => token.trim().toLowerCase())
+    .filter(token => token.length > 0);
+  return normalized.length > 0 ? [...new Set(normalized)] : [query];
 }

@@ -1093,7 +1093,11 @@ function deriveSkillInvocationTraceEntry(
     skillUri?: unknown;
     skillMdPath?: unknown;
     mode?: unknown;
+    scope?: unknown;
   };
+  const invocationRecord = metadata['invocation'] && typeof metadata['invocation'] === 'object'
+    ? metadata['invocation'] as { scope?: unknown }
+    : undefined;
   const normalizedToolCallId = typeof toolCallId === 'string' ? toolCallId.trim() : '';
   const name = typeof skillRecord.name === 'string' ? skillRecord.name.trim() : '';
   const skillUri = typeof skillRecord.skillUri === 'string'
@@ -1108,6 +1112,7 @@ function deriveSkillInvocationTraceEntry(
     name,
     skillUri,
     mode: skillRecord.mode === 'fork' ? 'fork' : 'inline',
+    scope: skillRecord.scope === 'session' || invocationRecord?.scope === 'session' ? 'session' : 'request',
     relatedFiles: Array.isArray(relatedFiles)
       ? relatedFiles
         .map(file => {

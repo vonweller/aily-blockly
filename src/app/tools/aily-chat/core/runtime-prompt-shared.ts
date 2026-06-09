@@ -43,25 +43,68 @@ export function createSkillCommandSection(id: string): IPromptSection {
     priority: 55,
     cacheable: false,
     getContent: (ctx) => {
+      const requestedSkillNames = Array.isArray((ctx as PromptContext & { requestedSkillNames?: readonly string[] }).requestedSkillNames)
+        ? ((ctx as PromptContext & { requestedSkillNames?: readonly string[] }).requestedSkillNames ?? [])
+          .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+          .map(name => name.trim())
+        : [];
       const commandName = ctx.command?.name?.trim();
-      if (!commandName) {
+      const targetSkillNames = requestedSkillNames.length > 0
+        ? requestedSkillNames
+        : (commandName ? [commandName] : []);
+
+      if (targetSkillNames.length === 0) {
         return '';
       }
 
-      const skillContext = SkillRegistry.getSkillContext(commandName);
-      if (!skillContext || skillContext.userInvocable === false) {
-        return '';
-      }
+      const sections = targetSkillNames
+        .map(name => buildRequestedSkillSection(name, requestedSkillNames.length > 0))
+        .filter((section): section is string => section.length > 0);
 
-      return [
-        `The current request explicitly selected the /${skillContext.name} skill command.`,
-        skillContext.mode === 'fork'
-          ? `Call load_skill with action=\"load\", name=\"${skillContext.name}\", and task set to the current user request so the skill runs as a forked subagent.`
-          : `Call load_skill with action=\"load\" and name=\"${skillContext.name}\" before continuing so the skill context is loaded for this turn.`,
-        `Skill file: ${skillContext.skillMdPath}`,
-      ].join('\n');
+      return sections.join('\n\n');
     },
   };
+}
+
+function buildRequestedSkillSection(name: string, fromRequestedSkillNames: boolean): string {
+  const skillContext = SkillRegistry.getSkillContext(name);
+  if (!skillContext || (!fromRequestedSkillNames && skillContext.userInvocable === false)) {
+    return '';
+  }
+
+  const intro = fromRequestedSkillNames
+    ? `The current request explicitly requested the ${skillContext.name} skill for this turn.`
+    : `The current request explicitly selected the /${skillContext.name} skill command.`;
+
+  if (skillContext.mode === 'fork') {
+    return [
+      intro,
+      `Call load_skill with action="load", name="${skillContext.name}", and task set to the current user request so the skill runs as a forked subagent.`,
+      `Skill file: ${skillContext.skillMdPath}`,
+    ].join('\n');
+  }
+
+  const relatedFiles = skillContext.relatedFiles ?? [];
+  const relatedFilesSection = relatedFiles.length > 0
+    ? [
+      'Related files (use read_file to inspect only what you need):',
+      ...relatedFiles.map(file => `- ${file.path}${file.category ? ` (${file.category})` : ''}`),
+    ]
+    : [];
+
+  return [
+    intro,
+    'Treat this skill as request-scoped context for the current turn. Do not assume it should remain active in future turns unless explicitly loaded again.',
+    `<skill-context name="${skillContext.name}" mode="inline">`,
+    `Description: ${skillContext.description || 'No description provided.'}`,
+    `Skill file: ${skillContext.skillMdPath}`,
+    ...(skillContext.baseDir ? [`Base directory: ${skillContext.baseDir}`] : []),
+    ...relatedFilesSection,
+    '',
+    'Instructions:',
+    skillContext.body,
+    '</skill-context>',
+  ].join('\n');
 }
 
 export function collectRuntimePromptFileContext(
