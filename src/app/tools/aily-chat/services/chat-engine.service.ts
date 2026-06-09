@@ -3302,7 +3302,18 @@ export class ChatEngineService implements IChatContext {
       || (!hasRegistryRequestOwner && !!this.messageSubscription)
       || typeof existingRuntimeState?.stopSession === 'function'
     );
-    const turnResponses = this.readActiveSessionRuntimeTurnResponses();
+    const capturedTurnResponses = this.readActiveSessionRuntimeTurnResponses();
+    // goback 时会先清空可见 lexStream 再触发本次 capture（经 clearVisibleChatView -> invalidateHostRequestGraph），
+    // 此时读取到的 turnResponses 为空。若在请求仍在进行时直接写回，会把后台正在流式输出的会话快照清空，
+    // 导致重新进入后会话流无法恢复（mac 上时序更易触发）。
+    // 仅在「请求进行中且本次快照为空、但已有 runtime 快照非空」时保留既有 turnResponses；
+    // 非进行中的清空（如 undo 到空）仍按正常逻辑写回。
+    const turnResponses = requestInProgress
+      && capturedTurnResponses.length === 0
+      && Array.isArray(existingRuntimeState?.turnResponses)
+      && existingRuntimeState.turnResponses.length > 0
+      ? existingRuntimeState.turnResponses
+      : capturedTurnResponses;
     const syncRuntimeViewOverlayFromVisibleServices = (
       this as unknown as {
         syncRuntimeViewOverlayFromVisibleServices?: (sessionId?: string | null) => ChatSessionRuntimeViewOverlay | null;
@@ -3673,6 +3684,9 @@ export class ChatEngineService implements IChatContext {
       ).buildRuntimeProjectionForVisibleAttach
         ?? ChatEngineService.prototype['buildRuntimeProjectionForVisibleAttach'];
       const runtimeProjectionState = buildRuntimeProjectionForVisibleAttach.call(this, runtimeState);
+      const runtimeTurnResponses = Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0
+        ? runtimeState.turnResponses
+        : (runtimeProjectionState?.turnResponses ?? []);
       traceBackgroundSessionExecution('attach-current-session-view-reattach-running-runtime', {
         sessionId: currentSessionId,
         requestInProgress: hasActiveRequest,
@@ -3683,6 +3697,15 @@ export class ChatEngineService implements IChatContext {
         && (!hasVisibleProjection || runtimeProjectionMismatch)
         && this.liveHostRequestGraphCache
         && typeof this.triggerSyncDetectChanges === 'function') {
+        // goback 时已通过 resetVisibleSessionProjection 清空可见 lexStream。
+        // hostResponseProjection（即 dialogItems 数据源）依赖 lexStream.turnResponses 作为 live source：
+        // 若仅 replaceState 而不回灌 lexStream，下一次变更检测会因 live source 为空而把缓存判定为
+        // 「无会话内容」并清空，导致重新进入后流式输出不显示（mac 上时序更易触发）。
+        // 这里把后台 runtime 的 turnResponses 水合回可见 lexStream（与「下一次渲染事件合并」恢复路径一致），
+        // 保证 live source 与缓存一致、内容在后续变更检测中稳定保留。
+        if (runtimeTurnResponses.length > 0) {
+          this.lexStream.hydrateTurnResponses(runtimeTurnResponses);
+        }
         this.liveHostRequestGraphCache.replaceState(runtimeProjectionState);
         this.triggerSyncDetectChanges();
       }
