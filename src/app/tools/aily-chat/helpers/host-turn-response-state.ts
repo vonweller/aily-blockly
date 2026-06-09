@@ -1147,7 +1147,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
       };
     }
 
-    if (this.hasPrimedModel) {
+    if (this.hasPrimedModel && normalizedSource.liveTurnResponses.length === 0) {
       this.cachedStamp = stamp;
       this.hasPrimedModel = false;
       return {
@@ -1167,6 +1167,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     this.cachedStamp = stamp;
     this.cachedState = state;
     this.cachedRequestModel = requestModel;
+    this.hasPrimedModel = false;
     return { state, requestModel };
   }
 
