@@ -34,6 +34,8 @@ import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
+import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
+import type { DevelopmentModePreference } from '../services/config.service';
 
 @Component({
   selector: 'app-main-window',
@@ -63,8 +65,8 @@ import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-t
     ModelStoreComponent,
     OnboardingComponent,
     TranslateModule,
-    OnboardingComponent,
     LibManagerToolComponent,
+    ModeWelcomeComponent,
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
@@ -101,6 +103,9 @@ export class MainWindowComponent {
   showOnboarding = false;
   onboardingConfig = null;
   private developmentModePreferencePromptOpen = false;
+
+  // 首次开发模式选择（全屏引导）
+  showModeWelcome = false;
 
   constructor(
     private uiService: UiService,
@@ -159,7 +164,7 @@ export class MainWindowComponent {
   }
 
   private async promptDevelopmentModePreferenceIfNeeded(): Promise<void> {
-    if (this.developmentModePreferencePromptOpen) {
+    if (this.developmentModePreferencePromptOpen || this.showModeWelcome) {
       return;
     }
 
@@ -172,39 +177,26 @@ export class MainWindowComponent {
     }
 
     this.developmentModePreferencePromptOpen = true;
+    this.showModeWelcome = true;
+    this.cd.detectChanges();
+  }
 
-    let modalRef: any;
-    const selectPreference = async (preference: 'coder' | 'blockly') => {
-      await this.configService.setDevelopmentModePreference(preference, 'onboarding');
-      modalRef?.close(preference);
-    };
+  // 用户在全屏引导中选择了某个开发模式
+  async onModeWelcomeSelect(preference: DevelopmentModePreference): Promise<void> {
+    await this.configService.setDevelopmentModePreference(preference, 'onboarding');
+    this.closeModeWelcome();
+  }
 
-    modalRef = this.modal.create({
-      nzTitle: this.translate.instant('SETTINGS.FIELDS.DEVELOPMENT_MODE_PROMPT_TITLE'),
-      nzContent: this.translate.instant('SETTINGS.FIELDS.DEVELOPMENT_MODE_PROMPT_DESC'),
-      nzClosable: true,
-      nzMaskClosable: false,
-      nzWidth: '420px',
-      nzClassName: 'development-mode-preference-modal',
-      nzFooter: [
-        {
-          label: this.translate.instant('PROJECT_NEW.BOARD.MODE_BLOCKLY'),
-          type: 'primary',
-          onClick: () => selectPreference('blockly'),
-        },
-        {
-          label: this.translate.instant('PROJECT_NEW.BOARD.MODE_CODER'),
-          onClick: () => selectPreference('coder'),
-        },
-      ],
-    });
+  // 用户选择「稍后再说」
+  async onModeWelcomeSkip(): Promise<void> {
+    await this.configService.markDevelopmentModePreferencePrompted();
+    this.closeModeWelcome();
+  }
 
-    modalRef.afterClose.subscribe(async (preference: 'coder' | 'blockly' | undefined) => {
-      if (preference !== 'coder' && preference !== 'blockly') {
-        await this.configService.markDevelopmentModePreferencePrompted();
-      }
-      this.developmentModePreferencePromptOpen = false;
-    });
+  private closeModeWelcome(): void {
+    this.showModeWelcome = false;
+    this.developmentModePreferencePromptOpen = false;
+    this.cd.detectChanges();
   }
 
   ngAfterViewInit(): void {
