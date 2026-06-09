@@ -7,7 +7,7 @@ import type {
 import type { ChatTextOptions } from '../services/chat.service';
 
 type ChatExternalInputContext = Pick<IAgentLifecycle, 'isWaiting'>
-  & Pick<IChatViewAccess, 'inputValue' | 'scrollManager'>
+  & Pick<IChatViewAccess, 'inputValue' | 'scrollManager' | 'triggerSyncDetectChanges'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'message'>;
 
@@ -16,7 +16,7 @@ interface ExternalInputCallbacks {
   regenerateTurn: () => Promise<void> | void;
   undoLastEdits: () => Promise<void> | void;
   newChat: () => Promise<void> | void;
-  queuePendingAutoSend: (text: string) => void;
+  ensureSessionReadyForSubmit: () => Promise<boolean>;
   submitText: (text: string, clearInput: boolean) => Promise<void> | void;
   focusInput: () => void;
   schedulePostInputWork: (work: () => void) => void;
@@ -50,6 +50,7 @@ export class ChatExternalInputCoordinator {
     } else {
       this.ctx.inputValue = text;
     }
+    this.ctx.triggerSyncDetectChanges();
 
     this.callbacks.schedulePostInputWork(() => {
       this.callbacks.focusInput();
@@ -58,13 +59,22 @@ export class ChatExternalInputCoordinator {
         return;
       }
 
-      if (this.ctx.sessionId) {
-        this.ctx.scrollManager.startNewExchange();
-        void this.callbacks.submitText(this.ctx.inputValue, true);
-      } else {
-        this.callbacks.queuePendingAutoSend(this.ctx.inputValue);
-      }
+      void this.autoSendExternalInput();
     });
+  }
+
+  private async autoSendExternalInput(): Promise<void> {
+    if (!this.ctx.sessionId) {
+      const ready = await this.callbacks.ensureSessionReadyForSubmit();
+      if (!ready || !this.ctx.sessionId) {
+        this.ctx.message.warning('无法创建会话，请稍后重试');
+        return;
+      }
+    }
+
+    this.ctx.scrollManager.startNewExchange();
+    await this.callbacks.submitText(this.ctx.inputValue, true);
+    this.ctx.triggerSyncDetectChanges();
   }
 
   private handleButtonText(text: string): void {

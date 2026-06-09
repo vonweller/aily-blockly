@@ -122,9 +122,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   /** 全局互斥：当前允许展开编辑框的用户 turnId；与本条不一致时需收起（由父级统一传入） */
   @Input() exclusiveEditTurnId: string | undefined;
 
-  /** 本组件 dialog-box 是否被 hover */
-  dialogBoxHovered = false;
-
   @Output() editAndResend = new EventEmitter<{ target: DialogTurnContext; newText: string; resources: ResourceItem[] }>();
   /** 本消息进入编辑态时发出 turnId，供父级互斥 */
   @Output() editSessionOpened = new EventEmitter<string>();
@@ -144,8 +141,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
 
-  /** 是否显示操作栏 */
-  showActions = false;
   /** 反馈状态 */
   feedbackState: 'helpful' | 'unhelpful' | null = null;
 
@@ -213,8 +208,14 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return !this.readOnly && this.role !== 'user' && !this.effectiveDoing;
   }
 
-  get showFooterActions(): boolean {
-    return this.canShowActions || (this.canShowLimitActions && this.showActions);
+  /** 是否渲染底部栏 DOM（非最后一条仅占位，hover 显影） */
+  get shouldRenderFooter(): boolean {
+    return this.canShowActions || this.canShowLimitActions;
+  }
+
+  /** 非最后一条助手消息：底部栏 hover 淡入，避免 @if 撑开布局 */
+  get hasHoverFooterFade(): boolean {
+    return this.canShowLimitActions && !this.canShowActions;
   }
 
   get actionTurnId(): string | undefined {
@@ -291,7 +292,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get showAssistantModelBadge(): boolean {
-    return this.showFooterActions && this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
+    return this.shouldRenderFooter && this.role === 'aily' && !this.effectiveDoing && !!this.assistantModelBadgeLabel;
   }
 
   get assistantModelBadgeTitle(): string {
@@ -345,10 +346,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return this.role === 'aily' && this.isLastAily && this.effectiveDoing;
   }
 
-  get showCheckpointAnchor(): boolean {
-    return this.canRenderCheckpointAnchor && this.dialogBoxHovered;
-  }
-
   /** 是否可编辑用户消息（非 doing 的 user 消息） */
   get canEditUserMessage(): boolean {
     return !this.readOnly && this.role === 'user' && !this.effectiveDoing && !this.isWaiting && !!this.actionTurnId && !this.isRequestDisabled;
@@ -386,7 +383,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return previewLabel ? `点击编辑 · ${previewLabel}` : '点击编辑';
   }
 
-  private get isCheckpointCompatibilityMode(): boolean {
+  get isCheckpointCompatibilityMode(): boolean {
     return this.workspaceCheckpointPresentationMode === 'compatibility';
   }
 
@@ -406,6 +403,20 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
         : '还原检查点';
 
     return this.isCheckpointCompatibilityMode ? `${baseLabel} · 兼容模式` : baseLabel;
+  }
+
+  get checkpointActionShortLabel(): string {
+    if (this.isFirstUserTurn) {
+      return '重新开始';
+    }
+    if (this.roundCount > 0) {
+      return `还原 · ${this.roundCount} 轮`;
+    }
+    return '还原检查点';
+  }
+
+  get checkpointActionIconClass(): string {
+    return this.isFirstUserTurn ? 'fa-arrow-rotate-left' : 'fa-clock-rotate-left';
   }
 
   get forkSessionActionLabel(): string {
@@ -547,16 +558,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return detail > 0
       ? `重新执行“${preview}” · ${detail} 轮`
       : `重新执行“${preview}”`;
-  }
-
-  onDialogMouseEnter(): void {
-    this.showActions = true;
-    this.dialogBoxHovered = true;
-  }
-
-  onDialogMouseLeave(): void {
-    this.showActions = false;
-    this.dialogBoxHovered = false;
   }
 
   onRegenerate(): void {
