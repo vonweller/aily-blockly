@@ -730,12 +730,31 @@ export class ConfigService {
     this.electronService.writeFile(localPath, JSON.stringify({ boards: entries }));
   }
 
+  /** Coder 开发板索引固定走 regions.cn.resource，不走 resource_sources 镜像链 */
+  private getCoderBoardResourceUrl(): string {
+    return this.normalizeResourceSourceUrl(this.data?.regions?.cn?.resource || '');
+  }
+
   private async fetchCoderBoardIndexEntriesOrThrow(): Promise<CoderBoardIndexEntry[]> {
-    return this.fetchRemoteArrayOrThrow(
-      '/coder_board_index.json',
-      '线上 coder_board_index.json 格式无效',
-      'boards'
-    ) as Promise<CoderBoardIndexEntry[]>;
+    const resourceUrl = this.getCoderBoardResourceUrl();
+    if (!resourceUrl) {
+      throw new Error('未配置 Coder 开发板资源地址 (regions.cn.resource)');
+    }
+
+    const response: any = await lastValueFrom(
+      this.http.get(`${resourceUrl}/coder_board_index.json`, {
+        responseType: 'json',
+      }).pipe(timeout(ConfigService.RESOURCE_REQUEST_TIMEOUT_MS)),
+    );
+
+    if (Array.isArray(response)) {
+      return response as CoderBoardIndexEntry[];
+    }
+    if (response && Array.isArray(response.boards)) {
+      return response.boards as CoderBoardIndexEntry[];
+    }
+
+    throw new Error('线上 coder_board_index.json 格式无效');
   }
 
   private async reloadCoderBoardIndexFromRemote(localPath: string, originalError: unknown): Promise<void> {
@@ -772,6 +791,30 @@ export class ConfigService {
       return [];
     }
     return this.sortBoardsByUsage([...this.coderBoardList]);
+  }
+
+  /**
+   * Aily Code 切换开发板弹窗：优先内存缓存（coder_board_index.json），并过滤尚未支持的板卡。
+   */
+  getCoderBoardListForSelector(): any[] {
+    if (!this.coderBoardList?.length) {
+      return [];
+    }
+    const list = this.coderBoardList.filter((board) => board.state !== 'todo');
+    return this.sortBoardsByUsage([...list]);
+  }
+
+  /** 线上刷新 Coder 开发板索引并返回选择器列表 */
+  async loadCoderBoardList(): Promise<any[]> {
+    try {
+      const entries = await this.loadCoderBoardIndexEntries();
+      if (entries.length > 0) {
+        this.coderBoardList = mapCoderBoardIndexToBoardList(entries);
+      }
+    } catch (error) {
+      console.error('Failed to load coder board list:', error);
+    }
+    return this.getCoderBoardListForSelector();
   }
 
   libraryList = [];

@@ -726,6 +726,23 @@
             "DONE": "Done"
         }
     },
+    "MODE_WELCOME": {
+        "TITLE": "Welcome to Aily Blockly",
+        "SUBTITLE": "Choose the way of building that suits you best and start your first project",
+        "BLOCKLY_TITLE": "Blockly Visual",
+        "BLOCKLY_TAGLINE": "Program by dragging blocks — perfect even with zero experience",
+        "BLOCKLY_FEATURE_1": "Visual drag-and-drop, what you see is what you get",
+        "BLOCKLY_FEATURE_2": "Great for learning and rapid prototyping",
+        "BLOCKLY_FEATURE_3": "Blocks generate reliable code automatically",
+        "CODER_TITLE": "Coder",
+        "CODER_TAGLINE": "A professional code editing experience with full control over every line",
+        "CODER_FEATURE_1": "Full code editor with smart completion",
+        "CODER_FEATURE_2": "Ideal for advanced and fine-grained development",
+        "CODER_FEATURE_3": "Close to a real embedded development workflow",
+        "CHOOSE": "Choose this mode",
+        "RESET_HINT": "You can switch anytime in Settings → Basic → Default Development Mode",
+        "SKIP": "Decide later"
+    },
     "NPM": {
         "INSTALLING": "Installing {{name}}...",
         "INSTALLING_DEPENDENCY": "Installing {{name}} dependency...",

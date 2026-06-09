@@ -120,5 +120,9 @@
 </app-onboarding>
 }
 
+<!-- 首次开发模式选择（全屏引导） -->
+<app-mode-welcome [show]="showModeWelcome" (select)="onModeWelcomeSelect($event)" (skip)="onModeWelcomeSkip()">
+</app-mode-welcome>
+
 <iframe src="https://abi.aily.pro/"></iframe>
 <iframe src="https://req-stats.aily.pro/track"></iframe>

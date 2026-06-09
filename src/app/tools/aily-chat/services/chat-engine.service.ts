@@ -79,7 +79,9 @@ import {
 } from '../core/chat-session-title';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
+import type { EditsSummary } from './edit-checkpoint.service';
 import { EditCheckpointService } from './edit-checkpoint.service';
+import { AiCoderDiffBridgeService } from '../../../services/ai-coder-diff-bridge.service';
 import { GitWorkspaceCheckpointProviderService } from './git-workspace-checkpoint-provider.service';
 import { ScrollManagerService } from './scroll-manager.service';
 import { ResourceManagerService } from './resource-manager.service';
@@ -957,9 +959,7 @@ export class ChatEngineService implements IChatContext {
     regenerateTurn: () => this.editActions.regenerateTurn(),
     undoLastEdits: () => this.editActions.undoLastEdits(),
     newChat: () => this.requestNewChatFromPane(),
-    queuePendingAutoSend: (text) => {
-      this._pendingAutoSendText = text;
-    },
+    ensureSessionReadyForSubmit: () => this.ensureSessionReadyForSubmit(),
     submitText: (text, clearInput) => this.submitUserText(text, { clearInput }),
     focusInput: () => {
       if (this.chatTextareaRef?.nativeElement) {
@@ -1908,6 +1908,7 @@ export class ChatEngineService implements IChatContext {
       get lexStream() { return thisEngine.lexStream; },
       openSettings: () => this.openSettings(),
       get editCheckpointService() { return thisEngine.editCheckpointService; },
+      triggerAiEditDiffPreview: (summary) => thisEngine.triggerAiEditDiffPreview(summary),
       get ngZone() { return thisEngine.ngZone; },
       get message() { return thisEngine.message; },
       get list() { return thisEngine.list; },
@@ -2086,6 +2087,7 @@ export class ChatEngineService implements IChatContext {
       get sessionId() { return thisEngine.sessionId; },
       get message() { return thisEngine.message; },
       get scrollManager() { return thisEngine.scrollManager; },
+      triggerSyncDetectChanges: () => thisEngine.triggerSyncDetectChanges(),
     };
   }
 
@@ -2107,6 +2109,7 @@ export class ChatEngineService implements IChatContext {
     public ngZone: NgZone,
     public absAutoSyncService: AbsAutoSyncService,
     public editCheckpointService: EditCheckpointService,
+    private aiCoderDiffBridge: AiCoderDiffBridgeService,
     public workspaceCheckpointProvider: GitWorkspaceCheckpointProviderService,
     public translate: TranslateService,
     public message: NzMessageService,
@@ -2148,6 +2151,21 @@ export class ChatEngineService implements IChatContext {
   /** 注册 OnPush CD 回调（由 component 调用 cdr.markForCheck） */
   setCdCallback(cb: () => void): void {
     this.viewAdapter.setCdCallback(cb);
+  }
+
+  /** AI 编辑完成后在内嵌 Coder 打开 DiffEditor 预览（与 autoSaveEdits / 摘要 UI 解耦） */
+  triggerAiEditDiffPreview(summary: EditsSummary | null): void {
+    const workspaceRoot = this.prjPath || this.prjRootPath;
+    if (workspaceRoot) {
+      this.aiCoderDiffBridge.setWorkspaceRoot(workspaceRoot);
+    }
+    if (!summary?.files?.length) {
+      return;
+    }
+    this.aiCoderDiffBridge.openFromSummary(
+      summary,
+      (filePath) => this.editCheckpointService.getInitialContent(filePath),
+    );
   }
 
   /**
@@ -3284,7 +3302,18 @@ export class ChatEngineService implements IChatContext {
       || (!hasRegistryRequestOwner && !!this.messageSubscription)
       || typeof existingRuntimeState?.stopSession === 'function'
     );
-    const turnResponses = this.readActiveSessionRuntimeTurnResponses();
+    const capturedTurnResponses = this.readActiveSessionRuntimeTurnResponses();
+    // goback 时会先清空可见 lexStream 再触发本次 capture（经 clearVisibleChatView -> invalidateHostRequestGraph），
+    // 此时读取到的 turnResponses 为空。若在请求仍在进行时直接写回，会把后台正在流式输出的会话快照清空，
+    // 导致重新进入后会话流无法恢复（mac 上时序更易触发）。
+    // 仅在「请求进行中且本次快照为空、但已有 runtime 快照非空」时保留既有 turnResponses；
+    // 非进行中的清空（如 undo 到空）仍按正常逻辑写回。
+    const turnResponses = requestInProgress
+      && capturedTurnResponses.length === 0
+      && Array.isArray(existingRuntimeState?.turnResponses)
+      && existingRuntimeState.turnResponses.length > 0
+      ? existingRuntimeState.turnResponses
+      : capturedTurnResponses;
     const syncRuntimeViewOverlayFromVisibleServices = (
       this as unknown as {
         syncRuntimeViewOverlayFromVisibleServices?: (sessionId?: string | null) => ChatSessionRuntimeViewOverlay | null;
@@ -3655,6 +3684,9 @@ export class ChatEngineService implements IChatContext {
       ).buildRuntimeProjectionForVisibleAttach
         ?? ChatEngineService.prototype['buildRuntimeProjectionForVisibleAttach'];
       const runtimeProjectionState = buildRuntimeProjectionForVisibleAttach.call(this, runtimeState);
+      const runtimeTurnResponses = Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0
+        ? runtimeState.turnResponses
+        : (runtimeProjectionState?.turnResponses ?? []);
       traceBackgroundSessionExecution('attach-current-session-view-reattach-running-runtime', {
         sessionId: currentSessionId,
         requestInProgress: hasActiveRequest,
@@ -3665,6 +3697,15 @@ export class ChatEngineService implements IChatContext {
         && (!hasVisibleProjection || runtimeProjectionMismatch)
         && this.liveHostRequestGraphCache
         && typeof this.triggerSyncDetectChanges === 'function') {
+        // goback 时已通过 resetVisibleSessionProjection 清空可见 lexStream。
+        // hostResponseProjection（即 dialogItems 数据源）依赖 lexStream.turnResponses 作为 live source：
+        // 若仅 replaceState 而不回灌 lexStream，下一次变更检测会因 live source 为空而把缓存判定为
+        // 「无会话内容」并清空，导致重新进入后流式输出不显示（mac 上时序更易触发）。
+        // 这里把后台 runtime 的 turnResponses 水合回可见 lexStream（与「下一次渲染事件合并」恢复路径一致），
+        // 保证 live source 与缓存一致、内容在后续变更检测中稳定保留。
+        if (runtimeTurnResponses.length > 0) {
+          this.lexStream.hydrateTurnResponses(runtimeTurnResponses);
+        }
         this.liveHostRequestGraphCache.replaceState(runtimeProjectionState);
         this.triggerSyncDetectChanges();
       }
@@ -3859,6 +3900,7 @@ export class ChatEngineService implements IChatContext {
       else { console.error('[ChatEngine] aily-lex 模块加载失败，聊天功能不可用'); }
     });
 
+    this.cleanupSubscriptions();
     this.setupSubscriptions();
   }
 
