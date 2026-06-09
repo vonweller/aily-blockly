@@ -159,6 +159,7 @@ export class LexMessageLifecycleBridge {
 
   async finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void> {
     const resolvedSaveTarget = saveTarget ? { ...saveTarget } : null;
+    const shouldFinalizeVisibleOwner = this.shouldFinalizeVisibleOwner(resolvedSaveTarget);
     const finalizeStartedAt = Date.now();
     let stageStartedAt = finalizeStartedAt;
     const logFinalizeStage = (stage: string): void => {
@@ -172,35 +173,43 @@ export class LexMessageLifecycleBridge {
       stageStartedAt = now;
     };
 
-    this.closeNativeThinking();
-    await this.partProcessor.finalize?.();
-    logFinalizeStage('part_processor_finalize');
+    if (shouldFinalizeVisibleOwner) {
+      this.closeNativeThinking();
+      await this.partProcessor.finalize?.();
+      logFinalizeStage('part_processor_finalize');
 
-    this.ctx.editCheckpointService.commitCurrentTurn();
-    if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
-      if (this.ctx.ailyChatConfigService.autoSaveEdits) {
-        this.ctx.editCheckpointService.acceptAllAsBaseline();
-        this.ctx.editCheckpointService.dismissSummary();
-      } else {
-        const summary = await this.ctx.editCheckpointService.getEditsSummary();
-        this.ctx.editCheckpointService.publishSummary(summary);
+      this.ctx.editCheckpointService.commitCurrentTurn();
+      if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
+        if (this.ctx.ailyChatConfigService.autoSaveEdits) {
+          this.ctx.editCheckpointService.acceptAllAsBaseline();
+          this.ctx.editCheckpointService.dismissSummary();
+        } else {
+          const summary = await this.ctx.editCheckpointService.getEditsSummary();
+          this.ctx.editCheckpointService.publishSummary(summary);
+        }
       }
+      logFinalizeStage('edit_checkpoint_finalize');
+
+      this.ctx.viewAdapter.markLastMessageDone();
+    } else {
+      logFinalizeStage('skip_detached_visible_finalize');
     }
-    logFinalizeStage('edit_checkpoint_finalize');
 
-    this.ctx.viewAdapter.markLastMessageDone();
-
-    try {
-      await this.runFinalizeCompaction?.();
-    } catch (error) {
-      console.warn('[LexStream] finalize-time compaction failed:', error);
+    if (shouldFinalizeVisibleOwner) {
+      try {
+        await this.runFinalizeCompaction?.();
+      } catch (error) {
+        console.warn('[LexStream] finalize-time compaction failed:', error);
+      }
     }
     logFinalizeStage('finalize_compaction');
 
-    try {
-      this.finalizeCurrentTurnResponse?.('completed');
-    } catch (error) {
-      console.warn('[LexStream] finalize current turn response failed:', error);
+    if (shouldFinalizeVisibleOwner) {
+      try {
+        this.finalizeCurrentTurnResponse?.('completed');
+      } catch (error) {
+        console.warn('[LexStream] finalize current turn response failed:', error);
+      }
     }
     logFinalizeStage('finalize_current_turn_response');
 
@@ -234,6 +243,16 @@ export class LexMessageLifecycleBridge {
     logFinalizeStage('mark_completed');
 
     void this.ctx.processPendingFollowupRequests?.(resolvedSaveTarget?.sessionId ?? this.ctx.sessionId);
+  }
+
+  private shouldFinalizeVisibleOwner(saveTarget: HostSessionSaveTarget | null): boolean {
+    const targetSessionId = typeof saveTarget?.sessionId === 'string' ? saveTarget.sessionId.trim() : '';
+    if (!targetSessionId) {
+      return true;
+    }
+
+    const visibleSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    return !!visibleSessionId && targetSessionId === visibleSessionId;
   }
 
   private normalizeTerminalTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {

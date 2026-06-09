@@ -1554,15 +1554,15 @@ function loadEnv() {
     ? path.join(__dirname, "..", "child")
     : path.join(process.resourcesPath, "child");
 
-  // Windows 开发态兜底：bundle node 仍未就绪时保留启动器 PATH 中的 npm
-  if (isWin32 && serve) {
-    const npmReady =
-      fs.existsSync(path.join(nodePath, "npm.cmd")) || fs.existsSync(path.join(nodePath, "npm"));
-    if (!npmReady && launcherPath) {
-      process.env.PATH = customPath + path.delimiter + launcherPath;
-      console.warn("[loadEnv] bundled npm 未找到，已追加启动器 PATH（开发态兜底）");
-    }
-  }
+  // // Windows 开发态兜底：bundle node 仍未就绪时保留启动器 PATH 中的 npm
+  // if (isWin32 && serve) {
+  //   const npmReady =
+  //     fs.existsSync(path.join(nodePath, "npm.cmd")) || fs.existsSync(path.join(nodePath, "npm"));
+  //   if (!npmReady && launcherPath) {
+  //     process.env.PATH = customPath + path.delimiter + launcherPath;
+  //     console.warn("[loadEnv] bundled npm 未找到，已追加启动器 PATH（开发态兜底）");
+  //   }
+  // }
 
   // 读取config.json文件
   const configPath = path.join(__dirname, 'config', "config.json");

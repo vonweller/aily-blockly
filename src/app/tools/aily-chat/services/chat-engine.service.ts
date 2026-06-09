@@ -2961,6 +2961,10 @@ export class ChatEngineService implements IChatContext {
       return false;
     }
 
+    if (this.chatSessionRuntimeRegistry && !this.chatSessionRuntimeRegistry.canStartRequest(targetSessionId)) {
+      return false;
+    }
+
     if (!(queuedFollowupMessagesBySession instanceof Map)) {
       return false;
     }
@@ -3019,6 +3023,36 @@ export class ChatEngineService implements IChatContext {
     }
 
     return true;
+  }
+
+  private async processRunnablePendingFollowupRequests(excludeSessionId?: string | null): Promise<boolean> {
+    const queuedFollowupMessagesBySession = (
+      this as unknown as { queuedFollowupMessagesBySession?: Map<string, PendingFollowupRequest[]> }
+    ).queuedFollowupMessagesBySession;
+    if (!(queuedFollowupMessagesBySession instanceof Map) || queuedFollowupMessagesBySession.size === 0) {
+      return false;
+    }
+
+    const excludedSessionId = typeof excludeSessionId === 'string' ? excludeSessionId.trim() : '';
+    let processed = false;
+    for (const sessionId of [...queuedFollowupMessagesBySession.keys()]) {
+      const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (!targetSessionId || targetSessionId === excludedSessionId) {
+        continue;
+      }
+
+      if (this.readVisibleSessionRequestInProgress(targetSessionId)) {
+        continue;
+      }
+
+      if (this.chatSessionRuntimeRegistry && !this.chatSessionRuntimeRegistry.canStartRequest(targetSessionId)) {
+        continue;
+      }
+
+      processed = (await this.processPendingFollowupRequests(targetSessionId)) || processed;
+    }
+
+    return processed;
   }
 
   private syncPendingFollowupRuntimeState(sessionId?: string | null): void {
@@ -4115,7 +4149,10 @@ Do not create non-existent boards and libraries.
     }
   }
 
-  private activatePreparedUserTurn(prepared: PreparedPendingFollowupRequest): void {
+  private activatePreparedUserTurn(
+    runtimeSessionId: string | null | undefined,
+    prepared: PreparedPendingFollowupRequest,
+  ): void {
     if (this.isCompleted) {
       this.isCancelled = false;
       this.isCompleted = false;
@@ -4125,6 +4162,13 @@ Do not create non-existent boards and libraries.
       this.isCancelled = false;
       this.pendingUserInput = false;
       this.activeToolExecutions = 0;
+    }
+
+    const targetSessionId = typeof runtimeSessionId === 'string' && runtimeSessionId.trim().length > 0
+      ? runtimeSessionId.trim()
+      : this.resolveActiveRuntimeSessionId();
+    if (!this.shouldProjectRuntimeViewStateToVisibleOwner(targetSessionId)) {
+      return;
     }
 
     this.msg.appendMessage('user', prepared.displayText);
@@ -4142,11 +4186,14 @@ Do not create non-existent boards and libraries.
     if (options?.activatePreparedUserTurn) {
       const activatePreparedUserTurn = (
         this as unknown as {
-          activatePreparedUserTurn?: (preparedRequest: PreparedPendingFollowupRequest) => void;
+          activatePreparedUserTurn?: (
+            runtimeOwnerSessionId: string | null | undefined,
+            preparedRequest: PreparedPendingFollowupRequest,
+          ) => void;
         }
       ).activatePreparedUserTurn
         ?? ChatEngineService.prototype['activatePreparedUserTurn'];
-      activatePreparedUserTurn.call(this, prepared);
+      activatePreparedUserTurn.call(this, runtimeSessionId, prepared);
     }
 
     const currentModel = this.chatService.currentModel as { model?: string; presetId?: string; name?: string } | null;
@@ -4322,6 +4369,11 @@ Do not create non-existent boards and libraries.
         ?? ChatEngineService.prototype['processPendingFollowupRequests'];
       await this.chatSessionRuntimeRegistry?.awaitPendingLexRequestCompleted(syncSessionId);
       await processPendingFollowupRequests.call(this, syncSessionId);
+      const processRunnablePendingFollowupRequests = (
+        this as unknown as { processRunnablePendingFollowupRequests?: (excludeSessionId?: string | null) => Promise<boolean> }
+      ).processRunnablePendingFollowupRequests
+        ?? ChatEngineService.prototype['processRunnablePendingFollowupRequests'];
+      await processRunnablePendingFollowupRequests.call(this, syncSessionId);
     }
   }
 
@@ -4348,11 +4400,10 @@ Do not create non-existent boards and libraries.
         canStartRequest,
       });
       if (!canStartRequest) {
-        if (activeHandle?.requestInProgress) {
-          this.queueFollowupMessage(content, runtimeSessionId, { kind: 'queued' });
-        }
+        this.queueFollowupMessage(content, runtimeSessionId, { kind: 'queued' });
         traceBackgroundSessionExecution('send-gated-before-run', {
           runtimeSessionId,
+          activeRequestInProgress: activeHandle?.requestInProgress === true,
         });
         return;
       }

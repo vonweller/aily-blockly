@@ -95,6 +95,13 @@ export class ChatSubmitShellCoordinator {
       return false;
     }
 
+    if (!this.deps.getSessionId()) {
+      const ensured = await this.deps.ensureSession?.();
+      if (ensured === false || !this.deps.getSessionId()) {
+        return false;
+      }
+    }
+
     if (this.deps.isWaiting()) {
       return this.queuePreparedInput(text, options?.queueKind ?? 'queued', 'running');
     }
@@ -111,13 +118,6 @@ export class ChatSubmitShellCoordinator {
 
       if (pendingDecision === 'remove') {
         this.deps.clearPendingRequests?.();
-      }
-    }
-
-    if (!this.deps.getSessionId()) {
-      const ensured = await this.deps.ensureSession?.();
-      if (ensured === false || !this.deps.getSessionId()) {
-        return false;
       }
     }
 

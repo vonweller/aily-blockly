@@ -274,10 +274,8 @@ export class LexRenderEventBridge {
         event.quotaSnapshot,
         event.terminationReason,
       );
-      if (event.modelName || event.modelBillingLabel || event.modelRouting || event.quotaSnapshot) {
-        this.ctx.invalidateHostRequestGraph();
-        this.ctx.triggerSyncDetectChanges();
-      }
+      this.ctx.invalidateHostRequestGraph();
+      this.ctx.triggerSyncDetectChanges();
       this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
       return;
     }
