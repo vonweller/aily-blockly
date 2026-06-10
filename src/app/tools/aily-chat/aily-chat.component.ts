@@ -208,6 +208,7 @@ export class AilyChatComponent implements OnDestroy {
   private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
+  private readonly toolOpenSubscription: Subscription;
   private pendingFollowupEditState: {
     readonly sessionId: string;
     readonly requestId: string;
@@ -265,6 +266,11 @@ export class AilyChatComponent implements OnDestroy {
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
+    });
+    this.toolOpenSubscription = this.uiService.actionSubject.subscribe((action: { action?: string; type?: string; data?: string }) => {
+      if (action?.action === 'open' && action?.type === 'tool' && action?.data === 'aily-chat') {
+        this.engine.scheduleComposerInputFocus();
+      }
     });
     // 注册 OnPush CD 回调 — viewAdapter 每次 flush/appendImmediate 后调用 markForCheck
     this.engine.setCdCallback(() => {
@@ -543,6 +549,8 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngAfterViewInit(): void {
+    this.engine.bindChatTextareaRef(this.chatTextarea);
+    this.engine.scheduleComposerInputFocus();
     ChatPerformanceTracer.increment('entry_open.pane_setup_complete');
     ChatPerformanceTracer.mark('entry_open.pane_setup_complete');
     this.viewportShellCoordinator.initialize(this.chatContainer);
@@ -776,6 +784,7 @@ export class AilyChatComponent implements OnDestroy {
   ngOnDestroy() {
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
+    this.toolOpenSubscription.unsubscribe();
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.lifecycleCoordinator.detachView();

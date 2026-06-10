@@ -430,6 +430,12 @@
         "MERMAID_COPY_FAILED": "복사 실패",
         "MERMAID_SAVE_FAILED": "저장 실패",
         "CLICK_TO_EDIT": "클릭하여 편집",
+        "TURN_ACTION_RESTART": "다시 시작",
+        "TURN_ACTION_RESTORE": "체크포인트 복원",
+        "TURN_ACTION_RESTORE_ROUNDS": "복원 · {{count}} 라운드",
+        "TURN_ACTION_FORK": "새 세션 분기",
+        "TURN_RESTORE_STATUS": "체크포인트 복원됨",
+        "TURN_RESTORE_REAPPLY": "다시 적용",
         "USER_FEEDBACK_NOTIFY_TITLE": "AI 도우미에서 입력이 필요합니다",
         "USER_FEEDBACK_NOTIFY_BODY": "AI 도우미에서 처리할 작업이 있습니다. 채팅을 열고 확인·답변 또는 화면 안내에 따라 다음 단계를 완료하세요.",
         "ONBOARDING": {

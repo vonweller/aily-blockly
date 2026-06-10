@@ -2,7 +2,7 @@
 <div
   [class.session-list-items]="isListVariant"
   [class.session-picker-list]="isPickerVariant"
-  [class.sscroll]="isPickerVariant"
+  [class.sscroll]="isListVariant || isPickerVariant"
   role="listbox"
   [attr.aria-label]="listAriaLabel">
   @for (group of displayGroups; track group.id) {

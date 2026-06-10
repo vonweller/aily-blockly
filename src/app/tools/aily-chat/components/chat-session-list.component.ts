@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, HostBinding, Input, Output } from '@angular/core';
 
 import type { ChatSessionInventoryGroup } from '../helpers/chat-session-presentation';
 import type { ChatSessionListLoadState } from '../services/chat-session-items.service';
@@ -33,6 +33,11 @@ export class ChatSessionListComponent {
   @Output() actionClick = new EventEmitter<{ action: string; data: ChatSessionListItem }>();
   @Output() newSession = new EventEmitter<void>();
   @Output() retryRequested = new EventEmitter<void>();
+
+  @HostBinding('class.is-empty')
+  get hostIsEmpty(): boolean {
+    return this.items.length === 0;
+  }
 
   get currentLoadStateKind(): ChatSessionListLoadState['kind'] {
     return this.loadState?.kind ?? 'ready';

@@ -442,6 +442,12 @@
         "MERMAID_COPY_FAILED": "فشل النسخ",
         "MERMAID_SAVE_FAILED": "فشل الحفظ",
         "CLICK_TO_EDIT": "انقر للتعديل",
+        "TURN_ACTION_RESTART": "إعادة البدء",
+        "TURN_ACTION_RESTORE": "استعادة نقطة التحقق",
+        "TURN_ACTION_RESTORE_ROUNDS": "استعادة · {{count}} جولات",
+        "TURN_ACTION_FORK": "تفرع جلسة جديدة",
+        "TURN_RESTORE_STATUS": "تمت استعادة نقطة التحقق",
+        "TURN_RESTORE_REAPPLY": "إعادة التطبيق",
         "USER_FEEDBACK_NOTIFY_TITLE": "مساعد الذكاء الاصطناعي يحتاج إلى تعاملك",
         "USER_FEEDBACK_NOTIFY_BODY": "مساعد الذكاء الاصطناعي ينتظر إجراءً منك. افتح المحادثة وأكمل التأكيد أو الإجابة أو الخطوة الموضحة على الشاشة.",
         "ONBOARDING": {

@@ -1,8 +1,32 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:host ::ng-deep .tool-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+:host ::ng-deep .tool-container > .content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* AI聊天组件主容器布局 - 包含TODO面板和聊天内容 */
 .aily-chat-wrapper {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   /* 防止内容溢出 */
 }
@@ -37,6 +61,11 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+
+  &.has-session-sidebar {
+    padding: 10px 0 10px 10px;
+    box-sizing: border-box;
+  }
 }
 
 .chat-stage {
@@ -51,9 +80,18 @@
 .chat-session-sidebar {
   position: relative;
   flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  margin: 10px 0 10px 10px;
-  overflow: visible;
+  min-height: 0;
+  overflow: hidden;
+
+  > aily-chat-session-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
 
   .chat-session-sidebar-content {
     display: flex;
@@ -111,6 +149,33 @@
   /* 确保flex子项可以收缩 */
   position: relative;
   z-index: 10;
+
+  &.has-stacked-session-list {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+
+    .guide-box {
+      flex: 0 0 auto;
+      height: auto;
+    }
+
+    > aily-chat-session-list.entry-session-control {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      max-width: 420px;
+      margin-top: 0;
+      overflow: hidden;
+    }
+
+    > aily-chat-session-list.entry-session-control.entry-guide-stacked.is-empty {
+      flex: 0 0 var(--aily-chat-entry-guide-stacked-empty-height, 36%);
+      height: var(--aily-chat-entry-guide-stacked-empty-height, 36%);
+      max-height: var(--aily-chat-entry-guide-stacked-empty-height, 36%);
+    }
+  }
 
   .dialogs {
     padding: 10px 0;

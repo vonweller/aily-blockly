@@ -151,7 +151,11 @@
       }
       <div class="chat-stage">
         <!-- 对话内容 -->
-        <div class="dialog-list sscroll" #chatContainer (scroll)="scrollManager.checkUserScroll()">
+        <div
+          class="dialog-list sscroll"
+          #chatContainer
+          [class.has-stacked-session-list]="paneStageSurface.showStackedSessionList && !paneStageSurface.showConversation"
+          (scroll)="scrollManager.checkUserScroll()">
       @if (paneStageSurface.showConversation) {
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs" #dialogsContent>

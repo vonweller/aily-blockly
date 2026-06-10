@@ -78,6 +78,39 @@
         </div>
       </div>
     } @else {
+      @if (canRenderCheckpointAnchor) {
+        <nav class="user-turn-actions" [attr.aria-label]="checkpointActionLabel">
+          <button
+            type="button"
+            class="user-turn-action"
+            [class.disabled]="checkpointActionDisabled"
+            [disabled]="checkpointActionDisabled"
+            [title]="checkpointActionTitle"
+            (click)="onRestoreCheckpoint(); $event.stopPropagation()"
+          >
+            <i class="fa-light" [ngClass]="checkpointActionIconClass"></i>
+            @if (isFirstUserTurn) {
+              <span>{{ 'AILY_CHAT.TURN_ACTION_RESTART' | translate }}</span>
+            } @else if (roundCount > 0) {
+              <span>{{ 'AILY_CHAT.TURN_ACTION_RESTORE_ROUNDS' | translate:{ count: roundCount } }}</span>
+            } @else {
+              <span>{{ 'AILY_CHAT.TURN_ACTION_RESTORE' | translate }}</span>
+            }
+          </button>
+          <button
+            type="button"
+            class="user-turn-action user-turn-action--icon"
+            [class.disabled]="forkSessionActionDisabled"
+            [disabled]="forkSessionActionDisabled"
+            [title]="forkSessionActionTitle"
+            [attr.aria-label]="'AILY_CHAT.TURN_ACTION_FORK' | translate"
+            (click)="onForkSession(); $event.stopPropagation()"
+          >
+            <i class="fa-light fa-code-branch"></i>
+          </button>
+        </nav>
+      }
+
       <div
         class="content"
         [class.thinking]="effectiveDoing"
@@ -105,33 +138,6 @@
           </x-markdown>
         }
       </div>
-
-      @if (canRenderCheckpointAnchor) {
-        <nav class="user-turn-actions" [attr.aria-label]="checkpointActionLabel">
-          <button
-            type="button"
-            class="user-turn-action"
-            [class.disabled]="checkpointActionDisabled"
-            [disabled]="checkpointActionDisabled"
-            [title]="checkpointActionTitle"
-            (click)="onRestoreCheckpoint(); $event.stopPropagation()"
-          >
-            <i class="fa-light" [ngClass]="checkpointActionIconClass"></i>
-            <span>{{ checkpointActionShortLabel }}</span>
-          </button>
-          <button
-            type="button"
-            class="user-turn-action user-turn-action--icon"
-            [class.disabled]="forkSessionActionDisabled"
-            [disabled]="forkSessionActionDisabled"
-            [title]="forkSessionActionTitle"
-            [attr.aria-label]="forkSessionActionLabel"
-            (click)="onForkSession(); $event.stopPropagation()"
-          >
-            <i class="fa-light fa-code-branch"></i>
-          </button>
-        </nav>
-      }
     }
 
     @if (effectiveDoing) {
@@ -176,13 +182,13 @@
 
     @if (showCheckpointRestore) {
       <div class="turn-restore-hint">
-        <span class="turn-restore-hint-text">{{ checkpointRestoreStatusLabel }}</span>
+        <span class="turn-restore-hint-text">{{ 'AILY_CHAT.TURN_RESTORE_STATUS' | translate }}</span>
         <button
           type="button"
           class="turn-restore-hint-action"
           [title]="checkpointRestoreActionTitle"
           (click)="onRestoreCheckpointState(); $event.stopPropagation()"
-        >{{ checkpointRestoreActionLabel }}</button>
+        >{{ 'AILY_CHAT.TURN_RESTORE_REAPPLY' | translate }}</button>
       </div>
     }
   </div>

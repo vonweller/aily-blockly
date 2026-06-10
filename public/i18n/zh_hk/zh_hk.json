@@ -465,6 +465,12 @@
         "MERMAID_COPY_FAILED": "複製失敗",
         "MERMAID_SAVE_FAILED": "保存失敗",
         "CLICK_TO_EDIT": "點擊編輯",
+        "TURN_ACTION_RESTART": "重新開始",
+        "TURN_ACTION_RESTORE": "還原檢查點",
+        "TURN_ACTION_RESTORE_ROUNDS": "還原 · {{count}} 輪",
+        "TURN_ACTION_FORK": "分叉新會話",
+        "TURN_RESTORE_STATUS": "已還原檢查點",
+        "TURN_RESTORE_REAPPLY": "恢復",
         "USER_FEEDBACK_NOTIFY_TITLE": "AI 助手需要你操作",
         "USER_FEEDBACK_NOTIFY_BODY": "AI 助手有待您處理的項目，請開啟對話並完成確認、作答或畫面指示的後續步驟。",
         "ONBOARDING": {

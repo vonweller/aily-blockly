@@ -499,7 +499,9 @@ export class ChatViewService {
       variant: 'entry',
       groups: this.sessionListGroups,
       loadState: this.chatSessionItemsService.sessionListLoadState,
-      hostClasses: ['entry-session-control'],
+      hostClasses: this.currentPaneSurface === 'entry'
+        ? ['entry-session-control', 'entry-guide-stacked']
+        : ['entry-session-control'],
     };
   }
 

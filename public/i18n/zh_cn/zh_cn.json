@@ -512,6 +512,12 @@
         "MERMAID_COPY_FAILED": "复制失败",
         "MERMAID_SAVE_FAILED": "保存失败",
         "CLICK_TO_EDIT": "点击编辑",
+        "TURN_ACTION_RESTART": "重新开始",
+        "TURN_ACTION_RESTORE": "还原检查点",
+        "TURN_ACTION_RESTORE_ROUNDS": "还原 · {{count}} 轮",
+        "TURN_ACTION_FORK": "分叉新会话",
+        "TURN_RESTORE_STATUS": "已还原检查点",
+        "TURN_RESTORE_REAPPLY": "恢复",
         "USER_FEEDBACK_NOTIFY_TITLE": "AI 助手需要你的操作",
         "USER_FEEDBACK_NOTIFY_BODY": "AI 助手有待您处理的操作，请打开对话并完成确认、作答或界面指示的后续步骤。",
         "ONBOARDING": {

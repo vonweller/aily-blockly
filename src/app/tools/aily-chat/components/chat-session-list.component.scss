@@ -5,7 +5,23 @@
 }
 
 :host(.chat-session-sidebar-content) {
+  flex: 1 1 auto;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:host(.entry-session-control) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+:host(.entry-session-control.entry-guide-stacked.is-empty) {
+  flex: 0 0 var(--aily-chat-entry-guide-stacked-empty-height, 36%);
+  height: var(--aily-chat-entry-guide-stacked-empty-height, 36%);
+  max-height: var(--aily-chat-entry-guide-stacked-empty-height, 36%);
 }
 
 .session-list-panel {
@@ -23,6 +39,8 @@
 .session-list-panel.entry {
   width: 100%;
   max-width: 420px;
+  flex: 1 1 auto;
+  min-height: 0;
   border-color: var(--aily-chat-session-list-border, var(--aily-border-secondary, rgba(255, 255, 255, 0.08)));
   background: var(--aily-chat-session-list-bg, var(--aily-chat-viewer-panel-raised, rgba(255, 255, 255, 0.03)));
 }
@@ -62,7 +80,7 @@
 }
 
 .session-list-panel.entry .session-list-body {
-  min-height: 220px;
+  min-height: 0;
 }
 
 .session-list-skeleton,

@@ -442,6 +442,12 @@
         "MERMAID_COPY_FAILED": "Ошибка копирования",
         "MERMAID_SAVE_FAILED": "Ошибка сохранения",
         "CLICK_TO_EDIT": "Нажмите для редактирования",
+        "TURN_ACTION_RESTART": "Начать заново",
+        "TURN_ACTION_RESTORE": "Восстановить контрольную точку",
+        "TURN_ACTION_RESTORE_ROUNDS": "Восстановить · {{count}} раундов",
+        "TURN_ACTION_FORK": "Создать ответвление сессии",
+        "TURN_RESTORE_STATUS": "Контрольная точка восстановлена",
+        "TURN_RESTORE_REAPPLY": "Применить снова",
         "USER_FEEDBACK_NOTIFY_TITLE": "Ассистенту ИИ нужен ваш ответ",
         "USER_FEEDBACK_NOTIFY_BODY": "ИИ-ассистент ждёт вашего действия. Откройте чат и завершите подтверждение, ответ или шаг, указанный на экране.",
         "ONBOARDING": {

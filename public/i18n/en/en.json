@@ -517,6 +517,12 @@
         "MERMAID_COPY_FAILED": "Copy failed",
         "MERMAID_SAVE_FAILED": "Save failed",
         "CLICK_TO_EDIT": "Click to edit",
+        "TURN_ACTION_RESTART": "Restart",
+        "TURN_ACTION_RESTORE": "Restore checkpoint",
+        "TURN_ACTION_RESTORE_ROUNDS": "Restore · {{count}} turns",
+        "TURN_ACTION_FORK": "Fork new session",
+        "TURN_RESTORE_STATUS": "Checkpoint restored",
+        "TURN_RESTORE_REAPPLY": "Reapply",
         "USER_FEEDBACK_NOTIFY_TITLE": "AI assistant needs your input",
         "USER_FEEDBACK_NOTIFY_BODY": "The AI assistant awaits your action. Open the chat and complete the pending confirmation, response, or on-screen step.",
         "ONBOARDING": {

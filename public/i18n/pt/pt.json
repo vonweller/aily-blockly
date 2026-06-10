@@ -442,6 +442,12 @@
         "MERMAID_COPY_FAILED": "Falha ao copiar",
         "MERMAID_SAVE_FAILED": "Falha ao salvar",
         "CLICK_TO_EDIT": "Clique para editar",
+        "TURN_ACTION_RESTART": "Reiniciar",
+        "TURN_ACTION_RESTORE": "Restaurar checkpoint",
+        "TURN_ACTION_RESTORE_ROUNDS": "Restaurar · {{count}} turnos",
+        "TURN_ACTION_FORK": "Bifurcar nova sessão",
+        "TURN_RESTORE_STATUS": "Checkpoint restaurado",
+        "TURN_RESTORE_REAPPLY": "Reaplicar",
         "USER_FEEDBACK_NOTIFY_TITLE": "O assistente de IA precisa da sua resposta",
         "USER_FEEDBACK_NOTIFY_BODY": "O assistente de IA aguarda a sua ação. Abra o chat e conclua a confirmação, a resposta ou o passo indicado no ecrã.",
         "ONBOARDING": {

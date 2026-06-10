@@ -442,6 +442,12 @@
         "MERMAID_COPY_FAILED": "Échec de la copie",
         "MERMAID_SAVE_FAILED": "Échec de l'enregistrement",
         "CLICK_TO_EDIT": "Cliquer pour modifier",
+        "TURN_ACTION_RESTART": "Recommencer",
+        "TURN_ACTION_RESTORE": "Restaurer le point de contrôle",
+        "TURN_ACTION_RESTORE_ROUNDS": "Restaurer · {{count}} tours",
+        "TURN_ACTION_FORK": "Créer une session dérivée",
+        "TURN_RESTORE_STATUS": "Point de contrôle restauré",
+        "TURN_RESTORE_REAPPLY": "Réappliquer",
         "USER_FEEDBACK_NOTIFY_TITLE": "L'assistant IA attend votre action",
         "USER_FEEDBACK_NOTIFY_BODY": "L'assistant IA attend votre action. Ouvrez la conversation et terminez la confirmation, la réponse ou l'étape indiquée à l'écran.",
         "ONBOARDING": {

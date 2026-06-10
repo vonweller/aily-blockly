@@ -442,6 +442,12 @@
         "MERMAID_COPY_FAILED": "Error al copiar",
         "MERMAID_SAVE_FAILED": "Error al guardar",
         "CLICK_TO_EDIT": "Clic para editar",
+        "TURN_ACTION_RESTART": "Reiniciar",
+        "TURN_ACTION_RESTORE": "Restaurar punto de control",
+        "TURN_ACTION_RESTORE_ROUNDS": "Restaurar · {{count}} turnos",
+        "TURN_ACTION_FORK": "Bifurcar nueva sesión",
+        "TURN_RESTORE_STATUS": "Punto de control restaurado",
+        "TURN_RESTORE_REAPPLY": "Reaplicar",
         "USER_FEEDBACK_NOTIFY_TITLE": "El asistente de IA necesita tu respuesta",
         "USER_FEEDBACK_NOTIFY_BODY": "El asistente de IA espera su acción. Abra el chat y complete la confirmación, la respuesta o el paso indicado en pantalla.",
         "ONBOARDING": {

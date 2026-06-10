@@ -961,13 +961,7 @@ export class ChatEngineService implements IChatContext {
     newChat: () => this.requestNewChatFromPane(),
     ensureSessionReadyForSubmit: () => this.ensureSessionReadyForSubmit(),
     submitText: (text, clearInput) => this.submitUserText(text, { clearInput }),
-    focusInput: () => {
-      if (this.chatTextareaRef?.nativeElement) {
-        const textarea = this.chatTextareaRef.nativeElement;
-        textarea.focus();
-        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      }
-    },
+    focusInput: () => this.scheduleComposerInputFocus(),
     schedulePostInputWork: (work) => {
       setTimeout(work, 100);
     },
@@ -3904,6 +3898,31 @@ export class ChatEngineService implements IChatContext {
     this.setupSubscriptions();
   }
 
+  bindChatTextareaRef(chatTextareaRef: ElementRef | null): void {
+    this.chatTextareaRef = chatTextareaRef;
+  }
+
+  scheduleComposerInputFocus(): void {
+    const focusInput = () => {
+      if (!this.chatTextareaRef?.nativeElement) {
+        return;
+      }
+
+      const textarea = this.chatTextareaRef.nativeElement;
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    };
+
+    this.triggerSyncDetectChanges();
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => focusInput());
+      return;
+    }
+
+    setTimeout(focusInput, 0);
+  }
+
   /**
     * 引擎销毁 — 由显式 runtime owner 调用
    */
@@ -4057,15 +4076,22 @@ Do not create non-existent boards and libraries.
     scope: 'summary' | 'visible-details' | 'full';
     priority: 'after-paint' | 'normal' | 'idle';
   }): void { this.session.requestSessionListRefresh(input); }
-  switchToSession(
+  async switchToSession(
     sessionId: string,
     options?: {
       readonly fallbackProjectPath?: string | null;
     },
   ): Promise<boolean> {
-    return this.session.switchToSession(sessionId, options);
+    const switched = await this.session.switchToSession(sessionId, options);
+    if (switched) {
+      this.scheduleComposerInputFocus();
+    }
+    return switched;
   }
-  newChat(): Promise<void> { return this.session.newChat(); }
+  async newChat(): Promise<void> {
+    await this.session.newChat();
+    this.scheduleComposerInputFocus();
+  }
   initializeEntryInventory(): Promise<boolean> { return this.session.initializeEntryInventory(); }
   returnToEntryInventory(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean }): Promise<void> {
     return this.session.returnToEntryInventory(options);
@@ -5145,7 +5171,7 @@ Do not create non-existent boards and libraries.
     });
   }
 
-  resetChat(): Promise<void> { return this.session.newChat(); }
+  resetChat(): Promise<void> { return this.newChat(); }
 
   private async requestNewChatFromPane(): Promise<void> {
     const requestNewChat = this.paneSessionCommandHandlers.requestNewChat;
