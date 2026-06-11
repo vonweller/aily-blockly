@@ -10,7 +10,11 @@ const OPEN_MAX_REQUESTS_SETTINGS_ACTION_ID = 'open-max-requests-settings';
 /** Narrow context: only needs lexStream for presenting/resolving confirmations */
 type LexAskConfirmationContext = Pick<IChatCoordination, 'lexStream' | 'openSettings'>
   & Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatServiceAccess, 'runtimeInteractionHost'>;
+  & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
+  & {
+    resolveActiveRuntimeSessionId?(): string | null | undefined;
+    readCurrentViewSessionResource?(): string | null | undefined;
+  };
 
 /**
  * Handles lex hook `ask` confirmations through blockly confirmation UI.
@@ -19,6 +23,30 @@ export class LexAskConfirmationBridge {
   private resolveAskConfirmation: ((confirmed: boolean) => void) | null = null;
 
   constructor(private readonly ctx: LexAskConfirmationContext) {}
+
+  private resolveInteractionSessionResource(): string {
+    const activeRuntimeSessionId = typeof this.ctx.resolveActiveRuntimeSessionId === 'function'
+      ? this.ctx.resolveActiveRuntimeSessionId()
+      : null;
+    const activeRuntimeResource = typeof activeRuntimeSessionId === 'string'
+      ? activeRuntimeSessionId.trim()
+      : '';
+    if (activeRuntimeResource) {
+      return activeRuntimeResource;
+    }
+
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const viewResource = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (viewResource) {
+      return viewResource;
+    }
+
+    throw new Error('Lex ask confirmation requires a sessionResource owner.');
+  }
 
   handleAskConfirmation(request: {
     message: string;
@@ -53,7 +81,10 @@ export class LexAskConfirmationBridge {
 
         this.resolveAskConfirmation = resolve;
 
-        void this.ctx.runtimeInteractionHost.presentToolApproval(this.ctx.sessionId, normalizedRequest).then((result) => {
+        void this.ctx.runtimeInteractionHost.presentToolApproval(
+          this.resolveInteractionSessionResource(),
+          normalizedRequest,
+        ).then((result) => {
           this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId!, !!result.approved, result.scope);
           const resolveRef = this.resolveAskConfirmation;
           this.resolveAskConfirmation = null;
@@ -89,7 +120,7 @@ export class LexAskConfirmationBridge {
 
       this.resolveAskConfirmation = resolve;
 
-      void this.ctx.runtimeInteractionHost.presentConfirmation(this.ctx.sessionId, {
+      void this.ctx.runtimeInteractionHost.presentConfirmation(this.resolveInteractionSessionResource(), {
         askId,
         partId: confirmationPartId,
         toolName: request.toolName,

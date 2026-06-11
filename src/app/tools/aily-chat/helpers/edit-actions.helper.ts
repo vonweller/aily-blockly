@@ -23,6 +23,7 @@ import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-vie
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { ResourceItem } from '../core/chat-types';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import {
   buildDialogTurnContext,
   getInteractionDisplayContent,
@@ -78,9 +79,17 @@ type EditActionsContext = ChatViewWriteBridgeContext
     workspaceCheckpointAccess?: WorkspaceCheckpointAccess;
     confirmRestoreCheckpoint?(confirmation: RestoreCheckpointConfirmation): Promise<boolean> | boolean;
     syncWorkspaceState?(): Promise<void> | void;
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
+    readCurrentViewSessionResource?(): string | null | undefined;
     readonly hostResponseProjection?: HostResponseProjection | null;
-    restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
-    replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
+    restoreSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
+    replaceSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
   };
 
 type EditActionsViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
@@ -134,6 +143,7 @@ export class EditActionsHelper {
       get ngZone() {
         return ctx.ngZone;
       },
+      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
     this.checkpointReplayCoordinator = new CheckpointReplayCoordinator(this.ctx, this.viewWriteBridge);

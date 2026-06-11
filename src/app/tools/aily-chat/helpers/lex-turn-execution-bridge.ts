@@ -24,6 +24,7 @@ type RenderEventSource = {
 
 type RenderEventSink = {
   readonly turnResponses?: readonly TurnResponseTurn[];
+  setProjectionSessionResource?(sessionId: string | null | undefined): void;
   reset(): void;
   hydrateTurnResponses?(turnResponses: readonly TurnResponseTurn[]): void;
   prepareTurnRequest(requestContent: string, displayContent?: string, metadata?: TurnRequest['metadata']): void;
@@ -149,6 +150,7 @@ export class LexTurnExecutionBridge {
     ) => RenderEventSink | null,
     private readonly getExecutionSessionId?: () => string | null | undefined,
     private readonly readExecutionYieldRequested?: (sessionId: string | null | undefined) => boolean,
+    private readonly readCurrentViewSessionResource?: () => string | null | undefined,
   ) {}
 
   /**
@@ -181,7 +183,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return this.ctx.ngZone.runOutsideAngular(async () => {
-        await this.preparePartsRendering();
+        await this.preparePartsRendering(executionState);
 
         try {
           await this.consumeAgentEvents(executionState, agent, userMessage, signal);
@@ -230,7 +232,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return this.ctx.ngZone.runOutsideAngular(async () => {
-        await this.preparePartsRendering();
+        await this.preparePartsRendering(executionState);
 
         try {
           await this.consumeRenderEvents(executionState, source, userMessage, signal);
@@ -346,6 +348,7 @@ export class LexTurnExecutionBridge {
       return;
     }
 
+    this._renderEventBridge!.setProjectionSessionResource?.(state.sessionId);
     this._renderEventBridge!.reset();
     this._renderEventBridge!.prepareTurnRequest(
       userMessage,
@@ -436,7 +439,11 @@ export class LexTurnExecutionBridge {
     this.ctx.toolCallingIteration = 0;
   }
 
-  private async preparePartsRendering(): Promise<void> {
+  private async preparePartsRendering(state: LexTurnExecutionRunState): Promise<void> {
+    if (state.sessionId && !this.isExecutionSessionVisible(state.sessionId)) {
+      return;
+    }
+
     this.uiEventBridge.ensureAilyMessage();
 
     // 等待同步 detectChanges 之后再进入 for-await，确保 Parts 组件已挂载。
@@ -536,19 +543,17 @@ export class LexTurnExecutionBridge {
           sessionId: executionSessionId ?? null,
           replayedTurnResponses: mergedTurnResponses.length,
         });
+        this._renderEventBridge.setProjectionSessionResource?.(executionSessionId);
         this._renderEventBridge.hydrateTurnResponses?.(mergedTurnResponses);
       }
       state.detachedRenderEventBridge = null;
+      this._renderEventBridge.setProjectionSessionResource?.(executionSessionId);
       return this._renderEventBridge;
     }
 
     if (!state.detachedRenderEventBridge) {
       const executionTurnResponses = this.readExecutionTurnResponses?.(executionSessionId);
-      const visibleOwnerTurnResponses = this.readVisibleOwnerTurnResponses(state);
-      const seedTurnResponses = mergeExecutionTurnResponsesById(
-        executionTurnResponses,
-        visibleOwnerTurnResponses,
-      );
+      const seedTurnResponses = mergeExecutionTurnResponsesById(executionTurnResponses);
       traceBackgroundSessionExecution('detach-to-background-sink', {
         sessionId: executionSessionId,
         seedTurnResponses: seedTurnResponses.length,
@@ -558,6 +563,7 @@ export class LexTurnExecutionBridge {
         seedTurnResponses,
       ) ?? null;
       if (state.detachedRenderEventBridge) {
+        state.detachedRenderEventBridge.setProjectionSessionResource?.(executionSessionId);
         state.detachedRenderEventBridge.hydrateTurnResponses?.(seedTurnResponses);
         state.detachedRenderEventBridge.prepareTurnRequest(
           state.requestContent,
@@ -567,7 +573,11 @@ export class LexTurnExecutionBridge {
       }
     }
 
-    return state.detachedRenderEventBridge ?? this._renderEventBridge;
+    if (!state.detachedRenderEventBridge) {
+      throw new Error(`Detached render sink is required for background session ${executionSessionId}.`);
+    }
+
+    return state.detachedRenderEventBridge;
   }
 
   private captureActiveRenderEventTurnId(state: LexTurnExecutionRunState, event: RenderEvent): void {
@@ -577,24 +587,19 @@ export class LexTurnExecutionBridge {
     }
   }
 
-  private readVisibleOwnerTurnResponses(state: LexTurnExecutionRunState): readonly TurnResponseTurn[] | undefined {
-    const visibleTurnResponses = this._renderEventBridge?.turnResponses;
-    if (!Array.isArray(visibleTurnResponses) || visibleTurnResponses.length === 0) {
-      return undefined;
-    }
-    if (!state.activeTurnId) {
-      return undefined;
-    }
-    return visibleTurnResponses.some(turn => turn.turnId === state.activeTurnId)
-      ? visibleTurnResponses
-      : undefined;
-  }
-
   private isExecutionSessionVisible(executionSessionId: string): boolean {
     return this.captureVisibleSessionId() === executionSessionId;
   }
 
   private captureVisibleSessionId(): string | null {
+    const currentViewSessionResource = this.readCurrentViewSessionResource?.();
+    if (typeof currentViewSessionResource === 'string') {
+      const trimmedViewResource = currentViewSessionResource.trim();
+      if (trimmedViewResource.length > 0) {
+        return trimmedViewResource;
+      }
+    }
+
     const currentSessionId = this.getCurrentSessionId();
     if (typeof currentSessionId !== 'string') {
       return null;

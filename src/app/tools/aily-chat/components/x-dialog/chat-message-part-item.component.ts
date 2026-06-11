@@ -341,6 +341,8 @@ export class ChatMessagePartItemComponent implements OnChanges {
     await this.chatEngine.submitInteractionActionRequest(
       action.label,
       this.buildErrorConfirmationInteractionAction(action),
+      undefined,
+      this.sessionId,
     );
   }
 

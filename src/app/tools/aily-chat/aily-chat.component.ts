@@ -308,7 +308,7 @@ export class AilyChatComponent implements OnDestroy {
       openUrl: (url) => this.electronService.openUrl(url),
     });
     this.requestController = new ChatRequestController({
-      sendNow: (text) => this.engine.submitUserText(text, { clearInput: true }),
+      sendNow: (text, sessionId) => this.engine.submitUserText(text, { clearInput: true, sessionId }),
       queue: (text, sessionId, options) => this.engine.queueFollowupMessage(text, sessionId, options),
       stop: (sessionId) => this.engine.stop(sessionId),
       getPending: (sessionId) => this.engine.getPendingFollowupRequests?.(sessionId) ?? [],
@@ -326,14 +326,14 @@ export class AilyChatComponent implements OnDestroy {
       getSessionAllowedPaths: () => this.engine.sessionAllowedPaths,
       getSessionId: () => this.vm.sessionId,
       getInputValue: () => this.vm.inputValue,
-      isWaiting: () => this.requestController.getActionState(this.vm.sessionId).canStop,
+      isWaiting: (sessionId) => this.requestController.getActionState(sessionId ?? this.vm.sessionId).canStop,
       ensureSession: () => this.engine.ensureSessionReadyForSubmit(),
-      hasPendingRequests: () => this.hasPendingFollowupRequests(),
-      confirmPendingRequestsBeforeSend: () => this.confirmPendingFollowupRequestsBeforeSend(),
-      clearPendingRequests: () => this.requestController.clearPending(this.vm.sessionId),
+      hasPendingRequests: (sessionId) => this.hasPendingFollowupRequests(sessionId),
+      confirmPendingRequestsBeforeSend: (sessionId) => this.confirmPendingFollowupRequestsBeforeSend(sessionId),
+      clearPendingRequests: (sessionId) => this.requestController.clearPending(sessionId ?? this.vm.sessionId),
       queueSend: (text, sessionId, options) => this.requestController.queue(text, sessionId, options),
       stop: (sessionId) => this.requestController.stop(sessionId, 'submit-shell'),
-      send: (text) => this.requestController.sendNow(text),
+      send: (text, sessionId) => this.requestController.sendNow(text, sessionId),
     });
     this.composerShellCoordinator = new ChatComposerShellCoordinator({
       viewState: this.viewState,
@@ -973,12 +973,12 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   private resolvePermissionTargetSessionId(): string {
-    const engineSessionId = typeof this.engine.sessionId === 'string' ? this.engine.sessionId.trim() : '';
-    if (engineSessionId) {
-      return engineSessionId;
+    const viewSessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
+    if (viewSessionId) {
+      return viewSessionId;
     }
 
-    return typeof this.chatService.currentSessionId === 'string' ? this.chatService.currentSessionId.trim() : '';
+    return '';
   }
 
   private confirmFullAccessPermission(): Promise<ChatPermissionConfirmDialogResult> {
@@ -1011,8 +1011,8 @@ export class AilyChatComponent implements OnDestroy {
     });
   }
 
-  private hasPendingFollowupRequests(): boolean {
-    return this.requestController.hasPending(this.vm.sessionId);
+  private hasPendingFollowupRequests(sessionId?: string | null): boolean {
+    return this.requestController.hasPending(sessionId ?? this.vm.sessionId);
   }
 
   getCurrentSessionPendingFollowupRequests(): readonly PendingFollowupRequest[] {
@@ -1120,13 +1120,14 @@ export class AilyChatComponent implements OnDestroy {
     setTimeout(focusComposer, 0);
   }
 
-  private confirmPendingFollowupRequestsBeforeSend(): Promise<'keep' | 'remove' | false> {
-    if (!this.hasPendingFollowupRequests()) {
+  private confirmPendingFollowupRequestsBeforeSend(sessionId?: string | null): Promise<'keep' | 'remove' | false> {
+    const targetSessionId = sessionId ?? this.vm.sessionId;
+    if (!this.hasPendingFollowupRequests(targetSessionId)) {
       return Promise.resolve('keep');
     }
 
     return new Promise<'keep' | 'remove' | false>((resolve) => {
-      const pendingCount = this.requestController.getPending(this.vm.sessionId).length;
+      const pendingCount = this.requestController.getPending(targetSessionId).length;
       const modalRef = this.modal.create({
         nzTitle: null,
         nzFooter: null,
@@ -1227,10 +1228,14 @@ export class AilyChatComponent implements OnDestroy {
     this.viewState.openSessionPicker(event);
   }
 
+  private resolveCurrentViewSessionResource(): string {
+    return typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
+  }
+
   handleSessionSelection(event: { sessionId: string; item: ChatSessionListItem }): void {
     void this.sessionActions.requestSwitchToSession(
       event.sessionId,
-      this.chatService.currentSessionId,
+      this.resolveCurrentViewSessionResource(),
       this.engine.editCheckpointService,
       this.createSessionSwitchCallbacks(),
       event.item,
@@ -1238,7 +1243,7 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   handleSessionAction(event: { action: string; data: any }): void {
-    this.sessionActions.sessionActionClick(event, this.chatService.currentSessionId, this.createSessionRowActionCallbacks());
+    this.sessionActions.sessionActionClick(event, this.resolveCurrentViewSessionResource(), this.createSessionRowActionCallbacks());
   }
 
   requestNewChat(): void {
@@ -1249,7 +1254,7 @@ export class AilyChatComponent implements OnDestroy {
     void this.sessionActions.requestReturnToEntryInventory(
       this.engine.editCheckpointService,
       this.createSessionEntryCommandCallbacks(),
-      this.chatService.currentSessionId,
+      this.resolveCurrentViewSessionResource(),
       {
         saveCurrentSession: options?.saveCurrentSession,
       },
@@ -1285,7 +1290,7 @@ export class AilyChatComponent implements OnDestroy {
       },
       onDeleteSessionRuntime: (sessionId: string) => {
         this.closeDebugBrowser();
-        this.engine.disposeSessionRuntime(sessionId);
+        this.engine.deleteSessionAction(sessionId);
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {
@@ -1332,7 +1337,7 @@ export class AilyChatComponent implements OnDestroy {
     this.closeDebugBrowser();
     try {
       await this.engine.getHistory();
-      const sessionId = this.chatService.currentSessionId || this.engine.sessionId;
+      const sessionId = this.resolveCurrentViewSessionResource();
       if (sessionId) {
         this.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
       }
@@ -1442,7 +1447,7 @@ export class AilyChatComponent implements OnDestroy {
   async continueCurrentExecution(event?: MouseEvent): Promise<void> {
     event?.stopPropagation();
     try {
-      await this.engine.continueCurrentExecution();
+      await this.engine.continueCurrentExecution(this.vm.sessionId);
     } catch (error) {
       console.warn('[AilyChatComponent] continue current execution failed:', error);
       this.message.error('继续执行失败，请从最新状态重试');

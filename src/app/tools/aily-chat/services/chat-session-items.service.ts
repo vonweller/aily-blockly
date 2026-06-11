@@ -9,6 +9,8 @@ import { ChatSessionStateService } from './chat-session-state.service';
 import type { ChatSessionRuntimeChangedEvent } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
+import { ChatSessionModelStoreService, type ChatSessionModel } from './chat-session-model-store.service';
+import { ChatSessionViewModelStoreService } from './chat-session-view-model-store.service';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import {
   chatSessionScopeProjectPath,
@@ -25,6 +27,8 @@ import type {
   SessionInventorySummary,
 } from '../helpers/host-session-item-controller';
 import { EditCheckpointService } from './edit-checkpoint.service';
+import { buildHostSessionCurrentPickerInputState } from '../helpers/host-session-input-state';
+import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
 
 type SessionListSourceLike = Partial<HostSessionHistoryItem> & Partial<HostSessionListProjectionItem> & Partial<ChatSessionListItem> & {
   readonly name?: string;
@@ -95,6 +99,8 @@ export class ChatSessionItemsService implements OnDestroy {
     @Optional() private readonly editCheckpointService: EditCheckpointService | null = null,
     @Optional() private readonly chatSessionStateService: ChatSessionStateService | null = null,
     @Optional() private readonly chatSessionRuntimeRegistry: ChatSessionRuntimeRegistryService | null = null,
+    @Optional() private readonly chatSessionModelStore: ChatSessionModelStoreService | null = null,
+    @Optional() private readonly chatSessionViewModelStore: ChatSessionViewModelStoreService | null = null,
   ) {
     ChatPerformanceTracer.increment('session_list.service_created');
     ChatPerformanceTracer.mark('session_list.service_created');
@@ -118,6 +124,23 @@ export class ChatSessionItemsService implements OnDestroy {
     this.controllerSubscription.add(this.chatSessionRuntimeStore.runtimeChanged$.subscribe((event) => {
       this.handleRuntimeChanged(event);
     }));
+    if (this.chatSessionModelStore) {
+      this.controllerSubscription.add(this.chatSessionModelStore.changed$.subscribe((event) => {
+        this.bumpSessionInventoryRevision();
+        this.refreshSessionListItem(event.sessionResource, `model-${event.kind}`);
+      }));
+    }
+    if (this.chatSessionViewModelStore) {
+      this.controllerSubscription.add(this.chatSessionViewModelStore.changed$.subscribe((event) => {
+        const affectedSessionIds = [
+          this.normalizeSessionId(event.previousSessionResource),
+          this.normalizeSessionId(event.currentSessionResource),
+        ].filter((sessionId, index, values) => sessionId && values.indexOf(sessionId) === index);
+        for (const sessionId of affectedSessionIds) {
+          this.refreshSessionListItem(sessionId, 'view-model-current-changed');
+        }
+      }));
+    }
     this.scheduleInitialSummaryLoad('service-created');
   }
 
@@ -130,44 +153,13 @@ export class ChatSessionItemsService implements OnDestroy {
   }
 
   private readLiveSessionRuntimeState(sessionId: string | null | undefined): ReturnType<ChatSessionRuntimeStoreService['read']> {
-    const runtimeState = this.chatSessionRuntimeStore.read(sessionId);
-    const activeHandle = this.chatSessionRuntimeRegistry?.readHandle(sessionId);
-    if (!activeHandle?.requestInProgress) {
-      if (this.chatSessionRuntimeRegistry && runtimeState) {
-        const hasStaleRuntimeGate = runtimeState.requestInProgress === true
-          || runtimeState.supportsInterruption === true
-          || runtimeState.status === 'in_progress'
-          || typeof runtimeState.stopSession === 'function'
-          || (runtimeState.activeResponseHandle !== undefined && runtimeState.activeResponseHandle !== null);
-        if (hasStaleRuntimeGate) {
-          const {
-            activeResponseHandle: _activeResponseHandle,
-            stopSession: _stopSession,
-            status,
-            ...rest
-          } = runtimeState;
-          return {
-            ...rest,
-            ...(status && status !== 'in_progress' ? { status } : {}),
-            requestInProgress: false,
-            supportsInterruption: false,
-          };
-        }
-      }
-      return runtimeState;
+    const projectedRuntimeState = this.chatSessionRuntimeRegistry?.readProjectedRuntimeState(sessionId);
+    if (projectedRuntimeState) {
+      return projectedRuntimeState;
     }
 
-    return {
-      ...(runtimeState ?? {
-        turnResponses: [],
-        hostProjectionState: null,
-        attachedView: false,
-      }),
-      requestInProgress: true,
-      status: runtimeState?.status ?? 'in_progress',
-      supportsInterruption: activeHandle.supportsInterruption,
-      activeResponseHandle: activeHandle.activeResponseHandle ?? runtimeState?.activeResponseHandle,
-    };
+    const runtimeState = this.chatSessionRuntimeStore.read(sessionId);
+    return runtimeState;
   }
 
   get sessionListItems(): ChatSessionListItem[] {
@@ -215,9 +207,9 @@ export class ChatSessionItemsService implements OnDestroy {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): readonly ChatSessionListItem[] {
-    return this.readSessionListItems(projectPath, projectRootPath).map(item =>
+    return this.mergeModelSessionListItems(this.readSessionListItems(projectPath, projectRootPath).map(item =>
       this.toSessionListItem(item, projectPath, projectRootPath)
-    );
+    ), projectPath, projectRootPath);
   }
 
   readSessionSummaryViewItems(
@@ -228,12 +220,12 @@ export class ChatSessionItemsService implements OnDestroy {
   ): readonly ChatSessionListItem[] {
     const resolvedProjectPath = projectPath ?? this.resolveCurrentProjectPath();
     const resolvedProjectRootPath = projectRootPath ?? AilyHost.get().project.projectRootPath ?? null;
-    const items = this.hostSessionItemController.readSummaryItems(
+    const items = this.mergeModelSessionListItems(this.hostSessionItemController.readSummaryItems(
       filter,
       resolvedProjectPath,
       resolvedProjectRootPath,
       { limit },
-    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath));
+    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath)), resolvedProjectPath, resolvedProjectRootPath);
     ChatPerformanceTracer.mark('session_list.summary_rows_projected', `count=${items.length},filter=${filter}${typeof limit === 'number' ? `,limit=${limit}` : ''}`);
     return items;
   }
@@ -241,17 +233,19 @@ export class ChatSessionItemsService implements OnDestroy {
   readCurrentSessionViewItem(
     projectPath?: string | null,
     projectRootPath?: string | null,
+    sessionResource?: string | null,
   ): ChatSessionListItem | null {
-    const currentSessionId = typeof this.chatService.currentSessionId === 'string'
-      ? this.chatService.currentSessionId.trim()
+    const explicitSessionId = typeof sessionResource === 'string'
+      ? sessionResource.trim()
       : '';
+    const currentSessionId = explicitSessionId || this.resolveCurrentViewSessionResource();
     if (!currentSessionId) {
       return null;
     }
 
     const currentItem = this.readCachedSessionItem(currentSessionId);
     if (currentItem && this.isSessionItemInViewScope(currentItem, projectPath, projectRootPath)) {
-      return currentItem;
+      return this.overlayModelSessionListItem(currentSessionId, currentItem, projectPath, projectRootPath);
     }
 
     const projectedSummary = this.readOrProjectSessionSummary(currentSessionId, projectPath, projectRootPath, 'all');
@@ -260,7 +254,7 @@ export class ChatSessionItemsService implements OnDestroy {
     }
 
     return this._sessionListItems.find(item =>
-      (item.current || item.sessionId === currentSessionId)
+      item.sessionId === currentSessionId
       && this.isSessionItemInViewScope(item, projectPath, projectRootPath)
     ) ?? null;
   }
@@ -278,7 +272,7 @@ export class ChatSessionItemsService implements OnDestroy {
 
     const cachedItem = this.readCachedSessionItem(normalizedSessionId);
     if (cachedItem) {
-      return cachedItem;
+      return this.overlayModelSessionListItem(normalizedSessionId, cachedItem, projectPath, projectRootPath);
     }
 
     const summaryItem = this.hostSessionItemController.readSummaryItem(
@@ -287,7 +281,8 @@ export class ChatSessionItemsService implements OnDestroy {
       projectPath ?? this.resolveCurrentProjectPath(),
       projectRootPath ?? AilyHost.get().project.projectRootPath ?? null,
     );
-    return summaryItem ? this.toSessionListItem(summaryItem, projectPath, projectRootPath) : null;
+    const projectedSummary = summaryItem ? this.toSessionListItem(summaryItem, projectPath, projectRootPath) : null;
+    return this.overlayModelSessionListItem(normalizedSessionId, projectedSummary, projectPath, projectRootPath);
   }
 
   loadInitialSummaries(
@@ -311,12 +306,12 @@ export class ChatSessionItemsService implements OnDestroy {
   ): void {
     const resolvedProjectPath = projectPath ?? this.resolveCurrentProjectPath();
     const resolvedProjectRootPath = projectRootPath ?? AilyHost.get().project.projectRootPath ?? null;
-    const summaryItems = this.hostSessionItemController.readSummaryItems(
+    const summaryItems = this.mergeModelSessionListItems(this.hostSessionItemController.readSummaryItems(
       'current-project',
       resolvedProjectPath,
       resolvedProjectRootPath,
       { cursor, limit },
-    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath));
+    ).map(item => this.toSessionListItem(item, resolvedProjectPath, resolvedProjectRootPath)), resolvedProjectPath, resolvedProjectRootPath);
     if (summaryItems.length === 0) {
       return;
     }
@@ -501,7 +496,14 @@ export class ChatSessionItemsService implements OnDestroy {
       resolvedProjectPath,
       resolvedProjectRootPath,
     );
-    const nextItem = projectionItem ? this.toSessionListItem(projectionItem, resolvedProjectPath, resolvedProjectRootPath) : null;
+    const nextItem = projectionItem
+      ? this.overlayModelSessionListItem(
+          normalizedSessionId,
+          this.toSessionListItem(projectionItem, resolvedProjectPath, resolvedProjectRootPath),
+          resolvedProjectPath,
+          resolvedProjectRootPath,
+        )
+      : this.overlayModelSessionListItem(normalizedSessionId, null, resolvedProjectPath, resolvedProjectRootPath);
 
     const previousItems = this._sessionListItems;
     const previousIndex = previousItems.findIndex(item => item.sessionId === normalizedSessionId);
@@ -841,6 +843,7 @@ export class ChatSessionItemsService implements OnDestroy {
   private buildSessionActions(item: SessionListSourceLike): readonly ChatSessionListAction[] {
     const archived = item?.archived === true;
     const pinned = item?.pinned === true;
+    const markedUnread = item?.markedUnread === true || item?.read === false;
 
     return [
       {
@@ -848,6 +851,12 @@ export class ChatSessionItemsService implements OnDestroy {
         action: pinned ? 'unpin-session' : 'pin-session',
         title: pinned ? '取消置顶' : '置顶',
         ...(pinned ? { active: true } : {}),
+      },
+      {
+        icon: markedUnread ? 'fa-light fa-envelope-open' : 'fa-light fa-envelope',
+        action: markedUnread ? 'mark-session-read' : 'mark-session-unread',
+        title: markedUnread ? '标记为已读' : '标记为未读',
+        ...(markedUnread ? { active: true } : {}),
       },
       {
         icon: archived ? 'fa-solid fa-archive' : 'fa-light fa-archive',
@@ -971,9 +980,140 @@ export class ChatSessionItemsService implements OnDestroy {
     projectRootPath?: string | null,
   ): boolean {
     const itemSessionId = this.normalizeSessionId(item?.sessionId);
-    const currentSessionId = this.normalizeSessionId(this.chatService.currentSessionId);
+    const currentSessionId = this.resolveCurrentViewSessionResource();
     return Boolean(itemSessionId && itemSessionId === currentSessionId
       && this.isSessionItemInViewScope(item, projectPath, projectRootPath));
+  }
+
+  private resolveCurrentViewSessionResource(): string {
+    const viewSessionResource = this.normalizeSessionId(this.chatSessionViewModelStore?.currentSessionResource ?? null);
+    if (viewSessionResource) {
+      return viewSessionResource;
+    }
+
+    return this.normalizeSessionId(this.chatService.currentSessionId);
+  }
+
+  private mergeModelSessionListItems(
+    items: readonly ChatSessionListItem[],
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem[] {
+    if (!this.chatSessionModelStore) {
+      return [...items];
+    }
+
+    const mergedItems = new Map<string, ChatSessionListItem>();
+    for (const item of items) {
+      mergedItems.set(item.sessionId, item);
+    }
+
+    for (const model of this.chatSessionModelStore.values()) {
+      const existing = mergedItems.get(model.sessionResource) ?? null;
+      const modelItem = this.toModelSessionListItem(model, existing, projectPath, projectRootPath);
+      if (!modelItem || !this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)) {
+        continue;
+      }
+      mergedItems.set(model.sessionResource, modelItem);
+    }
+
+    const nextItems = [...mergedItems.values()];
+    nextItems.sort((left, right) => this.compareSessionListItems(left, right));
+    return nextItems;
+  }
+
+  private overlayModelSessionListItem(
+    sessionId: string,
+    item: ChatSessionListItem | null,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem | null {
+    const model = this.chatSessionModelStore?.get(sessionId);
+    if (!model) {
+      return item;
+    }
+
+    const modelItem = this.toModelSessionListItem(model, item, projectPath, projectRootPath);
+    return modelItem && this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)
+      ? modelItem
+      : item;
+  }
+
+  private toModelSessionListItem(
+    model: ChatSessionModel,
+    existing: ChatSessionListItem | null | undefined,
+    projectPath?: string | null,
+    projectRootPath?: string | null,
+  ): ChatSessionListItem | null {
+    const providerOptions = model.inputState.providerOptions;
+    const selectedMode = model.inputState.selectedMode;
+    const runtimeState = this.readLiveSessionRuntimeState(model.sessionResource) ?? model.runtimeState;
+    const title = model.title.text || existing?.title || '';
+    const projectPathValue = model.projectPath ?? providerOptions?.folderPath ?? existing?.projectPath ?? null;
+    const latestTurnUpdatedAt = this.readLatestTurnUpdatedAt(model.turnResponses);
+    const timing = existing?.timing ?? (
+      latestTurnUpdatedAt !== undefined
+        ? { created: latestTurnUpdatedAt, updated: latestTurnUpdatedAt }
+        : undefined
+    );
+    const status: SessionListSourceLike['status'] = runtimeState?.requestInProgress === true
+      ? 'in_progress'
+      : runtimeState?.status ?? existing?.status as SessionListSourceLike['status'];
+    const inputState = selectedMode
+      ? buildHostSessionCurrentPickerInputState(selectedMode, providerOptions)
+      : existing?.inputState;
+    const requestRouting = selectedMode
+      ? buildHostSessionCurrentPickerRoutingSummary(
+          selectedMode,
+          undefined,
+          providerOptions?.permissionLevel,
+          providerOptions?.approvalsReviewer,
+          providerOptions?.approvalPolicy,
+        )
+      : existing?.requestRouting;
+
+    return this.toSessionListItem({
+      sessionId: model.sessionResource,
+      title,
+      titleSource: model.title.source,
+      titleDurable: model.title.durable,
+      description: runtimeState?.description ?? existing?.description ?? '',
+      sessionType: model.sessionType || existing?.sessionType,
+      projectPath: projectPathValue,
+      badge: existing?.badge,
+      status,
+      timing,
+      metadata: existing?.metadata,
+      changes: existing?.changes,
+      mode: selectedMode?.modeId ?? existing?.mode as SessionListSourceLike['mode'],
+      requestRouting,
+      inputState,
+      archived: existing?.archived,
+      pinned: existing?.pinned,
+      read: existing?.read,
+      markedUnread: existing?.markedUnread,
+      actions: existing?.actions,
+    }, projectPath, projectRootPath);
+  }
+
+  private readLatestTurnUpdatedAt(turnResponses: readonly { readonly updatedAt?: unknown }[] | null | undefined): number | undefined {
+    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
+      return undefined;
+    }
+
+    for (let index = turnResponses.length - 1; index >= 0; index -= 1) {
+      const updatedAt = turnResponses[index]?.updatedAt;
+      if (typeof updatedAt === 'number') {
+        return updatedAt;
+      }
+      if (typeof updatedAt === 'string') {
+        const timestamp = Date.parse(updatedAt);
+        if (Number.isFinite(timestamp)) {
+          return timestamp;
+        }
+      }
+    }
+    return undefined;
   }
 
   requestSessionListRefresh(request: SessionListRefreshRequest): void {

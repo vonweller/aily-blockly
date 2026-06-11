@@ -43,7 +43,7 @@ interface QueueOptionsLike {
 export class ChatRequestController {
   constructor(
     private readonly deps: {
-      sendNow: (text: string) => Promise<unknown>;
+      sendNow: (text: string, sessionId?: string | null) => Promise<unknown>;
       queue: (text: string, sessionId?: string | null, options?: QueueOptionsLike) => Promise<boolean> | boolean;
       stop: (sessionId?: string | null) => boolean;
       getPending: (sessionId?: string | null) => readonly PendingFollowupRequest[];
@@ -56,8 +56,8 @@ export class ChatRequestController {
     },
   ) {}
 
-  async sendNow(text: string): Promise<unknown> {
-    return this.deps.sendNow(text);
+  async sendNow(text: string, sessionId?: string | null): Promise<unknown> {
+    return this.deps.sendNow(text, sessionId);
   }
 
   queue(text: string, sessionId?: string | null, options?: QueueOptionsLike): Promise<boolean> | boolean {

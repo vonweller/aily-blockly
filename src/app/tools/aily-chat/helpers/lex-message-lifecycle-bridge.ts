@@ -17,6 +17,7 @@ type LexMessageLifecycleContext = LexMessageLifecycleViewWriteContext
   & Pick<IChatServiceAccess, 'editCheckpointService' | 'ailyChatConfigService'>
   & Pick<IChatCoordination, 'session' | 'applyPendingSwitch'>
   & {
+    readCurrentViewSessionResource?(): string | null;
     processPendingFollowupRequests?(sessionId?: string | null): Promise<boolean> | boolean;
     syncExecutionRuntimeState?(saveTarget?: HostSessionSaveTarget | null): void;
     triggerAiEditDiffPreview?(summary: EditsSummary | null): void;
@@ -90,6 +91,7 @@ export class LexMessageLifecycleBridge {
       get ngZone() {
         return ctx.ngZone;
       },
+      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
@@ -256,7 +258,14 @@ export class LexMessageLifecycleBridge {
       return true;
     }
 
-    const visibleSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const visibleSessionId = typeof currentViewSessionResource === 'string' && currentViewSessionResource.trim().length > 0
+      ? currentViewSessionResource.trim()
+      : typeof this.ctx.sessionId === 'string'
+        ? this.ctx.sessionId.trim()
+        : '';
     return !!visibleSessionId && targetSessionId === visibleSessionId;
   }
 

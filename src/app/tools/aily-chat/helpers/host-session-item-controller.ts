@@ -18,9 +18,12 @@ import {
   normalizeChatSurfaceModeId,
 } from '../core/chat-mode';
 import {
+  getChatSessionTitleSourcePriority,
   isCustomSessionTitleSource,
   normalizeChatSessionTitleSource,
+  normalizeChatSessionTitleCandidate,
   type ChatSessionDisplayTitle,
+  type ChatSessionTitleCandidate,
   type ChatSessionTitleSource,
 } from '../core/chat-session-title';
 import type { ChatHistoryService, HistoryFilterMode, HostSessionRecord, HostSessionStoreChangeEvent, PersistedHostTurnResponse, SessionIndexEntry } from '../services/chat-history.service';
@@ -53,6 +56,7 @@ export interface HostSessionHistoryItem {
   readonly sessionId: string;
   readonly title: string;
   readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
   readonly titleDurable?: boolean;
   readonly sessionType: ChatSessionType;
   readonly createdAt: number;
@@ -184,6 +188,7 @@ export interface HostSessionManagedItemSeed {
   readonly sessionId: string;
   readonly title?: string;
   readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
   readonly sessionType?: ChatSessionType;
   readonly createdAt?: number;
   readonly updatedAt?: number;
@@ -199,6 +204,7 @@ interface HostSessionManagedItem {
   readonly sessionId: string;
   readonly title: string;
   readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
   readonly sessionType: ChatSessionType;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -336,7 +342,9 @@ export class HostSessionItemController {
   ): HostSessionHistoryItem {
     const item = this.toHistoryItem(this.upsertManagedItem({
       sessionId,
-      title: options.title ?? this.resolveDefaultManagedTitle(),
+      title: options.title,
+      titleSource: options.titleSource,
+      titleRevision: options.titleRevision,
       sessionType: options.sessionType ?? this.resolveCurrentSessionType(),
       createdAt: options.createdAt,
       updatedAt: options.updatedAt,
@@ -354,7 +362,6 @@ export class HostSessionItemController {
   createForkedChatSessionItem(seed: HostSessionManagedItemSeed): HostSessionHistoryItem {
     const item = this.toHistoryItem(this.upsertManagedItem({
       ...seed,
-      title: seed.title ?? this.resolveDefaultManagedTitle(),
     }));
     this.notifyItemsChanged(seed.sessionId);
     return item;
@@ -368,18 +375,27 @@ export class HostSessionItemController {
       return;
     }
 
-    this.updateManagedChatSessionItemTitle(sessionId, normalizedTitle);
+    this.updateManagedChatSessionItemTitle(sessionId, {
+      text: normalizedTitle,
+      source: 'user',
+    });
 
     if (this.ctx.chatHistoryService.findEntry(sessionId)) {
       this.ctx.chatHistoryService.updateTitle(sessionId, normalizedTitle, { source: 'user' });
     }
   }
 
-  updateManagedChatSessionItemTitle(sessionId: string, title: string): void {
-    const normalizedTitle = typeof title === 'string'
-      ? title.trim()
-      : '';
-    if (!normalizedTitle) {
+  updateManagedChatSessionItemTitle(
+    sessionId: string,
+    title: string | Partial<ChatSessionTitleCandidate>,
+  ): void {
+    const candidate = normalizeChatSessionTitleCandidate(typeof title === 'string'
+      ? {
+          text: title,
+          source: 'legacy-custom',
+        }
+      : title);
+    if (!candidate.text) {
       return;
     }
 
@@ -388,9 +404,20 @@ export class HostSessionItemController {
       return;
     }
 
+    const existingPriority = getChatSessionTitleSourcePriority(managedItem.titleSource);
+    const nextPriority = getChatSessionTitleSourcePriority(candidate.source);
+    const existingRevision = managedItem.titleRevision ?? 0;
+    if (managedItem.title
+      && existingPriority > nextPriority
+      && (existingRevision > candidate.revision || candidate.revision === 0)) {
+      return;
+    }
+
     this.managedItems.set(sessionId, {
       ...managedItem,
-      title: normalizedTitle,
+      title: candidate.text,
+      titleSource: candidate.source,
+      titleRevision: Math.max(existingRevision + 1, candidate.revision),
       updatedAt: Date.now(),
     });
     this.notifyItemsChanged(sessionId);
@@ -698,10 +725,12 @@ export class HostSessionItemController {
     target: PersistedChatSessionEntryTarget,
     options: HostSessionEntryRestoreRequestOptions = {},
   ): HostSessionSwitchRestoreRequest {
+    const useTargetAsRestoreCarrier = this.hasCompleteEntryTargetCarrier(target);
     return this.resolveSessionRestoreRequest({
       sessionId: target.sessionId,
       fallbackProjectPath: options.fallbackProjectPath,
       metadataFallback: target,
+      useMetadataFallbackAsRestoreCarrier: useTargetAsRestoreCarrier,
       requestSource: 'entry-target',
     });
   }
@@ -711,10 +740,11 @@ export class HostSessionItemController {
     readonly fallbackProjectPath?: string | null;
     readonly hostRecordOverride?: HostSessionRecord | null;
     readonly metadataFallback?: PersistedChatSessionEntryTarget;
+    readonly useMetadataFallbackAsRestoreCarrier?: boolean;
     readonly requestSource: HostSessionRestoreRequestSource;
   }): HostSessionSwitchRestoreRequest {
     const metadataFallback = options.metadataFallback;
-    if (metadataFallback) {
+    if (metadataFallback && options.useMetadataFallbackAsRestoreCarrier !== false) {
       return this.resolveSessionRestoreRequestFromMetadataFallback({
         sessionId: options.sessionId,
         fallbackProjectPath: options.fallbackProjectPath,
@@ -732,7 +762,7 @@ export class HostSessionItemController {
           },
           null,
         )
-      : options.fallbackProjectPath ?? null;
+      : metadataFallback?.projectPath ?? options.fallbackProjectPath ?? null;
     const target = this.resolveSessionSwitchTarget(options.sessionId, switchTargetProjectHint);
     const sessionProjectPath = target.providerOptions.folderPath
       ?? target.projectPath
@@ -743,7 +773,7 @@ export class HostSessionItemController {
       sessionProjectPath,
       {
         hostRecordOverride: options.hostRecordOverride,
-        metadataFallback: target.entry ?? null,
+        metadataFallback: target.entry ?? metadataFallback ?? null,
         fallbackProviderOptions: target.providerOptions,
       },
     );
@@ -762,9 +792,20 @@ export class HostSessionItemController {
           : hostRecord
             ? 'history'
             : 'missing',
-        metadataSource: target.entry ? 'index-entry' : 'none',
+        metadataSource: target.entry
+          ? 'index-entry'
+          : metadataFallback
+            ? 'entry-target'
+            : 'none',
       },
     };
+  }
+
+  private hasCompleteEntryTargetCarrier(target: PersistedChatSessionEntryTarget): boolean {
+    const projectPath = this.readNonEmptyString(target.projectPath);
+    return !!projectPath
+      && !!target.providerOptions
+      && !!target.inputState;
   }
 
   private resolveSessionRestoreRequestFromMetadataFallback(options: {
@@ -968,9 +1009,18 @@ export class HostSessionItemController {
     const inputState = seed.inputState ?? this.getChatSessionInputState(seed.sessionId, seed.projectPath ?? null);
     const selectedMode = this.resolveCurrentSelectedMode();
     const mode = seed.mode ?? normalizeChatSurfaceModeId(inputState.mode.kind, selectedMode.modeId);
+    const titleCandidate = seed.title !== undefined
+      ? normalizeChatSessionTitleCandidate({
+          text: seed.title,
+          source: seed.titleSource,
+          revision: seed.titleRevision,
+        })
+      : this.resolveDefaultManagedTitleCandidate(seed.sessionId);
     const item: HostSessionManagedItem = {
       sessionId: seed.sessionId,
-      title: seed.title?.trim() || this.resolveDefaultManagedTitle(),
+      title: titleCandidate.text,
+      titleSource: titleCandidate.source,
+      titleRevision: titleCandidate.revision,
       sessionType: normalizeChatSessionType(seed.sessionType, this.resolveCurrentSessionType()),
       createdAt,
       updatedAt: seed.updatedAt ?? createdAt,
@@ -1113,6 +1163,7 @@ export class HostSessionItemController {
       sessionId: item.sessionId,
       title: title.text,
       titleSource: title.source,
+      titleRevision: item.titleRevision,
       titleDurable: title.durable,
       sessionType: isCurrent ? this.resolveCurrentSessionType() : normalizeChatSessionType(item.sessionType, DEFAULT_CHAT_SESSION_TYPE),
       createdAt: item.createdAt,
@@ -1289,6 +1340,7 @@ export class HostSessionItemController {
       item.sessionId,
       item.title,
       item.titleSource ?? '',
+      item.titleRevision ?? '',
       item.titleDurable ? 1 : 0,
       this.normalizePathForCache(item.projectPath ?? null),
       item.createdAt,
@@ -2161,12 +2213,27 @@ export class HostSessionItemController {
     });
   }
 
-  private resolveDefaultManagedTitle(): string {
-    return this.resolveCurrentSessionDurableTitle(this.ctx.chatService.currentSessionId);
-  }
+  private resolveDefaultManagedTitleCandidate(sessionId: string | null | undefined): ChatSessionTitleCandidate {
+    const normalizedSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    const currentSessionId = typeof this.ctx.chatService.currentSessionId === 'string'
+      ? this.ctx.chatService.currentSessionId.trim()
+      : '';
+    const currentTitle = typeof this.ctx.chatService.currentSessionTitle === 'string'
+      ? this.ctx.chatService.currentSessionTitle.trim()
+      : '';
+    if (!normalizedSessionId
+      || normalizedSessionId !== currentSessionId
+      || !isMeaningfulManagedSessionTitle(currentTitle, normalizedSessionId)) {
+      return normalizeChatSessionTitleCandidate(undefined);
+    }
 
-  private resolveCurrentSessionDurableTitle(sessionId: string | null | undefined): string {
-    return this.resolveCurrentSessionDurableTitleCandidate(sessionId)?.text ?? '';
+    return normalizeChatSessionTitleCandidate({
+      text: currentTitle,
+      source: this.readCurrentSessionTitleSource() ?? 'legacy-custom',
+      revision: (this.ctx.chatService as { readonly currentSessionTitleRevision?: unknown }).currentSessionTitleRevision,
+    });
   }
 
   private resolveCurrentSessionDurableTitleCandidate(sessionId: string | null | undefined): ChatSessionDisplayTitle | null {
@@ -2217,6 +2284,13 @@ export class HostSessionItemController {
       : '';
     if (isMeaningfulManagedSessionTitle(normalizedDurableTitle, sessionId)) {
       let normalizedSource = normalizeChatSessionTitleSource(durableTitleSource);
+      if (normalizedSource === 'default-first-request') {
+        return {
+          text: normalizedDurableTitle,
+          source: 'default-first-request',
+          durable: false,
+        };
+      }
       if (!isCustomSessionTitleSource(normalizedSource)) {
         const persistedEntry = this.ctx.chatHistoryService.findEntry(sessionId);
         const persistedEntryTitle = typeof persistedEntry?.title === 'string'
@@ -2424,13 +2498,15 @@ export class HostSessionItemController {
     }
 
     const selectedMode = this.resolveCurrentSelectedMode();
-    const currentDurableTitle = this.resolveCurrentSessionDurableTitle(sessionId);
-    const nextTitle = currentDurableTitle
-      ? currentDurableTitle
-      : managedItem.title;
+    const currentTitleCandidate = this.resolveDefaultManagedTitleCandidate(sessionId);
+    const nextTitle = currentTitleCandidate.text || managedItem.title;
+    const nextTitleSource = currentTitleCandidate.text ? currentTitleCandidate.source : managedItem.titleSource;
+    const nextTitleRevision = currentTitleCandidate.text ? currentTitleCandidate.revision : managedItem.titleRevision;
     this.managedItems.set(sessionId, {
       ...managedItem,
       title: nextTitle,
+      titleSource: nextTitleSource,
+      titleRevision: nextTitleRevision,
       projectPath: this.ctx.chatService.currentSessionPath || (managedItem.projectPath ?? null),
       sessionType: this.resolveCurrentSessionType(),
       agentRuntimeMode: this.ctx.chatService.currentAgentRuntimeMode ?? managedItem.agentRuntimeMode,

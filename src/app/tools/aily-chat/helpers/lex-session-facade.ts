@@ -31,8 +31,8 @@ export class LexSessionFacade {
     return this.restoreBridge.resolvePersistedRestorePlan(sessionId, turnResponses, hostRecord ?? null);
   }
 
-  restoreResolvedSnapshot(snapshot: SessionSnapshot): boolean {
-    return this.restoreBridge.restoreResolvedSnapshot(snapshot);
+  restoreResolvedSnapshot(snapshot: SessionSnapshot, sessionId?: string | null): boolean {
+    return this.restoreBridge.restoreResolvedSnapshot(snapshot, sessionId);
   }
 
   async restore(
@@ -41,6 +41,6 @@ export class LexSessionFacade {
     hostRecord?: HostSessionRecord | null,
   ): Promise<boolean> {
     const restorePlan = await this.resolveRestorePlan(sessionId, turnResponses, hostRecord ?? null);
-    return restorePlan?.snapshot ? this.restoreResolvedSnapshot(restorePlan.snapshot) : false;
+    return restorePlan?.snapshot ? this.restoreResolvedSnapshot(restorePlan.snapshot, sessionId) : false;
   }
 }

@@ -209,6 +209,13 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
       sessionId: string,
       auxiliary: HostSessionRecord['auxiliary'] | null | undefined,
     ): void;
+    readCurrentViewSessionResource?(): string | null;
+    projectRestoredHostProjection?(
+      sessionId: string,
+      turnResponses: readonly TurnResponseTurn[],
+      hostProjectionState: HostTurnResponseState,
+      options: { readonly attachedView: boolean },
+    ): void;
     resumeRestoredInteraction?(
       content: string,
       interactionAction: LexInteractionAction,
@@ -217,8 +224,14 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
         readonly requestMetadata?: TurnRequest['metadata'];
       },
     ): Promise<void>;
-    restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
-    replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
+    restoreSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
+    replaceSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
   };
 
 type HostSessionRestoreViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
@@ -251,6 +264,11 @@ export interface HostSessionRestoreFailureDetails {
   readonly sessionId: string;
   readonly hostRecordSessionId?: string;
   readonly storedSnapshotState?: LexSessionStoredSnapshotState;
+}
+
+export interface HostSessionRestoreOptions {
+  readonly isCurrent?: () => boolean;
+  readonly sessionId?: string | null;
 }
 
 export class HostSessionRestoreError extends Error {
@@ -318,6 +336,7 @@ export class HostSessionRestoreBridge {
       get ngZone() {
         return ctx.ngZone;
       },
+      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner?.(),
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
     this.hostSessionContentProvider = new HostSessionContentProvider({
@@ -335,20 +354,17 @@ export class HostSessionRestoreBridge {
 
   async restore(
     hostRecord: HostSessionRecord,
-    options: {
-      readonly isCurrent?: () => boolean;
-    } = {},
+    options: HostSessionRestoreOptions = {},
   ): Promise<void> {
     const isCurrent = options.isCurrent ?? (() => true);
+    const targetSessionId = this.resolveRestoreTargetSessionId(hostRecord, options.sessionId);
     const sanitizedHostRecord = sanitizeHostRecordForRestore(hostRecord);
-    this.assertHostRecordMatchesActiveSession(sanitizedHostRecord);
-
-    this.restoreSessionMetadata(sanitizedHostRecord);
+    this.assertHostRecordMatchesTargetSession(sanitizedHostRecord, targetSessionId);
 
     let restorePlan: ResolvedLexSessionRestorePlan | null = null;
     try {
       restorePlan = await this.ctx.lexStream.session.resolveRestorePlan(
-        this.ctx.sessionId,
+        targetSessionId,
         sanitizedHostRecord.turnResponses,
         sanitizedHostRecord,
       );
@@ -358,42 +374,58 @@ export class HostSessionRestoreBridge {
       }
       throw this.createRestoreFailure(
         'restore-plan-resolution-failed',
+        targetSessionId,
         null,
         error,
       );
     }
 
-    if (!isCurrent()) {
-      return;
-    }
-
     try {
       const resolvedLexSnapshot = restorePlan?.snapshot ?? null;
       const restoredLexSession = resolvedLexSnapshot
-        ? this.ctx.lexStream.session.restoreResolvedSnapshot(resolvedLexSnapshot)
+        ? this.ctx.lexStream.session.restoreResolvedSnapshot(resolvedLexSnapshot, targetSessionId)
         : false;
 
       const restoredSnapshot = restoredLexSession
-        ? this.ctx.lexStream.session.snapshot?.() ?? resolvedLexSnapshot
+        ? this.ctx.lexStream.session.snapshot?.(targetSessionId) ?? resolvedLexSnapshot
         : null;
       const turnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
-      this.ctx.lexStream.hydrateTurnResponses?.(turnResponses);
-      const hostResponseState = this.resolveRuntimeHostProjectionState(turnResponses)
+      const hostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, turnResponses)
         ?? buildHostProjectionStateFromPersistedRecord({
           turnResponses,
         });
+
+      const shouldAttachVisibleProjection = isCurrent() && this.isVisibleRestoreTarget(targetSessionId);
+      this.ctx.projectRestoredHostProjection?.(targetSessionId, turnResponses, hostResponseState, {
+        attachedView: shouldAttachVisibleProjection,
+      });
+      this.ctx.projectRestoredRuntimeAuxiliary?.(targetSessionId, sanitizedHostRecord.auxiliary);
+
+      if (!shouldAttachVisibleProjection) {
+        return;
+      }
+
+      this.restoreSessionMetadata(sanitizedHostRecord, targetSessionId);
+      this.ctx.lexStream.hydrateTurnResponses?.(targetSessionId, turnResponses, {
+        visibility: 'visibleAttach',
+      });
       this.applyHostView(hostResponseState);
       if (this.ctx.restoreSharedHostProjectionState) {
-        this.ctx.restoreSharedHostProjectionState(hostResponseState);
+        this.ctx.restoreSharedHostProjectionState(hostResponseState, {
+          sessionId: targetSessionId,
+          attachedView: true,
+        });
       } else {
-        this.ctx.replaceSharedHostProjectionState?.(hostResponseState);
+        this.ctx.replaceSharedHostProjectionState?.(hostResponseState, {
+          sessionId: targetSessionId,
+          attachedView: true,
+        });
       }
       await this.ctx.chatService.syncResolvedActiveModelAfterSuccessfulTurn?.(
-        this.ctx.sessionId,
+        targetSessionId,
         hostResponseState.turnResponses,
       );
-      this.ctx.projectRestoredRuntimeAuxiliary?.(this.ctx.sessionId, sanitizedHostRecord.auxiliary);
-      this.restorePendingRuntimeInteraction(hostResponseState.turnResponses);
+      this.restorePendingRuntimeInteraction(targetSessionId, hostResponseState.turnResponses);
 
       // Restore context budget: prefer persisted lex-derived values over local estimate
       const savedBudget = hostRecord.metadata?.contextBudget;
@@ -430,7 +462,7 @@ export class HostSessionRestoreBridge {
       if (!isCurrent()) {
         return;
       }
-      throw this.createRestoreFailure('restore-plan-apply-failed', restorePlan, error);
+      throw this.createRestoreFailure('restore-plan-apply-failed', targetSessionId, restorePlan, error);
     }
   }
 
@@ -510,19 +542,19 @@ export class HostSessionRestoreBridge {
     };
   }
 
-  async restoreCurrentSessionProjection(projectPathHint?: string | null): Promise<boolean> {
-    const sessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
-    if (!sessionId) {
+  async restoreSessionProjection(sessionId: string | null | undefined, projectPathHint?: string | null): Promise<boolean> {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
       return false;
     }
 
-    const indexEntry = this.ctx.chatHistoryService.findEntry(sessionId) ?? null;
-    const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(sessionId, projectPathHint, {
+    const indexEntry = this.ctx.chatHistoryService.findEntry(targetSessionId) ?? null;
+    const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(targetSessionId, projectPathHint, {
       metadataFallback: indexEntry,
     });
     const hostRecord = this.buildRuntimeRestoreHostRecord({
       target: {
-        sessionId,
+        sessionId: targetSessionId,
         sessionType: sessionContent.sessionType,
         projectPath: sessionContent.projectPathHint
           ?? sessionContent.providerOptions.folderPath
@@ -541,22 +573,29 @@ export class HostSessionRestoreBridge {
       return false;
     }
 
-    await this.restore(hostRecord);
+    await this.restore(hostRecord, { sessionId: targetSessionId });
     return true;
   }
 
-  private assertHostRecordMatchesActiveSession(hostRecord: HostSessionRecord): void {
-    const activeSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+  private resolveRestoreTargetSessionId(hostRecord: HostSessionRecord, requestedSessionId?: string | null): string {
+    const explicitSessionId = typeof requestedSessionId === 'string' ? requestedSessionId.trim() : '';
     const hostRecordSessionId = typeof hostRecord.metadata?.sessionId === 'string'
       ? hostRecord.metadata.sessionId.trim()
       : '';
-    if (!activeSessionId || !hostRecordSessionId || activeSessionId === hostRecordSessionId) {
+    return explicitSessionId || hostRecordSessionId;
+  }
+
+  private assertHostRecordMatchesTargetSession(hostRecord: HostSessionRecord, targetSessionId: string): void {
+    const hostRecordSessionId = typeof hostRecord.metadata?.sessionId === 'string'
+      ? hostRecord.metadata.sessionId.trim()
+      : '';
+    if (!targetSessionId || !hostRecordSessionId || targetSessionId === hostRecordSessionId) {
       return;
     }
 
     const details: HostSessionRestoreFailureDetails = {
       kind: 'host-record-session-mismatch',
-      sessionId: activeSessionId,
+      sessionId: targetSessionId,
       hostRecordSessionId,
     };
     throw new HostSessionRestoreError(
@@ -567,12 +606,13 @@ export class HostSessionRestoreBridge {
 
   private createRestoreFailure(
     kind: HostSessionRestoreFailureKind,
+    sessionId: string,
     restorePlan: ResolvedLexSessionRestorePlan | null,
     cause: unknown,
   ): HostSessionRestoreError {
     const details: HostSessionRestoreFailureDetails = {
       kind,
-      sessionId: typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '',
+      sessionId,
       ...(restorePlan?.diagnostics?.storedSnapshotState
         ? { storedSnapshotState: restorePlan.diagnostics.storedSnapshotState }
         : {}),
@@ -600,9 +640,10 @@ export class HostSessionRestoreBridge {
   }
 
   private resolveRuntimeHostProjectionState(
+    sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
   ): HostTurnResponseState | null {
-    const runtimeState = this.ctx.readSessionRuntimeState?.(this.ctx.sessionId);
+    const runtimeState = this.ctx.readSessionRuntimeState?.(sessionId);
     const hostProjectionState = runtimeState?.hostProjectionState;
     if (!hostProjectionState) {
       return null;
@@ -613,9 +654,9 @@ export class HostSessionRestoreBridge {
       : null;
   }
 
-  private restoreSessionMetadata(hostRecord: HostSessionRecord): void {
-    const indexEntry = this.ctx.chatHistoryService.findEntry(this.ctx.sessionId);
-    const sessionContent = this.hostSessionContentProvider.provideCurrentChatSessionContent(undefined, {
+  private restoreSessionMetadata(hostRecord: HostSessionRecord, sessionId: string): void {
+    const indexEntry = this.ctx.chatHistoryService.findEntry(sessionId);
+    const sessionContent = this.hostSessionContentProvider.provideChatSessionContent(sessionId, undefined, {
       hostRecordOverride: hostRecord,
       metadataFallback: indexEntry,
     });
@@ -751,29 +792,48 @@ export class HostSessionRestoreBridge {
     this.ctx.scrollManager.scrollToBottom('auto');
   }
 
-  private restorePendingRuntimeInteraction(turnResponses: readonly TurnResponseTurn[]): void {
-    const interactionContinuation = this.ctx.lexStream.session.snapshot()?.requestContext?.interactionContinuation;
+  private restorePendingRuntimeInteraction(sessionId: string, turnResponses: readonly TurnResponseTurn[]): void {
+    const interactionContinuation = this.ctx.lexStream.session.snapshot(sessionId)?.requestContext?.interactionContinuation;
     const pending = readInteractionPendingRecord(interactionContinuation);
     if (!pending || pending['kind'] === 'none') {
       return;
     }
 
     if (pending['kind'] === 'question') {
-      this.restorePendingQuestion(turnResponses);
+      this.restorePendingQuestion(sessionId, turnResponses);
       return;
     }
 
     if (pending['kind'] === 'confirmation') {
-      this.restorePendingConfirmation(turnResponses, interactionContinuation!);
+      this.restorePendingConfirmation(sessionId, turnResponses, interactionContinuation!);
       return;
     }
 
     if (pending['kind'] === 'plan_review') {
-      this.restorePendingPlanReview(interactionContinuation!);
+      this.restorePendingPlanReview(sessionId, interactionContinuation!);
     }
   }
 
-  private restorePendingQuestion(turnResponses: readonly TurnResponseTurn[]): void {
+  private isVisibleRestoreTarget(sessionId: string): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const currentViewSessionId = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (currentViewSessionId) {
+      return currentViewSessionId === targetSessionId;
+    }
+
+    return false;
+  }
+
+  private restorePendingQuestion(sessionId: string, turnResponses: readonly TurnResponseTurn[]): void {
     const questionPart = findPendingQuestionPart(turnResponses);
     if (!questionPart?.partId) {
       return;
@@ -790,7 +850,7 @@ export class HostSessionRestoreBridge {
       multi_select: question.multi_select,
     }));
 
-    void this.ctx.runtimeInteractionHost.presentQuestion(this.ctx.sessionId, questionPart.partId, questions)
+    void this.ctx.runtimeInteractionHost.presentQuestion(sessionId, questionPart.partId, questions)
       .then(async (result) => {
         if (!result?.answers) {
           return;
@@ -804,7 +864,7 @@ export class HostSessionRestoreBridge {
             payload: { answers: result.answers },
           },
           {
-            sessionId: this.ctx.sessionId,
+            sessionId,
           },
         );
       })
@@ -812,6 +872,7 @@ export class HostSessionRestoreBridge {
   }
 
   private restorePendingConfirmation(
+    sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
     continuation: LexTurnContinuation,
   ): void {
@@ -820,7 +881,7 @@ export class HostSessionRestoreBridge {
       return;
     }
 
-    void this.ctx.runtimeInteractionHost.presentConfirmation(this.ctx.sessionId, {
+    void this.ctx.runtimeInteractionHost.presentConfirmation(sessionId, {
       askId: confirmationPart.askId,
       partId: confirmationPart.partId,
       toolName: confirmationPart.toolName,
@@ -842,7 +903,7 @@ export class HostSessionRestoreBridge {
           buildConfirmationResumeContent(confirmationPart, result.approved),
           buildConfirmationInteractionAction(continuation, confirmationPart, result),
           {
-            sessionId: this.ctx.sessionId,
+            sessionId,
           },
         );
       })
@@ -850,6 +911,7 @@ export class HostSessionRestoreBridge {
   }
 
   private restorePendingPlanReview(
+    sessionId: string,
     continuation: LexTurnContinuation,
   ): void {
     const pendingReview = readPendingPlanReview(continuation);
@@ -857,13 +919,13 @@ export class HostSessionRestoreBridge {
       return;
     }
 
-    void this.ctx.runtimeInteractionHost.presentPlanReview(this.ctx.sessionId, pendingReview)
+    void this.ctx.runtimeInteractionHost.presentPlanReview(sessionId, pendingReview)
       .then(async (result) => {
         await this.ctx.resumeRestoredInteraction?.(
           buildPlanReviewResumeContent(pendingReview, result),
           buildPlanReviewInteractionAction(continuation, result),
           {
-            sessionId: this.ctx.sessionId,
+            sessionId,
           },
         );
       })
@@ -912,17 +974,19 @@ function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessio
     return hostRecord;
   }
 
-  const hasTransientRuntimeState = hostRecord.turnResponses.some(turn =>
-    turn.response.parts.some(part => isTransientRuntimeStatePart(part)),
+  const hasTransientRestoreState = hostRecord.turnResponses.some(turn =>
+    isTransientTurnResponseStatus(turn.response.status)
+    || turn.response.parts.some(part => isTransientRuntimeStatePart(part)),
   );
-  if (!hasTransientRuntimeState) {
+  if (!hasTransientRestoreState) {
     return hostRecord;
   }
 
   return {
     ...hostRecord,
     turnResponses: hostRecord.turnResponses.map(turn => {
-      if (!turn.response.parts.some(part => isTransientRuntimeStatePart(part))) {
+      const hasTransientRuntimeState = turn.response.parts.some(part => isTransientRuntimeStatePart(part));
+      if (!isTransientTurnResponseStatus(turn.response.status) && !hasTransientRuntimeState) {
         return turn;
       }
 
@@ -945,11 +1009,15 @@ function isTransientTurnResponseStatus(status: unknown): boolean {
 
 function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTurn {
   const clonedTurn = cloneJsonLikeValue(turn);
+  const responseStatus = isTransientTurnResponseStatus(clonedTurn.response.status)
+    ? 'cancelled'
+    : clonedTurn.response.status;
 
   return {
     ...clonedTurn,
     response: {
       ...clonedTurn.response,
+      status: responseStatus,
       parts: clonedTurn.response.parts.filter(part => !isTransientRuntimeStatePart(part)),
     },
   };

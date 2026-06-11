@@ -15,6 +15,14 @@ interface LexSessionRuntimeEntry {
   abortController: AbortController | null;
 }
 
+export interface LexSessionRuntimeEntryProjection {
+  readonly sessionId: string;
+  readonly configKey: string | null;
+  readonly hasHandle: boolean;
+  readonly stopSession: () => void;
+  readonly disposeSession: () => void;
+}
+
 function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
   return typeof (value as AgentHandle).chat === 'function'
     && typeof (value as AgentHandle).saveSession === 'function'
@@ -40,6 +48,8 @@ export class LexAgentLifecycleBridge {
         lex: AilyLexModule,
         currentTodoUnsubscribe: (() => void) | null,
       ) => (() => void) | null;
+      onEntryReady?: (entry: LexSessionRuntimeEntryProjection) => void;
+      onEntryDisposed?: (sessionId: string) => void;
     },
   ) {}
 
@@ -122,7 +132,22 @@ export class LexAgentLifecycleBridge {
     return this._loadPromise;
   }
 
-  async ensureAgent(sessionId?: string, configKey?: string): Promise<boolean> {
+  activateSession(sessionId?: string | null): boolean {
+    const targetEntry = this.resolveEntry(sessionId);
+    if (!targetEntry) {
+      return false;
+    }
+
+    this._activeSessionId = targetEntry.sessionId;
+    setActiveBlocklySlashCommandSession(targetEntry.sessionId);
+    return true;
+  }
+
+  async ensureAgent(
+    sessionId?: string,
+    configKey?: string,
+    options?: { readonly activate?: boolean },
+  ): Promise<boolean> {
     const startedAt = Date.now();
     if (!await this.loadModule()) {
       console.info('[LexStream][debug] ensureAgent loadModule unavailable', {
@@ -137,6 +162,7 @@ export class LexAgentLifecycleBridge {
     const targetSessionId = sessionId || this.deps.getSessionId();
     const normalizedConfigKey = typeof configKey === 'string' ? configKey : null;
     const existingEntry = this._sessionEntries.get(targetSessionId) ?? null;
+    const shouldActivate = options?.activate !== false;
 
     console.info('[LexStream][debug] ensureAgent start', {
       targetSessionId,
@@ -151,23 +177,27 @@ export class LexAgentLifecycleBridge {
     if (existingEntry) {
       if (normalizedConfigKey !== null) {
         if (existingEntry.configKey === normalizedConfigKey) {
-          this._activeSessionId = targetSessionId;
-          setActiveBlocklySlashCommandSession(targetSessionId);
+          if (shouldActivate) {
+            this.activateSession(targetSessionId);
+          }
           console.info('[LexStream][debug] ensureAgent reused existing entry', {
             targetSessionId,
-            reuseReason: 'config-match',
+            reuseReason: shouldActivate ? 'config-match' : 'config-match-acquire-only',
             durationMs: Date.now() - startedAt,
           });
+          this.publishSessionEntry(existingEntry);
           return true;
         }
-      } else if (this._activeSessionId !== targetSessionId) {
-        this._activeSessionId = targetSessionId;
-        setActiveBlocklySlashCommandSession(targetSessionId);
+      } else if (!shouldActivate || this._activeSessionId !== targetSessionId) {
+        if (shouldActivate) {
+          this.activateSession(targetSessionId);
+        }
         console.info('[LexStream][debug] ensureAgent reused existing entry', {
           targetSessionId,
-          reuseReason: 'active-session-switch',
+          reuseReason: shouldActivate ? 'active-session-switch' : 'acquire-only',
           durationMs: Date.now() - startedAt,
         });
+        this.publishSessionEntry(existingEntry);
         return true;
       }
     }
@@ -190,8 +220,9 @@ export class LexAgentLifecycleBridge {
     const created = this.deps.createAgent(lex, targetSessionId);
     const nextEntry = this.createSessionEntry(targetSessionId, created, normalizedConfigKey);
     this._sessionEntries.set(targetSessionId, nextEntry);
-    this._activeSessionId = targetSessionId;
-    setActiveBlocklySlashCommandSession(targetSessionId);
+    if (shouldActivate) {
+      this.activateSession(targetSessionId);
+    }
 
     if (snapshotToRestore) {
       try {
@@ -202,6 +233,7 @@ export class LexAgentLifecycleBridge {
     }
 
     nextEntry.todoUnsubscribe = this.deps.onAgentReady?.(nextEntry.agent, lex, nextEntry.todoUnsubscribe) ?? nextEntry.todoUnsubscribe;
+    this.publishSessionEntry(nextEntry);
     console.info('[LexStream][debug] ensureAgent ready', {
       targetSessionId,
       configKey: normalizedConfigKey,
@@ -240,6 +272,7 @@ export class LexAgentLifecycleBridge {
     this.stop(targetEntry.sessionId);
     this._sessionEntries.delete(targetEntry.sessionId);
     this.disposeSessionEntry(targetEntry);
+    this.deps.onEntryDisposed?.(targetEntry.sessionId);
     if (targetEntry.sessionId === this._activeSessionId) {
       this._activeSessionId = null;
       setActiveBlocklySlashCommandSession(null);
@@ -250,6 +283,7 @@ export class LexAgentLifecycleBridge {
     this.stop();
     for (const entry of this._sessionEntries.values()) {
       this.disposeSessionEntry(entry);
+      this.deps.onEntryDisposed?.(entry.sessionId);
     }
     this._sessionEntries.clear();
     this._activeSessionId = null;
@@ -296,6 +330,15 @@ export class LexAgentLifecycleBridge {
     entry.agent.dispose();
   }
 
+  private publishSessionEntry(entry: LexSessionRuntimeEntry): void {
+    this.deps.onEntryReady?.({
+      sessionId: entry.sessionId,
+      configKey: entry.configKey,
+      hasHandle: !!entry.handle,
+      stopSession: () => this.stop(entry.sessionId),
+      disposeSession: () => this.dispose(entry.sessionId),
+    });
+  }
 
   private resolveSessionId(sessionId?: string | null): string | null {
     const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0

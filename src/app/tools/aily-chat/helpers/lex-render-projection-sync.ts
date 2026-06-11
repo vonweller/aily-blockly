@@ -17,12 +17,18 @@ type RenderProjectionLifecycleAccess = {
   readonly currentMessageHandle: TurnResponseProjectionHandle | null;
 };
 
+type RenderProjectionVisibilityAccess = {
+  readProjectionSessionResource?(): string | null | undefined;
+  readCurrentViewSessionResource?(): string | null | undefined;
+};
+
 export class LexRenderProjectionSync {
   private readonly _hostProjectionBuilder: TurnResponseHostProjectionBuilder;
 
   constructor(
     private readonly ctx: LexRenderProjectionSyncContext,
     private readonly messageLifecycleBridge: RenderProjectionLifecycleAccess,
+    private readonly visibility: RenderProjectionVisibilityAccess = {},
   ) {
     this._hostProjectionBuilder = new TurnResponseHostProjectionBuilder(ctx.partStore);
   }
@@ -31,6 +37,10 @@ export class LexRenderProjectionSync {
     currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null,
     source: IncrementalTurnResponsePartSource,
   ): void {
+    if (!this.canProjectToVisible()) {
+      return;
+    }
+
     const handle = this.resolveProjectedMessageHandle(currentTurn);
     if (!handle || !currentTurn) {
       return;
@@ -48,10 +58,18 @@ export class LexRenderProjectionSync {
   }
 
   clearProjectedMessage(currentTurn: Pick<TurnResponseTurn, 'turnId'> | null): void {
+    if (!this.canProjectToVisible()) {
+      return;
+    }
+
     this._hostProjectionBuilder.clearHandle(this.resolveProjectedMessageHandle(currentTurn));
   }
 
   syncProjectedMessageMeta(currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null): void {
+    if (!this.canProjectToVisible()) {
+      return;
+    }
+
     const handle = this.resolveProjectedMessageHandle(currentTurn);
     if (!handle || !currentTurn) {
       return;
@@ -82,4 +100,25 @@ export class LexRenderProjectionSync {
 
     return this.messageLifecycleBridge.currentMessageHandle;
   }
+
+  private canProjectToVisible(): boolean {
+    const readCurrentViewSessionResource = this.visibility.readCurrentViewSessionResource;
+    if (typeof readCurrentViewSessionResource !== 'function') {
+      return true;
+    }
+
+    const currentViewSessionResource = normalizeSessionResource(readCurrentViewSessionResource());
+    if (!currentViewSessionResource) {
+      return false;
+    }
+
+    const projectionSessionResource = normalizeSessionResource(
+      this.visibility.readProjectionSessionResource?.(),
+    );
+    return !!projectionSessionResource && projectionSessionResource === currentViewSessionResource;
+  }
+}
+
+function normalizeSessionResource(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
 }

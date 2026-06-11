@@ -148,6 +148,7 @@ export class ChatSubscriptionCoordinator {
       get ngZone() {
         return ctx.ngZone;
       },
+      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }

@@ -45,7 +45,9 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   clearSessionState(): void;
 };
 
-type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'isConfiguredFor' | 'loadModule' | 'stop' | 'dispose' | 'disposeAll' | 'getAgent' | 'getHandle' | 'getSessionIds'>;
+export type LexTurnResponsesHydrationVisibility = 'visibleAttach' | 'detached';
+
+type LexOwnerAgentAccess = Pick<LexAgentLifecycleBridge, 'ensureAgent' | 'activateSession' | 'isConfiguredFor' | 'loadModule' | 'stop' | 'dispose' | 'disposeAll' | 'getAgent' | 'getHandle' | 'getSessionIds'>;
 type LexOwnerConversationAccess = Pick<LexTurnSessionBridge, 'messages'>;
 type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuestionAnswers' | 'presentConfirmation' | 'resolveConfirmation' | 'presentToolCallApproval' | 'resolveToolCallApproval' | 'processEvent'>;
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
@@ -79,6 +81,7 @@ type LexOwnerContext = BootstrapLexAgentContext
       readonly turnResponses?: readonly TurnResponseTurn[];
       readonly yieldRequested?: boolean;
     } | undefined;
+    readCurrentViewSessionResource?(): string | null;
   }
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
@@ -154,8 +157,41 @@ export class LexOwnerFacade {
     return this._renderEventBridge.turnResponses;
   }
 
-  hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void {
+  getTurnResponses(sessionId: string): readonly TurnResponseTurn[] {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return [];
+    }
+
+    if (this.isVisibleAttachedSession(targetSessionId)) {
+      return this._renderEventBridge.turnResponses;
+    }
+
+    return this.ctx.readSessionRuntimeState?.(targetSessionId)?.turnResponses ?? [];
+  }
+
+  hydrateTurnResponses(
+    sessionId: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[],
+    options: { readonly visibility?: LexTurnResponsesHydrationVisibility } = {},
+  ): void {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const visibility = options.visibility ?? (
+      targetSessionId && !this.isVisibleAttachedSession(targetSessionId)
+        ? 'detached'
+        : 'visibleAttach'
+    );
+
+    if (visibility !== 'visibleAttach' || (targetSessionId && !this.isVisibleAttachedSession(targetSessionId))) {
+      this.ctx.syncExecutionRuntimeTurnResponses?.(targetSessionId || null, turnResponses);
+      return;
+    }
+
+    this._renderEventBridge.setProjectionSessionResource?.(targetSessionId || null);
     this._renderEventBridge.hydrateTurnResponses(turnResponses);
+    if (targetSessionId) {
+      this.ctx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses);
+    }
   }
 
   finalizeCurrentTurnResponse(fallbackStatus: TurnResponseStatus = 'completed'): boolean {
@@ -233,6 +269,18 @@ export class LexOwnerFacade {
         currentTodoUnsubscribe?.();
         return null;
       },
+      onEntryReady: (entry) => {
+        this.ctx.chatSessionRuntimeRegistry?.syncHandleState?.(entry.sessionId, {
+          requestInProgress: false,
+          supportsInterruption: false,
+          activeResponseHandle: null,
+          stopSession: null,
+          disposeSession: entry.disposeSession,
+        });
+      },
+      onEntryDisposed: (sessionId) => {
+        this.ctx.chatSessionRuntimeRegistry?.releaseHandle?.(sessionId);
+      },
     });
     this._agentLifecycleBridge = agentLifecycleBridge;
     const turnBridge = new LexTurnSessionBridge(() => agentLifecycleBridge.getAgent());
@@ -250,10 +298,10 @@ export class LexOwnerFacade {
     });
     this._sessionPersistenceBridge = sessionPersistenceBridge;
     const sessionRestoreBridge = new LexSessionRestoreBridge({
-      ensureAgent: (sessionId) => agentLifecycleBridge.ensureAgent(sessionId),
+      ensureAgent: (sessionId, options) => agentLifecycleBridge.ensureAgent(sessionId, undefined, options),
       getLex: () => agentLifecycleBridge.getLex(),
       getCwd: () => this.ctx.prjPath || this.ctx.prjRootPath || '',
-      restoreSnapshot: (snapshot) => sessionPersistenceBridge.restoreSession(snapshot),
+      restoreSnapshot: (snapshot, sessionId) => sessionPersistenceBridge.restoreSession(snapshot, sessionId),
     });
     this._sessionFacade = new LexSessionFacade(
       sessionPersistenceBridge,
@@ -300,9 +348,11 @@ export class LexOwnerFacade {
       this.ctx,
       uiEventBridge,
       (sessionId, controller) => {
+        this.ctx.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, controller);
         agentLifecycleBridge.setAbortController(sessionId, controller);
       },
       (sessionId) => {
+        this.ctx.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, null);
         agentLifecycleBridge.setAbortController(sessionId, null);
       },
       () => this.ctx.sessionId,
@@ -351,16 +401,17 @@ export class LexOwnerFacade {
       },
       (sessionId) => agentLifecycleBridge.saveSession(sessionId),
       (sessionId) => {
-        const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+        const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+        if (!targetSessionId) {
+          return [];
+        }
+
+        const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(targetSessionId)?.turnResponses;
         if (runtimeTurnResponses && runtimeTurnResponses.length > 0) {
           return runtimeTurnResponses;
         }
-        const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-        const currentSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
-        if (!targetSessionId || targetSessionId === currentSessionId) {
-          return renderEventBridge.turnResponses.length > 0
-            ? renderEventBridge.turnResponses
-            : this.ctx.lexStream.turnResponses;
+        if (this.isVisibleAttachedSession(targetSessionId)) {
+          return renderEventBridge.turnResponses;
         }
         return [];
       },
@@ -396,6 +447,7 @@ export class LexOwnerFacade {
       },
       () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
       (sessionId) => this.ctx.readSessionRuntimeState?.(sessionId)?.yieldRequested === true,
+      () => this.ctx.readCurrentViewSessionResource?.(),
     );
     this._turnExecutionBridge = turnExecutionBridge;
     // Activate the RenderEvent path: wire the render bridge into execution
@@ -410,6 +462,20 @@ export class LexOwnerFacade {
 
   private _flushPendingEvents(): void {
     this._turnExecutionBridge.flushPendingEvents(this._sessionPersistenceBridge.drainPendingEvents());
+  }
+
+  private isVisibleAttachedSession(sessionId: string): boolean {
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const normalizedViewSessionResource = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (normalizedViewSessionResource) {
+      return normalizedViewSessionResource === sessionId;
+    }
+
+    return false;
   }
 
   private _resolveCompactionMetricsService(lex: AilyLexModule, sessionId: string): IMetricsService {

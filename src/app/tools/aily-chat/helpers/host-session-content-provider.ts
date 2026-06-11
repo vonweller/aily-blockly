@@ -87,18 +87,6 @@ export type HostSessionContentProviderContext = Pick<ISessionAccess, 'sessionId'
 export class HostSessionContentProvider {
   constructor(private readonly ctx: HostSessionContentProviderContext) {}
 
-  provideCurrentChatSessionContent(
-    projectPathHint?: string | null,
-    request?: HostSessionContentRequest,
-  ): HostSessionContent | null {
-    const sessionId = this.ctx.sessionId;
-    if (!sessionId) {
-      return null;
-    }
-
-    return this.provideChatSessionContent(sessionId, projectPathHint, request);
-  }
-
   provideChatSessionContent(
     sessionId: string,
     projectPathHint?: string | null,

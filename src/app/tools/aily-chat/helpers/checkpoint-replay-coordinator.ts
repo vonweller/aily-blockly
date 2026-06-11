@@ -25,6 +25,7 @@ import {
 } from './turn-response-response-model';
 import { projectTurnResponsesToHistory } from './turn-response-history-projector';
 import type { ChatViewWriteBridge, ChatViewWriteBridgeContext } from './chat-view-write-bridge';
+import type { HostSessionSaveTarget } from './host-session-save-bridge';
 
 export type CheckpointRedoChatReplayResult =
   | { ok: true }
@@ -250,9 +251,17 @@ type CheckpointReplayCoordinatorContext = ChatViewWriteBridgeContext
   & {
     workspaceCheckpointAccess?: CheckpointWorkspaceAccess;
     syncWorkspaceState?(): Promise<void> | void;
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
+    readCurrentViewSessionResource?(): string | null | undefined;
     readonly hostResponseProjection?: HostResponseProjection | null;
-    restoreSharedHostProjectionState?(state: HostTurnResponseState | null): void;
-    replaceSharedHostProjectionState?(state: HostTurnResponseState | null): void;
+    restoreSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
+    replaceSharedHostProjectionState?(
+      state: HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
   };
 
 type CheckpointReplayViewWriteAccess = Pick<
@@ -583,6 +592,8 @@ export class CheckpointReplayCoordinator {
     applyPreparedSyncWorkspaceState: CheckpointPreparedSyncAction,
   ): Promise<CheckpointRestoreCommitArtifact> {
     const saveCurrentSession = this.ctx.session.saveCurrentSession.bind(this.ctx.session);
+    const sessionId = this.resolveCheckpointSessionId();
+    const saveTarget = this.resolveCheckpointSaveTarget(sessionId);
     const liveTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
       ? [...this.ctx.lexStream.turnResponses]
       : [];
@@ -600,6 +611,7 @@ export class CheckpointReplayCoordinator {
       ? this.ctx.session.buildHostSessionRecord?.({
         visibleChatList: this.ctx.list,
         turnResponsesOverride: redoTurnResponses,
+        target: saveTarget,
       }) ?? null
       : null;
     const workspaceCheckpointAccess = this.getWorkspaceCheckpointAccess();
@@ -622,6 +634,7 @@ export class CheckpointReplayCoordinator {
       : null;
     const applyPreparedSessionSave = this.createPreparedSessionSaveAction({
       saveCurrentSession,
+      saveTarget,
       hostProjectionState: persistedVisibleProjectionState,
     });
     const applyPreparedLocalCommit = this.createPreparedRestoreLocalCommitAction({
@@ -634,6 +647,7 @@ export class CheckpointReplayCoordinator {
       truncateLiveTurnResponses: options.truncateLiveTurnResponses !== false,
       truncateChatTurn: options.truncateChatTurn,
       liveTurnResponses,
+      sessionId,
     });
     const handlePreparedCommitIOFailure = this.createPreparedCheckpointRestoreCommitFailureHandler();
 
@@ -666,6 +680,7 @@ export class CheckpointReplayCoordinator {
   }
 
   private createPreparedCheckpointRedoLocalCommitActions(params: {
+    sessionId: string;
     turnResponses: readonly TurnResponseTurn[];
     visibleProjectionState: HostTurnResponseState;
     previousHostResponseState: HostTurnResponseState;
@@ -705,7 +720,10 @@ export class CheckpointReplayCoordinator {
     const projectionRollbackStep: CheckpointRedoLocalRollbackStep = {
       failureMessage: '恢复先前 host projection 失败',
       apply: () => {
-        restoreSharedHostProjectionState?.(params.previousHostResponseState);
+        restoreSharedHostProjectionState?.(params.previousHostResponseState, {
+          sessionId: params.sessionId,
+          attachedView: true,
+        });
       },
     };
 
@@ -713,7 +731,7 @@ export class CheckpointReplayCoordinator {
       applyPreparedLocalCommit: async state => {
         state.appliedRollbackSteps = [];
 
-        hydrateTurnResponses?.(params.turnResponses);
+        hydrateTurnResponses?.(params.sessionId, params.turnResponses, { visibility: 'visibleAttach' });
         params.applyPreparedRebuildState();
 
         state.appliedRollbackSteps.push(historyRollbackStep);
@@ -729,7 +747,10 @@ export class CheckpointReplayCoordinator {
         }
 
         state.appliedRollbackSteps.push(projectionRollbackStep);
-        replaceSharedHostProjectionState?.(params.visibleProjectionState);
+        replaceSharedHostProjectionState?.(params.visibleProjectionState, {
+          sessionId: params.sessionId,
+          attachedView: true,
+        });
 
         params.applyPreparedRedoCarrierClear();
       },
@@ -776,6 +797,7 @@ export class CheckpointReplayCoordinator {
   }
 
   private createPreparedCheckpointRedoReplayActions(params: {
+    sessionId: string;
     turnResponses: readonly TurnResponseTurn[];
     previousLexTurnResponses: TurnResponseTurn[];
   }): {
@@ -787,16 +809,16 @@ export class CheckpointReplayCoordinator {
 
     return {
       applyPreparedReplayRestore: async () => restoreLexSession?.(
-          this.ctx.sessionId,
+          params.sessionId,
           params.turnResponses,
         ),
       applyPreparedReplayLexRollback: async () => {
         try {
           await restoreLexSession?.(
-            this.ctx.sessionId,
+            params.sessionId,
             params.previousLexTurnResponses,
           );
-          hydrateTurnResponses?.(params.previousLexTurnResponses);
+          hydrateTurnResponses?.(params.sessionId, params.previousLexTurnResponses, { visibility: 'visibleAttach' });
           return {
             rollbackErrors: [],
             rolledBackOnError: true,
@@ -888,6 +910,7 @@ export class CheckpointReplayCoordinator {
   }
 
   private createPreparedRestoreLocalCommitAction(params: {
+    sessionId: string;
     checkpointId: string;
     captureRedoTurns: boolean;
     redoCarrierArtifact: CheckpointRestoreRedoArtifact | null;
@@ -922,7 +945,9 @@ export class CheckpointReplayCoordinator {
         params.truncateChatTurn?.(params.turnId);
 
         if (params.truncateLiveTurnResponses && params.truncateIndex >= 0 && hydrateTurnResponses) {
-          hydrateTurnResponses(params.liveTurnResponses.slice(0, params.truncateIndex));
+          hydrateTurnResponses(params.sessionId, params.liveTurnResponses.slice(0, params.truncateIndex), {
+            visibility: 'visibleAttach',
+          });
           invalidateHostRequestGraph?.();
           triggerSyncDetectChanges();
         }
@@ -1842,6 +1867,8 @@ export class CheckpointReplayCoordinator {
     },
   ): Promise<CheckpointReplayArtifact> {
     const saveCurrentSession = this.ctx.session.saveCurrentSession.bind(this.ctx.session);
+    const sessionId = this.resolveCheckpointSessionId();
+    const saveTarget = this.resolveCheckpointSaveTarget(sessionId);
     const hostResponseState = buildHostProjectionStateFromPersistedRecord({
       turnResponses,
     });
@@ -1873,6 +1900,7 @@ export class CheckpointReplayCoordinator {
         hostProjection: hostResponseState,
         visibleChatList: hostResponseState.chatList,
         turnResponsesOverride: hostResponseState.turnResponses,
+        target: saveTarget,
       })
       : null;
     const visibleProjectionState = persistedVisibleRecord?.turnResponses?.length || hostResponseState.turnResponses.length === 0
@@ -1883,6 +1911,7 @@ export class CheckpointReplayCoordinator {
     const applyPreparedRedoCarrierClear = this.createPreparedRedoCarrierClearAction(options.clearRedoCarrier !== false);
     const applyPreparedSessionSave = this.createPreparedSessionSaveAction({
       saveCurrentSession,
+      saveTarget,
       hostProjectionState: visibleProjectionState,
       shouldSave: options.saveSession !== false,
     });
@@ -1893,6 +1922,7 @@ export class CheckpointReplayCoordinator {
     });
 
     const { applyPreparedLocalCommit, rollbackPreparedLocalStateOnFailure } = this.createPreparedCheckpointRedoLocalCommitActions({
+      sessionId,
       turnResponses,
       visibleProjectionState,
       previousHostResponseState,
@@ -1903,6 +1933,7 @@ export class CheckpointReplayCoordinator {
     });
 
     const { applyPreparedReplayRestore, applyPreparedReplayLexRollback } = this.createPreparedCheckpointRedoReplayActions({
+      sessionId,
       turnResponses,
       previousLexTurnResponses,
     });
@@ -1933,6 +1964,8 @@ export class CheckpointReplayCoordinator {
     },
   ): Promise<CheckpointReplayArtifact> {
     const saveCurrentSession = this.ctx.session.saveCurrentSession.bind(this.ctx.session);
+    const sessionId = this.resolveCheckpointSessionId();
+    const saveTarget = this.resolveCheckpointSaveTarget(sessionId);
     const persistedTurnResponses = replayArtifact.hostRecord?.turnResponses?.length
       ? replayArtifact.hostRecord.turnResponses
       : replayArtifact.turnResponses;
@@ -1967,6 +2000,7 @@ export class CheckpointReplayCoordinator {
         hostProjection: hostResponseState,
         visibleChatList: hostResponseState.chatList,
         turnResponsesOverride: persistedTurnResponses,
+        target: saveTarget,
       })
       : null);
     const visibleProjectionState = persistedVisibleRecord?.turnResponses?.length || hostResponseState.turnResponses.length === 0
@@ -1977,6 +2011,7 @@ export class CheckpointReplayCoordinator {
     const applyPreparedRedoCarrierClear = this.createPreparedRedoCarrierClearAction(options.clearRedoCarrier !== false);
     const applyPreparedSessionSave = this.createPreparedSessionSaveAction({
       saveCurrentSession,
+      saveTarget,
       hostProjectionState: visibleProjectionState,
       shouldSave: options.saveSession !== false,
     });
@@ -1987,6 +2022,7 @@ export class CheckpointReplayCoordinator {
     });
 
     const { applyPreparedLocalCommit, rollbackPreparedLocalStateOnFailure } = this.createPreparedCheckpointRedoLocalCommitActions({
+      sessionId,
       turnResponses: persistedTurnResponses,
       visibleProjectionState,
       previousHostResponseState,
@@ -1997,6 +2033,7 @@ export class CheckpointReplayCoordinator {
     });
 
     const { applyPreparedReplayRestore, applyPreparedReplayLexRollback } = this.createPreparedCheckpointRedoReplayActions({
+      sessionId,
       turnResponses: persistedTurnResponses,
       previousLexTurnResponses,
     });
@@ -2409,10 +2446,11 @@ export class CheckpointReplayCoordinator {
 
   private createPreparedSessionSaveAction(config: {
     saveCurrentSession: CheckpointReplayCoordinatorContext['session']['saveCurrentSession'];
+    saveTarget: HostSessionSaveTarget | null;
     hostProjectionState: HostTurnResponseState;
     shouldSave?: boolean;
   }): () => void {
-    const { saveCurrentSession, hostProjectionState, shouldSave = true } = config;
+    const { saveCurrentSession, saveTarget, hostProjectionState, shouldSave = true } = config;
     const frozenHostProjection = buildHostProjectionStateFromPersistedRecord({
       turnResponses: hostProjectionState.turnResponses.map(turn => this.cloneTurnResponseForSave(turn)),
     });
@@ -2425,8 +2463,32 @@ export class CheckpointReplayCoordinator {
       saveCurrentSession({
         hostProjection: frozenHostProjection,
         visibleChatList: frozenHostProjection.chatList,
+        target: saveTarget,
       });
     };
+  }
+
+  private resolveCheckpointSessionId(): string {
+    const viewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const normalizedViewResource = typeof viewSessionResource === 'string'
+      ? viewSessionResource.trim()
+      : '';
+    if (normalizedViewResource) {
+      return normalizedViewResource;
+    }
+
+    return '';
+  }
+
+  private resolveCheckpointSaveTarget(sessionId: string): HostSessionSaveTarget | null {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    return this.ctx.buildExecutionSaveTarget?.(normalizedSessionId) ?? null;
   }
 
   private cloneTurnResponseForSave(turn: TurnResponseTurn): TurnResponseTurn {
