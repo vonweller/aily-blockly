@@ -34,7 +34,10 @@ import {
 type LexRenderEventBridgeContext =
   Pick<IChatViewAccess, 'partStore' | 'list' | 'invalidateHostRequestGraph' | 'triggerSyncDetectChanges'>
   & Pick<IAgentLifecycle, 'toolCallingIteration' | 'isCancelled' | 'currentMessageSource'>
-  & Pick<IChatServiceAccess, 'contextBudgetService'>;
+  & Pick<IChatServiceAccess, 'contextBudgetService'>
+  & {
+    readCurrentViewSessionResource?(): string | null;
+  };
 
 type RenderMessageLifecycleAccess = {
   ensureAilyMessage(turnId?: string): void;
@@ -68,6 +71,7 @@ export class LexRenderEventBridge {
   private _pendingRequestDisplayContent: string | undefined;
   private _pendingRequestMetadata: TurnResponseTurn['request']['metadata'];
   private _currentTurnHasExecutionError = false;
+  private _projectionSessionResource: string | null = null;
 
   constructor(
     private readonly ctx: LexRenderEventBridgeContext,
@@ -77,13 +81,23 @@ export class LexRenderEventBridge {
   ) {
     this._streamBuilder = new TurnResponseIncrementalBuilder();
     this._sideEffects = new LexSideEffectHandler(ctx, hostSyncBridge);
-    this._projectionSync = new LexRenderProjectionSync(ctx, messageLifecycleBridge);
+    this._projectionSync = new LexRenderProjectionSync(ctx, messageLifecycleBridge, {
+      readProjectionSessionResource: () => this._projectionSessionResource,
+      readCurrentViewSessionResource: typeof ctx.readCurrentViewSessionResource === 'function'
+        ? () => ctx.readCurrentViewSessionResource?.() ?? null
+        : undefined,
+    });
     this._turnMaterializer = new LexRenderTurnMaterializer(ctx, getSessionSnapshot);
   }
 
   /** H1: update the host stream listener at runtime (e.g. after session restore). */
   setHostStreamListener(listener: IHostStreamListener | null): void {
     this._hostStreamEmitter.setListener(listener);
+  }
+
+  setProjectionSessionResource(sessionResource: string | null | undefined): void {
+    const normalized = normalizeSessionResource(sessionResource);
+    this._projectionSessionResource = normalized || null;
   }
 
   prepareTurnRequest(
@@ -128,11 +142,14 @@ export class LexRenderEventBridge {
     };
 
     this._turnResponses.set(turnId, seededTurn);
-    this.ctx.invalidateHostRequestGraph();
-    this.ctx.triggerSyncDetectChanges();
+    this.invalidateVisibleProjection();
   }
 
   get turnResponses(): readonly TurnResponseTurn[] {
+    if (!this.canUseCurrentTurnResponses()) {
+      return [];
+    }
+
     return [...this._turnResponses.values()]
       .sort((left, right) => left.createdAt - right.createdAt)
       .map(turn => clonePublicTurnResponseTurn(turn));
@@ -188,8 +205,7 @@ export class LexRenderEventBridge {
         },
       };
       this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      this.invalidateVisibleProjection();
       return true;
     }
 
@@ -213,8 +229,7 @@ export class LexRenderEventBridge {
         },
       };
       this._turnResponses.set(finalizedTurn.turnId, finalizedTurn);
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      this.invalidateVisibleProjection();
       return true;
     }
 
@@ -229,7 +244,9 @@ export class LexRenderEventBridge {
     }
 
     this._currentTurnHasExecutionError = true;
-    this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+    if (this.canProjectToVisible()) {
+      this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+    }
     this._streamBuilder.processEvent({ type: 'error_notice', message, timestamp: Date.now() });
     this.syncCurrentTurn(Date.now(), 'error');
     this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
@@ -248,7 +265,9 @@ export class LexRenderEventBridge {
       return;
     }
 
-    this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+    if (this.canProjectToVisible()) {
+      this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
+    }
 
     if (event.type === 'turn_begin') {
       if (turnBeginMode === 'fresh') {
@@ -256,8 +275,7 @@ export class LexRenderEventBridge {
       }
       this._projectionSync.syncProjectedMessageMeta(this._currentTurn);
       if (turnBeginMode === 'continued') {
-        this.ctx.invalidateHostRequestGraph();
-        this.ctx.triggerSyncDetectChanges();
+        this.invalidateVisibleProjection();
       }
       return;
     }
@@ -274,8 +292,7 @@ export class LexRenderEventBridge {
         event.quotaSnapshot,
         event.terminationReason,
       );
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      this.invalidateVisibleProjection();
       this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
       return;
     }
@@ -286,8 +303,7 @@ export class LexRenderEventBridge {
         event.timestamp,
         toHostClearToPreviousToolInvocationReason(event.reason),
       );
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      this.invalidateVisibleProjection();
       return;
     }
 
@@ -298,8 +314,7 @@ export class LexRenderEventBridge {
       this._hostStreamEmitter.emitResponseFollowups(this._currentTurn.turnId, event.value, event.timestamp);
     }
     if (responseModelChanged) {
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      this.invalidateVisibleProjection();
     }
   }
 
@@ -487,6 +502,37 @@ export class LexRenderEventBridge {
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, partChanges);
   }
+
+  private invalidateVisibleProjection(): void {
+    if (!this.canProjectToVisible()) {
+      return;
+    }
+
+    this.ctx.invalidateHostRequestGraph();
+    this.ctx.triggerSyncDetectChanges();
+  }
+
+  private canProjectToVisible(): boolean {
+    return this.canUseCurrentTurnResponses();
+  }
+
+  private canUseCurrentTurnResponses(): boolean {
+    if (typeof this.ctx.readCurrentViewSessionResource !== 'function') {
+      return true;
+    }
+
+    const currentViewSessionResource = normalizeSessionResource(this.ctx.readCurrentViewSessionResource());
+    if (!currentViewSessionResource) {
+      return false;
+    }
+
+    const projectionSessionResource = normalizeSessionResource(this._projectionSessionResource);
+    return !!projectionSessionResource && projectionSessionResource === currentViewSessionResource;
+  }
+}
+
+function normalizeSessionResource(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {

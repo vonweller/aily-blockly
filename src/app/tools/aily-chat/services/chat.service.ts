@@ -187,6 +187,11 @@ export class ChatService {
   private _currentResolvedMode: ChatResolvedMode = DEFAULT_CHAT_RESOLVED_MODE;
   private _currentAgentRuntimeMode: ChatAgentRuntimeMode = 'unbound';
   private _currentAgentRuntimeModeSource: ChatAgentRuntimeModeSource = 'fallback';
+  /**
+   * @deprecated Adapter for the currently attached chat view selection.
+   * Do not use this as session/model truth; read/write the target ChatSessionModel
+   * through ChatSessionModelStore/ChatSessionViewModelStore instead.
+   */
   private _currentSessionId = '';
   private _currentSessionPath = '';
   private _currentSessionType: ChatSessionType = DEFAULT_CHAT_SESSION_TYPE;
@@ -227,6 +232,11 @@ export class ChatService {
     return this._currentSessionId;
   }
 
+  /**
+   * @deprecated Adapter for the currently attached chat view selection.
+   * Do not use this as session/model truth; attach/acquire the target model
+   * through ChatSessionModelStore/ChatSessionViewModelStore instead.
+   */
   set currentSessionId(sessionId: string) {
     const normalizedSessionId = typeof sessionId === 'string'
       ? sessionId.trim()

@@ -16,8 +16,8 @@ interface ExternalInputCallbacks {
   regenerateTurn: () => Promise<void> | void;
   undoLastEdits: () => Promise<void> | void;
   newChat: () => Promise<void> | void;
-  ensureSessionReadyForSubmit: () => Promise<boolean>;
-  submitText: (text: string, clearInput: boolean) => Promise<void> | void;
+  ensureSessionReadyForSubmit: () => Promise<string | null>;
+  submitText: (text: string, clearInput: boolean, sessionId?: string | null) => Promise<void> | void;
   focusInput: () => void;
   schedulePostInputWork: (work: () => void) => void;
 }
@@ -64,16 +64,17 @@ export class ChatExternalInputCoordinator {
   }
 
   private async autoSendExternalInput(): Promise<void> {
-    if (!this.ctx.sessionId) {
-      const ready = await this.callbacks.ensureSessionReadyForSubmit();
-      if (!ready || !this.ctx.sessionId) {
+    let targetSessionId = this.ctx.sessionId;
+    if (!targetSessionId) {
+      targetSessionId = await this.callbacks.ensureSessionReadyForSubmit();
+      if (!targetSessionId) {
         this.ctx.message.warning('无法创建会话，请稍后重试');
         return;
       }
     }
 
     this.ctx.scrollManager.startNewExchange();
-    await this.callbacks.submitText(this.ctx.inputValue, true);
+    await this.callbacks.submitText(this.ctx.inputValue, true, targetSessionId);
     this.ctx.triggerSyncDetectChanges();
   }
 

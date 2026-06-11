@@ -9,11 +9,16 @@ import {
   isResolvedSessionTitleSource,
   normalizeChatSessionTitleSource,
   normalizeChatSessionTitleText,
+  type ChatSessionTitleCandidate,
 } from '../core/chat-session-title';
 
 type ChatTitleCoordinatorContext = Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatCoordination, 'session' | 'lexStream'>
-  & Pick<IAgentLifecycle, never>;
+  & Pick<IAgentLifecycle, never>
+  & {
+    readonly readCurrentViewSessionResource?: () => string | null | undefined;
+    readonly updateSessionModelTitle?: (sessionId: string, title: Partial<ChatSessionTitleCandidate>) => void;
+  };
 
 function isMeaningfulTitle(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -167,11 +172,12 @@ export class ChatTitleCoordinator {
   constructor(
     private readonly ctx: ChatTitleCoordinatorContext,
     private readonly titleRequestService: ChatTitleRequestProvider,
-    private readonly syncManagedSessionTitle?: (sessionId: string, title: string) => void,
+    private readonly syncManagedSessionTitle?: (sessionId: string, title: Partial<ChatSessionTitleCandidate>) => void,
   ) {}
 
-  generate(content: string): Promise<void> {
-    const sessionId = normalizeSessionId(this.ctx.sessionId);
+  generate(content: string, targetSessionIdInput?: string | null): Promise<void> {
+    const targetSessionId = normalizeSessionId(targetSessionIdInput);
+    const sessionId = targetSessionId || this.readCurrentViewSessionResource();
     const normalizedContent = typeof content === 'string' ? content.trim() : '';
     if (!sessionId || !normalizedContent) {
       this.logTitleDebug('skip-invalid-input', {
@@ -260,10 +266,15 @@ export class ChatTitleCoordinator {
           return;
         }
 
+        const titleCandidate = {
+          text: title,
+          source: 'generated',
+        } as const;
         this.ctx.chatHistoryService.updateTitle(sessionId, title, { source: 'generated' });
-        this.syncManagedSessionTitle?.(sessionId, title);
+        this.ctx.updateSessionModelTitle?.(sessionId, titleCandidate);
+        this.syncManagedSessionTitle?.(sessionId, titleCandidate);
         this.sealedSessionTitles.add(sessionId);
-        if (sessionId === normalizeSessionId(this.ctx.sessionId)) {
+        if (sessionId === this.readCurrentViewSessionResource()) {
           if (typeof this.ctx.chatService.setCurrentSessionTitle === 'function') {
             this.ctx.chatService.setCurrentSessionTitle({
               text: title,
@@ -313,7 +324,7 @@ export class ChatTitleCoordinator {
   }
 
   cancelPendingForCurrentSession(): void {
-    this.cancelPendingForSession(this.ctx.sessionId);
+    this.cancelPendingForSession(this.readCurrentViewSessionResource());
   }
 
   private hasResolvedSessionTitle(sessionId: string): boolean {
@@ -324,7 +335,7 @@ export class ChatTitleCoordinator {
     );
     const defaultTitle = this.readSessionDefaultTitle(sessionId, persistedRecord);
 
-    const currentSessionId = normalizeSessionId(this.ctx.sessionId);
+    const currentSessionId = this.readCurrentViewSessionResource();
     if (sessionId === currentSessionId) {
       const liveTitle = normalizeChatSessionTitleText(this.ctx.chatService.currentSessionTitle ?? this.ctx.sessionTitle);
       const liveResolvedTitle = isResolvedSessionTitleSource(this.ctx.chatService.currentSessionTitleSource)
@@ -360,7 +371,7 @@ export class ChatTitleCoordinator {
   }
 
   private readSessionDefaultTitle(sessionId: string, persistedRecord?: { turnResponses?: readonly unknown[] } | null): string {
-    if (sessionId === normalizeSessionId(this.ctx.sessionId)) {
+    if (sessionId === this.readCurrentViewSessionResource()) {
       const liveTurnResponses = (this.ctx.lexStream as { turnResponses?: readonly unknown[] } | undefined)?.turnResponses;
       const liveDefaultTitle = deriveDefaultTitleFromTurnResponses(liveTurnResponses);
       if (liveDefaultTitle) {
@@ -369,6 +380,12 @@ export class ChatTitleCoordinator {
     }
 
     return deriveDefaultTitleFromTurnResponses(persistedRecord?.turnResponses);
+  }
+
+  private readCurrentViewSessionResource(): string {
+    const viewResource = this.ctx.readCurrentViewSessionResource?.();
+    const normalizedViewResource = normalizeSessionId(viewResource);
+    return normalizedViewResource;
   }
 
   private isAbortError(error: unknown): boolean {

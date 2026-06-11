@@ -37,15 +37,18 @@ export class LexSessionPersistenceBridge {
       ?? [];
   }
 
-  restoreSession(snapshot: SessionSnapshot): boolean {
-    const handle = this.deps.getHandle?.() ?? null;
+  restoreSession(snapshot: SessionSnapshot, sessionId?: string | null): boolean {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : snapshot.sessionId;
+    const handle = this.deps.getHandle?.(targetSessionId) ?? null;
     if (handle?.restoreSession) {
       handle.restoreSession(snapshot);
       this.flushPendingEvents();
       return true;
     }
 
-    const agent = this.deps.getAgent();
+    const agent = this.deps.getAgent(targetSessionId);
     if (agent?.restoreSession) {
       agent.restoreSession(snapshot);
       this.flushPendingEvents();

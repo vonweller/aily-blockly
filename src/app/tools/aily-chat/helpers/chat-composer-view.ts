@@ -96,7 +96,7 @@ export function resolveComposerKeyAction(input: {
   if (input.isWaiting) {
     return {
       kind: 'submit',
-      queueKind: input.altKey ? 'steering' : 'queued',
+      queueKind: input.altKey ? 'queued' : 'steering',
     };
   }
 

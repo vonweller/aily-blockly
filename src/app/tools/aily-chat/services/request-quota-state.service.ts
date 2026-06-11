@@ -83,6 +83,12 @@ export class RequestQuotaStateService {
     this.acceptSnapshot(null);
   }
 
+  replaceProjectedState(snapshot: RequestQuotaServiceState | null | undefined): RequestQuotaServiceState | null {
+    this.transientRequestQuotaSnapshot = null;
+    this.replaceSnapshot(snapshot ?? null);
+    return this.getSnapshot();
+  }
+
   acceptTurnResponseQuotaSnapshot(turns: readonly TurnResponseTurn[] | null | undefined): RequestQuotaServiceState | null {
     const sidecarState = readRequestQuotaStateTurnSidecar(turns);
     if (!sidecarState) {

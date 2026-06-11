@@ -15,10 +15,16 @@ import type {
   ISessionAccess,
 } from '../core/chat-context';
 import type { LiveHostSessionRecord } from '../services/chat-history.service';
+import { countHostRecordMessages } from '../services/chat-history.service';
 import type {
   HostSessionRecord,
   ImportedDebugSessionRecord,
 } from '../services/chat-history.service';
+import type {
+  ChatSessionModelCreateProps,
+  ChatSessionModelReference,
+} from '../services/chat-session-model-store.service';
+import type { ChatSessionViewModel } from '../services/chat-session-view-model-store.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 import type {
   ChatSessionEntryStateService,
@@ -30,12 +36,16 @@ import {
   readHostSessionRestoreFailureDetails,
   type RuntimeRestoreHostRecordRequest,
   type HostSessionRestoreFailureDetails,
+  type HostSessionRestoreOptions,
 } from './host-session-restore-bridge';
 import { HostSessionSaveBridge } from './host-session-save-bridge';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import type { ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import type { ResourceItem } from '../core/chat-types';
-import type { HostResponseProjection } from './host-turn-response-state';
+import {
+  hasHostResponseConversationContent,
+  type HostResponseProjection,
+} from './host-turn-response-state';
 import type { ChatListItem } from '../services/chat-history.service';
 import type { ChatSelectedMode } from '../core/chat-mode';
 import { DEFAULT_CHAT_SESSION_TYPE, normalizeChatSelectedMode, normalizeChatSessionType, normalizeChatSurfaceModeId } from '../core/chat-mode';
@@ -127,13 +137,22 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     >;
     readonly hostRequestModel?: import('./host-turn-response-state').HostRequestModel | null;
     readonly hostResponseProjection?: import('./host-turn-response-state').HostResponseProjection | null;
-    captureActiveSessionRuntimeState?(): void;
+    captureVisibleAttachedSessionRuntimeState?(): void;
     clearSessionRuntimeState?(sessionId?: string | null): void;
+    acquireExistingSessionModel?(sessionId?: string | null): ChatSessionModelReference | undefined;
+    acquireSessionModel?(props: ChatSessionModelCreateProps): ChatSessionModelReference;
+    attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
+    detachSessionViewModel?(sessionId?: string | null): void;
+    readCurrentViewSessionResource?(): string | null;
+    buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
+    attachSessionView?(sessionId?: string | null): Promise<void>;
     attachCurrentSessionView?(): Promise<void>;
+    markVisibleSessionProjectionOwner?(sessionId?: string | null): void;
     ensureBackgroundSessionCanRerun?(sessionId?: string | null): void;
     resetVisibleSessionProjection(options?: {
       readonly clearResolvedActiveModel?: boolean;
@@ -146,7 +165,7 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     stopSessionAction(sessionId?: string | null): boolean;
     disposeSessionAction(sessionId?: string | null): boolean;
     buildRuntimeRestoreHostRecord?(request: RuntimeRestoreHostRecordRequest): HostSessionRecord | null;
-    restoreSessionHostRecord(hostRecord: HostSessionRecord, options?: { readonly isCurrent?: () => boolean }): Promise<void>;
+    restoreSessionHostRecord(hostRecord: HostSessionRecord, options?: HostSessionRestoreOptions): Promise<void>;
     resumeRestoredInteraction?(
       content: string,
       interactionAction: LexInteractionAction,
@@ -155,12 +174,18 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
         readonly requestMetadata?: import('aily-lex/browser').TurnRequest['metadata'];
       },
     ): Promise<void>;
-    restoreSharedHostProjectionState?(state: import('./host-turn-response-state').HostTurnResponseState | null): void;
-    replaceSharedHostProjectionState?(state: import('./host-turn-response-state').HostTurnResponseState | null): void;
+    restoreSharedHostProjectionState?(
+      state: import('./host-turn-response-state').HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
+    replaceSharedHostProjectionState?(
+      state: import('./host-turn-response-state').HostTurnResponseState | null,
+      options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
   };
 
 const GENERIC_SESSION_START_ERROR_MESSAGE = 'Sorry, something went wrong.';
-type SessionSwitchRestoreStage = 'session-start' | 'host-restore';
+type SessionSwitchRestoreStage = 'session-start' | 'host-restore' | 'missing-record';
 const ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX = '[AilyChat][EntryLifecycleGuard]';
 
 export interface SessionLifecycleRestoreErrorDetails {
@@ -211,6 +236,11 @@ export class SessionLifecycleHelper {
   private readonly _hostSessionContentProvider: HostSessionContentProvider;
   private _localHostSessionItemController: HostSessionItemController | null = null;
   private readonly _entryCoordinator: ChatSessionEntryCoordinator;
+  private readonly sessionAgentAcquirePromises = new Map<string, {
+    readonly providerOptionsKey: string;
+    readonly promise: Promise<boolean>;
+  }>();
+  private readonly sessionModelReferences = new Map<string, ChatSessionModelReference>();
   private sessionActivationRequestId = 0;
 
   constructor(private ctx: SessionLifecycleContext) {
@@ -221,7 +251,11 @@ export class SessionLifecycleHelper {
         return ctx.isLoggedIn;
       },
       get hasCurrentSession() {
-        return !!ctx.sessionId;
+        const currentViewSessionResource = typeof ctx.readCurrentViewSessionResource === 'function'
+          ? ctx.readCurrentViewSessionResource()
+          : null;
+        return typeof currentViewSessionResource === 'string'
+          && currentViewSessionResource.trim().length > 0;
       },
       enterEntryState: (options) => this.enterEntryState(options),
       enterBlankSessionShell: (options) => this.enterBlankSessionShell(options),
@@ -267,9 +301,10 @@ export class SessionLifecycleHelper {
     hostProjection?: HostResponseProjection | null;
     visibleChatList?: readonly ChatListItem[];
     turnResponsesOverride?: readonly import('aily-lex/browser').TurnResponseTurn[];
-    target?: HostSessionSaveTarget | null;
+    hostRequestModel?: import('./host-turn-response-state').HostRequestModel | null;
+    target: HostSessionSaveTarget | null;
   }): LiveHostSessionRecord | null {
-    return this._hostSessionSaveBridge.buildHostSessionRecord(options);
+    return options ? this._hostSessionSaveBridge.buildHostSessionRecord(options) : null;
   }
 
   buildLiveHostSessionRecord(options?: {
@@ -337,12 +372,13 @@ export class SessionLifecycleHelper {
       return false;
     }
 
-    if (!this.ctx.sessionId) {
+    const sourceSessionId = this.resolveCurrentViewSessionResource();
+    if (!sourceSessionId) {
       this.ctx.message.warning('当前没有可分叉的会话');
       return false;
     }
 
-    const sourceRecord = this.resolveForkSourceRecord();
+    const sourceRecord = this.resolveForkSourceRecord(sourceSessionId);
     const sourceTurnResponses = sourceRecord?.turnResponses ?? [];
     const targetTurnIndex = sourceTurnResponses.findIndex(turn => turn['turnId'] === options.turnId);
     if (targetTurnIndex < 0) {
@@ -356,11 +392,12 @@ export class SessionLifecycleHelper {
     const retainedTurnIds = new Set(retainedTurnResponses.map(turn => turn['turnId']));
     const forkedSessionId = `lex-${Date.now()}-fork`;
     const sourceSessionContent = sourceRecord
-      ? this._hostSessionContentProvider.provideCurrentChatSessionContent(
+      ? this._hostSessionContentProvider.provideChatSessionContent(
+          sourceSessionId,
           this.resolveCurrentSessionProjectPath(),
           {
             hostRecordOverride: sourceRecord as HostSessionRecord,
-            metadataFallback: this.ctx.chatHistoryService.findEntry(this.ctx.sessionId) ?? null,
+            metadataFallback: this.ctx.chatHistoryService.findEntry(sourceSessionId) ?? null,
             fallbackProviderOptions: this.resolveCurrentSessionProviderOptions(),
           },
         )
@@ -429,11 +466,16 @@ export class SessionLifecycleHelper {
   saveCurrentSession(options?: {
     hostProjection?: HostResponseProjection | null;
     visibleChatList?: readonly ChatListItem[];
+    hostRequestModel?: import('./host-turn-response-state').HostRequestModel | null;
     target?: HostSessionSaveTarget | null;
   }): void {
-    const currentSessionId = options?.target?.sessionId || this.ctx.chatService.currentSessionId || this.ctx.sessionId;
-    this.ctx.captureActiveSessionRuntimeState?.();
-    if (this._hostSessionSaveBridge.saveCurrentSession(options)) {
+    const saveTarget = options?.target ?? this.resolveCurrentSessionSaveTarget();
+    const currentSessionId = saveTarget?.sessionId || this.resolveCurrentViewSessionResource();
+    this.ctx.captureVisibleAttachedSessionRuntimeState?.();
+    if (this._hostSessionSaveBridge.saveCurrentSession({
+      ...options,
+      target: saveTarget,
+    })) {
       this.refreshHistoryList();
       return;
     }
@@ -636,7 +678,7 @@ export class SessionLifecycleHelper {
   }
 
   adoptActiveGlobalSessionToProject(projectPath: string, reason = 'chat-tool-create'): boolean {
-    const sessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const sessionId = this.resolveCurrentViewSessionResource();
     const targetProjectPath = this.getPersistableProjectPath(projectPath);
     if (!sessionId || !targetProjectPath) {
       return false;
@@ -675,10 +717,10 @@ export class SessionLifecycleHelper {
       const latestEntry = this.getLatestProjectSessionEntry(persistableProjectPath);
       if (latestEntry) {
         this.clearClientSessionStateForProjectSwitch();
-        this.ctx.chatService.currentSessionTitle = latestEntry.title || '';
         this.ctx.chatService.currentSessionPath = persistableProjectPath;
-        await this.startSessionWithId(latestEntry.sessionId);
-        await this.getHistory();
+        await this.switchToSession(latestEntry.sessionId, {
+          fallbackProjectPath: persistableProjectPath,
+        });
         this.ctx.isCompleted = true;
         this.refreshHistoryList();
         this.ctx.triggerSyncDetectChanges();
@@ -693,8 +735,10 @@ export class SessionLifecycleHelper {
 
   // ==================== 会话启动 ====================
 
-  async startSession(): Promise<void> {
-    if (this.ctx.isSessionStarting) return Promise.resolve();
+  async startSession(): Promise<string | null> {
+    if (this.ctx.isSessionStarting) {
+      return Promise.resolve(this.resolveCurrentViewSessionResource() || null);
+    }
     this.ctx.isSessionStarting = true;
     this.ctx.isCancelled = false;
 
@@ -732,6 +776,15 @@ export class SessionLifecycleHelper {
       agentRuntimeMode,
     );
     this.setActiveSessionId(pendingSessionId);
+    this.acquireSessionModel({
+      sessionResource: pendingSessionId,
+      title: { text: '', source: 'empty' },
+      projectPath: this.ctx.chatService.currentSessionPath || null,
+      sessionType: DEFAULT_CHAT_SESSION_TYPE,
+      inputState: { providerOptions },
+    });
+    this.ctx.attachSessionViewModel?.(pendingSessionId);
+    this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.applySessionProviderOptions(providerOptions);
@@ -756,33 +809,72 @@ export class SessionLifecycleHelper {
     // 初始化 aily-lex agent
     try {
       const agentReady = await this.ctx.lexStream.agent.ensureAgent(pendingSessionId, providerOptionsKey);
+      if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
+        return agentReady ? pendingSessionId : null;
+      }
       if (!agentReady) {
         const msg = GENERIC_SESSION_START_ERROR_MESSAGE;
         console.error('[SessionLifecycle]', msg);
         this.ctx.lexStream.turn.appendError(msg);
         this.ctx.isSessionStarting = false;
-        return;
+        return null;
       }
     } catch (err) {
+      if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
+        return null;
+      }
       console.error('[SessionLifecycle] aily-lex agent 初始化失败:', err);
       this.ctx.lexStream.turn.appendError(GENERIC_SESSION_START_ERROR_MESSAGE);
       this.ctx.isSessionStarting = false;
       throw err;
     }
 
+    if (!this.isVisibleSessionStartupOwner(pendingSessionId)) {
+      return pendingSessionId;
+    }
     await this.ctx.chatService.syncResolvedActiveModelFromContextInfo?.(pendingSessionId);
 
     this.ctx.isSessionStarting = false;
+    return pendingSessionId;
+  }
+
+  private isVisibleSessionStartupOwner(sessionId: string): boolean {
+    return this.resolveCurrentViewSessionResource() === sessionId;
   }
 
   /** 清理当前会话的本地 agent 资源 */
   dispose(): void {
-    this.ctx.disposeSessionAction(this.ctx.chatService.currentSessionId || this.ctx.sessionId);
+    for (const reference of this.sessionModelReferences.values()) {
+      reference.dispose();
+    }
+    this.sessionModelReferences.clear();
+    const currentViewSessionResource = this.resolveCurrentViewSessionResource();
+    if (currentViewSessionResource) {
+      this.ctx.disposeSessionAction(currentViewSessionResource);
+    }
+  }
+
+  releaseSessionModelReference(sessionId?: string | null): boolean {
+    const targetSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const reference = this.sessionModelReferences.get(targetSessionId);
+    if (!reference) {
+      return false;
+    }
+
+    reference.dispose();
+    this.sessionModelReferences.delete(targetSessionId);
+    return true;
   }
 
   enterEntryState(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): void {
     const explicitSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
-    const currentSessionId = explicitSessionId || this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const currentSessionId = explicitSessionId || this.resolveCurrentViewSessionResource();
     const explicitProjectPath = typeof options.projectPath === 'string' && options.projectPath.trim().length > 0
       ? options.projectPath.trim()
       : null;
@@ -797,6 +889,7 @@ export class SessionLifecycleHelper {
       });
     }
     this.setActiveSessionId('');
+    this.ctx.detachSessionViewModel?.(currentSessionId);
     this.ctx.chatService.hasBlankSessionShell = false;
     applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
@@ -817,10 +910,10 @@ export class SessionLifecycleHelper {
   async returnToEntryInventory(options: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null } = {}): Promise<void> {
     const targetSessionId = typeof options.sessionId === 'string' && options.sessionId.trim().length > 0
       ? options.sessionId.trim()
-      : this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+      : this.resolveCurrentViewSessionResource();
 
     if (targetSessionId) {
-      this.ctx.captureActiveSessionRuntimeState?.();
+      this.ctx.captureVisibleAttachedSessionRuntimeState?.();
       this.ctx.detachSessionRuntimeView?.(targetSessionId);
     }
 
@@ -836,9 +929,11 @@ export class SessionLifecycleHelper {
 
   /** 简化的停止+清理（替代旧 stopAndCloseSession） */
   async stopAndCloseSession(skipSave: boolean = false): Promise<void> {
-    const currentSessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const currentSessionId = this.resolveCurrentViewSessionResource();
     if (!skipSave) { this.saveCurrentSession(); }
-    this.ctx.stopSessionAction(currentSessionId);
+    if (currentSessionId) {
+      this.ctx.stopSessionAction(currentSessionId);
+    }
     this.ctx.chatService.clearResolvedActiveModel?.();
     this.ctx.isWaiting = false;
   }
@@ -847,12 +942,12 @@ export class SessionLifecycleHelper {
 
   async newChat(): Promise<void> {
     if (this.ctx.isSessionStarting) return;
-    const currentSessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+    const currentSessionId = this.resolveCurrentViewSessionResource();
     const currentScope = resolveChatSessionScopeFromProject(AilyHost.get().project);
     const nextProjectPath = chatSessionScopeProjectPath(currentScope);
     this.saveCurrentSession();
-    this.ctx.captureActiveSessionRuntimeState?.();
-    if (currentSessionId && !this.hasSessionRuntimeState(currentSessionId)) {
+    this.ctx.captureVisibleAttachedSessionRuntimeState?.();
+    if (currentSessionId && !this.hasSessionRuntimeOwner(currentSessionId)) {
       this.hostSessionItemController.discardChatSessionItem(currentSessionId);
       this.clearPersistedSessionEntryTarget(currentSessionId);
     }
@@ -871,34 +966,42 @@ export class SessionLifecycleHelper {
     });
   }
 
-  async ensureSessionReadyForSubmit(): Promise<boolean> {
-    if (this.ctx.sessionId) {
-      return true;
+  async ensureSessionReadyForSubmit(): Promise<string | null> {
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const normalizedViewSessionResource = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (normalizedViewSessionResource) {
+      return normalizedViewSessionResource;
     }
 
     if (!this.ctx.isLoggedIn) {
-      return false;
+      return null;
     }
 
     return this._entryCoordinator.bootstrapNewSession();
   }
 
   async getHistory(): Promise<void> {
-    if (!this.ctx.sessionId) return;
-    this.persistSessionEntryTarget(this.buildCurrentSessionEntryTarget(this.ctx.sessionId));
+    const sessionId = this.resolveCurrentViewSessionResource();
+    if (!sessionId) return;
+    this.persistSessionEntryTarget(this.buildCurrentSessionEntryTarget(sessionId));
     this.ctx.resetVisibleSessionProjection({
       clearResolvedActiveModel: true,
       clearTurns: true,
       resetToolCallingIteration: true,
       resetContextBudget: true,
     });
-    const sessionContent = this._hostSessionContentProvider.provideCurrentChatSessionContent(
+    const sessionContent = this._hostSessionContentProvider.provideChatSessionContent(
+      sessionId,
       this.resolveCurrentSessionProjectPath(),
     );
     const hostRecord = sessionContent?.hostRecord ?? null;
     if (hostRecord) {
       try {
-        await this.ctx.restoreSessionHostRecord(hostRecord);
+        await this.ctx.restoreSessionHostRecord(hostRecord, { sessionId });
       } catch (error) {
         console.warn('[SessionLifecycle] session history restore failed:', error);
         this.ctx.message.warning('会话历史加载失败，已继续打开当前会话');
@@ -907,11 +1010,16 @@ export class SessionLifecycleHelper {
       this.ctx.editCheckpointService?.clear();
       this.ctx.editCheckpointService?.dismissSummary();
     }
-    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(this.ctx.sessionId);
+    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
   }
 
   private createSessionId(): string {
-    return `lex-${Date.now()}`;
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) {
+      return `lex-${uuid}`;
+    }
+
+    return `lex-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
   private setActiveSessionId(sessionId: string): void {
@@ -919,9 +1027,11 @@ export class SessionLifecycleHelper {
     this.ctx.chatService.currentSessionId = sessionId;
   }
 
-  private hasSessionRuntimeState(sessionId: string | null | undefined): boolean {
+  private hasSessionRuntimeOwner(sessionId: string | null | undefined): boolean {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    return !!normalizedSessionId && !!this.ctx.readSessionRuntimeState?.(normalizedSessionId);
+    return !!normalizedSessionId
+      && (!!this.ctx.readSessionRuntimeState?.(normalizedSessionId)
+        || this.ctx.hasSessionRuntimeHandle?.(normalizedSessionId) === true);
   }
 
   private resolveCurrentProjectPath(): string | null {
@@ -955,13 +1065,19 @@ export class SessionLifecycleHelper {
       : `Forked: ${normalized}`;
   }
 
-  private resolveForkSourceRecord(): HostSessionRecord | LiveHostSessionRecord | null {
+  private resolveForkSourceRecord(sessionId: string | null | undefined): HostSessionRecord | LiveHostSessionRecord | null {
+    const sourceSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!sourceSessionId) {
+      return null;
+    }
+
     const liveRecord = this.buildLiveHostSessionRecord();
-    if (liveRecord?.sessionId === this.ctx.sessionId) {
+    if (liveRecord?.sessionId === sourceSessionId) {
       return liveRecord;
     }
 
-    return this._hostSessionContentProvider.provideCurrentChatSessionContent(
+    return this._hostSessionContentProvider.provideChatSessionContent(
+      sourceSessionId,
       this.resolveCurrentSessionProjectPath(),
     )?.hostRecord ?? null;
   }
@@ -1047,6 +1163,15 @@ export class SessionLifecycleHelper {
     } = {},
   ): Promise<void> {
     const activationRequestId = ++this.sessionActivationRequestId;
+    this.logSessionActivationScalar('activation-start', restoreRequest);
+    if (this.shouldRejectMissingRestoreRecord(restoreRequest)) {
+      throw this.createSessionRestoreError(
+        'missing-record',
+        restoreRequest.diagnostics,
+        new Error(`No durable or live session model found for ${restoreRequest.target.sessionId}`),
+      );
+    }
+
     this.resetForSessionActivation();
 
     if (options.ensureManagedItem) {
@@ -1069,41 +1194,93 @@ export class SessionLifecycleHelper {
       });
     }
 
+    if (await this.attachExistingSessionModelFromRestoreRequest(restoreRequest, activationRequestId)) {
+      return;
+    }
+
     if (options.preferDetachedRuntimeAttach === true
       && this.shouldReattachDetachedRuntimeSession(restoreRequest.target.sessionId)) {
       await this.reattachDetachedRuntimeSession(restoreRequest, activationRequestId);
       return;
     }
 
+    const hostRecordToRestore = this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? restoreRequest.hostRecord;
+    if (hostRecordToRestore) {
+      await this.restoreDurableSessionModelFromRestoreRequest(
+        restoreRequest,
+        hostRecordToRestore,
+        activationRequestId,
+      );
+      return;
+    }
+
+    await this.attachBlankSessionModelFromRestoreRequest(restoreRequest, activationRequestId);
+  }
+
+  private async restoreDurableSessionModelFromRestoreRequest(
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+      };
+      readonly sessionContent: HostSessionContent;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
+    },
+    hostRecordToRestore: HostSessionRecord,
+    activationRequestId: number,
+  ): Promise<void> {
+    const sessionId = typeof restoreRequest.target.sessionId === 'string'
+      ? restoreRequest.target.sessionId.trim()
+      : '';
+    if (!sessionId) {
+      return;
+    }
+
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    const resolvedTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    const restoredTitle = resolvedTitle.text
+      ? resolvedTitle
+      : {
+          text: restoreRequest.sessionContent.title,
+          source: restoreRequest.sessionContent.title ? 'restored' as ChatSessionTitleSource : resolvedTitle.source,
+        };
+    const providerOptions = restoreRequest.sessionContent.providerOptions;
+    this.acquireSessionModel({
+      sessionResource: sessionId,
+      title: restoredTitle,
+      projectPath: this.resolveSessionContentProjectPath(restoreRequest.sessionContent.hostRecord),
+      sessionType: restoreRequest.sessionContent.sessionType,
+      inputState: { providerOptions },
+    });
+    this.ctx.attachSessionViewModel?.(sessionId);
+    this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
+
+    await Promise.resolve();
+    this.throwIfSessionActivationSuperseded(activationRequestId);
+
     try {
-      await this.startSessionWithId(restoreRequest.target.sessionId, restoreRequest.sessionContent, activationRequestId);
+      await this.ctx.restoreSessionHostRecord(hostRecordToRestore, {
+        sessionId,
+        isCurrent: () => this.isCurrentSessionActivationRequest(activationRequestId),
+      });
       this.throwIfSessionActivationSuperseded(activationRequestId);
     } catch (error) {
       if (isSessionLifecycleSupersededError(error)) {
         throw error;
       }
-      throw this.createSessionRestoreError('session-start', restoreRequest.diagnostics, error);
+      throw this.createSessionRestoreError('host-restore', restoreRequest.diagnostics, error);
     }
 
-    const hostRecordToRestore = this.ctx.buildRuntimeRestoreHostRecord?.(restoreRequest) ?? restoreRequest.hostRecord;
-
-    if (hostRecordToRestore) {
-      try {
-        await this.ctx.restoreSessionHostRecord(hostRecordToRestore, {
-          isCurrent: () => this.isCurrentSessionActivationRequest(activationRequestId),
-        });
-        this.throwIfSessionActivationSuperseded(activationRequestId);
-      } catch (error) {
-        if (isSessionLifecycleSupersededError(error)) {
-          throw error;
-        }
-        throw this.createSessionRestoreError('host-restore', restoreRequest.diagnostics, error);
-      }
-    }
-
+    await this.ctx.attachSessionView?.(sessionId);
     this.throwIfSessionActivationSuperseded(activationRequestId);
-    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(restoreRequest.target.sessionId);
-
+    this.commitVisibleSessionShell({
+      sessionId,
+      title: restoredTitle,
+      sessionType: restoreRequest.sessionContent.sessionType,
+      providerOptions,
+      metadata: restoreRequest.sessionContent.metadata,
+    });
+    this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
+    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
     this.requestSessionListRefresh({
       reason: 'reopen',
       scope: 'summary',
@@ -1111,15 +1288,262 @@ export class SessionLifecycleHelper {
     });
   }
 
-  private shouldReattachDetachedRuntimeSession(sessionId: string): boolean {
+  private async attachExistingSessionModelFromRestoreRequest(
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+        readonly projectPath?: string | null;
+      };
+      readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
+    },
+    activationRequestId: number,
+  ): Promise<boolean> {
+    const sessionId = typeof restoreRequest.target.sessionId === 'string'
+      ? restoreRequest.target.sessionId.trim()
+      : '';
+    if (!sessionId || !this.ctx.acquireExistingSessionModel) {
+      return false;
+    }
+
+    const modelReference = this.ctx.acquireExistingSessionModel(sessionId);
+    if (!modelReference) {
+      this.logSessionActivationScalar('existing-model-missing', restoreRequest);
+      return false;
+    }
+
+    if (!this.existingSessionModelCanSatisfyRestore(modelReference.object, restoreRequest)) {
+      this.logSessionActivationScalar('existing-model-rejected', restoreRequest, {
+        modelTurns: this.countModelTurns(modelReference.object),
+        modelProjectionTurns: this.countModelProjectionTurns(modelReference.object),
+      });
+      modelReference.dispose();
+      return false;
+    }
+    this.logSessionActivationScalar('existing-model-accepted', restoreRequest, {
+      modelTurns: this.countModelTurns(modelReference.object),
+      modelProjectionTurns: this.countModelProjectionTurns(modelReference.object),
+    });
+
+    this.sessionModelReferences.get(sessionId)?.dispose();
+    this.sessionModelReferences.set(sessionId, modelReference);
+    this.throwIfSessionActivationSuperseded(activationRequestId);
+
+    this.setActiveSessionId(sessionId);
+    const viewModel = this.ctx.attachSessionViewModel?.(sessionId);
+    if (!viewModel) {
+      this.sessionModelReferences.get(sessionId)?.dispose();
+      this.sessionModelReferences.delete(sessionId);
+      return false;
+    }
+
+    const model = modelReference.object;
+    const modelTitle = model.title;
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    const restoredTitle = modelTitle.text
+      ? { text: modelTitle.text, source: modelTitle.source }
+      : resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    const providerOptions = model.inputState.providerOptions
+      ?? restoreRequest.sessionContent.providerOptions;
+
+    this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
+
+    await this.ctx.attachSessionView?.(sessionId);
+    this.throwIfSessionActivationSuperseded(activationRequestId);
+    this.commitVisibleSessionShell({
+      sessionId,
+      title: restoredTitle,
+      sessionType: model.sessionType ?? restoreRequest.sessionContent.sessionType,
+      providerOptions,
+      metadata: restoreRequest.sessionContent.metadata,
+    });
+    this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
+    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.requestSessionListRefresh({
+      reason: 'reopen',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
+    return true;
+  }
+
+  private existingSessionModelCanSatisfyRestore(
+    model: ChatSessionModelReference['object'],
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+      };
+      readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+    },
+  ): boolean {
+    const durableTurnResponses = restoreRequest.hostRecord?.turnResponses
+      ?? restoreRequest.sessionContent.hostRecord?.turnResponses
+      ?? [];
+    const hasDurableTurnResponses = Array.isArray(durableTurnResponses) && durableTurnResponses.length > 0;
+
+    const modelTurns = model.turnResponses;
+    if (Array.isArray(modelTurns) && modelTurns.length > 0) {
+      return true;
+    }
+
+    const runtimeState = this.ctx.readSessionRuntimeState?.(restoreRequest.target.sessionId);
+    if (Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0) {
+      return true;
+    }
+
+    if (!hasDurableTurnResponses) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private shouldRejectMissingRestoreRecord(
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+      };
+      readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
+    },
+  ): boolean {
+    const sessionId = typeof restoreRequest.target.sessionId === 'string'
+      ? restoreRequest.target.sessionId.trim()
+      : '';
+    if (!sessionId || restoreRequest.hostRecord || restoreRequest.sessionContent.hostRecord) {
+      return false;
+    }
+
+    if (restoreRequest.diagnostics.hostRecordSource !== 'missing'
+      || !this.isRealMetadataOnlyRestoreCarrier(restoreRequest.diagnostics.metadataSource)) {
+      return false;
+    }
+
+    if (this.restoreRequestHasLiveRuntimeContent(sessionId)) {
+      return false;
+    }
+
+    return !this.restoreRequestHasDurableConversationContent(restoreRequest);
+  }
+
+  private logSessionActivationScalar(
+    phase: string,
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+      };
+      readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
+    },
+    extra: {
+      readonly modelTurns?: number;
+      readonly modelProjectionTurns?: number;
+    } = {},
+  ): void {
+    const sessionId = restoreRequest.target.sessionId;
     const runtimeState = this.ctx.readSessionRuntimeState?.(sessionId);
-    return !!runtimeState && runtimeState.attachedView === false;
+    const runtimeProjection = runtimeState?.hostProjectionState ?? null;
+    const hostRecord = restoreRequest.hostRecord ?? restoreRequest.sessionContent.hostRecord ?? null;
+    const hostRecordTurns = Array.isArray(hostRecord?.turnResponses)
+      ? hostRecord.turnResponses.length
+      : 0;
+    const runtimeTurns = Array.isArray(runtimeState?.turnResponses)
+      ? runtimeState.turnResponses.length
+      : 0;
+    const runtimeProjectionTurns = Array.isArray(runtimeProjection?.turnResponses)
+      ? runtimeProjection.turnResponses.length
+      : 0;
+    const runtimeProjectionChatList = Array.isArray(runtimeProjection?.chatList)
+      ? runtimeProjection.chatList.length
+      : 0;
+    const runtimeProjectionDialogs = Array.isArray(runtimeProjection?.dialogItems)
+      ? runtimeProjection.dialogItems.length
+      : 0;
+    console.info(
+      '[SessionLifecycle][SwitchScalar]',
+      [
+        `phase=${phase}`,
+        `sessionId=${sessionId || '<empty>'}`,
+        `hostRecordSource=${restoreRequest.diagnostics.hostRecordSource}`,
+        `metadataSource=${restoreRequest.diagnostics.metadataSource}`,
+        `hostRecordTurns=${hostRecordTurns}`,
+        `runtimeAttached=${runtimeState?.attachedView ?? '<none>'}`,
+        `runtimeInProgress=${runtimeState?.requestInProgress === true}`,
+        `runtimeTurns=${runtimeTurns}`,
+        `runtimeProjectionTurns=${runtimeProjectionTurns}`,
+        `runtimeProjectionChatList=${runtimeProjectionChatList}`,
+        `runtimeProjectionDialogs=${runtimeProjectionDialogs}`,
+        `modelTurns=${extra.modelTurns ?? '<unknown>'}`,
+        `modelProjectionTurns=${extra.modelProjectionTurns ?? '<unknown>'}`,
+      ].join(' '),
+    );
+  }
+
+  private countModelTurns(model: ChatSessionModelReference['object']): number {
+    const turnResponses = model.turnResponses;
+    return Array.isArray(turnResponses) ? turnResponses.length : 0;
+  }
+
+  private countModelProjectionTurns(model: ChatSessionModelReference['object']): number {
+    const projection = model.hostProjectionState ?? null;
+    return Array.isArray(projection?.turnResponses) ? projection.turnResponses.length : 0;
+  }
+
+  private isRealMetadataOnlyRestoreCarrier(metadataSource: HostSessionSwitchRestoreDiagnostics['metadataSource'] | string): boolean {
+    return metadataSource === 'index-entry' || metadataSource === 'entry-target';
+  }
+
+  private restoreRequestHasLiveRuntimeContent(sessionId: string): boolean {
+    const runtimeState = this.ctx.readSessionRuntimeState?.(sessionId);
+    if (!runtimeState) {
+      return false;
+    }
+
+    return runtimeState.requestInProgress === true
+      || !!runtimeState.activeResponseHandle
+      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0)
+      || hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null);
+  }
+
+  private restoreRequestHasDurableConversationContent(
+    restoreRequest: {
+      readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+    },
+  ): boolean {
+    const hostRecord = restoreRequest.hostRecord ?? restoreRequest.sessionContent.hostRecord ?? null;
+    return !!hostRecord && countHostRecordMessages(hostRecord) > 0;
+  }
+
+  private shouldReattachDetachedRuntimeSession(sessionId: string): boolean {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const runtimeState = this.ctx.readSessionRuntimeState?.(normalizedSessionId);
+    if (!runtimeState) {
+      return false;
+    }
+
+    const hasLiveRuntimeContent = runtimeState.requestInProgress === true
+      || !!runtimeState.activeResponseHandle
+      || (Array.isArray(runtimeState.turnResponses) && runtimeState.turnResponses.length > 0)
+      || hasHostResponseConversationContent(runtimeState.hostProjectionState ?? null);
+
+    return runtimeState.attachedView === false
+      || hasLiveRuntimeContent;
   }
 
   private async reattachDetachedRuntimeSession(
     restoreRequest: {
       readonly target: {
         readonly sessionId: string;
+        readonly projectPath?: string | null;
       };
       readonly sessionContent: HostSessionContent;
     },
@@ -1129,22 +1553,92 @@ export class SessionLifecycleHelper {
     const providerOptions = restoreRequest.sessionContent.providerOptions;
 
     this.throwIfSessionActivationSuperseded(activationRequestId);
-    this.setActiveSessionId(sessionId);
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
     const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
-    applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
-    this.applySessionType(restoreRequest.sessionContent.sessionType);
-    this.applySessionProviderOptions(providerOptions);
+    this.acquireSessionModel({
+      sessionResource: sessionId,
+      title: restoredTitle,
+      projectPath: restoreRequest.sessionContent.projectPathHint
+        ?? providerOptions.folderPath
+        ?? restoreRequest.target.projectPath
+        ?? this.resolveSessionContentProjectPath(restoreRequest.sessionContent.hostRecord),
+      sessionType: restoreRequest.sessionContent.sessionType,
+      inputState: { providerOptions },
+    });
+    this.ctx.attachSessionViewModel?.(sessionId);
     this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
-    this.ctx.isSessionStarting = false;
-    this.ctx.isCancelled = false;
 
-    if (typeof this.ctx.attachCurrentSessionView === 'function') {
+    if (typeof this.ctx.attachSessionView === 'function') {
+      await this.ctx.attachSessionView(sessionId);
+      this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
+      this.throwIfSessionActivationSuperseded(activationRequestId);
+    } else if (typeof this.ctx.attachCurrentSessionView === 'function') {
       await this.ctx.attachCurrentSessionView();
       this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
       this.throwIfSessionActivationSuperseded(activationRequestId);
     }
+    this.commitVisibleSessionShell({
+      sessionId,
+      title: restoredTitle,
+      sessionType: restoreRequest.sessionContent.sessionType,
+      providerOptions,
+      metadata: restoreRequest.sessionContent.metadata,
+      applyAgentRuntimeMode: false,
+    });
 
+    this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.requestSessionListRefresh({
+      reason: 'reopen',
+      scope: 'summary',
+      priority: 'after-paint',
+    });
+  }
+
+  private async attachBlankSessionModelFromRestoreRequest(
+    restoreRequest: {
+      readonly target: {
+        readonly sessionId: string;
+        readonly projectPath?: string | null;
+      };
+      readonly sessionContent: HostSessionContent;
+    },
+    activationRequestId: number,
+  ): Promise<void> {
+    const sessionId = typeof restoreRequest.target.sessionId === 'string'
+      ? restoreRequest.target.sessionId.trim()
+      : '';
+    if (!sessionId) {
+      return;
+    }
+
+    this.throwIfSessionActivationSuperseded(activationRequestId);
+    const providerOptions = restoreRequest.sessionContent.providerOptions;
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    this.acquireSessionModel({
+      sessionResource: sessionId,
+      title: restoredTitle,
+      projectPath: restoreRequest.sessionContent.projectPathHint
+        ?? providerOptions.folderPath
+        ?? restoreRequest.target.projectPath
+        ?? this.resolveSessionContentProjectPath(restoreRequest.sessionContent.hostRecord),
+      sessionType: restoreRequest.sessionContent.sessionType,
+      inputState: { providerOptions },
+    });
+    this.ctx.attachSessionViewModel?.(sessionId);
+    this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, restoreRequest.sessionContent));
+    this.ctx.markVisibleSessionProjectionOwner?.(sessionId);
+
+    await this.ctx.attachSessionView?.(sessionId);
+    this.throwIfSessionActivationSuperseded(activationRequestId);
+    this.commitVisibleSessionShell({
+      sessionId,
+      title: restoredTitle,
+      sessionType: restoreRequest.sessionContent.sessionType,
+      providerOptions,
+      metadata: restoreRequest.sessionContent.metadata,
+    });
+    this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
     this.requestSessionListRefresh({
       reason: 'reopen',
@@ -1163,22 +1657,90 @@ export class SessionLifecycleHelper {
     }
   }
 
-  private resetForSessionActivation(): void {
-    const targetSessionId = this.ctx.chatService.currentSessionId || this.ctx.sessionId;
+  private resolveCurrentSessionSaveTarget(): HostSessionSaveTarget | null {
+    const sessionId = this.resolveCurrentViewSessionResource();
+    if (!sessionId) {
+      return null;
+    }
+    return this.ctx.buildExecutionSaveTarget?.(sessionId) ?? null;
+  }
 
-    this.ctx.captureActiveSessionRuntimeState?.();
-    this.ctx.detachSessionRuntimeView?.(targetSessionId);
+  private resolveCurrentViewSessionResource(): string {
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    return typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+  }
+
+  private acquireSessionModel(props: ChatSessionModelCreateProps): void {
+    const sessionId = typeof props.sessionResource === 'string'
+      ? props.sessionResource.trim()
+      : '';
+    if (!sessionId || !this.ctx.acquireSessionModel) {
+      return;
+    }
+
+    this.sessionModelReferences.get(sessionId)?.dispose();
+    this.sessionModelReferences.set(sessionId, this.ctx.acquireSessionModel({
+      ...props,
+      sessionResource: sessionId,
+    }));
+  }
+
+  private commitVisibleSessionShell(options: {
+    readonly sessionId: string;
+    readonly title: { readonly text: string; readonly source: ChatSessionTitleSource };
+    readonly sessionType?: unknown;
+    readonly providerOptions: HostSessionProviderOptions;
+    readonly metadata?: HostSessionContent['metadata'];
+    readonly applyAgentRuntimeMode?: boolean;
+  }): void {
+    this.setActiveSessionId(options.sessionId);
+    applyCurrentSessionTitle(this.ctx.chatService, options.title);
+    this.applySessionType(options.sessionType);
+    if (options.applyAgentRuntimeMode !== false) {
+      this.applyAgentRuntimeMode(options.providerOptions, options.metadata);
+    }
+    this.applySessionProviderOptions(options.providerOptions);
+    this.ctx.isSessionStarting = false;
+    this.ctx.isCancelled = false;
+  }
+
+  private acquireTargetSessionAgent(sessionId: string, providerOptionsKey: string): Promise<boolean> {
+    const existing = this.sessionAgentAcquirePromises.get(sessionId);
+    if (existing?.providerOptionsKey === providerOptionsKey) {
+      return existing.promise;
+    }
+
+    let acquirePromise: Promise<boolean>;
+    acquirePromise = this.ctx.lexStream.agent.ensureAgent(sessionId, providerOptionsKey, { activate: false })
+      .finally(() => {
+        if (this.sessionAgentAcquirePromises.get(sessionId)?.promise === acquirePromise) {
+          this.sessionAgentAcquirePromises.delete(sessionId);
+        }
+      });
+    this.sessionAgentAcquirePromises.set(sessionId, {
+      providerOptionsKey,
+      promise: acquirePromise,
+    });
+    return acquirePromise;
+  }
+
+  private resetForSessionActivation(): void {
+    const targetSessionId = this.resolveCurrentViewSessionResource();
+
+    this.ctx.captureVisibleAttachedSessionRuntimeState?.();
+    if (targetSessionId) {
+      this.ctx.detachSessionRuntimeView?.(targetSessionId);
+    }
 
     this.ctx.resetVisibleSessionProjection({
       clearEditSummary: true,
     });
 
-    this.setActiveSessionId('');
-    applyCurrentSessionTitle(this.ctx.chatService, { text: '', source: 'empty' });
-    this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
-    this.ctx.chatService.currentSessionPath = '';
     this.ctx.isSessionStarting = false;
-    this.ctx.hasInitializedForThisLogin = false;
   }
 
   private createSessionRestoreError(
@@ -1219,7 +1781,6 @@ export class SessionLifecycleHelper {
     sessionContent?: HostSessionContent | null,
     activationRequestId?: number,
   ): Promise<void> {
-    if (this.ctx.isSessionStarting) return Promise.resolve();
     this.ctx.isSessionStarting = true;
     this.ctx.isCancelled = false;
 
@@ -1228,9 +1789,31 @@ export class SessionLifecycleHelper {
       ?? (hostRecord
         ? resolveHostSessionProviderOptions(hostRecord)
         : this.resolveCurrentProjectProviderOptions());
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    const restoredTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
+
+    this.setActiveSessionId(sessionId);
+    this.acquireSessionModel({
+      sessionResource: sessionId,
+      title: restoredTitle,
+      projectPath: this.resolveSessionContentProjectPath(sessionContent?.hostRecord),
+      sessionType: sessionContent?.sessionType,
+      inputState: { providerOptions },
+    });
+    this.ctx.attachSessionViewModel?.(sessionId);
+    applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
+    this.applySessionType(sessionContent?.sessionType);
+    const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions, sessionContent?.metadata);
+    const appliedProviderOptions = this.applySessionProviderOptions(providerOptions);
+    const providerOptionsKey = this.createAgentProviderOptionsKey(
+      appliedProviderOptions,
+      agentRuntimeMode,
+    );
+    this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, sessionContent));
 
     this.ctx.interaction.resetApprovalState();
     this.ctx.lexStream.resetSessionState();
+    this.ctx.markVisibleSessionProjectionOwner?.(sessionId);
 
     this.ctx.lexStream.turns.clear();
     this.ctx.toolCallingIteration = 0;
@@ -1260,16 +1843,14 @@ export class SessionLifecycleHelper {
     }
 
     this.ctx.isCompleted = false;
-    const agentRuntimeMode = this.applyAgentRuntimeMode(providerOptions, sessionContent?.metadata);
-    const providerOptionsKey = this.createAgentProviderOptionsKey(
-      this.applySessionProviderOptions(providerOptions),
-      agentRuntimeMode,
-    );
 
     try {
-      const agentReady = await this.ctx.lexStream.agent.ensureAgent(sessionId, providerOptionsKey);
+      const agentReady = await this.acquireTargetSessionAgent(sessionId, providerOptionsKey);
       if (activationRequestId !== undefined) {
         this.throwIfSessionActivationSuperseded(activationRequestId);
+      }
+      if (!this.isVisibleSessionStartupOwner(sessionId)) {
+        return;
       }
       if (!agentReady) {
         const msg = GENERIC_SESSION_START_ERROR_MESSAGE;
@@ -1278,24 +1859,19 @@ export class SessionLifecycleHelper {
         this.ctx.isSessionStarting = false;
         return;
       }
+      this.ctx.lexStream.agent.activateSession?.(sessionId);
     } catch (err) {
       if (activationRequestId !== undefined && !this.isCurrentSessionActivationRequest(activationRequestId)) {
-        this.ctx.isSessionStarting = false;
         throw new SessionLifecycleSupersededError();
+      }
+      if (!this.isVisibleSessionStartupOwner(sessionId)) {
+        return;
       }
       console.error('[SessionLifecycle] aily-lex agent 初始化失败:', err);
       this.ctx.lexStream.turn.appendError(GENERIC_SESSION_START_ERROR_MESSAGE);
       this.ctx.isSessionStarting = false;
       throw err;
     }
-
-    this.setActiveSessionId(sessionId);
-    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
-    const restoredTitle = resolveRestoredSessionTitle(sessionContent, runtimeTurnResponses);
-    applyCurrentSessionTitle(this.ctx.chatService, restoredTitle);
-    this.applySessionType(sessionContent?.sessionType);
-    this.applySessionProviderOptions(providerOptions);
-    this.persistSessionEntryTarget(this.buildSessionEntryTarget(sessionId, sessionContent));
 
     this.ctx.isSessionStarting = false;
   }
@@ -1310,6 +1886,7 @@ export class SessionLifecycleHelper {
 
     await this.activateSessionFromRestoreRequest(restoreRequest, {
       ensureManagedItem: true,
+      preferDetachedRuntimeAttach: true,
     });
     return true;
   }
@@ -1339,7 +1916,8 @@ export class SessionLifecycleHelper {
   }
 
   private buildCurrentSessionEntryTarget(sessionId: string): PersistedChatSessionEntryTarget | null {
-    const sessionContent = this._hostSessionContentProvider.provideCurrentChatSessionContent(
+    const sessionContent = this._hostSessionContentProvider.provideChatSessionContent(
+      sessionId,
       this.resolveCurrentSessionProjectPath(),
       {
         metadataFallback: this.ctx.chatHistoryService.findEntry(sessionId) ?? null,

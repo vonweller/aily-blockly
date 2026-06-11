@@ -25,6 +25,7 @@ import {
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatDebugBrowserService } from './chat-debug-browser.service';
 import { ChatSessionItemsService, type ChatSessionListLoadState } from './chat-session-items.service';
+import { ChatSessionViewModelStoreService, type ChatSessionViewModel } from './chat-session-view-model-store.service';
 import { ChatSessionsControlService } from './chat-sessions-control.service';
 import { ChatService } from './chat.service';
 import { type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
@@ -119,6 +120,7 @@ export class ChatViewService {
   private readonly languageModelsService = inject(AilyChatLanguageModelsService);
   private readonly debugBrowser = inject(ChatDebugBrowserService);
   private readonly chatSessionItemsService = inject(ChatSessionItemsService);
+  private readonly chatSessionViewModelStore = inject(ChatSessionViewModelStoreService);
   private readonly chatSessionsControlService = inject(ChatSessionsControlService);
   private readonly chatService = inject(ChatService);
   private readonly destroyRef = inject(DestroyRef);
@@ -159,6 +161,11 @@ export class ChatViewService {
       .subscribe(() => {
         this.refreshSessionViewModel();
       });
+    this.chatSessionViewModelStore.changed$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.refreshSessionViewModel();
+      });
     this.chatService.sessionInputStateChanged$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
@@ -185,6 +192,19 @@ export class ChatViewService {
 
   get sessionListItems(): readonly ChatSessionListItem[] {
     return this.chatSessionsControlService.sessionListItems;
+  }
+
+  get currentViewModel(): ChatSessionViewModel | null {
+    return this.chatSessionViewModelStore.currentViewModel;
+  }
+
+  get currentViewSessionResource(): string {
+    const sessionResource = this.currentViewModel?.sessionResource;
+    return typeof sessionResource === 'string' ? sessionResource.trim() : '';
+  }
+
+  get currentViewSessionId(): string {
+    return this.currentViewSessionResource;
   }
 
   get sessionSidebarMinWidth(): number {
@@ -312,7 +332,7 @@ export class ChatViewService {
   }
 
   get hasConversationContent(): boolean {
-    return this.chatSessionsControlService.hasConversationContent;
+    return this.readCurrentViewHasConversationContent();
   }
 
   get sessionTitleSurfaceModel(): ChatSessionTitleSurfaceModel {
@@ -394,10 +414,15 @@ export class ChatViewService {
       return 'welcome';
     }
 
-    if (!this.chatSessionsControlService.hasConversationContent) {
-      if (this.hasCurrentSessionIdentity) {
+    const hasCurrentSessionIdentity = this.hasCurrentSessionIdentity;
+    if (!this.hasConversationContent) {
+      if (hasCurrentSessionIdentity) {
         return 'blank-session';
       }
+      return 'entry';
+    }
+
+    if (!hasCurrentSessionIdentity) {
       return 'entry';
     }
 
@@ -437,9 +462,13 @@ export class ChatViewService {
     hasConversationContent: boolean;
     isAuthenticated: boolean;
   }): void {
+    const hasCurrentSession = this.hasCurrentSessionIdentity;
+    const hasConversationContent = hasCurrentSession
+      ? this.readCurrentViewHasConversationContent(input.hasConversationContent)
+      : false;
     this.chatSessionsControlService.syncViewerLayout({
-      hasConversationContent: input.hasConversationContent,
-      hasCurrentSession: this.hasCurrentSessionIdentity,
+      hasConversationContent,
+      hasCurrentSession,
       isAuthenticated: input.isAuthenticated,
     });
     this.syncSessionViewerSuppression();
@@ -534,13 +563,35 @@ export class ChatViewService {
 
   private emitPaneDiagnostics(): void {
     const paneSurface = this.currentPaneSurface;
+    const currentViewModel = this.currentViewModel;
+    const currentModel = currentViewModel?.model ?? null;
+    const currentProjection = currentModel?.hostProjectionState ?? null;
+    const currentModelTurnCount = Array.isArray(currentModel?.turnResponses)
+      ? currentModel.turnResponses.length
+      : 0;
+    const currentProjectionTurnCount = Array.isArray(currentProjection?.turnResponses)
+      ? currentProjection.turnResponses.length
+      : 0;
+    const currentProjectionChatListCount = Array.isArray(currentProjection?.chatList)
+      ? currentProjection.chatList.length
+      : 0;
+    const currentProjectionDialogCount = Array.isArray(currentProjection?.dialogItems)
+      ? currentProjection.dialogItems.length
+      : 0;
+    const hasConversationContent = this.hasConversationContent;
     const diagnostics = {
       paneSurface,
-      hasConversationContent: this.chatSessionsControlService.hasConversationContent,
+      hasConversationContent,
+      controlHasConversationContent: this.chatSessionsControlService.hasConversationContent,
       hasCurrentSessionIdentity: this.hasCurrentSessionIdentity,
       hasCurrentSession: this.chatSessionsControlService.hasCurrentSession,
       hasBlankSessionShell: this.chatService.hasBlankSessionShell === true,
       currentSessionId: this.chatService.currentSessionId,
+      currentViewSessionResource: this.currentViewSessionResource,
+      currentModelTurnCount,
+      currentProjectionTurnCount,
+      currentProjectionChatListCount,
+      currentProjectionDialogCount,
       currentPaneTitle: this.currentPaneTitle,
       liveSessionTitle: this.chatService.currentSessionTitle,
       projectedSessionTitle: this.currentSessionViewItem?.title ?? '',
@@ -557,15 +608,65 @@ export class ChatViewService {
 
     this.lastPaneDiagnosticsKey = key;
     console.info('[AilyChat][PaneState]', diagnostics);
+    console.info(
+      '[AilyChat][PaneStateScalar]',
+      [
+        `surface=${paneSurface}`,
+        `content=${hasConversationContent}`,
+        `controlContent=${this.chatSessionsControlService.hasConversationContent}`,
+        `identity=${this.hasCurrentSessionIdentity}`,
+        `currentSessionId=${this.chatService.currentSessionId || '<empty>'}`,
+        `viewResource=${this.currentViewSessionResource || '<empty>'}`,
+        `modelTurns=${currentModelTurnCount}`,
+        `projectionTurns=${currentProjectionTurnCount}`,
+        `projectionChatList=${currentProjectionChatListCount}`,
+        `projectionDialogs=${currentProjectionDialogCount}`,
+        `blankShell=${this.chatService.hasBlankSessionShell === true}`,
+      ].join(' '),
+    );
+  }
+
+  private readCurrentViewHasConversationContent(fallback = this.chatSessionsControlService.hasConversationContent): boolean {
+    const model = this.currentViewModel?.model;
+    if (!model) {
+      return fallback === true;
+    }
+
+    if (Array.isArray(model.turnResponses) && model.turnResponses.length > 0) {
+      return true;
+    }
+
+    const projection = model.hostProjectionState;
+    if (!projection) {
+      return false;
+    }
+
+    return this.hasArrayContent(projection.turnResponses)
+      || this.hasArrayContent(projection.chatList)
+      || this.hasArrayContent(projection.dialogItems)
+      || this.hasArrayContent((projection as { readonly entries?: readonly unknown[] }).entries);
+  }
+
+  private hasArrayContent(value: unknown): boolean {
+    return Array.isArray(value) && value.length > 0;
   }
 
   private get currentSessionViewItem(): ChatSessionListItem | null {
-    return this.chatSessionItemsService.readCurrentSessionViewItem();
+    const currentViewSessionResource = this.currentViewSessionResource;
+    if (!currentViewSessionResource) {
+      return null;
+    }
+
+    return this.chatSessionItemsService.readCurrentSessionViewItem(
+      undefined,
+      undefined,
+      currentViewSessionResource,
+    );
   }
 
   private readProjectedCurrentSessionDisplayTitle(): ChatSessionDisplayTitle {
     const projectedItem = this.currentSessionViewItem;
-    const currentSessionId = this.chatService.currentSessionId;
+    const currentSessionId = this.currentViewSessionResource;
     const projectedTitle = projectedItem?.title ?? '';
     if (!isMeaningfulSessionTitle(projectedTitle, currentSessionId)) {
       return {
@@ -589,8 +690,11 @@ export class ChatViewService {
 
   private readLiveCurrentSessionDisplayTitle(): ChatSessionDisplayTitle {
     const liveTitle = this.chatService.currentSessionTitle;
-    const currentSessionId = this.chatService.currentSessionId;
-    if (!isMeaningfulSessionTitle(liveTitle, currentSessionId)) {
+    const currentSessionId = this.currentViewSessionResource;
+    const liveOwnerSessionId = typeof this.chatService.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (!currentSessionId || liveOwnerSessionId !== currentSessionId || !isMeaningfulSessionTitle(liveTitle, currentSessionId)) {
       return {
         text: '',
         source: 'empty',
@@ -624,14 +728,12 @@ export class ChatViewService {
   }
 
   private get hasCurrentSessionIdentity(): boolean {
-    return this.currentSessionViewItem !== null
-      || this.chatService.currentSessionId.trim().length > 0
+    return this.currentViewSessionResource.length > 0
       || this.chatService.hasBlankSessionShell === true;
   }
 
   private get hasActiveSessionTitleOwner(): boolean {
-    return this.currentSessionViewItem !== null
-      || this.chatService.currentSessionId.trim().length > 0;
+    return this.currentViewSessionResource.length > 0;
   }
 
   private readDefaultPaneTitle(): string {

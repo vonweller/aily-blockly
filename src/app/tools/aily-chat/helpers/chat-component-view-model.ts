@@ -56,6 +56,7 @@ interface ChatEngineViewLike {
 
 interface ChatViewStateLike {
   readonly isStandaloneWindow: boolean;
+  readonly currentViewSessionId: string;
   readonly bottomHeight: number;
   readonly senderMinHeight: number;
   readonly senderMaxHeight: number;
@@ -146,7 +147,7 @@ export class ChatComponentViewModel {
   }
 
   get isWaiting(): boolean {
-    return this.deps.engine.getSessionActionState?.(this.deps.engine.sessionId)?.canStop ?? this.deps.engine.isWaiting;
+    return this.deps.engine.getSessionActionState?.(this.sessionId)?.canStop ?? this.deps.engine.isWaiting;
   }
 
   get isCompleted(): boolean {
@@ -162,7 +163,7 @@ export class ChatComponentViewModel {
   }
 
   get sessionId(): string {
-    return this.deps.engine.sessionId;
+    return this.deps.viewState.currentViewSessionId;
   }
 
   get sessionTitle(): string {

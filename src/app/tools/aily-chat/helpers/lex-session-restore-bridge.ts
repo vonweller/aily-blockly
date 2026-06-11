@@ -12,10 +12,10 @@ type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
 export class LexSessionRestoreBridge {
   constructor(
     private readonly deps: {
-      ensureAgent: (sessionId?: string) => Promise<boolean>;
+      ensureAgent: (sessionId?: string, options?: { readonly activate?: boolean }) => Promise<boolean>;
       getLex: () => AilyLexModule | null;
       getCwd: () => string;
-      restoreSnapshot: (snapshot: LexSessionSnapshot) => boolean;
+      restoreSnapshot: (snapshot: LexSessionSnapshot, sessionId?: string | null) => boolean;
       resolveSnapshot?: typeof resolvePersistedLexSessionSnapshot;
       resolveRestorePlan?: typeof resolvePersistedLexSessionRestorePlan;
     },
@@ -26,7 +26,7 @@ export class LexSessionRestoreBridge {
     turnResponses?: readonly import('aily-lex/browser').TurnResponseTurn[],
     hostRecord?: HostSessionRecord | null,
   ): Promise<ResolvedLexSessionRestorePlan | null> {
-    if (!await this.deps.ensureAgent(sessionId)) {
+    if (!await this.deps.ensureAgent(sessionId, { activate: false })) {
       return null;
     }
 
@@ -65,8 +65,15 @@ export class LexSessionRestoreBridge {
     };
   }
 
-  restoreResolvedSnapshot(snapshot: LexSessionSnapshot): boolean {
-    return this.deps.restoreSnapshot(snapshot);
+  restoreResolvedSnapshot(snapshot: LexSessionSnapshot, sessionId?: string | null): boolean {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : snapshot.sessionId;
+    if (snapshot.sessionId !== targetSessionId) {
+      throw new Error(`[LexSessionRestoreBridge] Snapshot session mismatch: target=${targetSessionId}, snapshot=${snapshot.sessionId}`);
+    }
+
+    return this.deps.restoreSnapshot(snapshot, targetSessionId);
   }
 
   async restorePersistedSession(
@@ -75,6 +82,6 @@ export class LexSessionRestoreBridge {
     hostRecord?: HostSessionRecord | null,
   ): Promise<boolean> {
     const restorePlan = await this.resolvePersistedRestorePlan(sessionId, turnResponses, hostRecord ?? null);
-    return restorePlan?.snapshot ? this.restoreResolvedSnapshot(restorePlan.snapshot) : false;
+    return restorePlan?.snapshot ? this.restoreResolvedSnapshot(restorePlan.snapshot, sessionId) : false;
   }
 }

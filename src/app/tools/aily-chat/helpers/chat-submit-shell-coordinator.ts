@@ -40,14 +40,14 @@ export class ChatSubmitShellCoordinator {
       getSessionAllowedPaths: () => string[];
       getSessionId: () => string;
       getInputValue: () => string;
-      isWaiting: () => boolean;
-      ensureSession?: () => Promise<boolean>;
-      hasPendingRequests?: () => boolean;
-      confirmPendingRequestsBeforeSend?: () => Promise<ConfirmPendingRequestsResult>;
-      clearPendingRequests?: () => void;
+      isWaiting: (sessionId?: string | null) => boolean;
+      ensureSession?: () => Promise<string | null>;
+      hasPendingRequests?: (sessionId?: string | null) => boolean;
+      confirmPendingRequestsBeforeSend?: (sessionId?: string | null) => Promise<ConfirmPendingRequestsResult>;
+      clearPendingRequests?: (sessionId?: string | null) => void;
       queueSend?: QueueSendLike;
       stop: (sessionId?: string | null) => void;
-      send: (text: string) => Promise<unknown>;
+      send: (text: string, sessionId?: string | null) => Promise<unknown>;
     },
   ) {}
 
@@ -76,12 +76,13 @@ export class ChatSubmitShellCoordinator {
   }
 
   stopActiveRequest(): boolean {
-    if (!this.deps.isWaiting()) {
+    const sessionId = this.deps.getSessionId();
+    if (!this.deps.isWaiting(sessionId)) {
       return false;
     }
 
-    this.traceRequestAction('stop', 'running');
-    this.deps.stop(this.deps.getSessionId());
+    this.traceRequestAction('stop', 'running', { sessionId: sessionId || null });
+    this.deps.stop(sessionId);
     return true;
   }
 
@@ -95,37 +96,39 @@ export class ChatSubmitShellCoordinator {
       return false;
     }
 
-    if (!this.deps.getSessionId()) {
-      const ensured = await this.deps.ensureSession?.();
-      if (ensured === false || !this.deps.getSessionId()) {
+    let targetSessionId = this.deps.getSessionId();
+    if (!targetSessionId) {
+      targetSessionId = (await this.deps.ensureSession?.()) ?? '';
+      if (!targetSessionId) {
         return false;
       }
     }
 
-    if (this.deps.isWaiting()) {
-      return this.queuePreparedInput(text, options?.queueKind ?? 'queued', 'running');
+    if (this.deps.isWaiting(targetSessionId)) {
+      return this.queuePreparedInput(text, targetSessionId, options?.queueKind ?? 'steering', 'running');
     }
 
     if (options?.queueKind) {
-      return this.queuePreparedInput(text, options.queueKind, 'idle');
+      return this.queuePreparedInput(text, targetSessionId, options.queueKind, 'idle');
     }
 
-    if (this.deps.hasPendingRequests?.()) {
-      const pendingDecision = await this.deps.confirmPendingRequestsBeforeSend?.() ?? 'keep';
+    if (this.deps.hasPendingRequests?.(targetSessionId)) {
+      const pendingDecision = await this.deps.confirmPendingRequestsBeforeSend?.(targetSessionId) ?? 'keep';
       if (!pendingDecision) {
         return false;
       }
 
       if (pendingDecision === 'remove') {
-        this.deps.clearPendingRequests?.();
+        this.deps.clearPendingRequests?.(targetSessionId);
       }
     }
 
     this.traceRequestAction('send', 'idle', {
+      sessionId: targetSessionId,
       textLength: text.length,
-      hasPendingRequests: this.deps.hasPendingRequests?.() === true,
+      hasPendingRequests: this.deps.hasPendingRequests?.(targetSessionId) === true,
     });
-    await this.deps.send(text);
+    await this.deps.send(text, targetSessionId);
     this.deps.inputNotice.handleMessageSubmitted?.();
     this.deps.resourceManager.mergePathsTo(this.deps.getSessionAllowedPaths());
     this.deps.resourceManager.items = [];
@@ -134,15 +137,16 @@ export class ChatSubmitShellCoordinator {
 
   private async queuePreparedInput(
     text: string,
+    sessionId: string,
     kind: ChatPendingRequestKind,
     state: 'idle' | 'running',
   ): Promise<boolean> {
-    const sessionId = this.deps.getSessionId();
     if (!sessionId || typeof this.deps.queueSend !== 'function') {
       return false;
     }
 
     this.traceRequestAction('queue', state, {
+      sessionId,
       queueKind: kind,
       textLength: text.length,
     });

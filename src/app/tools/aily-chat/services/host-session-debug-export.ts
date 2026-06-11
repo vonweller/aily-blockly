@@ -158,7 +158,7 @@ export interface HostSessionRestoreDiagnosticsSummary {
 
 export interface HostSessionRestoreFailureSummary {
   readonly sessionId: string;
-  readonly stage: 'session-start' | 'host-restore';
+  readonly stage: 'session-start' | 'host-restore' | 'missing-record';
   readonly projectPath: string | null;
   readonly requestSource: string;
   readonly hostRecordSource: string;

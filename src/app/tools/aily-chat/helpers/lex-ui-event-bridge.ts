@@ -19,7 +19,10 @@ import { ChatViewWriteBridge } from './chat-view-write-bridge';
 type LexUiEventViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
 type LexUiEventContext = LexUiEventViewWriteContext
-  & ConstructorParameters<typeof LexAgentEventBridge>[0];
+  & ConstructorParameters<typeof LexAgentEventBridge>[0]
+  & {
+    readCurrentViewSessionResource?(): string | null;
+  };
 
 type LexUiEventLifecycleAccess = {
   ensureAilyMessage(): void;
@@ -82,7 +85,7 @@ export class LexUiEventBridge {
   private readonly renderEventBridge?: LexUiEventRenderAccess;
 
   constructor(
-    ctx: LexUiEventContext,
+    private readonly ctx: LexUiEventContext,
     partProcessor: LexAgentPartProcessor,
     hostSyncBridge: LexAgentHostSyncAccess,
     messageLifecycleBridge: LexUiEventLifecycleAccess,
@@ -125,6 +128,7 @@ export class LexUiEventBridge {
       get ngZone() {
         return ctx.ngZone;
       },
+      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
     };
     const mainLifecycleBridge: LexUiEventMainLifecycleAccess = messageLifecycleBridge;
     const getCurrentMessageHandle = (): ChatPartStoreReadableHandle | null => messageLifecycleBridge.currentMessageHandle;
@@ -213,6 +217,10 @@ export class LexUiEventBridge {
       return partId;
     }
 
+    if (!this.canWriteCurrentView()) {
+      return partId;
+    }
+
     this.ensureAilyMessage();
     const handle = this.messageLifecycleBridge.currentMessageHandle;
     if (!handle) {
@@ -225,6 +233,10 @@ export class LexUiEventBridge {
 
   updateQuestionAnswers(answers: QuestionPart['answers'], partId: string): boolean {
     const mirrored = this.renderEventBridge?.updateQuestionAnswers(answers, partId) ?? false;
+    if (!this.canWriteCurrentView()) {
+      return mirrored;
+    }
+
     const updated = this.viewWriteBridge.updateQuestionAnswersByPartId(answers, partId);
     return mirrored || updated;
   }
@@ -243,6 +255,10 @@ export class LexUiEventBridge {
       source: request.source,
       timestamp: Date.now(),
     } as any) ?? false;
+    if (!this.canWriteCurrentView()) {
+      return request.toolCallId;
+    }
+
     const updated = this.viewWriteBridge.updateToolCallApprovalRequestByToolCallId(request);
     if (mirrored || updated) {
       return request.toolCallId;
@@ -263,6 +279,10 @@ export class LexUiEventBridge {
       scope,
       timestamp: Date.now(),
     } as any) ?? false;
+    if (!this.canWriteCurrentView()) {
+      return;
+    }
+
     const updated = this.viewWriteBridge.resolveToolCallApprovalByToolCallId(toolCallId, { approved, scope });
     if (mirrored || updated) {
       return;
@@ -295,6 +315,10 @@ export class LexUiEventBridge {
       return partId;
     }
 
+    if (!this.canWriteCurrentView()) {
+      return partId;
+    }
+
     this.ensureAilyMessage();
     const handle = this.messageLifecycleBridge.currentMessageHandle;
     if (!handle) {
@@ -324,6 +348,10 @@ export class LexUiEventBridge {
       return;
     }
 
+    if (!this.canWriteCurrentView()) {
+      return;
+    }
+
     if (!this.viewWriteBridge.updateConfirmationResultByPartId(partId, {
       resolved: true,
       result: approved ? 'approved' : 'rejected',
@@ -331,5 +359,25 @@ export class LexUiEventBridge {
     })) {
       throw new Error(`Failed to resolve confirmation ${askId}: no matching confirmation part found.`);
     }
+  }
+
+  private canWriteCurrentView(): boolean {
+    const readCurrentViewSessionResource = this.ctx.readCurrentViewSessionResource;
+    if (typeof readCurrentViewSessionResource !== 'function') {
+      return true;
+    }
+
+    const currentViewSessionResource = readCurrentViewSessionResource();
+    const normalizedViewResource = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (!normalizedViewResource) {
+      return false;
+    }
+
+    const targetSessionId = typeof this.ctx.sessionId === 'string'
+      ? this.ctx.sessionId.trim()
+      : '';
+    return !!targetSessionId && targetSessionId === normalizedViewResource;
   }
 }

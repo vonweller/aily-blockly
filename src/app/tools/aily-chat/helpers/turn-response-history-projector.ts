@@ -51,7 +51,9 @@ export function projectTurnResponsesToHistory(
       return ctx.triggerSyncDetectChanges;
     },
     get sessionId() {
-      return ctx.sessionId;
+      const viewResource = (ctx as { readCurrentViewSessionResource?: () => string | null | undefined })
+        .readCurrentViewSessionResource?.();
+      return typeof viewResource === 'string' ? viewResource.trim() : '';
     },
     get chatHistoryService() {
       return ctx.chatHistoryService;
@@ -65,6 +67,7 @@ export function projectTurnResponsesToHistory(
     get ngZone() {
       return ctx.ngZone;
     },
+    markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner?.(),
   };
   const viewWriteBridge: TurnResponseHistoryProjectorViewWriteAccess = new ChatViewWriteBridge(viewWriteContext);
   const projectionBuilder = new TurnResponseHostProjectionBuilder(ctx.partStore);

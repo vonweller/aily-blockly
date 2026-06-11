@@ -27,6 +27,8 @@ type UserInteractionContext = Pick<IChatCoordination, 'lexStream'>
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & {
+    resolveActiveRuntimeSessionId?(): string | null | undefined;
+    readCurrentViewSessionResource?(): string | null | undefined;
     readonly ailyChatConfigService: Pick<
       AilyChatConfigService,
       'terminalAllowList'
@@ -112,6 +114,35 @@ export class UserInteractionHelper {
 
   constructor(private ctx: UserInteractionContext) {}
 
+  private normalizeSessionResource(sessionId: string | null | undefined): string {
+    return typeof sessionId === 'string' ? sessionId.trim() : '';
+  }
+
+  private resolveInteractionSessionResource(sessionId?: string | null): string {
+    const explicitResource = this.normalizeSessionResource(sessionId);
+    if (explicitResource) {
+      return explicitResource;
+    }
+
+    const activeRuntimeSessionId = typeof this.ctx.resolveActiveRuntimeSessionId === 'function'
+      ? this.ctx.resolveActiveRuntimeSessionId()
+      : null;
+    const activeRuntimeResource = this.normalizeSessionResource(activeRuntimeSessionId);
+    if (activeRuntimeResource) {
+      return activeRuntimeResource;
+    }
+
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const viewResource = this.normalizeSessionResource(currentViewSessionResource);
+    if (viewResource) {
+      return viewResource;
+    }
+
+    throw new Error('User interaction requires a sessionResource owner.');
+  }
+
   /** 清理内部状态（由 engine.destroy() 调用） */
   destroy(): void {
     this._resolveAskUser = null;
@@ -143,7 +174,11 @@ export class UserInteractionHelper {
     }
 
     try {
-      const result = await this.ctx.runtimeInteractionHost.presentQuestion(this.ctx.sessionId, partId, questions);
+      const result = await this.ctx.runtimeInteractionHost.presentQuestion(
+        this.resolveInteractionSessionResource(),
+        partId,
+        questions,
+      );
       if (result?.answers) {
         this.ctx.lexStream.ui.updateQuestionAnswers(result.answers, partId);
       }
@@ -174,15 +209,19 @@ export class UserInteractionHelper {
   /**
    * 用户在聊天界面回答 ask_user 问题后调用此方法（兼容外部调用）。
    */
-  resolveAskUserResponse(answer: string, wasFreeform: boolean): void {
-    this.ctx.runtimeInteractionHost.resolveQuestionCompat(this.ctx.sessionId, answer, wasFreeform);
+  resolveAskUserResponse(answer: string, wasFreeform: boolean, sessionId?: string | null): void {
+    this.ctx.runtimeInteractionHost.resolveQuestionCompat(
+      this.resolveInteractionSessionResource(sessionId),
+      answer,
+      wasFreeform,
+    );
   }
 
   /**
    * 用户跳过/取消 ask_user 问题。
    */
-  skipAskUserResponse(): void {
-    this.ctx.runtimeInteractionHost.skipQuestion(this.ctx.sessionId);
+  skipAskUserResponse(sessionId?: string | null): void {
+    this.ctx.runtimeInteractionHost.skipQuestion(this.resolveInteractionSessionResource(sessionId));
   }
 
   // ==================== 工具审批交互处理 ====================
@@ -215,7 +254,7 @@ export class UserInteractionHelper {
   }
 
   private ensureApprovalSessionState(): void {
-    const sessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId : '';
+    const sessionId = this.resolveInteractionSessionResource();
     if (this._approvalSessionId === sessionId) {
       return;
     }
@@ -344,7 +383,8 @@ export class UserInteractionHelper {
    */
   private _handleToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalResult> {
     this.ctx.lexStream.ui.presentToolCallApproval(request);
-    return this.ctx.runtimeInteractionHost.presentToolApproval(this.ctx.sessionId, request).then((result) => {
+    const sessionResource = this.resolveInteractionSessionResource();
+    return this.ctx.runtimeInteractionHost.presentToolApproval(sessionResource, request).then((result) => {
       this.ctx.lexStream.ui.resolveToolCallApproval(request.toolCallId, !!result.approved, result.scope);
       return {
         approved: !!result.approved,
@@ -359,17 +399,25 @@ export class UserInteractionHelper {
    * 外部调用：用户批准工具执行。
    */
   approveToolExecution(toolCallId: string, scope: ToolApprovalScope = 'once', actionId?: string): void {
-    this.ctx.runtimeInteractionHost.resolveToolApproval(this.ctx.sessionId, toolCallId, { approved: true, scope, actionId });
+    this.ctx.runtimeInteractionHost.resolveToolApproval(
+      this.resolveInteractionSessionResource(),
+      toolCallId,
+      { approved: true, scope, actionId },
+    );
   }
 
   /**
    * 外部调用：用户拒绝工具执行。
    */
   rejectToolExecution(toolCallId: string, reason?: string): void {
-    this.ctx.runtimeInteractionHost.resolveToolApproval(this.ctx.sessionId, toolCallId, {
-      approved: false,
-      reason: reason || '用户拒绝执行',
-    });
+    this.ctx.runtimeInteractionHost.resolveToolApproval(
+      this.resolveInteractionSessionResource(),
+      toolCallId,
+      {
+        approved: false,
+        reason: reason || '用户拒绝执行',
+      },
+    );
   }
 
   // ==================== 新手引导 ====================

@@ -14,6 +14,7 @@ type LexTurnStartupContext = Pick<
   & Pick<IChatCoordination, 'editActions'>
   & {
     resolveActiveRuntimeSessionId?(): string | null | undefined;
+    readCurrentViewSessionResource?(): string | null;
   };
 
 /**
@@ -98,9 +99,14 @@ export class LexTurnStartupBridge {
     const activeRuntimeSessionId = typeof this.ctx.resolveActiveRuntimeSessionId === 'function'
       ? this.ctx.resolveActiveRuntimeSessionId()?.trim()
       : '';
-    const visibleSessionId = typeof this.ctx.sessionId === 'string'
-      ? this.ctx.sessionId.trim()
-      : '';
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const visibleSessionId = typeof currentViewSessionResource === 'string' && currentViewSessionResource.trim().length > 0
+      ? currentViewSessionResource.trim()
+      : typeof this.ctx.sessionId === 'string'
+        ? this.ctx.sessionId.trim()
+        : '';
     const isDetachedRuntimeOwner = !!activeRuntimeSessionId
       && !!visibleSessionId
       && activeRuntimeSessionId !== visibleSessionId;

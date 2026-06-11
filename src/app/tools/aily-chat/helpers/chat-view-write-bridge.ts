@@ -36,11 +36,14 @@ export type ChatViewWriteBridgeContext = Pick<
 > & Pick<ISessionAccess, 'sessionId' | 'chatHistoryService'>
   & Pick<IProjectContext, 'currentModelName' | 'currentModelBillingLabel'>
   & Pick<IAgentLifecycle, 'currentMessageSource'>
-  & Pick<IChatServiceAccess, 'ngZone'>;
+  & Pick<IChatServiceAccess, 'ngZone'>
+  & {
+    markCurrentViewVisibleProjectionOwner: () => void;
+  };
 
 type ChatViewWriteListAccess = Pick<
   ChatViewWriteBridgeContext,
-  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource'
+  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource' | 'markCurrentViewVisibleProjectionOwner'
 >;
 
 type ChatViewWriteStoreAccess = Pick<
@@ -67,6 +70,7 @@ type ChatViewWriteViewSyncAccess = Pick<
 
 type ChatViewWriteHistoryRestoreAccess = Pick<ChatViewWriteListAccess, 'list'>
   & ChatViewWriteStoreAccess
+  & Pick<ChatViewWriteListAccess, 'markCurrentViewVisibleProjectionOwner'>
   & Pick<ChatViewWriteViewSyncAccess, 'ngZone' | 'viewAdapter'>;
 
 type ChatViewWriteMutationAccess = Pick<
@@ -76,12 +80,12 @@ type ChatViewWriteMutationAccess = Pick<
 
 type ChatViewWriteResetAccess = Pick<
   ChatViewWriteListAccess,
-  'list' | 'triggerSyncDetectChanges'
+  'list' | 'triggerSyncDetectChanges' | 'markCurrentViewVisibleProjectionOwner'
 > & ChatViewWriteStoreAccess & Pick<ChatViewWriteViewSyncAccess, 'invalidateHostRequestGraph' | 'viewAdapter'>;
 
 type ChatViewWriteMessageHandleAccess = Pick<
   ChatViewWriteListAccess,
-  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource'
+  'list' | 'scrollManager' | 'triggerSyncDetectChanges' | 'currentModelName' | 'currentModelBillingLabel' | 'currentMessageSource' | 'markCurrentViewVisibleProjectionOwner'
 > & ChatViewWriteStoreAccess;
 
 class ChatViewHistoryRestoreHelper {
@@ -114,6 +118,7 @@ class ChatViewHistoryRestoreHelper {
   }
 
   private setHistoryList(chatList: readonly ChatListItem[]): void {
+    this.access.markCurrentViewVisibleProjectionOwner();
     this.access.viewAdapter.reset?.();
     this.access.list = chatList.map(item => ({ ...item }));
   }
@@ -407,6 +412,7 @@ class ChatViewResetHelper {
   clearChatView(options: { detectChanges?: boolean } = {}): void {
     this.access.invalidateHostRequestGraph();
     this.access.viewAdapter.reset?.();
+    this.access.markCurrentViewVisibleProjectionOwner();
     this.access.list = [];
     this.access.partStore.reset();
 
@@ -426,6 +432,7 @@ class ChatViewResetHelper {
     }
 
     this.access.partStore.clearMessagesAtOrAfterHandle(handle);
+    this.access.markCurrentViewVisibleProjectionOwner();
     truncateChatMessageListFromHandle(this.access.list, handle);
     this.access.triggerSyncDetectChanges();
     return true;
@@ -486,6 +493,7 @@ class ChatViewMessageHandleHelper {
       }
     }
 
+    this.access.markCurrentViewVisibleProjectionOwner();
     this.access.list.push({
       role: 'aily',
       content: '',
@@ -520,6 +528,7 @@ class ChatViewMessageHandleHelper {
     const msgSource = getTurnResponseParticipant(options.source ?? this.access.currentMessageSource);
     const insertIndex = Math.min(anchorHandle.msgIndex + 1, this.access.list.length);
     this.access.partStore.shiftMessageIndexes(insertIndex, 1);
+    this.access.markCurrentViewVisibleProjectionOwner();
     this.access.list.splice(insertIndex, 0, {
       role: 'aily',
       content: '',
@@ -635,6 +644,9 @@ export class ChatViewWriteBridge {
       get currentMessageSource() {
         return bridge.listAccess.currentMessageSource;
       },
+      get markCurrentViewVisibleProjectionOwner() {
+        return bridge.listAccess.markCurrentViewVisibleProjectionOwner;
+      },
       get partStore() {
         return bridge.storeAccess.partStore;
       },
@@ -646,6 +658,9 @@ export class ChatViewWriteBridge {
         },
         set list(list) {
           bridge.listAccess.list = list;
+        },
+        get markCurrentViewVisibleProjectionOwner() {
+          return bridge.listAccess.markCurrentViewVisibleProjectionOwner;
         },
         get partStore() {
           return bridge.storeAccess.partStore;
@@ -699,6 +714,9 @@ export class ChatViewWriteBridge {
       },
       get triggerSyncDetectChanges() {
         return bridge.listAccess.triggerSyncDetectChanges;
+      },
+      get markCurrentViewVisibleProjectionOwner() {
+        return bridge.listAccess.markCurrentViewVisibleProjectionOwner;
       },
       get partStore() {
         return bridge.storeAccess.partStore;

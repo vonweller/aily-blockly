@@ -28,6 +28,22 @@ import {
 
 export type ProjectCreationCategory = 'blockly' | 'coder';
 
+export function resolveInitialProjectCategory(
+  explicitCategory?: ProjectCreationCategory | null,
+  preferredRuntimeMode?: string | null,
+  fallbackCategory: ProjectCreationCategory = 'blockly',
+): ProjectCreationCategory {
+  if (explicitCategory === 'blockly' || explicitCategory === 'coder') {
+    return explicitCategory;
+  }
+
+  if (preferredRuntimeMode === 'blockly' || preferredRuntimeMode === 'coder') {
+    return preferredRuntimeMode;
+  }
+
+  return fallbackCategory;
+}
+
 @Component({
   selector: 'app-project-new',
   imports: [
@@ -159,7 +175,10 @@ export class ProjectNewComponent {
     this._coderBoardList = this.configService.sortBoardsByUsage(
       this.process(this.configService.getCoderBoardList())
     );
-    this.selectedProjectCategory = this.configService.getPreferredChatAgentRuntimeMode();
+    this.selectedProjectCategory = resolveInitialProjectCategory(
+      undefined,
+      this.configService.getPreferredChatAgentRuntimeMode(),
+    );
     this.syncActiveBoardList();
 
     // 随机提取前五个

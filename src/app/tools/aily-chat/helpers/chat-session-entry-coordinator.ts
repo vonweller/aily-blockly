@@ -5,7 +5,7 @@ interface ChatSessionEntryCoordinatorContext {
   readonly hasCurrentSession: boolean;
   enterEntryState(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null }): void;
   enterBlankSessionShell(options?: { resetInitialization?: boolean; sessionId?: string | null; disposeRuntime?: boolean; projectPath?: string | null }): void;
-  startSession(): Promise<void>;
+  startSession(): Promise<string | null>;
   restorePersistedSessionTarget(): Promise<boolean>;
   requestSessionListRefresh(input: { reason: 'entry' | 'reopen'; scope: 'summary' | 'full'; priority: 'after-paint' | 'normal' }): void;
 }
@@ -43,11 +43,10 @@ export class ChatSessionEntryCoordinator {
     }
   }
 
-  async bootstrapNewSession(options: { resetInitialization?: boolean } = {}): Promise<boolean> {
+  async bootstrapNewSession(options: { resetInitialization?: boolean } = {}): Promise<string | null> {
     this.ctx.enterBlankSessionShell(options);
     ChatPerformanceTracer.increment('entry_open.blank_shell_visible');
     ChatPerformanceTracer.mark('entry_open.blank_shell_visible');
-    await this.ctx.startSession();
-    return this.ctx.hasCurrentSession;
+    return this.ctx.startSession();
   }
 }

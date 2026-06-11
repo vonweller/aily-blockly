@@ -4,8 +4,10 @@ import { ChatEngineService } from './services/chat-engine.service';
 import { ChatRuntimeInteractionHostService } from './services/chat-runtime-interaction-host.service';
 import { ChatSessionActionsService } from './services/chat-session-actions.service';
 import { ChatSessionItemsService } from './services/chat-session-items.service';
+import { ChatSessionModelStoreService } from './services/chat-session-model-store.service';
 import { ChatSessionRuntimeRegistryService } from './services/chat-session-runtime-registry.service';
 import { ChatSessionRuntimeStoreService } from './services/chat-session-runtime-store.service';
+import { ChatSessionViewModelStoreService } from './services/chat-session-view-model-store.service';
 import { ChatSessionsControlService } from './services/chat-sessions-control.service';
 import { ChatSetupSuggestionService } from './services/chat-setup-suggestion.service';
 import { ChatViewService } from './services/chat-view.service';
@@ -20,6 +22,8 @@ export const AILY_CHAT_RUNTIME_PROVIDERS: Provider[] = [
   ScrollManagerService,
   ResourceManagerService,
   ChatSessionRuntimeStoreService,
+  ChatSessionModelStoreService,
+  ChatSessionViewModelStoreService,
   ChatSessionRuntimeRegistryService,
   ChatSessionItemsService,
   ChatSessionActionsService,

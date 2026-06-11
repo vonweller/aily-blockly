@@ -67,6 +67,7 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & {
     readonly hostRequestModel?: HostRequestModel | null;
     readonly hostResponseProjection?: HostResponseProjection | null;
+    readCurrentViewSessionResource?(): string | null | undefined;
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
     invalidateHostRequestGraph?(): void;
   };
@@ -95,43 +96,41 @@ export interface HostSessionSaveTarget {
 export class HostSessionSaveBridge {
   constructor(private readonly ctx: HostSessionSaveContext) {}
 
-  buildHostSessionRecord(options?: {
+  buildHostSessionRecord(options: {
     previousHostProjection?: HostResponseProjection | null;
     hostProjection?: HostResponseProjection | null;
     visibleChatList?: readonly ChatListItem[];
     turnResponsesOverride?: readonly TurnResponseTurn[];
     sessionSnapshotOverride?: SessionSnapshot | null;
-    target?: HostSessionSaveTarget | null;
+    hostRequestModel?: HostRequestModel | null;
+    target: HostSessionSaveTarget | null;
     allowPersistedLookup?: boolean;
   }): LiveHostSessionRecord | null {
     const saveTarget = normalizeHostSessionSaveTarget(options?.target);
-    const sessionId = saveTarget?.sessionId ?? this.ctx.sessionId;
-    if (!sessionId) {
+    if (!saveTarget) {
       return null;
     }
 
-    const projectPath = saveTarget?.providerOptions.folderPath ?? this.resolveProjectPath();
+    const sessionId = saveTarget.sessionId;
+    const projectPath = saveTarget.providerOptions.folderPath;
     const budgetSnapshot = this.ctx.contextBudgetService?.getSnapshot();
     const allowPersistedLookup = options?.allowPersistedLookup !== false;
     const persistedRecord = allowPersistedLookup
       ? this.resolvePersistedRecord(saveTarget)
-        ?? (!saveTarget
-          ? this.loadPersistedRecord(sessionId, projectPath)
-          : null)
       : null;
     const previousHostProjection = options?.previousHostProjection
       ?? this.buildPersistedProjection(persistedRecord)
       ?? null;
     const sessionSnapshot = options?.sessionSnapshotOverride
-      ?? saveTarget?.sessionSnapshot
-      ?? this.ctx.lexStream.session?.snapshot?.(saveTarget?.sessionId)
-      ?? this.ctx.lexStream.session?.snapshot?.()
+      ?? saveTarget.sessionSnapshot
+      ?? this.ctx.lexStream.session?.snapshot?.(saveTarget.sessionId)
       ?? null;
-    const currentTurnResponses = options?.turnResponsesOverride
-      ?? saveTarget?.turnResponses
-      ?? this.ctx.lexStream.turnResponses;
+    const currentTurnResponses = this.resolveCurrentTurnResponses(
+      saveTarget,
+      options?.turnResponsesOverride,
+    );
     const currentHostProjection = options?.hostProjection
-      ?? (saveTarget ? this.buildTargetProjection(currentTurnResponses) : this.ctx.hostResponseProjection ?? null);
+      ?? this.buildTargetProjection(currentTurnResponses);
     const turnResponses = applySessionSnapshotRoundsToTurnResponses(
       resolveTurnResponsesForSave(
         currentTurnResponses,
@@ -146,19 +145,12 @@ export class HostSessionSaveBridge {
 
     const visibleChatList = options?.visibleChatList
       ? options.visibleChatList.map(message => ({ ...message })) as HostSessionSaveContext['list']
-      : saveTarget
-        ? buildVisibleChatListForSave(
-            previousHostProjection?.chatList ?? [],
-            currentHostProjection?.chatList ?? [],
-            undefined,
-            undefined,
-          )
       : buildVisibleChatListForSave(
-        previousHostProjection?.chatList ?? [],
-        currentHostProjection?.chatList ?? [],
-        this.ctx.list,
-        this.ctx.partStore,
-      );
+          previousHostProjection?.chatList ?? [],
+          currentHostProjection?.chatList ?? [],
+          undefined,
+          undefined,
+        );
     const canonicalTurnResponses = applyVisibleRequestDisplayContentToTurnResponses(
       visibleChatList,
       turnResponses,
@@ -167,32 +159,15 @@ export class HostSessionSaveBridge {
       canonicalTurnResponses,
       currentHostProjection,
       previousHostProjection ?? null,
-      saveTarget
-        ? buildHostRequestModelFromCanonical(
-            sessionSnapshot,
-            canonicalTurnResponses,
-            canonicalTurnResponses[canonicalTurnResponses.length - 1]?.turnId ?? null,
-          )
-        : this.ctx.hostRequestModel ?? null,
+      options?.hostRequestModel ?? buildHostRequestModelFromCanonical(
+        sessionSnapshot,
+        canonicalTurnResponses,
+        canonicalTurnResponses[canonicalTurnResponses.length - 1]?.turnId ?? null,
+      ),
     );
-    const selectedMode = saveTarget?.selectedMode ?? this.ctx.chatService.selectedMode ?? {
-      modeId: this.ctx.currentMode,
-      customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
-    };
-    const resolvedMode = saveTarget?.resolvedMode ?? this.ctx.chatService.currentResolvedMode ?? null;
-    const providerOptions = saveTarget?.providerOptions ?? {
-      folderPath: projectPath,
-      permissionMode: this.ctx.chatService.currentSessionPermissionMode,
-      ...(this.ctx.chatService.currentSessionPermissionLevel
-        ? { permissionLevel: this.ctx.chatService.currentSessionPermissionLevel }
-        : {}),
-      ...(this.ctx.chatService.currentSessionApprovalsReviewer
-        ? { approvalsReviewer: this.ctx.chatService.currentSessionApprovalsReviewer }
-        : {}),
-      ...(this.ctx.chatService.currentSessionApprovalPolicy
-        ? { approvalPolicy: this.ctx.chatService.currentSessionApprovalPolicy }
-        : {}),
-    };
+    const selectedMode = saveTarget.selectedMode;
+    const resolvedMode = saveTarget.resolvedMode ?? null;
+    const providerOptions = saveTarget.providerOptions;
     const inputState = resolvedMode
       ? buildHostSessionCurrentPickerInputStateFromResolvedMode(resolvedMode, providerOptions)
       : buildHostSessionCurrentPickerInputState(selectedMode, providerOptions);
@@ -209,18 +184,12 @@ export class HostSessionSaveBridge {
     const persistedTitle = normalizeChatSessionTitleText(persistedRecord?.metadata?.title);
     const persistedTitleSource = normalizePersistedChatSessionTitleSource(persistedRecord?.metadata?.titleSource);
     const persistedDefaultTitle = normalizeChatSessionTitleText(persistedRecord?.metadata?.defaultTitle);
-    const saveTargetTitleCandidate = normalizeChatSessionTitleCandidate(saveTarget?.sessionTitleCandidate);
+    const saveTargetTitleCandidate = normalizeChatSessionTitleCandidate(saveTarget.sessionTitleCandidate);
     const saveTargetTitle = saveTargetTitleCandidate.text;
     const saveTargetTitleSource = saveTargetTitleCandidate.source;
-    const targetOwnsVisibleTitle = !saveTarget || saveTarget.sessionId === this.ctx.sessionId;
-    const liveTitle = targetOwnsVisibleTitle
-      ? normalizeChatSessionTitleText(this.ctx.sessionTitle)
-      : '';
-    const liveTitleSourceKnown = targetOwnsVisibleTitle
-      && typeof (this.ctx.chatService as { currentSessionTitleSource?: unknown }).currentSessionTitleSource === 'string';
-    const liveTitleSource = targetOwnsVisibleTitle
-      ? normalizeChatSessionTitleSource(this.ctx.chatService.currentSessionTitleSource)
-      : 'empty';
+    const liveTitle = '';
+    const liveTitleSourceKnown = false;
+    const liveTitleSource = 'empty';
     const durableTitle = resolveDurableSessionTitle({
       persistedTitle,
       persistedTitleSource,
@@ -256,7 +225,7 @@ export class HostSessionSaveBridge {
         title: durableTitle.text,
         ...(durableTitle.source ? { titleSource: durableTitle.source } : {}),
         ...(defaultTitle ? { defaultTitle } : {}),
-        sessionType: normalizeChatSessionType(saveTarget?.sessionType ?? this.ctx.chatService.currentSessionType),
+        sessionType: normalizeChatSessionType(saveTarget.sessionType),
         projectPath,
         mode: selectedMode.modeId,
         agentRuntimeMode: this.ctx.currentAgentRuntimeMode ?? this.ctx.chatService.currentAgentRuntimeMode,
@@ -264,7 +233,7 @@ export class HostSessionSaveBridge {
         modeDescriptor,
         inputState,
         requestRouting,
-        model: saveTarget?.model?.model ?? this.ctx.currentModel?.model ?? null,
+        model: saveTarget.model?.model ?? null,
         contextBudget: budgetSnapshot ? {
           currentTokens: budgetSnapshot.currentTokens,
           maxContextTokens: budgetSnapshot.maxContextTokens,
@@ -279,7 +248,7 @@ export class HostSessionSaveBridge {
           toolResultsTokens: budgetSnapshot.toolResultsTokens,
           messageCount: budgetSnapshot.messageCount,
         } : undefined,
-        toolCallingIteration: saveTarget?.toolCallingIteration ?? this.ctx.toolCallingIteration ?? 0,
+        toolCallingIteration: saveTarget.toolCallingIteration ?? 0,
       },
     };
 
@@ -305,10 +274,13 @@ export class HostSessionSaveBridge {
     visibleChatList?: readonly ChatListItem[];
     turnResponsesOverride?: readonly TurnResponseTurn[];
     sessionSnapshotOverride?: SessionSnapshot | null;
+    hostRequestModel?: HostRequestModel | null;
   }): LiveHostSessionRecord | null {
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
+      hostRequestModel: options?.hostRequestModel ?? this.ctx.hostRequestModel ?? null,
+      turnResponsesOverride: options?.turnResponsesOverride ?? this.ctx.lexStream.turnResponses,
       target: {
         sessionId: this.ctx.sessionId,
         sessionTitle: this.ctx.sessionTitle,
@@ -327,14 +299,16 @@ export class HostSessionSaveBridge {
           customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
         },
         model: this.ctx.currentModel,
+        turnResponses: options?.turnResponsesOverride ?? this.ctx.lexStream.turnResponses,
       },
     });
   }
 
-  saveCurrentSession(options?: {
+  saveCurrentSession(options: {
     hostProjection?: HostResponseProjection | null;
     visibleChatList?: readonly ChatListItem[];
-    target?: HostSessionSaveTarget | null;
+    hostRequestModel?: HostRequestModel | null;
+    target: HostSessionSaveTarget | null;
   }): boolean {
     try {
       if (this.ctx.editCheckpointService?.getTotalEditCount() > 0) {
@@ -346,20 +320,27 @@ export class HostSessionSaveBridge {
       }
 
       const saveTarget = normalizeHostSessionSaveTarget(options?.target);
-      const sessionSnapshot = saveTarget?.sessionSnapshot
-        ?? this.ctx.lexStream.session?.save?.(saveTarget?.sessionId)
-        ?? this.ctx.lexStream.session?.save?.()
-        ?? null;
-      const previousHostProjection = saveTarget
-        ? this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget))
-        : this.ctx.hostResponseProjection ?? null;
       if (!saveTarget) {
+        return false;
+      }
+      const visibleTarget = this.isVisibleSaveTarget(saveTarget.sessionId);
+      const sessionSnapshot = saveTarget.sessionSnapshot
+        ?? this.ctx.lexStream.session?.save?.(saveTarget.sessionId)
+        ?? null;
+      const previousHostProjection = visibleTarget
+        ? options?.hostProjection ?? this.ctx.hostResponseProjection ?? null
+        : this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget));
+      if (visibleTarget) {
         this.ctx.invalidateHostRequestGraph?.();
       }
+      const hostProjection = visibleTarget
+        ? this.ctx.hostResponseProjection ?? options?.hostProjection
+        : options?.hostProjection;
       const record = this.buildHostSessionRecord({
         previousHostProjection,
-        hostProjection: options?.hostProjection,
-        visibleChatList: options?.visibleChatList,
+        hostProjection,
+        visibleChatList: options?.visibleChatList ?? (visibleTarget ? this.ctx.list : undefined),
+        hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
         sessionSnapshotOverride: sessionSnapshot,
         target: saveTarget
           ? {
@@ -410,10 +391,10 @@ export class HostSessionSaveBridge {
       return null;
     }
 
-    return this.ctx.chatHistoryService.loadHostRecord(
+    return this.ctx.chatHistoryService.loadHostRecord?.(
       target.sessionId,
       target.providerOptions.folderPath,
-    );
+    ) ?? null;
   }
 
   private loadPersistedRecord(sessionId: string, projectPath: string | null): HostSessionRecord | null {
@@ -438,6 +419,45 @@ export class HostSessionSaveBridge {
     return buildHostProjectionStateFromPersistedRecord({
       turnResponses,
     });
+  }
+
+  private resolveCurrentTurnResponses(
+    saveTarget: HostSessionSaveTarget,
+    turnResponsesOverride?: readonly TurnResponseTurn[],
+  ): readonly TurnResponseTurn[] {
+    if (Array.isArray(turnResponsesOverride)) {
+      return turnResponsesOverride;
+    }
+
+    if (Array.isArray(saveTarget.turnResponses)) {
+      return saveTarget.turnResponses;
+    }
+
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(saveTarget.sessionId)?.turnResponses;
+    if (Array.isArray(runtimeTurnResponses) && runtimeTurnResponses.length > 0) {
+      return runtimeTurnResponses;
+    }
+
+    if (this.isVisibleSaveTarget(saveTarget.sessionId)) {
+      return this.ctx.lexStream.turnResponses;
+    }
+
+    return [];
+  }
+
+  private isVisibleSaveTarget(sessionId: string): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : null;
+    const currentSessionId = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    return !!currentSessionId && currentSessionId === targetSessionId;
   }
 }
 
