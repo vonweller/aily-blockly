@@ -66,6 +66,13 @@ child/aily-builder*
 /child/tools/*/node_modules/*
 /child/aily-lex
 
+# Playwright E2E
+/renderer
+/test-results
+/playwright-report
+/out-tsc/e2e
+/e2e/.artifacts
+
 **/*.spec.ts
 **/__tests__/**/*
 .tmp

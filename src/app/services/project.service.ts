@@ -1982,10 +1982,13 @@ export class ProjectService {
         // 合并配置：保留当前项目的基本信息，使用新开发板的依赖和配置
         const newPackageJson: Record<string, unknown> = {
           ...templatePackageJson,
-          name: currentPackageJson.name,
-          nickname: currentPackageJson.nickname,
-          author: currentPackageJson.author,
-          description: currentPackageJson.description,
+          name: currentPackageJson.name, // 保留项目名称
+          nickname: currentPackageJson.nickname, // 保留昵称
+          author: currentPackageJson.author, // 保留作者
+          description: currentPackageJson.description, // 保留描述
+          ...(currentPackageJson.cloudId && { cloudId: currentPackageJson.cloudId }), // 保留云端项目ID
+          // 不保留其他自定义配置
+          // ...(currentPackageJson.projectConfig && { projectConfig: currentPackageJson.projectConfig }),
         };
 
         if (isAilyCode) {
@@ -1996,6 +1999,7 @@ export class ProjectService {
           }
         } else {
           newPackageJson['dependencies'] = {
+            // 从模板获取新的开发板依赖和基础库
             ...templatePackageJson.dependencies,
             ...Object.fromEntries(
               Object.entries(currentPackageJson.dependencies || {})

@@ -883,6 +883,7 @@ const { initLogger, registerLoggerHandlers } = require("./logger");
 const { registerToolsHandlers } = require("./tools");
 const { registerNotificationHandlers } = require("./notification");
 const { registerProbeRsHandlers } = require("./probe-rs");
+const { registerBleHandlers, registerWebBluetoothChooser } = require("./ble");
 
 let mainWindow;
 let userConf;
@@ -1248,9 +1249,18 @@ function installChildEnv(childPath, options) {
   }
 
   function extract7zPackage(z7Path, archivePath, targetPath, keyword, validateComplete) {
-    const archiveVersion = extractVersion(path.basename(archivePath), keyword);
     const installedVersion = readInstalledVersion(targetPath);
     const isComplete = validateComplete(targetPath);
+
+    if (!archivePath || !fs.existsSync(archivePath)) {
+      if (isComplete) {
+        return true;
+      }
+      console.error(`未找到 ${keyword} 压缩包: ${archivePath}`);
+      return false;
+    }
+
+    const archiveVersion = extractVersion(path.basename(archivePath), keyword);
 
     if (isComplete) {
       if (!installedVersion && archiveVersion) {
@@ -1264,14 +1274,6 @@ function installChildEnv(childPath, options) {
     } else if (fs.existsSync(targetPath)) {
       console.warn(`${keyword} 安装不完整，准备重新解压: ${targetPath}`);
       removeInstallDir(targetPath);
-    }
-
-    if (!archivePath || !fs.existsSync(archivePath)) {
-      if (isComplete) {
-        return true;
-      }
-      console.error(`未找到 ${keyword} 压缩包: ${archivePath}`);
-      return false;
     }
 
     try {
@@ -1323,7 +1325,9 @@ function installChildEnv(childPath, options) {
 
   for (const pkg of packages) {
     const targetPath = path.join(childPath, pkg.name);
-    const archivePath = findLatestVersionFile(sourceDir, pkg.name);
+    const archivePath =
+      findLatestVersionFile(sourceDir, pkg.name) ||
+      findLatestVersionFile(path.join(childPath, platformDir), pkg.name);
     if (z7Path) {
       extract7zPackage(z7Path, archivePath, targetPath, pkg.name, validators[pkg.name]);
     } else {
@@ -1550,19 +1554,17 @@ function runInstallEnv(childPath) {
 
 // 环境变量加载
 function loadEnv() {
-  const childPath = serve
+  let childPath = serve
     ? path.join(__dirname, "..", "child")
     : path.join(process.resourcesPath, "child");
 
-  // // Windows 开发态兜底：bundle node 仍未就绪时保留启动器 PATH 中的 npm
-  // if (isWin32 && serve) {
-  //   const npmReady =
-  //     fs.existsSync(path.join(nodePath, "npm.cmd")) || fs.existsSync(path.join(nodePath, "npm"));
-  //   if (!npmReady && launcherPath) {
-  //     process.env.PATH = customPath + path.delimiter + launcherPath;
-  //     console.warn("[loadEnv] bundled npm 未找到，已追加启动器 PATH（开发态兜底）");
-  //   }
-  // }
+  if (!fs.existsSync(childPath)) {
+    const devChildPath = path.join(__dirname, "..", "child");
+    if (fs.existsSync(devChildPath)) {
+      console.warn(`child 工具目录不存在，回退到开发目录: ${childPath} -> ${devChildPath}`);
+      childPath = devChildPath;
+    }
+  }
 
   // 读取config.json文件
   const configPath = path.join(__dirname, 'config', "config.json");
@@ -1895,6 +1897,7 @@ function createWindow() {
       nodeIntegration: true,
       webSecurity: false,
       preload: path.join(__dirname, "preload.js"),
+      enableBlinkFeatures: 'WebBluetooth',
       // 启用 Web Serial API 支持
       // enableBlinkFeatures: 'Serial',
       // 禁用后台节流和页面可见性，避免在后台时停止渲染
@@ -1902,6 +1905,8 @@ function createWindow() {
       pageVisibility: true,
     },
   });
+
+  registerWebBluetoothChooser(mainWindow);
 
   mainWindow.setBounds(winState.state);
 
@@ -2030,6 +2035,7 @@ function createWindow() {
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);
   registerProbeRsHandlers(mainWindow);
+  registerBleHandlers();
 
   // 检查是否有待处理的OAuth回调
   // 注意：这里不再使用 setTimeout 自动发送，而是等待 renderer-ready 事件
@@ -2373,6 +2379,14 @@ function normalizePortPath(value) {
   return typeof value === 'string' ? value.toLowerCase().replace(/[\\/]/g, '') : '';
 }
 
+function isAllowedWebDevicePermission(permission) {
+  return permission === 'serial' || permission === 'bluetooth' || permission === 'bluetoothScanning';
+}
+
+function isAllowedWebDeviceType(deviceType) {
+  return deviceType === 'serial' || deviceType === 'bluetooth' || deviceType === 'bluetoothLE';
+}
+
 app.on('web-contents-created', (event, contents) => {
   contents.session.on('select-serial-port', (event, portList, webContents, callback) => {
     event.preventDefault();
@@ -2403,17 +2417,15 @@ app.on('web-contents-created', (event, contents) => {
   });
 
   contents.session.setPermissionCheckHandler((wc, permission) => {
-    if (permission === 'serial') {
-      return true;
-    }
-    return false;
+    return isAllowedWebDevicePermission(permission);
+  });
+
+  contents.session.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(isAllowedWebDevicePermission(permission));
   });
 
   contents.session.setDevicePermissionHandler((details) => {
-    if (details.deviceType === 'serial') {
-      return true;
-    }
-    return false;
+    return isAllowedWebDeviceType(details.deviceType);
   });
 });
 

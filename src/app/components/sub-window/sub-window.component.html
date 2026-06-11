@@ -1,8 +1,8 @@
 <div class="sub-window-box bborder">
   <div class="header" [class.darwin]="isMac" [class.full-screen]="isMacFullScreen">
     <div class="title" (dblclick)="maximize()">
+      <ng-content select="[header-title-prefix]"></ng-content>
       <span class="title-text">{{ title }}</span>
-      <ng-content select="[title-extra]"></ng-content>
     </div>
     <div class="win-btns">
       <div class="header-btns">
@@ -29,7 +29,6 @@
           </div>
         }
         @if (btn === "close") {
-          <ng-content select="[header-btns]"></ng-content>
           <div class="btn ccenter close" (click)="close()">
             <i class="fa-light fa-xmark"></i>
           </div>
