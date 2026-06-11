@@ -64,7 +64,7 @@ child/aily-builder*
 /child/probe-rs
 /child/aily-coder
 /child/tools/*/node_modules/*
-/child/xpm
+/child/aily-lex
 
 **/*.spec.ts
 **/__tests__/**/*
