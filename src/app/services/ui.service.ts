@@ -72,7 +72,7 @@ export class UiService {
     if (this.electronService.isElectron) {
       this.isMainWindow = true;
       window['ipcRenderer'].on('window-go-main', (event, toolName) => {
-        this.openToolInMainWindow(toolName);
+        this.openToolInMainWindow(this.resolveToolNameFromWindowPath(toolName));
       });
 
       window['ipcRenderer'].on('sub-window-state-changed', (_event, state) => {
@@ -167,9 +167,26 @@ export class UiService {
   }
 
   private openToolInMainWindow(name: string) {
+    if (!name) {
+      return;
+    }
     this.openToolList = this.openToolList.filter((e) => e !== name);
     this.openToolList.push(name);
     this.actionSubject.next({ action: 'open', type: 'tool', data: name });
+  }
+
+  private resolveToolNameFromWindowPath(pathOrName: string | null | undefined): string {
+    const normalizedPath = this.normalizeToolWindowPath(pathOrName);
+    if (!normalizedPath) {
+      return '';
+    }
+
+    const childToolMatch = normalizedPath.match(/^\/child-tool\/([^/?#]+)/);
+    if (childToolMatch?.[1]) {
+      return decodeURIComponent(childToolMatch[1]);
+    }
+
+    return normalizedPath.replace(/^\/+/, '');
   }
 
   private getToolWindowPath(name: string): string | null {

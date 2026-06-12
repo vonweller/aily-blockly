@@ -204,6 +204,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       },
     };
   })(),
+  childToolSession: {
+    acquire: (toolId) => ipcRenderer.invoke("child-tool-session-acquire", toolId),
+    register: (payload) => ipcRenderer.invoke("child-tool-session-register", payload),
+    release: (toolId) => ipcRenderer.invoke("child-tool-session-release", toolId),
+    restart: (toolId) => ipcRenderer.invoke("child-tool-session-restart", toolId),
+    unregister: (payload) => ipcRenderer.invoke("child-tool-session-unregister", payload),
+  },
   codeViewer: {
     publishState: (state) => ipcRenderer.send("blockly-code-viewer-state-update", state),
     getState: () => ipcRenderer.invoke("blockly-code-viewer-state-get"),

@@ -26,6 +26,7 @@ interface ChildToolSession {
   running: boolean;
   hostInfo: ChildToolHostInfo | null;
   refCount: number;
+  releaseTimer: ReturnType<typeof setTimeout> | null;
 }
 
 @Injectable({
@@ -33,10 +34,12 @@ interface ChildToolSession {
 })
 export class ChildToolProcessService implements OnDestroy {
   private sessions = new Map<string, ChildToolSession>();
+  private readonly releaseGraceMs = 15000;
 
   async acquire(toolId: string): Promise<ChildToolHostInfo> {
     const config = this.requireConfig(toolId);
     const session = this.ensureSession(config.id);
+    this.cancelReleaseTimer(session);
     session.refCount += 1;
 
     try {
@@ -54,14 +57,15 @@ export class ChildToolProcessService implements OnDestroy {
 
     session.refCount = Math.max(0, session.refCount - 1);
     if (session.refCount === 0) {
-      await this.stopSession(config, session);
-      this.sessions.delete(toolId);
+      this.scheduleRelease(config, session);
     }
   }
 
   async restart(toolId: string): Promise<ChildToolHostInfo> {
     const config = this.requireConfig(toolId);
     const session = this.ensureSession(config.id);
+    this.cancelReleaseTimer(session);
+    await window['childToolSession']?.restart?.(config.id);
     await this.stopSession(config, session);
     return await this.startSession(config, session);
   }
@@ -71,6 +75,7 @@ export class ChildToolProcessService implements OnDestroy {
     for (const [toolId, session] of entries) {
       const config = getChildToolConfig(toolId);
       if (config) {
+        this.cancelReleaseTimer(session);
         await this.stopSession(config, session);
       }
       this.sessions.delete(toolId);
@@ -102,11 +107,46 @@ export class ChildToolProcessService implements OnDestroy {
         readyReject: null,
         running: false,
         hostInfo: null,
-        refCount: 0
+        refCount: 0,
+        releaseTimer: null
       };
       this.sessions.set(toolId, session);
     }
     return session;
+  }
+
+  private scheduleRelease(config: ChildToolConfig, session: ChildToolSession): void {
+    if (session.releaseTimer) {
+      return;
+    }
+
+    this.log(config, 'release scheduled', {
+      graceMs: this.releaseGraceMs,
+      port: session.hostInfo?.port,
+      pid: session.hostInfo?.pid
+    });
+
+    session.releaseTimer = setTimeout(() => {
+      session.releaseTimer = null;
+      if (session.refCount > 0) {
+        return;
+      }
+
+      void this.stopSession(config, session).finally(() => {
+        if (session.refCount === 0) {
+          this.sessions.delete(config.id);
+        }
+      });
+    }, this.releaseGraceMs);
+  }
+
+  private cancelReleaseTimer(session: ChildToolSession): void {
+    if (!session.releaseTimer) {
+      return;
+    }
+
+    clearTimeout(session.releaseTimer);
+    session.releaseTimer = null;
   }
 
   private async startSession(config: ChildToolConfig, session: ChildToolSession): Promise<ChildToolHostInfo> {
@@ -118,6 +158,11 @@ export class ChildToolProcessService implements OnDestroy {
       return session.startPromise;
     }
 
+    const sharedHostInfo = await this.acquireSharedSession(config, session);
+    if (sharedHostInfo) {
+      return sharedHostInfo;
+    }
+
     session.startPromise = this.startServer(config, session);
     try {
       return await session.startPromise;
@@ -126,7 +171,7 @@ export class ChildToolProcessService implements OnDestroy {
     }
   }
 
-  private async stopSession(_config: ChildToolConfig, session: ChildToolSession): Promise<void> {
+  private async stopSession(config: ChildToolConfig, session: ChildToolSession): Promise<void> {
     const streamId = session.streamId;
     if (!streamId && !session.running) {
       return;
@@ -134,11 +179,28 @@ export class ChildToolProcessService implements OnDestroy {
 
     try {
       if (streamId) {
-        await window['cmd']?.kill?.(streamId);
+        const result = await window['childToolSession']?.release?.(config.id);
+        if (!result?.success) {
+          await window['cmd']?.kill?.(streamId);
+        }
       }
     } finally {
       this.handleClose(session);
     }
+  }
+
+  private async acquireSharedSession(config: ChildToolConfig, session: ChildToolSession): Promise<ChildToolHostInfo | null> {
+    const sharedSession = await window['childToolSession']?.acquire?.(config.id);
+    const hostInfo = sharedSession?.hostInfo as ChildToolHostInfo | undefined;
+    if (!hostInfo?.url) {
+      return null;
+    }
+
+    session.streamId = String(sharedSession.streamId || '');
+    session.hostInfo = hostInfo;
+    session.running = true;
+    this.log(config, 'shared session acquired', this.sanitizeHostInfo(hostInfo));
+    return hostInfo;
   }
 
   private async startServer(config: ChildToolConfig, session: ChildToolSession): Promise<ChildToolHostInfo> {
@@ -236,6 +298,11 @@ export class ChildToolProcessService implements OnDestroy {
     }
 
     const hostInfo = await readyPromise;
+    await window['childToolSession']?.register?.({
+      toolId: config.id,
+      hostInfo,
+      streamId: session.streamId
+    });
     this.log(config, 'server ready promise resolved', this.sanitizeHostInfo(hostInfo));
     return hostInfo;
   }
@@ -263,6 +330,7 @@ export class ChildToolProcessService implements OnDestroy {
     }
 
     if (output.type === 'close') {
+      const closedStreamId = session.streamId;
       const reason = `${config.id} server closed with code ${output.code ?? 'unknown'}${this.formatBufferedStderr(session)}`;
       const details = {
         code: output.code,
@@ -277,6 +345,10 @@ export class ChildToolProcessService implements OnDestroy {
         this.log(config, 'process closed', details);
       }
       this.handleClose(session);
+      void window['childToolSession']?.unregister?.({
+        toolId: config.id,
+        streamId: closedStreamId
+      });
     }
   }
 

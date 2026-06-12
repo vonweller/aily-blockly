@@ -1,6 +1,7 @@
 // 窗口控制
 const { ipcMain, BrowserWindow, app, screen } = require("electron");
 const { requestWindowAttention } = require('./window-attention');
+const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
 const { exec, execSync } = require('child_process');
 const path = require('path');
 
@@ -14,6 +15,10 @@ const SUB_WINDOW_POOL_SIZE = 2;
 /** 子窗口最小尺寸（4:3，约为原 800×600 的 80%） */
 const SUB_WINDOW_MIN_WIDTH = 640;
 const SUB_WINDOW_MIN_HEIGHT = 480;
+const CHILD_TOOL_RELEASE_GRACE_MS = 15000;
+
+/** @type {Map<string, { hostInfo: any, streamId: string, refCount: number, releaseTimer: NodeJS.Timeout | null }>} */
+const childToolSessions = new Map();
 
 function applySubWindowMinimumSize(win) {
     if (!win || win.isDestroyed()) {
@@ -46,6 +51,82 @@ function getSubWindowWebPreferences() {
         preload: path.join(__dirname, 'preload.js'),
         backgroundThrottling: false,
     };
+}
+
+function sanitizeChildToolId(toolId) {
+    return String(toolId || '').trim();
+}
+
+function cloneChildToolSession(session) {
+    return session
+        ? {
+            hostInfo: session.hostInfo,
+            streamId: session.streamId,
+            refCount: session.refCount,
+        }
+        : null;
+}
+
+function cancelChildToolRelease(session) {
+    if (!session || !session.releaseTimer) {
+        return;
+    }
+    clearTimeout(session.releaseTimer);
+    session.releaseTimer = null;
+}
+
+function scheduleChildToolRelease(toolId, session) {
+    if (!session || session.releaseTimer) {
+        return;
+    }
+
+    session.releaseTimer = setTimeout(() => {
+        session.releaseTimer = null;
+        if (session.refCount > 0) {
+            return;
+        }
+        if (session.streamId) {
+            killCmdProcess(session.streamId);
+        }
+        childToolSessions.delete(toolId);
+    }, CHILD_TOOL_RELEASE_GRACE_MS);
+}
+
+function releaseChildToolSession(toolId) {
+    const normalizedToolId = sanitizeChildToolId(toolId);
+    const session = childToolSessions.get(normalizedToolId);
+    if (!session) {
+        return { success: false, reason: 'not-found' };
+    }
+
+    session.refCount = Math.max(0, session.refCount - 1);
+    if (session.refCount === 0) {
+        scheduleChildToolRelease(normalizedToolId, session);
+    }
+
+    return { success: true, session: cloneChildToolSession(session) };
+}
+
+function restartChildToolSession(toolId) {
+    const normalizedToolId = sanitizeChildToolId(toolId);
+    const session = childToolSessions.get(normalizedToolId);
+    if (!session) {
+        return { success: false, reason: 'not-found' };
+    }
+
+    cancelChildToolRelease(session);
+    if (session.streamId) {
+        killCmdProcess(session.streamId);
+    }
+    childToolSessions.delete(normalizedToolId);
+    return { success: true };
+}
+
+function isChildToolSessionAlive(session) {
+    if (!session?.streamId) {
+        return false;
+    }
+    return getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId);
 }
 
 /** @type {import('electron').BrowserWindow[]} */
@@ -503,6 +584,66 @@ function registerWindowHandlers(mainWindow) {
         return focusSubWindowByUrl(windowUrl);
     });
 
+    ipcMain.handle("child-tool-session-acquire", (_event, toolId) => {
+        const normalizedToolId = sanitizeChildToolId(toolId);
+        const session = childToolSessions.get(normalizedToolId);
+        if (!session?.hostInfo) {
+            return null;
+        }
+
+        if (!isChildToolSessionAlive(session)) {
+            cancelChildToolRelease(session);
+            childToolSessions.delete(normalizedToolId);
+            return null;
+        }
+
+        cancelChildToolRelease(session);
+        session.refCount += 1;
+        return cloneChildToolSession(session);
+    });
+
+    ipcMain.handle("child-tool-session-register", (_event, payload = {}) => {
+        const toolId = sanitizeChildToolId(payload.toolId);
+        if (!toolId || !payload.hostInfo || !payload.streamId) {
+            return { success: false, reason: 'invalid-payload' };
+        }
+
+        const existing = childToolSessions.get(toolId);
+        if (existing && existing.streamId && existing.streamId !== payload.streamId) {
+            cancelChildToolRelease(existing);
+            killCmdProcess(existing.streamId);
+        }
+
+        childToolSessions.set(toolId, {
+            hostInfo: payload.hostInfo,
+            streamId: payload.streamId,
+            refCount: 1,
+            releaseTimer: null,
+        });
+
+        return { success: true, session: cloneChildToolSession(childToolSessions.get(toolId)) };
+    });
+
+    ipcMain.handle("child-tool-session-release", (_event, toolId) => {
+        return releaseChildToolSession(toolId);
+    });
+
+    ipcMain.handle("child-tool-session-restart", (_event, toolId) => {
+        return restartChildToolSession(toolId);
+    });
+
+    ipcMain.handle("child-tool-session-unregister", (_event, payload = {}) => {
+        const toolId = sanitizeChildToolId(payload.toolId);
+        const session = childToolSessions.get(toolId);
+        if (!session || (payload.streamId && session.streamId !== payload.streamId)) {
+            return { success: false, reason: 'not-found' };
+        }
+
+        cancelChildToolRelease(session);
+        childToolSessions.delete(toolId);
+        return { success: true };
+    });
+
     ipcMain.on("window-minimize", (event) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         if (senderWindow) {
@@ -594,7 +735,7 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-go-main", (event, data) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
-        mainWindow.webContents.send("window-go-main", data.replace('/', ''));
+        mainWindow.webContents.send("window-go-main", normalizeSubWindowUrl(data));
         senderWindow.close();
     });
 

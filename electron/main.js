@@ -2786,8 +2786,15 @@ ipcMain.handle("open-new-instance", async (event, data) => {
 
 // settingChanged
 ipcMain.on("setting-changed", (event, data) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  mainWindow.webContents.send("setting-changed", data);
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try {
+      if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("setting-changed", data);
+      }
+    } catch (error) {
+      console.error("setting-changed broadcast failed:", error.message);
+    }
+  });
 });
 
 // OAuth状态管理的IPC处理器

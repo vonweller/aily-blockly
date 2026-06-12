@@ -643,6 +643,7 @@ function registerCmdHandlers(mainWindow) {
 
 module.exports = {
   registerCmdHandlers,
+  killCmdProcess: (streamId) => commandManager.killProcess(streamId),
   killAllCmdProcesses: () => commandManager.killAllProcesses(),
   getActiveCmdProcesses: () => commandManager.getActiveProcessSummaries()
 };
