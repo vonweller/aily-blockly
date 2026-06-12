@@ -17,6 +17,8 @@ import { IMenuItem } from '../../configs/menu.config';
 import { Router } from '@angular/router';
 import { PlatformService } from '../../services/platform.service';
 
+const MENU_ANCHOR_ALIGNMENT_EPSILON = 4;
+
 @Component({
   selector: 'app-menu',
   imports: [CommonModule, FormsModule, TranslateModule, NzToolTipModule],
@@ -34,11 +36,22 @@ export class MenuComponent implements AfterViewChecked {
     x: 2,
     y: 40,
   };
+  private menuListSignature = '';
 
   @Input()
   set menuList(value: readonly any[]) {
-    this._menuList = Array.isArray(value) ? value : [];
+    const nextMenuList = Array.isArray(value) ? value : [];
+    const nextSignature = this.buildMenuListSignature(nextMenuList);
+    const menuStructureChanged = nextSignature !== this.menuListSignature;
+
+    this._menuList = nextMenuList;
+    this.menuListSignature = nextSignature;
     this.initializeSectionState();
+
+    if (menuStructureChanged) {
+      this.pendingAnchorAlignment = true;
+      this.pendingViewportAdjustment = true;
+    }
   }
 
   get menuList(): readonly any[] {
@@ -80,6 +93,7 @@ export class MenuComponent implements AfterViewChecked {
   globalFilterValue = '';
   private pendingGlobalFilterFocus = false;
   private pendingViewportAdjustment = false;
+  private pendingAnchorAlignment = false;
   private pendingSubmenuGeometry = false;
 
   // 添加子菜单显示状态管理
@@ -307,6 +321,11 @@ export class MenuComponent implements AfterViewChecked {
 
     if (this.pendingSubmenuGeometry) {
       this.refineSubmenuPosition();
+    }
+
+    if (this.pendingAnchorAlignment) {
+      this.alignMenuPositionToAnchor();
+      this.pendingAnchorAlignment = false;
     }
 
     if (!this.pendingViewportAdjustment) {
@@ -668,7 +687,7 @@ export class MenuComponent implements AfterViewChecked {
     const viewportPadding = 8;
     const menuRect = (this.menuBox.nativeElement as HTMLElement).getBoundingClientRect();
     const anchoredTop = Math.max(viewportPadding, anchorBottom - menuRect.height);
-    if (anchoredTop === this.position.y) {
+    if (Math.abs(anchoredTop - this.position.y) <= MENU_ANCHOR_ALIGNMENT_EPSILON) {
       return;
     }
 
@@ -723,12 +742,41 @@ export class MenuComponent implements AfterViewChecked {
 
     return normalized;
   }
+
+  private buildMenuListSignature(items: readonly any[]): string {
+    return items
+      .map((item) => {
+        if (!item) {
+          return 'empty';
+        }
+        if (item.sep) {
+          return 'sep';
+        }
+
+        const action = typeof item.action === 'string' ? item.action : '';
+        const name = typeof item.name === 'string' ? item.name : '';
+        const text = typeof item.text === 'string' ? item.text : '';
+        const current = item.current ? 'current' : '';
+        const disabled = item.disabled ? 'disabled' : '';
+        const childCount = Array.isArray(item.children) ? item.children.length : 0;
+        const actionCount = Array.isArray(item.actions) ? item.actions.length : 0;
+        const section = typeof item.extra?.section === 'string' ? item.extra.section : '';
+        const sectionId = typeof item.extra?.sectionId === 'string' ? item.extra.sectionId : '';
+        const collapsed = item.extra?.collapsed === false ? 'expanded' : 'collapsed';
+        return [action, name, text, current, disabled, childCount, actionCount, section, sectionId, collapsed].join(':');
+      })
+      .join('|');
+  }
+
   // 显示子菜单
-  showSubMenu(event: MouseEvent, item: IMenuItem, index: number) {
+  showSubMenu(event: MouseEvent, item: IMenuItem) {
     if (!this.hasSubmenuContent(item)) {
       if (this.activeSubmenuItem === item) {
         this.activeSubmenuItem = null;
       }
+      this.setSubmenuReady(false);
+      this.pendingSubmenuGeometry = false;
+      this.activeSubmenuAnchor = null;
       return;
     }
 
@@ -743,35 +791,12 @@ export class MenuComponent implements AfterViewChecked {
 
     this.activeSubmenuItem = item;
     this.setSubmenuReady(false);
-    this.calculateSubmenuPosition(index);
+    this.calculateSubmenuPosition(event.currentTarget as HTMLElement | null);
   }
 
   // 计算子菜单位置
-  calculateSubmenuPosition(index: number) {
-    const menuItems = this.menuItems.toArray();
-    let targetItemIndex = 0;
-    let visibleItemCount = 0;
-
-    // 计算目标菜单项在可见项中的索引（与 visibleMenuItems 过滤规则一致）
-    for (let i = 0; i <= index; i++) {
-      const item = this.menuList[i];
-      if (item.sep) {
-        continue;
-      }
-      const shouldRender =
-        (item.children && item.children.length > 0) ||
-        item.action === 'recent-projects-root' ||
-        (!item.children && this.showInRouter(item));
-      if (shouldRender) {
-        if (i === index) {
-          targetItemIndex = visibleItemCount;
-        }
-        visibleItemCount++;
-      }
-    }
-
-    if (menuItems[targetItemIndex]) {
-      const menuItemElement = menuItems[targetItemIndex].nativeElement;
+  calculateSubmenuPosition(menuItemElement: HTMLElement | null) {
+    if (menuItemElement && this.menuBox?.nativeElement) {
       const menuBoxElement = this.menuBox.nativeElement;
       const menuBoxRect = menuBoxElement.getBoundingClientRect();
       const itemRect = menuItemElement.getBoundingClientRect();

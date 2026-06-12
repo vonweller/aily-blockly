@@ -30,7 +30,7 @@
         (input)="updateSectionFilter(getSectionId(item), $any($event.target).value)" />
     </div>
     } @else {
-    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item, $index)" (mousemove)="showSubMenu($event, item, $index)"
+    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item)"
       (mouseleave)="hideSubMenu($event, $index)"
       nz-tooltip
       [nzTooltipTitle]="hasHoverFlyout(item) ? null : getTooltipTitle(item.tooltip)"

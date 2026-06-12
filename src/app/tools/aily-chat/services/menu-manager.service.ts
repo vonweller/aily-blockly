@@ -48,6 +48,9 @@ export interface ChatSessionListItem {
 
 export type ChatSessionPickerAction = ChatSessionListAction;
 
+const CHAT_MENU_VIEWPORT_PADDING = 8;
+const CHAT_MENU_ANCHOR_GAP = 4;
+
 /**
  * 管理聊天界面的所有菜单/下拉面板状态：
  * - 会话列表
@@ -81,19 +84,25 @@ export class MenuManagerService implements OnDestroy {
   }
 
   /** 切换模式菜单的显示/隐藏 */
-  toggleModeMenu(event: MouseEvent): void {
+  toggleModeMenu(event: MouseEvent, modeItems: IMenuItem[] = []): void {
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
-      const menuHeight = 68;
+      const menuHeight = this.estimateMenuHeight(modeItems);
+      const estimatedMenuWidth = 250;
       let x = rect.left;
-      let y = rect.top - menuHeight - 1;
-      let anchorBottom: number | undefined = rect.top - 1;
-      if (x < 0) x = rect.left;
-      if (y < 0) {
-        y = rect.bottom - 1;
+      let y = rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP;
+      let anchorBottom: number | undefined = rect.top - CHAT_MENU_ANCHOR_GAP;
+
+      if (x + estimatedMenuWidth > window.innerWidth - CHAT_MENU_VIEWPORT_PADDING) {
+        x = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.right - estimatedMenuWidth);
+      }
+
+      if (y < CHAT_MENU_VIEWPORT_PADDING) {
+        y = rect.bottom + CHAT_MENU_ANCHOR_GAP;
         anchorBottom = undefined;
       }
+
       this.modeListPosition = { x: Math.max(0, x), y: Math.max(0, y), anchorBottom };
     } else {
       this.modeListPosition = { x: window.innerWidth - 302, y: window.innerHeight - 280 };
@@ -113,15 +122,15 @@ export class MenuManagerService implements OnDestroy {
       const menuHeight = this.estimateMenuHeight(permissionItems);
       const estimatedMenuWidth = 280;
       let x = rect.left;
-      let y = rect.top - menuHeight - 1;
-      let anchorBottom: number | undefined = rect.top - 1;
+      let y = rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP;
+      let anchorBottom: number | undefined = rect.top - CHAT_MENU_ANCHOR_GAP;
 
-      if (x + estimatedMenuWidth > window.innerWidth - 8) {
-        x = Math.max(8, rect.right - estimatedMenuWidth);
+      if (x + estimatedMenuWidth > window.innerWidth - CHAT_MENU_VIEWPORT_PADDING) {
+        x = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.right - estimatedMenuWidth);
       }
 
-      if (y < 8) {
-        y = Math.max(8, rect.bottom - 1);
+      if (y < CHAT_MENU_VIEWPORT_PADDING) {
+        y = rect.bottom + CHAT_MENU_ANCHOR_GAP;
         anchorBottom = undefined;
       }
 
@@ -145,15 +154,15 @@ export class MenuManagerService implements OnDestroy {
       const menuHeight = this.estimateMenuHeight(modelItems, { includeGlobalFilter: true });
       const estimatedMenuWidth = 320;
       let x = rect.left;
-      let y = rect.top - menuHeight - 1;
-      let anchorBottom: number | undefined = rect.top - 1;
+      let y = rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP;
+      let anchorBottom: number | undefined = rect.top - CHAT_MENU_ANCHOR_GAP;
 
-      if (x + estimatedMenuWidth > window.innerWidth - 8) {
-        x = Math.max(8, rect.right - estimatedMenuWidth);
+      if (x + estimatedMenuWidth > window.innerWidth - CHAT_MENU_VIEWPORT_PADDING) {
+        x = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.right - estimatedMenuWidth);
       }
 
-      if (y < 8) {
-        y = Math.max(8, rect.bottom - 1);
+      if (y < CHAT_MENU_VIEWPORT_PADDING) {
+        y = rect.bottom + CHAT_MENU_ANCHOR_GAP;
         anchorBottom = undefined;
       }
 
@@ -176,14 +185,14 @@ export class MenuManagerService implements OnDestroy {
       const menuHeight = this.estimateMenuHeight(reasoningItems);
       const estimatedMenuWidth = 220;
       let x = rect.left;
-      let y = rect.bottom + 4;
+      let y = rect.bottom + CHAT_MENU_ANCHOR_GAP;
 
-      if (x + estimatedMenuWidth > window.innerWidth - 8) {
-        x = Math.max(8, rect.right - estimatedMenuWidth);
+      if (x + estimatedMenuWidth > window.innerWidth - CHAT_MENU_VIEWPORT_PADDING) {
+        x = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.right - estimatedMenuWidth);
       }
 
-      if (y + menuHeight > window.innerHeight - 8) {
-        y = Math.max(8, rect.top - menuHeight - 4);
+      if (y + menuHeight > window.innerHeight - CHAT_MENU_VIEWPORT_PADDING) {
+        y = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP);
       }
 
       this.reasoningMenuPosition = { x: Math.max(0, x), y: Math.max(0, y) };
@@ -207,14 +216,14 @@ export class MenuManagerService implements OnDestroy {
       const menuHeight = this.estimateMenuHeight(actionItems);
       const estimatedMenuWidth = 300;
       let x = rect.left;
-      let y = rect.bottom + 4;
+      let y = rect.bottom + CHAT_MENU_ANCHOR_GAP;
 
-      if (x + estimatedMenuWidth > window.innerWidth - 8) {
-        x = Math.max(8, rect.right - estimatedMenuWidth);
+      if (x + estimatedMenuWidth > window.innerWidth - CHAT_MENU_VIEWPORT_PADDING) {
+        x = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.right - estimatedMenuWidth);
       }
 
-      if (y + menuHeight > window.innerHeight - 8) {
-        y = Math.max(8, rect.top - menuHeight - 4);
+      if (y + menuHeight > window.innerHeight - CHAT_MENU_VIEWPORT_PADDING) {
+        y = Math.max(CHAT_MENU_VIEWPORT_PADDING, rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP);
       }
 
       this.actionMenuPosition = { x: Math.max(0, x), y: Math.max(0, y) };
@@ -259,7 +268,7 @@ export class MenuManagerService implements OnDestroy {
 
     for (const item of items) {
       if (item?.sep) {
-        height += 6;
+        height += 9;
         continue;
       }
 
@@ -285,6 +294,6 @@ export class MenuManagerService implements OnDestroy {
       height += 28;
     }
 
-    return height + 8;
+    return height;
   }
 }

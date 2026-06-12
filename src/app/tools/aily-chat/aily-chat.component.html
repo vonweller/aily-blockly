@@ -184,7 +184,7 @@
             (editSessionClosed)="onUserMessageEditSessionClosed()"
             (dismissSessionMenus)="closeChatSessionMenus()"
             (editAndResend)="surfaceShellCoordinator.editAndResend($event)"
-            (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event)"
+            (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event, vm.modeMenuItems)"
             (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
             (editAddFile)="editResourceShellCoordinator.addFile($event)"
             (editAddFolder)="editResourceShellCoordinator.addFolder($event)">
@@ -418,7 +418,7 @@
               (toggleAddList)="resourceManager.toggleAddList()"
               (addFile)="resourceManager.addFile()"
               (addFolder)="resourceManager.addFolder()"
-              (modeClick)="switchShellCoordinator.toggleModeMenu($event)"
+              (modeClick)="switchShellCoordinator.toggleModeMenu($event, vm.modeMenuItems)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
             <!-- Context usage widget：按 Copilot / VS Code 的 widget/details 结构渲染 request-scoped usage -->
@@ -697,5 +697,4 @@
 <app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
 }
-
 

@@ -45,7 +45,6 @@
     color: var(--aily-menu-text);
     position: relative;
     overflow: visible;
-    transition: background 120ms ease, transform 120ms ease;
 
     .icon {
       position: sticky;
@@ -78,7 +77,6 @@
         padding: 0 1px;
         font-size: 12px;
         font-weight: 500;
-        transition: color 120ms ease;
       }
 
       .text {
@@ -89,13 +87,11 @@
         flex-shrink: 0;
         font-size: 11px;
         letter-spacing: 0.01em;
-        transition: color 120ms ease;
       }
     }
 
     &:hover {
       background: var(--aily-menu-hover);
-      transform: translateX(1px);
     }
 
     &.active {

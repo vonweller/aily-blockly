@@ -1188,8 +1188,7 @@ export class AilyChatComponent implements OnDestroy {
       this.vm.closeSessionPicker();
       this.reasoningMenuItems = [];
       this.menuManager.showReasoningMenu = false;
-      this.menuManager.showModelMenu = false;
-      this.menuManager.toggleModelMenu(payload.event, [...this.vm.modelMenuItems]);
+      this.menuManager.showModelMenu = true;
       return;
     }
 
