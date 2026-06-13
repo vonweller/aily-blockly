@@ -41,6 +41,7 @@ export class ChatSessionPickerComponent implements AfterViewInit, AfterViewCheck
   @Input() maxHeight = 360;
 
   @Output() selectSession = new EventEmitter<{ sessionId: string; item: ChatSessionListItem }>();
+  @Output() preloadSession = new EventEmitter<{ sessionId: string; item: ChatSessionListItem }>();
   @Output() actionClick = new EventEmitter<{ action: string; data: ChatSessionListItem }>();
   @Output() closeRequested = new EventEmitter<void>();
 

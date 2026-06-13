@@ -3,12 +3,10 @@ import type {
   RenderEvent,
   RenderClearToPreviousToolInvocationReason,
   SessionSnapshot,
-  TurnResponseCommand,
   TurnResponseQuestionPart,
   TurnResponseStatus,
   TurnResponseTurn,
 } from 'aily-lex/browser';
-import { createTurnResponseCommand } from 'aily-lex/browser';
 import type { TurnResponseProjectionHandle } from '../core/turn-response-host-projection-builder';
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
@@ -17,9 +15,12 @@ import { LexRenderProjectionSync } from './lex-render-projection-sync';
 import { LexRenderTurnMaterializer } from './lex-render-turn-materializer';
 import { LexSideEffectHandler } from './lex-side-effect-handler';
 import {
+  buildSeededTurnResponseTurn,
   buildTurnResponseRequest,
   getTurnResponseParticipant,
+  resolveInitialResponseSlashCommand,
 } from '../core/turn-response-stream-contract';
+import { hydrateQuestionAnswersFromAskUserToolMetadata } from '../core/turn-response-part-mapper';
 import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
@@ -37,6 +38,10 @@ type LexRenderEventBridgeContext =
   & Pick<IChatServiceAccess, 'contextBudgetService'>
   & {
     readCurrentViewSessionResource?(): string | null;
+    syncExecutionRuntimeTurnResponses?(
+      sessionId: string | null | undefined,
+      turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    ): void;
   };
 
 type RenderMessageLifecycleAccess = {
@@ -120,28 +125,16 @@ export class LexRenderEventBridge {
       return;
     }
 
-    const createdAt = Date.now();
-    const request = buildTurnResponseRequest(requestContent, displayContent, metadata);
-    const slashCommand = resolveInitialResponseSlashCommand(metadata);
-    const seededTurn: TurnResponseTurn = {
+    const seededTurn = buildSeededTurnResponseTurn({
       turnId,
-      request,
-      rounds: [],
-      response: {
-        id: turnId,
-        participant: getTurnResponseParticipant(this.ctx.currentMessageSource),
-        status: 'streaming',
-        parts: [],
-        resultText: '',
-        createdAt,
-        updatedAt: createdAt,
-      },
-      ...(slashCommand ? { responseModel: { slashCommand } } : {}),
-      createdAt,
-      updatedAt: createdAt,
-    };
+      requestContent,
+      displayContent,
+      metadata,
+      participant: this.ctx.currentMessageSource,
+    });
 
     this._turnResponses.set(turnId, seededTurn);
+    this.commitTurnResponsesToOwner();
     this.invalidateVisibleProjection();
   }
 
@@ -181,35 +174,29 @@ export class LexRenderEventBridge {
     }
 
     const parts = this._currentTurn.response.parts;
-    if (partId.trim().length === 0) {
+    const matchingIndex = findQuestionAnswerTargetIndex(parts, answers, partId);
+    if (matchingIndex < 0) {
       return false;
     }
 
-    for (let index = parts.length - 1; index >= 0; index--) {
-      const part = parts[index];
-      if (part?.type !== 'question' || part.partId !== partId) {
-        continue;
-      }
-
-      const nextParts = [...parts];
-      nextParts[index] = {
-        ...part,
-        answers: cloneQuestionAnswers(answers),
-      };
-      this._currentTurn = {
-        ...this._currentTurn,
-        updatedAt: Date.now(),
-        response: {
-          ...this._currentTurn.response,
-          parts: nextParts,
-        },
-      };
-      this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
-      this.invalidateVisibleProjection();
-      return true;
-    }
-
-    return false;
+    const part = parts[matchingIndex] as TurnResponseQuestionPart;
+    const nextParts = [...parts];
+    nextParts[matchingIndex] = {
+      ...part,
+      answers: cloneQuestionAnswers(answers),
+    };
+    this._currentTurn = {
+      ...this._currentTurn,
+      updatedAt: Date.now(),
+      response: {
+        ...this._currentTurn.response,
+        parts: nextParts,
+      },
+    };
+    this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
+    this.commitTurnResponsesToOwner();
+    this.invalidateVisibleProjection();
+    return true;
   }
 
   finalizeCurrentTurn(fallbackStatus: TurnResponseStatus = 'completed'): boolean {
@@ -229,6 +216,7 @@ export class LexRenderEventBridge {
         },
       };
       this._turnResponses.set(finalizedTurn.turnId, finalizedTurn);
+      this.commitTurnResponsesToOwner();
       this.invalidateVisibleProjection();
       return true;
     }
@@ -368,6 +356,7 @@ export class LexRenderEventBridge {
       if (continuedTurn) {
         this._currentTurn = continuedTurn;
         this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
+        this.commitTurnResponsesToOwner();
         this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, []);
         return 'continued';
       }
@@ -385,6 +374,7 @@ export class LexRenderEventBridge {
       timestamp,
     });
     this._turnResponses.set(turnId, this._currentTurn);
+    this.commitTurnResponsesToOwner();
     this._hostStreamEmitter.emitTurnStarted(this._currentTurn);
     this._hostStreamEmitter.emitInitialTurnFieldUpdates(this._currentTurn);
     return 'fresh';
@@ -499,8 +489,31 @@ export class LexRenderEventBridge {
     }
 
     this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
+    this.commitTurnResponsesToOwner();
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, partChanges);
+  }
+
+  private commitTurnResponsesToOwner(): void {
+    if (typeof this.ctx.syncExecutionRuntimeTurnResponses !== 'function') {
+      return;
+    }
+
+    const projectionSessionResource = normalizeSessionResource(this._projectionSessionResource);
+    if (!projectionSessionResource) {
+      return;
+    }
+
+    this.ctx.syncExecutionRuntimeTurnResponses(
+      projectionSessionResource,
+      this.snapshotRetainedTurnResponses(),
+    );
+  }
+
+  private snapshotRetainedTurnResponses(): readonly TurnResponseTurn[] {
+    return [...this._turnResponses.values()]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map(turn => clonePublicTurnResponseTurn(turn));
   }
 
   private invalidateVisibleProjection(): void {
@@ -583,7 +596,7 @@ function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
       })),
       codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
       progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: turn.response.parts.map(part => ({ ...part })),
+      parts: hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts).map(part => ({ ...part })),
     },
     ...(responseModel ? { responseModel } : {}),
   };
@@ -627,17 +640,10 @@ function clonePublicTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
       })),
       codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
       progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-      parts: turn.response.parts.map(part => ({ ...part })),
+      parts: hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts).map(part => ({ ...part })),
     },
     ...(responseModel ? { responseModel } : {}),
   };
-}
-
-function resolveInitialResponseSlashCommand(
-  metadata: TurnResponseTurn['request']['metadata'],
-): TurnResponseCommand | undefined {
-  const slashCommand = metadata?.command;
-  return slashCommand ? createTurnResponseCommand(slashCommand.name, slashCommand) : undefined;
 }
 
 function cloneQuestionAnswers(answers: TurnResponseQuestionPart['answers']): TurnResponseQuestionPart['answers'] {
@@ -650,6 +656,55 @@ function cloneQuestionAnswers(answers: TurnResponseQuestionPart['answers']): Tur
     freeText: answer.freeText ?? null,
     skipped: !!answer.skipped,
   }]));
+}
+
+function findQuestionAnswerTargetIndex(
+  parts: readonly TurnResponseTurn['response']['parts'][number][],
+  answers: TurnResponseQuestionPart['answers'],
+  partId: string,
+): number {
+  const normalizedPartId = typeof partId === 'string' ? partId.trim() : '';
+  if (normalizedPartId.length > 0) {
+    for (let index = parts.length - 1; index >= 0; index--) {
+      const part = parts[index];
+      if (part?.type === 'question' && part.partId === normalizedPartId) {
+        return index;
+      }
+    }
+  }
+
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index] as Partial<TurnResponseQuestionPart> | undefined;
+    if (part?.type === 'question' && !part.answers && questionAnswersMatchPart(answers, part)) {
+      return index;
+    }
+  }
+
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index] as Partial<TurnResponseQuestionPart> | undefined;
+    if (part?.type === 'question' && questionAnswersMatchPart(answers, part)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function questionAnswersMatchPart(
+  answers: TurnResponseQuestionPart['answers'],
+  part: Partial<TurnResponseQuestionPart>,
+): boolean {
+  if (!answers || !Array.isArray(part.questions)) {
+    return false;
+  }
+
+  const questionSet = new Set(
+    part.questions
+      .map(question => question?.question)
+      .filter((question): question is string => typeof question === 'string' && question.trim().length > 0),
+  );
+  const answerKeys = Object.keys(answers).filter(question => question.trim().length > 0);
+  return answerKeys.length > 0 && answerKeys.every(question => questionSet.has(question));
 }
 
 function isResponseModelRenderEvent(

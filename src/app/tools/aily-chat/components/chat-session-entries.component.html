@@ -41,6 +41,8 @@
       role="option"
       [attr.aria-selected]="isSelected(item)"
       [attr.aria-current]="item.current ? 'true' : null"
+      (mouseenter)="preloadItem(item)"
+      (focus)="preloadItem(item)"
       (click)="selectItem(item)">
       <div [class.session-list-copy]="isListVariant" [class.session-picker-copy]="isPickerVariant">
         <div [class.session-list-item-title-row]="isListVariant" [class.session-picker-title-row]="isPickerVariant">

@@ -8,6 +8,7 @@ import {
 import {
   buildTurnResponseAssistantMessageProjection,
   getTurnResponseAssistantText,
+  getTurnResponseDisplayContent,
   getTurnResponseParticipant,
 } from '../core/turn-response-stream-contract';
 
@@ -215,12 +216,15 @@ function attachAssociatedTurns(
     const linkedTurn = item.turnContext?.turnResponse ?? directTurn ?? actionTurn;
     const nextTurnId = item.turnContext?.turnId ?? item.resolvedTurnId ?? linkedTurn?.turnId ?? actionTurn?.turnId;
     const requestDisabled = nextTurnId ? disabledRequestTurnIds.has(nextTurnId) : false;
+    const nextContent = item.role === 'user' && isBlankDialogContent(item.content) && linkedTurn
+      ? getTurnResponseDisplayContent(linkedTurn.request)
+      : item.content;
     const nextTurnContext = buildDialogTurnContext({
       turnId: nextTurnId ?? nextAssociatedTurnId,
       turnResponse: linkedTurn ?? actionTurn ?? null,
       requestDisabled: item.turnContext?.requestDisabled === true || requestDisabled,
       requestContent: item.turnContext?.requestContent,
-      displayContent: item.role === 'user' ? item.content : undefined,
+      displayContent: item.role === 'user' ? nextContent : undefined,
     });
     const nextTrackBase = nextTurnId ?? `${item.role}-${getTurnResponseParticipant(item.source)}`;
     const nextTrackId = `${nextTrackBase}-${index}`;
@@ -229,6 +233,7 @@ function attachAssociatedTurns(
       linkedTurn === item.turnContext?.turnResponse
       && nextTurnId === item.resolvedTurnId
       && nextTrackId === item.trackId
+      && nextContent === item.content
       && sameDialogTurnContext(item.turnContext, nextTurnContext)
     ) {
       return item;
@@ -236,11 +241,16 @@ function attachAssociatedTurns(
 
     return {
       ...item,
+      content: nextContent,
       trackId: nextTrackId,
       resolvedTurnId: nextTurnId,
       turnContext: nextTurnContext,
     } satisfies InternalChatDialogViewItem;
   });
+}
+
+function isBlankDialogContent(content: string | null | undefined): boolean {
+  return typeof content !== 'string' || content.trim().length === 0;
 }
 
 function sameDialogTurnContext(

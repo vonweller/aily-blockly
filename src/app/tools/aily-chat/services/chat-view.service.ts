@@ -49,7 +49,7 @@ import type { ChatSessionInventoryGroup } from '../helpers/chat-session-presenta
 
 const BUILTIN_AGENT_PICKER_NAMES = new Set(['agent', 'ask', 'edit', 'qa']);
 
-export type ChatPaneSurface = 'chat' | 'blank-session' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
+export type ChatPaneSurface = 'chat' | 'blank-session' | 'session-loading' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
 
 export interface ChatPaneSessionListSurfaceModel {
   readonly title: string;
@@ -76,10 +76,20 @@ export interface ChatPaneEntryInfoSurfaceModel {
   readonly hostClasses: readonly string[];
 }
 
+export interface ChatPaneLoadingSurfaceModel {
+  readonly sessionId: string;
+  readonly title: string;
+  readonly iconClass: string;
+  readonly titleKey: string;
+  readonly descriptionKey: string;
+  readonly hostClasses: readonly string[];
+}
+
 export interface ChatPaneStageSurfaceModel {
-  readonly paneSurface: 'chat' | 'blank-session' | 'entry' | 'welcome';
+  readonly paneSurface: 'chat' | 'blank-session' | 'session-loading' | 'entry' | 'welcome';
   readonly showConversation: boolean;
   readonly guideSurface: ChatPaneEntryInfoSurfaceModel | null;
+  readonly loadingSurface?: ChatPaneLoadingSurfaceModel | null;
   readonly showSidebarSessionList: boolean;
   readonly sidebarSessionListSurface: ChatPaneSessionListSurfaceModel | null;
   readonly showStackedSessionList: boolean;
@@ -113,6 +123,11 @@ export class ChatViewService {
   private readonly sessionViewModelChangedSubject = new Subject<void>();
   private paneChromeActionBindings: ChatPaneChromeActionBindings | null = null;
   private lastPaneDiagnosticsKey = '';
+  private pendingSessionLoad: {
+    readonly sessionId: string;
+    readonly title: string;
+    readonly visible: boolean;
+  } | null = null;
 
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
@@ -282,6 +297,10 @@ export class ChatViewService {
       case 'blank-session':
         return this.currentSessionDisplayTitle.text
           || (!this.hasActiveSessionTitleOwner ? this.readDefaultPaneTitle() : '');
+      case 'session-loading':
+        return this.pendingSessionLoad?.title
+          || this.currentSessionDisplayTitle.text
+          || (!this.hasActiveSessionTitleOwner ? this.readDefaultPaneTitle() : '');
       default:
         return '';
     }
@@ -340,7 +359,9 @@ export class ChatViewService {
   }
 
   get isSessionTitleSurfaceClickEnabled(): boolean {
-    return this.currentPaneSurface === 'chat' || this.currentPaneSurface === 'blank-session';
+    return this.currentPaneSurface === 'chat'
+      || this.currentPaneSurface === 'blank-session'
+      || this.currentPaneSurface === 'session-loading';
   }
 
   get hostHeaderActions() {
@@ -372,7 +393,11 @@ export class ChatViewService {
 
   get paneStageSurfaceModel(): ChatPaneStageSurfaceModel | null {
     const paneSurface = this.currentPaneSurface;
-    if (paneSurface !== 'chat' && paneSurface !== 'blank-session' && paneSurface !== 'entry' && paneSurface !== 'welcome') {
+    if (paneSurface !== 'chat'
+      && paneSurface !== 'blank-session'
+      && paneSurface !== 'session-loading'
+      && paneSurface !== 'entry'
+      && paneSurface !== 'welcome') {
       return null;
     }
 
@@ -389,11 +414,15 @@ export class ChatViewService {
           ? paneSurface
           : null,
       ),
+      loadingSurface: paneSurface === 'session-loading' ? this.buildLoadingSurfaceModel() : null,
       showSidebarSessionList,
       sidebarSessionListSurface: showSidebarSessionList ? this.buildSessionListSurfaceModel('sidebar') : null,
       showStackedSessionList,
       stackedSessionListSurface: showStackedSessionList ? this.buildSessionListSurfaceModel('stacked') : null,
-      showSender: paneSurface === 'chat' || paneSurface === 'blank-session' || paneSurface === 'entry',
+      showSender: paneSurface === 'chat'
+        || paneSurface === 'blank-session'
+        || paneSurface === 'session-loading'
+        || paneSurface === 'entry',
     };
   }
 
@@ -412,6 +441,10 @@ export class ChatViewService {
 
     if (this.chatSessionsControlService.showWelcomeSurface) {
       return 'welcome';
+    }
+
+    if (this.pendingSessionLoad?.visible) {
+      return 'session-loading';
     }
 
     const hasCurrentSessionIdentity = this.hasCurrentSessionIdentity;
@@ -458,6 +491,53 @@ export class ChatViewService {
     this.chatSessionsControlService.selectSession(sessionId);
   }
 
+  beginSessionLoadSurface(input: { sessionId: string; title?: string | null }): void {
+    const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
+    if (!sessionId) {
+      return;
+    }
+
+    const title = typeof input.title === 'string' ? input.title.trim() : '';
+    this.pendingSessionLoad = {
+      sessionId,
+      title,
+      visible: false,
+    };
+    this.chatSessionsControlService.selectSession(sessionId);
+    this.refreshSessionViewModel();
+  }
+
+  revealSessionLoadSurface(sessionId: string): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId || this.pendingSessionLoad?.sessionId !== normalizedSessionId) {
+      return;
+    }
+
+    if (this.pendingSessionLoad.visible) {
+      return;
+    }
+
+    this.pendingSessionLoad = {
+      ...this.pendingSessionLoad,
+      visible: true,
+    };
+    this.refreshSessionViewModel();
+  }
+
+  clearSessionLoadSurface(sessionId?: string | null): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (normalizedSessionId && this.pendingSessionLoad?.sessionId !== normalizedSessionId) {
+      return;
+    }
+
+    if (!this.pendingSessionLoad) {
+      return;
+    }
+
+    this.pendingSessionLoad = null;
+    this.refreshSessionViewModel();
+  }
+
   syncSessionViewerLayout(input: {
     hasConversationContent: boolean;
     isAuthenticated: boolean;
@@ -493,7 +573,7 @@ export class ChatViewService {
 
     const paneSurface = this.currentPaneSurface;
     return this.chatSessionsControlService.readSessionTitleActionContext({
-      isChatSurface: paneSurface === 'chat' || paneSurface === 'blank-session',
+      isChatSurface: paneSurface === 'chat' || paneSurface === 'blank-session' || paneSurface === 'session-loading',
       isBlankSessionSurface: paneSurface === 'blank-session',
     });
   }
@@ -508,6 +588,7 @@ export class ChatViewService {
   private syncSessionViewerSuppression(): void {
     const suppressForSurface = this.currentPaneSurface !== 'chat'
       && this.currentPaneSurface !== 'blank-session'
+      && this.currentPaneSurface !== 'session-loading'
       && this.currentPaneSurface !== 'entry';
     this.chatSessionsControlService.setSessionViewerSuppressed(this.showSettings || suppressForSurface);
   }
@@ -558,6 +639,22 @@ export class ChatViewService {
     return null;
   }
 
+  private buildLoadingSurfaceModel(): ChatPaneLoadingSurfaceModel | null {
+    const pendingLoad = this.pendingSessionLoad;
+    if (!pendingLoad) {
+      return null;
+    }
+
+    return {
+      sessionId: pendingLoad.sessionId,
+      title: pendingLoad.title,
+      iconClass: 'fa-light fa-spinner-third',
+      titleKey: 'AILY_CHAT.SESSION_LOADING_TITLE',
+      descriptionKey: 'AILY_CHAT.SESSION_LOADING_DESCRIPTION',
+      hostClasses: ['guide-box', 'ccenter', 'session-loading-surface-guide'],
+    };
+  }
+
   private refreshSessionViewModel(): void {
     this.emitPaneDiagnostics();
     this.sessionViewModelChangedSubject.next();
@@ -595,9 +692,14 @@ export class ChatViewService {
       currentProjectionChatListCount,
       currentProjectionDialogCount,
       currentPaneTitle: this.currentPaneTitle,
+      pendingSessionLoad: this.pendingSessionLoad,
       liveSessionTitle: this.chatService.currentSessionTitle,
       projectedSessionTitle: this.currentSessionViewItem?.title ?? '',
       sessionListDisplayMode: this.chatSessionsControlService.sessionListDisplayMode,
+      sessionViewportWidth: this.chatSessionsControlService.sessionViewportWidth,
+      sessionSidebarMinWidth: this.chatSessionsControlService.sessionSidebarMinWidth,
+      sessionSidebarWidth: this.chatSessionsControlService.sessionSidebarWidth,
+      sessionSidebarMaxWidth: this.chatSessionsControlService.sessionSidebarMaxWidth,
       titleSurfaceShouldRender: this.sessionTitleSurfaceModel.shouldRender,
       titleSurfaceNavigationIconActionCount: this.sessionTitleSurfaceModel.navigationIconActions.length,
       titleSurfaceHasTitleAction: this.sessionTitleSurfaceModel.titleAction !== null,
@@ -623,6 +725,9 @@ export class ChatViewService {
         `projectionTurns=${currentProjectionTurnCount}`,
         `projectionChatList=${currentProjectionChatListCount}`,
         `projectionDialogs=${currentProjectionDialogCount}`,
+        `sessionMode=${this.chatSessionsControlService.sessionListDisplayMode}`,
+        `sessionViewportWidth=${this.chatSessionsControlService.sessionViewportWidth}`,
+        `sessionSidebarMinWidth=${this.chatSessionsControlService.sessionSidebarMinWidth}`,
         `blankShell=${this.chatService.hasBlankSessionShell === true}`,
       ].join(' '),
     );

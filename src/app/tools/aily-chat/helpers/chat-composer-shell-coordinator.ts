@@ -29,6 +29,10 @@ export class ChatComposerShellCoordinator {
       setInputValue: (value: string) => void;
       isWaiting: () => boolean;
       getEditingPendingKind?: () => ChatPendingRequestKind | null | undefined;
+      navigateInputHistory?: (
+        direction: 'previous' | 'next',
+        currentValue: string,
+      ) => string | null | undefined;
       submitCurrentInput: (options?: { queueKind?: ChatPendingRequestKind }) => Promise<unknown>;
       getTextareaRef: () => TextareaRefLike | undefined;
       schedule?: (work: () => void) => void;
@@ -67,6 +71,10 @@ export class ChatComposerShellCoordinator {
   async handleKeyDown(event: KeyboardEvent): Promise<void> {
     const textarea = event.target as HTMLTextAreaElement | null;
     const inputValue = this.deps.getInputValue();
+    if (this.tryNavigateInputHistory(event, textarea, inputValue)) {
+      return;
+    }
+
     const composerAction = this.deps.viewState.resolveComposerKeyAction({
       key: event.key,
       ctrlKey: event.ctrlKey,
@@ -104,6 +112,61 @@ export class ChatComposerShellCoordinator {
       default:
         return;
     }
+  }
+
+  private tryNavigateInputHistory(
+    event: KeyboardEvent,
+    textarea: HTMLTextAreaElement | null,
+    inputValue: string,
+  ): boolean {
+    if (!this.deps.navigateInputHistory || event.ctrlKey || event.altKey || event.metaKey) {
+      return false;
+    }
+
+    const direction = event.key === 'ArrowUp'
+      ? 'previous'
+      : event.key === 'ArrowDown'
+        ? 'next'
+        : null;
+    if (!direction || !this.isAtHistoryNavigationBoundary(direction, textarea, inputValue)) {
+      return false;
+    }
+
+    const nextValue = this.deps.navigateInputHistory(direction, inputValue);
+    if (nextValue === null || typeof nextValue === 'undefined') {
+      return false;
+    }
+
+    event.preventDefault();
+    this.deps.setInputValue(nextValue);
+    if (textarea) {
+      const caret = direction === 'previous' ? 0 : nextValue.length;
+      this.schedule(() => {
+        textarea.selectionStart = caret;
+        textarea.selectionEnd = caret;
+      });
+    }
+    return true;
+  }
+
+  private isAtHistoryNavigationBoundary(
+    direction: 'previous' | 'next',
+    textarea: HTMLTextAreaElement | null,
+    inputValue: string,
+  ): boolean {
+    if (!textarea) {
+      return true;
+    }
+
+    const selectionStart = textarea.selectionStart ?? inputValue.length;
+    const selectionEnd = textarea.selectionEnd ?? inputValue.length;
+    if (selectionStart !== selectionEnd) {
+      return false;
+    }
+
+    return direction === 'previous'
+      ? selectionStart === 0
+      : selectionEnd === inputValue.length;
   }
 
   private schedule(work: () => void): void {

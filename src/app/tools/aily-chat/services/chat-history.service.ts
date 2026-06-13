@@ -152,8 +152,15 @@ export interface HostSessionResponseSidecar {
   compatMessages?: unknown[];
 }
 
+export interface HostSessionCheckpointTimelineSidecar {
+  sessionResource: string;
+  currentCheckpointIndex: number;
+  turnResponses: PersistedHostTurnResponse[];
+}
+
 export interface HostSessionSidecar {
   response?: HostSessionResponseSidecar;
+  checkpointTimeline?: HostSessionCheckpointTimelineSidecar;
 }
 
 export interface HostSessionSkillInvocationTraceFile {
@@ -241,6 +248,14 @@ export interface SessionMetadata {
   };
   requestContext?: NonNullable<SessionSnapshot['requestContext']>;
   activeSkillNames?: readonly string[];
+  /**
+   * Fork capability used to create this session.
+   * `protocol` requires a real backend/runtime fork provider; Blockly transcript copies must stay `transcript`.
+   */
+  forkKind?: 'protocol' | 'transcript';
+  forkedFromSessionId?: string;
+  forkedBeforeTurnId?: string;
+  forkedRetainedTurnCount?: number;
   /** 工具调用迭代次数 */
   toolCallingIteration: number;
 }

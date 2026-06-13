@@ -4,7 +4,9 @@ import { runHostGitCommand } from '../helpers/git-host-command';
 import type {
   IWorkspaceCheckpointProvider,
   RollbackResult,
+  WorkspaceCheckpointRefMetadata,
   WorkspaceCheckpointDescriptor,
+  WorkspaceCheckpointForkRequest,
   WorkspaceCheckpointPresentationMode,
 } from './edit-checkpoint.service';
 import { EditingContentStore } from './editing-content-store.service';
@@ -72,7 +74,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     return this.repositoryRootCache.get(workspaceRoot) ? 'git' : 'compatibility';
   }
 
-  createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<void> {
+  createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> {
     return this.enqueue(async () => {
       await Promise.resolve(this.fallbackProvider?.createCheckpoint(descriptor));
 
@@ -83,10 +85,12 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
 
       const state = await this.ensureCheckpointRecord(context, descriptor);
       this.saveState(state);
+      const record = state.checkpoints.find(checkpoint => checkpoint.checkpointId === descriptor.checkpointId);
+      return record ? this.toCheckpointRefMetadata(context, record) : null;
     });
   }
 
-  completeCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<void> {
+  completeCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> {
     return this.enqueue(async () => {
       const context = await this.resolveRepositoryContext();
       if (!context) {
@@ -125,7 +129,20 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
       state.lastCheckpointRef = completedRef;
       state.updatedAt = Date.now();
       this.saveState(state);
+      return this.toCheckpointRefMetadata(context, record);
     });
+  }
+
+  async getCheckpointMetadata(checkpointId: string): Promise<WorkspaceCheckpointRefMetadata | null> {
+    await this.waitForPendingCheckpointMutations();
+    const context = await this.resolveRepositoryContext();
+    if (!context) {
+      return null;
+    }
+
+    const state = this.loadState(context);
+    const record = state?.checkpoints.find(checkpoint => checkpoint.checkpointId === checkpointId);
+    return record ? this.toCheckpointRefMetadata(context, record) : null;
   }
 
   replaceCheckpoints(descriptors: readonly WorkspaceCheckpointDescriptor[]): Promise<void> {
@@ -164,6 +181,116 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
       existingState.lastCheckpointRef = lastCheckpointRef ?? firstCheckpointRef;
       existingState.updatedAt = Date.now();
       this.saveState(existingState);
+    });
+  }
+
+  forkCheckpoints(request: WorkspaceCheckpointForkRequest): Promise<WorkspaceCheckpointRefMetadata[] | null> {
+    return this.enqueue(async () => {
+      const context = await this.resolveRepositoryContextForSession(request.sourceSessionResource);
+      if (!context) {
+        return null;
+      }
+
+      const sourceState = this.loadState(context);
+      if (!sourceState) {
+        return null;
+      }
+
+      const checkpointIds = request.checkpointIds
+        .map(checkpointId => checkpointId.trim())
+        .filter(checkpointId => checkpointId.length > 0);
+      const sourceByCheckpointId = new Map(sourceState.checkpoints.map(checkpoint => [checkpoint.checkpointId, checkpoint]));
+      const retainedRecords = checkpointIds.map(checkpointId => sourceByCheckpointId.get(checkpointId));
+      if (retainedRecords.some(record => !record)) {
+        return null;
+      }
+
+      const targetSessionId = request.targetSessionResource.trim();
+      if (!targetSessionId) {
+        return null;
+      }
+
+      const targetContext = {
+        ...context,
+        sessionId: targetSessionId,
+      };
+      const now = Date.now();
+      const targetState: PersistedWorkspaceCheckpointState = {
+        version: 1,
+        sessionId: targetSessionId,
+        workspaceRoot: context.workspaceRoot,
+        repositoryRoot: context.repositoryRoot,
+        checkpoints: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const firstSourceRef = retainedRecords[0]?.startCheckpointRef ?? sourceState.firstCheckpointRef;
+      if (firstSourceRef) {
+        const targetFirstRef = this.getCheckpointRef(targetSessionId, 0);
+        await this.copyGitRef(context.repositoryRoot, firstSourceRef, targetFirstRef);
+        targetState.firstCheckpointRef = targetFirstRef;
+        targetState.lastCheckpointRef = targetFirstRef;
+      }
+
+      for (const [index, sourceRecord] of retainedRecords.entries()) {
+        if (!sourceRecord) {
+          return null;
+        }
+
+        const requestOrdinal = index + 1;
+        const targetStartCheckpointRef = await this.copyPrimaryCheckpointRefForFork(
+          context.repositoryRoot,
+          sourceRecord.startCheckpointRef,
+          targetSessionId,
+          requestOrdinal - 1,
+          targetState.firstCheckpointRef,
+        );
+        const targetCompletedCheckpointRef = await this.copyPrimaryCheckpointRefForFork(
+          context.repositoryRoot,
+          sourceRecord.completedCheckpointRef,
+          targetSessionId,
+          requestOrdinal,
+        );
+        const additionalStartCheckpointRefs = await this.copyAdditionalCheckpointRefsForFork(
+          sourceRecord.additionalStartCheckpointRefs,
+          targetSessionId,
+          requestOrdinal - 1,
+        );
+        const additionalCompletedCheckpointRefs = await this.copyAdditionalCheckpointRefsForFork(
+          sourceRecord.additionalCompletedCheckpointRefs,
+          targetSessionId,
+          requestOrdinal,
+        );
+
+        const additionalRepositoryRoots = this.normalizeAdditionalRepositoryRoots([
+          ...(sourceRecord.additionalRepositoryRoots ?? []),
+          ...Object.keys(additionalStartCheckpointRefs ?? {}),
+          ...Object.keys(additionalCompletedCheckpointRefs ?? {}),
+        ], context.repositoryRoot);
+
+        targetState.checkpoints.push({
+          checkpointId: sourceRecord.checkpointId,
+          requestId: sourceRecord.requestId,
+          ...(sourceRecord.turnId ? { turnId: sourceRecord.turnId } : {}),
+          label: sourceRecord.label,
+          ...(additionalRepositoryRoots.length > 0 ? { additionalRepositoryRoots } : {}),
+          requestOrdinal,
+          ...(targetStartCheckpointRef ? { startCheckpointRef: targetStartCheckpointRef } : {}),
+          ...(targetCompletedCheckpointRef ? { completedCheckpointRef: targetCompletedCheckpointRef } : {}),
+          ...(additionalStartCheckpointRefs ? { additionalStartCheckpointRefs } : {}),
+          ...(additionalCompletedCheckpointRefs ? { additionalCompletedCheckpointRefs } : {}),
+          createdAt: sourceRecord.createdAt,
+          ...(sourceRecord.completedAt ? { completedAt: sourceRecord.completedAt } : {}),
+        });
+
+        if (targetCompletedCheckpointRef) {
+          targetState.lastCheckpointRef = targetCompletedCheckpointRef;
+        }
+      }
+
+      this.saveState(targetState);
+      return targetState.checkpoints.map(record => this.toCheckpointRefMetadata(targetContext, record));
     });
   }
 
@@ -306,14 +433,19 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
 
   private async resolveRepositoryContext(): Promise<{ sessionId: string; workspaceRoot: string; repositoryRoot: string } | null> {
     const sessionId = this.sessionId;
+    return sessionId ? this.resolveRepositoryContextForSession(sessionId) : null;
+  }
+
+  private async resolveRepositoryContextForSession(sessionId: string): Promise<{ sessionId: string; workspaceRoot: string; repositoryRoot: string } | null> {
+    const normalizedSessionId = sessionId.trim();
     const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
-    if (!sessionId || !workspaceRoot) {
+    if (!normalizedSessionId || !workspaceRoot) {
       return null;
     }
 
     if (this.repositoryRootCache.has(workspaceRoot)) {
       const cached = this.repositoryRootCache.get(workspaceRoot);
-      return cached ? { sessionId, workspaceRoot, repositoryRoot: cached } : null;
+      return cached ? { sessionId: normalizedSessionId, workspaceRoot, repositoryRoot: cached } : null;
     }
 
     try {
@@ -325,7 +457,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
 
       const repositoryRoot = (await this.runGit(['rev-parse', '--show-toplevel'], workspaceRoot)).trim();
       this.repositoryRootCache.set(workspaceRoot, repositoryRoot || null);
-      return repositoryRoot ? { sessionId, workspaceRoot, repositoryRoot } : null;
+      return repositoryRoot ? { sessionId: normalizedSessionId, workspaceRoot, repositoryRoot } : null;
     } catch {
       this.repositoryRootCache.set(workspaceRoot, null);
       return null;
@@ -385,6 +517,26 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     return state;
   }
 
+  private toCheckpointRefMetadata(
+    context: { sessionId: string; workspaceRoot: string; repositoryRoot: string },
+    record: PersistedWorkspaceCheckpointRecord,
+  ): WorkspaceCheckpointRefMetadata {
+    return {
+      checkpointId: record.checkpointId,
+      sessionResource: context.sessionId,
+      requestId: record.requestId,
+      ...(record.turnId ? { turnId: record.turnId } : {}),
+      checkpointNamespace: `${CHECKPOINT_REF_PREFIX}${context.sessionId}`,
+      turnIndex: record.requestOrdinal,
+      ...(record.startCheckpointRef ? { startCheckpointRef: record.startCheckpointRef } : {}),
+      ...(record.completedCheckpointRef ? { checkpointRef: record.completedCheckpointRef } : {}),
+      ...(record.additionalStartCheckpointRefs ? { additionalStartCheckpointRefs: { ...record.additionalStartCheckpointRefs } } : {}),
+      ...(record.additionalCompletedCheckpointRefs ? { additionalCheckpointRefs: { ...record.additionalCompletedCheckpointRefs } } : {}),
+      createdAt: record.createdAt,
+      ...(record.completedAt ? { completedAt: record.completedAt } : {}),
+    };
+  }
+
   private async ensureAdditionalCheckpointStartRefs(
     context: { sessionId: string; workspaceRoot: string; repositoryRoot: string },
     state: PersistedWorkspaceCheckpointState,
@@ -431,6 +583,48 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     if (changed) {
       record.additionalStartCheckpointRefs = additionalStartCheckpointRefs;
     }
+  }
+
+  private async copyPrimaryCheckpointRefForFork(
+    repositoryRoot: string,
+    sourceRef: string | undefined,
+    targetSessionId: string,
+    targetTurnNumber: number,
+    existingTargetRef?: string,
+  ): Promise<string | undefined> {
+    if (!sourceRef) {
+      return existingTargetRef;
+    }
+
+    const targetRef = this.getCheckpointRef(targetSessionId, targetTurnNumber);
+    await this.copyGitRef(repositoryRoot, sourceRef, targetRef);
+    return targetRef;
+  }
+
+  private async copyAdditionalCheckpointRefsForFork(
+    sourceRefs: Record<string, string> | undefined,
+    targetSessionId: string,
+    targetTurnNumber: number,
+  ): Promise<Record<string, string> | undefined> {
+    const entries = Object.entries(sourceRefs ?? {})
+      .map(([repositoryRoot, sourceRef]) => [repositoryRoot.trim(), sourceRef.trim()] as const)
+      .filter(([repositoryRoot, sourceRef]) => repositoryRoot.length > 0 && sourceRef.length > 0);
+    if (entries.length === 0) {
+      return undefined;
+    }
+
+    const targetRef = this.getCheckpointRef(targetSessionId, targetTurnNumber);
+    const copiedRefs: Record<string, string> = {};
+    for (const [repositoryRoot, sourceRef] of entries) {
+      await this.copyGitRef(repositoryRoot, sourceRef, targetRef);
+      copiedRefs[repositoryRoot] = targetRef;
+    }
+    return copiedRefs;
+  }
+
+  private async copyGitRef(repositoryRoot: string, sourceRef: string, targetRef: string): Promise<void> {
+    const commitOid = (await this.runGit(['rev-parse', sourceRef], repositoryRoot)).trim();
+    await this.runGit(['update-ref', targetRef, commitOid], repositoryRoot);
   }
 
   private normalizeAdditionalRepositoryRoots(

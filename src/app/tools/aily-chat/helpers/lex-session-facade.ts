@@ -1,4 +1,8 @@
-import type { SessionSnapshot } from 'aily-lex/browser';
+import {
+  forkSessionSnapshot,
+  type ForkSessionSnapshotOptions,
+  type SessionSnapshot,
+} from 'aily-lex/browser';
 import type { HostSessionRecord } from '../services/chat-history.service';
 
 import type { LexSessionPersistenceBridge } from './lex-session-persistence-bridge';
@@ -21,6 +25,13 @@ export class LexSessionFacade {
 
   snapshot(sessionId?: string | null): SessionSnapshot | null {
     return this.persistenceBridge.getSessionSnapshot(sessionId);
+  }
+
+  forkSnapshot(
+    sourceSnapshot: SessionSnapshot,
+    options: ForkSessionSnapshotOptions,
+  ): SessionSnapshot {
+    return forkSessionSnapshot(sourceSnapshot, options);
   }
 
   resolveRestorePlan(

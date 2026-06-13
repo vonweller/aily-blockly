@@ -29,6 +29,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
         [pillTone]="headerTone"
         [tone]="headerTone"
         [iconClass]="headerIconClass"
+        [showExpandedConnector]="false"
         [showChevron]="showBody"
         [clickable]="showBody"
         [expanded]="showBody && !collapsed"

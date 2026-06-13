@@ -2155,6 +2155,7 @@ interface PersistedRoundSummaryCarrier {
   readonly anchorRoundId: string;
   readonly summary: string;
   readonly anchorTurnId?: string;
+  readonly turnIndex?: number;
   readonly roundIndex?: number;
 }
 
@@ -2162,8 +2163,21 @@ function getLatestStructuredRoundSummaryForTurn(
   turn: import('aily-lex/browser').TurnResponseTurn,
 ): PersistedRoundSummaryCarrier | undefined {
   const turnSummary = turn.responseModel?.summaries?.at(-1) ?? turn.responseModel?.summary;
-  const anchorRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
+  const rawSummary = (turnSummary ?? {}) as Record<string, unknown>;
+  const toolCallRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
     ? turnSummary.toolCallRoundId.trim()
+    : undefined;
+  const anchorRoundId = typeof rawSummary['anchorRoundId'] === 'string' && rawSummary['anchorRoundId'].trim()
+    ? rawSummary['anchorRoundId'].trim()
+    : toolCallRoundId;
+  const anchorTurnId = typeof rawSummary['anchorTurnId'] === 'string' && rawSummary['anchorTurnId'].trim()
+    ? rawSummary['anchorTurnId'].trim()
+    : undefined;
+  const turnIndex = typeof rawSummary['turnIndex'] === 'number' && Number.isInteger(rawSummary['turnIndex']) && rawSummary['turnIndex'] >= 0
+    ? rawSummary['turnIndex']
+    : undefined;
+  const roundIndex = typeof rawSummary['roundIndex'] === 'number' && Number.isInteger(rawSummary['roundIndex']) && rawSummary['roundIndex'] >= -1
+    ? rawSummary['roundIndex']
     : undefined;
   const summary = normalizeTurnResponseSummaryPreview(turnSummary?.text);
 
@@ -2174,6 +2188,9 @@ function getLatestStructuredRoundSummaryForTurn(
   return {
     anchorRoundId,
     summary,
+    ...(anchorTurnId ? { anchorTurnId } : {}),
+    ...(turnIndex !== undefined ? { turnIndex } : {}),
+    ...(roundIndex !== undefined ? { roundIndex } : {}),
   };
 }
 
@@ -2210,18 +2227,23 @@ function findPersistedRoundSummaryTarget(
     }
   }
 
-  if (!carrier.anchorTurnId || carrier.roundIndex === undefined || carrier.roundIndex < 0) {
-    return undefined;
+  if (carrier.anchorTurnId && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
+    for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
+      const turn = turns[turnIndex];
+      if (turn.id !== carrier.anchorTurnId) {
+        continue;
+      }
+
+      return carrier.roundIndex < turn.rounds.length
+        ? { turnIndex, roundIndex: carrier.roundIndex }
+        : undefined;
+    }
   }
 
-  for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
-    const turn = turns[turnIndex];
-    if (turn.id !== carrier.anchorTurnId) {
-      continue;
-    }
-
-    return carrier.roundIndex < turn.rounds.length
-      ? { turnIndex, roundIndex: carrier.roundIndex }
+  if (carrier.turnIndex !== undefined && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
+    const turn = turns[carrier.turnIndex];
+    return carrier.turnIndex <= maxTurnIndex && turn && carrier.roundIndex < turn.rounds.length
+      ? { turnIndex: carrier.turnIndex, roundIndex: carrier.roundIndex }
       : undefined;
   }
 

@@ -26,6 +26,7 @@ const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
 export type ChatSessionRuntimeChangeReason =
   | 'transcript'
+  | 'projection'
   | 'status'
   | 'description'
   | 'view'

@@ -57,6 +57,7 @@ import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordina
 import { ChatRequestController } from './helpers/chat-request-controller';
 import type { ChatPendingRequestKind, PendingFollowupRequest } from './helpers/chat-pending-request';
 import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
+import { ChatInputHistoryNavigator } from './helpers/chat-input-history-navigator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
 import { ChatActionRegistry } from './helpers/chat-action-registry';
@@ -83,6 +84,7 @@ import { AilyChatDebugLogsComponent } from './components/aily-chat-debug-logs/ai
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
 import { AilyChatDebugViewerComponent } from './components/aily-chat-debug-viewer/aily-chat-debug-viewer.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
+import { ChatRuntimeQuestionCarouselComponent } from './components/chat-runtime-question-carousel.component';
 import { ChatRuntimeConfirmationCarouselComponent } from './components/chat-runtime-confirmation-carousel.component';
 import { ChatRuntimePlanReviewComponent } from './components/chat-runtime-plan-review.component';
 import { ChatSessionListComponent } from './components/chat-session-list.component';
@@ -152,6 +154,7 @@ interface PendingFollowupSection {
     AilyChatSettingsComponent,
     AilyChatDebugViewerComponent,
     ChatInputPartHostComponent,
+    ChatRuntimeQuestionCarouselComponent,
     ChatRuntimeConfirmationCarouselComponent,
     ChatRuntimePlanReviewComponent,
     ChatSessionListComponent,
@@ -205,10 +208,15 @@ export class AilyChatComponent implements OnDestroy {
   private sessionViewportResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
   private observedSessionViewportElement: HTMLElement | null = null;
+  private pendingSessionViewportMeasureFrameId: number | null = null;
+  private readonly inputHistory = new ChatInputHistoryNavigator([], (entries) => this.saveComposerInputHistory(entries));
+  private inputHistoryStorageKey = '';
   private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
   private readonly toolOpenSubscription: Subscription;
+  private sessionSwitchLoadRequestId = 0;
+  private sessionSwitchLoadTimerId: number | null = null;
   private pendingFollowupEditState: {
     readonly sessionId: string;
     readonly requestId: string;
@@ -343,6 +351,7 @@ export class AilyChatComponent implements OnDestroy {
       },
       isWaiting: () => this.vm.isWaiting,
       getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
+      navigateInputHistory: (direction, currentValue) => this.navigateComposerInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
       getTextareaRef: () => this.chatTextarea,
     });
@@ -510,17 +519,97 @@ export class AilyChatComponent implements OnDestroy {
       return false;
     }
 
+    this.ensureComposerInputHistoryLoaded();
+    const inputBeforeSubmit = this.vm.inputValue;
     const queueKind = options?.queueKind ?? this.getCurrentPendingFollowupEditKind() ?? undefined;
     const submitted = await this.submitShellCoordinator.submitCurrentInput(
       queueKind ? { queueKind } : undefined,
     );
 
     if (submitted) {
+      if (inputBeforeSubmit.trim().length > 0) {
+        this.inputHistory.append({ inputText: inputBeforeSubmit });
+      }
       this.pendingFollowupEditState = null;
       this.cdr.markForCheck();
     }
 
     return submitted;
+  }
+
+  private navigateComposerInputHistory(
+    direction: 'previous' | 'next',
+    currentValue: string,
+  ): string | null {
+    this.ensureComposerInputHistoryLoaded();
+
+    if (direction === 'previous' && this.inputHistory.isAtStart()) {
+      return null;
+    }
+
+    if (direction === 'next' && this.inputHistory.isAtEnd()) {
+      return null;
+    }
+
+    if (currentValue.trim().length > 0) {
+      this.inputHistory.overlay({ inputText: currentValue });
+    }
+
+    const entry = direction === 'previous'
+      ? this.inputHistory.previous()
+      : this.inputHistory.next();
+
+    return entry?.inputText ?? '';
+  }
+
+  private ensureComposerInputHistoryLoaded(): void {
+    const key = this.resolveComposerInputHistoryStorageKey();
+    if (key === this.inputHistoryStorageKey) {
+      return;
+    }
+
+    this.inputHistoryStorageKey = key;
+    this.inputHistory.replaceEntries(this.loadComposerInputHistory(key));
+  }
+
+  private resolveComposerInputHistoryStorageKey(): string {
+    const projectPath = this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || '';
+    const scope = projectPath.trim() || 'global';
+    return `aily-chat.input-history.v1:${scope}`;
+  }
+
+  private loadComposerInputHistory(key: string): Array<{ inputText: string }> {
+    try {
+      const raw = window.localStorage?.getItem(key);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw) as { entries?: unknown };
+      if (!Array.isArray(parsed?.entries)) {
+        return [];
+      }
+      return parsed.entries
+        .filter((entry): entry is { inputText: string } => (
+          !!entry && typeof entry === 'object' && typeof (entry as { inputText?: unknown }).inputText === 'string'
+        ))
+        .map((entry) => ({ inputText: entry.inputText }));
+    } catch {
+      return [];
+    }
+  }
+
+  private saveComposerInputHistory(entries: readonly { inputText: string }[]): void {
+    const key = this.inputHistoryStorageKey || this.resolveComposerInputHistoryStorageKey();
+    try {
+      window.localStorage?.setItem(key, JSON.stringify({
+        v: 1,
+        entries: entries.map((entry) => ({ inputText: entry.inputText })),
+      }));
+    } catch {
+      /* local input history is best-effort UI state */
+    }
   }
 
   private getCurrentSessionActionState() {
@@ -764,14 +853,7 @@ export class AilyChatComponent implements OnDestroy {
     this.cdr.markForCheck();
 
     try {
-      const changed = await this.engine.compactConversation();
-      if (changed) {
-        this.engine.saveCurrentSession();
-        this.engine.refreshHistoryList();
-        this.message.success('对话已压缩');
-      } else {
-        this.message.info('当前没有可压缩的对话');
-      }
+      await this.engine.send('user', '/compact', true);
     } catch (error) {
       console.error('[AilyChat] 手动压缩对话失败:', error);
       this.message.error('压缩对话失败');
@@ -782,6 +864,8 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngOnDestroy() {
+    this.clearSessionSwitchLoadTimer();
+    this.viewState.clearSessionLoadSurface();
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
     this.toolOpenSubscription.unsubscribe();
@@ -1242,6 +1326,30 @@ export class AilyChatComponent implements OnDestroy {
     );
   }
 
+  handleSessionPreload(event: { sessionId: string; item: ChatSessionListItem }): void {
+    const sessionId = typeof event.sessionId === 'string' ? event.sessionId.trim() : '';
+    if (!sessionId || sessionId === this.resolveCurrentViewSessionResource()) {
+      return;
+    }
+
+    const fallbackProjectPath = this.resolveSessionItemProjectPath(event.item);
+    void this.engine.preloadSessionModel?.(sessionId, {
+      fallbackProjectPath,
+    }).catch(error => {
+      console.debug('[AilyChat][SessionPreload] failed', {
+        sessionId,
+        error,
+      });
+    });
+  }
+
+  private resolveSessionItemProjectPath(item: ChatSessionListItem | null | undefined): string | null {
+    const projectPath = (item as { projectPath?: unknown } | null | undefined)?.projectPath;
+    return typeof projectPath === 'string' && projectPath.trim().length > 0
+      ? projectPath.trim()
+      : null;
+  }
+
   handleSessionAction(event: { action: string; data: any }): void {
     this.sessionActions.sessionActionClick(event, this.resolveCurrentViewSessionResource(), this.createSessionRowActionCallbacks());
   }
@@ -1351,14 +1459,94 @@ export class AilyChatComponent implements OnDestroy {
     fallbackProjectPath?: string | null,
   ): Promise<boolean> {
     this.closeDebugBrowser();
+    const loadingToken = this.beginDelayedSessionLoadSurface(sessionId);
     try {
-      return await this.engine.switchToSession(sessionId, {
+      const switched = await this.engine.switchToSession(sessionId, {
         fallbackProjectPath: fallbackProjectPath ?? null,
       });
+      this.finishDelayedSessionLoadSurface(loadingToken, {
+        restorePreviousSelection: !switched,
+      });
+      return switched;
     } catch (error) {
       this.reportSessionRestoreFailure(error);
+      this.finishDelayedSessionLoadSurface(loadingToken, {
+        restorePreviousSelection: !isSessionLifecycleSupersededError(error),
+      });
       return false;
     }
+  }
+
+  private beginDelayedSessionLoadSurface(sessionId: string): {
+    readonly requestId: number;
+    readonly sessionId: string;
+    readonly previousSelectedSessionId: string;
+  } {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const requestId = ++this.sessionSwitchLoadRequestId;
+    const previousSelectedSessionId = this.viewState.selectedSessionId;
+    this.clearSessionSwitchLoadTimer();
+
+    if (!normalizedSessionId) {
+      return { requestId, sessionId: '', previousSelectedSessionId };
+    }
+
+    const title = this.resolveSessionItemTitle(normalizedSessionId);
+    this.viewState.beginSessionLoadSurface({
+      sessionId: normalizedSessionId,
+      title,
+    });
+    this.sessionSwitchLoadTimerId = window.setTimeout(() => {
+      if (this.sessionSwitchLoadRequestId !== requestId) {
+        return;
+      }
+
+      this.viewState.revealSessionLoadSurface(normalizedSessionId);
+      this.cdr.markForCheck();
+    }, 100);
+
+    return {
+      requestId,
+      sessionId: normalizedSessionId,
+      previousSelectedSessionId,
+    };
+  }
+
+  private finishDelayedSessionLoadSurface(
+    token: {
+      readonly requestId: number;
+      readonly sessionId: string;
+      readonly previousSelectedSessionId: string;
+    },
+    options: {
+      readonly restorePreviousSelection: boolean;
+    },
+  ): void {
+    if (this.sessionSwitchLoadRequestId !== token.requestId) {
+      return;
+    }
+
+    this.clearSessionSwitchLoadTimer();
+    this.viewState.clearSessionLoadSurface(token.sessionId);
+    if (options.restorePreviousSelection && token.previousSelectedSessionId) {
+      this.viewState.selectSession(token.previousSelectedSessionId);
+    }
+    this.cdr.markForCheck();
+  }
+
+  private clearSessionSwitchLoadTimer(): void {
+    if (this.sessionSwitchLoadTimerId === null) {
+      return;
+    }
+
+    window.clearTimeout(this.sessionSwitchLoadTimerId);
+    this.sessionSwitchLoadTimerId = null;
+  }
+
+  private resolveSessionItemTitle(sessionId: string): string {
+    const item = this.sessionListItems.find(candidate => candidate.sessionId === sessionId);
+    const title = typeof item?.title === 'string' ? item.title.trim() : '';
+    return title;
   }
 
   private reportSessionRestoreFailure(error: unknown): void {
@@ -1496,7 +1684,8 @@ export class AilyChatComponent implements OnDestroy {
       return;
     }
 
-    this.viewState.setSessionViewportWidth(element.clientWidth);
+    this.applySessionViewportWidth(element.clientWidth);
+    this.scheduleSessionViewportStableMeasure(element);
 
     if (typeof ResizeObserver === 'undefined') {
       return;
@@ -1504,16 +1693,47 @@ export class AilyChatComponent implements OnDestroy {
 
     this.sessionViewportResizeObserver = new ResizeObserver((entries) => {
       const nextWidth = entries[0]?.contentRect?.width ?? element.clientWidth;
-      this.viewState.setSessionViewportWidth(nextWidth);
-      this.syncSessionListDisplayState();
+      this.applySessionViewportWidth(nextWidth);
     });
     this.sessionViewportResizeObserver.observe(element);
   }
 
   private disconnectSessionViewportObserver(): void {
+    this.cancelSessionViewportStableMeasure();
     this.sessionViewportResizeObserver?.disconnect();
     this.sessionViewportResizeObserver = null;
     this.observedSessionViewportElement = null;
+  }
+
+  private applySessionViewportWidth(width: number): void {
+    this.viewState.setSessionViewportWidth(width);
+    this.syncSessionListDisplayState();
+  }
+
+  private scheduleSessionViewportStableMeasure(element: HTMLElement): void {
+    this.cancelSessionViewportStableMeasure();
+    if (typeof globalThis.requestAnimationFrame !== 'function') {
+      return;
+    }
+
+    this.pendingSessionViewportMeasureFrameId = globalThis.requestAnimationFrame(() => {
+      this.pendingSessionViewportMeasureFrameId = null;
+      if (this.observedSessionViewportElement !== element) {
+        return;
+      }
+
+      this.applySessionViewportWidth(element.clientWidth);
+    });
+  }
+
+  private cancelSessionViewportStableMeasure(): void {
+    if (this.pendingSessionViewportMeasureFrameId === null || typeof globalThis.cancelAnimationFrame !== 'function') {
+      this.pendingSessionViewportMeasureFrameId = null;
+      return;
+    }
+
+    globalThis.cancelAnimationFrame(this.pendingSessionViewportMeasureFrameId);
+    this.pendingSessionViewportMeasureFrameId = null;
   }
 
   private syncSessionListDisplayState(): void {

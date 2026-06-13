@@ -53,10 +53,10 @@ type LexOwnerUiAccess = Pick<LexUiEventBridge, 'presentQuestion' | 'updateQuesti
 type LexOwnerTurnAccess = Pick<LexTurnRuntimeBridge, 'begin' | 'run' | 'draft' | 'ensureMessage' | 'appendError'>;
 type LexOwnerTurnControlAccess = Pick<
   LexTurnControlBridge,
-  'currentId' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'complete' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
+  'currentId' | 'turnIdByRound' | 'requestContent' | 'lastRoundId' | 'currentRequestMetadata' | 'complete' | 'discardIncomplete' | 'removeFrom' | 'restartFrom' | 'clear'
 >;
 type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
-type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;
+type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'forkSnapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;
 type LexOwnerMessageLifecycleAccess = Pick<LexMessageLifecycleBridge, 'resetTurnState' | 'currentMessageHandle'>;
 type LexOwnerExecutionAccess = Pick<LexTurnExecutionBridge, 'flushPendingEvents'>;
 type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendingEvents'>;
@@ -196,16 +196,6 @@ export class LexOwnerFacade {
 
   finalizeCurrentTurnResponse(fallbackStatus: TurnResponseStatus = 'completed'): boolean {
     return this._renderEventBridge.finalizeCurrentTurn(fallbackStatus);
-  }
-
-  async compactConversation(): Promise<boolean> {
-    const changed = await this._agentLifecycleBridge.getHandle()?.compactConversationOnDemand?.()
-      ?? await this._agentLifecycleBridge.getAgent()?.compactConversationOnDemand?.()
-      ?? await this._agentLifecycleBridge.getHandle()?.compactIfNeededForFinalize()
-      ?? await this._agentLifecycleBridge.getAgent()?.compactIfNeededForFinalize?.()
-      ?? false;
-    this._flushPendingEvents();
-    return changed;
   }
 
   /** H1: wire a host stream listener into the render bridge so host-side consumers
@@ -434,6 +424,9 @@ export class LexOwnerFacade {
             get isCancelled() { return ownerCtx.isCancelled; },
             get currentMessageSource() { return ownerCtx.currentMessageSource; },
             get contextBudgetService() { return ownerCtx.contextBudgetService; },
+            syncExecutionRuntimeTurnResponses: (targetSessionId, turnResponses) => {
+              ownerCtx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses);
+            },
           },
           hostSyncBridge,
           {

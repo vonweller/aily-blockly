@@ -10,6 +10,7 @@ import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnRe
 import type {
   LiveHostSessionRecord,
   HostSessionRecord,
+  HostSessionSidecar,
   HostSessionSkillInvocationTraceEntry,
   ChatListItem,
   PersistedHostResponseData,
@@ -57,6 +58,10 @@ import { resolveHostSessionInteractionActionSummary } from './host-session-inter
 import { cloneHostSessionRuntimeAuxiliary } from './host-session-runtime-auxiliary';
 import { cloneSessionRequestContextSnapshot } from './turn-request-prompt-context';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
+import {
+  canRedoSessionCheckpointTimeline,
+  type SessionCheckpointTimelineState,
+} from './session-checkpoint-timeline-model';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
@@ -68,7 +73,9 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
     readonly hostRequestModel?: HostRequestModel | null;
     readonly hostResponseProjection?: HostResponseProjection | null;
     readCurrentViewSessionResource?(): string | null | undefined;
+    readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    readSessionCheckpointTimelineState?(sessionId?: string | null): SessionCheckpointTimelineState | null;
     invalidateHostRequestGraph?(): void;
   };
 
@@ -216,9 +223,13 @@ export class HostSessionSaveBridge {
       pendingFollowupRequests: runtimeState?.pendingFollowupRequests,
       yieldRequested: runtimeState?.yieldRequested === true,
     });
+    const checkpointTimelineSidecar = buildCheckpointTimelineSidecar(
+      this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null,
+    );
     const record: LiveHostSessionRecord = {
       sessionId,
       turnResponses: persistedTurnResponses,
+      ...(checkpointTimelineSidecar ? { sidecar: { checkpointTimeline: checkpointTimelineSidecar } } : {}),
       ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
       metadata: {
         sessionId,
@@ -276,11 +287,13 @@ export class HostSessionSaveBridge {
     sessionSnapshotOverride?: SessionSnapshot | null;
     hostRequestModel?: HostRequestModel | null;
   }): LiveHostSessionRecord | null {
+    const currentTurnResponses = options?.turnResponsesOverride
+      ?? this.resolveTargetTurnResponses(this.ctx.sessionId);
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
       hostRequestModel: options?.hostRequestModel ?? this.ctx.hostRequestModel ?? null,
-      turnResponsesOverride: options?.turnResponsesOverride ?? this.ctx.lexStream.turnResponses,
+      turnResponsesOverride: currentTurnResponses,
       target: {
         sessionId: this.ctx.sessionId,
         sessionTitle: this.ctx.sessionTitle,
@@ -299,7 +312,7 @@ export class HostSessionSaveBridge {
           customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
         },
         model: this.ctx.currentModel,
-        turnResponses: options?.turnResponsesOverride ?? this.ctx.lexStream.turnResponses,
+        turnResponses: currentTurnResponses,
       },
     });
   }
@@ -433,16 +446,27 @@ export class HostSessionSaveBridge {
       return saveTarget.turnResponses;
     }
 
+    const modelTurnResponses = this.resolveTargetTurnResponses(saveTarget.sessionId);
+    if (modelTurnResponses.length > 0) {
+      return modelTurnResponses;
+    }
+
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(saveTarget.sessionId)?.turnResponses;
     if (Array.isArray(runtimeTurnResponses) && runtimeTurnResponses.length > 0) {
       return runtimeTurnResponses;
     }
 
-    if (this.isVisibleSaveTarget(saveTarget.sessionId)) {
-      return this.ctx.lexStream.turnResponses;
+    return [];
+  }
+
+  private resolveTargetTurnResponses(sessionId: string | null | undefined): readonly TurnResponseTurn[] {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return [];
     }
 
-    return [];
+    const turnResponses = this.ctx.readSessionTurnResponses?.(normalizedSessionId);
+    return Array.isArray(turnResponses) ? turnResponses : [];
   }
 
   private isVisibleSaveTarget(sessionId: string): boolean {
@@ -980,6 +1004,27 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
       parts: clonePersistableResponseParts(turn.response.parts),
     },
     ...(responseModel ? { responseModel } : {}),
+  };
+}
+
+function buildCheckpointTimelineSidecar(
+  state: SessionCheckpointTimelineState | null | undefined,
+): HostSessionSidecar['checkpointTimeline'] | undefined {
+  if (!canRedoSessionCheckpointTimeline(state)) {
+    return undefined;
+  }
+
+  const sessionResource = typeof state?.sessionResource === 'string'
+    ? state.sessionResource.trim()
+    : '';
+  if (!sessionResource || !Array.isArray(state?.turnResponses) || state.turnResponses.length === 0) {
+    return undefined;
+  }
+
+  return {
+    sessionResource,
+    currentCheckpointIndex: state.currentCheckpointIndex,
+    turnResponses: state.turnResponses.map(turn => cloneTurnResponse(turn) as PersistedHostTurnResponse),
   };
 }
 

@@ -281,6 +281,18 @@ export class HostSessionRecordStore {
         : {}),
       model: sanitizedMetadata.model ?? null,
       contextBudget: sanitizedMetadata.contextBudget,
+      ...(sanitizedMetadata.forkKind === 'protocol' || sanitizedMetadata.forkKind === 'transcript'
+        ? { forkKind: sanitizedMetadata.forkKind }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedFromSessionId === 'string' && sanitizedMetadata.forkedFromSessionId.length > 0
+        ? { forkedFromSessionId: sanitizedMetadata.forkedFromSessionId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedBeforeTurnId === 'string' && sanitizedMetadata.forkedBeforeTurnId.length > 0
+        ? { forkedBeforeTurnId: sanitizedMetadata.forkedBeforeTurnId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedRetainedTurnCount === 'number' && Number.isFinite(sanitizedMetadata.forkedRetainedTurnCount) && sanitizedMetadata.forkedRetainedTurnCount >= 0
+        ? { forkedRetainedTurnCount: sanitizedMetadata.forkedRetainedTurnCount }
+        : {}),
       toolCallingIteration: sanitizedMetadata.toolCallingIteration || 0,
     };
   }
@@ -546,15 +558,35 @@ export class HostSessionRecordStore {
     const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
       ? [...sidecar.response.compatMessages]
       : undefined;
+    const checkpointTimeline = sidecar?.checkpointTimeline;
+    const checkpointTimelineSessionResource = typeof checkpointTimeline?.sessionResource === 'string'
+      ? checkpointTimeline.sessionResource.trim()
+      : '';
+    const checkpointTimelineTurnResponses = this.normalizeTurnResponses(checkpointTimeline?.turnResponses);
+    const normalizedCheckpointTimeline = checkpointTimelineSessionResource
+      && checkpointTimelineTurnResponses?.length
+      && typeof checkpointTimeline?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointTimeline.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointTimelineSessionResource,
+          currentCheckpointIndex: Math.trunc(checkpointTimeline.currentCheckpointIndex),
+          turnResponses: checkpointTimelineTurnResponses,
+        }
+      : undefined;
 
-    if (!compatMessages?.length) {
+    if (!compatMessages?.length && !normalizedCheckpointTimeline) {
       return undefined;
     }
 
     return {
-      response: {
-        ...(compatMessages?.length ? { compatMessages } : {}),
-      },
+      ...(compatMessages?.length
+        ? {
+            response: {
+              compatMessages,
+            },
+          }
+        : {}),
+      ...(normalizedCheckpointTimeline ? { checkpointTimeline: normalizedCheckpointTimeline } : {}),
     };
   }
 
@@ -635,6 +667,18 @@ export class HostSessionRecordStore {
           }
         : undefined,
       toolCallingIteration: typeof sanitizedMetadata.toolCallingIteration === 'number' ? sanitizedMetadata.toolCallingIteration : 0,
+      ...(sanitizedMetadata.forkKind === 'protocol' || sanitizedMetadata.forkKind === 'transcript'
+        ? { forkKind: sanitizedMetadata.forkKind }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedFromSessionId === 'string' && sanitizedMetadata.forkedFromSessionId.length > 0
+        ? { forkedFromSessionId: sanitizedMetadata.forkedFromSessionId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedBeforeTurnId === 'string' && sanitizedMetadata.forkedBeforeTurnId.length > 0
+        ? { forkedBeforeTurnId: sanitizedMetadata.forkedBeforeTurnId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedRetainedTurnCount === 'number' && Number.isFinite(sanitizedMetadata.forkedRetainedTurnCount) && sanitizedMetadata.forkedRetainedTurnCount >= 0
+        ? { forkedRetainedTurnCount: sanitizedMetadata.forkedRetainedTurnCount }
+        : {}),
     };
   }
 

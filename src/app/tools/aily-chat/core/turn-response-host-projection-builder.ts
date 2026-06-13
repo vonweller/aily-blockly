@@ -2,7 +2,10 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import type { ChatPartStore } from './chat-part-store';
 import type { ChatMessageHandle, OpaqueChatMessageHandle } from '../helpers/chat-message-handle';
-import { turnResponsePartToChatPart } from './turn-response-part-mapper';
+import {
+  hydrateQuestionAnswersFromAskUserToolMetadata,
+  turnResponsePartToChatPart,
+} from './turn-response-part-mapper';
 import {
   getTurnResponseParticipant,
   getTurnResponseResponseText,
@@ -119,8 +122,9 @@ export class TurnResponseHostProjectionBuilder {
     this.partStore.clearMessageHandle(handle);
     const changed = this.syncMessageMeta(handle, turn);
 
-    for (let partIndex = 0; partIndex < turn.response.parts.length; partIndex++) {
-      const part = turn.response.parts[partIndex];
+    const hydratedParts = hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts);
+    for (let partIndex = 0; partIndex < hydratedParts.length; partIndex++) {
+      const part = hydratedParts[partIndex];
       this.partStore.addPartToHandle(
         handle,
         turnResponsePartToChatPart(

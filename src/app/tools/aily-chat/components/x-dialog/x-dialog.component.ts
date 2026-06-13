@@ -649,7 +649,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   /** 点击用户消息进入编辑模式 */
   onUserMessageClick(): void {
     if (!this.canEditUserMessage || this.isEditing) return;
-    const { text, resources } = parseUserTurnTextAndResources(this.displayContent ?? this.content ?? '');
+    const { text, resources } = parseUserTurnTextAndResources(this.renderableUserContent);
     const requestResources = extractUserTurnResources(this.requestContent);
     this.editText = text;
     this.editResources = mergeUserTurnResources(resources, requestResources);
@@ -796,7 +796,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       return false;
     }
 
-    return request !== this.normalizeComparisonText(this.displayContent ?? this.content);
+    return request !== this.normalizeComparisonText(this.renderableUserContent);
   }
 
   private normalizeComparisonText(content: string | undefined): string {
@@ -808,11 +808,11 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       return null;
     }
 
-    return this.buildPreviewText(this.displayContent ?? this.content, 24);
+    return this.buildPreviewText(this.renderableUserContent, 24);
   }
 
   private get actionTurnPreviewTitle(): string | null {
-    return this.buildPreviewText(this.displayContent ?? this.content, 80);
+    return this.buildPreviewText(this.renderableUserContent, 80);
   }
 
   private buildPreviewText(content: string | undefined, maxLength: number): string | null {
@@ -834,13 +834,44 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
           request: this._turnResponse.request,
           response: this._turnResponse.response,
           rounds: this._turnResponse.rounds,
-          displayContent: this.role === 'user' ? this.content : undefined,
+          displayContent: this.role === 'user'
+            ? (this.isBlankContent(this.content)
+                ? (this._turnResponse.request.displayContent ?? this._turnResponse.request.content)
+                : this.content)
+            : undefined,
         })
       : null;
   }
 
   private get effectiveTurnContext(): DialogTurnContext | null {
     return this.turnContext ?? this.compatTurnContext;
+  }
+
+  private get renderableUserContent(): string {
+    const context = this.effectiveTurnContext;
+    if (!this.isBlankContent(context?.displayContent)) {
+      return context?.displayContent ?? '';
+    }
+    if (!this.isBlankContent(context?.request?.displayContent)) {
+      return context?.request?.displayContent ?? '';
+    }
+    if (!this.isBlankContent(this.content)) {
+      return this.content;
+    }
+
+    return context?.requestContent
+      ?? context?.request?.content
+      ?? '';
+  }
+
+  private get renderableFallbackContent(): string {
+    return this.role === 'user'
+      ? this.renderableUserContent
+      : (this.content || '');
+  }
+
+  private isBlankContent(content: string | null | undefined): boolean {
+    return typeof content !== 'string' || content.trim().length === 0;
   }
 
   private get effectiveResponseStatus(): TurnResponseTurn['response']['status'] | undefined {
@@ -911,7 +942,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       }
 
       // User 消息 & fallback：预处理后由 x-markdown 渲染
-      const content = this.content || '';
+      const content = this.renderableFallbackContent;
       this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: this.effectiveDoing });
       const processed = preprocessHistoricalDialogContent(content);
       if (processed !== this.lastRaw) {

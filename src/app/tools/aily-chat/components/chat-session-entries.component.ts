@@ -31,6 +31,7 @@ export class ChatSessionEntriesComponent {
   @Input() variant: 'list' | 'picker' = 'list';
 
   @Output() selectSession = new EventEmitter<{ sessionId: string; item: ChatSessionListItem }>();
+  @Output() preloadSession = new EventEmitter<{ sessionId: string; item: ChatSessionListItem }>();
   @Output() actionClick = new EventEmitter<{ action: string; data: ChatSessionListItem }>();
 
   get isListVariant(): boolean {
@@ -63,6 +64,10 @@ export class ChatSessionEntriesComponent {
 
   selectItem(item: ChatSessionListItem): void {
     this.selectSession.emit({ sessionId: item.sessionId, item });
+  }
+
+  preloadItem(item: ChatSessionListItem): void {
+    this.preloadSession.emit({ sessionId: item.sessionId, item });
   }
 
   triggerAction(event: MouseEvent, action: ChatSessionListAction, item: ChatSessionListItem): void {

@@ -21,7 +21,7 @@ import type {
 import { AilyHost } from '../core/host';
 import { ChatViewWriteBridge, type ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
-import type { TurnResponseTurn } from 'aily-lex/browser';
+import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 import type { ResourceItem } from '../core/chat-types';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import {
@@ -38,7 +38,7 @@ import {
 } from '../core/user-turn-action-target';
 import { extractUserTurnResources, mergeUserTurnResources } from './chat-user-turn-context';
 import type { ChatTaskActionDetail } from './chat-task-action-coordinator';
-import type { CheckpointRestoreRedoArtifact, TurnSnapshot } from '../services/edit-checkpoint.service';
+import type { TurnSnapshot } from '../services/edit-checkpoint.service';
 import type { IWorkspaceCheckpointProvider } from '../services/edit-checkpoint.service';
 import {
   type HostResponseProjection,
@@ -48,6 +48,12 @@ import {
   CheckpointReplayCoordinator,
   type CheckpointRedoExecutionResult,
 } from './checkpoint-replay-coordinator';
+import {
+  canRedoSessionCheckpointTimeline,
+  getSessionCheckpointVisibleTurnResponses,
+  redoSessionCheckpointTimeline,
+  type SessionCheckpointTimelineState,
+} from './session-checkpoint-timeline-model';
 import { appendEditActionResult } from './edit-action-result-projection';
 import {
   buildUndoActionResult,
@@ -81,6 +87,23 @@ type EditActionsContext = ChatViewWriteBridgeContext
     syncWorkspaceState?(): Promise<void> | void;
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     readCurrentViewSessionResource?(): string | null | undefined;
+    readSessionTurnResponses(sessionId: string | null | undefined): readonly TurnResponseTurn[];
+    replaceSessionModelTurnResponses?(
+      sessionId: string | null | undefined,
+      turnResponses: readonly TurnResponseTurn[],
+    ): readonly TurnResponseTurn[] | null | undefined;
+    submitRegeneratedUserTurn?(
+      sessionId: string,
+      request: {
+        readonly requestText: string;
+        readonly displayText?: string;
+        readonly requestMetadata?: TurnRequest['metadata'];
+      },
+    ): Promise<void> | void;
+    cancelCurrentRequestForSession?(
+      sessionResource: string,
+      source: 'regenerate',
+    ): Promise<boolean> | boolean;
     readonly hostResponseProjection?: HostResponseProjection | null;
     restoreSharedHostProjectionState?(
       state: HostTurnResponseState | null,
@@ -89,6 +112,17 @@ type EditActionsContext = ChatViewWriteBridgeContext
     replaceSharedHostProjectionState?(
       state: HostTurnResponseState | null,
       options: { readonly sessionId: string | null; readonly attachedView?: boolean },
+    ): void;
+    projectRestoredHostProjection?(
+      sessionId: string,
+      turnResponses: readonly TurnResponseTurn[],
+      hostProjectionState: HostTurnResponseState,
+      options?: { readonly attachedView?: boolean },
+    ): void;
+    readSessionCheckpointTimelineState?(sessionId: string | null | undefined): SessionCheckpointTimelineState | null;
+    replaceSessionCheckpointTimelineState?(
+      sessionId: string | null | undefined,
+      state: SessionCheckpointTimelineState | null,
     ): void;
   };
 
@@ -147,6 +181,10 @@ export class EditActionsHelper {
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
     this.checkpointReplayCoordinator = new CheckpointReplayCoordinator(this.ctx, this.viewWriteBridge);
+  }
+
+  hasCheckpointTimelineRedo(): boolean {
+    return canRedoSessionCheckpointTimeline(this.readCurrentSessionCheckpointTimelineState());
   }
 
   private getWorkspaceCheckpointAccess(): WorkspaceCheckpointAccess {
@@ -255,7 +293,6 @@ export class EditActionsHelper {
       emitResultMessage?: boolean;
       captureRedoTurns?: boolean;
       truncateLiveTurnResponses?: boolean;
-      truncateChatTurn?: (turnId: string) => void;
     } = {},
   ): Promise<boolean> {
     this.refreshWorkspaceCheckpointAccess();
@@ -266,7 +303,6 @@ export class EditActionsHelper {
       emitResultMessage = true,
       captureRedoTurns = true,
       truncateLiveTurnResponses = true,
-      truncateChatTurn,
     } = options;
     const truncatedTurnId = turnId ?? snapshot.turnId;
     const restoreResult = await this.checkpointReplayCoordinator.restoreCheckpoint(snapshot.checkpointId, {
@@ -274,7 +310,6 @@ export class EditActionsHelper {
       listIndex,
       captureRedoTurns,
       truncateLiveTurnResponses,
-      truncateChatTurn,
     });
 
     if (restoreResult.ok === false) {
@@ -367,9 +402,7 @@ export class EditActionsHelper {
     lastRoundId: string | undefined;
   } {
     const normalized = target ?? {};
-    const liveTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
-      ? this.ctx.lexStream.turnResponses
-      : [];
+    const liveTurnResponses = this.readCurrentSessionTurnResponses();
     const isLiveTurnId = (turnId: string | undefined): turnId is string => !!turnId && (
       liveTurnResponses.some(turn => turn.turnId === turnId)
       || this.findTurnMessageIndex(turnId) !== undefined
@@ -409,14 +442,14 @@ export class EditActionsHelper {
     const requestContent = interactionContext?.requestContent
       ?? getInteractionRequestContent(normalized)
       ?? snapshotContext?.requestContent
-      ?? (resolvedTurnId ? this.ctx.lexStream.turns.requestContent(resolvedTurnId) : undefined);
+      ?? (resolvedTurnId ? this.getSessionTurnRequestContent(resolvedTurnId) : undefined);
     const displayContent = interactionContext?.displayContent
       ?? getInteractionDisplayContent(normalized)
       ?? snapshotContext?.displayContent
-      ?? (resolvedTurnId ? this.ctx.lexStream.turns.requestContent(resolvedTurnId) : undefined);
+      ?? (resolvedTurnId ? this.getSessionTurnDisplayContent(resolvedTurnId) : undefined);
     const lastRoundId = targetRoundId
       ?? snapshotContext?.lastRoundId
-      ?? (resolvedTurnId ? this.ctx.lexStream.turns.lastRoundId(resolvedTurnId) : undefined);
+      ?? (resolvedTurnId ? this.getSessionTurnLastRoundId(resolvedTurnId) : undefined);
 
     return {
       snapshot: resolvedSnapshot,
@@ -443,8 +476,8 @@ export class EditActionsHelper {
       return resolved;
     }
 
-    const liveTurnResponses = this.ctx.lexStream.turnResponses;
-    if (!Array.isArray(liveTurnResponses) || liveTurnResponses.length === 0) {
+    const liveTurnResponses = this.readCurrentSessionTurnResponses();
+    if (liveTurnResponses.length === 0) {
       return resolved;
     }
 
@@ -465,6 +498,39 @@ export class EditActionsHelper {
 
     const assistantIndex = this.ctx.list.findIndex(message => message.turnId === turnId);
     return assistantIndex >= 0 ? assistantIndex : undefined;
+  }
+
+  private readCurrentSessionTurnResponses(): readonly TurnResponseTurn[] {
+    const sessionId = this.resolveCurrentSessionResource();
+    return sessionId ? this.ctx.readSessionTurnResponses(sessionId) : [];
+  }
+
+  private findSessionTurnResponse(turnId: string | null | undefined): TurnResponseTurn | undefined {
+    const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    if (!normalizedTurnId) {
+      return undefined;
+    }
+
+    return this.readCurrentSessionTurnResponses().find(turn => turn.turnId === normalizedTurnId);
+  }
+
+  private getSessionTurnRequestContent(turnId: string | null | undefined): string | undefined {
+    const turn = this.findSessionTurnResponse(turnId);
+    return typeof turn?.request?.content === 'string'
+      ? turn.request.content
+      : undefined;
+  }
+
+  private getSessionTurnDisplayContent(turnId: string | null | undefined): string | undefined {
+    const turn = this.findSessionTurnResponse(turnId);
+    return typeof turn?.request?.displayContent === 'string'
+      ? turn.request.displayContent
+      : this.getSessionTurnRequestContent(turnId);
+  }
+
+  private getSessionTurnLastRoundId(turnId: string | null | undefined): string | undefined {
+    const turn = this.findSessionTurnResponse(turnId);
+    return turn?.rounds?.at(-1)?.id;
   }
 
   private getTurnRoundExecutionContext(rounds: EditActionTurnTarget['rounds'] | undefined): {
@@ -608,34 +674,33 @@ export class EditActionsHelper {
 
     this.refreshWorkspaceCheckpointAccess();
 
-    const checkpointRedoArtifact = this.ctx.editCheckpointService.getCheckpointRestoreRedoArtifact?.() ?? null;
-    const checkpointRedoTurnResponses = checkpointRedoArtifact?.hostRecord?.turnResponses
-      ?? checkpointRedoArtifact?.turnResponses
-      ?? this.ctx.editCheckpointService.getCheckpointRestoreRedoTurnResponses?.()
-      ?? [];
-    const hasCheckpointRedoChat = this.ctx.editCheckpointService.hasRecoverableCheckpointRestoreRedoTurnResponses?.()
-      ?? checkpointRedoTurnResponses.length > 0;
+    const checkpointTimelineState = this.readCurrentSessionCheckpointTimelineState();
+    const checkpointRedoTimelineState = checkpointTimelineState && canRedoSessionCheckpointTimeline(checkpointTimelineState)
+      ? redoSessionCheckpointTimeline(checkpointTimelineState)
+      : null;
+    const checkpointRedoTurnResponses = checkpointRedoTimelineState
+      ? getSessionCheckpointVisibleTurnResponses(checkpointRedoTimelineState)
+      : [];
+    const hasCheckpointRedoChat = checkpointRedoTimelineState !== null && checkpointRedoTurnResponses.length > 0;
 
     if (!hasCheckpointRedoChat && !this.ctx.editCheckpointService.canRedo) {
       this.ctx.message.info('没有可重做的文件变更');
       return;
     }
 
-    const previousTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
-      ? [...this.ctx.lexStream.turnResponses]
-      : [];
+    const previousTurnResponses = [...this.readCurrentSessionTurnResponses()];
 
     if (hasCheckpointRedoChat) {
       const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpoint(
-        checkpointRedoArtifact,
-          checkpointRedoTurnResponses,
-          previousTurnResponses,
-        );
+        checkpointRedoTurnResponses,
+        previousTurnResponses,
+      );
       if (checkpointRedoResult.ok === false) {
         this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
         return;
       }
 
+      this.replaceCurrentSessionCheckpointTimelineState(checkpointRedoTimelineState);
       this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
       return;
     }
@@ -651,6 +716,20 @@ export class EditActionsHelper {
 
     this.ctx.editCheckpointService.publishCurrentSummary();
     await this.reloadAbsWorkspace();
+  }
+
+  private readCurrentSessionCheckpointTimelineState(): SessionCheckpointTimelineState | null {
+    const sessionId = this.resolveCurrentSessionResource();
+    return sessionId ? this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null : null;
+  }
+
+  private replaceCurrentSessionCheckpointTimelineState(state: SessionCheckpointTimelineState | null): void {
+    const sessionId = this.resolveCurrentSessionResource();
+    if (!sessionId) {
+      return;
+    }
+
+    this.ctx.replaceSessionCheckpointTimelineState?.(sessionId, state);
   }
 
   /**
@@ -691,9 +770,6 @@ export class EditActionsHelper {
       turnId: resolved.turnId,
       listIndex: resolved.listIndex,
       emitResultMessage,
-      truncateChatTurn: turnId => {
-        this.ctx.lexStream.turns.removeFrom(turnId);
-      },
     });
   }
 
@@ -741,9 +817,7 @@ export class EditActionsHelper {
   }
 
   private getRestoreCheckpointRequestCount(turnId: string | undefined): number {
-    const liveTurnResponses = Array.isArray(this.ctx.lexStream.turnResponses)
-      ? this.ctx.lexStream.turnResponses
-      : [];
+    const liveTurnResponses = this.readCurrentSessionTurnResponses();
 
     if (!turnId) {
       return 1;
@@ -786,6 +860,44 @@ export class EditActionsHelper {
     return { fileCount: 0 };
   }
 
+  private resolveCurrentSessionResource(): string {
+    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
+      ? this.ctx.readCurrentViewSessionResource()
+      : undefined;
+    const normalizedCurrentViewResource = typeof currentViewSessionResource === 'string'
+      ? currentViewSessionResource.trim()
+      : '';
+    if (normalizedCurrentViewResource) {
+      return normalizedCurrentViewResource;
+    }
+
+    return typeof this.ctx.sessionId === 'string'
+      ? this.ctx.sessionId.trim()
+      : '';
+  }
+
+  private async cancelPendingRequestBeforeRegenerate(): Promise<boolean> {
+    if (!this.ctx.isWaiting) {
+      return true;
+    }
+
+    const sessionResource = this.resolveCurrentSessionResource();
+    if (!sessionResource || typeof this.ctx.cancelCurrentRequestForSession !== 'function') {
+      this.ctx.message.warning('正在处理中，请稍候...');
+      return false;
+    }
+
+    const cancelled = await Promise.resolve(
+      this.ctx.cancelCurrentRequestForSession(sessionResource, 'regenerate'),
+    );
+    if (!cancelled) {
+      this.ctx.message.warning('正在处理中，请稍候...');
+      return false;
+    }
+
+    return true;
+  }
+
   /**
    * 编辑并重新发�?�?回滚到指定消息的检查点 + 用新内容重新发�?
    */
@@ -820,8 +932,11 @@ export class EditActionsHelper {
    * 不传 target 时，默认重试最新一轮�?
    */
   async regenerateTurn(target?: EditActionTurnTarget | null): Promise<void> {
-    if (this.ctx.isWaiting) { this.ctx.message.warning('正在处理中，请稍候...'); return; }
     if (!this.ctx.sessionId) { this.ctx.message.warning('会话不存在，请开始新对话'); return; }
+    const cancelledPendingRequest = await this.cancelPendingRequestBeforeRegenerate();
+    if (!cancelledPendingRequest) {
+      return;
+    }
 
     // 1. 找到目标快照
     const normalizedTarget = target ?? undefined;
@@ -841,7 +956,7 @@ export class EditActionsHelper {
     const requestContent = resolvedTarget?.requestContent
       ?? canonicalTarget?.requestContent
       ?? snapshotContext?.requestContent
-      ?? (snapshotTurnId ? this.ctx.lexStream.turns.requestContent(snapshotTurnId) : undefined);
+      ?? (snapshotTurnId ? this.getSessionTurnRequestContent(snapshotTurnId) : undefined);
     const displayContent = resolvedTarget?.displayContent
       ?? canonicalTarget?.displayContent
       ?? snapshotContext?.displayContent
@@ -855,7 +970,7 @@ export class EditActionsHelper {
       ?? canonicalTarget?.lastRoundId
       ?? snapshotContext?.lastRoundId
       ?? (normalizedTarget ? getInteractionLastRoundId(normalizedTarget) : undefined)
-      ?? (snapshotTurnId ? this.ctx.lexStream.turns.lastRoundId(snapshotTurnId) : undefined);
+      ?? (snapshotTurnId ? this.getSessionTurnLastRoundId(snapshotTurnId) : undefined);
     const regenerateTarget = this.withResolvedTurnTarget(normalizedTarget, {
       turnId: snapshotTurnId,
       requestContent,
@@ -863,16 +978,13 @@ export class EditActionsHelper {
       lastRoundId,
     });
 
-    // 2. 复用 restore checkpoint 语义处理 workspace owner；restartFrom 只负责聊天侧 turn truncate
+    // 2. 复用 restore checkpoint 的 model transaction；它负责截断并恢复 lex/model/runtime owner。
     const restored = await this.restoreCheckpointSnapshot(snapshot, {
       turnId: snapshotTurnId,
       listIndex: this.ctx.editCheckpointService.getResponseStartListIndexForSnapshot(snapshot) ?? undefined,
       emitResultMessage: false,
       captureRedoTurns: false,
-      truncateLiveTurnResponses: false,
-      truncateChatTurn: turnId => {
-        this.ctx.lexStream.turns.restartFrom(turnId);
-      },
+      truncateLiveTurnResponses: true,
     });
     if (!restored) {
       return;
@@ -890,7 +1002,16 @@ export class EditActionsHelper {
       requestContent ?? fallbackUserMsg,
       regenerateTarget,
     );
-    this.ctx.lexStream.turn.begin(nextRequest, displayContent, requestMetadata);
-    this.ctx.lexStream.turn.run(nextRequest, displayContent);
+    const sessionResource = this.resolveCurrentSessionResource();
+    if (!sessionResource || typeof this.ctx.submitRegeneratedUserTurn !== 'function') {
+      this.ctx.message.warning('会话不存在，请开始新对话');
+      return;
+    }
+
+    await this.ctx.submitRegeneratedUserTurn(sessionResource, {
+      requestText: nextRequest,
+      ...(displayContent ? { displayText: displayContent } : {}),
+      ...(requestMetadata ? { requestMetadata } : {}),
+    });
   }
 }

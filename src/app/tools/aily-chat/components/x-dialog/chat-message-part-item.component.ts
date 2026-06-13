@@ -154,7 +154,13 @@ export class ChatMessagePartItemComponent implements OnChanges {
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
 
-  private readonly questionDataCache = new WeakMap<RenderableChatPart, any>();
+  private readonly questionDataCache = new WeakMap<RenderableChatPart, {
+    questions: QuestionPart['questions'];
+    answers: QuestionPart['answers'];
+    answersSignature: string;
+    isHistory: boolean;
+    data: any;
+  }>();
   private readonly chatEngine = inject(ChatEngineService, { optional: true });
   private readonly chatService = inject(ChatService, { optional: true });
   private readonly ailyChatConfigService = inject(AilyChatConfigService, { optional: true });
@@ -278,14 +284,30 @@ export class ChatMessagePartItemComponent implements OnChanges {
       return null;
     }
 
-    let cached = this.questionDataCache.get(this.part);
-    if (!cached) {
-      const qp = this.part as QuestionPart;
-      const hasAnswers = !!qp.answers && Object.keys(qp.answers).length > 0;
-      cached = { questions: qp.questions, answers: qp.answers, isHistory: qp.isHistory || hasAnswers };
-      this.questionDataCache.set(this.part, cached);
+    const qp = this.part as QuestionPart;
+    const hasAnswers = !!qp.answers && Object.keys(qp.answers).length > 0;
+    const isHistory = !!qp.isHistory || hasAnswers;
+    const answersSignature = stringifyQuestionAnswers(qp.answers);
+    const cached = this.questionDataCache.get(this.part);
+    if (
+      cached
+      && cached.questions === qp.questions
+      && cached.answers === qp.answers
+      && cached.answersSignature === answersSignature
+      && cached.isHistory === isHistory
+    ) {
+      return cached.data;
     }
-    return cached;
+
+    const data = { questions: qp.questions, answers: qp.answers, isHistory };
+    this.questionDataCache.set(this.part, {
+      questions: qp.questions,
+      answers: qp.answers,
+      answersSignature,
+      isHistory,
+      data,
+    });
+    return data;
   }
 
   shouldRenderInlineQuestion(): boolean {
@@ -299,14 +321,22 @@ export class ChatMessagePartItemComponent implements OnChanges {
     }
 
     const answers = data.answers;
-    return (!!answers && Object.keys(answers).length > 0) || this.hasActiveInlineQuestion();
+    if (!!answers && Object.keys(answers).length > 0) {
+      return true;
+    }
+
+    return Array.isArray(data.questions) && data.questions.length > 0;
   }
 
   isInteractiveInlineQuestion(): boolean {
-    return this.hasActiveInlineQuestion();
+    return false;
   }
 
   onInlineQuestionAnswered(result: { answers: Record<string, { selected: string[]; freeText: string | null; skipped: boolean }> }): void {
+    if (!this.isInteractiveInlineQuestion()) {
+      return;
+    }
+
     if (!this.sessionId || !this.hasActiveInlineQuestion()) {
       return;
     }
@@ -461,6 +491,18 @@ function compactRecord(record: Record<string, string | undefined>): Record<strin
   });
 
   return Object.fromEntries(entries);
+}
+
+function stringifyQuestionAnswers(answers: QuestionPart['answers']): string {
+  if (!answers || Object.keys(answers).length === 0) {
+    return '';
+  }
+
+  try {
+    return JSON.stringify(answers);
+  } catch {
+    return Object.keys(answers).join('\n');
+  }
 }
 
 function isContinueOnErrorConfirmation(value: unknown): value is ContinueOnErrorConfirmationData {

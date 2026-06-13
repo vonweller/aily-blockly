@@ -37,7 +37,8 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       [attr.data-kind]="item.kind"
       [class.cag-item-first]="first"
       [class.cag-item-last]="last"
-      [class.cag-item-only]="only">
+      [class.cag-item-only]="only"
+      [class.cag-item-pending-approval]="isPendingApprovalItem()">
       <div class="cag-item-icon-shell ccenter" [class.loading-icon]="item.kind !== 'thinking' && item.isSpinning" [class.lloading]="item.kind !== 'thinking' && item.isSpinning">
         <i [class]="item.iconClass"
            [class.cag-spin]="item.kind === 'thinking' && item.isSpinning"
@@ -684,6 +685,12 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
     }
 
     .cag-item.cag-item-only::before {
+      background: none;
+      mask-image: none;
+      -webkit-mask-image: none;
+    }
+
+    .cag-item.cag-item-pending-approval::before {
       background: none;
       mask-image: none;
       -webkit-mask-image: none;
@@ -1963,6 +1970,10 @@ export class ChatActivityItemComponent implements OnChanges {
 
   shouldRenderInlineApproval(): boolean {
     return !!this.item?.approval && (this.item.approval.resolved === true || this.hasActiveInlineApproval());
+  }
+
+  isPendingApprovalItem(): boolean {
+    return !!this.item?.approval && this.item.approval.resolved !== true;
   }
 
   isInteractiveInlineApproval(): boolean {

@@ -1,22 +1,41 @@
 :host {
   display: block;
+  width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-:host ::ng-deep .tool-container {
+:host ::ng-deep .tool-container,
+:host ::ng-deep .sub-window-box {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
-:host ::ng-deep .tool-container > .content {
+:host ::ng-deep .tool-container > .content,
+:host ::ng-deep .sub-window-box > .content {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+:host ::ng-deep .tool-container .header .title > aily-chat-session-title-control,
+:host ::ng-deep .sub-window-box .header .title > aily-chat-session-title-control {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -49,6 +68,9 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   /* 占用剩余空间，适应TODO面板高度变化 */
   min-height: 0;
   /* 确保可以收缩 */
@@ -59,6 +81,9 @@
 .chat-main-layout {
   display: flex;
   flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 
@@ -198,6 +223,8 @@
 
   .interactive-input-part > .chat-input-notification-container,
   .interactive-input-part > .chat-pending-followup-widget-container,
+  .interactive-input-part > .chat-question-carousel-widget-container,
+  .interactive-input-part > .chat-tool-confirmation-carousel-container,
   .interactive-input-part > .chat-todo-list-widget-container,
   .interactive-input-part > .chat-editing-session {
     width: 100%;
@@ -213,6 +240,8 @@
 
   .interactive-input-part:has(> .chat-input-notification-container.has-notification) .input-box,
   .interactive-input-part:has(> .chat-pending-followup-widget-container.has-pending) .input-box,
+  .interactive-input-part:has(> aily-chat-runtime-question-carousel.chat-question-carousel-widget-container.has-question) .input-box,
+  .interactive-input-part:has(> aily-chat-runtime-confirmation-carousel.chat-tool-confirmation-carousel-container.has-confirmation) .input-box,
   .interactive-input-part:has(> .chat-todo-list-widget-container > app-floating-todo.has-todos) .input-box,
   .interactive-input-part:has(> .chat-editing-session > app-aily-edits-viewer.has-summary) .input-box {
     margin-top: 0;
@@ -221,9 +250,21 @@
   }
 
   .interactive-input-part > .chat-input-notification-container.has-notification + .chat-todo-list-widget-container > app-floating-todo.has-todos,
+  .interactive-input-part > .chat-input-notification-container.has-notification + aily-chat-runtime-question-carousel.chat-question-carousel-widget-container.has-question,
+  .interactive-input-part > .chat-input-notification-container.has-notification + aily-chat-runtime-confirmation-carousel.chat-tool-confirmation-carousel-container.has-confirmation,
   .interactive-input-part > .chat-input-notification-container.has-notification + .chat-editing-session > app-aily-edits-viewer.has-summary,
+  .interactive-input-part > aily-chat-runtime-question-carousel.chat-question-carousel-widget-container.has-question ~ .chat-todo-list-widget-container > app-floating-todo.has-todos,
+  .interactive-input-part > aily-chat-runtime-confirmation-carousel.chat-tool-confirmation-carousel-container.has-confirmation ~ .chat-todo-list-widget-container > app-floating-todo.has-todos,
   .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) + .chat-editing-session > app-aily-edits-viewer.has-summary {
     --aily-chat-widget-top-radius: 0px;
+  }
+
+  .interactive-input-part > aily-chat-runtime-question-carousel.chat-question-carousel-widget-container:not(.has-question) {
+    display: none;
+  }
+
+  .interactive-input-part > aily-chat-runtime-confirmation-carousel.chat-tool-confirmation-carousel-container:not(.has-confirmation) {
+    display: none;
   }
 
   .interactive-input-part > .chat-input-notification-container {
@@ -837,6 +878,26 @@
     margin-top: 5px;
   }
 
+  &.session-loading-surface-guide {
+    min-height: 220px;
+
+    i {
+      font-size: 28px;
+      margin-bottom: 8px;
+      color: var(--aily-text-secondary, #999);
+      animation: aily-chat-session-loading-spin 1s linear infinite;
+    }
+
+    .session-loading-title {
+      max-width: min(100%, 420px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--aily-text-primary, inherit);
+      font-size: 14px;
+    }
+  }
+
   .setup-suggestion-card,
   .entry-session-list,
   .entry-session-actions {
@@ -986,6 +1047,16 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+  }
+}
+
+@keyframes aily-chat-session-loading-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
   }
 }
 
