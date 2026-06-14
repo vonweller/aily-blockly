@@ -28,7 +28,6 @@ import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
 import { createBlocklyAgentFileProvider } from '../core/blockly-agent-file-provider';
 import { createBlocklyInstructionFileProvider } from '../core/blockly-instruction-file-provider';
-import { createBlocklyClaudeHookCustomizationProvider } from '../core/blockly-claude-hook-customization-provider';
 import { createBlocklyHookCustomizationProvider } from '../core/blockly-hook-customization-provider';
 import { createBlocklyPluginCustomizationProvider } from '../core/blockly-plugin-customization-provider';
 import { createBlocklySkillCustomizationProvider } from '../core/blockly-skill-customization-provider';
@@ -1319,30 +1318,10 @@ export function bootstrapBlocklyLexAgent(
     projectRootPath: agentFolderProjectRoot,
     configSource: ctx.ailyChatConfigService,
   });
-  const claudeProjectInstructionFileProvider = createBlocklyInstructionFileProvider({
-    source: 'project',
-    projectRootPath: agentFolderProjectRoot,
-    configSource: ctx.ailyChatConfigService,
-    profile: 'claude',
-  });
-  const claudeUserInstructionFileProvider = createBlocklyInstructionFileProvider({
-    source: 'user',
-    projectRootPath: agentFolderProjectRoot,
-    configSource: ctx.ailyChatConfigService,
-    profile: 'claude',
-  });
   let agent: BlocklyLexAgentInstance | undefined;
   const skillCustomizationProvider = createBlocklySkillCustomizationProvider();
   const hookCustomizationProvider = createBlocklyHookCustomizationProvider({
     getAgent: () => agent,
-  });
-  const claudeProjectHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
-    source: 'project',
-    projectRootPath: agentFolderProjectRoot,
-  });
-  const claudeUserHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
-    source: 'user',
-    projectRootPath: agentFolderProjectRoot,
   });
   const pluginCustomizationProvider = createBlocklyPluginCustomizationProvider({
     getAgent: () => agent,
@@ -1372,14 +1351,10 @@ export function bootstrapBlocklyLexAgent(
     ], [
       { source: 'project', provider: projectInstructionFileProvider },
       { source: 'user', provider: userInstructionFileProvider },
-      { source: 'project', provider: claudeProjectInstructionFileProvider },
-      { source: 'user', provider: claudeUserInstructionFileProvider },
     ], [
       { provider: skillCustomizationProvider },
     ], [
       { provider: hookCustomizationProvider },
-      { provider: claudeProjectHookCustomizationProvider },
-      { provider: claudeUserHookCustomizationProvider },
     ], [
       { provider: pluginCustomizationProvider },
     ], 'aily-agent'),

@@ -90,10 +90,10 @@ const MERGED_TOGGLE_WIDTH = 36;
 const PARALLEL_TIME_THRESHOLD_MS = 5_000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const SUBGRAPH_COLORS = [
-  'var(--vscode-charts-purple, #b267e6)',
-  'var(--vscode-charts-blue, #3dc9b0)',
-  'var(--vscode-charts-yellow, #e5c07b)',
-  'var(--vscode-charts-orange, #d19a66)',
+  'var(--aily-chart-purple, #b267e6)',
+  'var(--aily-chart-blue, #3dc9b0)',
+  'var(--aily-chart-yellow, #e5c07b)',
+  'var(--aily-chart-orange, #d19a66)',
 ];
 
 export function layoutHostSessionDebugFlowGraph(
@@ -699,7 +699,7 @@ function renderSubgraphs(
       y: subgraph.y + SUBGRAPH_HEADER_HEIGHT / 2 + 4,
       'font-size': SUBLABEL_FONT_SIZE,
       fill: color,
-      'font-family': 'var(--vscode-font-family, sans-serif)',
+      'font-family': 'var(--aily-font-family, sans-serif)',
       'font-weight': '600',
     });
     headerText.textContent = `${isCollapsed ? '▶' : '▼'} ${subgraph.label}`;
@@ -712,8 +712,8 @@ function renderSubgraphs(
         x: subgraph.x + subgraph.width / 2,
         y: subgraph.y + SUBGRAPH_HEADER_HEIGHT + SUBGRAPH_PADDING + 4,
         'font-size': SUBLABEL_FONT_SIZE,
-        fill: 'var(--vscode-descriptionForeground, #8b949e)',
-        'font-family': 'var(--vscode-font-family, sans-serif)',
+        fill: 'var(--aily-text-muted, #8b949e)',
+        'font-family': 'var(--aily-font-family, sans-serif)',
         'font-style': 'italic',
         'text-anchor': 'middle',
       });
@@ -728,7 +728,7 @@ function renderSubgraphs(
 function renderEdges(svg: SVGElement, edges: readonly HostSessionDebugLayoutEdge[]): void {
   const strokeAttrs = {
     fill: 'none',
-    stroke: 'var(--vscode-descriptionForeground, #8b949e)',
+    stroke: 'var(--aily-text-muted, #8b949e)',
     'stroke-width': EDGE_STROKE_WIDTH,
     'stroke-linecap': 'round',
   };
@@ -779,8 +779,8 @@ function renderNodes(
   nodes: readonly HostSessionDebugLayoutNode[],
   focusableElements: Map<string, SVGElement>,
 ): void {
-  const fontFamily = 'var(--vscode-font-family, sans-serif)';
-  const nodeFill = 'var(--vscode-editor-background, var(--vscode-editorWidget-background, #252526))';
+  const fontFamily = 'var(--aily-font-family, sans-serif)';
+  const nodeFill = 'var(--aily-surface-primary, #252526)';
 
   for (const node of nodes) {
     const group = document.createElementNS(SVG_NS, 'g');
@@ -822,7 +822,7 @@ function renderNodes(
       rx: NODE_BORDER_RADIUS + focusOffset,
       ry: NODE_BORDER_RADIUS + focusOffset,
       fill: 'none',
-      stroke: 'var(--vscode-focusBorder, #58a6ff)',
+      stroke: 'var(--aily-focus-border, #58a6ff)',
       'stroke-width': 2,
     }));
 
@@ -849,7 +849,7 @@ function renderNodes(
         x: textX,
         y: node.y + NODE_PADDING_V + SUBLABEL_FONT_SIZE,
         'font-size': SUBLABEL_FONT_SIZE,
-        fill: 'var(--vscode-descriptionForeground, #8b949e)',
+        fill: 'var(--aily-text-muted, #8b949e)',
         'font-family': fontFamily,
         'clip-path': `url(#${clipId})`,
       });
@@ -860,7 +860,7 @@ function renderNodes(
         x: textX,
         y: node.y + node.height - NODE_PADDING_V - 2,
         'font-size': FONT_SIZE,
-        fill: 'var(--vscode-foreground, #e6edf3)',
+        fill: 'var(--aily-text-primary, #e6edf3)',
         'font-family': fontFamily,
         'clip-path': `url(#${clipId})`,
       });
@@ -871,7 +871,7 @@ function renderNodes(
         x: textX,
         y: node.y + NODE_PADDING_V + FONT_SIZE,
         'font-size': FONT_SIZE,
-        fill: 'var(--vscode-foreground, #e6edf3)',
+        fill: 'var(--aily-text-primary, #e6edf3)',
         'font-family': fontFamily,
         'clip-path': `url(#${clipId})`,
       });
@@ -882,7 +882,7 @@ function renderNodes(
         x: textX,
         y: node.y + node.height - NODE_PADDING_V,
         'font-size': SUBLABEL_FONT_SIZE,
-        fill: 'var(--vscode-descriptionForeground, #8b949e)',
+        fill: 'var(--aily-text-muted, #8b949e)',
         'font-family': fontFamily,
         'clip-path': `url(#${clipId})`,
       });
@@ -893,7 +893,7 @@ function renderNodes(
         x: textX,
         y: node.y + node.height / 2 + FONT_SIZE / 2 - 1,
         'font-size': FONT_SIZE,
-        fill: 'var(--vscode-foreground, #e6edf3)',
+        fill: 'var(--aily-text-primary, #e6edf3)',
         'font-family': fontFamily,
         'clip-path': `url(#${clipId})`,
       });
@@ -921,7 +921,7 @@ function renderMergedToggle(group: Element, node: HostSessionDebugLayoutNode, co
     y1: node.y + 4,
     x2: toggleX,
     y2: node.y + node.height - 4,
-    stroke: 'var(--vscode-descriptionForeground, #8b949e)',
+    stroke: 'var(--aily-text-muted, #8b949e)',
     'stroke-width': 0.5,
     opacity: 0.4,
   }));
@@ -951,22 +951,22 @@ function renderMergedToggle(group: Element, node: HostSessionDebugLayoutNode, co
 
 function getNodeColor(kind: HostSessionDebugFlowNode['kind'], isError?: boolean): string {
   if (isError) {
-    return 'var(--vscode-errorForeground, #f85149)';
+    return 'var(--aily-color-danger, #f85149)';
   }
 
   switch (kind) {
     case 'userMessage':
-      return 'var(--vscode-textLink-foreground, #58a6ff)';
+      return 'var(--aily-color-accent, #58a6ff)';
     case 'modelTurn':
-      return 'var(--vscode-charts-blue, #58a6ff)';
+      return 'var(--aily-chart-blue, #58a6ff)';
     case 'toolCall':
-      return 'var(--vscode-testing-iconPassed, #73c991)';
+      return 'var(--aily-color-success, #73c991)';
     case 'subagentInvocation':
-      return 'var(--vscode-charts-purple, #b267e6)';
+      return 'var(--aily-chart-purple, #b267e6)';
     case 'agentResponse':
-      return 'var(--vscode-foreground, #e6edf3)';
+      return 'var(--aily-text-primary, #e6edf3)';
     case 'generic':
-      return 'var(--vscode-descriptionForeground, #8b949e)';
+      return 'var(--aily-text-muted, #8b949e)';
   }
 }
 

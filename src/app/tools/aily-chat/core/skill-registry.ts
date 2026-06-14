@@ -7,10 +7,10 @@
  * 扫描来源（按优先级从低到高，同名后者覆盖前者）：
  * 0. Builtin Skills: ${rendererPath}/skills/          (随应用安装包分发，public/skills/)
  * 1. Global Skills:  ${AppDataPath}/aily-skills/      (用户全局自定义)
- * 2. Imported Global: ${userHome}/.claude/skills/     (外部 profile skills)
+ * 2. Configured User: userSkillFolders                (显式配置)
  * 3. Project Skills: ${projectRoot}/.aily/skills/     (项目专属)
  * 4. Cross-client:   ${projectRoot}/.agents/skills/   (规范推荐，跨客户端)
- * 5. Imported Project: ${projectRoot}/.claude/skills/ (外部 profile skills)
+ * 5. Configured Project: projectSkillFolders          (显式配置)
  */
 
 import {
@@ -213,7 +213,7 @@ class SkillRegistryImpl {
 
   /**
    * 扫描所有来源的 Skills。
-  * 扫描顺序：builtin → 全局 aily-skills → 全局 .claude/skills → 项目 .aily/skills/ → 项目 .agents/skills/ → 项目 .claude/skills/
+   * 扫描顺序：builtin → 全局 aily-skills → 配置的用户目录 → 项目 .aily/skills/ → 项目 .agents/skills/ → 配置的项目目录
    * 同名 skill 后扫描的覆盖先扫描的（项目级优先于全局优先于内置）。
    */
   async initialize(projectRoot?: string, options: SkillRegistryInitializeOptions = {}): Promise<void> {
@@ -257,12 +257,6 @@ class SkillRegistryImpl {
       this.scanDirectory(globalDir, { type: 'user' });
     }
 
-    // 2. 加载外部 profile 全局 skills（用户 home/.claude/skills）
-    const claudeGlobalDir = this.getClaudeGlobalSkillsDir();
-    if (claudeGlobalDir) {
-      this.scanDirectory(claudeGlobalDir, { type: 'user' });
-    }
-
     for (const userSkillDir of this.resolveConfiguredSkillDirectories(
       this._initializationOptions.userSkillFolders,
       'user',
@@ -282,12 +276,6 @@ class SkillRegistryImpl {
     if (projectRoot) {
       const agentsSkillsDir = host.path.join(projectRoot, '.agents', 'skills');
       this.scanDirectory(agentsSkillsDir, { type: 'project', projectRoot });
-    }
-
-    // 5. 加载项目 .claude/skills/（外部 profile skills 目录）
-    if (projectRoot) {
-      const claudeSkillsDir = host.path.join(projectRoot, '.claude', 'skills');
-      this.scanDirectory(claudeSkillsDir, { type: 'project', projectRoot });
     }
 
     for (const projectSkillDir of this.resolveConfiguredSkillDirectories(
@@ -424,14 +412,6 @@ class SkillRegistryImpl {
     const appDataPath = host.path?.getAppDataPath?.();
     if (!appDataPath) return null;
     return host.path.join(appDataPath, 'aily-skills');
-  }
-
-  /** 外部 profile 全局 skills 目录：${userHome}/.claude/skills/ */
-  private getClaudeGlobalSkillsDir(): string | null {
-    const host = AilyHost.get();
-    const userHome = host.path?.getUserHome?.();
-    if (!userHome) return null;
-    return host.path.join(userHome, '.claude', 'skills');
   }
 
   private normalizeInitializationOptions(options: SkillRegistryInitializeOptions | undefined): SkillRegistryInitializeOptions {
@@ -1120,11 +1100,6 @@ class SkillRegistryImpl {
       roots.push(globalDir);
     }
 
-    const claudeGlobalDir = this.getClaudeGlobalSkillsDir();
-    if (claudeGlobalDir) {
-      roots.push(claudeGlobalDir);
-    }
-
     roots.push(...this.resolveConfiguredSkillDirectories(
       this._initializationOptions.userSkillFolders,
       'user',
@@ -1136,7 +1111,6 @@ class SkillRegistryImpl {
       roots.push(
         host.path.join(projectRoot, '.aily', 'skills'),
         host.path.join(projectRoot, '.agents', 'skills'),
-        host.path.join(projectRoot, '.claude', 'skills'),
       );
     }
 

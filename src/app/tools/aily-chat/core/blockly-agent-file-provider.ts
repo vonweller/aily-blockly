@@ -18,8 +18,8 @@ export interface BlocklyAgentFileProviderOptions {
   readonly configSource?: BlocklyAgentFileProviderConfigSource;
 }
 
-export const DEFAULT_PROJECT_AGENT_SOURCE_FOLDERS = ['.aily/agents', '.claude/agents'] as const;
-export const DEFAULT_USER_AGENT_SOURCE_FOLDERS = ['~/.aily/agents', '~/.claude/agents'] as const;
+export const DEFAULT_PROJECT_AGENT_SOURCE_FOLDERS = ['.aily/agents'] as const;
+export const DEFAULT_USER_AGENT_SOURCE_FOLDERS = ['~/.aily/agents'] as const;
 
 const LEGACY_AGENT_FILE_EXTENSION = '.chatmode.md';
 const AGENT_FILE_EXTENSION = '.agent.md';
@@ -60,8 +60,7 @@ function shouldIncludeAgentFile(folderPath: string, fileName: string, _source: B
 
 function isCanonicalAgentFolder(folderPath: string): boolean {
   const normalized = normalizeFilesystemPath(folderPath);
-  return normalized.endsWith('/.aily/agents')
-    || normalized.endsWith('/.claude/agents');
+  return normalized.endsWith('/.aily/agents');
 }
 
 function normalizeFilesystemPath(value: string): string {
