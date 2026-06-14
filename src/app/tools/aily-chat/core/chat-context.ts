@@ -177,7 +177,7 @@ export interface IChatCoordination {
   /** 将 lex runtime 当前已注册 agent 列表同步给视图层。 */
   syncRegisteredAgentNames?(agentNames: readonly string[]): void;
   /** 发送消息 */
-  send(sender: string, content: string, clear?: boolean): Promise<void>;
+  send(sender: string, content: string, clear?: boolean, sessionId?: string | null): Promise<void>;
   /** 应用延迟的模型/模式切换 */
   applyPendingSwitch(sessionId?: string | null): Promise<void>;
   /** 工具审批桥接（委托到 interaction） */

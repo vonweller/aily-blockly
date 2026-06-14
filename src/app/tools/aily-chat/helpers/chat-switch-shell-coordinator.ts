@@ -1,7 +1,11 @@
 import type { IMenuItem } from '../../../configs/menu.config';
 
 import { resolveChatSurfaceModeId } from '../core/chat-mode';
-import { CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID } from './chat-configure-custom-agents-action';
+import {
+  CHAT_CUSTOM_AGENT_EDIT_ACTION_ID,
+  CHAT_CUSTOM_AGENT_VIEW_ACTION_ID,
+  CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
+} from './chat-configure-custom-agents-action';
 import type { ModelConfig } from '../services/chat.service';
 
 interface MenuManagerLike {
@@ -37,6 +41,16 @@ export class ChatSwitchShellCoordinator {
       switchToMode: (mode: string) => void | Promise<void>;
       switchToCustomAgent: (selection: { readonly modeId?: string; readonly customAgentTarget?: string }) => void | Promise<void>;
       configureCustomAgents: () => void | Promise<void>;
+      openCustomAgentSource?: (
+        source: {
+          readonly id?: string;
+          readonly uri?: string;
+          readonly source?: string;
+          readonly name?: string;
+          readonly target?: string;
+        },
+        intent: 'view' | 'edit',
+      ) => boolean | void | Promise<boolean | void>;
       updatePermissionPreset: (preset: string) => void | Promise<void>;
       switchToModel: (model: ModelConfig) => void | Promise<void>;
       switchToModelConfiguration: (
@@ -102,6 +116,34 @@ export class ChatSwitchShellCoordinator {
     }
   }
 
+  modeMenuActionClick(payload: { readonly action?: string; readonly item?: IMenuItem } | IMenuItem): void {
+    const action = typeof (payload as { readonly action?: unknown }).action === 'string'
+      ? (payload as { readonly action: string }).action
+      : '';
+    const item = ((payload as { readonly item?: IMenuItem }).item ?? payload) as IMenuItem;
+
+    if (action === CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID) {
+      this.deps.menuManager.showMode = false;
+      void this.callbacks.configureCustomAgents();
+      return;
+    }
+
+    if (action !== CHAT_CUSTOM_AGENT_VIEW_ACTION_ID && action !== CHAT_CUSTOM_AGENT_EDIT_ACTION_ID) {
+      return;
+    }
+
+    const source = readCustomAgentSource(item);
+    if (!source) {
+      return;
+    }
+
+    this.deps.menuManager.showMode = false;
+    void this.callbacks.openCustomAgentSource?.(
+      source,
+      action === CHAT_CUSTOM_AGENT_EDIT_ACTION_ID ? 'edit' : 'view',
+    );
+  }
+
   modelMenuClick(item: IMenuItem): void {
     this.deps.menuManager.showModelMenu = false;
 
@@ -152,4 +194,28 @@ export class ChatSwitchShellCoordinator {
 
     void this.callbacks.updatePermissionPreset(action);
   }
+}
+
+function readCustomAgentSource(item: IMenuItem | null | undefined): {
+  readonly id?: string;
+  readonly uri?: string;
+  readonly source?: string;
+  readonly name?: string;
+  readonly target?: string;
+} | undefined {
+  const value = item?.data?.customAgentSource;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const resolved = {
+    ...(typeof source['id'] === 'string' && source['id'].trim() ? { id: source['id'].trim() } : {}),
+    ...(typeof source['uri'] === 'string' && source['uri'].trim() ? { uri: source['uri'].trim() } : {}),
+    ...(typeof source['source'] === 'string' && source['source'].trim() ? { source: source['source'].trim() } : {}),
+    ...(typeof source['name'] === 'string' && source['name'].trim() ? { name: source['name'].trim() } : {}),
+    ...(typeof source['target'] === 'string' && source['target'].trim() ? { target: source['target'].trim() } : {}),
+  };
+
+  return Object.keys(resolved).length > 0 ? resolved : undefined;
 }

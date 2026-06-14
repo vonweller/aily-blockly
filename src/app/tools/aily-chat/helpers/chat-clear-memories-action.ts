@@ -1,4 +1,4 @@
-export const CHAT_CLEAR_MEMORIES_ACTION_ID = 'github.copilot.chat.tools.memory.clearMemories';
+export const CHAT_CLEAR_MEMORIES_ACTION_ID = 'aily.chat.tools.memory.clearMemories';
 export const CHAT_CLEAR_MEMORIES_ACTION_LABEL = 'Clear Memories';
 
 interface ChatClearMemoriesActionContext {

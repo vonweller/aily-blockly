@@ -57,7 +57,7 @@ import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordina
 import { ChatRequestController } from './helpers/chat-request-controller';
 import type { ChatPendingRequestKind, PendingFollowupRequest } from './helpers/chat-pending-request';
 import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
-import { ChatInputHistoryNavigator } from './helpers/chat-input-history-navigator';
+import { ChatInputHistoryNavigator, type ChatInputHistoryEntry } from './helpers/chat-input-history-navigator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
 import { ChatActionRegistry } from './helpers/chat-action-registry';
@@ -66,6 +66,7 @@ import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helpe
 import { ChatMemoryShellCoordinator } from './helpers/chat-memory-shell-coordinator';
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
+import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -84,8 +85,8 @@ import { AilyChatDebugLogsComponent } from './components/aily-chat-debug-logs/ai
 import { AilyChatSettingsComponent } from './components/settings/settings.component';
 import { AilyChatDebugViewerComponent } from './components/aily-chat-debug-viewer/aily-chat-debug-viewer.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
-import { ChatRuntimeQuestionCarouselComponent } from './components/chat-runtime-question-carousel.component';
 import { ChatRuntimeConfirmationCarouselComponent } from './components/chat-runtime-confirmation-carousel.component';
+import { ChatRuntimeQuestionCarouselComponent } from './components/chat-runtime-question-carousel.component';
 import { ChatRuntimePlanReviewComponent } from './components/chat-runtime-plan-review.component';
 import { ChatSessionListComponent } from './components/chat-session-list.component';
 import { ChatSessionPickerComponent } from './components/chat-session-picker.component';
@@ -154,8 +155,8 @@ interface PendingFollowupSection {
     AilyChatSettingsComponent,
     AilyChatDebugViewerComponent,
     ChatInputPartHostComponent,
-    ChatRuntimeQuestionCarouselComponent,
     ChatRuntimeConfirmationCarouselComponent,
+    ChatRuntimeQuestionCarouselComponent,
     ChatRuntimePlanReviewComponent,
     ChatSessionListComponent,
     ChatSessionPickerComponent,
@@ -208,15 +209,11 @@ export class AilyChatComponent implements OnDestroy {
   private sessionViewportResizeObserver: ResizeObserver | null = null;
   private observedDialogsElement: HTMLElement | null = null;
   private observedSessionViewportElement: HTMLElement | null = null;
-  private pendingSessionViewportMeasureFrameId: number | null = null;
-  private readonly inputHistory = new ChatInputHistoryNavigator([], (entries) => this.saveComposerInputHistory(entries));
-  private inputHistoryStorageKey = '';
   private readonly rememberedFullAccessSessions = new Set<string>();
+  private readonly inputHistoryNavigator = new ChatInputHistoryNavigator([], entries => this.persistInputHistoryEntries(entries));
+  private inputHistoryStorageKey: string | null = null;
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
-  private readonly toolOpenSubscription: Subscription;
-  private sessionSwitchLoadRequestId = 0;
-  private sessionSwitchLoadTimerId: number | null = null;
   private pendingFollowupEditState: {
     readonly sessionId: string;
     readonly requestId: string;
@@ -274,11 +271,6 @@ export class AilyChatComponent implements OnDestroy {
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
-    });
-    this.toolOpenSubscription = this.uiService.actionSubject.subscribe((action: { action?: string; type?: string; data?: string }) => {
-      if (action?.action === 'open' && action?.type === 'tool' && action?.data === 'aily-chat') {
-        this.engine.scheduleComposerInputFocus();
-      }
     });
     // 注册 OnPush CD 回调 — viewAdapter 每次 flush/appendImmediate 后调用 markForCheck
     this.engine.setCdCallback(() => {
@@ -351,7 +343,7 @@ export class AilyChatComponent implements OnDestroy {
       },
       isWaiting: () => this.vm.isWaiting,
       getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
-      navigateInputHistory: (direction, currentValue) => this.navigateComposerInputHistory(direction, currentValue),
+      navigateInputHistory: (direction, currentValue) => this.navigateInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
       getTextareaRef: () => this.chatTextarea,
     });
@@ -372,7 +364,7 @@ export class AilyChatComponent implements OnDestroy {
         return host.project.currentProjectPath || host.project.projectRootPath || this.projectService.currentProjectPath || this.projectService.projectRootPath || '';
       },
       getSessionId: () => this.vm.sessionId,
-      getCopilotMemoryEnabled: () => this.ailyChatConfigService.copilotMemoryEnabled === true,
+      getRepositoryMemoryEnabled: () => this.ailyChatConfigService.repositoryMemoryEnabled === true,
       notifyInfo: (text) => this.message.info(text),
       notifyError: (text) => this.message.error(text),
     });
@@ -519,17 +511,14 @@ export class AilyChatComponent implements OnDestroy {
       return false;
     }
 
-    this.ensureComposerInputHistoryLoaded();
-    const inputBeforeSubmit = this.vm.inputValue;
+    const submittedText = this.vm.inputValue.trim();
     const queueKind = options?.queueKind ?? this.getCurrentPendingFollowupEditKind() ?? undefined;
     const submitted = await this.submitShellCoordinator.submitCurrentInput(
       queueKind ? { queueKind } : undefined,
     );
 
     if (submitted) {
-      if (inputBeforeSubmit.trim().length > 0) {
-        this.inputHistory.append({ inputText: inputBeforeSubmit });
-      }
+      this.recordSubmittedInputHistory(submittedText);
       this.pendingFollowupEditState = null;
       this.cdr.markForCheck();
     }
@@ -537,79 +526,84 @@ export class AilyChatComponent implements OnDestroy {
     return submitted;
   }
 
-  private navigateComposerInputHistory(
-    direction: 'previous' | 'next',
-    currentValue: string,
-  ): string | null {
-    this.ensureComposerInputHistoryLoaded();
+  private navigateInputHistory(direction: 'previous' | 'next', currentValue: string): string | null {
+    this.ensureInputHistoryLoaded();
 
-    if (direction === 'previous' && this.inputHistory.isAtStart()) {
-      return null;
-    }
-
-    if (direction === 'next' && this.inputHistory.isAtEnd()) {
-      return null;
-    }
-
-    if (currentValue.trim().length > 0) {
-      this.inputHistory.overlay({ inputText: currentValue });
+    if ((currentValue || '').trim().length > 0) {
+      this.inputHistoryNavigator.overlay({ inputText: currentValue });
     }
 
     const entry = direction === 'previous'
-      ? this.inputHistory.previous()
-      : this.inputHistory.next();
-
-    return entry?.inputText ?? '';
+      ? this.inputHistoryNavigator.previous()
+      : this.inputHistoryNavigator.next();
+    return typeof entry?.inputText === 'string' ? entry.inputText : null;
   }
 
-  private ensureComposerInputHistoryLoaded(): void {
-    const key = this.resolveComposerInputHistoryStorageKey();
-    if (key === this.inputHistoryStorageKey) {
+  private recordSubmittedInputHistory(inputText: string): void {
+    const normalizedText = inputText.trim();
+    if (!normalizedText) {
       return;
     }
 
-    this.inputHistoryStorageKey = key;
-    this.inputHistory.replaceEntries(this.loadComposerInputHistory(key));
+    this.ensureInputHistoryLoaded();
+    this.inputHistoryNavigator.append({ inputText: normalizedText });
   }
 
-  private resolveComposerInputHistoryStorageKey(): string {
-    const projectPath = this.projectService.currentProjectPath
-      || this.projectService.projectRootPath
-      || '';
-    const scope = projectPath.trim() || 'global';
-    return `aily-chat.input-history.v1:${scope}`;
+  private ensureInputHistoryLoaded(): void {
+    const storageKey = this.resolveInputHistoryStorageKey();
+    if (this.inputHistoryStorageKey === storageKey) {
+      return;
+    }
+
+    this.inputHistoryStorageKey = storageKey;
+    this.inputHistoryNavigator.replaceEntries(this.readInputHistoryEntries(storageKey));
   }
 
-  private loadComposerInputHistory(key: string): Array<{ inputText: string }> {
+  private persistInputHistoryEntries(entries: readonly ChatInputHistoryEntry[]): void {
+    const storageKey = this.inputHistoryStorageKey ?? this.resolveInputHistoryStorageKey();
+    this.inputHistoryStorageKey = storageKey;
+
     try {
-      const raw = window.localStorage?.getItem(key);
-      if (!raw) {
-        return [];
-      }
-      const parsed = JSON.parse(raw) as { entries?: unknown };
-      if (!Array.isArray(parsed?.entries)) {
-        return [];
-      }
-      return parsed.entries
-        .filter((entry): entry is { inputText: string } => (
-          !!entry && typeof entry === 'object' && typeof (entry as { inputText?: unknown }).inputText === 'string'
-        ))
-        .map((entry) => ({ inputText: entry.inputText }));
+      globalThis.localStorage?.setItem(storageKey, JSON.stringify(entries));
+    } catch {
+      // Input history is a UI convenience; storage failures must not block send.
+    }
+  }
+
+  private readInputHistoryEntries(storageKey: string): ChatInputHistoryEntry[] {
+    try {
+      const raw = globalThis.localStorage?.getItem(storageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? parsed
+          .map(entry => ({
+            inputText: typeof entry?.inputText === 'string' ? entry.inputText : '',
+          }))
+          .filter(entry => entry.inputText.trim().length > 0)
+        : [];
     } catch {
       return [];
     }
   }
 
-  private saveComposerInputHistory(entries: readonly { inputText: string }[]): void {
-    const key = this.inputHistoryStorageKey || this.resolveComposerInputHistoryStorageKey();
+  private resolveInputHistoryStorageKey(): string {
+    let hostProjectPath = '';
+    let hostProjectRootPath = '';
     try {
-      window.localStorage?.setItem(key, JSON.stringify({
-        v: 1,
-        entries: entries.map((entry) => ({ inputText: entry.inputText })),
-      }));
+      const host = AilyHost.get();
+      hostProjectPath = host.project.currentProjectPath || '';
+      hostProjectRootPath = host.project.projectRootPath || '';
     } catch {
-      /* local input history is best-effort UI state */
+      hostProjectPath = '';
+      hostProjectRootPath = '';
     }
+
+    const workspaceKey = hostProjectPath
+      || hostProjectRootPath
+      || this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || 'global';
+    return `aily-chat.input-history:${workspaceKey}`;
   }
 
   private getCurrentSessionActionState() {
@@ -638,8 +632,6 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    this.engine.bindChatTextareaRef(this.chatTextarea);
-    this.engine.scheduleComposerInputFocus();
     ChatPerformanceTracer.increment('entry_open.pane_setup_complete');
     ChatPerformanceTracer.mark('entry_open.pane_setup_complete');
     this.viewportShellCoordinator.initialize(this.chatContainer);
@@ -853,7 +845,14 @@ export class AilyChatComponent implements OnDestroy {
     this.cdr.markForCheck();
 
     try {
-      await this.engine.send('user', '/compact', true);
+      const changed = await this.engine.compactConversation();
+      if (changed) {
+        this.engine.saveCurrentSession();
+        this.engine.refreshHistoryList();
+        this.message.success('对话已压缩');
+      } else {
+        this.message.info('当前没有可压缩的对话');
+      }
     } catch (error) {
       console.error('[AilyChat] 手动压缩对话失败:', error);
       this.message.error('压缩对话失败');
@@ -864,11 +863,8 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngOnDestroy() {
-    this.clearSessionSwitchLoadTimer();
-    this.viewState.clearSessionLoadSurface();
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
-    this.toolOpenSubscription.unsubscribe();
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.lifecycleCoordinator.detachView();
@@ -1057,12 +1053,12 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   private resolvePermissionTargetSessionId(): string {
-    const viewSessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
-    if (viewSessionId) {
-      return viewSessionId;
+    const engineSessionId = typeof this.engine.sessionId === 'string' ? this.engine.sessionId.trim() : '';
+    if (engineSessionId) {
+      return engineSessionId;
     }
 
-    return '';
+    return typeof this.chatService.currentSessionId === 'string' ? this.chatService.currentSessionId.trim() : '';
   }
 
   private confirmFullAccessPermission(): Promise<ChatPermissionConfirmDialogResult> {
@@ -1300,6 +1296,16 @@ export class AilyChatComponent implements OnDestroy {
     this.actionRegistry.runMenuAction(item);
   }
 
+  handleCheckpointRestoreSurfaceAction(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.handleDialogTaskAction({ action: 'redoEdits' });
+  }
+
+  handleDialogTaskAction(detail?: ChatTaskActionDetail): void {
+    this.engine.handleTaskActionDetail(detail);
+  }
+
   toggleSettings(): void {
     this.viewState.toggleSettings();
   }
@@ -1312,14 +1318,10 @@ export class AilyChatComponent implements OnDestroy {
     this.viewState.openSessionPicker(event);
   }
 
-  private resolveCurrentViewSessionResource(): string {
-    return typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
-  }
-
   handleSessionSelection(event: { sessionId: string; item: ChatSessionListItem }): void {
     void this.sessionActions.requestSwitchToSession(
       event.sessionId,
-      this.resolveCurrentViewSessionResource(),
+      this.chatService.currentSessionId,
       this.engine.editCheckpointService,
       this.createSessionSwitchCallbacks(),
       event.item,
@@ -1327,31 +1329,19 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   handleSessionPreload(event: { sessionId: string; item: ChatSessionListItem }): void {
-    const sessionId = typeof event.sessionId === 'string' ? event.sessionId.trim() : '';
-    if (!sessionId || sessionId === this.resolveCurrentViewSessionResource()) {
+    if (!event.sessionId) {
       return;
     }
 
-    const fallbackProjectPath = this.resolveSessionItemProjectPath(event.item);
-    void this.engine.preloadSessionModel?.(sessionId, {
-      fallbackProjectPath,
-    }).catch(error => {
-      console.debug('[AilyChat][SessionPreload] failed', {
-        sessionId,
-        error,
-      });
+    void this.engine.preloadSessionModel(event.sessionId, {
+      fallbackProjectPath: event.item.projectPath ?? null,
+    }).catch((error) => {
+      console.warn('[AilyChat] Failed to preload session model:', error);
     });
   }
 
-  private resolveSessionItemProjectPath(item: ChatSessionListItem | null | undefined): string | null {
-    const projectPath = (item as { projectPath?: unknown } | null | undefined)?.projectPath;
-    return typeof projectPath === 'string' && projectPath.trim().length > 0
-      ? projectPath.trim()
-      : null;
-  }
-
   handleSessionAction(event: { action: string; data: any }): void {
-    this.sessionActions.sessionActionClick(event, this.resolveCurrentViewSessionResource(), this.createSessionRowActionCallbacks());
+    this.sessionActions.sessionActionClick(event, this.chatService.currentSessionId, this.createSessionRowActionCallbacks());
   }
 
   requestNewChat(): void {
@@ -1362,7 +1352,7 @@ export class AilyChatComponent implements OnDestroy {
     void this.sessionActions.requestReturnToEntryInventory(
       this.engine.editCheckpointService,
       this.createSessionEntryCommandCallbacks(),
-      this.resolveCurrentViewSessionResource(),
+      this.chatService.currentSessionId,
       {
         saveCurrentSession: options?.saveCurrentSession,
       },
@@ -1396,9 +1386,13 @@ export class AilyChatComponent implements OnDestroy {
         this.closeDebugBrowser();
         return this.engine.returnToEntryInventory({ sessionId });
       },
+      onDeleteSession: (sessionId: string) => {
+        this.closeDebugBrowser();
+        return this.engine.deleteSessionAction(sessionId);
+      },
       onDeleteSessionRuntime: (sessionId: string) => {
         this.closeDebugBrowser();
-        this.engine.deleteSessionAction(sessionId);
+        this.engine.disposeSessionRuntime(sessionId);
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {
@@ -1445,7 +1439,7 @@ export class AilyChatComponent implements OnDestroy {
     this.closeDebugBrowser();
     try {
       await this.engine.getHistory();
-      const sessionId = this.resolveCurrentViewSessionResource();
+      const sessionId = this.chatService.currentSessionId || this.engine.sessionId;
       if (sessionId) {
         this.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
       }
@@ -1459,94 +1453,14 @@ export class AilyChatComponent implements OnDestroy {
     fallbackProjectPath?: string | null,
   ): Promise<boolean> {
     this.closeDebugBrowser();
-    const loadingToken = this.beginDelayedSessionLoadSurface(sessionId);
     try {
-      const switched = await this.engine.switchToSession(sessionId, {
+      return await this.engine.switchToSession(sessionId, {
         fallbackProjectPath: fallbackProjectPath ?? null,
       });
-      this.finishDelayedSessionLoadSurface(loadingToken, {
-        restorePreviousSelection: !switched,
-      });
-      return switched;
     } catch (error) {
       this.reportSessionRestoreFailure(error);
-      this.finishDelayedSessionLoadSurface(loadingToken, {
-        restorePreviousSelection: !isSessionLifecycleSupersededError(error),
-      });
       return false;
     }
-  }
-
-  private beginDelayedSessionLoadSurface(sessionId: string): {
-    readonly requestId: number;
-    readonly sessionId: string;
-    readonly previousSelectedSessionId: string;
-  } {
-    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    const requestId = ++this.sessionSwitchLoadRequestId;
-    const previousSelectedSessionId = this.viewState.selectedSessionId;
-    this.clearSessionSwitchLoadTimer();
-
-    if (!normalizedSessionId) {
-      return { requestId, sessionId: '', previousSelectedSessionId };
-    }
-
-    const title = this.resolveSessionItemTitle(normalizedSessionId);
-    this.viewState.beginSessionLoadSurface({
-      sessionId: normalizedSessionId,
-      title,
-    });
-    this.sessionSwitchLoadTimerId = window.setTimeout(() => {
-      if (this.sessionSwitchLoadRequestId !== requestId) {
-        return;
-      }
-
-      this.viewState.revealSessionLoadSurface(normalizedSessionId);
-      this.cdr.markForCheck();
-    }, 100);
-
-    return {
-      requestId,
-      sessionId: normalizedSessionId,
-      previousSelectedSessionId,
-    };
-  }
-
-  private finishDelayedSessionLoadSurface(
-    token: {
-      readonly requestId: number;
-      readonly sessionId: string;
-      readonly previousSelectedSessionId: string;
-    },
-    options: {
-      readonly restorePreviousSelection: boolean;
-    },
-  ): void {
-    if (this.sessionSwitchLoadRequestId !== token.requestId) {
-      return;
-    }
-
-    this.clearSessionSwitchLoadTimer();
-    this.viewState.clearSessionLoadSurface(token.sessionId);
-    if (options.restorePreviousSelection && token.previousSelectedSessionId) {
-      this.viewState.selectSession(token.previousSelectedSessionId);
-    }
-    this.cdr.markForCheck();
-  }
-
-  private clearSessionSwitchLoadTimer(): void {
-    if (this.sessionSwitchLoadTimerId === null) {
-      return;
-    }
-
-    window.clearTimeout(this.sessionSwitchLoadTimerId);
-    this.sessionSwitchLoadTimerId = null;
-  }
-
-  private resolveSessionItemTitle(sessionId: string): string {
-    const item = this.sessionListItems.find(candidate => candidate.sessionId === sessionId);
-    const title = typeof item?.title === 'string' ? item.title.trim() : '';
-    return title;
   }
 
   private reportSessionRestoreFailure(error: unknown): void {
@@ -1635,7 +1549,7 @@ export class AilyChatComponent implements OnDestroy {
   async continueCurrentExecution(event?: MouseEvent): Promise<void> {
     event?.stopPropagation();
     try {
-      await this.engine.continueCurrentExecution(this.vm.sessionId);
+      await this.engine.continueCurrentExecution();
     } catch (error) {
       console.warn('[AilyChatComponent] continue current execution failed:', error);
       this.message.error('继续执行失败，请从最新状态重试');
@@ -1684,8 +1598,7 @@ export class AilyChatComponent implements OnDestroy {
       return;
     }
 
-    this.applySessionViewportWidth(element.clientWidth);
-    this.scheduleSessionViewportStableMeasure(element);
+    this.viewState.setSessionViewportWidth(element.clientWidth);
 
     if (typeof ResizeObserver === 'undefined') {
       return;
@@ -1693,47 +1606,16 @@ export class AilyChatComponent implements OnDestroy {
 
     this.sessionViewportResizeObserver = new ResizeObserver((entries) => {
       const nextWidth = entries[0]?.contentRect?.width ?? element.clientWidth;
-      this.applySessionViewportWidth(nextWidth);
+      this.viewState.setSessionViewportWidth(nextWidth);
+      this.syncSessionListDisplayState();
     });
     this.sessionViewportResizeObserver.observe(element);
   }
 
   private disconnectSessionViewportObserver(): void {
-    this.cancelSessionViewportStableMeasure();
     this.sessionViewportResizeObserver?.disconnect();
     this.sessionViewportResizeObserver = null;
     this.observedSessionViewportElement = null;
-  }
-
-  private applySessionViewportWidth(width: number): void {
-    this.viewState.setSessionViewportWidth(width);
-    this.syncSessionListDisplayState();
-  }
-
-  private scheduleSessionViewportStableMeasure(element: HTMLElement): void {
-    this.cancelSessionViewportStableMeasure();
-    if (typeof globalThis.requestAnimationFrame !== 'function') {
-      return;
-    }
-
-    this.pendingSessionViewportMeasureFrameId = globalThis.requestAnimationFrame(() => {
-      this.pendingSessionViewportMeasureFrameId = null;
-      if (this.observedSessionViewportElement !== element) {
-        return;
-      }
-
-      this.applySessionViewportWidth(element.clientWidth);
-    });
-  }
-
-  private cancelSessionViewportStableMeasure(): void {
-    if (this.pendingSessionViewportMeasureFrameId === null || typeof globalThis.cancelAnimationFrame !== 'function') {
-      this.pendingSessionViewportMeasureFrameId = null;
-      return;
-    }
-
-    globalThis.cancelAnimationFrame(this.pendingSessionViewportMeasureFrameId);
-    this.pendingSessionViewportMeasureFrameId = null;
   }
 
   private syncSessionListDisplayState(): void {

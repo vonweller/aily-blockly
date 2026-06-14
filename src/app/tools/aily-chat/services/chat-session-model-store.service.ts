@@ -15,6 +15,7 @@ import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
   canRedoSessionCheckpointTimeline,
   cloneSessionCheckpointTimelineState,
+  getSessionCheckpointHiddenTurnResponses,
   spliceSessionCheckpointTimelineForwardBranch,
   type SessionCheckpointTimelineState,
 } from '../helpers/session-checkpoint-timeline-model';
@@ -236,6 +237,12 @@ export class ChatSessionModel {
     return canRedoSessionCheckpointTimeline(this.checkpointTimelineState);
   }
 
+  getDisabledCheckpointTurnIds(): readonly string[] {
+    return getSessionCheckpointHiddenTurnResponses(this.checkpointTimelineState)
+      .map(turn => normalizeChatSessionResource(turn.turnId))
+      .filter((turnId): turnId is string => turnId.length > 0);
+  }
+
   spliceCheckpointTimelineForwardBranch(): SessionCheckpointTimelineState | null {
     if (!this.checkpointTimelineState) {
       return null;
@@ -322,13 +329,36 @@ export class ChatSessionModel {
     state: ChatSessionRuntimeStatePatch,
     options?: ChatSessionRuntimeChangeOptions,
   ): void {
-    const nextState = state.turnResponses !== undefined
-      ? {
-          ...state,
-          turnResponses: this.replaceTurnResponses(state.turnResponses),
-        }
-      : state;
+    const nextState = this.resolveRuntimeStatePatchForModel(state);
     this.runtimeStore.replaceRuntimeState(this.sessionResource, nextState, options);
+  }
+
+  private resolveRuntimeStatePatchForModel(state: ChatSessionRuntimeStatePatch): ChatSessionRuntimeStatePatch {
+    if (state.turnResponses === undefined) {
+      return state;
+    }
+
+    const incomingTurnResponses = Array.isArray(state.turnResponses)
+      ? state.turnResponses
+      : [];
+    if (incomingTurnResponses.length > 0 || this.turnResponsesValue.length === 0) {
+      return {
+        ...state,
+        turnResponses: this.replaceTurnResponses(incomingTurnResponses),
+      };
+    }
+
+    const existingRuntimeState = this.runtimeStore.read(this.sessionResource);
+    return {
+      ...state,
+      // Runtime/projection mirrors can transiently report an empty transcript while
+      // a request is starting. The session model is the canonical transcript owner,
+      // so empty mirrors must not erase already accepted user turns.
+      turnResponses: this.getTurnResponses(),
+      ...(state.hostProjectionState === null && existingRuntimeState?.hostProjectionState
+        ? { hostProjectionState: existingRuntimeState.hostProjectionState }
+        : {}),
+    };
   }
 
   applyProjection(
@@ -507,6 +537,64 @@ export class ChatSessionModelStoreService {
     }
 
     model.updateMetadata(patch);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return true;
+  }
+
+  replaceTurnResponses(
+    sessionResource: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): readonly TurnResponseTurn[] | null {
+    const model = this.get(sessionResource);
+    if (!model || !Array.isArray(turnResponses)) {
+      return null;
+    }
+
+    const nextTurnResponses = model.replaceTurnResponses(turnResponses);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
+  }
+
+  appendOrReplaceTurnResponse(
+    sessionResource: string | null | undefined,
+    turnResponse: TurnResponseTurn,
+  ): readonly TurnResponseTurn[] | null {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return null;
+    }
+
+    const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
+  }
+
+  applyRuntimeState(
+    sessionResource: string | null | undefined,
+    state: ChatSessionRuntimeStatePatch,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): boolean {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return false;
+    }
+
+    model.applyRuntimeState(state, options);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return true;
+  }
+
+  applyProjection(
+    sessionResource: string | null | undefined,
+    state: HostTurnResponseState | null,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): boolean {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return false;
+    }
+
+    model.applyProjection(state, options);
     this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
     return true;
   }

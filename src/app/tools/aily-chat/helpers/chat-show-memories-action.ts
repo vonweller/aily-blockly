@@ -1,4 +1,4 @@
-export const CHAT_SHOW_MEMORIES_ACTION_ID = 'github.copilot.chat.tools.memory.showMemories';
+export const CHAT_SHOW_MEMORIES_ACTION_ID = 'aily.chat.tools.memory.showMemories';
 export const CHAT_SHOW_MEMORIES_ACTION_LABEL = 'Show Memories';
 
 interface ChatShowMemoriesActionContext {

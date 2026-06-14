@@ -701,6 +701,8 @@ export class ChatRuntimeModeService {
         },
       ))
       .filter((mode): mode is ChatResolvedMode => !mode.isBuiltin)
+      .filter((mode) => mode.enabled !== false)
+      .filter((mode) => mode.visibility?.userInvocable !== false)
       .filter((mode) => matchesRuntimeModeSessionType(mode.sessionTypes, this._currentSessionType));
 
     return createChatResolvedModesCollection(customModes);
@@ -780,12 +782,6 @@ function matchesRuntimeModeSessionType(
 
   const normalizedSessionType = normalizeChatSessionType(sessionType);
   return sessionTypes.some((candidate) => normalizeChatSessionType(candidate) === normalizedSessionType);
-}
-
-interface ParsedPromptLikeHandoff {
-  readonly label: string;
-  readonly agent: string;
-  readonly prompt: string;
 }
 
 function buildSessionCustomizationAgentCatalogEntry(
@@ -895,72 +891,45 @@ function normalizeSessionCustomizationAgentCatalogEntries(
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
-interface ParsedPromptLikeAgentDefinition {
-  readonly name?: string;
-  readonly description?: string;
-  readonly tools?: readonly string[];
-  readonly model?: string;
-  readonly sessionTypes?: readonly string[];
-  readonly argumentHint?: string;
-  readonly target?: 'vscode' | 'github-copilot' | 'claude' | 'undefined';
-  readonly visibility?: {
-    readonly userInvocable: boolean;
-    readonly agentInvocable: boolean;
-  };
-  readonly agents?: readonly string[];
-  readonly handoffs?: readonly ParsedPromptLikeHandoff[];
-  readonly systemPrompt: string;
-}
-
 function parseSessionCustomizationAgentDefinition(
   content: string,
   item: ChatSessionCustomizationItem,
   uri: string,
 ): Record<string, unknown> | undefined {
   const source = normalizeAgentCustomizationSource(item.source);
-  const lexDefinition = parseAgentDefinition(content, source, { uri }) as unknown as Record<string, unknown> | null;
-  const promptDefinition = parsePromptLikeAgentDefinition(content);
-  if (!lexDefinition && !promptDefinition) {
-    return undefined;
-  }
-
-  const promptName = typeof promptDefinition?.name === 'string' && promptDefinition.name.trim()
-    ? promptDefinition.name.trim()
-    : undefined;
   const itemName = typeof item.name === 'string' && item.name.trim()
     ? item.name.trim()
     : undefined;
+  const lexDefinition = parseAgentDefinition(
+    content,
+    source,
+    { uri },
+  ) as unknown as Record<string, unknown> | null;
+  if (!lexDefinition) {
+    return undefined;
+  }
+
   const lexName = typeof lexDefinition?.['name'] === 'string' && lexDefinition['name'].trim()
     ? lexDefinition['name'].trim()
     : undefined;
   const lexAgentType = typeof lexDefinition?.['agentType'] === 'string' && lexDefinition['agentType'].trim()
     ? lexDefinition['agentType'].trim()
     : undefined;
-  const description = promptDefinition?.description
+  const description = (typeof lexDefinition?.['description'] === 'string' && lexDefinition['description'].trim() ? lexDefinition['description'].trim() : undefined)
     ?? (typeof item.description === 'string' && item.description.trim() ? item.description.trim() : undefined)
     ?? (typeof lexDefinition?.['whenToUse'] === 'string' && lexDefinition['whenToUse'].trim() ? lexDefinition['whenToUse'].trim() : undefined);
-  const mergedName = promptName ?? lexName ?? itemName ?? lexAgentType ?? deriveSessionCustomizationAgentName(uri);
-  const mergedAgentType = lexAgentType ?? itemName ?? mergedName;
-  const mergedSystemPrompt = promptDefinition?.systemPrompt
-    ?? (typeof lexDefinition?.['systemPrompt'] === 'string' ? lexDefinition['systemPrompt'] : '');
+  const mergedName = lexName ?? itemName ?? lexAgentType ?? deriveSessionCustomizationAgentName(uri);
+  const mergedAgentType = lexAgentType ?? deriveSessionCustomizationAgentName(uri);
+  const mergedSystemPrompt = typeof lexDefinition?.['systemPrompt'] === 'string' ? lexDefinition['systemPrompt'] : '';
   const mergedModeInstructions = lexDefinition?.['modeInstructions'] && typeof lexDefinition['modeInstructions'] === 'object'
     ? lexDefinition['modeInstructions']
     : {
       content: mergedSystemPrompt,
       toolReferences: [],
     };
-  const mergedTools = promptDefinition?.tools
-    ?? (Array.isArray(lexDefinition?.['tools']) ? lexDefinition['tools'] : undefined)
-    ?? ['*'];
-  const mergedSessionTypes = promptDefinition?.sessionTypes
-    ?? readFrontmatterStringArray(lexDefinition?.['sessionTypes'])
+  const mergedTools = Array.isArray(lexDefinition?.['tools']) ? lexDefinition['tools'] : ['*'];
+  const mergedSessionTypes = readFrontmatterStringArray(lexDefinition?.['sessionTypes'])
     ?? readFrontmatterStringArray(item.sessionTypes);
-  const mergedHandoffs = promptDefinition?.handoffs
-    ?? (Array.isArray(lexDefinition?.['handoffs']) ? lexDefinition['handoffs'] : undefined);
-  const mergedAgents = promptDefinition?.agents
-    ?? (Array.isArray(lexDefinition?.['agents']) ? lexDefinition['agents'] : undefined);
-  const mergedModel = promptDefinition?.model
-    ?? (typeof lexDefinition?.['model'] === 'string' ? lexDefinition['model'] : undefined);
 
   return {
     ...(lexDefinition ?? {}),
@@ -975,328 +944,9 @@ function parseSessionCustomizationAgentDefinition(
     uri,
     source,
     tools: mergedTools,
-    ...(mergedModel ? { model: mergedModel } : {}),
-    ...(mergedHandoffs ? { handoffs: mergedHandoffs } : {}),
-    ...(mergedAgents ? { agents: mergedAgents } : {}),
-    ...(promptDefinition?.argumentHint ? { argumentHint: promptDefinition.argumentHint } : {}),
-    ...(promptDefinition?.target ? { target: promptDefinition.target } : {}),
-    ...(promptDefinition?.visibility ? { visibility: promptDefinition.visibility } : {}),
     ...(item.enabled === false ? { enabled: false } : {}),
     ...(mergedSessionTypes ? { sessionTypes: mergedSessionTypes } : {}),
   };
-}
-
-function parsePromptLikeAgentDefinition(content: string): ParsedPromptLikeAgentDefinition | undefined {
-  const frontmatter = readSessionCustomizationFrontmatter(content);
-  if (!frontmatter) {
-    return undefined;
-  }
-
-  const frontmatterMap = parseSimpleFrontmatter(frontmatter.header);
-  const name = readFrontmatterString(frontmatterMap['name']);
-  const description = readFrontmatterString(frontmatterMap['description']);
-  const tools = readFrontmatterStringArray(frontmatterMap['tools']);
-  const agents = readFrontmatterStringArray(frontmatterMap['agents']);
-  const sessionTypes = readFrontmatterStringArray(frontmatterMap['sessionTypes']);
-  const argumentHint = readFrontmatterString(frontmatterMap['argument-hint']);
-  const model = readFrontmatterString(frontmatterMap['model'])
-    ?? readFrontmatterStringArray(frontmatterMap['model'])?.[0];
-  const target = readPromptLikeTarget(frontmatterMap['target']);
-  const userInvocable = readFrontmatterBoolean(frontmatterMap['user-invocable']);
-  const infer = readFrontmatterBoolean(frontmatterMap['infer']);
-  const disableModelInvocation = readFrontmatterBoolean(frontmatterMap['disable-model-invocation']);
-  const handoffs = readPromptLikeHandoffs(frontmatterMap['handoffs']);
-  const hasRecognizedMetadata = !!(
-    name
-    || description
-    || tools
-    || agents
-    || argumentHint
-    || model
-    || target
-    || userInvocable !== undefined
-    || infer !== undefined
-    || disableModelInvocation !== undefined
-    || handoffs
-  );
-  if (!hasRecognizedMetadata && !frontmatter.body.trim()) {
-    return undefined;
-  }
-
-  const visibility = userInvocable !== undefined || infer !== undefined || disableModelInvocation !== undefined
-    ? {
-      userInvocable: userInvocable !== false,
-      agentInvocable: infer !== undefined ? infer === true : disableModelInvocation !== true,
-    }
-    : undefined;
-
-  return {
-    ...(name ? { name } : {}),
-    ...(description ? { description } : {}),
-    ...(tools ? { tools } : {}),
-    ...(model ? { model } : {}),
-    ...(sessionTypes ? { sessionTypes } : {}),
-    ...(argumentHint ? { argumentHint } : {}),
-    ...(target ? { target } : {}),
-    ...(visibility ? { visibility } : {}),
-    ...(agents ? { agents } : {}),
-    ...(handoffs ? { handoffs } : {}),
-    systemPrompt: frontmatter.body.trim(),
-  };
-}
-
-function readSessionCustomizationFrontmatter(
-  content: string,
-): { readonly header: string; readonly body: string } | undefined {
-  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$/);
-  if (!match) {
-    return undefined;
-  }
-
-  return {
-    header: match[1],
-    body: match[2] ?? '',
-  };
-}
-
-function parseSimpleFrontmatter(header: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  const lines = header.replace(/\r/g, '').split('\n');
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim() || line.trimStart().startsWith('#')) {
-      index += 1;
-      continue;
-    }
-
-    if (countIndent(line) !== 0) {
-      index += 1;
-      continue;
-    }
-
-    const separatorIndex = line.indexOf(':');
-    if (separatorIndex <= 0) {
-      index += 1;
-      continue;
-    }
-
-    const key = line.slice(0, separatorIndex).trim();
-    const rawValue = line.slice(separatorIndex + 1).trim();
-    if (rawValue) {
-      result[key] = parseSimpleScalarOrInlineArray(rawValue);
-      index += 1;
-      continue;
-    }
-
-    const block = collectIndentedBlock(lines, index + 1);
-    if (block.lines.length === 0) {
-      result[key] = '';
-      index += 1;
-      continue;
-    }
-
-    result[key] = parseIndentedBlock(block.lines);
-    index = block.nextIndex;
-  }
-
-  return result;
-}
-
-function collectIndentedBlock(
-  lines: readonly string[],
-  startIndex: number,
-): { readonly lines: readonly string[]; readonly nextIndex: number } {
-  const blockLines: string[] = [];
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      blockLines.push(line);
-      index += 1;
-      continue;
-    }
-
-    if (countIndent(line) === 0) {
-      break;
-    }
-
-    blockLines.push(line);
-    index += 1;
-  }
-
-  return { lines: blockLines, nextIndex: index };
-}
-
-function parseIndentedBlock(lines: readonly string[]): unknown {
-  const firstMeaningfulLine = lines.find(line => line.trim().length > 0);
-  if (!firstMeaningfulLine) {
-    return [];
-  }
-
-  return firstMeaningfulLine.trimStart().startsWith('- ')
-    ? parseIndentedArray(lines)
-    : parseIndentedMap(lines);
-}
-
-function parseIndentedArray(lines: readonly string[]): unknown[] {
-  const result: unknown[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-
-    const trimmed = line.trimStart();
-    if (!trimmed.startsWith('- ')) {
-      index += 1;
-      continue;
-    }
-
-    const currentIndent = countIndent(line);
-    const itemValue = trimmed.slice(2).trim();
-    const nestedBlock = collectNestedIndentedLines(lines, index + 1, currentIndent);
-    if (!itemValue) {
-      result.push(parseIndentedBlock(nestedBlock.lines));
-      index = nestedBlock.nextIndex;
-      continue;
-    }
-
-    const inlineMapSeparator = itemValue.indexOf(':');
-    if (inlineMapSeparator > 0) {
-      const itemMap: Record<string, unknown> = {};
-      const itemKey = itemValue.slice(0, inlineMapSeparator).trim();
-      const itemRawValue = itemValue.slice(inlineMapSeparator + 1).trim();
-      itemMap[itemKey] = parseSimpleScalarOrInlineArray(itemRawValue);
-      const nestedMap = parseIndentedMap(nestedBlock.lines);
-      for (const [key, value] of Object.entries(nestedMap)) {
-        itemMap[key] = value;
-      }
-      result.push(itemMap);
-      index = nestedBlock.nextIndex;
-      continue;
-    }
-
-    result.push(parseSimpleScalarOrInlineArray(itemValue));
-    index = nestedBlock.nextIndex;
-  }
-
-  return result;
-}
-
-function parseIndentedMap(lines: readonly string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-
-    const trimmed = line.trimStart();
-    const separatorIndex = trimmed.indexOf(':');
-    if (separatorIndex <= 0) {
-      index += 1;
-      continue;
-    }
-
-    const currentIndent = countIndent(line);
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    if (rawValue) {
-      result[key] = parseSimpleScalarOrInlineArray(rawValue);
-      index += 1;
-      continue;
-    }
-
-    const nestedBlock = collectNestedIndentedLines(lines, index + 1, currentIndent);
-    result[key] = parseIndentedBlock(nestedBlock.lines);
-    index = nestedBlock.nextIndex;
-  }
-
-  return result;
-}
-
-function collectNestedIndentedLines(
-  lines: readonly string[],
-  startIndex: number,
-  parentIndent: number,
-): { readonly lines: readonly string[]; readonly nextIndex: number } {
-  const nestedLines: string[] = [];
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      nestedLines.push(line);
-      index += 1;
-      continue;
-    }
-
-    if (countIndent(line) <= parentIndent) {
-      break;
-    }
-
-    nestedLines.push(line);
-    index += 1;
-  }
-
-  return { lines: nestedLines, nextIndex: index };
-}
-
-function parseSimpleScalarOrInlineArray(value: string): unknown {
-  const normalizedValue = value.trim();
-  if (!normalizedValue) {
-    return '';
-  }
-
-  if (normalizedValue.startsWith('[') && normalizedValue.endsWith(']')) {
-    return normalizedValue
-      .slice(1, -1)
-      .split(',')
-      .map(entry => stripSimpleQuotes(entry.trim()))
-      .filter(entry => entry.length > 0);
-  }
-
-  if (normalizedValue === 'true') {
-    return true;
-  }
-  if (normalizedValue === 'false') {
-    return false;
-  }
-
-  return stripSimpleQuotes(normalizedValue);
-}
-
-function stripSimpleQuotes(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function countIndent(line: string): number {
-  const match = line.match(/^\s*/);
-  return match?.[0]?.length ?? 0;
-}
-
-function readFrontmatterString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim()
-    ? value.trim()
-    : undefined;
-}
-
-function readFrontmatterBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean'
-    ? value
-    : undefined;
 }
 
 function readFrontmatterStringArray(value: unknown): readonly string[] | undefined {
@@ -1308,42 +958,6 @@ function readFrontmatterStringArray(value: unknown): readonly string[] | undefin
     .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     .map(entry => entry.trim());
   return result.length > 0 ? result : undefined;
-}
-
-function readPromptLikeTarget(
-  value: unknown,
-): ParsedPromptLikeAgentDefinition['target'] | undefined {
-  const normalizedValue = readFrontmatterString(value)?.toLowerCase();
-  return normalizedValue === 'vscode'
-    || normalizedValue === 'github-copilot'
-    || normalizedValue === 'claude'
-    || normalizedValue === 'undefined'
-    ? normalizedValue as ParsedPromptLikeAgentDefinition['target']
-    : undefined;
-}
-
-function readPromptLikeHandoffs(value: unknown): readonly ParsedPromptLikeHandoff[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const handoffs = value.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      return [];
-    }
-
-    const candidate = entry as Record<string, unknown>;
-    const label = readFrontmatterString(candidate['label']);
-    const agent = readFrontmatterString(candidate['agent']);
-    const prompt = readFrontmatterString(candidate['prompt']);
-    if (!label || !agent || !prompt) {
-      return [];
-    }
-
-    return [{ label, agent, prompt }];
-  });
-
-  return handoffs.length > 0 ? handoffs : undefined;
 }
 
 function deriveSessionCustomizationAgentName(uri: string): string {

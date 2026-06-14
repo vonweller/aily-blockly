@@ -22,8 +22,14 @@ type RenderProjectionVisibilityAccess = {
   readCurrentViewSessionResource?(): string | null | undefined;
 };
 
+type ViewRefreshHandle = {
+  dispose(): void;
+};
+
 export class LexRenderProjectionSync {
   private readonly _hostProjectionBuilder: TurnResponseHostProjectionBuilder;
+  private _viewRefreshHandle: ViewRefreshHandle | null = null;
+  private _viewRefreshPending = false;
 
   constructor(
     private readonly ctx: LexRenderProjectionSyncContext,
@@ -36,6 +42,7 @@ export class LexRenderProjectionSync {
   projectPendingChanges(
     currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'> | null,
     source: IncrementalTurnResponsePartSource,
+    options: { syncContent?: boolean } = {},
   ): void {
     if (!this.canProjectToVisible()) {
       return;
@@ -47,13 +54,17 @@ export class LexRenderProjectionSync {
     }
 
     const partsChanged = this._hostProjectionBuilder.projectIncrementalParts(handle, source, {
-      syncContent: true,
+      syncContent: options.syncContent === true,
     });
     const metaChanged = this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn);
 
     if (partsChanged || metaChanged) {
-      this.ctx.invalidateHostRequestGraph();
-      this.ctx.triggerSyncDetectChanges();
+      if (options.syncContent === true && typeof this.visibility.readCurrentViewSessionResource !== 'function') {
+        this.ctx.invalidateHostRequestGraph();
+        this.ctx.triggerSyncDetectChanges();
+        return;
+      }
+      this.scheduleViewRefresh();
     }
   }
 
@@ -83,9 +94,49 @@ export class LexRenderProjectionSync {
     currentTurn: Pick<TurnResponseTurn, 'turnId' | 'response'>,
   ): void {
     if (this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn)) {
+      this.scheduleViewRefresh();
+    }
+  }
+
+  dispose(): void {
+    this.clearPendingViewRefresh();
+  }
+
+  private scheduleViewRefresh(): void {
+    this._viewRefreshPending = true;
+    if (this._viewRefreshHandle !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? (callback: () => void) => {
+        const frameId = globalThis.requestAnimationFrame(callback);
+        return {
+          dispose: () => globalThis.cancelAnimationFrame?.(frameId),
+        };
+      }
+      : (callback: () => void) => {
+        const timerId = setTimeout(callback, 16);
+        return {
+          dispose: () => clearTimeout(timerId),
+        };
+      };
+
+    this._viewRefreshHandle = schedule(() => {
+      this._viewRefreshHandle = null;
+      if (!this._viewRefreshPending) {
+        return;
+      }
+      this._viewRefreshPending = false;
       this.ctx.invalidateHostRequestGraph();
       this.ctx.triggerSyncDetectChanges();
-    }
+    });
+  }
+
+  private clearPendingViewRefresh(): void {
+    this._viewRefreshHandle?.dispose();
+    this._viewRefreshHandle = null;
+    this._viewRefreshPending = false;
   }
 
   private resolveProjectedMessageHandle(

@@ -11,14 +11,21 @@ const GOVERNANCE_RUNTIME_TOOL_NAME_ALIASES = new Map<string, string>([
 ]);
 
 const TERMINAL_SESSION_TOOL_NAMES = new Set([
+  'command_exec',
+  'command_write_stdin',
+  'command_status',
+  'command_stop',
+  'command_read',
+  'command_tail',
+  'command_search',
   'get_terminal_output',
   'kill_terminal',
   'run_in_terminal',
   'send_to_terminal',
-  'start_background_command',
 ]);
 
 const TERMINAL_COMMAND_TOOL_NAMES = new Set([
+  'command_exec',
   'run_in_terminal',
 ]);
 

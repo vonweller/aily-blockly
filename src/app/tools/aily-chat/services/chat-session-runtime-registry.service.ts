@@ -228,15 +228,16 @@ export class ChatSessionRuntimeRegistryService {
       return;
     }
 
+    const activeHandle = this.upsertHandle(normalizedSessionId, handle);
     const patch: ChatSessionRuntimeProjectionPatch = {
       ...projection,
-      requestInProgress: true,
-      supportsInterruption: true,
-      activeResponseHandle: handle.activeResponseHandle,
-      stopSession: handle.stopSession,
-      ...(handle.disposeSession ? { disposeSession: handle.disposeSession } : {}),
-      ...(handle.capabilities ? { capabilities: handle.capabilities } : {}),
-      ...(handle.concurrencyScope !== undefined ? { concurrencyScope: handle.concurrencyScope } : {}),
+      requestInProgress: activeHandle.requestInProgress,
+      supportsInterruption: activeHandle.supportsInterruption,
+      activeResponseHandle: activeHandle.activeResponseHandle,
+      stopSession: activeHandle.stopSession,
+      ...(activeHandle.disposeSession ? { disposeSession: activeHandle.disposeSession } : {}),
+      capabilities: activeHandle.capabilities,
+      ...(activeHandle.concurrencyScope !== undefined ? { concurrencyScope: activeHandle.concurrencyScope } : {}),
     };
     this.projectRuntimeState(normalizedSessionId, patch);
   }

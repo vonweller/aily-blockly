@@ -1,4 +1,4 @@
-import type { NzModalService } from 'ng-zorro-antd/modal';
+﻿import type { NzModalService } from 'ng-zorro-antd/modal';
 
 import type { IAilyHostAPI } from '../core/host-api';
 import { ChatClearMemoriesDialogComponent } from '../components/chat-clear-memories-dialog/chat-clear-memories-dialog.component';
@@ -10,7 +10,7 @@ export interface ChatMemoryShellCoordinatorDeps {
   readonly getHost: () => IAilyHostAPI;
   readonly getProjectPath: () => string;
   readonly getSessionId: () => string | undefined;
-  readonly getCopilotMemoryEnabled: () => boolean;
+  readonly getRepositoryMemoryEnabled: () => boolean;
   readonly notifyInfo: (message: string) => void;
   readonly notifyError: (message: string) => void;
 }
@@ -23,7 +23,7 @@ export class ChatMemoryShellCoordinator {
       this.deps.getHost(),
       this.deps.getProjectPath(),
       this.deps.getSessionId(),
-      this.deps.getCopilotMemoryEnabled(),
+      this.deps.getRepositoryMemoryEnabled(),
     );
 
     if (entries.length === 0) {

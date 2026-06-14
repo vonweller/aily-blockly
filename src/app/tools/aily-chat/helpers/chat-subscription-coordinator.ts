@@ -42,7 +42,7 @@ interface SubscriptionCallbacks {
   receiveTextFromExternal: (text: string, options?: ChatTextOptions) => void;
   showAiWritingNotice: (isWaiting: boolean) => void;
   handleTaskAction: (event: ChatTaskActionEvent) => void;
-  flushPendingAutoSend: () => void;
+  flushPendingAutoSend: () => Promise<void> | void;
   syncAuthQuotaState: () => void;
   refreshRequestQuotaState: () => Promise<void>;
   refreshSessionProviderOptionsSources: () => void;

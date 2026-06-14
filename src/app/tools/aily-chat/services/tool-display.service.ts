@@ -7,15 +7,15 @@
  */
 
 import { AilyHost } from '../core/host';
-import { generateCopilotToolResultText, generateCopilotToolStartText } from '../core/tool-invocation-formatter';
+import { generateAilyToolResultText, generateAilyToolStartText } from '../core/tool-invocation-formatter';
 
 /**
  * 生成工具调用开始时的显示文本
  */
 export function generateToolStartText(toolName: string, args?: any): string {
-  const copilotText = generateCopilotToolStartText(toolName, args);
-  if (copilotText) {
-    return copilotText;
+  const ailyText = generateAilyToolStartText(toolName, args);
+  if (ailyText) {
+    return ailyText;
   }
 
   if (!args) return `正在执行工具: ${toolName}`;
@@ -28,9 +28,9 @@ export function generateToolStartText(toolName: string, args?: any): string {
  * 生成工具调用完成时的显示文本
  */
 export function generateToolResultText(toolName: string, args?: any, result?: any): string {
-  const copilotText = generateCopilotToolResultText(toolName, args, result);
-  if (copilotText) {
-    return copilotText;
+  const ailyText = generateAilyToolResultText(toolName, args, result);
+  if (ailyText) {
+    return ailyText;
   }
 
   const cleanToolName = toolName.startsWith('mcp_') ? toolName.substring(4) : toolName;

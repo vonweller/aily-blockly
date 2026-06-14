@@ -158,8 +158,16 @@ export interface HostSessionCheckpointTimelineSidecar {
   turnResponses: PersistedHostTurnResponse[];
 }
 
+export interface HostSessionCheckpointMarkerSidecar {
+  sessionResource: string;
+  currentCheckpointIndex: number;
+}
+
 export interface HostSessionSidecar {
   response?: HostSessionResponseSidecar;
+  checkpointMarker?: HostSessionCheckpointMarkerSidecar;
+  checkpointRedoBranch?: HostSessionCheckpointTimelineSidecar;
+  /** @deprecated New records must use checkpointMarker/checkpointRedoBranch. */
   checkpointTimeline?: HostSessionCheckpointTimelineSidecar;
 }
 
@@ -391,6 +399,7 @@ export class ChatHistoryService implements OnDestroy {
       joinPath: (...parts) => this.joinPath(...parts),
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
       resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
+      resolveModeByName: (modeName) => this.resolveStoredModeByName(modeName),
     });
     this.indexStore = new ChatHistoryIndexStore({
       indexFile: this.INDEX_FILE,
@@ -402,6 +411,7 @@ export class ChatHistoryService implements OnDestroy {
       isSamePath: (a, b) => this.isSamePath(a ?? null, b ?? null),
       readHostRecord: (sessionId, projectPath) => this.hostRecordStore.read(sessionId, projectPath),
       resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
+      resolveModeByName: (modeName) => this.resolveStoredModeByName(modeName),
     });
     this.hostSessionPersistenceBridge = new HostSessionPersistenceBridge(this.hostRecordStore, {
       ensureIndexLoaded: () => this.ensureIndexLoaded(),
@@ -1062,9 +1072,14 @@ export class ChatHistoryService implements OnDestroy {
     return this.chatService?.runtimeModeCollection.findModeById(modeId);
   }
 
+  private resolveStoredModeByName(modeName: string) {
+    return this.chatService?.runtimeModeCollection.findModeByName(modeName);
+  }
+
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions {
     return {
       resolveModeById: (modeId) => this.resolveStoredModeById(modeId),
+      resolveModeByName: (modeName) => this.resolveStoredModeByName(modeName),
     };
   }
 

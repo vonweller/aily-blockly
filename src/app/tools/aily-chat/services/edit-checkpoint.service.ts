@@ -41,7 +41,19 @@ export interface WorkspaceCheckpointDescriptor {
   additionalRepositoryRoots?: string[];
 }
 
-export type WorkspaceCheckpointPresentationMode = 'git' | 'compatibility' | 'unknown';
+export type WorkspaceCheckpointPresentationMode = 'git' | 'timeline' | 'unknown';
+
+export interface WorkspaceCheckpointAvailabilityDetail {
+  readonly mode: WorkspaceCheckpointPresentationMode;
+  readonly reason?:
+    | 'no-workspace'
+    | 'git-not-found'
+    | 'not-git-repository'
+    | 'git-safe-directory'
+    | 'git-probe-failed'
+    | 'timeline-unavailable';
+  readonly message?: string;
+}
 
 export interface WorkspaceCheckpointRefMetadata {
   checkpointId: string;
@@ -72,6 +84,9 @@ export interface IWorkspaceCheckpointProvider {
   setContext?(sessionId: string | null, workspaceRoot: string | null): void;
   setFallbackProvider?(provider: IWorkspaceCheckpointProvider): void;
   getPresentationMode?(): WorkspaceCheckpointPresentationMode;
+  ensurePresentationMode?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
+  getAvailabilityDetail?(): WorkspaceCheckpointAvailabilityDetail;
+  initializeRepository?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
   completeCheckpoint?(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> | WorkspaceCheckpointRefMetadata | null | void;
   clear?(): void;
   createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> | WorkspaceCheckpointRefMetadata | null | void;
@@ -120,6 +135,7 @@ export interface RollbackResult {
   errors: string[];
   rolledBackOnError?: boolean;
   rollbackErrors?: string[];
+  emergencyRollback?: () => Promise<RollbackResult | null> | RollbackResult | null;
 }
 
 export interface EditCheckpointRebuildStateSnapshot {
@@ -200,6 +216,7 @@ export class EditCheckpointService {
   private requestCheckpointMetadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
   private requestCheckpointMetadataByRequestId = new Map<string, RequestCheckpointMetadata>();
   private requestMetadataTargetsByCheckpointId = new Map<string, TurnRequest['metadata']>();
+  private checkpointMetadataWriteQueue: Promise<void> = Promise.resolve();
 
   /** 当前在时间线中的位置 (-1 = 初始状态/所有 turn 均已 undo) */
   private timelineIndex: number = -1;
@@ -297,7 +314,7 @@ export class EditCheckpointService {
     requestMetadata?: TurnRequest['metadata'],
   ): void {
     if (this.isInTurn) {
-      this.commitCurrentTurn();
+      void this.commitCurrentTurn();
     }
 
     // 截断 redo 历史
@@ -326,7 +343,7 @@ export class EditCheckpointService {
     this.timeline.push(snapshot);
     this.timelineIndex = this.timeline.length - 1;
     this.registerRequestCheckpointMetadata(snapshot, requestMetadata);
-    this.persistTimelineCheckpoint(snapshot);
+    void this.persistTimelineCheckpoint(snapshot);
 
     this.currentTurnTrackedPaths.clear();
     this.currentTurnOperations.clear();
@@ -406,7 +423,7 @@ export class EditCheckpointService {
     }
 
     currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
-    this.persistTimelineCheckpoint(currentTurn);
+    void this.persistTimelineCheckpoint(currentTurn);
   }
 
   recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void {
@@ -424,8 +441,10 @@ export class EditCheckpointService {
    * 提交当前 turn — 标记完成。
    * 磁盘快照由 lex agent 的 FileHistory.makeSnapshot() 处理。
    */
-  commitCurrentTurn(): void {
-    if (!this.isInTurn) return;
+  commitCurrentTurn(): Promise<void> {
+    if (!this.isInTurn) {
+      return this.waitForCheckpointMetadataSettled();
+    }
     this.isInTurn = false;
 
     const currentTurn = this.timeline[this.timelineIndex];
@@ -437,19 +456,22 @@ export class EditCheckpointService {
       currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
       const provider = this.getWorkspaceCheckpointProvider();
       const descriptor = this.toWorkspaceCheckpointDescriptor(currentTurn);
-      void Promise.resolve(provider.completeCheckpoint?.(descriptor))
-        .then(async metadata => {
-          const resolvedMetadata = metadata
-            ?? await provider.getCheckpointMetadata?.(currentTurn.checkpointId)
-            ?? null;
-          if (resolvedMetadata) {
-            this.applyWorkspaceCheckpointRefMetadata(currentTurn, resolvedMetadata);
-          }
-        })
-        .catch(error => {
-        console.warn('[EditCheckpoint] complete checkpoint failed:', error);
-      });
+      return this.enqueueCheckpointMetadataWrite(async () => {
+        const metadata = await Promise.resolve(provider.completeCheckpoint?.(descriptor));
+        const resolvedMetadata = metadata
+          ?? await provider.getCheckpointMetadata?.(currentTurn.checkpointId)
+          ?? null;
+        if (resolvedMetadata) {
+          this.applyWorkspaceCheckpointRefMetadata(currentTurn, resolvedMetadata);
+        }
+      }, 'complete checkpoint');
     }
+
+    return this.waitForCheckpointMetadataSettled();
+  }
+
+  waitForCheckpointMetadataSettled(): Promise<void> {
+    return this.checkpointMetadataWriteQueue;
   }
 
   // ==================== Undo / Redo ====================
@@ -1309,21 +1331,47 @@ export class EditCheckpointService {
     };
   }
 
-  private persistTimelineCheckpoint(snapshot: TurnSnapshot): void {
+  private persistTimelineCheckpoint(snapshot: TurnSnapshot): Promise<void> {
     if (!snapshot.checkpointId || !snapshot.turnId) {
-      return;
+      return this.waitForCheckpointMetadataSettled();
     }
 
     const provider = this.getWorkspaceCheckpointProvider();
-    void Promise.resolve(provider.createCheckpoint(
-      this.toWorkspaceCheckpointDescriptor(snapshot),
-    )).then(metadata => {
+    if (provider.getPresentationMode?.() === 'timeline') {
+      const existingRequestMetadata = this.requestMetadataTargetsByCheckpointId.get(snapshot.checkpointId);
+      const existingRefs = this.readCheckpointRefsFromRequestMetadata(existingRequestMetadata);
+      if (existingRefs.checkpointRef) {
+        return this.waitForCheckpointMetadataSettled();
+      }
+
+      const metadata = provider.createCheckpoint(this.toWorkspaceCheckpointDescriptor(snapshot)) as WorkspaceCheckpointRefMetadata | null | void;
       if (metadata) {
         this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
       }
-    }).catch(error => {
-      console.warn('[EditCheckpoint] create checkpoint failed:', error);
-    });
+      return this.waitForCheckpointMetadataSettled();
+    }
+
+    return this.enqueueCheckpointMetadataWrite(async () => {
+      const metadata = await Promise.resolve(provider.createCheckpoint(
+        this.toWorkspaceCheckpointDescriptor(snapshot),
+      ));
+      if (metadata) {
+        this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
+      }
+    }, 'create checkpoint');
+  }
+
+  private enqueueCheckpointMetadataWrite(
+    operation: () => Promise<void> | void,
+    label: string,
+  ): Promise<void> {
+    const queuedOperation = this.checkpointMetadataWriteQueue
+      .then(() => Promise.resolve(operation()))
+      .catch(error => {
+        console.warn(`[EditCheckpoint] ${label} failed:`, error);
+      });
+    this.checkpointMetadataWriteQueue = queuedOperation.catch(() => undefined);
+    return queuedOperation;
   }
 
   private replaceTimelineCheckpointsFromSnapshots(snapshots: readonly TurnSnapshot[]): void {
@@ -1345,12 +1393,56 @@ export class EditCheckpointService {
   }
 
   private createTimelineFallbackProvider(): IWorkspaceCheckpointProvider {
+    const buildTimelineMetadata = (
+      descriptor: WorkspaceCheckpointDescriptor,
+      options: { completed: boolean },
+    ): WorkspaceCheckpointRefMetadata | null => {
+      const sessionResource = this.timelineSessionId?.trim();
+      const workspaceRoot = this.timelineWorkspaceRoot?.trim();
+      if (!sessionResource || !workspaceRoot || !descriptor.checkpointId || !descriptor.requestId) {
+        return null;
+      }
+
+      const timelineService = this.getEditingSessionTimelineService();
+      const state = timelineService?.getState();
+      const checkpointIndex = state?.checkpoints.findIndex(checkpoint => checkpoint.checkpointId === descriptor.checkpointId) ?? -1;
+      const turnIndex = checkpointIndex >= 0 ? checkpointIndex + 1 : Math.max(1, this.timeline.findIndex(snapshot => snapshot.checkpointId === descriptor.checkpointId) + 1);
+      const checkpointNamespace = `aily-timeline:${sessionResource}`;
+      const startCheckpointRef = `${checkpointNamespace}/checkpoints/turn/${Math.max(0, turnIndex - 1)}`;
+      return {
+        checkpointId: descriptor.checkpointId,
+        sessionResource,
+        requestId: descriptor.requestId,
+        ...(descriptor.turnId ? { turnId: descriptor.turnId } : {}),
+        checkpointNamespace,
+        turnIndex,
+        startCheckpointRef,
+        ...(options.completed ? { checkpointRef: `${checkpointNamespace}/checkpoints/turn/${turnIndex}` } : {}),
+        createdAt: Date.now(),
+        ...(options.completed ? { completedAt: Date.now() } : {}),
+      };
+    };
+
     return {
-      getPresentationMode: () => 'compatibility',
+      getPresentationMode: () => 'timeline',
+      ensurePresentationMode: () => {
+        const timelineService = this.getEditingSessionTimelineService();
+        return timelineService ? 'timeline' : 'unknown';
+      },
+      getAvailabilityDetail: () => {
+        const timelineService = this.getEditingSessionTimelineService();
+        return timelineService
+          ? { mode: 'timeline' }
+          : {
+            mode: 'unknown',
+            reason: 'timeline-unavailable',
+            message: '缺少本地 timeline checkpoint 上下文',
+          };
+      },
       createCheckpoint: (descriptor: WorkspaceCheckpointDescriptor) => {
         const timelineService = this.getEditingSessionTimelineService();
         if (!timelineService) {
-          return;
+          return null;
         }
         timelineService.createCheckpoint({
           checkpointId: descriptor.checkpointId,
@@ -1358,6 +1450,39 @@ export class EditCheckpointService {
           turnId: descriptor.turnId,
           label: descriptor.label,
         });
+        return buildTimelineMetadata(descriptor, { completed: false });
+      },
+      completeCheckpoint: (descriptor: WorkspaceCheckpointDescriptor) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+        const checkpoint = timelineService.getCheckpoint(descriptor.checkpointId);
+        if (!checkpoint) {
+          timelineService.createCheckpoint({
+            checkpointId: descriptor.checkpointId,
+            requestId: descriptor.requestId,
+            turnId: descriptor.turnId,
+            label: descriptor.label,
+          });
+        }
+        return buildTimelineMetadata(descriptor, { completed: true });
+      },
+      getCheckpointMetadata: (checkpointId: string) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+        const checkpoint = timelineService.getCheckpoint(checkpointId);
+        if (!checkpoint) {
+          return null;
+        }
+        return buildTimelineMetadata({
+          checkpointId: checkpoint.checkpointId,
+          requestId: checkpoint.requestId,
+          turnId: checkpoint.turnId,
+          label: checkpoint.label,
+        }, { completed: true });
       },
       replaceCheckpoints: (descriptors: readonly WorkspaceCheckpointDescriptor[]) => {
         const timelineService = this.getEditingSessionTimelineService();
@@ -1372,6 +1497,50 @@ export class EditCheckpointService {
             label: descriptor.label,
           })),
         );
+      },
+      forkCheckpoints: (request: WorkspaceCheckpointForkRequest) => {
+        const sourceSessionResource = request.sourceSessionResource.trim();
+        const targetSessionResource = request.targetSessionResource.trim();
+        const workspaceRoot = this.timelineWorkspaceRoot?.trim();
+        if (!sourceSessionResource || !targetSessionResource || !workspaceRoot) {
+          return null;
+        }
+
+        const sourceState = this.editingTimelineRepository.load(sourceSessionResource, workspaceRoot);
+        if (!sourceState) {
+          return null;
+        }
+
+        const checkpointIds = request.checkpointIds
+          .map(checkpointId => checkpointId.trim())
+          .filter(Boolean);
+        const checkpointIdSet = new Set(checkpointIds);
+        const retainedCheckpoints = sourceState.checkpoints.filter(checkpoint => checkpointIdSet.has(checkpoint.checkpointId));
+        if (retainedCheckpoints.length !== checkpointIds.length) {
+          return null;
+        }
+
+        this.copyTimelineSessionDirectory(workspaceRoot, sourceSessionResource, targetSessionResource);
+        this.editingTimelineRepository.save({
+          ...sourceState,
+          sessionId: targetSessionResource,
+          checkpoints: retainedCheckpoints,
+          requestScopes: sourceState.requestScopes.filter(scope => retainedCheckpoints.some(checkpoint => checkpoint.requestId === scope.requestId)),
+          updatedAt: Date.now(),
+        });
+
+        return retainedCheckpoints.map((checkpoint, index) => ({
+          checkpointId: checkpoint.checkpointId,
+          sessionResource: targetSessionResource,
+          requestId: checkpoint.requestId,
+          ...(checkpoint.turnId ? { turnId: checkpoint.turnId } : {}),
+          checkpointNamespace: `aily-timeline:${targetSessionResource}`,
+          turnIndex: index + 1,
+          startCheckpointRef: `aily-timeline:${targetSessionResource}/checkpoints/turn/${index}`,
+          checkpointRef: `aily-timeline:${targetSessionResource}/checkpoints/turn/${index + 1}`,
+          createdAt: checkpoint.createdAt,
+          completedAt: Date.now(),
+        }));
       },
       buildRestorePlan: async (checkpointId: string) => {
         const timelineService = this.getEditingSessionTimelineService();
@@ -1414,8 +1583,9 @@ export class EditCheckpointService {
           return { rolledBackFiles: 0, errors: ['缺少 timeline apply 上下文'] };
         }
 
+        const emergencyRollback = this.captureTimelineEmergencyRollback(plan);
         const result = await applyService.apply(plan);
-        return {
+        const rollbackResult: RollbackResult = {
           rolledBackFiles: result.appliedFiles,
           errors: result.errors,
           ...(typeof result.rolledBackOnError === 'boolean'
@@ -1423,8 +1593,107 @@ export class EditCheckpointService {
             : {}),
           ...(result.rollbackErrors ? { rollbackErrors: result.rollbackErrors } : {}),
         };
+        if (rollbackResult.errors.length === 0 && emergencyRollback) {
+          Object.defineProperty(rollbackResult, 'emergencyRollback', {
+            value: emergencyRollback,
+            enumerable: false,
+            configurable: true,
+          });
+        }
+        return rollbackResult;
       },
     };
+  }
+
+  private captureTimelineEmergencyRollback(plan: RestorePlan): (() => RollbackResult) | null {
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    const snapshots = plan.files.map(file => {
+      const existed = fs.existsSync(file.uri);
+      return {
+        uri: file.uri,
+        existed,
+        content: existed ? fs.readFileSync(file.uri, file.contentKind === 'binary' ? undefined : 'utf-8') : null,
+      };
+    });
+    if (snapshots.length === 0) {
+      return null;
+    }
+
+    return () => {
+      const errors: string[] = [];
+      let restored = 0;
+      for (const snapshot of snapshots) {
+        try {
+          if (!snapshot.existed) {
+            if (fs.existsSync(snapshot.uri)) {
+              fs.unlinkSync(snapshot.uri);
+              restored++;
+            }
+            continue;
+          }
+
+          const dirPath = pathUtil.dirname(snapshot.uri);
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          fs.writeFileSync(snapshot.uri, snapshot.content ?? '', 'utf-8');
+          restored++;
+        } catch (error: any) {
+          errors.push(`timeline emergency rollback ${snapshot.uri} 失败: ${error?.message || String(error)}`);
+        }
+      }
+
+      return {
+        rolledBackFiles: errors.length === 0 ? restored : 0,
+        errors,
+        rolledBackOnError: errors.length === 0,
+        ...(errors.length > 0 ? { rollbackErrors: errors } : {}),
+      };
+    };
+  }
+
+  private copyTimelineSessionDirectory(workspaceRoot: string, sourceSessionId: string, targetSessionId: string): void {
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    const sourceDir = this.editingTimelineRepository.getSessionDir(workspaceRoot, sourceSessionId);
+    const targetDir = this.editingTimelineRepository.getSessionDir(workspaceRoot, targetSessionId);
+    if (!fs.existsSync(sourceDir)) {
+      return;
+    }
+    if (typeof fs.copySync === 'function') {
+      fs.copySync(sourceDir, targetDir);
+      return;
+    }
+    this.copyDirectoryRecursive(sourceDir, targetDir, pathUtil, fs);
+  }
+
+  private copyDirectoryRecursive(
+    sourceDir: string,
+    targetDir: string,
+    pathUtil: { join: (...parts: string[]) => string },
+    fs: {
+      existsSync(path: string): boolean;
+      mkdirSync(path: string, options?: { recursive?: boolean }): void;
+      readdirSync(path: string): string[];
+      statSync(path: string): { isDirectory(): boolean };
+      readFileSync(path: string): string | Uint8Array;
+      writeFileSync(path: string, content: string | Uint8Array): void;
+    },
+  ): void {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    for (const entry of fs.readdirSync(sourceDir)) {
+      const sourcePath = pathUtil.join(sourceDir, entry);
+      const targetPath = pathUtil.join(targetDir, entry);
+      const stat = fs.statSync(sourcePath);
+      if (stat.isDirectory()) {
+        this.copyDirectoryRecursive(sourcePath, targetPath, pathUtil, fs);
+      } else {
+        fs.writeFileSync(targetPath, fs.readFileSync(sourcePath));
+      }
+    }
   }
 
   private async getTimelineRequestSummary(turnId: string): Promise<RequestEditSummary | null> {

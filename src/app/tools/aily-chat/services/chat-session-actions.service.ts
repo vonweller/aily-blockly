@@ -28,6 +28,7 @@ export interface ChatSessionRowActionCallbacks {
   onSwitchSession: (sessionId: string, fallbackProjectPath?: string | null) => Promise<boolean>;
   onNewChat: () => void | Promise<void>;
   onEnterEntryState: (sessionId?: string | null) => void | Promise<void>;
+  onDeleteSession?: (sessionId: string) => boolean | void | Promise<boolean | void>;
   onDeleteSessionRuntime?: (sessionId: string) => void | Promise<void>;
   onDetectChanges: () => void;
   onUpdateTitle: (title: string) => void;
@@ -220,10 +221,15 @@ export class ChatSessionActionsService {
       }
 
       void (async () => {
-        await callbacks.onDeleteSessionRuntime?.(sessionId);
+        const handledBySessionOwner = callbacks.onDeleteSession
+          ? await callbacks.onDeleteSession(sessionId)
+          : false;
+        if (!handledBySessionOwner) {
+          await callbacks.onDeleteSessionRuntime?.(sessionId);
+          sessionItemController.deleteChatSessionItem(sessionId);
+        }
 
         const isDeletingCurrent = sessionId === currentSessionId;
-        sessionItemController.deleteChatSessionItem(sessionId);
         callbacks.onRefreshSessions();
         callbacks.onDetectChanges();
         if (!isDeletingCurrent) {

@@ -73,7 +73,7 @@ export interface IAilySkill {
   readonly metadata: SkillMetadata;
   /** 技能文件夹的绝对路径（URL 来源的为空字符串） */
   readonly folderPath: string;
-  /** 与 VS Code/Copilot skillDirectories 对齐的技能目录根。 */
+  /** Aily runtime skill directory root. */
   readonly baseDir: string;
   /** SKILL.md 文件绝对路径或 URL */
   readonly skillMdPath: string;

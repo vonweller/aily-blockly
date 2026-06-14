@@ -8,6 +8,7 @@ export type LexRuntimePartProcessor = Pick<
   | 'processTextDelta'
   | 'processThinking'
   | 'processToolCallStart'
+  | 'processToolCallProgress'
   | 'processToolCallEnd'
   | 'processTerminalResult'
   | 'processError'
@@ -56,6 +57,7 @@ export class LexRuntimeEventBridge {
       }
 
       case 'tool_call_progress':
+        this.partProcessor.processToolCallProgress(event.toolCallId, event.data);
         return true;
 
       case 'tool_call_end': {

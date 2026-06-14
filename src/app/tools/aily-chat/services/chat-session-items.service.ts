@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, Optional } from '@angular/core';
+﻿import { Injectable, OnDestroy, Optional } from '@angular/core';
 import { Subscription, Subject } from 'rxjs';
 
 import { ChatService } from './chat.service';
@@ -916,10 +916,8 @@ export class ChatSessionItemsService implements OnDestroy {
     switch (normalizedType) {
       case 'local':
         return 'Local';
-      case 'claude-code':
-        return 'Claude Code';
-      case 'copilotcli':
-        return 'Copilot CLI';
+      case 'aily-agent':
+        return 'Aily Agent';
       case 'agent':
         return 'Agent';
       default:
@@ -1010,6 +1008,9 @@ export class ChatSessionItemsService implements OnDestroy {
 
     for (const model of this.chatSessionModelStore.values()) {
       const existing = mergedItems.get(model.sessionResource) ?? null;
+      if (!existing && !this.shouldProjectModelOnlySession(model)) {
+        continue;
+      }
       const modelItem = this.toModelSessionListItem(model, existing, projectPath, projectRootPath);
       if (!modelItem || !this.isSessionItemInViewScope(modelItem, projectPath, projectRootPath)) {
         continue;
@@ -1094,6 +1095,27 @@ export class ChatSessionItemsService implements OnDestroy {
       markedUnread: existing?.markedUnread,
       actions: existing?.actions,
     }, projectPath, projectRootPath);
+  }
+
+  private shouldProjectModelOnlySession(model: ChatSessionModel): boolean {
+    const runtimeState = this.readLiveSessionRuntimeState(model.sessionResource) ?? model.runtimeState;
+    if (runtimeState?.requestInProgress === true
+      || runtimeState?.status === 'in_progress'
+      || runtimeState?.status === 'needs_input'
+      || !!runtimeState?.activeResponseHandle) {
+      return true;
+    }
+
+    if (Array.isArray(runtimeState?.turnResponses) && runtimeState.turnResponses.length > 0) {
+      return true;
+    }
+
+    if (Array.isArray(model.turnResponses) && model.turnResponses.length > 0) {
+      return true;
+    }
+
+    const projectionTurns = runtimeState?.hostProjectionState?.turnResponses;
+    return Array.isArray(projectionTurns) && projectionTurns.length > 0;
   }
 
   private readLatestTurnUpdatedAt(turnResponses: readonly { readonly updatedAt?: unknown }[] | null | undefined): number | undefined {

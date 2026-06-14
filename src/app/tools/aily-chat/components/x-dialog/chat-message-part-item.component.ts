@@ -1,4 +1,4 @@
-import {
+﻿import {
   Component,
   Input,
   OnChanges,
@@ -27,11 +27,11 @@ import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-i
 import { ChatService, type ModelConfig } from '../../services/chat.service';
 
 interface ContinueOnErrorConfirmationData {
-  readonly copilotContinueOnError: true;
+  readonly ailyContinueOnError: true;
 }
 
 interface SwitchToAutoOnRateLimitConfirmationData {
-  readonly copilotSwitchToAutoOnRateLimit: true;
+  readonly ailySwitchToAutoOnRateLimit: true;
   readonly alwaysSwitchToAuto: boolean;
 }
 
@@ -432,9 +432,9 @@ export class ChatMessagePartItemComponent implements OnChanges {
     const legacyAction = readString(value['action']);
     switch (legacyAction) {
       case 'switch_to_auto':
-        return { copilotSwitchToAutoOnRateLimit: true, alwaysSwitchToAuto: false };
+        return { ailySwitchToAutoOnRateLimit: true, alwaysSwitchToAuto: false };
       case 'try_again':
-        return { copilotContinueOnError: true };
+        return { ailyContinueOnError: true };
       default:
         return null;
     }
@@ -506,11 +506,11 @@ function stringifyQuestionAnswers(answers: QuestionPart['answers']): string {
 }
 
 function isContinueOnErrorConfirmation(value: unknown): value is ContinueOnErrorConfirmationData {
-  return isRecord(value) && value['copilotContinueOnError'] === true;
+  return isRecord(value) && value['ailyContinueOnError'] === true;
 }
 
 function isSwitchToAutoOnRateLimitConfirmation(value: unknown): value is SwitchToAutoOnRateLimitConfirmationData {
   return isRecord(value)
-    && value['copilotSwitchToAutoOnRateLimit'] === true
+    && value['ailySwitchToAutoOnRateLimit'] === true
     && typeof value['alwaysSwitchToAuto'] === 'boolean';
 }

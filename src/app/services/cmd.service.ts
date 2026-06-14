@@ -23,6 +23,7 @@ export interface CmdOptions {
   cwd?: string;
   env?: { [key: string]: string };
   streamId?: string;
+  shellProfile?: boolean;
 }
 
 interface QueuedTask {

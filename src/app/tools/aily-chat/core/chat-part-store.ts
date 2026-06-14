@@ -13,13 +13,15 @@
 import { Subject } from 'rxjs';
 import { collectMarkdownPostProcessPatches } from './chat-part-markdown-postprocessor';
 import {
-  ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart,
+  ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
   SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
 
 type ChatPartStoreKey = object | symbol | number;
+const TERMINAL_LIVE_STREAM_MAX_CHARS = 32 * 1024;
+const TERMINAL_LIVE_OMITTED_MARKER = '[earlier terminal output omitted]\n';
 
 // ==================== 变更事件 ====================
 
@@ -111,6 +113,38 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function appendTerminalLiveStream(existing: string | undefined, delta: string | undefined): string | undefined {
+  const combined = `${existing || ''}${delta || ''}`;
+  if (combined.length <= TERMINAL_LIVE_STREAM_MAX_CHARS) {
+    return combined;
+  }
+
+  const tailLength = Math.max(0, TERMINAL_LIVE_STREAM_MAX_CHARS - TERMINAL_LIVE_OMITTED_MARKER.length);
+  return `${TERMINAL_LIVE_OMITTED_MARKER}${combined.slice(-tailLength)}`;
+}
+
+function normalizeTerminalLivePart(terminal: TerminalPart): TerminalPart {
+  return {
+    ...terminal,
+    output: appendTerminalLiveStream(undefined, terminal.output),
+    stderr: appendTerminalLiveStream(undefined, terminal.stderr),
+  };
+}
+
+function getTerminalSessionKey(terminal: Pick<TerminalPart, 'processId' | 'outputSessionId' | 'terminalId'>): string | undefined {
+  return asString(terminal.processId) || asString(terminal.outputSessionId) || asString(terminal.terminalId);
+}
+
+function mergeTerminalSourceToolCallIds(existing: TerminalPart, next: TerminalPart): string[] | undefined {
+  const merged = Array.from(new Set([
+    ...(existing.sourceToolCallIds ?? []),
+    ...(existing.toolCallId ? [existing.toolCallId] : []),
+    ...(next.sourceToolCallIds ?? []),
+    ...(next.toolCallId ? [next.toolCallId] : []),
+  ].map(value => asString(value)).filter((value): value is string => !!value)));
+  return merged.length > 0 ? merged : undefined;
 }
 
 function mergeToolCallMetadata(
@@ -458,6 +492,72 @@ export class ChatPartStore {
     }
 
     return this.addPart(storeKey, part);
+  }
+
+  upsertTerminalForHandle(
+    handle: ChatPartStoreReadableHandle | null,
+    terminal: TerminalPart,
+  ): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
+    const parts = this.getParts(storeKey);
+    const terminalSessionKey = getTerminalSessionKey(terminal);
+    const existingIndex = parts.findIndex(part => {
+      if (part.type !== 'terminal') {
+        return false;
+      }
+      const partSessionKey = getTerminalSessionKey(part);
+      if (terminalSessionKey && partSessionKey === terminalSessionKey) {
+        return true;
+      }
+      if (terminalSessionKey || partSessionKey) {
+        return false;
+      }
+      return (!!terminal.toolCallId && part.toolCallId === terminal.toolCallId)
+        || (!!terminal.partId && part.partId === terminal.partId);
+    });
+
+    if (existingIndex < 0) {
+      return this.addPart(storeKey, normalizeTerminalLivePart(terminal));
+    }
+
+    const existing = parts[existingIndex] as TerminalPart;
+    const replacesOutput = terminal.outputUpdateKind === 'snapshot';
+    const output = replacesOutput
+      ? appendTerminalLiveStream(undefined, terminal.output)
+      : terminal.output
+      ? appendTerminalLiveStream(existing.output, terminal.output)
+      : existing.output;
+    const stderr = replacesOutput
+      ? appendTerminalLiveStream(undefined, terminal.stderr)
+      : terminal.stderr
+      ? appendTerminalLiveStream(existing.stderr, terminal.stderr)
+      : existing.stderr;
+    const sourceToolCallIds = mergeTerminalSourceToolCallIds(existing, terminal);
+    this.updatePart(storeKey, existingIndex, {
+      ...existing,
+      ...terminal,
+      partId: existing.partId || terminal.partId,
+      command: terminal.command || existing.command,
+      output,
+      stderr,
+      isRunning: terminal.isRunning,
+      exitCode: terminal.exitCode,
+      sourceToolCallIds,
+      processId: terminal.processId || existing.processId,
+      outputSessionId: terminal.outputSessionId || existing.outputSessionId,
+      terminalId: terminal.terminalId || existing.terminalId,
+      outputFilePath: terminal.outputFilePath || existing.outputFilePath,
+      cwd: terminal.cwd || existing.cwd,
+      status: terminal.status || existing.status,
+      bytesTotal: terminal.bytesTotal ?? existing.bytesTotal,
+      lastOutputAt: terminal.lastOutputAt || existing.lastOutputAt,
+      outputUpdateKind: terminal.outputUpdateKind || existing.outputUpdateKind,
+    });
+    return existingIndex;
   }
 
   /** 在指定位置插入 Part。超出范围时追加到末尾。 */
@@ -1379,7 +1479,7 @@ export class ChatPartStore {
           break;
         case 'terminal':
           segments.push(
-            `\n\`\`\`aily-terminal\n${JSON.stringify({ command: part.command, output: part.output, stderr: part.stderr, exitCode: part.exitCode, isRunning: false, toolCallId: part.toolCallId })}\n\`\`\`\n`
+            `\n\`\`\`aily-terminal\n${JSON.stringify({ partId: part.partId, command: part.command, output: part.output, stderr: part.stderr, exitCode: part.exitCode, isRunning: false, toolCallId: part.toolCallId, sourceToolCallIds: part.sourceToolCallIds, processId: part.processId, outputSessionId: part.outputSessionId, terminalId: part.terminalId, outputFilePath: part.outputFilePath, cwd: part.cwd, status: part.status, bytesTotal: part.bytesTotal, lastOutputAt: part.lastOutputAt })}\n\`\`\`\n`
           );
           break;
       }

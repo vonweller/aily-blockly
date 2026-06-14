@@ -53,6 +53,7 @@ export interface RestoreSessionBoundaryTransactionInput {
   readonly attachedView?: boolean;
   readonly hydrateVisibleTurnResponses?: boolean;
   readonly requireLexSnapshotRestore?: boolean;
+  readonly acceptRestorePlanTurnResponses?: boolean;
 }
 
 export interface RestoreSessionBoundaryTransactionResult {
@@ -73,6 +74,7 @@ export async function restoreSessionBoundaryTransaction(
 
   let turnResponses = [...input.turnResponses];
   let restoredLexSnapshot = false;
+  const acceptRestorePlanTurnResponses = input.acceptRestorePlanTurnResponses !== false;
   const resolveRestorePlan = ctx.lexStream.session?.resolveRestorePlan?.bind(ctx.lexStream.session);
   const restoreResolvedSnapshot = ctx.lexStream.session?.restoreResolvedSnapshot?.bind(ctx.lexStream.session);
 
@@ -88,7 +90,9 @@ export async function restoreSessionBoundaryTransaction(
         throw new Error(`Session boundary transaction failed to restore lex snapshot for ${sessionId}`);
       }
       restoredLexSnapshot = true;
-      turnResponses = [...(restorePlan.turnResponses ?? turnResponses)];
+      if (acceptRestorePlanTurnResponses) {
+        turnResponses = [...(restorePlan.turnResponses ?? turnResponses)];
+      }
     } else if (input.requireLexSnapshotRestore) {
       throw new Error(`Session boundary transaction resolved no lex snapshot for ${sessionId}`);
     }

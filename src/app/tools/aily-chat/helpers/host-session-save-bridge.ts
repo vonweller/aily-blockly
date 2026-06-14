@@ -223,13 +223,13 @@ export class HostSessionSaveBridge {
       pendingFollowupRequests: runtimeState?.pendingFollowupRequests,
       yieldRequested: runtimeState?.yieldRequested === true,
     });
-    const checkpointTimelineSidecar = buildCheckpointTimelineSidecar(
+    const checkpointSidecars = buildCheckpointSidecars(
       this.ctx.readSessionCheckpointTimelineState?.(sessionId) ?? null,
     );
     const record: LiveHostSessionRecord = {
       sessionId,
       turnResponses: persistedTurnResponses,
-      ...(checkpointTimelineSidecar ? { sidecar: { checkpointTimeline: checkpointTimelineSidecar } } : {}),
+      ...(checkpointSidecars ? { sidecar: checkpointSidecars } : {}),
       ...(runtimeAuxiliary ? { auxiliary: runtimeAuxiliary } : {}),
       metadata: {
         sessionId,
@@ -324,14 +324,6 @@ export class HostSessionSaveBridge {
     target: HostSessionSaveTarget | null;
   }): boolean {
     try {
-      if (this.ctx.editCheckpointService?.getTotalEditCount() > 0) {
-        try {
-          this.ctx.editCheckpointService.commitCurrentTurn();
-        } catch (error) {
-          console.warn('[SessionLifecycle] checkpoint commit failed:', error);
-        }
-      }
-
       const saveTarget = normalizeHostSessionSaveTarget(options?.target);
       if (!saveTarget) {
         return false;
@@ -1007,24 +999,35 @@ function cloneTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
   };
 }
 
-function buildCheckpointTimelineSidecar(
+function buildCheckpointSidecars(
   state: SessionCheckpointTimelineState | null | undefined,
-): HostSessionSidecar['checkpointTimeline'] | undefined {
-  if (!canRedoSessionCheckpointTimeline(state)) {
-    return undefined;
-  }
-
+): Pick<HostSessionSidecar, 'checkpointMarker' | 'checkpointRedoBranch'> | undefined {
   const sessionResource = typeof state?.sessionResource === 'string'
     ? state.sessionResource.trim()
     : '';
-  if (!sessionResource || !Array.isArray(state?.turnResponses) || state.turnResponses.length === 0) {
+  if (!sessionResource || typeof state?.currentCheckpointIndex !== 'number' || !Number.isFinite(state.currentCheckpointIndex)) {
     return undefined;
   }
 
-  return {
+  const checkpointMarker = {
     sessionResource,
     currentCheckpointIndex: state.currentCheckpointIndex,
-    turnResponses: state.turnResponses.map(turn => cloneTurnResponse(turn) as PersistedHostTurnResponse),
+  };
+  if (!canRedoSessionCheckpointTimeline(state)
+    || !Array.isArray(state.turnResponses)
+    || state.turnResponses.length === 0) {
+    return {
+      checkpointMarker,
+    };
+  }
+
+  return {
+    checkpointMarker,
+    checkpointRedoBranch: {
+      sessionResource,
+      currentCheckpointIndex: state.currentCheckpointIndex,
+      turnResponses: state.turnResponses.map(turn => cloneTurnResponse(turn) as PersistedHostTurnResponse),
+    },
   };
 }
 

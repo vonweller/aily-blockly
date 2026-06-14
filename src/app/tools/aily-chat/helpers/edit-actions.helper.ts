@@ -15,6 +15,7 @@ import type {
   IAgentLifecycle,
   IChatCoordination,
   IChatServiceAccess,
+  IChatViewAccess,
   IProjectContext,
   ISessionAccess,
 } from '../core/chat-context';
@@ -50,6 +51,7 @@ import {
 } from './checkpoint-replay-coordinator';
 import {
   canRedoSessionCheckpointTimeline,
+  cloneSessionCheckpointTimelineState,
   getSessionCheckpointVisibleTurnResponses,
   redoSessionCheckpointTimeline,
   type SessionCheckpointTimelineState,
@@ -76,6 +78,7 @@ type WorkspaceCheckpointAccess = Partial<Pick<
 >>;
 
 type EditActionsContext = ChatViewWriteBridgeContext
+  & Pick<IChatViewAccess, 'inputValue'>
   & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled' | 'pendingEditFeedback'>
   & Pick<ISessionAccess, 'sessionAllowedPaths' | 'conversationMessages'>
   & Pick<IProjectContext, 'getCurrentProjectPath'>
@@ -237,6 +240,10 @@ export class EditActionsHelper {
     if (projectPath) {
       this.ctx.absAutoSyncService.initialize(projectPath);
     }
+    if (typeof this.ctx.absAutoSyncService.scheduleSessionStartExport === 'function') {
+      this.ctx.absAutoSyncService.scheduleSessionStartExport();
+      return;
+    }
     this.ctx.absAutoSyncService.exportToAbs().catch((err: any) => {
       console.warn('[ChatEngine] ABS 自动导出失败:', err);
     });
@@ -328,6 +335,33 @@ export class EditActionsHelper {
     this.checkpointReplayCoordinator.projectRestoreExecutionResult(restoreResult);
 
     return true;
+  }
+
+  private restoreCheckpointRequestToInput(resolved: {
+    listIndex: number | undefined;
+    requestContent: string | undefined;
+    displayContent: string | undefined;
+  }): void {
+    if (this.isFirstVisibleUserTurnIndex(resolved.listIndex)) {
+      return;
+    }
+
+    const inputText = resolved.displayContent ?? resolved.requestContent ?? '';
+    if (!inputText.trim()) {
+      return;
+    }
+
+    this.ctx.inputValue = inputText;
+    this.ctx.triggerSyncDetectChanges?.();
+  }
+
+  private isFirstVisibleUserTurnIndex(listIndex: number | undefined): boolean {
+    if (typeof listIndex !== 'number' || listIndex < 0) {
+      return false;
+    }
+
+    const firstUserIndex = this.ctx.list.findIndex(message => message.role === 'user' && !!message.turnId);
+    return firstUserIndex >= 0 && firstUserIndex === listIndex;
   }
 
   private toCanonicalTurnContext(target: EditActionTurnTarget | null | undefined): DialogTurnContext | null {
@@ -691,16 +725,26 @@ export class EditActionsHelper {
     const previousTurnResponses = [...this.readCurrentSessionTurnResponses()];
 
     if (hasCheckpointRedoChat) {
+      const previousCheckpointTimelineState = checkpointTimelineState
+        ? cloneSessionCheckpointTimelineState(checkpointTimelineState)
+        : null;
       const checkpointRedoResult = await this.checkpointReplayCoordinator.redoCheckpoint(
         checkpointRedoTurnResponses,
         previousTurnResponses,
+        {
+          applyCheckpointTimelineCommit: () => {
+            this.replaceCurrentSessionCheckpointTimelineState(checkpointRedoTimelineState);
+          },
+          rollbackCheckpointTimelineCommit: () => {
+            this.replaceCurrentSessionCheckpointTimelineState(previousCheckpointTimelineState);
+          },
+        },
       );
       if (checkpointRedoResult.ok === false) {
         this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
         return;
       }
 
-      this.replaceCurrentSessionCheckpointTimelineState(checkpointRedoTimelineState);
       this.checkpointReplayCoordinator.projectRedoExecutionResult(checkpointRedoResult);
       return;
     }
@@ -765,6 +809,8 @@ export class EditActionsHelper {
     if (!confirmed) {
       return false;
     }
+
+    this.restoreCheckpointRequestToInput(resolved);
 
     return this.restoreCheckpointSnapshot(resolved.snapshot, {
       turnId: resolved.turnId,
@@ -922,7 +968,12 @@ export class EditActionsHelper {
       this.ctx.pendingEditFeedback = editFeedback;
     }
     this.ctx.scrollManager.startNewExchange?.();
-    await this.ctx.send('user', newText, false);
+    const sessionResource = this.resolveCurrentSessionResource();
+    if (!sessionResource) {
+      this.ctx.message.warning('会话不存在，请开始新对话');
+      return;
+    }
+    await this.ctx.send('user', newText, false, sessionResource);
     this.ctx.resourceManager.mergePathsTo(this.ctx.sessionAllowedPaths);
     this.ctx.resourceManager.items = [];
   }
@@ -947,7 +998,12 @@ export class EditActionsHelper {
     const snapshot = resolvedTarget?.snapshot ?? this.ctx.editCheckpointService.getLatestSnapshot();
 
     if (!snapshot) {
-      await this.ctx.send('user', '请重试上次的操作。', false);
+      const sessionResource = this.resolveCurrentSessionResource();
+      if (!sessionResource) {
+        this.ctx.message.warning('会话不存在，请开始新对话');
+        return;
+      }
+      await this.ctx.send('user', '请重试上次的操作。', false, sessionResource);
       return;
     }
 

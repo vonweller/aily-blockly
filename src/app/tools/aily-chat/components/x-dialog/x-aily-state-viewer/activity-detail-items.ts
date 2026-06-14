@@ -2237,7 +2237,7 @@ function buildTerminalOutputRowsFromContent(input: {
     if (part.type === 'terminal_command') {
       const exitCode = typeof part['exitCode'] === 'number' ? part['exitCode'] : undefined;
       const isRunning = part['isRunning'] === true;
-      const terminalId = typeof part['terminalId'] === 'string' ? part['terminalId'] : undefined;
+      const terminalId = firstDisplayString(part['processId'], part['outputSessionId'], part['terminalId']);
       const cwd = typeof part['cwd'] === 'string' ? part['cwd'] : undefined;
       return [{
         id: `${recordId}:output:command`,
@@ -2306,7 +2306,7 @@ function buildTerminalOutputRows(input: {
   const commandTitle = terminal.command || summary || toolName || '终端命令';
   const commandSubtitle = [
     ...baseSubtitle,
-    terminal.terminalId ? `终端 ${terminal.terminalId}` : '',
+    getParsedTerminalDisplayId(terminal) ? `终端 ${getParsedTerminalDisplayId(terminal)}` : '',
     terminal.cwd || '',
   ].filter(Boolean).join(' · ');
   const stderr = normalizeTerminalStream(terminal.stderr);
@@ -2610,6 +2610,20 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function firstDisplayString(...values: readonly unknown[]): string | undefined {
+  for (const value of values) {
+    const text = asString(value);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function getParsedTerminalDisplayId(terminal: ReturnType<typeof parseTerminalPayload> extends infer T ? Exclude<T, null> : never): string | undefined {
+  return firstDisplayString(terminal.processId, terminal.outputSessionId, terminal.terminalId);
 }
 
 function asBoolean(value: unknown): boolean {

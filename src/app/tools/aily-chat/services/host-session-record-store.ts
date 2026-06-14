@@ -1,7 +1,5 @@
 import { AilyHost } from '../core/host';
 import {
-  isLegacyChatPlanModeValue,
-  LEGACY_CHAT_PLAN_AGENT_TARGET,
   normalizeChatSessionType,
 } from '../core/chat-mode';
 import {
@@ -226,6 +224,7 @@ export interface HostSessionRecordStoreOptions {
   joinPath: (...parts: string[]) => string;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
   resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
+  resolveModeByName?: HostSessionSelectedModeResolveOptions['resolveModeByName'];
 }
 
 /**
@@ -268,13 +267,6 @@ export class HostSessionRecordStore {
         : {}),
       ...(sanitizedMetadata.requestRouting
         ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
-        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
-          ? {
-              requestRouting: {
-                selectedModeId: 'agent',
-                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-              },
-            }
         : {}),
       ...(sanitizedMetadata.interactionActionSummary
         ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
@@ -558,7 +550,20 @@ export class HostSessionRecordStore {
     const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
       ? [...sidecar.response.compatMessages]
       : undefined;
-    const checkpointTimeline = sidecar?.checkpointTimeline;
+    const checkpointMarker = sidecar?.checkpointMarker;
+    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
+      ? checkpointMarker.sessionResource.trim()
+      : '';
+    const normalizedCheckpointMarker = checkpointMarkerSessionResource
+      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointMarkerSessionResource,
+          currentCheckpointIndex: Math.trunc(checkpointMarker.currentCheckpointIndex),
+        }
+      : undefined;
+
+    const checkpointTimeline = sidecar?.checkpointRedoBranch ?? sidecar?.checkpointTimeline;
     const checkpointTimelineSessionResource = typeof checkpointTimeline?.sessionResource === 'string'
       ? checkpointTimeline.sessionResource.trim()
       : '';
@@ -574,7 +579,7 @@ export class HostSessionRecordStore {
         }
       : undefined;
 
-    if (!compatMessages?.length && !normalizedCheckpointTimeline) {
+    if (!compatMessages?.length && !normalizedCheckpointMarker && !normalizedCheckpointTimeline) {
       return undefined;
     }
 
@@ -586,7 +591,8 @@ export class HostSessionRecordStore {
             },
           }
         : {}),
-      ...(normalizedCheckpointTimeline ? { checkpointTimeline: normalizedCheckpointTimeline } : {}),
+      ...(normalizedCheckpointMarker ? { checkpointMarker: normalizedCheckpointMarker } : {}),
+      ...(normalizedCheckpointTimeline ? { checkpointRedoBranch: normalizedCheckpointTimeline } : {}),
     };
   }
 
@@ -636,13 +642,6 @@ export class HostSessionRecordStore {
         : {}),
       ...(sanitizedMetadata.requestRouting
         ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
-        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
-          ? {
-              requestRouting: {
-                selectedModeId: 'agent',
-                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-              },
-            }
         : {}),
       ...(sanitizedMetadata.interactionActionSummary
         ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
@@ -691,8 +690,11 @@ export class HostSessionRecordStore {
   }
 
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
-    return this.options.resolveModeById
-      ? { resolveModeById: this.options.resolveModeById }
+    return this.options.resolveModeById || this.options.resolveModeByName
+      ? {
+          ...(this.options.resolveModeById ? { resolveModeById: this.options.resolveModeById } : {}),
+          ...(this.options.resolveModeByName ? { resolveModeByName: this.options.resolveModeByName } : {}),
+        }
       : undefined;
   }
 

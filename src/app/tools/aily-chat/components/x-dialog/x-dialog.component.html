@@ -180,15 +180,4 @@
       </div>
     }
 
-    @if (showCheckpointRestore) {
-      <div class="turn-restore-hint">
-        <span class="turn-restore-hint-text">{{ 'AILY_CHAT.TURN_RESTORE_STATUS' | translate }}</span>
-        <button
-          type="button"
-          class="turn-restore-hint-action"
-          [title]="checkpointRestoreActionTitle"
-          (click)="onRestoreCheckpointState(); $event.stopPropagation()"
-        >{{ 'AILY_CHAT.TURN_RESTORE_REAPPLY' | translate }}</button>
-      </div>
-    }
   </div>

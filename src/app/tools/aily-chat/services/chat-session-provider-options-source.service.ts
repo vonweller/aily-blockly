@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+﻿import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 
 import type { ChatSessionProviderOptionCommand } from '../core/chat-mode';
@@ -6,7 +6,7 @@ import { AilyHost } from '../core/host';
 import type { IFileSystem } from '../core/host-api';
 import { runHostGitCommand } from '../helpers/git-host-command';
 
-const OPEN_REPOSITORY_COMMAND_ID = 'github.copilot.cli.sessions.openRepository';
+const OPEN_REPOSITORY_COMMAND_ID = 'aily.agent.sessions.openRepository';
 
 export type ChatSessionProviderOptionsSourceRepositoryKind = 'repository' | 'folder';
 
@@ -47,7 +47,7 @@ export interface ChatSessionProviderOptionsSourceBinding {
 }
 
 @Injectable({ providedIn: 'root' })
-export class CopilotCliSessionProviderOptionsSourceService implements ChatSessionProviderOptionsSource {
+export class AilyAgentSessionProviderOptionsSourceService implements ChatSessionProviderOptionsSource {
   private readonly didChangeSubject = new Subject<void>();
   private snapshotState: ChatSessionProviderOptionsSourceSnapshot | null = null;
   private workspaceKey = '';

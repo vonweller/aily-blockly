@@ -167,7 +167,6 @@
             [doing]="item.doing"
             [isLastAily]="item.isLastAily"
             [isFirstUserTurn]="item.isFirstUserTurn"
-            [showCheckpointRestore]="item.showCheckpointRestore"
             [sessionId]="vm.sessionId"
             [currentMode]="vm.currentMode"
             [currentModelName]="vm.currentModelName"
@@ -188,9 +187,28 @@
             (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event)"
             (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
             (editAddFile)="editResourceShellCoordinator.addFile($event)"
-            (editAddFolder)="editResourceShellCoordinator.addFolder($event)">
+            (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
+            (taskAction)="handleDialogTaskAction($event)">
           </aily-x-dialog>
           }
+        @if (vm.checkpointRestoreSurface; as checkpointRestoreSurface) {
+          <div
+            class="chat-checkpoint-restore-surface"
+            role="group"
+            [attr.aria-label]="checkpointRestoreSurface.statusLabelKey | translate">
+            <div class="checkpoint-line-left"></div>
+            <span class="checkpoint-label-text">{{ checkpointRestoreSurface.statusLabelKey | translate }}</span>
+            <span class="checkpoint-dot-separator"></span>
+            <button
+              type="button"
+              class="checkpoint-restore-action"
+              [title]="checkpointRestoreSurface.actionTitle"
+              (click)="handleCheckpointRestoreSurfaceAction($event)">
+              {{ checkpointRestoreSurface.actionLabelKey | translate }}
+            </button>
+            <div class="checkpoint-line-right"></div>
+          </div>
+        }
       </div>
       <!-- </ngx-simplebar> -->
       } @else {
@@ -689,7 +707,7 @@
 
 @if(menuManager.showMode){
 <app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)"></app-menu>
+  (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)" (actionClickEvent)="switchShellCoordinator.modeMenuActionClick($event)"></app-menu>
 }
 
 @if(menuManager.showPermissionMenu){

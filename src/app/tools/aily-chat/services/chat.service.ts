@@ -36,7 +36,6 @@ import {
   createBuiltinChatResolvedMode,
   createPlanChatResolvedMode,
   createChatSessionInputModeFromResolvedMode,
-  isLegacyChatPlanModeValue,
   isPlanChatAgentTarget,
   normalizeChatSelectedMode,
   normalizeChatSessionProviderOptionGroups,
@@ -131,11 +130,11 @@ export interface ChatServiceSessionProviderOptionsResult {
   readonly newSessionOptions: Record<string, string>;
 }
 
-const COPILOTCLI_ISOLATION_OPTION_ID = 'isolation';
-const COPILOTCLI_REPOSITORY_OPTION_ID = 'repository';
-const COPILOTCLI_BRANCH_OPTION_ID = 'branch';
-const COPILOTCLI_WORKSPACE_ISOLATION_ID = 'workspace';
-const COPILOTCLI_WORKTREE_ISOLATION_ID = 'worktree';
+const AILY_AGENT_ISOLATION_OPTION_ID = 'isolation';
+const AILY_AGENT_REPOSITORY_OPTION_ID = 'repository';
+const AILY_AGENT_BRANCH_OPTION_ID = 'branch';
+const AILY_AGENT_WORKSPACE_ISOLATION_ID = 'workspace';
+const AILY_AGENT_WORKTREE_ISOLATION_ID = 'worktree';
 
 type ChatServiceProviderSelectionState = Record<string, string>;
 
@@ -737,21 +736,6 @@ export class ChatService {
     const persistedMode = config.data?.aiChatMode;
     const persistedCustomAgentTarget = normalizeAgentIdentifier(config.data?.aiChatCustomAgentTarget);
     if (persistedMode !== undefined) {
-      if (isLegacyChatPlanModeValue(persistedMode)) {
-        const planMode = createPlanChatResolvedMode();
-        this.setSelectedMode({
-          modeId: 'agent',
-          customAgentTarget: planMode.customAgentTarget,
-        }, { persist: false });
-
-        if (config.data) {
-          config.data.aiChatMode = 'agent';
-          config.data.aiChatCustomAgentTarget = planMode.customAgentTarget;
-          config.save?.();
-        }
-        return;
-      }
-
       const normalizedMode = normalizeChatSurfaceModeId(persistedMode);
       if (normalizedMode === 'agent' && persistedCustomAgentTarget) {
         this.setSelectedMode({
@@ -933,7 +917,7 @@ export class ChatService {
         continue;
       }
 
-      if ((optionId === HOST_SESSION_FOLDER_OPTION_ID || optionId === COPILOTCLI_REPOSITORY_OPTION_ID) && typeof update.value === 'string') {
+      if ((optionId === HOST_SESSION_FOLDER_OPTION_ID || optionId === AILY_AGENT_REPOSITORY_OPTION_ID) && typeof update.value === 'string') {
         const folderPath = update.value.trim();
         if (folderPath !== nextProviderOptions.folderPath) {
           nextProviderOptions = {
@@ -943,18 +927,18 @@ export class ChatService {
           hadProviderOptionsChange = true;
         }
 
-        if (nextNewSelections[COPILOTCLI_REPOSITORY_OPTION_ID] !== folderPath) {
+        if (nextNewSelections[AILY_AGENT_REPOSITORY_OPTION_ID] !== folderPath) {
           nextNewSelections = {
             ...nextNewSelections,
-            [COPILOTCLI_REPOSITORY_OPTION_ID]: folderPath,
+            [AILY_AGENT_REPOSITORY_OPTION_ID]: folderPath,
           };
           hadNewSelectionChange = true;
         }
 
-        if (shouldApplyToCurrentSession && nextCurrentSelections[COPILOTCLI_REPOSITORY_OPTION_ID] !== folderPath) {
+        if (shouldApplyToCurrentSession && nextCurrentSelections[AILY_AGENT_REPOSITORY_OPTION_ID] !== folderPath) {
           nextCurrentSelections = {
             ...nextCurrentSelections,
-            [COPILOTCLI_REPOSITORY_OPTION_ID]: folderPath,
+            [AILY_AGENT_REPOSITORY_OPTION_ID]: folderPath,
           };
         }
         continue;
@@ -1104,8 +1088,8 @@ export class ChatService {
     selectionState: ChatServiceProviderSelectionState,
     scope: 'current' | 'new',
   ): readonly ChatSessionProviderOptionGroup[] {
-    if (sessionType === 'copilotcli') {
-      return this.buildCopilotCliProviderOptionGroups(
+    if (sessionType === 'aily-agent') {
+      return this.buildAilyAgentProviderOptionGroups(
         previousInputState,
         providerOptions,
         selectionState,
@@ -1114,12 +1098,7 @@ export class ChatService {
       );
     }
 
-    const groups = resolveHostSessionProviderOptionGroups(previousInputState, providerOptions);
-    if (sessionType === 'claude-code') {
-      return groups.map((group) => this.decorateClaudeProviderOptionGroup(group, scope));
-    }
-
-    return groups;
+    return resolveHostSessionProviderOptionGroups(previousInputState, providerOptions);
   }
 
   private buildNewSessionOptionSelections(
@@ -1127,32 +1106,32 @@ export class ChatService {
     providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode },
     selectionState: ChatServiceProviderSelectionState,
   ): Record<string, string> {
-    if (sessionType === 'copilotcli') {
+    if (sessionType === 'aily-agent') {
       const sourceSnapshot = this.readSessionProviderOptionsSourceSnapshot(sessionType);
       const sourceRepository = this.readSourceRepository(
         sourceSnapshot,
-        providerOptions.folderPath || this.readSelectionStateValue(selectionState, COPILOTCLI_REPOSITORY_OPTION_ID),
+        providerOptions.folderPath || this.readSelectionStateValue(selectionState, AILY_AGENT_REPOSITORY_OPTION_ID),
       );
       const newSessionOptions: Record<string, string> = {
-        [COPILOTCLI_ISOLATION_OPTION_ID]: this.readSelectionStateValue(selectionState, COPILOTCLI_ISOLATION_OPTION_ID)
-          ?? COPILOTCLI_WORKSPACE_ISOLATION_ID,
+        [AILY_AGENT_ISOLATION_OPTION_ID]: this.readSelectionStateValue(selectionState, AILY_AGENT_ISOLATION_OPTION_ID)
+          ?? AILY_AGENT_WORKSPACE_ISOLATION_ID,
       };
 
-      const repository = this.readSelectionStateValue(selectionState, COPILOTCLI_REPOSITORY_OPTION_ID)
+      const repository = this.readSelectionStateValue(selectionState, AILY_AGENT_REPOSITORY_OPTION_ID)
         || sourceRepository?.path
         || sourceSnapshot?.repositories[0]?.path
         || providerOptions.folderPath;
       if (repository) {
-        newSessionOptions[COPILOTCLI_REPOSITORY_OPTION_ID] = repository;
+        newSessionOptions[AILY_AGENT_REPOSITORY_OPTION_ID] = repository;
       }
 
       const branch = sourceRepository?.kind === 'folder'
         ? undefined
-        : this.readSelectionStateValue(selectionState, COPILOTCLI_BRANCH_OPTION_ID)
+        : this.readSelectionStateValue(selectionState, AILY_AGENT_BRANCH_OPTION_ID)
           || sourceRepository?.currentBranch
           || sourceSnapshot?.repositories.find((repositoryEntry) => repositoryEntry.kind === 'repository')?.currentBranch;
       if (branch) {
-        newSessionOptions[COPILOTCLI_BRANCH_OPTION_ID] = branch;
+        newSessionOptions[AILY_AGENT_BRANCH_OPTION_ID] = branch;
       }
 
       return newSessionOptions;
@@ -1166,7 +1145,7 @@ export class ChatService {
     };
   }
 
-  private buildCopilotCliProviderOptionGroups(
+  private buildAilyAgentProviderOptionGroups(
     previousInputState: ChatSessionInputState | null | undefined,
     providerOptions: { folderPath: string; permissionMode: ChatSessionPermissionMode },
     selectionState: ChatServiceProviderSelectionState,
@@ -1179,21 +1158,21 @@ export class ChatService {
     const supportsWorktree = sourceSnapshot?.supportsWorktree !== false;
     const isCurrentScope = scope === 'current';
 
-    const isolationGroup = storedGroupById.get(COPILOTCLI_ISOLATION_OPTION_ID);
+    const isolationGroup = storedGroupById.get(AILY_AGENT_ISOLATION_OPTION_ID);
     const isolationItems: readonly ChatSessionProviderOptionItem[] = supportsWorktree
       ? [
-        { id: COPILOTCLI_WORKSPACE_ISOLATION_ID, name: 'Workspace', icon: this.createProviderOptionIcon('folder') },
-        { id: COPILOTCLI_WORKTREE_ISOLATION_ID, name: 'Worktree', icon: this.createProviderOptionIcon('worktree') },
+        { id: AILY_AGENT_WORKSPACE_ISOLATION_ID, name: 'Workspace', icon: this.createProviderOptionIcon('folder') },
+        { id: AILY_AGENT_WORKTREE_ISOLATION_ID, name: 'Worktree', icon: this.createProviderOptionIcon('worktree') },
       ]
       : [
-        { id: COPILOTCLI_WORKSPACE_ISOLATION_ID, name: 'Workspace', icon: this.createProviderOptionIcon('folder') },
+        { id: AILY_AGENT_WORKSPACE_ISOLATION_ID, name: 'Workspace', icon: this.createProviderOptionIcon('folder') },
       ];
-    const isolationSelectedId = this.readSelectionStateValue(selectionState, COPILOTCLI_ISOLATION_OPTION_ID)
+    const isolationSelectedId = this.readSelectionStateValue(selectionState, AILY_AGENT_ISOLATION_OPTION_ID)
       ?? this.readSelectedOptionIdFromGroup(isolationGroup)
-      ?? COPILOTCLI_WORKSPACE_ISOLATION_ID;
+      ?? AILY_AGENT_WORKSPACE_ISOLATION_ID;
     const isolationSelected = isolationItems.find((item) => item.id === isolationSelectedId) ?? isolationItems[0];
     groups.push(this.withSelectedDefaultMetadata({
-      id: COPILOTCLI_ISOLATION_OPTION_ID,
+      id: AILY_AGENT_ISOLATION_OPTION_ID,
       name: isolationGroup?.name ?? 'Isolation',
       ...(isolationGroup?.description ? { description: isolationGroup.description } : { description: 'Pick Isolation Mode' }),
       ...(isolationGroup?.icon ? { icon: isolationGroup.icon } : {}),
@@ -1201,9 +1180,9 @@ export class ChatService {
       selected: isCurrentScope ? this.withLockedMetadata(isolationSelected) : isolationSelected,
     }, scope));
 
-    const repositoryGroup = storedGroupById.get(COPILOTCLI_REPOSITORY_OPTION_ID);
+    const repositoryGroup = storedGroupById.get(AILY_AGENT_REPOSITORY_OPTION_ID);
     const sourceRepositories = sourceSnapshot?.repositories ?? [];
-    const repositorySelectedId = this.readSelectionStateValue(selectionState, COPILOTCLI_REPOSITORY_OPTION_ID)
+    const repositorySelectedId = this.readSelectionStateValue(selectionState, AILY_AGENT_REPOSITORY_OPTION_ID)
       || this.readSelectedOptionIdFromGroup(repositoryGroup)
       || this.readSourceRepository(sourceSnapshot, providerOptions.folderPath)?.path
       || sourceRepositories[0]?.path;
@@ -1226,7 +1205,7 @@ export class ChatService {
       ? repositoryGroup.items.map((item) => this.withFallbackIcon(item, 'folder'))
       : (repositorySelectedId ? [this.createPathOptionItem(repositorySelectedId, 'folder')] : []);
     groups.push(this.withSelectedDefaultMetadata({
-      id: COPILOTCLI_REPOSITORY_OPTION_ID,
+      id: AILY_AGENT_REPOSITORY_OPTION_ID,
       name: repositoryGroup?.name ?? 'Folder',
       ...(repositoryGroup?.description
         ? { description: repositoryGroup.description }
@@ -1239,10 +1218,10 @@ export class ChatService {
       ...(repositorySelected ? { selected: repositorySelected } : {}),
     }, scope));
 
-    const branchGroup = storedGroupById.get(COPILOTCLI_BRANCH_OPTION_ID);
+    const branchGroup = storedGroupById.get(AILY_AGENT_BRANCH_OPTION_ID);
     const branchSelectedId = sourceRepository?.kind === 'folder'
       ? undefined
-      : this.readSelectionStateValue(selectionState, COPILOTCLI_BRANCH_OPTION_ID)
+      : this.readSelectionStateValue(selectionState, AILY_AGENT_BRANCH_OPTION_ID)
         ?? this.readSelectedOptionIdFromGroup(branchGroup)
         ?? sourceRepository?.currentBranch;
     const sourceBranchItems = sourceRepository?.kind === 'repository'
@@ -1267,34 +1246,18 @@ export class ChatService {
         ? branchGroup.items.map((item) => this.withFallbackIcon(item, 'git-branch'))
         : (branchSelectedId ? [this.createNamedOptionItem(branchSelectedId, branchSelectedId, 'git-branch')] : []);
       groups.push(this.withSelectedDefaultMetadata({
-        id: COPILOTCLI_BRANCH_OPTION_ID,
+        id: AILY_AGENT_BRANCH_OPTION_ID,
         name: branchGroup?.name ?? 'Branch',
         ...(branchGroup?.description ? { description: branchGroup.description } : { description: 'Pick Branch' }),
         ...(branchGroup?.icon ? { icon: branchGroup.icon } : { icon: this.createProviderOptionIcon('git-branch') }),
         ...(!isCurrentScope && branchGroup?.commands?.length ? { commands: branchGroup.commands } : {}),
-        when: branchGroup?.when ?? `chatSessionOption.${COPILOTCLI_ISOLATION_OPTION_ID} == '${COPILOTCLI_WORKTREE_ISOLATION_ID}'`,
+        when: branchGroup?.when ?? `chatSessionOption.${AILY_AGENT_ISOLATION_OPTION_ID} == '${AILY_AGENT_WORKTREE_ISOLATION_ID}'`,
         items: branchItems,
         ...(branchSelected ? { selected: branchSelected } : {}),
       }, scope));
     }
 
     return groups;
-  }
-
-  private decorateClaudeProviderOptionGroup(
-    group: ChatSessionProviderOptionGroup,
-    scope: 'current' | 'new',
-  ): ChatSessionProviderOptionGroup {
-    if (group.id !== HOST_SESSION_FOLDER_OPTION_ID) {
-      return this.withSelectedDefaultMetadata(group, scope);
-    }
-
-    return this.withSelectedDefaultMetadata({
-      ...group,
-      icon: group.icon ?? this.createProviderOptionIcon('folder'),
-      items: group.items.map((item) => this.withFallbackIcon(item, 'folder')),
-      selected: group.selected ? this.withFallbackIcon(group.selected, 'folder') : group.selected,
-    }, scope);
   }
 
   private withSelectedDefaultMetadata(

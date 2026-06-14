@@ -128,7 +128,7 @@ export class ChatStopCoordinator {
       );
     }
 
-    this.ctx.editCheckpointService.commitCurrentTurn();
+    await this.ctx.editCheckpointService.commitCurrentTurn();
     this.ctx.viewAdapter.markLastMessageDone();
     this.ctx.isWaiting = false;
     this.ctx.isCompleted = true;

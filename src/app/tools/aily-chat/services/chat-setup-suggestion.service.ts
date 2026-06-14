@@ -126,7 +126,7 @@ export class ChatSetupSuggestionService {
       projectKey,
       title: '当前项目还没有测试基线',
       subtitle: detection.descriptionTarget,
-      message: `你这次请求看起来是在生成测试，但当前 ${detection.descriptionTarget} 还没有明显的测试配置或测试文件。更接近 VS Code/Copilot 的流程是先补齐测试环境，再继续生成具体测试。`,
+      message: `你这次请求看起来是在生成测试，但当前 ${detection.descriptionTarget} 还没有明显的测试配置或测试文件。建议先补齐 Aily 可验证的测试环境，再继续生成具体测试。`,
       prompt: detection.prompt,
     };
   }

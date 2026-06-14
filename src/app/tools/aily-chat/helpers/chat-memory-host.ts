@@ -1,4 +1,4 @@
-import type { IAilyHostAPI, IDirent, IFileSystem } from '../core/host-api';
+﻿import type { IAilyHostAPI, IDirent, IFileSystem } from '../core/host-api';
 
 export interface BlocklyMemoryStorageRoots {
   readonly userDir: string;
@@ -74,7 +74,7 @@ export function listBlocklyLocalMemoryEntries(
   host: Pick<IAilyHostAPI, 'fs' | 'path' | 'project'>,
   cwd?: string,
   sessionId?: string,
-  copilotMemoryEnabled = false,
+  repositoryMemoryEnabled = false,
 ): BlocklyMemoryEntry[] {
   const roots = resolveBlocklyMemoryStorageRoots(host, cwd, sessionId);
   if (!roots) {
@@ -88,7 +88,7 @@ export function listBlocklyLocalMemoryEntries(
     entries.push(...readScopeEntries(host.fs, host.path, roots.sessionDir, 'session', '/memories/session/'));
   }
 
-  if (!copilotMemoryEnabled) {
+  if (!repositoryMemoryEnabled) {
     entries.push(...readScopeEntries(host.fs, host.path, roots.repoDir, 'repo', '/memories/repo/'));
   }
 

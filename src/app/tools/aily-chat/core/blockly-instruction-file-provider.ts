@@ -1,4 +1,4 @@
-import {
+﻿import {
   createBlocklyFileCustomizationProvider,
   type BlocklyCustomizationFileSource,
   type BlocklyDiscoveredCustomizationFile,
@@ -8,7 +8,7 @@ import {
 import { AilyHost } from './host';
 
 export type BlocklyInstructionFileSource = BlocklyCustomizationFileSource;
-export type BlocklyInstructionFileProviderProfile = 'copilot' | 'claude';
+export type BlocklyInstructionFileProviderProfile = 'provider' | 'claude';
 
 export interface BlocklyInstructionFileProviderConfigSource extends BlocklyFileCustomizationProviderConfigSource {
   readonly userInstructionFolders?: readonly string[];
@@ -28,16 +28,16 @@ export interface BlocklyInstructionFileProvider {
 }
 
 const INSTRUCTION_FILE_EXTENSION = '.instructions.md';
-const DEFAULT_INSTRUCTION_FILE_PROVIDER_PROFILE: BlocklyInstructionFileProviderProfile = 'copilot';
-const COPILOT_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.github'] as const;
-const COPILOT_USER_DEFAULT_INSTRUCTION_FOLDERS: readonly string[] = [];
+const DEFAULT_INSTRUCTION_FILE_PROVIDER_PROFILE: BlocklyInstructionFileProviderProfile = 'provider';
+const AILY_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.aily'] as const;
+const AILY_USER_DEFAULT_INSTRUCTION_FOLDERS: readonly string[] = [];
 const CLAUDE_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.claude'] as const;
 const CLAUDE_USER_DEFAULT_INSTRUCTION_FOLDERS = ['.claude'] as const;
-const ROOT_AGENT_INSTRUCTION_FILE_NAMES = new Set(['agents.md', 'claude.md']);
-const GITHUB_AGENT_INSTRUCTION_FILE_NAMES = new Set(['copilot-instructions.md']);
+const ROOT_AGENT_INSTRUCTION_FILE_NAMES = new Set(['agents.md', 'aily.md']);
+const AILY_AGENT_INSTRUCTION_FILE_NAMES = new Set(['aily-instructions.md']);
 const CLAUDE_PROJECT_FOLDER_INSTRUCTION_FILE_NAMES = new Set(['claude.md', 'claude.local.md']);
 const CLAUDE_USER_FOLDER_INSTRUCTION_FILE_NAMES = new Set(['claude.md']);
-const COPILOT_ROOT_PROJECT_AGENT_INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+const AILY_ROOT_PROJECT_AGENT_INSTRUCTION_FILES = ['AGENTS.md', 'AILY.md'] as const;
 const CLAUDE_ROOT_PROJECT_INSTRUCTION_FILES = ['CLAUDE.md', 'CLAUDE.local.md'] as const;
 
 export function createBlocklyInstructionFileProvider(
@@ -49,7 +49,7 @@ export function createBlocklyInstructionFileProvider(
     projectRootPath: options.projectRootPath,
     configSource: options.configSource,
     defaultFolders: resolveDefaultInstructionFolders(options.source, profile),
-    ...(profile === 'copilot' ? {
+    ...(profile === 'provider' ? {
       resolveConfiguredFolders: (configSource: BlocklyInstructionFileProviderConfigSource | undefined, source: BlocklyInstructionFileSource) => source === 'user'
         ? configSource?.userInstructionFolders
         : configSource?.projectInstructionFolders,
@@ -158,8 +158,8 @@ function resolveDefaultInstructionFolders(
   }
 
   return source === 'project'
-    ? COPILOT_PROJECT_DEFAULT_INSTRUCTION_FOLDERS
-    : COPILOT_USER_DEFAULT_INSTRUCTION_FOLDERS;
+    ? AILY_PROJECT_DEFAULT_INSTRUCTION_FOLDERS
+    : AILY_USER_DEFAULT_INSTRUCTION_FOLDERS;
 }
 
 function resolveInstructionProjectRootPath(options: BlocklyInstructionFileProviderOptions): string {
@@ -209,7 +209,7 @@ function resolveProjectRootInstructionFileNames(
 ): readonly string[] {
   return profile === 'claude'
     ? CLAUDE_ROOT_PROJECT_INSTRUCTION_FILES
-    : COPILOT_ROOT_PROJECT_AGENT_INSTRUCTION_FILES;
+    : AILY_ROOT_PROJECT_AGENT_INSTRUCTION_FILES;
 }
 
 function dedupeDiscoveredInstructionFiles(
@@ -258,7 +258,7 @@ function shouldIncludeInstructionFile(
     return false;
   }
 
-  if (profile === 'copilot' && normalizedFileName.endsWith(INSTRUCTION_FILE_EXTENSION)) {
+  if (profile === 'provider' && normalizedFileName.endsWith(INSTRUCTION_FILE_EXTENSION)) {
     return true;
   }
 
@@ -273,8 +273,8 @@ function shouldIncludeInstructionFile(
       : CLAUDE_PROJECT_FOLDER_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
   }
 
-  if (normalizedFolderPath.endsWith('/.github')) {
-    return GITHUB_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
+  if (normalizedFolderPath.endsWith('/.aily')) {
+    return AILY_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
   }
 
   return ROOT_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);

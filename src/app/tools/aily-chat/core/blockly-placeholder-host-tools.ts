@@ -77,7 +77,7 @@ function makeCodeEditorContribution(): IToolContribution {
 - **apply_edit**: Apply a content edit to a file via the editor API.
 - **get_symbols**: Get workspace symbols matching a query.
 
-This tool requires a code editor (VS Code, etc.) to be active.`,
+This tool requires a supported IDE code editor to be active.`,
     inputSchema: {
       type: 'object',
       properties: {

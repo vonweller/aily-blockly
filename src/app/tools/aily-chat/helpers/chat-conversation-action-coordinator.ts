@@ -11,7 +11,7 @@ type ChatConversationActionContext = Pick<IAgentLifecycle, 'isWaiting'>
   & Pick<IChatViewAccess, 'scrollManager'>;
 
 interface ChatConversationActionCallbacks {
-  submitText: (text: string) => Promise<void> | void;
+  submitText: (text: string, sessionId: string) => Promise<void> | void;
 }
 
 /**
@@ -31,13 +31,14 @@ export class ChatConversationActionCoordinator {
       this.ctx.message.warning('正在处理中，请稍候...');
       return;
     }
-    if (!this.ctx.sessionId) {
+    const sessionId = this.resolveCurrentSessionId();
+    if (!sessionId) {
       this.ctx.message.warning('会话不存在，请开始新对话');
       return;
     }
 
     this.ctx.scrollManager.startNewExchange?.();
-    await this.callbacks.submitText('请继续完成之前的任务。');
+    await this.callbacks.submitText('请继续完成之前的任务。', sessionId);
   }
 
   async retryLastAction(): Promise<void> {
@@ -45,12 +46,17 @@ export class ChatConversationActionCoordinator {
       this.ctx.message.warning('正在处理中，请稍候...');
       return;
     }
-    if (!this.ctx.sessionId) {
+    const sessionId = this.resolveCurrentSessionId();
+    if (!sessionId) {
       this.ctx.message.warning('会话不存在，请开始新对话');
       return;
     }
 
     this.ctx.scrollManager.startNewExchange?.();
-    await this.callbacks.submitText('请重试上次的操作。');
+    await this.callbacks.submitText('请重试上次的操作。', sessionId);
+  }
+
+  private resolveCurrentSessionId(): string {
+    return typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
   }
 }

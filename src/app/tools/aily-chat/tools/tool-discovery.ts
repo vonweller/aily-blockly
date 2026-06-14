@@ -33,8 +33,8 @@ export const LEGACY_DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
   },
   {
     name: '终端工具',
-    brief: '后台命令执行、获取终端输出',
-    tools: ['start_background_command', 'get_terminal_output'],
+    brief: '命令执行、轮询、停止、长输出读取/检索',
+    tools: ['command_exec', 'command_write_stdin', 'command_status', 'command_stop', 'command_read', 'command_tail', 'command_search'],
   },
 ];
 

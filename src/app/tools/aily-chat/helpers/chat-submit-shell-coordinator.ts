@@ -105,7 +105,7 @@ export class ChatSubmitShellCoordinator {
     }
 
     if (this.deps.isWaiting(targetSessionId)) {
-      return this.queuePreparedInput(text, targetSessionId, options?.queueKind ?? 'steering', 'running');
+      return this.queuePreparedInput(text, targetSessionId, options?.queueKind ?? 'queued', 'running');
     }
 
     if (options?.queueKind) {

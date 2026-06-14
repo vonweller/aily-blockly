@@ -41,6 +41,7 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   readonly turnResponses: readonly TurnResponseTurn[];
   finalizeCurrentTurn(fallbackStatus?: TurnResponseStatus): boolean;
   hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void;
+  setProjectionSessionResource(sessionResource: string | null | undefined): void;
   setHostStreamListener(listener: IHostStreamListener | null): void;
   clearSessionState(): void;
 };

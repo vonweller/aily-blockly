@@ -7,11 +7,10 @@
  * 扫描来源（按优先级从低到高，同名后者覆盖前者）：
  * 0. Builtin Skills: ${rendererPath}/skills/          (随应用安装包分发，public/skills/)
  * 1. Global Skills:  ${AppDataPath}/aily-skills/      (用户全局自定义)
- * 2. Claude Global:  ${userHome}/.claude/skills/      (Claude 全局 skills)
+ * 2. Imported Global: ${userHome}/.claude/skills/     (外部 profile skills)
  * 3. Project Skills: ${projectRoot}/.aily/skills/     (项目专属)
- * 4. Workspace GH:   ${projectRoot}/.github/skills/   (VS Code/Copilot workspace root)
- * 5. Cross-client:   ${projectRoot}/.agents/skills/   (规范推荐，跨客户端)
- * 6. Claude Project: ${projectRoot}/.claude/skills/   (Claude 项目 skills)
+ * 4. Cross-client:   ${projectRoot}/.agents/skills/   (规范推荐，跨客户端)
+ * 5. Imported Project: ${projectRoot}/.claude/skills/ (外部 profile skills)
  */
 
 import {
@@ -214,7 +213,7 @@ class SkillRegistryImpl {
 
   /**
    * 扫描所有来源的 Skills。
-  * 扫描顺序：builtin → 全局 aily-skills → 全局 .claude/skills → 项目 .aily/skills/ → 项目 .github/skills/ → 项目 .agents/skills/ → 项目 .claude/skills/
+  * 扫描顺序：builtin → 全局 aily-skills → 全局 .claude/skills → 项目 .aily/skills/ → 项目 .agents/skills/ → 项目 .claude/skills/
    * 同名 skill 后扫描的覆盖先扫描的（项目级优先于全局优先于内置）。
    */
   async initialize(projectRoot?: string, options: SkillRegistryInitializeOptions = {}): Promise<void> {
@@ -258,7 +257,7 @@ class SkillRegistryImpl {
       this.scanDirectory(globalDir, { type: 'user' });
     }
 
-    // 2. 加载 Claude 全局 skills（用户 home/.claude/skills）
+    // 2. 加载外部 profile 全局 skills（用户 home/.claude/skills）
     const claudeGlobalDir = this.getClaudeGlobalSkillsDir();
     if (claudeGlobalDir) {
       this.scanDirectory(claudeGlobalDir, { type: 'user' });
@@ -279,19 +278,13 @@ class SkillRegistryImpl {
       this.scanDirectory(ailySkillsDir, { type: 'project', projectRoot });
     }
 
-    // 4. 加载项目 .github/skills/（VS Code/Copilot workspace skill root）
-    if (projectRoot) {
-      const githubSkillsDir = host.path.join(projectRoot, '.github', 'skills');
-      this.scanDirectory(githubSkillsDir, { type: 'project', projectRoot });
-    }
-
-    // 5. 加载项目 .agents/skills/（Agent Skills 规范跨客户端互操作目录）
+    // 4. 加载项目 .agents/skills/（Agent Skills 规范跨客户端互操作目录）
     if (projectRoot) {
       const agentsSkillsDir = host.path.join(projectRoot, '.agents', 'skills');
       this.scanDirectory(agentsSkillsDir, { type: 'project', projectRoot });
     }
 
-    // 6. 加载项目 .claude/skills/（Claude Code skills 目录）
+    // 5. 加载项目 .claude/skills/（外部 profile skills 目录）
     if (projectRoot) {
       const claudeSkillsDir = host.path.join(projectRoot, '.claude', 'skills');
       this.scanDirectory(claudeSkillsDir, { type: 'project', projectRoot });
@@ -433,7 +426,7 @@ class SkillRegistryImpl {
     return host.path.join(appDataPath, 'aily-skills');
   }
 
-  /** Claude 全局 skills 目录：${userHome}/.claude/skills/ */
+  /** 外部 profile 全局 skills 目录：${userHome}/.claude/skills/ */
   private getClaudeGlobalSkillsDir(): string | null {
     const host = AilyHost.get();
     const userHome = host.path?.getUserHome?.();
@@ -743,13 +736,17 @@ class SkillRegistryImpl {
 
   /** 按 agent 过滤 skills */
   getSkillsForAgent(agentName: string): IAilySkill[] {
+    const normalizedAgentNames = normalizeAgentIdentifiers([agentName]);
+    const normalizedAgentName = normalizedAgentNames[0] ?? agentName;
     return [...this.skills.values()].filter(
       s => {
         if (!this.isTrustedSkillSource(s)) {
           return false;
         }
-        const matchesAgent = !s.metadata.agents || s.metadata.agents.length === 0 || s.metadata.agents.includes(agentName);
-        const matchesTarget = !s.metadata.targets || s.metadata.targets.length === 0 || s.metadata.targets.includes(agentName);
+        const skillAgents = normalizeAgentIdentifiers(s.metadata.agents);
+        const skillTargets = normalizeAgentIdentifiers(s.metadata.targets);
+        const matchesAgent = skillAgents.length === 0 || skillAgents.includes(normalizedAgentName);
+        const matchesTarget = skillTargets.length === 0 || skillTargets.includes(normalizedAgentName);
         return matchesAgent && matchesTarget;
       }
     );
@@ -761,7 +758,8 @@ class SkillRegistryImpl {
       if (!this.isTrustedSkillSource(s)) return false;
       if (!s.metadata.autoActivate) return false;
       if (agentName && s.metadata.agents && s.metadata.agents.length > 0) {
-        return s.metadata.agents.includes(agentName);
+        const normalizedAgentName = normalizeAgentIdentifiers([agentName])[0] ?? agentName;
+        return normalizeAgentIdentifiers(s.metadata.agents).includes(normalizedAgentName);
       }
       return true;
     });
@@ -1137,7 +1135,6 @@ class SkillRegistryImpl {
     if (projectRoot) {
       roots.push(
         host.path.join(projectRoot, '.aily', 'skills'),
-        host.path.join(projectRoot, '.github', 'skills'),
         host.path.join(projectRoot, '.agents', 'skills'),
         host.path.join(projectRoot, '.claude', 'skills'),
       );

@@ -163,10 +163,15 @@ export class ChatSendCoordinator {
     const payloadRequestRouting = requestMetadata?.requestRouting && typeof requestMetadata.requestRouting === 'object' && !Array.isArray(requestMetadata.requestRouting)
       ? requestMetadata.requestRouting as Record<string, unknown>
       : undefined;
-    const requestAgentId = typeof payloadRequestRouting?.['customAgentTarget'] === 'string' && payloadRequestRouting['customAgentTarget'].trim()
+    const resolvedMode = this.resolveCurrentMode(selectedMode);
+    const modeInfo = createTurnRequestModeInfoFromResolvedMode(resolvedMode);
+    const payloadCustomAgentTarget = typeof payloadRequestRouting?.['customAgentTarget'] === 'string' && payloadRequestRouting['customAgentTarget'].trim()
       ? payloadRequestRouting['customAgentTarget'].trim()
-      : selectedCustomAgentTarget;
-    const modeInfo = createTurnRequestModeInfoFromResolvedMode(this.resolveCurrentMode(selectedMode));
+      : undefined;
+    const modeCustomAgentTarget = resolvedMode.isBuiltin === false
+      ? resolvedMode.customAgentTarget ?? selectedCustomAgentTarget
+      : undefined;
+    const requestAgentId = modeCustomAgentTarget ?? payloadCustomAgentTarget ?? selectedCustomAgentTarget;
     const currentSessionPermissionLevel = typeof this.ctx.currentSessionPermissionLevel === 'string'
       && this.ctx.currentSessionPermissionLevel.trim().length > 0
       ? this.ctx.currentSessionPermissionLevel.trim()
@@ -270,7 +275,7 @@ export class ChatSendCoordinator {
         resolveCommand: ({ agentId, name, kind }) => this.ctx.lexStream
           ?.agent
           .getHandle?.()
-          .resolveRequestCommand(name, kind, agentId)
+          ?.resolveRequestCommand(name, kind, agentId)
           ?? this.ctx.lexStream
             ?.agent
             .getAgent()

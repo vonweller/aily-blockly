@@ -305,7 +305,7 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
   hostRecord: HostSessionRecord,
   targetSessionId: string,
 ): SessionCheckpointTimelineState | null {
-  const sidecar = hostRecord.sidecar?.checkpointTimeline;
+  const sidecar = hostRecord.sidecar?.checkpointRedoBranch;
   const targetResource = typeof targetSessionId === 'string' ? targetSessionId.trim() : '';
   const sidecarResource = typeof sidecar?.sessionResource === 'string'
     ? sidecar.sessionResource.trim()
@@ -314,11 +314,93 @@ function buildSessionCheckpointTimelineStateFromHostRecord(
     return null;
   }
 
+  if (!hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
+    console.warn('[HostSessionRestore] dropped checkpoint timeline sidecar with incomplete checkpoint metadata', {
+      sessionResource: targetResource,
+    });
+    return null;
+  }
+
   return createSessionCheckpointTimelineState({
     sessionResource: targetResource,
     turnResponses: sidecar.turnResponses as unknown as readonly TurnResponseTurn[],
     currentCheckpointIndex: sidecar.currentCheckpointIndex,
   });
+}
+
+function hasCompleteCheckpointMetadataForTimelineTurns(
+  turnResponses: readonly unknown[],
+  targetSessionResource: string,
+): boolean {
+  for (const turn of turnResponses) {
+    const metadata = readTurnRequestMetadata(turn);
+    const checkpointId = readStringProperty(metadata, 'checkpointId');
+    if (!checkpointId) {
+      continue;
+    }
+
+    const checkpointNamespace = readStringProperty(metadata, 'checkpointNamespace');
+    const checkpointRef = readStringProperty(metadata, 'checkpointRef');
+    if (!checkpointNamespace || !checkpointRef) {
+      return false;
+    }
+
+    if (checkpointNamespace !== `refs/sessions/${targetSessionResource}`) {
+      return false;
+    }
+
+    if (!hasCompleteAdditionalCheckpointRefs(metadata)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function readTurnRequestMetadata(turn: unknown): Record<string, unknown> | null {
+  if (!turn || typeof turn !== 'object') {
+    return null;
+  }
+
+  const request = (turn as { request?: unknown }).request;
+  if (!request || typeof request !== 'object') {
+    return null;
+  }
+
+  const metadata = (request as { metadata?: unknown }).metadata;
+  return metadata && typeof metadata === 'object'
+    ? metadata as Record<string, unknown>
+    : null;
+}
+
+function readStringProperty(record: Record<string, unknown> | null, key: string): string {
+  const value = record?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasCompleteAdditionalCheckpointRefs(metadata: Record<string, unknown> | null): boolean {
+  const additionalStartRefs = readStringRecord(metadata?.['additionalStartCheckpointRefs']);
+  const additionalRefs = readStringRecord(metadata?.['additionalCheckpointRefs']);
+  if (!additionalStartRefs) {
+    return true;
+  }
+
+  if (!additionalRefs) {
+    return false;
+  }
+
+  return Object.keys(additionalStartRefs).every(key => !!additionalRefs[key]);
+}
+
+function readStringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => [key.trim(), typeof item === 'string' ? item.trim() : ''] as const)
+    .filter(([key, item]) => key.length > 0 && item.length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
 /**
@@ -737,6 +819,9 @@ export class HostSessionRestoreBridge {
     const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
       ? this.ctx.chatService.findResolvedModeById(modeId)
       : undefined;
+    const resolveModeByName = (modeName: string) => typeof this.ctx.chatService.findResolvedModeByName === 'function'
+      ? this.ctx.chatService.findResolvedModeByName(modeName)
+      : undefined;
     const hasSessionPickerMetadata = !!sessionMetadata?.modeDescriptor
       || !!sessionMetadata?.inputState
       || !!sessionMetadata?.requestRouting;
@@ -746,7 +831,7 @@ export class HostSessionRestoreBridge {
           modeDescriptor: sessionMetadata?.modeDescriptor,
           inputState: sessionMetadata?.inputState,
           requestRouting: sessionMetadata?.requestRouting,
-        }, { resolveModeById })
+        }, { resolveModeById, resolveModeByName })
       : normalizeChatSelectedMode({
           modeId: resolveHostSessionRequestRoutingSummary(hostRecord).selectedModeId,
           customAgentTarget: resolveHostSessionRequestRoutingSummary(hostRecord).customAgentTarget,
@@ -757,7 +842,7 @@ export class HostSessionRestoreBridge {
           modeDescriptor: sessionMetadata?.modeDescriptor,
           inputState: sessionMetadata?.inputState,
           requestRouting: sessionMetadata?.requestRouting,
-        }, { resolveModeById })
+        }, { resolveModeById, resolveModeByName })
       : undefined;
     const storedModeId = typeof storedModeDescriptor?.id === 'string' && storedModeDescriptor.id.trim().length > 0
       ? storedModeDescriptor.id.trim()

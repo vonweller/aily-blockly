@@ -245,19 +245,19 @@
                     <div class="setting-label">项目级 Instruction Folders</div>
                     <div class="setting-hint">每行一个绝对路径，优先级低于用户级，高于仓库自动发现。</div>
                     <textarea nz-input rows="3" [(ngModel)]="projectInstructionFoldersText"
-                        placeholder="例如：D:/project/.github/instructions"></textarea>
+                        placeholder="例如：D:/project/.aily/instructions"></textarea>
                 </div>
                 <div class="setting-block">
                     <div class="setting-label">用户级 Agent Folders</div>
-                    <div class="setting-hint">每行一个路径，作为 `~/.copilot/agents`、`~/.claude/agents` 之外的补充 source。</div>
+                    <div class="setting-hint">每行一个路径，作为 `~/.aily/agents`、`~/.claude/agents` 之外的补充 source。</div>
                     <textarea nz-input rows="3" [(ngModel)]="userAgentFoldersText"
                         placeholder="例如：D:/rules/user-agents"></textarea>
                 </div>
                 <div class="setting-block">
                     <div class="setting-label">项目级 Agent Folders</div>
-                    <div class="setting-hint">每行一个路径，作为 `.github/agents`、`.claude/agents` 之外的补充 source。</div>
+                    <div class="setting-hint">每行一个路径，作为 `.aily/agents`、`.claude/agents` 之外的补充 source。</div>
                     <textarea nz-input rows="3" [(ngModel)]="projectAgentFoldersText"
-                        placeholder="例如：D:/project/.github/agents"></textarea>
+                        placeholder="例如：D:/project/.aily/agents"></textarea>
                 </div>
                 <div class="setting-row">
                     <label nz-checkbox [(ngModel)]="useChatSessionCustomizationsForCustomAgents">存在 session customization provider 时，custom agents 优先使用该 source</label>

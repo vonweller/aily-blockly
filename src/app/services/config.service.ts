@@ -20,6 +20,7 @@ export class ConfigService {
   private static readonly DEFAULT_OFFICIAL_REGION = 'cn';
   private static readonly RESOURCE_REQUEST_TIMEOUT_MS = 8000;
   private static readonly HARDWARE_INDEX_BACKGROUND_REFRESH_MIN_INTERVAL_MS = 30000;
+  private static readonly HARDWARE_INDEX_CHAT_SEND_REFRESH_DELAY_MS = 5000;
 
   data: AppConfig | any = {};
 
@@ -921,6 +922,7 @@ export class ConfigService {
   private _hardwareIndexLoaded = false;  // 标记索引是否已加载
   private hardwareIndexLoadPromise: Promise<void> | null = null;
   private hardwareIndexBackgroundRefreshPromise: Promise<void> | null = null;
+  private hardwareIndexBackgroundRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private hardwareIndexLastLoadedAt = 0;
   private hardwareIndexLastRefreshScheduledAt = 0;
 
@@ -932,7 +934,7 @@ export class ConfigService {
   async loadHardwareIndexForAI(): Promise<void> {
     // 避免重复加载
     if (this._hardwareIndexLoaded) {
-      console.log('[ConfigService] 硬件索引已加载，跳过');
+      this.traceHardwareIndexRefresh('hardware index already loaded');
       return;
     }
 
@@ -955,15 +957,18 @@ export class ConfigService {
     const now = Date.now();
     if (!options.force) {
       if (this.hardwareIndexBackgroundRefreshPromise) {
-        console.info('[ConfigService][debug] skip background hardware refresh while in flight', {
-          reason: normalizedReason,
-        });
+        this.traceHardwareIndexRefresh('skip background hardware refresh while in flight', { reason: normalizedReason });
+        return;
+      }
+
+      if (this.hardwareIndexBackgroundRefreshTimer) {
+        this.traceHardwareIndexRefresh('skip background hardware refresh while scheduled', { reason: normalizedReason });
         return;
       }
 
       if (this.hardwareIndexLastRefreshScheduledAt > 0
         && now - this.hardwareIndexLastRefreshScheduledAt < ConfigService.HARDWARE_INDEX_BACKGROUND_REFRESH_MIN_INTERVAL_MS) {
-        console.info('[ConfigService][debug] skip background hardware refresh due to min interval', {
+        this.traceHardwareIndexRefresh('skip background hardware refresh due to min interval', {
           reason: normalizedReason,
           elapsedMs: now - this.hardwareIndexLastRefreshScheduledAt,
         });
@@ -971,18 +976,36 @@ export class ConfigService {
       }
     }
 
+    if (options.force && this.hardwareIndexBackgroundRefreshTimer) {
+      clearTimeout(this.hardwareIndexBackgroundRefreshTimer);
+      this.hardwareIndexBackgroundRefreshTimer = null;
+    }
+
     this.hardwareIndexLastRefreshScheduledAt = now;
-    this.hardwareIndexBackgroundRefreshPromise = this.refreshHardwareIndexForAIInternal(normalizedReason)
-      .catch(error => {
-        console.warn('[ConfigService] 后台刷新 AI 硬件索引失败:', error);
-      })
-      .finally(() => {
-        this.hardwareIndexBackgroundRefreshPromise = null;
-      });
+    const delayMs = !options.force && normalizedReason === 'chat-send-latest'
+      ? ConfigService.HARDWARE_INDEX_CHAT_SEND_REFRESH_DELAY_MS
+      : 0;
+    const startRefresh = () => {
+      this.hardwareIndexBackgroundRefreshTimer = null;
+      this.hardwareIndexBackgroundRefreshPromise = this.refreshHardwareIndexForAIInternal(normalizedReason)
+        .catch(error => {
+          console.warn('[ConfigService] 后台刷新 AI 硬件索引失败:', error);
+        })
+        .finally(() => {
+          this.hardwareIndexBackgroundRefreshPromise = null;
+        });
+    };
+
+    if (delayMs > 0) {
+      this.hardwareIndexBackgroundRefreshTimer = setTimeout(startRefresh, delayMs);
+      return;
+    }
+
+    startRefresh();
   }
 
   private async loadHardwareIndexForAIInternal(): Promise<void> {
-    console.log('[ConfigService] 开始加载 AI 硬件索引...');
+    this.traceHardwareIndexRefresh('start loading hardware index');
     const configFilePath = window['path'].getAppDataPath();
     
     await Promise.all([
@@ -992,11 +1015,14 @@ export class ConfigService {
     
     this._hardwareIndexLoaded = true;
     this.hardwareIndexLastLoadedAt = Date.now();
-    console.log('[ConfigService] AI 硬件索引加载完成, boardIndex:', this.boardIndex?.length, 'libraryIndex:', this.libraryIndex?.length);
+    this.traceHardwareIndexRefresh('hardware index loaded', {
+      boardCount: this.boardIndex?.length ?? 0,
+      libraryCount: this.libraryIndex?.length ?? 0,
+    });
   }
 
   private async refreshHardwareIndexForAIInternal(reason: string): Promise<void> {
-    console.info('[ConfigService][debug] start background hardware refresh', {
+    this.traceHardwareIndexRefresh('start background hardware refresh', {
       reason,
       alreadyLoaded: this._hardwareIndexLoaded,
       lastLoadedAt: this.hardwareIndexLastLoadedAt || null,
@@ -1014,11 +1040,24 @@ export class ConfigService {
     ]);
 
     this.hardwareIndexLastLoadedAt = Date.now();
-    console.info('[ConfigService][debug] background hardware refresh finished', {
+    this.traceHardwareIndexRefresh('background hardware refresh finished', {
       reason,
       boardCount: this.boardIndex?.length ?? 0,
       libraryCount: this.libraryIndex?.length ?? 0,
     });
+  }
+
+  private traceHardwareIndexRefresh(message: string, details?: Record<string, unknown>): void {
+    try {
+      const enabled = globalThis.localStorage?.getItem?.('aily.config.traceHardwareIndexRefresh') === '1'
+        || (globalThis as Record<string, unknown>)['__AILY_CONFIG_TRACE_HARDWARE_INDEX_REFRESH__'] === true;
+      if (!enabled) {
+        return;
+      }
+      console.info(`[ConfigService][debug] ${message}`, details ?? {});
+    } catch {
+      // Debug tracing must never affect the chat submit hot path.
+    }
   }
 
   /**
@@ -1035,14 +1074,14 @@ export class ConfigService {
       // 优先从本地缓存读取
       if (this.electronService.exists(localPath)) {
         this.boardIndex = this.parseBoardIndex(this.electronService.readFile(localPath));
-        console.log('[ConfigService] 本地 boardIndex 加载成功, 数量:', this.boardIndex?.length || 0);
+        this.traceHardwareIndexRefresh('local board index loaded', { count: this.boardIndex?.length || 0 });
       }
       // 从远程加载最新数据
       const boardIndex = await this.loadBoardIndex();
       if (boardIndex.length > 0) {
         this.boardIndex = boardIndex;
         this.writeBoardIndexCache(localPath, boardIndex);
-        console.log('[ConfigService] 远程 boardIndex 加载成功并缓存, 数量:', boardIndex.length);
+        this.traceHardwareIndexRefresh('remote board index loaded and cached', { count: boardIndex.length });
       }
     } catch (error) {
       console.error('[ConfigService] boards-index.json 加载失败，尝试从线上恢复:', error);
@@ -1052,19 +1091,19 @@ export class ConfigService {
 
   private async loadAndCacheLibraryIndex(configFilePath: string): Promise<void> {
     const localPath = `${configFilePath}/libraries-index.json`;
-    console.log('[ConfigService] 检查 libraries-index.json 路径:', localPath);
+    this.traceHardwareIndexRefresh('checking libraries index path', { localPath });
 
     try {
       // 优先从本地缓存读取
       if (this.electronService.exists(localPath)) {
         const fileContent = this.electronService.readFile(localPath);
-        console.log('[ConfigService] 本地 libraries-index.json 文件大小:', fileContent?.length || 0, '字节');
+        this.traceHardwareIndexRefresh('local libraries index file read', { byteLength: fileContent?.length || 0 });
         this.libraryIndex = this.parseLibraryIndex(fileContent);
-        console.log('[ConfigService] 本地 libraryIndex 加载成功, 数量:', this.libraryIndex?.length || 0);
+        this.traceHardwareIndexRefresh('local library index loaded', { count: this.libraryIndex?.length || 0 });
 
         if (this.libraryIndex.length > 0) {
           const sample = this.libraryIndex[0];
-          console.log('[ConfigService] libraryIndex 示例数据:', {
+          this.traceHardwareIndexRefresh('library index sample', {
             name: sample.name,
             displayName: sample.displayName,
             category: sample.category,
@@ -1072,7 +1111,7 @@ export class ConfigService {
           });
         }
       } else {
-        console.log('[ConfigService] 本地 libraries-index.json 不存在');
+        this.traceHardwareIndexRefresh('local libraries index file missing');
       }
 
       // 从远程加载最新数据
@@ -1080,7 +1119,7 @@ export class ConfigService {
       if (libraryIndex.length > 0) {
         this.libraryIndex = libraryIndex;
         this.writeLibraryIndexCache(localPath, libraryIndex);
-        console.log('[ConfigService] 远程 libraryIndex 加载成功并缓存, 数量:', libraryIndex.length);
+        this.traceHardwareIndexRefresh('remote library index loaded and cached', { count: libraryIndex.length });
       }
     } catch (error) {
       console.error('[ConfigService] libraries-index.json 加载失败，尝试从线上恢复:', error);

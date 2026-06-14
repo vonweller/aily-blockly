@@ -34,6 +34,15 @@ export interface ActivityToolHeaderDisplayData {
   pillTone: string;
 }
 
+export interface ActivityToolbarActionDisplayData {
+  id: string;
+  iconClass: string;
+  label: string;
+  tooltip?: string;
+  disabled?: boolean;
+  data?: Record<string, unknown>;
+}
+
 export interface ActivityGroupHeaderDisplayData {
   kind: 'default' | 'tool' | 'thinking' | 'subagent' | 'state' | 'collaboration';
   title: string;
@@ -80,6 +89,7 @@ export interface ActivityGroupDisplayItem {
   approval?: ActivityApprovalDisplayData;
   approvalSummary?: ActivityApprovalSummaryDisplayData;
   invocationDetail?: ActivityInvocationDisplayData;
+  toolbarActions?: readonly ActivityToolbarActionDisplayData[];
   children?: readonly ActivityGroupDisplayChild[];
   detailSections?: readonly DetailSectionDescriptor[];
   detailExpanded?: boolean;

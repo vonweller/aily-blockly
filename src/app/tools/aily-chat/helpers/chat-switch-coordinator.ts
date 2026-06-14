@@ -7,8 +7,6 @@ import type {
 } from '../core/chat-context';
 import { normalizeAgentIdentifier } from '../core/agent-identifiers';
 import {
-  LEGACY_CHAT_PLAN_AGENT_TARGET,
-  isLegacyChatPlanModeValue,
   resolveChatSurfaceModeId,
 } from '../core/chat-mode';
 import type { ChatSurfaceModeId } from '../core/chat-mode';
@@ -180,14 +178,6 @@ export class ChatSwitchCoordinator {
   }
 
   async switchToMode(mode: string): Promise<void> {
-    if (isLegacyChatPlanModeValue(mode)) {
-      await this.switchToCustomAgent({
-        modeId: LEGACY_CHAT_PLAN_AGENT_TARGET,
-        customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-      });
-      return;
-    }
-
     const normalizedMode = resolveChatSurfaceModeId(mode);
     if (!normalizedMode || normalizedMode === this.ctx.currentMode) {
       return;

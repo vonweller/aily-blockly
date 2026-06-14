@@ -57,6 +57,7 @@ const _fallback: IAilyHostAPI = {
   get notification() { return {} as any; },
   get env() { return (window as any)['env']; },
   get shell() { return (window as any)['other']; },
+  get log() { return (window as any)['log'] ?? console; },
   get editor() { return undefined; },
   get mcp() { return (window as any)['mcp']; },
 };

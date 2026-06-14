@@ -17,6 +17,7 @@ export type ChatPartMutationStoreAccess = Pick<
   | 'updateSubagentForHandle'
   | 'updateStateForHandle'
   | 'upsertStateForHandle'
+  | 'upsertTerminalForHandle'
   | 'postProcessMarkdownForHandle'
   | 'updateLatestRunningSubagentForHandle'
   | 'findToolCallOpaqueHandle'
@@ -45,7 +46,7 @@ export class ChatPartMutationBridge {
   }
 
   addTerminalPartForToolCall(toolCallId: string, part: TerminalPart): number {
-    return this.store.addPartToHandle(this.findToolCallHandle(toolCallId), part);
+    return this.store.upsertTerminalForHandle(this.findToolCallHandle(toolCallId), part);
   }
 
   appendMarkdownToCurrentMessage(text: string): number {

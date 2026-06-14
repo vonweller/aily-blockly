@@ -203,9 +203,15 @@ function buildTerminalToolResultContent(terminal: NonNullable<ReturnType<typeof 
     type: 'terminal_command',
     text: terminal.command,
     terminalId: terminal.terminalId,
+    processId: terminal.processId,
+    outputSessionId: terminal.outputSessionId,
+    outputFilePath: terminal.outputFilePath,
     cwd: terminal.cwd,
     exitCode: terminal.exitCode,
     isRunning: terminal.isRunning,
+    status: terminal.status,
+    bytesTotal: terminal.bytesTotal,
+    lastOutputAt: terminal.lastOutputAt,
   }];
 
   if (terminal.output) {
@@ -215,7 +221,7 @@ function buildTerminalToolResultContent(terminal: NonNullable<ReturnType<typeof 
     });
   }
 
-  if (terminal.stderr && terminal.stderr.trim() && terminal.stderr.trim() !== '(terminal stderr completed with no output)') {
+  if (terminal.stderr && terminal.stderr.trim()) {
     parts.push({
       type: 'terminal_stderr',
       text: terminal.stderr.trim(),

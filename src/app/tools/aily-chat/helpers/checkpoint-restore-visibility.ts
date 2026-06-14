@@ -1,11 +1,20 @@
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
+
+export interface CheckpointRestoreSurface {
+  readonly visible: true;
+  readonly presentationMode: WorkspaceCheckpointPresentationMode;
+  readonly statusLabelKey: 'AILY_CHAT.TURN_RESTORE_STATUS';
+  readonly actionLabelKey: 'AILY_CHAT.TURN_RESTORE_REAPPLY';
+  readonly actionTitle: string;
+}
 
 export function applyCheckpointRestoreVisibility(
   dialogItems: readonly ChatDialogViewItem[],
-  canShowCheckpointRestore: boolean,
+  _canShowCheckpointRestore: boolean,
 ): ChatDialogViewItem[] {
-  if (dialogItems.length === 0 || canShowCheckpointRestore) {
-    return [...dialogItems];
+  if (dialogItems.length === 0) {
+    return [];
   }
 
   let changed = false;
@@ -22,4 +31,21 @@ export function applyCheckpointRestoreVisibility(
   });
 
   return changed ? normalizedItems : [...dialogItems];
+}
+
+export function buildCheckpointRestoreSurface(
+  canRedoCheckpoint: boolean,
+  presentationMode: WorkspaceCheckpointPresentationMode,
+): CheckpointRestoreSurface | null {
+  if (!canRedoCheckpoint || (presentationMode !== 'git' && presentationMode !== 'timeline')) {
+    return null;
+  }
+
+  return {
+    visible: true,
+    presentationMode,
+    statusLabelKey: 'AILY_CHAT.TURN_RESTORE_STATUS',
+    actionLabelKey: 'AILY_CHAT.TURN_RESTORE_REAPPLY',
+    actionTitle: '重新应用已撤销的工作区更改和聊天',
+  };
 }

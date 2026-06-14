@@ -176,13 +176,10 @@ function finalizeDialogItems(
   disabledRequestTurnIds: ReadonlySet<string>,
 ): ChatDialogViewItem[] {
   return toPublicDialogItems(
-    markRestoreCheckpointItem(
-      markFirstUserTurnItem(
-        markLastAilyItem(
-          attachAssociatedTurns(items, turnResponses, disabledRequestTurnIds),
-        ),
+    markFirstUserTurnItem(
+      markLastAilyItem(
+        attachAssociatedTurns(items, turnResponses, disabledRequestTurnIds),
       ),
-      disabledRequestTurnIds,
     ),
   );
 }
@@ -324,26 +321,6 @@ function markFirstUserTurnItem(items: InternalChatDialogViewItem[]): InternalCha
     return {
       ...item,
       isFirstUserTurn,
-    } satisfies InternalChatDialogViewItem;
-  });
-}
-
-function markRestoreCheckpointItem(
-  items: InternalChatDialogViewItem[],
-  disabledRequestTurnIds: ReadonlySet<string>,
-): InternalChatDialogViewItem[] {
-  const shouldShowRestore = disabledRequestTurnIds.size > 0;
-  const lastItemIndex = items.length - 1;
-
-  return items.map((item, index) => {
-    const showCheckpointRestore = shouldShowRestore && index === lastItemIndex;
-    if (item.showCheckpointRestore === showCheckpointRestore) {
-      return item;
-    }
-
-    return {
-      ...item,
-      showCheckpointRestore,
     } satisfies InternalChatDialogViewItem;
   });
 }

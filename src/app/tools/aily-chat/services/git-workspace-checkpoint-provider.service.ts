@@ -4,6 +4,7 @@ import { runHostGitCommand } from '../helpers/git-host-command';
 import type {
   IWorkspaceCheckpointProvider,
   RollbackResult,
+  WorkspaceCheckpointAvailabilityDetail,
   WorkspaceCheckpointRefMetadata,
   WorkspaceCheckpointDescriptor,
   WorkspaceCheckpointForkRequest,
@@ -43,17 +44,22 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
   });
   private sessionId: string | null = null;
   private workspaceRoot: string | null = null;
-  private fallbackProvider: IWorkspaceCheckpointProvider | null = null;
   private repositoryRootCache = new Map<string, string | null>();
+  private availabilityDetailByWorkspaceRoot = new Map<string, WorkspaceCheckpointAvailabilityDetail>();
+  private presentationModeWarmups = new Set<string>();
   private queued = Promise.resolve();
+  private fallbackProvider: IWorkspaceCheckpointProvider | null = null;
 
   setContext(sessionId: string | null, workspaceRoot: string | null): void {
     this.sessionId = sessionId;
     this.workspaceRoot = workspaceRoot;
+    this.fallbackProvider?.setContext?.(sessionId, workspaceRoot);
+    this.warmPresentationModeCache(workspaceRoot);
   }
 
   setFallbackProvider(provider: IWorkspaceCheckpointProvider): void {
     this.fallbackProvider = provider;
+    provider.setContext?.(this.sessionId, this.workspaceRoot);
   }
 
   clear(): void {
@@ -61,26 +67,124 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     this.workspaceRoot = null;
   }
 
+  private warmPresentationModeCache(workspaceRoot: string | null): void {
+    if (!workspaceRoot || this.repositoryRootCache.has(workspaceRoot) || this.presentationModeWarmups.has(workspaceRoot)) {
+      return;
+    }
+
+    this.presentationModeWarmups.add(workspaceRoot);
+    void Promise.resolve()
+      .then(() => {
+        if (this.workspaceRoot !== workspaceRoot || this.repositoryRootCache.has(workspaceRoot)) {
+          return;
+        }
+        return this.ensurePresentationMode();
+      })
+      .catch(error => {
+        this.logCheckpointDiagnostic('error', `presentation mode warm-up failed: workspaceRoot=${workspaceRoot}`, error);
+      })
+      .finally(() => {
+        this.presentationModeWarmups.delete(workspaceRoot);
+      });
+  }
+
   getPresentationMode(): WorkspaceCheckpointPresentationMode {
     const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
     if (!workspaceRoot) {
+      this.setAvailabilityDetail(null, { mode: 'unknown', reason: 'no-workspace', message: '未打开工作区' });
       return 'unknown';
     }
 
     if (!this.repositoryRootCache.has(workspaceRoot)) {
+      return this.getFallbackPresentationMode();
+    }
+
+    return this.repositoryRootCache.get(workspaceRoot)
+      ? 'git'
+      : this.getFallbackPresentationMode();
+  }
+
+  async ensurePresentationMode(): Promise<WorkspaceCheckpointPresentationMode> {
+    const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!workspaceRoot) {
+      this.logCheckpointDiagnostic('warn', 'ensurePresentationMode skipped: no workspace root');
       return 'unknown';
     }
 
-    return this.repositoryRootCache.get(workspaceRoot) ? 'git' : 'compatibility';
+    if (!this.repositoryRootCache.has(workspaceRoot)) {
+      const sessionId = this.sessionId ?? '__presentation_probe__';
+      this.logCheckpointDiagnostic('info', `ensurePresentationMode probing repository context: session=${sessionId}; workspaceRoot=${workspaceRoot}`);
+      await this.resolveRepositoryContextForSession(sessionId);
+    }
+
+    const mode = this.getPresentationMode();
+    const detail = this.getAvailabilityDetail();
+    this.logCheckpointDiagnostic(
+      mode === 'git' ? 'info' : 'warn',
+      `ensurePresentationMode result: mode=${mode}; reason=${detail.reason ?? 'none'}; message=${detail.message ?? ''}; workspaceRoot=${workspaceRoot}`,
+    );
+    return mode;
+  }
+
+  getAvailabilityDetail(): WorkspaceCheckpointAvailabilityDetail {
+    const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!workspaceRoot) {
+      return { mode: 'unknown', reason: 'no-workspace', message: '未打开工作区' };
+    }
+
+    const existing = this.availabilityDetailByWorkspaceRoot.get(workspaceRoot);
+    if (existing) {
+      return existing;
+    }
+
+    const mode = this.getPresentationMode();
+    if (mode === 'timeline') {
+      return this.fallbackProvider?.getAvailabilityDetail?.() ?? { mode: 'timeline' };
+    }
+    if (mode === 'unknown') {
+      return {
+        mode,
+        reason: 'timeline-unavailable',
+        message: 'Git repository cache is unavailable and timeline checkpoint is not ready',
+      };
+    }
+    return { mode };
+  }
+
+  private getFallbackPresentationMode(): WorkspaceCheckpointPresentationMode {
+    return this.fallbackProvider?.getPresentationMode?.() ?? 'unknown';
+  }
+
+  async initializeRepository(): Promise<WorkspaceCheckpointPresentationMode> {
+    const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
+    if (!workspaceRoot) {
+      this.setAvailabilityDetail(null, { mode: 'unknown', reason: 'no-workspace', message: '未打开工作区' });
+      return 'unknown';
+    }
+
+    const currentMode = await this.ensurePresentationMode();
+    if (currentMode === 'git') {
+      return currentMode;
+    }
+
+    this.logCheckpointDiagnostic('info', `initializing git repository for checkpoint support: workspaceRoot=${workspaceRoot}`);
+    try {
+      await this.runGit(['init', '-b', 'main'], workspaceRoot);
+    } catch (error) {
+      this.logCheckpointDiagnostic('warn', `git init -b main failed; retrying plain git init: workspaceRoot=${workspaceRoot}`, error);
+      await this.runGit(['init'], workspaceRoot);
+    }
+
+    this.repositoryRootCache.delete(workspaceRoot);
+    this.availabilityDetailByWorkspaceRoot.delete(workspaceRoot);
+    return await this.ensurePresentationMode();
   }
 
   createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> {
     return this.enqueue(async () => {
-      await Promise.resolve(this.fallbackProvider?.createCheckpoint(descriptor));
-
       const context = await this.resolveRepositoryContext();
       if (!context) {
-        return;
+        return await Promise.resolve(this.fallbackProvider?.createCheckpoint(descriptor) ?? null);
       }
 
       const state = await this.ensureCheckpointRecord(context, descriptor);
@@ -94,7 +198,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     return this.enqueue(async () => {
       const context = await this.resolveRepositoryContext();
       if (!context) {
-        return;
+        return await Promise.resolve(this.fallbackProvider?.completeCheckpoint?.(descriptor) ?? null);
       }
 
       const state = await this.ensureCheckpointRecord(context, descriptor, this.loadState(context) ?? this.createEmptyState(context));
@@ -137,7 +241,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     await this.waitForPendingCheckpointMutations();
     const context = await this.resolveRepositoryContext();
     if (!context) {
-      return null;
+      return await Promise.resolve(this.fallbackProvider?.getCheckpointMetadata?.(checkpointId) ?? null);
     }
 
     const state = this.loadState(context);
@@ -147,10 +251,9 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
 
   replaceCheckpoints(descriptors: readonly WorkspaceCheckpointDescriptor[]): Promise<void> {
     return this.enqueue(async () => {
-      await Promise.resolve(this.fallbackProvider?.replaceCheckpoints(descriptors));
-
       const context = await this.resolveRepositoryContext();
       if (!context) {
+        await Promise.resolve(this.fallbackProvider?.replaceCheckpoints(descriptors));
         return;
       }
 
@@ -188,7 +291,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     return this.enqueue(async () => {
       const context = await this.resolveRepositoryContextForSession(request.sourceSessionResource);
       if (!context) {
-        return null;
+        return await Promise.resolve(this.fallbackProvider?.forkCheckpoints?.(request) ?? null);
       }
 
       const sourceState = this.loadState(context);
@@ -302,9 +405,7 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
       return gitPlan;
     }
 
-    return this.fallbackProvider
-      ? await this.fallbackProvider.buildRestorePlan(checkpointId)
-      : null;
+    return await Promise.resolve(this.fallbackProvider?.buildRestorePlan(checkpointId) ?? null);
   }
 
   async buildRedoPlan(checkpointId: string): Promise<RestorePlan | null> {
@@ -315,16 +416,16 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
       return gitPlan;
     }
 
-    return this.fallbackProvider
-      ? await this.fallbackProvider.buildRedoPlan(checkpointId)
-      : null;
+    return await Promise.resolve(this.fallbackProvider?.buildRedoPlan(checkpointId) ?? null);
   }
 
   async applyRestorePlan(plan: RestorePlan): Promise<RollbackResult | null> {
     if (plan.applyMetadata?.kind !== 'git-checkpoint') {
-      return this.fallbackProvider?.applyRestorePlan
-        ? await this.fallbackProvider.applyRestorePlan(plan)
-        : null;
+      return await Promise.resolve(this.fallbackProvider?.applyRestorePlan?.(plan) ?? {
+        rolledBackFiles: 0,
+        errors: ['workspace checkpoint provider 缺少 timeline restore plan 应用器'],
+        rolledBackOnError: true,
+      });
     }
 
     const context = await this.resolveRepositoryContext();
@@ -387,6 +488,12 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
       return {
         rolledBackFiles: plan.files.length,
         errors: [],
+        emergencyRollback: async () => this.rollbackAppliedCheckpointTargetsWithTempDir(
+          appliedTargets.map(target => ({ ...target })),
+          context.workspaceRoot,
+          context.sessionId,
+          plan.files.length,
+        ),
       };
     } catch (error: any) {
       const rollbackErrors = await this.rollbackAppliedCheckpointTargets(appliedTargets, tmpDir).catch(rollbackError => [String(rollbackError)]);
@@ -394,6 +501,39 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
         rolledBackFiles: 0,
         errors: [`checkpoint git apply 失败: ${error?.message || String(error)}`],
         ...(rollbackErrors.length === 0 ? { rolledBackOnError: true, rollbackErrors: [] } : { rolledBackOnError: false, rollbackErrors }),
+      };
+    } finally {
+      this.cleanupTempDir(tmpDir);
+    }
+  }
+
+  private async rollbackAppliedCheckpointTargetsWithTempDir(
+    appliedTargets: readonly { repositoryRoot: string; commitOid: string }[],
+    workspaceRoot: string,
+    sessionId: string,
+    fileCount: number,
+  ): Promise<RollbackResult> {
+    const pathUtil = AilyHost.get().path;
+    const fs = AilyHost.get().fs;
+    const tmpDir = pathUtil.join(
+      workspaceRoot,
+      '.aily',
+      'workspace-checkpoints',
+      '.tmp',
+      `${sessionId}-rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+
+    try {
+      const rollbackErrors = await this.rollbackAppliedCheckpointTargets(appliedTargets, tmpDir);
+      return {
+        rolledBackFiles: rollbackErrors.length === 0 ? fileCount : 0,
+        errors: rollbackErrors,
+        rolledBackOnError: rollbackErrors.length === 0,
+        rollbackErrors,
       };
     } finally {
       this.cleanupTempDir(tmpDir);
@@ -440,28 +580,131 @@ export class GitWorkspaceCheckpointProviderService implements IWorkspaceCheckpoi
     const normalizedSessionId = sessionId.trim();
     const workspaceRoot = this.workspaceRoot ?? AilyHost.get().project.currentProjectPath ?? null;
     if (!normalizedSessionId || !workspaceRoot) {
+      this.logCheckpointDiagnostic('warn', `resolveRepositoryContext skipped: session=${normalizedSessionId || '(empty)'}; workspaceRoot=${workspaceRoot ?? '(empty)'}`);
       return null;
     }
 
     if (this.repositoryRootCache.has(workspaceRoot)) {
       const cached = this.repositoryRootCache.get(workspaceRoot);
+      this.logCheckpointDiagnostic(
+        cached ? 'info' : 'warn',
+        `resolveRepositoryContext cache hit: session=${normalizedSessionId}; workspaceRoot=${workspaceRoot}; repositoryRoot=${cached ?? '(none)'}`,
+      );
       return cached ? { sessionId: normalizedSessionId, workspaceRoot, repositoryRoot: cached } : null;
     }
 
     try {
+      this.logCheckpointDiagnostic('info', `resolveRepositoryContext probe start: session=${normalizedSessionId}; workspaceRoot=${workspaceRoot}`);
       const inside = (await this.runGit(['rev-parse', '--is-inside-work-tree'], workspaceRoot)).trim();
+      this.logCheckpointDiagnostic('info', `resolveRepositoryContext git inside-work-tree=${inside}; workspaceRoot=${workspaceRoot}`);
       if (inside !== 'true') {
         this.repositoryRootCache.set(workspaceRoot, null);
+        this.setAvailabilityDetail(workspaceRoot, {
+          mode: this.getFallbackPresentationMode(),
+          reason: 'not-git-repository',
+          message: '当前工作区不是 Git 仓库，使用本地 timeline checkpoint',
+        });
         return null;
       }
 
       const repositoryRoot = (await this.runGit(['rev-parse', '--show-toplevel'], workspaceRoot)).trim();
+      this.logCheckpointDiagnostic('info', `resolveRepositoryContext git repositoryRoot=${repositoryRoot || '(empty)'}; workspaceRoot=${workspaceRoot}`);
       this.repositoryRootCache.set(workspaceRoot, repositoryRoot || null);
+      this.setAvailabilityDetail(workspaceRoot, repositoryRoot
+        ? { mode: 'git' }
+        : {
+          mode: this.getFallbackPresentationMode(),
+          reason: 'not-git-repository',
+          message: '当前工作区无法解析 Git 仓库根目录，使用本地 timeline checkpoint',
+        });
       return repositoryRoot ? { sessionId: normalizedSessionId, workspaceRoot, repositoryRoot } : null;
-    } catch {
+    } catch (error) {
       this.repositoryRootCache.set(workspaceRoot, null);
+      const detail = this.buildGitProbeFailureDetail(error);
+      this.setAvailabilityDetail(workspaceRoot, detail);
+      this.logCheckpointDiagnostic(
+        'error',
+        `resolveRepositoryContext probe failed: session=${normalizedSessionId}; workspaceRoot=${workspaceRoot}; reason=${detail.reason ?? 'unknown'}; message=${detail.message ?? ''}`,
+        error,
+      );
       return null;
     }
+  }
+
+  private setAvailabilityDetail(
+    workspaceRoot: string | null,
+    detail: WorkspaceCheckpointAvailabilityDetail,
+  ): void {
+    if (!workspaceRoot) {
+      return;
+    }
+    this.availabilityDetailByWorkspaceRoot.set(workspaceRoot, detail);
+    this.logCheckpointDiagnostic(
+      detail.mode === 'git' ? 'info' : 'warn',
+      `availability detail updated: workspaceRoot=${workspaceRoot}; mode=${detail.mode}; reason=${detail.reason ?? 'none'}; message=${detail.message ?? ''}`,
+    );
+  }
+
+  private logCheckpointDiagnostic(level: 'info' | 'warn' | 'error', message: string, error?: unknown): void {
+    try {
+      const logger = AilyHost.get().log;
+      if (level === 'error') {
+        logger?.error?.(`[AilyChat][GitCheckpoint] ${message}`, error);
+        return;
+      }
+      logger?.[level]?.(`[AilyChat][GitCheckpoint] ${message}`);
+    } catch {
+      // Diagnostics must not affect checkpoint behavior.
+    }
+  }
+
+  private buildGitProbeFailureDetail(error: unknown): WorkspaceCheckpointAvailabilityDetail {
+    const message = error instanceof Error && error.message ? error.message : String(error ?? '');
+    const lowerMessage = message.toLowerCase();
+    if (
+      lowerMessage.includes('enoent')
+      || lowerMessage.includes('not recognized')
+      || lowerMessage.includes('command not found')
+      || lowerMessage.includes('commandnotfoundexception')
+      || (message.includes('无法将') && message.includes('识别'))
+      || message.includes('不是内部或外部命令')
+      || lowerMessage.includes('git command host is unavailable')
+    ) {
+      return {
+        mode: this.getFallbackPresentationMode(),
+        reason: 'git-not-found',
+        message: '未找到 git 命令，使用本地 timeline checkpoint',
+      };
+    }
+
+    if (
+      lowerMessage.includes('dubious ownership')
+      || lowerMessage.includes('safe.directory')
+      || lowerMessage.includes('detected dubious')
+    ) {
+      return {
+        mode: this.getFallbackPresentationMode(),
+        reason: 'git-safe-directory',
+        message,
+      };
+    }
+
+    if (
+      lowerMessage.includes('not a git repository')
+      || lowerMessage.includes('not inside a work tree')
+    ) {
+      return {
+        mode: this.getFallbackPresentationMode(),
+        reason: 'not-git-repository',
+        message: '当前工作区不是 Git 仓库，使用本地 timeline checkpoint',
+      };
+    }
+
+    return {
+      mode: this.getFallbackPresentationMode(),
+      reason: 'git-probe-failed',
+      message,
+    };
   }
 
   private createEmptyState(context: { sessionId: string; workspaceRoot: string; repositoryRoot: string }): PersistedWorkspaceCheckpointState {

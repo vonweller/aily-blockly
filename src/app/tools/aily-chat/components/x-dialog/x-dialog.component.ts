@@ -95,7 +95,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   /** 是否为最后一条 aily 消息（显示操作按钮） */
   @Input() isLastAily = false;
   @Input() isFirstUserTurn = false;
-  @Input() showCheckpointRestore = false;
   @Input() workspaceCheckpointPresentationMode: WorkspaceCheckpointPresentationMode = 'unknown';
   /** 当前会话 ID */
   @Input() sessionId = '';
@@ -133,6 +132,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   @Output() editModelToggle = new EventEmitter<{ event: MouseEvent; type: 'model' }>();
   @Output() editAddFile = new EventEmitter<DialogTurnContext>();
   @Output() editAddFolder = new EventEmitter<DialogTurnContext>();
+  @Output() taskAction = new EventEmitter<ChatTaskActionDetail>();
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
@@ -157,6 +157,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   private _effectivePartsSource: readonly TurnResponsePart[] = EMPTY_TURN_PARTS;
   private _effectiveProgressMessagesSource: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = EMPTY_PROGRESS_MESSAGES;
   private _effectivePartsDoing = false;
+  private _effectivePartsRevisionKey = '';
   private _effectivePartsCache = [] as RenderableChatPart[];
 
   constructor(
@@ -243,20 +244,39 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     const turnParts = response?.parts ?? EMPTY_TURN_PARTS;
     const progressMessages = response?.progressMessages ?? EMPTY_PROGRESS_MESSAGES;
     const doing = this.effectiveDoing;
+    const revisionKey = this.getEffectivePartsRevisionKey(response, turnParts);
     if (turnParts === this._effectivePartsSource
       && progressMessages === this._effectiveProgressMessagesSource
-      && doing === this._effectivePartsDoing) {
+      && doing === this._effectivePartsDoing
+      && revisionKey === this._effectivePartsRevisionKey) {
       return this._effectivePartsCache;
     }
 
     this._effectivePartsSource = turnParts;
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
+    this._effectivePartsRevisionKey = revisionKey;
     this._effectivePartsCache = [
       ...turnParts.map(part => turnResponsePartToChatPart(part)),
       ...buildRenderableProgressParts(response, doing, this.hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
+  }
+
+  private getEffectivePartsRevisionKey(
+    response: TurnResponseTurn['response'] | null | undefined,
+    parts: readonly TurnResponsePart[],
+  ): string {
+    const responseRecord = response as { updatedAt?: unknown; revision?: unknown } | null | undefined;
+    const turnRecord = this.effectiveTurnContext?.turnResponse as { updatedAt?: unknown; revision?: unknown } | null | undefined;
+    const value = responseRecord?.updatedAt ?? responseRecord?.revision ?? turnRecord?.updatedAt ?? turnRecord?.revision;
+    const base = typeof value === 'number' && Number.isFinite(value) ? String(value) : '-1';
+    const terminalKey = parts
+      .map((part, index) => part.type === 'terminal'
+        ? buildTerminalPartRevisionKey(part, index)
+        : `${index}:${part.type}`)
+      .join('|');
+    return `${base}:${parts.length}:${terminalKey}`;
   }
 
   private get hasActiveConfirmationCarousel(): boolean {
@@ -339,7 +359,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get canRenderCheckpointAnchor(): boolean {
-    return !this.readOnly && this.role === 'user' && !!this.actionTurnId;
+    return !this.readOnly
+      && this.role === 'user'
+      && !!this.actionTurnId
+      && !this.isCheckpointWorkspaceUnavailable;
   }
   
   get isCurrentStreamingResponse(): boolean {
@@ -356,15 +379,15 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get checkpointActionDisabled(): boolean {
-    return this.isRequestDisabled;
+    return this.isRequestDisabled || this.isCheckpointWorkspaceUnavailable;
   }
 
   get forkSessionActionDisabled(): boolean {
-    return this.isRequestDisabled;
+    return this.isRequestDisabled || this.isCheckpointWorkspaceUnavailable;
   }
 
   get regenerateActionDisabled(): boolean {
-    return this.isRequestDisabled;
+    return this.isRequestDisabled || this.isCheckpointWorkspaceUnavailable;
   }
 
   get editTooltipTitle(): string {
@@ -383,26 +406,17 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return previewLabel ? `点击编辑 · ${previewLabel}` : '点击编辑';
   }
 
-  get isCheckpointCompatibilityMode(): boolean {
-    return this.workspaceCheckpointPresentationMode === 'compatibility';
-  }
-
-  private appendCheckpointModeHint(base: string): string {
-    if (!this.isCheckpointCompatibilityMode) {
-      return base;
-    }
-
-    return `${base} 当前工作区未走 git-backed checkpoint 主路径，此入口仍处于 compatibility mode，不完全等同于 VS Code / Copilot 的真实恢复语义。`;
+  get isCheckpointWorkspaceUnavailable(): boolean {
+    return this.workspaceCheckpointPresentationMode !== 'git'
+      && this.workspaceCheckpointPresentationMode !== 'timeline';
   }
 
   get checkpointActionLabel(): string {
-    const baseLabel = this.isFirstUserTurn
+    return this.isFirstUserTurn
       ? '重新开始'
       : this.roundCount > 0
         ? `还原检查点 · ${this.roundCount} 轮`
         : '还原检查点';
-
-    return this.isCheckpointCompatibilityMode ? `${baseLabel} · 兼容模式` : baseLabel;
   }
 
   get checkpointActionShortLabel(): string {
@@ -424,12 +438,16 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get checkpointActionTitle(): string {
+    if (this.isCheckpointWorkspaceUnavailable) {
+      return '当前工作区 checkpoint 尚未就绪，不能执行检查点恢复、重新开始或历史分叉。';
+    }
+
     if (this.isFirstUserTurn) {
-      return this.appendCheckpointModeHint('清空当前对话并撤销全部更改');
+      return '清空当前对话并撤销全部更改';
     }
 
     if (this.checkpointActionDisabled) {
-      return this.appendCheckpointModeHint('该请求已成为失活的历史边界，不能再次作为活动检查点使用；工作区是否还能恢复，请以单独的恢复入口状态为准');
+      return '该请求已成为失活的历史边界，不能再次作为活动检查点使用；工作区是否还能恢复，请以单独的恢复入口状态为准';
     }
 
     const hints: string[] = [];
@@ -447,10 +465,14 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       hints.push('该轮请求包含额外上下文');
     }
 
-    return this.appendCheckpointModeHint(hints.length > 0 ? hints.join('，') : '还原到该轮检查点');
+    return hints.length > 0 ? hints.join('，') : '还原到该轮检查点';
   }
 
   get forkSessionActionTitle(): string {
+    if (this.isCheckpointWorkspaceUnavailable) {
+      return '当前工作区 checkpoint 尚未就绪，不能创建带有工作区检查点边界的新会话。';
+    }
+
     if (this.forkSessionActionDisabled) {
       return '该请求已失活，不能再从这里分叉新会话；这只影响聊天历史操作，工作区恢复状态请看单独的恢复入口';
     }
@@ -461,18 +483,6 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
 
     return '创建一个新会话，并从该请求重新开始';
-  }
-
-  get checkpointRestoreStatusLabel(): string {
-    return this.isCheckpointCompatibilityMode ? '已还原检查点 · 兼容模式' : '已还原检查点';
-  }
-
-  get checkpointRestoreActionLabel(): string {
-    return '恢复';
-  }
-
-  get checkpointRestoreActionTitle(): string {
-    return this.appendCheckpointModeHint('重新应用已撤销的工作区更改和聊天');
   }
 
   get userTurnMetadataLabel(): string | null {
@@ -538,6 +548,10 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get regenerateActionTitle(): string {
+    if (this.isCheckpointWorkspaceUnavailable) {
+      return '当前工作区 checkpoint 尚未就绪，不能安全重新执行该历史请求。';
+    }
+
     if (this.regenerateActionDisabled) {
       return '该请求已失活，不能重新执行；这只影响聊天历史操作，工作区恢复状态请看单独的恢复入口';
     }
@@ -568,38 +582,21 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     const detail: ChatTaskActionDetail = target
       ? { action: 'regenerate', target }
       : { action: 'regenerate' };
-    document.dispatchEvent(new CustomEvent('aily-task-action', {
-      bubbles: true,
-      detail,
-    }));
+    this.taskAction.emit(detail);
   }
 
   onRestoreCheckpoint(): void {
     const target = this.effectiveTurnContext;
     if (!target || this.checkpointActionDisabled) return;
     const detail: ChatTaskActionDetail = { action: 'restoreCheckpoint', target };
-    document.dispatchEvent(new CustomEvent('aily-task-action', {
-      bubbles: true,
-      detail,
-    }));
+    this.taskAction.emit(detail);
   }
 
   onForkSession(): void {
     const target = this.effectiveTurnContext;
     if (!target || this.forkSessionActionDisabled) return;
     const detail: ChatTaskActionDetail = { action: 'forkSession', target };
-    document.dispatchEvent(new CustomEvent('aily-task-action', {
-      bubbles: true,
-      detail,
-    }));
-  }
-
-  onRestoreCheckpointState(): void {
-    const detail: ChatTaskActionDetail = { action: 'redoEdits' };
-    document.dispatchEvent(new CustomEvent('aily-task-action', {
-      bubbles: true,
-      detail,
-    }));
+    this.taskAction.emit(detail);
   }
 
   onCopyContent(): void {
@@ -619,10 +616,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     const vote = feedback === 'helpful' ? 1 : 0;
     if (target) {
       const detail: ChatTaskActionDetail = { action: 'voteResponse', target, vote };
-      document.dispatchEvent(new CustomEvent('aily-task-action', {
-        bubbles: true,
-        detail,
-      }));
+      this.taskAction.emit(detail);
     }
 
     if (!this.sessionId) {
@@ -960,4 +954,25 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       this.editSessionClosed.emit();
     }
   }
+}
+
+function buildTerminalPartRevisionKey(part: TurnResponsePart, index: number): string {
+  if (part.type !== 'terminal') {
+    return `${index}:${part.type}`;
+  }
+
+  return [
+    index,
+    part.type,
+    part.partId ?? '',
+    part.processId ?? '',
+    part.outputSessionId ?? '',
+    part.status ?? '',
+    part.isRunning ? 'running' : 'idle',
+    part.exitCode ?? '',
+    part.bytesTotal ?? '',
+    part.lastOutputAt ?? '',
+    part.output?.length ?? 0,
+    part.stderr?.length ?? 0,
+  ].join(':');
 }

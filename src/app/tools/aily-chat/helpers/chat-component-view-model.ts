@@ -10,6 +10,7 @@ import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
 import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 import type { IMenuItem } from '../../../configs/menu.config';
 import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { CheckpointRestoreSurface } from './checkpoint-restore-visibility';
 import type { ChatSessionActionState } from './chat-request-controller';
 import type { HostRequestModel } from './host-turn-response-state';
 import type { MenuPosition } from '../services/menu-manager.service';
@@ -17,6 +18,7 @@ import type { MenuPosition } from '../services/menu-manager.service';
 interface ChatEngineViewLike {
   readonly hostRequestModel: HostRequestModel | null;
   readonly dialogItems: readonly ChatDialogViewItem[];
+  readonly checkpointRestoreSurface: CheckpointRestoreSurface | null;
   readonly partStore: ChatPartStore;
   readonly isWaiting: boolean;
   readonly getSessionActionState?: (sessionId?: string | null) => ChatSessionActionState;
@@ -140,6 +142,10 @@ export class ChatComponentViewModel {
 
   get dialogItems(): readonly ChatDialogViewItem[] {
     return this.deps.engine.dialogItems;
+  }
+
+  get checkpointRestoreSurface(): CheckpointRestoreSurface | null {
+    return this.deps.engine.checkpointRestoreSurface;
   }
 
   get partStore(): ChatPartStore {

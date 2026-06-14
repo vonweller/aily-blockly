@@ -1381,6 +1381,7 @@ export class SessionLifecycleHelper {
           : sourceTurnResponses,
       } as HostSessionRecord, {
         resolveModeById: (modeId) => this.ctx.chatService.findResolvedModeById?.(modeId),
+        resolveModeByName: (modeName) => this.ctx.chatService.findResolvedModeByName?.(modeName),
       });
     }
 

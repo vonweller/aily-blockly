@@ -213,6 +213,73 @@
       min-width: 0;
       max-width: 100%;
     }
+
+    .chat-checkpoint-restore-surface {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 24px;
+      margin: 4px 0 8px;
+      padding: 0 2px;
+      color: var(--aily-chat-xdialog-username-text, rgba(204, 204, 204, 0.72));
+      font-size: 11px;
+      line-height: 20px;
+      user-select: none;
+      box-sizing: border-box;
+    }
+
+    .checkpoint-line-left,
+    .checkpoint-line-right {
+      height: 1px;
+      min-width: 24px;
+      background: var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.12));
+      opacity: 0.75;
+    }
+
+    .checkpoint-line-left {
+      flex: 0 1 52px;
+    }
+
+    .checkpoint-line-right {
+      flex: 1 1 auto;
+    }
+
+    .checkpoint-label-text {
+      color: var(--aily-chat-viewer-state-done, #89d185);
+      white-space: nowrap;
+    }
+
+    .checkpoint-dot-separator {
+      width: 3px;
+      height: 3px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.52;
+      flex: 0 0 auto;
+    }
+
+    .checkpoint-restore-action {
+      padding: 0;
+      border: none;
+      background: transparent;
+      appearance: none;
+      outline: none;
+      color: var(--aily-chat-xdialog-msg-btn, rgba(204, 204, 204, 0.78));
+      font: inherit;
+      line-height: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      text-decoration: none;
+
+      &:hover,
+      &:focus-visible {
+        color: var(--aily-chat-xdialog-msg-btn-hover-fg, #e3e3e3);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+    }
+
   }
 }
 

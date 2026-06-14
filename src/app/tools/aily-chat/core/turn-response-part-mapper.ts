@@ -153,6 +153,15 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         exitCode: part.exitCode,
         isRunning: part.isRunning,
         toolCallId: part.toolCallId,
+        sourceToolCallIds: part.sourceToolCallIds,
+        processId: part.processId,
+        outputSessionId: part.outputSessionId,
+        terminalId: part.terminalId,
+        outputFilePath: part.outputFilePath,
+        cwd: part.cwd,
+        status: part.status,
+        bytesTotal: part.bytesTotal,
+        lastOutputAt: part.lastOutputAt,
       } satisfies TurnResponseTerminalPart;
   }
 }
@@ -211,7 +220,17 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       return confirmation;
     }
     case 'terminal': {
-      const terminal = mkTerminal(part.command, part.toolCallId, part.partId);
+      const terminal = mkTerminal(part.command, part.toolCallId, part.partId, {
+        sourceToolCallIds: part.sourceToolCallIds ? [...part.sourceToolCallIds] : undefined,
+        processId: part.processId,
+        outputSessionId: part.outputSessionId,
+        terminalId: part.terminalId,
+        outputFilePath: part.outputFilePath,
+        cwd: part.cwd,
+        status: part.status,
+        bytesTotal: part.bytesTotal,
+        lastOutputAt: part.lastOutputAt,
+      });
       terminal.output = part.output;
       terminal.stderr = part.stderr;
       terminal.exitCode = part.exitCode;
@@ -219,8 +238,10 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       return terminal;
     }
     case 'subagent': {
+      const subAgentInvocationId = (part as { readonly subAgentInvocationId?: string }).subAgentInvocationId || part.toolCallId;
       const toolCall = mkSubagentToolCall(part.toolCallId, part.agentName, part.description, {
         ...(part.metadata || {}),
+        subAgentInvocationId,
         phase: part.state === 'error' ? 'failed' : part.state === 'done' ? 'completed' : 'started',
         toolSpecificData: {
           ...((((part.metadata && typeof part.metadata === 'object' && !Array.isArray(part.metadata))

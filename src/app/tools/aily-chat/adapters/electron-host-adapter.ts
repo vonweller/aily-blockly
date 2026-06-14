@@ -63,6 +63,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const wEnv = (window as any)['env'];
   const wMcp = (window as any)['mcp'];
   const wOs = (window as any)['os'];
+  const wLog = (window as any)['log'];
   const textDocumentContentProviders = new Map<string, {
     provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
   }>();
@@ -295,6 +296,12 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
     moveToTrash: (filePath) => wOther?.moveToTrash(filePath),
   };
 
+  const log = wLog ? {
+    info: (message: string) => wLog.info?.(message),
+    warn: (message: string) => wLog.warn?.(message),
+    error: (message: string, error?: unknown) => wLog.error?.(message, error),
+  } : undefined;
+
   // ----- editor (可选) -----
   let editor: IEditorProvider | undefined;
   if (deps.blocklyService || deps.uiService) {
@@ -370,7 +377,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   return {
     fs, path, terminal, dialog, platform,
     project, auth, config, builder, notification,
-    env, shell, editor, mcp,
+    env, shell, log, editor, mcp,
     // 宿主特有服务透传
     blockly: deps.blocklyService,
     connectionGraph: deps.connectionGraphService,

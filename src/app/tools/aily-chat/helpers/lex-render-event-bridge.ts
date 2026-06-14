@@ -77,6 +77,8 @@ export class LexRenderEventBridge {
   private _pendingRequestMetadata: TurnResponseTurn['request']['metadata'];
   private _currentTurnHasExecutionError = false;
   private _projectionSessionResource: string | null = null;
+  private _ownerCommitHandle: { dispose(): void } | null = null;
+  private _ownerCommitPending = false;
 
   constructor(
     private readonly ctx: LexRenderEventBridgeContext,
@@ -194,7 +196,7 @@ export class LexRenderEventBridge {
       },
     };
     this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
-    this.commitTurnResponsesToOwner();
+    this.commitTurnResponsesToOwner('immediate');
     this.invalidateVisibleProjection();
     return true;
   }
@@ -216,13 +218,13 @@ export class LexRenderEventBridge {
         },
       };
       this._turnResponses.set(finalizedTurn.turnId, finalizedTurn);
-      this.commitTurnResponsesToOwner();
+      this.commitTurnResponsesToOwner('immediate');
       this.invalidateVisibleProjection();
       return true;
     }
 
-    this.syncCurrentTurn(Date.now(), fallbackStatus);
-    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
+    this.syncCurrentTurn(Date.now(), fallbackStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
     return true;
   }
 
@@ -236,8 +238,8 @@ export class LexRenderEventBridge {
       this.messageLifecycleBridge.ensureAilyMessage(this._currentTurn.turnId);
     }
     this._streamBuilder.processEvent({ type: 'error_notice', message, timestamp: Date.now() });
-    this.syncCurrentTurn(Date.now(), 'error');
-    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
+    this.syncCurrentTurn(Date.now(), 'error', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
     return true;
   }
 
@@ -279,9 +281,10 @@ export class LexRenderEventBridge {
         event.modelRouting,
         event.quotaSnapshot,
         event.terminationReason,
+        'immediate',
       );
       this.invalidateVisibleProjection();
-      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
+      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
       return;
     }
 
@@ -296,8 +299,10 @@ export class LexRenderEventBridge {
     }
 
     const responseModelChanged = this._streamBuilder.processEvent(event) && isResponseModelRenderEvent(event);
-    this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus());
-    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder);
+    this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
+    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
+      syncContent: event.type === 'markdown_delta',
+    });
     if (event.type === 'response_followups') {
       this._hostStreamEmitter.emitResponseFollowups(this._currentTurn.turnId, event.value, event.timestamp);
     }
@@ -321,6 +326,7 @@ export class LexRenderEventBridge {
     this._pendingRequestDisplayContent = undefined;
     this._pendingRequestMetadata = undefined;
     this._currentTurnHasExecutionError = false;
+    this.clearPendingOwnerCommit();
   }
 
   /** Clear all retained live turn responses when a session is replaced or restored. */
@@ -332,6 +338,8 @@ export class LexRenderEventBridge {
 
   /** Clean up. */
   dispose(): void {
+    this.clearPendingOwnerCommit();
+    this._projectionSync.dispose();
     this._streamBuilder.destroy();
   }
 
@@ -356,14 +364,14 @@ export class LexRenderEventBridge {
       if (continuedTurn) {
         this._currentTurn = continuedTurn;
         this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
-        this.commitTurnResponsesToOwner();
+        this.commitTurnResponsesToOwner('immediate');
         this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, []);
         return 'continued';
       }
     }
 
     if (this._currentTurn) {
-      this.syncCurrentTurn(timestamp, 'completed');
+      this.syncCurrentTurn(timestamp, 'completed', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
     }
 
     this._currentTurn = this._streamBuilder.beginTurn({
@@ -374,7 +382,7 @@ export class LexRenderEventBridge {
       timestamp,
     });
     this._turnResponses.set(turnId, this._currentTurn);
-    this.commitTurnResponsesToOwner();
+    this.commitTurnResponsesToOwner('immediate');
     this._hostStreamEmitter.emitTurnStarted(this._currentTurn);
     this._hostStreamEmitter.emitInitialTurnFieldUpdates(this._currentTurn);
     return 'fresh';
@@ -434,6 +442,7 @@ export class LexRenderEventBridge {
     modelRouting?: NonNullable<TurnResponseTurn['responseModel']>['modelRouting'],
     quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'],
     terminationReason?: TurnResponseTurn['response']['terminationReason'],
+    ownerCommitMode: 'immediate' | 'deferred' = 'immediate',
   ): void {
     if (!this._currentTurn) {
       return;
@@ -489,12 +498,58 @@ export class LexRenderEventBridge {
     }
 
     this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
-    this.commitTurnResponsesToOwner();
+    this.commitTurnResponsesToOwner(ownerCommitMode);
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
     this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, partChanges);
   }
 
-  private commitTurnResponsesToOwner(): void {
+  private commitTurnResponsesToOwner(mode: 'immediate' | 'deferred' = 'immediate'): void {
+    if (mode === 'deferred') {
+      this.scheduleOwnerCommit();
+      return;
+    }
+
+    this.clearPendingOwnerCommit();
+    this.commitTurnResponsesToOwnerNow();
+  }
+
+  private scheduleOwnerCommit(): void {
+    this._ownerCommitPending = true;
+    if (this._ownerCommitHandle !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? (callback: () => void) => {
+        const frameId = globalThis.requestAnimationFrame(callback);
+        return {
+          dispose: () => globalThis.cancelAnimationFrame?.(frameId),
+        };
+      }
+      : (callback: () => void) => {
+        const timerId = setTimeout(callback, 16);
+        return {
+          dispose: () => clearTimeout(timerId),
+        };
+      };
+
+    this._ownerCommitHandle = schedule(() => {
+      this._ownerCommitHandle = null;
+      if (!this._ownerCommitPending) {
+        return;
+      }
+      this._ownerCommitPending = false;
+      this.commitTurnResponsesToOwnerNow();
+    });
+  }
+
+  private clearPendingOwnerCommit(): void {
+    this._ownerCommitHandle?.dispose();
+    this._ownerCommitHandle = null;
+    this._ownerCommitPending = false;
+  }
+
+  private commitTurnResponsesToOwnerNow(): void {
     if (typeof this.ctx.syncExecutionRuntimeTurnResponses !== 'function') {
       return;
     }

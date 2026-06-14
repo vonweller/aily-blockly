@@ -140,7 +140,7 @@ export interface ConfirmationPart {
 /** 终端命令输出 Part — Phase 2 新渲染能力 */
 export interface TerminalPart {
   type: 'terminal';
-  /** 稳定 part identity，优先绑定关联 toolCallId */
+  /** 稳定 part identity，优先绑定命令会话身份 */
   partId?: string;
   /** 执行的命令 */
   command: string;
@@ -154,6 +154,39 @@ export interface TerminalPart {
   isRunning: boolean;
   /** 关联的工具调用 ID */
   toolCallId?: string;
+  /** 触发/更新该命令会话的工具调用 ID 列表 */
+  sourceToolCallIds?: string[];
+  /** 命令进程 ID */
+  processId?: string;
+  /** 长输出会话 ID */
+  outputSessionId?: string;
+  /** 兼容旧终端 ID 或宿主终端 ID */
+  terminalId?: string;
+  /** 长输出文件路径 */
+  outputFilePath?: string;
+  /** 命令工作目录 */
+  cwd?: string;
+  /** 宿主返回的命令状态 */
+  status?: string;
+  /** 当前已记录输出字节数 */
+  bytesTotal?: number;
+  /** 最近输出时间 */
+  lastOutputAt?: string;
+  /** 输出更新语义：delta 追加，snapshot 替换当前窗口。 */
+  outputUpdateKind?: 'delta' | 'snapshot';
+}
+
+export interface TerminalPartOptions {
+  processId?: string;
+  outputSessionId?: string;
+  terminalId?: string;
+  outputFilePath?: string;
+  cwd?: string;
+  status?: string;
+  bytesTotal?: number;
+  lastOutputAt?: string;
+  sourceToolCallIds?: string[];
+  outputUpdateKind?: 'delta' | 'snapshot';
 }
 
 /** 子Agent 内部的结构化子项 */
@@ -178,6 +211,8 @@ export interface SubagentChildItem {
 export interface SubagentToolCallSnapshot {
   /** 工具调用 ID */
   toolCallId: string;
+  /** Grouping id for one subagent invocation. */
+  subAgentInvocationId?: string;
   /** 子Agent 名称（如 'Explore', 'Plan'） */
   agentName: string;
   /** 任务简述 */
@@ -297,14 +332,34 @@ export function mkConfirmation(
 }
 
 /** 创建 TerminalPart */
-export function mkTerminal(command: string, toolCallId?: string, partId?: string): TerminalPart {
+export function mkTerminal(
+  command: string,
+  toolCallId?: string,
+  partId?: string,
+  options: TerminalPartOptions = {},
+): TerminalPart {
+  const sessionId = getTerminalSessionId(options);
+  const sourceToolCallIds = uniqueStrings([
+    ...(toolCallId ? [toolCallId] : []),
+    ...(options.sourceToolCallIds ?? []),
+  ]);
   return {
     type: 'terminal',
-    partId: partId ?? buildTerminalPartId(command, toolCallId),
+    partId: partId ?? buildTerminalPartId(command, toolCallId, sessionId),
     command,
     output: '',
     isRunning: true,
     toolCallId,
+    ...(sourceToolCallIds.length > 0 ? { sourceToolCallIds } : {}),
+    ...(options.processId ? { processId: options.processId } : {}),
+    ...(options.outputSessionId ? { outputSessionId: options.outputSessionId } : {}),
+    ...(options.terminalId ? { terminalId: options.terminalId } : {}),
+    ...(options.outputFilePath ? { outputFilePath: options.outputFilePath } : {}),
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.status ? { status: options.status } : {}),
+    ...(typeof options.bytesTotal === 'number' ? { bytesTotal: options.bytesTotal } : {}),
+    ...(options.lastOutputAt ? { lastOutputAt: options.lastOutputAt } : {}),
+    ...(options.outputUpdateKind ? { outputUpdateKind: options.outputUpdateKind } : {}),
   };
 }
 
@@ -329,10 +384,20 @@ export function buildConfirmationPartId(askId: string): string {
   return `confirmation:${askId}`;
 }
 
-export function buildTerminalPartId(command: string, toolCallId?: string): string {
-  return toolCallId && toolCallId.trim().length > 0
+export function buildTerminalPartId(command: string, toolCallId?: string, sessionId?: string): string {
+  return sessionId && sessionId.trim().length > 0
+    ? `terminal-session:${sessionId.trim()}`
+    : toolCallId && toolCallId.trim().length > 0
     ? `terminal:${toolCallId}`
     : `terminal:${command.trim() || 'unknown'}`;
+}
+
+function getTerminalSessionId(options: Pick<TerminalPartOptions, 'processId' | 'outputSessionId' | 'terminalId'>): string | undefined {
+  return asString(options.processId) || asString(options.outputSessionId) || asString(options.terminalId);
+}
+
+function uniqueStrings(values: readonly (string | undefined)[]): string[] {
+  return Array.from(new Set(values.map(value => asString(value)).filter((value): value is string => !!value)));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -429,6 +494,7 @@ export function toolCallPartToSubagentSnapshot(part: ToolCallPart): SubagentTool
 
   return {
     toolCallId: part.toolCallId,
+    subAgentInvocationId: asString(metadata['subAgentInvocationId']) || part.toolCallId,
     agentName: asString(toolSpecificData['agentName']) || part.toolName || 'Agent',
     description: asString(toolSpecificData['description'])
       || asString(metadata['argsSummary'])
@@ -480,7 +546,7 @@ export function subagentSnapshotToToolCall(part: SubagentToolCallSnapshot, exist
       phase: subagentStateToNarrativePhase(part.state),
       argsSummary: part.description || asString(partMetadata['argsSummary']) || asString(existingMetadata['argsSummary']),
       recordId: part.toolCallId,
-      subAgentInvocationId: part.toolCallId,
+      subAgentInvocationId: part.subAgentInvocationId || part.toolCallId,
       invocationMessage: asString(partMetadata['invocationMessage']) || asString(existingMetadata['invocationMessage']) || part.description || part.agentName,
       pastTenseMessage: asString(partMetadata['pastTenseMessage']) || asString(existingMetadata['pastTenseMessage']) || (part.description ? `Completed Task: "${part.description}"` : part.agentName),
       timeline,

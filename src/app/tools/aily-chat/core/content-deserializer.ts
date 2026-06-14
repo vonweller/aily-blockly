@@ -241,7 +241,17 @@ export function deserializeContentToParts(content: string): ChatPart[] {
         flushMd();
         try {
           const data = JSON.parse(body.trim());
-          const tp: TerminalPart = mkTerminal(data.command || '', data.toolCallId, data.partId);
+          const tp: TerminalPart = mkTerminal(data.command || '', data.toolCallId, data.partId, {
+            sourceToolCallIds: Array.isArray(data.sourceToolCallIds) ? data.sourceToolCallIds : undefined,
+            processId: data.processId,
+            outputSessionId: data.outputSessionId,
+            terminalId: data.terminalId,
+            outputFilePath: data.outputFilePath,
+            cwd: data.cwd,
+            status: data.status,
+            bytesTotal: data.bytesTotal,
+            lastOutputAt: data.lastOutputAt,
+          });
           tp.output = data.output || '';
           tp.stderr = data.stderr || '';
           tp.exitCode = data.exitCode ?? data.exit_code;

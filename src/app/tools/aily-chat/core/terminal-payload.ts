@@ -6,21 +6,37 @@ export interface ParsedTerminalPayload {
   isRunning: boolean;
   toolCallId?: string;
   terminalId?: string;
+  processId?: string;
+  outputSessionId?: string;
+  outputFilePath?: string;
   cwd?: string;
+  status?: string;
+  bytesTotal?: number;
+  lastOutputAt?: string;
 }
+
+const EMPTY_STDOUT_MARKER = '(terminal stdout completed with no output)';
+const EMPTY_STDERR_MARKER = '(terminal stderr completed with no output)';
 
 export function parseTerminalPayload(text: string): ParsedTerminalPayload | null {
   try {
     const data = JSON.parse(text);
+    const status = asString(data.status);
     return {
-      command: data.command || '',
-      output: data.output || '',
-      stderr: data.stderr || '',
+      command: asString(data.command) || '',
+      output: cleanTerminalStream(asString(data.output) ?? asString(data.stdout) ?? '', EMPTY_STDOUT_MARKER),
+      stderr: cleanTerminalStream(asString(data.stderr) ?? '', EMPTY_STDERR_MARKER),
       exitCode: data.exit_code ?? data.exitCode,
-      isRunning: data.status === 'running',
-      toolCallId: data.toolCallId,
-      terminalId: data.terminalId,
-      cwd: data.cwd,
+      isRunning: status === 'running',
+      toolCallId: asString(data.toolCallId),
+      terminalId: asString(data.terminalId),
+      processId: asString(data.processId) || asString(data.id),
+      outputSessionId: asString(data.outputSessionId),
+      outputFilePath: asString(data.outputFilePath),
+      cwd: asString(data.cwd),
+      status,
+      bytesTotal: asNumber(data.bytesTotal),
+      lastOutputAt: asString(data.lastOutputAt),
     };
   } catch {
     const lines = text.split(/\r?\n/);
@@ -55,6 +71,8 @@ export function parseTerminalPayload(text: string): ParsedTerminalPayload | null
     const command = headers.get('command') || '';
     const exitCodeRaw = headers.get('exitcode');
     const exitCode = exitCodeRaw != null && exitCodeRaw !== '' ? Number(exitCodeRaw) : undefined;
+    const bytesTotal = asNumber(headers.get('bytestotal'));
+    const status = headers.get('status');
 
     if (!command && stdout.length === 0 && stderr.length === 0) {
       return null;
@@ -62,13 +80,51 @@ export function parseTerminalPayload(text: string): ParsedTerminalPayload | null
 
     return {
       command,
-      output: stdout.join('\n').trim(),
-      stderr: stderr.join('\n').trim(),
+      output: cleanTerminalStream(stdout.join('\n').trim(), EMPTY_STDOUT_MARKER),
+      stderr: cleanTerminalStream(stderr.join('\n').trim(), EMPTY_STDERR_MARKER),
       exitCode: Number.isNaN(exitCode as number) ? undefined : exitCode,
-      isRunning: headers.get('status') === 'running',
+      isRunning: status === 'running',
       toolCallId: headers.get('toolcallid'),
       terminalId: headers.get('terminalid'),
+      processId: headers.get('processid'),
+      outputSessionId: headers.get('outputsessionid'),
+      outputFilePath: headers.get('outputfilepath'),
       cwd: headers.get('cwd'),
+      status,
+      bytesTotal,
+      lastOutputAt: headers.get('lastoutputat'),
     };
   }
+}
+
+function cleanTerminalStream(value: string, emptyMarker: string): string {
+  if (!value) {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (trimmed === emptyMarker) {
+    return '';
+  }
+
+  if (value.startsWith(emptyMarker)) {
+    return value.slice(emptyMarker.length).replace(/^\r?\n+/, '');
+  }
+
+  return value;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
