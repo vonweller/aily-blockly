@@ -8,7 +8,7 @@
   border-radius: 5px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
   position: fixed;
-  z-index: 999;
+  z-index: 1000000;
   flex-direction: column;
   padding: 4px 0;
 
@@ -289,7 +289,7 @@
   overflow: hidden;
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-  z-index: 1000;
+  z-index: 1000001;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;

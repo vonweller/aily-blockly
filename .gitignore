@@ -70,6 +70,7 @@ child/aily-builder*
 /renderer
 /test-results
 /playwright-report
+/e2e/logs
 /out-tsc/e2e
 /e2e/.artifacts
 

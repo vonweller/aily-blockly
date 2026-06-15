@@ -1492,6 +1492,16 @@ function appendPathSegment(pathValue, segment) {
   return `${pathValue}${path.delimiter}${segment}`;
 }
 
+function normalizeWindowsPathValue(value) {
+  if (!isWin32 || !value || typeof value !== 'string') {
+    return value;
+  }
+
+  let normalized = value.trim().replace(/\//g, '\\');
+  normalized = normalized.replace(/^([a-zA-Z]):(?!\\)/, '$1:\\');
+  return normalized;
+}
+
 function appendExecutableDirIfExists(pathValue, segment, executableName) {
   if (!segment || !executableName) {
     return pathValue;
@@ -1587,8 +1597,8 @@ function applyChildToolEnv(childPath) {
   }
 
   if (isWin32) {
-    const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const systemRoot = normalizeWindowsPathValue(process.env.SystemRoot || process.env.windir || 'C:\\Windows');
+    const programFiles = normalizeWindowsPathValue(process.env.ProgramFiles || 'C:\\Program Files');
     const systemPaths = [
       path.join(systemRoot, 'System32'),
       path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'),
@@ -1598,6 +1608,9 @@ function applyChildToolEnv(childPath) {
     systemPaths.forEach((sysPath) => {
       customPath = appendPathSegment(customPath, sysPath);
     });
+    process.env.SystemRoot = systemRoot;
+    process.env.windir = normalizeWindowsPathValue(process.env.windir || systemRoot);
+    process.env.ComSpec = normalizeWindowsPathValue(process.env.ComSpec || path.join(systemRoot, 'System32', 'cmd.exe'));
   } else if (isDarwin) {
     ['/bin', '/usr/bin'].forEach((sysPath) => {
       customPath = appendPathSegment(customPath, sysPath);
