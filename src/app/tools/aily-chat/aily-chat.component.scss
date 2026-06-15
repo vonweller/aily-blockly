@@ -175,6 +175,11 @@
   position: relative;
   z-index: 10;
 
+  &.has-conversation {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
   &.has-stacked-session-list {
     display: flex;
     flex-direction: column;
@@ -285,7 +290,7 @@
 
 .sender {
   flex-shrink: 0;
-  padding-top: 6px;
+  padding-top: 10px;
   border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 
   .interactive-input-part > .chat-input-notification-container,
@@ -340,6 +345,14 @@
 
   .interactive-input-part > .chat-pending-followup-widget-container {
     margin-bottom: -10px;
+  }
+
+  .interactive-input-part:has(> .chat-todo-list-widget-container > app-floating-todo.has-todos) {
+    gap: 0;
+  }
+
+  .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) {
+    margin-bottom: 4px;
   }
 
   .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget {
@@ -696,7 +709,7 @@
     flex-direction: column;
     flex: 0 0 auto;
     min-height: 140px;
-    margin: 10px;
+    margin: 0 10px 10px;
     padding: 5px;
     border: 1px solid transparent;
     border-radius: 5px;
@@ -876,6 +889,10 @@
       }
     }
   }
+}
+
+.chat-main-layout.has-session-sidebar .sender .input-box {
+  margin-bottom: 0;
 }
 
 .historyList {

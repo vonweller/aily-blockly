@@ -99,11 +99,12 @@
     @for (subItem of getSubmenuChildren(activeSubmenuItem); track $index) {
     @if(shouldUseRichSubmenuOption(subItem)) {
     <div class="menu-item submenu-option" (click)="subItemClick($event,subItem)"
-      [ngClass]="{ disabled: subItem.disabled }">
+      [title]="getSubmenuRichItemTitle(subItem)"
+      [ngClass]="{ disabled: subItem.disabled, checked: subItem.check }">
       <div class="submenu-option-copy">
         <div class="submenu-option-title-row">
           <div class="submenu-option-inline-copy">
-            <div class="name ellipsis">{{ subItem.name }}</div>
+            <div class="name">{{ subItem.name }}</div>
             @if(getSubmenuItemDetail(subItem)) {
             <div class="submenu-option-separator" aria-hidden="true">-</div>
             <div class="submenu-option-detail ellipsis">{{ getSubmenuItemDetail(subItem) }}</div>

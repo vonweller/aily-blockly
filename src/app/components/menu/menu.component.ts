@@ -191,6 +191,12 @@ export class MenuComponent implements AfterViewChecked {
     return path;
   }
 
+  getSubmenuRichItemTitle(subItem: IMenuItem | null | undefined): string {
+    const name = typeof subItem?.name === 'string' ? subItem.name.trim() : '';
+    const detail = this.getSubmenuItemDetail(subItem)?.trim() ?? '';
+    return [name, detail].filter(Boolean).join(' - ');
+  }
+
   getSubmenuSectionLabel(item: IMenuItem | null | undefined): string | null {
     const hoverFlyout = this.getHoverFlyoutData(item);
     const label = typeof hoverFlyout?.['sectionLabel'] === 'string'

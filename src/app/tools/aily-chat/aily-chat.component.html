@@ -157,6 +157,7 @@
         <div
           class="dialog-list sscroll"
           #chatContainer
+          [class.has-conversation]="paneStageSurface.showConversation"
           [class.has-stacked-session-list]="paneStageSurface.showStackedSessionList && !paneStageSurface.showConversation"
           (scroll)="scrollManager.checkUserScroll()">
       @if (paneStageSurface.showConversation) {

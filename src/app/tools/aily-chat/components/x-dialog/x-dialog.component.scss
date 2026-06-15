@@ -24,7 +24,6 @@
 // ===== 对话气泡容器（Copilot interactive-item-container 对齐）=====
 .dialog-box {
   position: relative;
-  margin: 2px 0;
   border-radius: 5px;
   background: transparent;
   min-width: 0;
@@ -213,7 +212,7 @@
 }
 
 .content {
-  padding: 4px 0 8px;
+  padding: 5px 0 5px;
   user-select: text;
   min-width: 0;
   max-width: 100%;
@@ -473,7 +472,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 2px 4px;
   min-height: 24px;
   transition: opacity 0.15s ease;
 
