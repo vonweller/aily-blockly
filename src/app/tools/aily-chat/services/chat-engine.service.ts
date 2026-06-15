@@ -3366,6 +3366,7 @@ export class ChatEngineService implements IChatContext {
       this.chatService.clearResolvedActiveModel?.();
     }
 
+    this.visibleProjectionSessionId = null;
     this.lexStream.resetSessionState();
     this.clearVisibleChatView({ detectChanges: options.detectChanges });
 

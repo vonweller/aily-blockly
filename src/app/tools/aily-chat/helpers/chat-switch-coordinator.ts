@@ -179,7 +179,10 @@ export class ChatSwitchCoordinator {
 
   async switchToMode(mode: string): Promise<void> {
     const normalizedMode = resolveChatSurfaceModeId(mode);
-    if (!normalizedMode || normalizedMode === this.ctx.currentMode) {
+    const needsBuiltinAgentReset = normalizedMode === 'agent'
+      && this.ctx.currentMode === 'agent'
+      && !!this.ctx.chatService.currentCustomAgentTarget;
+    if (!normalizedMode || (normalizedMode === this.ctx.currentMode && !needsBuiltinAgentReset)) {
       return;
     }
 
