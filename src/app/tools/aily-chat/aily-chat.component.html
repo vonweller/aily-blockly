@@ -446,7 +446,8 @@
               [showAddList]="resourceManager.showAddList"
               [currentMode]="vm.currentMode"
               [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
-              [showModelChip]="vm.modelMenuItems.length > 0"
+              [showModelChip]="false"
+              [showModeLabel]="false"
               [modelChipLabel]="vm.currentModelChipLabel"
               [modelBillingLabel]="vm.currentModelBillingLabel"
               (toggleAddList)="resourceManager.toggleAddList()"
@@ -455,6 +456,12 @@
               (modeClick)="switchShellCoordinator.toggleModeMenu($event, vm.modeMenuItems)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
+            <div class="btn mode permission-mode-indicator ccenter"
+              nz-tooltip nzTooltipPlacement="top"
+              [nzTooltipTitle]="vm.currentPermissionLabel"
+              (click)="togglePermissionMenu($event)">
+              <i [class]="permissionButtonIconClass"></i>
+            </div>
             <!-- Context usage widget：按 Copilot / VS Code 的 widget/details 结构渲染 request-scoped usage -->
             @if(vm.contextUsageDisplay; as contextUsage) {
             <div class="token-budget-indicator chat-context-usage-widget ccenter"
@@ -647,18 +654,18 @@
               </span>
             </div>
             }
-            <div class="btn mode permission-mode-indicator ccenter"
-              [class.right2]="!shouldShowStopPrimaryAction() || !shouldShowSendPrimaryAction()"
-              [class.right3]="shouldShowStopPrimaryAction() && shouldShowSendPrimaryAction()"
+            <div class="composer-primary-actions">
+            @if(vm.modelMenuItems.length > 0) {
+            <div class="composer-model-chip ccenter"
               nz-tooltip nzTooltipPlacement="top"
-              [nzTooltipTitle]="vm.currentPermissionLabel"
-              (click)="togglePermissionMenu($event)">
-              <i [class]="permissionButtonIconClass"></i>
+              [nzTooltipTitle]="vm.currentModelName"
+              (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)">
+              <i class="fa-light fa-star-christmas"></i>
+              <span>{{ vm.currentModelChipLabel }}</span>
             </div>
+            }
             @if(shouldShowSendPrimaryAction()) {
             <div class="btn ccenter"
-              [class.right]="!shouldShowStopPrimaryAction()"
-              [class.right2]="shouldShowStopPrimaryAction()"
               [ngClass]="{'disabled': isSendPrimaryActionDisabled()}"
               nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="getSendPrimaryActionTooltip()"
@@ -667,7 +674,7 @@
             </div>
             }
             @if(shouldShowStopPrimaryAction()) {
-            <div class="btn right ccenter lloading" nzTooltipPlacement="bottom" nz-tooltip
+            <div class="btn ccenter lloading" nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="'AILY_CHAT.STOP' | translate"
               (click)="submitShellCoordinator.stopActiveRequest()">
               <div class="stop-box ccenter">
@@ -678,6 +685,7 @@
               </div>
             </div>
             }
+            </div>
           </div>
         </div>
         </aily-chat-input-part-host>

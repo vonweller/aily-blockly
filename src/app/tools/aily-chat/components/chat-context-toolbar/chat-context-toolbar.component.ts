@@ -26,6 +26,7 @@ export class ChatContextToolbarComponent {
   @Input() currentMode = 'agent';
   @Input() currentCustomAgentTarget: string | undefined;
   @Input() showModelChip = false;
+  @Input() showModeLabel = true;
   @Input() modelChipLabel = '';
   @Input() modelBillingLabel = '';
 

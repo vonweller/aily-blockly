@@ -178,7 +178,15 @@ export class AilyChatComponent implements OnDestroy {
   } as const;
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('chatTextarea') chatTextarea: ElementRef;
+  private chatTextareaRef?: ElementRef;
+  @ViewChild('chatTextarea')
+  set chatTextarea(ref: ElementRef | undefined) {
+    this.chatTextareaRef = ref;
+    this.engine.bindChatTextareaRef(ref ?? null);
+  }
+  get chatTextarea(): ElementRef | undefined {
+    return this.chatTextareaRef;
+  }
   @ViewChild('windowBoxRoot')
   set windowBoxRoot(ref: ElementRef<HTMLElement> | undefined) {
     this.observeSessionViewport(ref?.nativeElement ?? null);
@@ -441,7 +449,7 @@ export class AilyChatComponent implements OnDestroy {
           queryBlockDefinitionTool,
         };
       },
-      initializeEngine: () => this.engine.init(this.chatTextarea),
+      initializeEngine: () => this.engine.init(this.chatTextarea ?? null),
       detachEngineView: () => this.engine.detachView(),
     });
   }
@@ -637,6 +645,7 @@ export class AilyChatComponent implements OnDestroy {
     this.viewportShellCoordinator.initialize(this.chatContainer);
     this.scrollManager.handleContentHeightChange();
     this.syncSessionListDisplayState();
+    this.scheduleChatInputFocusAfterSessionChange();
     if (typeof globalThis.requestAnimationFrame === 'function') {
       globalThis.requestAnimationFrame(() => {
         ChatPerformanceTracer.increment('entry_open.first_stable_paint');
@@ -1344,7 +1353,9 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   requestNewChat(): void {
-    void this.sessionActions.requestNewChat(this.engine.editCheckpointService, this.createSessionCommandCallbacks());
+    void this.sessionActions
+      .requestNewChat(this.engine.editCheckpointService, this.createSessionCommandCallbacks())
+      .then(() => this.scheduleChatInputFocusAfterSessionChange());
   }
 
   requestReturnToEntryInventory(options?: { saveCurrentSession?: boolean }): void {
@@ -1381,10 +1392,7 @@ export class AilyChatComponent implements OnDestroy {
         this.closeDebugBrowser();
         return this.engine.newChat();
       },
-      onEnterEntryState: (sessionId?: string | null) => {
-        this.closeDebugBrowser();
-        return this.engine.returnToEntryInventory({ sessionId });
-      },
+      onEnterEntryState: (sessionId?: string | null) => this.runReturnAwareEntryState(sessionId),
       onDeleteSession: (sessionId: string) => {
         this.closeDebugBrowser();
         return this.engine.deleteSessionAction(sessionId);
@@ -1425,13 +1433,16 @@ export class AilyChatComponent implements OnDestroy {
   private createSessionEntryCommandCallbacks() {
     return {
       onSaveCurrentSession: () => this.engine.saveCurrentSession(),
-      onEnterEntryState: (sessionId?: string | null) => {
-        this.closeDebugBrowser();
-        return this.engine.returnToEntryInventory({
-          sessionId,
-        });
-      },
+      onEnterEntryState: (sessionId?: string | null) => this.runReturnAwareEntryState(sessionId),
     };
+  }
+
+  private async runReturnAwareEntryState(sessionId?: string | null): Promise<void> {
+    this.closeDebugBrowser();
+    await this.engine.returnToEntryInventory({
+      sessionId,
+    });
+    this.scheduleChatInputFocusAfterSessionChange();
   }
 
   private async runRestoreAwareHistoryLoad(): Promise<void> {
@@ -1453,13 +1464,28 @@ export class AilyChatComponent implements OnDestroy {
   ): Promise<boolean> {
     this.closeDebugBrowser();
     try {
-      return await this.engine.switchToSession(sessionId, {
+      const switched = await this.engine.switchToSession(sessionId, {
         fallbackProjectPath: fallbackProjectPath ?? null,
       });
+      if (switched) {
+        this.scheduleChatInputFocusAfterSessionChange();
+      }
+      return switched;
     } catch (error) {
       this.reportSessionRestoreFailure(error);
       return false;
     }
+  }
+
+  private scheduleChatInputFocusAfterSessionChange(): void {
+    const focusInput = () => {
+      this.engine.bindChatTextareaRef(this.chatTextarea ?? null);
+      this.engine.scheduleComposerInputFocus();
+    };
+
+    focusInput();
+    setTimeout(focusInput, 50);
+    setTimeout(focusInput, 150);
   }
 
   private reportSessionRestoreFailure(error: unknown): void {

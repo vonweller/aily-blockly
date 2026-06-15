@@ -159,8 +159,9 @@
   padding: 0 6px;
   margin-left: 2px;
   border-radius: 999px;
-  background: var(--aily-chat-viewer-badge-bg, rgba(97, 175, 239, 0.14));
-  color: var(--aily-chat-viewer-blockly-chip-fg, #8ec8ff);
+  border: 1px solid var(--aily-chat-viewer-blockly-chip-border, rgba(0, 120, 212, 0.28));
+  background: var(--aily-chat-viewer-blockly-chip-bg, rgba(0, 120, 212, 0.12));
+  color: var(--aily-chat-viewer-blockly-chip-fg, #005fb8);
   font-size: 10px;
   line-height: 1;
   letter-spacing: 0.02em;

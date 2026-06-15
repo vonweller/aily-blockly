@@ -38,7 +38,7 @@
   <i [class]="modeIconClass"></i>
   @if (currentCustomAgentTarget && currentMode === 'agent') {
     <span>{{ currentCustomAgentTarget }}</span>
-  } @else if (modeLabelKey) {
+  } @else if (showModeLabel && modeLabelKey) {
     <span>{{ modeLabelKey | translate }}</span>
   }
 </div>
