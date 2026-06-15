@@ -346,7 +346,7 @@ class CommandManager {
 
   // 执行命令并返回流式数据
   executeCommand(options) {
-    let { command, args = [], cwd, env, streamId } = options;
+    let { command, args = [], cwd, env, streamId, shellProfile = true } = options;
     
     // 根据平台选择正确的 shell
     let shell;
@@ -386,6 +386,12 @@ class CommandManager {
         shellKind = resolvedShell.kind;
         shellDiagnostics = resolvedShell.diagnostics;
       }
+    }
+
+    if (shellProfile === false && !command.endsWith('.cmd') && !command.endsWith('.bat')) {
+      shell = false;
+      shellKind = 'direct';
+      shellDiagnostics = undefined;
     }
 
     // 为 npm install 命令自动添加 --foreground-scripts，确保 postinstall 输出可见

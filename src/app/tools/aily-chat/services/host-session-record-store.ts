@@ -1,7 +1,5 @@
 import { AilyHost } from '../core/host';
 import {
-  isLegacyChatPlanModeValue,
-  LEGACY_CHAT_PLAN_AGENT_TARGET,
   normalizeChatSessionType,
 } from '../core/chat-mode';
 import {
@@ -226,6 +224,7 @@ export interface HostSessionRecordStoreOptions {
   joinPath: (...parts: string[]) => string;
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
   resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
+  resolveModeByName?: HostSessionSelectedModeResolveOptions['resolveModeByName'];
 }
 
 /**
@@ -268,19 +267,24 @@ export class HostSessionRecordStore {
         : {}),
       ...(sanitizedMetadata.requestRouting
         ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
-        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
-          ? {
-              requestRouting: {
-                selectedModeId: 'agent',
-                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-              },
-            }
         : {}),
       ...(sanitizedMetadata.interactionActionSummary
         ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
         : {}),
       model: sanitizedMetadata.model ?? null,
       contextBudget: sanitizedMetadata.contextBudget,
+      ...(sanitizedMetadata.forkKind === 'protocol' || sanitizedMetadata.forkKind === 'transcript'
+        ? { forkKind: sanitizedMetadata.forkKind }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedFromSessionId === 'string' && sanitizedMetadata.forkedFromSessionId.length > 0
+        ? { forkedFromSessionId: sanitizedMetadata.forkedFromSessionId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedBeforeTurnId === 'string' && sanitizedMetadata.forkedBeforeTurnId.length > 0
+        ? { forkedBeforeTurnId: sanitizedMetadata.forkedBeforeTurnId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedRetainedTurnCount === 'number' && Number.isFinite(sanitizedMetadata.forkedRetainedTurnCount) && sanitizedMetadata.forkedRetainedTurnCount >= 0
+        ? { forkedRetainedTurnCount: sanitizedMetadata.forkedRetainedTurnCount }
+        : {}),
       toolCallingIteration: sanitizedMetadata.toolCallingIteration || 0,
     };
   }
@@ -546,15 +550,49 @@ export class HostSessionRecordStore {
     const compatMessages = Array.isArray(sidecar?.response?.compatMessages)
       ? [...sidecar.response.compatMessages]
       : undefined;
+    const checkpointMarker = sidecar?.checkpointMarker;
+    const checkpointMarkerSessionResource = typeof checkpointMarker?.sessionResource === 'string'
+      ? checkpointMarker.sessionResource.trim()
+      : '';
+    const normalizedCheckpointMarker = checkpointMarkerSessionResource
+      && typeof checkpointMarker?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointMarker.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointMarkerSessionResource,
+          currentCheckpointIndex: Math.trunc(checkpointMarker.currentCheckpointIndex),
+        }
+      : undefined;
 
-    if (!compatMessages?.length) {
+    const checkpointTimeline = sidecar?.checkpointRedoBranch ?? sidecar?.checkpointTimeline;
+    const checkpointTimelineSessionResource = typeof checkpointTimeline?.sessionResource === 'string'
+      ? checkpointTimeline.sessionResource.trim()
+      : '';
+    const checkpointTimelineTurnResponses = this.normalizeTurnResponses(checkpointTimeline?.turnResponses);
+    const normalizedCheckpointTimeline = checkpointTimelineSessionResource
+      && checkpointTimelineTurnResponses?.length
+      && typeof checkpointTimeline?.currentCheckpointIndex === 'number'
+      && Number.isFinite(checkpointTimeline.currentCheckpointIndex)
+      ? {
+          sessionResource: checkpointTimelineSessionResource,
+          currentCheckpointIndex: Math.trunc(checkpointTimeline.currentCheckpointIndex),
+          turnResponses: checkpointTimelineTurnResponses,
+        }
+      : undefined;
+
+    if (!compatMessages?.length && !normalizedCheckpointMarker && !normalizedCheckpointTimeline) {
       return undefined;
     }
 
     return {
-      response: {
-        ...(compatMessages?.length ? { compatMessages } : {}),
-      },
+      ...(compatMessages?.length
+        ? {
+            response: {
+              compatMessages,
+            },
+          }
+        : {}),
+      ...(normalizedCheckpointMarker ? { checkpointMarker: normalizedCheckpointMarker } : {}),
+      ...(normalizedCheckpointTimeline ? { checkpointRedoBranch: normalizedCheckpointTimeline } : {}),
     };
   }
 
@@ -604,13 +642,6 @@ export class HostSessionRecordStore {
         : {}),
       ...(sanitizedMetadata.requestRouting
         ? { requestRouting: normalizeHostSessionRequestRoutingSummary(sanitizedMetadata.requestRouting, selectedMode) }
-        : isLegacyChatPlanModeValue(sanitizedMetadata.mode) && !modeDescriptor
-          ? {
-              requestRouting: {
-                selectedModeId: 'agent',
-                customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-              },
-            }
         : {}),
       ...(sanitizedMetadata.interactionActionSummary
         ? { interactionActionSummary: normalizeHostSessionInteractionActionSummary(sanitizedMetadata.interactionActionSummary) }
@@ -635,6 +666,18 @@ export class HostSessionRecordStore {
           }
         : undefined,
       toolCallingIteration: typeof sanitizedMetadata.toolCallingIteration === 'number' ? sanitizedMetadata.toolCallingIteration : 0,
+      ...(sanitizedMetadata.forkKind === 'protocol' || sanitizedMetadata.forkKind === 'transcript'
+        ? { forkKind: sanitizedMetadata.forkKind }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedFromSessionId === 'string' && sanitizedMetadata.forkedFromSessionId.length > 0
+        ? { forkedFromSessionId: sanitizedMetadata.forkedFromSessionId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedBeforeTurnId === 'string' && sanitizedMetadata.forkedBeforeTurnId.length > 0
+        ? { forkedBeforeTurnId: sanitizedMetadata.forkedBeforeTurnId }
+        : {}),
+      ...(typeof sanitizedMetadata.forkedRetainedTurnCount === 'number' && Number.isFinite(sanitizedMetadata.forkedRetainedTurnCount) && sanitizedMetadata.forkedRetainedTurnCount >= 0
+        ? { forkedRetainedTurnCount: sanitizedMetadata.forkedRetainedTurnCount }
+        : {}),
     };
   }
 
@@ -647,8 +690,11 @@ export class HostSessionRecordStore {
   }
 
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
-    return this.options.resolveModeById
-      ? { resolveModeById: this.options.resolveModeById }
+    return this.options.resolveModeById || this.options.resolveModeByName
+      ? {
+          ...(this.options.resolveModeById ? { resolveModeById: this.options.resolveModeById } : {}),
+          ...(this.options.resolveModeByName ? { resolveModeByName: this.options.resolveModeByName } : {}),
+        }
       : undefined;
   }
 

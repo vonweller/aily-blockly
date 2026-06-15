@@ -123,7 +123,7 @@ export class LexHostSyncBridge {
     }
 
     const targetLabel = targetModeId
-      ? `${targetAgent || targetModeId} 模式`
+      ? `${formatCanonicalChatModeLabel(targetModeId)} 模式`
       : targetAgent;
     const handoffMessage = event.reason
       ? `代理请求切换到 ${targetLabel}: ${event.reason}`
@@ -170,6 +170,18 @@ export class LexHostSyncBridge {
       this.applyLexTodos(sessionId, lexTodos);
     });
   }
+}
+
+function formatCanonicalChatModeLabel(modeId: 'ask' | 'edit' | 'agent'): string {
+  switch (modeId) {
+    case 'ask':
+      return 'Ask';
+    case 'edit':
+      return 'Edit';
+    case 'agent':
+      return 'Agent';
+  }
+  return modeId;
 }
 
 function cloneMetricsSnapshot(snapshot: MetricsSnapshot): MetricsSnapshot {

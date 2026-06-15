@@ -29,6 +29,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
         [pillTone]="headerTone"
         [tone]="headerTone"
         [iconClass]="headerIconClass"
+        [showExpandedConnector]="false"
         [showChevron]="showBody"
         [clickable]="showBody"
         [expanded]="showBody && !collapsed"
@@ -383,17 +384,12 @@ export class XAilyConfirmationViewerComponent implements OnChanges {
       return '执行前请确认此命令。';
     }
 
-    if (normalizedToolName === 'start_background_command') {
-      return '该命令将在后台持续运行。';
-    }
-
     return message;
   }
 
   private isBoilerplateConfirmationMessage(message: string): boolean {
     return message === '执行前请确认此终端命令。'
-      || message === '执行前请确认此命令。'
-      || message === '该命令将在后台持续运行。';
+      || message === '执行前请确认此命令。';
   }
 
   getActionMenuLabel(action: ToolApprovalAction): string {

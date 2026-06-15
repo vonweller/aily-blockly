@@ -79,9 +79,11 @@ import {
   type HostSessionContent,
   type HostSessionContentMetadataSource,
 } from './host-session-content-provider';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { ChatSessionItemsService } from '../services/chat-session-items.service';
 import { ChatSessionEntryCoordinator } from './chat-session-entry-coordinator';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
+import { createRequiredSessionResourceModel } from './required-session-resource-model';
 
 type LexInteractionAction = NonNullable<import('aily-lex/browser').TurnRequest['metadata']>['interactionAction'];
 
@@ -144,9 +146,16 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
     attachSessionViewModel?(sessionId?: string | null): ChatSessionViewModel | null;
     detachSessionViewModel?(sessionId?: string | null): void;
     readCurrentViewSessionResource?(): string | null;
+    clearEntryInputState?(): void;
     buildExecutionSaveTarget?(sessionId: string | null | undefined): HostSessionSaveTarget | null;
     getDevelopmentModePreferenceRuntimeMode?(): ChatAgentRuntimeMode | undefined;
+    readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
+    readSessionCheckpointTimelineState?(sessionId?: string | null): import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null;
+    replaceSessionCheckpointTimelineState?(
+      sessionId: string,
+      state: import('./session-checkpoint-timeline-model').SessionCheckpointTimelineState | null | undefined,
+    ): void;
     hasSessionRuntimeHandle?(sessionId?: string | null): boolean;
     projectRestoredRuntimeAuxiliary?(sessionId: string, auxiliary: HostSessionRecord['auxiliary'] | null | undefined): void;
     detachSessionRuntimeView?(sessionId?: string | null): boolean;
@@ -187,6 +196,11 @@ type SessionLifecycleContext = ChatViewWriteBridgeContext
 const GENERIC_SESSION_START_ERROR_MESSAGE = 'Sorry, something went wrong.';
 type SessionSwitchRestoreStage = 'session-start' | 'host-restore' | 'missing-record';
 const ENTRY_DISPOSE_RUNTIME_GUARD_PREFIX = '[AilyChat][EntryLifecycleGuard]';
+
+type ProtocolForkResult =
+  | { readonly kind: 'unsupported' }
+  | { readonly kind: 'created'; readonly turnResponses: TurnResponseTurn[] }
+  | { readonly kind: 'failed'; readonly reason: 'source-snapshot' | 'checkpoint-metadata' | 'snapshot-fork' | 'agent' | 'restore'; readonly error?: unknown };
 
 export interface SessionLifecycleRestoreErrorDetails {
   readonly stage: SessionSwitchRestoreStage;
@@ -241,6 +255,7 @@ export class SessionLifecycleHelper {
     readonly promise: Promise<boolean>;
   }>();
   private readonly sessionModelReferences = new Map<string, ChatSessionModelReference>();
+  private readonly sessionModelPreloadPromises = new Map<string, Promise<boolean>>();
   private sessionActivationRequestId = 0;
 
   constructor(private ctx: SessionLifecycleContext) {
@@ -386,10 +401,14 @@ export class SessionLifecycleHelper {
       return false;
     }
 
+    const sourceRetainedTurnResponses = sourceTurnResponses.slice(0, targetTurnIndex);
+    if (sourceRetainedTurnResponses.length === 0) {
+      this.ctx.message.info('无法在第一轮请求之前分叉会话');
+      return false;
+    }
+
     this.saveCurrentSession();
 
-    const retainedTurnResponses = sourceTurnResponses.slice(0, targetTurnIndex);
-    const retainedTurnIds = new Set(retainedTurnResponses.map(turn => turn['turnId']));
     const forkedSessionId = `lex-${Date.now()}-fork`;
     const sourceSessionContent = sourceRecord
       ? this._hostSessionContentProvider.provideChatSessionContent(
@@ -405,9 +424,29 @@ export class SessionLifecycleHelper {
     const selectedMode = this.resolveForkSelectedMode(
       sourceSessionContent?.metadata,
       sourceTurnResponses,
-      retainedTurnResponses,
+      sourceRetainedTurnResponses,
     );
     const forkedProviderOptions = sourceSessionContent?.providerOptions ?? this.resolveCurrentSessionProviderOptions();
+    const protocolFork = await this.tryCreateProtocolFork({
+      sourceSessionId,
+      forkedSessionId,
+      beforeTurnId: options.turnId,
+      sourceRetainedTurnResponses,
+      forkedProviderOptions,
+    });
+    if (protocolFork.kind === 'failed') {
+      console.warn('[SessionLifecycle][Fork] protocol fork failed; aborting fork instead of degrading to transcript fork', {
+        reason: protocolFork.reason,
+        error: protocolFork.error,
+      });
+      this.ctx.message.warning('Failed to fork the current session. Please try again.');
+      return false;
+    }
+
+    const retainedTurnResponses = protocolFork.kind === 'created'
+      ? protocolFork.turnResponses
+      : this.buildTranscriptForkTurnResponses(sourceRetainedTurnResponses);
+    const forkKind = protocolFork.kind === 'created' ? 'protocol' as const : 'transcript' as const;
     const forkedInputState = buildHostSessionCurrentPickerInputState(selectedMode, forkedProviderOptions);
     const forkedRequestRouting = buildHostSessionCurrentPickerRoutingSummary(
       selectedMode,
@@ -440,25 +479,226 @@ export class SessionLifecycleHelper {
       requestRouting: forkedItem.requestRouting ?? forkedRequestRouting,
       model: this.resolveCurrentModelName(),
       toolCallingIteration: retainedTurnResponses.length,
+      forkKind,
+      forkedFromSessionId: sourceSessionId,
+      forkedBeforeTurnId: options.turnId,
+      forkedRetainedTurnCount: retainedTurnResponses.length,
     };
     const forkedRecord: HostSessionRecord = {
       metadata: forkedMetadata,
       ...(retainedTurnResponses.length > 0 ? { turnResponses: retainedTurnResponses } : {}),
     };
 
-    if (retainedTurnResponses.length > 0) {
-      this.ctx.chatHistoryService.saveHostRecord({
-        sessionId: forkedSessionId,
-        metadata: forkedMetadata,
-        turnResponses: retainedTurnResponses,
-      });
-    }
+    this.ctx.chatHistoryService.saveHostRecord({
+      sessionId: forkedSessionId,
+      metadata: forkedMetadata,
+      turnResponses: retainedTurnResponses,
+    });
 
     await this.switchToSession(forkedSessionId, forkedRecord);
     this.ctx.scrollManager.setScrollLock(true);
     this.ctx.scrollManager.scrollToBottom();
 
     return true;
+  }
+
+  private async tryCreateProtocolFork(input: {
+    sourceSessionId: string;
+    forkedSessionId: string;
+    beforeTurnId: string;
+    sourceRetainedTurnResponses: readonly TurnResponseTurn[];
+    forkedProviderOptions: HostSessionProviderOptions;
+  }): Promise<ProtocolForkResult> {
+    const sessionFacade = this.ctx.lexStream.session as typeof this.ctx.lexStream.session & {
+      forkSnapshot?: (
+        sourceSnapshot: import('aily-lex/browser').SessionSnapshot,
+        options: import('aily-lex/browser').ForkSessionSnapshotOptions,
+      ) => import('aily-lex/browser').SessionSnapshot;
+    };
+    if (typeof sessionFacade.forkSnapshot !== 'function') {
+      return { kind: 'unsupported' };
+    }
+
+    const sourceSnapshot = sessionFacade.snapshot?.(input.sourceSessionId)
+      ?? sessionFacade.save?.(input.sourceSessionId)
+      ?? null;
+    if (!sourceSnapshot) {
+      return { kind: 'failed', reason: 'source-snapshot' };
+    }
+
+    let forkedSnapshot: import('aily-lex/browser').SessionSnapshot;
+    try {
+      forkedSnapshot = sessionFacade.forkSnapshot(sourceSnapshot, {
+        targetSessionId: input.forkedSessionId,
+        boundary: { kind: 'beforeTurnId', turnId: input.beforeTurnId },
+      });
+    } catch (error) {
+      return { kind: 'failed', reason: 'snapshot-fork', error };
+    }
+
+    const retainedTurnResponses = await this.resolveProtocolForkTurnResponses(input);
+    if (!retainedTurnResponses) {
+      return { kind: 'failed', reason: 'checkpoint-metadata' };
+    }
+
+    const providerOptionsKey = createHostSessionProviderOptionsKey(input.forkedProviderOptions);
+    let ready = false;
+    try {
+      ready = await this.ctx.lexStream.agent.ensureAgent(input.forkedSessionId, providerOptionsKey, { activate: false });
+    } catch (error) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
+      return { kind: 'failed', reason: 'agent', error };
+    }
+    if (!ready) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
+      return { kind: 'failed', reason: 'agent' };
+    }
+
+    let restored = false;
+    try {
+      restored = sessionFacade.restoreResolvedSnapshot?.(forkedSnapshot, input.forkedSessionId) === true;
+    } catch (error) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
+      return { kind: 'failed', reason: 'restore', error };
+    }
+    if (!restored) {
+      this.ctx.lexStream.agent.dispose(input.forkedSessionId);
+      return { kind: 'failed', reason: 'restore' };
+    }
+
+    return {
+      kind: 'created',
+      turnResponses: this.buildProtocolForkTurnResponses(retainedTurnResponses),
+    };
+  }
+
+  private async resolveProtocolForkTurnResponses(input: {
+    sourceSessionId: string;
+    forkedSessionId: string;
+    sourceRetainedTurnResponses: readonly TurnResponseTurn[];
+  }): Promise<readonly TurnResponseTurn[] | null> {
+    if (!this.hasCheckpointOwnedTurn(input.sourceRetainedTurnResponses)) {
+      return input.sourceRetainedTurnResponses;
+    }
+
+    const forkedTurnResponses = await this.ctx.editCheckpointService.forkRequestCheckpointMetadata?.({
+      sourceSessionResource: input.sourceSessionId,
+      targetSessionResource: input.forkedSessionId,
+      retainedTurnResponses: input.sourceRetainedTurnResponses,
+    });
+    return forkedTurnResponses && forkedTurnResponses.length === input.sourceRetainedTurnResponses.length
+      ? forkedTurnResponses
+      : null;
+  }
+
+  private hasCheckpointOwnedTurn(turnResponses: readonly TurnResponseTurn[]): boolean {
+    return turnResponses.some(turn => this.hasCheckpointOwnedRequestMetadata(turn.request?.metadata));
+  }
+
+  private hasCheckpointOwnedRequestMetadata(
+    metadata: TurnResponseTurn['request']['metadata'] | undefined,
+  ): boolean {
+    if (!metadata || typeof metadata !== 'object') {
+      return false;
+    }
+
+    const record = metadata as Record<string, unknown>;
+    return [
+      'checkpointId',
+      'checkpointNamespace',
+      'checkpointRef',
+      'checkpointRefs',
+      'startCheckpointRef',
+      'additionalCheckpointRefs',
+      'additionalStartCheckpointRefs',
+    ].some(key => record[key] !== undefined && record[key] !== null);
+  }
+
+  private buildProtocolForkTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
+    return turnResponses.map(turn => this.sanitizeProtocolForkTurn(turn));
+  }
+
+  private sanitizeProtocolForkTurn(turn: TurnResponseTurn): TurnResponseTurn {
+    const requestMetadata = this.sanitizeProtocolForkRequestMetadata(turn.request?.metadata);
+    const { metadata: _metadata, ...requestWithoutMetadata } = turn.request;
+    return {
+      ...turn,
+      request: {
+        ...requestWithoutMetadata,
+        ...(requestMetadata ? { metadata: requestMetadata } : {}),
+      },
+    };
+  }
+
+  private sanitizeProtocolForkRequestMetadata(
+    metadata: TurnResponseTurn['request']['metadata'] | undefined,
+  ): TurnResponseTurn['request']['metadata'] | undefined {
+    if (!metadata || typeof metadata !== 'object') {
+      return metadata;
+    }
+
+    const nextMetadata = { ...metadata } as Record<string, unknown>;
+    delete nextMetadata['requestContextSnapshot'];
+    delete nextMetadata['requestContext'];
+    return Object.keys(nextMetadata).length > 0
+      ? nextMetadata as TurnResponseTurn['request']['metadata']
+      : undefined;
+  }
+
+  private buildTranscriptForkTurnResponses(turnResponses: readonly TurnResponseTurn[]): TurnResponseTurn[] {
+    return turnResponses.map(turn => this.sanitizeTranscriptForkTurn(turn));
+  }
+
+  private sanitizeTranscriptForkTurn(turn: TurnResponseTurn): TurnResponseTurn {
+    const requestMetadata = this.sanitizeTranscriptForkRequestMetadata(turn.request?.metadata);
+    const responseModel = this.sanitizeTranscriptForkResponseModel(turn.responseModel);
+    const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn;
+    const { metadata: _metadata, ...requestWithoutMetadata } = turn.request;
+    return {
+      ...turnWithoutResponseModel,
+      request: {
+        ...requestWithoutMetadata,
+        ...(requestMetadata ? { metadata: requestMetadata } : {}),
+      },
+      ...(responseModel ? { responseModel } : {}),
+    };
+  }
+
+  private sanitizeTranscriptForkRequestMetadata(
+    metadata: TurnResponseTurn['request']['metadata'] | undefined,
+  ): TurnResponseTurn['request']['metadata'] | undefined {
+    if (!metadata || typeof metadata !== 'object') {
+      return metadata;
+    }
+
+    const nextMetadata = { ...metadata } as Record<string, unknown>;
+    delete nextMetadata['checkpointId'];
+    delete nextMetadata['checkpointRef'];
+    delete nextMetadata['additionalCheckpointRefs'];
+    delete nextMetadata['checkpointRefs'];
+    delete nextMetadata['requestContextSnapshot'];
+    delete nextMetadata['requestContext'];
+    return Object.keys(nextMetadata).length > 0
+      ? nextMetadata as TurnResponseTurn['request']['metadata']
+      : undefined;
+  }
+
+  private sanitizeTranscriptForkResponseModel(
+    responseModel: TurnResponseTurn['responseModel'] | undefined,
+  ): TurnResponseTurn['responseModel'] | undefined {
+    if (!responseModel) {
+      return undefined;
+    }
+
+    const {
+      summary: _summary,
+      summaries: _summaries,
+      summaryPreview: _summaryPreview,
+      ...nextResponseModel
+    } = responseModel;
+    return Object.keys(nextResponseModel).length > 0
+      ? nextResponseModel as TurnResponseTurn['responseModel']
+      : undefined;
   }
 
   // ==================== 会话持久化 ====================
@@ -700,8 +940,36 @@ export class SessionLifecycleHelper {
     }
 
     this.ctx.chatService.currentSessionPath = targetProjectPath;
-    const providerOptions = this.resolveCurrentProjectProviderOptions();
-    this.applySessionProviderOptions(providerOptions);
+    const requiredResource = createRequiredSessionResourceModel({
+      sessionResource: sessionId,
+      projectPath: targetProjectPath,
+      projectRootPath: AilyHost.get().project.projectRootPath,
+      selectedMode: this.ctx.chatService.selectedMode ?? { modeId: this.ctx.currentMode },
+      runtimeMode: this.ctx.chatService.currentAgentRuntimeMode,
+      runtimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
+      providerOptions: this.resolveCurrentProjectProviderOptions(),
+    });
+    this.acquireSessionModel({
+      sessionResource: requiredResource.sessionResource,
+      title: {
+        text: this.ctx.chatService.currentSessionTitle ?? '',
+        source: this.ctx.chatService.currentSessionTitleSource ?? 'empty',
+        revision: this.ctx.chatService.currentSessionTitleRevision,
+      },
+      projectPath: requiredResource.projectPath,
+      sessionType: this.ctx.chatService.currentSessionType ?? DEFAULT_CHAT_SESSION_TYPE,
+      inputState: {
+        providerOptions: requiredResource.providerOptions,
+        selectedMode: requiredResource.selectedMode,
+      },
+    });
+    this.applySessionProviderOptions(requiredResource.providerOptions);
+    if (typeof this.ctx.chatService.setCurrentAgentRuntimeMode === 'function') {
+      this.ctx.chatService.setCurrentAgentRuntimeMode(requiredResource.runtimeMode, requiredResource.runtimeModeSource);
+    } else {
+      this.ctx.chatService.currentAgentRuntimeMode = requiredResource.runtimeMode;
+      this.ctx.chatService.currentAgentRuntimeModeSource = requiredResource.runtimeModeSource;
+    }
     this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(sessionId));
     this.refreshHistoryList();
     this.ctx.triggerSyncDetectChanges();
@@ -895,6 +1163,7 @@ export class SessionLifecycleHelper {
     this.applySessionType(DEFAULT_CHAT_SESSION_TYPE);
     this.ctx.chatService.currentSessionPath = explicitProjectPath ?? '';
     this.ctx.chatService.clearResolvedActiveModel?.();
+    this.ctx.clearEntryInputState?.();
     this.ctx.isSessionStarting = false;
 
     if (options.resetInitialization === true) {
@@ -954,7 +1223,7 @@ export class SessionLifecycleHelper {
     if (currentSessionId) {
       this.ctx.detachSessionRuntimeView?.(currentSessionId);
     }
-    this.enterBlankSessionShell({
+    this.enterEntryState({
       sessionId: currentSessionId,
       disposeRuntime: false,
       projectPath: nextProjectPath,
@@ -1071,15 +1340,28 @@ export class SessionLifecycleHelper {
       return null;
     }
 
-    const liveRecord = this.buildLiveHostSessionRecord();
+    const modelTurnResponses = [...(this.ctx.readSessionTurnResponses?.(sourceSessionId) ?? [])];
+    const liveRecord = this.buildLiveHostSessionRecord({
+      ...(modelTurnResponses.length > 0 ? { turnResponsesOverride: modelTurnResponses } : {}),
+    });
     if (liveRecord?.sessionId === sourceSessionId) {
-      return liveRecord;
+      return modelTurnResponses.length > 0
+        ? { ...liveRecord, turnResponses: modelTurnResponses }
+        : liveRecord;
     }
 
-    return this._hostSessionContentProvider.provideChatSessionContent(
+    const durableRecord = this._hostSessionContentProvider.provideChatSessionContent(
       sourceSessionId,
       this.resolveCurrentSessionProjectPath(),
     )?.hostRecord ?? null;
+    if (modelTurnResponses.length > 0 && durableRecord?.metadata) {
+      return {
+        ...durableRecord,
+        turnResponses: modelTurnResponses,
+      };
+    }
+
+    return durableRecord;
   }
 
   private resolveForkSelectedMode(
@@ -1099,6 +1381,7 @@ export class SessionLifecycleHelper {
           : sourceTurnResponses,
       } as HostSessionRecord, {
         resolveModeById: (modeId) => this.ctx.chatService.findResolvedModeById?.(modeId),
+        resolveModeByName: (modeName) => this.ctx.chatService.findResolvedModeByName?.(modeName),
       });
     }
 
@@ -1121,6 +1404,74 @@ export class SessionLifecycleHelper {
 
     await this.activateSessionFromRestoreRequest(restoreRequest, {
       preferDetachedRuntimeAttach: true,
+    });
+    return true;
+  }
+
+  async preloadSessionModel(
+    sessionId: string,
+    options: { readonly fallbackProjectPath?: string | null } = {},
+  ): Promise<boolean> {
+    const targetSessionId = typeof sessionId === 'string'
+      ? sessionId.trim()
+      : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    if (this.sessionModelReferences.has(targetSessionId)) {
+      return true;
+    }
+
+    const pending = this.sessionModelPreloadPromises.get(targetSessionId);
+    if (pending) {
+      return pending;
+    }
+
+    const preloadPromise = this.loadSessionModelForPreload(targetSessionId, options)
+      .finally(() => {
+        if (this.sessionModelPreloadPromises.get(targetSessionId) === preloadPromise) {
+          this.sessionModelPreloadPromises.delete(targetSessionId);
+        }
+      });
+    this.sessionModelPreloadPromises.set(targetSessionId, preloadPromise);
+    return preloadPromise;
+  }
+
+  private async loadSessionModelForPreload(
+    sessionId: string,
+    options: { readonly fallbackProjectPath?: string | null },
+  ): Promise<boolean> {
+    const existingReference = this.ctx.acquireExistingSessionModel?.(sessionId);
+    if (existingReference) {
+      this.sessionModelReferences.get(sessionId)?.dispose();
+      this.sessionModelReferences.set(sessionId, existingReference);
+      return true;
+    }
+
+    const entryProjectPath = this.ctx.chatHistoryService.findEntry(sessionId)?.projectPath ?? null;
+    const restoreRequest = this.hostSessionItemController.resolveSessionSwitchRestoreRequest(sessionId, {
+      fallbackProjectPath: options.fallbackProjectPath ?? entryProjectPath ?? this.resolveCurrentProjectPath(),
+    });
+    const hostRecord = restoreRequest.hostRecord ?? restoreRequest.sessionContent.hostRecord ?? null;
+    if (!hostRecord) {
+      return false;
+    }
+
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
+    const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    this.acquireSessionModel({
+      sessionResource: sessionId,
+      title: restoredTitle.text
+        ? restoredTitle
+        : {
+            text: restoreRequest.sessionContent.title ?? '',
+            source: restoreRequest.sessionContent.title ? 'restored-custom' : 'empty',
+          },
+      projectPath: this.resolveSessionContentProjectPath(hostRecord),
+      sessionType: restoreRequest.sessionContent.sessionType,
+      inputState: { providerOptions: restoreRequest.sessionContent.providerOptions },
+      turnResponses: hostRecord.turnResponses,
     });
     return true;
   }
@@ -1172,7 +1523,7 @@ export class SessionLifecycleHelper {
       );
     }
 
-    this.resetForSessionActivation();
+    this.resetForSessionActivation({ clearVisibleProjection: false });
 
     if (options.ensureManagedItem) {
       this.hostSessionItemController.createNewChatSessionItem(restoreRequest.target.sessionId, {
@@ -1281,6 +1632,10 @@ export class SessionLifecycleHelper {
     });
     this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.logSessionActivationScalar('durable-restore-committed', restoreRequest, {
+      modelTurns: this.countReferencedModelTurns(sessionId),
+      modelProjectionTurns: this.countReferencedModelProjectionTurns(sessionId),
+    });
     this.requestSessionListRefresh({
       reason: 'reopen',
       scope: 'summary',
@@ -1360,6 +1715,10 @@ export class SessionLifecycleHelper {
     });
     this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.logSessionActivationScalar('existing-model-attached', restoreRequest, {
+      modelTurns: this.countModelTurns(model),
+      modelProjectionTurns: this.countModelProjectionTurns(model),
+    });
     this.requestSessionListRefresh({
       reason: 'reopen',
       scope: 'summary',
@@ -1463,6 +1822,9 @@ export class SessionLifecycleHelper {
     const runtimeProjectionDialogs = Array.isArray(runtimeProjection?.dialogItems)
       ? runtimeProjection.dialogItems.length
       : 0;
+    const lexSnapshotTurns = this.countLexSnapshotTurns(sessionId);
+    const summaryBoundaries = this.countSummaryBoundaries(hostRecord?.turnResponses);
+    const checkpointSidecars = this.countCheckpointSidecars(hostRecord?.turnResponses);
     console.info(
       '[SessionLifecycle][SwitchScalar]',
       [
@@ -1477,6 +1839,9 @@ export class SessionLifecycleHelper {
         `runtimeProjectionTurns=${runtimeProjectionTurns}`,
         `runtimeProjectionChatList=${runtimeProjectionChatList}`,
         `runtimeProjectionDialogs=${runtimeProjectionDialogs}`,
+        `lexSnapshotTurns=${lexSnapshotTurns}`,
+        `summaryBoundaries=${summaryBoundaries}`,
+        `checkpointSidecars=${checkpointSidecars}`,
         `modelTurns=${extra.modelTurns ?? '<unknown>'}`,
         `modelProjectionTurns=${extra.modelProjectionTurns ?? '<unknown>'}`,
       ].join(' '),
@@ -1491,6 +1856,63 @@ export class SessionLifecycleHelper {
   private countModelProjectionTurns(model: ChatSessionModelReference['object']): number {
     const projection = model.hostProjectionState ?? null;
     return Array.isArray(projection?.turnResponses) ? projection.turnResponses.length : 0;
+  }
+
+  private countReferencedModelTurns(sessionId: string): number {
+    const model = this.sessionModelReferences.get(sessionId)?.object;
+    return model ? this.countModelTurns(model) : 0;
+  }
+
+  private countReferencedModelProjectionTurns(sessionId: string): number {
+    const model = this.sessionModelReferences.get(sessionId)?.object;
+    return model ? this.countModelProjectionTurns(model) : 0;
+  }
+
+  private countLexSnapshotTurns(sessionId: string): number {
+    try {
+      const snapshot = this.ctx.lexStream.session?.snapshot?.(sessionId);
+      return Array.isArray(snapshot?.turns) ? snapshot.turns.length : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private countSummaryBoundaries(turnResponses: HostSessionRecord['turnResponses'] | null | undefined): number {
+    if (!Array.isArray(turnResponses)) {
+      return 0;
+    }
+
+    return turnResponses.reduce((total, turn) => {
+      const roundCount = Array.isArray(turn?.rounds)
+        ? turn.rounds.filter(round => typeof round?.summary === 'string' && round.summary.trim().length > 0).length
+        : 0;
+      const responseModel = turn?.responseModel;
+      const sidecarCount = Array.isArray(responseModel?.summaries)
+        ? responseModel.summaries.filter(summary => typeof summary?.text === 'string' && summary.text.trim().length > 0).length
+        : (typeof responseModel?.summary?.text === 'string' && responseModel.summary.text.trim().length > 0 ? 1 : 0);
+      return total + roundCount + sidecarCount;
+    }, 0);
+  }
+
+  private countCheckpointSidecars(turnResponses: HostSessionRecord['turnResponses'] | null | undefined): number {
+    if (!Array.isArray(turnResponses)) {
+      return 0;
+    }
+
+    return turnResponses.reduce((total, turn) => {
+      const metadata = turn?.request?.metadata as Record<string, unknown> | undefined;
+      if (!metadata || typeof metadata !== 'object') {
+        return total;
+      }
+      return total + (
+        typeof metadata['checkpointId'] === 'string'
+        || typeof metadata['checkpointRef'] === 'string'
+        || metadata['additionalCheckpointRefs'] !== undefined
+        || metadata['checkpointRefs'] !== undefined
+          ? 1
+          : 0
+      );
+    }, 0);
   }
 
   private isRealMetadataOnlyRestoreCarrier(metadataSource: HostSessionSwitchRestoreDiagnostics['metadataSource'] | string): boolean {
@@ -1546,6 +1968,8 @@ export class SessionLifecycleHelper {
         readonly projectPath?: string | null;
       };
       readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
     },
     activationRequestId: number,
   ): Promise<void> {
@@ -1587,6 +2011,10 @@ export class SessionLifecycleHelper {
     });
 
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.logSessionActivationScalar('runtime-reattached', restoreRequest, {
+      modelTurns: this.countReferencedModelTurns(sessionId),
+      modelProjectionTurns: this.countReferencedModelProjectionTurns(sessionId),
+    });
     this.requestSessionListRefresh({
       reason: 'reopen',
       scope: 'summary',
@@ -1601,6 +2029,8 @@ export class SessionLifecycleHelper {
         readonly projectPath?: string | null;
       };
       readonly sessionContent: HostSessionContent;
+      readonly hostRecord?: HostSessionRecord | null;
+      readonly diagnostics: HostSessionSwitchRestoreDiagnostics;
     },
     activationRequestId: number,
   ): Promise<void> {
@@ -1615,6 +2045,7 @@ export class SessionLifecycleHelper {
     const providerOptions = restoreRequest.sessionContent.providerOptions;
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(sessionId)?.turnResponses;
     const restoredTitle = resolveRestoredSessionTitle(restoreRequest.sessionContent, runtimeTurnResponses);
+    this.resetForSessionActivation({ clearVisibleProjection: true });
     this.acquireSessionModel({
       sessionResource: sessionId,
       title: restoredTitle,
@@ -1640,6 +2071,10 @@ export class SessionLifecycleHelper {
     });
     this.ctx.ensureBackgroundSessionCanRerun?.(sessionId);
     this.ctx.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
+    this.logSessionActivationScalar('blank-model-attached', restoreRequest, {
+      modelTurns: this.countReferencedModelTurns(sessionId),
+      modelProjectionTurns: this.countReferencedModelProjectionTurns(sessionId),
+    });
     this.requestSessionListRefresh({
       reason: 'reopen',
       scope: 'summary',
@@ -1728,7 +2163,7 @@ export class SessionLifecycleHelper {
     return acquirePromise;
   }
 
-  private resetForSessionActivation(): void {
+  private resetForSessionActivation(options: { readonly clearVisibleProjection?: boolean } = {}): void {
     const targetSessionId = this.resolveCurrentViewSessionResource();
 
     this.ctx.captureVisibleAttachedSessionRuntimeState?.();
@@ -1736,9 +2171,11 @@ export class SessionLifecycleHelper {
       this.ctx.detachSessionRuntimeView?.(targetSessionId);
     }
 
-    this.ctx.resetVisibleSessionProjection({
-      clearEditSummary: true,
-    });
+    if (options.clearVisibleProjection !== false) {
+      this.ctx.resetVisibleSessionProjection({
+        clearEditSummary: true,
+      });
+    }
 
     this.ctx.isSessionStarting = false;
   }
@@ -1896,21 +2333,30 @@ export class SessionLifecycleHelper {
     const selectedMode = normalizeChatSelectedMode(
       this.ctx.chatService.selectedMode ?? { modeId: this.ctx.currentMode },
     );
+    const requiredResource = createRequiredSessionResourceModel({
+      sessionResource: sessionId,
+      projectPath: providerOptions.folderPath,
+      projectRootPath: AilyHost.get().project.projectRootPath,
+      selectedMode,
+      runtimeMode: this.ctx.chatService.currentAgentRuntimeMode,
+      runtimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
+      providerOptions,
+    });
 
     return {
       sessionId,
-      projectPath: providerOptions.folderPath ?? null,
-      providerOptions,
-      inputState: buildHostSessionCurrentPickerInputState(selectedMode, providerOptions),
-      mode: selectedMode.modeId,
-      agentRuntimeMode: this.ctx.chatService.currentAgentRuntimeMode,
-      agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
+      projectPath: requiredResource.projectPath,
+      providerOptions: requiredResource.providerOptions,
+      inputState: buildHostSessionCurrentPickerInputState(requiredResource.selectedMode, requiredResource.providerOptions),
+      mode: requiredResource.selectedMode.modeId,
+      agentRuntimeMode: requiredResource.runtimeMode,
+      agentRuntimeModeSource: requiredResource.runtimeModeSource,
       requestRouting: buildHostSessionCurrentPickerRoutingSummary(
-        selectedMode,
+        requiredResource.selectedMode,
         undefined,
-        providerOptions.permissionLevel,
-        providerOptions.approvalsReviewer,
-        providerOptions.approvalPolicy,
+        requiredResource.providerOptions.permissionLevel,
+        requiredResource.providerOptions.approvalsReviewer,
+        requiredResource.providerOptions.approvalPolicy,
       ),
     };
   }

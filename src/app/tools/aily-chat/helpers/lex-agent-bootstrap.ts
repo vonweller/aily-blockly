@@ -28,7 +28,6 @@ import { BLOCKLY_LEX_DEFERRED_GROUPS, createBlocklyToolProvider } from '../core/
 import { createBlocklyAgentProvider } from '../core/blockly-agent-provider';
 import { createBlocklyAgentFileProvider } from '../core/blockly-agent-file-provider';
 import { createBlocklyInstructionFileProvider } from '../core/blockly-instruction-file-provider';
-import { createBlocklyClaudeHookCustomizationProvider } from '../core/blockly-claude-hook-customization-provider';
 import { createBlocklyHookCustomizationProvider } from '../core/blockly-hook-customization-provider';
 import { createBlocklyPluginCustomizationProvider } from '../core/blockly-plugin-customization-provider';
 import { createBlocklySkillCustomizationProvider } from '../core/blockly-skill-customization-provider';
@@ -50,7 +49,7 @@ import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
-import { CopilotCliSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
+import { AilyAgentSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
 import { ChatSessionRuntimeRegistryService } from '../services/chat-session-runtime-registry.service';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
@@ -112,7 +111,72 @@ export interface LexRuntimeApiConfig {
 }
 
 const DEFAULT_INTERACTION_HARD_ROUND_CAP = 200;
-const COPILOT_SUMMARIZER_PRESET_ID = 'auto-fast';
+const FAST_SUMMARIZER_PRESET_ID = 'auto-fast';
+
+type BlocklyExternalTerminal = NonNullable<IExternalHostAPI['terminal']>;
+
+const blocklyCommandSessionControllers = new Set<BlocklyExternalTerminal>();
+const blocklyCommandSessionOwners = new Map<string, BlocklyExternalTerminal>();
+
+export type BlocklyCommandSessionSnapshot = Awaited<ReturnType<NonNullable<BlocklyExternalTerminal['getProcessStatus']>>>;
+
+function registerBlocklyCommandSessionController(terminal: BlocklyExternalTerminal | undefined): void {
+  if (!terminal) {
+    return;
+  }
+  blocklyCommandSessionControllers.add(terminal);
+}
+
+function registerBlocklyCommandSessionOwner(processId: string, terminal: BlocklyExternalTerminal): void {
+  blocklyCommandSessionOwners.set(processId, terminal);
+  registerBlocklyCommandSessionController(terminal);
+}
+
+async function runWithBlocklyCommandSessionController<T>(
+  processId: string,
+  action: (terminal: BlocklyExternalTerminal) => Promise<T | null | undefined>,
+): Promise<T | null> {
+  const preferred = blocklyCommandSessionOwners.get(processId);
+  if (preferred) {
+    const result = await action(preferred);
+    if (result != null) {
+      return result;
+    }
+    blocklyCommandSessionOwners.delete(processId);
+  }
+
+  for (const terminal of blocklyCommandSessionControllers) {
+    if (terminal === preferred) {
+      continue;
+    }
+    const result = await action(terminal);
+    if (result != null) {
+      blocklyCommandSessionOwners.set(processId, terminal);
+      return result;
+    }
+  }
+
+  return null;
+}
+
+export async function getBlocklyCommandSessionStatus(processId: string): Promise<BlocklyCommandSessionSnapshot | null> {
+  return runWithBlocklyCommandSessionController(processId, async terminal => {
+    return typeof terminal.getProcessStatus === 'function'
+      ? terminal.getProcessStatus(processId)
+      : null;
+  });
+}
+
+export async function stopBlocklyCommandSession(
+  processId: string,
+  options?: { yieldTimeMs?: number },
+): Promise<BlocklyCommandSessionSnapshot | null> {
+  return runWithBlocklyCommandSessionController(processId, async terminal => {
+    return typeof terminal.stopProcess === 'function'
+      ? terminal.stopProcess(processId, options)
+      : null;
+  });
+}
 
 interface ResolvePersistedLexSessionOptions {
   lex: AilyLexModule;
@@ -211,6 +275,8 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'read_file', 'write_file', 'edit_file', 'multi_edit_file',
   'delete_file', 'list_dir', 'create_directory',
   'grep_search', 'glob_search',
+  'command_exec', 'command_write_stdin', 'command_status', 'command_stop',
+  'command_read', 'command_tail', 'command_search',
   'run_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'agent',
   'get_changed_files',
   'fetch_webpage', 'clone_repository',
@@ -297,9 +363,9 @@ function isCoreToolEnabledByHostConfig(
   toolName: string,
 ): boolean {
   const memoryToolEnabled = configService.memoryToolEnabled !== false;
-  const copilotMemoryEnabled = configService.copilotMemoryEnabled === true;
+  const repositoryMemoryEnabled = configService.repositoryMemoryEnabled === true;
   if (toolName === 'memory') {
-    return memoryToolEnabled || copilotMemoryEnabled;
+    return memoryToolEnabled || repositoryMemoryEnabled;
   }
   if (toolName === 'resolve_memory_file_uri') {
     return memoryToolEnabled;
@@ -1090,7 +1156,7 @@ export function buildLexSummarizerModelConfig(
   maxOutputTokens = 8192,
 ): any {
   const summarizerRuntimeModel = typeof chatConfigService?.resolvePresetModel === 'function'
-    ? chatConfigService.resolvePresetModel(COPILOT_SUMMARIZER_PRESET_ID) ?? currentModel
+    ? chatConfigService.resolvePresetModel(FAST_SUMMARIZER_PRESET_ID) ?? currentModel
     : currentModel;
   return buildLexModelConfig(summarizerRuntimeModel, maxOutputTokens);
 }
@@ -1252,30 +1318,10 @@ export function bootstrapBlocklyLexAgent(
     projectRootPath: agentFolderProjectRoot,
     configSource: ctx.ailyChatConfigService,
   });
-  const claudeProjectInstructionFileProvider = createBlocklyInstructionFileProvider({
-    source: 'project',
-    projectRootPath: agentFolderProjectRoot,
-    configSource: ctx.ailyChatConfigService,
-    profile: 'claude',
-  });
-  const claudeUserInstructionFileProvider = createBlocklyInstructionFileProvider({
-    source: 'user',
-    projectRootPath: agentFolderProjectRoot,
-    configSource: ctx.ailyChatConfigService,
-    profile: 'claude',
-  });
   let agent: BlocklyLexAgentInstance | undefined;
   const skillCustomizationProvider = createBlocklySkillCustomizationProvider();
   const hookCustomizationProvider = createBlocklyHookCustomizationProvider({
     getAgent: () => agent,
-  });
-  const claudeProjectHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
-    source: 'project',
-    projectRootPath: agentFolderProjectRoot,
-  });
-  const claudeUserHookCustomizationProvider = createBlocklyClaudeHookCustomizationProvider({
-    source: 'user',
-    projectRootPath: agentFolderProjectRoot,
   });
   const pluginCustomizationProvider = createBlocklyPluginCustomizationProvider({
     getAgent: () => agent,
@@ -1303,20 +1349,6 @@ export function bootstrapBlocklyLexAgent(
     ], [
       { source: 'host', provider: runtimeAgentProvider },
     ], [
-      { source: 'project', provider: claudeProjectInstructionFileProvider },
-      { source: 'user', provider: claudeUserInstructionFileProvider },
-    ], [
-      { provider: skillCustomizationProvider },
-    ], [
-      { provider: claudeProjectHookCustomizationProvider },
-      { provider: claudeUserHookCustomizationProvider },
-    ], [], 'claude-code'),
-    createBlocklySessionCustomizationProviderBinding([
-      { source: 'project', provider: projectAgentFileProvider },
-      { source: 'user', provider: userAgentFileProvider },
-    ], [
-      { source: 'host', provider: runtimeAgentProvider },
-    ], [
       { source: 'project', provider: projectInstructionFileProvider },
       { source: 'user', provider: userInstructionFileProvider },
     ], [
@@ -1325,7 +1357,7 @@ export function bootstrapBlocklyLexAgent(
       { provider: hookCustomizationProvider },
     ], [
       { provider: pluginCustomizationProvider },
-    ], 'copilotcli'),
+    ], 'aily-agent'),
   ] as const;
   const sessionCustomizationContentProvider = createBlocklySessionCustomizationContentProvider([
     { source: 'host', provider: runtimeAgentProvider },
@@ -1341,8 +1373,8 @@ export function bootstrapBlocklyLexAgent(
   };
   const sessionProviderOptionsSourceBindings = [
     {
-      sessionType: 'copilotcli',
-      source: new CopilotCliSessionProviderOptionsSourceService(),
+      sessionType: 'aily-agent',
+      source: new AilyAgentSessionProviderOptionsSourceService(),
     },
   ] as const;
 
@@ -1355,8 +1387,8 @@ export function bootstrapBlocklyLexAgent(
     endpoint: buildLexEndpoint(lex, ctx.currentModel, ctx.ailyChatConfigService),
     model: buildLexModelConfig(ctx.currentModel),
     summarizerModel: buildLexSummarizerModelConfig(ctx.currentModel, ctx.ailyChatConfigService),
-    contextCompactionArchitecture: 'copilot',
-    copilotInlineSummarization: true,
+    contextCompactionArchitecture: 'provider',
+    inlineSummarization: true,
     sessionId: sessionId || ctx.sessionId,
     sessionStorage,
     capabilities: new Set([...adapter.capabilities, `runtime:${agentRuntimeMode}`]),
@@ -1980,14 +2012,14 @@ function createBlocklyMemoryFeatureConfigExtension(
 ): {
   getMemoryFeatureFlags(): {
     memoryToolEnabled: boolean;
-    copilotMemoryEnabled: boolean;
+    repositoryMemoryEnabled: boolean;
   };
 } {
   return {
     getMemoryFeatureFlags() {
       return {
         memoryToolEnabled: configService.memoryToolEnabled !== false,
-        copilotMemoryEnabled: configService.copilotMemoryEnabled === true,
+        repositoryMemoryEnabled: configService.repositoryMemoryEnabled === true,
       };
     },
   };
@@ -2155,6 +2187,7 @@ interface PersistedRoundSummaryCarrier {
   readonly anchorRoundId: string;
   readonly summary: string;
   readonly anchorTurnId?: string;
+  readonly turnIndex?: number;
   readonly roundIndex?: number;
 }
 
@@ -2162,8 +2195,21 @@ function getLatestStructuredRoundSummaryForTurn(
   turn: import('aily-lex/browser').TurnResponseTurn,
 ): PersistedRoundSummaryCarrier | undefined {
   const turnSummary = turn.responseModel?.summaries?.at(-1) ?? turn.responseModel?.summary;
-  const anchorRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
+  const rawSummary = (turnSummary ?? {}) as Record<string, unknown>;
+  const toolCallRoundId = typeof turnSummary?.toolCallRoundId === 'string' && turnSummary.toolCallRoundId.trim()
     ? turnSummary.toolCallRoundId.trim()
+    : undefined;
+  const anchorRoundId = typeof rawSummary['anchorRoundId'] === 'string' && rawSummary['anchorRoundId'].trim()
+    ? rawSummary['anchorRoundId'].trim()
+    : toolCallRoundId;
+  const anchorTurnId = typeof rawSummary['anchorTurnId'] === 'string' && rawSummary['anchorTurnId'].trim()
+    ? rawSummary['anchorTurnId'].trim()
+    : undefined;
+  const turnIndex = typeof rawSummary['turnIndex'] === 'number' && Number.isInteger(rawSummary['turnIndex']) && rawSummary['turnIndex'] >= 0
+    ? rawSummary['turnIndex']
+    : undefined;
+  const roundIndex = typeof rawSummary['roundIndex'] === 'number' && Number.isInteger(rawSummary['roundIndex']) && rawSummary['roundIndex'] >= -1
+    ? rawSummary['roundIndex']
     : undefined;
   const summary = normalizeTurnResponseSummaryPreview(turnSummary?.text);
 
@@ -2174,6 +2220,9 @@ function getLatestStructuredRoundSummaryForTurn(
   return {
     anchorRoundId,
     summary,
+    ...(anchorTurnId ? { anchorTurnId } : {}),
+    ...(turnIndex !== undefined ? { turnIndex } : {}),
+    ...(roundIndex !== undefined ? { roundIndex } : {}),
   };
 }
 
@@ -2210,18 +2259,23 @@ function findPersistedRoundSummaryTarget(
     }
   }
 
-  if (!carrier.anchorTurnId || carrier.roundIndex === undefined || carrier.roundIndex < 0) {
-    return undefined;
+  if (carrier.anchorTurnId && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
+    for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
+      const turn = turns[turnIndex];
+      if (turn.id !== carrier.anchorTurnId) {
+        continue;
+      }
+
+      return carrier.roundIndex < turn.rounds.length
+        ? { turnIndex, roundIndex: carrier.roundIndex }
+        : undefined;
+    }
   }
 
-  for (let turnIndex = maxTurnIndex; turnIndex >= 0; turnIndex -= 1) {
-    const turn = turns[turnIndex];
-    if (turn.id !== carrier.anchorTurnId) {
-      continue;
-    }
-
-    return carrier.roundIndex < turn.rounds.length
-      ? { turnIndex, roundIndex: carrier.roundIndex }
+  if (carrier.turnIndex !== undefined && carrier.roundIndex !== undefined && carrier.roundIndex >= 0) {
+    const turn = turns[carrier.turnIndex];
+    return carrier.turnIndex <= maxTurnIndex && turn && carrier.roundIndex < turn.rounds.length
+      ? { turnIndex: carrier.turnIndex, roundIndex: carrier.roundIndex }
       : undefined;
   }
 
@@ -2467,16 +2521,24 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
   }
 
   const sessions = new Map<string, ExternalTerminalSession>();
+  let terminalApi: BlocklyExternalTerminal;
 
   const createSnapshot = (session: ExternalTerminalSession) => ({
     id: session.id,
+    processId: session.id,
     command: session.command,
     cwd: session.cwd,
     stdout: session.stdout,
     stderr: session.stderr,
     running: session.running,
+    status: session.status,
     exitCode: session.exitCode,
     pid: session.pid,
+    outputSessionId: session.outputSessionId,
+    bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
+    startedAt: session.startedAt,
+    lastOutputAt: session.lastOutputAt,
+    completedAt: session.completedAt,
   });
 
   const settleReady = (session: ExternalTerminalSession) => {
@@ -2494,6 +2556,10 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     }
     session.running = false;
     session.exitCode = exitCode;
+    session.status = session.status === 'running'
+      ? (exitCode === 0 ? 'completed' : 'failed')
+      : session.status;
+    session.completedAt = Date.now();
     settleReady(session);
     if (!session.finishedResolved) {
       session.finishedResolved = true;
@@ -2503,6 +2569,8 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     session.removeListener = undefined;
     session.subscription?.unsubscribe?.();
     session.subscription = undefined;
+    session.abortCleanup?.();
+    session.abortCleanup = undefined;
   };
 
   const attachCmdServiceSession = (
@@ -2520,10 +2588,14 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         switch (data?.type) {
           case 'stdout':
             session.stdout += data.data ?? '';
+            session.lastOutputAt = Date.now();
+            emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
             settleReady(session);
             break;
           case 'stderr':
             session.stderr += data.data ?? '';
+            session.lastOutputAt = Date.now();
+            emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
             settleReady(session);
             break;
           case 'close': {
@@ -2538,12 +2610,18 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
           }
           case 'error':
             session.stderr += data.error ?? '';
+            session.lastOutputAt = Date.now();
+            emitExternalTerminalOutput(session, 'stderr', data.error ?? '');
+            session.status = 'failed';
             finalize(session, 1);
             break;
         }
       },
       error: (err: unknown) => {
         session.stderr += err instanceof Error ? err.message : String(err);
+        session.lastOutputAt = Date.now();
+        emitExternalTerminalOutput(session, 'stderr', err instanceof Error ? err.message : String(err));
+        session.status = 'failed';
         finalize(session, 1);
       },
     });
@@ -2554,10 +2632,14 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       switch (data.type) {
         case 'stdout':
           session.stdout += data.data ?? '';
+          session.lastOutputAt = Date.now();
+          emitExternalTerminalOutput(session, 'stdout', data.data ?? '');
           settleReady(session);
           break;
         case 'stderr':
           session.stderr += data.data ?? '';
+          session.lastOutputAt = Date.now();
+          emitExternalTerminalOutput(session, 'stderr', data.data ?? '');
           settleReady(session);
           break;
         case 'close':
@@ -2565,30 +2647,43 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
           break;
         case 'error':
           session.stderr += data.error ?? '';
+          session.lastOutputAt = Date.now();
+          emitExternalTerminalOutput(session, 'stderr', data.error ?? '');
+          session.status = 'failed';
           finalize(session, 1);
           break;
       }
     });
   };
 
-  const start = async (command: string, opts?: { cwd?: string; timeout?: number; env?: Record<string, string> }) => {
+  const start = async (command: string, opts?: {
+    cwd?: string;
+    timeout?: number;
+    env?: Record<string, string>;
+    onOutput?: ExternalTerminalSession['outputListener'];
+  }) => {
     const id = `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
     const session: ExternalTerminalSession = {
       id,
+      outputSessionId: id,
       command,
       cwd,
       stdout: '',
       stderr: '',
       running: true,
+      status: 'running',
+      startedAt: Date.now(),
+      lastOutputAt: Date.now(),
       readyResolved: false,
       finishedResolved: false,
       ready: new Promise<void>((resolve) => { resolveReady = resolve; }),
       finished: new Promise<void>((resolve) => { resolveFinished = resolve; }),
       resolveReady,
       resolveFinished,
+      outputListener: opts?.onOutput,
     };
 
     if (hasCmdService) {
@@ -2603,13 +2698,17 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         return;
       }
       session.stderr += `${session.stderr ? '\n' : ''}[Process killed: timeout exceeded]`;
-      if (typeof host.terminal.kill === 'function') {
-        await host.terminal.kill(id);
+      session.lastOutputAt = Date.now();
+      session.status = 'timeout';
+      emitExternalTerminalOutput(session, 'stderr', '[Process killed: timeout exceeded]');
+      const stopped = await stopExternalSession(session, host);
+      if (stopped && session.running) {
+        finalize(session, session.exitCode ?? 124);
       }
-      finalize(session, 124);
     }, timeout);
 
     sessions.set(id, session);
+    registerBlocklyCommandSessionOwner(id, terminalApi);
 
     try {
       if (hasRawTerminal) {
@@ -2617,14 +2716,17 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         session.pid = result?.pid;
         if (!result?.success) {
           session.stderr += result?.error ?? 'Terminal start failed';
+          session.status = 'failed';
           finalize(session, 1);
         }
       } else if (!hasCmdService) {
         session.stderr += 'Terminal start failed';
+        session.status = 'failed';
         finalize(session, 1);
       }
     } catch (err) {
       session.stderr += err instanceof Error ? err.message : String(err);
+      session.status = 'failed';
       finalize(session, 1);
     }
 
@@ -2632,7 +2734,7 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     return createSnapshot(session);
   };
 
-  return {
+  terminalApi = {
     exec: async (command: string, opts?: { cwd?: string; timeout?: number; env?: Record<string, string> }) => {
       const snapshot = await start(command, opts);
       const session = sessions.get(snapshot.id);
@@ -2652,13 +2754,90 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       const session = sessions.get(id);
       return session ? createSnapshot(session) : null;
     },
+    execCommand: async (command: string, opts?: { cwd?: string; timeoutMs?: number; timeout?: number; yieldTimeMs?: number; signal?: AbortSignal; env?: Record<string, string>; onOutput?: (event: any) => void }) => {
+      const snapshot = await start(command, {
+        cwd: opts?.cwd,
+        timeout: opts?.timeoutMs ?? opts?.timeout,
+        env: opts?.env,
+        onOutput: opts?.onOutput,
+      });
+      const session = sessions.get(snapshot.id);
+      if (!session) {
+        return snapshot;
+      }
+      session.outputListener = opts?.onOutput;
+      bindAbortToExternalSession(session, opts?.signal, async () => {
+        session.status = 'cancelled';
+        const stopped = await stopExternalSession(session, host);
+        if (stopped && session.running) {
+          finalize(session, session.exitCode ?? 130);
+        }
+      });
+      return waitForExternalSession(session, opts?.yieldTimeMs, opts?.signal);
+    },
+    writeStdin: async (id: string, input: string, opts?: { yieldTimeMs?: number; signal?: AbortSignal; onOutput?: (event: any) => void }) => {
+      const session = sessions.get(id);
+      if (!session) {
+        return null;
+      }
+      session.outputListener = opts?.onOutput;
+      if (input.length > 0) {
+        const ok = await sendExternalInput(session, host, input);
+        if (!ok && session.running) {
+          session.stderr += `${session.stderr ? '\n' : ''}[stdin unavailable]`;
+          session.lastOutputAt = Date.now();
+          emitExternalTerminalOutput(session, 'stderr', '[stdin unavailable]');
+        }
+      }
+      bindAbortToExternalSession(session, opts?.signal, async () => {
+        session.status = 'cancelled';
+        const stopped = await stopExternalSession(session, host);
+        if (stopped && session.running) {
+          finalize(session, session.exitCode ?? 130);
+        }
+      });
+      return waitForExternalSession(session, opts?.yieldTimeMs, opts?.signal);
+    },
+    getProcessStatus: async (id: string) => {
+      const session = sessions.get(id);
+      return session ? createSnapshot(session) : null;
+    },
+    stopProcess: async (id: string, opts?: { yieldTimeMs?: number }) => {
+      const session = sessions.get(id);
+      if (!session) {
+        return null;
+      }
+      session.status = 'killed';
+      session.stderr += `${session.stderr ? '\n' : ''}[Process stopped by user]`;
+      session.lastOutputAt = Date.now();
+      emitExternalTerminalOutput(session, 'stderr', '[Process stopped by user]', {
+        status: 'killed',
+        running: false,
+      });
+      const stopped = await stopExternalSession(session, host);
+      if (stopped && session.running) {
+        finalize(session, session.exitCode ?? 130);
+      }
+      return waitForExternalSession(session, opts?.yieldTimeMs ?? 250);
+    },
+    readOutput: async (id: string, opts?: { offset?: number; maxBytes?: number }) => {
+      const session = sessions.get(id);
+      return session ? readExternalOutput(session, opts?.offset, opts?.maxBytes) : null;
+    },
+    tailOutput: async (id: string, maxBytes?: number) => {
+      const session = sessions.get(id);
+      return session ? tailExternalOutput(session, maxBytes) : null;
+    },
+    searchOutput: async (id: string, opts: { query?: string; regex?: string; beforeLines?: number; afterLines?: number; maxMatches?: number }) => {
+      const session = sessions.get(id);
+      return session ? searchExternalOutput(session, opts) : null;
+    },
     sendInput: async (id: string, input: string) => {
-      const sendInput = host.cmd?.sendInput ?? host.terminal?.input;
-      if (!sessions.has(id) || typeof sendInput !== 'function') {
+      const session = sessions.get(id);
+      if (!session) {
         return false;
       }
-      const result = await sendInput.call(host.cmd ?? host.terminal, id, input);
-      return result?.success !== false;
+      return sendExternalInput(session, host, input);
     },
     kill: async (id: string) => {
       const session = sessions.get(id);
@@ -2673,17 +2852,24 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       return result?.success !== false;
     },
   };
+  registerBlocklyCommandSessionController(terminalApi);
+  return terminalApi;
 }
 
 interface ExternalTerminalSession {
   id: string;
+  outputSessionId: string;
   command: string;
   cwd: string;
   stdout: string;
   stderr: string;
   running: boolean;
+  status: 'running' | 'completed' | 'failed' | 'timeout' | 'killed' | 'cancelled';
   exitCode?: number;
   pid?: number;
+  startedAt: number;
+  lastOutputAt: number;
+  completedAt?: number;
   readyResolved: boolean;
   finishedResolved: boolean;
   ready: Promise<void>;
@@ -2693,10 +2879,202 @@ interface ExternalTerminalSession {
   removeListener?: () => void;
   subscription?: { unsubscribe(): void };
   timer?: ReturnType<typeof setTimeout>;
+  outputListener?: (event: {
+    processId: string;
+    outputSessionId: string;
+    command: string;
+    cwd: string;
+    stream: 'stdout' | 'stderr';
+    text: string;
+    status?: ExternalTerminalSession['status'];
+    running?: boolean;
+    bytesTotal: number;
+    timestamp: number;
+  }) => void;
+  abortCleanup?: () => void;
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForExternalSession(
+  session: ExternalTerminalSession,
+  yieldTimeMs = 1_000,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted && session.running) {
+    session.status = 'cancelled';
+  }
+
+  if (session.running && (yieldTimeMs ?? 0) > 0) {
+    let removeAbortListener: (() => void) | undefined;
+    const abortPromise = signal
+      ? new Promise<void>((resolve) => {
+          const onAbort = () => resolve();
+          signal.addEventListener('abort', onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+        })
+      : undefined;
+    await Promise.race([
+      session.finished,
+      delay(Math.max(0, Math.min(30_000, yieldTimeMs))),
+      ...(abortPromise ? [abortPromise] : []),
+    ]);
+    removeAbortListener?.();
+  }
+
+  return {
+    id: session.id,
+    processId: session.id,
+    command: session.command,
+    cwd: session.cwd,
+    stdout: session.stdout,
+    stderr: session.stderr,
+    running: session.running,
+    status: session.status,
+    exitCode: session.exitCode,
+    pid: session.pid,
+    outputSessionId: session.outputSessionId,
+    bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
+    startedAt: session.startedAt,
+    lastOutputAt: session.lastOutputAt,
+    completedAt: session.completedAt,
+  };
+}
+
+function bindAbortToExternalSession(
+  session: ExternalTerminalSession,
+  signal: AbortSignal | undefined,
+  onAbort: () => void | Promise<void>,
+): void {
+  if (!signal || session.abortCleanup) {
+    return;
+  }
+  const handleAbort = () => {
+    void onAbort();
+  };
+  signal.addEventListener('abort', handleAbort, { once: true });
+  session.abortCleanup = () => signal.removeEventListener('abort', handleAbort);
+  if (signal.aborted) {
+    handleAbort();
+  }
+}
+
+function emitExternalTerminalOutput(
+  session: ExternalTerminalSession,
+  stream: 'stdout' | 'stderr',
+  text: string,
+  options: { status?: ExternalTerminalSession['status']; running?: boolean } = {},
+): void {
+  if (!session.outputListener || !text) {
+    return;
+  }
+  const now = Date.now();
+  session.outputListener({
+    processId: session.id,
+    outputSessionId: session.outputSessionId,
+    command: session.command,
+    cwd: session.cwd,
+    stream,
+    text,
+    status: options.status ?? session.status,
+    running: options.running ?? session.running,
+    bytesTotal: byteLength(session.stdout) + byteLength(session.stderr),
+    timestamp: now,
+  });
+}
+
+async function sendExternalInput(session: ExternalTerminalSession, host: any, input: string): Promise<boolean> {
+  const sendInput = host.cmd?.sendInput ?? host.terminal?.input;
+  if (!session.running || typeof sendInput !== 'function') {
+    return false;
+  }
+  const result = await sendInput.call(host.cmd ?? host.terminal, session.id, input);
+  return result?.success !== false;
+}
+
+async function stopExternalSession(session: ExternalTerminalSession, host: any): Promise<boolean> {
+  const kill = host.cmd?.kill ?? host.terminal?.kill;
+  if (typeof kill !== 'function') {
+    return false;
+  }
+  const result = await kill.call(host.cmd ?? host.terminal, session.id);
+  return result?.success !== false;
+}
+
+function readExternalOutput(session: ExternalTerminalSession, offset = 0, maxBytes = 64 * 1024) {
+  const content = combinedExternalOutput(session);
+  const normalizedOffset = Math.max(0, Math.min(content.length, Math.floor(offset)));
+  const normalizedMaxBytes = Math.max(0, Math.floor(maxBytes));
+  const slice = content.slice(normalizedOffset, normalizedOffset + normalizedMaxBytes);
+  return {
+    content: slice,
+    offset: normalizedOffset,
+    nextOffset: normalizedOffset + slice.length,
+    bytesTotal: byteLength(content),
+    truncatedByBytes: normalizedOffset + slice.length < content.length,
+  };
+}
+
+function tailExternalOutput(session: ExternalTerminalSession, maxBytes = 32 * 1024) {
+  const content = combinedExternalOutput(session);
+  const normalizedMaxBytes = Math.max(0, Math.floor(maxBytes));
+  const offset = Math.max(0, content.length - normalizedMaxBytes);
+  return {
+    content: content.slice(offset),
+    offset,
+    bytesTotal: byteLength(content),
+    omittedPrefixBytes: byteLength(content.slice(0, offset)),
+  };
+}
+
+function searchExternalOutput(
+  session: ExternalTerminalSession,
+  options: { query?: string; regex?: string; beforeLines?: number; afterLines?: number; maxMatches?: number },
+) {
+  const content = combinedExternalOutput(session);
+  const lines = content.split(/\r?\n/);
+  const beforeLines = Math.max(0, Math.floor(options.beforeLines ?? 0));
+  const afterLines = Math.max(0, Math.floor(options.afterLines ?? 0));
+  const maxMatches = Math.max(1, Math.floor(options.maxMatches ?? 20));
+  const matcher = options.regex
+    ? new RegExp(options.regex)
+    : null;
+  const query = options.query ?? '';
+  const matches: Array<{ lineNumber: number; line: string; before: string[]; after: string[] }> = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const hit = matcher ? matcher.test(line) : (query ? line.includes(query) : false);
+    if (!hit) {
+      continue;
+    }
+    matches.push({
+      lineNumber: index + 1,
+      line,
+      before: lines.slice(Math.max(0, index - beforeLines), index),
+      after: lines.slice(index + 1, index + 1 + afterLines),
+    });
+    if (matches.length >= maxMatches) {
+      break;
+    }
+  }
+  return {
+    matches,
+    bytesTotal: byteLength(content),
+    truncatedByMatches: matches.length >= maxMatches,
+  };
+}
+
+function combinedExternalOutput(session: ExternalTerminalSession): string {
+  return [
+    session.stdout,
+    session.stderr ? `${session.stdout ? '\n' : ''}${session.stderr}` : '',
+  ].join('');
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 function parseShellCommand(command: string): string[] {

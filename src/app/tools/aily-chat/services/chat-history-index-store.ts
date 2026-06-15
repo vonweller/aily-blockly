@@ -33,6 +33,7 @@ export interface ChatHistoryIndexStoreOptions {
   isSamePath: (a: string | null | undefined, b: string | null | undefined) => boolean;
   readHostRecord: (sessionId: string, projectPath: string | null) => HostSessionRecord | null;
   resolveModeById?: HostSessionSelectedModeResolveOptions['resolveModeById'];
+  resolveModeByName?: HostSessionSelectedModeResolveOptions['resolveModeByName'];
 }
 
 export interface ChatHistoryIndexLoadDiagnostics {
@@ -335,8 +336,11 @@ export class ChatHistoryIndexStore {
   }
 
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions | undefined {
-    return this.options.resolveModeById
-      ? { resolveModeById: this.options.resolveModeById }
+    return this.options.resolveModeById || this.options.resolveModeByName
+      ? {
+          ...(this.options.resolveModeById ? { resolveModeById: this.options.resolveModeById } : {}),
+          ...(this.options.resolveModeByName ? { resolveModeByName: this.options.resolveModeByName } : {}),
+        }
       : undefined;
   }
 }

@@ -195,6 +195,7 @@ export class HostSessionContentProvider {
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions {
     return {
       resolveModeById: (modeId) => this.ctx.chatService.findResolvedModeById?.(modeId),
+      resolveModeByName: (modeName) => this.ctx.chatService.findResolvedModeByName?.(modeName),
     };
   }
 }

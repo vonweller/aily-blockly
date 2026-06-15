@@ -1,4 +1,4 @@
-import { parseAgentDefinition, type AgentSource, type IAgentContribution, type IHostAgentFileProvider, type IHostAgentProvider } from 'aily-lex/browser';
+﻿import { parseAgentDefinition, type AgentSource, type IAgentContribution, type IHostAgentFileProvider, type IHostAgentProvider } from 'aily-lex/browser';
 
 import { BLOCKLY_HOST_AGENT_URI_SCHEME, createBlocklyHostAgentUri } from './blockly-agent-provider';
 import {
@@ -32,14 +32,9 @@ export const BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_METADATA: BlocklySessionCust
 
 export const BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_METADATA_BY_SESSION_TYPE: Readonly<Record<string, BlocklySessionCustomizationProviderMetadata>> = {
   local: BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_METADATA,
-  'claude-code': {
-    label: 'Claude',
-    iconId: 'claude',
-    supportedTypes: ['agent', 'instructions', 'skill', 'hook'],
-  },
-  copilotcli: {
-    label: 'Copilot CLI',
-    iconId: 'copilot',
+  'aily-agent': {
+    label: 'Aily Agent',
+    iconId: 'aily',
     supportedTypes: ['agent', 'instructions', 'skill', 'hook', 'plugins'],
   },
 };
@@ -47,8 +42,7 @@ export const BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_METADATA_BY_SESSION_TYPE: Re
 export const BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_SESSION_TYPE = 'local';
 export const BLOCKLY_SESSION_CUSTOMIZATION_PROVIDER_SESSION_TYPES = [
   'local',
-  'claude-code',
-  'copilotcli',
+  'aily-agent',
 ] as const;
 
 export interface BlocklySessionCustomizationItem {
@@ -482,7 +476,7 @@ function buildAgentFileCustomizationItem(
   sessionType: string,
 ): BlocklySessionCustomizationItem | undefined {
   const uri = typeof file.uri === 'string' ? file.uri.trim() : '';
-  const parsed = parseAgentDefinition(file.content, source, uri ? { uri } : undefined);
+  const parsed = parseAgentDefinition(file.content, source, uri ? { name: file.name, uri } : { name: file.name });
   const sessionTypes = parseAgentCustomizationSessionTypes(file.content);
   if (!shouldIncludeAgentCustomizationUri(uri, sessionTypes, sessionType)) {
     return undefined;
@@ -506,15 +500,6 @@ function buildInstructionFileCustomizationItem(
   source: AgentSource,
   sessionType: string,
 ): BlocklySessionCustomizationItem {
-  if (sessionType === 'claude-code') {
-    return {
-      type: 'instructions',
-      uri: file.uri.trim(),
-      name: stripMarkdownExtension(file.name),
-      source,
-    };
-  }
-
   const metadata = parseInstructionCustomizationMetadata(file.content);
   const name = metadata.name ?? file.name;
   const isAgentInstruction = isAgentInstructionCustomizationFile(file);
@@ -564,16 +549,8 @@ function shouldIncludeAgentCustomizationUri(
     return false;
   }
 
-  if (sessionType === 'claude-code') {
-    if (Array.isArray(sessionTypes) && sessionTypes.length > 0 && !sessionTypes.includes('claude-code')) {
-      return false;
-    }
-
-    return !isFileCustomizationUri(uri) || isClaudeCustomizationUri(uri);
-  }
-
-  if (sessionType === 'copilotcli') {
-    return !isClaudeCustomizationUri(uri);
+  if (Array.isArray(sessionTypes) && sessionTypes.length > 0 && !sessionTypes.includes(sessionType)) {
+    return false;
   }
 
   return true;
@@ -584,31 +561,11 @@ function shouldIncludeSkillCustomizationUri(uri: string, sessionType: string): b
     return false;
   }
 
-  if (sessionType === 'claude-code') {
-    return isClaudeSkillCustomizationUri(uri);
-  }
-
-  if (sessionType === 'copilotcli') {
-    return !isClaudeSkillCustomizationUri(uri);
-  }
-
   return true;
-}
-
-function isFileCustomizationUri(uri: string): boolean {
-  return uri.trim().toLowerCase().startsWith('file:');
-}
-
-function isClaudeCustomizationUri(uri: string): boolean {
-  return uri.trim().replace(/\\/g, '/').toLowerCase().includes('/.claude/');
 }
 
 function stripMarkdownExtension(value: string): string {
   return value.replace(/\.md$/i, '');
-}
-
-function isClaudeSkillCustomizationUri(uri: string): boolean {
-  return uri.trim().replace(/\\/g, '/').toLowerCase().includes('/.claude/skills/');
 }
 
 function parseAgentCustomizationSessionTypes(content: string): readonly string[] | undefined {
@@ -619,11 +576,11 @@ function isAgentInstructionCustomizationFile(
   file: { readonly name: string; readonly uri: string },
 ): boolean {
   const normalizedName = file.name.trim().toLowerCase();
-  if (normalizedName === 'agents.md' || normalizedName === 'claude.md') {
+  if (normalizedName === 'agents.md' || normalizedName === 'aily.md') {
     return true;
   }
 
-  return file.uri.trim().replace(/\\/g, '/').toLowerCase().endsWith('/.github/copilot-instructions.md');
+  return file.uri.trim().replace(/\\/g, '/').toLowerCase().endsWith('/.aily/aily-instructions.md');
 }
 
 function buildInstructionPresentation(
@@ -761,34 +718,47 @@ function serializeRuntimeAgentContribution(contribution: IAgentContribution): st
       : '';
 
   const frontmatterEntries: Array<readonly [string, unknown]> = [
-    ['agentType', contribution.agentType],
     ['name', contribution.name],
-    ['whenToUse', contribution.whenToUse],
+    ['description', contribution.description ?? contribution.whenToUse],
+    ['argument-hint', contribution.argumentHint ?? `Describe the task for ${contribution.name}`],
   ];
 
-  if (contribution.whenNotToUse) {
-    frontmatterEntries.push(['whenNotToUse', contribution.whenNotToUse]);
+  if (contribution.target) {
+    frontmatterEntries.push(['target', contribution.target]);
+  }
+  if (contribution.visibility?.agentInvocable === false) {
+    frontmatterEntries.push(['disable-model-invocation', true]);
+  }
+  if (contribution.visibility?.userInvocable === false) {
+    frontmatterEntries.push(['user-invocable', false]);
   }
   if (contribution.tools) {
     frontmatterEntries.push(['tools', contribution.tools]);
   }
+  const ailyEntries: [string, unknown][] = [];
   if (contribution.excludeTools) {
-    frontmatterEntries.push(['disallowedTools', contribution.excludeTools]);
+    ailyEntries.push(['disallowedTools', contribution.excludeTools]);
   }
   if (contribution.disallowedPromptPatterns) {
-    frontmatterEntries.push(['disallowedPromptPatterns', contribution.disallowedPromptPatterns]);
+    ailyEntries.push(['disallowedPromptPatterns', contribution.disallowedPromptPatterns]);
   }
   if (contribution.agents) {
     frontmatterEntries.push(['agents', contribution.agents]);
   }
+  if (contribution.handoffs && contribution.handoffs.length > 0) {
+    frontmatterEntries.push(['handoffs', contribution.handoffs]);
+  }
   if (typeof contribution.maxTurns === 'number') {
-    frontmatterEntries.push(['maxTurns', contribution.maxTurns]);
+    ailyEntries.push(['maxTurns', contribution.maxTurns]);
   }
   if (contribution.model) {
     frontmatterEntries.push(['model', contribution.model]);
   }
   if (contribution.messageInheritance) {
-    frontmatterEntries.push(['messageInheritance', contribution.messageInheritance]);
+    ailyEntries.push(['messageInheritance', contribution.messageInheritance]);
+  }
+  if (ailyEntries.length > 0) {
+    frontmatterEntries.push(['aily', Object.fromEntries(ailyEntries)]);
   }
 
   const header = frontmatterEntries

@@ -25,6 +25,11 @@ type ChatStopCoordinatorContext = Pick<
 const DEFAULT_STOP_SETTLE_TIMEOUT_MS = 1000;
 const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
+export interface ChatStopVisibleSessionOptions {
+  readonly applyPendingSwitch?: boolean;
+  readonly processPendingFollowupRequests?: boolean;
+}
+
 /**
  * Coordinates host-side cleanup when the visible current turn is stopped.
  *
@@ -75,7 +80,7 @@ export class ChatStopCoordinator {
     return snapshot.currentTokens <= 0 || snapshot.maxContextTokens <= 0;
   }
 
-  async stopVisibleSession(sessionId?: string): Promise<void> {
+  async stopVisibleSession(sessionId?: string, options: ChatStopVisibleSessionOptions = {}): Promise<void> {
     const pendingUserInputBeforeStop = this.ctx.pendingUserInput === true;
     const activeToolExecutionsBeforeStop = this.ctx.activeToolExecutions;
     this.ctx.isCancelled = true;
@@ -123,7 +128,7 @@ export class ChatStopCoordinator {
       );
     }
 
-    this.ctx.editCheckpointService.commitCurrentTurn();
+    await this.ctx.editCheckpointService.commitCurrentTurn();
     this.ctx.viewAdapter.markLastMessageDone();
     this.ctx.isWaiting = false;
     this.ctx.isCompleted = true;
@@ -131,7 +136,11 @@ export class ChatStopCoordinator {
     this.ctx.markExplicitInterrupt?.(sessionId);
 
     await this.waitForAbortSettle(sessionId);
-    await this.ctx.applyPendingSwitch(sessionId);
-    await this.ctx.processPendingFollowupRequests?.(sessionId);
+    if (options.applyPendingSwitch !== false) {
+      await this.ctx.applyPendingSwitch(sessionId);
+    }
+    if (options.processPendingFollowupRequests !== false) {
+      await this.ctx.processPendingFollowupRequests?.(sessionId);
+    }
   }
 }

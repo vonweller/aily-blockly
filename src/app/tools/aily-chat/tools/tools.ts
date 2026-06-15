@@ -60,8 +60,8 @@ export const DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
   },
   {
     name: '终端工具',
-    brief: '后台命令执行、获取终端输出',
-    tools: ['start_background_command', 'get_terminal_output']
+    brief: '命令执行、轮询、停止、长输出读取/检索',
+    tools: ['command_exec', 'command_write_stdin', 'command_status', 'command_stop', 'command_read', 'command_tail', 'command_search']
   }
 ];
 
@@ -364,7 +364,7 @@ export const TOOLS = [
         name: 'execute_command',
         description: `在 PowerShell 中执行系统 CLI 命令。用于执行系统操作或运行特定命令来完成用户任务中的任何步骤。支持命令链，优先使用相对命令和路径以保持终端一致性。
 
-如果命令需要长时间运行（如服务器、监控），请使用 start_background_command 代替。`,
+如果命令需要长时间运行或输出很多内容，请使用 command_exec，并通过 command_write_stdin、command_tail、command_read、command_search 或 command_stop 继续控制。`,
         input_schema: {
             type: 'object',
             properties: {
@@ -376,48 +376,49 @@ export const TOOLS = [
         agents: ["mainAgent"]
     },
     // =============================================================================
-    // 终端会话工具 — 后台命令执行与输出获取（参考 Copilot run_in_terminal/get_terminal_output）
+    // 命令进程工具 — 短等待、轮询、停止、长输出读取/检索
     // =============================================================================
     {
-        name: 'start_background_command',
-        description: `在后台启动一个长时间运行的命令，不等待完成即返回。返回 session_id 用于后续查询输出。
+        name: 'command_exec',
+        description: `执行系统 CLI 命令。默认短等待；如果命令未完成，返回 processId、outputSessionId 和 outputFilePath，后续通过 command_write_stdin 轮询或交互。
 
 适合场景：
 - 启动开发服务器（如 npm run dev）
-- 启动串口监控
+- 启动 CLI 形态的串口/蓝牙/网络调试工具
 - 执行耗时较长的编译/下载任务
 
-启动后使用 get_terminal_output 查看实时输出。`,
+长输出不要直接要求全文，使用 command_tail、command_read 或 command_search。`,
         input_schema: {
             type: 'object',
             properties: {
                 command: { type: 'string', description: '要执行的命令' },
                 cwd: { type: 'string', description: '工作目录（可选，默认当前项目路径）' },
-                label: { type: 'string', description: '可选标签，用于识别该会话（如 "build", "server"）' }
+                timeoutMs: { type: 'number', description: '硬超时毫秒数（默认 30000）' },
+                yieldTimeMs: { type: 'number', description: '短等待毫秒数，超过后返回 running（默认 1000）' }
             },
             required: ['command']
         },
         agents: ["mainAgent"]
     },
     {
-        name: 'get_terminal_output',
-        description: `获取后台命令的当前输出。默认返回自上次读取以来的新输出（增量模式）。
-
-使用场景：
-- 检查后台命令的执行进度和输出
-- 获取服务器启动日志
-- 监控编译进度`,
+        name: 'command_write_stdin',
+        description: `向命令进程写入 stdin；input 为空字符串时只轮询进程输出和状态，不写入内容。`,
         input_schema: {
             type: 'object',
             properties: {
-                session_id: { type: 'string', description: '终端会话 ID（由 start_background_command 返回）' },
-                incremental: { type: 'boolean', description: '是否仅获取新输出（默认 true）', default: true },
-                max_chars: { type: 'number', description: '最大返回字符数（默认 50000）', default: 50000 }
+                processId: { type: 'string', description: 'command_exec 返回的 processId' },
+                input: { type: 'string', description: '精确写入 stdin 的文本；空字符串表示 poll' },
+                yieldTimeMs: { type: 'number', description: '等待更多输出的毫秒数' }
             },
-            required: ['session_id']
+            required: ['processId']
         },
         agents: ["mainAgent"]
     },
+    { name: 'command_status', description: '获取命令进程状态和有界输出预览。', input_schema: { type: 'object', properties: { processId: { type: 'string' } }, required: ['processId'] }, agents: ["mainAgent"] },
+    { name: 'command_stop', description: '停止仍在运行的命令进程并返回最终状态。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, yieldTimeMs: { type: 'number' } }, required: ['processId'] }, agents: ["mainAgent"] },
+    { name: 'command_read', description: '按字节 offset 读取命令输出文件的一段内容。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, outputSessionId: { type: 'string' }, offset: { type: 'number' }, maxBytes: { type: 'number' } } }, agents: ["mainAgent"] },
+    { name: 'command_tail', description: '读取命令输出文件的最新尾部内容。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, outputSessionId: { type: 'string' }, maxBytes: { type: 'number' } } }, agents: ["mainAgent"] },
+    { name: 'command_search', description: '在命令输出文件中检索文本或正则，只返回命中片段。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, outputSessionId: { type: 'string' }, query: { type: 'string' }, regex: { type: 'string' }, beforeLines: { type: 'number' }, afterLines: { type: 'number' }, maxMatches: { type: 'number' } } }, agents: ["mainAgent"] },
     {
         name: "get_context",
         description: `获取当前的环境上下文信息，包括项目路径、当前平台、系统环境等。可以指定获取特定类型的上下文信息。`,
@@ -3005,7 +3006,7 @@ IMPORTANT: update是全量替换，必须包含所有任务。只想添加新任
         agents: ["mainAgent"]
     },
     // =============================================================================
-    // 记忆工具 — 持久化笔记存储（参考 Copilot memory 工具）
+    // 记忆工具 — 持久化笔记存储
     // =============================================================================
     {
         name: 'memory',
@@ -3016,7 +3017,7 @@ IMPORTANT: update是全量替换，必须包含所有任务。只想添加新任
 - **/memories/session/**: 当前会话记忆，仅作用于当前对话。
 - **/memories/repo/**: 当前仓库记忆，记录项目约定、结构与已验证事实。
 
-支持的操作与 Copilot memory 主干一致：view/create/str_replace/insert/delete/rename。
+支持的操作：view/create/str_replace/insert/delete/rename。
 
 不要把 instruction 文件或项目根 aily.md 当成 memory tool 的存储位置。`,
         input_schema: {

@@ -295,8 +295,8 @@ export interface AilyChatConfig {
     };
     /** 是否启用本地 memory tool（对齐 chat.tools.memory.enabled）。 */
     memoryToolEnabled?: boolean;
-    /** 是否启用 Copilot-backed repository memory（对齐 chat.copilotMemory.enabled）。 */
-    copilotMemoryEnabled?: boolean;
+    /** 是否启用 Aily repository memory。 */
+    repositoryMemoryEnabled?: boolean;
     /** 安全工作区配置 */
     securityWorkspaces?: {
         /** 是否允许访问项目文件 */
@@ -398,7 +398,7 @@ const DEFAULT_CONFIG: AilyChatConfig = {
     enabledTools: [],
     disabledTools: [],
     memoryToolEnabled: true,
-    copilotMemoryEnabled: false,
+    repositoryMemoryEnabled: false,
     securityWorkspaces: {
         project: true,
         library: true
@@ -1016,12 +1016,12 @@ export class AilyChatConfigService {
         this.config.memoryToolEnabled = value !== false;
     }
 
-    get copilotMemoryEnabled(): boolean {
-        return this.config.copilotMemoryEnabled === true;
+    get repositoryMemoryEnabled(): boolean {
+        return this.config.repositoryMemoryEnabled === true;
     }
 
-    set copilotMemoryEnabled(value: boolean) {
-        this.config.copilotMemoryEnabled = value === true;
+    set repositoryMemoryEnabled(value: boolean) {
+        this.config.repositoryMemoryEnabled = value === true;
     }
 
     /**

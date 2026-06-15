@@ -1,4 +1,4 @@
-import {
+﻿import {
   createBlocklyFileCustomizationProvider,
   type BlocklyCustomizationFileSource,
   type BlocklyDiscoveredCustomizationFile,
@@ -8,7 +8,6 @@ import {
 import { AilyHost } from './host';
 
 export type BlocklyInstructionFileSource = BlocklyCustomizationFileSource;
-export type BlocklyInstructionFileProviderProfile = 'copilot' | 'claude';
 
 export interface BlocklyInstructionFileProviderConfigSource extends BlocklyFileCustomizationProviderConfigSource {
   readonly userInstructionFolders?: readonly string[];
@@ -19,7 +18,6 @@ export interface BlocklyInstructionFileProviderOptions {
   readonly source: BlocklyInstructionFileSource;
   readonly projectRootPath?: string;
   readonly configSource?: BlocklyInstructionFileProviderConfigSource;
-  readonly profile?: BlocklyInstructionFileProviderProfile;
 }
 
 export interface BlocklyInstructionFileProvider {
@@ -28,33 +26,24 @@ export interface BlocklyInstructionFileProvider {
 }
 
 const INSTRUCTION_FILE_EXTENSION = '.instructions.md';
-const DEFAULT_INSTRUCTION_FILE_PROVIDER_PROFILE: BlocklyInstructionFileProviderProfile = 'copilot';
-const COPILOT_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.github'] as const;
-const COPILOT_USER_DEFAULT_INSTRUCTION_FOLDERS: readonly string[] = [];
-const CLAUDE_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.claude'] as const;
-const CLAUDE_USER_DEFAULT_INSTRUCTION_FOLDERS = ['.claude'] as const;
-const ROOT_AGENT_INSTRUCTION_FILE_NAMES = new Set(['agents.md', 'claude.md']);
-const GITHUB_AGENT_INSTRUCTION_FILE_NAMES = new Set(['copilot-instructions.md']);
-const CLAUDE_PROJECT_FOLDER_INSTRUCTION_FILE_NAMES = new Set(['claude.md', 'claude.local.md']);
-const CLAUDE_USER_FOLDER_INSTRUCTION_FILE_NAMES = new Set(['claude.md']);
-const COPILOT_ROOT_PROJECT_AGENT_INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
-const CLAUDE_ROOT_PROJECT_INSTRUCTION_FILES = ['CLAUDE.md', 'CLAUDE.local.md'] as const;
+const AILY_PROJECT_DEFAULT_INSTRUCTION_FOLDERS = ['.aily'] as const;
+const AILY_USER_DEFAULT_INSTRUCTION_FOLDERS: readonly string[] = [];
+const ROOT_AGENT_INSTRUCTION_FILE_NAMES = new Set(['agents.md', 'aily.md']);
+const AILY_AGENT_INSTRUCTION_FILE_NAMES = new Set(['aily-instructions.md']);
+const AILY_ROOT_PROJECT_AGENT_INSTRUCTION_FILES = ['AGENTS.md', 'AILY.md'] as const;
 
 export function createBlocklyInstructionFileProvider(
   options: BlocklyInstructionFileProviderOptions,
 ): BlocklyInstructionFileProvider {
-  const profile = options.profile ?? DEFAULT_INSTRUCTION_FILE_PROVIDER_PROFILE;
   const provider = createBlocklyFileCustomizationProvider({
     source: options.source,
     projectRootPath: options.projectRootPath,
     configSource: options.configSource,
-    defaultFolders: resolveDefaultInstructionFolders(options.source, profile),
-    ...(profile === 'copilot' ? {
-      resolveConfiguredFolders: (configSource: BlocklyInstructionFileProviderConfigSource | undefined, source: BlocklyInstructionFileSource) => source === 'user'
-        ? configSource?.userInstructionFolders
-        : configSource?.projectInstructionFolders,
-    } : {}),
-    shouldIncludeFile: (folderPath, fileName, source) => shouldIncludeInstructionFile(folderPath, fileName, source, profile),
+    defaultFolders: resolveDefaultInstructionFolders(options.source),
+    resolveConfiguredFolders: (configSource: BlocklyInstructionFileProviderConfigSource | undefined, source: BlocklyInstructionFileSource) => source === 'user'
+      ? configSource?.userInstructionFolders
+      : configSource?.projectInstructionFolders,
+    shouldIncludeFile: shouldIncludeInstructionFile,
   });
   let contributionSignature = serializeDiscoveredInstructionFiles(readInstructionFiles());
   const listeners = new Set<() => void>();
@@ -149,17 +138,10 @@ export function createBlocklyInstructionFileProvider(
 
 function resolveDefaultInstructionFolders(
   source: BlocklyInstructionFileSource,
-  profile: BlocklyInstructionFileProviderProfile,
 ): readonly string[] {
-  if (profile === 'claude') {
-    return source === 'project'
-      ? CLAUDE_PROJECT_DEFAULT_INSTRUCTION_FOLDERS
-      : CLAUDE_USER_DEFAULT_INSTRUCTION_FOLDERS;
-  }
-
   return source === 'project'
-    ? COPILOT_PROJECT_DEFAULT_INSTRUCTION_FOLDERS
-    : COPILOT_USER_DEFAULT_INSTRUCTION_FOLDERS;
+    ? AILY_PROJECT_DEFAULT_INSTRUCTION_FOLDERS
+    : AILY_USER_DEFAULT_INSTRUCTION_FOLDERS;
 }
 
 function resolveInstructionProjectRootPath(options: BlocklyInstructionFileProviderOptions): string {
@@ -177,15 +159,13 @@ function readProjectRootAgentInstructionFiles(
     return [];
   }
 
-  const profile = options.profile ?? DEFAULT_INSTRUCTION_FILE_PROVIDER_PROFILE;
-
   const host = AilyHost.get();
   const projectRootPath = resolveInstructionProjectRootPath(options).trim();
   if (!projectRootPath) {
     return [];
   }
 
-  return resolveProjectRootInstructionFileNames(profile).flatMap((fileName) => {
+  return AILY_ROOT_PROJECT_AGENT_INSTRUCTION_FILES.flatMap((fileName) => {
     const filePath = host.path?.join?.(projectRootPath, fileName) ?? `${projectRootPath}/${fileName}`;
     try {
       if (!host.fs?.existsSync?.(filePath)) {
@@ -202,14 +182,6 @@ function readProjectRootAgentInstructionFiles(
       return [];
     }
   });
-}
-
-function resolveProjectRootInstructionFileNames(
-  profile: BlocklyInstructionFileProviderProfile,
-): readonly string[] {
-  return profile === 'claude'
-    ? CLAUDE_ROOT_PROJECT_INSTRUCTION_FILES
-    : COPILOT_ROOT_PROJECT_AGENT_INSTRUCTION_FILES;
 }
 
 function dedupeDiscoveredInstructionFiles(
@@ -250,31 +222,20 @@ function toFileUri(filePath: string): string {
 function shouldIncludeInstructionFile(
   folderPath: string,
   fileName: string,
-  source: BlocklyInstructionFileSource,
-  profile: BlocklyInstructionFileProviderProfile,
+  _source: BlocklyInstructionFileSource,
 ): boolean {
   const normalizedFileName = fileName.trim().toLowerCase();
   if (!normalizedFileName) {
     return false;
   }
 
-  if (profile === 'copilot' && normalizedFileName.endsWith(INSTRUCTION_FILE_EXTENSION)) {
+  if (normalizedFileName.endsWith(INSTRUCTION_FILE_EXTENSION)) {
     return true;
   }
 
   const normalizedFolderPath = folderPath.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
-  if (profile === 'claude') {
-    if (!normalizedFolderPath.endsWith('/.claude')) {
-      return false;
-    }
-
-    return source === 'user'
-      ? CLAUDE_USER_FOLDER_INSTRUCTION_FILE_NAMES.has(normalizedFileName)
-      : CLAUDE_PROJECT_FOLDER_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
-  }
-
-  if (normalizedFolderPath.endsWith('/.github')) {
-    return GITHUB_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
+  if (normalizedFolderPath.endsWith('/.aily')) {
+    return AILY_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);
   }
 
   return ROOT_AGENT_INSTRUCTION_FILE_NAMES.has(normalizedFileName);

@@ -136,7 +136,7 @@ export class AilyEditsViewerComponent implements OnInit, OnDestroy {
   }
 
   onRedo(): void {
-    const detail: ChatTaskActionDetail = { action: 'redoEdits' };
+    const detail: ChatTaskActionDetail = { action: 'redoFileEdits' };
     document.dispatchEvent(new CustomEvent('aily-task-action', {
       bubbles: true,
       detail,

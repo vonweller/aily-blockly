@@ -24,8 +24,8 @@ type RenderEventSource = {
 
 type RenderEventSink = {
   readonly turnResponses?: readonly TurnResponseTurn[];
-  setProjectionSessionResource?(sessionId: string | null | undefined): void;
   reset(): void;
+  setProjectionSessionResource?(sessionResource: string | null | undefined): void;
   hydrateTurnResponses?(turnResponses: readonly TurnResponseTurn[]): void;
   prepareTurnRequest(requestContent: string, displayContent?: string, metadata?: TurnRequest['metadata']): void;
   processEvent(event: RenderEvent): void;
@@ -183,7 +183,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return this.ctx.ngZone.runOutsideAngular(async () => {
-        await this.preparePartsRendering(executionState);
+        await this.preparePartsRendering();
 
         try {
           await this.consumeAgentEvents(executionState, agent, userMessage, signal);
@@ -232,7 +232,7 @@ export class LexTurnExecutionBridge {
 
     try {
       return this.ctx.ngZone.runOutsideAngular(async () => {
-        await this.preparePartsRendering(executionState);
+        await this.preparePartsRendering();
 
         try {
           await this.consumeRenderEvents(executionState, source, userMessage, signal);
@@ -348,11 +348,15 @@ export class LexTurnExecutionBridge {
       return;
     }
 
-    this._renderEventBridge!.setProjectionSessionResource?.(state.sessionId);
+    const executionTurnResponses = mergeExecutionTurnResponsesById(
+      this.readExecutionTurnResponses?.(state.sessionId),
+    );
     this._renderEventBridge!.reset();
+    this._renderEventBridge!.setProjectionSessionResource?.(state.sessionId ?? null);
+    this._renderEventBridge!.hydrateTurnResponses?.(executionTurnResponses);
     this._renderEventBridge!.prepareTurnRequest(
-      userMessage,
-      displayContent,
+      state.requestContent || userMessage,
+      state.requestDisplayContent ?? displayContent,
       state.requestMetadata,
     );
     this.ctx.activeToolExecutions = 0;
@@ -439,11 +443,7 @@ export class LexTurnExecutionBridge {
     this.ctx.toolCallingIteration = 0;
   }
 
-  private async preparePartsRendering(state: LexTurnExecutionRunState): Promise<void> {
-    if (state.sessionId && !this.isExecutionSessionVisible(state.sessionId)) {
-      return;
-    }
-
+  private async preparePartsRendering(): Promise<void> {
     this.uiEventBridge.ensureAilyMessage();
 
     // 等待同步 detectChanges 之后再进入 for-await，确保 Parts 组件已挂载。
@@ -543,11 +543,10 @@ export class LexTurnExecutionBridge {
           sessionId: executionSessionId ?? null,
           replayedTurnResponses: mergedTurnResponses.length,
         });
-        this._renderEventBridge.setProjectionSessionResource?.(executionSessionId);
+        this._renderEventBridge.setProjectionSessionResource?.(executionSessionId ?? null);
         this._renderEventBridge.hydrateTurnResponses?.(mergedTurnResponses);
       }
       state.detachedRenderEventBridge = null;
-      this._renderEventBridge.setProjectionSessionResource?.(executionSessionId);
       return this._renderEventBridge;
     }
 
@@ -563,7 +562,6 @@ export class LexTurnExecutionBridge {
         seedTurnResponses,
       ) ?? null;
       if (state.detachedRenderEventBridge) {
-        state.detachedRenderEventBridge.setProjectionSessionResource?.(executionSessionId);
         state.detachedRenderEventBridge.hydrateTurnResponses?.(seedTurnResponses);
         state.detachedRenderEventBridge.prepareTurnRequest(
           state.requestContent,
@@ -592,15 +590,7 @@ export class LexTurnExecutionBridge {
   }
 
   private captureVisibleSessionId(): string | null {
-    const currentViewSessionResource = this.readCurrentViewSessionResource?.();
-    if (typeof currentViewSessionResource === 'string') {
-      const trimmedViewResource = currentViewSessionResource.trim();
-      if (trimmedViewResource.length > 0) {
-        return trimmedViewResource;
-      }
-    }
-
-    const currentSessionId = this.getCurrentSessionId();
+    const currentSessionId = this.readCurrentViewSessionResource?.() ?? this.getCurrentSessionId();
     if (typeof currentSessionId !== 'string') {
       return null;
     }

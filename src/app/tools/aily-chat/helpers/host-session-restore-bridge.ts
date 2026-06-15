@@ -36,12 +36,17 @@ import { type ChatSessionTitleSource } from '../core/chat-session-title';
 import { resolveHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import { normalizeHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import type { LexSessionStoredSnapshotState, ResolvedLexSessionRestorePlan } from './host-session-restore-resolver';
+import { restoreSessionBoundaryTransaction } from './session-model-boundary-transaction';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
 import type { AskUserAnswer, AskUserQuestion } from '../core/ask-user';
 import type { ConfirmationPart, QuestionPart } from '../core/chat-parts';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
+import {
+  createSessionCheckpointTimelineState,
+  type SessionCheckpointTimelineState,
+} from './session-checkpoint-timeline-model';
 
 type LexInteractionAction = NonNullable<TurnRequest['metadata']>['interactionAction'];
 type LexTurnContinuation = NonNullable<TurnResponseTurn['response']['continuation']>;
@@ -209,6 +214,10 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
       sessionId: string,
       auxiliary: HostSessionRecord['auxiliary'] | null | undefined,
     ): void;
+    replaceSessionCheckpointTimelineState?(
+      sessionId: string,
+      state: SessionCheckpointTimelineState | null | undefined,
+    ): void;
     readCurrentViewSessionResource?(): string | null;
     projectRestoredHostProjection?(
       sessionId: string,
@@ -216,6 +225,10 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
       hostProjectionState: HostTurnResponseState,
       options: { readonly attachedView: boolean },
     ): void;
+    replaceSessionModelTurnResponses?(
+      sessionId: string,
+      turnResponses: readonly TurnResponseTurn[],
+    ): readonly TurnResponseTurn[] | null | undefined;
     resumeRestoredInteraction?(
       content: string,
       interactionAction: LexInteractionAction,
@@ -286,6 +299,108 @@ export class HostSessionRestoreError extends Error {
 
 export function readHostSessionRestoreFailureDetails(error: unknown): HostSessionRestoreFailureDetails | null {
   return error instanceof HostSessionRestoreError ? error.details : null;
+}
+
+function buildSessionCheckpointTimelineStateFromHostRecord(
+  hostRecord: HostSessionRecord,
+  targetSessionId: string,
+): SessionCheckpointTimelineState | null {
+  const sidecar = hostRecord.sidecar?.checkpointRedoBranch;
+  const targetResource = typeof targetSessionId === 'string' ? targetSessionId.trim() : '';
+  const sidecarResource = typeof sidecar?.sessionResource === 'string'
+    ? sidecar.sessionResource.trim()
+    : '';
+  if (!targetResource || sidecarResource !== targetResource || !Array.isArray(sidecar?.turnResponses)) {
+    return null;
+  }
+
+  if (!hasCompleteCheckpointMetadataForTimelineTurns(sidecar.turnResponses, targetResource)) {
+    console.warn('[HostSessionRestore] dropped checkpoint timeline sidecar with incomplete checkpoint metadata', {
+      sessionResource: targetResource,
+    });
+    return null;
+  }
+
+  return createSessionCheckpointTimelineState({
+    sessionResource: targetResource,
+    turnResponses: sidecar.turnResponses as unknown as readonly TurnResponseTurn[],
+    currentCheckpointIndex: sidecar.currentCheckpointIndex,
+  });
+}
+
+function hasCompleteCheckpointMetadataForTimelineTurns(
+  turnResponses: readonly unknown[],
+  targetSessionResource: string,
+): boolean {
+  for (const turn of turnResponses) {
+    const metadata = readTurnRequestMetadata(turn);
+    const checkpointId = readStringProperty(metadata, 'checkpointId');
+    if (!checkpointId) {
+      continue;
+    }
+
+    const checkpointNamespace = readStringProperty(metadata, 'checkpointNamespace');
+    const checkpointRef = readStringProperty(metadata, 'checkpointRef');
+    if (!checkpointNamespace || !checkpointRef) {
+      return false;
+    }
+
+    if (checkpointNamespace !== `refs/sessions/${targetSessionResource}`) {
+      return false;
+    }
+
+    if (!hasCompleteAdditionalCheckpointRefs(metadata)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function readTurnRequestMetadata(turn: unknown): Record<string, unknown> | null {
+  if (!turn || typeof turn !== 'object') {
+    return null;
+  }
+
+  const request = (turn as { request?: unknown }).request;
+  if (!request || typeof request !== 'object') {
+    return null;
+  }
+
+  const metadata = (request as { metadata?: unknown }).metadata;
+  return metadata && typeof metadata === 'object'
+    ? metadata as Record<string, unknown>
+    : null;
+}
+
+function readStringProperty(record: Record<string, unknown> | null, key: string): string {
+  const value = record?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasCompleteAdditionalCheckpointRefs(metadata: Record<string, unknown> | null): boolean {
+  const additionalStartRefs = readStringRecord(metadata?.['additionalStartCheckpointRefs']);
+  const additionalRefs = readStringRecord(metadata?.['additionalCheckpointRefs']);
+  if (!additionalStartRefs) {
+    return true;
+  }
+
+  if (!additionalRefs) {
+    return false;
+  }
+
+  return Object.keys(additionalStartRefs).every(key => !!additionalRefs[key]);
+}
+
+function readStringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => [key.trim(), typeof item === 'string' ? item.trim() : ''] as const)
+    .filter(([key, item]) => key.length > 0 && item.length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
 /**
@@ -381,51 +496,55 @@ export class HostSessionRestoreBridge {
     }
 
     try {
-      const resolvedLexSnapshot = restorePlan?.snapshot ?? null;
-      const restoredLexSession = resolvedLexSnapshot
-        ? this.ctx.lexStream.session.restoreResolvedSnapshot(resolvedLexSnapshot, targetSessionId)
-        : false;
-
-      const restoredSnapshot = restoredLexSession
-        ? this.ctx.lexStream.session.snapshot?.(targetSessionId) ?? resolvedLexSnapshot
-        : null;
-      const turnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
-      const hostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, turnResponses)
+      const initialTurnResponses = [...(restorePlan?.turnResponses ?? sanitizedHostRecord.turnResponses ?? [])];
+      const hostResponseState = this.resolveRuntimeHostProjectionState(targetSessionId, initialTurnResponses)
         ?? buildHostProjectionStateFromPersistedRecord({
-          turnResponses,
+          turnResponses: initialTurnResponses,
         });
 
       const shouldAttachVisibleProjection = isCurrent() && this.isVisibleRestoreTarget(targetSessionId);
-      this.ctx.projectRestoredHostProjection?.(targetSessionId, turnResponses, hostResponseState, {
+      const transactionResult = await restoreSessionBoundaryTransaction(this.ctx, {
+        sessionId: targetSessionId,
+        turnResponses: initialTurnResponses,
+        restorePlan,
+        hostProjectionState: hostResponseState,
+        hostRecord: sanitizedHostRecord,
         attachedView: shouldAttachVisibleProjection,
+        hydrateVisibleTurnResponses: shouldAttachVisibleProjection,
       });
+      const turnResponses = transactionResult.turnResponses;
+      const restoredSnapshot = transactionResult.restoredLexSnapshot
+        ? this.ctx.lexStream.session.snapshot?.(targetSessionId) ?? restorePlan?.snapshot ?? null
+        : null;
+      const restoredHostResponseState = transactionResult.hostProjectionState;
       this.ctx.projectRestoredRuntimeAuxiliary?.(targetSessionId, sanitizedHostRecord.auxiliary);
+      this.ctx.replaceSessionCheckpointTimelineState?.(
+        targetSessionId,
+        buildSessionCheckpointTimelineStateFromHostRecord(sanitizedHostRecord, targetSessionId),
+      );
 
       if (!shouldAttachVisibleProjection) {
         return;
       }
 
       this.restoreSessionMetadata(sanitizedHostRecord, targetSessionId);
-      this.ctx.lexStream.hydrateTurnResponses?.(targetSessionId, turnResponses, {
-        visibility: 'visibleAttach',
-      });
-      this.applyHostView(hostResponseState);
+      this.applyHostView(restoredHostResponseState);
       if (this.ctx.restoreSharedHostProjectionState) {
-        this.ctx.restoreSharedHostProjectionState(hostResponseState, {
+        this.ctx.restoreSharedHostProjectionState(restoredHostResponseState, {
           sessionId: targetSessionId,
           attachedView: true,
         });
       } else {
-        this.ctx.replaceSharedHostProjectionState?.(hostResponseState, {
+        this.ctx.replaceSharedHostProjectionState?.(restoredHostResponseState, {
           sessionId: targetSessionId,
           attachedView: true,
         });
       }
       await this.ctx.chatService.syncResolvedActiveModelAfterSuccessfulTurn?.(
         targetSessionId,
-        hostResponseState.turnResponses,
+        restoredHostResponseState.turnResponses,
       );
-      this.restorePendingRuntimeInteraction(targetSessionId, hostResponseState.turnResponses);
+      this.restorePendingRuntimeInteraction(targetSessionId, restoredHostResponseState.turnResponses);
 
       // Restore context budget: prefer persisted lex-derived values over local estimate
       const savedBudget = hostRecord.metadata?.contextBudget;
@@ -453,7 +572,7 @@ export class HostSessionRestoreBridge {
         );
       }
 
-      await this.restoreEditCheckpoints(hostResponseState.turnResponses);
+      await this.restoreEditCheckpoints(restoredHostResponseState.turnResponses);
       if (!isCurrent()) {
         return;
       }
@@ -700,6 +819,9 @@ export class HostSessionRestoreBridge {
     const resolveModeById = (modeId: string) => typeof this.ctx.chatService.findResolvedModeById === 'function'
       ? this.ctx.chatService.findResolvedModeById(modeId)
       : undefined;
+    const resolveModeByName = (modeName: string) => typeof this.ctx.chatService.findResolvedModeByName === 'function'
+      ? this.ctx.chatService.findResolvedModeByName(modeName)
+      : undefined;
     const hasSessionPickerMetadata = !!sessionMetadata?.modeDescriptor
       || !!sessionMetadata?.inputState
       || !!sessionMetadata?.requestRouting;
@@ -709,7 +831,7 @@ export class HostSessionRestoreBridge {
           modeDescriptor: sessionMetadata?.modeDescriptor,
           inputState: sessionMetadata?.inputState,
           requestRouting: sessionMetadata?.requestRouting,
-        }, { resolveModeById })
+        }, { resolveModeById, resolveModeByName })
       : normalizeChatSelectedMode({
           modeId: resolveHostSessionRequestRoutingSummary(hostRecord).selectedModeId,
           customAgentTarget: resolveHostSessionRequestRoutingSummary(hostRecord).customAgentTarget,
@@ -720,7 +842,7 @@ export class HostSessionRestoreBridge {
           modeDescriptor: sessionMetadata?.modeDescriptor,
           inputState: sessionMetadata?.inputState,
           requestRouting: sessionMetadata?.requestRouting,
-        }, { resolveModeById })
+        }, { resolveModeById, resolveModeByName })
       : undefined;
     const storedModeId = typeof storedModeDescriptor?.id === 'string' && storedModeDescriptor.id.trim().length > 0
       ? storedModeDescriptor.id.trim()

@@ -6,11 +6,36 @@ export function normalizeTurnResponseSummaryPreview(summaryPreview: string | nul
     : undefined;
 }
 
-export type TurnResponseRoundSummaryCarrier = NonNullable<NonNullable<TurnResponseTurn['responseModel']>['summary']>;
+type LexTurnResponseRoundSummaryCarrier = NonNullable<NonNullable<TurnResponseTurn['responseModel']>['summary']>;
+
+export type TurnResponseRoundSummaryCarrier = Omit<LexTurnResponseRoundSummaryCarrier, 'source'> & {
+  readonly source?: NonNullable<LexTurnResponseRoundSummaryCarrier['source']> | 'inline' | 'heuristic';
+  readonly anchorTurnId?: string;
+  readonly anchorRoundId?: string;
+  readonly turnIndex?: number;
+  readonly roundIndex?: number;
+};
+
+export type TurnResponseModelSidecarCarrier = Omit<NonNullable<TurnResponseTurn['responseModel']>, 'summary' | 'summaries'> & {
+  readonly summary?: TurnResponseRoundSummaryCarrier;
+  readonly summaries?: readonly TurnResponseRoundSummaryCarrier[];
+};
 
 function normalizeOptionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim()
     ? value.trim()
+    : undefined;
+}
+
+function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function normalizeOptionalRoundIndex(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= -1
+    ? value
     : undefined;
 }
 
@@ -83,7 +108,7 @@ export function cloneTurnResponseModelRouting(
 function normalizeTurnResponseRoundSummarySource(
   source: unknown,
 ): TurnResponseRoundSummaryCarrier['source'] | undefined {
-  return source === 'background' || source === 'foreground' || source === 'heuristic'
+  return source === 'background' || source === 'foreground' || source === 'inline' || source === 'heuristic'
     ? source
     : undefined;
 }
@@ -94,6 +119,11 @@ export function cloneTurnResponseRoundSummaryCarrier(
   const toolCallRoundId = normalizeOptionalText(summary?.toolCallRoundId);
   const text = normalizeOptionalText(summary?.text);
   const source = normalizeTurnResponseRoundSummarySource(summary?.source);
+  const rawSummary = (summary ?? {}) as Record<string, unknown>;
+  const anchorTurnId = normalizeOptionalText(rawSummary['anchorTurnId']);
+  const anchorRoundId = normalizeOptionalText(rawSummary['anchorRoundId']) ?? toolCallRoundId;
+  const turnIndex = normalizeOptionalNonNegativeInteger(rawSummary['turnIndex']);
+  const roundIndex = normalizeOptionalRoundIndex(rawSummary['roundIndex']);
 
   if (!toolCallRoundId || !text) {
     return undefined;
@@ -103,6 +133,10 @@ export function cloneTurnResponseRoundSummaryCarrier(
     toolCallRoundId,
     text,
     ...(source ? { source } : {}),
+    ...(anchorTurnId ? { anchorTurnId } : {}),
+    ...(anchorRoundId ? { anchorRoundId } : {}),
+    ...(turnIndex !== undefined ? { turnIndex } : {}),
+    ...(roundIndex !== undefined ? { roundIndex } : {}),
   };
 }
 
@@ -226,7 +260,7 @@ export function getTurnResponseResolvedModelBillingLabel(
 
 export function cloneTurnResponseModelSidecar(
   responseModel: TurnResponseTurn['responseModel'] | undefined,
-): TurnResponseTurn['responseModel'] | undefined {
+): TurnResponseModelSidecarCarrier | undefined {
   if (!responseModel) {
     return undefined;
   }

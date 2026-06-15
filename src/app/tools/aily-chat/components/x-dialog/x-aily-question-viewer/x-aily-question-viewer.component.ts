@@ -479,8 +479,8 @@ export class XAilyQuestionViewerComponent implements OnChanges {
       return this.submittedSummary;
     }
 
-    if (this.isHistory && !this.isCurrentSkipped && !this.isMultiQuestion) {
-      return this.historySummary || '';
+    if (this.isHistory) {
+      return this.historySummary || (this.isCurrentSkipped ? '已跳过' : '');
     }
 
     return '';
@@ -525,9 +525,9 @@ export class XAilyQuestionViewerComponent implements OnChanges {
 
   /** 历史模式摘要：显示用户之前的选择 */
   get historySummary(): string {
-    const ans = this.answers.get(0);
+    const ans = this.answers.get(this.currentIndex);
     if (!ans) return '';
-    const q = this.questions[0];
+    const q = this.questions[this.currentIndex];
     if (!q) return '';
     const labels = Array.from(ans.selected).sort((a, b) => a - b)
       .map(idx => q.options[idx]?.label).filter(Boolean);
@@ -554,6 +554,8 @@ export class XAilyQuestionViewerComponent implements OnChanges {
     } else {
       ans.selected.clear();
       ans.selected.add(index);
+      this.onConfirm();
+      return;
     }
     // ★ detectChanges 替代 markForCheck：仅触发自身 CD，
     // 阻断脏标记冒泡到 parent 导致 getQuestionData() 创建新对象

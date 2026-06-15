@@ -486,6 +486,8 @@
         "SERVICE_TITLE": "ai assistant service",
         "DISCLAIMER": "AI responses are for reference only and may not be accurate. They do not represent the views of the software developers. Users should verify the information themselves.",
         "USAGE_GUIDE": "Learn AI Usage",
+        "SESSION_LOADING_TITLE": "Opening session",
+        "SESSION_LOADING_DESCRIPTION": "Loading conversation history...",
         "ADD_CONTEXT": "Add Context",
         "ADD_FILE": "Add File",
         "ADD_FOLDER": "Add Folder",

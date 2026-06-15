@@ -43,6 +43,8 @@ export interface IAilyHostAPI {
   readonly env: IEnvProvider;
   /** 杂项系统操作 */
   readonly shell: IShellUtils;
+  /** 宿主日志 */
+  readonly log?: IHostLogProvider;
 
   /** 编辑器能力（可选 — Blockly IDE 专属功能通过此扩展点注入） */
   readonly editor?: IEditorProvider;
@@ -208,6 +210,16 @@ export interface ITerminal {
   // === 后台静默执行 ===
   execBackground?(command: string, options?: any): { processInfo: { pid: number; kill(): void }; promise: Promise<any> };
   killBackgroundProcess?(pid: number): Promise<{ success: boolean }>;
+}
+
+// ============================================================
+// 日志
+// ============================================================
+
+export interface IHostLogProvider {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string, error?: unknown): void;
 }
 
 // ============================================================

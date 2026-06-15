@@ -2089,17 +2089,28 @@ function buildOrderedHostResponseEntries(
 
 function projectTurnResponseForHostEntry(entry: HostTurnResponseEntry): TurnResponseTurn {
   const turn = entry.turnResponse!;
+  const response = turn.response ?? {
+    id: entry.turnId,
+    participant: getTurnResponseParticipant(undefined),
+    status: 'streaming',
+    parts: [],
+    resultText: '',
+    createdAt: turn.createdAt ?? Date.now(),
+    updatedAt: turn.updatedAt ?? Date.now(),
+  };
   const responseModel = cloneProjectedTurnResponseModel(turn.responseModel);
   const { responseModel: _responseModel, ...turnWithoutResponseModel } = turn as TurnResponseTurn & {
     responseModel?: unknown;
   };
+  const request = turn.request ?? { content: '' };
   return {
     ...turnWithoutResponseModel,
+    request,
     rounds: cloneProjectedTurnRounds(turn.rounds ?? []),
     ...(responseModel ? { responseModel } : {}),
     response: {
-      ...turn.response,
-      parts: [...turn.response.parts],
+      ...response,
+      parts: [...(response.parts ?? [])],
     },
   };
 }
@@ -2256,7 +2267,34 @@ function asPersistedRecordArray(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
+function firstPersistedString(...values: readonly unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function mergePersistedStringArrays(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const merged = Array.from(new Set([
+    ...(previous ?? []),
+    ...(next ?? []),
+  ].map(value => firstPersistedString(value)).filter((value): value is string => !!value)));
+  return merged.length > 0 ? merged : undefined;
+}
+
 function getPersistedTurnResponsePartIdentity(part: TurnResponsePart): string | null {
+  if (part.type === 'terminal') {
+    const terminalSessionKey = getPersistedTerminalSessionKey(part);
+    if (terminalSessionKey) {
+      return `terminal-session:${terminalSessionKey}`;
+    }
+  }
+
   if ('partId' in part && typeof part.partId === 'string' && part.partId.length > 0) {
     return part.partId;
   }
@@ -2285,6 +2323,10 @@ function getPersistedTurnResponsePartIdentity(part: TurnResponsePart): string | 
     default:
       return null;
   }
+}
+
+function getPersistedTerminalSessionKey(part: Extract<TurnResponsePart, { type: 'terminal' }>): string | undefined {
+  return firstPersistedString(part.processId, part.outputSessionId, part.terminalId);
 }
 
 type ImportedTurnResponsePart = TurnResponsePart;
@@ -2325,9 +2367,12 @@ function assignFallbackPartIdsForImportedTurn(
           scope: part.scope,
         };
       case 'terminal':
+        const terminalSessionKey = getPersistedTerminalSessionKey(part);
         return {
           ...part,
-          partId: typeof part.toolCallId === 'string' && part.toolCallId.length > 0
+          partId: terminalSessionKey
+            ? `terminal-session:${terminalSessionKey}`
+            : typeof part.toolCallId === 'string' && part.toolCallId.length > 0
             ? `terminal:${part.toolCallId}`
             : `terminal:${turnId}:${index}`,
         };
@@ -2505,10 +2550,21 @@ function mergePersistedTurnResponsePart(previous: TurnResponsePart, next: TurnRe
       return {
         ...previousPart,
         ...next,
+        command: next.command || previousPart.command,
         output: next.output ?? previousPart.output,
         stderr: next.stderr ?? previousPart.stderr,
         exitCode: next.exitCode ?? previousPart.exitCode,
         isRunning: next.isRunning ?? previousPart.isRunning,
+        toolCallId: next.toolCallId ?? previousPart.toolCallId,
+        sourceToolCallIds: mergePersistedStringArrays(previousPart.sourceToolCallIds, next.sourceToolCallIds),
+        processId: next.processId ?? previousPart.processId,
+        outputSessionId: next.outputSessionId ?? previousPart.outputSessionId,
+        terminalId: next.terminalId ?? previousPart.terminalId,
+        outputFilePath: next.outputFilePath ?? previousPart.outputFilePath,
+        cwd: next.cwd ?? previousPart.cwd,
+        status: next.status ?? previousPart.status,
+        bytesTotal: next.bytesTotal ?? previousPart.bytesTotal,
+        lastOutputAt: next.lastOutputAt ?? previousPart.lastOutputAt,
       };
     }
     case 'subagent': {
@@ -2635,22 +2691,58 @@ function buildHostResponseEntries(
   turnResponses: readonly PersistedHostTurnResponse[],
 ): HostResponseEntry[] {
   if (turnResponses.length > 0) {
-    return turnResponses.map(turn => ({
-      kind: 'turn',
-      turnId: turn['turnId'],
-      turnResponse: turn,
-      user: null,
-      assistant: null,
-      runtimeState: buildPersistedHostTurnRuntimeState(turn.response),
-    } satisfies HostTurnResponseEntry));
+    return turnResponses.map(turn => {
+      const turnResponse = normalizeHostTurnResponseForProjection(turn);
+      return {
+        kind: 'turn',
+        turnId: turnResponse.turnId,
+        turnResponse,
+        user: null,
+        assistant: null,
+        runtimeState: buildPersistedHostTurnRuntimeState(turnResponse.response),
+      } satisfies HostTurnResponseEntry;
+    });
   }
 
   return [];
 }
 
+function normalizeHostTurnResponseForProjection(turn: PersistedHostTurnResponse): PersistedHostTurnResponse {
+  const now = Date.now();
+  const turnId = typeof turn.turnId === 'string' && turn.turnId.length > 0
+    ? turn.turnId
+    : `turn-${now}`;
+  const request = turn.request ?? { content: '' };
+  const response = turn.response ?? {
+    id: turnId,
+    participant: getTurnResponseParticipant(undefined),
+    status: 'streaming',
+    parts: [],
+    resultText: '',
+    createdAt: turn.createdAt ?? now,
+    updatedAt: turn.updatedAt ?? now,
+  };
+  return {
+    ...turn,
+    turnId,
+    request,
+    response: {
+      ...response,
+      parts: [...(response.parts ?? [])],
+    },
+    rounds: turn.rounds ?? [],
+    createdAt: turn.createdAt ?? response.createdAt ?? now,
+    updatedAt: turn.updatedAt ?? response.updatedAt ?? now,
+  };
+}
+
 function buildPersistedHostTurnRuntimeState(
   response: PersistedHostTurnResponse['response'],
 ): HostTurnRuntimeState | undefined {
+  if (!response) {
+    return undefined;
+  }
+
   const persistedResponseData = extractPersistedResponseData(response);
   if (!persistedResponseData) {
     return undefined;
@@ -2852,14 +2944,11 @@ function finalizeCanonicalDialogItems(
     }
   }
 
-  const shouldShowRestore = disabledRequestTurnIds.size > 0;
-  const lastItemIndex = items.length - 1;
-
   return items.map((item, index) => ({
     ...item,
     isLastAily: index === lastAilyIndex,
     isFirstUserTurn: index === firstUserIndex,
-    showCheckpointRestore: shouldShowRestore && index === lastItemIndex,
+    showCheckpointRestore: false,
   }));
 }
 

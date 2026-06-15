@@ -1,4 +1,5 @@
 import type { DialogTurnContext } from '../core/user-turn-action-target';
+import type { ChatSessionBoundaryActionController } from './chat-session-boundary-controller';
 import type { EditActionsHelper } from './edit-actions.helper';
 
 export type ChatTaskActionName =
@@ -7,6 +8,7 @@ export type ChatTaskActionName =
   | 'regenerate'
   | 'undoEdits'
   | 'redoEdits'
+  | 'redoFileEdits'
   | 'keepEdits'
   | 'acceptFile'
   | 'rejectFile'
@@ -42,6 +44,7 @@ interface TaskActionCallbacks {
  */
 export class ChatTaskActionCoordinator {
   constructor(
+    private readonly boundaryActions: ChatSessionBoundaryActionController,
     private readonly editActions: EditActionsHelper,
     private readonly callbacks: TaskActionCallbacks,
   ) {}
@@ -57,12 +60,15 @@ export class ChatTaskActionCoordinator {
         void this.callbacks.retryLastAction();
         return;
       case 'regenerate':
-        void this.editActions.regenerateTurn(detail?.target);
+        void this.boundaryActions.regenerateTurn(detail?.target);
         return;
       case 'undoEdits':
         void this.editActions.undoLastEdits();
         return;
       case 'redoEdits':
+        void this.boundaryActions.redoEdits();
+        return;
+      case 'redoFileEdits':
         void this.editActions.redoEdits();
         return;
       case 'keepEdits':
@@ -81,12 +87,12 @@ export class ChatTaskActionCoordinator {
         return;
       case 'restoreCheckpoint':
         if (detail?.target) {
-          void this.editActions.restoreToCheckpoint(detail.target);
+          void this.boundaryActions.restoreCheckpoint(detail.target);
         }
         return;
       case 'forkSession':
         if (detail?.target) {
-          void this.editActions.forkSessionFromTurn(detail.target);
+          void this.boundaryActions.forkSession(detail.target);
         }
         return;
       case 'newChat':

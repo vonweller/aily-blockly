@@ -8,6 +8,8 @@ import { IMenuItem } from '../../../configs/menu.config';
 import { normalizeAgentIdentifier, normalizeAgentIdentifiers } from '../core/agent-identifiers';
 import {
   CHAT_CONFIGURE_CUSTOM_AGENTS_ACTION_LABEL,
+  CHAT_CUSTOM_AGENT_EDIT_ACTION_ID,
+  CHAT_CUSTOM_AGENT_VIEW_ACTION_ID,
   CHAT_PICKER_CONFIGURE_CUSTOM_AGENTS_ACTION_ID,
 } from '../helpers/chat-configure-custom-agents-action';
 import {
@@ -25,13 +27,14 @@ import {
 import { AilyChatLanguageModelsService } from './aily-chat-language-models.service';
 import { ChatDebugBrowserService } from './chat-debug-browser.service';
 import { ChatSessionItemsService, type ChatSessionListLoadState } from './chat-session-items.service';
+import { ChatSessionModelStoreService } from './chat-session-model-store.service';
 import { ChatSessionViewModelStoreService, type ChatSessionViewModel } from './chat-session-view-model-store.service';
 import { ChatSessionsControlService } from './chat-sessions-control.service';
 import { ChatService } from './chat.service';
 import { type ChatSessionListItem, type MenuPosition } from './menu-manager.service';
 import {
-  createPlanChatResolvedMode,
   isPlanChatResolvedMode,
+  createPlanChatResolvedMode,
   resolveChatCurrentMode,
   type ChatResolvedMode,
   type ChatResolvedModeTarget,
@@ -49,7 +52,7 @@ import type { ChatSessionInventoryGroup } from '../helpers/chat-session-presenta
 
 const BUILTIN_AGENT_PICKER_NAMES = new Set(['agent', 'ask', 'edit', 'qa']);
 
-export type ChatPaneSurface = 'chat' | 'blank-session' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
+export type ChatPaneSurface = 'chat' | 'blank-session' | 'session-loading' | 'entry' | 'welcome' | 'login' | 'debug-home' | 'debug-session';
 
 export interface ChatPaneSessionListSurfaceModel {
   readonly title: string;
@@ -76,10 +79,20 @@ export interface ChatPaneEntryInfoSurfaceModel {
   readonly hostClasses: readonly string[];
 }
 
+export interface ChatPaneLoadingSurfaceModel {
+  readonly sessionId: string;
+  readonly title: string;
+  readonly iconClass: string;
+  readonly titleKey: string;
+  readonly descriptionKey: string;
+  readonly hostClasses: readonly string[];
+}
+
 export interface ChatPaneStageSurfaceModel {
-  readonly paneSurface: 'chat' | 'blank-session' | 'entry' | 'welcome';
+  readonly paneSurface: 'chat' | 'blank-session' | 'session-loading' | 'entry' | 'welcome';
   readonly showConversation: boolean;
   readonly guideSurface: ChatPaneEntryInfoSurfaceModel | null;
+  readonly loadingSurface?: ChatPaneLoadingSurfaceModel | null;
   readonly showSidebarSessionList: boolean;
   readonly sidebarSessionListSurface: ChatPaneSessionListSurfaceModel | null;
   readonly showStackedSessionList: boolean;
@@ -113,6 +126,15 @@ export class ChatViewService {
   private readonly sessionViewModelChangedSubject = new Subject<void>();
   private paneChromeActionBindings: ChatPaneChromeActionBindings | null = null;
   private lastPaneDiagnosticsKey = '';
+  private lastPaneLayoutDiagnosticsKey = '';
+  private lastPaneLayoutDiagnosticsLogAt = 0;
+  private sessionModelViewRefreshHandle: { dispose(): void } | null = null;
+  private sessionModelViewRefreshPending = false;
+  private pendingSessionLoad: {
+    readonly sessionId: string;
+    readonly title: string;
+    readonly visible: boolean;
+  } | null = null;
 
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
@@ -120,6 +142,7 @@ export class ChatViewService {
   private readonly languageModelsService = inject(AilyChatLanguageModelsService);
   private readonly debugBrowser = inject(ChatDebugBrowserService);
   private readonly chatSessionItemsService = inject(ChatSessionItemsService);
+  private readonly chatSessionModelStore = inject(ChatSessionModelStoreService);
   private readonly chatSessionViewModelStore = inject(ChatSessionViewModelStoreService);
   private readonly chatSessionsControlService = inject(ChatSessionsControlService);
   private readonly chatService = inject(ChatService);
@@ -166,6 +189,13 @@ export class ChatViewService {
       .subscribe(() => {
         this.refreshSessionViewModel();
       });
+    this.chatSessionModelStore.changed$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        if (event.sessionResource === this.currentViewSessionResource) {
+          this.scheduleSessionModelViewRefresh();
+        }
+      });
     this.chatService.sessionInputStateChanged$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
@@ -184,6 +214,7 @@ export class ChatViewService {
       });
 
     this.syncSessionViewerSuppression();
+    this.destroyRef.onDestroy(() => this.clearPendingSessionModelViewRefresh());
   }
 
   get isStandaloneWindow(): boolean {
@@ -282,6 +313,10 @@ export class ChatViewService {
       case 'blank-session':
         return this.currentSessionDisplayTitle.text
           || (!this.hasActiveSessionTitleOwner ? this.readDefaultPaneTitle() : '');
+      case 'session-loading':
+        return this.pendingSessionLoad?.title
+          || this.currentSessionDisplayTitle.text
+          || (!this.hasActiveSessionTitleOwner ? this.readDefaultPaneTitle() : '');
       default:
         return '';
     }
@@ -340,7 +375,9 @@ export class ChatViewService {
   }
 
   get isSessionTitleSurfaceClickEnabled(): boolean {
-    return this.currentPaneSurface === 'chat' || this.currentPaneSurface === 'blank-session';
+    return this.currentPaneSurface === 'chat'
+      || this.currentPaneSurface === 'blank-session'
+      || this.currentPaneSurface === 'session-loading';
   }
 
   get hostHeaderActions() {
@@ -372,7 +409,11 @@ export class ChatViewService {
 
   get paneStageSurfaceModel(): ChatPaneStageSurfaceModel | null {
     const paneSurface = this.currentPaneSurface;
-    if (paneSurface !== 'chat' && paneSurface !== 'blank-session' && paneSurface !== 'entry' && paneSurface !== 'welcome') {
+    if (paneSurface !== 'chat'
+      && paneSurface !== 'blank-session'
+      && paneSurface !== 'session-loading'
+      && paneSurface !== 'entry'
+      && paneSurface !== 'welcome') {
       return null;
     }
 
@@ -389,11 +430,15 @@ export class ChatViewService {
           ? paneSurface
           : null,
       ),
+      loadingSurface: paneSurface === 'session-loading' ? this.buildLoadingSurfaceModel() : null,
       showSidebarSessionList,
       sidebarSessionListSurface: showSidebarSessionList ? this.buildSessionListSurfaceModel('sidebar') : null,
       showStackedSessionList,
       stackedSessionListSurface: showStackedSessionList ? this.buildSessionListSurfaceModel('stacked') : null,
-      showSender: paneSurface === 'chat' || paneSurface === 'blank-session' || paneSurface === 'entry',
+      showSender: paneSurface === 'chat'
+        || paneSurface === 'blank-session'
+        || paneSurface === 'session-loading'
+        || paneSurface === 'entry',
     };
   }
 
@@ -412,6 +457,10 @@ export class ChatViewService {
 
     if (this.chatSessionsControlService.showWelcomeSurface) {
       return 'welcome';
+    }
+
+    if (this.pendingSessionLoad?.visible) {
+      return 'session-loading';
     }
 
     const hasCurrentSessionIdentity = this.hasCurrentSessionIdentity;
@@ -458,6 +507,53 @@ export class ChatViewService {
     this.chatSessionsControlService.selectSession(sessionId);
   }
 
+  beginSessionLoadSurface(input: { sessionId: string; title?: string | null }): void {
+    const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : '';
+    if (!sessionId) {
+      return;
+    }
+
+    const title = typeof input.title === 'string' ? input.title.trim() : '';
+    this.pendingSessionLoad = {
+      sessionId,
+      title,
+      visible: false,
+    };
+    this.chatSessionsControlService.selectSession(sessionId);
+    this.refreshSessionViewModel();
+  }
+
+  revealSessionLoadSurface(sessionId: string): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId || this.pendingSessionLoad?.sessionId !== normalizedSessionId) {
+      return;
+    }
+
+    if (this.pendingSessionLoad.visible) {
+      return;
+    }
+
+    this.pendingSessionLoad = {
+      ...this.pendingSessionLoad,
+      visible: true,
+    };
+    this.refreshSessionViewModel();
+  }
+
+  clearSessionLoadSurface(sessionId?: string | null): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (normalizedSessionId && this.pendingSessionLoad?.sessionId !== normalizedSessionId) {
+      return;
+    }
+
+    if (!this.pendingSessionLoad) {
+      return;
+    }
+
+    this.pendingSessionLoad = null;
+    this.refreshSessionViewModel();
+  }
+
   syncSessionViewerLayout(input: {
     hasConversationContent: boolean;
     isAuthenticated: boolean;
@@ -493,7 +589,7 @@ export class ChatViewService {
 
     const paneSurface = this.currentPaneSurface;
     return this.chatSessionsControlService.readSessionTitleActionContext({
-      isChatSurface: paneSurface === 'chat' || paneSurface === 'blank-session',
+      isChatSurface: paneSurface === 'chat' || paneSurface === 'blank-session' || paneSurface === 'session-loading',
       isBlankSessionSurface: paneSurface === 'blank-session',
     });
   }
@@ -508,6 +604,7 @@ export class ChatViewService {
   private syncSessionViewerSuppression(): void {
     const suppressForSurface = this.currentPaneSurface !== 'chat'
       && this.currentPaneSurface !== 'blank-session'
+      && this.currentPaneSurface !== 'session-loading'
       && this.currentPaneSurface !== 'entry';
     this.chatSessionsControlService.setSessionViewerSuppressed(this.showSettings || suppressForSurface);
   }
@@ -558,22 +655,76 @@ export class ChatViewService {
     return null;
   }
 
+  private buildLoadingSurfaceModel(): ChatPaneLoadingSurfaceModel | null {
+    const pendingLoad = this.pendingSessionLoad;
+    if (!pendingLoad) {
+      return null;
+    }
+
+    return {
+      sessionId: pendingLoad.sessionId,
+      title: pendingLoad.title,
+      iconClass: 'fa-light fa-spinner-third',
+      titleKey: 'AILY_CHAT.SESSION_LOADING_TITLE',
+      descriptionKey: 'AILY_CHAT.SESSION_LOADING_DESCRIPTION',
+      hostClasses: ['guide-box', 'ccenter', 'session-loading-surface-guide'],
+    };
+  }
+
   private refreshSessionViewModel(): void {
     this.emitPaneDiagnostics();
     this.sessionViewModelChangedSubject.next();
   }
 
+  private scheduleSessionModelViewRefresh(): void {
+    this.sessionModelViewRefreshPending = true;
+    if (this.sessionModelViewRefreshHandle !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? (callback: () => void) => {
+        const frameId = globalThis.requestAnimationFrame(callback);
+        return { dispose: () => globalThis.cancelAnimationFrame?.(frameId) };
+      }
+      : (callback: () => void) => {
+        const timerId = setTimeout(callback, 16);
+        return { dispose: () => clearTimeout(timerId) };
+      };
+
+    this.sessionModelViewRefreshHandle = schedule(() => {
+      this.sessionModelViewRefreshHandle = null;
+      if (!this.sessionModelViewRefreshPending) {
+        return;
+      }
+      this.sessionModelViewRefreshPending = false;
+      this.sessionViewModelChangedSubject.next();
+    });
+  }
+
+  private clearPendingSessionModelViewRefresh(): void {
+    this.sessionModelViewRefreshHandle?.dispose();
+    this.sessionModelViewRefreshHandle = null;
+    this.sessionModelViewRefreshPending = false;
+  }
+
   private emitPaneDiagnostics(): void {
+    if (!this.debugBrowser.isOpen) {
+      return;
+    }
+
     const paneSurface = this.currentPaneSurface;
     const currentViewModel = this.currentViewModel;
     const currentModel = currentViewModel?.model ?? null;
     const currentProjection = currentModel?.hostProjectionState ?? null;
-    const currentModelTurnCount = Array.isArray(currentModel?.turnResponses)
-      ? currentModel.turnResponses.length
-      : 0;
     const currentProjectionTurnCount = Array.isArray(currentProjection?.turnResponses)
       ? currentProjection.turnResponses.length
       : 0;
+    const currentModelTurnCount = currentProjectionTurnCount > 0
+      ? currentProjectionTurnCount
+      : Array.isArray(currentModel?.turnResponses)
+        ? currentModel.turnResponses.length
+        : 0;
     const currentProjectionChatListCount = Array.isArray(currentProjection?.chatList)
       ? currentProjection.chatList.length
       : 0;
@@ -595,6 +746,34 @@ export class ChatViewService {
       currentProjectionChatListCount,
       currentProjectionDialogCount,
       currentPaneTitle: this.currentPaneTitle,
+      pendingSessionLoad: this.pendingSessionLoad,
+      liveSessionTitle: this.chatService.currentSessionTitle,
+      projectedSessionTitle: this.currentSessionViewItem?.title ?? '',
+      sessionListDisplayMode: this.chatSessionsControlService.sessionListDisplayMode,
+      sessionViewportWidth: this.chatSessionsControlService.sessionViewportWidth,
+      sessionSidebarMinWidth: this.chatSessionsControlService.sessionSidebarMinWidth,
+      sessionSidebarWidth: this.chatSessionsControlService.sessionSidebarWidth,
+      sessionSidebarMaxWidth: this.chatSessionsControlService.sessionSidebarMaxWidth,
+      titleSurfaceShouldRender: this.sessionTitleSurfaceModel.shouldRender,
+      titleSurfaceNavigationIconActionCount: this.sessionTitleSurfaceModel.navigationIconActions.length,
+      titleSurfaceHasTitleAction: this.sessionTitleSurfaceModel.titleAction !== null,
+      titleSurfaceActionCount: this.sessionTitleSurfaceModel.actions.length,
+    };
+    const semanticDiagnostics = {
+      paneSurface,
+      hasConversationContent,
+      controlHasConversationContent: this.chatSessionsControlService.hasConversationContent,
+      hasCurrentSessionIdentity: this.hasCurrentSessionIdentity,
+      hasCurrentSession: this.chatSessionsControlService.hasCurrentSession,
+      hasBlankSessionShell: this.chatService.hasBlankSessionShell === true,
+      currentSessionId: this.chatService.currentSessionId,
+      currentViewSessionResource: this.currentViewSessionResource,
+      currentModelTurnCount,
+      currentProjectionTurnCount,
+      currentProjectionChatListCount,
+      currentProjectionDialogCount,
+      currentPaneTitle: this.currentPaneTitle,
+      pendingSessionLoad: this.pendingSessionLoad,
       liveSessionTitle: this.chatService.currentSessionTitle,
       projectedSessionTitle: this.currentSessionViewItem?.title ?? '',
       sessionListDisplayMode: this.chatSessionsControlService.sessionListDisplayMode,
@@ -603,13 +782,31 @@ export class ChatViewService {
       titleSurfaceHasTitleAction: this.sessionTitleSurfaceModel.titleAction !== null,
       titleSurfaceActionCount: this.sessionTitleSurfaceModel.actions.length,
     };
-    const key = JSON.stringify(diagnostics);
-    if (key === this.lastPaneDiagnosticsKey) {
+    const semanticKey = JSON.stringify(semanticDiagnostics);
+    const layoutKey = [
+      this.chatSessionsControlService.sessionViewportWidth,
+      this.chatSessionsControlService.sessionSidebarMinWidth,
+      this.chatSessionsControlService.sessionSidebarWidth,
+      this.chatSessionsControlService.sessionSidebarMaxWidth,
+    ].join('|');
+    const semanticChanged = semanticKey !== this.lastPaneDiagnosticsKey;
+    const layoutChanged = layoutKey !== this.lastPaneLayoutDiagnosticsKey;
+    const now = Date.now();
+    const shouldLogLayoutChange = layoutChanged && now - this.lastPaneLayoutDiagnosticsLogAt >= 1000;
+    if (!semanticChanged && !shouldLogLayoutChange) {
       return;
     }
 
-    this.lastPaneDiagnosticsKey = key;
-    console.info('[AilyChat][PaneState]', diagnostics);
+    if (semanticChanged) {
+      this.lastPaneDiagnosticsKey = semanticKey;
+      console.info('[AilyChat][PaneState]', diagnostics);
+    }
+
+    if (layoutChanged && shouldLogLayoutChange) {
+      this.lastPaneLayoutDiagnosticsKey = layoutKey;
+      this.lastPaneLayoutDiagnosticsLogAt = now;
+    }
+
     console.info(
       '[AilyChat][PaneStateScalar]',
       [
@@ -623,6 +820,9 @@ export class ChatViewService {
         `projectionTurns=${currentProjectionTurnCount}`,
         `projectionChatList=${currentProjectionChatListCount}`,
         `projectionDialogs=${currentProjectionDialogCount}`,
+        `sessionMode=${this.chatSessionsControlService.sessionListDisplayMode}`,
+        `sessionViewportWidth=${this.chatSessionsControlService.sessionViewportWidth}`,
+        `sessionSidebarMinWidth=${this.chatSessionsControlService.sessionSidebarMinWidth}`,
         `blankShell=${this.chatService.hasBlankSessionShell === true}`,
       ].join(' '),
     );
@@ -634,19 +834,15 @@ export class ChatViewService {
       return fallback === true;
     }
 
-    if (Array.isArray(model.turnResponses) && model.turnResponses.length > 0) {
+    const projection = model.hostProjectionState;
+    if (this.hasArrayContent(projection?.turnResponses)
+      || this.hasArrayContent(projection?.chatList)
+      || this.hasArrayContent(projection?.dialogItems)
+      || this.hasArrayContent((projection as { readonly entries?: readonly unknown[] } | null)?.entries)) {
       return true;
     }
 
-    const projection = model.hostProjectionState;
-    if (!projection) {
-      return false;
-    }
-
-    return this.hasArrayContent(projection.turnResponses)
-      || this.hasArrayContent(projection.chatList)
-      || this.hasArrayContent(projection.dialogItems)
-      || this.hasArrayContent((projection as { readonly entries?: readonly unknown[] }).entries);
+    return Array.isArray(model.turnResponses) && model.turnResponses.length > 0;
   }
 
   private hasArrayContent(value: unknown): boolean {
@@ -786,7 +982,36 @@ export class ChatViewService {
       normalizeAgentIdentifier(mode.customAgentTarget ?? mode.name) === normalizedAgentTarget);
   }
 
+  private getRuntimeModeCollection(): { readonly builtin?: readonly ChatResolvedMode[]; readonly custom?: readonly ChatResolvedMode[] } | undefined {
+    const collection = (this.chatService as unknown as {
+      readonly runtimeModeCollection?: {
+        readonly builtin?: readonly ChatResolvedMode[];
+        readonly custom?: readonly ChatResolvedMode[];
+      };
+    }).runtimeModeCollection;
+    return collection && typeof collection === 'object' && !Array.isArray(collection)
+      ? collection
+      : undefined;
+  }
+
+  private getAvailableBuiltinModes(): readonly ChatResolvedMode[] {
+    const runtimeBuiltinModes = this.getRuntimeModeCollection()?.builtin;
+    if (Array.isArray(runtimeBuiltinModes) && runtimeBuiltinModes.length > 0) {
+      return runtimeBuiltinModes;
+    }
+
+    return [
+      resolveChatCurrentMode({ modeId: 'agent' }),
+      resolveChatCurrentMode({ modeId: 'ask' }),
+    ];
+  }
+
   private getAvailableCustomModes(): readonly ChatResolvedMode[] {
+    const collectionCustomModes = this.getRuntimeModeCollection()?.custom;
+    if (Array.isArray(collectionCustomModes) && collectionCustomModes.length > 0) {
+      return collectionCustomModes;
+    }
+
     const runtimeModes = Array.isArray(this.chatService.availableResolvedCustomModes)
       ? this.chatService.availableResolvedCustomModes
       : [];
@@ -803,14 +1028,28 @@ export class ChatViewService {
       : undefined;
   }
 
-  private getPlanMode(): ChatResolvedMode {
-    const availablePlanMode = this.getAvailableCustomModes().find((mode) => isPlanChatResolvedMode(mode));
+  private isBootstrapPlanMode(mode: ChatResolvedMode): boolean {
+    return isPlanChatResolvedMode(mode)
+      && !mode.uri
+      && mode.modeInstructions?.metadata?.['source'] === 'bootstrap';
+  }
+
+  private isProviderBackedPlanMode(mode: ChatResolvedMode): boolean {
+    return isPlanChatResolvedMode(mode)
+      && !this.isBootstrapPlanMode(mode)
+      && typeof mode.uri === 'string'
+      && mode.uri.trim().length > 0;
+  }
+
+  private getPlanMode(): ChatResolvedMode | undefined {
+    const availablePlanMode = this.getAvailableCustomModes()
+      .find((mode) => this.isProviderBackedPlanMode(mode));
     if (availablePlanMode) {
       return availablePlanMode;
     }
 
     const currentResolvedMode = this.getCurrentResolvedMode();
-    return isPlanChatResolvedMode(currentResolvedMode)
+    return this.isProviderBackedPlanMode(currentResolvedMode)
       ? currentResolvedMode
       : createPlanChatResolvedMode();
   }
@@ -843,18 +1082,37 @@ export class ChatViewService {
     const hiddenTargets = this.getHiddenCustomAgentTargets();
     const currentSessionCustomAgentTarget = this.getCurrentSessionCustomAgentTarget();
     const planMode = this.getPlanMode();
-    const planCustomAgentTarget = planMode.customAgentTarget ?? planMode.name;
-    const items: IMenuItem[] = [
-      {
-        name: this.translate.instant('AILY_CHAT.MODE_AGENT_FULL'),
-        action: 'agent-mode',
-        icon: 'fa-light fa-user-astronaut',
-        current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === 'agent',
-        data: { mode: 'agent' satisfies ChatSurfaceModeId },
-      },
-    ];
+    const planCustomAgentTarget = planMode?.customAgentTarget ?? planMode?.name;
+    const builtinModeItems = this.getAvailableBuiltinModes()
+      .filter((mode) => mode.kind !== 'edit')
+      .sort((left, right) => {
+        const order = { agent: 0, ask: 1, edit: 2 } satisfies Record<ChatSurfaceModeId, number>;
+        return order[left.kind] - order[right.kind];
+      })
+      .map((mode) => {
+        const isAgentMode = mode.kind === 'agent';
+        const isAskMode = mode.kind === 'ask';
+        return {
+          name: isAgentMode
+            ? this.translate.instant('AILY_CHAT.MODE_AGENT_FULL')
+            : isAskMode
+              ? this.translate.instant('AILY_CHAT.MODE_QA_FULL')
+              : mode.label,
+          action: `${mode.kind}-mode`,
+          icon: isAgentMode
+            ? 'fa-light fa-user-astronaut'
+            : isAskMode
+              ? 'fa-light fa-comment-smile'
+              : 'fa-light fa-pen-to-square',
+          current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === mode.kind,
+          data: { mode: mode.kind },
+        } satisfies IMenuItem;
+      })
+      .filter((item) => item.data?.mode !== 'ask' || !currentSessionCustomAgentTarget);
+    const items: IMenuItem[] = [...builtinModeItems];
 
-    if (planCustomAgentTarget
+    if (planMode
+      && planCustomAgentTarget
       && planMode.hidden !== true
       && planMode.enabled !== false
       && planMode.visibility?.userInvocable !== false
@@ -874,16 +1132,6 @@ export class ChatViewService {
       });
     }
 
-    if (!currentSessionCustomAgentTarget) {
-      items.push({
-        name: this.translate.instant('AILY_CHAT.MODE_QA_FULL'),
-        action: 'ask-mode',
-        icon: 'fa-light fa-comment-smile',
-        current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === 'ask',
-        data: { mode: 'ask' satisfies ChatSurfaceModeId },
-      });
-    }
-
     const customAgentItems = this.getAvailableCustomModes()
       .filter((mode) => {
         const customAgentTarget = mode.customAgentTarget ?? mode.name;
@@ -899,16 +1147,39 @@ export class ChatViewService {
       })
       .map((mode) => {
         const customAgentTarget = mode.customAgentTarget ?? mode.name;
+        const customAgentSource = {
+          id: mode.id,
+          ...(mode.uri ? { uri: mode.uri } : {}),
+          ...(mode.source ? { source: mode.source } : {}),
+          name: mode.name,
+          target: customAgentTarget,
+        };
+        const sourceActions = mode.uri
+          ? [
+              {
+                icon: 'fa-light fa-eye',
+                action: CHAT_CUSTOM_AGENT_VIEW_ACTION_ID,
+                title: 'View Agent',
+              },
+              {
+                icon: 'fa-light fa-pen-to-square',
+                action: CHAT_CUSTOM_AGENT_EDIT_ACTION_ID,
+                title: 'Edit Agent',
+              },
+            ]
+          : undefined;
         return {
         name: mode.label,
         action: 'custom-agent-mode',
         icon: 'fa-light fa-user-astronaut',
         current: !currentResolvedMode.isBuiltin && currentResolvedMode.id === mode.id,
         ...(mode.description ? { tooltip: mode.description } : {}),
+        ...(sourceActions ? { actions: sourceActions } : {}),
         data: {
           mode: 'agent' satisfies ChatSurfaceModeId,
           modeId: mode.id,
           customAgentTarget,
+          customAgentSource,
         },
       } satisfies IMenuItem;
       });

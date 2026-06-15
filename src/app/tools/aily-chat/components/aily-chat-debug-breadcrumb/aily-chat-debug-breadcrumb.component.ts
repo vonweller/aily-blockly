@@ -31,7 +31,7 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from 
       gap: 8px;
       font-size: 12px;
       line-height: 1.4;
-      color: var(--vscode-descriptionForeground, rgba(255, 255, 255, 0.68));
+      color: var(--aily-text-muted, rgba(255, 255, 255, 0.68));
     }
 
     .chat-debug-breadcrumb-item {
@@ -44,12 +44,12 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from 
     }
 
     .chat-debug-breadcrumb-item:hover {
-      color: var(--vscode-foreground, #fff);
+      color: var(--aily-text-primary, #fff);
       text-decoration: underline;
     }
 
     .chat-debug-breadcrumb-current {
-      color: var(--vscode-foreground, #fff);
+      color: var(--aily-text-primary, #fff);
       font-weight: 600;
     }
 

@@ -22,7 +22,7 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { AilyHost } from '../core/host';
-import type { FileHistory } from 'aily-lex/browser';
+import type { FileHistory, TurnRequest } from 'aily-lex/browser';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 import { buildDialogTurnContext, type DialogTurnContext } from '../core/user-turn-action-target';
 import { EditingContentStore } from './editing-content-store.service';
@@ -32,7 +32,6 @@ import { EditingSessionTimelineService } from './editing-session-timeline.servic
 import { EditingTextDiffService } from './editing-text-diff.service';
 import { EditingTimelineRepository } from './editing-timeline-repository.service';
 import type { RequestEditSummary, RestorePlan } from './editing-timeline.types';
-import type { LiveHostSessionRecord } from './chat-history.service';
 
 export interface WorkspaceCheckpointDescriptor {
   checkpointId: string;
@@ -42,16 +41,58 @@ export interface WorkspaceCheckpointDescriptor {
   additionalRepositoryRoots?: string[];
 }
 
-export type WorkspaceCheckpointPresentationMode = 'git' | 'compatibility' | 'unknown';
+export type WorkspaceCheckpointPresentationMode = 'git' | 'timeline' | 'unknown';
+
+export interface WorkspaceCheckpointAvailabilityDetail {
+  readonly mode: WorkspaceCheckpointPresentationMode;
+  readonly reason?:
+    | 'no-workspace'
+    | 'git-not-found'
+    | 'not-git-repository'
+    | 'git-safe-directory'
+    | 'git-probe-failed'
+    | 'timeline-unavailable';
+  readonly message?: string;
+}
+
+export interface WorkspaceCheckpointRefMetadata {
+  checkpointId: string;
+  sessionResource: string;
+  requestId: string;
+  turnId?: string;
+  checkpointNamespace: string;
+  turnIndex: number;
+  startCheckpointRef?: string;
+  checkpointRef?: string;
+  additionalStartCheckpointRefs?: Record<string, string>;
+  additionalCheckpointRefs?: Record<string, string>;
+  createdAt?: number;
+  completedAt?: number;
+}
+
+export interface RequestCheckpointMetadata extends WorkspaceCheckpointRefMetadata {
+  source: 'request-metadata';
+}
+
+export interface WorkspaceCheckpointForkRequest {
+  sourceSessionResource: string;
+  targetSessionResource: string;
+  checkpointIds: readonly string[];
+}
 
 export interface IWorkspaceCheckpointProvider {
   setContext?(sessionId: string | null, workspaceRoot: string | null): void;
   setFallbackProvider?(provider: IWorkspaceCheckpointProvider): void;
   getPresentationMode?(): WorkspaceCheckpointPresentationMode;
-  completeCheckpoint?(descriptor: WorkspaceCheckpointDescriptor): Promise<void> | void;
+  ensurePresentationMode?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
+  getAvailabilityDetail?(): WorkspaceCheckpointAvailabilityDetail;
+  initializeRepository?(): Promise<WorkspaceCheckpointPresentationMode> | WorkspaceCheckpointPresentationMode;
+  completeCheckpoint?(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> | WorkspaceCheckpointRefMetadata | null | void;
   clear?(): void;
-  createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<void> | void;
+  createCheckpoint(descriptor: WorkspaceCheckpointDescriptor): Promise<WorkspaceCheckpointRefMetadata | null | void> | WorkspaceCheckpointRefMetadata | null | void;
   replaceCheckpoints(descriptors: readonly WorkspaceCheckpointDescriptor[]): Promise<void> | void;
+  forkCheckpoints?(request: WorkspaceCheckpointForkRequest): Promise<WorkspaceCheckpointRefMetadata[] | null> | WorkspaceCheckpointRefMetadata[] | null;
+  getCheckpointMetadata?(checkpointId: string): Promise<WorkspaceCheckpointRefMetadata | null> | WorkspaceCheckpointRefMetadata | null;
   buildRestorePlan(checkpointId: string): Promise<RestorePlan | null> | RestorePlan | null;
   buildRedoPlan(checkpointId: string): Promise<RestorePlan | null> | RestorePlan | null;
   applyRestorePlan?(plan: RestorePlan): Promise<RollbackResult | null> | RollbackResult | null;
@@ -81,6 +122,9 @@ export interface TurnSnapshot {
   rounds?: TurnResponseTurn['rounds'];
   /** 本 turn 是否有文件变更 */
   hasFileEdits: boolean;
+  checkpointRef?: string;
+  additionalCheckpointRefs?: Record<string, string>;
+  checkpointNamespace?: string;
   additionalRepositoryRoots?: string[];
   createdAt: number;
 }
@@ -91,21 +135,14 @@ export interface RollbackResult {
   errors: string[];
   rolledBackOnError?: boolean;
   rollbackErrors?: string[];
-}
-
-export interface CheckpointRestoreRedoArtifact {
-  checkpointId: string;
-  turnResponses: TurnResponseTurn[];
-  redoPlan: RestorePlan | null;
-  hostRecord: LiveHostSessionRecord | null;
+  emergencyRollback?: () => Promise<RollbackResult | null> | RollbackResult | null;
 }
 
 export interface EditCheckpointRebuildStateSnapshot {
   initialFileContents: Map<string, string | null>;
   timeline: TurnSnapshot[];
   truncatedRequestBoundaries: TurnSnapshot[];
-  checkpointRestoreRedoArtifact: CheckpointRestoreRedoArtifact | null;
-  checkpointRestoreRedoRecoverable: boolean;
+  requestCheckpointMetadata: RequestCheckpointMetadata[];
   timelineIndex: number;
   keptTimelineIndex: number;
   pendingSnapshot: Map<string, string | null> | null;
@@ -176,11 +213,10 @@ export class EditCheckpointService {
    */
   private truncatedRequestBoundaries: TurnSnapshot[] = [];
 
-  /** Restore 后临时保留的 checkpoint redo artifact，用于恢复被截断的聊天与对应 workspace plan。 */
-  private checkpointRestoreRedoArtifact: CheckpointRestoreRedoArtifact | null = null;
-
-  /** Restore redo carrier 是否仍处于可安全恢复的状态。 */
-  private checkpointRestoreRedoRecoverable = false;
+  private requestCheckpointMetadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+  private requestCheckpointMetadataByRequestId = new Map<string, RequestCheckpointMetadata>();
+  private requestMetadataTargetsByCheckpointId = new Map<string, TurnRequest['metadata']>();
+  private checkpointMetadataWriteQueue: Promise<void> = Promise.resolve();
 
   /** 当前在时间线中的位置 (-1 = 初始状态/所有 turn 均已 undo) */
   private timelineIndex: number = -1;
@@ -275,9 +311,10 @@ export class EditCheckpointService {
     requestContent?: string,
     displayContent?: string,
     checkpointId?: string,
+    requestMetadata?: TurnRequest['metadata'],
   ): void {
     if (this.isInTurn) {
-      this.commitCurrentTurn();
+      void this.commitCurrentTurn();
     }
 
     // 截断 redo 历史
@@ -285,8 +322,6 @@ export class EditCheckpointService {
       this.timeline.splice(this.timelineIndex + 1);
     }
     this.truncatedRequestBoundaries = [];
-    this.checkpointRestoreRedoArtifact = null;
-    this.checkpointRestoreRedoRecoverable = false;
     this.pendingSnapshot = null;
 
     if (!checkpointId) {
@@ -307,7 +342,8 @@ export class EditCheckpointService {
 
     this.timeline.push(snapshot);
     this.timelineIndex = this.timeline.length - 1;
-    this.persistTimelineCheckpoint(snapshot);
+    this.registerRequestCheckpointMetadata(snapshot, requestMetadata);
+    void this.persistTimelineCheckpoint(snapshot);
 
     this.currentTurnTrackedPaths.clear();
     this.currentTurnOperations.clear();
@@ -387,7 +423,7 @@ export class EditCheckpointService {
     }
 
     currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
-    this.persistTimelineCheckpoint(currentTurn);
+    void this.persistTimelineCheckpoint(currentTurn);
   }
 
   recordAdditionalRepositoryRootCandidates(paths: readonly string[] | undefined | null): void {
@@ -405,8 +441,10 @@ export class EditCheckpointService {
    * 提交当前 turn — 标记完成。
    * 磁盘快照由 lex agent 的 FileHistory.makeSnapshot() 处理。
    */
-  commitCurrentTurn(): void {
-    if (!this.isInTurn) return;
+  commitCurrentTurn(): Promise<void> {
+    if (!this.isInTurn) {
+      return this.waitForCheckpointMetadataSettled();
+    }
     this.isInTurn = false;
 
     const currentTurn = this.timeline[this.timelineIndex];
@@ -416,12 +454,24 @@ export class EditCheckpointService {
 
     if (currentTurn?.checkpointId && currentTurn.turnId) {
       currentTurn.additionalRepositoryRoots = this.getCurrentTurnAdditionalRepositoryRoots();
-      void Promise.resolve(this.getWorkspaceCheckpointProvider().completeCheckpoint?.(
-        this.toWorkspaceCheckpointDescriptor(currentTurn),
-      )).catch(error => {
-        console.warn('[EditCheckpoint] complete checkpoint failed:', error);
-      });
+      const provider = this.getWorkspaceCheckpointProvider();
+      const descriptor = this.toWorkspaceCheckpointDescriptor(currentTurn);
+      return this.enqueueCheckpointMetadataWrite(async () => {
+        const metadata = await Promise.resolve(provider.completeCheckpoint?.(descriptor));
+        const resolvedMetadata = metadata
+          ?? await provider.getCheckpointMetadata?.(currentTurn.checkpointId)
+          ?? null;
+        if (resolvedMetadata) {
+          this.applyWorkspaceCheckpointRefMetadata(currentTurn, resolvedMetadata);
+        }
+      }, 'complete checkpoint');
     }
+
+    return this.waitForCheckpointMetadataSettled();
+  }
+
+  waitForCheckpointMetadataSettled(): Promise<void> {
+    return this.checkpointMetadataWriteQueue;
   }
 
   // ==================== Undo / Redo ====================
@@ -432,91 +482,7 @@ export class EditCheckpointService {
 
   get canRedo(): boolean {
     return this.timelineIndex < this.timeline.length - 1
-      || this.pendingSnapshot !== null
-      || this.hasRecoverableCheckpointRestoreRedoTurnResponses();
-  }
-
-  setCheckpointRestoreRedoTurnResponses(
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-  ): void {
-    this.setCheckpointRestoreRedoArtifact(turnResponses && turnResponses.length > 0 ? {
-      checkpointId: this.getCheckpointIdFromTurnResponses(turnResponses) ?? 'unknown',
-      turnResponses,
-      redoPlan: null,
-      hostRecord: null,
-    } : null);
-  }
-
-  setCheckpointRestoreRedoArtifact(
-    artifact: {
-      checkpointId: string;
-      turnResponses: readonly TurnResponseTurn[];
-      redoPlan?: RestorePlan | null;
-      hostRecord?: LiveHostSessionRecord | null;
-    } | null | undefined,
-  ): void {
-    if (!artifact || !Array.isArray(artifact.turnResponses) || artifact.turnResponses.length === 0) {
-      this.checkpointRestoreRedoArtifact = null;
-      this.checkpointRestoreRedoRecoverable = false;
-      return;
-    }
-
-    this.checkpointRestoreRedoArtifact = {
-      checkpointId: artifact.checkpointId,
-      turnResponses: artifact.turnResponses.map(turn => ({ ...turn })),
-      redoPlan: this.cloneRestorePlan(artifact.redoPlan ?? null),
-      hostRecord: this.cloneLiveHostSessionRecord(artifact.hostRecord ?? null),
-    };
-    this.checkpointRestoreRedoRecoverable = true;
-  }
-
-  async captureCheckpointRestoreRedoArtifact(
-    checkpointId: string,
-    turnResponses: readonly TurnResponseTurn[] | null | undefined,
-    options?: {
-      hostRecord?: LiveHostSessionRecord | null;
-    },
-  ): Promise<CheckpointRestoreRedoArtifact | null> {
-    if (!Array.isArray(turnResponses) || turnResponses.length === 0) {
-      this.setCheckpointRestoreRedoArtifact(null);
-      return null;
-    }
-
-    const redoPlan = await this.getWorkspaceCheckpointProvider().buildRedoPlan(checkpointId);
-    const artifact: CheckpointRestoreRedoArtifact = {
-      checkpointId,
-      turnResponses: turnResponses.map(turn => ({ ...turn })),
-      redoPlan: this.cloneRestorePlan(redoPlan),
-      hostRecord: this.cloneLiveHostSessionRecord(options?.hostRecord ?? null),
-    };
-    this.setCheckpointRestoreRedoArtifact(artifact);
-    return this.getCheckpointRestoreRedoArtifact();
-  }
-
-  getCheckpointRestoreRedoArtifact(): CheckpointRestoreRedoArtifact | null {
-    return this.cloneCheckpointRestoreRedoArtifact(this.checkpointRestoreRedoArtifact);
-  }
-
-  getCheckpointRestoreRedoTurnResponses(): readonly TurnResponseTurn[] {
-    return this.checkpointRestoreRedoArtifact ? [...this.checkpointRestoreRedoArtifact.turnResponses] : [];
-  }
-
-  hasRecoverableCheckpointRestoreRedoTurnResponses(): boolean {
-    return this.checkpointRestoreRedoRecoverable
-      && (this.checkpointRestoreRedoArtifact?.turnResponses.length ?? 0) > 0;
-  }
-
-  markCheckpointRestoreRedoTurnResponsesUnrecoverable(): void {
-    if (!this.checkpointRestoreRedoArtifact || this.checkpointRestoreRedoArtifact.turnResponses.length === 0) {
-      this.checkpointRestoreRedoRecoverable = false;
-      return;
-    }
-
-    this.checkpointRestoreRedoRecoverable = false;
-  }
-
-  clearCheckpointRestoreRedoTurnResponses(): void {
-    this.setCheckpointRestoreRedoArtifact(null);
+      || this.pendingSnapshot !== null;
   }
 
   captureRebuildState(): EditCheckpointRebuildStateSnapshot {
@@ -524,8 +490,7 @@ export class EditCheckpointService {
       initialFileContents: new Map(this.initialFileContents),
       timeline: this.cloneTurnSnapshots(this.timeline),
       truncatedRequestBoundaries: this.cloneTurnSnapshots(this.truncatedRequestBoundaries),
-      checkpointRestoreRedoArtifact: this.cloneCheckpointRestoreRedoArtifact(this.checkpointRestoreRedoArtifact),
-      checkpointRestoreRedoRecoverable: this.checkpointRestoreRedoRecoverable,
+      requestCheckpointMetadata: this.cloneRequestCheckpointMetadataList([...this.requestCheckpointMetadataByCheckpointId.values()]),
       timelineIndex: this.timelineIndex,
       keptTimelineIndex: this.keptTimelineIndex,
       pendingSnapshot: this.pendingSnapshot ? new Map(this.pendingSnapshot) : null,
@@ -566,6 +531,7 @@ export class EditCheckpointService {
       }
     }
 
+    const requestCheckpointMetadata: RequestCheckpointMetadata[] = [];
     const timeline = turnResponses.flatMap((turn, index) => {
       const checkpointId = turn.request.metadata?.checkpointId;
       if (!checkpointId) {
@@ -578,7 +544,7 @@ export class EditCheckpointService {
         || turn.createdAt
         || turn.response?.createdAt
         || Date.now();
-      return [{
+      const snapshot = {
         checkpointId,
         turnIndex: index,
         turnStartListIndex: null,
@@ -589,8 +555,14 @@ export class EditCheckpointService {
         lastRoundId: turn.rounds.at(-1)?.id,
         rounds: turn.rounds,
         hasFileEdits: !!fileHistorySnapshot && Object.keys(fileHistorySnapshot.trackedFileBackups ?? {}).length > 0,
+        ...this.readCheckpointRefsFromRequestMetadata(turn.request.metadata),
         createdAt,
-      } satisfies TurnSnapshot];
+      } satisfies TurnSnapshot;
+      const metadata = this.readRequestCheckpointMetadataFromTurn(turn, index, snapshot);
+      if (metadata) {
+        requestCheckpointMetadata.push(metadata);
+      }
+      return [snapshot];
     });
 
     return {
@@ -598,6 +570,7 @@ export class EditCheckpointService {
       initialFileContents,
       timeline,
       truncatedRequestBoundaries: [],
+      requestCheckpointMetadata,
       timelineIndex: timeline.length - 1,
       keptTimelineIndex: -1,
       pendingSnapshot: null,
@@ -643,8 +616,7 @@ export class EditCheckpointService {
     this.initialFileContents = new Map(snapshot.initialFileContents);
     this.timeline = this.cloneTurnSnapshots(snapshot.timeline);
     this.truncatedRequestBoundaries = this.cloneTurnSnapshots(snapshot.truncatedRequestBoundaries);
-    this.checkpointRestoreRedoArtifact = this.cloneCheckpointRestoreRedoArtifact(snapshot.checkpointRestoreRedoArtifact);
-    this.checkpointRestoreRedoRecoverable = snapshot.checkpointRestoreRedoRecoverable;
+    this.restoreRequestCheckpointMetadata(snapshot.requestCheckpointMetadata);
     this.timelineIndex = snapshot.timelineIndex;
     this.keptTimelineIndex = snapshot.keptTimelineIndex;
     this.pendingSnapshot = snapshot.pendingSnapshot ? new Map(snapshot.pendingSnapshot) : null;
@@ -661,6 +633,76 @@ export class EditCheckpointService {
 
   restoreRebuildState(snapshot: EditCheckpointRebuildStateSnapshot): void {
     this.applyRebuildState(snapshot);
+  }
+
+  getRequestCheckpointMetadataByCheckpointId(checkpointId: string | null | undefined): RequestCheckpointMetadata | null {
+    const normalizedCheckpointId = typeof checkpointId === 'string' ? checkpointId.trim() : '';
+    if (!normalizedCheckpointId) {
+      return null;
+    }
+    return this.cloneRequestCheckpointMetadata(this.requestCheckpointMetadataByCheckpointId.get(normalizedCheckpointId)) ?? null;
+  }
+
+  getRequestCheckpointMetadataByRequestId(requestId: string | null | undefined): RequestCheckpointMetadata | null {
+    const normalizedRequestId = typeof requestId === 'string' ? requestId.trim() : '';
+    if (!normalizedRequestId) {
+      return null;
+    }
+    return this.cloneRequestCheckpointMetadata(this.requestCheckpointMetadataByRequestId.get(normalizedRequestId)) ?? null;
+  }
+
+  async forkRequestCheckpointMetadata(input: {
+    sourceSessionResource: string;
+    targetSessionResource: string;
+    retainedTurnResponses: readonly TurnResponseTurn[];
+  }): Promise<TurnResponseTurn[] | null> {
+    const sourceSessionResource = input.sourceSessionResource.trim();
+    const targetSessionResource = input.targetSessionResource.trim();
+    if (!sourceSessionResource || !targetSessionResource) {
+      return null;
+    }
+
+    const checkpointIds = input.retainedTurnResponses
+      .map(turn => this.readCheckpointIdFromRequestMetadata(turn.request?.metadata))
+      .filter((checkpointId): checkpointId is string => !!checkpointId);
+    if (checkpointIds.length === 0) {
+      return input.retainedTurnResponses.map(turn => this.cloneTurnResponseTurn(turn));
+    }
+
+    const provider = this.getWorkspaceCheckpointProvider();
+    if (typeof provider.forkCheckpoints !== 'function') {
+      return null;
+    }
+
+    const forkedMetadata = await Promise.resolve(provider.forkCheckpoints({
+      sourceSessionResource,
+      targetSessionResource,
+      checkpointIds,
+    }));
+    if (!forkedMetadata || forkedMetadata.length !== checkpointIds.length) {
+      return null;
+    }
+
+    const metadataByCheckpointId = new Map<string, RequestCheckpointMetadata>();
+    for (const metadata of forkedMetadata) {
+      const requestMetadata = this.cloneRequestCheckpointMetadata({
+        source: 'request-metadata',
+        ...metadata,
+        sessionResource: targetSessionResource,
+      });
+      if (requestMetadata) {
+        metadataByCheckpointId.set(requestMetadata.checkpointId, requestMetadata);
+      }
+    }
+
+    if (checkpointIds.some(checkpointId => !metadataByCheckpointId.has(checkpointId))) {
+      return null;
+    }
+
+    return input.retainedTurnResponses.map(turn => this.cloneTurnResponseTurnWithForkedCheckpointMetadata(
+      turn,
+      metadataByCheckpointId,
+    ));
   }
 
   /**
@@ -1005,8 +1047,9 @@ export class EditCheckpointService {
     this.initialFileContents.clear();
     this.timeline = [];
     this.truncatedRequestBoundaries = [];
-    this.checkpointRestoreRedoArtifact = null;
-    this.checkpointRestoreRedoRecoverable = false;
+    this.requestCheckpointMetadataByCheckpointId.clear();
+    this.requestCheckpointMetadataByRequestId.clear();
+    this.requestMetadataTargetsByCheckpointId.clear();
     this.timelineIndex = -1;
     this.keptTimelineIndex = -1;
     this.pendingSnapshot = null;
@@ -1132,16 +1175,203 @@ export class EditCheckpointService {
     this.updateTimelinePointerForCheckpoint(latestSnapshot.checkpointId, latestSnapshot);
   }
 
-  private persistTimelineCheckpoint(snapshot: TurnSnapshot): void {
+  private registerRequestCheckpointMetadata(
+    snapshot: TurnSnapshot,
+    requestMetadata?: TurnRequest['metadata'],
+  ): void {
     if (!snapshot.checkpointId || !snapshot.turnId) {
       return;
     }
 
-    void Promise.resolve(this.getWorkspaceCheckpointProvider().createCheckpoint(
-      this.toWorkspaceCheckpointDescriptor(snapshot),
-    )).catch(error => {
-      console.warn('[EditCheckpoint] create checkpoint failed:', error);
-    });
+    const metadata = this.buildRequestCheckpointMetadata(snapshot, this.readCheckpointRefsFromRequestMetadata(requestMetadata));
+    if (!metadata) {
+      return;
+    }
+
+    this.storeRequestCheckpointMetadata(metadata, requestMetadata);
+  }
+
+  private applyWorkspaceCheckpointRefMetadata(
+    snapshot: TurnSnapshot,
+    workspaceMetadata: WorkspaceCheckpointRefMetadata,
+  ): void {
+    const metadata = this.buildRequestCheckpointMetadata(snapshot, workspaceMetadata);
+    if (!metadata) {
+      return;
+    }
+
+    snapshot.checkpointRef = metadata.checkpointRef;
+    snapshot.additionalCheckpointRefs = this.cloneStringRecord(metadata.additionalCheckpointRefs);
+    snapshot.checkpointNamespace = metadata.checkpointNamespace;
+    this.storeRequestCheckpointMetadata(metadata, this.requestMetadataTargetsByCheckpointId.get(metadata.checkpointId));
+  }
+
+  private buildRequestCheckpointMetadata(
+    snapshot: TurnSnapshot,
+    refs: Partial<WorkspaceCheckpointRefMetadata> | null | undefined,
+  ): RequestCheckpointMetadata | null {
+    const sessionResource = this.timelineSessionId?.trim();
+    const checkpointId = snapshot.checkpointId?.trim();
+    const requestId = (refs?.requestId || snapshot.turnId || checkpointId)?.trim();
+    if (!sessionResource || !checkpointId || !requestId) {
+      return null;
+    }
+
+    const turnId = (refs?.turnId || snapshot.turnId || '').trim();
+    return {
+      source: 'request-metadata',
+      checkpointId,
+      sessionResource,
+      requestId,
+      ...(turnId ? { turnId } : {}),
+      checkpointNamespace: refs?.checkpointNamespace || `refs/sessions/${sessionResource}`,
+      turnIndex: typeof refs?.turnIndex === 'number' && Number.isFinite(refs.turnIndex)
+        ? refs.turnIndex
+        : snapshot.turnIndex + 1,
+      ...(refs?.startCheckpointRef ? { startCheckpointRef: refs.startCheckpointRef } : {}),
+      ...(refs?.checkpointRef ? { checkpointRef: refs.checkpointRef } : {}),
+      ...(refs?.additionalStartCheckpointRefs ? { additionalStartCheckpointRefs: this.cloneStringRecord(refs.additionalStartCheckpointRefs) } : {}),
+      ...(refs?.additionalCheckpointRefs ? { additionalCheckpointRefs: this.cloneStringRecord(refs.additionalCheckpointRefs) } : {}),
+      ...(typeof refs?.createdAt === 'number' ? { createdAt: refs.createdAt } : { createdAt: snapshot.createdAt }),
+      ...(typeof refs?.completedAt === 'number' ? { completedAt: refs.completedAt } : {}),
+    };
+  }
+
+  private storeRequestCheckpointMetadata(
+    metadata: RequestCheckpointMetadata,
+    requestMetadata?: TurnRequest['metadata'],
+  ): void {
+    const cloned = this.cloneRequestCheckpointMetadata(metadata);
+    if (!cloned) {
+      return;
+    }
+
+    this.requestCheckpointMetadataByCheckpointId.set(cloned.checkpointId, cloned);
+    this.requestCheckpointMetadataByRequestId.set(cloned.requestId, cloned);
+
+    if (requestMetadata) {
+      this.requestMetadataTargetsByCheckpointId.set(cloned.checkpointId, requestMetadata);
+      this.writeRequestCheckpointMetadata(requestMetadata, cloned);
+    }
+  }
+
+  private restoreRequestCheckpointMetadata(metadata: readonly RequestCheckpointMetadata[] | undefined): void {
+    this.requestCheckpointMetadataByCheckpointId.clear();
+    this.requestCheckpointMetadataByRequestId.clear();
+    this.requestMetadataTargetsByCheckpointId.clear();
+    for (const item of metadata ?? []) {
+      this.storeRequestCheckpointMetadata(item);
+    }
+  }
+
+  private writeRequestCheckpointMetadata(
+    requestMetadata: TurnRequest['metadata'],
+    checkpointMetadata: RequestCheckpointMetadata,
+  ): void {
+    if (!requestMetadata) {
+      return;
+    }
+
+    const mutableMetadata = requestMetadata as Record<string, unknown>;
+    mutableMetadata['checkpointId'] = checkpointMetadata.checkpointId;
+    mutableMetadata['checkpointNamespace'] = checkpointMetadata.checkpointNamespace;
+    mutableMetadata['checkpointTurnIndex'] = checkpointMetadata.turnIndex;
+    if (checkpointMetadata.startCheckpointRef) {
+      mutableMetadata['startCheckpointRef'] = checkpointMetadata.startCheckpointRef;
+    }
+    if (checkpointMetadata.checkpointRef) {
+      mutableMetadata['checkpointRef'] = checkpointMetadata.checkpointRef;
+    }
+    if (checkpointMetadata.additionalStartCheckpointRefs) {
+      mutableMetadata['additionalStartCheckpointRefs'] = this.cloneStringRecord(checkpointMetadata.additionalStartCheckpointRefs);
+    }
+    if (checkpointMetadata.additionalCheckpointRefs) {
+      mutableMetadata['additionalCheckpointRefs'] = this.cloneStringRecord(checkpointMetadata.additionalCheckpointRefs);
+    }
+  }
+
+  private readRequestCheckpointMetadataFromTurn(
+    turn: Pick<TurnResponseTurn, 'turnId' | 'request'>,
+    index: number,
+    snapshot: TurnSnapshot,
+  ): RequestCheckpointMetadata | null {
+    const refs = this.readCheckpointRefsFromRequestMetadata(turn.request.metadata);
+    return this.buildRequestCheckpointMetadata({
+      ...snapshot,
+      turnId: turn.turnId,
+      turnIndex: index,
+    }, refs);
+  }
+
+  private readCheckpointRefsFromRequestMetadata(
+    requestMetadata: TurnRequest['metadata'] | undefined,
+  ): Partial<WorkspaceCheckpointRefMetadata> {
+    const record = requestMetadata && typeof requestMetadata === 'object'
+      ? requestMetadata as Record<string, unknown>
+      : {};
+    return {
+      ...(typeof record['checkpointNamespace'] === 'string' && record['checkpointNamespace'].trim()
+        ? { checkpointNamespace: record['checkpointNamespace'].trim() }
+        : {}),
+      ...(typeof record['checkpointTurnIndex'] === 'number' && Number.isFinite(record['checkpointTurnIndex'])
+        ? { turnIndex: record['checkpointTurnIndex'] }
+        : {}),
+      ...(typeof record['startCheckpointRef'] === 'string' && record['startCheckpointRef'].trim()
+        ? { startCheckpointRef: record['startCheckpointRef'].trim() }
+        : {}),
+      ...(typeof record['checkpointRef'] === 'string' && record['checkpointRef'].trim()
+        ? { checkpointRef: record['checkpointRef'].trim() }
+        : {}),
+      ...(this.normalizeStringRecord(record['additionalStartCheckpointRefs'])
+        ? { additionalStartCheckpointRefs: this.normalizeStringRecord(record['additionalStartCheckpointRefs'])! }
+        : {}),
+      ...(this.normalizeStringRecord(record['additionalCheckpointRefs'])
+        ? { additionalCheckpointRefs: this.normalizeStringRecord(record['additionalCheckpointRefs'])! }
+        : {}),
+    };
+  }
+
+  private persistTimelineCheckpoint(snapshot: TurnSnapshot): Promise<void> {
+    if (!snapshot.checkpointId || !snapshot.turnId) {
+      return this.waitForCheckpointMetadataSettled();
+    }
+
+    const provider = this.getWorkspaceCheckpointProvider();
+    if (provider.getPresentationMode?.() === 'timeline') {
+      const existingRequestMetadata = this.requestMetadataTargetsByCheckpointId.get(snapshot.checkpointId);
+      const existingRefs = this.readCheckpointRefsFromRequestMetadata(existingRequestMetadata);
+      if (existingRefs.checkpointRef) {
+        return this.waitForCheckpointMetadataSettled();
+      }
+
+      const metadata = provider.createCheckpoint(this.toWorkspaceCheckpointDescriptor(snapshot)) as WorkspaceCheckpointRefMetadata | null | void;
+      if (metadata) {
+        this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
+      }
+      return this.waitForCheckpointMetadataSettled();
+    }
+
+    return this.enqueueCheckpointMetadataWrite(async () => {
+      const metadata = await Promise.resolve(provider.createCheckpoint(
+        this.toWorkspaceCheckpointDescriptor(snapshot),
+      ));
+      if (metadata) {
+        this.applyWorkspaceCheckpointRefMetadata(snapshot, metadata);
+      }
+    }, 'create checkpoint');
+  }
+
+  private enqueueCheckpointMetadataWrite(
+    operation: () => Promise<void> | void,
+    label: string,
+  ): Promise<void> {
+    const queuedOperation = this.checkpointMetadataWriteQueue
+      .then(() => Promise.resolve(operation()))
+      .catch(error => {
+        console.warn(`[EditCheckpoint] ${label} failed:`, error);
+      });
+    this.checkpointMetadataWriteQueue = queuedOperation.catch(() => undefined);
+    return queuedOperation;
   }
 
   private replaceTimelineCheckpointsFromSnapshots(snapshots: readonly TurnSnapshot[]): void {
@@ -1163,12 +1393,56 @@ export class EditCheckpointService {
   }
 
   private createTimelineFallbackProvider(): IWorkspaceCheckpointProvider {
+    const buildTimelineMetadata = (
+      descriptor: WorkspaceCheckpointDescriptor,
+      options: { completed: boolean },
+    ): WorkspaceCheckpointRefMetadata | null => {
+      const sessionResource = this.timelineSessionId?.trim();
+      const workspaceRoot = this.timelineWorkspaceRoot?.trim();
+      if (!sessionResource || !workspaceRoot || !descriptor.checkpointId || !descriptor.requestId) {
+        return null;
+      }
+
+      const timelineService = this.getEditingSessionTimelineService();
+      const state = timelineService?.getState();
+      const checkpointIndex = state?.checkpoints.findIndex(checkpoint => checkpoint.checkpointId === descriptor.checkpointId) ?? -1;
+      const turnIndex = checkpointIndex >= 0 ? checkpointIndex + 1 : Math.max(1, this.timeline.findIndex(snapshot => snapshot.checkpointId === descriptor.checkpointId) + 1);
+      const checkpointNamespace = `aily-timeline:${sessionResource}`;
+      const startCheckpointRef = `${checkpointNamespace}/checkpoints/turn/${Math.max(0, turnIndex - 1)}`;
+      return {
+        checkpointId: descriptor.checkpointId,
+        sessionResource,
+        requestId: descriptor.requestId,
+        ...(descriptor.turnId ? { turnId: descriptor.turnId } : {}),
+        checkpointNamespace,
+        turnIndex,
+        startCheckpointRef,
+        ...(options.completed ? { checkpointRef: `${checkpointNamespace}/checkpoints/turn/${turnIndex}` } : {}),
+        createdAt: Date.now(),
+        ...(options.completed ? { completedAt: Date.now() } : {}),
+      };
+    };
+
     return {
-      getPresentationMode: () => 'compatibility',
+      getPresentationMode: () => 'timeline',
+      ensurePresentationMode: () => {
+        const timelineService = this.getEditingSessionTimelineService();
+        return timelineService ? 'timeline' : 'unknown';
+      },
+      getAvailabilityDetail: () => {
+        const timelineService = this.getEditingSessionTimelineService();
+        return timelineService
+          ? { mode: 'timeline' }
+          : {
+            mode: 'unknown',
+            reason: 'timeline-unavailable',
+            message: '缺少本地 timeline checkpoint 上下文',
+          };
+      },
       createCheckpoint: (descriptor: WorkspaceCheckpointDescriptor) => {
         const timelineService = this.getEditingSessionTimelineService();
         if (!timelineService) {
-          return;
+          return null;
         }
         timelineService.createCheckpoint({
           checkpointId: descriptor.checkpointId,
@@ -1176,6 +1450,39 @@ export class EditCheckpointService {
           turnId: descriptor.turnId,
           label: descriptor.label,
         });
+        return buildTimelineMetadata(descriptor, { completed: false });
+      },
+      completeCheckpoint: (descriptor: WorkspaceCheckpointDescriptor) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+        const checkpoint = timelineService.getCheckpoint(descriptor.checkpointId);
+        if (!checkpoint) {
+          timelineService.createCheckpoint({
+            checkpointId: descriptor.checkpointId,
+            requestId: descriptor.requestId,
+            turnId: descriptor.turnId,
+            label: descriptor.label,
+          });
+        }
+        return buildTimelineMetadata(descriptor, { completed: true });
+      },
+      getCheckpointMetadata: (checkpointId: string) => {
+        const timelineService = this.getEditingSessionTimelineService();
+        if (!timelineService) {
+          return null;
+        }
+        const checkpoint = timelineService.getCheckpoint(checkpointId);
+        if (!checkpoint) {
+          return null;
+        }
+        return buildTimelineMetadata({
+          checkpointId: checkpoint.checkpointId,
+          requestId: checkpoint.requestId,
+          turnId: checkpoint.turnId,
+          label: checkpoint.label,
+        }, { completed: true });
       },
       replaceCheckpoints: (descriptors: readonly WorkspaceCheckpointDescriptor[]) => {
         const timelineService = this.getEditingSessionTimelineService();
@@ -1190,6 +1497,50 @@ export class EditCheckpointService {
             label: descriptor.label,
           })),
         );
+      },
+      forkCheckpoints: (request: WorkspaceCheckpointForkRequest) => {
+        const sourceSessionResource = request.sourceSessionResource.trim();
+        const targetSessionResource = request.targetSessionResource.trim();
+        const workspaceRoot = this.timelineWorkspaceRoot?.trim();
+        if (!sourceSessionResource || !targetSessionResource || !workspaceRoot) {
+          return null;
+        }
+
+        const sourceState = this.editingTimelineRepository.load(sourceSessionResource, workspaceRoot);
+        if (!sourceState) {
+          return null;
+        }
+
+        const checkpointIds = request.checkpointIds
+          .map(checkpointId => checkpointId.trim())
+          .filter(Boolean);
+        const checkpointIdSet = new Set(checkpointIds);
+        const retainedCheckpoints = sourceState.checkpoints.filter(checkpoint => checkpointIdSet.has(checkpoint.checkpointId));
+        if (retainedCheckpoints.length !== checkpointIds.length) {
+          return null;
+        }
+
+        this.copyTimelineSessionDirectory(workspaceRoot, sourceSessionResource, targetSessionResource);
+        this.editingTimelineRepository.save({
+          ...sourceState,
+          sessionId: targetSessionResource,
+          checkpoints: retainedCheckpoints,
+          requestScopes: sourceState.requestScopes.filter(scope => retainedCheckpoints.some(checkpoint => checkpoint.requestId === scope.requestId)),
+          updatedAt: Date.now(),
+        });
+
+        return retainedCheckpoints.map((checkpoint, index) => ({
+          checkpointId: checkpoint.checkpointId,
+          sessionResource: targetSessionResource,
+          requestId: checkpoint.requestId,
+          ...(checkpoint.turnId ? { turnId: checkpoint.turnId } : {}),
+          checkpointNamespace: `aily-timeline:${targetSessionResource}`,
+          turnIndex: index + 1,
+          startCheckpointRef: `aily-timeline:${targetSessionResource}/checkpoints/turn/${index}`,
+          checkpointRef: `aily-timeline:${targetSessionResource}/checkpoints/turn/${index + 1}`,
+          createdAt: checkpoint.createdAt,
+          completedAt: Date.now(),
+        }));
       },
       buildRestorePlan: async (checkpointId: string) => {
         const timelineService = this.getEditingSessionTimelineService();
@@ -1232,8 +1583,9 @@ export class EditCheckpointService {
           return { rolledBackFiles: 0, errors: ['缺少 timeline apply 上下文'] };
         }
 
+        const emergencyRollback = this.captureTimelineEmergencyRollback(plan);
         const result = await applyService.apply(plan);
-        return {
+        const rollbackResult: RollbackResult = {
           rolledBackFiles: result.appliedFiles,
           errors: result.errors,
           ...(typeof result.rolledBackOnError === 'boolean'
@@ -1241,8 +1593,107 @@ export class EditCheckpointService {
             : {}),
           ...(result.rollbackErrors ? { rollbackErrors: result.rollbackErrors } : {}),
         };
+        if (rollbackResult.errors.length === 0 && emergencyRollback) {
+          Object.defineProperty(rollbackResult, 'emergencyRollback', {
+            value: emergencyRollback,
+            enumerable: false,
+            configurable: true,
+          });
+        }
+        return rollbackResult;
       },
     };
+  }
+
+  private captureTimelineEmergencyRollback(plan: RestorePlan): (() => RollbackResult) | null {
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    const snapshots = plan.files.map(file => {
+      const existed = fs.existsSync(file.uri);
+      return {
+        uri: file.uri,
+        existed,
+        content: existed ? fs.readFileSync(file.uri, file.contentKind === 'binary' ? undefined : 'utf-8') : null,
+      };
+    });
+    if (snapshots.length === 0) {
+      return null;
+    }
+
+    return () => {
+      const errors: string[] = [];
+      let restored = 0;
+      for (const snapshot of snapshots) {
+        try {
+          if (!snapshot.existed) {
+            if (fs.existsSync(snapshot.uri)) {
+              fs.unlinkSync(snapshot.uri);
+              restored++;
+            }
+            continue;
+          }
+
+          const dirPath = pathUtil.dirname(snapshot.uri);
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          fs.writeFileSync(snapshot.uri, snapshot.content ?? '', 'utf-8');
+          restored++;
+        } catch (error: any) {
+          errors.push(`timeline emergency rollback ${snapshot.uri} 失败: ${error?.message || String(error)}`);
+        }
+      }
+
+      return {
+        rolledBackFiles: errors.length === 0 ? restored : 0,
+        errors,
+        rolledBackOnError: errors.length === 0,
+        ...(errors.length > 0 ? { rollbackErrors: errors } : {}),
+      };
+    };
+  }
+
+  private copyTimelineSessionDirectory(workspaceRoot: string, sourceSessionId: string, targetSessionId: string): void {
+    const fs = AilyHost.get().fs;
+    const pathUtil = AilyHost.get().path;
+    const sourceDir = this.editingTimelineRepository.getSessionDir(workspaceRoot, sourceSessionId);
+    const targetDir = this.editingTimelineRepository.getSessionDir(workspaceRoot, targetSessionId);
+    if (!fs.existsSync(sourceDir)) {
+      return;
+    }
+    if (typeof fs.copySync === 'function') {
+      fs.copySync(sourceDir, targetDir);
+      return;
+    }
+    this.copyDirectoryRecursive(sourceDir, targetDir, pathUtil, fs);
+  }
+
+  private copyDirectoryRecursive(
+    sourceDir: string,
+    targetDir: string,
+    pathUtil: { join: (...parts: string[]) => string },
+    fs: {
+      existsSync(path: string): boolean;
+      mkdirSync(path: string, options?: { recursive?: boolean }): void;
+      readdirSync(path: string): string[];
+      statSync(path: string): { isDirectory(): boolean };
+      readFileSync(path: string): string | Uint8Array;
+      writeFileSync(path: string, content: string | Uint8Array): void;
+    },
+  ): void {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    for (const entry of fs.readdirSync(sourceDir)) {
+      const sourcePath = pathUtil.join(sourceDir, entry);
+      const targetPath = pathUtil.join(targetDir, entry);
+      const stat = fs.statSync(sourcePath);
+      if (stat.isDirectory()) {
+        this.copyDirectoryRecursive(sourcePath, targetPath, pathUtil, fs);
+      } else {
+        fs.writeFileSync(targetPath, fs.readFileSync(sourcePath));
+      }
+    }
   }
 
   private async getTimelineRequestSummary(turnId: string): Promise<RequestEditSummary | null> {
@@ -1601,48 +2052,129 @@ export class EditCheckpointService {
       ...snapshot,
       ...(snapshot.rounds ? { rounds: [...snapshot.rounds] } : {}),
       ...(snapshot.additionalRepositoryRoots ? { additionalRepositoryRoots: [...snapshot.additionalRepositoryRoots] } : {}),
+      ...(snapshot.additionalCheckpointRefs ? { additionalCheckpointRefs: this.cloneStringRecord(snapshot.additionalCheckpointRefs) } : {}),
     }));
   }
 
-  private cloneCheckpointRestoreRedoArtifact(
-    artifact: CheckpointRestoreRedoArtifact | null | undefined,
-  ): CheckpointRestoreRedoArtifact | null {
-    if (!artifact) {
+  private cloneRequestCheckpointMetadataList(metadata: readonly RequestCheckpointMetadata[]): RequestCheckpointMetadata[] {
+    return metadata
+      .map(item => this.cloneRequestCheckpointMetadata(item))
+      .filter((item): item is RequestCheckpointMetadata => !!item);
+  }
+
+  private cloneRequestCheckpointMetadata(
+    metadata: RequestCheckpointMetadata | null | undefined,
+  ): RequestCheckpointMetadata | null {
+    if (!metadata) {
       return null;
     }
 
     return {
-      checkpointId: artifact.checkpointId,
-      turnResponses: artifact.turnResponses.map(turn => ({ ...turn })),
-      redoPlan: this.cloneRestorePlan(artifact.redoPlan),
-      hostRecord: this.cloneLiveHostSessionRecord(artifact.hostRecord),
+      source: 'request-metadata',
+      checkpointId: metadata.checkpointId,
+      sessionResource: metadata.sessionResource,
+      requestId: metadata.requestId,
+      ...(metadata.turnId ? { turnId: metadata.turnId } : {}),
+      checkpointNamespace: metadata.checkpointNamespace,
+      turnIndex: metadata.turnIndex,
+      ...(metadata.startCheckpointRef ? { startCheckpointRef: metadata.startCheckpointRef } : {}),
+      ...(metadata.checkpointRef ? { checkpointRef: metadata.checkpointRef } : {}),
+      ...(metadata.additionalStartCheckpointRefs ? { additionalStartCheckpointRefs: this.cloneStringRecord(metadata.additionalStartCheckpointRefs) } : {}),
+      ...(metadata.additionalCheckpointRefs ? { additionalCheckpointRefs: this.cloneStringRecord(metadata.additionalCheckpointRefs) } : {}),
+      ...(typeof metadata.createdAt === 'number' ? { createdAt: metadata.createdAt } : {}),
+      ...(typeof metadata.completedAt === 'number' ? { completedAt: metadata.completedAt } : {}),
     };
   }
 
-  private cloneLiveHostSessionRecord(record: LiveHostSessionRecord | null | undefined): LiveHostSessionRecord | null {
-    if (!record) {
-      return null;
-    }
-
-    return JSON.parse(JSON.stringify(record)) as LiveHostSessionRecord;
-  }
-
-  private cloneRestorePlan(plan: RestorePlan | null | undefined): RestorePlan | null {
-    if (!plan) {
-      return null;
-    }
-
+  private cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
+    const requestMetadata = turn.request?.metadata && typeof turn.request.metadata === 'object'
+      ? { ...(turn.request.metadata as Record<string, unknown>) } as TurnRequest['metadata']
+      : turn.request?.metadata;
     return {
-      checkpointId: plan.checkpointId,
-      epoch: plan.epoch,
-      files: plan.files.map(file => ({ ...file })),
-      ...(plan.applyMetadata ? { applyMetadata: { ...plan.applyMetadata } } : {}),
+      ...turn,
+      request: {
+        ...turn.request,
+        ...(requestMetadata ? { metadata: requestMetadata } : {}),
+      },
+      rounds: Array.isArray(turn.rounds)
+        ? turn.rounds.map(round => ({ ...round }))
+        : turn.rounds,
+      response: turn.response
+        ? {
+            ...turn.response,
+            parts: Array.isArray(turn.response.parts)
+              ? turn.response.parts.map(part => ({ ...part }))
+              : turn.response.parts,
+          }
+        : turn.response,
+      ...(turn.responseModel ? { responseModel: { ...turn.responseModel } } : {}),
     };
   }
 
-  private getCheckpointIdFromTurnResponses(turnResponses: readonly TurnResponseTurn[]): string | null {
-    const checkpointId = turnResponses.at(-1)?.request?.metadata?.checkpointId;
-    return typeof checkpointId === 'string' && checkpointId.length > 0 ? checkpointId : null;
+  private cloneTurnResponseTurnWithForkedCheckpointMetadata(
+    turn: TurnResponseTurn,
+    metadataByCheckpointId: ReadonlyMap<string, RequestCheckpointMetadata>,
+  ): TurnResponseTurn {
+    const cloned = this.cloneTurnResponseTurn(turn);
+    const checkpointId = this.readCheckpointIdFromRequestMetadata(cloned.request?.metadata);
+    if (!checkpointId) {
+      return cloned;
+    }
+
+    const checkpointMetadata = metadataByCheckpointId.get(checkpointId);
+    if (!checkpointMetadata) {
+      return cloned;
+    }
+
+    const requestMetadata = cloned.request.metadata && typeof cloned.request.metadata === 'object'
+      ? { ...(cloned.request.metadata as Record<string, unknown>) } as TurnRequest['metadata']
+      : {} as TurnRequest['metadata'];
+    this.clearCheckpointRefsFromRequestMetadata(requestMetadata);
+    this.writeRequestCheckpointMetadata(requestMetadata, checkpointMetadata);
+    return {
+      ...cloned,
+      request: {
+        ...cloned.request,
+        metadata: requestMetadata,
+      },
+    };
+  }
+
+  private readCheckpointIdFromRequestMetadata(metadata: TurnRequest['metadata'] | undefined): string | null {
+    if (!metadata || typeof metadata !== 'object') {
+      return null;
+    }
+
+    const checkpointId = (metadata as Record<string, unknown>)['checkpointId'];
+    return typeof checkpointId === 'string' && checkpointId.trim()
+      ? checkpointId.trim()
+      : null;
+  }
+
+  private clearCheckpointRefsFromRequestMetadata(metadata: TurnRequest['metadata']): void {
+    const mutableMetadata = metadata as Record<string, unknown>;
+    delete mutableMetadata['checkpointNamespace'];
+    delete mutableMetadata['checkpointTurnIndex'];
+    delete mutableMetadata['startCheckpointRef'];
+    delete mutableMetadata['checkpointRef'];
+    delete mutableMetadata['checkpointRefs'];
+    delete mutableMetadata['additionalStartCheckpointRefs'];
+    delete mutableMetadata['additionalCheckpointRefs'];
+  }
+
+  private normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key.trim(), typeof item === 'string' ? item.trim() : ''] as const)
+      .filter(([key, item]) => key.length > 0 && item.length > 0);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  private cloneStringRecord(value: Record<string, string> | undefined): Record<string, string> | undefined {
+    return value ? { ...value } : undefined;
   }
 
 }

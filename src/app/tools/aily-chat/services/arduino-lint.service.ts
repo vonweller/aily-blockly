@@ -22,7 +22,13 @@ export type LintMode = 'fast' | 'accurate' | 'auto' | 'ast-grep';
 /**
  * Lint 输出格式
  */
-export type LintFormat = 'human' | 'vscode' | 'json';
+export type LintFormat = 'human' | 'diagnostic' | 'json';
+
+type AilyBuilderLintFormat = 'human' | 'vscode' | 'json';
+
+function toAilyBuilderLintFormat(format: LintFormat): AilyBuilderLintFormat {
+  return format === 'diagnostic' ? 'vscode' : format;
+}
 
 /**
  * Lint 检查选项
@@ -440,7 +446,7 @@ export class ArduinoLintService {
       '--tools-path', `"${toolsPath}"`,
       '--tool-versions', `"${toolVersions.join(',')}"`,
       '--mode', mode,
-      '--format', format
+      '--format', toAilyBuilderLintFormat(format)
     ];
 
     return lintCommandParts.join(' ');
@@ -504,9 +510,9 @@ export class ArduinoLintService {
           executionTime: jsonResult.executionTime || executionTime,
           mode: jsonResult.mode || mode
         };
-      } else if (format === 'vscode') {
-        // VS Code 格式解析
-        return this.parseVSCodeFormat(output, executionTime, mode);
+      } else if (format === 'diagnostic') {
+        // 诊断定位格式解析
+        return this.parseDiagnosticFormat(output, executionTime, mode);
       } else {
         // Human 格式解析
         return this.parseHumanFormat(output, executionTime, mode);
@@ -530,9 +536,9 @@ export class ArduinoLintService {
   }
 
   /**
-   * 解析 VS Code 格式输出
+   * 解析诊断定位格式输出
    */
-  private parseVSCodeFormat(output: string, executionTime: number, mode: LintMode): LintResult {
+  private parseDiagnosticFormat(output: string, executionTime: number, mode: LintMode): LintResult {
     const errors: LintError[] = [];
     const warnings: LintError[] = [];
 
@@ -552,7 +558,7 @@ export class ArduinoLintService {
       const trimmedLine = line.trim();
       if (!trimmedLine) continue;
 
-      // VS Code 格式: file(line,column): severity: message
+      // 诊断定位格式: file(line,column): severity: message
       const match = trimmedLine.match(/^(.+)\((\d+),(\d+)\):\s+(error|warning|info):\s+(.+)$/);
       if (match) {
         const [, file, lineStr, colStr, severity, message] = match;

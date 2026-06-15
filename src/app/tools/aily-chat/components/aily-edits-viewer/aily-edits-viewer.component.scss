@@ -152,12 +152,12 @@
                 }
 
                 &.secondary {
-                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
-                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                    background: var(--aily-button-secondary-bg, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--aily-button-secondary-text, var(--aily-text-quaternary, #d4d4d4));
 
                     &:hover {
-                        background: var(--vscode-button-secondaryHoverBackground, var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.08)));
-                        color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                        background: var(--aily-button-secondary-hover-bg, var(--aily-chat-viewer-overlay-hover, rgba(255, 255, 255, 0.08)));
+                        color: var(--aily-button-secondary-text, var(--aily-text-quaternary, #d4d4d4));
                     }
                 }
 
@@ -166,13 +166,13 @@
                 }
 
                 &.keep-btn {
-                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
-                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                    background: var(--aily-button-secondary-bg, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--aily-button-secondary-text, var(--aily-text-quaternary, #d4d4d4));
                 }
 
                 &.undo-btn {
-                    background: var(--vscode-button-secondaryBackground, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
-                    color: var(--vscode-button-secondaryForeground, var(--aily-text-quaternary, #d4d4d4));
+                    background: var(--aily-button-secondary-bg, var(--aily-bg-tertiary, rgba(255, 255, 255, 0.08)));
+                    color: var(--aily-button-secondary-text, var(--aily-text-quaternary, #d4d4d4));
                 }
 
                 &:disabled {

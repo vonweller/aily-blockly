@@ -1,63 +1,69 @@
-/**
- * ChatTerminalPartComponent — 终端命令输出渲染器
- *
- * 使用与 confirmation widget 接近的紧凑卡片样式：
- *   - 标题行 + 运行状态
- *   - 命令预览块
- *   - 可折叠输出区
- */
 import {
+  AfterViewChecked,
+  ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  EventEmitter,
   Input,
   OnChanges,
+  OnDestroy,
+  Output,
   SimpleChanges,
-  ChangeDetectionStrategy,
-  ChangeDetectorRef,
-  ElementRef,
   ViewChild,
-  AfterViewChecked,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChatCommandPreviewComponent } from '../chat-command-preview/chat-command-preview.component';
-import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.component';
+
+import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.types';
 
 @Component({
   selector: 'aily-chat-terminal-part',
   standalone: true,
-  imports: [CommonModule, ChatCommandPreviewComponent, ChatPartHeaderShellComponent],
+  imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="term-container" [class.thinking]="isRunning">
-      <aily-chat-part-header-shell
-        [title]="headerTitle"
-        [meta]="headerMeta"
-        [pill]="headerPill"
-        [tone]="statusTone"
-        [iconClass]="statusIconClass"
-        [iconSpin]="isRunning"
-        [showChevron]="hasDetailContent"
-        [clickable]="hasDetailContent"
-        [expanded]="hasDetailContent && !collapsed"
-        (toggleRequested)="toggleCollapse()"></aily-chat-part-header-shell>
-
-      @if (hasDetailContent && !collapsed) {
-        <div class="term-body">
-          @if (command) {
-            <aily-chat-command-preview class="term-command-block" [command]="command" />
-          }
-
-          @if (hasOutput) {
-            <div class="term-output-block">
-              @if (output) {
-                <pre class="term-output" #outputEl><code>{{ output }}</code></pre>
-              }
-              @if (stderr) {
-                <pre class="term-output term-stderr"><code>{{ stderr }}</code></pre>
-              }
-            </div>
-          }
+    <div class="terminal-tool-card" [attr.data-tone]="tone">
+      <div class="terminal-tool-title">
+        <span class="terminal-tool-decoration" [attr.data-tone]="tone" aria-hidden="true">
+          <i [class]="iconClass"></i>
+        </span>
+        <div class="terminal-tool-command">
+          <span class="terminal-tool-command-label">命令</span>
+          <code [textContent]="command || 'terminal command'"></code>
         </div>
-      }
+        @if (subtitle) {
+          <span class="terminal-tool-subtitle">{{ subtitle }}</span>
+        }
+        @if (status) {
+          <span class="terminal-tool-status" [attr.data-tone]="tone">{{ status }}</span>
+        }
+        @if (actions.length) {
+          <span class="terminal-action-bar" aria-label="终端操作">
+            @for (action of actions; track action.id) {
+              <button
+                type="button"
+                class="terminal-action-button"
+                [disabled]="action.disabled"
+                [attr.title]="action.tooltip || action.label"
+                [attr.aria-label]="action.label"
+                (click)="selectAction(action, $event)">
+                <i [class]="action.iconClass"></i>
+              </button>
+            }
+          </span>
+        }
+      </div>
+      <div
+        class="terminal-output-container"
+        #outputContainer
+        [class.terminal-output-container-no-output]="!hasOutput"
+        role="region"
+        [attr.aria-label]="'命令输出：' + (command || 'terminal command')">
+        @if (hasOutput) {
+          <pre class="terminal-output"><code [textContent]="output"></code></pre>
+        } @else {
+          <div class="terminal-output-empty">命令未产生输出</div>
+        }
+      </div>
     </div>
   `,
   styles: [`
@@ -66,154 +72,278 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
       min-width: 0;
     }
 
-    /*
-     * \u7ec8\u7aef\u5bb9\u5668\u2014\u2014\u5bf9\u9f50 think-viewer / subagent \u65e0\u9762\u677f\u98ce\u683c
-     * \u5916\u5c42\u65e0\u80cc\u666f\u8272\uff0c header \u53ef\u70b9\u51fb\u5e26 hover\uff0c\u5185\u5bb9\u533a\u5e26\u5de6\u4fa7\u8fde\u63a5\u7ebf
-     */
-    .term-container {
-      position: relative;
-      padding: 2px 0;
-      color: var(--chat-fg, #cccccc);
+    .terminal-tool-card {
       min-width: 0;
+      overflow: hidden;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--chat-bg-elevated, #1f1f1f) 86%, #000 14%);
     }
 
-    .term-body {
-      position: relative;
-      padding: 4px 0 6px 20px;
-      margin-top: 2px;
+    .terminal-tool-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       min-width: 0;
+      padding: 5px 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-bottom: 0;
+      border-top-left-radius: 6px;
+      border-top-right-radius: 6px;
+      background: color-mix(in srgb, var(--chat-bg-elevated, #252526) 92%, #fff 8%);
     }
 
-    .term-body::before {
-      content: '';
-      position: absolute;
-      left: 9px;
-      top: 0;
-      bottom: 0;
-      width: 1px;
-      background-color: var(--chat-border, rgba(255,255,255,0.10));
-      mask-image: linear-gradient(to bottom,
-        transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
-      -webkit-mask-image: linear-gradient(to bottom,
-        transparent 0px, #000 8px, #000 calc(100% - 8px), transparent 100%);
-    }
-
-    .term-command-block {
-      margin-top: 0;
-    }
-
-    .term-output-block {
-      margin-top: 6px;
-    }
-
-    .term-output {
-      margin: 0;
-      padding: 4px 0;
-      font-size: 12px;
-      line-height: 1.6;
+    .terminal-tool-decoration {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
       color: var(--chat-fg-dim, #8e8e8e);
-      max-height: 200px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      overflow-wrap: break-word;
+      font-size: 12px;
+    }
+
+    .terminal-tool-decoration[data-tone='success'] { color: var(--chat-success, #89d185); }
+    .terminal-tool-decoration[data-tone='error'] { color: var(--chat-error, #f14c4c); }
+    .terminal-tool-decoration[data-tone='info'] { color: var(--chat-info, #75beff); }
+
+    @keyframes terminal-tool-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .terminal-tool-decoration i.cag-spin,
+    .terminal-tool-decoration i.fa-spin {
+      display: inline-block;
+      transform-origin: center center;
+      will-change: transform;
+      animation: terminal-tool-spin 0.8s linear infinite;
+    }
+
+    .terminal-tool-command {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .terminal-tool-command-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--chat-fg-muted, #6a6a6a);
+    }
+
+    .terminal-tool-command code {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       border: 0;
       background: transparent;
+      color: var(--chat-fg, #cccccc);
       font-family: Consolas, 'Courier New', monospace;
-    }
-    .term-output::-webkit-scrollbar { width: 6px; }
-    .term-output::-webkit-scrollbar-track { background: transparent; }
-    .term-output::-webkit-scrollbar-thumb { background: var(--chat-border, rgba(255,255,255,0.10)); border-radius: 5px; }
-    .term-stderr {
-      margin-top: 4px;
-      color: var(--chat-error, #f14c4c);
+      font-size: 12px;
+      line-height: 1.35;
     }
 
-    @keyframes term-spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
+    .terminal-tool-subtitle {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .terminal-tool-status {
+      flex: 0 0 auto;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.1);
+      color: var(--chat-fg-dim, #8e8e8e);
+      background: rgba(255,255,255,0.04);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .terminal-tool-status[data-tone='success'] {
+      color: var(--chat-success, #89d185);
+      border-color: rgba(137, 209, 133, 0.22);
+      background: rgba(137, 209, 133, 0.08);
+    }
+
+    .terminal-tool-status[data-tone='error'] {
+      color: var(--chat-error, #f14c4c);
+      border-color: rgba(241, 76, 76, 0.22);
+      background: rgba(241, 76, 76, 0.08);
+    }
+
+    .terminal-tool-status[data-tone='info'] {
+      color: var(--chat-info, #75beff);
+      border-color: rgba(117, 190, 255, 0.2);
+      background: rgba(117, 190, 255, 0.08);
+    }
+
+    .terminal-action-bar {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+    }
+
+    .terminal-action-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--chat-fg-dim, #8e8e8e);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .terminal-action-button:hover:not(:disabled),
+    .terminal-action-button:focus-visible:not(:disabled) {
+      color: var(--chat-fg, #cccccc);
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.12);
+      outline: none;
+    }
+
+    .terminal-action-button:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+    }
+
+    .terminal-output-container {
+      max-height: 300px;
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-bottom-left-radius: 6px;
+      border-bottom-right-radius: 6px;
+      background: color-mix(in srgb, var(--chat-bg, #181818) 88%, #000 12%);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.22) transparent;
+    }
+
+    .terminal-output-container:focus-visible {
+      outline: 1px solid var(--chat-focus, #4da3ff);
+      outline-offset: 2px;
+    }
+
+    .terminal-output-container-no-output {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+    }
+
+    .terminal-output {
+      margin: 0;
+      padding: 7px 10px;
+      white-space: pre;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--chat-fg, #cccccc);
+    }
+
+    .terminal-output code {
+      display: block;
+      white-space: pre;
+      font: inherit;
+      color: inherit;
+    }
+
+    .terminal-output-empty {
+      padding: 6px 10px;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 12px;
+      line-height: 1.35;
+      font-style: italic;
     }
   `],
 })
-export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked {
+export class ChatTerminalPartComponent implements OnChanges, AfterViewChecked, OnDestroy {
   @Input() command = '';
+  @Input() subtitle?: string;
+  @Input() status?: string;
+  @Input() tone: 'info' | 'success' | 'error' | 'neutral' = 'neutral';
+  @Input() iconClass = 'fa-light fa-terminal';
   @Input() output = '';
-  @Input() stderr = '';
-  @Input() exitCode: number | undefined;
-  @Input() isRunning = false;
+  @Input() hasOutput = false;
+  @Input() actions: readonly ActivityToolbarActionDisplayData[] = [];
 
-  @ViewChild('outputEl') outputEl?: ElementRef<HTMLPreElement>;
+  @Output() actionSelected = new EventEmitter<ActivityToolbarActionDisplayData>();
 
-  collapsed = false;
-  hasError = false;
-  hasOutput = false;
+  @ViewChild('outputContainer') outputContainer?: ElementRef<HTMLElement>;
 
-  private _shouldAutoScroll = true;
-
-  get headerTitle(): string {
-    return '运行终端命令';
-  }
-
-  get headerMeta(): string | undefined {
-    if (this.hasError) {
-      return `退出码 ${this.exitCode}`;
-    }
-
-    return undefined;
-  }
-
-  get headerPill(): string | undefined {
-    if (this.isRunning) {
-      return '进行中';
-    }
-
-    if (this.hasError) {
-      return '失败';
-    }
-
-    return undefined;
-  }
-
-  get statusTone(): 'info' | 'success' | 'error' {
-    if (this.isRunning) {
-      return 'info';
-    }
-
-    return this.hasError ? 'error' : 'success';
-  }
-
-  get hasDetailContent(): boolean {
-    return !!this.command || this.hasOutput;
-  }
-
-  get statusIconClass(): string {
-    if (this.isRunning) return 'fa-light fa-spinner-third';
-    return this.hasError ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check';
-  }
-
-  constructor(private cdr: ChangeDetectorRef) {}
+  private shouldAutoScroll = false;
+  private scrollFrameId: number | null = null;
 
   ngOnChanges(changes: SimpleChanges): void {
-    this.hasError = this.exitCode != null && this.exitCode !== 0;
-    this.hasOutput = !!(this.output || this.stderr);
-
-    // 运行中时自动展开
-    if (changes['isRunning'] && this.isRunning) {
-      this.collapsed = false;
+    if (changes['output'] || changes['hasOutput']) {
+      this.shouldAutoScroll = true;
     }
   }
 
   ngAfterViewChecked(): void {
-    if (this.outputEl && this._shouldAutoScroll) {
-      const el = this.outputEl.nativeElement;
-      if (this.isRunning) {
-        el.scrollTop = el.scrollHeight;
-      }
+    if (!this.shouldAutoScroll || !this.outputContainer) {
+      return;
     }
+
+    this.shouldAutoScroll = false;
+    this.scheduleAutoScroll();
   }
 
-  toggleCollapse(): void {
-    this.collapsed = !this.collapsed;
-    this.cdr.markForCheck();
+  ngOnDestroy(): void {
+    this.cancelAutoScroll();
+  }
+
+  selectAction(action: ActivityToolbarActionDisplayData, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (action.disabled) {
+      return;
+    }
+    this.actionSelected.emit(action);
+  }
+
+  private scheduleAutoScroll(): void {
+    if (this.scrollFrameId !== null || typeof globalThis.requestAnimationFrame !== 'function') {
+      if (typeof globalThis.requestAnimationFrame !== 'function') {
+        this.scrollToBottom();
+      }
+      return;
+    }
+
+    this.scrollFrameId = globalThis.requestAnimationFrame(() => {
+      this.scrollFrameId = null;
+      this.scrollToBottom();
+    });
+  }
+
+  private cancelAutoScroll(): void {
+    if (this.scrollFrameId === null) {
+      return;
+    }
+    globalThis.cancelAnimationFrame?.(this.scrollFrameId);
+    this.scrollFrameId = null;
+  }
+
+  private scrollToBottom(): void {
+    const element = this.outputContainer?.nativeElement;
+    if (!element) {
+      return;
+    }
+    element.scrollTop = element.scrollHeight;
   }
 }

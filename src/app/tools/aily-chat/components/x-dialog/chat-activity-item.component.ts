@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, SimpleChanges, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { ComponentMap } from 'ngx-x-markdown';
 
 import { AilyHost } from '../../core/host';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
-import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
+import { ChatTerminalPartComponent } from './chat-terminal-part/chat-terminal-part.component';
+import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
 import {
   getDiffDisplayLines,
@@ -24,12 +25,16 @@ import {
   type InstructionDiagnosticFilter,
 } from './x-aily-state-viewer/activity-detail-items';
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../../helpers/chat-artifact-reference';
-import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../../services/chat-runtime-interaction-host.service';
+import {
+  ChatRuntimeInteractionHostService,
+  type RuntimeCommandSessionActionResult,
+  type RuntimeConfirmationDecision,
+} from '../../services/chat-runtime-interaction-host.service';
 
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent],
+  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -37,7 +42,8 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       [attr.data-kind]="item.kind"
       [class.cag-item-first]="first"
       [class.cag-item-last]="last"
-      [class.cag-item-only]="only">
+      [class.cag-item-only]="only"
+      [class.cag-item-pending-approval]="isPendingApprovalItem()">
       <div class="cag-item-icon-shell ccenter" [class.loading-icon]="item.kind !== 'thinking' && item.isSpinning" [class.lloading]="item.kind !== 'thinking' && item.isSpinning">
         <i [class]="item.iconClass"
            [class.cag-spin]="item.kind === 'thinking' && item.isSpinning"
@@ -77,6 +83,21 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
                   }
                 </div>
                 <span class="cag-item-tool-title-side">
+                  @if (shouldRenderHeaderToolbar() && item.toolbarActions?.length) {
+                    <span class="cag-item-toolbar" aria-label="工具操作">
+                      @for (action of item.toolbarActions; track action.id) {
+                        <button
+                          type="button"
+                          class="cag-item-toolbar-button"
+                          [disabled]="isToolbarActionDisabled(action)"
+                          [attr.title]="action.tooltip || action.label"
+                          [attr.aria-label]="action.label"
+                          (click)="handleToolbarAction(action, $event)">
+                          <i [class]="action.iconClass"></i>
+                        </button>
+                      }
+                    </span>
+                  }
                   @if (item.toolHeader?.meta) {
                     <span class="cag-item-head-meta">{{ item.toolHeader?.meta }}</span>
                   }
@@ -369,6 +390,17 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
                                     </section>
                                   }
                                 </div>
+                              } @else if (group.kind === 'terminal') {
+                                <aily-chat-terminal-part
+                                  [command]="getTerminalCommandText(group)"
+                                  [subtitle]="getTerminalCommandSubtitle(group)"
+                                  [status]="getTerminalCommandStatus(group)"
+                                  [tone]="getTerminalGroupTone(group)"
+                                  [iconClass]="getTerminalGroupIconClass(group)"
+                                  [hasOutput]="hasTerminalOutput(group)"
+                                  [output]="getTerminalOutputText(group)"
+                                  [actions]="getTerminalToolbarActions()"
+                                  (actionSelected)="handleTerminalToolbarAction($event)" />
                               } @else {
                                 @for (row of group.rows; track row.id) {
                                 <div class="cag-item-invocation-output" [attr.data-tone]="row.tone || 'neutral'" [attr.data-output-kind]="row.outputKind || 'default'">
@@ -406,11 +438,7 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
                                       }
                                       @if (row.note) {
                                         <div class="cag-item-invocation-output-stream-note">
-                                          <x-markdown
-                                            [content]="row.note"
-                                            [components]="componentMap"
-                                            rootClassName="x-markdown-dark cag-item-markdown"
-                                          />
+                                          <pre class="cag-item-invocation-output-terminal-block"><code [textContent]="row.note"></code></pre>
                                         </div>
                                       }
                                     </div>
@@ -689,6 +717,12 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       -webkit-mask-image: none;
     }
 
+    .cag-item.cag-item-pending-approval::before {
+      background: none;
+      mask-image: none;
+      -webkit-mask-image: none;
+    }
+
     .cag-item[data-kind='thinking'] {
       padding-top: 5px;
       padding-bottom: 4px;
@@ -813,6 +847,41 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       align-items: center;
       gap: 6px;
       flex-shrink: 0;
+    }
+
+    .cag-item-toolbar {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .cag-item-toolbar-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--chat-fg-dim, #8e8e8e);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .cag-item-toolbar-button:hover:not(:disabled),
+    .cag-item-toolbar-button:focus-visible:not(:disabled) {
+      color: var(--chat-fg, #cccccc);
+      background: rgba(255,255,255,0.07);
+      border-color: rgba(255,255,255,0.10);
+      outline: none;
+    }
+
+    .cag-item-toolbar-button:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
     }
 
     .cag-item-head-meta {
@@ -1378,6 +1447,14 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       padding: 0;
     }
 
+    .cag-item-invocation-output-group[data-group-kind='terminal'] {
+      min-width: 0;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+    }
+
     .cag-item-invocation-output-command {
       background: transparent;
     }
@@ -1673,6 +1750,25 @@ import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } f
       color: var(--chat-fg, #cccccc);
     }
 
+    .cag-item-invocation-output-terminal-block {
+      margin: 0;
+      padding: 8px 10px;
+      overflow-x: auto;
+      max-height: 260px;
+      border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(0,0,0,0.24);
+    }
+
+    .cag-item-invocation-output-terminal-block code {
+      display: block;
+      white-space: pre;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--chat-fg, #cccccc);
+    }
+
     .cag-item-invocation-output-diff-shell {
       display: flex;
       flex-direction: column;
@@ -1958,11 +2054,16 @@ export class ChatActivityItemComponent implements OnChanges {
 
   readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
+  private readonly cdr = inject(ChangeDetectorRef);
 
   detailExpanded = false;
 
   shouldRenderInlineApproval(): boolean {
     return !!this.item?.approval && (this.item.approval.resolved === true || this.hasActiveInlineApproval());
+  }
+
+  isPendingApprovalItem(): boolean {
+    return !!this.item?.approval && this.item.approval.resolved !== true;
   }
 
   isInteractiveInlineApproval(): boolean {
@@ -2026,7 +2127,7 @@ export class ChatActivityItemComponent implements OnChanges {
         this.detailExpanded = nextAutoDetailExpanded;
       } else if (nextAutoDetailExpanded !== this.lastAutoDetailExpanded) {
         this.detailExpanded = nextAutoDetailExpanded;
-      } else if (this.item.detailExpanded === true && !this.detailExpanded) {
+      } else if (this.item.detailExpanded === true && !this.detailExpanded && !this.isCommandSessionContinuedInBackground()) {
         this.detailExpanded = true;
       }
 
@@ -2043,6 +2144,41 @@ export class ChatActivityItemComponent implements OnChanges {
     return !!this.item.toolHeader || this.item.headerKind === 'tool';
   }
 
+  shouldRenderHeaderToolbar(): boolean {
+    return !this.hasTerminalOutputGroup();
+  }
+
+  getTerminalToolbarActions(): readonly ActivityToolbarActionDisplayData[] {
+    return (this.item.toolbarActions || []).filter(action => this.shouldShowTerminalToolbarAction(action));
+  }
+
+  private shouldShowTerminalToolbarAction(action: ActivityToolbarActionDisplayData): boolean {
+    if (action.id === 'continue-background') {
+      const processId = this.getToolbarProcessId(action);
+      return !!processId
+        && !action.disabled
+        && this.runtimeInteractionHost?.isCommandSessionBackground(this.sessionId, processId) !== true;
+    }
+    if (action.id === 'stop-process') {
+      return !!this.getToolbarProcessId(action) && !action.disabled;
+    }
+    if (action.id === 'open-output-file') {
+      return !action.disabled;
+    }
+    return true;
+  }
+
+  private hasTerminalOutputGroup(): boolean {
+    const invocationDetail = this.item.invocationDetail;
+    if (!invocationDetail) {
+      return false;
+    }
+
+    return invocationDetail.outputSections.some(section =>
+      this.getOutputGroups(section).some(group => group.kind === 'terminal'),
+    );
+  }
+
   getInstructionProjection() {
     return buildInstructionDetailProjection({
       id: this.item.id,
@@ -2055,11 +2191,152 @@ export class ChatActivityItemComponent implements OnChanges {
     this.selectedInstructionFilter = filterId;
   }
 
+  handleToolbarAction(action: ActivityToolbarActionDisplayData, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.runToolbarAction(action);
+  }
+
+  handleTerminalToolbarAction(action: ActivityToolbarActionDisplayData): void {
+    this.runToolbarAction(action);
+  }
+
+  private runToolbarAction(action: ActivityToolbarActionDisplayData): void {
+    if (this.isToolbarActionDisabled(action)) {
+      return;
+    }
+
+    switch (action.id) {
+      case 'toggle-output':
+        this.toggleDetail();
+        return;
+      case 'open-output-file':
+        this.openToolbarOutputFile(action);
+        return;
+      case 'continue-background':
+        void this.continueToolbarProcessInBackground(action);
+        return;
+      case 'stop-process':
+        void this.stopToolbarProcess(action);
+        return;
+      default:
+        return;
+    }
+  }
+
+  isToolbarActionDisabled(action: ActivityToolbarActionDisplayData): boolean {
+    if (action.disabled) {
+      return true;
+    }
+    if (action.id === 'continue-background') {
+      const processId = this.getToolbarProcessId(action);
+      return !processId || this.runtimeInteractionHost?.isCommandSessionBackground(this.sessionId, processId) === true;
+    }
+    return false;
+  }
+
+  private async continueToolbarProcessInBackground(action: ActivityToolbarActionDisplayData): Promise<void> {
+    const processId = this.getToolbarProcessId(action);
+    if (!processId || !this.runtimeInteractionHost) {
+      return;
+    }
+
+    await this.runtimeInteractionHost.requestCommandSessionAction(this.sessionId, {
+      actionId: 'continue_background',
+      processId,
+      outputSessionId: typeof action.data?.['outputSessionId'] === 'string' ? action.data['outputSessionId'] : undefined,
+      outputFilePath: typeof action.data?.['outputFilePath'] === 'string' ? action.data['outputFilePath'] : undefined,
+    });
+    this.detailExpanded = false;
+    this.item = {
+      ...this.item,
+      toolHeader: this.item.toolHeader
+        ? {
+            ...this.item.toolHeader,
+            pill: '后台运行',
+            pillTone: 'neutral',
+          }
+        : this.item.toolHeader,
+      toolbarActions: this.item.toolbarActions?.filter(toolbarAction => toolbarAction.id !== 'continue-background'),
+    };
+    this.cdr.markForCheck();
+  }
+
+  private async stopToolbarProcess(action: ActivityToolbarActionDisplayData): Promise<void> {
+    const processId = this.getToolbarProcessId(action);
+    if (!processId || !this.runtimeInteractionHost) {
+      return;
+    }
+
+    const result = await this.runtimeInteractionHost.requestCommandSessionAction(this.sessionId, {
+      actionId: 'stop',
+      processId,
+      outputSessionId: typeof action.data?.['outputSessionId'] === 'string' ? action.data['outputSessionId'] : undefined,
+      outputFilePath: typeof action.data?.['outputFilePath'] === 'string' ? action.data['outputFilePath'] : undefined,
+    });
+    this.applyCommandSessionActionResult(result);
+  }
+
+  private applyCommandSessionActionResult(result: RuntimeCommandSessionActionResult): void {
+    if (!result.ok || result.actionId !== 'stop') {
+      return;
+    }
+
+    const snapshot = result.snapshot;
+    const running = snapshot?.running === true;
+    const exitCode = typeof snapshot?.exitCode === 'number' ? snapshot.exitCode : 130;
+    const status = snapshot?.status || 'killed';
+    const stopped = !running;
+
+    this.item = {
+      ...this.item,
+      isSpinning: running,
+      iconClass: running
+        ? this.item.iconClass
+        : (exitCode && exitCode !== 0 ? 'fa-light fa-circle-xmark' : 'fa-light fa-circle-check'),
+      iconColor: running ? this.item.iconColor : (exitCode && exitCode !== 0 ? '#d4380d' : '#389e0d'),
+      toolHeader: this.item.toolHeader
+        ? {
+            ...this.item.toolHeader,
+            meta: stopped && exitCode != null ? `退出码 ${exitCode}` : this.item.toolHeader.meta,
+            pill: stopped ? (status === 'killed' ? '已停止' : this.item.toolHeader.pill) : this.item.toolHeader.pill,
+            pillTone: stopped ? (status === 'killed' ? 'warn' : this.item.toolHeader.pillTone) : this.item.toolHeader.pillTone,
+          }
+        : this.item.toolHeader,
+      toolbarActions: this.item.toolbarActions?.filter(toolbarAction =>
+        toolbarAction.id !== 'stop-process' && toolbarAction.id !== 'continue-background',
+      ),
+    };
+    this.cdr.markForCheck();
+  }
+
+  private getToolbarProcessId(action: ActivityToolbarActionDisplayData): string {
+    return typeof action.data?.['processId'] === 'string'
+      ? action.data['processId'].trim()
+      : '';
+  }
+
+  private openToolbarOutputFile(action: ActivityToolbarActionDisplayData): void {
+    const outputFilePath = typeof action.data?.['outputFilePath'] === 'string'
+      ? action.data['outputFilePath'].trim()
+      : '';
+    if (!outputFilePath) {
+      return;
+    }
+
+    AilyHost.get().shell?.openByExplorer?.(outputFilePath);
+  }
+
   hasDetailContent(): boolean {
     return this.hasDetailSections() || !!this.item.instructionMetadata;
   }
 
   shouldAutoExpandDetails(): boolean {
+    if (this.isCommandSessionContinuedInBackground()) {
+      return false;
+    }
+
     if (this.item.detailExpanded === true) {
       return true;
     }
@@ -2082,6 +2359,14 @@ export class ChatActivityItemComponent implements OnChanges {
     }
 
     return invocationDetail.outputSections.some((section) => (section.rows?.length || 0) > 0);
+  }
+
+  private isCommandSessionContinuedInBackground(): boolean {
+    const action = this.item.toolbarActions?.find(toolbarAction =>
+      toolbarAction.id === 'continue-background' || toolbarAction.id === 'stop-process',
+    );
+    const processId = action ? this.getToolbarProcessId(action) : '';
+    return !!processId && this.runtimeInteractionHost?.isCommandSessionBackground(this.sessionId, processId) === true;
   }
 
   toggleDetail(): void {
@@ -2125,6 +2410,76 @@ export class ChatActivityItemComponent implements OnChanges {
     return isGroupedDiffOutputGroup(group);
   }
 
+  getTerminalGroupTone(group: StateDetailOutputGroup): 'info' | 'success' | 'error' | 'neutral' {
+    const command = this.getTerminalCommandRow(group);
+    if (command?.tone === 'info' || command?.tone === 'success' || command?.tone === 'error' || command?.tone === 'neutral') {
+      return command.tone;
+    }
+
+    const status = `${command?.trailing || ''} ${command?.subtitle || ''}`.toLowerCase();
+    if (status.includes('运行') || status.includes('running')) {
+      return 'info';
+    }
+    if (status.includes('失败') || status.includes('error') || status.includes('exit') && !status.includes('exit 0') || status.includes('退出码 ') && !status.includes('退出码 0')) {
+      return 'error';
+    }
+    if (status.includes('完成') || status.includes('success') || status.includes('completed') || status.includes('退出码 0')) {
+      return 'success';
+    }
+    if (group.rows.some(row => row.outputChannel === 'stderr' && (row.note || '').trim().length > 0)) {
+      return 'error';
+    }
+    return 'neutral';
+  }
+
+  getTerminalGroupIconClass(group: StateDetailOutputGroup): string {
+    const tone = this.getTerminalGroupTone(group);
+    if (tone === 'success') {
+      return 'fa-light fa-circle-check';
+    }
+    if (tone === 'error') {
+      return 'fa-light fa-circle-xmark';
+    }
+    if (tone === 'info') {
+      return 'fa-light fa-spinner-third cag-spin';
+    }
+    return 'fa-light fa-terminal';
+  }
+
+  getTerminalCommandText(group: StateDetailOutputGroup): string {
+    return this.getTerminalCommandRow(group)?.note?.trim() || 'terminal command';
+  }
+
+  getTerminalCommandSubtitle(group: StateDetailOutputGroup): string | undefined {
+    return this.getTerminalCommandRow(group)?.subtitle;
+  }
+
+  getTerminalCommandStatus(group: StateDetailOutputGroup): string | undefined {
+    return this.getTerminalCommandRow(group)?.trailing;
+  }
+
+  hasTerminalOutput(group: StateDetailOutputGroup): boolean {
+    return group.rows.some(row => row.outputKind === 'terminal-stream' && (row.note || '').trim().length > 0);
+  }
+
+  getTerminalOutputText(group: StateDetailOutputGroup): string {
+    const stdout = group.rows
+      .filter(row => row.outputKind === 'terminal-stream' && row.outputChannel !== 'stderr')
+      .map(row => row.note || '')
+      .filter(text => text.length > 0)
+      .join('\n');
+    const stderr = group.rows
+      .filter(row => row.outputKind === 'terminal-stream' && row.outputChannel === 'stderr')
+      .map(row => row.note || '')
+      .filter(text => text.length > 0)
+      .join('\n');
+
+    if (stdout && stderr) {
+      return `${stdout.replace(/\s+$/u, '')}\n\n[stderr]\n${stderr}`;
+    }
+    return stdout || stderr;
+  }
+
   getGroupedDiffFiles(rows: readonly StateDetailRow[]): readonly DiffDisplayFile[] {
     return getGroupedDiffFiles(rows);
   }
@@ -2153,6 +2508,10 @@ export class ChatActivityItemComponent implements OnChanges {
     return section.rows.length > 0
       ? [{ id: `${section.title}:fallback`, kind: 'generic', rows: section.rows }]
       : [];
+  }
+
+  private getTerminalCommandRow(group: StateDetailOutputGroup): StateDetailRow | undefined {
+    return group.rows.find(row => row.outputKind === 'terminal-command');
   }
 
   getResolvedReferenceLabel(reference: string): string {

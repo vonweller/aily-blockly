@@ -9,11 +9,11 @@ export type ChatSurfaceModeId = ChatModeId;
 
 export type ChatSessionType = string;
 export const LOCAL_CHAT_SESSION_TYPE: ChatSessionType = 'local';
-export const COPILOTCLI_CHAT_SESSION_TYPE: ChatSessionType = 'copilotcli';
+export const AILY_AGENT_CHAT_SESSION_TYPE: ChatSessionType = 'aily-agent';
 export const DEFAULT_CHAT_SESSION_TYPE: ChatSessionType = LOCAL_CHAT_SESSION_TYPE;
 
 const CHAT_SESSION_CUSTOM_AGENT_TARGETS = {
-  [COPILOTCLI_CHAT_SESSION_TYPE]: 'github-copilot',
+  [AILY_AGENT_CHAT_SESSION_TYPE]: 'aily',
 } as const satisfies Record<string, ChatResolvedModeTarget>;
 
 export interface ChatSelectedMode {
@@ -33,9 +33,12 @@ export interface ChatResolvedModeHandoff {
   readonly label: string;
   readonly agent: string;
   readonly prompt: string;
+  readonly send?: boolean;
+  readonly showContinueOn?: boolean;
+  readonly model?: string;
 }
 
-export type ChatResolvedModeTarget = 'vscode' | 'github-copilot' | 'claude' | 'undefined';
+export type ChatResolvedModeTarget = 'aily' | 'undefined';
 
 export interface ChatResolvedModeVisibility {
   readonly userInvocable: boolean;
@@ -176,43 +179,11 @@ export interface ChatSessionInputState {
   groups?: readonly ChatSessionProviderOptionGroup[];
 }
 
-export const LEGACY_CHAT_PLAN_MODE_ID = 'plan';
-export const LEGACY_CHAT_PLAN_AGENT_TARGET = 'Plan';
+export const PLAN_CHAT_AGENT_TARGET = 'Plan';
 export const PLAN_CHAT_MODE_DESCRIPTION = 'Researches and outlines multi-step plans';
 export const PLAN_CHAT_MODE_ARGUMENT_HINT = 'Outline the goal or problem to research';
 export const PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT = 'Start implementation';
-
-const PLAN_CHAT_MODE_INSTRUCTIONS = `You are a planning agent working with the user to build an actionable implementation plan.
-
-Your only responsibility in this mode is planning and research. Do not start implementation, do not edit workspace files, and do not act as if planning approval has already been granted.
-
-Current plan location: /memories/session/plan.md. Keep the durable plan there while also presenting the plan to the user in the conversation.
-
-Workflow:
-1. Discovery
-- Gather the missing context needed to understand the task, existing implementation patterns, dependencies, and blockers.
-- Prefer read-only investigation first. If the task spans multiple independent areas, split discovery across matching subagents instead of doing everything serially.
-- Feed findings back into the evolving plan.
-
-2. Alignment
-- When research reveals ambiguity or tradeoffs, clarify them with the user before finalizing the plan.
-- Surface constraints, risks, and alternative approaches explicitly.
-- If the answers materially change scope, loop back into discovery.
-
-3. Design
-- Produce a concrete, reviewable implementation plan with explicit steps, dependencies, validation, and scope boundaries.
-- Reference the specific files, functions, types, and patterns that should be reused.
-- Save the plan to /memories/session/plan.md and also show the plan to the user.
-
-4. Refinement
-- Revise the plan when the user asks for changes.
-- Clarify open questions or alternatives before approval.
-- Keep the plan file and the user-visible plan in sync until the user explicitly approves or hands off to implementation.
-
-Rules:
-- Stop if you are considering file-editing tools for implementation work; this mode is for planning only.
-- Use questions freely to remove ambiguity rather than making large assumptions.
-- The final plan should be concise enough to scan and detailed enough to execute without guesswork.`;
+export const PLAN_CHAT_MODE_OPEN_IN_EDITOR_PROMPT = '#createFile the plan as is into an untitled file (`untitled:plan-{camelCaseName}.prompt.md` without frontmatter) for further refinement.';
 
 const BUILTIN_CHAT_MODE_LABELS: Record<ChatSurfaceModeId, string> = {
   ask: 'Ask',
@@ -268,14 +239,9 @@ export function resolveChatModeId(value: unknown): ChatModeId | undefined {
   }
 }
 
-export function isLegacyChatPlanModeValue(value: unknown): boolean {
-  return typeof value === 'string'
-    && value.trim().toLowerCase() === LEGACY_CHAT_PLAN_MODE_ID;
-}
-
 export function isPlanChatAgentTarget(value: unknown): boolean {
   return normalizeAgentIdentifier(typeof value === 'string' ? value : '')
-    === normalizeAgentIdentifier(LEGACY_CHAT_PLAN_AGENT_TARGET);
+    === normalizeAgentIdentifier(PLAN_CHAT_AGENT_TARGET);
 }
 
 export function normalizeChatModeId(
@@ -300,16 +266,11 @@ export function normalizeChatSelectedMode(
   value: { readonly modeId?: unknown; readonly customAgentTarget?: unknown } | undefined,
   fallback: ChatSelectedMode = DEFAULT_CHAT_SELECTED_MODE,
 ): ChatSelectedMode {
-  const isLegacyPlanMode = isLegacyChatPlanModeValue(value?.modeId);
-  const modeId = isLegacyPlanMode
-    ? 'agent'
-    : normalizeChatSurfaceModeId(value?.modeId, fallback.modeId);
+  const modeId = normalizeChatSurfaceModeId(value?.modeId, fallback.modeId);
   const customAgentTarget = normalizeAgentIdentifier(
     typeof value?.customAgentTarget === 'string'
       ? value.customAgentTarget
-      : isLegacyPlanMode
-        ? LEGACY_CHAT_PLAN_AGENT_TARGET
-        : undefined,
+      : undefined,
   ) || undefined;
 
   return {
@@ -340,14 +301,14 @@ export function createBuiltinChatResolvedMode(
 
 export function createPlanChatResolvedMode(): ChatResolvedMode {
   return {
-    id: LEGACY_CHAT_PLAN_AGENT_TARGET,
+    id: PLAN_CHAT_AGENT_TARGET,
     kind: 'agent',
     isBuiltin: false,
-    name: LEGACY_CHAT_PLAN_AGENT_TARGET,
-    label: LEGACY_CHAT_PLAN_AGENT_TARGET,
+    name: PLAN_CHAT_AGENT_TARGET,
+    label: PLAN_CHAT_AGENT_TARGET,
     description: PLAN_CHAT_MODE_DESCRIPTION,
     argumentHint: PLAN_CHAT_MODE_ARGUMENT_HINT,
-    target: 'vscode',
+    target: 'aily',
     sessionTypes: [LOCAL_CHAT_SESSION_TYPE],
     visibility: {
       userInvocable: true,
@@ -359,17 +320,26 @@ export function createPlanChatResolvedMode(): ChatResolvedMode {
         label: 'Start Implementation',
         agent: 'agent',
         prompt: PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT,
+        send: true,
+      },
+      {
+        label: 'Open in Editor',
+        agent: 'agent',
+        prompt: PLAN_CHAT_MODE_OPEN_IN_EDITOR_PROMPT,
+        send: true,
+        showContinueOn: false,
       },
     ],
     modeInstructions: {
-      content: PLAN_CHAT_MODE_INSTRUCTIONS,
+      content: '',
       toolReferences: [],
       metadata: {
         source: 'bootstrap',
+        fallbackOnly: true,
         disableModelInvocation: true,
       },
     },
-    customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
+    customAgentTarget: PLAN_CHAT_AGENT_TARGET,
   };
 }
 
@@ -464,6 +434,9 @@ export function serializeChatResolvedModesCache(
           label: handoff.label,
           agent: handoff.agent,
           prompt: handoff.prompt,
+          ...(handoff.send !== undefined ? { send: handoff.send } : {}),
+          ...(handoff.showContinueOn !== undefined ? { showContinueOn: handoff.showContinueOn } : {}),
+          ...(handoff.model ? { model: handoff.model } : {}),
         })),
       } : {}),
       ...(mode.agents ? { agents: [...mode.agents] } : {}),
@@ -709,13 +682,6 @@ export function resolveChatSelectedModeFromInputState(
   }
 
   if (mode.kind === 'agent') {
-    if (isLegacyChatPlanModeValue(mode.id)) {
-      return normalizeChatSelectedMode({
-        modeId: 'agent',
-        customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-      });
-    }
-
     const builtinModeId = resolveChatSurfaceModeId(mode.id);
     if (!mode.id || builtinModeId === 'agent') {
       if (mode.modeInstructions?.name) {
@@ -743,13 +709,6 @@ export function resolveChatSelectedModeFromInputState(
     return normalizeChatSelectedMode({ modeId: builtinModeId });
   }
 
-  if (isLegacyChatPlanModeValue(mode.id)) {
-    return normalizeChatSelectedMode({
-      modeId: 'agent',
-      customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-    });
-  }
-
   return mode.id
     ? normalizeChatSelectedMode({
         modeId: 'agent',
@@ -766,13 +725,6 @@ export function normalizeChatSessionInputState(
   const mode = normalizeChatSessionInputMode(value?.mode);
   if (!mode) {
     return createChatSessionInputState(normalizeChatSelectedMode(fallback), { groups });
-  }
-
-  if (isLegacyChatPlanModeValue(mode.id)) {
-    return createChatSessionInputState({
-      modeId: 'agent',
-      customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-    }, { groups });
   }
 
   const builtinModeId = resolveChatSurfaceModeId(mode.id);
@@ -1232,9 +1184,7 @@ function readChatResolvedModeTarget(
 
   const normalizedValue = value.trim().toLowerCase();
   return (
-    normalizedValue === 'vscode'
-    || normalizedValue === 'github-copilot'
-    || normalizedValue === 'claude'
+    normalizedValue === 'aily'
     || normalizedValue === 'undefined'
   )
     ? normalizedValue as ChatResolvedModeTarget
@@ -1290,6 +1240,9 @@ function readChatResolvedModeHandoffs(
       readonly label?: unknown;
       readonly agent?: unknown;
       readonly prompt?: unknown;
+      readonly send?: unknown;
+      readonly showContinueOn?: unknown;
+      readonly model?: unknown;
     };
     const label = readNonEmptyString(handoff.label);
     const agent = readNonEmptyString(handoff.agent);
@@ -1298,7 +1251,18 @@ function readChatResolvedModeHandoffs(
       return [];
     }
 
-    return [{ label, agent, prompt }];
+    const send = typeof handoff.send === 'boolean' ? handoff.send : undefined;
+    const showContinueOn = typeof handoff.showContinueOn === 'boolean' ? handoff.showContinueOn : undefined;
+    const model = readNonEmptyString(handoff.model);
+
+    return [{
+      label,
+      agent,
+      prompt,
+      ...(send !== undefined ? { send } : {}),
+      ...(showContinueOn !== undefined ? { showContinueOn } : {}),
+      ...(model ? { model } : {}),
+    }];
   });
 
   return handOffs.length > 0 ? handOffs : undefined;

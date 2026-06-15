@@ -9,6 +9,7 @@ const { app, BrowserWindow, ipcMain, dialog, screen, shell, Menu } = require("el
 
 const { isWin32, isDarwin, isLinux } = require("./platform");
 const projectLock = require("./project-lock");
+const ORIGINAL_PROCESS_PATH = process.env.PATH || process.env.Path || "";
 
 // 设置应用名称，用于 Windows 系统通知显示
 app.setName("aily blockly");
@@ -1491,6 +1492,91 @@ function appendPathSegment(pathValue, segment) {
   return `${pathValue}${path.delimiter}${segment}`;
 }
 
+function appendExecutableDirIfExists(pathValue, segment, executableName) {
+  if (!segment || !executableName) {
+    return pathValue;
+  }
+  const executablePath = path.join(segment, executableName);
+  if (!fs.existsSync(executablePath)) {
+    return pathValue;
+  }
+  return appendPathSegment(pathValue, segment);
+}
+
+function uniquePathSegments(segments) {
+  const seen = new Set();
+  const result = [];
+  for (const segment of segments) {
+    if (!segment || typeof segment !== "string") {
+      continue;
+    }
+    const normalized = segment.trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = isWin32 ? normalized.toLowerCase() : normalized;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function appendGitToolPaths(pathValue) {
+  const envGitPath = process.env.AILY_GIT_PATH || process.env.GIT_EXECUTABLE || "";
+  if (envGitPath) {
+    const gitPathStatTarget = fs.existsSync(envGitPath) ? envGitPath : "";
+    if (gitPathStatTarget) {
+      try {
+        const stat = fs.statSync(gitPathStatTarget);
+        const gitDir = stat.isDirectory() ? gitPathStatTarget : path.dirname(gitPathStatTarget);
+        pathValue = appendExecutableDirIfExists(pathValue, gitDir, isWin32 ? "git.exe" : "git");
+      } catch (_) {}
+    }
+  }
+
+  if (isWin32) {
+    const pathGitDirs = uniquePathSegments(
+      ORIGINAL_PROCESS_PATH
+        .split(path.delimiter)
+        .filter(segment => segment && fs.existsSync(path.join(segment, "git.exe")))
+    );
+    for (const gitDir of pathGitDirs) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git.exe");
+    }
+
+    const programFilesRoots = uniquePathSegments([
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs") : "",
+      "C:\\Program Files",
+      "C:\\Program Files (x86)",
+    ]);
+    for (const root of programFilesRoots) {
+      pathValue = appendExecutableDirIfExists(pathValue, path.join(root, "Git", "cmd"), "git.exe");
+      pathValue = appendExecutableDirIfExists(pathValue, path.join(root, "Git", "bin"), "git.exe");
+    }
+    return pathValue;
+  }
+
+  if (isDarwin) {
+    for (const gitDir of ["/usr/bin", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git");
+    }
+    return pathValue;
+  }
+
+  if (isLinux) {
+    for (const gitDir of ["/usr/bin", "/usr/local/bin", "/snap/bin"]) {
+      pathValue = appendExecutableDirIfExists(pathValue, gitDir, "git");
+    }
+  }
+
+  return pathValue;
+}
+
 // child 工具解压完成后再注入 PATH 与相关环境变量
 function applyChildToolEnv(childPath) {
   const nodeBinPath = path.join(childPath, isDarwin ? "node/bin" : "node");
@@ -1530,6 +1616,7 @@ function applyChildToolEnv(childPath) {
   customPath = appendPathSegment(customPath, ailyBuilderPath);
   customPath = appendPathSegment(customPath, ninjaPath);
   customPath = appendPathSegment(customPath, probeRsDir);
+  customPath = appendGitToolPaths(customPath);
 
   process.env.PATH = customPath;
   process.env.AILY_CHILD_PATH = childPath;

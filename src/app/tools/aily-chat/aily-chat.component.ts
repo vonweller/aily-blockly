@@ -57,6 +57,7 @@ import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordina
 import { ChatRequestController } from './helpers/chat-request-controller';
 import type { ChatPendingRequestKind, PendingFollowupRequest } from './helpers/chat-pending-request';
 import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
+import { ChatInputHistoryNavigator, type ChatInputHistoryEntry } from './helpers/chat-input-history-navigator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
 import { ChatActionRegistry } from './helpers/chat-action-registry';
@@ -65,6 +66,7 @@ import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helpe
 import { ChatMemoryShellCoordinator } from './helpers/chat-memory-shell-coordinator';
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
+import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -84,6 +86,7 @@ import { AilyChatSettingsComponent } from './components/settings/settings.compon
 import { AilyChatDebugViewerComponent } from './components/aily-chat-debug-viewer/aily-chat-debug-viewer.component';
 import { ChatInputPartHostComponent } from './components/chat-input-part-host.component';
 import { ChatRuntimeConfirmationCarouselComponent } from './components/chat-runtime-confirmation-carousel.component';
+import { ChatRuntimeQuestionCarouselComponent } from './components/chat-runtime-question-carousel.component';
 import { ChatRuntimePlanReviewComponent } from './components/chat-runtime-plan-review.component';
 import { ChatSessionListComponent } from './components/chat-session-list.component';
 import { ChatSessionPickerComponent } from './components/chat-session-picker.component';
@@ -153,6 +156,7 @@ interface PendingFollowupSection {
     AilyChatDebugViewerComponent,
     ChatInputPartHostComponent,
     ChatRuntimeConfirmationCarouselComponent,
+    ChatRuntimeQuestionCarouselComponent,
     ChatRuntimePlanReviewComponent,
     ChatSessionListComponent,
     ChatSessionPickerComponent,
@@ -206,9 +210,10 @@ export class AilyChatComponent implements OnDestroy {
   private observedDialogsElement: HTMLElement | null = null;
   private observedSessionViewportElement: HTMLElement | null = null;
   private readonly rememberedFullAccessSessions = new Set<string>();
+  private readonly inputHistoryNavigator = new ChatInputHistoryNavigator([], entries => this.persistInputHistoryEntries(entries));
+  private inputHistoryStorageKey: string | null = null;
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
-  private readonly toolOpenSubscription: Subscription;
   private pendingFollowupEditState: {
     readonly sessionId: string;
     readonly requestId: string;
@@ -266,11 +271,6 @@ export class AilyChatComponent implements OnDestroy {
     });
     this.sessionViewModelChangeSubscription = this.viewState.sessionViewModelChanged$.subscribe(() => {
       this.syncSessionListDisplayState();
-    });
-    this.toolOpenSubscription = this.uiService.actionSubject.subscribe((action: { action?: string; type?: string; data?: string }) => {
-      if (action?.action === 'open' && action?.type === 'tool' && action?.data === 'aily-chat') {
-        this.engine.scheduleComposerInputFocus();
-      }
     });
     // 注册 OnPush CD 回调 — viewAdapter 每次 flush/appendImmediate 后调用 markForCheck
     this.engine.setCdCallback(() => {
@@ -343,6 +343,7 @@ export class AilyChatComponent implements OnDestroy {
       },
       isWaiting: () => this.vm.isWaiting,
       getEditingPendingKind: () => this.getCurrentPendingFollowupEditKind(),
+      navigateInputHistory: (direction, currentValue) => this.navigateInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
       getTextareaRef: () => this.chatTextarea,
     });
@@ -363,7 +364,7 @@ export class AilyChatComponent implements OnDestroy {
         return host.project.currentProjectPath || host.project.projectRootPath || this.projectService.currentProjectPath || this.projectService.projectRootPath || '';
       },
       getSessionId: () => this.vm.sessionId,
-      getCopilotMemoryEnabled: () => this.ailyChatConfigService.copilotMemoryEnabled === true,
+      getRepositoryMemoryEnabled: () => this.ailyChatConfigService.repositoryMemoryEnabled === true,
       notifyInfo: (text) => this.message.info(text),
       notifyError: (text) => this.message.error(text),
     });
@@ -510,17 +511,99 @@ export class AilyChatComponent implements OnDestroy {
       return false;
     }
 
+    const submittedText = this.vm.inputValue.trim();
     const queueKind = options?.queueKind ?? this.getCurrentPendingFollowupEditKind() ?? undefined;
     const submitted = await this.submitShellCoordinator.submitCurrentInput(
       queueKind ? { queueKind } : undefined,
     );
 
     if (submitted) {
+      this.recordSubmittedInputHistory(submittedText);
       this.pendingFollowupEditState = null;
       this.cdr.markForCheck();
     }
 
     return submitted;
+  }
+
+  private navigateInputHistory(direction: 'previous' | 'next', currentValue: string): string | null {
+    this.ensureInputHistoryLoaded();
+
+    if ((currentValue || '').trim().length > 0) {
+      this.inputHistoryNavigator.overlay({ inputText: currentValue });
+    }
+
+    const entry = direction === 'previous'
+      ? this.inputHistoryNavigator.previous()
+      : this.inputHistoryNavigator.next();
+    return typeof entry?.inputText === 'string' ? entry.inputText : null;
+  }
+
+  private recordSubmittedInputHistory(inputText: string): void {
+    const normalizedText = inputText.trim();
+    if (!normalizedText) {
+      return;
+    }
+
+    this.ensureInputHistoryLoaded();
+    this.inputHistoryNavigator.append({ inputText: normalizedText });
+  }
+
+  private ensureInputHistoryLoaded(): void {
+    const storageKey = this.resolveInputHistoryStorageKey();
+    if (this.inputHistoryStorageKey === storageKey) {
+      return;
+    }
+
+    this.inputHistoryStorageKey = storageKey;
+    this.inputHistoryNavigator.replaceEntries(this.readInputHistoryEntries(storageKey));
+  }
+
+  private persistInputHistoryEntries(entries: readonly ChatInputHistoryEntry[]): void {
+    const storageKey = this.inputHistoryStorageKey ?? this.resolveInputHistoryStorageKey();
+    this.inputHistoryStorageKey = storageKey;
+
+    try {
+      globalThis.localStorage?.setItem(storageKey, JSON.stringify(entries));
+    } catch {
+      // Input history is a UI convenience; storage failures must not block send.
+    }
+  }
+
+  private readInputHistoryEntries(storageKey: string): ChatInputHistoryEntry[] {
+    try {
+      const raw = globalThis.localStorage?.getItem(storageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? parsed
+          .map(entry => ({
+            inputText: typeof entry?.inputText === 'string' ? entry.inputText : '',
+          }))
+          .filter(entry => entry.inputText.trim().length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private resolveInputHistoryStorageKey(): string {
+    let hostProjectPath = '';
+    let hostProjectRootPath = '';
+    try {
+      const host = AilyHost.get();
+      hostProjectPath = host.project.currentProjectPath || '';
+      hostProjectRootPath = host.project.projectRootPath || '';
+    } catch {
+      hostProjectPath = '';
+      hostProjectRootPath = '';
+    }
+
+    const workspaceKey = hostProjectPath
+      || hostProjectRootPath
+      || this.projectService.currentProjectPath
+      || this.projectService.projectRootPath
+      || 'global';
+    return `aily-chat.input-history:${workspaceKey}`;
   }
 
   private getCurrentSessionActionState() {
@@ -549,8 +632,6 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    this.engine.bindChatTextareaRef(this.chatTextarea);
-    this.engine.scheduleComposerInputFocus();
     ChatPerformanceTracer.increment('entry_open.pane_setup_complete');
     ChatPerformanceTracer.mark('entry_open.pane_setup_complete');
     this.viewportShellCoordinator.initialize(this.chatContainer);
@@ -784,7 +865,6 @@ export class AilyChatComponent implements OnDestroy {
   ngOnDestroy() {
     this.debugBrowserChangeSubscription.unsubscribe();
     this.sessionViewModelChangeSubscription.unsubscribe();
-    this.toolOpenSubscription.unsubscribe();
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
     this.lifecycleCoordinator.detachView();
@@ -973,12 +1053,12 @@ export class AilyChatComponent implements OnDestroy {
   }
 
   private resolvePermissionTargetSessionId(): string {
-    const viewSessionId = typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
-    if (viewSessionId) {
-      return viewSessionId;
+    const engineSessionId = typeof this.engine.sessionId === 'string' ? this.engine.sessionId.trim() : '';
+    if (engineSessionId) {
+      return engineSessionId;
     }
 
-    return '';
+    return typeof this.chatService.currentSessionId === 'string' ? this.chatService.currentSessionId.trim() : '';
   }
 
   private confirmFullAccessPermission(): Promise<ChatPermissionConfirmDialogResult> {
@@ -1215,6 +1295,16 @@ export class AilyChatComponent implements OnDestroy {
     this.actionRegistry.runMenuAction(item);
   }
 
+  handleCheckpointRestoreSurfaceAction(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.handleDialogTaskAction({ action: 'redoEdits' });
+  }
+
+  handleDialogTaskAction(detail?: ChatTaskActionDetail): void {
+    this.engine.handleTaskActionDetail(detail);
+  }
+
   toggleSettings(): void {
     this.viewState.toggleSettings();
   }
@@ -1227,22 +1317,30 @@ export class AilyChatComponent implements OnDestroy {
     this.viewState.openSessionPicker(event);
   }
 
-  private resolveCurrentViewSessionResource(): string {
-    return typeof this.vm.sessionId === 'string' ? this.vm.sessionId.trim() : '';
-  }
-
   handleSessionSelection(event: { sessionId: string; item: ChatSessionListItem }): void {
     void this.sessionActions.requestSwitchToSession(
       event.sessionId,
-      this.resolveCurrentViewSessionResource(),
+      this.chatService.currentSessionId,
       this.engine.editCheckpointService,
       this.createSessionSwitchCallbacks(),
       event.item,
     );
   }
 
+  handleSessionPreload(event: { sessionId: string; item: ChatSessionListItem }): void {
+    if (!event.sessionId) {
+      return;
+    }
+
+    void this.engine.preloadSessionModel(event.sessionId, {
+      fallbackProjectPath: event.item.projectPath ?? null,
+    }).catch((error) => {
+      console.warn('[AilyChat] Failed to preload session model:', error);
+    });
+  }
+
   handleSessionAction(event: { action: string; data: any }): void {
-    this.sessionActions.sessionActionClick(event, this.resolveCurrentViewSessionResource(), this.createSessionRowActionCallbacks());
+    this.sessionActions.sessionActionClick(event, this.chatService.currentSessionId, this.createSessionRowActionCallbacks());
   }
 
   requestNewChat(): void {
@@ -1253,7 +1351,7 @@ export class AilyChatComponent implements OnDestroy {
     void this.sessionActions.requestReturnToEntryInventory(
       this.engine.editCheckpointService,
       this.createSessionEntryCommandCallbacks(),
-      this.resolveCurrentViewSessionResource(),
+      this.chatService.currentSessionId,
       {
         saveCurrentSession: options?.saveCurrentSession,
       },
@@ -1287,9 +1385,13 @@ export class AilyChatComponent implements OnDestroy {
         this.closeDebugBrowser();
         return this.engine.returnToEntryInventory({ sessionId });
       },
+      onDeleteSession: (sessionId: string) => {
+        this.closeDebugBrowser();
+        return this.engine.deleteSessionAction(sessionId);
+      },
       onDeleteSessionRuntime: (sessionId: string) => {
         this.closeDebugBrowser();
-        this.engine.deleteSessionAction(sessionId);
+        this.engine.disposeSessionRuntime(sessionId);
       },
       onDetectChanges: () => this.cdr.markForCheck(),
       onUpdateTitle: (title: string) => {
@@ -1336,7 +1438,7 @@ export class AilyChatComponent implements OnDestroy {
     this.closeDebugBrowser();
     try {
       await this.engine.getHistory();
-      const sessionId = this.resolveCurrentViewSessionResource();
+      const sessionId = this.chatService.currentSessionId || this.engine.sessionId;
       if (sessionId) {
         this.chatHistoryService.clearRecordedRestoreFailure?.(sessionId);
       }
@@ -1446,7 +1548,7 @@ export class AilyChatComponent implements OnDestroy {
   async continueCurrentExecution(event?: MouseEvent): Promise<void> {
     event?.stopPropagation();
     try {
-      await this.engine.continueCurrentExecution(this.vm.sessionId);
+      await this.engine.continueCurrentExecution();
     } catch (error) {
       console.warn('[AilyChatComponent] continue current execution failed:', error);
       this.message.error('继续执行失败，请从最新状态重试');

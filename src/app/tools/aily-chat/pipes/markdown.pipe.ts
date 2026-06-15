@@ -328,10 +328,16 @@ export class MarkdownPipe implements PipeTransform {
             askId,
             toolName: jsonData.toolName || '',
             title: jsonData.title || '确认操作',
+            subtitle: jsonData.subtitle || '',
             message: jsonData.message || '',
             args: jsonData.args,
-            resolved: jsonData.resolved || false,
-            approved: jsonData.approved || false,
+            source: jsonData.source || '',
+            actions: Array.isArray(jsonData.actions) ? jsonData.actions : [],
+            primaryScope: jsonData.primaryScope || 'once',
+            resolved: jsonData.resolved || jsonData.result === 'approved' || jsonData.result === 'rejected' || false,
+            approved: jsonData.approved || jsonData.result === 'approved' || false,
+            result: jsonData.result,
+            scope: jsonData.scope,
           };
         default:
           console.warn(`Unknown aily type: ${type}, using raw data`);

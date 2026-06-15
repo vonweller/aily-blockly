@@ -13,6 +13,13 @@ import type { ChatSessionTitleSource } from '../core/chat-session-title';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
 import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
 import {
+  canRedoSessionCheckpointTimeline,
+  cloneSessionCheckpointTimelineState,
+  getSessionCheckpointHiddenTurnResponses,
+  spliceSessionCheckpointTimelineForwardBranch,
+  type SessionCheckpointTimelineState,
+} from '../helpers/session-checkpoint-timeline-model';
+import {
   normalizeHostSessionProviderOptions,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
@@ -44,6 +51,7 @@ export interface ChatSessionModelCreateProps {
   readonly projectPath?: string | null;
   readonly sessionType?: string | null;
   readonly inputState?: ChatSessionModelInputState | null;
+  readonly turnResponses?: readonly TurnResponseTurn[] | null;
 }
 
 export interface ChatSessionModelMetadataPatch {
@@ -103,7 +111,9 @@ export class ChatSessionModel {
   private projectPathState: string | null;
   private sessionTypeState: string;
   private inputStateValue: ChatSessionModelInputState;
+  private turnResponsesValue: TurnResponseTurn[] = [];
   private pendingFollowupQueue: PendingFollowupRequest[] = [];
+  private checkpointTimelineState: SessionCheckpointTimelineState | null = null;
 
   constructor(
     private readonly runtimeStore: ChatSessionRuntimeStoreService,
@@ -118,6 +128,7 @@ export class ChatSessionModel {
     this.projectPathState = normalizeProjectPath(props.projectPath);
     this.sessionTypeState = normalizeChatSessionType(props.sessionType, DEFAULT_CHAT_SESSION_TYPE);
     this.inputStateValue = normalizeInputState(props.inputState);
+    this.turnResponsesValue = cloneTurnResponses(props.turnResponses);
   }
 
   readonly sessionResource: ChatSessionResource;
@@ -158,11 +169,87 @@ export class ChatSessionModel {
   }
 
   get turnResponses(): readonly TurnResponseTurn[] {
-    return this.runtimeState?.turnResponses ?? [];
+    return this.getTurnResponses();
   }
 
   get hostProjectionState(): HostTurnResponseState | null {
     return this.runtimeState?.hostProjectionState ?? null;
+  }
+
+  getTurnResponses(): readonly TurnResponseTurn[] {
+    return cloneTurnResponses(this.turnResponsesValue);
+  }
+
+  replaceTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly TurnResponseTurn[] {
+    const existingTurnsById = new Map(this.turnResponsesValue.map(turn => [turn.turnId, turn]));
+    this.turnResponsesValue = Array.isArray(turnResponses)
+      ? turnResponses.map(turnResponse => mergeTurnResponseWithExistingRequest(existingTurnsById.get(turnResponse.turnId), turnResponse))
+      : [];
+    return this.getTurnResponses();
+  }
+
+  appendOrReplaceTurnResponse(turnResponse: TurnResponseTurn): readonly TurnResponseTurn[] {
+    const existingIndex = this.turnResponsesValue.findIndex(turn => turn.turnId === turnResponse.turnId);
+    const clonedTurnResponse = mergeTurnResponseWithExistingRequest(
+      existingIndex >= 0 ? this.turnResponsesValue[existingIndex] : undefined,
+      turnResponse,
+    );
+    if (existingIndex >= 0) {
+      this.turnResponsesValue.splice(existingIndex, 1, clonedTurnResponse);
+    } else {
+      this.turnResponsesValue.push(clonedTurnResponse);
+    }
+
+    return this.getTurnResponses();
+  }
+
+  removeTurnResponsesAfter(turnId: string | null | undefined): readonly TurnResponseTurn[] {
+    const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    if (!normalizedTurnId) {
+      return this.getTurnResponses();
+    }
+
+    const turnIndex = this.turnResponsesValue.findIndex(turn => turn.turnId === normalizedTurnId);
+    if (turnIndex < 0) {
+      return this.getTurnResponses();
+    }
+
+    this.turnResponsesValue = this.turnResponsesValue.slice(0, turnIndex + 1);
+    return this.getTurnResponses();
+  }
+
+  getCheckpointTimelineState(): SessionCheckpointTimelineState | null {
+    return cloneSessionCheckpointTimelineState(this.checkpointTimelineState);
+  }
+
+  replaceCheckpointTimelineState(state: SessionCheckpointTimelineState | null | undefined): void {
+    const clonedState = cloneSessionCheckpointTimelineState(state);
+    this.checkpointTimelineState = clonedState && clonedState.sessionResource === this.sessionResource
+      ? clonedState
+      : null;
+  }
+
+  clearCheckpointTimelineState(): void {
+    this.checkpointTimelineState = null;
+  }
+
+  canRedoCheckpointTimeline(): boolean {
+    return canRedoSessionCheckpointTimeline(this.checkpointTimelineState);
+  }
+
+  getDisabledCheckpointTurnIds(): readonly string[] {
+    return getSessionCheckpointHiddenTurnResponses(this.checkpointTimelineState)
+      .map(turn => normalizeChatSessionResource(turn.turnId))
+      .filter((turnId): turnId is string => turnId.length > 0);
+  }
+
+  spliceCheckpointTimelineForwardBranch(): SessionCheckpointTimelineState | null {
+    if (!this.checkpointTimelineState) {
+      return null;
+    }
+
+    this.checkpointTimelineState = spliceSessionCheckpointTimelineForwardBranch(this.checkpointTimelineState);
+    return this.getCheckpointTimelineState();
   }
 
   getPendingFollowupRequests(): readonly PendingFollowupRequest[] {
@@ -242,7 +329,36 @@ export class ChatSessionModel {
     state: ChatSessionRuntimeStatePatch,
     options?: ChatSessionRuntimeChangeOptions,
   ): void {
-    this.runtimeStore.replaceRuntimeState(this.sessionResource, state, options);
+    const nextState = this.resolveRuntimeStatePatchForModel(state);
+    this.runtimeStore.replaceRuntimeState(this.sessionResource, nextState, options);
+  }
+
+  private resolveRuntimeStatePatchForModel(state: ChatSessionRuntimeStatePatch): ChatSessionRuntimeStatePatch {
+    if (state.turnResponses === undefined) {
+      return state;
+    }
+
+    const incomingTurnResponses = Array.isArray(state.turnResponses)
+      ? state.turnResponses
+      : [];
+    if (incomingTurnResponses.length > 0 || this.turnResponsesValue.length === 0) {
+      return {
+        ...state,
+        turnResponses: this.replaceTurnResponses(incomingTurnResponses),
+      };
+    }
+
+    const existingRuntimeState = this.runtimeStore.read(this.sessionResource);
+    return {
+      ...state,
+      // Runtime/projection mirrors can transiently report an empty transcript while
+      // a request is starting. The session model is the canonical transcript owner,
+      // so empty mirrors must not erase already accepted user turns.
+      turnResponses: this.getTurnResponses(),
+      ...(state.hostProjectionState === null && existingRuntimeState?.hostProjectionState
+        ? { hostProjectionState: existingRuntimeState.hostProjectionState }
+        : {}),
+    };
   }
 
   applyProjection(
@@ -255,9 +371,91 @@ export class ChatSessionModel {
   }
 
   dispose(): void {
+    this.turnResponsesValue = [];
     this.pendingFollowupQueue = [];
+    this.checkpointTimelineState = null;
     this.partStore.destroy();
   }
+}
+
+function cloneTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): TurnResponseTurn[] {
+  return Array.isArray(turnResponses)
+    ? turnResponses.map(turnResponse => cloneTurnResponse(turnResponse))
+    : [];
+}
+
+function cloneTurnResponse(turnResponse: TurnResponseTurn): TurnResponseTurn {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(turnResponse) as TurnResponseTurn;
+  }
+
+  return JSON.parse(JSON.stringify(turnResponse)) as TurnResponseTurn;
+}
+
+function mergeTurnResponseWithExistingRequest(
+  existingTurn: TurnResponseTurn | undefined,
+  nextTurn: TurnResponseTurn,
+): TurnResponseTurn {
+  const clonedNextTurn = cloneTurnResponse(nextTurn);
+  if (!existingTurn?.request) {
+    return clonedNextTurn;
+  }
+
+  const existingRequest = existingTurn.request;
+  const nextRequest = clonedNextTurn.request;
+  if (!nextRequest) {
+    return {
+      ...clonedNextTurn,
+      request: cloneTurnRequest(existingRequest),
+    };
+  }
+
+  const shouldPreserveContent = isBlankRequestText(nextRequest.content)
+    && !isBlankRequestText(existingRequest.content);
+  const shouldPreserveDisplayContent = isBlankRequestText(nextRequest.displayContent)
+    && !isBlankRequestText(existingRequest.displayContent);
+  const shouldPreserveMetadata = nextRequest.metadata === undefined
+    && existingRequest.metadata !== undefined;
+
+  if (!shouldPreserveContent && !shouldPreserveDisplayContent && !shouldPreserveMetadata) {
+    return clonedNextTurn;
+  }
+
+  return {
+    ...clonedNextTurn,
+    request: {
+      ...nextRequest,
+      ...(shouldPreserveContent ? { content: existingRequest.content } : {}),
+      ...(shouldPreserveDisplayContent ? { displayContent: existingRequest.displayContent } : {}),
+      ...(shouldPreserveMetadata ? { metadata: cloneRequestMetadata(existingRequest.metadata) } : {}),
+    },
+  };
+}
+
+function cloneTurnRequest(request: TurnResponseTurn['request']): TurnResponseTurn['request'] {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(request) as TurnResponseTurn['request'];
+  }
+
+  return JSON.parse(JSON.stringify(request)) as TurnResponseTurn['request'];
+}
+
+function cloneRequestMetadata(
+  metadata: TurnResponseTurn['request']['metadata'],
+): TurnResponseTurn['request']['metadata'] {
+  if (metadata === undefined) {
+    return undefined;
+  }
+
+  try {
+    return globalThis.structuredClone(metadata);
+  } catch {
+    return JSON.parse(JSON.stringify(metadata)) as TurnResponseTurn['request']['metadata'];
+  }
+}
+
+function isBlankRequestText(value: unknown): boolean {
+  return typeof value !== 'string' || value.trim().length === 0;
 }
 
 function clonePendingFollowupRequest(request: PendingFollowupRequest): PendingFollowupRequest {
@@ -339,6 +537,64 @@ export class ChatSessionModelStoreService {
     }
 
     model.updateMetadata(patch);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return true;
+  }
+
+  replaceTurnResponses(
+    sessionResource: string | null | undefined,
+    turnResponses: readonly TurnResponseTurn[] | null | undefined,
+  ): readonly TurnResponseTurn[] | null {
+    const model = this.get(sessionResource);
+    if (!model || !Array.isArray(turnResponses)) {
+      return null;
+    }
+
+    const nextTurnResponses = model.replaceTurnResponses(turnResponses);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
+  }
+
+  appendOrReplaceTurnResponse(
+    sessionResource: string | null | undefined,
+    turnResponse: TurnResponseTurn,
+  ): readonly TurnResponseTurn[] | null {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return null;
+    }
+
+    const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return nextTurnResponses;
+  }
+
+  applyRuntimeState(
+    sessionResource: string | null | undefined,
+    state: ChatSessionRuntimeStatePatch,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): boolean {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return false;
+    }
+
+    model.applyRuntimeState(state, options);
+    this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
+    return true;
+  }
+
+  applyProjection(
+    sessionResource: string | null | undefined,
+    state: HostTurnResponseState | null,
+    options?: ChatSessionRuntimeChangeOptions,
+  ): boolean {
+    const model = this.get(sessionResource);
+    if (!model) {
+      return false;
+    }
+
+    model.applyProjection(state, options);
     this.changedSubject.next({ sessionResource: model.sessionResource, kind: 'updated' });
     return true;
   }

@@ -1,4 +1,4 @@
-import type { TurnResponseTurn } from 'aily-lex/browser';
+﻿import type { TurnResponseTurn } from 'aily-lex/browser';
 import { Subject, type Observable } from 'rxjs';
 import type { EditCheckpointService } from '../services/edit-checkpoint.service';
 import type { ChatSessionStateScopeSnapshot, ChatSessionStateService, PersistedChatSessionState, ResolvedChatSessionState } from '../services/chat-session-state.service';
@@ -229,7 +229,7 @@ type HostSessionRecordLike = {
 };
 
 type HostSessionItemControllerContext = {
-  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
+  readonly chatService: Pick<ChatService, 'currentSessionId' | 'currentSessionPath' | 'currentSessionType' | 'currentSessionPermissionMode' | 'currentSessionPermissionLevel' | 'currentSessionApprovalsReviewer' | 'currentSessionApprovalPolicy' | 'currentSessionTitle' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentResolvedMode' | 'selectedMode' | 'findResolvedModeById' | 'findResolvedModeByName' | 'sessionInputStateChanged$' | 'sessionProviderOptionsChanged$' | 'buildCurrentSessionProviderOptionGroups' | 'buildNewSessionProviderOptionGroups'>
     & Partial<Pick<ChatService, 'currentSessionTitleSource'>>
     & Partial<Pick<ChatService, 'sessionDisplayTitleChanged$' | 'sessionDurableTitleChanged$' | 'sessionTitleChanged$'>>;
   readonly chatHistoryService: Pick<ChatHistoryService, 'getHistoryList' | 'findEntry' | 'loadHostRecord' | 'updateTitle' | 'deleteSession'> & Partial<Pick<ChatHistoryService, 'hostSessionChanged$'>>;
@@ -974,6 +974,7 @@ export class HostSessionItemController {
   private getModeResolveOptions(): HostSessionSelectedModeResolveOptions {
     return {
       resolveModeById: (modeId) => this.ctx.chatService.findResolvedModeById(modeId),
+      resolveModeByName: (modeName) => this.ctx.chatService.findResolvedModeByName?.(modeName),
     };
   }
 
@@ -2116,10 +2117,8 @@ export class HostSessionItemController {
     switch (normalizedType) {
       case 'local':
         return 'Local';
-      case 'claude-code':
-        return 'Claude Code';
-      case 'copilotcli':
-        return 'Copilot CLI';
+      case 'aily-agent':
+        return 'Aily Agent';
       case 'agent':
         return 'Agent';
       default:

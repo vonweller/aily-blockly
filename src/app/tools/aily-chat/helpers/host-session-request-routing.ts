@@ -5,8 +5,6 @@ import {
 } from 'aily-lex/browser';
 
 import {
-  isLegacyChatPlanModeValue,
-  LEGACY_CHAT_PLAN_AGENT_TARGET,
   normalizeChatModeId,
   normalizeChatSelectedMode,
   resolveChatModeId,
@@ -59,8 +57,7 @@ export function normalizeHostSessionRequestRoutingSummary(
   const fallbackModeId = fallbackSelectedMode?.modeId
     ?? resolveRequestRoutingModeId(fallback)
     ?? normalizeChatModeId(fallback);
-  const legacyModeValue = value?.requestModeId ?? value?.selectedModeId ?? fallbackSelectedMode?.modeId ?? fallback;
-  const customAgentTarget = normalizeCustomAgentTarget(value?.customAgentTarget, legacyModeValue)
+  const customAgentTarget = normalizeCustomAgentTarget(value?.customAgentTarget)
     ?? resolveChatSelectedCustomAgentTarget(fallbackSelectedMode);
   const requestModeId = resolveRequestModeIdFromSummaryValue(value?.requestModeId, value?.selectedModeId);
   const selectedModeId = requestModeId ?? fallbackModeId;
@@ -187,8 +184,7 @@ function readTurnRequestRouting(
   const modeId = resolveTurnRequestModeKind(modeInfo) ?? resolveRequestRoutingModeId(metadata['modeId']);
   const requestRouting = asRecord(metadata['requestRouting']);
   const customAgentTarget = normalizeCustomAgentTarget(requestRouting?.['customAgentTarget'])
-    ?? resolveTurnRequestModeCustomAgentTarget(modeInfo)
-    ?? normalizeCustomAgentTarget(undefined, metadata['modeId']);
+    ?? resolveTurnRequestModeCustomAgentTarget(modeInfo);
   const permissionLevel = normalizePermissionLevel(modeInfo?.permissionLevel ?? requestRouting?.['permissionLevel']);
   const approvalsReviewer = normalizeApprovalsReviewer(modeInfoRecord?.['approvalsReviewer'] ?? requestRouting?.['approvalsReviewer']);
   const approvalPolicy = normalizeApprovalPolicy(modeInfoRecord?.['approvalPolicy'] ?? requestRouting?.['approvalPolicy']);
@@ -215,11 +211,7 @@ function readMetadataRequestRouting(
     return undefined;
   }
 
-  const modeValue = requestRouting['requestModeId'] ?? requestRouting['selectedModeId'];
-  const customAgentTarget = normalizeCustomAgentTarget(
-    requestRouting['customAgentTarget'],
-    modeValue,
-  );
+  const customAgentTarget = normalizeCustomAgentTarget(requestRouting['customAgentTarget']);
   const explicitRequestModeId = resolveRequestRoutingModeId(requestRouting['requestModeId']);
   const modeId = explicitRequestModeId ?? resolveRequestRoutingModeId(requestRouting['selectedModeId']);
   const permissionLevel = normalizePermissionLevel(requestRouting['permissionLevel']);
@@ -258,14 +250,12 @@ function normalizeApprovalPolicy(value: unknown): 'on_request' | 'never' | undef
     : undefined;
 }
 
-function normalizeCustomAgentTarget(value: unknown, modeValue?: unknown): string | undefined {
+function normalizeCustomAgentTarget(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim().length > 0) {
     return value.trim();
   }
 
-  return isLegacyChatPlanModeValue(modeValue)
-    ? LEGACY_CHAT_PLAN_AGENT_TARGET
-    : undefined;
+  return undefined;
 }
 
 function isSelectedModeSnapshot(
@@ -282,7 +272,7 @@ function resolveRequestModeIdFromSummaryValue(
 }
 
 function resolveRequestRoutingModeId(value: unknown): ChatModeId | undefined {
-  return resolveChatModeId(value) ?? (isLegacyChatPlanModeValue(value) ? 'agent' : undefined);
+  return resolveChatModeId(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

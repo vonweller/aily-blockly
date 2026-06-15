@@ -93,8 +93,21 @@ export class ChatExternalInputCoordinator {
         void this.callbacks.newChat();
         return;
       default:
-        this.ctx.scrollManager.startNewExchange();
-        void this.callbacks.submitText(text, false);
+        void this.submitExternalButtonText(text);
     }
+  }
+
+  private async submitExternalButtonText(text: string): Promise<void> {
+    let targetSessionId = typeof this.ctx.sessionId === 'string' ? this.ctx.sessionId.trim() : '';
+    if (!targetSessionId) {
+      targetSessionId = await this.callbacks.ensureSessionReadyForSubmit() ?? '';
+      if (!targetSessionId) {
+        this.ctx.message.warning('无法创建会话，请稍后重试');
+        return;
+      }
+    }
+
+    this.ctx.scrollManager.startNewExchange();
+    await this.callbacks.submitText(text, false, targetSessionId);
   }
 }

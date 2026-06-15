@@ -85,11 +85,14 @@ export function getToolApprovalTitle(toolName: string | undefined, fallbackTitle
 
   switch (normalizedToolName) {
     case 'run_in_terminal':
+    case 'command_exec':
       return '运行终端命令';
     case 'send_to_terminal':
+    case 'command_write_stdin':
       return '发送终端输入';
     case 'kill_terminal':
-      return '结束终端会话';
+    case 'command_stop':
+      return '结束命令进程';
     default:
       return fallbackTitle && !fallbackTitle.startsWith('确认执行: ')
         ? fallbackTitle
@@ -216,19 +219,22 @@ export function generateApprovalMessage(
 
   switch (normalizedToolName) {
     case 'run_in_terminal':
+    case 'command_exec':
       return {
         title: getToolApprovalTitle(normalizedToolName),
         message: `即将运行终端命令：\n${args?.command || '(未知命令)'}${args?.goal ? '\n目标：' + args.goal : ''}`,
       };
     case 'send_to_terminal':
+    case 'command_write_stdin':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将向终端发送输入：\n${args?.command || '(空输入 / 回车)'}`,
+        message: `即将向终端发送输入：\n${args?.input || args?.command || '(空输入 / 轮询)'}`,
       };
     case 'kill_terminal':
+    case 'command_stop':
       return {
         title: getToolApprovalTitle(normalizedToolName),
-        message: `即将结束终端会话：${args?.id || args?.terminalId || '(未知终端)'}`,
+        message: `即将结束命令进程：${args?.processId || args?.id || args?.terminalId || '(未知进程)'}`,
       };
     default:
       {

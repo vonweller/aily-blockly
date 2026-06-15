@@ -58,6 +58,7 @@ export type RenderEventPartStoreAccess = Pick<
   | 'updateSubagentForHandle'
   | 'upsertSubagentChildItemForHandle'
   | 'findToolCallOpaqueHandle'
+  | 'upsertTerminalForHandle'
 >;
 
 function hasUsableStoreHandle(
@@ -347,6 +348,15 @@ export class RenderEventPartAdapter {
     if (!progressUpdate) {
       return;
     }
+    const commandOutput = normalizeCommandOutputProgress(event.data);
+    if (commandOutput) {
+      this._store.upsertTerminalForHandle(toolHandle, commandTerminalUpdateToPart(commandOutput, event.toolCallId, true));
+    }
+
+    const commandSession = normalizeCommandSessionUpdate(event.data);
+    if (commandSession) {
+      this._store.upsertTerminalForHandle(toolHandle, commandTerminalUpdateToPart(commandSession, event.toolCallId, false));
+    }
 
     const nextMetadata = buildToolCallProgressMetadataPatch({
       toolCallId: event.toolCallId,
@@ -423,7 +433,7 @@ export class RenderEventPartAdapter {
     }
 
     const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
-    this._store.addPartToHandle(toolHandle ?? handle, terminal);
+    this._store.upsertTerminalForHandle(toolHandle ?? handle, terminal);
   }
 }
 
@@ -638,6 +648,16 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function normalizeTimestamp(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  return undefined;
+}
+
 function resolveTodoState(items: readonly { status: string }[]): StatePart['state'] {
   if (!items.length) {
     return 'info';
@@ -706,7 +726,17 @@ function extractTerminalPart(toolCallId: string, result: Extract<RenderEvent, { 
     return null;
   }
 
-  const terminal = mkTerminal(parsed.command, toolCallId);
+  const terminal = mkTerminal(parsed.command, toolCallId, undefined, {
+    processId: parsed.processId,
+    outputSessionId: parsed.outputSessionId,
+    terminalId: parsed.terminalId,
+    outputFilePath: parsed.outputFilePath,
+    cwd: parsed.cwd,
+    status: parsed.status,
+    bytesTotal: parsed.bytesTotal,
+    lastOutputAt: parsed.lastOutputAt,
+    outputUpdateKind: 'snapshot',
+  });
   terminal.output = parsed.output;
   terminal.stderr = parsed.stderr;
   terminal.exitCode = parsed.exitCode;
@@ -745,7 +775,7 @@ function normalizeToolCallProgressUpdate(
   }
 
   const record = data as Record<string, unknown>;
-  const summary = firstMeaningfulString(record['message'], record['text'], record['status'], record['detail'], record['step']);
+  const summary = firstMeaningfulString(record['summary'], record['message'], record['text'], record['status'], record['detail'], record['step']);
   const detail = firstMeaningfulString(record['detail']);
   const step = firstMeaningfulString(record['step']);
   const statusText = firstMeaningfulString(record['status'], record['statusText']);
@@ -762,6 +792,116 @@ function normalizeToolCallProgressUpdate(
     ...(step ? { step } : {}),
     ...(statusText ? { statusText } : {}),
   };
+}
+
+function normalizeCommandOutputProgress(data: unknown): {
+  command: string;
+  stdout: string;
+  stderr: string;
+  processId?: string;
+  outputSessionId?: string;
+  outputFilePath?: string;
+  cwd?: string;
+  status?: string;
+  running?: boolean;
+  bytesTotal?: number;
+  lastOutputAt?: string;
+} | null {
+  const record = asRecord(data);
+  if (!record || asString(record['kind']) !== 'command_output') {
+    return null;
+  }
+
+  const text = asString(record['text']) ?? asString(record['detail']) ?? '';
+  if (!text) {
+    return null;
+  }
+
+  const stream = asString(record['stream']) === 'stderr' ? 'stderr' : 'stdout';
+  const command = asString(record['command']) || 'terminal command';
+  return {
+    command,
+    stdout: stream === 'stdout' ? text : '',
+    stderr: stream === 'stderr' ? text : '',
+    processId: asString(record['processId']),
+    outputSessionId: asString(record['outputSessionId']),
+    outputFilePath: asString(record['outputFilePath']),
+    cwd: asString(record['cwd']),
+    status: asString(record['status']),
+    running: typeof record['running'] === 'boolean' ? record['running'] : undefined,
+    bytesTotal: asNumber(record['bytesTotal']),
+    lastOutputAt: normalizeTimestamp(record['lastOutputAt']),
+  };
+}
+
+function normalizeCommandSessionUpdate(data: unknown): {
+  command: string;
+  stdout: string;
+  stderr: string;
+  processId?: string;
+  outputSessionId?: string;
+  outputFilePath?: string;
+  cwd?: string;
+  status?: string;
+  running?: boolean;
+  exitCode?: number;
+  bytesTotal?: number;
+  lastOutputAt?: string;
+} | null {
+  const record = asRecord(data);
+  if (!record || asString(record['kind']) !== 'command_session_update') {
+    return null;
+  }
+
+  return {
+    command: asString(record['command']) || 'terminal command',
+    stdout: typeof record['stdout'] === 'string' ? record['stdout'] : '',
+    stderr: typeof record['stderr'] === 'string' ? record['stderr'] : '',
+    processId: asString(record['processId']),
+    outputSessionId: asString(record['outputSessionId']),
+    outputFilePath: asString(record['outputFilePath']),
+    cwd: asString(record['cwd']),
+    status: asString(record['status']),
+    running: typeof record['running'] === 'boolean' ? record['running'] : undefined,
+    exitCode: asNumber(record['exitCode']),
+    bytesTotal: asNumber(record['bytesTotal']),
+    lastOutputAt: normalizeTimestamp(record['lastOutputAt']),
+  };
+}
+
+function commandTerminalUpdateToPart(
+  update: {
+    command: string;
+    stdout: string;
+    stderr: string;
+    processId?: string;
+    outputSessionId?: string;
+    outputFilePath?: string;
+    cwd?: string;
+    status?: string;
+    running?: boolean;
+    exitCode?: number;
+    bytesTotal?: number;
+    lastOutputAt?: string;
+  },
+  toolCallId: string,
+  defaultRunning: boolean,
+) {
+  const terminal = mkTerminal(update.command, toolCallId, undefined, {
+    processId: update.processId,
+    outputSessionId: update.outputSessionId,
+    outputFilePath: update.outputFilePath,
+    cwd: update.cwd,
+    status: update.status || (defaultRunning ? 'running' : undefined),
+    bytesTotal: update.bytesTotal,
+    lastOutputAt: update.lastOutputAt,
+    outputUpdateKind: defaultRunning ? 'delta' : 'snapshot',
+  });
+  terminal.output = update.stdout;
+  terminal.stderr = update.stderr;
+  terminal.exitCode = update.exitCode;
+  terminal.isRunning = update.running ?? (update.status ? update.status === 'running' : defaultRunning);
+  return terminal;
 }
 
 function buildToolCallProgressMetadataPatch(input: {
@@ -997,13 +1137,14 @@ function buildSubagentMetadata(
   event: Extract<RenderEvent, { type: 'subagent_begin' }>,
 ): Record<string, unknown> {
   const description = event.description?.trim() || event.agentName;
+  const subAgentInvocationId = (event as { readonly subAgentInvocationId?: string }).subAgentInvocationId || event.toolCallId;
 
   return {
     toolName: 'agent',
     phase: 'started',
     argsSummary: event.description,
     recordId: event.toolCallId,
-    subAgentInvocationId: event.toolCallId,
+    subAgentInvocationId,
     invocationMessage: description,
     pastTenseMessage: description ? `Completed Task: "${description}"` : event.agentName,
     timeline: [mkSubagentTimelineEntry({

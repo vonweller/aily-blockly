@@ -29,6 +29,7 @@ export const SCHEMATIC_AGENT_REQUIRED_CONTEXT = {
   hydrateBeforeFirstModelCall: true,
 } as const;
 export const SCHEMATIC_AGENT_WHEN_NOT_TO_USE = 'Do not use for library analysis, ABS block/library questions, generic project setup, or other programming-first tasks unless the request explicitly asks for wiring or a connection diagram.';
+export const SCHEMATIC_AGENT_ARGUMENT_HINT = 'Describe the circuit wiring or schematic task to complete';
 export const SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS = [
   'analyzelibrary',
   'analyze library',
@@ -54,7 +55,7 @@ export const SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS = [
  * Architecture note:
  *  - tools: ['*'] would inherit parent (main agent) tools — missing schematic-only tools
  *  - Explicit list is matched by name, bypassing main-agent visibility completely
- *  - This follows Claude Code's pattern where each agent declares its own tool needs
+ *  - Each agent declares its own tool needs explicitly.
  */
 
 // Schematic-domain tools (only visible to SchematicAgent, not mainAgent)
@@ -243,6 +244,9 @@ export function createBlocklyHostAgentUri(agentType: string): string {
 const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
   agentType: SCHEMATIC_AGENT_TYPE,
   name: 'Schematic Agent',
+  description: SCHEMATIC_AGENT_WHEN_TO_USE,
+  argumentHint: SCHEMATIC_AGENT_ARGUMENT_HINT,
+  target: 'aily',
   whenToUse: SCHEMATIC_AGENT_WHEN_TO_USE,
   whenNotToUse: SCHEMATIC_AGENT_WHEN_NOT_TO_USE,
   uri: createBlocklyHostAgentUri(SCHEMATIC_AGENT_TYPE),
@@ -261,6 +265,7 @@ const SCHEMATIC_AGENT_CONTRIBUTION: IAgentContribution = {
   model: SCHEMATIC_AGENT_MODEL,
   messageInheritance: SCHEMATIC_AGENT_MESSAGE_INHERITANCE,
   disallowedPromptPatterns: [...SCHEMATIC_AGENT_DISALLOWED_PROMPT_PATTERNS],
+  agents: [],
 };
 
 function getConfiguredAgentTools(

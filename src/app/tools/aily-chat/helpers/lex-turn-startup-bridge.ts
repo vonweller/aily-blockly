@@ -154,6 +154,7 @@ export class LexTurnStartupBridge {
         userMessage,
         displayContent,
         nextRequestMetadata.checkpointId,
+        nextRequestMetadata,
       );
     }
     if (this.shouldRefreshLocalEstimate()) {

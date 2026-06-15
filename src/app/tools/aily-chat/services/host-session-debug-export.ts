@@ -5,6 +5,7 @@ import {
   normalizeChatAgentRuntimeModeSource,
   type ChatAgentRuntimeMode,
 } from '../core/chat-agent-runtime-mode';
+import { resolveChatSelectedCustomAgentTarget } from '../core/chat-mode';
 import { BLOCKLY_PROMPT_PROFILE } from '../core/blockly-prompt-profile';
 import { CODER_PROMPT_PROFILE } from '../core/coder-prompt-profile';
 import { UNBOUND_ROUTER_PROMPT_PROFILE } from '../core/unbound-router-prompt-profile';
@@ -282,6 +283,8 @@ function buildHostSessionDebugExportEnvelope(
   const modeDescriptor = resolveHostSessionModeDescriptor(hostRecord, options);
   const inputState = resolveHostSessionInputState(hostRecord, options);
   const requestRouting = resolveHostSessionRequestRoutingSummary(hostRecord);
+  const customAgentTarget = requestRouting.customAgentTarget
+    ?? resolveChatSelectedCustomAgentTarget(selectedMode);
   const interactionActionSummary = resolveHostSessionInteractionActionSummary(hostRecord);
   const runtimeMode = normalizeChatAgentRuntimeMode(metadata.agentRuntimeMode ?? metadata.runtimeMode, 'unbound');
   const runtimeModeSource = normalizeChatAgentRuntimeModeSource(
@@ -402,7 +405,7 @@ function buildHostSessionDebugExportEnvelope(
       ...(modeDescriptor ? { modeDescriptor } : {}),
       inputState,
       ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
-      ...(requestRouting.customAgentTarget ? { customAgentTarget: requestRouting.customAgentTarget } : {}),
+      ...(customAgentTarget ? { customAgentTarget } : {}),
       ...(requestRouting.permissionLevel ? { permissionLevel: requestRouting.permissionLevel } : {}),
       ...(requestRouting.approvalsReviewer ? { approvalsReviewer: requestRouting.approvalsReviewer } : {}),
       ...(requestRouting.approvalPolicy ? { approvalPolicy: requestRouting.approvalPolicy } : {}),

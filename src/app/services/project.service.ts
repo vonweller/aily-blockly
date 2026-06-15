@@ -60,6 +60,10 @@ interface ProjectCreationOptions {
   activationReason?: ProjectActivationReason;
 }
 
+interface ProjectCloseOptions {
+  activationReason?: ProjectActivationReason;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -185,6 +189,10 @@ export class ProjectService {
 
   private hasBlockingChatRequest(): boolean {
     return this.chatService?.isWaiting === true;
+  }
+
+  private shouldBlockForChatRequest(reason?: ProjectActivationReason): boolean {
+    return reason !== 'chat-tool-create' && this.hasBlockingChatRequest();
   }
 
   private warnBlockingChatRequest(): void {
@@ -349,12 +357,15 @@ export class ProjectService {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
 
-    if (this.hasBlockingChatRequest()) {
+    if (this.shouldBlockForChatRequest(activationReason)) {
       this.warnBlockingChatRequest();
       return false;
     }
 
-    await this.close();
+    const closeResult = await this.close({ activationReason });
+    if (closeResult === false) {
+      return false;
+    }
     await new Promise(resolve => setTimeout(resolve, 100));
     // 判断路径是否存在
     if (!this.electronService.exists(projectPath)) {
@@ -471,8 +482,8 @@ export class ProjectService {
     this.addRecentlyProject({ name: this.currentPackageData.name, path: path, nickname: this.currentPackageData.nickname || this.currentPackageData.name });
   }
 
-  async close() {
-    if (this.hasBlockingChatRequest()) {
+  async close(options: ProjectCloseOptions = {}) {
+    if (this.shouldBlockForChatRequest(options.activationReason)) {
       this.warnBlockingChatRequest();
       return false;
     }

@@ -1,6 +1,6 @@
 @if (vm.isStandaloneWindow) {
 <app-sub-window [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
-  <ng-container title-extra>
+  <ng-container header-title-prefix>
     <aily-chat-session-title-control
       [surface]="sessionTitleSurfaceModel"
       [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
@@ -14,7 +14,7 @@
 </app-sub-window>
 } @else {
 <app-tool-container [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" (closeEvent)="surfaceShellCoordinator.close()">
-  <ng-container title-extra>
+  <ng-container header-title-prefix>
     <aily-chat-session-title-control
       [surface]="sessionTitleSurfaceModel"
       [surfaceClickEnabled]="viewState.isSessionTitleSurfaceClickEnabled"
@@ -54,6 +54,7 @@
     [showNewSession]="false"
     [variant]="surface.variant"
     (selectSession)="handleSessionSelection($event)"
+    (preloadSession)="handleSessionPreload($event)"
     (actionClick)="handleSessionAction($event)"
     (retryRequested)="handleSessionListRetry()"
     (newSession)="requestNewChat()"></aily-chat-session-list>
@@ -166,7 +167,6 @@
             [doing]="item.doing"
             [isLastAily]="item.isLastAily"
             [isFirstUserTurn]="item.isFirstUserTurn"
-            [showCheckpointRestore]="item.showCheckpointRestore"
             [sessionId]="vm.sessionId"
             [currentMode]="vm.currentMode"
             [currentModelName]="vm.currentModelName"
@@ -187,12 +187,41 @@
             (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event, vm.modeMenuItems)"
             (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
             (editAddFile)="editResourceShellCoordinator.addFile($event)"
-            (editAddFolder)="editResourceShellCoordinator.addFolder($event)">
+            (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
+            (taskAction)="handleDialogTaskAction($event)">
           </aily-x-dialog>
           }
+        @if (vm.checkpointRestoreSurface; as checkpointRestoreSurface) {
+          <div
+            class="chat-checkpoint-restore-surface"
+            role="group"
+            [attr.aria-label]="checkpointRestoreSurface.statusLabelKey | translate">
+            <div class="checkpoint-line-left"></div>
+            <span class="checkpoint-label-text">{{ checkpointRestoreSurface.statusLabelKey | translate }}</span>
+            <span class="checkpoint-dot-separator"></span>
+            <button
+              type="button"
+              class="checkpoint-restore-action"
+              [title]="checkpointRestoreSurface.actionTitle"
+              (click)="handleCheckpointRestoreSurfaceAction($event)">
+              {{ checkpointRestoreSurface.actionLabelKey | translate }}
+            </button>
+            <div class="checkpoint-line-right"></div>
+          </div>
+        }
       </div>
       <!-- </ngx-simplebar> -->
       } @else {
+        @if (paneStageSurface.loadingSurface; as loadingSurface) {
+        <div [ngClass]="loadingSurface.hostClasses" role="status" aria-live="polite">
+          <i [class]="loadingSurface.iconClass"></i>
+          <div class="title">{{ loadingSurface.titleKey | translate }}</div>
+          @if (loadingSurface.title) {
+          <div class="session-loading-title">{{ loadingSurface.title }}</div>
+          }
+          <div class="text">{{ loadingSurface.descriptionKey | translate }}</div>
+        </div>
+        } @else {
         @if (paneStageSurface.guideSurface; as guideSurface) {
         <div [ngClass]="guideSurface.hostClasses">
           <i [class]="guideSurface.iconClass"></i>
@@ -202,6 +231,7 @@
             <div class="btn link" (click)="surfaceShellCoordinator.openUrl()">{{ guideSurface.actionLabelKey | translate }}</div>
           </div>
         </div>
+        }
         }
       }
         @if (paneStageSurface.showStackedSessionList) {
@@ -286,6 +316,7 @@
           </div>
         </div>
         }
+        <aily-chat-runtime-question-carousel inputPartWidget class="chat-question-carousel-widget-container" [sessionId]="vm.sessionId"></aily-chat-runtime-question-carousel>
         <aily-chat-runtime-confirmation-carousel inputPartWidget class="chat-tool-confirmation-carousel-container" [sessionId]="vm.sessionId"></aily-chat-runtime-confirmation-carousel>
         <aily-chat-runtime-plan-review inputPartWidget class="chat-plan-review-widget-container" [sessionId]="vm.sessionId"></aily-chat-runtime-plan-review>
         @if(!vm.showSettings){
@@ -670,12 +701,13 @@
   [maxHeight]="sessionPickerSurface.maxHeight"
   (closeRequested)="vm.closeSessionPicker()"
   (selectSession)="handleSessionSelection($event)"
+  (preloadSession)="handleSessionPreload($event)"
   (actionClick)="handleSessionAction($event)"></aily-chat-session-picker>
 }
 
 @if(menuManager.showMode){
 <app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
-  (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)"></app-menu>
+  (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)" (actionClickEvent)="switchShellCoordinator.modeMenuActionClick($event)"></app-menu>
 }
 
 @if(menuManager.showPermissionMenu){

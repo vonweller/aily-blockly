@@ -5,6 +5,10 @@ import { AilyHost } from '../core/host';
 import type { IFileWatchHandle } from '../core/host-api';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
 import { resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
+import {
+  stopBlocklyCommandSession,
+  type BlocklyCommandSessionSnapshot,
+} from '../helpers/lex-agent-bootstrap';
 
 export interface RuntimeQuestionWidgetState {
   readonly sessionId: string;
@@ -85,6 +89,23 @@ export interface RuntimePlanReviewWidgetState {
   };
 }
 
+export type RuntimeCommandSessionActionId = 'continue_background' | 'stop';
+
+export interface RuntimeCommandSessionActionRequest {
+  readonly actionId: RuntimeCommandSessionActionId;
+  readonly processId: string;
+  readonly outputSessionId?: string;
+  readonly outputFilePath?: string;
+}
+
+export interface RuntimeCommandSessionActionResult {
+  readonly ok: boolean;
+  readonly actionId: RuntimeCommandSessionActionId;
+  readonly processId: string;
+  readonly snapshot?: BlocklyCommandSessionSnapshot;
+  readonly error?: string;
+}
+
 type QuestionRuntimeEntry = RuntimeQuestionWidgetState & {
   readonly resolve: (result: AskUserFullResponse | undefined) => void;
 };
@@ -111,6 +132,74 @@ export class ChatRuntimeInteractionHostService {
   private readonly _confirmationActiveIndices = signal<Record<string, number | undefined>>({});
   private readonly _planReviewEntries = signal<Record<string, PlanReviewRuntimeEntry | undefined>>({});
   private readonly _planReviewFileSyncs = new Map<string, PlanReviewFileSyncState>();
+  private readonly _backgroundCommandSessions = new Set<string>();
+
+  async requestCommandSessionAction(
+    sessionId: string,
+    request: RuntimeCommandSessionActionRequest,
+  ): Promise<RuntimeCommandSessionActionResult> {
+    const processId = request.processId?.trim();
+    if (!processId) {
+      return {
+        ok: false,
+        actionId: request.actionId,
+        processId: '',
+        error: '缺少命令进程 ID',
+      };
+    }
+
+    if (request.actionId === 'continue_background') {
+      this.markCommandSessionBackground(sessionId, processId);
+      return { ok: true, actionId: request.actionId, processId };
+    }
+
+    if (request.actionId === 'stop') {
+      const snapshot = await stopBlocklyCommandSession(processId, { yieldTimeMs: 250 });
+      this.clearCommandSessionBackground(sessionId, processId);
+      return snapshot
+        ? { ok: true, actionId: request.actionId, processId, snapshot }
+        : {
+            ok: false,
+            actionId: request.actionId,
+            processId,
+            error: `未找到命令进程：${processId}`,
+          };
+    }
+
+    return {
+      ok: false,
+      actionId: request.actionId,
+      processId,
+      error: `不支持的命令会话操作：${request.actionId}`,
+    };
+  }
+
+  markCommandSessionBackground(sessionId: string, processId: string): void {
+    const key = this.getCommandSessionDisplayKey(sessionId, processId);
+    if (key) {
+      this._backgroundCommandSessions.add(key);
+    }
+  }
+
+  clearCommandSessionBackground(sessionId: string, processId: string): void {
+    const key = this.getCommandSessionDisplayKey(sessionId, processId);
+    if (key) {
+      this._backgroundCommandSessions.delete(key);
+    }
+  }
+
+  isCommandSessionBackground(sessionId: string, processId: string | undefined): boolean {
+    const key = this.getCommandSessionDisplayKey(sessionId, processId);
+    return !!key && this._backgroundCommandSessions.has(key);
+  }
+
+  private getCommandSessionDisplayKey(sessionId: string, processId: string | undefined): string | null {
+    const normalizedProcessId = processId?.trim();
+    if (!normalizedProcessId) {
+      return null;
+    }
+    return `${sessionId || 'default'}::${normalizedProcessId}`;
+  }
 
   getQuestionWidget(sessionId: string): RuntimeQuestionWidgetState | null {
     return this._questionEntries()[sessionId] ?? null;

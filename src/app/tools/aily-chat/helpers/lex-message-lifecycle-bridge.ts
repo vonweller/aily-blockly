@@ -183,7 +183,7 @@ export class LexMessageLifecycleBridge {
       await this.partProcessor.finalize?.();
       logFinalizeStage('part_processor_finalize');
 
-      this.ctx.editCheckpointService.commitCurrentTurn();
+      await this.ctx.editCheckpointService.commitCurrentTurn();
       if (this.ctx.editCheckpointService.hasEditsInCurrentTurn()) {
         const summary = await this.ctx.editCheckpointService.getEditsSummary();
         const autoSave = this.ctx.ailyChatConfigService.autoSaveEdits;

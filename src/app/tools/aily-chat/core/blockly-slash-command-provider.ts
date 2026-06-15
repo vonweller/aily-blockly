@@ -30,6 +30,12 @@ const BLOCKLY_SLASH_COMMANDS: readonly ISlashCommandContribution[] = [
     sampleRequest: '/edit rename this helper to match the new contract',
     when: 'Use when the request is an explicit code modification task.',
   },
+  {
+    name: 'compact',
+    description: 'Compact the current conversation history.',
+    sampleRequest: '/compact',
+    when: 'Use to summarize older conversation context and keep the session continuing with a compacted history.',
+  },
 ];
 
 function normalizeSessionId(sessionId?: string | null): string | null {

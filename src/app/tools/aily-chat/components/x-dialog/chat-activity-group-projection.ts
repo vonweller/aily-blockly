@@ -36,6 +36,7 @@ import type {
   ActivityGroupHeaderDisplayData,
   ActivityGroupDisplayItem,
   ActivityInvocationDisplayData,
+  ActivityToolbarActionDisplayData,
 } from './chat-activity-group.types';
 
 export type ActivityGroupState = 'doing' | 'done' | 'error';
@@ -581,8 +582,8 @@ function buildApprovalCodeRow(
 
   const lines = body.split('\n');
   let outputUri: string | undefined;
-  if (lines[0]?.startsWith('<vscode_codeblock_uri>') && lines[0].endsWith('</vscode_codeblock_uri>')) {
-    outputUri = lines[0].slice('<vscode_codeblock_uri>'.length, -'</vscode_codeblock_uri>'.length);
+  if (lines[0]?.startsWith('<aily_codeblock_uri>') && lines[0].endsWith('</aily_codeblock_uri>')) {
+    outputUri = lines[0].slice('<aily_codeblock_uri>'.length, -'</aily_codeblock_uri>'.length);
     lines.shift();
   }
 
@@ -654,11 +655,69 @@ export function buildTerminalActivityDisplayItem(
     approval: undefined,
     approvalSummary: undefined,
     invocationDetail,
+    toolbarActions: buildTerminalToolbarActions(part),
     children: undefined,
     detailSections,
-    detailExpanded: false,
+    detailExpanded: shouldExpandTerminalOutput(part),
     detailKind: invocationDetail ? 'invocation' : undefined,
   };
+}
+
+function buildTerminalToolbarActions(part: TerminalPart): readonly ActivityToolbarActionDisplayData[] {
+  const actions: ActivityToolbarActionDisplayData[] = [
+    {
+      id: 'toggle-output',
+      iconClass: 'fa-light fa-chevron-down',
+      label: '显示或隐藏输出',
+      tooltip: '显示或隐藏命令输出',
+    },
+  ];
+
+  if (part.outputFilePath) {
+    actions.push({
+      id: 'open-output-file',
+      iconClass: 'fa-light fa-arrow-up-right-from-square',
+      label: '打开输出文件',
+      tooltip: '在系统文件管理器中打开输出文件',
+      data: { outputFilePath: part.outputFilePath },
+    });
+  }
+
+  if (part.isRunning && part.processId) {
+    const sessionData = {
+      processId: part.processId,
+      ...(part.outputSessionId ? { outputSessionId: part.outputSessionId } : {}),
+      ...(part.outputFilePath ? { outputFilePath: part.outputFilePath } : {}),
+    };
+
+    actions.push({
+      id: 'continue-background',
+      iconClass: 'fa-light fa-window-minimize',
+      label: '后端执行',
+      tooltip: '折叠输出并让命令继续在后端执行',
+      data: sessionData,
+    });
+
+    actions.push({
+      id: 'stop-process',
+      iconClass: 'fa-light fa-stop',
+      label: '中断',
+      tooltip: '中断正在运行的命令进程',
+      data: sessionData,
+    });
+  }
+
+  return actions;
+}
+
+function shouldExpandTerminalOutput(part: TerminalPart): boolean {
+  if (part.isRunning) {
+    return !!(part.output || part.stderr);
+  }
+  if (part.exitCode != null && part.exitCode !== 0) {
+    return true;
+  }
+  return !!(part.output || part.stderr);
 }
 
 export function buildToolActivityShellPresentation(input: {
@@ -1207,16 +1266,22 @@ function getToolLikeActivityState(part: ToolCallPart | ConfirmationPart | Termin
 }
 
 function buildTerminalDetailSections(part: TerminalPart): readonly DetailSectionDescriptor[] {
+  const terminalKey = getTerminalDisplayKey(part);
+  const commandTone: StateDetailRow['tone'] = part.isRunning
+    ? 'info'
+    : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'success');
   const rows = [
     {
-      id: `${part.toolCallId || 'terminal'}:command`,
+      id: `${terminalKey}:command`,
       title: '命令',
+      subtitle: part.cwd,
       note: part.command,
-      tone: 'neutral' as const,
+      trailing: formatTerminalStatusLabel(part),
+      tone: commandTone,
       outputKind: 'terminal-command' as const,
     },
     ...(part.output ? [{
-      id: `${part.toolCallId || 'terminal'}:stdout`,
+      id: `${terminalKey}:stdout`,
       title: 'stdout',
       note: part.output,
       tone: 'neutral' as const,
@@ -1224,7 +1289,7 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
       outputChannel: 'stdout' as const,
     }] : []),
     ...(part.stderr ? [{
-      id: `${part.toolCallId || 'terminal'}:stderr`,
+      id: `${terminalKey}:stderr`,
       title: 'stderr',
       note: part.stderr,
       tone: 'error' as const,
@@ -1237,11 +1302,34 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
     title: '工具输出',
     rows,
     outputGroups: [{
-      id: `${part.toolCallId || 'terminal'}:output-group`,
+      id: `${terminalKey}:output-group`,
       kind: 'terminal',
       rows,
     }],
   }];
+}
+
+function formatTerminalStatusLabel(part: TerminalPart): string {
+  if (part.isRunning) {
+    return '运行中';
+  }
+  if (part.status === 'killed') {
+    return '已停止';
+  }
+  if (part.status === 'timeout') {
+    return '已超时';
+  }
+  if (part.exitCode != null) {
+    return `退出码 ${part.exitCode}`;
+  }
+  if (part.status) {
+    return part.status;
+  }
+  return '已完成';
+}
+
+function getTerminalDisplayKey(part: TerminalPart): string {
+  return part.processId || part.outputSessionId || part.terminalId || part.toolCallId || part.partId || 'terminal';
 }
 
 function getActivityGroupStateLabel(state: ActivityGroupState): string {

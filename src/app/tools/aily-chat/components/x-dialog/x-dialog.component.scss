@@ -201,48 +201,6 @@
   padding: 0;
 }
 
-.turn-restore-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-self: center;
-  width: 100%;
-  max-width: 100%;
-  margin: 2px 0 4px;
-  padding: 0 4px;
-  min-height: 20px;
-  font-size: 10px;
-  line-height: 18px;
-  color: var(--chat-fg-dim);
-}
-
-.turn-restore-hint-text {
-  color: var(--chat-success);
-  opacity: 0.9;
-}
-
-.turn-restore-hint-action {
-  padding: 0;
-  border: none;
-  background: transparent;
-  appearance: none;
-  outline: none;
-  font-size: inherit;
-  font-family: inherit;
-  line-height: inherit;
-  color: var(--aily-chat-xdialog-checkpoint-fg, var(--chat-fg-dim));
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
-  text-underline-offset: 2px;
-
-  &:hover {
-    color: var(--aily-chat-xdialog-checkpoint-fg-hover, var(--chat-fg));
-  }
-}
-
 .edit-turn-hint {
   margin: 2px 2px 8px;
   padding: 6px 8px;

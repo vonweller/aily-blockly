@@ -9,8 +9,6 @@ import {
   createChatSessionInputStateFromResolvedMode,
   createChatSessionInputState,
   DEFAULT_CHAT_SESSION_PERMISSION_MODE,
-  isLegacyChatPlanModeValue,
-  LEGACY_CHAT_PLAN_AGENT_TARGET,
   normalizeChatSessionProviderOptionGroups,
   normalizeChatSelectedMode,
   normalizeChatSessionModeDescriptor,
@@ -36,6 +34,10 @@ import type { HostSessionRecord } from '../services/chat-history.service';
 
 export interface HostSessionSelectedModeResolveOptions {
   readonly resolveModeById?: (modeId: string) => (
+    Pick<ChatResolvedMode, 'kind' | 'customAgentTarget'>
+    & Partial<Pick<ChatResolvedMode, 'id' | 'isBuiltin' | 'name' | 'modeInstructions' | 'uri'>>
+  ) | undefined;
+  readonly resolveModeByName?: (modeName: string) => (
     Pick<ChatResolvedMode, 'kind' | 'customAgentTarget'>
     & Partial<Pick<ChatResolvedMode, 'id' | 'isBuiltin' | 'name' | 'modeInstructions' | 'uri'>>
   ) | undefined;
@@ -516,13 +518,6 @@ function resolveStoredSelectedModeFromInputState(
     return undefined;
   }
 
-  if (isLegacyChatPlanModeValue(storedMode.id)) {
-    return normalizeChatSelectedMode({
-      modeId: 'agent',
-      customAgentTarget: LEGACY_CHAT_PLAN_AGENT_TARGET,
-    });
-  }
-
   const storedBuiltinModeId = resolveChatModeId(storedMode.id);
   const storedModeKind = storedMode.kind ?? storedBuiltinModeId;
   if (storedModeKind && storedModeKind !== 'agent') {
@@ -551,6 +546,18 @@ function resolveStoredSelectedModeFromInputState(
       modeId: resolvedModeByUri.kind,
       customAgentTarget: resolvedModeByUri.kind === 'agent'
         ? resolvedModeByUri.customAgentTarget
+        : undefined,
+    });
+  }
+
+  const resolvedModeByName = storedMode.modeInstructions?.name
+    ? options?.resolveModeByName?.(storedMode.modeInstructions.name)
+    : undefined;
+  if (resolvedModeByName) {
+    return normalizeChatSelectedMode({
+      modeId: resolvedModeByName.kind,
+      customAgentTarget: resolvedModeByName.kind === 'agent'
+        ? resolvedModeByName.customAgentTarget
         : undefined,
     });
   }
@@ -627,7 +634,7 @@ function resolveTurnModeDescriptorFromMetadata(
 
   if (isCustomMode) {
     const resolvedMode = (modeUri ? options?.resolveModeById?.(modeUri) : undefined)
-      ?? (modeName ? options?.resolveModeById?.(modeName) : undefined);
+      ?? (modeName ? options?.resolveModeByName?.(modeName) : undefined);
     if (resolvedMode) {
       return createChatSessionModeDescriptorFromResolvedMode({
         id: typeof resolvedMode.id === 'string' && resolvedMode.id.trim().length > 0
@@ -833,8 +840,15 @@ function resolveStoredModeDescriptorById(
     return resolvedById;
   }
 
-  return modeDescriptor.modeInstructions?.uri
+  const resolvedByUri = modeDescriptor.modeInstructions?.uri
     ? options?.resolveModeById?.(modeDescriptor.modeInstructions.uri)
+    : undefined;
+  if (resolvedByUri) {
+    return resolvedByUri;
+  }
+
+  return (modeDescriptor.modeInstructions?.name ?? modeDescriptor.name)
+    ? options?.resolveModeByName?.((modeDescriptor.modeInstructions?.name ?? modeDescriptor.name)!)
     : undefined;
 }
 
@@ -849,8 +863,15 @@ function resolveStoredModeById(
     return resolvedById;
   }
 
-  return storedMode.modeInstructions?.uri
+  const resolvedByUri = storedMode.modeInstructions?.uri
     ? options?.resolveModeById?.(storedMode.modeInstructions.uri)
+    : undefined;
+  if (resolvedByUri) {
+    return resolvedByUri;
+  }
+
+  return storedMode.modeInstructions?.name
+    ? options?.resolveModeByName?.(storedMode.modeInstructions.name)
     : undefined;
 }
 

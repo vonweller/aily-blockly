@@ -1,5 +1,5 @@
 import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseQuotaSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
-import { collectTurnResponseText } from 'aily-lex/browser';
+import { collectTurnResponseText, createTurnResponseCommand } from 'aily-lex/browser';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -391,6 +391,36 @@ export function buildTurnResponseTurn(
     createdAt: projection.createdAt,
     updatedAt: projection.updatedAt,
   };
+}
+
+export function buildSeededTurnResponseTurn(input: {
+  readonly turnId: string;
+  readonly requestContent: string;
+  readonly displayContent?: string;
+  readonly metadata?: TurnResponseTurn['request']['metadata'];
+  readonly participant?: string;
+  readonly timestamp?: number;
+}): TurnResponseTurn {
+  const timestamp = input.timestamp ?? Date.now();
+  const slashCommand = resolveInitialResponseSlashCommand(input.metadata);
+  return buildTurnResponseTurn({
+    turnId: input.turnId,
+    request: buildTurnResponseRequest(input.requestContent, input.displayContent, input.metadata),
+    rounds: [],
+    participant: input.participant,
+    slashCommand,
+    status: 'streaming',
+    parts: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+export function resolveInitialResponseSlashCommand(
+  metadata: TurnResponseTurn['request']['metadata'],
+): TurnResponseCommand | undefined {
+  const slashCommand = metadata?.command;
+  return slashCommand ? createTurnResponseCommand(slashCommand.name, slashCommand) : undefined;
 }
 
 function getContinuationResolvedModelName(

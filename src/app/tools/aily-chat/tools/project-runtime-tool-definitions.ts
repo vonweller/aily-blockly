@@ -118,7 +118,7 @@ export const PROJECT_RUNTIME_TOOL_DEFINITIONS = [
 - **/memories/session/**: 当前会话记忆，仅作用于当前对话。
 - **/memories/repo/**: 当前仓库记忆，记录项目约定、结构与已验证事实。
 
-支持的操作与 Copilot memory 主干一致：view/create/str_replace/insert/delete/rename。
+支持的操作：view/create/str_replace/insert/delete/rename。
 
 不要把 instruction 文件或项目根 aily.md 当成 memory tool 的存储位置。`,
         input_schema: {

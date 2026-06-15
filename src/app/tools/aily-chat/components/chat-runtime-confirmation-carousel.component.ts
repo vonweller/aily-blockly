@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Input, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostBinding, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 import { ChatRuntimeInteractionHostService, type RuntimeConfirmationDecision } from '../services/chat-runtime-interaction-host.service';
@@ -12,14 +12,12 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
   template: `
     @if (activeConfirmation; as active) {
       <div class="rtc-shell">
-        <div class="rtc-header">
-          <div class="rtc-title-group">
-            <div class="rtc-title">{{ active.kind === 'approval' ? '工具审批' : '确认请求' }}</div>
-            @if (queue.length > 1) {
+        @if (queue.length > 1) {
+          <div class="rtc-header">
+            <div class="rtc-title-group">
+              <div class="rtc-title">{{ active.kind === 'approval' ? '工具审批' : '确认请求' }}</div>
               <div class="rtc-step">{{ activeIndex + 1 }}/{{ queue.length }}</div>
-            }
-          </div>
-          @if (queue.length > 1) {
+            </div>
             <div class="rtc-nav">
               <button type="button" class="rtc-nav-btn" (click)="navigate(-1)" aria-label="上一个确认">
                 <i class="fa-light fa-chevron-left"></i>
@@ -28,8 +26,8 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
                 <i class="fa-light fa-chevron-right"></i>
               </button>
             </div>
-          }
-        </div>
+          </div>
+        }
 
         <x-aily-confirmation-viewer
           class="rtc-viewer"
@@ -48,12 +46,17 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
     .rtc-shell {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      margin: 0 0 8px;
-      padding: 8px;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 10px;
-      background: rgba(255,255,255,0.03);
+      gap: 2px;
+      margin: 0;
+      padding: 4px 3px;
+      box-sizing: border-box;
+      border: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255,255,255,0.08));
+      border-bottom: none;
+      border-radius: var(--aily-chat-widget-top-radius, 8px) var(--aily-chat-widget-top-radius, 8px) 0 0;
+      background: color-mix(in srgb, var(--aily-bg-elevated, #1f1f1f) 72%, transparent);
+      backdrop-filter: blur(6px);
+      color: var(--aily-text-tertiary, #cccccc);
+      overflow: hidden;
     }
 
     .rtc-header {
@@ -61,6 +64,8 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      min-height: 22px;
+      padding: 0 3px;
     }
 
     .rtc-title-group {
@@ -73,7 +78,7 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
     .rtc-title {
       font-size: 12px;
       font-weight: 600;
-      color: var(--chat-fg, #cccccc);
+      color: var(--chat-fg-dim, #8e8e8e);
     }
 
     .rtc-step {
@@ -108,6 +113,45 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
     .rtc-viewer {
       margin: 0;
     }
+
+    :host ::ng-deep .rtc-viewer .aa-body {
+      gap: 4px;
+    }
+
+    :host ::ng-deep .rtc-viewer .aa-message {
+      padding: 0 3px;
+    }
+
+    :host ::ng-deep .rtc-viewer .aa-actions {
+      margin-top: 0;
+    }
+
+    :host ::ng-deep .rtc-viewer .cca-actions {
+      padding: 0 3px 3px;
+      margin-bottom: 0;
+      gap: 4px;
+    }
+
+    :host ::ng-deep .rtc-viewer .cca-btn-primary,
+    :host ::ng-deep .rtc-viewer .cca-btn-caret,
+    :host ::ng-deep .rtc-viewer .cca-btn-reject {
+      min-height: 22px;
+      border-radius: 2px;
+    }
+
+    :host ::ng-deep .rtc-viewer .cca-btn-primary:not(.cca-btn-primary-standalone) {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+
+    :host ::ng-deep .rtc-viewer .cca-btn-caret {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+    }
+
+    :host ::ng-deep .rtc-viewer .cmdp-container {
+      border-radius: 2px;
+    }
   `],
 })
 export class ChatRuntimeConfirmationCarouselComponent {
@@ -125,6 +169,11 @@ export class ChatRuntimeConfirmationCarouselComponent {
 
   get activeConfirmation() {
     return this.sessionId ? this.runtimeHost.getActiveConfirmation(this.sessionId) : null;
+  }
+
+  @HostBinding('class.has-confirmation')
+  get hasConfirmation(): boolean {
+    return !!this.activeConfirmation;
   }
 
   navigate(delta: number): void {

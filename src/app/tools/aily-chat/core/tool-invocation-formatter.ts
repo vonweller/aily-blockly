@@ -53,13 +53,23 @@ export function buildToolInvocationDisplaySummary(input: {
     case 'check_exists':
       return { label: `Checked ${formatPathLeaf(getPrimaryPath(args), args?.type === 'folder' ? 'folder' : 'path')}` };
     case 'run_in_terminal':
+    case 'command_exec':
     case 'execute_command':
-    case 'start_background_command':
       return buildCommandSummary('Ran', args);
     case 'send_to_terminal':
+    case 'command_write_stdin':
       return buildSendToTerminalSummary(args);
     case 'get_terminal_output':
+    case 'command_status':
       return buildTerminalOutputSummary(args);
+    case 'command_stop':
+      return { label: 'Stopped command', subtitle: asString(args?.processId) };
+    case 'command_read':
+      return { label: 'Read command output', subtitle: asString(args?.outputSessionId) || asString(args?.processId) };
+    case 'command_tail':
+      return { label: 'Read command tail', subtitle: asString(args?.outputSessionId) || asString(args?.processId) };
+    case 'command_search':
+      return { label: 'Searched command output', subtitle: asString(args?.query) || asString(args?.regex) };
     case 'fetch':
     case 'fetch_webpage':
       return buildFetchSummary(args);
@@ -91,8 +101,8 @@ export function buildToolInvocationDisplaySummary(input: {
       return buildBoardConfigSummary();
     case 'install_extension':
       return { label: `Installed ${truncateDisplayText(asString(args?.name) || asString(args?.id) || 'extension', 48)}` };
-    case 'run_vscode_command':
-      return { label: `Ran ${truncateDisplayText(asString(args?.name) || asString(args?.commandId) || 'VS Code command', 56)}` };
+    case 'run_editor_command':
+      return { label: `Ran ${truncateDisplayText(asString(args?.name) || asString(args?.commandId) || 'editor command', 56)}` };
     case 'resolve_memory_file_uri':
       return { label: `Resolved ${truncateDisplayText(asString(args?.path) || 'memory file', 56)}` };
     case 'memory':
@@ -143,11 +153,11 @@ export function flattenToolInvocationDisplaySummary(
   return summary.subtitle ? `${summary.label}, ${summary.subtitle}` : summary.label;
 }
 
-export function generateCopilotToolStartText(toolName: string, args?: any): string | undefined {
+export function generateAilyToolStartText(toolName: string, args?: any): string | undefined {
   return flattenToolInvocationDisplaySummary(buildToolInvocationDisplaySummary({ toolName, args }));
 }
 
-export function generateCopilotToolResultText(toolName: string, args?: any, result?: any): string | undefined {
+export function generateAilyToolResultText(toolName: string, args?: any, result?: any): string | undefined {
   const cleanToolName = cleanToolNamePrefix(toolName);
   const summary = buildToolInvocationDisplaySummary({ toolName, args, result });
   const base = flattenToolInvocationDisplaySummary(summary);
@@ -296,19 +306,19 @@ function buildCommandSummary(verb: string, args: any): ToolInvocationDisplaySumm
 }
 
 function buildSendToTerminalSummary(args: any): ToolInvocationDisplaySummary {
-  const command = asString(args?.command);
-  const terminalId = asString(args?.id) || asString(args?.terminalId);
+  const command = asString(args?.input) || asString(args?.command);
+  const terminalId = asString(args?.processId) || asString(args?.id) || asString(args?.terminalId);
   return {
     label: command ? `Sent ${truncateDisplayText(command, 56)}` : 'Sent terminal input',
-    subtitle: terminalId ? `to terminal ${terminalId}` : undefined,
+    subtitle: terminalId ? `to process ${terminalId}` : undefined,
   };
 }
 
 function buildTerminalOutputSummary(args: any): ToolInvocationDisplaySummary {
-  const terminalId = asString(args?.id) || asString(args?.terminalId);
+  const terminalId = asString(args?.processId) || asString(args?.outputSessionId) || asString(args?.id) || asString(args?.terminalId);
   return {
-    label: 'Read terminal output',
-    subtitle: terminalId ? `from terminal ${terminalId}` : undefined,
+    label: 'Read command output',
+    subtitle: terminalId ? `from process ${terminalId}` : undefined,
   };
 }
 
@@ -890,6 +900,9 @@ function cleanToolNamePrefix(toolName: string): string {
 
 function normalizeFormatterToolName(toolName: string): string {
   const cleanToolName = cleanToolNamePrefix(toolName);
+  if (cleanToolName === 'manage_todo_list' || cleanToolName === 'todo_write_tool') {
+    return cleanToolName;
+  }
   const runtimeToolName = toRuntimeGovernanceToolName(cleanToolName) || cleanToolName;
   return normalizeReadSideToolName(runtimeToolName) === 'run_in_terminal'
     ? 'run_in_terminal'
