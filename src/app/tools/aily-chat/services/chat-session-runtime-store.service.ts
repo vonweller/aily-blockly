@@ -17,6 +17,7 @@ import type { ChatInputNotice } from './chat-input-notice';
 import type { ContextBudgetSnapshot } from './context-budget-snapshot';
 import type { RequestQuotaSnapshot } from './request-quota-snapshot';
 import type { RequestQuotaServiceState } from './request-quota-state.service';
+import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
 
 export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
 
@@ -289,6 +290,18 @@ export class ChatSessionRuntimeStoreService {
     const nextTurnResponses = Array.isArray(state.turnResponses)
       ? [...state.turnResponses]
       : previousState?.turnResponses ?? [];
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(normalizedSessionId, nextTurnResponses);
+    if (ownerDiagnostics.mismatchCount > 0) {
+      console.warn('[ChatSessionRuntimeStore][owner-mismatch]', {
+        sessionId: normalizedSessionId,
+        mismatchCount: ownerDiagnostics.mismatchCount,
+        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+        reason: options?.reason ?? null,
+      });
+    }
     const nextHostProjectionState = state.hostProjectionState !== undefined
       ? state.hostProjectionState ?? null
       : previousState?.hostProjectionState ?? null;

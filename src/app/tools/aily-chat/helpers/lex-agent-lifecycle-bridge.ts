@@ -88,7 +88,11 @@ export class LexAgentLifecycleBridge {
   }
 
   isConfiguredFor(sessionId?: string, configKey?: string): boolean {
-    const targetSessionId = sessionId || this.deps.getSessionId();
+    const targetSessionId = normalizeLexSessionId(sessionId)
+      || normalizeLexSessionId(this.deps.getSessionId());
+    if (!targetSessionId) {
+      return false;
+    }
     const entry = this._sessionEntries.get(targetSessionId);
     if (!entry) {
       return false;
@@ -133,7 +137,11 @@ export class LexAgentLifecycleBridge {
   }
 
   activateSession(sessionId?: string | null): boolean {
-    const targetEntry = this.resolveEntry(sessionId);
+    const targetSessionId = this.resolveSessionId(sessionId);
+    if (!targetSessionId) {
+      return false;
+    }
+    const targetEntry = this._sessionEntries.get(targetSessionId) ?? null;
     if (!targetEntry) {
       return false;
     }
@@ -149,6 +157,17 @@ export class LexAgentLifecycleBridge {
     options?: { readonly activate?: boolean },
   ): Promise<boolean> {
     const startedAt = Date.now();
+    const targetSessionId = normalizeLexSessionId(sessionId)
+      || normalizeLexSessionId(this.deps.getSessionId());
+    if (!targetSessionId) {
+      console.info('[LexStream][debug] ensureAgent skipped without session owner', {
+        requestedSessionId: sessionId ?? null,
+        requestedConfigKey: typeof configKey === 'string' ? configKey : null,
+        durationMs: Date.now() - startedAt,
+      });
+      return false;
+    }
+
     if (!await this.loadModule()) {
       console.info('[LexStream][debug] ensureAgent loadModule unavailable', {
         requestedSessionId: sessionId ?? null,
@@ -159,7 +178,6 @@ export class LexAgentLifecycleBridge {
     }
 
     const lex = this._lex!;
-    const targetSessionId = sessionId || this.deps.getSessionId();
     const normalizedConfigKey = typeof configKey === 'string' ? configKey : null;
     const existingEntry = this._sessionEntries.get(targetSessionId) ?? null;
     const shouldActivate = options?.activate !== false;
@@ -341,10 +359,15 @@ export class LexAgentLifecycleBridge {
   }
 
   private resolveSessionId(sessionId?: string | null): string | null {
-    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
-      ? sessionId.trim()
-      : this._activeSessionId;
-    return targetSessionId ?? null;
+    if (typeof sessionId === 'string') {
+      return normalizeLexSessionId(sessionId) || null;
+    }
+
+    if (sessionId === null) {
+      return null;
+    }
+
+    return this._activeSessionId;
   }
 
   private resolveEntry(sessionId?: string | null): LexSessionRuntimeEntry | null {
@@ -371,6 +394,10 @@ export class LexAgentLifecycleBridge {
 
     entry.agent.restoreSession?.(snapshot);
   }
+}
+
+function normalizeLexSessionId(sessionId: string | null | undefined): string {
+  return typeof sessionId === 'string' ? sessionId.trim() : '';
 }
 
 function extractRuntimeModeFromConfigKey(configKey: string | null | undefined): string | null {

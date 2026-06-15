@@ -6,6 +6,7 @@ import { getBlocklyContextSnapshotService } from './blockly-context-snapshot-ser
 import { buildProjectTool } from '../tools/buildProjectTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
 import { getBoardParametersTool } from '../tools/getBoardParametersTool';
+import { getHardwareCategoriesTool } from '../tools/getHardwareCategoriesTools';
 import { setBoardConfigTool } from '../tools/boardConfigTool';
 import { newProjectTool } from '../tools/createProjectTool';
 import { reloadProjectTool } from '../tools/reloadProjectTool';
@@ -101,6 +102,56 @@ function makeBoardSearchContribution(createDeferred: DeferredFactory): RuntimeSc
   };
 }
 
+function makeSearchBoardsLibrariesContribution(): RuntimeScopedToolContribution {
+  return {
+    name: 'search_boards_libraries',
+    toolSet: 'blockly-discovery',
+    description: 'Search Aily development boards and libraries by text query or structured filters',
+    prompt: searchBoardsLibrariesTool.description,
+    inputSchema: searchBoardsLibrariesTool.parameters,
+    annotations: { readOnly: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+  };
+}
+
+function makeGetHardwareCategoriesContribution(): RuntimeScopedToolContribution {
+  return {
+    name: 'get_hardware_categories',
+    toolSet: 'blockly-discovery',
+    description: 'Get board or library category facets for guided hardware selection',
+    prompt: getHardwareCategoriesTool.description,
+    inputSchema: getHardwareCategoriesTool.parameters,
+    annotations: { readOnly: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+  };
+}
+
+function makeGetBoardParametersContribution(): RuntimeScopedToolContribution {
+  return {
+    name: 'get_board_parameters',
+    toolSet: 'blockly-discovery',
+    description: 'Read detailed parameters from the current project board configuration',
+    prompt: 'Use this read-only tool when you need the current board pins, serial/I2C/SPI configuration, PWM pins, builtin LEDs, or other board.json parameters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        parameters: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } },
+          ],
+          description: 'Optional parameter name or list. Omit to return all board parameters.',
+        },
+      },
+    },
+    annotations: { readOnly: true },
+    runtimeModes: ['unbound', 'coder', 'blockly'],
+    agentScope: ['main', 'Plan', 'Explore', 'SchematicAgent'],
+  };
+}
+
 export function appendBlocklyProjectContributions(
   contributions: IToolContribution[],
   hostAPI: IExternalHostAPI,
@@ -121,6 +172,11 @@ export function appendBlocklyDiscoveryContributions(
   createDeferred: DeferredFactory,
 ): void {
   if (hostAPI.boardSearch?.search) {
+    contributions.push(makeSearchBoardsLibrariesContribution());
+    contributions.push(makeGetHardwareCategoriesContribution());
+    if (hostAPI.project) {
+      contributions.push(makeGetBoardParametersContribution());
+    }
     contributions.push(makeBoardSearchContribution(createDeferred));
   }
 }
@@ -276,6 +332,28 @@ export function createBlocklyProjectDiscoveryHandlers(): Record<string, InvokeHa
         default:
           return error(`Unknown action: ${action}`);
       }
+    },
+
+    search_boards_libraries: async (input, _hostAPI) => {
+      const host = AilyHost.get();
+      if (!host.config) return error('Board/library search is not available.');
+      const result = await searchBoardsLibrariesTool.handler(input as any, host.config as any);
+      return fromToolResult(result);
+    },
+
+    get_hardware_categories: async (input, _hostAPI) => {
+      const host = AilyHost.get();
+      if (!host.config) return error('Hardware category search is not available.');
+      const result = await getHardwareCategoriesTool.handler(input as any, host.config as any);
+      return fromToolResult(result);
+    },
+
+    get_board_parameters: async (input, _hostAPI) => {
+      const host = AilyHost.get();
+      if (!host.project) return error('Board parameters are not available.');
+      return fromToolResult(await getBoardParametersTool.handler(host.project as any, {
+        parameters: input['parameters'] as any,
+      }));
     },
   };
 }

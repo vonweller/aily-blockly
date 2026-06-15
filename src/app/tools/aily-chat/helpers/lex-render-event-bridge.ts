@@ -30,6 +30,7 @@ import {
   getTurnResponseResolvedModelName,
   withExplicitAgentSummaryPreview,
 } from './turn-response-response-model';
+import { buildSessionTurnOwnerDiagnostics } from './session-turn-owner-diagnostics';
 
 /** Narrow context: only needs partStore for rendering + toolCallingIteration for turn tracking */
 type LexRenderEventBridgeContext =
@@ -105,6 +106,10 @@ export class LexRenderEventBridge {
   setProjectionSessionResource(sessionResource: string | null | undefined): void {
     const normalized = normalizeSessionResource(sessionResource);
     this._projectionSessionResource = normalized || null;
+  }
+
+  getProjectionSessionResource(): string | null {
+    return this._projectionSessionResource;
   }
 
   prepareTurnRequest(
@@ -301,7 +306,7 @@ export class LexRenderEventBridge {
     const responseModelChanged = this._streamBuilder.processEvent(event) && isResponseModelRenderEvent(event);
     this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
     this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
-      syncContent: event.type === 'markdown_delta',
+      syncContent: false,
     });
     if (event.type === 'response_followups') {
       this._hostStreamEmitter.emitResponseFollowups(this._currentTurn.turnId, event.value, event.timestamp);
@@ -559,9 +564,23 @@ export class LexRenderEventBridge {
       return;
     }
 
+    const turnResponses = this.snapshotRetainedTurnResponses();
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(projectionSessionResource, turnResponses);
+    if (turnResponses.length > 0
+      && ownerDiagnostics.ownerSamples.length > 0
+      && !ownerDiagnostics.ownerSamples.includes(projectionSessionResource)) {
+      console.warn('[LexRender][blocked-owner-commit]', {
+        projectionSessionResource,
+        ownerSamples: ownerDiagnostics.ownerSamples,
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+      });
+      return;
+    }
+
     this.ctx.syncExecutionRuntimeTurnResponses(
       projectionSessionResource,
-      this.snapshotRetainedTurnResponses(),
+      turnResponses,
     );
   }
 

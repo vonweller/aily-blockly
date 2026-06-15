@@ -62,6 +62,11 @@ import {
   canRedoSessionCheckpointTimeline,
   type SessionCheckpointTimelineState,
 } from './session-checkpoint-timeline-model';
+import {
+  buildSessionTurnOwnerDiagnostics,
+  formatSessionTurnOwnerDiagnosticsFields,
+  hasBlockingSessionTurnOwnerMismatch,
+} from './session-turn-owner-diagnostics';
 
 type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
@@ -277,6 +282,30 @@ export class HostSessionSaveBridge {
       : record.metadata.requestRouting;
     record.metadata.interactionActionSummary = resolvedInteractionActionSummary;
 
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(sessionId, persistedTurnResponses as readonly TurnResponseTurn[]);
+    if (ownerDiagnostics.mismatchCount > 0) {
+      console.warn('[HostSessionSave][owner-mismatch]', {
+        sessionId,
+        mismatchCount: ownerDiagnostics.mismatchCount,
+        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+        forkKind: record.metadata.forkKind ?? null,
+        forkedFromSessionId: record.metadata.forkedFromSessionId ?? null,
+      });
+      if (hasBlockingSessionTurnOwnerMismatch(ownerDiagnostics, {
+        allowForkedTurns: !!record.metadata.forkedFromSessionId || !!record.metadata.forkKind,
+      })) {
+        console.warn('[HostSessionSave][blocked-cross-session-record]', {
+          sessionId,
+          expectedSessionId: sessionId,
+          mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        });
+        return null;
+      }
+    }
+
     return record;
   }
 
@@ -286,16 +315,34 @@ export class HostSessionSaveBridge {
     turnResponsesOverride?: readonly TurnResponseTurn[];
     sessionSnapshotOverride?: SessionSnapshot | null;
     hostRequestModel?: HostRequestModel | null;
+    target?: HostSessionSaveTarget | null;
   }): LiveHostSessionRecord | null {
-    const currentTurnResponses = options?.turnResponsesOverride
-      ?? this.resolveTargetTurnResponses(this.ctx.sessionId);
+    const rawTarget = options?.target ?? null;
+    const targetSessionId = typeof rawTarget?.sessionId === 'string' && rawTarget.sessionId.trim().length > 0
+      ? rawTarget.sessionId.trim()
+      : this.ctx.sessionId;
+    const targetTurnResponses = options?.turnResponsesOverride
+      ?? (Array.isArray(rawTarget?.turnResponses) ? rawTarget.turnResponses : undefined)
+      ?? this.resolveTargetTurnResponses(targetSessionId);
+    const visibleTarget = this.isVisibleSaveTarget(targetSessionId);
+    const currentTurnResponses = targetTurnResponses.length > 0
+      ? targetTurnResponses
+      : (visibleTarget && Array.isArray(this.ctx.lexStream.turnResponses) ? this.ctx.lexStream.turnResponses : []);
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(targetSessionId, currentTurnResponses);
+    console.info('[HostSessionSave][owner]', [
+      `phase=build-live`,
+      `targetSessionId=${targetSessionId || '<empty>'}`,
+      `visibleTarget=${visibleTarget}`,
+      `currentViewSession=${this.ctx.readCurrentViewSessionResource?.() ?? '<unknown>'}`,
+      ...formatSessionTurnOwnerDiagnosticsFields('target', ownerDiagnostics),
+    ].join(' '));
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
-      hostRequestModel: options?.hostRequestModel ?? this.ctx.hostRequestModel ?? null,
+      hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
       turnResponsesOverride: currentTurnResponses,
-      target: {
-        sessionId: this.ctx.sessionId,
+      target: rawTarget ?? {
+        sessionId: targetSessionId,
         sessionTitle: this.ctx.sessionTitle,
         sessionTitleSource: this.ctx.chatService.currentSessionTitleSource,
         sessionTitleRevision: this.ctx.chatService.currentSessionTitleRevision,
@@ -448,6 +495,10 @@ export class HostSessionSaveBridge {
       return runtimeTurnResponses;
     }
 
+    if (this.isVisibleSaveTarget(saveTarget.sessionId) && Array.isArray(this.ctx.lexStream.turnResponses)) {
+      return this.ctx.lexStream.turnResponses;
+    }
+
     return [];
   }
 
@@ -458,7 +509,12 @@ export class HostSessionSaveBridge {
     }
 
     const turnResponses = this.ctx.readSessionTurnResponses?.(normalizedSessionId);
-    return Array.isArray(turnResponses) ? turnResponses : [];
+    if (Array.isArray(turnResponses) && turnResponses.length > 0) {
+      return turnResponses;
+    }
+
+    const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(normalizedSessionId)?.turnResponses;
+    return Array.isArray(runtimeTurnResponses) ? runtimeTurnResponses : [];
   }
 
   private isVisibleSaveTarget(sessionId: string): boolean {

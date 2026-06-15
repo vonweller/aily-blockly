@@ -26,6 +26,7 @@ type RenderEventSink = {
   readonly turnResponses?: readonly TurnResponseTurn[];
   reset(): void;
   setProjectionSessionResource?(sessionResource: string | null | undefined): void;
+  getProjectionSessionResource?(): string | null | undefined;
   hydrateTurnResponses?(turnResponses: readonly TurnResponseTurn[]): void;
   prepareTurnRequest(requestContent: string, displayContent?: string, metadata?: TurnRequest['metadata']): void;
   processEvent(event: RenderEvent): void;
@@ -318,7 +319,9 @@ export class LexTurnExecutionBridge {
   }
 
   private readCurrentExecutionTurnResponses(state: LexTurnExecutionRunState): readonly TurnResponseTurn[] | undefined {
-    if (state.sessionId && this.isExecutionSessionVisible(state.sessionId)) {
+    if (state.sessionId
+      && this.isExecutionSessionVisible(state.sessionId)
+      && this.isVisibleRenderEventBridgeOwnedBy(state.sessionId)) {
       traceBackgroundSessionExecution('read-visible-turn-responses', {
         sessionId: state.sessionId,
         hasDetachedSink: !!state.detachedRenderEventBridge,
@@ -534,17 +537,25 @@ export class LexTurnExecutionBridge {
 
     const executionSessionId = state.sessionId;
     if (!executionSessionId || this.isExecutionSessionVisible(executionSessionId)) {
-      if (state.detachedRenderEventBridge) {
+      const visibleOwnerMismatch = !!executionSessionId
+        && !this.isVisibleRenderEventBridgeOwnedBy(executionSessionId);
+      if (state.detachedRenderEventBridge || visibleOwnerMismatch) {
         const mergedTurnResponses = mergeExecutionTurnResponsesById(
           this.readExecutionTurnResponses?.(executionSessionId),
-          state.detachedRenderEventBridge.turnResponses,
+          state.detachedRenderEventBridge?.turnResponses,
         );
         traceBackgroundSessionExecution('reattach-visible-sink', {
           sessionId: executionSessionId ?? null,
           replayedTurnResponses: mergedTurnResponses.length,
+          visibleOwnerMismatch,
         });
         this._renderEventBridge.setProjectionSessionResource?.(executionSessionId ?? null);
         this._renderEventBridge.hydrateTurnResponses?.(mergedTurnResponses);
+        this._renderEventBridge.prepareTurnRequest(
+          state.requestContent,
+          state.requestDisplayContent,
+          state.requestMetadata,
+        );
       }
       state.detachedRenderEventBridge = null;
       return this._renderEventBridge;
@@ -589,6 +600,15 @@ export class LexTurnExecutionBridge {
     return this.captureVisibleSessionId() === executionSessionId;
   }
 
+  private isVisibleRenderEventBridgeOwnedBy(executionSessionId: string): boolean {
+    const readProjectionSessionResource = this._renderEventBridge?.getProjectionSessionResource;
+    if (typeof readProjectionSessionResource !== 'function') {
+      return true;
+    }
+
+    return normalizeSessionResource(readProjectionSessionResource.call(this._renderEventBridge)) === executionSessionId;
+  }
+
   private captureVisibleSessionId(): string | null {
     const currentSessionId = this.readCurrentViewSessionResource?.() ?? this.getCurrentSessionId();
     if (typeof currentSessionId !== 'string') {
@@ -618,4 +638,8 @@ export class LexTurnExecutionBridge {
 
     return this.readExecutionYieldRequested?.(state.sessionId) === true;
   }
+}
+
+function normalizeSessionResource(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
