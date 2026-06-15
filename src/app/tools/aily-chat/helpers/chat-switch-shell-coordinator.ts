@@ -89,6 +89,15 @@ export class ChatSwitchShellCoordinator {
     const customAgentTarget = typeof item.data?.customAgentTarget === 'string'
       ? item.data.customAgentTarget.trim()
       : '';
+
+    const builtinModeFromModeId = resolveChatSurfaceModeId(customModeId);
+    if (builtinModeFromModeId) {
+      if (builtinModeFromModeId !== this.deps.getCurrentMode() || this.needsBuiltinAgentReset(builtinModeFromModeId)) {
+        void this.callbacks.switchToMode(builtinModeFromModeId);
+      }
+      return;
+    }
+
     if (customModeId) {
       const currentModeId = typeof this.deps.getCurrentModeId() === 'string'
         ? this.deps.getCurrentModeId()!.trim()
@@ -111,9 +120,22 @@ export class ChatSwitchShellCoordinator {
     }
 
     const mode = resolveChatSurfaceModeId(item.data?.mode);
-    if (mode && mode !== this.deps.getCurrentMode()) {
+    if (mode && (mode !== this.deps.getCurrentMode() || this.needsBuiltinAgentReset(mode))) {
       void this.callbacks.switchToMode(mode);
     }
+  }
+
+  private needsBuiltinAgentReset(nextMode: string): boolean {
+    if (nextMode !== 'agent' || this.deps.getCurrentMode() !== 'agent') {
+      return false;
+    }
+    if (this.deps.getCurrentCustomAgentTarget()) {
+      return true;
+    }
+    const currentModeId = typeof this.deps.getCurrentModeId() === 'string'
+      ? this.deps.getCurrentModeId()!.trim()
+      : '';
+    return !!currentModeId && !resolveChatSurfaceModeId(currentModeId);
   }
 
   modeMenuActionClick(payload: { readonly action?: string; readonly item?: IMenuItem } | IMenuItem): void {
