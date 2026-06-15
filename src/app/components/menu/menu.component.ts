@@ -18,6 +18,7 @@ import { Router } from '@angular/router';
 import { PlatformService } from '../../services/platform.service';
 
 const MENU_ANCHOR_ALIGNMENT_EPSILON = 4;
+const CHAT_MODEL_SUBMENU_OPEN_BODY_CLASS = 'aily-chat-model-submenu-open';
 
 @Component({
   selector: 'app-menu',
@@ -77,6 +78,10 @@ export class MenuComponent implements AfterViewChecked {
 
   @Input() focusGlobalFilterOnOpen = false;
 
+  @Input() tooltipOverlayClassName = 'aily-menu-item-tooltip';
+
+  @Input() tooltipPlacement = 'rightTop';
+
   @Output() itemClickEvent = new EventEmitter();
 
   @Output() subItemClickEvent = new EventEmitter();
@@ -111,6 +116,7 @@ export class MenuComponent implements AfterViewChecked {
   } | null = null;
 
   constructor(
+    private hostRef: ElementRef<HTMLElement>,
     private router: Router,
     private platformService: PlatformService
   ) { }
@@ -338,6 +344,7 @@ export class MenuComponent implements AfterViewChecked {
   ngOnDestroy(): void {
     document.removeEventListener('click', this.handleDocumentClick);
     document.removeEventListener('contextmenu', this.handleDocumentClick);
+    this.setModelSubmenuBodyState(false);
   }
 
   itemClick(item) {
@@ -375,6 +382,7 @@ export class MenuComponent implements AfterViewChecked {
 
   closeMenu() {
     this.activeSubmenuItem = null;
+    this.setModelSubmenuBodyState(false);
     this.setSubmenuReady(false);
     this.pendingSubmenuGeometry = false;
     this.activeSubmenuAnchor = null;
@@ -774,6 +782,7 @@ export class MenuComponent implements AfterViewChecked {
       if (this.activeSubmenuItem === item) {
         this.activeSubmenuItem = null;
       }
+      this.setModelSubmenuBodyState(false);
       this.setSubmenuReady(false);
       this.pendingSubmenuGeometry = false;
       this.activeSubmenuAnchor = null;
@@ -790,6 +799,7 @@ export class MenuComponent implements AfterViewChecked {
     }
 
     this.activeSubmenuItem = item;
+    this.setModelSubmenuBodyState(true);
     this.setSubmenuReady(false);
     this.calculateSubmenuPosition(event.currentTarget as HTMLElement | null);
   }
@@ -933,11 +943,20 @@ export class MenuComponent implements AfterViewChecked {
     submenuElement.classList.toggle('ready', ready);
   }
 
+  private setModelSubmenuBodyState(isOpen: boolean): void {
+    if (typeof document === 'undefined' || !this.hostRef.nativeElement.classList.contains('model-menu')) {
+      return;
+    }
+
+    document.body.classList.toggle(CHAT_MODEL_SUBMENU_OPEN_BODY_CLASS, isOpen);
+  }
+
   // 隐藏子菜单
   hideSubMenu(event: MouseEvent, index: number) {
     // 延时隐藏，给用户时间移动到子菜单
     this.submenuTimeout = setTimeout(() => {
       this.activeSubmenuItem = null;
+      this.setModelSubmenuBodyState(false);
       this.setSubmenuReady(false);
       this.pendingSubmenuGeometry = false;
       this.activeSubmenuAnchor = null;

@@ -50,6 +50,12 @@ export type ChatSessionPickerAction = ChatSessionListAction;
 
 const CHAT_MENU_VIEWPORT_PADDING = 8;
 const CHAT_MENU_ANCHOR_GAP = 4;
+const CHAT_MENU_ITEM_HORIZONTAL_CHROME = 58;
+const CHAT_MENU_ITEM_ICON_WIDTH = 30;
+const CHAT_MENU_ITEM_META_GAP = 10;
+const CHAT_MENU_ITEM_CURRENT_WIDTH = 18;
+const CHAT_MENU_ITEM_ACTION_WIDTH = 22;
+const CHAT_MENU_ITEM_ACTION_GAP = 2;
 
 /**
  * 管理聊天界面的所有菜单/下拉面板状态：
@@ -70,6 +76,8 @@ export class MenuManagerService implements OnDestroy {
   modelListPosition: MenuPosition = { x: 0, y: 0 };
   reasoningMenuPosition: MenuPosition = { x: 0, y: 0 };
   actionMenuPosition: MenuPosition = { x: 0, y: 0 };
+  permissionMenuWidth = 168;
+  modelMenuWidth = 260;
 
   ngOnDestroy(): void {
     return;
@@ -116,11 +124,15 @@ export class MenuManagerService implements OnDestroy {
   }
 
   togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void {
+    const estimatedMenuWidth = this.estimateMenuWidth(permissionItems, {
+      minWidth: 168,
+      maxWidth: 220,
+    });
+    this.permissionMenuWidth = estimatedMenuWidth;
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
       const menuHeight = this.estimateMenuHeight(permissionItems);
-      const estimatedMenuWidth = 280;
       let x = rect.left;
       let y = rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP;
       let anchorBottom: number | undefined = rect.top - CHAT_MENU_ANCHOR_GAP;
@@ -148,11 +160,16 @@ export class MenuManagerService implements OnDestroy {
 
   /** 切换模型菜单的显示/隐藏 */
   toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {
+    const estimatedMenuWidth = this.estimateMenuWidth(modelItems, {
+      minWidth: 224,
+      maxWidth: 300,
+      includeGlobalFilter: true,
+    });
+    this.modelMenuWidth = estimatedMenuWidth;
     const target = event.currentTarget as HTMLElement;
     if (target) {
       const rect = target.getBoundingClientRect();
       const menuHeight = this.estimateMenuHeight(modelItems, { includeGlobalFilter: true });
-      const estimatedMenuWidth = 320;
       let x = rect.left;
       let y = rect.top - menuHeight - CHAT_MENU_ANCHOR_GAP;
       let anchorBottom: number | undefined = rect.top - CHAT_MENU_ANCHOR_GAP;
@@ -176,6 +193,69 @@ export class MenuManagerService implements OnDestroy {
     this.showPermissionMenu = false;
     this.showReasoningMenu = false;
     this.showModelMenu = !this.showModelMenu;
+  }
+
+  private estimateMenuWidth(
+    items: IMenuItem[] | null | undefined,
+    options: {
+      minWidth: number;
+      maxWidth: number;
+      includeGlobalFilter?: boolean;
+    },
+  ): number {
+    const viewportMaxWidth = Math.max(
+      options.minWidth,
+      window.innerWidth - CHAT_MENU_VIEWPORT_PADDING * 2,
+    );
+    const maxWidth = Math.min(options.maxWidth, viewportMaxWidth);
+    let width = options.includeGlobalFilter ? 224 : options.minWidth;
+
+    for (const item of items ?? []) {
+      if (!item || item.sep) {
+        continue;
+      }
+
+      const nameWidth = this.estimateTextWidth(item.name);
+      const metaWidth = this.estimateTextWidth(item.text);
+      const actionCount = Array.isArray(item.actions) ? item.actions.length : 0;
+      const actionsWidth = actionCount > 0
+        ? actionCount * CHAT_MENU_ITEM_ACTION_WIDTH + Math.max(0, actionCount - 1) * CHAT_MENU_ITEM_ACTION_GAP
+        : 0;
+      const hasIcon = typeof item.icon === 'string' && item.icon.trim().length > 0;
+      const hasArrow = Array.isArray(item.children) && item.children.length > 0 && !item.hideChildrenArrow;
+
+      const itemWidth =
+        CHAT_MENU_ITEM_HORIZONTAL_CHROME
+        + (hasIcon ? CHAT_MENU_ITEM_ICON_WIDTH : 0)
+        + nameWidth
+        + (metaWidth > 0 ? CHAT_MENU_ITEM_META_GAP + metaWidth : 0)
+        + (item.current ? CHAT_MENU_ITEM_CURRENT_WIDTH : 0)
+        + actionsWidth
+        + (hasArrow ? 22 : 0);
+
+      width = Math.max(width, itemWidth);
+    }
+
+    return Math.round(Math.min(maxWidth, Math.max(options.minWidth, width)));
+  }
+
+  private estimateTextWidth(value: unknown): number {
+    if (typeof value !== 'string') {
+      return 0;
+    }
+
+    return Array.from(value.trim()).reduce((total, char) => {
+      if (/[\u3400-\u9fff\uff00-\uffef]/.test(char)) {
+        return total + 12;
+      }
+      if (/[A-Z0-9]/.test(char)) {
+        return total + 7;
+      }
+      if (/\s/.test(char)) {
+        return total + 4;
+      }
+      return total + 6;
+    }, 0);
   }
 
   toggleReasoningMenu(event: MouseEvent, reasoningItems: IMenuItem[]): void {

@@ -34,8 +34,8 @@
       (mouseleave)="hideSubMenu($event, $index)"
       nz-tooltip
       [nzTooltipTitle]="hasHoverFlyout(item) ? null : getTooltipTitle(item.tooltip)"
-      nzTooltipOverlayClassName="aily-menu-item-tooltip"
-      nzTooltipPlacement="rightTop"
+      [nzTooltipOverlayClassName]="tooltipOverlayClassName"
+      [nzTooltipPlacement]="tooltipPlacement"
       [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuItem === item, 'current': item.current, 'section': item.action?.startsWith('section-'), 'section-toggle': isSectionToggle(item)}">
       @if(item.icon){
       <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>

@@ -132,7 +132,9 @@
     </div>
     } @else {
     @if (paneStageSurfaceModel; as paneStageSurface) {
-    <div class="chat-main-layout" [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
+    <div
+      class="chat-main-layout"
+      [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
       @if (paneStageSurface.showSidebarSessionList) {
       @if (paneStageSurface.sidebarSessionListSurface; as sidebarSessionSurface) {
       <div
@@ -706,17 +708,19 @@
 }
 
 @if(menuManager.showMode){
-<app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
+<app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition"
+  tooltipOverlayClassName="aily-chat-menu-left-tooltip" tooltipPlacement="leftTop" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)" (actionClickEvent)="switchShellCoordinator.modeMenuActionClick($event)"></app-menu>
 }
 
 @if(menuManager.showPermissionMenu){
-<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="280" (closeEvent)="menuManager.closeAll()"
+<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="menuManager.permissionMenuWidth"
+  tooltipOverlayClassName="aily-chat-menu-left-tooltip" tooltipPlacement="leftTop" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handlePermissionMenuClick($event)"></app-menu>
 }
 
 @if(menuManager.showModelMenu){
-<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="320" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
+<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="menuManager.modelMenuWidth" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (actionClickEvent)="handleModelMenuActionClick($event)"></app-menu>
 }
 
@@ -729,4 +733,3 @@
 <app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
 }
-

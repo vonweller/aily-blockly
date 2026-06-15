@@ -289,7 +289,7 @@
   overflow: hidden;
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-  z-index: 1000001;
+  z-index: 1000010;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -461,6 +461,32 @@
   }
 
   scrollbar-width: none;
+}
+
+:host(.model-menu) {
+  position: relative;
+  z-index: 1000020;
+
+  .menu-box {
+    z-index: 1000020;
+  }
+
+  .submenu-box {
+    z-index: 1000030 !important;
+  }
+}
+
+:host(.mode-menu),
+:host(.permission-menu),
+:host(.model-menu),
+:host(.reasoning-menu),
+:host(.action-menu) {
+  .menu-box .menu-item.current {
+    .name::before {
+      display: none;
+      content: none;
+    }
+  }
 }
 
 :host ::ng-deep .aily-menu-item-tooltip {
