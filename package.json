@@ -1,7 +1,7 @@
 {
   "name": "aily-blockly",
   "productName": "aily blockly",
-  "version": "0.9.58",
+  "version": "0.9.59",
   "author": "coloz",
   "description": "aily blockly dev",
   "main": "electron/main.js",
@@ -184,7 +184,6 @@
     "@ngx-translate/core": "^16.0.3",
     "@orama/orama": "^3.1.18",
     "@orama/tokenizers": "^3.1.18",
-    "@splidejs/splide": "^4.1.4",
     "@tanstack/angular-virtual": "^4.0.6",
     "@types/uuid": "^10.0.0",
     "@xterm/addon-clipboard": "^0.1.0",
