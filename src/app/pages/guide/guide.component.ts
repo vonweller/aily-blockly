@@ -20,7 +20,7 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
   templateUrl: './guide.component.html',
   styleUrl: './guide.component.scss'
 })
-export class GuideComponent implements OnInit, AfterViewInit, OnDestroy {
+export class GuideComponent implements OnInit, OnDestroy {
   version = packageJson.version;
   guideMenu = GUIDE_MENU;
   showMenu = true;
