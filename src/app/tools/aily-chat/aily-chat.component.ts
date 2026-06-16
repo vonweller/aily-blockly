@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
+import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, NgZone } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -255,6 +255,7 @@ export class AilyChatComponent implements OnDestroy {
     private chatHistoryService: ChatHistoryService,
     public debugBrowser: ChatDebugBrowserService,
     private cdr: ChangeDetectorRef,
+    private ngZone: NgZone,
     private builderService: BuilderService,
     private themeService: ThemeService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
@@ -1631,8 +1632,10 @@ export class AilyChatComponent implements OnDestroy {
 
     this.sessionViewportResizeObserver = new ResizeObserver((entries) => {
       const nextWidth = entries[0]?.contentRect?.width ?? element.clientWidth;
-      this.viewState.setSessionViewportWidth(nextWidth);
-      this.syncSessionListDisplayState();
+      this.ngZone.run(() => {
+        this.viewState.setSessionViewportWidth(nextWidth);
+        this.syncSessionListDisplayState();
+      });
     });
     this.sessionViewportResizeObserver.observe(element);
   }
