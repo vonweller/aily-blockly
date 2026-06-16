@@ -75,4 +75,12 @@ export class ChatContextToolbarComponent {
         return 'AILY_CHAT.MODE_AGENT';
     }
   }
+
+  get modeTooltipTitle(): string {
+    if (this.currentCustomAgentTarget && this.currentMode === 'agent') {
+      return this.currentCustomAgentTarget;
+    }
+
+    return this.modeLabelKey ?? '';
+  }
 }

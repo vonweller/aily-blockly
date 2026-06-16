@@ -12,6 +12,9 @@
     <div
       class="acc-back ccenter"
       [class.acc-back--composer]="appearance === 'composer'"
+      nz-tooltip
+      nzTooltipPlacement="bottom"
+      [nzTooltipTitle]="'AILY_CHAT.ADD_CONTEXT' | translate"
       (click)="toggleAddList.emit()"
     >
       <i class="fa-light fa-angle-left"></i>
@@ -20,6 +23,7 @@
   <div
     class="acc-sub ccenter"
     nz-tooltip
+    nzTooltipPlacement="bottom"
     [nzTooltipTitle]="'AILY_CHAT.ADD_FILE' | translate"
     (click)="addFile.emit()"
   >
@@ -28,13 +32,21 @@
   <div
     class="acc-sub ccenter"
     nz-tooltip
+    nzTooltipPlacement="bottom"
     [nzTooltipTitle]="'AILY_CHAT.ADD_FOLDER' | translate"
     (click)="addFolder.emit()"
   >
     <i class="fa-light fa-folder-plus"></i>
   </div>
 }
-<div class="acc-chip ccenter" (click)="modeClick.emit($event)">
+<div
+  class="acc-chip ccenter"
+  [class.acc-chip--after-expanded-context]="showAddList"
+  nz-tooltip
+  nzTooltipPlacement="bottom"
+  [nzTooltipTitle]="currentCustomAgentTarget && currentMode === 'agent' ? currentCustomAgentTarget : (modeTooltipTitle | translate)"
+  (click)="modeClick.emit($event)"
+>
   <i [class]="modeIconClass"></i>
   @if (currentCustomAgentTarget && currentMode === 'agent') {
     <span>{{ currentCustomAgentTarget }}</span>
@@ -43,7 +55,13 @@
   }
 </div>
 @if (showModelChip) {
-  <div class="acc-chip ccenter" (click)="modelClick.emit($event)">
+  <div
+    class="acc-chip ccenter"
+    nz-tooltip
+    nzTooltipPlacement="bottom"
+    [nzTooltipTitle]="modelChipLabel"
+    (click)="modelClick.emit($event)"
+  >
     <i class="fa-light fa-star-christmas"></i><span>{{ modelChipLabel }}</span>
     <!-- @if (modelBillingLabel) {
       <span class="acc-mini-tag">{{ modelBillingLabel }}</span>

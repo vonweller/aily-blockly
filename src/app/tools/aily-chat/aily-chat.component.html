@@ -457,7 +457,7 @@
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
             <div class="btn mode permission-mode-indicator ccenter"
-              nz-tooltip nzTooltipPlacement="top"
+              nz-tooltip nzTooltipPlacement="bottom"
               [nzTooltipTitle]="vm.currentPermissionLabel"
               (click)="togglePermissionMenu($event)">
               <i [class]="permissionButtonIconClass"></i>
@@ -657,7 +657,7 @@
             <div class="composer-primary-actions">
             @if(vm.modelMenuItems.length > 0) {
             <div class="composer-model-chip ccenter"
-              nz-tooltip nzTooltipPlacement="top"
+              nz-tooltip nzTooltipPlacement="bottom"
               [nzTooltipTitle]="vm.currentModelName"
               (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)">
               <i class="fa-light fa-star-christmas"></i>
