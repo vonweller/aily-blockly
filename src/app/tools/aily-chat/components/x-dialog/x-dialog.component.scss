@@ -394,6 +394,7 @@
         max-width: 100%;
         display: block;
         overflow-x: auto;
+        margin-bottom: 12px;
       }
 
       h2 {
@@ -415,7 +416,7 @@
       table {
         border-collapse: collapse;
         overflow: hidden;
-        box-shadow: var(--aily-chat-xdialog-md-table-shadow, 0 1px 3px rgba(255, 255, 255, 0.05));
+        box-shadow: none;
         border-radius: 5px;
       }
       

@@ -147,6 +147,16 @@ interface QuestionAnsweredEvent {
     :host {
       display: block;
       min-width: 0;
+      --aq-fg: var(--chat-fg-head, var(--aily-text-quaternary, #e3e3e3));
+      --aq-fg-dim: var(--chat-fg-dim, var(--aily-text-muted, #8e8e8e));
+      --aq-fg-muted: var(--chat-fg-muted, var(--aily-text-disabled, #6a6a6a));
+      --aq-border: var(--chat-border, var(--aily-chat-xdialog-msg-divider, rgba(255,255,255,0.12)));
+      --aq-border-soft: color-mix(in srgb, var(--aq-border) 70%, transparent);
+      --aq-bg: var(--aily-chat-viewer-overlay-soft, rgba(255,255,255,0.05));
+      --aq-bg-hover: var(--aily-chat-viewer-option-hover, var(--chat-bg-hover, rgba(255,255,255,0.06)));
+      --aq-bg-selected: var(--aily-chat-viewer-option-selected-bg, rgba(24,144,255,0.08));
+      --aq-border-selected: var(--aily-chat-viewer-option-selected-border, rgba(24,144,255,0.35));
+      --aq-info: var(--chat-info, var(--aily-chat-viewer-state-info, #75beff));
     }
 
     .aq-container {
@@ -210,44 +220,51 @@ interface QuestionAnsweredEvent {
     .aq-input-container {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       padding: 8px;
       min-width: 0;
     }
 
     /* Options */
-    .aq-options { display: flex; flex-direction: column; gap: 6px; }
+    .aq-options { display: flex; flex-direction: column; gap: 8px; }
     .aq-option {
       display: flex;
       align-items: flex-start;
       gap: 8px;
-      padding: 8px 10px;
+      padding: 9px 10px;
       border-radius: 5px;
       cursor: pointer;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.08);
-      transition: all 0.15s ease;
+      background: var(--aq-bg);
+      border: 1px solid var(--aq-border-soft);
+      color: var(--aq-fg);
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
       user-select: none;
     }
-    .aq-option:hover:not(.aq-disabled) { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); }
-    .aq-option.aq-checked:not(.aq-disabled) {
-      background: rgba(116, 179, 255, 0.06);
-      border-color: rgba(116, 179, 255, 0.18);
+    .aq-option:hover:not(.aq-disabled) {
+      background: var(--aq-bg-hover);
+      border-color: color-mix(in srgb, var(--aq-border) 88%, var(--aq-info) 12%);
+      color: var(--aq-fg);
+    }
+    .aq-option.aq-checked {
+      background: var(--aq-bg-selected);
+      border-color: var(--aq-border-selected);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aq-border-selected) 18%, transparent);
     }
     .aq-option.aq-disabled { cursor: default; opacity: 0.6; }
+    .aq-option.aq-disabled.aq-checked { opacity: 0.86; }
 
     /* Option number prefix (Copilot style) */
     .aq-opt-num {
       flex-shrink: 0;
       font-size: 12px;
       font-weight: 600;
-      color: var(--chat-fg-muted, #6a6a6a);
+      color: var(--aq-fg-muted);
       line-height: 1.35;
     }
     .aq-check-icon {
       flex-shrink: 0;
       font-size: 11px;
-      color: var(--chat-fg, #cccccc);
+      color: var(--aq-info);
       margin-left: auto;
       align-self: center;
     }
@@ -262,7 +279,7 @@ interface QuestionAnsweredEvent {
     }
     .aq-option-label {
       font-size: 12px;
-      color: var(--chat-fg, #cccccc);
+      color: var(--aq-fg);
       line-height: 1.35;
       display: inline-flex;
       align-items: center;
@@ -275,8 +292,8 @@ interface QuestionAnsweredEvent {
       display: inline-block;
       font-size: 10px;
       font-weight: 600;
-      color: var(--chat-info, #75beff);
-      background: rgba(116, 179, 255, 0.12);
+      color: var(--aq-info);
+      background: var(--aily-chat-viewer-badge-bg, rgba(116, 179, 255, 0.12));
       border-radius: 5px;
       padding: 1px 6px;
       line-height: 1.4;
@@ -285,7 +302,7 @@ interface QuestionAnsweredEvent {
     }
     .aq-option-desc {
       font-size: 11px;
-      color: var(--chat-fg-dim, #8e8e8e);
+      color: var(--aq-fg-dim);
       line-height: 1.3;
       white-space: pre-wrap;
       word-break: break-word;

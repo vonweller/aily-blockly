@@ -1041,12 +1041,54 @@ import {
       padding: 5px;
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-radius: 5px;
-      background: rgba(255,255,255,0.025);
+      background: color-mix(in srgb, var(--aily-chat-viewer-panel, var(--chat-bg-subtle, rgba(255,255,255,0.025))) 86%, var(--chat-bg-hover, transparent) 14%);
     }
 
     .cag-item-detail-body[data-detail-kind='invocation'] {
-      border-color: rgba(255,255,255,0.08);
-      background: rgba(255,255,255,0.02);
+      border-color: var(--chat-border-dim, rgba(255,255,255,0.08));
+      background: color-mix(in srgb, var(--aily-chat-viewer-card-bg, var(--chat-bg-subtle, rgba(255,255,255,0.02))) 88%, var(--chat-bg-hover, transparent) 12%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body {
+      --cag-detail-inner-border: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 96%, #000 4%);
+      --cag-detail-inner-border-soft: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      --cag-detail-inner-bg: color-mix(in srgb, var(--aily-bg-secondary, #e0e0e0) 96%, #000 4%);
+      --cag-detail-inner-bg-soft: color-mix(in srgb, var(--aily-bg-secondary, #e0e0e0) 98%, #000 2%);
+      border-color: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      background: color-mix(in srgb, var(--aily-bg-tertiary, #d6d6d6) 42%, var(--aily-bg-elevated, #ededed) 58%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body[data-detail-kind='invocation'] {
+      border-color: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      background: color-mix(in srgb, var(--aily-bg-tertiary, #d6d6d6) 52%, var(--aily-bg-secondary, #e0e0e0) 48%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-state-badge,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-instruction-filter,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-widget,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-confirmation-summary,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-args,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='data'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='code'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='generic'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-subpart {
+      border-color: var(--cag-detail-inner-border);
+      background: var(--cag-detail-inner-bg-soft);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-widget-title,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-body + .cag-item-tool-body,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-detail-section + .cag-item-detail-section,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='terminal-command'] + .cag-item-invocation-output[data-output-kind='terminal-stream'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='terminal-stream'] + .cag-item-invocation-output[data-output-kind='terminal-stream'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='changed-file'] + .cag-item-invocation-output[data-output-kind='changed-file'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-detail-row + .cag-item-detail-row {
+      border-color: var(--cag-detail-inner-border-soft);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-instruction-filter-active {
+      border-color: var(--cag-detail-inner-border);
+      background: var(--cag-detail-inner-bg);
     }
 
     .cag-item-detail-body[data-detail-kind='subagent'] {
