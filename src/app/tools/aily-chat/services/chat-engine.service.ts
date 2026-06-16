@@ -125,6 +125,7 @@ import type {
 import { createChatSessionActionState, type ChatSessionActionState } from '../helpers/chat-request-controller';
 import { ChatSwitchCoordinator } from '../helpers/chat-switch-coordinator';
 import { buildSeededTurnResponseTurn } from '../core/turn-response-stream-contract';
+import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
 
 type VisibleSessionProjectionResetOptions = {
   readonly clearResolvedActiveModel?: boolean;
@@ -1644,8 +1645,12 @@ export class ChatEngineService implements IChatContext {
       ?? ChatEngineService.prototype['resolveCurrentViewSessionResource']
     );
     const currentSessionId = resolveCurrentViewSessionResource.call(this);
+    const serviceSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
     const visibleProjectionSessionId = (this as unknown as { visibleProjectionSessionId?: string | null }).visibleProjectionSessionId;
     return currentSessionId.length > 0
+      && serviceSessionId === currentSessionId
       && typeof visibleProjectionSessionId === 'string'
       && visibleProjectionSessionId.trim() === currentSessionId;
   }
@@ -3306,7 +3311,9 @@ export class ChatEngineService implements IChatContext {
       (shouldFollow) => this.scrollManager.scrollToBottomIfNeeded(shouldFollow, 'auto'),
     );
 
-    this.chatHistoryService.setLiveSessionProvider(() => this.session.buildLiveHostSessionRecord());
+    this.chatHistoryService.setLiveSessionProvider((sessionId) => this.session.buildLiveHostSessionRecord({
+      target: this.buildExecutionSaveTarget(sessionId),
+    }));
 
     // H1: wire the cache as the host stream listener for incremental turn events.
     this.lexStream.setHostStreamListener(this.liveHostRequestGraphCache);
@@ -4768,6 +4775,15 @@ export class ChatEngineService implements IChatContext {
     if (!sessionId) {
       return;
     }
+    const canCaptureVisibleAttachedSessionRuntimeState = (
+      (this as unknown as {
+        canCaptureVisibleAttachedSessionRuntimeState?: ChatEngineService['canCaptureVisibleAttachedSessionRuntimeState'];
+      }).canCaptureVisibleAttachedSessionRuntimeState
+      ?? ChatEngineService.prototype['canCaptureVisibleAttachedSessionRuntimeState']
+    );
+    if (!canCaptureVisibleAttachedSessionRuntimeState.call(this, sessionId)) {
+      return;
+    }
 
     const existingRuntimeState = this.chatSessionRuntimeStore.read(sessionId);
     const existingRuntimeHandle = this.chatSessionRuntimeRegistry?.readHandle?.(sessionId);
@@ -4862,6 +4878,26 @@ export class ChatEngineService implements IChatContext {
     }
   }
 
+  private canCaptureVisibleAttachedSessionRuntimeState(sessionId?: string | null): boolean {
+    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetSessionId) {
+      return false;
+    }
+
+    const currentSessionId = typeof this.chatService?.currentSessionId === 'string'
+      ? this.chatService.currentSessionId.trim()
+      : '';
+    if (currentSessionId && currentSessionId !== targetSessionId) {
+      return false;
+    }
+
+    const visibleProjectionSessionId = (this as unknown as { visibleProjectionSessionId?: string | null }).visibleProjectionSessionId;
+    const visibleProjectionOwner = typeof visibleProjectionSessionId === 'string'
+      ? visibleProjectionSessionId.trim()
+      : '';
+    return !visibleProjectionOwner || visibleProjectionOwner === targetSessionId;
+  }
+
   private syncExecutionRuntimeState(saveTarget?: HostSessionSaveTarget | null): void {
     const sessionId = typeof saveTarget?.sessionId === 'string'
       ? saveTarget.sessionId.trim()
@@ -4919,6 +4955,19 @@ export class ChatEngineService implements IChatContext {
   ): void {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId || !Array.isArray(turnResponses)) {
+      return;
+    }
+
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(targetSessionId, turnResponses);
+    if (turnResponses.length > 0
+      && ownerDiagnostics.ownerSamples.length > 0
+      && !ownerDiagnostics.ownerSamples.includes(targetSessionId)) {
+      console.warn('[AilyChat][SyncRuntime][blocked-owner-mismatch]', {
+        targetSessionId,
+        ownerSamples: ownerDiagnostics.ownerSamples,
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+      });
       return;
     }
 
@@ -6187,6 +6236,19 @@ Do not create non-existent boards and libraries.
         if (shouldCommitRestoredCheckpointForwardBranch) {
           await commitRestoredCheckpointForwardBranchBeforeUserTurn.call(this, targetSessionId);
         }
+      }
+
+      if (targetSessionId && currentVisibleSessionId === targetSessionId) {
+        const readSessionTurnResponses = (
+          (this as unknown as { readSessionTurnResponses?: ChatEngineService['readSessionTurnResponses'] })
+            .readSessionTurnResponses
+          ?? ChatEngineService.prototype['readSessionTurnResponses']
+        );
+        const existingTurnResponses = readSessionTurnResponses.call(this, targetSessionId);
+        this.markVisibleSessionProjectionOwner(targetSessionId);
+        this.lexStream.hydrateTurnResponses?.(targetSessionId, existingTurnResponses, {
+          visibility: 'visibleAttach',
+        });
       }
 
       const seededTurnBeginResult = this.lexStream.turn.begin(prepared.llmText, prepared.displayText, prepared.requestMetadata);

@@ -40,6 +40,10 @@ import {
 } from './host-session-restore-bridge';
 import { HostSessionSaveBridge } from './host-session-save-bridge';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
+import {
+  buildSessionTurnOwnerDiagnostics,
+  formatSessionTurnOwnerDiagnosticsFields,
+} from './session-turn-owner-diagnostics';
 import type { ChatViewWriteBridgeContext } from './chat-view-write-bridge';
 import type { ResourceItem } from '../core/chat-types';
 import {
@@ -327,6 +331,7 @@ export class SessionLifecycleHelper {
     visibleChatList?: readonly ChatListItem[];
     turnResponsesOverride?: readonly import('aily-lex/browser').TurnResponseTurn[];
     sessionSnapshotOverride?: import('aily-lex/browser').SessionSnapshot | null;
+    target?: HostSessionSaveTarget | null;
   }): LiveHostSessionRecord | null {
     return this._hostSessionSaveBridge.buildLiveHostSessionRecord(options);
   }
@@ -1043,13 +1048,14 @@ export class SessionLifecycleHelper {
       this.applySessionProviderOptions(providerOptions),
       agentRuntimeMode,
     );
+    const freshSelectedMode = this.resolveCurrentSelectedModeForFreshSession();
     this.setActiveSessionId(pendingSessionId);
     this.acquireSessionModel({
       sessionResource: pendingSessionId,
       title: { text: '', source: 'empty' },
       projectPath: this.ctx.chatService.currentSessionPath || null,
       sessionType: DEFAULT_CHAT_SESSION_TYPE,
-      inputState: { providerOptions },
+      inputState: { providerOptions, selectedMode: freshSelectedMode },
     });
     this.ctx.attachSessionViewModel?.(pendingSessionId);
     this.ctx.markVisibleSessionProjectionOwner?.(pendingSessionId);
@@ -1061,7 +1067,7 @@ export class SessionLifecycleHelper {
       agentRuntimeMode,
       agentRuntimeModeSource: this.ctx.chatService.currentAgentRuntimeModeSource,
     });
-    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId));
+    this.persistSessionEntryTarget(this.buildFreshSessionEntryTarget(pendingSessionId, freshSelectedMode));
     this.requestSessionListRefresh({
       reason: 'state',
       scope: 'summary',
@@ -1825,6 +1831,12 @@ export class SessionLifecycleHelper {
     const lexSnapshotTurns = this.countLexSnapshotTurns(sessionId);
     const summaryBoundaries = this.countSummaryBoundaries(hostRecord?.turnResponses);
     const checkpointSidecars = this.countCheckpointSidecars(hostRecord?.turnResponses);
+    const model = this.sessionModelReferences.get(sessionId)?.object;
+    const hostOwner = buildSessionTurnOwnerDiagnostics(sessionId, hostRecord?.turnResponses as readonly TurnResponseTurn[] | undefined);
+    const runtimeOwner = buildSessionTurnOwnerDiagnostics(sessionId, runtimeState?.turnResponses);
+    const runtimeProjectionOwner = buildSessionTurnOwnerDiagnostics(sessionId, runtimeProjection?.turnResponses as readonly TurnResponseTurn[] | undefined);
+    const modelOwner = buildSessionTurnOwnerDiagnostics(sessionId, model?.turnResponses);
+    const modelProjectionOwner = buildSessionTurnOwnerDiagnostics(sessionId, model?.hostProjectionState?.turnResponses as readonly TurnResponseTurn[] | undefined);
     console.info(
       '[SessionLifecycle][SwitchScalar]',
       [
@@ -1844,8 +1856,28 @@ export class SessionLifecycleHelper {
         `checkpointSidecars=${checkpointSidecars}`,
         `modelTurns=${extra.modelTurns ?? '<unknown>'}`,
         `modelProjectionTurns=${extra.modelProjectionTurns ?? '<unknown>'}`,
+        ...formatSessionTurnOwnerDiagnosticsFields('host', hostOwner),
+        ...formatSessionTurnOwnerDiagnosticsFields('runtime', runtimeOwner),
+        ...formatSessionTurnOwnerDiagnosticsFields('runtimeProjection', runtimeProjectionOwner),
+        ...formatSessionTurnOwnerDiagnosticsFields('model', modelOwner),
+        ...formatSessionTurnOwnerDiagnosticsFields('modelProjection', modelProjectionOwner),
       ].join(' '),
     );
+    if (hostOwner.mismatchCount > 0
+      || runtimeOwner.mismatchCount > 0
+      || runtimeProjectionOwner.mismatchCount > 0
+      || modelOwner.mismatchCount > 0
+      || modelProjectionOwner.mismatchCount > 0) {
+      console.warn('[SessionLifecycle][owner-mismatch]', {
+        phase,
+        sessionId,
+        host: hostOwner,
+        runtime: runtimeOwner,
+        runtimeProjection: runtimeProjectionOwner,
+        model: modelOwner,
+        modelProjection: modelProjectionOwner,
+      });
+    }
   }
 
   private countModelTurns(model: ChatSessionModelReference['object']): number {
@@ -2328,10 +2360,13 @@ export class SessionLifecycleHelper {
     return true;
   }
 
-  private buildFreshSessionEntryTarget(sessionId: string): PersistedChatSessionEntryTarget {
+  private buildFreshSessionEntryTarget(
+    sessionId: string,
+    selectedModeInput?: ChatSelectedMode,
+  ): PersistedChatSessionEntryTarget {
     const providerOptions = this.resolveCurrentSessionProviderOptions();
     const selectedMode = normalizeChatSelectedMode(
-      this.ctx.chatService.selectedMode ?? { modeId: this.ctx.currentMode },
+      selectedModeInput ?? this.ctx.chatService.selectedMode ?? { modeId: this.ctx.currentMode },
     );
     const requiredResource = createRequiredSessionResourceModel({
       sessionResource: sessionId,
@@ -2359,6 +2394,13 @@ export class SessionLifecycleHelper {
         requiredResource.providerOptions.approvalPolicy,
       ),
     };
+  }
+
+  private resolveCurrentSelectedModeForFreshSession(): ChatSelectedMode {
+    return normalizeChatSelectedMode(this.ctx.chatService.selectedMode ?? {
+      modeId: this.ctx.currentMode,
+      customAgentTarget: this.ctx.chatService.currentCustomAgentTarget,
+    });
   }
 
   private buildCurrentSessionEntryTarget(sessionId: string): PersistedChatSessionEntryTarget | null {

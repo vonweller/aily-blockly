@@ -1,5 +1,9 @@
 import { HostSessionRecordStore } from './host-session-record-store';
 import { normalizePersistedChatSessionTitleSource, type PersistedChatSessionTitleSource } from '../core/chat-session-title';
+import {
+  buildSessionTurnOwnerDiagnostics,
+  hasBlockingSessionTurnOwnerMismatch,
+} from '../helpers/session-turn-owner-diagnostics';
 
 import type {
   HostSessionRecord,
@@ -10,7 +14,7 @@ import type {
 } from './chat-history.service';
 import { countHostRecordMessages } from './chat-history.service';
 
-type LiveSessionProvider = () => LiveHostSessionRecord | null;
+type LiveSessionProvider = (sessionId: string) => LiveHostSessionRecord | null;
 type PendingTitleUpdate = { title: string; source: PersistedChatSessionTitleSource };
 type DurablePersistedTitleCandidate = { title: string; source?: PersistedChatSessionTitleSource };
 
@@ -77,6 +81,10 @@ export class HostSessionPersistenceBridge {
     }
 
     this.options.ensureIndexLoaded();
+
+    if (this.shouldRejectRecordOwnerMismatch(record, 'saveHostRecord')) {
+      return;
+    }
 
     const hostRecord = this.materializeHostRecord(record);
     const messageCount = countHostRecordMessages(hostRecord);
@@ -176,11 +184,6 @@ export class HostSessionPersistenceBridge {
 
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {
     try {
-      const liveRecord = this.tryLoadLiveHostRecord(sessionId);
-      if (liveRecord) {
-        return liveRecord;
-      }
-
       const cached = this.sessionCache.get(sessionId);
       if (cached) {
         return cached;
@@ -222,24 +225,29 @@ export class HostSessionPersistenceBridge {
   }
 
   flushAll(): void {
-    let liveRecord: LiveHostSessionRecord | null = null;
-    if (this.liveSessionProvider) {
-      try {
-        liveRecord = this.liveSessionProvider();
-      } catch (error) {
-        console.warn('[ChatHistory] 获取 live session 失败:', error);
-      }
-    }
-
     for (const sessionId of this.dirtySessionIds) {
       let hostRecord = this.sessionCache.get(sessionId);
+      let liveRecord: LiveHostSessionRecord | null = null;
+      if (this.liveSessionProvider) {
+        try {
+          liveRecord = this.liveSessionProvider(sessionId);
+        } catch (error) {
+          console.warn('[ChatHistory] 获取 live session 失败:', error);
+        }
+      }
 
-      if (liveRecord && liveRecord.sessionId === sessionId && countHostRecordMessages(liveRecord) > 0) {
+      if (liveRecord
+        && liveRecord.sessionId === sessionId
+        && countHostRecordMessages(liveRecord) > 0
+        && !this.shouldRejectRecordOwnerMismatch(liveRecord, 'flushAll-live')) {
         hostRecord = this.materializeHostRecord(liveRecord);
         this.sessionCache.set(sessionId, hostRecord);
       }
 
       if (hostRecord) {
+        if (this.shouldRejectRecordOwnerMismatch(hostRecord, 'flushAll-cache')) {
+          continue;
+        }
         const messageCount = countHostRecordMessages(hostRecord);
         if (messageCount === 0) {
           continue;
@@ -335,8 +343,12 @@ export class HostSessionPersistenceBridge {
     }
 
     try {
-      const liveRecord = this.liveSessionProvider();
+      const liveRecord = this.liveSessionProvider(sessionId);
       if (!liveRecord || liveRecord.sessionId !== sessionId) {
+        return null;
+      }
+
+      if (this.shouldRejectRecordOwnerMismatch(liveRecord, 'tryLoadLiveHostRecord')) {
         return null;
       }
 
@@ -345,6 +357,47 @@ export class HostSessionPersistenceBridge {
       console.warn('[ChatHistory] 读取 live session 失败:', error);
       return null;
     }
+  }
+
+  private shouldRejectRecordOwnerMismatch(
+    record: Pick<LiveHostSessionRecord, 'turnResponses' | 'metadata'> & { readonly sessionId?: string },
+    phase: string,
+  ): boolean {
+    const sessionId = typeof record.sessionId === 'string' && record.sessionId.trim().length > 0
+      ? record.sessionId.trim()
+      : typeof record.metadata?.sessionId === 'string'
+        ? record.metadata.sessionId.trim()
+        : '';
+    const diagnostics = buildSessionTurnOwnerDiagnostics(sessionId, record.turnResponses as any);
+    if (diagnostics.mismatchCount === 0) {
+      return false;
+    }
+
+    const allowForkedTurns = !!record.metadata?.forkedFromSessionId || !!record.metadata?.forkKind;
+    console.warn('[ChatHistory][owner-mismatch]', {
+      phase,
+      sessionId,
+      recordSessionId: record.sessionId,
+      metadataSessionId: record.metadata?.sessionId ?? null,
+      mismatchCount: diagnostics.mismatchCount,
+      mismatchedOwners: diagnostics.mismatchedOwners,
+      mismatchedTurnIds: diagnostics.mismatchedTurnIds.slice(0, 5),
+      firstTurnId: diagnostics.firstTurnId,
+      firstRequestPreview: diagnostics.firstRequestPreview,
+      forkKind: record.metadata?.forkKind ?? null,
+      forkedFromSessionId: record.metadata?.forkedFromSessionId ?? null,
+    });
+
+    if (!hasBlockingSessionTurnOwnerMismatch(diagnostics, { allowForkedTurns })) {
+      return false;
+    }
+
+    console.warn('[ChatHistory][blocked-cross-session-record]', {
+      phase,
+      sessionId,
+      mismatchedOwners: diagnostics.mismatchedOwners,
+    });
+    return true;
   }
 
   private applyPendingTitle(metadata: SessionMetadata): SessionMetadata {

@@ -29,6 +29,7 @@ import {
   type ChatSessionRuntimeState,
   type ChatSessionRuntimeStatePatch,
 } from './chat-session-runtime-store.service';
+import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
 
 export type ChatSessionResource = string;
 
@@ -548,6 +549,19 @@ export class ChatSessionModelStoreService {
     const model = this.get(sessionResource);
     if (!model || !Array.isArray(turnResponses)) {
       return null;
+    }
+
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, turnResponses);
+    if (ownerDiagnostics.mismatchCount > 0) {
+      console.warn('[ChatSessionModelStore][owner-mismatch]', {
+        phase: 'replaceTurnResponses',
+        sessionResource: model.sessionResource,
+        mismatchCount: ownerDiagnostics.mismatchCount,
+        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+      });
     }
 
     const nextTurnResponses = model.replaceTurnResponses(turnResponses);

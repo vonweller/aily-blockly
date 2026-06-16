@@ -339,7 +339,7 @@ export function countHostRecordMessages(record: Pick<HostSessionRecord, 'turnRes
   return record.turnResponses.length * 2;
 }
 
-type LiveSessionProvider = () => LiveHostSessionRecord | null;
+type LiveSessionProvider = (sessionId: string) => LiveHostSessionRecord | null;
 
 @Injectable({
   providedIn: 'root'
