@@ -441,13 +441,13 @@
               (keydown)="composerShellCoordinator.handleKeyDown($event)" (input)="composerShellCoordinator.updateSuggestions()">
             </textarea>
           </div>
-          <div class="btns">
+          <div class="btns" [class.has-expanded-context]="resourceManager.showAddList">
             <aily-chat-context-toolbar
               [showAddList]="resourceManager.showAddList"
               [currentMode]="vm.currentMode"
               [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
               [showModelChip]="false"
-              [showModeLabel]="false"
+              [showModeLabel]="true"
               [modelChipLabel]="vm.currentModelChipLabel"
               [modelBillingLabel]="vm.currentModelBillingLabel"
               (toggleAddList)="resourceManager.toggleAddList()"
@@ -461,6 +461,7 @@
               [nzTooltipTitle]="vm.currentPermissionLabel"
               (click)="togglePermissionMenu($event)">
               <i [class]="permissionButtonIconClass"></i>
+              <span>{{ vm.currentPermissionLabel | slice:0:2 }}</span>
             </div>
             <!-- Context usage widget：按 Copilot / VS Code 的 widget/details 结构渲染 request-scoped usage -->
             @if(vm.contextUsageDisplay; as contextUsage) {

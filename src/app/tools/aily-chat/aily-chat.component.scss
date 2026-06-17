@@ -857,8 +857,33 @@
       }
 
       .permission-mode-indicator {
+        --permission-mode-indicator-width: 54px;
         flex: 0 0 auto;
-        width: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        width: var(--permission-mode-indicator-width);
+        min-width: var(--permission-mode-indicator-width);
+        padding: 0 6px;
+        gap: 4px;
+        box-sizing: border-box;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .permission-mode-indicator > i {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 14px;
+        width: 14px;
+      }
+
+      .permission-mode-indicator > span {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 1;
       }
 
       .btn.mode,
@@ -905,10 +930,47 @@
           font-size: 12px;
         }
       }
+
+      &.has-expanded-context .permission-mode-indicator {
+        width: 28px;
+        min-width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      &.has-expanded-context .permission-mode-indicator > span {
+        display: none;
+      }
+
+      &.has-expanded-context .composer-model-chip {
+        width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      &.has-expanded-context .composer-model-chip > span {
+        display: none;
+      }
     }
 
     @container aily-chat-composer-toolbar (max-width: 420px) {
       .btns .interaction-budget-indicator {
+        display: none;
+      }
+    }
+
+    @container aily-chat-composer-toolbar (max-width: 360px) {
+      .btns .permission-mode-indicator {
+        width: 28px;
+        min-width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      .btns .permission-mode-indicator > span {
         display: none;
       }
     }

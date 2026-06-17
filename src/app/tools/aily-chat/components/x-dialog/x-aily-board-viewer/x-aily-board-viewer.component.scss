@@ -11,6 +11,14 @@
     }
 }
 
+:host-context([data-theme='light']) .aily-board-viewer {
+    background-color: var(--aily-bg-tertiary, #d6d6d6);
+
+    &:hover {
+        background-color: color-mix(in srgb, var(--aily-bg-tertiary, #d6d6d6) 94%, #000 6%);
+    }
+}
+
 // 加载卡片
 .loading-card {
     display: flex;
@@ -64,12 +72,7 @@
     display: flex;
     position: relative;
     border-radius: 5px;
-    background-color: var(--aily-chat-viewer-card-bg, #3a3a3a);
     cursor: pointer;
-
-    &:hover {
-        background-color: var(--aily-chat-viewer-card-hover, #3f3f3f);
-    }
 
     .img-box {
         width: 50px;
