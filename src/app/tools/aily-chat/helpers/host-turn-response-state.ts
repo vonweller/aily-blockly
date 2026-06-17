@@ -1,5 +1,4 @@
 import {
-  collectTurnResponseText,
   type SessionSnapshot,
   type TurnRequest,
   type TurnResponseCommand,
@@ -10,6 +9,7 @@ import {
 
 import type { ChatPartStore, ChatPartStoreReadableHandle } from '../core/chat-part-store';
 import type { ChatPart } from '../core/chat-parts';
+import { collectMainTurnResponseText } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -1541,7 +1541,7 @@ function buildHostResponseView(
   responseSidecar?: Pick<HostResponseSidecarRuntimeState, 'responseId' | 'result'>,
 ): HostResponseView {
   const viewParts = buildHostResponseViewParts(turn.response.parts, clearState);
-  const resultText = responseSidecar?.result || turn.response.resultText || collectTurnResponseText(viewParts);
+  const resultText = responseSidecar?.result || turn.response.resultText || collectMainTurnResponseText(viewParts);
   const responseState = turn.response.status;
 
   return {
@@ -2381,6 +2381,16 @@ function assignFallbackPartIdsForImportedTurn(
             ? `tool:${part.toolCallId}`
             : `tool:${turnId}:${index}`,
         };
+      case 'markdown':
+        return {
+          ...part,
+          partId: `markdown:${turnId}:${index}`,
+        } as TurnResponsePart;
+      case 'thinking':
+        return {
+          ...part,
+          partId: `thinking:${turnId}:${index}`,
+        } as TurnResponsePart;
       case 'question':
         return {
           ...part,
@@ -2459,39 +2469,6 @@ function mergePersistedTimelineEntries(previous: unknown, next: unknown): Record
   return merged.length > 0 ? merged : undefined;
 }
 
-function mergePersistedChildItems(previous: unknown, next: unknown): Record<string, unknown>[] | undefined {
-  const merged: Record<string, unknown>[] = [];
-  const indexByToolCallId = new Map<string, number>();
-
-  const appendItems = (items: Record<string, unknown>[]) => {
-    for (const item of items) {
-      const kind = typeof item['kind'] === 'string' ? item['kind'] : undefined;
-      const toolCallId = typeof item['toolCallId'] === 'string' ? item['toolCallId'] : undefined;
-      if (kind !== 'tool' || !toolCallId) {
-        merged.push({ ...item });
-        continue;
-      }
-
-      const existingIndex = indexByToolCallId.get(toolCallId);
-      if (existingIndex === undefined) {
-        indexByToolCallId.set(toolCallId, merged.length);
-        merged.push({ ...item });
-        continue;
-      }
-
-      merged[existingIndex] = {
-        ...merged[existingIndex],
-        ...item,
-      };
-    }
-  };
-
-  appendItems(asPersistedRecordArray(previous));
-  appendItems(asPersistedRecordArray(next));
-
-  return merged.length > 0 ? merged : undefined;
-}
-
 function mergePersistedToolSpecificData(previous: unknown, next: unknown): Record<string, unknown> | undefined {
   const previousRecord = asPersistedRecord(previous);
   const nextRecord = asPersistedRecord(next);
@@ -2503,9 +2480,12 @@ function mergePersistedToolSpecificData(previous: unknown, next: unknown): Recor
     ...(previousRecord ?? {}),
     ...(nextRecord ?? {}),
   };
-  const childItems = mergePersistedChildItems(previousRecord?.['childItems'], nextRecord?.['childItems']);
-  if (childItems) {
-    merged['childItems'] = childItems;
+
+  // Live subagent child output is represented as scoped first-class parts.
+  // `toolSpecificData.childItems` is a legacy restore/migration shape only;
+  // preserving it in sparse live updates reintroduces parent-metadata churn.
+  if (merged['kind'] === 'subagent') {
+    delete merged['childItems'];
   }
 
   return merged;
@@ -2708,7 +2688,7 @@ function mergeTurnResponseContinuation(previous: TurnResponseTurn, next: TurnRes
       ...next.response,
       parts: mergedParts,
       continuation: next.response.continuation ?? previous.response.continuation,
-      resultText: next.response.resultText || collectTurnResponseText(mergedParts),
+      resultText: next.response.resultText || collectMainTurnResponseText(mergedParts),
       createdAt: previous.response.createdAt || next.response.createdAt,
       updatedAt: next.response.updatedAt || previous.response.updatedAt,
     },
@@ -3603,7 +3583,7 @@ function applyHostStreamEvent(
     response: {
       ...baseTurn.response,
       parts: nextParts,
-      resultText: collectTurnResponseText(nextParts),
+      resultText: collectMainTurnResponseText(nextParts),
       updatedAt: event.updatedAt,
     },
   };
@@ -3629,6 +3609,8 @@ function mergeDeltaHostStreamResponsePart(previous: TurnResponsePart, next: Turn
     case 'markdown': {
       const previousPart = previous as Extract<TurnResponsePart, { type: 'markdown' }>;
       return {
+        ...previousPart,
+        ...next,
         type: 'markdown',
         content: previousPart.content + next.content,
       };

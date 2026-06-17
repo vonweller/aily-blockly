@@ -43,6 +43,13 @@ export interface AskUserFullResponse {
   answers: Record<string, AskUserAnswer>;
 }
 
+export interface AskUserPresentationContext {
+  readonly toolCallId?: string;
+  readonly sourceAgentRole?: 'main' | 'subagent';
+  readonly subAgentInvocationId?: string;
+  readonly parentToolCallId?: string;
+}
+
 export interface AskUserBridgeResponse {
   answer: string;
   cancelled: boolean;
@@ -59,7 +66,10 @@ export interface AskUserResponse {
 // 全局回调注册
 // ============================
 
-type AskUserFullCallback = (questions: AskUserQuestion[]) => Promise<AskUserFullResponse | undefined>;
+type AskUserFullCallback = (
+  questions: AskUserQuestion[],
+  context?: AskUserPresentationContext,
+) => Promise<AskUserFullResponse | undefined>;
 
 let _registeredCallback: AskUserFullCallback | null = null;
 
@@ -91,6 +101,7 @@ export async function askUserSingle(
   options?: { label: string; description?: string; recommended?: boolean }[],
   multiSelect?: boolean,
   allowFreeform = true,
+  context?: AskUserPresentationContext,
 ): Promise<AskUserBridgeResponse> {
   const q: AskUserQuestion = {
     question,
@@ -99,14 +110,15 @@ export async function askUserSingle(
     allow_freeform: allowFreeform,
   };
 
-  return askUserMany([q]);
+  return askUserMany([q], context);
 }
 
 export async function askUserMany(
   questions: AskUserQuestion[],
+  context?: AskUserPresentationContext,
 ): Promise<AskUserBridgeResponse> {
   if (_registeredCallback) {
-    const response = await _registeredCallback(questions);
+    const response = await _registeredCallback(questions, context);
     if (!response) return { answer: '', cancelled: true };
 
     const parts: string[] = [];

@@ -25,6 +25,18 @@ interface TraceEntry {
   detail?: string;
 }
 
+interface JankSnapshotEntry {
+  label: string;
+  t: number;
+  data: Record<string, unknown>;
+}
+
+interface RenderEventSnapshotEntry {
+  label: string;
+  t: number;
+  data: Record<string, unknown>;
+}
+
 export interface ChatPerformanceTraceEntry {
   readonly tag: string;
   readonly phase: 'start' | 'end';
@@ -45,6 +57,10 @@ const log: TraceEntry[] = [];
 /** 关键事件独立 buffer — 不被高频 streaming 事件覆盖 */
 const KEY_MAX = 500;
 const keyLog: TraceEntry[] = [];
+const SNAPSHOT_MAX = 80;
+const jankSnapshots: JankSnapshotEntry[] = [];
+const RENDER_EVENT_MAX = 100;
+const renderEventSnapshots: RenderEventSnapshotEntry[] = [];
 const counters = new Map<string, number>();
 /** 高频标签集 — 这些 tag 不写入 keyLog */
 const HIGH_FREQ_TAGS = new Set(['sse_chunk', 'preprocess_rAF_scheduled']);
@@ -100,6 +116,10 @@ export class ChatPerformanceTracer {
   static dumpJankContext: (count?: number) => void;
 
   // ─── 核心 API ───
+
+  static isEnabled(): boolean {
+    return isEnabled();
+  }
 
   static enable(): void {
     try {
@@ -168,6 +188,35 @@ export class ChatPerformanceTracer {
     }
   }
 
+  static recordJankSnapshot(label: string, data: Record<string, unknown>): void {
+    if (!isEnabled() || typeof label !== 'string' || label.trim().length === 0) {
+      return;
+    }
+    jankSnapshots.push({
+      label: label.trim(),
+      t: performance.now(),
+      data: sanitizeSnapshotData(data),
+    });
+    if (jankSnapshots.length > SNAPSHOT_MAX) {
+      jankSnapshots.splice(0, jankSnapshots.length - SNAPSHOT_MAX);
+    }
+  }
+
+  static recordRenderEvent(label: string, data: Record<string, unknown>): void {
+    if (!isEnabled() || typeof label !== 'string' || label.trim().length === 0) {
+      return;
+    }
+
+    renderEventSnapshots.push({
+      label: label.trim(),
+      t: performance.now(),
+      data: sanitizeSnapshotData(data),
+    });
+    if (renderEventSnapshots.length > RENDER_EVENT_MAX) {
+      renderEventSnapshots.splice(0, renderEventSnapshots.length - RENDER_EVENT_MAX);
+    }
+  }
+
   static snapshotCounters(): Record<string, number> {
     return Object.fromEntries(counters.entries());
   }
@@ -186,6 +235,14 @@ export class ChatPerformanceTracer {
         t: entry.t,
         ...(entry.detail ? { detail: entry.detail } : {}),
       }));
+  }
+
+  static snapshotRenderEvents(): readonly Readonly<Record<string, unknown>>[] {
+    return renderEventSnapshots.map(entry => ({
+      label: entry.label,
+      t: entry.t,
+      ...entry.data,
+    }));
   }
 
   // ─── 输出与调试 ───
@@ -290,8 +347,71 @@ export class ChatPerformanceTracer {
     console.table(entries.slice(0, 20));
   }
 
+  static dumpJankSnapshots(count = 20): void {
+    if (jankSnapshots.length === 0) {
+      console.log('[PerfTracer] 无渲染快照');
+      return;
+    }
+
+    const safeCount = Math.max(1, Math.min(Math.floor(count), 40));
+    const snapshots = jankSnapshots.slice(-safeCount);
+    const first = snapshots[0];
+    const rows = snapshots.map((entry) => ({
+      'Δms': +(entry.t - first.t).toFixed(2),
+      label: entry.label,
+      ...entry.data,
+    }));
+    console.log(`[PerfTracer] jank snapshots: count=${jankSnapshots.length}, showing=${snapshots.length}`);
+    console.table(rows);
+  }
+
+  static dumpRecentRenderEvents(count = 40): void {
+    if (renderEventSnapshots.length === 0) {
+      console.log('[PerfTracer] 无 render event 摘要');
+      return;
+    }
+
+    const safeCount = Math.max(1, Math.min(Math.floor(count), RENDER_EVENT_MAX));
+    const events = renderEventSnapshots.slice(-safeCount);
+    const first = events[0];
+    const rows = events.map((entry) => ({
+      'Δms': +(entry.t - first.t).toFixed(2),
+      label: entry.label,
+      ...entry.data,
+    }));
+    console.log(`[PerfTracer] recent render events: count=${renderEventSnapshots.length}, showing=${events.length}`);
+    console.table(rows);
+  }
+
   /** 清空日志 */
-  static reset(): void { log.length = 0; keyLog.length = 0; counters.clear(); seqId = 0; }
+  static reset(): void {
+    log.length = 0;
+    keyLog.length = 0;
+    jankSnapshots.length = 0;
+    renderEventSnapshots.length = 0;
+    counters.clear();
+    seqId = 0;
+  }
+}
+
+function sanitizeSnapshotData(data: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data || {})) {
+    if (typeof value === 'string') {
+      result[key] = value.length > 160 ? `${value.slice(0, 157)}...` : value;
+      continue;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || value == null) {
+      result[key] = value;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      result[key] = value.slice(0, 8).map((entry) => String(entry)).join(',');
+      continue;
+    }
+    result[key] = String(value);
+  }
+  return result;
 }
 
 // 暴露到全局方便 Console 调用
@@ -308,7 +428,7 @@ try { (globalThis as any).ChatPerformanceTracer = ChatPerformanceTracer; } catch
  *   ChatPerformanceTracer.dumpLongTasks(40);         // 打印最近 40 条长任务明细
  */
 let longTaskObserver: PerformanceObserver | null = null;
-const longTasks: Array<{ start: number; duration: number; name: string }> = [];
+const longTasks: Array<{ start: number; duration: number; name: string; attribution?: string }> = [];
 
 ChatPerformanceTracer.startLongTaskObserver = function(): void {
   ChatPerformanceTracer.enable();
@@ -316,13 +436,15 @@ ChatPerformanceTracer.startLongTaskObserver = function(): void {
   try {
     longTaskObserver = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
+        const attribution = formatLongTaskAttribution(entry);
         longTasks.push({
           start: entry.startTime,
           duration: entry.duration,
           name: entry.name || 'self',
+          ...(attribution ? { attribution } : {}),
         });
         if (isEnabled()) {
-          ChatPerformanceTracer.mark('LONG_TASK', `${entry.duration.toFixed(1)}ms`);
+          ChatPerformanceTracer.mark('LONG_TASK', `${entry.duration.toFixed(1)}ms${attribution ? ` ${attribution}` : ''}`);
         }
         // keep last 200
         if (longTasks.length > 200) longTasks.splice(0, longTasks.length - 200);
@@ -366,13 +488,42 @@ ChatPerformanceTracer.dumpLongTasks = function(count?: number): void {
     'start(ms)': +t.start.toFixed(1),
     'duration(ms)': +t.duration.toFixed(1),
     'name': t.name,
+    'attribution': t.attribution || '',
   })));
 };
 
 ChatPerformanceTracer.dumpJankContext = function(count = 40): void {
   console.log('[PerfTracer] jank context');
   ChatPerformanceTracer.dumpLongTasks(count);
+  ChatPerformanceTracer.dumpJankSnapshots(Math.min(count, 20));
+  ChatPerformanceTracer.dumpRecentRenderEvents(Math.min(count, 100));
   ChatPerformanceTracer.dumpCounters();
   ChatPerformanceTracer.dumpKey(count);
   ChatPerformanceTracer.dumpSlow(8);
 };
+
+function formatLongTaskAttribution(entry: PerformanceEntry): string | undefined {
+  const raw = entry as PerformanceEntry & {
+    attribution?: Array<{
+      name?: string;
+      entryType?: string;
+      containerType?: string;
+      containerName?: string;
+      containerId?: string;
+      containerSrc?: string;
+    }>;
+  };
+  const attribution = Array.isArray(raw.attribution) ? raw.attribution : [];
+  if (!attribution.length) {
+    return undefined;
+  }
+  return attribution
+    .slice(0, 4)
+    .map((item) => [
+      item.name || item.entryType || '',
+      item.containerType || '',
+      item.containerName || item.containerId || item.containerSrc || '',
+    ].filter(Boolean).join(':'))
+    .filter(Boolean)
+    .join('|') || undefined;
+}

@@ -16,7 +16,7 @@ import { appendMarkdownContent, getMarkdownContentLength, getMarkdownContentWind
 import { appendThinkContent, getThinkContentLength, getThinkContentWindow, storeThinkContent } from './think-content-store';
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
-  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, isLikelyPlanMarkdown,
+  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, isLikelyPlanMarkdown, buildScopedTextPartId,
   type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
@@ -788,7 +788,7 @@ export class ChatPartStore {
 
     // 创建新 MarkdownPart
     const idx = parts.length;
-    parts.push(mkMarkdown(text, normalizedScope));
+    parts.push(mkMarkdown(text, normalizedScope, buildScopedTextPartId('markdown', normalizedScope, idx)));
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }
@@ -901,7 +901,7 @@ export class ChatPartStore {
 
     // 创建新 ThinkingPart（streaming，未完成）
     const idx = parts.length;
-    parts.push(mkThinking(text, false, normalizedScope));
+    parts.push(mkThinking(text, false, normalizedScope, buildScopedTextPartId('thinking', normalizedScope, idx)));
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }
@@ -1259,7 +1259,9 @@ export class ChatPartStore {
         agentName: compat.agentName,
         description: compat.description,
         result: compat.resultText,
-        childItems: (compat.childItems || []).map(child => ({ ...child })),
+        ...((compat.childItems || []).length > 0
+          ? { childItems: (compat.childItems || []).map(child => ({ ...child })) }
+          : {}),
       },
     };
     nextPart.text = compat.description || existing.text || compat.agentName;

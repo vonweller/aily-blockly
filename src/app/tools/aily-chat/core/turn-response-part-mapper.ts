@@ -6,6 +6,7 @@ import type {
   TurnResponseStatePart,
   TurnResponseTerminalPart,
 } from 'aily-lex/browser';
+import { collectTurnResponseText } from 'aily-lex/browser';
 
 import type { ChatPart } from './chat-parts';
 import {
@@ -28,6 +29,22 @@ import { getThinkContent } from './think-content-store';
 
 type MutableQuestionAnswers = Extract<ChatPart, { type: 'question' }>['answers'];
 type ScopedTurnResponsePartMetadata = { readonly metadata?: Record<string, unknown> };
+
+export function collectMainTurnResponseText(parts: readonly TurnResponsePart[]): string {
+  return collectTurnResponseText(parts.filter(part => !isSubagentScopedTurnResponsePart(part)));
+}
+
+function isSubagentScopedTurnResponsePart(part: TurnResponsePart): boolean {
+  const metadata = (part as ScopedTurnResponsePartMetadata).metadata;
+  return !!metadata
+    && typeof metadata === 'object'
+    && metadata['sourceAgentRole'] === 'subagent';
+}
+
+function optionalTurnResponsePartId(part: TurnResponsePart): string | undefined {
+  const partId = (part as unknown as { readonly partId?: unknown }).partId;
+  return typeof partId === 'string' && partId.trim().length > 0 ? partId : undefined;
+}
 
 export function hydrateQuestionAnswersFromAskUserToolMetadata(
   parts: readonly TurnResponsePart[],
@@ -71,6 +88,7 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
       const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
       return {
         type: 'markdown',
+        ...(part.partId ? { partId: part.partId } : {}),
         content: part.content || (part.contentRef ? getMarkdownContent(part.contentRef) : ''),
         ...(metadata ? { metadata } : {}),
       } as TurnResponsePart;
@@ -79,6 +97,7 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
       const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
       return {
         type: 'thinking',
+        ...(part.partId ? { partId: part.partId } : {}),
         content: part.content || (part.contentRef ? getThinkContent(part.contentRef) : ''),
         isComplete: part.isComplete,
         ...(metadata ? { metadata } : {}),
@@ -199,9 +218,18 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
 export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: ChatPart): ChatPart {
   switch (part.type) {
     case 'markdown':
-      return mkMarkdown(part.content, normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata));
+      return mkMarkdown(
+        part.content,
+        normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata),
+        optionalTurnResponsePartId(part),
+      );
     case 'thinking':
-      return mkThinking(part.content, part.isComplete, normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata));
+      return mkThinking(
+        part.content,
+        part.isComplete,
+        normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata),
+        optionalTurnResponsePartId(part),
+      );
     case 'tool_call':
       return {
         ...mkToolCall(part.toolCallId, part.toolName, part.text, part.state, part.args, part.metadata),

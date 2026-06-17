@@ -506,12 +506,13 @@ export class LexTurnExecutionBridge {
 
     if (event.type === 'subagent_begin') {
       if (activeScope && !this.isEventForActiveSubagentScope(event, activeScope)) {
-        return [this.toSubagentToolStartedActivity(activeScope, {
+        return [this.withSubagentScope(activeScope, {
+          type: 'tool_call_begin',
           toolCallId: event.toolCallId,
           toolName: event.agentName || 'agent',
           input: { description: event.description },
           timestamp: event.timestamp,
-        })];
+        } as RenderEvent)];
       }
 
       state.activeSubagentRenderScopes.push({
@@ -535,14 +536,17 @@ export class LexTurnExecutionBridge {
           this.popActiveSubagentRenderScope(state, activeScope);
           return [event];
         }
-        return [this.toSubagentToolCompletedActivity(activeScope, {
+        return [this.withSubagentScope(activeScope, {
+          type: 'tool_call_end',
           toolCallId: event.toolCallId,
           toolName: event.agentName || 'agent',
           resultText: event.resultText,
+          result: event.resultText ? { content: [{ type: 'text', text: event.resultText }] } : undefined,
           durationMs: event.durationMs,
           state: event.state,
+          isError: event.state === 'error',
           timestamp: event.timestamp,
-        })];
+        } as RenderEvent)];
 
       case 'turn_begin':
       case 'turn_end':
@@ -554,19 +558,19 @@ export class LexTurnExecutionBridge {
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [this.toSubagentTextActivity(activeScope, 'thinking', event.text, event.timestamp)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'thinking_complete':
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'markdown_delta':
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [this.toSubagentTextActivity(activeScope, 'text', event.text, event.timestamp)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'tool_call_begin':
         if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
@@ -575,7 +579,7 @@ export class LexTurnExecutionBridge {
         if (event.toolCallId === activeScope.toolCallId) {
           return [];
         }
-        return [this.toSubagentToolStartedActivity(activeScope, event)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'tool_call_progress':
         if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
@@ -584,7 +588,7 @@ export class LexTurnExecutionBridge {
         if (event.toolCallId === activeScope.toolCallId) {
           return [];
         }
-        return [this.toSubagentToolProgressActivity(activeScope, event)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'tool_call_end':
         if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
@@ -594,20 +598,20 @@ export class LexTurnExecutionBridge {
           this.popActiveSubagentRenderScope(state, activeScope);
           return [this.toSubagentEndFromToolCall(activeScope, event)];
         }
-        return [this.toSubagentToolCompletedActivity(activeScope, event)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'error_notice':
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [this.toSubagentTextActivity(activeScope, 'text', event.message, event.timestamp)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'warning_notice':
       case 'info_notice':
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [this.toSubagentTextActivity(activeScope, 'text', event.message, event.timestamp)];
+        return [this.withSubagentScope(activeScope, event)];
 
       case 'question_request':
       case 'approval_request':
@@ -615,11 +619,24 @@ export class LexTurnExecutionBridge {
         if (this.isScopedSubagentPartEvent(event, activeScope)) {
           return [event];
         }
-        return [];
+        return [this.withSubagentScope(activeScope, event)];
 
       default:
         return [];
     }
+  }
+
+  private withSubagentScope<T extends RenderEvent>(
+    scope: ActiveSubagentRenderScope,
+    event: T,
+  ): T {
+    const scopedEvent = event as T & { subAgentInvocationId?: string; parentToolCallId?: string };
+    return {
+      ...event,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: scopedEvent.subAgentInvocationId || scope.subAgentInvocationId,
+      parentToolCallId: scopedEvent.parentToolCallId || scope.toolCallId,
+    } as T;
   }
 
   private getActiveSubagentRenderScope(state: LexTurnExecutionRunState): ActiveSubagentRenderScope | null {

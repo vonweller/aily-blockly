@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 
-import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion } from '../core/ask-user';
+import type { AskUserAnswer, AskUserFullResponse, AskUserQuestion, AskUserPresentationContext } from '../core/ask-user';
 import { AilyHost } from '../core/host';
 import type { IFileWatchHandle } from '../core/host-api';
 import type { ToolApprovalAction, ToolApprovalRequest, ToolApprovalScope } from '../helpers/tool-approval-ui';
@@ -13,6 +13,7 @@ import {
 export interface RuntimeQuestionWidgetState {
   readonly sessionId: string;
   readonly partId: string;
+  readonly context?: AskUserPresentationContext;
   readonly data: {
     partId: string;
     isHistory: false;
@@ -205,7 +206,12 @@ export class ChatRuntimeInteractionHostService {
     return this._questionEntries()[sessionId] ?? null;
   }
 
-  presentQuestion(sessionId: string, partId: string, questions: AskUserQuestion[]): Promise<AskUserFullResponse | undefined> {
+  presentQuestion(
+    sessionId: string,
+    partId: string,
+    questions: AskUserQuestion[],
+    context?: AskUserPresentationContext,
+  ): Promise<AskUserFullResponse | undefined> {
     this.clearQuestion(sessionId);
 
     return new Promise<AskUserFullResponse | undefined>((resolve) => {
@@ -215,6 +221,7 @@ export class ChatRuntimeInteractionHostService {
         [sessionId]: {
           sessionId,
           partId,
+          context,
           resolve,
           data: {
             partId,

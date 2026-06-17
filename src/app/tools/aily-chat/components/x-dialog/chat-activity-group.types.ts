@@ -61,6 +61,12 @@ export interface ActivityInvocationDisplayData {
   postConfirmation: boolean;
 }
 
+export interface ActivityLazyDetailData {
+  detailSections?: readonly DetailSectionDescriptor[];
+  invocationDetail?: ActivityInvocationDisplayData;
+  detailKind?: 'invocation' | 'state' | 'subagent';
+}
+
 export interface ActivityGroupDisplayChild {
   id: string;
   kind: 'detail' | 'thinking' | 'tool' | 'text';
@@ -83,6 +89,7 @@ export interface ActivityGroupDisplayItem {
   label: string;
   subtitle?: string;
   note?: string;
+  noteRenderMode?: 'markdown' | 'plain';
   thinking?: {
     content?: string;
     ref?: string;
@@ -95,6 +102,7 @@ export interface ActivityGroupDisplayItem {
   approval?: ActivityApprovalDisplayData;
   approvalSummary?: ActivityApprovalSummaryDisplayData;
   invocationDetail?: ActivityInvocationDisplayData;
+  loadDetail?: () => ActivityLazyDetailData;
   toolbarActions?: readonly ActivityToolbarActionDisplayData[];
   children?: readonly ActivityGroupDisplayChild[];
   detailSections?: readonly DetailSectionDescriptor[];

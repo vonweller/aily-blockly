@@ -126,10 +126,10 @@ export function buildChatPartIdentity(part: ChatPart, index: number): string {
     return part.partId || `question-${index}`;
   }
   if (part.type === 'thinking') {
-    return `thinking-${index}`;
+    return part.partId || `thinking-${index}`;
   }
   if (part.type === 'markdown') {
-    return `markdown-${index}`;
+    return part.partId || `markdown-${index}`;
   }
   if (part.type === 'plan') {
     return part.partId || `plan-${index}`;
@@ -399,19 +399,35 @@ export function buildToolActivityDisplayItem(
   const approval = projectToolCallApprovalDisplayData(part);
   const approvalSummary = approval?.resolved ? buildResolvedApprovalSummary(approval) : undefined;
   const pendingApproval = !!approval && !approval.resolved;
-  const rawDetailSections = pendingApproval && approval
+  const eagerDetailSections = pendingApproval && approval
     ? buildApprovalDetailSections({
         message: approval.message,
         description: approval.description,
       })
-    : getPreparedDetailSections(part);
-  const detailSections = rawDetailSections?.length ? rawDetailSections : undefined;
+    : approvalSummary
+      ? getPreparedDetailSections(part)
+      : undefined;
+  const detailSections = eagerDetailSections?.length ? eagerDetailSections : undefined;
   const invocationDetail = detailSections
     ? buildInvocationDetailDisplay({
         detailSections,
         postConfirmation: !!approvalSummary,
       })
     : undefined;
+  const loadDetail = pendingApproval || approvalSummary
+    ? undefined
+    : () => {
+        const lazySections = getPreparedDetailSections(part);
+        const lazyDetailSections = lazySections?.length ? lazySections : undefined;
+        const lazyInvocationDetail = lazyDetailSections
+          ? buildInvocationDetailDisplay({ detailSections: lazyDetailSections })
+          : undefined;
+        return {
+          detailSections: lazyDetailSections,
+          invocationDetail: lazyInvocationDetail,
+          detailKind: lazyDetailSections?.length ? 'invocation' as const : undefined,
+        };
+      };
   const shell = buildToolActivityShellPresentation({
     state: part.state,
     approval,
@@ -450,10 +466,11 @@ export function buildToolActivityDisplayItem(
     approval,
     approvalSummary,
     invocationDetail,
+    loadDetail,
     children: undefined,
     detailSections,
     detailExpanded: false,
-    detailKind: detailSections?.length ? 'invocation' : undefined,
+    detailKind: detailSections?.length || loadDetail ? 'invocation' : undefined,
   };
 }
 
@@ -872,18 +889,14 @@ export function buildScopedMarkdownActivityDisplayItem(
 
   return {
     id: options?.id || buildChatPartIdentity(part, 0),
-    kind: 'thinking',
+    kind: 'activity',
     iconClass: 'fa-light fa-message-lines',
     isSpinning: false,
     iconColor: getSubagentStepColor('neutral'),
     kicker: 'Output',
     label: '输出',
     note: content,
-    thinking: {
-      content,
-      isComplete: true,
-      ...(typeof part.contentLength === 'number' ? { contentLength: part.contentLength } : {}),
-    },
+    noteRenderMode: 'plain',
     pill: '',
     pillTone: 'neutral',
   };

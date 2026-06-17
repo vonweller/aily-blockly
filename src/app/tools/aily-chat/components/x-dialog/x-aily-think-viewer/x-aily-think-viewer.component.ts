@@ -361,7 +361,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     let rawLength = 0;
     if (this.data.ref) {
       rawLength = getThinkContentLength(this.data.ref);
-      if (this.data.isComplete === false) {
+      if (this.data.isComplete === false || this.embedded) {
         raw = getThinkContentWindow(this.data.ref, LIVE_THINK_RENDER_WINDOW_CHARS, LIVE_THINK_OMITTED_MARKER);
       } else {
         raw = getThinkContent(this.data.ref);
@@ -377,6 +377,10 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     }
     if (!rawLength) {
       rawLength = raw.length;
+    }
+    if (this.embedded && raw.length > LIVE_THINK_RENDER_WINDOW_CHARS) {
+      const tailLength = Math.max(0, LIVE_THINK_RENDER_WINDOW_CHARS - LIVE_THINK_OMITTED_MARKER.length);
+      raw = `${LIVE_THINK_OMITTED_MARKER}${raw.slice(-tailLength)}`;
     }
 
     this.thinkContent = raw;

@@ -1,5 +1,5 @@
 import type { TurnResponseCommand, TurnResponseFollowup, TurnResponseQuotaSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
-import { collectTurnResponseText, createTurnResponseCommand } from 'aily-lex/browser';
+import { createTurnResponseCommand } from 'aily-lex/browser';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
@@ -17,6 +17,7 @@ import {
   isAutoPresetIdentifier,
   isDefaultAutoPresetIdentifier,
 } from '../helpers/model-billing-label';
+import { collectMainTurnResponseText } from './turn-response-part-mapper';
 
 function formatResolvedPresetDisplayName(presetId: string | undefined): string | undefined {
   if (!presetId) {
@@ -296,7 +297,7 @@ export function getTurnResponseAssistantText(
 export function getTurnResponseResponseText(
   response: Pick<TurnResponseTurn['response'], 'resultText' | 'parts'>,
 ): string {
-  return response.resultText || collectTurnResponseText(response.parts) || '';
+  return response.resultText || collectMainTurnResponseText(response.parts) || '';
 }
 
 export function isCanonicalTurnResponseUserEntryProjection(
@@ -366,7 +367,7 @@ export function buildTurnResponseTurn(
       status: projection.status,
       terminationReason: projection.terminationReason,
       parts: projection.parts,
-      resultText: collectTurnResponseText(projection.parts),
+      resultText: collectMainTurnResponseText(projection.parts),
       createdAt: projection.createdAt,
       updatedAt: projection.updatedAt,
     },

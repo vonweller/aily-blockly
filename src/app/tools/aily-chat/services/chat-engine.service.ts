@@ -71,6 +71,7 @@ import {
   type ChatResolvedModeHandoff,
   type ChatSelectedMode,
   type ChatSurfaceModeId,
+  PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT,
 } from '../core/chat-mode';
 import {
   normalizeChatSessionTitleCandidate,
@@ -132,6 +133,16 @@ import { createChatSessionActionState, type ChatSessionActionState } from '../he
 import { ChatSwitchCoordinator } from '../helpers/chat-switch-coordinator';
 import { buildSeededTurnResponseTurn } from '../core/turn-response-stream-contract';
 import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
+
+const AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY = '__AILY_CHAT_AGENT_LOOP_PENDING_COUNT__';
+
+function updateAilyChatAgentLoopPendingCount(delta: number): void {
+  const global = globalThis as Record<string, unknown>;
+  const current = typeof global[AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY] === 'number'
+    ? global[AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY] as number
+    : 0;
+  global[AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY] = Math.max(0, current + delta);
+}
 
 type VisibleSessionProjectionResetOptions = {
   readonly clearResolvedActiveModel?: boolean;
@@ -5814,7 +5825,7 @@ export class ChatEngineService implements IChatContext {
     this.refreshSessionProviderOptionsSources();
 
     // 注册 ask_user 回调：在聊天界面显示全部问题并等待用户回答
-    registerAskUserCallback((questions) => this.interaction.handleAskUser(questions));
+    registerAskUserCallback((questions, context) => this.interaction.handleAskUser(questions, context));
 
     // 预加载 aily-lex 模块
     this.lexStream.agent.loadModule().then(ok => {
@@ -5950,33 +5961,17 @@ export class ChatEngineService implements IChatContext {
     await this.send('user', content, options?.clearInput ?? true, options?.sessionId);
   }
 
-  async startImplementationFromPlanPart(sessionId?: string | null, planText?: string | null): Promise<void> {
+  async startImplementationFromPlanPart(sessionId?: string | null, _planText?: string | null): Promise<void> {
     const targetSessionId = this.resolvePlanHandoffTargetSessionId(sessionId);
     if (!this.canRunPlanHandoff(targetSessionId)) {
       return;
     }
 
     await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: 'agent' });
-    const resetPlanImplementationRuntimeBoundary = (
-      (this as unknown as { resetPlanImplementationRuntimeBoundary?: ChatEngineService['resetPlanImplementationRuntimeBoundary'] })
-        .resetPlanImplementationRuntimeBoundary
-      ?? ChatEngineService.prototype['resetPlanImplementationRuntimeBoundary']
-    );
-    resetPlanImplementationRuntimeBoundary.call(this, targetSessionId);
-    const normalizedPlanText = normalizePlanHandoffText(planText);
-    await this.submitUserText(
-      normalizedPlanText ? buildClearContextImplementationPrompt(normalizedPlanText) : 'Start implementation',
-      { clearInput: false, sessionId: targetSessionId },
-    );
-  }
-
-  private resetPlanImplementationRuntimeBoundary(sessionId: string): void {
-    const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    if (!targetSessionId) {
-      return;
-    }
-
-    this.lexStream?.agent?.dispose?.(targetSessionId);
+    await this.submitUserText(PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT, {
+      clearInput: false,
+      sessionId: targetSessionId,
+    });
   }
 
   async clearContextAndImplementPlanPart(planText: string, sessionId?: string | null): Promise<void> {
@@ -6330,6 +6325,8 @@ Do not create non-existent boards and libraries.
       throw new Error('executePreparedUserSend requires a sessionResource owner.');
     }
 
+    updateAilyChatAgentLoopPendingCount(1);
+    try {
     if (options?.activatePreparedUserTurn) {
       const activatePreparedUserTurn = (
         this as unknown as {
@@ -6606,6 +6603,9 @@ Do not create non-existent boards and libraries.
         ?? ChatEngineService.prototype['processPendingFollowupRequests'];
       await processPendingFollowupRequests.call(this, syncSessionId);
       await this.chatSessionRuntimeRegistry?.awaitPendingLexRequestCompleted(syncSessionId);
+    }
+    } finally {
+      updateAilyChatAgentLoopPendingCount(-1);
     }
   }
 
@@ -7672,11 +7672,10 @@ function normalizePlanHandoffText(value: unknown): string {
 
 function buildClearContextImplementationPrompt(planText: string): string {
   return [
-    'Start implementation from this approved plan.',
+    'A previous agent produced the plan below to accomplish the user\'s task.',
+    'Implement the plan in a fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.',
     '',
-    '<proposed_plan>',
     planText,
-    '</proposed_plan>',
   ].join('\n');
 }
 

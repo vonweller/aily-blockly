@@ -85,11 +85,20 @@ export interface ChatSessionLexRequestCompletedInput {
 
 const LEX_COMPLETION_IDLE_TIMEOUT_MS = 500;
 const LEX_COMPLETION_SLOW_PHASE_MS = 64;
+const LEX_COMPLETION_BACKGROUND_GLOBAL_KEY = '__AILY_CHAT_LEX_COMPLETION_PENDING_COUNT__';
 
 function getNowMs(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
+}
+
+function updateLexCompletionBackgroundOperation(delta: number): void {
+  const global = globalThis as Record<string, unknown>;
+  const current = typeof global[LEX_COMPLETION_BACKGROUND_GLOBAL_KEY] === 'number'
+    ? global[LEX_COMPLETION_BACKGROUND_GLOBAL_KEY] as number
+    : 0;
+  global[LEX_COMPLETION_BACKGROUND_GLOBAL_KEY] = Math.max(0, current + delta);
 }
 
 @Injectable()
@@ -196,20 +205,25 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     const runCompletion = async (): Promise<void> => {
-      await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'workspace-finalize');
-      await this.runLexCompletionPhase(
-        normalizedSessionId,
-        input.turnId,
-        'workspace_finalize',
-        input.runWorkspaceFinalize,
-      );
-      await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'session-end-hooks');
-      await this.runLexCompletionPhase(
-        normalizedSessionId,
-        input.turnId,
-        'session_end_hooks',
-        input.runSessionEndHooks,
-      );
+      updateLexCompletionBackgroundOperation(1);
+      try {
+        await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'workspace-finalize');
+        await this.runLexCompletionPhase(
+          normalizedSessionId,
+          input.turnId,
+          'workspace_finalize',
+          input.runWorkspaceFinalize,
+        );
+        await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'session-end-hooks');
+        await this.runLexCompletionPhase(
+          normalizedSessionId,
+          input.turnId,
+          'session_end_hooks',
+          input.runSessionEndHooks,
+        );
+      } finally {
+        updateLexCompletionBackgroundOperation(-1);
+      }
     };
 
     const previous = this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve();
