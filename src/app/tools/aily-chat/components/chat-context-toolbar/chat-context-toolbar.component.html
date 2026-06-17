@@ -59,6 +59,7 @@
 @if (showModelChip) {
   <div
     class="acc-chip ccenter"
+    [class.acc-chip--after-expanded-context]="showAddList"
     nz-tooltip
     nzTooltipPlacement="bottom"
     [nzTooltipTitle]="modelChipLabel"

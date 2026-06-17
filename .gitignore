@@ -65,6 +65,7 @@ child/aily-builder*
 /child/aily-coder
 /child/tools/*/node_modules/*
 /child/aily-lex
+/child/aily-subapp
 
 # Playwright E2E
 /renderer

@@ -592,7 +592,7 @@
 .edit-input-box {
   display: flex;
   flex-direction: column;
-  margin: 5px 10px 5px;
+  margin: 5px 0 5px;
   padding: 5px;
   border-radius: 5px;
   border: 1px solid var(--aily-chat-xdialog-msg-divider, var(--chat-border));
@@ -677,6 +677,8 @@
     height: 28px;
     position: relative;
     align-items: center;
+    container-type: inline-size;
+    container-name: aily-chat-edit-toolbar;
 
     .edit-btn {
       width: 28px;

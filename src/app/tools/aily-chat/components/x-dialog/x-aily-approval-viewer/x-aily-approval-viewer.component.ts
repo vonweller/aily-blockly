@@ -78,7 +78,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
     .aa-body {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 5px;
       border-radius: 0;
       padding: 0;
       background: transparent;
@@ -87,7 +87,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
     }
 
     :host(:not(.aa-embedded)) .aa-body {
-      margin-top: 8px;
+      margin-top: 5px;
     }
 
     .aa-body-embedded {
@@ -128,7 +128,7 @@ import { ChatPartHeaderShellComponent } from '../chat-part-header-shell.componen
       word-break: break-word;
       overflow-wrap: break-word;
       white-space: pre-wrap;
-      padding: 0 5px;
+      padding: 5px 5px 0 5px;
     }
     .aa-command-block {
       margin-top: 0;
