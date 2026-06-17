@@ -3,6 +3,7 @@ import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import type { RenderEvent, SessionSnapshot, TurnRequest, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
+import { yieldToBrowserTask } from '../tools/browserTaskScheduler';
 
 type LexTurnExecutionContext = Pick<
   IAgentLifecycle,
@@ -50,11 +51,20 @@ const GENERIC_EXECUTION_ERROR_MESSAGE = 'Sorry, something went wrong.';
 interface LexTurnExecutionRunState {
   readonly sessionId: string | null;
   readonly saveTarget: HostSessionSaveTarget | null;
+  abortSignal?: AbortSignal;
   detachedRenderEventBridge: RenderEventSink | null;
   activeTurnId: string | null;
+  activeSubagentRenderScopes: ActiveSubagentRenderScope[];
   requestContent: string;
   requestDisplayContent?: string;
   requestMetadata?: TurnRequest['metadata'];
+  usedRenderEventStream: boolean;
+}
+
+interface ActiveSubagentRenderScope {
+  readonly toolCallId: string;
+  readonly subAgentInvocationId: string;
+  readonly agentName?: string;
 }
 
 const BACKGROUND_SESSION_TRACE_FLAG = 'aily.chat.traceBackgroundSession';
@@ -122,6 +132,26 @@ function cloneExecutionTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
   }
 }
 
+async function yieldOutsideAngular(ctx: Pick<IChatServiceAccess, 'ngZone'>, label = 'turn'): Promise<void> {
+  const startedAt = performance.now();
+  try {
+    if (typeof ctx.ngZone?.runOutsideAngular === 'function') {
+      await ctx.ngZone.runOutsideAngular(() => yieldToBrowserTask(0));
+      ChatPerformanceTracer.recordDuration('turn_yield', performance.now() - startedAt, label, {
+        slowThresholdMs: 24,
+      });
+      return;
+    }
+  } catch {
+    // Fall through to the unpatched browser scheduler if a lightweight test zone mock throws.
+  }
+
+  await yieldToBrowserTask(0);
+  ChatPerformanceTracer.recordDuration('turn_yield', performance.now() - startedAt, label, {
+    slowThresholdMs: 24,
+  });
+}
+
 /**
  * Handles lex turn execution scheduling for the blockly host path.
  *
@@ -175,9 +205,22 @@ export class LexTurnExecutionBridge {
     }
 
     const executionState = this.createExecutionRunState(userMessage);
+    if (!this.canUseLegacyAgentEventPath(executionState)) {
+      console.warn('[AilyChat][TurnOwner] Legacy AgentEvent path cannot run detached session safely', {
+        executionSessionId: executionState.sessionId,
+        visibleSessionId: this.captureVisibleSessionId(),
+      });
+      this.reportExecutionError(
+        new Error('Legacy AgentEvent execution cannot be projected to a detached session.'),
+        executionState,
+      );
+      return this.finalizeTurnExecution(executionState);
+    }
+
     const abortController = new AbortController();
     this.setAbortController(executionState.sessionId, abortController);
     const signal = abortController.signal;
+    executionState.abortSignal = signal;
     const turnSpan = ChatPerformanceTracer.begin('lex_runTurn');
 
     this.resetTurnState();
@@ -227,6 +270,7 @@ export class LexTurnExecutionBridge {
     const abortController = new AbortController();
     this.setAbortController(executionState.sessionId, abortController);
     const signal = abortController.signal;
+    executionState.abortSignal = signal;
     const turnSpan = ChatPerformanceTracer.begin('lex_runTurn_render');
 
     this.resetRenderEventTurnState(executionState, userMessage, displayContent);
@@ -261,9 +305,11 @@ export class LexTurnExecutionBridge {
       saveTarget: this.captureExecutionSaveTarget?.(sessionId) ?? null,
       detachedRenderEventBridge: null,
       activeTurnId: null,
+      activeSubagentRenderScopes: [],
       requestContent,
       requestDisplayContent,
       requestMetadata: this.getCurrentRequestMetadata?.(),
+      usedRenderEventStream: false,
     };
   }
 
@@ -283,13 +329,18 @@ export class LexTurnExecutionBridge {
       hasDetachedSink: !!state.detachedRenderEventBridge,
     });
     const finalizeStartedAt = Date.now();
+    const fallbackStatus = this.ctx.isCancelled ? 'cancelled' : 'completed';
     try {
       if (state.detachedRenderEventBridge?.finalizeCurrentTurn) {
-        const finalized = state.detachedRenderEventBridge.finalizeCurrentTurn('completed');
+        const finalized = state.detachedRenderEventBridge.finalizeCurrentTurn(fallbackStatus);
         traceBackgroundSessionExecution('finalize-detached-turn-fallback', {
           sessionId: state.sessionId,
           finalized,
+          fallbackStatus,
         });
+      }
+      if (state.usedRenderEventStream || state.detachedRenderEventBridge) {
+        this.syncExecutionRuntimeState(state, state.detachedRenderEventBridge ?? this._renderEventBridge);
       }
       await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state));
       console.info('[AilyChat][FinalizeDebug] finalizeTurnExecution completed', {
@@ -373,6 +424,7 @@ export class LexTurnExecutionBridge {
     userMessage: string,
     signal: AbortSignal,
   ): Promise<void> {
+    state.usedRenderEventStream = true;
     traceBackgroundSessionExecution('consume-render-events-start', {
       sessionId: state.sessionId,
       hasDetachedSink: !!state.detachedRenderEventBridge,
@@ -385,16 +437,22 @@ export class LexTurnExecutionBridge {
       yieldRequested: () => this.isExecutionYieldRequested(state),
     })) {
       eventCount += 1;
-      this.captureActiveRenderEventTurnId(state, event);
+      if (!this.acceptRenderEventForExecutionOwner(state, event)
+        || !this.acceptRenderEventForActiveTurn(state, event)) {
+        continue;
+      }
       if (eventCount === 1) {
         traceBackgroundSessionExecution('consume-render-events-first', {
           sessionId: state.sessionId,
           eventType: event.type,
+          turnId: state.activeTurnId,
         });
       }
       const renderEventSink = this.resolveExecutionRenderEventSink(state);
-      renderEventSink.processEvent(event);
-      this.syncExecutionRuntimeState(state, renderEventSink);
+      const routedEvents = this.routeRenderEventsForSubagentScope(state, event);
+      for (const routedEvent of routedEvents) {
+        renderEventSink.processEvent(routedEvent);
+      }
 
       const cancellationApplies = this.isExecutionCancellationEffective(state);
       if (!cancellationApplies && this.ctx.isCancelled && !ignoredCrossSessionCancel) {
@@ -409,12 +467,12 @@ export class LexTurnExecutionBridge {
         break;
       }
 
-      if (!this.shouldYieldForRenderEvent(event.type)) {
+      if (!routedEvents.some(routedEvent => this.shouldYieldForRenderEvent(routedEvent.type))) {
         continue;
       }
       const now = performance.now();
       if (now - lastYieldTime >= 16) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await yieldOutsideAngular(this.ctx, 'render');
         lastYieldTime = performance.now();
       }
     }
@@ -434,9 +492,270 @@ export class LexTurnExecutionBridge {
       || eventType === 'subagent_activity'
       || eventType === 'subagent_end'
       || eventType === 'tool_call_begin'
+      || eventType === 'tool_call_progress'
       || eventType === 'tool_call_end'
       || eventType === 'state_update'
       || eventType === 'error_notice';
+  }
+
+  private routeRenderEventsForSubagentScope(
+    state: LexTurnExecutionRunState,
+    event: RenderEvent,
+  ): RenderEvent[] {
+    const activeScope = this.getActiveSubagentRenderScope(state);
+
+    if (event.type === 'subagent_begin') {
+      if (activeScope && !this.isEventForActiveSubagentScope(event, activeScope)) {
+        return [this.toSubagentToolStartedActivity(activeScope, {
+          toolCallId: event.toolCallId,
+          toolName: event.agentName || 'agent',
+          input: { description: event.description },
+          timestamp: event.timestamp,
+        })];
+      }
+
+      state.activeSubagentRenderScopes.push({
+        toolCallId: event.toolCallId,
+        subAgentInvocationId: event.subAgentInvocationId || event.toolCallId,
+        agentName: event.agentName,
+      });
+      return [event];
+    }
+
+    if (!activeScope) {
+      return [event];
+    }
+
+    switch (event.type) {
+      case 'subagent_activity':
+        return [event];
+
+      case 'subagent_end':
+        if (this.isEventForActiveSubagentScope(event, activeScope)) {
+          this.popActiveSubagentRenderScope(state, activeScope);
+          return [event];
+        }
+        return [this.toSubagentToolCompletedActivity(activeScope, {
+          toolCallId: event.toolCallId,
+          toolName: event.agentName || 'agent',
+          resultText: event.resultText,
+          durationMs: event.durationMs,
+          state: event.state,
+          timestamp: event.timestamp,
+        })];
+
+      case 'turn_begin':
+      case 'turn_end':
+      case 'usage':
+      case 'session_meta':
+        return [];
+
+      case 'thinking_delta':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [this.toSubagentTextActivity(activeScope, 'thinking', event.text, event.timestamp)];
+
+      case 'thinking_complete':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [];
+
+      case 'markdown_delta':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [this.toSubagentTextActivity(activeScope, 'text', event.text, event.timestamp)];
+
+      case 'tool_call_begin':
+        if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
+          return [event];
+        }
+        if (event.toolCallId === activeScope.toolCallId) {
+          return [];
+        }
+        return [this.toSubagentToolStartedActivity(activeScope, event)];
+
+      case 'tool_call_progress':
+        if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
+          return [event];
+        }
+        if (event.toolCallId === activeScope.toolCallId) {
+          return [];
+        }
+        return [this.toSubagentToolProgressActivity(activeScope, event)];
+
+      case 'tool_call_end':
+        if (this.isScopedSubagentPartEvent(event, activeScope) && event.toolCallId !== activeScope.toolCallId) {
+          return [event];
+        }
+        if (event.toolCallId === activeScope.toolCallId || isSubagentToolName(event.toolName)) {
+          this.popActiveSubagentRenderScope(state, activeScope);
+          return [this.toSubagentEndFromToolCall(activeScope, event)];
+        }
+        return [this.toSubagentToolCompletedActivity(activeScope, event)];
+
+      case 'error_notice':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [this.toSubagentTextActivity(activeScope, 'text', event.message, event.timestamp)];
+
+      case 'warning_notice':
+      case 'info_notice':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [this.toSubagentTextActivity(activeScope, 'text', event.message, event.timestamp)];
+
+      case 'question_request':
+      case 'approval_request':
+      case 'approval_resolve':
+        if (this.isScopedSubagentPartEvent(event, activeScope)) {
+          return [event];
+        }
+        return [];
+
+      default:
+        return [];
+    }
+  }
+
+  private getActiveSubagentRenderScope(state: LexTurnExecutionRunState): ActiveSubagentRenderScope | null {
+    return state.activeSubagentRenderScopes[state.activeSubagentRenderScopes.length - 1] ?? null;
+  }
+
+  private popActiveSubagentRenderScope(
+    state: LexTurnExecutionRunState,
+    scope: ActiveSubagentRenderScope,
+  ): void {
+    const index = state.activeSubagentRenderScopes.findIndex(candidate =>
+      candidate.toolCallId === scope.toolCallId
+      && candidate.subAgentInvocationId === scope.subAgentInvocationId,
+    );
+    if (index >= 0) {
+      state.activeSubagentRenderScopes.splice(index, 1);
+    }
+  }
+
+  private isEventForActiveSubagentScope(
+    event: { readonly toolCallId?: string; readonly subAgentInvocationId?: string },
+    scope: ActiveSubagentRenderScope,
+  ): boolean {
+    return event.toolCallId === scope.toolCallId
+      || event.subAgentInvocationId === scope.subAgentInvocationId;
+  }
+
+  private isScopedSubagentPartEvent(
+    event: RenderEvent,
+    scope: ActiveSubagentRenderScope,
+  ): boolean {
+    if (!('type' in event)) {
+      return false;
+    }
+    switch (event.type) {
+      case 'markdown_delta':
+      case 'thinking_delta':
+      case 'thinking_complete':
+      case 'tool_call_begin':
+      case 'tool_call_progress':
+      case 'tool_call_end':
+      case 'error_notice':
+      case 'warning_notice':
+      case 'info_notice':
+      case 'question_request':
+      case 'approval_request':
+      case 'approval_resolve':
+        return event.sourceAgentRole === 'subagent'
+          || event.subAgentInvocationId === scope.subAgentInvocationId
+          || event.parentToolCallId === scope.toolCallId;
+      default:
+        return false;
+    }
+  }
+
+  private toSubagentTextActivity(
+    scope: ActiveSubagentRenderScope,
+    activityKind: 'thinking' | 'text',
+    content: string,
+    timestamp: number,
+  ): RenderEvent {
+    return {
+      type: 'subagent_activity',
+      toolCallId: scope.toolCallId,
+      subAgentInvocationId: scope.subAgentInvocationId,
+      activityKind,
+      content,
+      timestamp,
+    };
+  }
+
+  private toSubagentToolStartedActivity(
+    scope: ActiveSubagentRenderScope,
+    event: Pick<Extract<RenderEvent, { type: 'tool_call_begin' }>, 'toolCallId' | 'toolName' | 'input' | 'timestamp'>,
+  ): RenderEvent {
+    return {
+      type: 'subagent_activity',
+      toolCallId: scope.toolCallId,
+      subAgentInvocationId: scope.subAgentInvocationId,
+      activityKind: 'tool_started',
+      childToolCallId: event.toolCallId,
+      toolName: event.toolName,
+      argsSummary: summarizeRenderToolInput(event.toolName, event.input),
+      state: 'doing',
+      timestamp: event.timestamp,
+    };
+  }
+
+  private toSubagentToolProgressActivity(
+    scope: ActiveSubagentRenderScope,
+    event: Extract<RenderEvent, { type: 'tool_call_progress' }>,
+  ): RenderEvent {
+    return {
+      type: 'subagent_activity',
+      toolCallId: scope.toolCallId,
+      subAgentInvocationId: scope.subAgentInvocationId,
+      activityKind: 'tool_progress',
+      childToolCallId: event.toolCallId,
+      content: summarizeRenderToolProgress(event.data),
+      state: 'doing',
+      timestamp: event.timestamp,
+    };
+  }
+
+  private toSubagentToolCompletedActivity(
+    scope: ActiveSubagentRenderScope,
+    event: Pick<Extract<RenderEvent, { type: 'tool_call_end' }>, 'toolCallId' | 'toolName' | 'resultText' | 'durationMs' | 'state' | 'timestamp'>,
+  ): RenderEvent {
+    return {
+      type: 'subagent_activity',
+      toolCallId: scope.toolCallId,
+      subAgentInvocationId: scope.subAgentInvocationId,
+      activityKind: event.state === 'error' ? 'tool_failed' : 'tool_completed',
+      childToolCallId: event.toolCallId,
+      toolName: event.toolName,
+      content: event.resultText,
+      state: event.state,
+      durationMs: event.durationMs,
+      timestamp: event.timestamp,
+    };
+  }
+
+  private toSubagentEndFromToolCall(
+    scope: ActiveSubagentRenderScope,
+    event: Extract<RenderEvent, { type: 'tool_call_end' }>,
+  ): RenderEvent {
+    return {
+      type: 'subagent_end',
+      toolCallId: scope.toolCallId,
+      subAgentInvocationId: scope.subAgentInvocationId,
+      agentName: scope.agentName || event.toolName || 'Agent',
+      resultText: event.resultText,
+      state: event.state,
+      durationMs: event.durationMs,
+      timestamp: event.timestamp,
+    };
   }
 
   private resetTurnState(): void {
@@ -450,7 +769,7 @@ export class LexTurnExecutionBridge {
     this.uiEventBridge.ensureAilyMessage();
 
     // 等待同步 detectChanges 之后再进入 for-await，确保 Parts 组件已挂载。
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await yieldOutsideAngular(this.ctx, 'prepare');
   }
 
   private async consumeAgentEvents(
@@ -476,10 +795,18 @@ export class LexTurnExecutionBridge {
 
       const now = performance.now();
       if (now - lastYieldTime >= 16) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await yieldOutsideAngular(this.ctx, 'legacy');
         lastYieldTime = performance.now();
       }
     }
+  }
+
+  private canUseLegacyAgentEventPath(state: LexTurnExecutionRunState): boolean {
+    if (!state.sessionId) {
+      return true;
+    }
+
+    return this.isExecutionSessionVisible(state.sessionId);
   }
 
   private shouldYieldForRendering(eventType: string): boolean {
@@ -523,10 +850,15 @@ export class LexTurnExecutionBridge {
       return;
     }
 
-    this.syncExecutionRuntimeTurnResponses?.(
-      executionSessionId,
-      renderEventSink?.turnResponses
-        ?? this.readExecutionTurnResponses?.(executionSessionId),
+    const startedAt = performance.now();
+    const turnResponses = renderEventSink?.turnResponses
+      ?? this.readExecutionTurnResponses?.(executionSessionId);
+    this.syncExecutionRuntimeTurnResponses?.(executionSessionId, turnResponses);
+    ChatPerformanceTracer.recordDuration(
+      'runtime_turn_response_sync',
+      performance.now() - startedAt,
+      `session=${executionSessionId},turns=${Array.isArray(turnResponses) ? turnResponses.length : 0}`,
+      { slowThresholdMs: 16 },
     );
   }
 
@@ -589,11 +921,85 @@ export class LexTurnExecutionBridge {
     return state.detachedRenderEventBridge;
   }
 
-  private captureActiveRenderEventTurnId(state: LexTurnExecutionRunState, event: RenderEvent): void {
-    const turnId = (event as { turnId?: unknown }).turnId;
-    if (typeof turnId === 'string' && turnId.trim().length > 0) {
-      state.activeTurnId = turnId;
+  private acceptRenderEventForActiveTurn(state: LexTurnExecutionRunState, event: RenderEvent): boolean {
+    const turnId = this.readRenderEventTurnId(event);
+    if (!turnId) {
+      return true;
     }
+
+    if (!state.activeTurnId) {
+      state.activeTurnId = turnId;
+      return true;
+    }
+
+    if (state.activeTurnId === turnId) {
+      return true;
+    }
+
+    traceBackgroundSessionExecution('ignore-cross-turn-render-event', {
+      sessionId: state.sessionId,
+      activeTurnId: state.activeTurnId,
+      eventTurnId: turnId,
+      eventType: event.type,
+    });
+    console.warn('[AilyChat][TurnOwner] Ignore render event for non-active turn', {
+      sessionId: state.sessionId,
+      activeTurnId: state.activeTurnId,
+      eventTurnId: turnId,
+      eventType: event.type,
+    });
+    return false;
+  }
+
+  private acceptRenderEventForExecutionOwner(state: LexTurnExecutionRunState, event: RenderEvent): boolean {
+    const eventSessionId = this.readRenderEventSessionId(event);
+    if (!eventSessionId || !state.sessionId || eventSessionId === state.sessionId) {
+      return true;
+    }
+
+    traceBackgroundSessionExecution('ignore-cross-session-render-event', {
+      sessionId: state.sessionId,
+      eventSessionId,
+      activeTurnId: state.activeTurnId,
+      eventTurnId: this.readRenderEventTurnId(event),
+      eventType: event.type,
+    });
+    console.warn('[AilyChat][TurnOwner] Ignore render event for non-active session', {
+      sessionId: state.sessionId,
+      eventSessionId,
+      activeTurnId: state.activeTurnId,
+      eventTurnId: this.readRenderEventTurnId(event),
+      eventType: event.type,
+    });
+    return false;
+  }
+
+  private readRenderEventTurnId(event: RenderEvent): string | null {
+    const turnId = (event as { turnId?: unknown }).turnId;
+    if (typeof turnId !== 'string') {
+      return null;
+    }
+
+    const trimmedTurnId = turnId.trim();
+    return trimmedTurnId.length > 0 ? trimmedTurnId : null;
+  }
+
+  private readRenderEventSessionId(event: RenderEvent): string | null {
+    const eventRecord = event as {
+      sessionId?: unknown;
+      trace?: { sessionId?: unknown };
+      metadata?: { sessionId?: unknown; sessionResource?: unknown };
+    };
+    const sessionId = eventRecord.sessionId
+      ?? eventRecord.trace?.sessionId
+      ?? eventRecord.metadata?.sessionId
+      ?? eventRecord.metadata?.sessionResource;
+    if (typeof sessionId !== 'string') {
+      return null;
+    }
+
+    const trimmedSessionId = sessionId.trim();
+    return trimmedSessionId.length > 0 ? trimmedSessionId : null;
   }
 
   private isExecutionSessionVisible(executionSessionId: string): boolean {
@@ -620,6 +1026,10 @@ export class LexTurnExecutionBridge {
   }
 
   private isExecutionCancellationEffective(state: LexTurnExecutionRunState): boolean {
+    if (state.abortSignal?.aborted) {
+      return true;
+    }
+
     if (!this.ctx.isCancelled) {
       return false;
     }
@@ -642,4 +1052,105 @@ export class LexTurnExecutionBridge {
 
 function normalizeSessionResource(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isSubagentToolName(toolName: string | null | undefined): boolean {
+  return toolName === 'agent' || toolName === 'runSubagent' || toolName === 'run_subagent';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function firstStringField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = asString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function firstStringArrayValue(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  for (const item of value) {
+    const text = asString(item);
+    if (text) {
+      return text;
+    }
+  }
+
+  return undefined;
+}
+
+function truncateRenderSummary(value: string | undefined, maxLength = 120): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function summarizeRenderToolInput(toolName: string, input: unknown): string | undefined {
+  const record = asRecord(input);
+  if (!record) {
+    return truncateRenderSummary(asString(input));
+  }
+
+  switch (toolName) {
+    case 'read_file':
+    case 'readFile':
+      return truncateRenderSummary(firstStringField(record, ['filePath', 'path']));
+    case 'file_search':
+    case 'glob_search':
+    case 'grep_search':
+    case 'semantic_search':
+      return truncateRenderSummary(
+        firstStringField(record, ['query', 'pattern', 'includePattern'])
+        || firstStringArrayValue(record, 'filePaths'),
+      );
+    case 'list_dir':
+    case 'create_directory':
+    case 'create_file':
+    case 'update_file':
+    case 'delete_file':
+      return truncateRenderSummary(firstStringField(record, ['path', 'filePath', 'directoryPath']));
+    case 'command_exec':
+      return truncateRenderSummary(firstStringField(record, ['command', 'cmd']));
+    default:
+      return truncateRenderSummary(
+        firstStringField(record, ['description', 'prompt', 'query', 'path', 'filePath', 'command'])
+        || JSON.stringify(record),
+      );
+  }
+}
+
+function summarizeRenderToolProgress(data: unknown): string | undefined {
+  const record = asRecord(data);
+  if (!record) {
+    return truncateRenderSummary(asString(data));
+  }
+
+  return truncateRenderSummary(
+    firstStringField(record, ['summary', 'detail', 'statusText', 'label', 'message', 'phase'])
+    || JSON.stringify(record),
+  );
 }

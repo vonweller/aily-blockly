@@ -270,6 +270,22 @@ interface HostTurnResponseClearRuntimeState {
   readonly message?: string;
 }
 
+interface HostResponseProjectionBuildOptions {
+  readonly disabledRequestTurnIds?: readonly string[];
+  readonly previousDialogItems?: readonly ChatDialogViewItem[] | null;
+  readonly dialogItemStore?: HostDialogItemProjectionStore;
+}
+
+export interface HostDialogProjectionMetrics {
+  readonly itemCount: number;
+  readonly changedItemCount: number;
+  readonly reusedTurnCount: number;
+  readonly rebuiltTurnCount: number;
+  readonly frozenTurnCount: number;
+  readonly prunedTurnCount: number;
+  readonly durationMs: number;
+}
+
 interface HostTurnRuntimeState {
   readonly waiting?: HostTurnWaitingRuntimeState;
   readonly responseClear?: HostTurnResponseClearRuntimeState;
@@ -1012,6 +1028,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
   private cachedState: HostTurnResponseState | null = null;
   private cachedRequestModel: HostRequestModel | null = null;
   private hasPrimedModel = false;
+  private readonly dialogItemStore = new HostDialogItemProjectionStore();
   private readonly turnEntriesById = new Map<string, HostTurnResponseEntry>();
   private turnEntryOrder: string[] = [];
 
@@ -1060,6 +1077,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
   }
 
   replaceState(state: HostTurnResponseState | null): void {
+    this.dialogItemStore.clear();
     this.turnEntriesById.clear();
     this.turnEntryOrder = [];
 
@@ -1086,6 +1104,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     this.cachedState = null;
     this.cachedRequestModel = null;
     this.hasPrimedModel = false;
+    this.dialogItemStore.clear();
     this.turnEntriesById.clear();
     this.turnEntryOrder = [];
     this.turnEntryStateRevision += 1;
@@ -1102,6 +1121,10 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     source: LiveHostRequestGraphSource,
   ): HostRequestModel | null {
     return this.resolveCurrentOutputs(source).requestModel;
+  }
+
+  getLastDialogProjectionMetrics(): HostDialogProjectionMetrics {
+    return this.dialogItemStore.getLastMetrics();
   }
 
   private resolveCurrentOutputs(
@@ -1159,6 +1182,8 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     const state = buildMaybeHostResponseStateFromResolvedTurnSources(
       resolvedSource,
       this.turnEntriesById,
+      this.cachedState?.dialogItems ?? null,
+      this.dialogItemStore,
     );
     const requestModel = buildMaybeHostRequestModelFromResolvedTurnSources(
       resolvedSource,
@@ -1335,7 +1360,7 @@ function buildHostRequestModelFromEntries(
 
 function buildHostResponseStateFromEntries(
   entries: readonly HostResponseEntry[],
-  options: { disabledRequestTurnIds?: readonly string[] } = {},
+  options: HostResponseProjectionBuildOptions = {},
 ): HostTurnResponseState {
   return {
     entries,
@@ -1345,7 +1370,7 @@ function buildHostResponseStateFromEntries(
 
 function buildHostResponseProjectionFromEntries(
   entries: readonly HostResponseEntry[],
-  options: { disabledRequestTurnIds?: readonly string[] } = {},
+  options: HostResponseProjectionBuildOptions = {},
 ): HostResponseProjection {
   const turnResponses = entries
     .filter((entry): entry is HostTurnResponseEntry => entry.kind === 'turn' && !!entry.turnResponse)
@@ -1974,6 +1999,8 @@ function resolveLiveHostRequestGraphSource(
 function buildMaybeHostResponseStateFromResolvedTurnSources(
   resolvedSource: ResolvedLiveHostRequestGraphSource,
   turnEntriesById: ReadonlyMap<string, HostTurnResponseEntry>,
+  previousDialogItems?: readonly ChatDialogViewItem[] | null,
+  dialogItemStore?: HostDialogItemProjectionStore,
 ): HostTurnResponseState | null {
   const entries = buildOrderedHostResponseEntries(resolvedSource.orderedTurnIds, turnEntriesById);
   if (entries.length === 0) {
@@ -1982,6 +2009,8 @@ function buildMaybeHostResponseStateFromResolvedTurnSources(
 
   const state = buildHostResponseStateFromEntries(entries, {
     disabledRequestTurnIds: resolvedSource.disabledRequestTurnIds,
+    previousDialogItems,
+    dialogItemStore,
   });
   return hasHostResponseConversationContent(state) ? state : null;
 }
@@ -2320,6 +2349,10 @@ function getPersistedTurnResponsePartIdentity(part: TurnResponsePart): string | 
       return typeof part.toolCallId === 'string' && part.toolCallId.length > 0
         ? `subagent:${part.toolCallId}`
         : null;
+    case 'plan':
+      return typeof part.partId === 'string' && part.partId.length > 0
+        ? part.partId
+        : 'plan:proposed';
     default:
       return null;
   }
@@ -2382,6 +2415,11 @@ function assignFallbackPartIdsForImportedTurn(
           partId: typeof part.toolCallId === 'string' && part.toolCallId.length > 0
             ? `subagent:${part.toolCallId}`
             : `subagent:${turnId}:${index}`,
+        };
+      case 'plan':
+        return {
+          ...part,
+          partId: `plan:${turnId}:${index}`,
         };
       default:
         return part;
@@ -2574,6 +2612,18 @@ function mergePersistedTurnResponsePart(previous: TurnResponsePart, next: TurnRe
         ...next,
         childItems: next.childItems ?? previousPart.childItems,
         metadata: mergePersistedPartMetadata(previousPart.metadata, next.metadata),
+      };
+    }
+    case 'plan': {
+      const previousPart = previous as Extract<TurnResponsePart, { type: 'plan' }>;
+      return {
+        ...previousPart,
+        ...next,
+        text: next.text || previousPart.text,
+        steps: next.steps ?? previousPart.steps,
+        assumptions: next.assumptions ?? previousPart.assumptions,
+        verification: next.verification ?? previousPart.verification,
+        source: next.source ?? previousPart.source,
       };
     }
     default:
@@ -2868,10 +2918,13 @@ export function buildTurnNativeRestoreChatList(
 
 function buildCanonicalDialogItemsFromEntries(
   entries: readonly HostResponseEntry[],
-  options: { disabledRequestTurnIds?: readonly string[] } = {},
+  options: HostResponseProjectionBuildOptions = {},
 ): ChatDialogViewItem[] {
+  const startedAt = readHighResolutionNow();
   const disabledRequestTurnIds = new Set(options.disabledRequestTurnIds ?? []);
   const items: ChatDialogViewItem[] = [];
+  const retainedTurnIds = new Set<string>();
+  options.dialogItemStore?.beginProjection();
 
   for (const entry of entries) {
     if (entry.kind !== 'turn' || !entry.turnResponse) {
@@ -2879,52 +2932,378 @@ function buildCanonicalDialogItemsFromEntries(
     }
 
     const requestDisabled = disabledRequestTurnIds.has(entry.turnId);
-    const userProjection = buildTurnResponseUserMessageProjection(entry.turnResponse, entry.user ?? undefined);
-    const userTurnContext = buildDialogTurnContext({
-      turnResponse: entry.turnResponse,
-      requestDisabled,
-      requestContent: userProjection.turnContext?.requestContent,
-      displayContent: userProjection.turnContext?.displayContent,
-    });
+    retainedTurnIds.add(entry.turnId);
+    items.push(...(
+      options.dialogItemStore?.resolveEntryItems(entry, requestDisabled)
+      ?? buildCanonicalDialogItemsForEntry(entry, requestDisabled)
+    ));
+  }
+  options.dialogItemStore?.prune(retainedTurnIds);
 
-    if (userTurnContext) {
-      items.push({
-        trackId: `request:${entry.turnId}`,
-        role: 'user',
-        content: userProjection.content,
-        doing: userProjection.state === 'doing',
-        turnModelName: '',
-        turnContext: userTurnContext,
-        isLastAily: false,
-        isFirstUserTurn: false,
-        showCheckpointRestore: false,
-      });
+  const stabilizedItems = stabilizeCanonicalDialogItems(
+    finalizeCanonicalDialogItems(items, disabledRequestTurnIds),
+    options.previousDialogItems,
+  );
+  const finalizedItems = options.dialogItemStore?.freezeCompletedItems(stabilizedItems) ?? stabilizedItems;
+  options.dialogItemStore?.completeProjection(
+    finalizedItems,
+    options.previousDialogItems ?? null,
+    readHighResolutionNow() - startedAt,
+  );
+  return finalizedItems;
+}
+
+function buildCanonicalDialogItemsForEntry(
+  entry: HostTurnResponseEntry,
+  requestDisabled: boolean,
+): ChatDialogViewItem[] {
+  if (!entry.turnResponse) {
+    return [];
+  }
+
+  const items: ChatDialogViewItem[] = [];
+  const userItem = buildCanonicalRequestDialogItemForEntry(entry, requestDisabled);
+  if (userItem) {
+    items.push(userItem);
+  }
+
+  const assistantItem = buildCanonicalResponseDialogItemForEntry(entry, requestDisabled);
+  if (assistantItem) {
+    items.push(assistantItem);
+  }
+
+  return items;
+}
+
+function buildCanonicalRequestDialogItemForEntry(
+  entry: HostTurnResponseEntry,
+  requestDisabled: boolean,
+): ChatDialogViewItem | null {
+  if (!entry.turnResponse) {
+    return null;
+  }
+
+  const userProjection = buildTurnResponseUserMessageProjection(entry.turnResponse, entry.user ?? undefined);
+  const userTurnContext = buildDialogTurnContext({
+    turnResponse: entry.turnResponse,
+    requestDisabled,
+    requestContent: userProjection.turnContext?.requestContent,
+    displayContent: userProjection.turnContext?.displayContent,
+  });
+
+  if (!userTurnContext) {
+    return null;
+  }
+
+  return {
+    trackId: `request:${entry.turnId}`,
+    role: 'user',
+    content: userProjection.content,
+    doing: userProjection.state === 'doing',
+    turnModelName: '',
+    turnContext: userTurnContext,
+    isLastAily: false,
+    isFirstUserTurn: false,
+    showCheckpointRestore: false,
+  };
+}
+
+function buildCanonicalResponseDialogItemForEntry(
+  entry: HostTurnResponseEntry,
+  requestDisabled: boolean,
+): ChatDialogViewItem | null {
+  if (!entry.turnResponse) {
+    return null;
+  }
+
+  const assistantProjection = buildTurnResponseAssistantMessageProjection(entry.turnResponse, entry.assistant ?? undefined);
+  const assistantTurnContext = buildDialogTurnContext({
+    turnResponse: entry.turnResponse,
+    requestDisabled,
+  });
+
+  if (!assistantTurnContext) {
+    return null;
+  }
+
+  return {
+    trackId: `response:${entry.turnId}`,
+    role: 'aily',
+    content: assistantProjection.content || getTurnResponseAssistantText(entry.turnResponse),
+    doing: assistantProjection.state === 'doing',
+    turnModelName: assistantProjection.modelName || '',
+    turnModelBillingLabel: assistantProjection.modelBillingLabel,
+    turnContext: assistantTurnContext,
+    responseVote: entry.runtimeState?.responseSidecar?.vote,
+    isLastAily: false,
+    isFirstUserTurn: false,
+    showCheckpointRestore: false,
+  };
+}
+
+class HostDialogItemProjectionStore {
+  private readonly entryItemsByTurnId = new Map<string, {
+    readonly requestSignature: string;
+    readonly responseSignature: string;
+    readonly requestItem: ChatDialogViewItem | null;
+    readonly responseItem: ChatDialogViewItem | null;
+    readonly items: readonly ChatDialogViewItem[];
+    readonly frozen: boolean;
+  }>();
+  private readonly frozenTurnIds = new Set<string>();
+  private currentMetrics = createEmptyHostDialogProjectionMetrics();
+  private lastMetrics = createEmptyHostDialogProjectionMetrics();
+
+  beginProjection(): void {
+    this.currentMetrics = createEmptyHostDialogProjectionMetrics();
+  }
+
+  resolveEntryItems(
+    entry: HostTurnResponseEntry,
+    requestDisabled: boolean,
+  ): readonly ChatDialogViewItem[] {
+    const requestSignature = buildCanonicalDialogRequestSignature(entry, requestDisabled);
+    const responseSignature = buildCanonicalDialogResponseSignature(entry, requestDisabled);
+    const cached = this.entryItemsByTurnId.get(entry.turnId);
+    if (cached?.requestSignature === requestSignature && cached.responseSignature === responseSignature) {
+      this.currentMetrics = {
+        ...this.currentMetrics,
+        reusedTurnCount: this.currentMetrics.reusedTurnCount + 1,
+        frozenTurnCount: this.currentMetrics.frozenTurnCount + (cached.frozen ? 1 : 0),
+      };
+      return cached.items;
     }
 
-    const assistantProjection = buildTurnResponseAssistantMessageProjection(entry.turnResponse, entry.assistant ?? undefined);
-    const assistantTurnContext = buildDialogTurnContext({
-      turnResponse: entry.turnResponse,
-      requestDisabled,
+    const shouldFreeze = isCompletedHostTurnEntry(entry);
+    const requestItem = cached?.requestSignature === requestSignature
+      ? cached.requestItem
+      : buildCanonicalRequestDialogItemForEntry(entry, requestDisabled);
+    const responseItem = cached?.responseSignature === responseSignature
+      ? cached.responseItem
+      : buildCanonicalResponseDialogItemForEntry(entry, requestDisabled);
+    const items = [
+      ...(requestItem ? [requestItem] : []),
+      ...(responseItem ? [responseItem] : []),
+    ];
+    if (shouldFreeze) {
+      this.frozenTurnIds.add(entry.turnId);
+    } else {
+      this.frozenTurnIds.delete(entry.turnId);
+    }
+    this.entryItemsByTurnId.set(entry.turnId, {
+      requestSignature,
+      responseSignature,
+      requestItem,
+      responseItem,
+      items,
+      frozen: shouldFreeze,
     });
+    this.currentMetrics = {
+      ...this.currentMetrics,
+      reusedTurnCount: this.currentMetrics.reusedTurnCount + (cached ? 1 : 0),
+      rebuiltTurnCount: this.currentMetrics.rebuiltTurnCount + (cached ? 0 : 1),
+      frozenTurnCount: this.currentMetrics.frozenTurnCount + (shouldFreeze ? 1 : 0),
+    };
+    return items;
+  }
 
-    if (assistantTurnContext) {
-      items.push({
-        trackId: `response:${entry.turnId}`,
-        role: 'aily',
-        content: assistantProjection.content || getTurnResponseAssistantText(entry.turnResponse),
-        doing: assistantProjection.state === 'doing',
-        turnModelName: assistantProjection.modelName || '',
-        turnModelBillingLabel: assistantProjection.modelBillingLabel,
-        turnContext: assistantTurnContext,
-        responseVote: entry.runtimeState?.responseSidecar?.vote,
-        isLastAily: false,
-        isFirstUserTurn: false,
-        showCheckpointRestore: false,
-      });
+  prune(retainedTurnIds: ReadonlySet<string>): void {
+    let prunedTurnCount = 0;
+    for (const turnId of [...this.entryItemsByTurnId.keys()]) {
+      if (!retainedTurnIds.has(turnId)) {
+        this.entryItemsByTurnId.delete(turnId);
+        this.frozenTurnIds.delete(turnId);
+        prunedTurnCount += 1;
+      }
+    }
+    if (prunedTurnCount > 0) {
+      this.currentMetrics = {
+        ...this.currentMetrics,
+        prunedTurnCount: this.currentMetrics.prunedTurnCount + prunedTurnCount,
+      };
     }
   }
 
-  return finalizeCanonicalDialogItems(items, disabledRequestTurnIds);
+  completeProjection(
+    items: readonly ChatDialogViewItem[],
+    previousItems: readonly ChatDialogViewItem[] | null,
+    durationMs: number,
+  ): void {
+    const previousByTrackId = new Map((previousItems ?? []).map(item => [item.trackId, item] as const));
+    const changedItemCount = previousItems
+      ? items.reduce((count, item) => count + (previousByTrackId.get(item.trackId) === item ? 0 : 1), 0)
+      : items.length;
+    this.lastMetrics = {
+      ...this.currentMetrics,
+      itemCount: items.length,
+      changedItemCount,
+      durationMs,
+    };
+    traceHostDialogProjectionMetrics(this.lastMetrics);
+  }
+
+  freezeCompletedItems(items: readonly ChatDialogViewItem[]): ChatDialogViewItem[] {
+    if (this.frozenTurnIds.size === 0) {
+      return [...items];
+    }
+
+    return items.map(item => {
+      const turnId = item.turnContext?.turnId;
+      return turnId && this.frozenTurnIds.has(turnId) && !Object.isFrozen(item)
+        ? Object.freeze({ ...item })
+        : item;
+    });
+  }
+
+  getLastMetrics(): HostDialogProjectionMetrics {
+    return this.lastMetrics;
+  }
+
+  clear(): void {
+    this.entryItemsByTurnId.clear();
+    this.frozenTurnIds.clear();
+    this.currentMetrics = createEmptyHostDialogProjectionMetrics();
+    this.lastMetrics = createEmptyHostDialogProjectionMetrics();
+  }
+}
+
+function createEmptyHostDialogProjectionMetrics(): HostDialogProjectionMetrics {
+  return {
+    itemCount: 0,
+    changedItemCount: 0,
+    reusedTurnCount: 0,
+    rebuiltTurnCount: 0,
+    frozenTurnCount: 0,
+    prunedTurnCount: 0,
+    durationMs: 0,
+  };
+}
+
+function isCompletedHostTurnEntry(entry: HostTurnResponseEntry): boolean {
+  const status = entry.turnResponse?.response.status;
+  return !!status && status !== 'streaming';
+}
+
+function readHighResolutionNow(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function traceHostDialogProjectionMetrics(metrics: HostDialogProjectionMetrics): void {
+  if (metrics.itemCount === 0) {
+    return;
+  }
+
+  let debugEnabled = false;
+  try {
+    debugEnabled = globalThis.localStorage?.getItem('aily.chat.projectionPerf') === '1';
+  } catch {
+    debugEnabled = false;
+  }
+
+  if (!debugEnabled && metrics.durationMs < 16) {
+    return;
+  }
+
+  console.debug('[AilyChat][ProjectionPerf]', {
+    itemCount: metrics.itemCount,
+    changedItemCount: metrics.changedItemCount,
+    reusedTurnCount: metrics.reusedTurnCount,
+    rebuiltTurnCount: metrics.rebuiltTurnCount,
+    frozenTurnCount: metrics.frozenTurnCount,
+    prunedTurnCount: metrics.prunedTurnCount,
+    durationMs: Math.round(metrics.durationMs * 100) / 100,
+  });
+}
+
+function buildCanonicalDialogRequestSignature(
+  entry: HostTurnResponseEntry,
+  requestDisabled: boolean,
+): string {
+  const turn = entry.turnResponse;
+  const request = turn?.request;
+  return [
+    entry.turnId,
+    requestDisabled === true ? 'disabled' : 'enabled',
+    request?.content ?? '',
+    request?.displayContent ?? '',
+    turn?.createdAt ?? '',
+    buildRoundsProjectionSignature(turn?.rounds),
+    entry.user?.displayContent ?? '',
+    entry.user?.requestContent ?? '',
+    entry.user?.state ?? '',
+  ].join('\u0000');
+}
+
+function buildCanonicalDialogResponseSignature(
+  entry: HostTurnResponseEntry,
+  requestDisabled: boolean,
+): string {
+  const turn = entry.turnResponse;
+  const response = turn?.response;
+  const parts = response?.parts ?? [];
+  const lastPart = parts.length > 0 ? parts[parts.length - 1] : null;
+
+  return [
+    entry.turnId,
+    requestDisabled === true ? 'disabled' : 'enabled',
+    turn?.updatedAt ?? '',
+    response?.id ?? '',
+    response?.participant ?? '',
+    response?.status ?? '',
+    response?.resultText ?? '',
+    response?.createdAt ?? '',
+    response?.updatedAt ?? '',
+    parts.length,
+    getTurnResponsePartProjectionSignature(lastPart),
+    response?.progressMessages?.length ?? 0,
+    entry.assistant?.content ?? '',
+    entry.assistant?.state ?? '',
+    entry.assistant?.modelName ?? '',
+    entry.assistant?.modelBillingLabel ?? '',
+    entry.runtimeState?.responseSidecar?.vote ?? '',
+  ].join('\u0000');
+}
+
+function buildRoundsProjectionSignature(rounds: TurnResponseTurn['rounds'] | undefined): string {
+  if (!rounds?.length) {
+    return '0';
+  }
+
+  const lastRound = rounds[rounds.length - 1];
+  return [
+    rounds.length,
+    lastRound?.id ?? '',
+    lastRound?.toolCalls?.length ?? 0,
+  ].join(':');
+}
+
+function getTurnResponsePartProjectionSignature(part: TurnResponsePart | null): string {
+  if (!part) {
+    return '';
+  }
+
+  const record = part as unknown as Record<string, unknown>;
+  const content = typeof record['content'] === 'string'
+    ? record['content']
+    : typeof record['text'] === 'string'
+      ? record['text']
+      : typeof record['output'] === 'string'
+        ? record['output']
+        : '';
+  return [
+    part.type,
+    typeof record['partId'] === 'string' ? record['partId'] : '',
+    typeof record['toolCallId'] === 'string' ? record['toolCallId'] : '',
+    typeof record['status'] === 'string' ? record['status'] : '',
+    typeof record['state'] === 'string' ? record['state'] : '',
+    typeof record['isRunning'] === 'boolean' ? String(record['isRunning']) : '',
+    typeof record['exitCode'] === 'number' ? String(record['exitCode']) : '',
+    typeof record['lastOutputAt'] === 'number' ? String(record['lastOutputAt']) : '',
+    content.length,
+    content,
+  ].join(':');
 }
 
 function finalizeCanonicalDialogItems(
@@ -2950,6 +3329,73 @@ function finalizeCanonicalDialogItems(
     isFirstUserTurn: index === firstUserIndex,
     showCheckpointRestore: false,
   }));
+}
+
+function stabilizeCanonicalDialogItems(
+  nextItems: readonly ChatDialogViewItem[],
+  previousItems: readonly ChatDialogViewItem[] | null | undefined,
+): ChatDialogViewItem[] {
+  if (!previousItems?.length || nextItems.length === 0) {
+    return [...nextItems];
+  }
+
+  const previousByTrackId = new Map(previousItems.map(item => [item.trackId, item]));
+  let reusedCount = 0;
+  const stabilized = nextItems.map((item) => {
+    const previous = previousByTrackId.get(item.trackId);
+    if (!previous || !canReuseCanonicalDialogItem(previous, item)) {
+      return item;
+    }
+    reusedCount += 1;
+    return previous;
+  });
+
+  return reusedCount > 0 ? stabilized : [...nextItems];
+}
+
+function canReuseCanonicalDialogItem(
+  previous: ChatDialogViewItem,
+  next: ChatDialogViewItem,
+): boolean {
+  return previous.role === next.role
+    && previous.content === next.content
+    && previous.doing === next.doing
+    && previous.turnModelName === next.turnModelName
+    && previous.turnModelBillingLabel === next.turnModelBillingLabel
+    && previous.responseVote === next.responseVote
+    && previous.isLastAily === next.isLastAily
+    && previous.isFirstUserTurn === next.isFirstUserTurn
+    && previous.showCheckpointRestore === next.showCheckpointRestore
+    && getCanonicalDialogContextSignature(previous) === getCanonicalDialogContextSignature(next);
+}
+
+function getCanonicalDialogContextSignature(item: ChatDialogViewItem): string {
+  const context = item.turnContext;
+  const turn = context?.turnResponse;
+  const response = turn?.response;
+  const baseSignature = [
+    context?.turnId ?? '',
+    context?.requestDisabled === true ? 'disabled' : 'enabled',
+    context?.requestContent ?? '',
+    context?.displayContent ?? '',
+    context?.roundCount ?? 0,
+    context?.toolCallCount ?? 0,
+    context?.lastRoundId ?? '',
+  ];
+
+  if (item.role === 'user') {
+    return baseSignature.join('\u0000');
+  }
+
+  return [
+    ...baseSignature,
+    turn?.updatedAt ?? '',
+    response?.updatedAt ?? '',
+    response?.status ?? '',
+    response?.resultText ?? '',
+    response?.parts?.length ?? 0,
+    response?.progressMessages?.length ?? 0,
+  ].join('\u0000');
 }
 
 function buildTurnEntryMessageProjections(

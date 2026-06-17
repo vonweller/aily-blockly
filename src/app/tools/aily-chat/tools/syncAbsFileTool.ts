@@ -10,6 +10,13 @@ import { AbsAutoSyncService } from '../services/abs-auto-sync.service';
 import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { loadProjectBlockDefinitions, parseAbs, BlocklyAbsParser } from './absParser';
 import { arduinoGenerator } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
+import { yieldToBrowserFrame } from './browserTaskScheduler';
+import {
+  getSharedBlocklyEditorOperationQueue,
+  type BlocklyEditorOperationQueue,
+  type BlocklyEditorOperationProgressReporter,
+} from './blocklyEditorOperationQueue';
+import type { EditorOperationEventSink } from './editorOperationEvents';
 
 declare const Blockly: any;
 
@@ -18,7 +25,34 @@ declare const Blockly: any;
  * 在密集的同步 DOM 操作循环中定期调用，防止 UI 冻结。
  */
 function yieldToEventLoop(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0));
+  return yieldToBrowserFrame();
+}
+
+function shouldLogSyncAbsImportDebug(): boolean {
+  try {
+    const globalScope = typeof window !== 'undefined'
+      ? (window as any)
+      : (globalThis as Record<string, unknown>);
+    return globalScope.__AILY_DEBUG_BLOCKLY_IMPORT__ === true
+      || globalScope.localStorage?.getItem?.('aily.debug.blocklyImport') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function describeSyncAbsImportError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function debugSyncAbsImportIssue(message: string, error?: unknown): void {
+  if (!shouldLogSyncAbsImportDebug()) {
+    return;
+  }
+  if (error === undefined) {
+    console.warn(message);
+    return;
+  }
+  console.warn(`${message}: ${describeSyncAbsImportError(error)}`);
 }
 
 async function writeGeneratedSketchIno(
@@ -72,9 +106,15 @@ interface SyncAbsResult {
 }
 
 export interface SyncAbsInvocationContext {
+  sessionId?: string;
   turnId?: string;
   toolCallId?: string;
+  signal?: AbortSignal;
   timelineWriter?: EditingTimelineWriter;
+  editorOperationQueue?: BlocklyEditorOperationQueue;
+  progressSink?: EditorOperationEventSink;
+  reportOperationProgress?: BlocklyEditorOperationProgressReporter;
+  runOutsideAngular?: <T>(operation: () => Promise<T> | T) => Promise<T> | T;
 }
 
 export async function writeTimelineAwareTextFile(
@@ -139,6 +179,40 @@ export async function backupAbiFileIfPresent(
   await writeTimelineAwareTextFile(backupPath, currentAbi, electronService, invocationContext);
   projectService?.copyPackageJsonToTemp?.(projectService?.currentProjectPath);
   return backupPath;
+}
+
+async function reportSyncAbsImportProgress(
+  invocationContext: SyncAbsInvocationContext | undefined,
+  summary: string,
+  progress: number,
+  detail?: string,
+): Promise<void> {
+  try {
+    await invocationContext?.reportOperationProgress?.({
+      summary,
+      progress,
+      detail,
+    });
+  } catch (error) {
+    console.warn('[syncAbsFile] operation progress reporting failed:', error);
+  }
+}
+
+function createSyncAbsCancellationError(): Error {
+  const error = new Error('ABS import cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfSyncAbsCancelled(invocationContext?: SyncAbsInvocationContext): void {
+  if (invocationContext?.signal?.aborted) {
+    throw createSyncAbsCancellationError();
+  }
+}
+
+function isSyncAbsCancellationError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === 'AbortError' || /cancelled|canceled|aborted/i.test(error.message));
 }
 
 // =============================================================================
@@ -209,8 +283,25 @@ export async function syncAbsFileHandler(
     case 'export':
       return await exportToAbs(abiFilePath, absFilePath, includeHeader, electronService, invocationContext);
     
-    case 'import':
-      return await importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService, invocationContext);
+    case 'import': {
+      const editorOperationQueue = invocationContext?.editorOperationQueue ?? getSharedBlocklyEditorOperationQueue();
+      return await editorOperationQueue.enqueue(
+        'blockly.syncAbs.import',
+        'Apply ABS to Blockly workspace',
+        reportOperationProgress => importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService, {
+          ...invocationContext,
+          reportOperationProgress,
+        }),
+        {
+          sessionId: invocationContext?.sessionId,
+          turnId: invocationContext?.turnId,
+          toolCallId: invocationContext?.toolCallId,
+          signal: invocationContext?.signal,
+          progressSink: invocationContext?.progressSink,
+          runOutsideAngular: invocationContext?.runOutsideAngular,
+        },
+      );
+    }
     
     case 'status':
       return await getAbsStatus(absFilePath, abiFilePath, electronService);
@@ -304,6 +395,9 @@ ${preview}
       }
     };
   } catch (error) {
+    if (isSyncAbsCancellationError(error)) {
+      throw error;
+    }
     return {
       is_error: true,
       content: `导出失败: ${error instanceof Error ? error.message : String(error)}`
@@ -324,6 +418,7 @@ async function importFromAbs(
   invocationContext?: SyncAbsInvocationContext,
 ): Promise<SyncAbsResult> {
   try {
+    throwIfSyncAbsCancelled(invocationContext);
     // 检查 ABS 文件是否存在
     if (!await electronService.exists(absFilePath)) {
       return {
@@ -331,6 +426,8 @@ async function importFromAbs(
         content: `ABS 文件不存在: ${absFilePath}\n\n请先使用 \`syncAbs action="export"\` 生成 ABS 文件`
       };
     }
+    await reportSyncAbsImportProgress(invocationContext, 'Preparing pre-import backup', 0.1, absFilePath);
+    throwIfSyncAbsCancelled(invocationContext);
     
     // 在修改前保存当前版本（AI 修改时的版本控制）
     // 注意：使用 getWorkspaceAbsContent 而不是 exportToAbs，避免覆盖用户编辑的 ABS 文件
@@ -347,9 +444,13 @@ async function importFromAbs(
         console.warn('[syncAbsFile] 保存版本失败:', e);
       }
     }
+    await reportSyncAbsImportProgress(invocationContext, 'Reading ABS file', 0.15, absFilePath);
+    throwIfSyncAbsCancelled(invocationContext);
     
     // 读取 ABS 文件
     const absContent = await electronService.readFile(absFilePath);
+    await reportSyncAbsImportProgress(invocationContext, 'Parsing ABS blocks', 0.2);
+    throwIfSyncAbsCancelled(invocationContext);
     
     // 解析 ABS（不转换为 ABI JSON，而是获取 BlockConfig）
     const parser = new BlocklyAbsParser();
@@ -371,6 +472,13 @@ async function importFromAbs(
         content: `ABS 解析失败:\n${errorMessages}\n\n请检查 ABS 文件语法，读取对应库 reademe_ai.md 或使用 \`get_block_info_tool\` 查询正确的块定义和参数格式。`
       };
     }
+    await reportSyncAbsImportProgress(
+      invocationContext,
+      'Preparing Blockly workspace update',
+      0.35,
+      `${parseResult.rootBlocks.length} root blocks`,
+    );
+    throwIfSyncAbsCancelled(invocationContext);
     
     // 获取工作区
     const workspace = getActiveWorkspace();
@@ -383,6 +491,9 @@ async function importFromAbs(
     
     // 备份当前 ABI 文件
     await backupAbiFileIfPresent(abiFilePath, electronService, projectService, invocationContext);
+    await reportSyncAbsImportProgress(invocationContext, 'Backed up current Blockly artifacts', 0.45);
+    throwIfSyncAbsCancelled(invocationContext);
+    await reportSyncAbsImportProgress(invocationContext, 'Applying Blockly workspace changes', 0.5);
     
     // 收集所有变量：从 @var 声明 + 从 $varName 引用自动推断
     const allVariables = new Map<string, string>(); // name → type
@@ -479,9 +590,16 @@ async function importFromAbs(
           variableNameToId,
           preprocessVariableReferences
         );
+        await reportSyncAbsImportProgress(
+          invocationContext,
+          'Applied incremental Blockly update',
+          0.75,
+          `added ${updateResult.added}, removed ${updateResult.removed}, unchanged ${updateResult.unchanged}`,
+        );
+        throwIfSyncAbsCancelled(invocationContext);
         // console.log(`📊 增量更新完成: +${updateResult.added}, -${updateResult.removed}, =${updateResult.unchanged}`);
       } catch (e) {
-        console.warn('⚠️ 增量更新失败，回退到全量更新:', e);
+        debugSyncAbsImportIssue('Incremental Blockly update failed, falling back to full rebuild', e);
         useIncrementalUpdate = false;
       }
     }
@@ -560,6 +678,7 @@ async function importFromAbs(
       let blockCreateCount = 0;
       
       for (const blockConfig of parseResult.rootBlocks) {
+        throwIfSyncAbsCancelled(invocationContext);
         // 检查是否有受保护块需要重建子块
         if (PROTECTED_ROOT_BLOCKS.has(blockConfig.type) && protectedBlocksMap.has(blockConfig.type)) {
           const protectedInfo = protectedBlocksMap.get(blockConfig.type);
@@ -578,7 +697,7 @@ async function importFromAbs(
               failedBlocks.push(...rebuildResult.failedBlocks);
             }
           } catch (error) {
-            console.warn(`重建受保护块子块失败: ${blockConfig.type}`, error);
+            debugSyncAbsImportIssue(`Protected block child rebuild failed: ${blockConfig.type}`, error);
             failedBlocks.push({
               blockType: blockConfig.type,
               error: error instanceof Error ? error.message : String(error)
@@ -586,6 +705,7 @@ async function importFromAbs(
           }
           // 每创建 2 个根块后让出事件循环，允许 UI 刷新
           if (blockCreateCount % 2 === 0) { await yieldToEventLoop(); }
+          throwIfSyncAbsCancelled(invocationContext);
           continue;
         }
         
@@ -608,7 +728,7 @@ async function importFromAbs(
             failedBlocks.push(...result.failedBlocks);
           }
         } catch (error) {
-          console.warn(`创建块失败: ${blockConfig.type}`, error);
+          debugSyncAbsImportIssue(`Block creation failed: ${blockConfig.type}`, error);
           failedBlocks.push({
             blockType: blockConfig.type,
             error: error instanceof Error ? error.message : String(error)
@@ -617,6 +737,15 @@ async function importFromAbs(
         blockCreateCount++;
         // 每创建 2 个根块后让出事件循环，允许 UI 刷新
         if (blockCreateCount % 2 === 0) { await yieldToEventLoop(); }
+        throwIfSyncAbsCancelled(invocationContext);
+        if (blockCreateCount % 10 === 0) {
+          await reportSyncAbsImportProgress(
+            invocationContext,
+            'Rebuilding Blockly blocks',
+            Math.min(0.74, 0.5 + (blockCreateCount / Math.max(1, parseResult.rootBlocks.length)) * 0.24),
+            `${blockCreateCount}/${parseResult.rootBlocks.length} root blocks`,
+          );
+        }
       }
     } else {
       // 使用增量更新结果
@@ -684,6 +813,8 @@ async function importFromAbs(
     // 保存工作区到 ABI 文件
     const abiJson = Blockly.serialization.workspaces.save(workspace);
     await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson, null, 2), electronService, invocationContext);
+    await reportSyncAbsImportProgress(invocationContext, 'Saving generated project files', 0.85);
+    throwIfSyncAbsCancelled(invocationContext);
 
     // 在 AI 回合中 builder 的自动预处理会因 aiWaiting 被延后。
     // 这里直接同步刷新 sketch.ino，避免同一 turn 立即读取时仍看到旧代码。
@@ -694,8 +825,10 @@ async function importFromAbs(
     } catch (error) {
       sketchSyncWarning = `\n\n**⚠️ 代码生成告警:** 未能立即刷新 sketch.ino: ${error instanceof Error ? error.message : String(error)}`;
     }
+    throwIfSyncAbsCancelled(invocationContext);
     
     const variableCount = allVariables.size;  // 使用收集到的所有变量数量
+    await reportSyncAbsImportProgress(invocationContext, 'Blockly workspace import finished', 0.95);
     
     // 警告信息
     let warnings = '';
@@ -744,7 +877,7 @@ async function importFromAbs(
 
 ${sketchSyncInfo ? `**代码同步:** 已刷新 \`${sketchSyncInfo.filePath}\`${sketchSyncInfo.generated ? '' : '（当前生成结果为空）'}
 
-` : ''}工作区已更新，请使用get_workspace_overview_tool检查工作区实际的代码是否符合用户需求。`,
+` : ''}工作区已更新。请使用 \`lint\` 验证生成代码；如需检查结构，请读取 \`project.abs\` 或导出的 sketch 文件，不要调用旧的直接 Blockly mutation/overview 工具。`,
       metadata: {
         operation: 'import',
         filePath: absFilePath,
@@ -1398,7 +1531,7 @@ function remapAndExpandInputs(block: any, inputs: Record<string, any>): Record<s
   }
   for (let i = availableInputs.length; i < extraInputs.length; i++) {
     result[extraInputs[i].key] = extraInputs[i].value;
-    console.warn(`    ⚠️ 无法映射输入 ${extraInputs[i].key}，块上没有更多可用值输入`);
+    debugSyncAbsImportIssue(`Unable to map extra input, no available value input remains: ${extraInputs[i].key}`);
   }
 
   return result;
@@ -1437,7 +1570,7 @@ async function rebuildBlockChildren(
         // console.log(`    ✅ loadExtraState 调用完成`);
       }
     } catch (e) {
-      console.warn(`    ⚠️ 更新 extraState 失败:`, e);
+        debugSyncAbsImportIssue('Updating block extraState failed', e);
     }
   }
   
@@ -1520,7 +1653,7 @@ async function rebuildBlockChildren(
               input.connection.connect(targetConnection);
             } catch (connectError) {
               // 连接失败，销毁孤立块避免残留
-              console.warn(`    ⚠️ 连接失败，清理孤立块: ${childConfig.type}`, connectError);
+              debugSyncAbsImportIssue(`Child connection failed, cleaning orphan block: ${childConfig.type}`, connectError);
               try { result.block.dispose(true); } catch (_) { /* ignore */ }
               failedBlocks.push({
                 blockType: childConfig.type,
@@ -1529,7 +1662,7 @@ async function rebuildBlockChildren(
             }
           } else {
             // 无可用连接点，销毁孤立块
-            console.warn(`    ⚠️ ${childConfig.type} 无 outputConnection/previousConnection，清理`);
+            debugSyncAbsImportIssue(`Child block has no output/previous connection, cleaning: ${childConfig.type}`);
             try { result.block.dispose(true); } catch (_) { /* ignore */ }
             failedBlocks.push({
               blockType: childConfig.type,
@@ -1542,7 +1675,7 @@ async function rebuildBlockChildren(
           failedBlocks.push(...result.failedBlocks);
         }
       } catch (e) {
-        console.warn(`    ⚠️ 重建子块失败: ${childConfig.type}`, e);
+        debugSyncAbsImportIssue(`Child rebuild failed: ${childConfig.type}`, e);
         failedBlocks.push({
           blockType: childConfig.type,
           error: e instanceof Error ? e.message : String(e)
@@ -1722,7 +1855,7 @@ async function incrementalUpdate(
         if (rebuildResult.failedBlocks?.length) failedBlocks.push(...rebuildResult.failedBlocks);
         // console.log(`    ✅ 子树重建成功: ${currentType}`);
       } catch (error) {
-        console.warn(`子树重建失败: ${currentType}`, error);
+        debugSyncAbsImportIssue(`Subtree rebuild failed: ${currentType}`, error);
         failedBlocks.push({ blockType: currentType, error: error instanceof Error ? error.message : String(error) });
       }
       processedExistingBlocks.add(currentItem.block.id);
@@ -1764,7 +1897,7 @@ async function incrementalUpdate(
       if (result.failedBlocks?.length) failedBlocks.push(...result.failedBlocks);
       processedNewBlocks.add(newItem.index);
     } catch (error) {
-      console.warn(`添加块失败: ${config.type}`, error);
+      debugSyncAbsImportIssue(`Adding block failed: ${config.type}`, error);
       failedBlocks.push({ blockType: config.type, error: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -1793,7 +1926,7 @@ async function incrementalUpdate(
         if (rebuildResult.failedBlocks?.length) failedBlocks.push(...rebuildResult.failedBlocks);
         // console.log(`    ✅ ${currentType} 子树重建成功`);
       } catch (error) {
-        console.warn(`子树重建失败: ${currentType}`, error);
+        debugSyncAbsImportIssue(`Subtree rebuild failed: ${currentType}`, error);
         failedBlocks.push({ blockType: currentType, error: error instanceof Error ? error.message : String(error) });
       }
       processedExistingBlocks.add(currentItem.block.id);
@@ -1847,7 +1980,7 @@ async function incrementalUpdate(
             );
             if (rebuildResult.failedBlocks?.length) failedBlocks.push(...rebuildResult.failedBlocks);
           } catch (error) {
-            console.warn(`重建受保护块子块失败: ${blockType}`, error);
+            debugSyncAbsImportIssue(`Protected block child rebuild failed: ${blockType}`, error);
             failedBlocks.push({ blockType: blockType, error: error instanceof Error ? error.message : String(error) });
           }
           processedNewBlocks.add(matchingNewConfig.index);
@@ -1866,7 +1999,7 @@ async function incrementalUpdate(
               item.block.dispose(true);
               removedCount++;
             } catch (e) {
-              console.warn(`删除重复受保护块失败: ${blockType}`, e);
+              debugSyncAbsImportIssue(`Deleting duplicate protected block failed: ${blockType}`, e);
             } finally {
               Blockly.Events.enable();
             }
@@ -1888,7 +2021,7 @@ async function incrementalUpdate(
               }
             }
           } catch (e) {
-            console.warn(`清空受保护块子块失败: ${blockType}`, e);
+            debugSyncAbsImportIssue(`Clearing protected block children failed: ${blockType}`, e);
           } finally {
             Blockly.Events.enable();
           }
@@ -1905,7 +2038,7 @@ async function incrementalUpdate(
         item.block.dispose(true);
         removedCount++;
       } catch (e) {
-        console.warn(`删除块失败: ${blockType}`, e);
+        debugSyncAbsImportIssue(`Deleting unmatched block failed: ${blockType}`, e);
       } finally {
         Blockly.Events.enable();
       }
@@ -1933,7 +2066,7 @@ async function incrementalUpdate(
         }
         if (result.failedBlocks?.length) failedBlocks.push(...result.failedBlocks);
       } catch (error) {
-        console.warn(`添加块失败: ${config.type}`, error);
+        debugSyncAbsImportIssue(`Adding block failed: ${config.type}`, error);
         failedBlocks.push({ blockType: config.type, error: error instanceof Error ? error.message : String(error) });
       }
     }
@@ -1957,7 +2090,7 @@ async function incrementalUpdate(
         block.dispose(true);
         cleanupCount++;
       } catch (e) {
-        console.warn(`清理残留块失败: ${block.type}`, e);
+        debugSyncAbsImportIssue(`Cleaning residual block failed: ${block.type}`, e);
       } finally {
         Blockly.Events.enable();
       }
@@ -1985,7 +2118,7 @@ async function incrementalUpdate(
     }
     // console.log(`🎨 工作区渲染刷新完成`);
   } catch (e) {
-    console.warn(`渲染刷新失败:`, e);
+    debugSyncAbsImportIssue('Workspace render refresh failed', e);
   }
   
   return {

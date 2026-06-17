@@ -997,11 +997,14 @@ export class ChatViewService {
   private getAvailableBuiltinModes(): readonly ChatResolvedMode[] {
     const runtimeBuiltinModes = this.getRuntimeModeCollection()?.builtin;
     if (Array.isArray(runtimeBuiltinModes) && runtimeBuiltinModes.length > 0) {
-      return runtimeBuiltinModes;
+      return runtimeBuiltinModes.some((mode) => mode.kind === 'plan')
+        ? runtimeBuiltinModes
+        : [...runtimeBuiltinModes, resolveChatCurrentMode({ modeId: 'plan' })];
     }
 
     return [
       resolveChatCurrentMode({ modeId: 'agent' }),
+      resolveChatCurrentMode({ modeId: 'plan' }),
       resolveChatCurrentMode({ modeId: 'ask' }),
     ];
   }
@@ -1082,55 +1085,41 @@ export class ChatViewService {
     const hiddenTargets = this.getHiddenCustomAgentTargets();
     const currentSessionCustomAgentTarget = this.getCurrentSessionCustomAgentTarget();
     const planMode = this.getPlanMode();
-    const planCustomAgentTarget = planMode?.customAgentTarget ?? planMode?.name;
     const builtinModeItems = this.getAvailableBuiltinModes()
       .filter((mode) => mode.kind !== 'edit')
       .sort((left, right) => {
-        const order = { agent: 0, ask: 1, edit: 2 } satisfies Record<ChatSurfaceModeId, number>;
+        const order = { agent: 0, plan: 1, ask: 2, edit: 3 } satisfies Record<ChatSurfaceModeId, number>;
         return order[left.kind] - order[right.kind];
       })
       .map((mode) => {
         const isAgentMode = mode.kind === 'agent';
         const isAskMode = mode.kind === 'ask';
+        const isPlanMode = mode.kind === 'plan';
         return {
           name: isAgentMode
             ? this.translate.instant('AILY_CHAT.MODE_AGENT_FULL')
             : isAskMode
               ? this.translate.instant('AILY_CHAT.MODE_QA_FULL')
-              : mode.label,
+              : isPlanMode
+                ? planMode?.label ?? mode.label
+                : mode.label,
           action: `${mode.kind}-mode`,
           icon: isAgentMode
             ? 'fa-light fa-user-astronaut'
             : isAskMode
               ? 'fa-light fa-comment-smile'
-              : 'fa-light fa-pen-to-square',
-          current: currentResolvedMode.isBuiltin && currentResolvedMode.kind === mode.kind,
+              : isPlanMode
+                ? 'fa-light fa-list-check'
+                : 'fa-light fa-pen-to-square',
+          current: isPlanMode
+            ? isPlanChatResolvedMode(currentResolvedMode)
+            : currentResolvedMode.isBuiltin && currentResolvedMode.kind === mode.kind,
+          ...(isPlanMode && planMode?.description ? { tooltip: planMode.description } : {}),
           data: { mode: mode.kind },
         } satisfies IMenuItem;
       })
       .filter((item) => item.data?.mode !== 'ask' || !currentSessionCustomAgentTarget);
     const items: IMenuItem[] = [...builtinModeItems];
-
-    if (planMode
-      && planCustomAgentTarget
-      && planMode.hidden !== true
-      && planMode.enabled !== false
-      && planMode.visibility?.userInvocable !== false
-      && !hiddenTargets.has(planCustomAgentTarget)
-      && this.isModeVisibleInCurrentPicker(planMode, currentSessionCustomAgentTarget)) {
-      items.push({
-        name: planMode.label,
-        action: 'plan-mode',
-        icon: 'fa-light fa-list-check',
-        current: isPlanChatResolvedMode(currentResolvedMode),
-        ...(planMode.description ? { tooltip: planMode.description } : {}),
-        data: {
-          mode: 'agent' satisfies ChatSurfaceModeId,
-          modeId: planMode.id,
-          customAgentTarget: planCustomAgentTarget,
-        },
-      });
-    }
 
     const customAgentItems = this.getAvailableCustomModes()
       .filter((mode) => {

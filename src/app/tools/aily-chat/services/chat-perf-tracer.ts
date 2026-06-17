@@ -3,10 +3,11 @@
  *
  * 用法：
  *   在浏览器 DevTools Console 中：
- *     (window as any).__AILY_PERF_TRACE = true;   // 开启跟踪
- *     (window as any).__AILY_PERF_TRACE = false;  // 关闭跟踪
- *     ChatPerformanceTracer.dump();                // 打印最近 200 个事件
- *     ChatPerformanceTracer.dumpSlow(5);           // 打印耗时 > 5ms 的事件
+ *     ChatPerformanceTracer.enable();             // 开启跟踪
+ *     ChatPerformanceTracer.disable();            // 关闭跟踪
+ *     ChatPerformanceTracer.dump();                // 打印 bounded 摘要
+ *     ChatPerformanceTracer.dump(40);              // 打印最近 40 个事件明细
+ *     ChatPerformanceTracer.dumpSlow(5);           // 打印耗时 > 5ms 的摘要
  *     ChatPerformanceTracer.reset();               // 清空日志
  *
  * 诊断重点：
@@ -95,9 +96,24 @@ export class ChatPerformanceTracer {
   // ─── 动态扩展方法（Console 调用） ───
   static startLongTaskObserver: () => void;
   static stopLongTaskObserver: () => void;
-  static dumpLongTasks: () => void;
+  static dumpLongTasks: (count?: number) => void;
+  static dumpJankContext: (count?: number) => void;
 
   // ─── 核心 API ───
+
+  static enable(): void {
+    try {
+      (globalThis as Record<string, unknown>)['__AILY_PERF_TRACE'] = true;
+      globalThis.localStorage?.setItem?.(ENTRY_OPEN_TRACE_FLAG, '1');
+    } catch {}
+  }
+
+  static disable(): void {
+    try {
+      (globalThis as Record<string, unknown>)['__AILY_PERF_TRACE'] = false;
+      globalThis.localStorage?.removeItem?.(ENTRY_OPEN_TRACE_FLAG);
+    } catch {}
+  }
 
   /** 开始一个命名 span，返回 spanId */
   static begin(tag: string, detail?: string): number {
@@ -127,6 +143,31 @@ export class ChatPerformanceTracer {
     counters.set(counter, (counters.get(counter) ?? 0) + normalizedDelta);
   }
 
+  static recordDuration(
+    tag: string,
+    durationMs: number,
+    detail?: string,
+    options: { readonly slowThresholdMs?: number; readonly counterPrefix?: string } = {},
+  ): void {
+    if (!isEnabled() || typeof tag !== 'string' || tag.trim().length === 0 || !Number.isFinite(durationMs)) {
+      return;
+    }
+
+    const normalizedTag = tag.trim();
+    const prefix = options.counterPrefix || `duration.${normalizedTag}`;
+    this.increment(`${prefix}.count`);
+    this.increment(`${prefix}.totalMs`, Math.max(0, Math.round(durationMs)));
+
+    const slowThresholdMs = Number.isFinite(options.slowThresholdMs) ? options.slowThresholdMs! : 16;
+    if (durationMs >= slowThresholdMs) {
+      this.increment(`${prefix}.slow`);
+      this.mark(
+        `SLOW ${normalizedTag}`,
+        `${durationMs.toFixed(1)}ms${detail ? ` ${detail}` : ''}`,
+      );
+    }
+  }
+
   static snapshotCounters(): Record<string, number> {
     return Object.fromEntries(counters.entries());
   }
@@ -150,9 +191,22 @@ export class ChatPerformanceTracer {
   // ─── 输出与调试 ───
 
   /** 打印最近的全部事件日志 */
-  static dump(count = 500): void {
-    const entries = log.slice(-count);
-    if (entries.length === 0) { console.log('[PerfTracer] 无记录'); return; }
+  static dump(count?: number): void {
+    if (log.length === 0) { console.log('[PerfTracer] 无记录'); return; }
+    const recent = log.slice(-120);
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    console.log(
+      `[PerfTracer] events: count=${log.length}, recent=${recent.length}, span=${first && last ? (last.t - first.t).toFixed(1) : '0.0'}ms`,
+    );
+
+    if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) {
+      console.log('[PerfTracer] pass dump(40) to print a bounded detail table');
+      return;
+    }
+
+    const safeCount = Math.max(1, Math.min(Math.floor(count), 40));
+    const entries = log.slice(-safeCount);
 
     const t0 = entries[0].t;
     const rows = entries.map(e => ({
@@ -168,9 +222,22 @@ export class ChatPerformanceTracer {
    * 打印关键事件（工具调用、startChatTurn 阶段、LONG_TASK 等）
    * 不含高频 streaming 事件（sse_chunk / doFlush / preprocess），定位卡顿首选
    */
-  static dumpKey(count = 200): void {
-    const entries = keyLog.slice(-count);
-    if (entries.length === 0) { console.log('[PerfTracer] 无关键事件'); return; }
+  static dumpKey(count?: number): void {
+    if (keyLog.length === 0) { console.log('[PerfTracer] 无关键事件'); return; }
+    const recent = keyLog.slice(-80);
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    console.log(
+      `[PerfTracer] key events: count=${keyLog.length}, recent=${recent.length}, span=${first && last ? (last.t - first.t).toFixed(1) : '0.0'}ms`,
+    );
+
+    if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) {
+      console.log('[PerfTracer] pass dumpKey(40) to print a bounded detail table');
+      return;
+    }
+
+    const safeCount = Math.max(1, Math.min(Math.floor(count), 40));
+    const entries = keyLog.slice(-safeCount);
 
     const t0 = entries[0].t;
     const rows = entries.map(e => ({
@@ -201,7 +268,12 @@ export class ChatPerformanceTracer {
 
     if (slow.length === 0) { console.log(`[PerfTracer] 无 > ${thresholdMs}ms 的 span`); return; }
     slow.sort((a, b) => b.ms - a.ms);
-    console.table(slow);
+    const top = slow.slice(0, 10);
+    const totalMs = slow.reduce((sum, entry) => sum + entry.ms, 0);
+    console.log(
+      `[PerfTracer] slow spans: count=${slow.length}, total=${totalMs.toFixed(1)}ms, max=${slow[0]?.ms.toFixed(1) ?? '0.0'}ms`,
+    );
+    console.table(top);
   }
 
   static dumpCounters(): void {
@@ -214,7 +286,8 @@ export class ChatPerformanceTracer {
       return;
     }
 
-    console.table(entries);
+    console.log(`[PerfTracer] counters: count=${entries.length}, top=${Math.min(entries.length, 20)}`);
+    console.table(entries.slice(0, 20));
   }
 
   /** 清空日志 */
@@ -231,12 +304,14 @@ try { (globalThis as any).ChatPerformanceTracer = ChatPerformanceTracer; } catch
  * 用法：
  *   ChatPerformanceTracer.startLongTaskObserver();   // 开始监听
  *   ChatPerformanceTracer.stopLongTaskObserver();    // 停止
- *   ChatPerformanceTracer.dumpLongTasks();           // 打印捕获的长任务
+ *   ChatPerformanceTracer.dumpLongTasks();           // 打印长任务摘要
+ *   ChatPerformanceTracer.dumpLongTasks(40);         // 打印最近 40 条长任务明细
  */
 let longTaskObserver: PerformanceObserver | null = null;
 const longTasks: Array<{ start: number; duration: number; name: string }> = [];
 
 ChatPerformanceTracer.startLongTaskObserver = function(): void {
+  ChatPerformanceTracer.enable();
   if (longTaskObserver) return;
   try {
     longTaskObserver = new PerformanceObserver((list) => {
@@ -268,11 +343,36 @@ ChatPerformanceTracer.stopLongTaskObserver = function(): void {
   }
 };
 
-ChatPerformanceTracer.dumpLongTasks = function(): void {
+ChatPerformanceTracer.dumpLongTasks = function(count?: number): void {
   if (longTasks.length === 0) { console.log('[PerfTracer] 无 long task 记录'); return; }
-  console.table(longTasks.map(t => ({
+  const allTotalDurationMs = longTasks.reduce((sum, task) => sum + task.duration, 0);
+  const allMaxDurationMs = longTasks.reduce((max, task) => Math.max(max, task.duration), 0);
+  const recent = longTasks.slice(-20);
+  const recentTotalDurationMs = recent.reduce((sum, task) => sum + task.duration, 0);
+  const recentMaxDurationMs = recent.reduce((max, task) => Math.max(max, task.duration), 0);
+  console.log(
+    `[PerfTracer] long tasks: count=${longTasks.length}, total=${allTotalDurationMs.toFixed(1)}ms, max=${allMaxDurationMs.toFixed(1)}ms, recent20Total=${recentTotalDurationMs.toFixed(1)}ms, recent20Max=${recentMaxDurationMs.toFixed(1)}ms`,
+  );
+
+  if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) {
+    console.log('[PerfTracer] pass dumpLongTasks(40) to print a bounded detail table');
+    return;
+  }
+
+  const safeCount = Math.max(1, Math.min(Math.floor(count), 40));
+  const tasks = longTasks.slice(-safeCount);
+  console.log(`[PerfTracer] long tasks detail: showing ${tasks.length}/${longTasks.length}`);
+  console.table(tasks.map(t => ({
     'start(ms)': +t.start.toFixed(1),
     'duration(ms)': +t.duration.toFixed(1),
     'name': t.name,
   })));
+};
+
+ChatPerformanceTracer.dumpJankContext = function(count = 40): void {
+  console.log('[PerfTracer] jank context');
+  ChatPerformanceTracer.dumpLongTasks(count);
+  ChatPerformanceTracer.dumpCounters();
+  ChatPerformanceTracer.dumpKey(count);
+  ChatPerformanceTracer.dumpSlow(8);
 };

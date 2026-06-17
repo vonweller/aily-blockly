@@ -10,6 +10,11 @@ interface ErrorDiagnosticsRow {
   value: string;
 }
 
+interface ErrorPresentation {
+  readonly title: string;
+  readonly message?: string;
+}
+
 export interface ErrorActionItem {
   id: string;
   label: string;
@@ -48,7 +53,7 @@ export interface ErrorActionItem {
           }
         </div>
       }
-      @if (diagnosticRows.length > 0) {
+      @if (showDiagnostics && diagnosticRows.length > 0) {
         <div class="ac-error-meta">
           @for (row of diagnosticRows; track row.label) {
             <div class="ac-error-meta-row">
@@ -143,11 +148,13 @@ export class XAilyErrorViewerComponent {
     actions?: readonly ErrorActionItem[];
   } | null = null;
 
+  @Input() showDiagnostics = false;
+
   @Output() action = new EventEmitter<ErrorActionItem>();
 
   /** 优先使用顶层 message，其次 error.message */
   get displayMessage(): string {
-    return this.data?.message ?? this.data?.error?.message ?? '';
+    return this.presentation?.message ?? this.data?.message ?? this.data?.error?.message ?? '';
   }
 
   get actionItems(): readonly ErrorActionItem[] {
@@ -163,11 +170,11 @@ export class XAilyErrorViewerComponent {
   }
 
   get titleText(): string {
-    return this.data?.severity === 'warning'
+    return this.presentation?.title ?? (this.data?.severity === 'warning'
       ? '警告'
       : this.data?.severity === 'info'
         ? '信息'
-        : (this.data?.error?.status ? `错误 ${this.data.error.status}` : '错误');
+        : (this.data?.error?.status ? `错误 ${this.data.error.status}` : '错误'));
   }
 
   get diagnosticRows(): readonly ErrorDiagnosticsRow[] {
@@ -190,6 +197,43 @@ export class XAilyErrorViewerComponent {
 
   onAction(actionItem: ErrorActionItem): void {
     this.action.emit(actionItem);
+  }
+
+  private get presentation(): ErrorPresentation | null {
+    const code = this.readErrorCode();
+    const hardStopReason = this.readHardStopReason();
+    const status = this.readStatus();
+
+    if (code === 'invalid_interaction_state') {
+      return {
+        title: '继续请求已过期',
+        message: '这个继续操作已不再可用。请发送新的消息继续当前上下文。',
+      };
+    }
+
+    if (code === '29001') {
+      return {
+        title: '对话流已中断',
+        message: '本轮响应没有正常完成。可以重试本轮请求，或发送新的消息继续。',
+      };
+    }
+
+    if (hardStopReason?.startsWith('interaction_')) {
+      const hardStopMessage = formatConciseReason(formatContinuationHardStopReason(hardStopReason));
+      return {
+        title: '执行已暂停',
+        message: `${hardStopMessage} 这只是本轮执行链的安全边界，不代表账户额度用完。请发送新的请求继续，或缩小任务范围。`,
+      };
+    }
+
+    if (this.data?.error?.status === 409 || status === 'conflict') {
+      return {
+        title: '请求状态已变化',
+        message: '当前会话状态已更新，请重新发送请求。',
+      };
+    }
+
+    return null;
   }
 
   private readDiagnosticSource(value: unknown): Record<string, unknown> | null {
@@ -254,6 +298,43 @@ export class XAilyErrorViewerComponent {
     return this.readDiagnosticSource(details?.['diagnostics']);
   }
 
+  private readErrorCode(): string | undefined {
+    const diagnostics = this.data?.diagnostics ?? this.readNoticeDiagnostics(this.data?.metadata);
+    const metadata = this.readDiagnosticSource(this.data?.metadata);
+    const errorDetails = this.readDiagnosticSource(metadata?.['errorDetails']);
+    const messageCode = this.readErrorCodeFromMessage(this.data?.error?.message ?? this.data?.message);
+    return this.readText(this.data?.error?.message) === 'invalid_interaction_state'
+      ? 'invalid_interaction_state'
+      : this.readText(diagnostics?.['errorCode'])
+        ?? this.readText(errorDetails?.['code'])
+        ?? this.readText(metadata?.['code'])
+        ?? messageCode;
+  }
+
+  private readErrorCodeFromMessage(message: unknown): string | undefined {
+    const text = this.readText(message);
+    if (!text) {
+      return undefined;
+    }
+
+    const bracketMatch = text.match(/aily-services\s*\[([^\]]+)\]/i);
+    if (bracketMatch?.[1]) {
+      return bracketMatch[1].trim();
+    }
+
+    return undefined;
+  }
+
+  private readHardStopReason(): string | undefined {
+    const diagnostics = this.data?.diagnostics ?? this.readNoticeDiagnostics(this.data?.metadata);
+    return formatRawReason(this.readText(diagnostics?.['hardStopReason']));
+  }
+
+  private readStatus(): string | undefined {
+    const diagnostics = this.data?.diagnostics ?? this.readNoticeDiagnostics(this.data?.metadata);
+    return this.readText(diagnostics?.['status']);
+  }
+
   private readText(value: unknown): string | undefined {
     if (typeof value === 'string' && value.trim().length > 0) {
       return value;
@@ -263,6 +344,14 @@ export class XAilyErrorViewerComponent {
     }
     return undefined;
   }
+}
+
+function formatRawReason(value: string | undefined): string | undefined {
+  return value && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function formatConciseReason(value: string): string {
+  return value.replace(/\s+\([^)]+\)\s*$/, '').trim();
 }
 
 const DIAGNOSTIC_LABELS = {

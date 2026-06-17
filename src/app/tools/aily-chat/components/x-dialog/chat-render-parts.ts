@@ -80,10 +80,7 @@ function hasActiveSubagentPart(parts: readonly TurnResponsePart[]): boolean {
 
     const metadata = asRecord(part.metadata);
     const toolSpecificData = asRecord(metadata?.['toolSpecificData']);
-    return part.state === 'doing' && (
-      typeof metadata?.['subAgentInvocationId'] === 'string'
-      || toolSpecificData?.['kind'] === 'subagent'
-    );
+    return part.state === 'doing' && isSubagentToolSpecificData(toolSpecificData);
   });
 }
 
@@ -106,14 +103,21 @@ function getPendingConfirmationCount(parts: readonly TurnResponsePart[], include
 function isSubagentToolCall(part: Extract<TurnResponsePart, { type: 'tool_call' }>): boolean {
   const metadata = asRecord(part.metadata);
   const toolSpecificData = asRecord(metadata?.['toolSpecificData']);
-  return typeof metadata?.['subAgentInvocationId'] === 'string'
-    || toolSpecificData?.['kind'] === 'subagent';
+  return isSubagentToolSpecificData(toolSpecificData);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function isSubagentToolSpecificData(toolSpecificData: Record<string, unknown> | undefined): boolean {
+  return !!toolSpecificData && (
+    toolSpecificData['kind'] === 'subagent'
+    || typeof toolSpecificData['agentName'] === 'string'
+    || typeof toolSpecificData['description'] === 'string'
+  );
 }
 
 function getConfirmationPendingLabel(count: number): string {

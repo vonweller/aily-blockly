@@ -7,33 +7,48 @@ import {
   OnChanges,
   SimpleChanges,
   OnDestroy,
+  ChangeDetectorRef,
+  ChangeDetectionStrategy,
+  NgZone,
   signal,
+  inject,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
 import { AilyChatCodeComponent } from '../aily-chat-code.component';
 import { getClosingTagsForOpenBlocks } from '../../../services/content-sanitizer.service';
-import { getThinkContent } from '../../../core/think-content-store';
+import {
+  getThinkContent,
+  getThinkContentLength,
+  getThinkContentWindow,
+} from '../../../core/think-content-store';
+import { ChatPerformanceTracer } from '../../../services/chat-perf-tracer';
+
+const LIVE_THINK_RENDER_WINDOW_CHARS = 48 * 1024;
+const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\n';
 
 @Component({
   selector: 'x-aily-think-viewer',
   standalone: true,
   imports: [CommonModule, XMarkdownComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="ac-think" [class.expanded]="thinkExpanded" [class.streaming]="data?.isComplete === false">
-      <div class="ac-think-header" (click)="thinkExpanded = !thinkExpanded">
-        @if (data?.isComplete) {
-          <i class="fa-light fa-circle-check ac-think-icon done"></i>
-        } @else {
-          <i class="fa-light fa-spinner-third ac-think-icon loading ac-spin"></i>
-        }
-        <span class="ac-think-label" [class.ac-think-shimmer]="data?.isComplete === false && !thinkExpanded">
-          {{ displayLabel }}
-        </span>
-        <i class="fa-light fa-chevron-down ac-think-arrow"></i>
-      </div>
-      @if (thinkExpanded) {
+    <div class="ac-think" [class.expanded]="thinkExpanded || embedded" [class.streaming]="data?.isComplete === false" [class.embedded]="embedded">
+      @if (!embedded) {
+        <div class="ac-think-header" (click)="thinkExpanded = !thinkExpanded">
+          @if (data?.isComplete) {
+            <i class="fa-light fa-circle-check ac-think-icon done"></i>
+          } @else {
+            <i class="fa-light fa-spinner-third ac-think-icon loading ac-spin"></i>
+          }
+          <span class="ac-think-label" [class.ac-think-shimmer]="data?.isComplete === false && !thinkExpanded">
+            {{ displayLabel }}
+          </span>
+          <i class="fa-light fa-chevron-down ac-think-arrow"></i>
+        </div>
+      }
+      @if (thinkExpanded || embedded) {
         <div class="ac-think-body" #thinkBody (scroll)="onThinkBodyScroll($event)">
           @if (markdownContent()) {
             <x-markdown
@@ -65,6 +80,9 @@ import { getThinkContent } from '../../../core/think-content-store';
         position: relative;
         margin: 2px 0;
         color: var(--chat-fg, #ccc);
+      }
+      .ac-think.embedded {
+        margin: 0;
       }
 
       /* ===== 折叠头部（Copilot .monaco-button.monaco-icon-button 风格）===== */
@@ -144,6 +162,18 @@ import { getThinkContent } from '../../../core/think-content-store';
         scrollbar-color: var(--chat-border, rgba(255,255,255,0.10)) transparent;
         scrollbar-gutter: stable;
         user-select: text;
+      }
+      .ac-think.embedded .ac-think-body {
+        max-height: none;
+        overflow: visible;
+        scrollbar-gutter: auto;
+        padding: 2px 12px 4px 0px;
+        padding-top: 0;
+        margin-top: 0;
+      }
+
+      .ac-think.embedded .ac-think-body::before {
+        content: none;
       }
 
       /* 垂直连接线 */
@@ -245,6 +275,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     ref?: string;
     v?: number;
   } | null = null;
+  @Input() embedded = false;
   @ViewChild('thinkBody') thinkBodyRef?: ElementRef<HTMLElement>;
 
   thinkContent = '';
@@ -263,6 +294,8 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   private _phraseIndex = 0;
   private _phraseTimer: ReturnType<typeof setInterval> | null = null;
   displayLabel = 'Thinking...';
+  private readonly ngZone = inject(NgZone);
+  private readonly cdr = inject(ChangeDetectorRef);
 
   /** 从 think 内容开头提取 **粗体标题** */
   private _extractTitle(content: string): string {
@@ -282,11 +315,17 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   }
 
   private _startPhraseRotation(): void {
+    if (this.embedded) return;
     if (this._phraseTimer) return;
-    this._phraseTimer = setInterval(() => {
-      this._phraseIndex = (this._phraseIndex + 1) % this._phrases.length;
-      this.displayLabel = this._phrases[this._phraseIndex];
-    }, 3000);
+    this.ngZone.runOutsideAngular(() => {
+      this._phraseTimer = setInterval(() => {
+        this.ngZone.run(() => {
+          this._phraseIndex = (this._phraseIndex + 1) % this._phrases.length;
+          this.displayLabel = this._phrases[this._phraseIndex];
+          this.cdr.markForCheck();
+        });
+      }, 3000);
+    });
   }
 
   private _stopPhraseRotation(): void {
@@ -298,6 +337,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
   // ===== Throttle state =====
   private _pendingRaw: string | null = null;
+  private _pendingRawLength = 0;
   private _throttleTimerId: ReturnType<typeof setTimeout> | null = null;
   private _lastRenderedRawLen = 0;
 
@@ -318,8 +358,14 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
     // 获取原始内容
     let raw = '';
+    let rawLength = 0;
     if (this.data.ref) {
-      raw = getThinkContent(this.data.ref);
+      rawLength = getThinkContentLength(this.data.ref);
+      if (this.data.isComplete === false) {
+        raw = getThinkContentWindow(this.data.ref, LIVE_THINK_RENDER_WINDOW_CHARS, LIVE_THINK_OMITTED_MARKER);
+      } else {
+        raw = getThinkContent(this.data.ref);
+      }
     } else if (this.data.encoded && this.data.content) {
       try {
         raw = decodeURIComponent(atob(this.data.content));
@@ -328,6 +374,9 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       }
     } else {
       raw = this.data.content || '';
+    }
+    if (!rawLength) {
+      rawLength = raw.length;
     }
 
     this.thinkContent = raw;
@@ -341,7 +390,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     if (this.data.isComplete === true && prevStreaming) {
       this._stopPolling();
       this._cancelThrottle();
-      this._renderNow(raw, true);
+      this._renderNow(raw, true, rawLength);
       this.thinkExpanded = false;
       this._updateLabel();
       return;
@@ -352,14 +401,14 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       this._updateLabel();
       // ★ 修复：首次以 isComplete=true 渲染时（历史/finalize），必须调用 _renderNow
       // 之前仅在 streaming→done 转换时渲染，直接 isComplete=true 时 raw 被计算但未渲染
-      this._renderNow(raw, true);
+      this._renderNow(raw, true, rawLength);
       return;
     }
 
     if (!this.data.isComplete) {
       this.thinkExpanded = true;
-      this.shouldScrollThink = true;
-      this._scheduleRender(raw);
+      this.shouldScrollThink = !this.embedded;
+      this._scheduleRender(raw, rawLength);
       this._startPhraseRotation();
       // 启动轮询：v 字段已移除，x-markdown 不再驱动 ngOnChanges，需自行拉取 store
       this._startPolling();
@@ -380,8 +429,8 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
    *
    * 效果：think 内容每 100ms 最多 render 一次，每次只处理 500+ bytes 增量
    */
-  private _scheduleRender(raw: string): void {
-    const rawLen = raw.length;
+  private _scheduleRender(raw: string, rawLength = raw.length): void {
+    const rawLen = rawLength;
     const prevRendered = this._lastRenderedRawLen;
 
     // 立即渲染的条件：
@@ -390,22 +439,30 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     // 3. 内容已完成（isComplete）
     if (rawLen >= prevRendered + 500 || prevRendered === 0) {
       this._cancelThrottle();
-      this._renderNow(raw, false);
+      this._renderNow(raw, false, rawLength);
       return;
     }
 
     this._pendingRaw = raw;
+    this._pendingRawLength = rawLength;
 
     if (this._throttleTimerId !== null) return; // 已有 pending
 
-    this._throttleTimerId = setTimeout(() => {
-      this._throttleTimerId = null;
-      if (this._pendingRaw !== null) {
-        const pending = this._pendingRaw;
-        this._pendingRaw = null;
-        this._renderNow(pending, false);
-      }
-    }, 100);
+    this.ngZone.runOutsideAngular(() => {
+      this._throttleTimerId = setTimeout(() => {
+        this._throttleTimerId = null;
+        if (this._pendingRaw !== null) {
+          const pending = this._pendingRaw;
+          const pendingLength = this._pendingRawLength || pending.length;
+          this._pendingRaw = null;
+          this._pendingRawLength = 0;
+          this.ngZone.run(() => {
+            this._renderNow(pending, false, pendingLength);
+            this.cdr.markForCheck();
+          });
+        }
+      }, 100);
+    });
   }
 
   private _cancelThrottle(): void {
@@ -414,23 +471,41 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       this._throttleTimerId = null;
     }
     this._pendingRaw = null;
+    this._pendingRawLength = 0;
   }
 
   /** 启动轮询：每 200ms 从 store 读取最新 think 内容 */
   private _startPolling(): void {
     if (this._pollTimer) return;
-    this._pollTimer = setInterval(() => {
-      if (!this.data?.ref || this.data.isComplete) {
-        this._stopPolling();
-        return;
-      }
-      const raw = getThinkContent(this.data.ref);
-      if (raw && raw.length !== this._lastRenderedRawLen) {
-        this.thinkContent = raw;
-        this.shouldScrollThink = true;
-        this._scheduleRender(raw);
-      }
-    }, 200);
+    this.ngZone.runOutsideAngular(() => {
+      this._pollTimer = setInterval(() => {
+        if (!this.data?.ref || this.data.isComplete) {
+          this._stopPolling();
+          return;
+        }
+        const rawLength = getThinkContentLength(this.data.ref);
+        const raw = getThinkContentWindow(
+          this.data.ref,
+          LIVE_THINK_RENDER_WINDOW_CHARS,
+          LIVE_THINK_OMITTED_MARKER,
+        );
+        if (raw && rawLength !== this._lastRenderedRawLen) {
+          this.ngZone.run(() => {
+            const updateStartedAt = performance.now();
+            this.thinkContent = raw;
+            this.shouldScrollThink = !this.embedded;
+            this._scheduleRender(raw, rawLength);
+            this.cdr.markForCheck();
+            ChatPerformanceTracer.recordDuration(
+              'thinking_poll_update',
+              performance.now() - updateStartedAt,
+              `raw=${rawLength},visible=${raw.length},embedded=${this.embedded}`,
+              { slowThresholdMs: 8 },
+            );
+          });
+        }
+      }, 200);
+    });
   }
 
   /** 停止轮询 */
@@ -441,20 +516,31 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
     }
   }
 
-  private _renderNow(raw: string, isFinal: boolean): void {
+  private _renderNow(raw: string, isFinal: boolean, rawLength = raw.length): void {
+    const renderStartedAt = performance.now();
     if (!raw) {
       this.markdownContent.set('');
       this._lastRenderedRawLen = 0;
+      ChatPerformanceTracer.recordDuration('thinking_render_commit', performance.now() - renderStartedAt, 'empty', {
+        slowThresholdMs: 8,
+      });
       return;
     }
 
     // 非完成状态：追加闭合标签（修复流式过程中的 markdown 截断）
     const displayContent = isFinal ? raw : raw + getClosingTagsForOpenBlocks(raw);
     this.markdownContent.set(displayContent);
-    this._lastRenderedRawLen = raw.length;
+    this._lastRenderedRawLen = rawLength;
+    ChatPerformanceTracer.recordDuration(
+      'thinking_render_commit',
+      performance.now() - renderStartedAt,
+      `raw=${rawLength},visible=${raw.length},display=${displayContent.length},final=${isFinal},embedded=${this.embedded}`,
+      { slowThresholdMs: 8 },
+    );
   }
 
   onThinkBodyScroll(event: Event): void {
+    if (this.embedded) return;
     const el = event.target as HTMLElement | null;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -462,6 +548,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   }
 
   ngAfterViewChecked(): void {
+    if (this.embedded) return;
     if (this.shouldScrollThink && this.thinkBodyRef?.nativeElement) {
       const el = this.thinkBodyRef.nativeElement;
       if (this.thinkStickToBottom) {

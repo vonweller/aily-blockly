@@ -208,6 +208,20 @@
     max-width: 100%;
     box-sizing: border-box;
 
+    .dialog-virtual-row {
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .dialog-virtual-spacer {
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
+      pointer-events: none;
+      contain: strict;
+    }
+
     aily-x-dialog {
       display: block;
       min-width: 0;

@@ -10,9 +10,11 @@ import {
   SimpleChanges,
   ViewChild,
   ElementRef,
+  AfterViewInit,
   AfterViewChecked,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
+  NgZone,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -24,10 +26,12 @@ import { AilyChatCodeComponent } from './aily-chat-code.component';
 import { ChatAPI } from '../../core/api-endpoints';
 import { AilyHost } from '../../core/host';
 import { ResourceItem } from '../../core/chat-types';
+import type { ChatPart } from '../../core/chat-parts';
 import {
   buildDialogTurnContext,
   type DialogTurnContext,
 } from '../../core/user-turn-action-target';
+import type { ChatSelectedMode } from '../../core/chat-mode';
 import { extractUserTurnResources, mergeUserTurnResources, parseUserTurnTextAndResources } from '../../helpers/chat-user-turn-context';
 import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
 import { ChatMessagePartsComponent } from './chat-message-parts.component';
@@ -42,7 +46,7 @@ import {
   getTurnResponseAssistantText,
   getTurnResponseResponseText,
 } from '../../core/turn-response-stream-contract';
-import { turnResponsePartToChatPart } from '../../core/turn-response-part-mapper';
+import { turnResponsePartToChatParts } from '../../core/turn-response-part-mapper';
 import { buildRenderableProgressParts, type RenderableChatPart } from './chat-render-parts';
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
@@ -68,7 +72,7 @@ const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy {
+export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChecked, OnDestroy {
   @Input() role = 'user';
   @Input() content = '';
   @Input() doing = false;
@@ -118,6 +122,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   /** 该消息创建时使用的模型倍率 */
   @Input() turnModelBillingLabel = '';
   @Input() isWaiting = false;
+  @Input() liveParts: readonly ChatPart[] | null = null;
+  @Input() selectedMode: Pick<ChatSelectedMode, 'modeId' | 'customAgentTarget'> | null | undefined;
   /** 全局互斥：当前允许展开编辑框的用户 turnId；与本条不一致时需收起（由父级统一传入） */
   @Input() exclusiveEditTurnId: string | undefined;
 
@@ -136,6 +142,7 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   @ViewChild('editTextarea') editTextareaRef?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('editInputBox') editInputBoxRef?: ElementRef<HTMLElement>;
+  @ViewChild('contentRoot') contentRootRef?: ElementRef<HTMLElement>;
 
   streamContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
@@ -149,12 +156,17 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   editText = '';
   editResources: ResourceItem[] = [];
   showEditAddList = false;
+  isViewportVisible = true;
+  private lastRenderedContentHeight = 0;
+  private visibilityObserver: IntersectionObserver | null = null;
+  private contentResizeObserver: ResizeObserver | null = null;
 
   private _turnResponse: TurnResponseTurn | null = null;
   private _turnContext: DialogTurnContext | null = null;
   private _responseVote: HostResponseVoteDirection | undefined;
   private compatTurnContext: DialogTurnContext | null = null;
   private _effectivePartsSource: readonly TurnResponsePart[] = EMPTY_TURN_PARTS;
+  private _effectiveLivePartsSource: readonly ChatPart[] | null = null;
   private _effectiveProgressMessagesSource: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = EMPTY_PROGRESS_MESSAGES;
   private _effectivePartsDoing = false;
   private _effectivePartsRevisionKey = '';
@@ -162,6 +174,8 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
 
   constructor(
     private cdr: ChangeDetectorRef,
+    private hostElement: ElementRef<HTMLElement>,
+    private ngZone: NgZone,
     @Optional() private runtimeInteractionHost: ChatRuntimeInteractionHostService | null = null,
   ) {}
 
@@ -240,24 +254,48 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
   }
 
   get effectiveParts() {
+    const liveParts = this.role === 'aily' && this.liveParts?.length ? this.liveParts : null;
+    if (liveParts) {
+      const doing = this.effectiveDoing;
+      const revisionKey = this.getLivePartsRevisionKey(liveParts);
+      if (liveParts === this._effectiveLivePartsSource
+        && doing === this._effectivePartsDoing
+        && revisionKey === this._effectivePartsRevisionKey) {
+        return this._effectivePartsCache;
+      }
+
+      this._effectiveLivePartsSource = liveParts;
+      this._effectivePartsSource = EMPTY_TURN_PARTS;
+      this._effectiveProgressMessagesSource = EMPTY_PROGRESS_MESSAGES;
+      this._effectivePartsDoing = doing;
+      this._effectivePartsRevisionKey = revisionKey;
+      this._effectivePartsCache = [
+        ...liveParts,
+        ...buildRenderableProgressParts(this.effectiveTurnContext?.response, doing, this.hasActiveConfirmationCarousel),
+      ];
+      return this._effectivePartsCache;
+    }
+
     const response = this.effectiveTurnContext?.response;
     const turnParts = response?.parts ?? EMPTY_TURN_PARTS;
     const progressMessages = response?.progressMessages ?? EMPTY_PROGRESS_MESSAGES;
     const doing = this.effectiveDoing;
     const revisionKey = this.getEffectivePartsRevisionKey(response, turnParts);
-    if (turnParts === this._effectivePartsSource
+    if (this._effectiveLivePartsSource === null
+      && turnParts === this._effectivePartsSource
       && progressMessages === this._effectiveProgressMessagesSource
       && doing === this._effectivePartsDoing
       && revisionKey === this._effectivePartsRevisionKey) {
       return this._effectivePartsCache;
     }
 
+    this._effectiveLivePartsSource = null;
     this._effectivePartsSource = turnParts;
     this._effectiveProgressMessagesSource = progressMessages;
     this._effectivePartsDoing = doing;
     this._effectivePartsRevisionKey = revisionKey;
     this._effectivePartsCache = [
-      ...turnParts.map(part => turnResponsePartToChatPart(part)),
+      ...turnParts.flatMap(part => turnResponsePartToChatParts(part)),
       ...buildRenderableProgressParts(response, doing, this.hasActiveConfirmationCarousel),
     ];
     return this._effectivePartsCache;
@@ -279,12 +317,28 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     return `${base}:${parts.length}:${terminalKey}`;
   }
 
+  private getLivePartsRevisionKey(parts: readonly ChatPart[]): string {
+    return parts
+      .map((part, index) => part.type === 'terminal'
+        ? buildTerminalPartRevisionKey(part as TurnResponsePart, index)
+        : `${index}:${part.type}:${readChatPartStableRevision(part)}`)
+      .join('|');
+  }
+
   private get hasActiveConfirmationCarousel(): boolean {
     return !!this.sessionId && !!this.runtimeInteractionHost?.getActiveConfirmation(this.sessionId);
   }
 
   get hasStructuredAilyContent(): boolean {
     return this.role === 'aily' && this.effectiveParts.length > 0;
+  }
+
+  get shouldRenderHeavyContent(): boolean {
+    return this.isViewportVisible || this.shouldForceRenderHeavyContent;
+  }
+
+  get virtualizedPlaceholderHeight(): number {
+    return Math.max(this.lastRenderedContentHeight || 0, this.role === 'user' ? 34 : 42);
   }
 
   get activityTurnResponse(): TurnResponseTurn | null {
@@ -299,6 +353,14 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
 
     return this.doing;
+  }
+
+  private get shouldForceRenderHeavyContent(): boolean {
+    return this.isEditing
+      || this.effectiveDoing
+      || this.isLastAily
+      || this.canRenderCheckpointAnchor
+      || this.hasActiveConfirmationCarousel;
   }
 
   get assistantModelBadgeLabel(): string | null {
@@ -928,7 +990,12 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
       this.refreshCompatTurnContext();
     }
 
-    if (changes['doing'] || changes['content'] || changes['parts'] || changes['turnResponse'] || changes['turnContext']) {
+    if (changes['doing'] || changes['content'] || changes['parts'] || changes['turnResponse'] || changes['turnContext'] || changes['liveParts']) {
+      if (!this.shouldRenderHeavyContent) {
+        this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: false });
+        return;
+      }
+
       // ★ Phase 2: aily 消息统一走 Part-based 渲染
       if (this.hasStructuredAilyContent) {
         this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: this.effectiveDoing });
@@ -946,12 +1013,93 @@ export class XDialogComponent implements OnChanges, AfterViewChecked, OnDestroy 
     }
   }
 
+  ngAfterViewInit(): void {
+    this.observeViewportVisibility();
+    this.observeContentHeight();
+  }
+
   ngAfterViewChecked(): void { }
 
   ngOnDestroy(): void {
+    this.visibilityObserver?.disconnect();
+    this.visibilityObserver = null;
+    this.contentResizeObserver?.disconnect();
+    this.contentResizeObserver = null;
     this.detachEditOutsideClickListener();
     if (this.isEditing) {
       this.editSessionClosed.emit();
+    }
+  }
+
+  private observeViewportVisibility(): void {
+    if (typeof IntersectionObserver === 'undefined') {
+      this.isViewportVisible = true;
+      return;
+    }
+
+    const host = this.hostElement.nativeElement;
+    const root = host.closest('.dialog-list') as HTMLElement | null;
+    this.ngZone.runOutsideAngular(() => {
+      this.visibilityObserver = new IntersectionObserver(entries => {
+        const entry = entries[0];
+        if (!entry) {
+          return;
+        }
+
+        const nextVisible = entry.isIntersecting || this.shouldForceRenderHeavyContent;
+        if (nextVisible === this.isViewportVisible) {
+          return;
+        }
+
+        this.ngZone.run(() => {
+          this.isViewportVisible = nextVisible;
+          if (nextVisible) {
+            this.refreshRenderableContent();
+          }
+          this.cdr.markForCheck();
+        });
+      }, {
+        root,
+        rootMargin: '900px 0px',
+        threshold: 0,
+      });
+      this.visibilityObserver.observe(host);
+    });
+  }
+
+  private observeContentHeight(): void {
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const element = this.contentRootRef?.nativeElement;
+    if (!element) {
+      return;
+    }
+
+    this.ngZone.runOutsideAngular(() => {
+      this.contentResizeObserver = new ResizeObserver(entries => {
+        const entry = entries[0];
+        const height = entry?.contentRect?.height ?? 0;
+        if (!this.shouldRenderHeavyContent || height <= 0) {
+          return;
+        }
+        this.lastRenderedContentHeight = Math.ceil(height);
+      });
+      this.contentResizeObserver.observe(element);
+    });
+  }
+
+  private refreshRenderableContent(): void {
+    this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: this.effectiveDoing });
+    if (this.hasStructuredAilyContent) {
+      return;
+    }
+
+    const processed = preprocessHistoricalDialogContent(this.renderableFallbackContent);
+    if (processed !== this.lastRaw) {
+      this.lastRaw = processed;
+      this.streamContent.set(processed);
     }
   }
 }
@@ -975,4 +1123,28 @@ function buildTerminalPartRevisionKey(part: TurnResponsePart, index: number): st
     part.output?.length ?? 0,
     part.stderr?.length ?? 0,
   ].join(':');
+}
+
+function readChatPartStableRevision(part: ChatPart): string {
+  switch (part.type) {
+    case 'markdown':
+    case 'thinking':
+      return String(part.content?.length ?? 0);
+    case 'tool_call':
+      return [part.partId ?? '', part.toolCallId ?? '', part.state ?? '', part.text ?? '', part.args ?? ''].join(':');
+    case 'state':
+      return [part.stateId ?? '', part.state ?? '', part.text ?? '', part.progress ?? ''].join(':');
+    case 'error':
+      return [part.message ?? '', part.severity ?? ''].join(':');
+    case 'question':
+      return [part.partId ?? '', part.questions?.length ?? 0, part.answers ? 'answered' : 'open'].join(':');
+    case 'confirmation':
+      return [part.partId ?? '', part.askId ?? '', part.resolved ? 'resolved' : 'pending'].join(':');
+    case 'terminal':
+      return buildTerminalPartRevisionKey(part as unknown as TurnResponsePart, 0);
+    case 'plan':
+      return [part.partId ?? '', part.status ?? '', part.text?.length ?? 0].join(':');
+    default:
+      return '';
+  }
 }

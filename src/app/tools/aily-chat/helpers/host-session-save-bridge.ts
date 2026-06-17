@@ -274,12 +274,8 @@ export class HostSessionSaveBridge {
     const resolvedInteractionActionSummary = resolveHostSessionInteractionActionSummary(
       record as unknown as Pick<import('../services/chat-history.service').HostSessionRecord, 'metadata' | 'turnResponses'>,
     );
-    record.metadata.requestRouting = resolvedRequestRouting.permissionLevel
-      ? {
-          ...record.metadata.requestRouting,
-          permissionLevel: resolvedRequestRouting.permissionLevel,
-        }
-      : record.metadata.requestRouting;
+    record.metadata.mode = resolvedRequestRouting.selectedModeId;
+    record.metadata.requestRouting = resolvedRequestRouting;
     record.metadata.interactionActionSummary = resolvedInteractionActionSummary;
 
     const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(sessionId, persistedTurnResponses as readonly TurnResponseTurn[]);
@@ -1094,15 +1090,60 @@ function sanitizeTransientPersistedResponseStatus(
     continuation?: Record<string, unknown>;
   };
   const mutableResponse = nextResponse as unknown as Record<string, unknown>;
-  if (mutableResponse['status'] === 'in_progress') {
+  const responseStatus = normalizeResponseStatus(mutableResponse['status']);
+  if (isTransientResponseStatus(responseStatus)) {
     delete mutableResponse['status'];
   }
-  if (nextResponse.continuation?.status === 'in_progress') {
+  if (nextResponse.continuation) {
     const continuation = { ...nextResponse.continuation };
-    delete continuation.status;
-    nextResponse.continuation = continuation;
+    const continuationStatus = normalizeResponseStatus(continuation['status']);
+    const isTerminalPlanTurn = isTerminalResponseStatus(responseStatus)
+      && nextResponse.parts.some(part => part.type === 'plan');
+    if (isTransientResponseStatus(continuationStatus)
+      || (isTerminalPlanTurn && isPlanReviewContinuation(continuation))) {
+      delete continuation['status'];
+    }
+    if (isTerminalPlanTurn && isPlanReviewContinuation(continuation)) {
+      delete continuation['pendingState'];
+    }
+    if (Object.keys(continuation).length > 0) {
+      nextResponse.continuation = continuation;
+    } else {
+      delete nextResponse.continuation;
+    }
   }
   return nextResponse;
+}
+
+function normalizeResponseStatus(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function isTransientResponseStatus(status: string): boolean {
+  return status === 'in_progress'
+    || status === 'running'
+    || status === 'streaming'
+    || status === 'pending';
+}
+
+function isTerminalResponseStatus(status: string): boolean {
+  return status === 'completed'
+    || status === 'cancelled'
+    || status === 'canceled'
+    || status === 'failed'
+    || status === 'error';
+}
+
+function isPlanReviewContinuation(continuation: Record<string, unknown>): boolean {
+  const status = normalizeResponseStatus(continuation['status']);
+  if (status === 'waiting_plan_review' || status === 'plan_review') {
+    return true;
+  }
+
+  const pendingState = continuation['pendingState'];
+  return !!pendingState
+    && typeof pendingState === 'object'
+    && normalizeResponseStatus((pendingState as Record<string, unknown>)['kind']) === 'plan_review';
 }
 
 function clonePersistableResponseParts(

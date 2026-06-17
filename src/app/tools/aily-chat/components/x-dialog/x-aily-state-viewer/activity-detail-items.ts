@@ -257,6 +257,12 @@ function buildToolCallOutputRowsWithFallback(input: {
     return [buildFallbackToolCallOutputRow(`${input.baseId}:output:toolSpecificData`, input.toolName, toolSpecificResult, input.state)];
   }
 
+  if (input.toolSpecificData?.['kind'] === 'editor_operation'
+    || input.metadata['progressKind'] === 'editor_operation'
+    || asString(input.metadata['operationKind'])?.startsWith('blockly.')) {
+    return [];
+  }
+
   const fallbackText = asMeaningfulToolCallFallbackText(input.text, input.toolName, input.state);
   if (fallbackText) {
     return [buildFallbackToolCallOutputRow(`${input.baseId}:output:text`, input.toolName, fallbackText, input.state)];
@@ -2561,9 +2567,28 @@ function buildToolCallNote(
     if (statusText) {
       pushNote(`状态: ${statusText}`);
     }
+    const operationKind = asString(progressDetails['operationKind']);
+    if (operationKind) {
+      pushNote(`操作: ${operationKind}`);
+    }
+    const queueSize = asNumber(progressDetails['queueSize']);
+    if (queueSize !== undefined) {
+      pushNote(`队列: ${queueSize}`);
+    }
+    const durationMs = asNumber(progressDetails['durationMs']);
+    if (durationMs !== undefined) {
+      pushNote(`耗时: ${formatDurationMs(durationMs)}`);
+    }
   }
 
   return notes.length > 0 ? notes.join('\n') : undefined;
+}
+
+function formatDurationMs(durationMs: number): string {
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 }
 
 function toBackgroundTaskActivityRow(activity: Record<string, unknown>, taskId: string): StateDetailRow {
@@ -3046,6 +3071,7 @@ function formatTaskGraphStatus(status?: string): string {
 
 function formatNarrativePhase(phase?: string): string {
   const map: Record<string, string> = {
+    queued: '排队',
     started: '开始',
     progress: '进度',
     completed: '完成',

@@ -94,6 +94,7 @@ type EditActionsContext = ChatViewWriteBridgeContext
     replaceSessionModelTurnResponses?(
       sessionId: string | null | undefined,
       turnResponses: readonly TurnResponseTurn[],
+      ownerPolicy?: { readonly allowForkedTurns?: boolean; readonly source?: string },
     ): readonly TurnResponseTurn[] | null | undefined;
     submitRegeneratedUserTurn?(
       sessionId: string,

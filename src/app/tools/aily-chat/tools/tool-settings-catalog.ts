@@ -17,6 +17,7 @@ const PROJECT_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
   { name: 'command_exec', description: '执行命令，长耗时任务返回可轮询的进程 ID。', agents: [MAIN_AGENT_TYPE] },
   { name: 'command_write_stdin', description: '向命令进程写入 stdin，空输入用于轮询。', agents: [MAIN_AGENT_TYPE] },
   { name: 'command_status', description: '读取命令进程状态。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'command_resize', description: '调整 PTY 命令进程尺寸。', agents: [MAIN_AGENT_TYPE] },
   { name: 'command_stop', description: '停止命令进程。', agents: [MAIN_AGENT_TYPE] },
   { name: 'command_read', description: '按范围读取命令长输出。', agents: [MAIN_AGENT_TYPE] },
   { name: 'command_tail', description: '读取命令长输出尾部。', agents: [MAIN_AGENT_TYPE] },
@@ -54,21 +55,9 @@ const FILE_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
 ];
 
 const BLOCKLY_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
-  { name: 'smart_block_tool', description: '智能创建 Blockly 块。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'connect_blocks_tool', description: '连接 Blockly 块。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'create_code_structure_tool', description: '创建代码结构。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'configure_block_tool', description: '配置 Blockly 块。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'delete_block_tool', description: '删除 Blockly 块。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'get_workspace_overview_tool', description: '获取 Blockly 工作区总览。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'queryBlockDefinitionTool', description: '查询块定义信息。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'analyze_library_blocks', description: '分析库中的块定义。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'verify_block_existence', description: '验证块是否存在。', agents: [MAIN_AGENT_TYPE] },
-];
-
-const ABS_TOOL_SETTINGS: ToolSettingsCatalogEntry[] = [
   { name: 'syncAbs', description: '同步 ABS 文件和图形化工作区。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'edit_abi_file', description: '编辑 ABI 文件。', agents: [MAIN_AGENT_TYPE] },
-  { name: 'reload_abi_json', description: '重新加载 Blockly ABI 数据。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'lint', description: '检查当前 Blockly 生成代码的语法问题。', agents: [MAIN_AGENT_TYPE] },
+  { name: 'analyzeLibrary', description: '按库 ID 分析可用块定义和 readme_ai.md 参考。', agents: [MAIN_AGENT_TYPE] },
 ];
 
 export const TOOL_SETTINGS_CATALOG: ToolSettingsCatalogEntry[] = [
@@ -76,6 +65,5 @@ export const TOOL_SETTINGS_CATALOG: ToolSettingsCatalogEntry[] = [
   ...PROJECT_TOOL_SETTINGS,
   ...FILE_TOOL_SETTINGS,
   ...BLOCKLY_TOOL_SETTINGS,
-  ...ABS_TOOL_SETTINGS,
   ...LEGACY_HOST_EXTERNAL_TOOLS,
 ];

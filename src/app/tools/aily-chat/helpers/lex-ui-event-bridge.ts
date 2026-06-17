@@ -1,5 +1,4 @@
 import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
-import type { ChatPartStoreReadableHandle } from '../core/chat-part-store';
 import { buildConfirmationPartId, buildQuestionPartId, mkConfirmation, mkError, mkQuestion } from '../core/chat-parts';
 import type { ConfirmationPart, QuestionItem, QuestionPart } from '../core/chat-parts';
 import type { ToolApprovalRequest } from './tool-approval-ui';
@@ -13,7 +12,6 @@ import {
   type LexAgentHostSyncAccess,
   type LexAgentPartProcessor,
 } from './lex-agent-event-bridge';
-import { LexSubagentPartBridge } from './lex-subagent-part-bridge';
 import { ChatViewWriteBridge } from './chat-view-write-bridge';
 
 type LexUiEventViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
@@ -59,11 +57,6 @@ type LexUiEventMainEventBridge = Pick<
   'processEvent'
 >;
 
-type LexUiEventSubagentEventBridge = Pick<
-  LexSubagentPartBridge,
-  'processEvent'
->;
-
 type LexUiInteractionRenderEvent = Extract<RenderEvent, { type: 'approval_request' | 'approval_resolve' | 'question_request' }>;
 
 type LexUiEventRenderAccess = {
@@ -79,7 +72,6 @@ type LexUiEventRenderAccess = {
  */
 export class LexUiEventBridge {
   private readonly mainEventBridge: LexUiEventMainEventBridge;
-  private readonly subagentEventBridge: LexUiEventSubagentEventBridge;
   private readonly viewWriteBridge: LexUiEventWriteAccess;
   private readonly messageLifecycleBridge: LexUiEventOwnerLifecycleAccess;
   private readonly renderEventBridge?: LexUiEventRenderAccess;
@@ -131,7 +123,6 @@ export class LexUiEventBridge {
       markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
     };
     const mainLifecycleBridge: LexUiEventMainLifecycleAccess = messageLifecycleBridge;
-    const getCurrentMessageHandle = (): ChatPartStoreReadableHandle | null => messageLifecycleBridge.currentMessageHandle;
     this.messageLifecycleBridge = messageLifecycleBridge;
     this.renderEventBridge = renderEventBridge;
     this.mainEventBridge = new LexAgentEventBridge(
@@ -140,7 +131,6 @@ export class LexUiEventBridge {
       hostSyncBridge,
       mainLifecycleBridge,
     );
-    this.subagentEventBridge = new LexSubagentPartBridge(ctx.partStore, getCurrentMessageHandle);
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
@@ -158,7 +148,9 @@ export class LexUiEventBridge {
 
   processEvent(event: any, scope: 'main' | 'subagent' = 'main'): void {
     if (scope === 'subagent') {
-      this.subagentEventBridge.processEvent(event);
+      // New subagent live rendering must arrive as scoped RenderEvent first-class parts.
+      // Raw child events are intentionally ignored here to avoid reviving the legacy
+      // parent tool_call metadata childItems live path.
       return;
     }
 

@@ -2,9 +2,13 @@ import type { ToolResultContent } from 'aily-lex/browser';
 import type { IExternalHostAPI } from 'aily-lex/host/blockly';
 
 export interface BlocklyToolInvocationContext {
+  sessionId?: string;
   toolCallId?: string;
   trace?: { turnId?: string };
+  signal?: AbortSignal;
+  cwd?: string;
   host?: { getExtension<T>(id: string): T | undefined };
+  emitEvent?: (event: unknown) => void;
 }
 
 export type InvokeHandler = (

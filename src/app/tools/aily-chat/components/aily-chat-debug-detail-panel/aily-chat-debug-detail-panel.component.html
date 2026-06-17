@@ -16,6 +16,16 @@
   </div>
 
   <div class="chat-debug-detail-panel-body sscroll">
+    @if (eventBoundaryTags.length > 0) {
+    <div class="chat-debug-detail-panel-section">
+      <div class="chat-debug-detail-panel-section-title">事件边界</div>
+      <div class="chat-debug-detail-panel-tags">
+        @for (tag of eventBoundaryTags; track tag.label) {
+        <span class="chat-debug-detail-panel-tag">{{ tag.label }} {{ tag.value }}</span>
+        }
+      </div>
+    </div>
+    }
     @if (messageContent; as content) {
     <div class="chat-debug-detail-panel-section">
       <div class="chat-debug-detail-panel-section-title">{{ content.type === 'user' ? '用户消息' : '代理响应' }}</div>

@@ -5,6 +5,7 @@ import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';
 import { normalizeInputNameForAbs } from './abiAbsConverter';
 import { getProjectInfoTool } from './getProjectInfoTool';
+import { yieldToBrowserFrame } from './browserTaskScheduler';
 declare const Blockly: any;
 
 /**
@@ -947,6 +948,33 @@ interface JsonFixResult {
   changes: string[];
 }
 
+function shouldLogBlocklyImportDebug(): boolean {
+  try {
+    const globalScope = typeof window !== 'undefined'
+      ? (window as any)
+      : (globalThis as Record<string, unknown>);
+    return globalScope.__AILY_DEBUG_BLOCKLY_IMPORT__ === true
+      || globalScope.localStorage?.getItem?.('aily.debug.blocklyImport') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function describeBlocklyImportError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function debugBlocklyImportIssue(message: string, error?: unknown): void {
+  if (!shouldLogBlocklyImportDebug()) {
+    return;
+  }
+  if (error === undefined) {
+    console.warn(message);
+    return;
+  }
+  console.warn(`${message}: ${describeBlocklyImportError(error)}`);
+}
+
 /**
  * 简化的块创建函数
  */
@@ -957,43 +985,34 @@ async function createBlockSafely(
   animate: boolean
 ): Promise<any> {
   try {
-    return new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        try {
-          if (!workspace || workspace.disposed) {
-            reject(new Error('工作区已被销毁'));
-            return;
-          }
+    await yieldToBrowserFrame();
 
-          // 直接创建块，使用Blockly默认事件处理
-          const block = workspace.newBlock(type);
+    if (!workspace || workspace.disposed) {
+      throw new Error('工作区已被销毁');
+    }
 
-          if (!block) {
-            reject(new Error(`创建块 "${type}" 失败`));
-            return;
-          }
+    // 直接创建块，使用 Blockly 默认事件处理
+    const block = workspace.newBlock(type);
 
-          // 设置位置
-          if (position && typeof position.x === 'number' && typeof position.y === 'number') {
-            block.moveBy(position.x, position.y);
-          }
+    if (!block) {
+      throw new Error(`创建块 "${type}" 失败`);
+    }
 
-          // 初始化块
-          block.initSvg();
-          
-          if (animate) {
-            block.render();
-          }
+    // 设置位置
+    if (position && typeof position.x === 'number' && typeof position.y === 'number') {
+      block.moveBy(position.x, position.y);
+    }
 
-          resolve(block);
-        } catch (error) {
-          console.warn('createBlockSafely 内部错误:', error);
-          reject(error);
-        }
-      }, 50);
-    });
+    // 初始化块
+    block.initSvg();
+
+    if (animate) {
+      block.render();
+    }
+
+    return block;
   } catch (error) {
-    console.warn('createBlockSafely 错误:', error);
+    debugBlocklyImportIssue('createBlockSafely failed', error);
     throw error;
   }
 }
@@ -5335,7 +5354,7 @@ async function configureBlockInputs(
                   // console.log(`🔗 成功连接子块到输入 "${inputName}"`);
                   updatedInputs.push(inputName);
                 } catch (connectError) {
-                  console.warn(`⚠️ 子块连接失败，清理孤立块: ${childBlock.type}`, connectError);
+                  debugBlocklyImportIssue(`Child block connection failed, cleaning orphan block: ${childBlock.type}`, connectError);
                   try { childBlock.dispose(true); } catch (_) { /* ignore */ }
                   failedBlocks.push({
                     blockType: childBlock.type,
@@ -5343,7 +5362,7 @@ async function configureBlockInputs(
                   });
                 }
               } else {
-                console.warn(`⚠️ 子块 ${childBlock.type} 没有可用的连接点，清理孤立块`);
+                debugBlocklyImportIssue(`Child block has no available connection, cleaning orphan block: ${childBlock.type}`);
                 try { childBlock.dispose(true); } catch (_) { /* ignore */ }
                 failedBlocks.push({
                   blockType: childBlock.type,
@@ -5353,7 +5372,7 @@ async function configureBlockInputs(
               } // 关闭 currentInput 存在性检查
             } else if (!childBlock) {
               // 子块创建失败的情况已经在 createBlockFromConfig 中收集
-              console.warn(`❌ 子块创建失败: ${inputConfig.block?.type || 'unknown'}`);
+              debugBlocklyImportIssue(`Child block creation failed: ${inputConfig.block?.type || 'unknown'}`);
             }
         } else if (inputConfig.shadow) {
           // console.log('👤 创建影子块...');
@@ -5372,7 +5391,7 @@ async function configureBlockInputs(
             // 🆕 重新获取 input 引用（同 block 子块的理由）
             const currentInput = block.getInput(inputName);
             if (!currentInput || !currentInput.connection) {
-              console.warn(`⚠️ 输入 "${inputName}" 在影子块创建后不存在或无连接点，清理孤立块`);
+              debugBlocklyImportIssue(`Input missing after shadow block creation, cleaning orphan block: ${inputName}`);
               try { shadowBlock.dispose(true); } catch (_) { /* ignore */ }
               failedBlocks.push({
                 blockType: shadowBlock.type,
@@ -5404,7 +5423,7 @@ async function configureBlockInputs(
                 // console.log(`🔗 成功设置影子块到输入 "${inputName}"`);
                 updatedInputs.push(inputName);
               } catch (connectError) {
-                console.warn(`⚠️ 影子块连接失败，清理孤立块: ${shadowBlock.type}`, connectError);
+                debugBlocklyImportIssue(`Shadow block connection failed, cleaning orphan block: ${shadowBlock.type}`, connectError);
                 try { shadowBlock.dispose(true); } catch (_) { /* ignore */ }
                 failedBlocks.push({
                   blockType: shadowBlock.type,
@@ -5412,7 +5431,7 @@ async function configureBlockInputs(
                 });
               }
             } else {
-              console.warn(`⚠️ 影子块 ${shadowBlock.type} 没有可用的连接点，清理孤立块`);
+              debugBlocklyImportIssue(`Shadow block has no available connection, cleaning orphan block: ${shadowBlock.type}`);
               try { shadowBlock.dispose(true); } catch (_) { /* ignore */ }
               failedBlocks.push({
                 blockType: shadowBlock.type,
@@ -5421,7 +5440,7 @@ async function configureBlockInputs(
             }
             } // 关闭 currentInput 存在性检查
           } else if (!shadowBlock) {
-            console.warn(`❌ 影子块创建失败: ${inputConfig.shadow?.type || 'unknown'}`);
+            debugBlocklyImportIssue(`Shadow block creation failed: ${inputConfig.shadow?.type || 'unknown'}`);
           }
         } else {
           // console.log(`ℹ️ 输入 "${inputName}" 没有块或影子配置`);
@@ -5468,10 +5487,10 @@ async function configureBlockInputs(
                 updatedInputs.push(inputName);
               }
             } catch (fieldError) {
-              console.warn(`⚠️ 应用字段值失败: ${fieldError}`);
+              debugBlocklyImportIssue('Failed to apply extracted field value', fieldError);
             }
           } else {
-            console.warn(`⚠️ 无法从 shadow/block 配置中提取 ${inputName} 的值`);
+            debugBlocklyImportIssue(`Unable to extract field value from shadow/block config: ${inputName}`);
           }
         } else {
           // 🆕 输入不存在，记录到失败列表
@@ -5484,7 +5503,7 @@ async function configureBlockInputs(
               }
             }
           }
-          console.warn(`❌ 输入 "${inputName}" 在块 ${block.type} 中不存在`);
+          debugBlocklyImportIssue(`Input "${inputName}" does not exist on block ${block.type}`);
           
           // 收集错误信息，包含可用输入提示
           failedBlocks.push({
@@ -5495,7 +5514,7 @@ async function configureBlockInputs(
       }
       } catch (inputError) {
         // 单个输入处理失败，记录错误但继续处理其他输入
-        console.warn(`⚠️ 处理输入 "${inputName}" 时出错，继续处理其他输入:`, inputError);
+        debugBlocklyImportIssue(`Input processing failed, continuing: ${inputName}`, inputError);
         // 🆕 收集输入处理失败
         failedBlocks.push({
           blockType: `${block.type}.${inputName}`,
@@ -5506,10 +5525,10 @@ async function configureBlockInputs(
     
     // console.log(`✅ configureBlockInputs 完成，更新了 ${updatedInputs.length} 个输入: ${updatedInputs.join(', ')}`);
     if (failedBlocks.length > 0) {
-      console.warn(`⚠️ 有 ${failedBlocks.length} 个嵌套块创建失败`);
+      debugBlocklyImportIssue(`${failedBlocks.length} nested blocks failed to create`);
     }
   } catch (error) {
-    console.warn('❌ 配置块输入时出错:', error);
+    debugBlocklyImportIssue('Block input configuration failed', error);
     // 🆕 收集整体错误
     failedBlocks.push({
       blockType: block.type,
@@ -5575,7 +5594,7 @@ export async function createBlockFromConfig(
     try {
       block = await createBlockSafely(workspace, config.type, position, false);
     } catch (createError) {
-      console.warn(`❌ createBlockSafely 抛出异常: ${config.type}`, createError);
+      debugBlocklyImportIssue(`createBlockSafely threw: ${config.type}`, createError);
       const suggestion = generateBlockFailureSuggestion(config.type);
       failedBlocks.push({
         blockType: config.type,
@@ -5586,7 +5605,7 @@ export async function createBlockFromConfig(
     }
     
     if (!block) {
-      console.warn(`❌ 块创建失败: ${config.type}`);
+      debugBlocklyImportIssue(`Block creation returned null: ${config.type}`);
       // 🆕 收集失败信息并生成建议
       const suggestion = generateBlockFailureSuggestion(config.type);
       failedBlocks.push({
@@ -5688,7 +5707,7 @@ export async function createBlockFromConfig(
           // console.log(`✅ next连接成功: ${block.type} -> ${nextBlock.type}`);
           totalBlocks += nextResult.totalBlocks;
         } catch (connectionError) {
-          console.warn(`⚠️ next连接失败，清理孤立块: ${connectionError}`);
+          debugBlocklyImportIssue('Next connection failed, cleaning orphan block', connectionError);
           // 连接失败，销毁孤立的 next 块避免残留
           try { nextBlock.dispose(true); } catch (_) { /* ignore */ }
           failedBlocks.push({
@@ -5700,7 +5719,7 @@ export async function createBlockFromConfig(
         const reason = !nextBlock ? 'next块创建失败' : 
                        !block.nextConnection ? `${block.type} 无 nextConnection` : 
                        `${nextBlock.type} 无 previousConnection`;
-        console.warn(`⚠️ next连接失败: ${reason}`);
+        debugBlocklyImportIssue(`Next connection failed: ${reason}`);
         if (nextBlock) {
           // 无法连接，销毁孤立块
           try { nextBlock.dispose(true); } catch (_) { /* ignore */ }
@@ -5715,7 +5734,7 @@ export async function createBlockFromConfig(
     // console.log(`🎉 createBlockFromConfig 完成: ${config.type}`);
     return { block, totalBlocks, failedBlocks };
   } catch (error) {
-    console.warn('❌ 从配置创建块时出错:', error);
+    debugBlocklyImportIssue('Create block from config failed', error);
     // 🆕 收集整体创建失败
     const blockType = typeof config === 'string' ? 'text' : config.type;
     failedBlocks.push({

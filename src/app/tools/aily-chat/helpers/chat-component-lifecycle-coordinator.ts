@@ -5,7 +5,6 @@ export class ChatComponentLifecycleCoordinator {
       initializeHost: () => void;
       loadMermaid: () => Promise<{ default?: any } | any>;
       setMermaidInstance: (instance: any) => void;
-      exposeEditBlockTools: () => void;
       initializeEngine: () => void;
       detachEngineView: () => void;
     },
@@ -20,7 +19,6 @@ export class ChatComponentLifecycleCoordinator {
       this.deps.setMermaidInstance(mermaidModule?.default ?? mermaidModule);
     });
 
-    this.deps.exposeEditBlockTools();
     this.deps.initializeEngine();
   }
 

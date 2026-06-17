@@ -74,7 +74,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
         callback(data);
       });
     },
+    onPidData: (pid, callback) => {
+      const channel = `terminal-inc-data-${pid}`;
+      const listener = (event, payload) => {
+        callback(payload);
+      };
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
+    onPidExit: (pid, callback) => {
+      const channel = `terminal-exit-${pid}`;
+      const listener = (event, payload) => {
+        callback(payload);
+      };
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
     sendInput: (data) => ipcRenderer.send("terminal-to-pty", data),
+    spawnCommand: (data) => ipcRenderer.invoke("terminal-spawn-command", data),
     sendInputAsync: (data) => ipcRenderer.invoke("terminal-to-pty-async", data),
     close: (data) => ipcRenderer.send("terminal-close", data),
     resize: (data) => ipcRenderer.send("terminal-resize", data),

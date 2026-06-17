@@ -36,10 +36,12 @@
 }
 <div class="acc-chip ccenter" (click)="modeClick.emit($event)">
   <i [class]="modeIconClass"></i>
-  @if (currentCustomAgentTarget && currentMode === 'agent') {
-    <span>{{ currentCustomAgentTarget }}</span>
+  @if (displayCustomAgentTarget) {
+    <span>{{ displayCustomAgentTarget }}</span>
   } @else if (modeLabelKey) {
     <span>{{ modeLabelKey | translate }}</span>
+  } @else if (modePlainLabel) {
+    <span>{{ modePlainLabel }}</span>
   }
 </div>
 @if (showModelChip) {

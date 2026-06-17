@@ -12,16 +12,24 @@
 
 import { Subject } from 'rxjs';
 import { collectMarkdownPostProcessPatches } from './chat-part-markdown-postprocessor';
+import { appendMarkdownContent, getMarkdownContentLength, getMarkdownContentWindow, storeMarkdownContent } from './markdown-content-store';
+import { appendThinkContent, getThinkContentLength, getThinkContentWindow, storeThinkContent } from './think-content-store';
 import {
   ChatPart, MarkdownPart, ThinkingPart, ToolCallPart, StatePart, TerminalPart,
-  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot,
+  SubagentToolCallSnapshot, isSubagentToolCallMetadata, mkMarkdown, mkThinking, mkToolCall, mkError, mkState, mkSubagentTimelineEntry, subagentSnapshotToToolCall, toolCallPartToSubagentSnapshot, mkPlan, isLikelyPlanMarkdown,
+  type ChatPartScope, isSameChatPartScope, normalizeChatPartScope, withChatPartScopeMetadata,
 } from './chat-parts';
 import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 type ChatPartStoreKey = object | symbol | number;
 const TERMINAL_LIVE_STREAM_MAX_CHARS = 32 * 1024;
 const TERMINAL_LIVE_OMITTED_MARKER = '[earlier terminal output omitted]\n';
+const SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS = 12 * 1024;
+const SUBAGENT_CHILD_LIVE_OMITTED_MARKER = '[earlier subagent output omitted]\n';
+let subagentChildContentRefCounter = 0;
+type RunningPartFinalizeStatus = 'completed' | 'cancelled' | 'error';
 
 // ==================== 变更事件 ====================
 
@@ -131,6 +139,66 @@ function normalizeTerminalLivePart(terminal: TerminalPart): TerminalPart {
     output: appendTerminalLiveStream(undefined, terminal.output),
     stderr: appendTerminalLiveStream(undefined, terminal.stderr),
   };
+}
+
+function getSubagentChildContentKind(child: Pick<SubagentChildItem, 'kind' | 'contentKind'>): 'markdown' | 'thinking' {
+  if (child.contentKind === 'markdown' || child.contentKind === 'thinking') {
+    return child.contentKind;
+  }
+  return child.kind === 'thinking' ? 'thinking' : 'markdown';
+}
+
+function createSubagentChildContentRef(kind: SubagentChildItem['kind']): string {
+  const randomId = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${(++subagentChildContentRefCounter).toString(36)}`;
+  return `subagent-child:${kind}:${randomId}`;
+}
+
+function storeSubagentChildContent(kind: 'markdown' | 'thinking', key: string, content: string): void {
+  if (kind === 'thinking') {
+    storeThinkContent(key, content);
+    return;
+  }
+  storeMarkdownContent(key, content);
+}
+
+function appendSubagentChildContent(kind: 'markdown' | 'thinking', key: string, delta: string): void {
+  if (kind === 'thinking') {
+    appendThinkContent(key, delta);
+    return;
+  }
+  appendMarkdownContent(key, delta);
+}
+
+function getSubagentChildContentLength(kind: 'markdown' | 'thinking', key: string): number {
+  return kind === 'thinking' ? getThinkContentLength(key) : getMarkdownContentLength(key);
+}
+
+function getSubagentChildContentWindow(kind: 'markdown' | 'thinking', key: string): string {
+  return kind === 'thinking'
+    ? getThinkContentWindow(key, SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS, SUBAGENT_CHILD_LIVE_OMITTED_MARKER)
+    : getMarkdownContentWindow(key, SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS, SUBAGENT_CHILD_LIVE_OMITTED_MARKER);
+}
+
+function ensureSubagentChildContentRef(child: SubagentChildItem): SubagentChildItem {
+  if (child.kind !== 'thinking' && child.kind !== 'text') {
+    return child;
+  }
+
+  const contentKind = getSubagentChildContentKind(child);
+  let contentRef = asString(child.contentRef);
+  if (!contentRef) {
+    contentRef = createSubagentChildContentRef(child.kind);
+    storeSubagentChildContent(contentKind, contentRef, child.content || '');
+  }
+
+  const contentLength = getSubagentChildContentLength(contentKind, contentRef);
+  child.contentRef = contentRef;
+  child.contentKind = contentKind;
+  child.contentLength = contentLength;
+  child.content = getSubagentChildContentWindow(contentKind, contentRef);
+  return child;
 }
 
 function getTerminalSessionKey(terminal: Pick<TerminalPart, 'processId' | 'outputSessionId' | 'terminalId'>): string | undefined {
@@ -259,7 +327,41 @@ function buildSubagentChildTimelineEntry(child: SubagentChildItem, index: number
     phase: 'progress',
     summary: child.kind === 'thinking' ? '子代理思考' : child.kind === 'question' ? '子代理提问' : '子代理输出',
     resultText: child.content || undefined,
+    progressDetails: child.contentRef
+      ? {
+        contentRef: child.contentRef,
+        contentKind: child.contentKind,
+        contentLength: child.contentLength,
+      }
+      : undefined,
   });
+}
+
+function finalizeSubagentChildItems(
+  childItems: readonly SubagentChildItem[] | undefined,
+  status: RunningPartFinalizeStatus | undefined,
+): SubagentChildItem[] | undefined {
+  if (!Array.isArray(childItems) || childItems.length === 0) {
+    return childItems ? [...childItems] : undefined;
+  }
+
+  const finalToolState: NonNullable<SubagentChildItem['state']> = status === 'error' || status === 'cancelled'
+    ? 'error'
+    : 'done';
+  let changed = false;
+  const nextItems = childItems.map((child) => {
+    if (child.kind !== 'tool' || child.state === 'done' || child.state === 'error') {
+      return child;
+    }
+
+    changed = true;
+    return {
+      ...child,
+      state: finalToolState,
+    };
+  });
+
+  return changed ? nextItems : [...childItems];
 }
 
 function mergeSubagentToolChildItem(existing: SubagentChildItem, next: SubagentChildItem): SubagentChildItem {
@@ -277,6 +379,74 @@ function mergeSubagentToolChildItem(existing: SubagentChildItem, next: SubagentC
     state: next.state,
     duration: next.duration ?? existing.duration,
   };
+}
+
+function appendSubagentTextChildInPlace(
+  part: ToolCallPart,
+  child: SubagentChildItem,
+): boolean {
+  if ((child.kind !== 'thinking' && child.kind !== 'text' && child.kind !== 'question') || !child.content) {
+    return false;
+  }
+
+  const metadata = asRecord(part.metadata);
+  const toolSpecificData = asRecord(metadata?.['toolSpecificData']);
+  if (!metadata || !toolSpecificData) {
+    return false;
+  }
+
+  let childItems = Array.isArray(toolSpecificData['childItems'])
+    ? toolSpecificData['childItems'] as SubagentChildItem[]
+    : undefined;
+  if (!childItems) {
+    childItems = [];
+    toolSpecificData['childItems'] = childItems;
+  }
+
+  const previousChild = childItems[childItems.length - 1];
+  const shouldAppendToPrevious = previousChild?.kind === child.kind;
+  if (shouldAppendToPrevious) {
+    if (previousChild.kind === 'thinking' || previousChild.kind === 'text') {
+      ensureSubagentChildContentRef(previousChild);
+      const contentKind = getSubagentChildContentKind(previousChild);
+      appendSubagentChildContent(contentKind, previousChild.contentRef!, child.content);
+      previousChild.contentLength = getSubagentChildContentLength(contentKind, previousChild.contentRef!);
+      previousChild.content = getSubagentChildContentWindow(contentKind, previousChild.contentRef!);
+    } else {
+      previousChild.content = `${previousChild.content || ''}${child.content}`;
+    }
+  } else {
+    const nextChild = { ...child };
+    ensureSubagentChildContentRef(nextChild);
+    childItems.push(nextChild);
+  }
+
+  const timeline = Array.isArray(metadata['timeline'])
+    ? metadata['timeline'] as Record<string, unknown>[]
+    : undefined;
+  if (timeline) {
+    const childIndex = childItems.length - 1;
+    const recordId = `child:${childIndex}`;
+    if (shouldAppendToPrevious) {
+      const timelineEntry = timeline.find(entry => entry['recordId'] === recordId);
+      if (timelineEntry) {
+        timelineEntry['resultText'] = childItems[childIndex].content || undefined;
+        if (childItems[childIndex].contentRef) {
+          timelineEntry['progressDetails'] = {
+            contentRef: childItems[childIndex].contentRef,
+            contentKind: childItems[childIndex].contentKind,
+            contentLength: childItems[childIndex].contentLength,
+          };
+        }
+      } else {
+        timeline.push(buildSubagentChildTimelineEntry(childItems[childIndex], childIndex));
+      }
+    } else {
+      timeline.push(buildSubagentChildTimelineEntry(childItems[childIndex], childIndex));
+    }
+  }
+
+  return true;
 }
 
 function isUsableChatPartStoreHandle(
@@ -600,15 +770,16 @@ export class ChatPartStore {
    * 如果最后一个 Part 不是 MarkdownPart，则创建新的。
    * 返回受影响的 partIndex。
    */
-  appendToMarkdown(storeKey: ChatPartStoreKey, text: string): number {
+  appendToMarkdown(storeKey: ChatPartStoreKey, text: string, scope?: ChatPartScope): number {
     let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
       this._store.set(storeKey, parts);
     }
 
+    const normalizedScope = normalizeChatPartScope(scope);
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
-    if (last && last.type === 'markdown') {
+    if (last && last.type === 'markdown' && isSameChatPartScope(last, normalizedScope)) {
       const idx = parts.length - 1;
       (last as MarkdownPart).content += text;
       this.emitChange(storeKey, idx, 'append');
@@ -617,25 +788,26 @@ export class ChatPartStore {
 
     // 创建新 MarkdownPart
     const idx = parts.length;
-    parts.push(mkMarkdown(text));
+    parts.push(mkMarkdown(text, normalizedScope));
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }
 
-  appendToMarkdownHandle(handle: ChatPartStoreReadableHandle | null, text: string): number {
+  appendToMarkdownHandle(handle: ChatPartStoreReadableHandle | null, text: string, scope?: ChatPartScope): number {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
       return -1;
     }
 
-    return this.appendToMarkdown(storeKey, text);
+    return this.appendToMarkdown(storeKey, text, scope);
   }
 
-  /**
-   * 追加文本到最后一个 ThinkingPart。
-   * 如果最后一个 Part 不是 ThinkingPart，则创建新的。
-   */
-  appendToThinking(storeKey: ChatPartStoreKey, text: string): number {
+  appendToPlanHandle(handle: ChatPartStoreReadableHandle | null, text: string): number {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return -1;
+    }
+
     let parts = this._store.get(storeKey);
     if (!parts) {
       parts = [];
@@ -643,7 +815,84 @@ export class ChatPartStore {
     }
 
     const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
-    if (last && last.type === 'thinking') {
+    if (last && last.type === 'plan' && last.status === 'streaming') {
+      const idx = parts.length - 1;
+      last.text += text;
+      this.emitChange(storeKey, idx, 'append');
+      return idx;
+    }
+
+    const idx = parts.length;
+    parts.push(mkPlan(text, 'streaming', 'plan:proposed', { source: 'proposed_plan' }));
+    this.emitChange(storeKey, idx, 'add');
+    return idx;
+  }
+
+  completePlanHandle(handle: ChatPartStoreReadableHandle | null): void {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts) {
+      return;
+    }
+
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex];
+      if (part.type === 'plan' && part.status === 'streaming') {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          status: 'completed',
+          text: part.text.trim(),
+        });
+        return;
+      }
+    }
+  }
+
+  materializeFinalMarkdownAsPlanForHandle(handle: ChatPartStoreReadableHandle | null): boolean {
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    const parts = this._store.get(storeKey);
+    if (!parts || parts.some(part => part.type === 'plan')) {
+      return false;
+    }
+
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex];
+      if (part.type !== 'markdown') {
+        continue;
+      }
+      const text = part.content.trim();
+      if (!isLikelyPlanMarkdown(text)) {
+        continue;
+      }
+      this.updatePart(storeKey, partIndex, mkPlan(text, 'completed', 'plan:fallback', { source: 'summary' }));
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * 追加文本到最后一个 ThinkingPart。
+   * 如果最后一个 Part 不是 ThinkingPart，则创建新的。
+   */
+  appendToThinking(storeKey: ChatPartStoreKey, text: string, scope?: ChatPartScope): number {
+    let parts = this._store.get(storeKey);
+    if (!parts) {
+      parts = [];
+      this._store.set(storeKey, parts);
+    }
+
+    const normalizedScope = normalizeChatPartScope(scope);
+    const last = parts.length > 0 ? parts[parts.length - 1] : undefined;
+    if (last && last.type === 'thinking' && !last.isComplete && isSameChatPartScope(last, normalizedScope)) {
       const idx = parts.length - 1;
       (last as ThinkingPart).content += text;
       this.emitChange(storeKey, idx, 'append');
@@ -652,42 +901,44 @@ export class ChatPartStore {
 
     // 创建新 ThinkingPart（streaming，未完成）
     const idx = parts.length;
-    parts.push(mkThinking(text, false));
+    parts.push(mkThinking(text, false, normalizedScope));
     this.emitChange(storeKey, idx, 'add');
     return idx;
   }
 
-  appendToThinkingHandle(handle: ChatPartStoreReadableHandle | null, text: string): number {
+  appendToThinkingHandle(handle: ChatPartStoreReadableHandle | null, text: string, scope?: ChatPartScope): number {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
       return -1;
     }
 
-    return this.appendToThinking(storeKey, text);
+    return this.appendToThinking(storeKey, text, scope);
   }
 
   /**
    * 完成最后一个 ThinkingPart（设 isComplete = true）
    */
-  completeThinking(storeKey: ChatPartStoreKey): void {
+  completeThinking(storeKey: ChatPartStoreKey, scope?: ChatPartScope): void {
     const parts = this._store.get(storeKey);
     if (!parts) return;
+    const normalizedScope = normalizeChatPartScope(scope);
     for (let i = parts.length - 1; i >= 0; i--) {
-      if (parts[i].type === 'thinking') {
-        (parts[i] as ThinkingPart).isComplete = true;
+      const part = parts[i];
+      if (part.type === 'thinking' && !part.isComplete && isSameChatPartScope(part, normalizedScope)) {
+        part.isComplete = true;
         this.emitChange(storeKey, i, 'update');
         break;
       }
     }
   }
 
-  completeThinkingHandle(handle: ChatPartStoreReadableHandle | null): void {
+  completeThinkingHandle(handle: ChatPartStoreReadableHandle | null, scope?: ChatPartScope): void {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
       return;
     }
 
-    this.completeThinking(storeKey);
+    this.completeThinking(storeKey, scope);
   }
 
   /**
@@ -888,6 +1139,7 @@ export class ChatPartStore {
 
   finalizeRunningPartsForHandle(
     handle: ChatPartStoreReadableHandle | null,
+    options: { readonly status?: RunningPartFinalizeStatus } = {},
   ): void {
     const storeKey = this.resolveStoreKey(handle);
     if (storeKey === null) {
@@ -905,7 +1157,7 @@ export class ChatPartStore {
       if (part.type === 'state' && part.state === 'doing') {
         this.updatePart(storeKey, partIndex, {
           ...part,
-          state: 'done',
+          state: options.status === 'error' ? 'error' : options.status === 'cancelled' ? 'warn' : 'done',
         });
         continue;
       }
@@ -914,16 +1166,36 @@ export class ChatPartStore {
         const compatSubagent = isSubagentToolCallMetadata(part.metadata)
           ? toolCallPartToSubagentSnapshot(part)
           : null;
+        const finalToolState: ToolCallPart['state'] = options.status === 'error'
+          ? 'error'
+          : options.status === 'cancelled'
+            ? 'warn'
+            : 'done';
         this.updatePart(
           storeKey,
           partIndex,
           compatSubagent
-            ? this.rebuildSubagentToolCallPart(part, { ...compatSubagent, state: 'done' }, { appendTerminalEntry: true })
+            ? {
+              ...this.rebuildSubagentToolCallPart(part, {
+                ...compatSubagent,
+                state: options.status === 'error' ? 'error' : 'done',
+                childItems: finalizeSubagentChildItems(compatSubagent.childItems, options.status),
+              }, { appendTerminalEntry: true }),
+              state: finalToolState,
+            }
             : {
               ...part,
-              state: 'done',
+              state: finalToolState,
             },
         );
+        continue;
+      }
+
+      if (part.type === 'thinking' && !part.isComplete) {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          isComplete: true,
+        });
         continue;
       }
 
@@ -931,6 +1203,15 @@ export class ChatPartStore {
         this.updatePart(storeKey, partIndex, {
           ...part,
           isRunning: false,
+        });
+        continue;
+      }
+
+      if (part.type === 'plan' && part.status === 'streaming') {
+        this.updatePart(storeKey, partIndex, {
+          ...part,
+          status: options.status === 'error' ? 'failed' : 'completed',
+          text: part.text.trim(),
         });
         continue;
       }
@@ -1034,59 +1315,74 @@ export class ChatPartStore {
     toolCallId: string,
     child: SubagentChildItem,
   ): boolean {
-    const parts = this._store.get(storeKey);
-    if (!parts) return false;
+    const startedAt = performance.now();
+    let outcome = 'miss';
+    let beforeCount = 0;
+    let afterCount = 0;
 
-    const partIndex = this.findSubagentPartIndex(storeKey, toolCallId);
-    if (partIndex < 0) {
-      return false;
-    }
+    try {
+      const parts = this._store.get(storeKey);
+      if (!parts) return false;
 
-    const storePart = parts[partIndex];
-    const compat = storePart.type === 'tool_call' && isSubagentToolCallMetadata(storePart.metadata)
-      ? toolCallPartToSubagentSnapshot(storePart)
-      : null;
-
-    if (!compat) {
-      return false;
-    }
-
-    const childItems = [...(compat.childItems || [])];
-
-    if (child.kind === 'tool' && child.toolCallId) {
-      const existingIndex = childItems.findIndex(
-        item => item.kind === 'tool' && item.toolCallId === child.toolCallId,
-      );
-      if (existingIndex >= 0) {
-        childItems[existingIndex] = mergeSubagentToolChildItem(childItems[existingIndex], child);
-      } else {
-        childItems.push(child);
-      }
-    } else {
-      if (!child.content) {
+      const partIndex = this.findSubagentPartIndex(storeKey, toolCallId);
+      if (partIndex < 0) {
         return false;
       }
 
-      const previousChild = childItems[childItems.length - 1];
-      if (previousChild?.kind === child.kind) {
-        childItems[childItems.length - 1] = {
-          ...previousChild,
-          content: `${previousChild.content}${child.content}`,
-        };
-      } else {
-        childItems.push(child);
-      }
-    }
+      const storePart = parts[partIndex];
+      const compat = storePart.type === 'tool_call' && isSubagentToolCallMetadata(storePart.metadata)
+        ? toolCallPartToSubagentSnapshot(storePart)
+        : null;
 
-    this.updatePart(
-      storeKey,
-      partIndex,
-      this.rebuildSubagentToolCallPart(storePart as ToolCallPart, {
-        ...compat,
-        childItems,
-      }),
-    );
-    return true;
+      if (!compat) {
+        return false;
+      }
+
+      const childItems = [...(compat.childItems || [])];
+      beforeCount = childItems.length;
+      afterCount = childItems.length;
+
+      if (child.kind === 'tool' && child.toolCallId) {
+        const existingIndex = childItems.findIndex(
+          item => item.kind === 'tool' && item.toolCallId === child.toolCallId,
+        );
+        if (existingIndex >= 0) {
+          childItems[existingIndex] = mergeSubagentToolChildItem(childItems[existingIndex], child);
+          outcome = 'tool_update';
+        } else {
+          childItems.push(child);
+          outcome = 'tool_add';
+        }
+        afterCount = childItems.length;
+      } else if (appendSubagentTextChildInPlace(storePart as ToolCallPart, child)) {
+        const updatedCompat = toolCallPartToSubagentSnapshot(storePart as ToolCallPart);
+        afterCount = updatedCompat?.childItems?.length ?? beforeCount;
+        outcome = 'text_append';
+        this.emitChange(storeKey, partIndex, 'append');
+        return true;
+      } else {
+        outcome = 'ignored';
+        return false;
+      }
+
+      this.updatePart(
+        storeKey,
+        partIndex,
+        this.rebuildSubagentToolCallPart(storePart as ToolCallPart, {
+          ...compat,
+          childItems,
+        }),
+      );
+      return true;
+    } finally {
+      ChatPerformanceTracer.increment(`part_store.subagent_child_upsert.kind.${child.kind}`);
+      ChatPerformanceTracer.recordDuration(
+        'part_store.subagent_child_upsert',
+        performance.now() - startedAt,
+        `kind=${child.kind},outcome=${outcome},before=${beforeCount},after=${afterCount}`,
+        { slowThresholdMs: 4 },
+      );
+    }
   }
 
   updateSubagentForHandle(
@@ -1481,6 +1777,9 @@ export class ChatPartStore {
           segments.push(
             `\n\`\`\`aily-terminal\n${JSON.stringify({ partId: part.partId, command: part.command, output: part.output, stderr: part.stderr, exitCode: part.exitCode, isRunning: false, toolCallId: part.toolCallId, sourceToolCallIds: part.sourceToolCallIds, processId: part.processId, outputSessionId: part.outputSessionId, terminalId: part.terminalId, outputFilePath: part.outputFilePath, cwd: part.cwd, status: part.status, bytesTotal: part.bytesTotal, lastOutputAt: part.lastOutputAt })}\n\`\`\`\n`
           );
+          break;
+        case 'plan':
+          segments.push(`\n<proposed_plan>\n${part.text}\n</proposed_plan>\n`);
           break;
       }
     }

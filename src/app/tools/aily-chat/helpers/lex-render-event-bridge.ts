@@ -7,6 +7,7 @@ import type {
   TurnResponseStatus,
   TurnResponseTurn,
 } from 'aily-lex/browser';
+import { collectTurnResponseText } from 'aily-lex/browser';
 import type { TurnResponseProjectionHandle } from '../core/turn-response-host-projection-builder';
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
@@ -31,6 +32,7 @@ import {
   withExplicitAgentSummaryPreview,
 } from './turn-response-response-model';
 import { buildSessionTurnOwnerDiagnostics } from './session-turn-owner-diagnostics';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 /** Narrow context: only needs partStore for rendering + toolCallingIteration for turn tracking */
 type LexRenderEventBridgeContext =
@@ -50,6 +52,17 @@ type RenderMessageLifecycleAccess = {
   readonly currentMessageHandle: TurnResponseProjectionHandle | null;
 };
 
+interface PendingLiveTurnSnapshotOptions {
+  readonly fallbackStatus?: TurnResponseStatus;
+  readonly usage?: TurnResponseTurn['usage'];
+  readonly continuation?: TurnResponseTurn['response']['continuation'];
+  readonly modelName?: string;
+  readonly modelBillingLabel?: string;
+  readonly modelRouting?: NonNullable<TurnResponseTurn['responseModel']>['modelRouting'];
+  readonly quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'];
+  readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
+}
+
 /**
  * LexRenderEventBridge — unified bridge that consumes RenderEvent
  * and writes to ChatPartStore via RenderEventPartAdapter.
@@ -57,7 +70,6 @@ type RenderMessageLifecycleAccess = {
  * Replaces the chain of:
  *   LexAgentEventBridge → LexRuntimeEventBridge
  *                        → LexStateEventBridge
- *                        → LexSubagentPartBridge
  *                        → PartEventProcessor
  *
  * Also satisfies the minimal reset/finalize contract so LexMessageLifecycleBridge can
@@ -66,6 +78,7 @@ type RenderMessageLifecycleAccess = {
  * Side effects previously scattered across those bridges are handled inline.
  */
 export class LexRenderEventBridge {
+  private static readonly LIVE_TURN_SNAPSHOT_COMMIT_INTERVAL_MS = 250;
   private readonly _streamBuilder: TurnResponseIncrementalBuilder;
   private readonly _sideEffects: LexSideEffectHandler;
   private readonly _hostStreamEmitter = new LexRenderHostStreamEmitter();
@@ -73,6 +86,7 @@ export class LexRenderEventBridge {
   private readonly _turnMaterializer: LexRenderTurnMaterializer;
   private readonly _turnResponses = new Map<string, TurnResponseTurn>();
   private _currentTurn: TurnResponseTurn | null = null;
+  private _hostStreamBaselineTurn: TurnResponseTurn | null = null;
   private _pendingRequestContent = '';
   private _pendingRequestDisplayContent: string | undefined;
   private _pendingRequestMetadata: TurnResponseTurn['request']['metadata'];
@@ -80,6 +94,12 @@ export class LexRenderEventBridge {
   private _projectionSessionResource: string | null = null;
   private _ownerCommitHandle: { dispose(): void } | null = null;
   private _ownerCommitPending = false;
+  private _liveSnapshotCommitHandle: { dispose(): void } | null = null;
+  private _liveSnapshotCommitPending = false;
+  private _liveSnapshotCommitTimestamp = 0;
+  private _liveSnapshotCommitOptions: PendingLiveTurnSnapshotOptions | null = null;
+  private _streamProjectionHandle: { dispose(): void } | null = null;
+  private _streamProjectionPending = false;
 
   constructor(
     private readonly ctx: LexRenderEventBridgeContext,
@@ -229,6 +249,7 @@ export class LexRenderEventBridge {
     }
 
     this.syncCurrentTurn(Date.now(), fallbackStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this.flushPendingStreamProjection(false);
     this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
     return true;
   }
@@ -244,11 +265,21 @@ export class LexRenderEventBridge {
     }
     this._streamBuilder.processEvent({ type: 'error_notice', message, timestamp: Date.now() });
     this.syncCurrentTurn(Date.now(), 'error', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'immediate');
+    this.flushPendingStreamProjection(false);
     this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
     return true;
   }
 
   processEvent(event: RenderEvent): void {
+    ChatPerformanceTracer.increment(`render_event.${event.type}`);
+    if (event.type === 'subagent_activity') {
+      ChatPerformanceTracer.increment(`render_event.subagent_activity.${event.activityKind}`);
+      const contentLength = typeof event.content === 'string' ? event.content.length : 0;
+      ChatPerformanceTracer.mark(
+        'subagent_activity',
+        `kind=${event.activityKind},tool=${event.toolCallId},child=${event.childToolCallId || ''},content=${contentLength}`,
+      );
+    }
     let turnBeginMode: 'fresh' | 'continued' | null = null;
     if (event.type === 'turn_begin') {
       turnBeginMode = this.beginTurn(event.turnId, event.timestamp);
@@ -265,6 +296,7 @@ export class LexRenderEventBridge {
     }
 
     if (event.type === 'turn_begin') {
+      this.clearPendingStreamProjection();
       if (turnBeginMode === 'fresh') {
         this._projectionSync.clearProjectedMessage(this._currentTurn);
       }
@@ -276,24 +308,40 @@ export class LexRenderEventBridge {
     }
 
     if (event.type === 'turn_end') {
-      this.syncCurrentTurn(
-        event.timestamp,
-        'completed',
-        event.usage,
-        event.continuation,
-        event.modelName,
-        event.modelBillingLabel,
-        event.modelRouting,
-        event.quotaSnapshot,
-        event.terminationReason,
-        'immediate',
-      );
-      this.invalidateVisibleProjection();
-      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
+      this.flushPendingStreamProjection(false);
+      const snapshotOptions: PendingLiveTurnSnapshotOptions = {
+        fallbackStatus: isIntermediateToolTurnEnd(event) ? this.resolveLiveFallbackStatus() : 'completed',
+        usage: event.usage,
+        continuation: event.continuation,
+        modelName: event.modelName,
+        modelBillingLabel: event.modelBillingLabel,
+        modelRouting: event.modelRouting,
+        quotaSnapshot: event.quotaSnapshot,
+        terminationReason: event.terminationReason,
+      };
+      if (isIntermediateToolTurnEnd(event)) {
+        this.scheduleLiveTurnSnapshotCommit(event.timestamp, snapshotOptions);
+      } else {
+        this.syncCurrentTurn(
+          event.timestamp,
+          snapshotOptions.fallbackStatus ?? 'completed',
+          snapshotOptions.usage,
+          snapshotOptions.continuation,
+          snapshotOptions.modelName,
+          snapshotOptions.modelBillingLabel,
+          snapshotOptions.modelRouting,
+          snapshotOptions.quotaSnapshot,
+          snapshotOptions.terminationReason,
+          'immediate',
+        );
+        this.invalidateVisibleProjection();
+        this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, { syncContent: true });
+      }
       return;
     }
 
     if (event.type === 'clear_to_previous_tool_invocation') {
+      this.flushPendingStreamProjection(false);
       this._hostStreamEmitter.emitClearToPreviousToolInvocation(
         this._currentTurn.turnId,
         event.timestamp,
@@ -304,10 +352,25 @@ export class LexRenderEventBridge {
     }
 
     const responseModelChanged = this._streamBuilder.processEvent(event) && isResponseModelRenderEvent(event);
-    this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
-    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
-      syncContent: false,
-    });
+    const isLiveTextStreamEvent = isLiveTextStreamRenderEvent(event);
+    if (isLiveTextStreamEvent) {
+      this.clearPendingStreamProjection();
+      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
+        syncContent: false,
+      });
+      this.emitLiveHostStreamPartChanges(event.timestamp);
+    } else {
+      this.flushPendingStreamProjection(false);
+      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
+        syncContent: false,
+      });
+      this.emitLiveHostStreamPartChanges(event.timestamp);
+    }
+    if (responseModelChanged || shouldCommitLiveTurnSnapshotImmediately(event)) {
+      this.syncCurrentTurn(event.timestamp, this.resolveLiveFallbackStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'deferred');
+    } else if (!isLiveTextStreamEvent) {
+      this.scheduleLiveTurnSnapshotCommit(event.timestamp);
+    }
     if (event.type === 'response_followups') {
       this._hostStreamEmitter.emitResponseFollowups(this._currentTurn.turnId, event.value, event.timestamp);
     }
@@ -327,11 +390,14 @@ export class LexRenderEventBridge {
   reset(): void {
     this._streamBuilder.reset();
     this._currentTurn = null;
+    this._hostStreamBaselineTurn = null;
     this._pendingRequestContent = '';
     this._pendingRequestDisplayContent = undefined;
     this._pendingRequestMetadata = undefined;
     this._currentTurnHasExecutionError = false;
     this.clearPendingOwnerCommit();
+    this.clearPendingLiveTurnSnapshotCommit();
+    this.clearPendingStreamProjection();
   }
 
   /** Clear all retained live turn responses when a session is replaced or restored. */
@@ -344,6 +410,8 @@ export class LexRenderEventBridge {
   /** Clean up. */
   dispose(): void {
     this.clearPendingOwnerCommit();
+    this.clearPendingLiveTurnSnapshotCommit();
+    this.clearPendingStreamProjection();
     this._projectionSync.dispose();
     this._streamBuilder.destroy();
   }
@@ -368,6 +436,7 @@ export class LexRenderEventBridge {
       });
       if (continuedTurn) {
         this._currentTurn = continuedTurn;
+        this._hostStreamBaselineTurn = continuedTurn;
         this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
         this.commitTurnResponsesToOwner('immediate');
         this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, []);
@@ -386,6 +455,7 @@ export class LexRenderEventBridge {
       slashCommand: initialSlashCommand,
       timestamp,
     });
+    this._hostStreamBaselineTurn = this._currentTurn;
     this._turnResponses.set(turnId, this._currentTurn);
     this.commitTurnResponsesToOwner('immediate');
     this._hostStreamEmitter.emitTurnStarted(this._currentTurn);
@@ -437,6 +507,28 @@ export class LexRenderEventBridge {
       : 'streaming';
   }
 
+  private emitLiveHostStreamPartChanges(updatedAt: number): void {
+    if (!this._currentTurn) {
+      return;
+    }
+
+    const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
+    if (partChanges.length === 0) {
+      return;
+    }
+
+    const previousTurn = this._hostStreamBaselineTurn ?? this._currentTurn;
+    const nextTurn = applyHostStreamPartChanges(previousTurn, partChanges, updatedAt, {
+      participant: getTurnResponseParticipant(
+        this.ctx.currentMessageSource || previousTurn.response.participant,
+      ),
+    });
+    this._hostStreamEmitter.emitTurnDelta(nextTurn, previousTurn, partChanges);
+    this._hostStreamBaselineTurn = nextTurn;
+    this._currentTurn = nextTurn;
+    this._turnResponses.set(nextTurn.turnId, nextTurn);
+  }
+
   private syncCurrentTurn(
     updatedAt: number,
     fallbackStatus: TurnResponseStatus,
@@ -452,8 +544,10 @@ export class LexRenderEventBridge {
     if (!this._currentTurn) {
       return;
     }
+    this.clearPendingLiveTurnSnapshotCommit();
 
     const previousTurn = this._currentTurn;
+    const previousHostStreamTurn = this._hostStreamBaselineTurn ?? previousTurn;
     const materialized = this._turnMaterializer.materializeCurrentTurn(
       this._streamBuilder,
       this._currentTurn,
@@ -505,7 +599,8 @@ export class LexRenderEventBridge {
     this._turnResponses.set(this._currentTurn.turnId, this._currentTurn);
     this.commitTurnResponsesToOwner(ownerCommitMode);
     const partChanges = this._streamBuilder.drainTurnResponsePartChanges();
-    this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousTurn, partChanges);
+    this._hostStreamEmitter.emitTurnDelta(this._currentTurn, previousHostStreamTurn, partChanges);
+    this._hostStreamBaselineTurn = this._currentTurn;
   }
 
   private commitTurnResponsesToOwner(mode: 'immediate' | 'deferred' = 'immediate'): void {
@@ -516,6 +611,105 @@ export class LexRenderEventBridge {
 
     this.clearPendingOwnerCommit();
     this.commitTurnResponsesToOwnerNow();
+  }
+
+  private scheduleLiveTurnSnapshotCommit(timestamp: number, options?: PendingLiveTurnSnapshotOptions): void {
+    this._liveSnapshotCommitTimestamp = Math.max(this._liveSnapshotCommitTimestamp, timestamp);
+    if (options) {
+      this._liveSnapshotCommitOptions = {
+        ...this._liveSnapshotCommitOptions,
+        ...options,
+      };
+    }
+    this._liveSnapshotCommitPending = true;
+    if (this._liveSnapshotCommitHandle !== null) {
+      return;
+    }
+
+    const timerId = setTimeout(() => {
+      this._liveSnapshotCommitHandle = null;
+      if (!this._liveSnapshotCommitPending) {
+        return;
+      }
+      this._liveSnapshotCommitPending = false;
+      const commitTimestamp = this._liveSnapshotCommitTimestamp || Date.now();
+      const commitOptions = this._liveSnapshotCommitOptions;
+      this._liveSnapshotCommitTimestamp = 0;
+      this._liveSnapshotCommitOptions = null;
+      this.syncCurrentTurn(
+        commitTimestamp,
+        commitOptions?.fallbackStatus ?? this.resolveLiveFallbackStatus(),
+        commitOptions?.usage,
+        commitOptions?.continuation,
+        commitOptions?.modelName,
+        commitOptions?.modelBillingLabel,
+        commitOptions?.modelRouting,
+        commitOptions?.quotaSnapshot,
+        commitOptions?.terminationReason,
+        'deferred',
+      );
+    }, LexRenderEventBridge.LIVE_TURN_SNAPSHOT_COMMIT_INTERVAL_MS);
+
+    this._liveSnapshotCommitHandle = {
+      dispose: () => clearTimeout(timerId),
+    };
+  }
+
+  private clearPendingLiveTurnSnapshotCommit(): void {
+    this._liveSnapshotCommitHandle?.dispose();
+    this._liveSnapshotCommitHandle = null;
+    this._liveSnapshotCommitPending = false;
+    this._liveSnapshotCommitTimestamp = 0;
+    this._liveSnapshotCommitOptions = null;
+  }
+
+  private scheduleStreamProjection(): void {
+    this._streamProjectionPending = true;
+    if (this._streamProjectionHandle !== null) {
+      return;
+    }
+
+    this._streamProjectionHandle = scheduleAnimationFrameLikeTask(() => {
+      const projectionStartedAt = performance.now();
+      this._streamProjectionHandle = null;
+      if (!this._streamProjectionPending) {
+        return;
+      }
+
+      this._streamProjectionPending = false;
+      if (!this._currentTurn) {
+        return;
+      }
+
+      this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
+        syncContent: false,
+      });
+      ChatPerformanceTracer.recordDuration('stream_projection_flush', performance.now() - projectionStartedAt, 'scheduled', {
+        slowThresholdMs: 12,
+      });
+    });
+  }
+
+  private flushPendingStreamProjection(syncContent: boolean): void {
+    const shouldFlush = this._streamProjectionPending || this._streamProjectionHandle !== null;
+    this.clearPendingStreamProjection();
+    if (!shouldFlush || !this._currentTurn) {
+      return;
+    }
+
+    const projectionStartedAt = performance.now();
+    this._projectionSync.projectPendingChanges(this._currentTurn, this._streamBuilder, {
+      syncContent,
+    });
+    ChatPerformanceTracer.recordDuration('stream_projection_flush', performance.now() - projectionStartedAt, `syncContent=${syncContent}`, {
+      slowThresholdMs: 12,
+    });
+  }
+
+  private clearPendingStreamProjection(): void {
+    this._streamProjectionHandle?.dispose();
+    this._streamProjectionHandle = null;
+    this._streamProjectionPending = false;
   }
 
   private scheduleOwnerCommit(): void {
@@ -620,6 +814,34 @@ export class LexRenderEventBridge {
 
 function normalizeSessionResource(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function applyHostStreamPartChanges(
+  turn: TurnResponseTurn,
+  partChanges: readonly HostStreamPartChange[],
+  updatedAt: number,
+  patch: { readonly participant?: string } = {},
+): TurnResponseTurn {
+  const parts = [...turn.response.parts];
+  for (const change of partChanges) {
+    if (!Number.isInteger(change.partIndex) || change.partIndex < 0) {
+      continue;
+    }
+
+    parts[change.partIndex] = change.part;
+  }
+
+  return {
+    ...turn,
+    updatedAt,
+    response: {
+      ...turn.response,
+      updatedAt,
+      ...(patch.participant ? { participant: patch.participant } : {}),
+      parts,
+      resultText: collectTurnResponseText(parts),
+    },
+  };
 }
 
 function getTurnResponseModelName(turn: TurnResponseTurn | null | undefined): string | undefined {
@@ -792,4 +1014,47 @@ function isResponseModelRenderEvent(
     || event.type === 'response_followups'
     || event.type === 'response_command'
     || event.type === 'usage';
+}
+
+function isLiveTextStreamRenderEvent(event: RenderEvent): boolean {
+  return event.type === 'markdown_delta'
+    || event.type === 'thinking_delta';
+}
+
+function shouldCommitLiveTurnSnapshotImmediately(event: RenderEvent): boolean {
+  return event.type === 'question_request'
+    || event.type === 'approval_request'
+    || event.type === 'approval_resolve'
+    || event.type === 'thinking_complete'
+    || event.type === 'approval_auto_review_start'
+    || event.type === 'approval_auto_review_complete'
+    || event.type === 'state_update'
+    || event.type === 'error_notice'
+    || event.type === 'subagent_begin'
+    || event.type === 'subagent_end'
+    || event.type === 'background_task_update'
+    || event.type === 'todo_update'
+    || event.type === 'session_meta';
+}
+
+function isIntermediateToolTurnEnd(event: Extract<RenderEvent, { type: 'turn_end' }>): boolean {
+  const continuation = event.continuation;
+  const stopReason = typeof continuation?.stopReason === 'string'
+    ? continuation.stopReason
+    : undefined;
+  return stopReason === 'TOOL_CALLS';
+}
+
+function scheduleAnimationFrameLikeTask(callback: () => void): { dispose(): void } {
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    const frameId = globalThis.requestAnimationFrame(callback);
+    return {
+      dispose: () => globalThis.cancelAnimationFrame?.(frameId),
+    };
+  }
+
+  const timerId = setTimeout(callback, 16);
+  return {
+    dispose: () => clearTimeout(timerId),
+  };
 }

@@ -4,11 +4,17 @@ import {
   buildHostProjectionStateFromPersistedRecord,
   type HostTurnResponseState,
 } from './host-turn-response-state';
+import { buildSessionTurnOwnerDiagnostics } from './session-turn-owner-diagnostics';
 
 type LexRestorePlan = {
   readonly snapshot?: unknown | null;
   readonly turnResponses?: readonly TurnResponseTurn[] | null;
 } | null;
+
+export interface SessionModelBoundaryTurnOwnerPolicyOptions {
+  readonly allowForkedTurns?: boolean;
+  readonly source?: string;
+}
 
 export interface SessionModelBoundaryTransactionContext {
   readonly lexStream: {
@@ -35,6 +41,7 @@ export interface SessionModelBoundaryTransactionContext {
   replaceSessionModelTurnResponses?(
     sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
+    ownerPolicy?: SessionModelBoundaryTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null | undefined;
   replaceSharedHostProjectionState?(
     state: HostTurnResponseState | null,
@@ -98,7 +105,21 @@ export async function restoreSessionBoundaryTransaction(
     }
   }
 
-  const modelTurnResponses = ctx.replaceSessionModelTurnResponses?.(sessionId, turnResponses);
+  const modelTurnResponses = ctx.replaceSessionModelTurnResponses?.(
+    sessionId,
+    turnResponses,
+    {
+      allowForkedTurns: isForkedHostRecord(input.hostRecord),
+      source: 'session-boundary-restore',
+    },
+  );
+  if (modelTurnResponses === null) {
+    const diagnostics = buildSessionTurnOwnerDiagnostics(sessionId, turnResponses);
+    throw new Error(
+      `Session boundary transaction rejected turn owner mismatch for ${sessionId}`
+      + ` (${diagnostics.mismatchCount} mismatched turns).`,
+    );
+  }
   if (Array.isArray(modelTurnResponses)) {
     turnResponses = [...modelTurnResponses];
   }
@@ -131,4 +152,10 @@ export async function restoreSessionBoundaryTransaction(
     hostProjectionState,
     restoredLexSnapshot,
   };
+}
+
+function isForkedHostRecord(hostRecord: HostSessionRecord | null | undefined): boolean {
+  const metadata = hostRecord?.metadata as unknown as Record<string, unknown> | undefined;
+  return typeof metadata?.['forkedFromSessionId'] === 'string'
+    || typeof metadata?.['forkKind'] === 'string';
 }

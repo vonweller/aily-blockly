@@ -166,7 +166,10 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const terminal: ITerminal = {
     getShell: () => wTerminal?.getShell(),
     init: (data) => wTerminal?.init(data),
+    onPidData: (pid, cb) => wTerminal?.onPidData?.(pid, cb),
+    onPidExit: (pid, cb) => wTerminal?.onPidExit?.(pid, cb),
     sendInput: (data) => wTerminal?.sendInput(data),
+    spawnCommand: (data) => wTerminal?.spawnCommand?.(data),
     sendInputAsync: (data) => wTerminal?.sendInputAsync(data),
     close: (data) => wTerminal?.close(data),
     resize: (data) => wTerminal?.resize(data),

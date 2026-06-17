@@ -192,9 +192,13 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: B
     },
 
     async invoke(toolName: string, input: unknown, signal?: AbortSignal, invocationContext?: {
+      sessionId?: string;
       toolCallId?: string;
       trace?: { turnId?: string };
+      signal?: AbortSignal;
+      cwd?: string;
       host?: { getExtension<T>(id: string): T | undefined };
+      emitEvent?: (event: unknown) => void;
     }): Promise<ToolResultContent> {
       // External tools call handlers directly; no blockly-side runtime registry remains here.
       if (runtimeMode === 'blockly' && isLegacyHostExternalToolName(toolName)) {
@@ -206,7 +210,10 @@ export function createBlocklyToolProvider(hostAPI: IExternalHostAPI, options?: B
         return error(`Unknown contributed tool: ${toolName}`);
       }
       try {
-        return await handler(input as Record<string, unknown>, hostAPI, invocationContext);
+        return await handler(input as Record<string, unknown>, hostAPI, {
+          ...invocationContext,
+          signal,
+        });
       } catch (err) {
         return error(`${toolName} error: ${err instanceof Error ? err.message : String(err)}`);
       }

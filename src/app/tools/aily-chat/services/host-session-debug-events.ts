@@ -58,7 +58,11 @@ export interface HostSessionDebugEventCommon {
   readonly id: string;
   readonly sequence: number;
   readonly sessionId: string;
+  readonly ownerSessionId?: string;
   readonly turnId: string;
+  readonly selectedModeId?: string;
+  readonly requestModeId?: string;
+  readonly eventSource?: string;
   readonly kind: HostSessionDebugEventKind;
   readonly created: number;
   readonly parentEventId?: string;
@@ -166,6 +170,7 @@ export interface HostSessionDebugResolvedModelTurnContent {
   readonly outputTokens?: number;
   readonly cachedTokens?: number;
   readonly totalTokens?: number;
+  readonly requestRouting?: string;
   readonly requestOptions?: string;
   readonly sections?: readonly HostSessionDebugMessageSection[];
 }
@@ -395,6 +400,7 @@ function buildHostSessionDebugArtifacts(
   if (providerOptions.folderPath || providerOptions.permissionMode !== 'default' || providerOptions.permissionLevel || providerOptions.approvalsReviewer || providerOptions.approvalPolicy) {
     const event = createDebugEvent({
       sessionId,
+      ownerSessionId: sessionId,
       turnId: sessionEventTurnId,
       sequence: sequence++,
       kind: 'generic',
@@ -403,6 +409,9 @@ function buildHostSessionDebugArtifacts(
       details: formatProviderOptionsDetails(providerOptions),
       level: 'info',
       category: 'session',
+      eventSource: 'session',
+      selectedModeId: requestRouting.selectedModeId,
+      ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
     });
     events.push(event);
     resolvedContentById.set(event.id, {
@@ -414,6 +423,7 @@ function buildHostSessionDebugArtifacts(
   if (requestRouting.requestModeId || requestRouting.customAgentTarget || requestRouting.permissionLevel || requestRouting.approvalsReviewer || requestRouting.approvalPolicy) {
     const event = createDebugEvent({
       sessionId,
+      ownerSessionId: sessionId,
       turnId: sessionEventTurnId,
       sequence: sequence++,
       kind: 'generic',
@@ -422,6 +432,9 @@ function buildHostSessionDebugArtifacts(
       details: formatRequestRoutingDetails(requestRouting),
       level: 'info',
       category: 'session',
+      eventSource: 'session',
+      selectedModeId: requestRouting.selectedModeId,
+      ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
     });
     events.push(event);
     resolvedContentById.set(event.id, {
@@ -433,6 +446,7 @@ function buildHostSessionDebugArtifacts(
   if (interactionActionSummary) {
     const event = createDebugEvent({
       sessionId,
+      ownerSessionId: sessionId,
       turnId: sessionEventTurnId,
       sequence: sequence++,
       kind: 'generic',
@@ -441,6 +455,9 @@ function buildHostSessionDebugArtifacts(
       details: formatInteractionActionDetails(interactionActionSummary),
       level: 'info',
       category: 'session',
+      eventSource: 'session',
+      selectedModeId: requestRouting.selectedModeId,
+      ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
     });
     events.push(event);
     resolvedContentById.set(event.id, {
@@ -459,6 +476,7 @@ function buildHostSessionDebugArtifacts(
     };
     const event = createDebugEvent({
       sessionId,
+      ownerSessionId: sessionId,
       turnId: sessionEventTurnId,
       sequence: sequence++,
       kind: 'generic',
@@ -467,6 +485,9 @@ function buildHostSessionDebugArtifacts(
       details: formatPendingPlanReviewDetails(payload),
       level: 'info',
       category: 'session',
+      eventSource: 'session',
+      selectedModeId: requestRouting.selectedModeId,
+      ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
     });
     events.push(event);
     resolvedContentById.set(event.id, {
@@ -476,11 +497,17 @@ function buildHostSessionDebugArtifacts(
   }
 
   for (const turn of record.turnResponses ?? []) {
+    const turnRequestRouting = resolveHostSessionRequestRoutingSummary({
+      metadata: record.metadata,
+      turnResponses: [turn],
+    });
+    const turnDebugBoundary = buildDebugEventBoundaryFields(sessionId, turnRequestRouting);
     const userMessageSections = buildMessageSections('request', turn.request.displayContent ?? turn.request.content);
     const requestContent = extractRequestContent(turn.request);
     let userMessageEventId: string | undefined;
     if (requestContent) {
       const event = createDebugEvent({
+        ...turnDebugBoundary,
         sessionId,
         turnId: turn.turnId,
         sequence: sequence++,
@@ -488,6 +515,7 @@ function buildHostSessionDebugArtifacts(
         created: normalizeTimestamp(turn.createdAt, turn.updatedAt),
         message: requestContent,
         sections: userMessageSections,
+        eventSource: 'turn-request',
       });
       userMessageEventId = event.id;
       events.push(event);
@@ -510,6 +538,7 @@ function buildHostSessionDebugArtifacts(
       : deriveDuration(turn.response.createdAt, turn.response.updatedAt);
     const modelTurnTotalTokens = sumNumbers(turn.usage?.inputTokens, turn.usage?.outputTokens);
     const modelTurnEvent = createDebugEvent({
+      ...turnDebugBoundary,
       sessionId,
       turnId: turn.turnId,
       sequence: sequence++,
@@ -524,12 +553,14 @@ function buildHostSessionDebugArtifacts(
       totalTokens: modelTurnTotalTokens,
       durationInMillis: modelTurnDuration,
       status: turn.response.status,
+      eventSource: 'model-turn',
     });
     events.push(modelTurnEvent);
 
     const modelRouting = turn.responseModel?.modelRouting;
     if (modelRouting) {
       const event = createDebugEvent({
+        ...turnDebugBoundary,
         sessionId,
         turnId: turn.turnId,
         sequence: sequence++,
@@ -540,6 +571,7 @@ function buildHostSessionDebugArtifacts(
         details: formatModelRoutingDetails(modelRouting),
         level: 'info',
         category: 'model',
+        eventSource: 'model-routing',
       });
       events.push(event);
       resolvedContentById.set(event.id, {
@@ -553,6 +585,7 @@ function buildHostSessionDebugArtifacts(
         const input = safeJsonSummary(toolCall.input) || undefined;
         const output = safeUnknownSummary(toolCall.output) || toolCall.error?.trim() || undefined;
         const event = createDebugEvent({
+          ...turnDebugBoundary,
           sessionId,
           turnId: turn.turnId,
           sequence: sequence++,
@@ -565,6 +598,7 @@ function buildHostSessionDebugArtifacts(
           output,
           result: toolCall.error ? 'error' : 'success',
           durationInMillis: toolCall.durationMs,
+          eventSource: 'tool-round',
         });
         events.push(event);
         resolvedContentById.set(event.id, {
@@ -579,10 +613,12 @@ function buildHostSessionDebugArtifacts(
     }
 
     const requestSections = buildModelTurnRequestSections(turn.request);
-    const responseSections = buildResponseSections(turn.response.parts, turn.response.resultText);
+    const responseParts = resolvePersistedTurnResponseParts(turn);
+    const responseSections = buildResponseSections(responseParts, turn.response.resultText);
     const modelTurnSections = [...requestSections, ...responseSections];
     for (const progressMessage of turn.response.progressMessages ?? []) {
       events.push(createDebugEvent({
+        ...turnDebugBoundary,
         sessionId,
         turnId: turn.turnId,
         sequence: sequence++,
@@ -593,10 +629,11 @@ function buildHostSessionDebugArtifacts(
         details: progressMessage.content,
         level: 'info',
         category: 'progress',
+        eventSource: 'progress',
       }));
     }
 
-    for (const part of turn.response.parts ?? []) {
+    for (const part of responseParts) {
       const projected = projectPartEvent(part, {
         sessionId,
         turnId: turn.turnId,
@@ -604,6 +641,7 @@ function buildHostSessionDebugArtifacts(
         created: modelTurnCreated,
         sequence: sequence++,
         toolCallParentId: findToolCallParentEventId(events, modelTurnEvent.id, part),
+        boundary: turnDebugBoundary,
       });
       if (!projected) {
         continue;
@@ -625,11 +663,13 @@ function buildHostSessionDebugArtifacts(
       outputTokens: modelTurnEvent.outputTokens,
       cachedTokens: modelTurnEvent.cachedTokens,
       totalTokens: modelTurnEvent.totalTokens,
+      requestRouting: JSON.stringify(turnRequestRouting, null, 2),
       requestOptions: modelTurnSections.find(section => section.name === 'Request Options')?.content,
       sections: modelTurnSections,
     });
 
     const agentResponseEvent = createDebugEvent({
+      ...turnDebugBoundary,
       sessionId,
       turnId: turn.turnId,
       sequence: sequence++,
@@ -638,6 +678,7 @@ function buildHostSessionDebugArtifacts(
       parentEventId: modelTurnEvent.id,
       message: turn.response.resultText,
       sections: responseSections,
+      eventSource: 'agent-response',
     });
     events.push(agentResponseEvent);
     resolvedContentById.set(agentResponseEvent.id, {
@@ -653,10 +694,22 @@ function buildHostSessionDebugArtifacts(
 
 function createDebugEvent<TEvent extends HostSessionDebugEventSeed>(
   event: TEvent,
-): TEvent & Pick<HostSessionDebugEventCommon, 'id'> {
+): TEvent & Pick<HostSessionDebugEventCommon, 'id' | 'ownerSessionId'> {
   return {
     ...event,
+    ownerSessionId: event.ownerSessionId ?? event.sessionId,
     id: createHostSessionDebugEventId(event.sessionId, event.turnId, event.kind, event.sequence),
+  };
+}
+
+function buildDebugEventBoundaryFields(
+  sessionId: string,
+  requestRouting: ReturnType<typeof resolveHostSessionRequestRoutingSummary>,
+): Pick<HostSessionDebugEventCommon, 'ownerSessionId' | 'selectedModeId' | 'requestModeId'> {
+  return {
+    ownerSessionId: sessionId,
+    selectedModeId: requestRouting.selectedModeId,
+    ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
   };
 }
 
@@ -916,6 +969,29 @@ function buildOutputMessagesSection(
   }]);
 }
 
+function resolvePersistedTurnResponseParts(
+  turn: NonNullable<HostSessionRecord['turnResponses']>[number],
+): readonly TurnResponsePart[] {
+  const parts = Array.isArray(turn.response?.parts) ? [...turn.response.parts] : [];
+  const envelopePlanPart = turn.planPart as TurnResponsePart | undefined;
+  if (!envelopePlanPart || envelopePlanPart.type !== 'plan') {
+    return parts;
+  }
+
+  const envelopePartId = typeof envelopePlanPart.partId === 'string' ? envelopePlanPart.partId.trim() : '';
+  const hasSamePlanPart = parts.some((part) => {
+    if (part.type !== 'plan') {
+      return false;
+    }
+    const partId = typeof part.partId === 'string' ? part.partId.trim() : '';
+    return envelopePartId
+      ? partId === envelopePartId
+      : part.text === envelopePlanPart.text && part.status === envelopePlanPart.status;
+  });
+
+  return hasSamePlanPart ? parts : [...parts, envelopePlanPart];
+}
+
 function jsonStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value, null, 2);
@@ -1078,6 +1154,7 @@ function projectPartEvent(
     toolCallParentId: string;
     created: number;
     sequence: number;
+    boundary: Pick<HostSessionDebugEventCommon, 'ownerSessionId' | 'selectedModeId' | 'requestModeId'>;
   },
 ): {
   event: HostSessionDebugEvent;
@@ -1088,6 +1165,7 @@ function projectPartEvent(
       if (part.kind === 'instructions') {
         return {
           event: createDebugEvent({
+            ...context.boundary,
             sessionId: context.sessionId,
             turnId: context.turnId,
             sequence: context.sequence,
@@ -1098,6 +1176,7 @@ function projectPartEvent(
             details: previewText(part.text, 180),
             level: part.state === 'error' ? 'error' : (part.state === 'warn' ? 'warning' : 'info'),
             category: 'customization',
+            eventSource: 'response-part',
           }),
           content: buildInstructionCustomizationContent(part),
         };
@@ -1105,6 +1184,7 @@ function projectPartEvent(
 
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1115,11 +1195,13 @@ function projectPartEvent(
           details: [part.state, previewText(part.text, 180)].filter(Boolean).join(' · ') || undefined,
           level: part.state === 'error' ? 'error' : 'info',
           category: 'state',
+          eventSource: 'response-part',
         }),
       };
     case 'question':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1130,11 +1212,13 @@ function projectPartEvent(
           details: previewText(part.questions.map(question => question.question).join(' · '), 180),
           level: 'info',
           category: 'question',
+          eventSource: 'response-part',
         }),
       };
     case 'confirmation':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1149,11 +1233,13 @@ function projectPartEvent(
           ].filter(Boolean).join(' · '), 180),
           level: part.resolved === false ? 'error' : 'info',
           category: 'confirmation',
+          eventSource: 'response-part',
         }),
       };
     case 'subagent':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1166,6 +1252,7 @@ function projectPartEvent(
           durationInMillis: sumChildItemDurations(part),
           toolCallCount: part.childItems?.filter(item => item.kind === 'tool').length,
           modelTurnCount: part.childItems?.filter(item => item.kind === 'text').length,
+          eventSource: 'response-part',
         }),
         content: {
           kind: 'text',
@@ -1182,6 +1269,7 @@ function projectPartEvent(
     case 'terminal':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1196,15 +1284,52 @@ function projectPartEvent(
           ].filter(Boolean).join(' · '), 180),
           level: typeof part.exitCode === 'number' && part.exitCode !== 0 ? 'error' : 'info',
           category: 'terminal',
+          eventSource: 'response-part',
         }),
         content: {
           kind: 'text',
           text: [part.command, part.output, part.stderr].filter(Boolean).join('\n'),
         },
       };
+    case 'plan':
+      return {
+        event: createDebugEvent({
+          ...context.boundary,
+          sessionId: context.sessionId,
+          turnId: context.turnId,
+          sequence: context.sequence,
+          kind: 'generic',
+          created: context.created,
+          parentEventId: context.modelTurnEventId,
+          name: 'Plan',
+          details: previewText([
+            part.status,
+            part.source ? `source=${part.source}` : '',
+            part.partId ? `part=${part.partId}` : '',
+            part.text,
+          ].filter(Boolean).join(' | '), 180),
+          level: part.status === 'failed' ? 'error' : 'info',
+          category: 'plan',
+          eventSource: 'response-part',
+        }),
+        content: {
+          kind: 'text',
+          text: JSON.stringify({
+            status: part.status,
+            ...(part.source ? { source: part.source } : {}),
+            ...(part.partId ? { partId: part.partId } : {}),
+            charLength: typeof part.text === 'string' ? part.text.length : 0,
+            text: part.text,
+            ...(part.steps ? { steps: part.steps } : {}),
+            ...(part.assumptions ? { assumptions: part.assumptions } : {}),
+            ...(part.verification ? { verification: part.verification } : {}),
+          }, null, 2),
+        },
+      };
     case 'info':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1215,11 +1340,13 @@ function projectPartEvent(
           details: previewText(part.message, 180),
           level: 'info',
           category: 'info',
+          eventSource: 'response-part',
         }),
       };
     case 'warning':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1230,11 +1357,13 @@ function projectPartEvent(
           details: previewText(part.message, 180),
           level: 'warning',
           category: 'warning',
+          eventSource: 'response-part',
         }),
       };
     case 'error':
       return {
         event: createDebugEvent({
+          ...context.boundary,
           sessionId: context.sessionId,
           turnId: context.turnId,
           sequence: context.sequence,
@@ -1245,6 +1374,7 @@ function projectPartEvent(
           details: previewText(part.message, 180),
           level: 'error',
           category: 'error',
+          eventSource: 'response-part',
         }),
       };
     default:
@@ -1272,6 +1402,7 @@ function projectAutoReviewEvent(
     toolCallParentId: string;
     created: number;
     sequence: number;
+    boundary: Pick<HostSessionDebugEventCommon, 'ownerSessionId' | 'selectedModeId' | 'requestModeId'>;
   },
 ): {
   event: HostSessionDebugEvent;
@@ -1316,6 +1447,7 @@ function projectAutoReviewEvent(
 
   return {
     event: createDebugEvent({
+      ...context.boundary,
       sessionId: context.sessionId,
       turnId: context.turnId,
       sequence: context.sequence,
@@ -1326,6 +1458,7 @@ function projectAutoReviewEvent(
       details,
       level: status === 'approved' || status === 'reviewing' ? 'info' : (status === 'timedOut' ? 'warning' : 'error'),
       category: 'approval',
+      eventSource: 'response-part',
     }),
     content: {
       kind: 'text',

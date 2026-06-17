@@ -18,31 +18,10 @@ import {
 import { CommonModule } from '@angular/common';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import { ChatPart } from '../../core/chat-parts';
-import { isProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
-import {
-  buildActivityGroupIdentity,
-  buildChatPartIdentity,
-  isGroupableActivityPart,
-  isSubagentToolCall,
-} from './chat-activity-group-projection';
+import { type RenderableChatPart } from './chat-render-parts';
+import { buildChatRenderItems, type ActivityGroupRenderItem, type ChatRenderItem } from './chat-subagent-group-projection';
 import { ChatActivityGroupComponent } from './chat-activity-group.component';
 import { ChatMessagePartItemComponent } from './chat-message-part-item.component';
-
-interface PartRenderItem {
-  kind: 'part';
-  id: string;
-  part: RenderableChatPart;
-}
-
-interface ActivityGroupRenderItem {
-  kind: 'group';
-  id: string;
-  parts: readonly ChatPart[];
-  live: boolean;
-}
-
-type ChatRenderItem = PartRenderItem | ActivityGroupRenderItem;
 
 @Component({
   selector: 'aily-chat-message-parts',
@@ -100,79 +79,6 @@ export class ChatMessagePartsComponent implements OnChanges {
   }
 
   private _refresh(): void {
-    this.renderItems = this._markLiveGroups(this._buildRenderItems(this.parts || []));
-  }
-
-  private _buildRenderItems(parts: readonly RenderableChatPart[]): ChatRenderItem[] {
-    const items: ChatRenderItem[] = [];
-    let buffer: ChatPart[] = [];
-
-    const flushBuffer = (): void => {
-      if (buffer.length >= 1) {
-        items.push({
-          kind: 'group',
-          id: buildActivityGroupIdentity(buffer),
-          parts: buffer,
-          live: false,
-        });
-      }
-      buffer = [];
-    };
-
-    parts.forEach((part, index) => {
-      if (this._isIgnorablePart(part)) {
-        return;
-      }
-
-      if (isProgressMessageDisplayPart(part)) {
-        flushBuffer();
-        items.push({ kind: 'part', id: `progress:${part.progressKind}:${index}:${part.content}`, part });
-        return;
-      }
-
-      if (isSubagentToolCall(part)) {
-        flushBuffer();
-        items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
-        return;
-      }
-
-      if (isGroupableActivityPart(part)) {
-        buffer.push(part);
-        return;
-      }
-      flushBuffer();
-      items.push({ kind: 'part', id: buildChatPartIdentity(part, index), part });
-    });
-
-    flushBuffer();
-    return items;
-  }
-
-  private _markLiveGroups(items: readonly ChatRenderItem[]): ChatRenderItem[] {
-    if (!this.doing || items.length === 0) {
-      return items.map((item) => item.kind === 'group' ? { ...item, live: false } : item);
-    }
-
-    return items.map((item, index) => item.kind === 'group'
-      ? { ...item, live: !this._hasLookAheadBoundary(items, index) }
-      : item);
-  }
-
-  private _hasLookAheadBoundary(items: readonly ChatRenderItem[], groupIndex: number): boolean {
-    for (let index = groupIndex + 1; index < items.length; index++) {
-      if (items[index].kind === 'part') {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  private _isIgnorablePart(part: RenderableChatPart): boolean {
-    if (isProgressMessageDisplayPart(part)) {
-      return part.content.trim().length === 0;
-    }
-
-    return part.type === 'markdown' && part.content.trim().length === 0;
+    this.renderItems = buildChatRenderItems(this.parts || [], this.doing);
   }
 }

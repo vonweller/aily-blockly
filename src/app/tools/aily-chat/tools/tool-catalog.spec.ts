@@ -29,4 +29,15 @@ describe('tool-catalog', () => {
     expect(names).toContain('reload_project');
     expect(names).toContain('switch_board');
   });
+
+  it('keeps Blockly catalog aligned to the operation surface', () => {
+    const names = new Set(TOOL_CATALOG.map(tool => tool.name));
+
+    expect(names.has('syncAbs')).toBeTrue();
+    expect(names.has('lint')).toBeTrue();
+    expect(names.has('analyzeLibrary')).toBeTrue();
+
+    expect(names.has('get_workspace_overview_tool')).toBeFalse();
+    expect(names.has('analyze_library_blocks')).toBeFalse();
+  });
 });

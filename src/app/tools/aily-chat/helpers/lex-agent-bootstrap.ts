@@ -178,6 +178,17 @@ export async function stopBlocklyCommandSession(
   });
 }
 
+export async function resizeBlocklyCommandSession(
+  processId: string,
+  size: { cols: number; rows: number },
+): Promise<BlocklyCommandSessionSnapshot | null> {
+  return runWithBlocklyCommandSessionController(processId, async terminal => {
+    return typeof terminal.resizeProcess === 'function'
+      ? terminal.resizeProcess(processId, size)
+      : null;
+  });
+}
+
 interface ResolvePersistedLexSessionOptions {
   lex: AilyLexModule;
   sessionId: string;
@@ -191,7 +202,6 @@ interface BootstrapLexAgentOptions {
   lex: AilyLexModule;
   sessionId?: string;
   askHandler?: (askContext: any) => Promise<boolean>;
-  onSubagentEvent?: (event: any) => void;
   metrics?: IMetricsService;
 }
 
@@ -205,6 +215,9 @@ export type BootstrapLexAgentContext = Pick<IProjectContext, 'prjPath' | 'prjRoo
     readonly currentSessionPermissionMode?: ChatSessionPermissionMode;
     readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
     readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
+    readonly ngZone?: {
+      runOutsideAngular<T>(operation: () => Promise<T> | T): Promise<T> | T;
+    };
     selectAgentRuntimeMode?(
       mode: Exclude<ChatAgentRuntimeMode, 'unbound'>,
       source: ChatAgentRuntimeModeSource,
@@ -275,7 +288,7 @@ const LEX_CORE_SAFE_TOOLS = new Set([
   'read_file', 'write_file', 'edit_file', 'multi_edit_file',
   'delete_file', 'list_dir', 'create_directory',
   'grep_search', 'glob_search',
-  'command_exec', 'command_write_stdin', 'command_status', 'command_stop',
+  'command_exec', 'command_write_stdin', 'command_status', 'command_resize', 'command_stop',
   'command_read', 'command_tail', 'command_search',
   'run_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'agent',
   'get_changed_files',
@@ -1164,7 +1177,7 @@ export function buildLexSummarizerModelConfig(
 export function bootstrapBlocklyLexAgent(
   options: BootstrapLexAgentOptions,
 ): BlocklyLexAgentInstance {
-  const { ctx, lex, sessionId, askHandler, onSubagentEvent, metrics } = options;
+  const { ctx, lex, sessionId, askHandler, metrics } = options;
   const cwd = resolveLexRuntimeCwd(ctx);
   const agentRuntimeMode = normalizeChatAgentRuntimeMode(ctx.currentAgentRuntimeMode, cwd ? 'coder' : 'unbound');
   const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
@@ -1204,6 +1217,13 @@ export function bootstrapBlocklyLexAgent(
     memoryStorage: createBlocklyMemoryStorageExtension(cwd),
     memoryFeatureConfig: createBlocklyMemoryFeatureConfigExtension(ctx.ailyChatConfigService),
   };
+  if (ctx.ngZone?.runOutsideAngular) {
+    runtimeExtensions['hostExecutionBoundary'] = {
+      runOutsideAngular: <T>(operation: () => Promise<T> | T): Promise<T> | T => {
+        return ctx.ngZone!.runOutsideAngular(operation);
+      },
+    };
+  }
   if (cwd && (sessionId || ctx.sessionId)) {
     const lexPostTurnResources = ctx.chatSessionRuntimeRegistry?.getOrCreateLexPostTurnResources?.(
       sessionId || ctx.sessionId,
@@ -1488,7 +1508,7 @@ export function bootstrapBlocklyLexAgent(
     ctx.syncSessionProviderOptionsSource?.(sessionProviderOptionsSourceBindings[0] ?? null);
   }
 
-  attachBlocklyPostCreateExtensions(agent, adapter, onSubagentEvent);
+  attachBlocklyPostCreateExtensions(agent, adapter);
 
   return agent;
 }
@@ -1507,7 +1527,6 @@ function resolveLexRuntimeCwd(ctx: Pick<BootstrapLexAgentContext, 'currentSessio
 function attachBlocklyPostCreateExtensions(
   agent: BlocklyLexAgentInstance,
   adapter: BlocklyHostAdapter,
-  onSubagentEvent?: (event: any) => void,
 ): void {
   const agentExecutor = createBlocklySubagentExtension(agent);
 
@@ -1609,15 +1628,14 @@ function attachBlocklyPostCreateExtensions(
   });
 
   // Re-expose the lex-owned AgentExecutor back to the host as an extension bridge.
-  // This is UI/event wiring only, not a second subagent runtime inside blockly.
+  // The live subagent UI path is owned by the canonical RenderEvent stream.
+  // Do not forward raw subagent AgentEvents directly into Blockly UI metadata;
+  // doing so reintroduces the legacy childItems path and duplicates scoped parts.
   const origRunSync = agentExecutor.runSync.bind(agentExecutor);
   (agentExecutor as any).runSync = (subagentOptions: any) => {
     return origRunSync({
       ...subagentOptions,
-      onEvent: (event: any) => {
-        onSubagentEvent?.(event);
-        subagentOptions.onEvent?.(event);
-      },
+      onEvent: subagentOptions.onEvent,
     });
   };
   const origRestoreSession = agent.restoreSession.bind(agent);
@@ -2389,16 +2407,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function shouldPersistInteractionContinuation(
   continuation: import('aily-lex/browser').TurnResponseTurn['response']['continuation'] | undefined,
 ): continuation is NonNullable<import('aily-lex/browser').TurnResponseTurn['response']['continuation']> {
-  if (!continuation) {
+  if (!continuation
+    || typeof continuation.interactionId !== 'string'
+    || continuation.interactionId.trim().length === 0
+    || !Number.isFinite(continuation.stepIndex)
+    || continuation.stepIndex < 0
+    || typeof continuation.lease !== 'string'
+    || continuation.lease.trim().length === 0) {
     return false;
   }
 
-  return typeof continuation.interactionId === 'string'
-    && continuation.interactionId.trim().length > 0
-    && Number.isFinite(continuation.stepIndex)
-    && continuation.stepIndex >= 0
-    && typeof continuation.lease === 'string'
-    && continuation.lease.trim().length > 0;
+  const pendingKind = continuation.pendingState && typeof continuation.pendingState === 'object'
+    ? (continuation.pendingState as Record<string, unknown>)['kind']
+    : undefined;
+  if (typeof pendingKind === 'string' && pendingKind !== 'none') {
+    return true;
+  }
+
+  if (continuation.hardStopReason?.startsWith('interaction_')) {
+    return false;
+  }
+
+  return continuation.status !== 'completed'
+    && continuation.status !== 'complete';
 }
 
 function toLexConversationTurnStatus(
@@ -2515,8 +2546,15 @@ async function loadNpmLibraries(command: string): Promise<void> {
 function createExternalTerminal(host: any, prjPath: () => string): IExternalHostAPI['terminal'] {
   const hasRawTerminal = !!(host.terminal?.run && host.terminal?.onData);
   const hasCmdService = !!(host.cmd?.spawn && host.cmd?.kill && host.cmd?.sendInput);
+  const hasPtyTerminal = !!(
+    host.terminal?.spawnCommand
+    && host.terminal?.sendInput
+    && host.terminal?.onPidData
+    && host.terminal?.onPidExit
+    && host.terminal?.resize
+  );
 
-  if (!hasRawTerminal && !hasCmdService) {
+  if (!hasRawTerminal && !hasCmdService && !hasPtyTerminal) {
     return undefined;
   }
 
@@ -2656,13 +2694,38 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     });
   };
 
+  const attachPtyTerminalSession = (session: ExternalTerminalSession) => {
+    const removeData = host.terminal.onPidData(session.id, (payload: any) => {
+      const text = typeof payload === 'string' ? payload : payload?.data ?? '';
+      if (!text) {
+        return;
+      }
+      session.stdout += text;
+      session.lastOutputAt = Date.now();
+      emitExternalTerminalOutput(session, 'stdout', text);
+      settleReady(session);
+    });
+    const removeExit = host.terminal.onPidExit(session.id, (payload: any) => {
+      finalize(session, typeof payload?.exitCode === 'number' ? payload.exitCode : 0);
+    });
+    session.removeListener = () => {
+      removeData?.();
+      removeExit?.();
+    };
+  };
+
   const start = async (command: string, opts?: {
+    processId?: string;
     cwd?: string;
     timeout?: number;
     env?: Record<string, string>;
+    tty?: boolean;
+    streamStdin?: boolean;
+    streamStdoutStderr?: boolean;
+    size?: { rows: number; cols: number };
     onOutput?: ExternalTerminalSession['outputListener'];
   }) => {
-    const id = `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const id = opts?.processId?.trim() || `terminal_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const cwd = opts?.cwd ?? prjPath();
     let resolveReady!: () => void;
     let resolveFinished!: () => void;
@@ -2684,9 +2747,14 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       resolveReady,
       resolveFinished,
       outputListener: opts?.onOutput,
+      executionKind: opts?.tty ? 'pty' : 'buffered',
     };
 
-    if (hasCmdService) {
+    if (opts?.tty) {
+      if (hasPtyTerminal) {
+        attachPtyTerminalSession(session);
+      }
+    } else if (hasCmdService) {
       attachCmdServiceSession(session, command, cwd, opts?.env);
     } else if (hasRawTerminal) {
       attachRawTerminalSession(session);
@@ -2711,7 +2779,31 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
     registerBlocklyCommandSessionOwner(id, terminalApi);
 
     try {
-      if (hasRawTerminal) {
+      if (opts?.tty) {
+        if (!hasPtyTerminal) {
+          session.stderr += 'PTY command execution is not supported by the current host.';
+          session.status = 'failed';
+          finalize(session, 1);
+        } else {
+          const result = await host.terminal.spawnCommand({
+            processId: id,
+            command,
+            cwd,
+            env: opts?.env,
+            cols: opts?.size?.cols,
+            rows: opts?.size?.rows,
+          });
+          session.pid = result?.pid;
+          session.ptyPid = result?.pid;
+          if (!result?.success) {
+            session.stderr += result?.error ?? 'PTY command start failed';
+            session.status = 'failed';
+            finalize(session, 1);
+          } else {
+            settleReady(session);
+          }
+        }
+      } else if (hasRawTerminal) {
         const result = await host.terminal.run({ command, cwd, streamId: id, env: opts?.env });
         session.pid = result?.pid;
         if (!result?.success) {
@@ -2754,11 +2846,16 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
       const session = sessions.get(id);
       return session ? createSnapshot(session) : null;
     },
-    execCommand: async (command: string, opts?: { cwd?: string; timeoutMs?: number; timeout?: number; yieldTimeMs?: number; signal?: AbortSignal; env?: Record<string, string>; onOutput?: (event: any) => void }) => {
+    execCommand: async (command: string, opts?: { processId?: string; cwd?: string; timeoutMs?: number; timeout?: number; yieldTimeMs?: number; signal?: AbortSignal; env?: Record<string, string>; tty?: boolean; streamStdin?: boolean; streamStdoutStderr?: boolean; size?: { rows: number; cols: number }; onOutput?: (event: any) => void }) => {
       const snapshot = await start(command, {
+        processId: opts?.processId,
         cwd: opts?.cwd,
         timeout: opts?.timeoutMs ?? opts?.timeout,
         env: opts?.env,
+        tty: opts?.tty,
+        streamStdin: opts?.streamStdin,
+        streamStdoutStderr: opts?.streamStdoutStderr,
+        size: opts?.size,
         onOutput: opts?.onOutput,
       });
       const session = sessions.get(snapshot.id);
@@ -2797,6 +2894,28 @@ function createExternalTerminal(host: any, prjPath: () => string): IExternalHost
         }
       });
       return waitForExternalSession(session, opts?.yieldTimeMs, opts?.signal);
+    },
+    resizeProcess: async (id: string, size: { cols: number; rows: number }) => {
+      const session = sessions.get(id);
+      if (!session) {
+        return null;
+      }
+
+      const cols = Math.floor(size.cols);
+      const rows = Math.floor(size.rows);
+      if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+        session.stderr += `${session.stderr ? '\n' : ''}[terminal resize failed: rows and cols must be greater than 0]`;
+        session.lastOutputAt = Date.now();
+        emitExternalTerminalOutput(session, 'stderr', '[terminal resize failed: rows and cols must be greater than 0]');
+        return createSnapshot(session);
+      }
+
+      if (session.executionKind !== 'pty' || typeof host.terminal?.resize !== 'function') {
+        return createSnapshot(session);
+      }
+
+      host.terminal.resize({ pid: session.id, cols, rows });
+      return createSnapshot(session);
     },
     getProcessStatus: async (id: string) => {
       const session = sessions.get(id);
@@ -2867,6 +2986,7 @@ interface ExternalTerminalSession {
   status: 'running' | 'completed' | 'failed' | 'timeout' | 'killed' | 'cancelled';
   exitCode?: number;
   pid?: number;
+  ptyPid?: number;
   startedAt: number;
   lastOutputAt: number;
   completedAt?: number;
@@ -2892,6 +3012,7 @@ interface ExternalTerminalSession {
     timestamp: number;
   }) => void;
   abortCleanup?: () => void;
+  executionKind: 'buffered' | 'pty';
 }
 
 function delay(ms: number): Promise<void> {
@@ -2986,6 +3107,13 @@ function emitExternalTerminalOutput(
 }
 
 async function sendExternalInput(session: ExternalTerminalSession, host: any, input: string): Promise<boolean> {
+  if (session.executionKind === 'pty') {
+    if (!session.running || typeof host.terminal?.sendInput !== 'function') {
+      return false;
+    }
+    host.terminal.sendInput({ pid: session.id, input });
+    return true;
+  }
   const sendInput = host.cmd?.sendInput ?? host.terminal?.input;
   if (!session.running || typeof sendInput !== 'function') {
     return false;
@@ -2995,6 +3123,13 @@ async function sendExternalInput(session: ExternalTerminalSession, host: any, in
 }
 
 async function stopExternalSession(session: ExternalTerminalSession, host: any): Promise<boolean> {
+  if (session.executionKind === 'pty') {
+    if (typeof host.terminal?.close !== 'function') {
+      return false;
+    }
+    host.terminal.close({ pid: session.id });
+    return true;
+  }
   const kill = host.cmd?.kill ?? host.terminal?.kill;
   if (typeof kill !== 'function') {
     return false;

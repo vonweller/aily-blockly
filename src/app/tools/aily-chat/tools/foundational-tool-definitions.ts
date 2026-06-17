@@ -142,7 +142,7 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
         name: 'execute_command',
         description: `在 PowerShell 中执行系统 CLI 命令。用于执行系统操作或运行特定命令来完成用户任务中的任何步骤。支持命令链，优先使用相对命令和路径以保持终端一致性。
 
-如果命令需要长时间运行或输出很多内容，请使用 command_exec，并通过 command_write_stdin、command_tail、command_read、command_search 或 command_stop 继续控制。`,
+如果命令需要长时间运行或输出很多内容，请使用 command_exec，并通过 command_write_stdin、command_resize、command_tail、command_read、command_search 或 command_stop 继续控制。`,
         input_schema: {
             type: 'object',
             properties: {
@@ -167,9 +167,22 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
             type: 'object',
             properties: {
                 command: { type: 'string', description: '要执行的命令' },
+                processId: { type: 'string', description: '可选的调用方进程 ID；交互式 PTY 会话可用它作为稳定 processId' },
                 cwd: { type: 'string', description: '工作目录（可选，默认当前项目路径）' },
                 timeoutMs: { type: 'number', description: '硬超时毫秒数（默认 30000）' },
-                yieldTimeMs: { type: 'number', description: '短等待毫秒数，超过后返回 running（默认 1000）' }
+                yieldTimeMs: { type: 'number', description: '短等待毫秒数，超过后返回 running（默认 1000）' },
+                tty: { type: 'boolean', description: '需要真实 PTY 交互时设为 true；默认使用普通 buffered 命令执行' },
+                streamStdin: { type: 'boolean', description: '保持 stdin 可写；tty=true 时隐含支持' },
+                streamStdoutStderr: { type: 'boolean', description: '流式回传 stdout/stderr 进度；tty=true 时隐含支持' },
+                size: {
+                    type: 'object',
+                    description: 'PTY 初始尺寸，仅 tty=true 时有效',
+                    properties: {
+                        rows: { type: 'number' },
+                        cols: { type: 'number' }
+                    },
+                    required: ['rows', 'cols']
+                }
             },
             required: ['command']
         },
@@ -190,6 +203,7 @@ export const FOUNDATIONAL_TOOL_DEFINITIONS = [
         agents: ["mainAgent"]
     },
     { name: 'command_status', description: '获取命令进程状态和有界输出预览。', input_schema: { type: 'object', properties: { processId: { type: 'string' } }, required: ['processId'] }, agents: ["mainAgent"] },
+    { name: 'command_resize', description: '调整 tty=true 启动的 PTY 命令进程尺寸。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, size: { type: 'object', properties: { rows: { type: 'number' }, cols: { type: 'number' } }, required: ['rows', 'cols'] } }, required: ['processId', 'size'] }, agents: ["mainAgent"] },
     { name: 'command_stop', description: '停止仍在运行的命令进程并返回最终状态。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, yieldTimeMs: { type: 'number' } }, required: ['processId'] }, agents: ["mainAgent"] },
     { name: 'command_read', description: '按字节 offset 读取命令输出文件的一段内容。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, outputSessionId: { type: 'string' }, offset: { type: 'number' }, maxBytes: { type: 'number' } } }, agents: ["mainAgent"] },
     { name: 'command_tail', description: '读取命令输出文件的最新尾部内容。', input_schema: { type: 'object', properties: { processId: { type: 'string' }, outputSessionId: { type: 'string' }, maxBytes: { type: 'number' } } }, agents: ["mainAgent"] },

@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from 
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 
 import type { ChatSessionListAction, ChatSessionListItem } from '../services/menu-manager.service';
+import { createBuiltinChatResolvedMode, normalizeChatModeId } from '../core/chat-mode';
 import {
   type ChatSessionInventoryGroup,
   formatChatSessionStatusMeta,
@@ -79,6 +80,24 @@ export class ChatSessionEntriesComponent {
     return formatChatSessionStatusMeta(item);
   }
 
+  detailSegments(item: ChatSessionListItem): string[] {
+    const target = this.readNonEmptyString(item.requestRouting?.customAgentTarget);
+    if (target) {
+      return [target];
+    }
+
+    const modeId = this.readNonEmptyString(item.requestRouting?.requestModeId)
+      ?? this.readNonEmptyString(item.requestRouting?.selectedModeId)
+      ?? this.readNonEmptyString(item.mode)
+      ?? this.readNonEmptyString(item.inputState?.mode?.kind)
+      ?? this.readNonEmptyString(item.inputState?.mode?.id);
+    return modeId ? [createBuiltinChatResolvedMode(normalizeChatModeId(modeId)).label] : [];
+  }
+
+  hasStatusSeparator(item: ChatSessionListItem): boolean {
+    return this.detailSegments(item).length > 0;
+  }
+
   statusClass(status?: string): string {
     return getChatSessionStatusClass(status);
   }
@@ -113,5 +132,9 @@ export class ChatSessionEntriesComponent {
     }
 
     this.archivedExpanded = !this.archivedExpanded;
+  }
+
+  private readNonEmptyString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
   }
 }

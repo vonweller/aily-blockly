@@ -285,7 +285,7 @@ function mergeResumedInteractionMetadata(
   const existingContinuation = existing?.['interactionContinuation'];
   const incomingContinuation = incoming['interactionContinuation'];
 
-  if (!existingContinuation || incomingContinuation) {
+  if (!existingContinuation || incomingContinuation || !shouldCarryExistingInteractionContinuation(existingContinuation)) {
     return incoming;
   }
 
@@ -293,4 +293,34 @@ function mergeResumedInteractionMetadata(
     ...incoming,
     interactionContinuation: existingContinuation,
   };
+}
+
+function shouldCarryExistingInteractionContinuation(continuation: unknown): boolean {
+  if (!continuation || typeof continuation !== 'object' || Array.isArray(continuation)) {
+    return false;
+  }
+
+  const record = continuation as Record<string, unknown>;
+  const interactionId = typeof record['interactionId'] === 'string' ? record['interactionId'].trim() : '';
+  const lease = typeof record['lease'] === 'string' ? record['lease'].trim() : '';
+  const stepIndex = record['stepIndex'];
+  if (!interactionId || !lease || typeof stepIndex !== 'number' || !Number.isFinite(stepIndex) || stepIndex < 0) {
+    return false;
+  }
+
+  const pendingState = record['pendingState'];
+  const pendingKind = pendingState && typeof pendingState === 'object' && !Array.isArray(pendingState)
+    ? (pendingState as Record<string, unknown>)['kind']
+    : undefined;
+  if (typeof pendingKind === 'string' && pendingKind !== 'none') {
+    return true;
+  }
+
+  const hardStopReason = typeof record['hardStopReason'] === 'string' ? record['hardStopReason'] : undefined;
+  if (hardStopReason?.startsWith('interaction_')) {
+    return false;
+  }
+
+  const status = typeof record['status'] === 'string' ? record['status'] : undefined;
+  return status !== 'completed' && status !== 'complete';
 }

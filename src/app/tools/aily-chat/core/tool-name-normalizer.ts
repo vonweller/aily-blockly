@@ -14,6 +14,7 @@ const TERMINAL_SESSION_TOOL_NAMES = new Set([
   'command_exec',
   'command_write_stdin',
   'command_status',
+  'command_resize',
   'command_stop',
   'command_read',
   'command_tail',

@@ -39,6 +39,7 @@ export interface ImportedDebugSessionViewModel {
   readonly requestRouting: HostSessionRequestRoutingSummary;
   readonly interactionActionSummary?: HostSessionInteractionActionSummary;
   readonly pendingPlanReview?: ImportedDebugPendingPlanReviewSummary;
+  readonly planParts: readonly ImportedDebugPlanPartSummary[];
   readonly dualPersistence?: HostSessionDebugDualPersistenceSummary;
   readonly liveRuntimeOverlay?: HostSessionDebugLiveRuntimeOverlaySummary;
   readonly restoreDiagnostics?: HostSessionRestoreDiagnosticsSummary;
@@ -56,6 +57,15 @@ export interface ImportedDebugPendingPlanReviewSummary {
   readonly canProvideFeedback: boolean;
 }
 
+export interface ImportedDebugPlanPartSummary {
+  readonly turnId: string;
+  readonly partId?: string;
+  readonly status: string;
+  readonly source?: string;
+  readonly charLength: number;
+  readonly preview: string;
+}
+
 export function buildImportedDebugSessionViewModel(
   record: ImportedDebugSessionRecord,
 ): ImportedDebugSessionViewModel {
@@ -68,6 +78,7 @@ export function buildImportedDebugSessionViewModel(
     requestRouting: resolveHostSessionRequestRoutingSummary(record.hostRecord),
     interactionActionSummary: resolveHostSessionInteractionActionSummary(record.hostRecord),
     pendingPlanReview: buildPendingPlanReviewSummary(record),
+    planParts: buildPlanPartSummaries(record),
     ...(record.debugDualPersistence ? { dualPersistence: { ...record.debugDualPersistence } } : {}),
     ...(record.debugLiveRuntimeOverlay ? { liveRuntimeOverlay: { ...record.debugLiveRuntimeOverlay } } : {}),
     ...(record.debugRestoreDiagnostics ? { restoreDiagnostics: { ...record.debugRestoreDiagnostics } } : {}),
@@ -76,6 +87,69 @@ export function buildImportedDebugSessionViewModel(
     messageCount: projection.dialogItems.length,
     dialogItems: projection.dialogItems.map(disableDialogItemActions),
   };
+}
+
+function buildPlanPartSummaries(
+  record: ImportedDebugSessionRecord,
+): ImportedDebugPlanPartSummary[] {
+  const summaries: ImportedDebugPlanPartSummary[] = [];
+  for (const turn of record.hostRecord.turnResponses ?? []) {
+    for (const part of resolveDebugPlanParts(turn)) {
+      if (!isPlanResponsePart(part)) {
+        continue;
+      }
+      const text = typeof part.text === 'string' ? part.text : '';
+      summaries.push({
+        turnId: typeof turn.turnId === 'string' ? turn.turnId : '',
+        ...(typeof part.partId === 'string' && part.partId.trim() ? { partId: part.partId.trim() } : {}),
+        status: typeof part.status === 'string' && part.status.trim() ? part.status.trim() : 'unknown',
+        ...(typeof part.source === 'string' && part.source.trim() ? { source: part.source.trim() } : {}),
+        charLength: text.length,
+        preview: previewPlanText(text),
+      });
+    }
+  }
+  return summaries;
+}
+
+function resolveDebugPlanParts(
+  turn: ImportedDebugSessionRecord['hostRecord']['turnResponses'][number],
+): readonly unknown[] {
+  const parts = Array.isArray(turn.response?.parts) ? [...turn.response.parts] : [];
+  const envelopePlanPart = turn.planPart;
+  if (!isPlanResponsePart(envelopePlanPart)) {
+    return parts;
+  }
+
+  const envelopePartId = typeof envelopePlanPart.partId === 'string' ? envelopePlanPart.partId.trim() : '';
+  const hasSamePlanPart = parts.some((part) => {
+    if (!isPlanResponsePart(part)) {
+      return false;
+    }
+    const partId = typeof part.partId === 'string' ? part.partId.trim() : '';
+    return envelopePartId
+      ? partId === envelopePartId
+      : part.text === envelopePlanPart.text && part.status === envelopePlanPart.status;
+  });
+
+  return hasSamePlanPart ? parts : [...parts, envelopePlanPart];
+}
+
+function isPlanResponsePart(part: unknown): part is {
+  readonly type: 'plan';
+  readonly partId?: unknown;
+  readonly status?: unknown;
+  readonly source?: unknown;
+  readonly text?: unknown;
+} {
+  return typeof part === 'object'
+    && part !== null
+    && (part as { readonly type?: unknown }).type === 'plan';
+}
+
+function previewPlanText(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized;
 }
 
 function buildPendingPlanReviewSummary(
@@ -130,6 +204,7 @@ const BUILTIN_SURFACE_MODE_LABELS: Record<ChatSurfaceModeId, string> = {
   ask: 'Ask',
   edit: 'Edit',
   agent: 'Agent',
+  plan: 'Plan',
 };
 
 function disableDialogItemActions(item: ChatDialogViewItem): ChatDialogViewItem {

@@ -282,6 +282,7 @@ type CheckpointReplayCoordinatorContext = ChatViewWriteBridgeContext
     replaceSessionModelTurnResponses?(
       sessionId: string | null | undefined,
       turnResponses: readonly TurnResponseTurn[],
+      ownerPolicy?: { readonly allowForkedTurns?: boolean; readonly source?: string },
     ): readonly TurnResponseTurn[] | null | undefined;
     readonly hostResponseProjection?: HostResponseProjection | null;
     restoreSharedHostProjectionState?(

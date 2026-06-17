@@ -485,6 +485,7 @@ function buildDualPersistenceDebugEvent(
   summary: HostSessionDebugDualPersistenceSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `dual-persistence:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -504,6 +505,7 @@ function buildContextUsageDebugEvent(
   summary: HostSessionDebugContextUsageSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `context-usage:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -523,6 +525,7 @@ function buildRuntimeModeDebugEvent(
   summary: HostSessionRuntimeModeDebugSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `runtime-mode:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -542,6 +545,7 @@ function buildSessionScopeDebugEvent(
   summary: HostSessionScopeDebugSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `session-scope:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -561,6 +565,7 @@ function buildLiveRuntimeOverlayDebugEvent(
   summary: HostSessionDebugLiveRuntimeOverlaySummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `live-runtime-overlay:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -580,6 +585,7 @@ function buildRestoreDiagnosticsDebugEvent(
   summary: HostSessionRestoreDiagnosticsSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `restore-diagnostics:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -599,6 +605,7 @@ function buildRestoreFailureDebugEvent(
   summary: HostSessionRestoreFailureSummary,
 ): HostSessionDebugEvent {
   return {
+    ...buildSessionDebugExportEventBoundary(record),
     id: `restore-failure:${record.metadata.sessionId}:${sequence}`,
     sequence,
     sessionId: record.metadata.sessionId,
@@ -609,6 +616,18 @@ function buildRestoreFailureDebugEvent(
     details: formatRestoreFailureDetails(summary),
     level: 'error',
     category: 'session',
+  };
+}
+
+function buildSessionDebugExportEventBoundary(
+  record: HostSessionRecord,
+): Pick<HostSessionDebugEvent, 'ownerSessionId' | 'selectedModeId' | 'requestModeId' | 'eventSource'> {
+  const requestRouting = resolveHostSessionRequestRoutingSummary(record);
+  return {
+    ownerSessionId: record.metadata.sessionId,
+    selectedModeId: requestRouting.selectedModeId,
+    ...(requestRouting.requestModeId ? { requestModeId: requestRouting.requestModeId } : {}),
+    eventSource: 'debug-export',
   };
 }
 

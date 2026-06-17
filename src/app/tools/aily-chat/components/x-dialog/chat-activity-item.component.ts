@@ -6,6 +6,7 @@ import type { ComponentMap } from 'ngx-x-markdown';
 import { AilyHost } from '../../core/host';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
 import { ChatTerminalPartComponent } from './chat-terminal-part/chat-terminal-part.component';
+import { XAilyThinkViewerComponent } from './x-aily-think-viewer/x-aily-think-viewer.component';
 import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
 import {
@@ -30,11 +31,12 @@ import {
   type RuntimeCommandSessionActionResult,
   type RuntimeConfirmationDecision,
 } from '../../services/chat-runtime-interaction-host.service';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent],
+  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -54,11 +56,7 @@ import {
       <div class="cag-item-body">
         @if (item.kind === 'thinking') {
           <div class="cag-item-thinking-content">
-            <x-markdown
-              [content]="item.note || item.label"
-              [components]="componentMap"
-              rootClassName="x-markdown-dark cag-item-markdown"
-            />
+            <x-aily-think-viewer [data]="getThinkingViewerData()" [embedded]="true" />
           </div>
         } @else {
           <div
@@ -2119,6 +2117,7 @@ export class ChatActivityItemComponent implements OnChanges {
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['item']) {
+      const syncStartedAt = performance.now();
       const previousItem = changes['item'].previousValue as ActivityGroupDisplayItem | undefined;
       const isSameItem = previousItem?.id === this.item.id;
       const nextAutoDetailExpanded = this.shouldAutoExpandDetails();
@@ -2133,6 +2132,14 @@ export class ChatActivityItemComponent implements OnChanges {
 
       this.lastAutoDetailExpanded = nextAutoDetailExpanded;
       this.selectedInstructionFilter = 'all';
+      const markdownSurfaceCount = countActivityItemMarkdownSurfaces(this.item, this.detailExpanded);
+      ChatPerformanceTracer.increment('activity_item.markdown_instances', markdownSurfaceCount);
+      ChatPerformanceTracer.recordDuration(
+        'activity_item.input_sync',
+        performance.now() - syncStartedAt,
+        `id=${this.item.id},kind=${this.item.kind},detail=${this.detailExpanded},markdownSurfaces=${markdownSurfaceCount}`,
+        { slowThresholdMs: 4 },
+      );
     }
   }
 
@@ -2142,6 +2149,25 @@ export class ChatActivityItemComponent implements OnChanges {
 
   isToolHeader(): boolean {
     return !!this.item.toolHeader || this.item.headerKind === 'tool';
+  }
+
+  getThinkingViewerData(): {
+    content?: string;
+    ref?: string;
+    isComplete?: boolean;
+  } {
+    const thinking = this.item.thinking;
+    if (thinking?.ref) {
+      return {
+        ref: thinking.ref,
+        isComplete: thinking.isComplete,
+      };
+    }
+
+    return {
+      content: thinking?.content ?? this.item.note ?? '',
+      isComplete: thinking?.isComplete ?? !this.item.isSpinning,
+    };
   }
 
   shouldRenderHeaderToolbar(): boolean {
@@ -2551,4 +2577,59 @@ export class ChatActivityItemComponent implements OnChanges {
     const host = AilyHost.get();
     return host.project.currentProjectPath || host.project.projectRootPath || '';
   }
+}
+
+function countActivityItemMarkdownSurfaces(item: ActivityGroupDisplayItem, detailExpanded: boolean): number {
+  let count = 0;
+  if (item.note) {
+    count += 1;
+  }
+  for (const child of item.children || []) {
+    if (child.content) {
+      count += 1;
+    }
+  }
+
+  if (!detailExpanded) {
+    return count;
+  }
+
+  count += countDetailSectionMarkdownSurfaces(item.detailSections || []);
+  const invocation = item.invocationDetail;
+  if (invocation) {
+    if (invocation.progressSection) {
+      count += countDetailSectionMarkdownSurfaces([invocation.progressSection]);
+    }
+    if (invocation.argsSection) {
+      count += countDetailSectionMarkdownSurfaces([invocation.argsSection]);
+    }
+    count += countDetailSectionMarkdownSurfaces(invocation.outputSections);
+    count += countDetailSectionMarkdownSurfaces(invocation.historySections);
+  }
+  return count;
+}
+
+function countDetailSectionMarkdownSurfaces(sections: readonly DetailSectionDescriptor[]): number {
+  let count = 0;
+  for (const section of sections) {
+    for (const row of section.rows || []) {
+      if (row.note) {
+        count += 1;
+      }
+      if (row.outputCode) {
+        count += 1;
+      }
+    }
+    for (const group of section.outputGroups || []) {
+      for (const row of group.rows || []) {
+        if (row.note) {
+          count += 1;
+        }
+        if (row.outputCode) {
+          count += 1;
+        }
+      }
+    }
+  }
+  return count;
 }

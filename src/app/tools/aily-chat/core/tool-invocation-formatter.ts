@@ -62,6 +62,8 @@ export function buildToolInvocationDisplaySummary(input: {
     case 'get_terminal_output':
     case 'command_status':
       return buildTerminalOutputSummary(args);
+    case 'command_resize':
+      return { label: 'Resized command terminal', subtitle: asString(args?.processId) };
     case 'command_stop':
       return { label: 'Stopped command', subtitle: asString(args?.processId) };
     case 'command_read':

@@ -62,6 +62,11 @@ export interface ChatSessionModelMetadataPatch {
   readonly inputState?: ChatSessionModelInputState | null;
 }
 
+export interface ChatSessionTurnOwnerPolicyOptions {
+  readonly allowForkedTurns?: boolean;
+  readonly source?: string;
+}
+
 export type ChatSessionModelStoreChangeKind = 'created' | 'updated' | 'disposed';
 
 export interface ChatSessionModelStoreChangedEvent {
@@ -467,6 +472,29 @@ function clonePendingFollowupRequest(request: PendingFollowupRequest): PendingFo
   return JSON.parse(JSON.stringify(request)) as PendingFollowupRequest;
 }
 
+function hasBlockingIncomingOwnerMismatch(
+  sessionResource: string,
+  incomingTurnResponses: readonly TurnResponseTurn[],
+  existingTurnResponses: readonly TurnResponseTurn[],
+  options?: ChatSessionTurnOwnerPolicyOptions,
+): boolean {
+  const incomingDiagnostics = buildSessionTurnOwnerDiagnostics(sessionResource, incomingTurnResponses);
+  if (incomingDiagnostics.mismatchCount === 0 || options?.allowForkedTurns === true) {
+    return false;
+  }
+
+  const existingTurnIds = new Set(
+    existingTurnResponses
+      .map(turn => typeof turn?.turnId === 'string' ? turn.turnId : '')
+      .filter(turnId => turnId.length > 0),
+  );
+  if (existingTurnIds.size === 0) {
+    return true;
+  }
+
+  return incomingDiagnostics.mismatchedTurnIds.some(turnId => !existingTurnIds.has(turnId));
+}
+
 @Injectable()
 export class ChatSessionModelStoreService {
   private readonly models = new Map<ChatSessionResource, ChatSessionModel>();
@@ -545,6 +573,7 @@ export class ChatSessionModelStoreService {
   replaceTurnResponses(
     sessionResource: string | null | undefined,
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
+    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null {
     const model = this.get(sessionResource);
     if (!model || !Array.isArray(turnResponses)) {
@@ -553,7 +582,15 @@ export class ChatSessionModelStoreService {
 
     const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, turnResponses);
     if (ownerDiagnostics.mismatchCount > 0) {
-      console.warn('[ChatSessionModelStore][owner-mismatch]', {
+      const blocked = hasBlockingIncomingOwnerMismatch(
+        model.sessionResource,
+        turnResponses,
+        model.turnResponses,
+        ownerPolicy,
+      );
+      console.warn(blocked
+        ? '[ChatSessionModelStore][blocked-owner-mismatch]'
+        : '[ChatSessionModelStore][owner-mismatch]', {
         phase: 'replaceTurnResponses',
         sessionResource: model.sessionResource,
         mismatchCount: ownerDiagnostics.mismatchCount,
@@ -561,7 +598,11 @@ export class ChatSessionModelStoreService {
         mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
         firstTurnId: ownerDiagnostics.firstTurnId,
         firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+        source: ownerPolicy?.source ?? null,
       });
+      if (blocked) {
+        return null;
+      }
     }
 
     const nextTurnResponses = model.replaceTurnResponses(turnResponses);
@@ -572,10 +613,36 @@ export class ChatSessionModelStoreService {
   appendOrReplaceTurnResponse(
     sessionResource: string | null | undefined,
     turnResponse: TurnResponseTurn,
+    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): readonly TurnResponseTurn[] | null {
     const model = this.get(sessionResource);
     if (!model) {
       return null;
+    }
+
+    const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, [turnResponse]);
+    if (ownerDiagnostics.mismatchCount > 0) {
+      const blocked = hasBlockingIncomingOwnerMismatch(
+        model.sessionResource,
+        [turnResponse],
+        model.turnResponses,
+        ownerPolicy,
+      );
+      console.warn(blocked
+        ? '[ChatSessionModelStore][blocked-owner-mismatch]'
+        : '[ChatSessionModelStore][owner-mismatch]', {
+        phase: 'appendOrReplaceTurnResponse',
+        sessionResource: model.sessionResource,
+        mismatchCount: ownerDiagnostics.mismatchCount,
+        mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+        mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+        firstTurnId: ownerDiagnostics.firstTurnId,
+        firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+        source: ownerPolicy?.source ?? null,
+      });
+      if (blocked) {
+        return null;
+      }
     }
 
     const nextTurnResponses = model.appendOrReplaceTurnResponse(turnResponse);
@@ -587,10 +654,39 @@ export class ChatSessionModelStoreService {
     sessionResource: string | null | undefined,
     state: ChatSessionRuntimeStatePatch,
     options?: ChatSessionRuntimeChangeOptions,
+    ownerPolicy?: ChatSessionTurnOwnerPolicyOptions,
   ): boolean {
     const model = this.get(sessionResource);
     if (!model) {
       return false;
+    }
+
+    if (Array.isArray(state.turnResponses)) {
+      const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(model.sessionResource, state.turnResponses);
+      if (ownerDiagnostics.mismatchCount > 0) {
+        const blocked = hasBlockingIncomingOwnerMismatch(
+          model.sessionResource,
+          state.turnResponses,
+          model.turnResponses,
+          ownerPolicy,
+        );
+        console.warn(blocked
+          ? '[ChatSessionModelStore][blocked-owner-mismatch]'
+          : '[ChatSessionModelStore][owner-mismatch]', {
+          phase: 'applyRuntimeState',
+          sessionResource: model.sessionResource,
+          mismatchCount: ownerDiagnostics.mismatchCount,
+          mismatchedOwners: ownerDiagnostics.mismatchedOwners,
+          mismatchedTurnIds: ownerDiagnostics.mismatchedTurnIds.slice(0, 5),
+          firstTurnId: ownerDiagnostics.firstTurnId,
+          firstRequestPreview: ownerDiagnostics.firstRequestPreview,
+          reason: options?.reason ?? null,
+          source: ownerPolicy?.source ?? null,
+        });
+        if (blocked) {
+          return false;
+        }
+      }
     }
 
     model.applyRuntimeState(state, options);

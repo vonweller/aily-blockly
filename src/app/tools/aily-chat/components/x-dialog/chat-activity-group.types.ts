@@ -83,6 +83,12 @@ export interface ActivityGroupDisplayItem {
   label: string;
   subtitle?: string;
   note?: string;
+  thinking?: {
+    content?: string;
+    ref?: string;
+    isComplete?: boolean;
+    contentLength?: number;
+  };
   headerMeta?: string;
   pill: string;
   pillTone: string;

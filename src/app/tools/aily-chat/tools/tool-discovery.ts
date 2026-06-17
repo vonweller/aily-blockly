@@ -34,7 +34,7 @@ export const LEGACY_DEFERRED_TOOL_GROUPS: DeferredToolGroup[] = [
   {
     name: '终端工具',
     brief: '命令执行、轮询、停止、长输出读取/检索',
-    tools: ['command_exec', 'command_write_stdin', 'command_status', 'command_stop', 'command_read', 'command_tail', 'command_search'],
+    tools: ['command_exec', 'command_write_stdin', 'command_status', 'command_resize', 'command_stop', 'command_read', 'command_tail', 'command_search'],
   },
 ];
 

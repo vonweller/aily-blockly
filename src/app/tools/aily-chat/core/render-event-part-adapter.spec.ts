@@ -29,6 +29,65 @@ describe('RenderEventPartAdapter', () => {
     expect((parts[0] as any).content).toBe('Hello world');
   });
 
+  it('streams proposed plan blocks as a dedicated plan part instead of markdown', () => {
+    processCurrent({ type: 'markdown_delta', text: 'Intro\n<proposed_', timestamp: 1 });
+    processCurrent({ type: 'markdown_delta', text: 'plan>\n1. Inspect', timestamp: 2 });
+
+    let parts = store.getPartsForHandle(currentHandle);
+    expect(parts.length).toBe(2);
+    expect(parts[0]).toEqual(jasmine.objectContaining({ type: 'markdown', content: 'Intro\n' }));
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'plan',
+      status: 'streaming',
+      text: '\n1. Inspect',
+      source: 'proposed_plan',
+    }));
+
+    processCurrent({ type: 'markdown_delta', text: '\n2. Implement</proposed_', timestamp: 3 });
+    processCurrent({ type: 'markdown_delta', text: 'plan>\nAfter', timestamp: 4 });
+
+    parts = store.getPartsForHandle(currentHandle);
+    expect(parts.length).toBe(3);
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'plan',
+      status: 'completed',
+      text: '1. Inspect\n2. Implement',
+    }));
+    expect(parts[2]).toEqual(jasmine.objectContaining({ type: 'markdown', content: '\nAfter' }));
+  });
+
+  it('finalizes an unterminated proposed plan block at turn end', () => {
+    processCurrent({ type: 'markdown_delta', text: '<proposed_plan>\n1. Inspect', timestamp: 1 });
+
+    adapter.finalize(currentHandle);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts).toEqual([
+      jasmine.objectContaining({
+        type: 'plan',
+        status: 'completed',
+        text: '1. Inspect',
+      }),
+    ]);
+  });
+
+  it('can materialize final plan-mode markdown as a plan part when the model omits proposed_plan tags', () => {
+    processCurrent({ type: 'markdown_delta', text: 'Intro\n', timestamp: 1 });
+    processCurrent({ type: 'markdown_delta', text: '## Plan\n1. Wire DHT11\n2. Verify OLED', timestamp: 2 });
+
+    adapter.finalize(currentHandle, { materializeFinalMarkdownAsPlan: true });
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts).toEqual([
+      jasmine.objectContaining({
+        type: 'plan',
+        status: 'completed',
+        text: 'Intro\n## Plan\n1. Wire DHT11\n2. Verify OLED',
+        source: 'summary',
+      }),
+    ]);
+  });
+
   it('should append thinking deltas and complete', () => {
     processCurrent({ type: 'thinking_delta', text: 'Let me think...', timestamp: 1 });
     processCurrent({ type: 'thinking_complete', timestamp: 2 });
@@ -92,6 +151,25 @@ describe('RenderEventPartAdapter', () => {
 
     const parts = store.getPartsForHandle(currentHandle);
     expect((parts[0] as any).state).toBe('error');
+  });
+
+  it('maps retryable service stream errors to structured retry actions', () => {
+    processCurrent({
+      type: 'error_notice',
+      message: '对话流处理异常，请稍后重试',
+      code: '29001',
+      timestamp: 1,
+    });
+
+    const part = store.getPartsForHandle(currentHandle)[0] as any;
+    expect(part.type).toBe('error');
+    expect(part.metadata?.errorDetails?.code).toBe('29001');
+    expect(part.metadata?.errorDetails?.confirmationButtons).toEqual([
+      {
+        data: { ailyContinueOnError: true },
+        label: 'Try Again',
+      },
+    ]);
   });
 
   it('preserves structured read_file metadata from lex tool results through the displayed tool header', () => {
@@ -190,6 +268,194 @@ describe('RenderEventPartAdapter', () => {
       }),
       jasmine.objectContaining({ type: 'terminal_stdout', text: 'done' }),
     ]);
+  });
+
+  it('should stream command_exec output into one terminal part before completion', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command',
+      toolName: 'command_exec',
+      input: { command: 'npm test' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stream: 'stdout',
+        text: 'line 1\n',
+        bytesTotal: 7,
+      },
+      timestamp: 2,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stream: 'stderr',
+        text: 'warn\n',
+        bytesTotal: 12,
+      },
+      timestamp: 3,
+    });
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'tc-command',
+        state: 'doing',
+      }),
+      jasmine.objectContaining({
+        type: 'terminal',
+        command: 'npm test',
+        output: 'line 1\n',
+        stderr: 'warn\n',
+        isRunning: true,
+      }),
+    ]);
+  });
+
+  it('should stop a streamed command terminal when progress reports a killed process', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-stop',
+      toolName: 'command_exec',
+      input: { command: 'npm test' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-stop',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stream: 'stderr',
+        text: '[Process stopped by user]',
+        processId: 'process-1',
+        outputSessionId: 'process-1',
+        status: 'killed',
+        running: false,
+        bytesTotal: 25,
+      },
+      timestamp: 2,
+    });
+
+    const terminal = store.getPartsForHandle(currentHandle).find(part => part.type === 'terminal') as any;
+    expect(terminal).toEqual(jasmine.objectContaining({
+      type: 'terminal',
+      command: 'npm test',
+      stderr: '[Process stopped by user]',
+      isRunning: false,
+      status: 'killed',
+      processId: 'process-1',
+      outputSessionId: 'process-1',
+    }));
+  });
+
+  it('should merge structured command session updates into the same terminal session without duplicating live output', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-exec',
+      toolName: 'command_exec',
+      input: { command: 'npm test' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-exec',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stream: 'stdout',
+        text: 'line 1\n',
+        processId: 'process-1',
+        outputSessionId: 'output-1',
+        bytesTotal: 7,
+      },
+      timestamp: 2,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-exec',
+      data: {
+        kind: 'command_session_update',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stdout: 'line 1\n',
+        stderr: '',
+        processId: 'process-1',
+        outputSessionId: 'output-1',
+        outputFilePath: '/tmp/output-1.log',
+        cwd: '/workspace',
+        status: 'running',
+        running: true,
+        bytesTotal: 7,
+      },
+      timestamp: 3,
+    });
+
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-status',
+      toolName: 'command_status',
+      input: { processId: 'process-1' },
+      timestamp: 4,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-status',
+      data: {
+        kind: 'command_session_update',
+        toolName: 'command_status',
+        command: 'npm test',
+        stdout: 'line 1\ndone\n',
+        stderr: '',
+        processId: 'process-1',
+        outputSessionId: 'output-1',
+        outputFilePath: '/tmp/output-1.log',
+        cwd: '/workspace',
+        status: 'completed',
+        running: false,
+        exitCode: 0,
+        bytesTotal: 12,
+        lastOutputAt: 1770998400000,
+      },
+      timestamp: 5,
+    });
+
+    const terminals = store.getPartsForHandle(currentHandle).filter(part => part.type === 'terminal') as any[];
+    expect(terminals.length).toBe(1);
+    expect(terminals[0]).toEqual(jasmine.objectContaining({
+      type: 'terminal',
+      command: 'npm test',
+      output: 'line 1\ndone\n',
+      stderr: '',
+      exitCode: 0,
+      isRunning: false,
+      status: 'completed',
+      processId: 'process-1',
+      outputSessionId: 'output-1',
+      outputFilePath: '/tmp/output-1.log',
+      cwd: '/workspace',
+      bytesTotal: 12,
+      lastOutputAt: new Date(1770998400000).toISOString(),
+      sourceToolCallIds: ['tc-command-exec', 'tc-command-status'],
+    }));
   });
 
   it('should preserve structured image and resource tool results in metadata timeline', () => {
@@ -484,6 +750,109 @@ describe('RenderEventPartAdapter', () => {
     expect((parts[0] as any).severity).toBe('info');
   });
 
+  it('should preserve scoped subagent metadata on notice parts', () => {
+    processCurrent({
+      type: 'warning_notice',
+      message: 'Child agent needs more context.',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+      timestamp: 1,
+    });
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts[0].type).toBe('error');
+    expect((parts[0] as any).severity).toBe('warning');
+    expect((parts[0] as any).metadata).toEqual(jasmine.objectContaining({
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+  });
+
+  it('should preserve scoped subagent metadata on interaction parts', () => {
+    processCurrent({
+      type: 'question_request',
+      requestId: 'question-1',
+      questions: [{ question: 'Which file?' }],
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+      timestamp: 1,
+    });
+    processCurrent({
+      type: 'approval_request',
+      requestId: 'approval-standalone',
+      toolName: 'ask_user',
+      input: { reason: 'Need confirmation' },
+      message: 'Continue?',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+      timestamp: 2,
+    });
+
+    const parts = store.getPartsForHandle(currentHandle) as any[];
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'question',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+    expect(parts[0].metadata).toEqual(jasmine.objectContaining({
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'confirmation',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+    expect(parts[1].metadata).toEqual(jasmine.objectContaining({
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+  });
+
+  it('should preserve scoped subagent metadata on tool approval patches', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'child-tool',
+      toolName: 'write_file',
+      input: { path: 'a.ts' },
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+      timestamp: 1,
+    });
+    processCurrent({
+      type: 'approval_request',
+      toolCallId: 'child-tool',
+      toolName: 'write_file',
+      input: { path: 'a.ts' },
+      message: 'Allow write?',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+      timestamp: 2,
+    });
+
+    const parts = store.getPartsForHandle(currentHandle) as any[];
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      state: 'pending_approval',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+    expect(parts[0].metadata).toEqual(jasmine.objectContaining({
+      approval: jasmine.any(Object),
+      subAgentInvocationId: 'call-agent',
+      parentToolCallId: 'call-agent',
+    }));
+  });
+
   it('should handle subagent lifecycle', () => {
     processCurrent({
       type: 'subagent_begin',
@@ -559,6 +928,119 @@ describe('RenderEventPartAdapter', () => {
         description: 'Searching codebase',
         agentName: 'Explore',
         result: 'Found 3 matches',
+      }),
+    }));
+  });
+
+  it('maps scoped subagent child stream to first-class scoped parts without mutating childItems', () => {
+    processCurrent({
+      type: 'subagent_begin',
+      toolCallId: 'sa1',
+      subAgentInvocationId: 'sa1',
+      agentName: 'Explore',
+      description: 'Searching codebase',
+      timestamp: 1,
+    } as any);
+
+    processCurrent({
+      type: 'thinking_delta',
+      text: 'Inspecting ',
+      timestamp: 2,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'thinking_delta',
+      text: 'files',
+      timestamp: 3,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'thinking_complete',
+      timestamp: 4,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'markdown_delta',
+      text: 'Found ',
+      timestamp: 5,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'markdown_delta',
+      text: 'candidate paths',
+      timestamp: 6,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'child1',
+      toolName: 'search_files',
+      input: { query: 'generator' },
+      timestamp: 7,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+    processCurrent({
+      type: 'tool_call_end',
+      toolCallId: 'child1',
+      toolName: 'search_files',
+      resultText: '3 matches',
+      durationMs: 12,
+      state: 'done',
+      isError: false,
+      timestamp: 8,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    } as any);
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts.length).toBe(4);
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'sa1',
+      metadata: jasmine.objectContaining({
+        subAgentInvocationId: 'sa1',
+      }),
+    }));
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toEqual([]);
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'thinking',
+      content: 'Inspecting files',
+      isComplete: true,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    }));
+    expect(parts[2]).toEqual(jasmine.objectContaining({
+      type: 'markdown',
+      content: 'Found candidate paths',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    }));
+    expect(parts[3]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'child1',
+      state: 'done',
+      text: '3 matches',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+      metadata: jasmine.objectContaining({
+        subAgentInvocationId: 'sa1',
+        parentToolCallId: 'sa1',
       }),
     }));
   });
@@ -762,6 +1244,146 @@ describe('RenderEventPartAdapter', () => {
         }),
       }),
     ]);
+  });
+
+  it('preserves editor operation phases as bounded tool invocation progress state', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-editor-op',
+      toolName: 'syncAbs',
+      input: { action: 'import' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-editor-op',
+      data: {
+        kind: 'editor_operation',
+        operationId: 'op-1',
+        operationKind: 'blockly.syncAbs.import',
+        phase: 'queued',
+        label: 'Import ABS',
+        summary: 'Import ABS queued',
+        queueSize: 2,
+        running: true,
+      },
+      timestamp: 2,
+    } as RenderEvent);
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-editor-op',
+      data: {
+        kind: 'editor_operation',
+        operationId: 'op-1',
+        operationKind: 'blockly.syncAbs.import',
+        phase: 'completed',
+        label: 'Import ABS',
+        summary: 'Import ABS completed',
+        durationMs: 1250,
+        running: false,
+      },
+      timestamp: 3,
+    } as RenderEvent);
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'tc-editor-op',
+        state: 'done',
+        text: 'Import ABS completed',
+        metadata: jasmine.objectContaining({
+          toolName: 'syncAbs',
+          phase: 'completed',
+          progressKind: 'editor_operation',
+          operationId: 'op-1',
+          operationKind: 'blockly.syncAbs.import',
+          operationLabel: 'Import ABS',
+          durationMs: 1250,
+          toolSpecificData: jasmine.objectContaining({
+            kind: 'editor_operation',
+            operationId: 'op-1',
+            operationKind: 'blockly.syncAbs.import',
+            label: 'Import ABS',
+            phase: 'completed',
+            running: false,
+          }),
+          timeline: [
+            jasmine.objectContaining({
+              recordId: 'tc-editor-op:op-1:queued',
+              phase: 'queued',
+              summary: 'Import ABS queued',
+              progressDetails: jasmine.objectContaining({
+                kind: 'editor_operation',
+                operationKind: 'blockly.syncAbs.import',
+                queueSize: 2,
+                running: true,
+              }),
+            }),
+            jasmine.objectContaining({
+              recordId: 'tc-editor-op:op-1:completed',
+              phase: 'completed',
+              summary: 'Import ABS completed',
+              progressDetails: jasmine.objectContaining({
+                kind: 'editor_operation',
+                operationKind: 'blockly.syncAbs.import',
+                durationMs: 1250,
+                running: false,
+              }),
+            }),
+          ],
+        }),
+      }),
+    ]);
+  });
+
+  it('keeps command output progress on the originating tool handle after current handle advances', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-command-shift',
+      toolName: 'command_exec',
+      input: { command: 'npm test' },
+      timestamp: 1,
+    });
+
+    const originalHandle = currentHandle;
+    const advancedHandle = store.createDetachedHandle('shift-command');
+    currentHandle = advancedHandle;
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-command-shift',
+      data: {
+        kind: 'command_output',
+        toolName: 'command_exec',
+        command: 'npm test',
+        stream: 'stdout',
+        text: 'line 1\n',
+        processId: 'process-1',
+        outputSessionId: 'output-1',
+        bytesTotal: 7,
+      },
+      timestamp: 2,
+    } as RenderEvent);
+
+    expect(store.getPartsForHandle(originalHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'tc-command-shift',
+        state: 'doing',
+        text: 'line 1\n',
+      }),
+      jasmine.objectContaining({
+        type: 'terminal',
+        command: 'npm test',
+        output: 'line 1\n',
+        processId: 'process-1',
+        outputSessionId: 'output-1',
+        isRunning: true,
+      }),
+    ]);
+    expect(store.getPartsForHandle(advancedHandle)).toEqual([]);
   });
 
   it('keeps subagent activity and completion on the originating handle after current handle advances', () => {
