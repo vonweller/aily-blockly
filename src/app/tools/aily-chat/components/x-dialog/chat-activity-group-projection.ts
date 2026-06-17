@@ -1,4 +1,4 @@
-import { ChatPart, ConfirmationPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
+import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
 import { projectToolCallApprovalDisplayData } from '../../core/tool-call-approval';
 import {
   buildActivityItemsFromDetailSections,
@@ -29,6 +29,9 @@ import {
   isSearchSummaryToolName,
   normalizeReadSideToolName,
 } from '../../core/tool-name-normalizer';
+import { getMarkdownContentWindow } from '../../core/markdown-content-store';
+import { getThinkContentWindow } from '../../core/think-content-store';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 import type {
   ActivityApprovalDisplayData,
   ActivityApprovalSummaryDisplayData,
@@ -67,12 +70,21 @@ export interface ActivityShellPresentation {
   kicker?: string;
 }
 
+const SUBAGENT_CHILD_DISPLAY_MAX_CHARS = 12 * 1024;
+const SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER = '[earlier subagent output omitted]\n';
+
 export interface ThinkingActivityPresentation {
   iconClass: string;
   iconColor: string;
   kicker: string;
   label: string;
   note?: string;
+  thinking?: {
+    content?: string;
+    ref?: string;
+    isComplete?: boolean;
+    contentLength?: number;
+  };
 }
 
 export interface ToolInvocationSummaryDisplay {
@@ -103,7 +115,12 @@ export function buildChatPartIdentity(part: ChatPart, index: number): string {
     return part.partId || part.askId;
   }
   if (part.type === 'terminal') {
-    return part.toolCallId || `terminal-${index}`;
+    return part.partId
+      || part.processId
+      || part.outputSessionId
+      || part.terminalId
+      || part.toolCallId
+      || `terminal-${index}`;
   }
   if (part.type === 'question') {
     return part.partId || `question-${index}`;
@@ -114,15 +131,19 @@ export function buildChatPartIdentity(part: ChatPart, index: number): string {
   if (part.type === 'markdown') {
     return `markdown-${index}`;
   }
+  if (part.type === 'plan') {
+    return part.partId || `plan-${index}`;
+  }
   return `error-${index}`;
 }
 
-export function buildActivityGroupIdentity(parts: readonly ChatPart[]): string {
+export function buildActivityGroupIdentity(parts: readonly ChatPart[], startIndex = 0): string {
   const firstPart = parts[0];
   const lastPart = parts[parts.length - 1];
+  const lastIndex = startIndex + parts.length - 1;
   const groupId = [
-    buildChatPartIdentity(firstPart, 0),
-    buildChatPartIdentity(lastPart, parts.length - 1),
+    buildChatPartIdentity(firstPart, startIndex),
+    buildChatPartIdentity(lastPart, lastIndex),
     String(parts.length),
   ].join('::');
 
@@ -253,7 +274,10 @@ export function buildSubagentActivitySummary(
   const agentName = asString(toolSpecificData?.['agentName']) || '子代理';
   const description = asString(toolSpecificData?.['description']) || argsSummary || part.text || '';
   const result = asString(toolSpecificData?.['result']) || '';
-  const childItems = asRecordArray(toolSpecificData?.['childItems']);
+  const childItems = settleSubagentChildItemsForParent(
+    asRecordArray(toolSpecificData?.['childItems']),
+    part.state,
+  );
   const shouldAppendResult = shouldAppendSubagentResult(childItems, result);
 
   return {
@@ -279,6 +303,10 @@ export function buildSubagentActivitySummary(
 export function buildSubagentActivityItems(
   part: Pick<ToolCallPart, 'toolCallId' | 'text' | 'state' | 'metadata'>,
 ): readonly ActivityGroupDisplayItem[] {
+  const startedAt = performance.now();
+  let rawChildCount = 0;
+  let normalizedChildCount = 0;
+  let itemCount = 0;
   const metadata = asRecord(part.metadata);
   const toolSpecificData = asRecord(metadata?.['toolSpecificData']);
   if (!isSubagentMetadata(toolSpecificData)) {
@@ -289,7 +317,13 @@ export function buildSubagentActivityItems(
   const description = asString(toolSpecificData['description']) || argsSummary || part.text || '';
   const prompt = asString(toolSpecificData['prompt']);
   const result = asString(toolSpecificData['result']) || '';
-  const childItems = normalizeSubagentChildItems(asRecordArray(toolSpecificData['childItems']));
+  const rawChildItems = asRecordArray(toolSpecificData['childItems']);
+  rawChildCount = rawChildItems.length;
+  const childItems = settleSubagentChildItemsForParent(
+    normalizeSubagentChildItems(rawChildItems),
+    part.state,
+  );
+  normalizedChildCount = childItems.length;
   const shouldAppendResult = shouldAppendSubagentResult(childItems, result);
   const items: ActivityGroupDisplayItem[] = [];
 
@@ -315,6 +349,16 @@ export function buildSubagentActivityItems(
     }));
   }
 
+  itemCount = items.length;
+  ChatPerformanceTracer.increment('activity_projection.subagent_build.count');
+  ChatPerformanceTracer.increment('activity_projection.subagent_child_count.raw', rawChildCount);
+  ChatPerformanceTracer.increment('activity_projection.subagent_child_count.normalized', normalizedChildCount);
+  ChatPerformanceTracer.recordDuration(
+    'activity_projection.subagent_build',
+    performance.now() - startedAt,
+    `tool=${part.toolCallId},raw=${rawChildCount},normalized=${normalizedChildCount},items=${itemCount},state=${part.state}`,
+    { slowThresholdMs: 6 },
+  );
   return items;
 }
 
@@ -800,7 +844,7 @@ export function buildStateActivityShellPresentation(input: {
 }
 
 export function buildThinkingActivityPresentation(
-  part: Pick<ThinkingPart, 'content' | 'isComplete'>,
+  part: Pick<ThinkingPart, 'content' | 'contentRef' | 'contentLength' | 'isComplete'>,
 ): ThinkingActivityPresentation {
   const isSpinning = !part.isComplete;
   return {
@@ -808,7 +852,40 @@ export function buildThinkingActivityPresentation(
     iconColor: isSpinning ? 'var(--chat-info)' : 'var(--chat-success)',
     kicker: isSpinning ? 'Thinking' : 'Thought',
     label: isSpinning ? '思考中' : '思考',
-    note: part.content || undefined,
+    note: undefined,
+    thinking: {
+      ...(part.contentRef ? { ref: part.contentRef } : {}),
+      ...(!part.contentRef && part.content ? { content: part.content } : {}),
+      ...(typeof part.contentLength === 'number' ? { contentLength: part.contentLength } : {}),
+      isComplete: part.isComplete,
+    },
+  };
+}
+
+export function buildScopedMarkdownActivityDisplayItem(
+  part: MarkdownPart,
+  options?: { id?: string },
+): ActivityGroupDisplayItem {
+  const content = part.contentRef
+    ? getMarkdownContentWindow(part.contentRef, SUBAGENT_CHILD_DISPLAY_MAX_CHARS, SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER)
+    : part.content;
+
+  return {
+    id: options?.id || buildChatPartIdentity(part, 0),
+    kind: 'thinking',
+    iconClass: 'fa-light fa-message-lines',
+    isSpinning: false,
+    iconColor: getSubagentStepColor('neutral'),
+    kicker: 'Output',
+    label: '输出',
+    note: content,
+    thinking: {
+      content,
+      isComplete: true,
+      ...(typeof part.contentLength === 'number' ? { contentLength: part.contentLength } : {}),
+    },
+    pill: '',
+    pillTone: 'neutral',
   };
 }
 
@@ -1270,6 +1347,7 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
   const commandTone: StateDetailRow['tone'] = part.isRunning
     ? 'info'
     : (part.exitCode != null && part.exitCode !== 0 ? 'error' : 'success');
+  const metadataRows = buildTerminalMetadataRows(part, terminalKey);
   const rows = [
     {
       id: `${terminalKey}:command`,
@@ -1280,9 +1358,11 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
       tone: commandTone,
       outputKind: 'terminal-command' as const,
     },
+    ...metadataRows,
     ...(part.output ? [{
       id: `${terminalKey}:stdout`,
-      title: 'stdout',
+      title: 'stdout tail',
+      subtitle: formatTerminalTailSubtitle(part, 'stdout'),
       note: part.output,
       tone: 'neutral' as const,
       outputKind: 'terminal-stream' as const,
@@ -1290,7 +1370,8 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
     }] : []),
     ...(part.stderr ? [{
       id: `${terminalKey}:stderr`,
-      title: 'stderr',
+      title: 'stderr tail',
+      subtitle: formatTerminalTailSubtitle(part, 'stderr'),
       note: part.stderr,
       tone: 'error' as const,
       outputKind: 'terminal-stream' as const,
@@ -1307,6 +1388,75 @@ function buildTerminalDetailSections(part: TerminalPart): readonly DetailSection
       rows,
     }],
   }];
+}
+
+function buildTerminalMetadataRows(part: TerminalPart, terminalKey: string): StateDetailRow[] {
+  const rows: StateDetailRow[] = [];
+
+  if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
+    rows.push({
+      id: `${terminalKey}:bytes`,
+      title: '已记录输出',
+      note: formatTerminalByteCount(part.bytesTotal),
+      trailing: part.outputSessionId ? '可按需读取' : undefined,
+      tone: 'neutral',
+      outputKind: 'default',
+    });
+  }
+
+  if (part.outputFilePath) {
+    rows.push({
+      id: `${terminalKey}:output-file`,
+      title: '输出文件',
+      note: part.outputFilePath,
+      trailing: '完整输出',
+      tone: 'neutral',
+      outputKind: 'resource',
+      outputUri: part.outputFilePath,
+    });
+  }
+
+  if (part.processId || part.outputSessionId) {
+    rows.push({
+      id: `${terminalKey}:identity`,
+      title: '进程会话',
+      note: [
+        part.processId ? `processId=${part.processId}` : undefined,
+        part.outputSessionId ? `outputSessionId=${part.outputSessionId}` : undefined,
+      ].filter(Boolean).join('\n'),
+      tone: 'neutral',
+      outputKind: 'default',
+    });
+  }
+
+  return rows;
+}
+
+function formatTerminalTailSubtitle(part: TerminalPart, stream: 'stdout' | 'stderr'): string | undefined {
+  const parts: string[] = ['live tail'];
+  if (typeof part.bytesTotal === 'number' && Number.isFinite(part.bytesTotal)) {
+    parts.push(formatTerminalByteCount(part.bytesTotal));
+  }
+  if (stream === 'stdout' && part.outputFilePath) {
+    parts.push('full output in file');
+  }
+  return parts.join(' · ');
+}
+
+function formatTerminalByteCount(value: number): string {
+  const bytes = Math.max(0, Math.floor(value));
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let current = bytes / 1024;
+  for (const unit of units) {
+    if (current < 1024 || unit === units[units.length - 1]) {
+      return `${current >= 10 ? current.toFixed(0) : current.toFixed(1)} ${unit}`;
+    }
+    current /= 1024;
+  }
+  return `${bytes} B`;
 }
 
 function formatTerminalStatusLabel(part: TerminalPart): string {
@@ -1733,9 +1883,29 @@ function getSubagentStepPillTone(tone: string | undefined): string {
   }
 }
 
+function resolveSubagentChildContent(item: Record<string, unknown>): string {
+  const contentRef = asString(item['contentRef']);
+  if (contentRef) {
+    const contentKind = asString(item['contentKind']);
+    return contentKind === 'thinking'
+      ? getThinkContentWindow(contentRef, SUBAGENT_CHILD_DISPLAY_MAX_CHARS, SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER)
+      : getMarkdownContentWindow(contentRef, SUBAGENT_CHILD_DISPLAY_MAX_CHARS, SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER);
+  }
+
+  const content = asString(item['content']) || '';
+  if (content.length <= SUBAGENT_CHILD_DISPLAY_MAX_CHARS) {
+    return content;
+  }
+
+  const tailLength = Math.max(0, SUBAGENT_CHILD_DISPLAY_MAX_CHARS - SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER.length);
+  return `${SUBAGENT_CHILD_DISPLAY_OMITTED_MARKER}${content.slice(-tailLength)}`;
+}
+
 function normalizeSubagentChildItems(items: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+  const startedAt = performance.now();
   const normalized: Record<string, unknown>[] = [];
 
+  try {
   for (const item of items) {
     const kind = asString(item['kind']);
     if (!kind) {
@@ -1758,8 +1928,9 @@ function normalizeSubagentChildItems(items: readonly Record<string, unknown>[]):
       continue;
     }
 
-    const content = asString(item['content']);
-    if (!content) {
+    const contentRef = asString(item['contentRef']);
+    const content = resolveSubagentChildContent(item);
+    if (!content && !contentRef) {
       continue;
     }
 
@@ -1770,6 +1941,16 @@ function normalizeSubagentChildItems(items: readonly Record<string, unknown>[]):
 
     const previous = normalized[normalized.length - 1];
     if (previous && asString(previous['kind']) === kind) {
+      const previousContentRef = asString(previous['contentRef']);
+      if (previousContentRef || contentRef) {
+        normalized[normalized.length - 1] = {
+          ...previous,
+          ...item,
+          content,
+        };
+        continue;
+      }
+
       normalized[normalized.length - 1] = {
         ...previous,
         content: `${asString(previous['content']) || ''}${content}`,
@@ -1781,6 +1962,40 @@ function normalizeSubagentChildItems(items: readonly Record<string, unknown>[]):
   }
 
   return normalized;
+  } finally {
+    ChatPerformanceTracer.recordDuration(
+      'activity_projection.subagent_normalize',
+      performance.now() - startedAt,
+      `input=${items.length},output=${normalized.length}`,
+      { slowThresholdMs: 4 },
+    );
+  }
+}
+
+function settleSubagentChildItemsForParent(
+  items: readonly Record<string, unknown>[],
+  parentState: ToolCallPart['state'],
+): Record<string, unknown>[] {
+  if (parentState === 'doing' || parentState === 'pending_approval') {
+    return [...items];
+  }
+
+  const finalState = parentState === 'error' ? 'error' : 'done';
+  return items.map((item) => {
+    if (asString(item['kind']) !== 'tool') {
+      return item;
+    }
+
+    const state = asString(item['state']);
+    if (state === 'done' || state === 'error') {
+      return item;
+    }
+
+    return {
+      ...item,
+      state: finalState,
+    };
+  });
 }
 
 function toSubagentActivityItems(item: Record<string, unknown>, index: number): ActivityGroupDisplayItem[] {

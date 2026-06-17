@@ -48,10 +48,12 @@
   (click)="modeClick.emit($event)"
 >
   <i [class]="modeIconClass"></i>
-  @if (currentCustomAgentTarget && currentMode === 'agent') {
-    <span>{{ currentCustomAgentTarget }}</span>
+  @if (displayCustomAgentTarget) {
+    <span>{{ displayCustomAgentTarget }}</span>
   } @else if (showModeLabel && modeLabelKey) {
     <span>{{ modeLabelKey | translate }}</span>
+  } @else if (modePlainLabel) {
+    <span>{{ modePlainLabel }}</span>
   }
 </div>
 @if (showModelChip) {

@@ -2,17 +2,21 @@
   Component,
   Input,
   OnChanges,
+  OnDestroy,
   SimpleChanges,
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  NgZone,
   signal,
   inject,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
 import type { TurnRequest, TurnResponseTurn } from 'aily-lex/browser';
 
-import { ChatPart, MarkdownPart, ErrorPart, QuestionPart } from '../../core/chat-parts';
+import { ChatPart, MarkdownPart, ErrorPart, QuestionPart, PlanPart } from '../../core/chat-parts';
 import { AilyChatConfigService } from '../../services/aily-chat-config.service';
 import { isDefaultAutoPresetSelected } from '../../helpers/model-billing-label';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
@@ -25,6 +29,12 @@ import { isProgressMessageDisplayPart, type ProgressMessageDisplayPart, type Ren
 import { ChatEngineService } from '../../services/chat-engine.service';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import { ChatService, type ModelConfig } from '../../services/chat.service';
+import {
+  getMarkdownContent as readStoredMarkdownContent,
+  getMarkdownContentLength as readStoredMarkdownContentLength,
+  getMarkdownContentWindow as readStoredMarkdownContentWindow,
+} from '../../core/markdown-content-store';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
 interface ContinueOnErrorConfirmationData {
   readonly ailyContinueOnError: true;
@@ -35,13 +45,39 @@ interface SwitchToAutoOnRateLimitConfirmationData {
   readonly alwaysSwitchToAuto: boolean;
 }
 
-type ErrorConfirmationData = ContinueOnErrorConfirmationData | SwitchToAutoOnRateLimitConfirmationData;
+interface ContinueInteractionActionData {
+  readonly ailyContinueInteraction: true;
+}
+
+type ErrorConfirmationData =
+  | ContinueOnErrorConfirmationData
+  | SwitchToAutoOnRateLimitConfirmationData
+  | ContinueInteractionActionData;
+
+const PLAN_MARKDOWN_RENDER_CHAR_LIMIT = 6_000;
+const PLAN_CHUNK_SIZE = 2_000;
+const LARGE_MARKDOWN_RENDER_CHAR_LIMIT = 24_000;
+const LARGE_MARKDOWN_CHUNK_SIZE = 4_000;
+const LIVE_MARKDOWN_POLL_INTERVAL_MS = 180;
+const LIVE_MARKDOWN_RENDER_WINDOW_CHARS = 48 * 1024;
+const LIVE_MARKDOWN_OMITTED_MARKER = '[earlier streaming text omitted from live view]\n\n';
+
+interface PlanTextChunk {
+  readonly id: string;
+  readonly text: string;
+}
+
+interface MarkdownTextChunk {
+  readonly id: string;
+  readonly text: string;
+}
 
 @Component({
   selector: 'aily-chat-message-part-item',
   standalone: true,
   imports: [
     CommonModule,
+    TranslateModule,
     XMarkdownComponent,
     XAilyErrorViewerComponent,
     XAilyQuestionViewerComponent,
@@ -52,12 +88,20 @@ type ErrorConfirmationData = ContinueOnErrorConfirmationData | SwitchToAutoOnRat
   template: `
     @switch (part?.type) {
       @case ('markdown') {
-        <x-markdown
-          [content]="getMarkdownContent()"
-          [streaming]="streamingConfig()"
-          [components]="componentMap"
-          rootClassName="x-markdown-dark"
-        />
+        @if (shouldRenderMarkdownAsChunkedText()) {
+          <div class="chat-markdown-plain" role="text" aria-label="Assistant message">
+            @for (chunk of getMarkdownTextChunks(); track chunk.id) {
+              <span class="chat-markdown-text-chunk">{{ chunk.text }}</span>
+            }
+          </div>
+        } @else {
+          <x-markdown
+            [content]="getMarkdownDisplayContent()"
+            [streaming]="streamingConfig()"
+            [components]="componentMap"
+            rootClassName="x-markdown-dark"
+          />
+        }
       }
       @case ('thinking') {
         @if (shouldUseStandaloneActivityGroup()) {
@@ -90,6 +134,71 @@ type ErrorConfirmationData = ContinueOnErrorConfirmationData | SwitchToAutoOnRat
       }
       @case ('terminal') {
         <aily-chat-activity-group [parts]="getStandaloneActivityParts()" [doing]="doing" [sessionId]="sessionId" />
+      }
+      @case ('plan') {
+        <section class="chat-plan-card" [attr.data-plan-status]="getPlanData().status">
+          <header class="chat-plan-card-header">
+            <span class="chat-plan-card-icon ccenter">
+              @if (getPlanData().status === 'streaming') {
+                <i class="fa-light fa-spinner-third ac-spin"></i>
+              } @else {
+                <i class="fa-light fa-list-check"></i>
+              }
+            </span>
+            <span class="chat-plan-card-title">Plan</span>
+            <span class="chat-plan-card-status">{{ getPlanStatusLabel() }}</span>
+          </header>
+          <div class="chat-plan-card-body">
+            @if (shouldRenderPlanAsChunkedText()) {
+              <div class="chat-plan-card-plain" role="text" aria-label="Plan text">
+                @for (chunk of getPlanTextChunks(); track chunk.id) {
+                  <span class="chat-plan-text-chunk">{{ chunk.text }}</span>
+                }
+              </div>
+            } @else {
+              <x-markdown
+                [content]="getPlanData().text"
+                [streaming]="streamingConfig()"
+                [components]="componentMap"
+                rootClassName="x-markdown-dark"
+              />
+            }
+          </div>
+          @if (shouldShowPlanActions()) {
+            <footer class="chat-plan-card-actions">
+              <button
+                type="button"
+                class="chat-plan-action chat-plan-action-primary"
+                [disabled]="planActionBusy"
+                (click)="startImplementation($event)">
+                {{ 'AILY_CHAT.PLAN_ACTION_START_IMPLEMENTATION' | translate }}
+              </button>
+              <button
+                type="button"
+                class="chat-plan-action"
+                [disabled]="planActionBusy"
+                (click)="clearContextAndImplement($event)">
+                {{ 'AILY_CHAT.PLAN_ACTION_CLEAR_CONTEXT_AND_IMPLEMENT' | translate }}
+              </button>
+              <button
+                type="button"
+                class="chat-plan-action"
+                [disabled]="planActionBusy"
+                (click)="stayInPlan($event)">
+                {{ 'AILY_CHAT.PLAN_ACTION_STAY_IN_PLAN' | translate }}
+              </button>
+              <button
+                type="button"
+                class="chat-plan-action chat-plan-action-icon"
+                [disabled]="planActionBusy"
+                [title]="'AILY_CHAT.PLAN_ACTION_OPEN_IN_EDITOR' | translate"
+                [attr.aria-label]="'AILY_CHAT.PLAN_ACTION_OPEN_IN_EDITOR' | translate"
+                (click)="openPlanInEditor($event)">
+                <i class="fa-light fa-up-right-from-square"></i>
+              </button>
+            </footer>
+          }
+        </section>
       }
       @case ('progress') {
         <div class="chat-working-progress" [attr.data-progress-kind]="getProgressData()?.progressKind || 'working'">
@@ -143,9 +252,132 @@ type ErrorConfirmationData = ContinueOnErrorConfirmationData | SwitchToAutoOnRat
       overflow-wrap: anywhere;
       word-break: break-word;
     }
+
+    .chat-plan-card {
+      border: 1px solid var(--chat-border, rgba(255, 255, 255, 0.14));
+      border-radius: 8px;
+      background: var(--chat-panel-bg, rgba(255, 255, 255, 0.045));
+      overflow: hidden;
+    }
+
+    .chat-plan-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--chat-border, rgba(255, 255, 255, 0.12));
+      color: var(--chat-fg, #d4d4d4);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .chat-plan-card-icon {
+      flex: 0 0 auto;
+      width: 16px;
+      height: 16px;
+      color: var(--chat-info, #75beff);
+      font-size: 12px;
+    }
+
+    .chat-plan-card-title {
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+
+    .chat-plan-card-status {
+      min-width: 0;
+      color: var(--chat-fg-dim, #9a9a9a);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-plan-card-body {
+      padding: 8px 10px 10px;
+      min-width: 0;
+    }
+
+    .chat-plan-card-plain {
+      margin: 0;
+      min-width: 0;
+      color: var(--chat-fg, #d4d4d4);
+      font-family: var(--chat-font-family, inherit);
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .chat-plan-text-chunk {
+      display: block;
+      content-visibility: auto;
+      contain-intrinsic-size: 0 180px;
+    }
+
+    .chat-markdown-plain {
+      min-width: 0;
+      color: var(--chat-fg, #d4d4d4);
+      font-family: var(--chat-font-family, inherit);
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .chat-markdown-text-chunk {
+      display: block;
+      content-visibility: auto;
+      contain-intrinsic-size: 0 220px;
+    }
+
+    .chat-plan-card-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0 10px 10px;
+    }
+
+    .chat-plan-action {
+      min-height: 26px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.04);
+      color: var(--chat-fg, #d4d4d4);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .chat-plan-action-primary {
+      background: #0e639c;
+      border-color: transparent;
+      color: #ffffff;
+    }
+
+    .chat-plan-action-icon {
+      width: 28px;
+      min-width: 28px;
+      padding: 0;
+    }
+
+    .chat-plan-action:not(:disabled):hover {
+      background: rgba(255,255,255,0.08);
+    }
+
+    .chat-plan-action-primary:not(:disabled):hover {
+      background: #1177bb;
+    }
+
+    .chat-plan-action:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
   `],
 })
-export class ChatMessagePartItemComponent implements OnChanges {
+export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
   @Input() part: RenderableChatPart | null = null;
   @Input() doing = false;
   @Input() sessionId = '';
@@ -165,6 +397,15 @@ export class ChatMessagePartItemComponent implements OnChanges {
   private readonly chatService = inject(ChatService, { optional: true });
   private readonly ailyChatConfigService = inject(AilyChatConfigService, { optional: true });
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly ngZone = inject(NgZone);
+  private planChunkCache: { readonly text: string; readonly chunks: readonly PlanTextChunk[] } | null = null;
+  private markdownChunkCache: { readonly text: string; readonly chunks: readonly MarkdownTextChunk[] } | null = null;
+  private markdownPollTimer: ReturnType<typeof setInterval> | null = null;
+  private activeMarkdownContentRef = '';
+  private activeMarkdownContentLength = -1;
+  readonly markdownDisplayContent = signal('');
+  planActionBusy = false;
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['doing']) {
@@ -173,10 +414,48 @@ export class ChatMessagePartItemComponent implements OnChanges {
         enableAnimation: this.doing,
       });
     }
+
+    if (changes['part'] || changes['doing']) {
+      this.syncMarkdownDisplayContent();
+      this.syncMarkdownPolling();
+    }
   }
 
-  getMarkdownContent(): string {
-    return this.part?.type === 'markdown' ? (this.part as MarkdownPart).content : '';
+  ngOnDestroy(): void {
+    this.stopMarkdownPolling();
+  }
+
+  getMarkdownDisplayContent(): string {
+    return this.markdownDisplayContent();
+  }
+
+  shouldRenderMarkdownAsChunkedText(): boolean {
+    const markdown = this.part?.type === 'markdown' ? this.part as MarkdownPart : null;
+    if (!markdown) {
+      return false;
+    }
+
+    const contentLength = typeof markdown.contentLength === 'number'
+      ? markdown.contentLength
+      : this.markdownDisplayContent().length;
+    return contentLength > LARGE_MARKDOWN_RENDER_CHAR_LIMIT;
+  }
+
+  getMarkdownTextChunks(): readonly MarkdownTextChunk[] {
+    const text = this.markdownDisplayContent();
+    if (this.markdownChunkCache?.text === text) {
+      return this.markdownChunkCache.chunks;
+    }
+
+    const chunks: MarkdownTextChunk[] = [];
+    for (let offset = 0; offset < text.length; offset += LARGE_MARKDOWN_CHUNK_SIZE) {
+      chunks.push({
+        id: `markdown-chunk-${offset}`,
+        text: text.slice(offset, offset + LARGE_MARKDOWN_CHUNK_SIZE),
+      });
+    }
+    this.markdownChunkCache = { text, chunks };
+    return chunks;
   }
 
   getStandaloneActivityParts(): readonly ChatPart[] {
@@ -201,6 +480,224 @@ export class ChatMessagePartItemComponent implements OnChanges {
 
   getProgressData(): ProgressMessageDisplayPart | null {
     return isProgressMessageDisplayPart(this.part) ? this.part : null;
+  }
+
+  getPlanData(): PlanPart {
+    return this.part as PlanPart;
+  }
+
+  getPlanStatusLabel(): string {
+    switch (this.getPlanData().status) {
+      case 'streaming':
+        return 'Planning';
+      case 'failed':
+        return 'Plan failed';
+      case 'completed':
+      default:
+        return 'Ready for review';
+    }
+  }
+
+  shouldRenderPlanAsChunkedText(): boolean {
+    const plan = this.part?.type === 'plan' ? this.part as PlanPart : null;
+    if (!plan) {
+      return false;
+    }
+
+    return plan.text.length > PLAN_MARKDOWN_RENDER_CHAR_LIMIT;
+  }
+
+  getPlanTextChunks(): readonly PlanTextChunk[] {
+    const text = this.part?.type === 'plan' ? (this.part as PlanPart).text : '';
+    if (this.planChunkCache?.text === text) {
+      return this.planChunkCache.chunks;
+    }
+
+    const chunks: PlanTextChunk[] = [];
+    for (let offset = 0; offset < text.length; offset += PLAN_CHUNK_SIZE) {
+      chunks.push({
+        id: `plan-chunk-${offset}`,
+        text: text.slice(offset, offset + PLAN_CHUNK_SIZE),
+      });
+    }
+    this.planChunkCache = { text, chunks };
+    return chunks;
+  }
+
+  shouldShowPlanActions(): boolean {
+    return !!this.part
+      && this.part.type === 'plan'
+      && this.part.status === 'completed'
+      && !this.doing;
+  }
+
+  async startImplementation(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    await this.runPlanAction(() => this.chatEngine?.startImplementationFromPlanPart?.(
+      this.sessionId,
+      this.getPlanData().text,
+    ));
+  }
+
+  async clearContextAndImplement(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    await this.runPlanAction(() => this.chatEngine?.clearContextAndImplementPlanPart?.(
+      this.getPlanData().text,
+      this.sessionId,
+    ));
+  }
+
+  async stayInPlan(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    await this.runPlanAction(() => this.chatEngine?.stayInPlanFromPlanPart?.(this.sessionId));
+  }
+
+  async openPlanInEditor(event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    await this.runPlanAction(() => this.chatEngine?.openPlanPartInEditor?.(
+      this.getPlanData().text,
+      this.sessionId,
+    ));
+  }
+
+  private async runPlanAction(action: () => Promise<unknown> | undefined): Promise<void> {
+    if (!this.shouldShowPlanActions() || this.planActionBusy) {
+      return;
+    }
+
+    this.planActionBusy = true;
+    this.cdr.markForCheck();
+    try {
+      await action();
+    } finally {
+      this.planActionBusy = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  private syncMarkdownDisplayContent(): void {
+    const startedAt = performance.now();
+    const markdown = this.part?.type === 'markdown' ? this.part as MarkdownPart : null;
+    const liveStreamingRef = !!markdown?.contentRef && this.doing;
+    let rawContent = '';
+    let nextLength = 0;
+
+    if (markdown) {
+      if (markdown.contentRef) {
+        if (liveStreamingRef) {
+          rawContent = readStoredMarkdownContentWindow(
+            markdown.contentRef,
+            LIVE_MARKDOWN_RENDER_WINDOW_CHARS,
+            LIVE_MARKDOWN_OMITTED_MARKER,
+          );
+        } else {
+          rawContent = readStoredMarkdownContent(markdown.contentRef);
+        }
+        if (typeof markdown.contentLength === 'number') {
+          nextLength = markdown.contentLength;
+        } else {
+          nextLength = readStoredMarkdownContentLength(markdown.contentRef);
+        }
+      } else {
+        rawContent = markdown.content;
+        if (typeof markdown.contentLength === 'number') {
+          nextLength = markdown.contentLength;
+        } else {
+          nextLength = rawContent.length;
+        }
+      }
+    }
+
+    let nextContent = rawContent;
+    if (!markdown?.contentRef || !liveStreamingRef) {
+      nextContent = this.selectMarkdownDisplayContent(rawContent, false);
+    }
+
+    if (
+      this.markdownDisplayContent() === nextContent
+      && this.activeMarkdownContentRef === (markdown?.contentRef || '')
+      && this.activeMarkdownContentLength === nextLength
+    ) {
+      return;
+    }
+
+    this.activeMarkdownContentRef = markdown?.contentRef || '';
+    this.activeMarkdownContentLength = nextLength;
+    this.markdownDisplayContent.set(nextContent);
+    this.markdownChunkCache = null;
+    ChatPerformanceTracer.recordDuration(
+      'markdown_display_sync',
+      performance.now() - startedAt,
+      `raw=${rawContent.length},visible=${nextContent.length},ref=${!!markdown?.contentRef},doing=${this.doing}`,
+      { slowThresholdMs: 8 },
+    );
+  }
+
+  private syncMarkdownPolling(): void {
+    const markdown = this.part?.type === 'markdown' ? this.part as MarkdownPart : null;
+    if (!markdown?.contentRef || !this.doing) {
+      this.stopMarkdownPolling();
+      return;
+    }
+
+    if (this.markdownPollTimer) {
+      return;
+    }
+
+    this.ngZone.runOutsideAngular(() => {
+      this.markdownPollTimer = setInterval(() => {
+        const contentRef = this.activeMarkdownContentRef;
+        if (!contentRef) {
+          return;
+        }
+
+        const rawLength = readStoredMarkdownContentLength(contentRef);
+        const nextContent = readStoredMarkdownContentWindow(
+          contentRef,
+          LIVE_MARKDOWN_RENDER_WINDOW_CHARS,
+          LIVE_MARKDOWN_OMITTED_MARKER,
+        );
+        if (nextContent === this.markdownDisplayContent() && rawLength === this.activeMarkdownContentLength) {
+          return;
+        }
+
+        this.ngZone.run(() => {
+          const updateStartedAt = performance.now();
+          this.activeMarkdownContentLength = rawLength;
+          this.markdownDisplayContent.set(nextContent);
+          this.markdownChunkCache = null;
+          this.cdr.markForCheck();
+          ChatPerformanceTracer.recordDuration(
+            'markdown_poll_update',
+            performance.now() - updateStartedAt,
+            `raw=${rawLength},visible=${nextContent.length}`,
+            { slowThresholdMs: 8 },
+          );
+        });
+      }, LIVE_MARKDOWN_POLL_INTERVAL_MS);
+    });
+  }
+
+  private stopMarkdownPolling(): void {
+    if (!this.markdownPollTimer) {
+      return;
+    }
+
+    clearInterval(this.markdownPollTimer);
+    this.markdownPollTimer = null;
+  }
+
+  private selectMarkdownDisplayContent(content: string, liveStreamingRef: boolean): string {
+    if (!liveStreamingRef || content.length <= LIVE_MARKDOWN_RENDER_WINDOW_CHARS) {
+      return content;
+    }
+
+    const tailLength = Math.max(0, LIVE_MARKDOWN_RENDER_WINDOW_CHARS - LIVE_MARKDOWN_OMITTED_MARKER.length);
+    return `${LIVE_MARKDOWN_OMITTED_MARKER}${content.slice(-tailLength)}`;
   }
 
   getStateData(): {
@@ -353,6 +850,16 @@ export class ChatMessagePartItemComponent implements OnChanges {
       return;
     }
 
+    if (isContinueInteractionAction(action.data)) {
+      await this.chatEngine.submitInteractionActionRequest(
+        action.label,
+        { kind: 'continue' },
+        undefined,
+        this.sessionId,
+      );
+      return;
+    }
+
     if (isSwitchToAutoOnRateLimitConfirmation(action.data)) {
       const autoModel = this.resolveDefaultAutoModel();
       if (!autoModel || this.isDefaultAutoModelSelected()) {
@@ -391,9 +898,18 @@ export class ChatMessagePartItemComponent implements OnChanges {
       ? errorDetails['confirmationButtons']
       : [];
 
-    return confirmationButtons
+    const actions = confirmationButtons
       .map((button, index) => this.toErrorAction(button, index))
       .filter((button): button is ErrorActionItem => button !== null);
+    if (actions.length === 0 && isContinuableErrorContinuation(this.turnResponse?.response?.continuation)) {
+      return [{
+        id: 'error-action-continue-interaction',
+        label: '继续',
+        data: { ailyContinueInteraction: true },
+      }];
+    }
+
+    return actions;
   }
 
   private toErrorAction(value: unknown, index: number): ErrorActionItem | null {
@@ -425,7 +941,9 @@ export class ChatMessagePartItemComponent implements OnChanges {
 
   private readErrorConfirmationData(value: Record<string, unknown>): ErrorConfirmationData | null {
     const rawData = value['data'];
-    if (isContinueOnErrorConfirmation(rawData) || isSwitchToAutoOnRateLimitConfirmation(rawData)) {
+    if (isContinueOnErrorConfirmation(rawData)
+      || isSwitchToAutoOnRateLimitConfirmation(rawData)
+      || isContinueInteractionAction(rawData)) {
       return rawData;
     }
 
@@ -441,6 +959,10 @@ export class ChatMessagePartItemComponent implements OnChanges {
   }
 
   private buildErrorConfirmationInteractionAction(action: ErrorActionItem): NonNullable<TurnRequest['metadata']>['interactionAction'] {
+    if (isContinueInteractionAction(action.data)) {
+      return { kind: 'continue' };
+    }
+
     const confirmationData = action.data === undefined ? [] : [action.data];
     return {
       kind: 'confirmation',
@@ -513,4 +1035,34 @@ function isSwitchToAutoOnRateLimitConfirmation(value: unknown): value is SwitchT
   return isRecord(value)
     && value['ailySwitchToAutoOnRateLimit'] === true
     && typeof value['alwaysSwitchToAuto'] === 'boolean';
+}
+
+function isContinueInteractionAction(value: unknown): value is ContinueInteractionActionData {
+  return isRecord(value) && value['ailyContinueInteraction'] === true;
+}
+
+function isContinuableErrorContinuation(
+  continuation: TurnResponseTurn['response']['continuation'] | null | undefined,
+): boolean {
+  if (!continuation || typeof continuation !== 'object') {
+    return false;
+  }
+
+  const interactionId = typeof continuation.interactionId === 'string'
+    ? continuation.interactionId.trim()
+    : '';
+  const lease = typeof continuation.lease === 'string'
+    ? continuation.lease.trim()
+    : '';
+  if (!interactionId || !lease || !Number.isFinite(continuation.stepIndex)) {
+    return false;
+  }
+
+  const pendingState = continuation.pendingState && typeof continuation.pendingState === 'object'
+    ? continuation.pendingState as Record<string, unknown>
+    : undefined;
+  const pendingKind = typeof pendingState?.['kind'] === 'string'
+    ? pendingState['kind']
+    : undefined;
+  return pendingKind === 'continue';
 }

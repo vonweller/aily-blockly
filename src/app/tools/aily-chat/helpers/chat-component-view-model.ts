@@ -1,6 +1,7 @@
 import type { ChatPartStore } from '../core/chat-part-store';
 import type { Observable } from 'rxjs';
 import type { ModelConfig } from '../services/chat.service';
+import type { ChatSelectedMode } from '../core/chat-mode';
 import type { AuthQuotaSnapshot } from '../services/auth-quota-snapshot';
 import type { ChatInputNotice } from '../services/chat-input-notice';
 import type { ContextBudgetSnapshot } from '../services/context-budget-snapshot';
@@ -28,6 +29,7 @@ interface ChatEngineViewLike {
   readonly sessionId: string;
   readonly sessionTitle: string;
   readonly currentMode: string;
+  readonly selectedMode: ChatSelectedMode;
   readonly currentAgentRuntimeMode: string;
   readonly currentSessionPermissionMode: string;
   readonly currentSessionApprovalsReviewer: 'user' | 'auto_review' | undefined;
@@ -194,6 +196,10 @@ export class ChatComponentViewModel {
 
   get currentMode(): string {
     return this.deps.engine.currentMode;
+  }
+
+  get selectedMode(): ChatSelectedMode {
+    return this.deps.engine.selectedMode;
   }
 
   get currentAgentRuntimeMode(): string {

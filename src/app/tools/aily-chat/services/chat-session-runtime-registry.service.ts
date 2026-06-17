@@ -10,6 +10,8 @@ import type { HostSessionProviderOptions } from '../helpers/host-session-input-s
 import { EditingContentStore } from './editing-content-store.service';
 import { EditingTimelineRepository } from './editing-timeline-repository.service';
 import { EditingTimelineRecordingBridge } from './editing-timeline-recording-bridge';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
+import { yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
 import {
   ChatSessionRuntimeStoreService,
   DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
@@ -79,6 +81,15 @@ export interface ChatSessionLexRequestCompletedInput {
   readonly reason: string;
   readonly runWorkspaceFinalize: () => Promise<void>;
   readonly runSessionEndHooks: () => Promise<void>;
+}
+
+const LEX_COMPLETION_IDLE_TIMEOUT_MS = 500;
+const LEX_COMPLETION_SLOW_PHASE_MS = 64;
+
+function getNowMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 }
 
 @Injectable()
@@ -185,8 +196,20 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     const runCompletion = async (): Promise<void> => {
-      await input.runWorkspaceFinalize();
-      await input.runSessionEndHooks();
+      await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'workspace-finalize');
+      await this.runLexCompletionPhase(
+        normalizedSessionId,
+        input.turnId,
+        'workspace_finalize',
+        input.runWorkspaceFinalize,
+      );
+      await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'session-end-hooks');
+      await this.runLexCompletionPhase(
+        normalizedSessionId,
+        input.turnId,
+        'session_end_hooks',
+        input.runSessionEndHooks,
+      );
     };
 
     const previous = this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve();
@@ -196,6 +219,41 @@ export class ChatSessionRuntimeRegistryService {
       }
     });
     this.pendingLexRequestCompletion.set(normalizedSessionId, next);
+  }
+
+  private async yieldBeforeLexCompletionPhase(
+    sessionId: string,
+    turnId: string,
+    phase: string,
+  ): Promise<void> {
+    const startedAt = getNowMs();
+    await yieldToBrowserIdle(LEX_COMPLETION_IDLE_TIMEOUT_MS);
+    await yieldToBrowserTask(0);
+    ChatPerformanceTracer.recordDuration(
+      'lex_completion_idle_boundary',
+      getNowMs() - startedAt,
+      `session=${sessionId},turn=${turnId},phase=${phase}`,
+      { slowThresholdMs: LEX_COMPLETION_SLOW_PHASE_MS },
+    );
+  }
+
+  private async runLexCompletionPhase(
+    sessionId: string,
+    turnId: string,
+    phase: string,
+    runPhase: () => Promise<void>,
+  ): Promise<void> {
+    const startedAt = getNowMs();
+    try {
+      await runPhase();
+    } finally {
+      ChatPerformanceTracer.recordDuration(
+        `lex_completion_${phase}`,
+        getNowMs() - startedAt,
+        `session=${sessionId},turn=${turnId}`,
+        { slowThresholdMs: LEX_COMPLETION_SLOW_PHASE_MS },
+      );
+    }
   }
 
   async awaitPendingLexRequestCompleted(sessionId?: string | null): Promise<void> {

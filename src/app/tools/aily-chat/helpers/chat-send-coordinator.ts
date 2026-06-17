@@ -85,7 +85,16 @@ export class ChatSendCoordinator {
     private readonly getSessionAllowedPaths: () => readonly string[] = () => [],
     private readonly getPendingRuntimeSnapshot: (
       sessionId?: string | null,
-    ) => { readonly runtimeOwnerSessionId?: string; readonly providerOptionsKey?: string } = () => ({}),
+    ) => {
+      readonly runtimeOwnerSessionId?: string;
+      readonly providerOptionsKey?: string;
+      readonly selectedMode?: ChatSelectedMode;
+      readonly currentMode?: string;
+      readonly currentResolvedMode?: ChatResolvedMode;
+      readonly currentSessionPermissionLevel?: string;
+      readonly currentSessionApprovalsReviewer?: 'user' | 'auto_review';
+      readonly currentSessionApprovalPolicy?: 'on_request' | 'never';
+    } = () => ({}),
     private readonly createRequestId: () => string = () => globalThis.crypto.randomUUID(),
   ) {}
 
@@ -152,18 +161,22 @@ export class ChatSendCoordinator {
 
   private applyRuntimeModeMetadata(
     requestMetadata?: UserTurnPayload['requestMetadata'],
+    sessionId?: string | null,
   ): UserTurnPayload['requestMetadata'] {
-    const selectedMode = this.ctx.selectedMode
+    const runtimeSnapshot = this.getPendingRuntimeSnapshot(sessionId);
+    const selectedMode = runtimeSnapshot.selectedMode
+      ? normalizeChatSelectedMode(runtimeSnapshot.selectedMode)
+      : this.ctx.selectedMode
       ? normalizeChatSelectedMode(this.ctx.selectedMode)
       : normalizeChatSelectedMode({
-          modeId: this.ctx.currentMode,
+          modeId: runtimeSnapshot.currentMode ?? this.ctx.currentMode,
           customAgentTarget: this.ctx.currentCustomAgentTarget,
         });
     const selectedCustomAgentTarget = resolveChatSelectedCustomAgentTarget(selectedMode);
     const payloadRequestRouting = requestMetadata?.requestRouting && typeof requestMetadata.requestRouting === 'object' && !Array.isArray(requestMetadata.requestRouting)
       ? requestMetadata.requestRouting as Record<string, unknown>
       : undefined;
-    const resolvedMode = this.resolveCurrentMode(selectedMode);
+    const resolvedMode = runtimeSnapshot.currentResolvedMode ?? this.resolveCurrentMode(selectedMode);
     const modeInfo = createTurnRequestModeInfoFromResolvedMode(resolvedMode);
     const payloadCustomAgentTarget = typeof payloadRequestRouting?.['customAgentTarget'] === 'string' && payloadRequestRouting['customAgentTarget'].trim()
       ? payloadRequestRouting['customAgentTarget'].trim()
@@ -172,15 +185,27 @@ export class ChatSendCoordinator {
       ? resolvedMode.customAgentTarget ?? selectedCustomAgentTarget
       : undefined;
     const requestAgentId = modeCustomAgentTarget ?? payloadCustomAgentTarget ?? selectedCustomAgentTarget;
-    const currentSessionPermissionLevel = typeof this.ctx.currentSessionPermissionLevel === 'string'
+    const snapshotPermissionLevel = runtimeSnapshot.currentSessionPermissionLevel;
+    const currentSessionPermissionLevel = typeof snapshotPermissionLevel === 'string'
+      && snapshotPermissionLevel.trim().length > 0
+      ? snapshotPermissionLevel.trim()
+      : typeof this.ctx.currentSessionPermissionLevel === 'string'
       && this.ctx.currentSessionPermissionLevel.trim().length > 0
       ? this.ctx.currentSessionPermissionLevel.trim()
       : undefined;
-    const currentSessionApprovalsReviewer = this.ctx.currentSessionApprovalsReviewer === 'auto_review'
+    const snapshotApprovalsReviewer = runtimeSnapshot.currentSessionApprovalsReviewer;
+    const currentSessionApprovalsReviewer = snapshotApprovalsReviewer === 'auto_review'
+      || snapshotApprovalsReviewer === 'user'
+      ? snapshotApprovalsReviewer
+      : this.ctx.currentSessionApprovalsReviewer === 'auto_review'
       || this.ctx.currentSessionApprovalsReviewer === 'user'
       ? this.ctx.currentSessionApprovalsReviewer
       : undefined;
-    const currentSessionApprovalPolicy = this.ctx.currentSessionApprovalPolicy === 'never'
+    const snapshotApprovalPolicy = runtimeSnapshot.currentSessionApprovalPolicy;
+    const currentSessionApprovalPolicy = snapshotApprovalPolicy === 'never'
+      || snapshotApprovalPolicy === 'on_request'
+      ? snapshotApprovalPolicy
+      : this.ctx.currentSessionApprovalPolicy === 'never'
       || this.ctx.currentSessionApprovalPolicy === 'on_request'
       ? this.ctx.currentSessionApprovalPolicy
       : undefined;
@@ -220,11 +245,13 @@ export class ChatSendCoordinator {
 
   applyRuntimeRequestMetadata(
     requestMetadata?: UserTurnPayload['requestMetadata'],
+    sessionId?: string | null,
   ): UserTurnPayload['requestMetadata'] {
     return this.applyRuntimePromptContext(
       this.applyRuntimeModelRoutingMetadata(
         this.applyRuntimeModeMetadata(
           this.applyRuntimeRequestId(requestMetadata),
+          sessionId,
         ),
       ),
     );
@@ -261,8 +288,12 @@ export class ChatSendCoordinator {
   private buildPreparedUserSend(
     text: string,
     pendingEditFeedback?: string | null,
+    sessionId?: string | null,
   ): PreparedPendingFollowupRequest | null {
-    if (!this.ctx.sessionId || !text) {
+    const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+      ? sessionId.trim()
+      : this.ctx.sessionId;
+    if (!targetSessionId || !text) {
       return null;
     }
 
@@ -298,7 +329,7 @@ export class ChatSendCoordinator {
           }),
         }
       : payload.requestMetadata;
-    const requestMetadataWithPromptContext = this.applyRuntimeRequestMetadata(requestMetadata);
+    const requestMetadataWithPromptContext = this.applyRuntimeRequestMetadata(requestMetadata, targetSessionId);
 
     return {
       text,
@@ -373,11 +404,15 @@ export class ChatSendCoordinator {
 
   capturePendingSend(content: string, sessionId?: string | null): PreparedPendingFollowupRequest | null {
     const text = content.trim();
-    const prepared = this.buildPreparedUserSend(text, this.ctx.pendingEditFeedback);
+    const prepared = this.buildPreparedUserSend(text, this.ctx.pendingEditFeedback, sessionId);
     return prepared ? this.capturePendingSnapshot(prepared, sessionId) : null;
   }
 
-  prepareSend(sender: string, content: string): PreparedUserSend | null {
+  prepareSend(
+    sender: string,
+    content: string,
+    options: { readonly sessionId?: string | null; readonly projectUserMessage?: boolean } = {},
+  ): PreparedUserSend | null {
     if (this.ctx.isCancelled && sender === 'tool') {
       return null;
     }
@@ -388,7 +423,10 @@ export class ChatSendCoordinator {
     }
 
     const text = content.trim();
-    if (!this.ctx.sessionId || !text) {
+    const targetSessionId = typeof options.sessionId === 'string' && options.sessionId.trim().length > 0
+      ? options.sessionId.trim()
+      : this.ctx.sessionId;
+    if (!targetSessionId || !text) {
       return null;
     }
 
@@ -406,13 +444,15 @@ export class ChatSendCoordinator {
       this.ctx.activeToolExecutions = 0;
     }
 
-    const prepared = this.buildPreparedUserSend(text, this.ctx.pendingEditFeedback);
+    const prepared = this.buildPreparedUserSend(text, this.ctx.pendingEditFeedback, targetSessionId);
     if (!prepared) {
       return null;
     }
 
     this.ctx.pendingEditFeedback = null;
-    this.ctx.msg.appendMessage('user', prepared.displayText);
+    if (options.projectUserMessage !== false) {
+      this.ctx.msg.appendMessage('user', prepared.displayText);
+    }
 
     return {
       ...prepared,

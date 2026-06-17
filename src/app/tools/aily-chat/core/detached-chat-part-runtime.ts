@@ -7,7 +7,11 @@ import {
 } from './chat-part-store';
 import type { ChatMessageHandle, OpaqueChatMessageHandle } from '../helpers/chat-message-handle';
 import { RenderEventPartAdapter, type RenderEventPartStoreAccess } from './render-event-part-adapter';
-import { chatPartToTurnResponsePart, turnResponsePartToChatPart } from './turn-response-part-mapper';
+import { chatPartToTurnResponsePart, turnResponsePartToChatPart, turnResponsePartToChatParts } from './turn-response-part-mapper';
+import { appendThinkContent, storeThinkContent } from './think-content-store';
+import { appendMarkdownContent, storeMarkdownContent } from './markdown-content-store';
+
+const VISIBLE_MARKDOWN_REF_THRESHOLD = 32 * 1024;
 
 export type DetachedRuntimeProjectionTargetHandle<TMessage extends object = object> =
   | ChatMessageHandle<TMessage & { content: string }>
@@ -33,6 +37,7 @@ type DetachedRuntimeStore = RenderEventPartStoreAccess & Pick<
   | 'finalizeRunningPartsForHandle'
   | 'getPartsForHandle'
   | 'projectPartChangesFromHandle'
+  | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 type DetachedRuntimeProjectionTargetStore = Pick<
@@ -81,8 +86,9 @@ export class DetachedChatPartRuntime {
     return this.adapter.process(event, this.detachedHandle);
   }
 
-  finalizeRunningParts(): void {
-    this.store.finalizeRunningPartsForHandle(this.detachedHandle);
+  finalizeRunningParts(options: { readonly materializeFinalMarkdownAsPlan?: boolean; readonly status?: 'completed' | 'cancelled' | 'error' } = {}): void {
+    this.adapter.finalize(this.detachedHandle, options);
+    this.store.finalizeRunningPartsForHandle(this.detachedHandle, { status: options.status });
   }
 
   collectTurnResponseParts(): TurnResponsePart[] {
@@ -93,7 +99,9 @@ export class DetachedChatPartRuntime {
     this.reset();
 
     for (const part of parts) {
-      this.store.addPartToHandle(this.detachedHandle, turnResponsePartToChatPart(part));
+      for (const chatPart of turnResponsePartToChatParts(part)) {
+        this.store.addPartToHandle(this.detachedHandle, chatPart);
+      }
     }
 
     // Hydration is a baseline restore, not a live delta.
@@ -105,7 +113,9 @@ export class DetachedChatPartRuntime {
     targetStore: DetachedRuntimeProjectionTargetStore,
     targetHandle: DetachedRuntimeProjectionTargetHandle | null,
   ): boolean {
-    const changes = this.changeTracker.drainPartIndexChangesForHandle(this.detachedHandle);
+    const changes = coalesceProjectionChanges(
+      this.changeTracker.drainPartIndexChangesForHandle(this.detachedHandle),
+    );
     if (changes.length === 0) {
       return false;
     }
@@ -143,5 +153,75 @@ export class DetachedChatPartRuntime {
 }
 
 function cloneChatPart(part: ChatPart, existing?: ChatPart): ChatPart {
+  if (part.type === 'markdown') {
+    const existingMarkdown = existing?.type === 'markdown' ? existing : undefined;
+    if (part.content.length > VISIBLE_MARKDOWN_REF_THRESHOLD || !!existingMarkdown?.contentRef) {
+      const contentRef = existingMarkdown?.contentRef || createVisibleContentRef('markdown');
+      const existingLength = typeof existingMarkdown?.contentLength === 'number'
+        ? existingMarkdown.contentLength
+        : -1;
+      if (existingMarkdown?.contentRef === contentRef && existingLength >= 0 && part.content.length >= existingLength) {
+        const appendFrom = Math.max(0, Math.min(existingLength, part.content.length));
+        appendMarkdownContent(contentRef, part.content.slice(appendFrom));
+      } else {
+        storeMarkdownContent(contentRef, part.content);
+      }
+      return {
+        ...part,
+        content: '',
+        contentRef,
+        contentLength: part.content.length,
+      };
+    }
+  }
+
+  if (part.type === 'thinking') {
+    const existingThinking = existing?.type === 'thinking' ? existing : undefined;
+    const contentRef = existingThinking?.contentRef || createVisibleContentRef('thinking');
+    const existingLength = typeof existingThinking?.contentLength === 'number'
+      ? existingThinking.contentLength
+      : -1;
+    if (existingThinking?.contentRef === contentRef && existingLength >= 0 && part.content.length >= existingLength) {
+      const appendFrom = Math.max(0, Math.min(existingLength, part.content.length));
+      appendThinkContent(contentRef, part.content.slice(appendFrom));
+    } else {
+      storeThinkContent(contentRef, part.content);
+    }
+    return {
+      ...part,
+      content: '',
+      contentRef,
+      contentLength: part.content.length,
+    };
+  }
+
   return turnResponsePartToChatPart(chatPartToTurnResponsePart(part), existing);
+}
+
+function createVisibleContentRef(kind: 'markdown' | 'thinking'): string {
+  const randomId = Math.random().toString(36).slice(2);
+  return `visible-${kind}:${Date.now().toString(36)}:${randomId}`;
+}
+
+function coalesceProjectionChanges<TChange extends Pick<{ partIndex: number }, 'partIndex'>>(
+  changes: readonly TChange[],
+): Array<Pick<TChange, 'partIndex'>> {
+  if (changes.length <= 1) {
+    return [...changes];
+  }
+
+  const seen = new Set<number>();
+  const coalesced: Array<Pick<TChange, 'partIndex'>> = [];
+  for (let index = changes.length - 1; index >= 0; index--) {
+    const partIndex = changes[index]?.partIndex;
+    if (!Number.isInteger(partIndex) || seen.has(partIndex)) {
+      continue;
+    }
+
+    seen.add(partIndex);
+    coalesced.push({ partIndex });
+  }
+
+  coalesced.reverse();
+  return coalesced;
 }

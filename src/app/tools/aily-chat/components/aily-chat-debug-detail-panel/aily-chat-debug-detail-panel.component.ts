@@ -21,6 +21,11 @@ interface CustomizationSectionViewModel {
   readonly entries: readonly HostSessionDebugCustomizationLogEntry[];
 }
 
+interface EventBoundaryTag {
+  readonly label: string;
+  readonly value: string;
+}
+
 @Component({
   selector: 'aily-chat-debug-detail-panel',
   standalone: true,
@@ -54,6 +59,24 @@ export class AilyChatDebugDetailPanelComponent {
 
   get summary(): string | undefined {
     return this.event ? getHostSessionDebugEventDetails(this.event) : undefined;
+  }
+
+  get eventBoundaryTags(): readonly EventBoundaryTag[] {
+    const event = this.event;
+    if (!event) {
+      return [];
+    }
+
+    const owner = event.ownerSessionId || event.sessionId;
+    return [
+      { label: 'owner', value: owner },
+      { label: 'session', value: event.sessionId },
+      { label: 'turn', value: event.turnId },
+      ...(event.requestModeId || event.selectedModeId
+        ? [{ label: 'mode', value: event.requestModeId || event.selectedModeId || '' }]
+        : []),
+      ...(event.eventSource ? [{ label: 'source', value: event.eventSource }] : []),
+    ];
   }
 
   get messageContent(): HostSessionDebugResolvedMessageContent | null {

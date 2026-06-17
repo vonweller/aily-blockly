@@ -1522,11 +1522,13 @@ export class SessionLifecycleHelper {
     const activationRequestId = ++this.sessionActivationRequestId;
     this.logSessionActivationScalar('activation-start', restoreRequest);
     if (this.shouldRejectMissingRestoreRecord(restoreRequest)) {
-      throw this.createSessionRestoreError(
-        'missing-record',
-        restoreRequest.diagnostics,
-        new Error(`No durable or live session model found for ${restoreRequest.target.sessionId}`),
-      );
+      console.warn('[SessionLifecycle][recoverable-missing-record]', {
+        sessionId: restoreRequest.target.sessionId,
+        projectPath: restoreRequest.diagnostics.projectPath ?? null,
+        requestSource: restoreRequest.diagnostics.requestSource,
+        hostRecordSource: restoreRequest.diagnostics.hostRecordSource,
+        metadataSource: restoreRequest.diagnostics.metadataSource,
+      });
     }
 
     this.resetForSessionActivation({ clearVisibleProjection: false });

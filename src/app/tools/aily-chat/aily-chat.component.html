@@ -159,11 +159,18 @@
           #chatContainer
           [class.has-conversation]="paneStageSurface.showConversation"
           [class.has-stacked-session-list]="paneStageSurface.showStackedSessionList && !paneStageSurface.showConversation"
-          (scroll)="scrollManager.checkUserScroll()">
+          (scroll)="handleConversationScroll()">
       @if (paneStageSurface.showConversation) {
       <!-- <ngx-simplebar #simplebarRef [options]="options"> -->
       <div class="dialogs" #dialogsContent>
-        @for(item of vm.dialogItems; track item.trackId){
+        @if (dialogVirtualTopSpacerHeight > 0) {
+          <div class="dialog-virtual-spacer" [style.height.px]="dialogVirtualTopSpacerHeight" aria-hidden="true"></div>
+        }
+        @for(item of renderedDialogItems; track item.trackId){
+          <div
+            class="dialog-virtual-row"
+            #dialogVirtualRow
+            [attr.data-track-id]="item.trackId">
           <aily-x-dialog
             [role]="item.role"
             [content]="item.content"
@@ -172,6 +179,7 @@
             [isFirstUserTurn]="item.isFirstUserTurn"
             [sessionId]="vm.sessionId"
             [currentMode]="vm.currentMode"
+            [selectedMode]="vm.selectedMode"
             [currentModelName]="vm.currentModelName"
             [currentModelChipLabel]="vm.currentModelChipLabel"
             [currentModelBillingLabel]="vm.currentModelBillingLabel"
@@ -181,6 +189,7 @@
             [isWaiting]="vm.isWaiting"
             [turnContext]="item.turnContext"
             [turnResponse]="item.turnContext?.turnResponse ?? null"
+            [liveParts]="getLivePartsForDialogItem(item)"
             [workspaceCheckpointPresentationMode]="vm.workspaceCheckpointPresentationMode"
             [exclusiveEditTurnId]="userMessageEditingTurnId"
             (editSessionOpened)="onUserMessageEditSessionOpened($event)"
@@ -193,7 +202,11 @@
             (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
             (taskAction)="handleDialogTaskAction($event)">
           </aily-x-dialog>
+          </div>
           }
+        @if (dialogVirtualBottomSpacerHeight > 0) {
+          <div class="dialog-virtual-spacer" [style.height.px]="dialogVirtualBottomSpacerHeight" aria-hidden="true"></div>
+        }
         @if (vm.checkpointRestoreSurface; as checkpointRestoreSurface) {
           <div
             class="chat-checkpoint-restore-surface"
@@ -446,6 +459,7 @@
               [showAddList]="resourceManager.showAddList"
               [currentMode]="vm.currentMode"
               [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
+              [selectedMode]="vm.selectedMode"
               [showModelChip]="false"
               [showModeLabel]="true"
               [modelChipLabel]="vm.currentModelChipLabel"
@@ -575,24 +589,17 @@
               <ng-template #interactionBudgetTooltip>
                 <div style="font-size:11px;line-height:1.6;min-width:220px">
                   <div style="font-weight:600;margin-bottom:2px">{{ vm.interactionBudgetSnapshot.title }}</div>
-                  @if(vm.interactionBudgetSnapshot.descriptionText) {
-                  <div style="margin-bottom:4px;opacity:0.78">{{ vm.interactionBudgetSnapshot.descriptionText }}</div>
-                  }
                   @if(vm.interactionBudgetSnapshot.hardStopMessage) {
                   <div style="margin-bottom:4px;color:#e06c75">{{ vm.interactionBudgetSnapshot.hardStopMessage }}</div>
+                  }
+                  @if(!vm.interactionBudgetSnapshot.hardStopMessage && vm.interactionBudgetSnapshot.continueDescription) {
+                  <div style="margin-bottom:4px;opacity:0.78">{{ vm.interactionBudgetSnapshot.continueDescription }}</div>
                   }
                   @if(vm.interactionBudgetSnapshot.statusText) {
                   <div style="margin-bottom:5px;opacity:0.7">{{ vm.interactionBudgetSnapshot.statusText }}</div>
                   }
-                  @if(vm.interactionBudgetSnapshot.metadataText) {
-                  <div style="margin-bottom:5px;opacity:0.6">{{ vm.interactionBudgetSnapshot.metadataText }}</div>
-                  }
-                  @for(item of vm.interactionBudgetSnapshot.items; track item.key) {
-                  <div [style.color]="item.severity === 'danger' ? '#e06c75' : item.severity === 'warning' ? '#e5c07b' : '#c9d1d9'">
-                    <span>{{ item.label }}</span>
-                    <span style="opacity:0.7"> · {{ item.valueLabel }}</span>
-                    <span style="opacity:0.55"> ({{ item.percent | number:'1.0-0' }}%)</span>
-                  </div>
+                  @if(!vm.interactionBudgetSnapshot.hardStopMessage && !vm.interactionBudgetSnapshot.continueDescription && !vm.interactionBudgetSnapshot.statusText && vm.interactionBudgetSnapshot.descriptionText) {
+                  <div style="margin-bottom:4px;opacity:0.78">{{ vm.interactionBudgetSnapshot.descriptionText }}</div>
                   }
                 </div>
               </ng-template>

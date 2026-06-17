@@ -1,7 +1,7 @@
 import type { Observable } from 'rxjs';
 import { normalizeAgentIdentifier } from './agent-identifiers';
 
-export const CHAT_MODE_IDS = ['ask', 'edit', 'agent'] as const;
+export const CHAT_MODE_IDS = ['ask', 'edit', 'agent', 'plan'] as const;
 export type ChatModeId = (typeof CHAT_MODE_IDS)[number];
 
 export const CHAT_SURFACE_MODE_IDS = CHAT_MODE_IDS;
@@ -189,6 +189,7 @@ const BUILTIN_CHAT_MODE_LABELS: Record<ChatSurfaceModeId, string> = {
   ask: 'Ask',
   edit: 'Edit',
   agent: 'Agent',
+  plan: 'Plan',
 };
 
 export const DEFAULT_CHAT_MODE_ID: ChatModeId = 'agent';
@@ -233,6 +234,7 @@ export function resolveChatModeId(value: unknown): ChatModeId | undefined {
     case 'ask':
     case 'edit':
     case 'agent':
+    case 'plan':
       return normalizedValue;
     default:
       return undefined;
@@ -273,6 +275,10 @@ export function normalizeChatSelectedMode(
       : undefined,
   ) || undefined;
 
+  if (modeId === 'agent' && isPlanChatAgentTarget(customAgentTarget)) {
+    return { modeId: 'plan' };
+  }
+
   return {
     modeId,
     ...(modeId === 'agent' && customAgentTarget ? { customAgentTarget } : {}),
@@ -290,6 +296,10 @@ export function createBuiltinChatResolvedMode(
   modeId: unknown,
 ): ChatResolvedMode {
   const normalizedModeId = normalizeChatSurfaceModeId(modeId, DEFAULT_CHAT_SURFACE_MODE_ID);
+  if (normalizedModeId === 'plan') {
+    return createPlanChatResolvedMode();
+  }
+
   return {
     id: normalizedModeId,
     kind: normalizedModeId,
@@ -301,9 +311,9 @@ export function createBuiltinChatResolvedMode(
 
 export function createPlanChatResolvedMode(): ChatResolvedMode {
   return {
-    id: PLAN_CHAT_AGENT_TARGET,
-    kind: 'agent',
-    isBuiltin: false,
+    id: 'plan',
+    kind: 'plan',
+    isBuiltin: true,
     name: PLAN_CHAT_AGENT_TARGET,
     label: PLAN_CHAT_AGENT_TARGET,
     description: PLAN_CHAT_MODE_DESCRIPTION,
@@ -331,12 +341,23 @@ export function createPlanChatResolvedMode(): ChatResolvedMode {
       },
     ],
     modeInstructions: {
-      content: '',
+      content: [
+        'You are a PLANNING AGENT, pairing with the user to create a detailed, actionable plan.',
+        'Your SOLE responsibility is planning. NEVER start implementation.',
+        'Research the project, clarify ambiguity, identify risks, and present a concise implementation plan before any changes are made.',
+        'Plan Mode is a collaboration mode. Do not confuse it with a generic TODO/checklist or progress tracker; the final plan artifact must be emitted as exactly one <proposed_plan> block.',
+        'Do not edit files, install dependencies, deploy, flash firmware, or run mutating device commands in Plan mode.',
+        'Use read-only project/library search, memory, and focused research agents when useful.',
+        'If the user answers a clarifying question while this conversation is still in Plan mode, treat that answer only as plan refinement input. Never start implementation from that answer.',
+        'When persisting the current plan, use the memory path /memories/session/plan.md. Keep that file in sync with plan revisions, but never use the file as a substitute for showing the plan to the user.',
+        'For Blockly and hardware work, include board/library constraints, wiring or pinmap assumptions, generated code impact, firmware/build/flash verification, and any device safety or rollback considerations.',
+        'When the plan is ready, show a concise human-readable plan inside <proposed_plan> and </proposed_plan>, then stop. Implementation can only start from the host Start Implementation handoff in Agent mode.',
+      ].join('\n\n'),
       toolReferences: [],
       metadata: {
         source: 'bootstrap',
-        fallbackOnly: true,
-        disableModelInvocation: true,
+        promptVersion: 'aily-plan-mode-2026-06-15',
+        planningOnly: true,
       },
     },
     customAgentTarget: PLAN_CHAT_AGENT_TARGET,
@@ -346,11 +367,12 @@ export function createPlanChatResolvedMode(): ChatResolvedMode {
 export function isPlanChatResolvedMode(
   mode: Pick<ChatResolvedMode, 'id' | 'kind' | 'isBuiltin' | 'name' | 'customAgentTarget'> | null | undefined,
 ): boolean {
-  return mode?.kind === 'agent'
-    && mode.isBuiltin === false
-    && (isPlanChatAgentTarget(mode.customAgentTarget)
+  return mode?.kind === 'plan'
+    || (mode?.kind === 'agent'
+      && mode.isBuiltin === false
+      && (isPlanChatAgentTarget(mode.customAgentTarget)
       || isPlanChatAgentTarget(mode.name)
-      || isPlanChatAgentTarget(mode.id));
+      || isPlanChatAgentTarget(mode.id)));
 }
 
 const BUILTIN_CHAT_RESOLVED_MODES: readonly ChatResolvedMode[] = CHAT_SURFACE_MODE_IDS.map(modeId =>
@@ -484,6 +506,10 @@ export function resolveChatCurrentMode(
     ? customAgentTargetOrOptions as ResolveChatCurrentModeOptions | undefined
     : maybeOptions;
   const selectedCustomAgentTarget = resolveChatSelectedCustomAgentTarget(selectedMode);
+
+  if (selectedMode.modeId === 'plan') {
+    return createPlanChatResolvedMode();
+  }
 
   if (selectedMode.modeId !== 'agent' || !selectedCustomAgentTarget) {
     return createBuiltinChatResolvedMode(selectedMode.modeId);
@@ -682,6 +708,10 @@ export function resolveChatSelectedModeFromInputState(
   }
 
   if (mode.kind === 'agent') {
+    if (isPlanChatAgentTarget(mode.id) || isPlanChatAgentTarget(mode.modeInstructions?.name)) {
+      return { modeId: 'plan' };
+    }
+
     const builtinModeId = resolveChatSurfaceModeId(mode.id);
     if (!mode.id || builtinModeId === 'agent') {
       if (mode.modeInstructions?.name) {

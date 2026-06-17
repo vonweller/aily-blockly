@@ -90,6 +90,8 @@ export function getToolApprovalTitle(toolName: string | undefined, fallbackTitle
     case 'send_to_terminal':
     case 'command_write_stdin':
       return '发送终端输入';
+    case 'command_resize':
+      return '调整终端尺寸';
     case 'kill_terminal':
     case 'command_stop':
       return '结束命令进程';
@@ -229,6 +231,11 @@ export function generateApprovalMessage(
       return {
         title: getToolApprovalTitle(normalizedToolName),
         message: `即将向终端发送输入：\n${args?.input || args?.command || '(空输入 / 轮询)'}`,
+      };
+    case 'command_resize':
+      return {
+        title: getToolApprovalTitle(normalizedToolName),
+        message: `即将调整命令进程终端尺寸：${args?.processId || '(未知进程)'}\nrows=${args?.size?.rows ?? '(未知)'} cols=${args?.size?.cols ?? '(未知)'}`,
       };
     case 'kill_terminal':
     case 'command_stop':

@@ -59,6 +59,7 @@
             [showAddList]="showEditAddList"
             [currentMode]="currentMode"
             [currentCustomAgentTarget]="currentCustomAgentTarget"
+            [selectedMode]="selectedMode"
             [showModelChip]="!!(currentModelChipLabel || currentModelName)"
             [modelChipLabel]="currentModelChipLabel || currentModelName"
             [modelBillingLabel]="currentModelBillingLabel"
@@ -113,29 +114,36 @@
 
       <div
         class="content"
+        #contentRoot
         [class.thinking]="effectiveDoing"
+        [class.virtualized-content]="!shouldRenderHeavyContent"
+        [style.min-height.px]="shouldRenderHeavyContent ? null : virtualizedPlaceholderHeight"
         (click)="canEditUserMessage ? onUserMessageClick() : null"
         nz-tooltip
         [nzTooltipTitle]="editTooltipTitle || (canEditUserMessage ? ('AILY_CHAT.CLICK_TO_EDIT' | translate) : '')"
         nzTooltipPlacement="bottom"
         [nzTooltipOverlayStyle]="{ marginTop: '-10px', fontSize: '12px' }"
       >
-        @if (hasStructuredAilyContent) {
-          <!-- ★ Phase 2: aily 消息统一走 Part-based 渲染 -->
-          <aily-chat-message-parts
-            [parts]="effectiveParts"
-            [sessionId]="sessionId"
-            [doing]="effectiveDoing"
-            [turnResponse]="activityTurnResponse"
-          />
-        } @else if (streamContent()) {
-          <x-markdown
-            [content]="streamContent()"
-            [streaming]="streamingConfig()"
-            [components]="componentMap"
-            rootClassName="x-markdown-dark"
-          >
-          </x-markdown>
+        @if (shouldRenderHeavyContent) {
+          @if (hasStructuredAilyContent) {
+            <!-- ★ Phase 2: aily 消息统一走 Part-based 渲染 -->
+            <aily-chat-message-parts
+              [parts]="effectiveParts"
+              [sessionId]="sessionId"
+              [doing]="effectiveDoing"
+              [turnResponse]="activityTurnResponse"
+            />
+          } @else if (streamContent()) {
+            <x-markdown
+              [content]="streamContent()"
+              [streaming]="streamingConfig()"
+              [components]="componentMap"
+              rootClassName="x-markdown-dark"
+            >
+            </x-markdown>
+          }
+        } @else {
+          <div class="virtualized-content-placeholder" aria-hidden="true"></div>
         }
       </div>
     }

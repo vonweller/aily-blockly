@@ -1,6 +1,7 @@
 import { AilyHost } from '../core/host';
 import {
   normalizeChatSessionType,
+  normalizeChatSelectedMode,
 } from '../core/chat-mode';
 import {
   normalizeChatSessionTitleText,
@@ -12,11 +13,14 @@ import {
   hasHostSessionExplicitTurnRequestRouting,
   normalizeHostSessionRequestRoutingSummary,
   resolveHostSessionRequestRoutingSummary,
+  resolveHostSessionTurnRequestRoutingSummary,
 } from '../helpers/host-session-request-routing';
 import {
   normalizeHostSessionInteractionActionSummary,
   resolveHostSessionInteractionActionSummary,
 } from '../helpers/host-session-interaction-action';
+import type { PlanPart } from '../core/chat-parts';
+import { isLikelyPlanMarkdown } from '../core/chat-parts';
 import {
   type HostSessionSelectedModeResolveOptions,
   normalizeHostSessionInputStateFromMetadata,
@@ -462,6 +466,14 @@ export class HostSessionRecordStore {
 
   private cloneTurnResponse(turn: PersistedHostTurnResponse): PersistedHostTurnResponse {
     const {
+      modeId: _modeId,
+      modeSelection: _modeSelection,
+      requestRouting: _turnRequestRouting,
+      planPart: _planPart,
+      handoffAction: _handoffAction,
+      ...turnWithoutEnvelope
+    } = turn;
+    const {
       followups,
       responseId,
       responseMarkdownInfo,
@@ -477,9 +489,31 @@ export class HostSessionRecordStore {
       followups?: readonly TurnResponseFollowup[];
       continuation?: TurnResponseTurn['response']['continuation'];
     };
+    const requestRouting = resolveHostSessionTurnRequestRoutingSummary(turn, turn.modeId);
+    const modeSelection = requestRouting
+      ? normalizeChatSelectedMode({
+          modeId: requestRouting.selectedModeId,
+          customAgentTarget: requestRouting.customAgentTarget,
+        })
+      : undefined;
+    const modeId = requestRouting?.requestModeId ?? requestRouting?.selectedModeId;
+    const planPart = this.normalizePersistedTurnPlanPart(turn.planPart)
+      ?? this.findPersistedTurnPlanPart(turn.response.parts)
+      ?? this.synthesizePersistedTurnPlanPartFromMarkdown(turn.response.parts, modeId);
+    const handoffAction = normalizeHostSessionInteractionActionSummary(turn.handoffAction)
+      ?? this.resolveTurnInteractionActionSummary(turn);
+    const responseParts = this.materializeEnvelopePlanPart(
+      turn.response.parts.map(part => clonePersistedValue(part)),
+      planPart,
+    );
 
     return {
-      ...turn,
+      ...turnWithoutEnvelope,
+      ...(modeId ? { modeId } : {}),
+      ...(modeSelection ? { modeSelection } : {}),
+      ...(requestRouting ? { requestRouting } : {}),
+      ...(planPart ? { planPart } : {}),
+      ...(handoffAction ? { handoffAction } : {}),
       request: {
         ...turn['request'],
         ...(turn.request?.metadata ? { metadata: clonePersistedValue(turn.request.metadata) } : {}),
@@ -516,7 +550,7 @@ export class HostSessionRecordStore {
         })),
         codeCitations: (turn.response.codeCitations ?? []).map(citation => ({ ...citation })),
         progressMessages: (turn.response.progressMessages ?? []).map(message => ({ ...message })),
-        parts: turn.response.parts.map(part => clonePersistedValue(part)),
+        parts: responseParts,
         ...(continuation
           ? {
               continuation: {
@@ -544,6 +578,120 @@ export class HostSessionRecordStore {
         ...(typeof completionTokens === 'number' ? { completionTokens } : {}),
       },
     } satisfies PersistedHostTurnResponse;
+  }
+
+  private normalizePersistedTurnPlanPart(value: unknown): PlanPart | undefined {
+    const part = isRecord(value) ? value : undefined;
+    if (!part || part['type'] !== 'plan') {
+      return undefined;
+    }
+
+    const status = part['status'] === 'streaming' || part['status'] === 'completed' || part['status'] === 'failed'
+      ? part['status']
+      : undefined;
+    const text = typeof part['text'] === 'string' ? part['text'] : '';
+    if (!status || text.length === 0) {
+      return undefined;
+    }
+
+    return {
+      type: 'plan',
+      ...(typeof part['partId'] === 'string' && part['partId'].trim().length > 0 ? { partId: part['partId'].trim() } : {}),
+      status,
+      text,
+      ...(Array.isArray(part['steps']) ? { steps: clonePersistedValue(part['steps']) as PlanPart['steps'] } : {}),
+      ...(Array.isArray(part['assumptions']) ? { assumptions: part['assumptions'].filter((item): item is string => typeof item === 'string') } : {}),
+      ...(Array.isArray(part['verification']) ? { verification: part['verification'].filter((item): item is string => typeof item === 'string') } : {}),
+      ...(part['source'] === 'proposed_plan' || part['source'] === 'plan_file' || part['source'] === 'summary'
+        ? { source: part['source'] }
+        : {}),
+    };
+  }
+
+  private findPersistedTurnPlanPart(parts: readonly TurnResponseTurn['response']['parts'][number][]): PlanPart | undefined {
+    for (const part of parts) {
+      const planPart = this.normalizePersistedTurnPlanPart(part);
+      if (planPart) {
+        return planPart;
+      }
+    }
+
+    return undefined;
+  }
+
+  private synthesizePersistedTurnPlanPartFromMarkdown(
+    parts: readonly TurnResponseTurn['response']['parts'][number][],
+    modeId: string | undefined,
+  ): PlanPart | undefined {
+    if (modeId !== 'plan') {
+      return undefined;
+    }
+
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (!isRecord(part) || part['type'] !== 'markdown') {
+        continue;
+      }
+
+      const text = typeof part['content'] === 'string' ? part['content'].trim() : '';
+      if (!isLikelyPlanMarkdown(text)) {
+        continue;
+      }
+
+      return {
+        type: 'plan',
+        partId: 'plan:fallback',
+        status: 'completed',
+        text,
+        source: 'summary',
+      };
+    }
+
+    return undefined;
+  }
+
+  private materializeEnvelopePlanPart(
+    parts: TurnResponseTurn['response']['parts'],
+    planPart: PlanPart | undefined,
+  ): TurnResponseTurn['response']['parts'] {
+    if (!planPart) {
+      return parts;
+    }
+
+    const envelopePartId = typeof planPart.partId === 'string' ? planPart.partId.trim() : '';
+    const hasSamePlanPart = parts.some((part) => {
+      const persistedPlanPart = this.normalizePersistedTurnPlanPart(part);
+      if (!persistedPlanPart) {
+        return false;
+      }
+      const partId = typeof persistedPlanPart.partId === 'string' ? persistedPlanPart.partId.trim() : '';
+      return envelopePartId
+        ? partId === envelopePartId
+        : persistedPlanPart.text === planPart.text && persistedPlanPart.status === planPart.status;
+    });
+
+    return hasSamePlanPart ? parts : [...parts, planPart as TurnResponseTurn['response']['parts'][number]];
+  }
+
+  private resolveTurnInteractionActionSummary(
+    turn: PersistedHostTurnResponse,
+  ): ReturnType<typeof normalizeHostSessionInteractionActionSummary> {
+    const metadata = isRecord(turn.request?.metadata) ? turn.request.metadata : undefined;
+    const interactionAction = isRecord(metadata?.['interactionAction'])
+      ? metadata['interactionAction']
+      : undefined;
+    if (!interactionAction) {
+      return undefined;
+    }
+
+    const payload = isRecord(interactionAction['payload']) ? interactionAction['payload'] : undefined;
+    return normalizeHostSessionInteractionActionSummary({
+      kind: interactionAction['kind'],
+      result: payload?.['result'] ?? interactionAction['result'],
+      actionId: payload?.['actionId'] ?? interactionAction['actionId'],
+      feedback: payload?.['feedback'] ?? interactionAction['feedback'],
+      sourceEvent: payload?.['sourceEvent'] ?? interactionAction['sourceEvent'],
+    });
   }
 
   private normalizeSidecar(sidecar: HostSessionSidecar | undefined): HostSessionSidecar | undefined {

@@ -20,6 +20,7 @@ import type {
 } from 'aily-lex/browser';
 import {
   buildConfirmationPartId,
+  type ChatPartScope,
   type SubagentChildItem,
   type StatePart,
   mkSubagentTimelineEntry,
@@ -30,6 +31,8 @@ import {
   mkError,
   mkQuestion,
   mkConfirmation,
+  normalizeChatPartScope,
+  withChatPartScopeMetadata,
 } from './chat-parts';
 import {
   buildPendingToolCallApprovalMetadata,
@@ -47,6 +50,8 @@ import {
 export type RenderEventPartStoreAccess = Pick<
   ChatPartStore,
   | 'appendToMarkdownHandle'
+  | 'appendToPlanHandle'
+  | 'completePlanHandle'
   | 'appendToThinkingHandle'
   | 'completeThinkingHandle'
   | 'addPartToHandle'
@@ -59,6 +64,7 @@ export type RenderEventPartStoreAccess = Pick<
   | 'upsertSubagentChildItemForHandle'
   | 'findToolCallOpaqueHandle'
   | 'upsertTerminalForHandle'
+  | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 function hasUsableStoreHandle(
@@ -79,12 +85,21 @@ function hasUsableStoreHandle(
   return !!handle.message && typeof handle.message === 'object';
 }
 
+function eventScope(event: RenderEvent): ChatPartScope | undefined {
+  return normalizeChatPartScope(event as unknown as ChatPartScope);
+}
+
+const PROPOSED_PLAN_OPEN_TAG = '<proposed_plan>';
+const PROPOSED_PLAN_CLOSE_TAG = '</proposed_plan>';
+
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
 
 export class RenderEventPartAdapter {
   private readonly _store: RenderEventPartStoreAccess;
+  private _planStreamState: 'markdown' | 'plan' = 'markdown';
+  private _planStreamBuffer = '';
 
   constructor(store: RenderEventPartStoreAccess) {
     this._store = store;
@@ -101,15 +116,15 @@ export class RenderEventPartAdapter {
     switch (event.type) {
       // ---- Text ----
       case 'markdown_delta':
-        this._store.appendToMarkdownHandle(handle, event.text);
+        this._processMarkdownDelta(handle, event.text, eventScope(event));
         return true;
 
       case 'thinking_delta':
-        this._store.appendToThinkingHandle(handle, event.text);
+        this._store.appendToThinkingHandle(handle, event.text, eventScope(event));
         return true;
 
       case 'thinking_complete':
-        this._store.completeThinkingHandle(handle);
+        this._store.completeThinkingHandle(handle, eventScope(event));
         return true;
 
       // ---- Tool Call ----
@@ -120,6 +135,8 @@ export class RenderEventPartAdapter {
           `${event.toolName}…`,
           'doing',
           event.input,
+          undefined,
+          eventScope(event),
         ));
         return true;
 
@@ -134,7 +151,7 @@ export class RenderEventPartAdapter {
           {
             state: event.state === 'error' ? 'error' : 'done',
             text: event.resultText,
-            metadata: buildToolResultMetadataPatch({
+            metadata: withChatPartScopeMetadata(buildToolResultMetadataPatch({
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               state: event.state === 'error' ? 'error' : 'done',
@@ -142,7 +159,7 @@ export class RenderEventPartAdapter {
               result: event.result,
               timestamp: event.timestamp,
               durationMs: event.durationMs,
-            }),
+            }), eventScope(event)),
           },
         );
         this._appendTerminalPart(handle, event);
@@ -289,7 +306,34 @@ export class RenderEventPartAdapter {
 
   /** Reset per-turn state. Call at the start of each new turn. */
   reset(): void {
-    // no-op: current-handle ownership lives with the caller/runtime
+    this._planStreamState = 'markdown';
+    this._planStreamBuffer = '';
+  }
+
+  finalize(
+    handle: ChatPartStoreOpaqueHandle | null,
+    options: { readonly materializeFinalMarkdownAsPlan?: boolean } = {},
+  ): void {
+    if (!hasUsableStoreHandle(handle)) {
+      this.reset();
+      return;
+    }
+
+    if (this._planStreamBuffer) {
+      if (this._planStreamState === 'plan') {
+        this._store.appendToPlanHandle(handle, this._planStreamBuffer);
+      } else {
+        this._store.appendToMarkdownHandle(handle, this._planStreamBuffer);
+      }
+    }
+
+    if (this._planStreamState === 'plan') {
+      this._store.completePlanHandle(handle);
+    } else if (options.materializeFinalMarkdownAsPlan === true) {
+      this._store.materializeFinalMarkdownAsPlanForHandle(handle);
+    }
+
+    this.reset();
   }
 
   /** Clean up. */
@@ -350,15 +394,25 @@ export class RenderEventPartAdapter {
     }
     const commandOutput = normalizeCommandOutputProgress(event.data);
     if (commandOutput) {
-      this._store.upsertTerminalForHandle(toolHandle, commandTerminalUpdateToPart(commandOutput, event.toolCallId, true));
+      const terminal = commandTerminalUpdateToPart(commandOutput, event.toolCallId, true);
+      const scope = eventScope(event);
+      if (scope) {
+        Object.assign(terminal, scope);
+      }
+      this._store.upsertTerminalForHandle(toolHandle, terminal);
     }
 
     const commandSession = normalizeCommandSessionUpdate(event.data);
     if (commandSession) {
-      this._store.upsertTerminalForHandle(toolHandle, commandTerminalUpdateToPart(commandSession, event.toolCallId, false));
+      const terminal = commandTerminalUpdateToPart(commandSession, event.toolCallId, false);
+      const scope = eventScope(event);
+      if (scope) {
+        Object.assign(terminal, scope);
+      }
+      this._store.upsertTerminalForHandle(toolHandle, terminal);
     }
 
-    const nextMetadata = buildToolCallProgressMetadataPatch({
+    const nextMetadata = withChatPartScopeMetadata(buildToolCallProgressMetadataPatch({
       toolCallId: event.toolCallId,
       toolName: toolPart?.toolName,
       timestamp: event.timestamp,
@@ -367,11 +421,19 @@ export class RenderEventPartAdapter {
       detail: progressUpdate.detail,
       step: progressUpdate.step,
       statusText: progressUpdate.statusText,
+      kind: progressUpdate.kind,
+      phase: progressUpdate.phase,
+      label: progressUpdate.label,
+      operationId: progressUpdate.operationId,
+      operationKind: progressUpdate.operationKind,
+      queueSize: progressUpdate.queueSize,
+      durationMs: progressUpdate.durationMs,
+      running: progressUpdate.running,
       existingMetadata: toolPart?.metadata,
-    });
+    }), eventScope(event));
 
     this._store.patchToolCallForHandle(toolHandle, event.toolCallId, {
-      state: 'doing',
+      state: resolveProgressToolCallState(progressUpdate),
       ...(progressUpdate.summary ? { text: progressUpdate.summary } : {}),
       metadata: nextMetadata,
     });
@@ -432,8 +494,70 @@ export class RenderEventPartAdapter {
       return;
     }
 
+    const scope = eventScope(event);
+    if (scope) {
+      Object.assign(terminal, scope);
+    }
+
     const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
     this._store.upsertTerminalForHandle(toolHandle ?? handle, terminal);
+  }
+
+  private _processMarkdownDelta(handle: ChatPartStoreOpaqueHandle, text: string, scope?: ChatPartScope): void {
+    const normalizedScope = normalizeChatPartScope(scope);
+    if (normalizedScope?.sourceAgentRole === 'subagent' || normalizedScope?.subAgentInvocationId) {
+      this._store.appendToMarkdownHandle(handle, text, normalizedScope);
+      return;
+    }
+
+    this._planStreamBuffer += text;
+
+    while (this._planStreamBuffer.length > 0) {
+      if (this._planStreamState === 'markdown') {
+        const openIndex = indexOfCaseInsensitive(this._planStreamBuffer, PROPOSED_PLAN_OPEN_TAG);
+        if (openIndex >= 0) {
+          const before = this._planStreamBuffer.slice(0, openIndex);
+          if (before) {
+            this._store.appendToMarkdownHandle(handle, before);
+          }
+          this._planStreamBuffer = this._planStreamBuffer.slice(openIndex + PROPOSED_PLAN_OPEN_TAG.length);
+          this._planStreamState = 'plan';
+          continue;
+        }
+
+        const keep = longestSuffixPrefixLength(this._planStreamBuffer, PROPOSED_PLAN_OPEN_TAG);
+        const safeLength = this._planStreamBuffer.length - keep;
+        if (safeLength <= 0) {
+          return;
+        }
+
+        this._store.appendToMarkdownHandle(handle, this._planStreamBuffer.slice(0, safeLength));
+        this._planStreamBuffer = this._planStreamBuffer.slice(safeLength);
+        return;
+      }
+
+      const closeIndex = indexOfCaseInsensitive(this._planStreamBuffer, PROPOSED_PLAN_CLOSE_TAG);
+      if (closeIndex >= 0) {
+        const planDelta = this._planStreamBuffer.slice(0, closeIndex);
+        if (planDelta) {
+          this._store.appendToPlanHandle(handle, planDelta);
+        }
+        this._store.completePlanHandle(handle);
+        this._planStreamBuffer = this._planStreamBuffer.slice(closeIndex + PROPOSED_PLAN_CLOSE_TAG.length);
+        this._planStreamState = 'markdown';
+        continue;
+      }
+
+      const keep = longestSuffixPrefixLength(this._planStreamBuffer, PROPOSED_PLAN_CLOSE_TAG);
+      const safeLength = this._planStreamBuffer.length - keep;
+      if (safeLength <= 0) {
+        return;
+      }
+
+      this._store.appendToPlanHandle(handle, this._planStreamBuffer.slice(0, safeLength));
+      this._planStreamBuffer = this._planStreamBuffer.slice(safeLength);
+      return;
+    }
   }
 }
 
@@ -631,6 +755,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function indexOfCaseInsensitive(text: string, search: string): number {
+  return text.toLowerCase().indexOf(search.toLowerCase());
+}
+
+function longestSuffixPrefixLength(text: string, marker: string): number {
+  const max = Math.min(text.length, marker.length - 1);
+  const lowerText = text.toLowerCase();
+  const lowerMarker = marker.toLowerCase();
+  for (let length = max; length > 0; length -= 1) {
+    if (lowerMarker.startsWith(lowerText.slice(-length))) {
+      return length;
+    }
+  }
+  return 0;
+}
+
 function asRecordArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value
@@ -757,6 +897,14 @@ function normalizeToolCallProgressUpdate(
   detail?: string;
   step?: string;
   statusText?: string;
+  kind?: string;
+  phase?: string;
+  label?: string;
+  operationId?: string;
+  operationKind?: string;
+  queueSize?: number;
+  durationMs?: number;
+  running?: boolean;
 } | null {
   if (typeof data === 'string') {
     const summary = data.trim();
@@ -780,17 +928,33 @@ function normalizeToolCallProgressUpdate(
   const step = firstMeaningfulString(record['step']);
   const statusText = firstMeaningfulString(record['status'], record['statusText']);
   const progress = asNumber(record['progress']) ?? asNumber(record['percentage']);
+  const kind = firstMeaningfulString(record['kind']);
+  const phase = firstMeaningfulString(record['phase']);
+  const label = firstMeaningfulString(record['label']);
+  const operationId = firstMeaningfulString(record['operationId']);
+  const operationKind = firstMeaningfulString(record['operationKind']);
+  const queueSize = asNumber(record['queueSize']);
+  const durationMs = asNumber(record['durationMs']);
+  const running = typeof record['running'] === 'boolean' ? record['running'] : undefined;
 
-  if (!summary && progress == null && !detail && !step && !statusText) {
+  if (!summary && progress == null && !detail && !step && !statusText && !phase && !label && !operationId && !operationKind) {
     return null;
   }
 
   return {
-    summary: summary ?? (toolName ? `${toolName} still running...` : 'Tool still running...'),
+    summary: summary ?? label ?? (toolName ? `${toolName} still running...` : 'Tool still running...'),
     ...(progress != null ? { progress } : {}),
     ...(detail ? { detail } : {}),
     ...(step ? { step } : {}),
     ...(statusText ? { statusText } : {}),
+    ...(kind ? { kind } : {}),
+    ...(phase ? { phase } : {}),
+    ...(label ? { label } : {}),
+    ...(operationId ? { operationId } : {}),
+    ...(operationKind ? { operationKind } : {}),
+    ...(queueSize != null ? { queueSize } : {}),
+    ...(durationMs != null ? { durationMs } : {}),
+    ...(running != null ? { running } : {}),
   };
 }
 
@@ -913,38 +1077,140 @@ function buildToolCallProgressMetadataPatch(input: {
   detail?: string;
   step?: string;
   statusText?: string;
+  kind?: string;
+  phase?: string;
+  label?: string;
+  operationId?: string;
+  operationKind?: string;
+  queueSize?: number;
+  durationMs?: number;
+  running?: boolean;
   existingMetadata?: Record<string, unknown>;
 }): Record<string, unknown> {
   const existingMetadata = asRecord(input.existingMetadata) ?? {};
   const existingTimeline = asRecordArray(existingMetadata['timeline']);
+  const phase = normalizeProgressPhase(input.phase);
+  const recordId = input.kind === 'editor_operation' && input.operationId
+    ? `${input.toolCallId}:${input.operationId}:${phase === 'progress' ? 'progress' : phase}`
+    : `${input.toolCallId}:progress`;
+  const progressDetails = buildProgressDetails(input);
   const progressEntry: Record<string, unknown> = {
-    recordId: `${input.toolCallId}:progress`,
-    phase: 'progress',
+    recordId,
+    phase,
     ...(input.summary ? { summary: input.summary } : {}),
     ...(input.progress != null ? { progress: input.progress } : {}),
-    ...((input.summary || input.detail || input.step || input.statusText || input.progress != null)
-      ? {
-          progressDetails: {
-            ...(input.summary ? { message: input.summary } : {}),
-            ...(input.detail ? { detail: input.detail } : {}),
-            ...(input.step ? { step: input.step } : {}),
-            ...(input.statusText ? { statusText: input.statusText } : {}),
-            ...(input.progress != null ? { progress: input.progress } : {}),
-          },
-        }
-      : {}),
+    ...(progressDetails ? { progressDetails } : {}),
     timestamp: input.timestamp,
   };
 
   const timeline = mergeProgressTimeline(existingTimeline, progressEntry);
+  const toolSpecificData = input.kind === 'editor_operation'
+    ? {
+        kind: 'editor_operation',
+        ...(input.operationId ? { operationId: input.operationId } : {}),
+        ...(input.operationKind ? { operationKind: input.operationKind } : {}),
+        ...(input.label ? { label: input.label } : {}),
+        phase,
+        ...(input.running != null ? { running: input.running } : {}),
+      }
+    : existingMetadata['toolSpecificData'];
 
   return {
     ...existingMetadata,
     ...(input.toolName ? { toolName: input.toolName } : {}),
-    phase: 'progress',
+    phase,
     ...(input.progress != null ? { progress: input.progress } : {}),
+    ...(input.kind ? { progressKind: input.kind } : {}),
+    ...(input.operationId ? { operationId: input.operationId } : {}),
+    ...(input.operationKind ? { operationKind: input.operationKind } : {}),
+    ...(input.label ? { operationLabel: input.label } : {}),
+    ...(input.queueSize != null ? { queueSize: input.queueSize } : {}),
+    ...(input.durationMs != null ? { durationMs: input.durationMs } : {}),
+    ...(toolSpecificData ? { toolSpecificData } : {}),
     timeline,
   };
+}
+
+function buildProgressDetails(input: {
+  summary?: string;
+  progress?: number;
+  detail?: string;
+  step?: string;
+  statusText?: string;
+  kind?: string;
+  phase?: string;
+  label?: string;
+  operationId?: string;
+  operationKind?: string;
+  queueSize?: number;
+  durationMs?: number;
+  running?: boolean;
+}): Record<string, unknown> | undefined {
+  if (!input.summary
+    && !input.detail
+    && !input.step
+    && !input.statusText
+    && input.progress == null
+    && !input.kind
+    && !input.phase
+    && !input.label
+    && !input.operationId
+    && !input.operationKind
+    && input.queueSize == null
+    && input.durationMs == null
+    && input.running == null) {
+    return undefined;
+  }
+
+  return {
+    ...(input.summary ? { message: input.summary } : {}),
+    ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.step ? { step: input.step } : {}),
+    ...(input.statusText ? { statusText: input.statusText } : {}),
+    ...(input.progress != null ? { progress: input.progress } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.phase ? { phase: normalizeProgressPhase(input.phase) } : {}),
+    ...(input.label ? { label: input.label } : {}),
+    ...(input.operationId ? { operationId: input.operationId } : {}),
+    ...(input.operationKind ? { operationKind: input.operationKind } : {}),
+    ...(input.queueSize != null ? { queueSize: input.queueSize } : {}),
+    ...(input.durationMs != null ? { durationMs: input.durationMs } : {}),
+    ...(input.running != null ? { running: input.running } : {}),
+  };
+}
+
+function normalizeProgressPhase(phase?: string): string {
+  switch (phase) {
+    case 'queued':
+    case 'started':
+    case 'progress':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return phase;
+    default:
+      return 'progress';
+  }
+}
+
+function resolveProgressToolCallState(progressUpdate: {
+  kind?: string;
+  phase?: string;
+}): 'doing' | 'done' | 'warn' | 'error' {
+  if (progressUpdate.kind !== 'editor_operation') {
+    return 'doing';
+  }
+
+  switch (normalizeProgressPhase(progressUpdate.phase)) {
+    case 'completed':
+      return 'done';
+    case 'failed':
+      return 'error';
+    case 'cancelled':
+      return 'warn';
+    default:
+      return 'doing';
+  }
 }
 
 function mergeProgressTimeline(
@@ -987,6 +1253,7 @@ function questionRequestToPart(event: Extract<RenderEvent, { type: 'question_req
     })),
     undefined,
     event.requestId,
+    eventScope(event),
   );
 }
 
@@ -1003,6 +1270,10 @@ function confirmationRequestToPart(event: Extract<RenderEvent, { type: 'approval
       description: event.description,
       actions: event.actions,
       primaryScope: event.primaryScope,
+      sourceAgentRole: event.sourceAgentRole,
+      subAgentInvocationId: event.subAgentInvocationId,
+      parentToolCallId: event.parentToolCallId,
+      sequence: event.sequence,
     },
   );
 }
@@ -1014,7 +1285,7 @@ function approvalRequestToToolCallPatch(
     state: 'pending_approval',
     text: event.message || `${event.toolName} requires approval`,
     args: event.input,
-    metadata: {
+    metadata: withChatPartScopeMetadata({
       approval: buildPendingToolCallApprovalMetadata({
         toolCallId: event.toolCallId,
         toolName: event.toolName,
@@ -1027,7 +1298,7 @@ function approvalRequestToToolCallPatch(
         primaryScope: event.primaryScope,
         args: event.input,
       }),
-    },
+    }, eventScope(event)),
   };
 }
 
@@ -1036,13 +1307,13 @@ function approvalResolveToToolCallPatch(
 ): ToolCallPartPatch {
   return {
     state: event.result === 'approved' ? 'doing' : 'error',
-    metadata: {
+    metadata: withChatPartScopeMetadata({
       approval: buildResolvedToolCallApprovalMetadata({
         toolCallId: event.toolCallId,
         result: event.result,
         scope: event.scope,
       }),
-    },
+    }, eventScope(event)),
   };
 }
 
@@ -1110,18 +1381,47 @@ function getStandaloneApprovalRequestId(
 }
 
 function errorNoticeToPart(event: Extract<RenderEvent, { type: 'error_notice' }>) {
-  return mkError(event.message);
+  const code = typeof event.code === 'string' && event.code.trim().length > 0
+    ? event.code.trim()
+    : undefined;
+  return mkError(
+    event.message,
+    'error',
+    withChatPartScopeMetadata(buildErrorNoticeMetadata(code), eventScope(event)),
+  );
+}
+
+function buildErrorNoticeMetadata(code: string | undefined): Record<string, unknown> | undefined {
+  if (!code) {
+    return undefined;
+  }
+
+  const errorDetails: Record<string, unknown> = { code };
+  if (isRetryableServiceStreamErrorCode(code)) {
+    errorDetails['confirmationButtons'] = [
+      {
+        data: { ailyContinueOnError: true },
+        label: 'Try Again',
+      },
+    ];
+  }
+
+  return { errorDetails };
+}
+
+function isRetryableServiceStreamErrorCode(code: string): boolean {
+  return code === '29001' || code === 'request_failed';
 }
 
 function warningNoticeToPart(event: Extract<RenderEvent, { type: 'warning_notice' }>) {
-  return mkError(event.message, 'warning', {
+  return mkError(event.message, 'warning', withChatPartScopeMetadata({
     ...(typeof event.code === 'string' ? { code: event.code } : {}),
     ...(event.details && typeof event.details === 'object' ? { details: event.details } : {}),
-  });
+  }, eventScope(event)));
 }
 
 function infoNoticeToPart(event: Extract<RenderEvent, { type: 'info_notice' }>) {
-  return mkError(event.message, 'info');
+  return mkError(event.message, 'info', withChatPartScopeMetadata(undefined, eventScope(event)));
 }
 
 function subagentBeginToPart(event: Extract<RenderEvent, { type: 'subagent_begin' }>) {

@@ -99,10 +99,32 @@ export class AilyChatDebugViewerComponent {
             reference: this.view.pendingPlanReview.planUri,
           }]
         : []),
+      ...this.planPartDetailRows,
       ...this.dualPersistenceDetailRows,
       ...this.restoreDiagnosticsDetailRows,
       ...this.restoreFailureDetailRows,
       ...this.liveRuntimeDetailRows,
+    ];
+  }
+
+  get planPartDetailRows(): readonly DebugSessionDetailRow[] {
+    const planParts = this.view.planParts ?? [];
+    if (!planParts.length) {
+      return [];
+    }
+
+    const latestPlan = planParts[planParts.length - 1];
+    const latestStatus = [
+      latestPlan.status,
+      latestPlan.source ? `source=${latestPlan.source}` : '',
+      latestPlan.partId ? `part=${latestPlan.partId}` : '',
+    ].filter(Boolean).join(', ');
+    return [
+      { label: 'Plan parts', value: String(planParts.length) },
+      { label: 'Latest plan status', value: latestStatus || 'unknown' },
+      { label: 'Latest plan turn', value: latestPlan.turnId || '<unknown>' },
+      { label: 'Latest plan chars', value: String(latestPlan.charLength) },
+      ...(latestPlan.preview ? [{ label: 'Latest plan preview', value: latestPlan.preview }] : []),
     ];
   }
 

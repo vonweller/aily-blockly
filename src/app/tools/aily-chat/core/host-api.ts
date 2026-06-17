@@ -189,8 +189,14 @@ export interface ITerminal {
   // === PTY 终端（window['terminal'] 的能力） ===
   /** 创建终端实例 */
   init?(data: any): Promise<any>;
+  /** 监听指定 PTY pid 的输出；返回解除监听函数 */
+  onPidData?(pid: number | string, callback: (data: any) => void): () => void;
+  /** 监听指定 PTY pid 的退出；返回解除监听函数 */
+  onPidExit?(pid: number | string, callback: (data: any) => void): () => void;
   /** 发送输入到 PTY */
   sendInput?(data: any): void;
+  /** 以 PTY 方式启动单个命令进程 */
+  spawnCommand?(data: any): Promise<any>;
   sendInputAsync?(data: any): Promise<any>;
   /** 关闭终端 */
   close?(data: any): void;

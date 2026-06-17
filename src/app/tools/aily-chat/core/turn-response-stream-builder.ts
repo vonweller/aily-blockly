@@ -1,4 +1,4 @@
-import type { RenderEvent, TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
+import type { RenderEvent, TurnRequest, TurnResponseCommand, TurnResponseFollowup, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 
 import {
   type ChatPartStore,
@@ -17,7 +17,6 @@ type IncrementalTurnResponseProjectionTargetStore = Pick<
 
 type IncrementalTurnResponseRuntime = Pick<
   DetachedChatPartRuntime,
-  | 'finalizeRunningParts'
   | 'reset'
   | 'process'
   | 'hydrateTurnResponseParts'
@@ -25,7 +24,7 @@ type IncrementalTurnResponseRuntime = Pick<
   | 'projectPendingPartsTo'
   | 'drainTurnResponsePartChanges'
   | 'destroy'
->;
+> & Pick<DetachedChatPartRuntime, 'finalizeRunningParts'>;
 
 interface TurnResponseIncrementalProjection {
   readonly turnId: string;
@@ -159,11 +158,13 @@ export class TurnResponseIncrementalBuilder {
       return null;
     }
 
-    if (options.status !== 'streaming') {
-      this.runtime.finalizeRunningParts();
-    }
-
     const request = options.snapshot?.request ?? this.currentProjection.request;
+    if (options.status !== 'streaming') {
+      this.runtime.finalizeRunningParts({
+        materializeFinalMarkdownAsPlan: isPlanTurnRequest(request),
+        status: options.status === 'cancelled' ? 'cancelled' : options.status === 'error' ? 'error' : 'completed',
+      });
+    }
     const rounds = options.snapshot?.rounds ?? this.currentProjection.rounds;
     const usage = options.usage ?? options.snapshot?.usage ?? this.currentProjection.usage;
     const requestUsage = options.snapshot?.requestUsage ?? this.currentProjection.requestUsage;
@@ -343,4 +344,29 @@ export class TurnResponseIncrementalBuilder {
         return false;
     }
   }
+}
+
+function isPlanTurnRequest(request: TurnRequest | null | undefined): boolean {
+  const metadata = request?.metadata as Record<string, unknown> | undefined;
+  if (!metadata) {
+    return false;
+  }
+
+  if (metadata['modeId'] === 'plan') {
+    return true;
+  }
+
+  const modeInfo = metadata['modeInfo'] && typeof metadata['modeInfo'] === 'object'
+    ? metadata['modeInfo'] as Record<string, unknown>
+    : undefined;
+  if (modeInfo?.['modeId'] === 'plan' || modeInfo?.['kind'] === 'plan') {
+    return true;
+  }
+
+  const requestRouting = metadata['requestRouting'] && typeof metadata['requestRouting'] === 'object'
+    ? metadata['requestRouting'] as Record<string, unknown>
+    : undefined;
+  return requestRouting?.['modeId'] === 'plan'
+    || requestRouting?.['requestModeId'] === 'plan'
+    || requestRouting?.['selectedModeId'] === 'plan';
 }

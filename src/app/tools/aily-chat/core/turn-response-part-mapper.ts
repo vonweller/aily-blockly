@@ -1,6 +1,7 @@
 import type {
   TurnResponseConfirmationPart,
   TurnResponsePart,
+  TurnResponsePlanPart,
   TurnResponseQuestionPart,
   TurnResponseStatePart,
   TurnResponseTerminalPart,
@@ -12,15 +13,21 @@ import {
   mkConfirmation,
   mkError,
   mkMarkdown,
+  mkPlan,
   mkQuestion,
   mkState,
   mkSubagentToolCall,
   mkTerminal,
   mkThinking,
   mkToolCall,
+  normalizeChatPartScope,
+  withChatPartScopeMetadata,
 } from './chat-parts';
+import { getMarkdownContent } from './markdown-content-store';
+import { getThinkContent } from './think-content-store';
 
 type MutableQuestionAnswers = Extract<ChatPart, { type: 'question' }>['answers'];
+type ScopedTurnResponsePartMetadata = { readonly metadata?: Record<string, unknown> };
 
 export function hydrateQuestionAnswersFromAskUserToolMetadata(
   parts: readonly TurnResponsePart[],
@@ -60,17 +67,23 @@ export function hydrateQuestionAnswersFromAskUserToolMetadata(
 
 export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
   switch (part.type) {
-    case 'markdown':
+    case 'markdown': {
+      const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
       return {
         type: 'markdown',
-        content: part.content,
-      };
-    case 'thinking':
+        content: part.content || (part.contentRef ? getMarkdownContent(part.contentRef) : ''),
+        ...(metadata ? { metadata } : {}),
+      } as TurnResponsePart;
+    }
+    case 'thinking': {
+      const metadata = withChatPartScopeMetadata(undefined, normalizeChatPartScope(part));
       return {
         type: 'thinking',
-        content: part.content,
+        content: part.content || (part.contentRef ? getThinkContent(part.contentRef) : ''),
         isComplete: part.isComplete,
-      };
+        ...(metadata ? { metadata } : {}),
+      } as TurnResponsePart;
+    }
     case 'tool_call':
       return {
         type: 'tool_call',
@@ -112,7 +125,8 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         message: part.message,
         ...(part.metadata ? { metadata: part.metadata } : {}),
       } as TurnResponsePart;
-    case 'question':
+    case 'question': {
+      const metadata = withChatPartScopeMetadata(part.metadata, normalizeChatPartScope(part));
       return {
         type: 'question',
         partId: part.partId,
@@ -124,8 +138,11 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         })),
         answers: cloneQuestionAnswers(part.answers),
         isHistory: part.isHistory,
+        ...(metadata ? { metadata } : {}),
       } satisfies TurnResponseQuestionPart;
-    case 'confirmation':
+    }
+    case 'confirmation': {
+      const metadata = withChatPartScopeMetadata(part.metadata, normalizeChatPartScope(part));
       return {
         type: 'confirmation',
         partId: part.partId,
@@ -141,8 +158,10 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         resolved: part.resolved,
         result: part.result,
         scope: part.scope,
+        ...(metadata ? { metadata } : {}),
         ...(part.description != null ? { description: part.description } : {}),
       } satisfies TurnResponseConfirmationPart;
+    }
     case 'terminal':
       return {
         type: 'terminal',
@@ -163,15 +182,26 @@ export function chatPartToTurnResponsePart(part: ChatPart): TurnResponsePart {
         bytesTotal: part.bytesTotal,
         lastOutputAt: part.lastOutputAt,
       } satisfies TurnResponseTerminalPart;
+    case 'plan':
+      return {
+        type: 'plan',
+        partId: part.partId,
+        status: part.status,
+        text: part.text,
+        steps: part.steps?.map(step => ({ ...step })),
+        assumptions: part.assumptions ? [...part.assumptions] : undefined,
+        verification: part.verification ? [...part.verification] : undefined,
+        source: part.source,
+      } satisfies TurnResponsePlanPart;
   }
 }
 
 export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: ChatPart): ChatPart {
   switch (part.type) {
     case 'markdown':
-      return mkMarkdown(part.content);
+      return mkMarkdown(part.content, normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata));
     case 'thinking':
-      return mkThinking(part.content, part.isComplete);
+      return mkThinking(part.content, part.isComplete, normalizeChatPartScope((part as ScopedTurnResponsePartMetadata).metadata));
     case 'tool_call':
       return {
         ...mkToolCall(part.toolCallId, part.toolName, part.text, part.state, part.args, part.metadata),
@@ -191,7 +221,7 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
         options: item.options?.map(option => ({ ...option })),
         allow_freeform: item.allowFreeform,
         multi_select: item.multiSelect,
-      })), part.isHistory, part.partId?.replace(/^question:/, ''));
+      })), part.isHistory, part.partId?.replace(/^question:/, ''), normalizeChatPartScope(part.metadata), part.metadata);
       question.partId = part.partId ?? question.partId;
       const mergedAnswers = part.answers
         ? cloneQuestionAnswers(part.answers)
@@ -212,6 +242,8 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
         description: part.description ?? existingConfirmation?.description,
         actions: part.actions ?? existingConfirmation?.actions,
         primaryScope: part.primaryScope ?? existingConfirmation?.primaryScope,
+        metadata: part.metadata ?? existingConfirmation?.metadata,
+        ...(normalizeChatPartScope(part.metadata) ?? {}),
       });
       confirmation.partId = part.partId ?? confirmation.partId;
       confirmation.resolved = part.resolved || existingConfirmation?.resolved || false;
@@ -237,6 +269,13 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       terminal.isRunning = part.isRunning;
       return terminal;
     }
+    case 'plan':
+      return mkPlan(part.text, part.status, part.partId, {
+        steps: part.steps?.map(step => ({ ...step })),
+        assumptions: part.assumptions ? [...part.assumptions] : undefined,
+        verification: part.verification ? [...part.verification] : undefined,
+        source: part.source,
+      });
     case 'subagent': {
       const subAgentInvocationId = (part as { readonly subAgentInvocationId?: string }).subAgentInvocationId || part.toolCallId;
       const toolCall = mkSubagentToolCall(part.toolCallId, part.agentName, part.description, {
@@ -257,6 +296,90 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       toolCall.partId = part.partId ?? toolCall.partId;
       toolCall.state = part.state === 'error' ? 'error' : part.state === 'done' ? 'done' : 'doing';
       return toolCall;
+    }
+  }
+}
+
+export function turnResponsePartToChatParts(part: TurnResponsePart, existing?: ChatPart): ChatPart[] {
+  const primary = turnResponsePartToChatPart(part, existing);
+  if (part.type !== 'subagent' || !Array.isArray(part.childItems) || part.childItems.length === 0) {
+    return [primary];
+  }
+
+  const subAgentInvocationId = part.subAgentInvocationId || part.toolCallId;
+  return [
+    stripLegacySubagentChildItems(primary),
+    ...part.childItems.map((child, index) => legacySubagentChildItemToChatPart(
+      child,
+      {
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId,
+        parentToolCallId: part.toolCallId,
+        sequence: index,
+      },
+      part.toolCallId,
+      index,
+    )),
+  ];
+}
+
+function stripLegacySubagentChildItems(part: ChatPart): ChatPart {
+  if (part.type !== 'tool_call' || !part.metadata || typeof part.metadata !== 'object') {
+    return part;
+  }
+
+  const metadata = { ...part.metadata };
+  const toolSpecificData = metadata['toolSpecificData'];
+  if (!toolSpecificData || typeof toolSpecificData !== 'object' || Array.isArray(toolSpecificData)) {
+    return part;
+  }
+
+  const nextToolSpecificData = { ...(toolSpecificData as Record<string, unknown>) };
+  delete nextToolSpecificData['childItems'];
+  return {
+    ...part,
+    metadata: {
+      ...metadata,
+      toolSpecificData: nextToolSpecificData,
+    },
+  };
+}
+
+function legacySubagentChildItemToChatPart(
+  child: Extract<TurnResponsePart, { type: 'subagent' }>['childItems'][number],
+  scope: NonNullable<ReturnType<typeof normalizeChatPartScope>>,
+  parentToolCallId: string,
+  index: number,
+): ChatPart {
+  switch (child.kind) {
+    case 'thinking':
+      return mkThinking(child.content || '', true, scope);
+    case 'text':
+      return mkMarkdown(child.content || '', scope);
+    case 'tool': {
+      const toolCallId = typeof child.toolCallId === 'string' && child.toolCallId.trim().length > 0
+        ? child.toolCallId
+        : `${parentToolCallId}:legacy-child:${index}`;
+      const toolName = typeof child.toolName === 'string' && child.toolName.trim().length > 0
+        ? child.toolName
+        : 'tool';
+      const state = child.state === 'error'
+        ? 'error'
+        : child.state === 'doing'
+          ? 'doing'
+          : 'done';
+      return mkToolCall(
+        toolCallId,
+        toolName,
+        child.content || child.argsSummary || toolName,
+        state,
+        child.argsSummary ? { summary: child.argsSummary } : undefined,
+        withChatPartScopeMetadata({
+          legacySubagentChild: true,
+          ...(typeof child.duration === 'number' ? { duration: child.duration } : {}),
+        }, scope),
+        scope,
+      );
     }
   }
 }

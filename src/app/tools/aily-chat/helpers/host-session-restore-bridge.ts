@@ -36,7 +36,10 @@ import { type ChatSessionTitleSource } from '../core/chat-session-title';
 import { resolveHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import { normalizeHostSessionRequestRoutingSummary } from './host-session-request-routing';
 import type { LexSessionStoredSnapshotState, ResolvedLexSessionRestorePlan } from './host-session-restore-resolver';
-import { restoreSessionBoundaryTransaction } from './session-model-boundary-transaction';
+import {
+  restoreSessionBoundaryTransaction,
+  type SessionModelBoundaryTurnOwnerPolicyOptions,
+} from './session-model-boundary-transaction';
 
 import type { HostSessionRecord } from '../services/chat-history.service';
 import type { ChatSessionRuntimeState } from '../services/chat-session-runtime-store.service';
@@ -228,6 +231,7 @@ type HostSessionRestoreContext = ChatViewWriteBridgeContext
     replaceSessionModelTurnResponses?(
       sessionId: string,
       turnResponses: readonly TurnResponseTurn[],
+      ownerPolicy?: SessionModelBoundaryTurnOwnerPolicyOptions,
     ): readonly TurnResponseTurn[] | null | undefined;
     resumeRestoredInteraction?(
       content: string,
@@ -849,7 +853,16 @@ export class HostSessionRestoreBridge {
       : typeof sessionMetadata?.inputState?.mode?.id === 'string'
         ? sessionMetadata.inputState.mode.id.trim()
       : '';
-    if (storedModeId && typeof this.ctx.chatService.setChatMode === 'function') {
+    if (mergedSelectedMode.modeId === 'plan') {
+      if (typeof this.ctx.chatService.setSelectedMode === 'function') {
+        this.ctx.chatService.setSelectedMode({ modeId: 'plan' }, { persist: false });
+      } else if (typeof this.ctx.chatService.setChatMode === 'function') {
+        this.ctx.chatService.setChatMode('plan', false);
+      } else {
+        this.ctx.chatService.currentMode = 'plan';
+        this.ctx.chatService.currentCustomAgentTarget = undefined;
+      }
+    } else if (storedModeId && typeof this.ctx.chatService.setChatMode === 'function') {
       this.ctx.chatService.setChatMode(storedModeId, false);
       if (mergedSelectedMode.modeId === 'agent'
         && mergedSelectedMode.customAgentTarget
@@ -1098,7 +1111,8 @@ function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessio
 
   const hasTransientRestoreState = hostRecord.turnResponses.some(turn =>
     isTransientTurnResponseStatus(turn.response.status)
-    || turn.response.parts.some(part => isTransientRuntimeStatePart(part)),
+    || turn.response.parts.some(part => isTransientRuntimeStatePart(part))
+    || hasTerminalPlanReviewContinuation(turn),
   );
   if (!hasTransientRestoreState) {
     return hostRecord;
@@ -1108,7 +1122,9 @@ function sanitizeHostRecordForRestore(hostRecord: HostSessionRecord): HostSessio
     ...hostRecord,
     turnResponses: hostRecord.turnResponses.map(turn => {
       const hasTransientRuntimeState = turn.response.parts.some(part => isTransientRuntimeStatePart(part));
-      if (!isTransientTurnResponseStatus(turn.response.status) && !hasTransientRuntimeState) {
+      if (!isTransientTurnResponseStatus(turn.response.status)
+        && !hasTransientRuntimeState
+        && !hasTerminalPlanReviewContinuation(turn)) {
         return turn;
       }
 
@@ -1134,15 +1150,77 @@ function sanitizeTurnResponseForRestore(turn: TurnResponseTurn): TurnResponseTur
   const responseStatus = isTransientTurnResponseStatus(clonedTurn.response.status)
     ? 'cancelled'
     : clonedTurn.response.status;
+  const continuation = sanitizeTerminalPlanReviewContinuation(
+    responseStatus,
+    clonedTurn.response.parts,
+    clonedTurn.response.continuation,
+  );
 
   return {
     ...clonedTurn,
     response: {
       ...clonedTurn.response,
       status: responseStatus,
+      ...(continuation ? { continuation } : { continuation: undefined }),
       parts: clonedTurn.response.parts.filter(part => !isTransientRuntimeStatePart(part)),
     },
   };
+}
+
+function hasTerminalPlanReviewContinuation(turn: TurnResponseTurn): boolean {
+  return isTerminalTurnResponseStatus(turn.response.status)
+    && turn.response.parts.some(part => part.type === 'plan')
+    && isPlanReviewContinuation(turn.response.continuation);
+}
+
+function sanitizeTerminalPlanReviewContinuation(
+  responseStatus: unknown,
+  parts: readonly TurnResponseTurn['response']['parts'][number][],
+  continuation: TurnResponseTurn['response']['continuation'] | undefined,
+): TurnResponseTurn['response']['continuation'] | undefined {
+  if (!isTerminalTurnResponseStatus(responseStatus)
+    || !parts.some(part => part.type === 'plan')
+    || !isPlanReviewContinuation(continuation)) {
+    return continuation;
+  }
+
+  const sanitized = cloneJsonLikeValue(continuation) as unknown as Record<string, unknown>;
+  delete sanitized['status'];
+  delete sanitized['pendingState'];
+  return Object.keys(sanitized).length > 0
+    ? sanitized as unknown as TurnResponseTurn['response']['continuation']
+    : undefined;
+}
+
+function isTerminalTurnResponseStatus(status: unknown): boolean {
+  switch (typeof status === 'string' ? status.trim().toLowerCase() : '') {
+    case 'completed':
+    case 'cancelled':
+    case 'canceled':
+    case 'failed':
+    case 'error':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isPlanReviewContinuation(continuation: unknown): boolean {
+  if (!continuation || typeof continuation !== 'object') {
+    return false;
+  }
+
+  const record = continuation as Record<string, unknown>;
+  const status = typeof record['status'] === 'string' ? record['status'].trim().toLowerCase() : '';
+  if (status === 'waiting_plan_review' || status === 'plan_review') {
+    return true;
+  }
+
+  const pendingState = record['pendingState'];
+  return !!pendingState
+    && typeof pendingState === 'object'
+    && typeof (pendingState as Record<string, unknown>)['kind'] === 'string'
+    && ((pendingState as Record<string, unknown>)['kind'] as string).trim().toLowerCase() === 'plan_review';
 }
 
 function cloneJsonLikeValue<T>(value: T): T {

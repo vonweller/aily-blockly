@@ -4,10 +4,17 @@ import type { IExternalHostAPI } from 'aily-lex/host/blockly';
 import { AilyHost } from './host';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
+import {
+  createToolCallProgressEditorOperationSink,
+  type EditorOperationEventSink,
+} from '../tools/editorOperationEvents';
 import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { error, fromToolResult, text, type InvokeHandler } from './blockly-contributed-tool-runtime';
 
 type DeferredFactory = (group: string, reason: string) => { group: string; reason: string };
+type HostExecutionBoundary = {
+  runOutsideAngular?<T>(operation: () => Promise<T> | T): Promise<T> | T;
+};
 type RuntimeScopedToolContribution = IToolContribution & {
   readonly toolSet?: string;
   readonly runtimeModes?: readonly string[];
@@ -179,15 +186,26 @@ export function createBlocklyWorkspaceHandlers(
       const host = AilyHost.get();
       if (!host.absSync && !host.editor) return error('ABS editor is not available in this environment.');
       const editingTimeline = invocationContext?.host?.getExtension<EditingTimelineWriter>('editingTimeline');
+      const forwardedEditorOperationEvents = invocationContext?.host?.getExtension<EditorOperationEventSink>('editorOperationEvents');
+      const hostExecutionBoundary = invocationContext?.host?.getExtension<HostExecutionBoundary>('hostExecutionBoundary');
+      const editorOperationProgress = createToolCallProgressEditorOperationSink({
+        emitEvent: invocationContext?.emitEvent,
+        trace: invocationContext?.trace,
+        forwardTo: forwardedEditorOperationEvents,
+      });
       const result = await syncAbsHandler(
         { operation: input['action'] as 'export' | 'import' | 'status' },
         host.project as any,
         host.electron as any,
         host.absSync as any,
         {
+          sessionId: invocationContext?.sessionId,
           turnId: invocationContext?.trace?.turnId,
           toolCallId: invocationContext?.toolCallId,
+          signal: invocationContext?.signal,
           timelineWriter: editingTimeline,
+          progressSink: editorOperationProgress,
+          runOutsideAngular: hostExecutionBoundary?.runOutsideAngular,
         },
       );
       return fromToolResult(result);

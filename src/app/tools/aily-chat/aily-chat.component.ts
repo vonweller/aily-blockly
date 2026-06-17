@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, NgZone } from '@angular/core';
+import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, AfterViewChecked, NgZone } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -22,13 +22,6 @@ import { PlatformService } from '../../services/platform.service';
 import { ElectronService } from '../../services/electron.service';
 import { BuilderService } from '../../services/builder.service';
 
-import {
-  getActiveWorkspace,
-  configureBlockTool,
-  deleteBlockTool,
-  getWorkspaceOverviewTool,
-  queryBlockDefinitionTool,
-} from './tools/editBlockTool';
 import { ConnectionGraphService } from '../../services/connection-graph.service';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { ConfigService } from '../../services/config.service';
@@ -36,7 +29,7 @@ import { AilyChatConfigService } from './services/aily-chat-config.service';
 import { MERMAID_DARK_THEME, MermaidCodeComponent } from 'ngx-x-markdown';
 import { AilyHost } from './core/host';
 import { createElectronHostAdapter } from './adapters/electron-host-adapter';
-import { ScrollManagerService } from './services/scroll-manager.service';
+import { ScrollManagerService, type ChatRevealOptions, type ChatRevealTarget } from './services/scroll-manager.service';
 import { ResourceManagerService } from './services/resource-manager.service';
 import { MenuManagerService, type ChatSessionListItem } from './services/menu-manager.service';
 import { ChatSessionActionsService } from './services/chat-session-actions.service';
@@ -62,6 +55,10 @@ import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coor
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
 import { ChatActionRegistry } from './helpers/chat-action-registry';
 import { ChatComponentViewModel } from './helpers/chat-component-view-model';
+import type { ChatDialogViewItem } from './helpers/chat-dialog-view-items';
+import type { ChatPart } from './core/chat-parts';
+import { findChatMessageHandleByTurnId } from './helpers/chat-message-handle';
+import { exposeAilyChatE2eHarness, type AilyChatE2eRenderingDiagnostics } from './helpers/aily-chat-e2e-harness';
 import { importDebugSnapshotFromDialog } from './helpers/chat-debug-import.helper';
 import { ChatMemoryShellCoordinator } from './helpers/chat-memory-shell-coordinator';
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
@@ -168,7 +165,7 @@ interface PendingFollowupSection {
   styleUrl: './aily-chat.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AilyChatComponent implements OnDestroy {
+export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   readonly debugBrowserViewState = {
     Home: ChatDebugBrowserViewState.Home,
     Overview: ChatDebugBrowserViewState.Overview,
@@ -197,6 +194,7 @@ export class AilyChatComponent implements OnDestroy {
     this.observeDialogContent(ref?.nativeElement ?? null);
   }
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
+  @ViewChildren('dialogVirtualRow', { read: ElementRef }) dialogVirtualRows: QueryList<ElementRef<HTMLElement>>;
 
   public readonly vm: ChatComponentViewModel;
   reasoningMenuItems: IMenuItem[] = [];
@@ -220,6 +218,23 @@ export class AilyChatComponent implements OnDestroy {
   private readonly rememberedFullAccessSessions = new Set<string>();
   private readonly inputHistoryNavigator = new ChatInputHistoryNavigator([], entries => this.persistInputHistoryEntries(entries));
   private inputHistoryStorageKey: string | null = null;
+  private readonly dialogVirtualizationMinItems = 80;
+  private readonly dialogVirtualOverscanPx = 1200;
+  private readonly dialogVirtualEstimatedHeight = 160;
+  private readonly dialogVirtualHeightByTrackId = new Map<string, number>();
+  private dialogVirtualSourceItems: readonly ChatDialogViewItem[] | null = null;
+  private dialogVirtualVisibleItems: readonly ChatDialogViewItem[] = [];
+  private dialogVirtualStartIndex = 0;
+  private dialogVirtualEndIndex = Number.POSITIVE_INFINITY;
+  private dialogVirtualRefreshRaf: number | null = null;
+  private dialogVirtualMeasureRaf: number | null = null;
+  private syncViewRefreshRaf: number | null = null;
+  private readonly liveDialogPartsCache = new Map<string, {
+    readonly revision: number;
+    readonly parts: readonly ChatPart[] | null;
+  }>();
+  public dialogVirtualTopSpacerHeight = 0;
+  public dialogVirtualBottomSpacerHeight = 0;
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
   private pendingFollowupEditState: {
@@ -272,6 +287,14 @@ export class AilyChatComponent implements OnDestroy {
       engine: this.engine,
       viewState: this.viewState,
     });
+    this.scrollManager.setRevealHostDelegate?.({
+      prepareRevealTarget: (target, options) => this.prepareDialogRevealTarget(target, options),
+    });
+    exposeAilyChatE2eHarness({
+      engine: this.engine,
+      viewState: this.viewState,
+      readRenderingDiagnostics: () => this.readRenderingDiagnostics(),
+    });
     this.engine.setPaneSessionCommandHandlers({
       requestNewChat: () => this.requestNewChat(),
     });
@@ -285,10 +308,10 @@ export class AilyChatComponent implements OnDestroy {
     this.engine.setCdCallback(() => {
       this.syncSessionListDisplayState();
     });
-    // 注册同步 detectChanges 回调 — 供 zone 外场景直接触发 CD（如 _ensureAilyMessage）
+    // Stream/update paths can be very chatty; coalesce them to the browser frame
+    // instead of forcing a synchronous component tree check for every event.
     this.engine.setSyncDetectChanges(() => {
-      this.syncSessionListDisplayState();
-      this.cdr.detectChanges();
+      this.scheduleSyncViewRefresh();
     });
     this.switchShellCoordinator = new ChatSwitchShellCoordinator({
       menuManager: this.menuManager,
@@ -440,15 +463,6 @@ export class AilyChatComponent implements OnDestroy {
             ? { startOnLoad: false, ...MERMAID_DARK_THEME }
             : { startOnLoad: false, theme: 'default' as const };
         MermaidCodeComponent.setMermaidInstance(instance, config);
-      },
-      exposeEditBlockTools: () => {
-        (window as any).editBlockTool = {
-          getActiveWorkspace,
-          configureBlockTool,
-          deleteBlockTool,
-          getWorkspaceOverviewTool,
-          queryBlockDefinitionTool,
-        };
       },
       initializeEngine: () => this.engine.init(this.chatTextarea ?? null),
       detachEngineView: () => this.engine.detachView(),
@@ -877,6 +891,9 @@ export class AilyChatComponent implements OnDestroy {
     this.sessionViewModelChangeSubscription.unsubscribe();
     this.disconnectDialogContentObserver();
     this.disconnectSessionViewportObserver();
+    this.cancelDialogVirtualRafs();
+    this.cancelSyncViewRefreshRaf();
+    this.scrollManager.setRevealHostDelegate?.(null);
     this.lifecycleCoordinator.detachView();
   }
 
@@ -1305,6 +1322,420 @@ export class AilyChatComponent implements OnDestroy {
     this.actionRegistry.runMenuAction(item);
   }
 
+  ngAfterViewChecked(): void {
+    if (this.shouldUseDialogVirtualization(this.vm.dialogItems)) {
+      this.scheduleDialogWindowMeasurement();
+    }
+  }
+
+  get renderedDialogItems(): readonly ChatDialogViewItem[] {
+    const items = this.vm.dialogItems;
+    if (!this.shouldUseDialogVirtualization(items)) {
+      this.resetDialogVirtualWindow(items);
+      return items;
+    }
+
+    if (this.dialogVirtualSourceItems !== items) {
+      this.dialogVirtualSourceItems = items;
+      this.reconcileDialogVirtualHeightCache(items);
+      this.computeDialogVirtualWindow(items);
+      this.scheduleDialogWindowMeasurement();
+    }
+
+    return this.dialogVirtualVisibleItems;
+  }
+
+  getLivePartsForDialogItem(item: ChatDialogViewItem): readonly ChatPart[] | null {
+    if (item.role !== 'aily') {
+      return null;
+    }
+
+    const turnId = item.turnContext?.turnId ?? item.turnContext?.turnResponse?.turnId;
+    if (!turnId) {
+      return null;
+    }
+
+    const revision = this.vm.partStore.revision;
+    const cacheKey = `${this.vm.sessionId}:${item.trackId}:${turnId}`;
+    const cached = this.liveDialogPartsCache.get(cacheKey);
+    if (cached?.revision === revision) {
+      return cached.parts;
+    }
+
+    const handle = findChatMessageHandleByTurnId(this.engine.list, turnId, { role: 'aily' });
+    const parts = handle ? this.vm.partStore.getPartsForHandle(handle) : [];
+    const snapshot = parts.length > 0 ? [...parts] : null;
+    this.liveDialogPartsCache.set(cacheKey, { revision, parts: snapshot });
+    this.pruneLiveDialogPartsCache();
+    return snapshot;
+  }
+
+  private pruneLiveDialogPartsCache(): void {
+    if (this.liveDialogPartsCache.size <= 160) {
+      return;
+    }
+
+    const renderedItems = this.dialogVirtualVisibleItems.length > 0
+      ? this.dialogVirtualVisibleItems
+      : this.vm.dialogItems;
+    const visibleKeys = new Set(
+      renderedItems
+        .map(item => {
+          const turnId = item.turnContext?.turnId ?? item.turnContext?.turnResponse?.turnId;
+          return turnId ? `${this.vm.sessionId}:${item.trackId}:${turnId}` : '';
+        })
+        .filter(key => key.length > 0),
+    );
+    for (const key of [...this.liveDialogPartsCache.keys()]) {
+      if (!visibleKeys.has(key)) {
+        this.liveDialogPartsCache.delete(key);
+      }
+      if (this.liveDialogPartsCache.size <= 160) {
+        break;
+      }
+    }
+  }
+
+  private readRenderingDiagnostics(): AilyChatE2eRenderingDiagnostics {
+    const items = this.vm.dialogItems;
+    const usesVirtualization = this.shouldUseDialogVirtualization(items);
+    const container = this.chatContainer?.nativeElement as HTMLElement | undefined;
+    const queryRoot = (this.observedDialogsElement
+      ?? container
+      ?? document.querySelector('app-aily-chat')) as HTMLElement | null;
+    return {
+      totalDialogItems: items.length,
+      renderedDialogItems: usesVirtualization ? this.dialogVirtualVisibleItems.length : items.length,
+      mountedDialogElements: queryRoot?.querySelectorAll('aily-x-dialog').length ?? 0,
+      virtualRows: queryRoot?.querySelectorAll('.dialog-virtual-row').length ?? 0,
+      topSpacerHeight: this.dialogVirtualTopSpacerHeight,
+      bottomSpacerHeight: this.dialogVirtualBottomSpacerHeight,
+      scrollTop: Math.round(container?.scrollTop ?? 0),
+      scrollHeight: Math.round(container?.scrollHeight ?? 0),
+      clientHeight: Math.round(container?.clientHeight ?? 0),
+      scrollLock: this.scrollManager.scrollLock,
+      virtualWindowStartIndex: this.dialogVirtualStartIndex,
+      virtualWindowEndIndex: this.dialogVirtualEndIndex,
+      measuredRowCount: this.dialogVirtualHeightByTrackId.size,
+    };
+  }
+
+  handleConversationScroll(): void {
+    this.scrollManager.checkUserScroll();
+    this.scheduleDialogWindowRefresh();
+  }
+
+  private scheduleSyncViewRefresh(): void {
+    if (this.syncViewRefreshRaf !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 16) as unknown as number;
+
+    this.syncViewRefreshRaf = schedule(() => {
+      this.syncViewRefreshRaf = null;
+      this.syncSessionListDisplayState();
+      this.cdr.markForCheck();
+    });
+  }
+
+  private cancelSyncViewRefreshRaf(): void {
+    if (this.syncViewRefreshRaf === null) {
+      return;
+    }
+
+    if (typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this.syncViewRefreshRaf);
+    } else {
+      clearTimeout(this.syncViewRefreshRaf as unknown as ReturnType<typeof setTimeout>);
+    }
+    this.syncViewRefreshRaf = null;
+  }
+
+  private shouldUseDialogVirtualization(items: readonly ChatDialogViewItem[]): boolean {
+    return items.length > this.dialogVirtualizationMinItems;
+  }
+
+  private resetDialogVirtualWindow(items: readonly ChatDialogViewItem[]): void {
+    if (this.dialogVirtualSourceItems === items
+      && this.dialogVirtualVisibleItems === items
+      && this.dialogVirtualTopSpacerHeight === 0
+      && this.dialogVirtualBottomSpacerHeight === 0) {
+      return;
+    }
+
+    this.dialogVirtualSourceItems = items;
+    this.dialogVirtualVisibleItems = items;
+    this.dialogVirtualStartIndex = 0;
+    this.dialogVirtualEndIndex = items.length;
+    this.dialogVirtualTopSpacerHeight = 0;
+    this.dialogVirtualBottomSpacerHeight = 0;
+    this.reconcileDialogVirtualHeightCache(items);
+  }
+
+  private scheduleDialogWindowRefresh(): void {
+    if (this.dialogVirtualRefreshRaf !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 16) as unknown as number;
+
+    this.dialogVirtualRefreshRaf = schedule(() => {
+      this.dialogVirtualRefreshRaf = null;
+      const items = this.vm.dialogItems;
+      if (!this.shouldUseDialogVirtualization(items)) {
+        this.resetDialogVirtualWindow(items);
+        return;
+      }
+
+      const changed = this.computeDialogVirtualWindow(items);
+      if (changed) {
+        this.cdr.markForCheck();
+      }
+    });
+  }
+
+  private scheduleDialogWindowMeasurement(): void {
+    if (this.dialogVirtualMeasureRaf !== null) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 16) as unknown as number;
+
+    this.dialogVirtualMeasureRaf = schedule(() => {
+      this.dialogVirtualMeasureRaf = null;
+      if (!this.shouldUseDialogVirtualization(this.vm.dialogItems)) {
+        return;
+      }
+
+      const measured = this.measureRenderedDialogRows();
+      if (measured && this.computeDialogVirtualWindow(this.vm.dialogItems)) {
+        this.cdr.markForCheck();
+      }
+    });
+  }
+
+  private computeDialogVirtualWindow(items: readonly ChatDialogViewItem[]): boolean {
+    this.dialogVirtualSourceItems = items;
+    this.reconcileDialogVirtualHeightCache(items);
+
+    if (items.length === 0) {
+      return this.applyDialogVirtualWindow(items, 0, 0, 0, 0);
+    }
+
+    const viewport = this.chatContainer?.nativeElement as HTMLElement | undefined;
+    const viewportHeight = Math.max(1, viewport?.clientHeight || 640);
+    const totalHeight = this.computeDialogVirtualTotalHeight(items);
+    const fallbackBottomTop = Math.max(0, totalHeight - viewportHeight);
+    const viewportTop = Math.max(0, viewport?.scrollTop ?? fallbackBottomTop);
+    const windowTop = Math.max(0, viewportTop - this.dialogVirtualOverscanPx);
+    const windowBottom = viewportTop + viewportHeight + this.dialogVirtualOverscanPx;
+
+    return this.computeDialogVirtualWindowForRange(items, windowTop, windowBottom, totalHeight);
+  }
+
+  private computeDialogVirtualWindowForRange(
+    items: readonly ChatDialogViewItem[],
+    windowTop: number,
+    windowBottom: number,
+    totalHeight = this.computeDialogVirtualTotalHeight(items),
+  ): boolean {
+    if (items.length === 0) {
+      return this.applyDialogVirtualWindow(items, 0, 0, 0, 0);
+    }
+
+    let offset = 0;
+    let start = 0;
+    let end = items.length;
+    let topSpacer = 0;
+    let bottomSpacer = 0;
+    let foundStart = false;
+
+    for (let index = 0; index < items.length; index++) {
+      const height = this.getDialogVirtualItemHeight(items[index]);
+      const itemTop = offset;
+      const itemBottom = itemTop + height;
+
+      if (!foundStart && itemBottom >= windowTop) {
+        start = index;
+        topSpacer = itemTop;
+        foundStart = true;
+      }
+
+      if (foundStart && itemTop > windowBottom) {
+        end = index;
+        bottomSpacer = Math.max(0, totalHeight - itemTop);
+        break;
+      }
+
+      offset = itemBottom;
+    }
+
+    if (!foundStart) {
+      start = Math.max(0, items.length - 1);
+      topSpacer = Math.max(0, totalHeight - this.getDialogVirtualItemHeight(items[start]));
+      end = items.length;
+      bottomSpacer = 0;
+    } else if (end === items.length) {
+      bottomSpacer = 0;
+    }
+
+    start = Math.max(0, Math.min(start, items.length));
+    end = Math.max(start, Math.min(end, items.length));
+
+    return this.applyDialogVirtualWindow(items, start, end, topSpacer, bottomSpacer);
+  }
+
+  private prepareDialogRevealTarget(target: ChatRevealTarget, options: ChatRevealOptions): boolean {
+    const items = this.vm.dialogItems;
+    if (!this.shouldUseDialogVirtualization(items)) {
+      return false;
+    }
+
+    const targetIndex = this.resolveDialogRevealTargetIndex(items, target);
+    if (targetIndex < 0) {
+      return false;
+    }
+
+    const targetTop = this.computeDialogVirtualOffsetBefore(items, targetIndex);
+    const targetHeight = this.getDialogVirtualItemHeight(items[targetIndex]);
+    const windowTop = Math.max(0, targetTop - this.dialogVirtualOverscanPx);
+    const windowBottom = targetTop + targetHeight + this.dialogVirtualOverscanPx;
+    const changed = this.computeDialogVirtualWindowForRange(items, windowTop, windowBottom);
+
+    const container = this.chatContainer?.nativeElement as HTMLElement | undefined;
+    if (container) {
+      const relativeTop = options.relativeTop ?? 0;
+      container.scrollTo({
+        top: Math.max(0, Math.round(targetTop + relativeTop)),
+        behavior: options.behavior ?? 'auto',
+      });
+    }
+
+    if (changed) {
+      this.cdr.markForCheck();
+    }
+    return true;
+  }
+
+  private resolveDialogRevealTargetIndex(items: readonly ChatDialogViewItem[], target: ChatRevealTarget): number {
+    switch (target) {
+      case 'current-response':
+        return this.findLastDialogIndex(items, item => item.role === 'aily' && (item.isLastAily || item.doing));
+      case 'pending-confirmation':
+      case 'pending-question':
+      case 'pending-plan-review':
+        return this.findLastDialogIndex(items, item => item.role === 'aily' && (item.isLastAily || item.doing));
+      case 'checkpoint-anchor': {
+        const checkpointIndex = this.findLastDialogIndex(items, item => item.role === 'user' && item.showCheckpointRestore);
+        return checkpointIndex >= 0
+          ? checkpointIndex
+          : this.findLastDialogIndex(items, item => item.role === 'user' && !!item.turnContext?.turnId);
+      }
+      default:
+        return -1;
+    }
+  }
+
+  private findLastDialogIndex(
+    items: readonly ChatDialogViewItem[],
+    predicate: (item: ChatDialogViewItem) => boolean,
+  ): number {
+    for (let index = items.length - 1; index >= 0; index--) {
+      if (predicate(items[index])) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private applyDialogVirtualWindow(
+    items: readonly ChatDialogViewItem[],
+    start: number,
+    end: number,
+    topSpacer: number,
+    bottomSpacer: number,
+  ): boolean {
+    const visibleItems = items.slice(start, end);
+    const changed = this.dialogVirtualStartIndex !== start
+      || this.dialogVirtualEndIndex !== end
+      || Math.abs(this.dialogVirtualTopSpacerHeight - topSpacer) > 1
+      || Math.abs(this.dialogVirtualBottomSpacerHeight - bottomSpacer) > 1
+      || this.dialogVirtualVisibleItems.length !== visibleItems.length
+      || this.dialogVirtualVisibleItems[0]?.trackId !== visibleItems[0]?.trackId
+      || this.dialogVirtualVisibleItems[this.dialogVirtualVisibleItems.length - 1]?.trackId !== visibleItems[visibleItems.length - 1]?.trackId;
+
+    this.dialogVirtualStartIndex = start;
+    this.dialogVirtualEndIndex = end;
+    this.dialogVirtualTopSpacerHeight = Math.max(0, Math.round(topSpacer));
+    this.dialogVirtualBottomSpacerHeight = Math.max(0, Math.round(bottomSpacer));
+    this.dialogVirtualVisibleItems = visibleItems;
+    return changed;
+  }
+
+  private measureRenderedDialogRows(): boolean {
+    const rows = this.dialogVirtualRows?.toArray() ?? [];
+    let changed = false;
+
+    for (const rowRef of rows) {
+      const element = rowRef.nativeElement;
+      const trackId = element.dataset['trackId'];
+      if (!trackId) {
+        continue;
+      }
+
+      const measuredHeight = element.getBoundingClientRect().height || element.offsetHeight || 0;
+      if (measuredHeight <= 0) {
+        continue;
+      }
+
+      const previousHeight = this.dialogVirtualHeightByTrackId.get(trackId);
+      if (previousHeight == null || Math.abs(previousHeight - measuredHeight) > 1) {
+        this.dialogVirtualHeightByTrackId.set(trackId, measuredHeight);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  private reconcileDialogVirtualHeightCache(items: readonly ChatDialogViewItem[]): void {
+    if (this.dialogVirtualHeightByTrackId.size === 0) {
+      return;
+    }
+
+    const liveTrackIds = new Set(items.map(item => item.trackId));
+    for (const trackId of Array.from(this.dialogVirtualHeightByTrackId.keys())) {
+      if (!liveTrackIds.has(trackId)) {
+        this.dialogVirtualHeightByTrackId.delete(trackId);
+      }
+    }
+  }
+
+  private computeDialogVirtualTotalHeight(items: readonly ChatDialogViewItem[]): number {
+    return items.reduce((total, item) => total + this.getDialogVirtualItemHeight(item), 0);
+  }
+
+  private computeDialogVirtualOffsetBefore(items: readonly ChatDialogViewItem[], targetIndex: number): number {
+    let offset = 0;
+    const boundedTargetIndex = Math.max(0, Math.min(targetIndex, items.length));
+    for (let index = 0; index < boundedTargetIndex; index++) {
+      offset += this.getDialogVirtualItemHeight(items[index]);
+    }
+    return offset;
+  }
+
+  private getDialogVirtualItemHeight(item: ChatDialogViewItem): number {
+    return this.dialogVirtualHeightByTrackId.get(item.trackId)
+      ?? (item.role === 'user' ? 92 : this.dialogVirtualEstimatedHeight);
+  }
+
   handleCheckpointRestoreSurfaceAction(event?: Event): void {
     event?.preventDefault();
     event?.stopPropagation();
@@ -1606,6 +2037,8 @@ export class AilyChatComponent implements OnDestroy {
     }
 
     this.dialogsResizeObserver = new ResizeObserver(() => {
+      this.scheduleDialogWindowMeasurement();
+      this.scheduleDialogWindowRefresh();
       this.scrollManager.handleContentHeightChange();
     });
     this.dialogsResizeObserver.observe(element);
@@ -1658,5 +2091,25 @@ export class AilyChatComponent implements OnDestroy {
     this.dialogsResizeObserver?.disconnect();
     this.dialogsResizeObserver = null;
     this.observedDialogsElement = null;
+  }
+
+  private cancelDialogVirtualRafs(): void {
+    if (this.dialogVirtualRefreshRaf !== null) {
+      if (typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(this.dialogVirtualRefreshRaf);
+      } else {
+        clearTimeout(this.dialogVirtualRefreshRaf as unknown as ReturnType<typeof setTimeout>);
+      }
+      this.dialogVirtualRefreshRaf = null;
+    }
+
+    if (this.dialogVirtualMeasureRaf !== null) {
+      if (typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(this.dialogVirtualMeasureRaf);
+      } else {
+        clearTimeout(this.dialogVirtualMeasureRaf as unknown as ReturnType<typeof setTimeout>);
+      }
+      this.dialogVirtualMeasureRaf = null;
+    }
   }
 }

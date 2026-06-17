@@ -19,6 +19,7 @@ import {
   ElementRef,
   Input,
   OnChanges,
+  OnDestroy,
   SimpleChanges,
   ViewChild,
   inject,
@@ -26,7 +27,7 @@ import {
 import { CommonModule } from '@angular/common';
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
-import { ChatPart, ConfirmationPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart } from '../../core/chat-parts';
+import { ChatPart, ConfirmationPart, MarkdownPart, StatePart, TerminalPart, ThinkingPart, ToolCallPart, getSubAgentInvocationId, isSubagentChildPart } from '../../core/chat-parts';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import {
   buildConfirmationActivityDisplayItem,
@@ -37,6 +38,7 @@ import {
   buildTerminalActivityDisplayItem,
   buildToolActivityDisplayItem,
   buildResolvedApprovalSummary,
+  buildScopedMarkdownActivityDisplayItem,
   buildThinkingActivityPresentation,
   buildStateActivityShellPresentation,
   buildChatPartIdentity,
@@ -49,6 +51,7 @@ import {
   buildTurnResponseContinuationDetailSections,
   type DetailSectionDescriptor,
 } from './x-aily-state-viewer/activity-detail-items';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
 @Component({
   selector: 'aily-chat-activity-group',
@@ -130,7 +133,9 @@ import {
           class="cag-detail-viewport"
           [class.cag-detail-viewport-fixed]="useFixedViewport"
           (scroll)="onDetailViewportScroll()">
-          <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" />
+          @if (displayItems.length) {
+            <aily-chat-activity-list [items]="displayItems" [sessionId]="sessionId" />
+          }
         </div>
       }
     </div>
@@ -361,7 +366,7 @@ import {
     }
   `],
 })
-export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
+export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, OnDestroy {
   @Input() parts: readonly ChatPart[] = [];
   @Input() doing = false;
   @Input() sessionId = '';
@@ -378,6 +383,9 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   private lastViewportScrollHeight = 0;
   private ignoreNextViewportScroll = false;
   private readonly runtimeInteractionHost = inject(ChatRuntimeInteractionHostService, { optional: true });
+  private detailViewportSyncScheduled = false;
+  private detailViewportFrameId: number | null = null;
+  private detailViewportTimerId: ReturnType<typeof setTimeout> | null = null;
   showDetailViewportTopFade = false;
   showDetailViewportBottomFade = false;
 
@@ -388,7 +396,19 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   }
 
   ngAfterViewChecked(): void {
-    this._syncDetailViewportScroll();
+    this.scheduleDetailViewportSync();
+  }
+
+  ngOnDestroy(): void {
+    if (this.detailViewportFrameId !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this.detailViewportFrameId);
+    }
+    if (this.detailViewportTimerId !== null) {
+      clearTimeout(this.detailViewportTimerId);
+    }
+    this.detailViewportFrameId = null;
+    this.detailViewportTimerId = null;
+    this.detailViewportSyncScheduled = false;
   }
 
   toggle(): void {
@@ -434,14 +454,22 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
 
   private _refresh(): void {
     if (!this.parts.length) {
+      this.displayItems = [];
       return;
     }
+    const refreshStartedAt = performance.now();
     const pres = buildActivityGroupPresentation(this.parts);
     const settledState = pres.state === 'doing' ? 'done' : pres.state;
     this.groupState = this.doing ? 'doing' : settledState;
     this.groupHeader = pres.header;
-    this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i)));
+    this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i, this.parts)));
     this._syncExpandedState();
+    ChatPerformanceTracer.recordDuration(
+      'activity_group_refresh',
+      performance.now() - refreshStartedAt,
+      `parts=${this.parts.length},items=${this.displayItems.length},doing=${this.doing},state=${this.groupState}`,
+      { slowThresholdMs: 8 },
+    );
   }
 
   private _attachTurnResponseContinuation(items: ActivityGroupDisplayItem[]): ActivityGroupDisplayItem[] {
@@ -537,41 +565,79 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
   }
 
   private _syncDetailViewportScroll(): void {
+    const syncStartedAt = performance.now();
+    const recordSync = (detail: string): void => {
+      ChatPerformanceTracer.recordDuration(
+        'activity_group_scroll_sync',
+        performance.now() - syncStartedAt,
+        detail,
+        { slowThresholdMs: 8 },
+      );
+    };
+
     if (!this.expanded || !this.useFixedViewport) {
       this.showDetailViewportTopFade = false;
       this.showDetailViewportBottomFade = false;
+      recordSync('not-fixed');
       return;
     }
 
     const viewport = this.detailViewportRef?.nativeElement;
     if (!viewport) {
+      recordSync('missing-viewport');
       return;
     }
 
     const scrollHeight = viewport.scrollHeight;
     if (!scrollHeight) {
+      recordSync('empty-scroll-height');
       return;
     }
 
     if (scrollHeight === this.lastViewportScrollHeight && !this.detailViewportAutoScrollEnabled) {
+      recordSync('unchanged-disabled');
       return;
     }
 
     this.lastViewportScrollHeight = scrollHeight;
     if (!this.detailViewportAutoScrollEnabled) {
       this.updateDetailViewportFades(viewport);
+      recordSync('manual-scroll');
       return;
     }
 
     const maxScrollTop = Math.max(0, scrollHeight - viewport.clientHeight);
     if (maxScrollTop <= 0 || viewport.scrollTop >= maxScrollTop - 1) {
       this.updateDetailViewportFades(viewport);
+      recordSync('already-bottom');
       return;
     }
 
     this.ignoreNextViewportScroll = true;
     viewport.scrollTop = maxScrollTop;
     this.updateDetailViewportFades(viewport);
+    recordSync('auto-scroll');
+  }
+
+  private scheduleDetailViewportSync(): void {
+    if (this.detailViewportSyncScheduled) {
+      return;
+    }
+
+    this.detailViewportSyncScheduled = true;
+    const callback = (): void => {
+      this.detailViewportSyncScheduled = false;
+      this.detailViewportFrameId = null;
+      this.detailViewportTimerId = null;
+      this._syncDetailViewportScroll();
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      this.detailViewportFrameId = globalThis.requestAnimationFrame(callback);
+      return;
+    }
+
+    this.detailViewportTimerId = setTimeout(callback, 16);
   }
 
   private updateDetailViewportFades(viewport: HTMLElement): void {
@@ -586,8 +652,12 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
     this.showDetailViewportBottomFade = maxScrollTop > 0 && viewport.scrollTop < maxScrollTop - 5;
   }
 
-  private _buildItems(part: ChatPart, index: number): ActivityGroupDisplayItem[] {
+  private _buildItems(part: ChatPart, index: number, groupParts: readonly ChatPart[]): ActivityGroupDisplayItem[] {
     const id = buildChatPartIdentity(part, index);
+
+    if (part.type === 'markdown' && isSubagentChildPart(part)) {
+      return [buildScopedMarkdownActivityDisplayItem(part as MarkdownPart, { id })];
+    }
 
     if (part.type === 'thinking') {
       const tp = part as ThinkingPart;
@@ -602,6 +672,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
         kicker: thinking.kicker,
         label: thinking.label,
         note: thinking.note,
+        thinking: thinking.thinking,
         pill: '',
         pillTone: 'neutral',
       }];
@@ -609,6 +680,9 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
 
     if (part.type === 'tool_call') {
       if (isSubagentToolCall(part)) {
+        if (hasScopedSubagentChildren(groupParts, part)) {
+          return [];
+        }
         return [...buildSubagentActivityItems(part)];
       }
 
@@ -666,4 +740,11 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked {
       pillTone: 'neutral',
     }];
   }
+}
+
+function hasScopedSubagentChildren(parts: readonly ChatPart[], parent: ToolCallPart): boolean {
+  const subAgentInvocationId = getSubAgentInvocationId(parent) || parent.toolCallId;
+  return parts.some((part) => part !== parent
+    && isSubagentChildPart(part)
+    && getSubAgentInvocationId(part) === subAgentInvocationId);
 }

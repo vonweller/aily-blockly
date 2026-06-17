@@ -7,6 +7,7 @@ import {
 import {
   normalizeChatModeId,
   normalizeChatSelectedMode,
+  isPlanChatAgentTarget,
   resolveChatModeId,
   resolveChatSelectedCustomAgentTarget,
   type ChatModeId,
@@ -60,15 +61,23 @@ export function normalizeHostSessionRequestRoutingSummary(
   const customAgentTarget = normalizeCustomAgentTarget(value?.customAgentTarget)
     ?? resolveChatSelectedCustomAgentTarget(fallbackSelectedMode);
   const requestModeId = resolveRequestModeIdFromSummaryValue(value?.requestModeId, value?.selectedModeId);
-  const selectedModeId = requestModeId ?? fallbackModeId;
+  const selectedModeId = isPlanChatAgentTarget(customAgentTarget)
+    ? 'plan'
+    : requestModeId ?? fallbackModeId;
+  const effectiveRequestModeId = selectedModeId === 'plan'
+    ? 'plan'
+    : requestModeId;
+  const effectiveCustomAgentTarget = selectedModeId === 'plan' && isPlanChatAgentTarget(customAgentTarget)
+    ? undefined
+    : customAgentTarget;
   const permissionLevel = normalizePermissionLevel(value?.permissionLevel);
   const approvalsReviewer = normalizeApprovalsReviewer(value?.approvalsReviewer);
   const approvalPolicy = normalizeApprovalPolicy(value?.approvalPolicy);
 
   return {
     selectedModeId,
-    ...(requestModeId ? { requestModeId } : {}),
-    ...(customAgentTarget ? { customAgentTarget } : {}),
+    ...(effectiveRequestModeId ? { requestModeId: effectiveRequestModeId } : {}),
+    ...(effectiveCustomAgentTarget ? { customAgentTarget: effectiveCustomAgentTarget } : {}),
     ...(permissionLevel ? { permissionLevel } : {}),
     ...(approvalsReviewer ? { approvalsReviewer } : {}),
     ...(approvalPolicy ? { approvalPolicy } : {}),
@@ -125,7 +134,7 @@ export function resolveHostSessionRequestRoutingSummary(
     ? snapshot.modeId ?? metadataSnapshot?.modeId
     : metadataSnapshot?.modeId ?? snapshot?.modeId;
   const customAgentTarget = preferTurnSnapshot
-    ? snapshot.customAgentTarget ?? metadataSnapshot?.customAgentTarget
+    ? snapshot.customAgentTarget
     : metadataSnapshot?.customAgentTarget ?? snapshot?.customAgentTarget;
   const requestModeExplicit = preferTurnSnapshot
     ? snapshot?.requestModeExplicit ?? false
@@ -154,6 +163,29 @@ export function resolveHostSessionRequestRoutingSummary(
   );
 }
 
+export function resolveHostSessionTurnRequestRoutingSummary(
+  turnResponse: PersistedHostTurnResponse | undefined,
+  fallback: unknown,
+): HostSessionRequestRoutingSummary | undefined {
+  const snapshot = readTurnRequestRouting(turnResponse);
+  if (!snapshot) {
+    return undefined;
+  }
+
+  return normalizeHostSessionRequestRoutingSummary(
+    {
+      ...(snapshot.modeId
+        ? (snapshot.requestModeExplicit ? { requestModeId: snapshot.modeId } : { selectedModeId: snapshot.modeId })
+        : {}),
+      ...(snapshot.customAgentTarget ? { customAgentTarget: snapshot.customAgentTarget } : {}),
+      ...(snapshot.permissionLevel ? { permissionLevel: snapshot.permissionLevel } : {}),
+      ...(snapshot.approvalsReviewer ? { approvalsReviewer: snapshot.approvalsReviewer } : {}),
+      ...(snapshot.approvalPolicy ? { approvalPolicy: snapshot.approvalPolicy } : {}),
+    },
+    fallback,
+  );
+}
+
 function resolveLatestTurnRequestRouting(
   turnResponses: readonly PersistedHostTurnResponse[] | undefined,
 ): HostSessionRequestRoutingSnapshot | undefined {
@@ -175,28 +207,47 @@ function readTurnRequestRouting(
   turnResponse: PersistedHostTurnResponse | undefined,
 ): HostSessionRequestRoutingSnapshot | undefined {
   const metadata = asRecord(turnResponse?.request?.metadata);
-  if (!metadata) {
+  const topLevelRouting = asRecord(turnResponse?.requestRouting);
+  if (!metadata && !topLevelRouting && !turnResponse?.modeId && !turnResponse?.modeSelection) {
     return undefined;
   }
 
-  const modeInfo = readTurnRequestModeInfo(metadata);
+  const modeInfo = readTurnRequestModeInfo(metadata ?? {});
   const modeInfoRecord = modeInfo as Record<string, unknown> | undefined;
-  const modeId = resolveTurnRequestModeKind(modeInfo) ?? resolveRequestRoutingModeId(metadata['modeId']);
-  const requestRouting = asRecord(metadata['requestRouting']);
+  const requestRouting = asRecord(metadata?.['requestRouting']);
+  const topLevelModeSelection = isSelectedModeSnapshot(turnResponse?.modeSelection)
+    ? normalizeChatSelectedMode(turnResponse?.modeSelection)
+    : undefined;
+  const modeId = resolveTurnRequestModeKind(modeInfo)
+    ?? resolveRequestRoutingModeId(metadata?.['modeId'])
+    ?? resolveRequestRoutingModeId(requestRouting?.['requestModeId'])
+    ?? resolveRequestRoutingModeId(requestRouting?.['selectedModeId'])
+    ?? resolveRequestRoutingModeId(topLevelRouting?.['requestModeId'])
+    ?? resolveRequestRoutingModeId(topLevelRouting?.['selectedModeId'])
+    ?? resolveRequestRoutingModeId(turnResponse?.modeId)
+    ?? topLevelModeSelection?.modeId;
   const customAgentTarget = normalizeCustomAgentTarget(requestRouting?.['customAgentTarget'])
-    ?? resolveTurnRequestModeCustomAgentTarget(modeInfo);
-  const permissionLevel = normalizePermissionLevel(modeInfo?.permissionLevel ?? requestRouting?.['permissionLevel']);
-  const approvalsReviewer = normalizeApprovalsReviewer(modeInfoRecord?.['approvalsReviewer'] ?? requestRouting?.['approvalsReviewer']);
-  const approvalPolicy = normalizeApprovalPolicy(modeInfoRecord?.['approvalPolicy'] ?? requestRouting?.['approvalPolicy']);
+    ?? resolveTurnRequestModeCustomAgentTarget(modeInfo)
+    ?? normalizeCustomAgentTarget(topLevelRouting?.['customAgentTarget'])
+    ?? topLevelModeSelection?.customAgentTarget;
+  const effectiveModeId = isPlanChatAgentTarget(customAgentTarget)
+    ? 'plan'
+    : modeId;
+  const effectiveCustomAgentTarget = effectiveModeId === 'plan' && isPlanChatAgentTarget(customAgentTarget)
+    ? undefined
+    : customAgentTarget;
+  const permissionLevel = normalizePermissionLevel(modeInfo?.permissionLevel ?? requestRouting?.['permissionLevel'] ?? topLevelRouting?.['permissionLevel']);
+  const approvalsReviewer = normalizeApprovalsReviewer(modeInfoRecord?.['approvalsReviewer'] ?? requestRouting?.['approvalsReviewer'] ?? topLevelRouting?.['approvalsReviewer']);
+  const approvalPolicy = normalizeApprovalPolicy(modeInfoRecord?.['approvalPolicy'] ?? requestRouting?.['approvalPolicy'] ?? topLevelRouting?.['approvalPolicy']);
 
-  if (!modeId && !customAgentTarget && !permissionLevel && !approvalsReviewer && !approvalPolicy) {
+  if (!effectiveModeId && !effectiveCustomAgentTarget && !permissionLevel && !approvalsReviewer && !approvalPolicy) {
     return undefined;
   }
 
   return {
-    ...(modeId ? { modeId } : {}),
-    ...(customAgentTarget ? { customAgentTarget } : {}),
-    ...(modeId ? { requestModeExplicit: true } : {}),
+    ...(effectiveModeId ? { modeId: effectiveModeId } : {}),
+    ...(effectiveCustomAgentTarget ? { customAgentTarget: effectiveCustomAgentTarget } : {}),
+    ...(effectiveModeId ? { requestModeExplicit: true } : {}),
     ...(permissionLevel ? { permissionLevel } : {}),
     ...(approvalsReviewer ? { approvalsReviewer } : {}),
     ...(approvalPolicy ? { approvalPolicy } : {}),
@@ -213,18 +264,24 @@ function readMetadataRequestRouting(
 
   const customAgentTarget = normalizeCustomAgentTarget(requestRouting['customAgentTarget']);
   const explicitRequestModeId = resolveRequestRoutingModeId(requestRouting['requestModeId']);
-  const modeId = explicitRequestModeId ?? resolveRequestRoutingModeId(requestRouting['selectedModeId']);
+  const rawModeId = explicitRequestModeId ?? resolveRequestRoutingModeId(requestRouting['selectedModeId']);
+  const modeId = isPlanChatAgentTarget(customAgentTarget)
+    ? 'plan'
+    : rawModeId;
+  const effectiveCustomAgentTarget = modeId === 'plan' && isPlanChatAgentTarget(customAgentTarget)
+    ? undefined
+    : customAgentTarget;
   const permissionLevel = normalizePermissionLevel(requestRouting['permissionLevel']);
   const approvalsReviewer = normalizeApprovalsReviewer(requestRouting['approvalsReviewer']);
   const approvalPolicy = normalizeApprovalPolicy(requestRouting['approvalPolicy']);
-  if (!modeId && !customAgentTarget && !permissionLevel && !approvalsReviewer && !approvalPolicy) {
+  if (!modeId && !effectiveCustomAgentTarget && !permissionLevel && !approvalsReviewer && !approvalPolicy) {
     return undefined;
   }
 
   return {
     ...(modeId ? { modeId } : {}),
-    ...(customAgentTarget ? { customAgentTarget } : {}),
-    ...(explicitRequestModeId ? { requestModeExplicit: true } : {}),
+    ...(effectiveCustomAgentTarget ? { customAgentTarget: effectiveCustomAgentTarget } : {}),
+    ...((explicitRequestModeId || modeId === 'plan') ? { requestModeExplicit: true } : {}),
     ...(permissionLevel ? { permissionLevel } : {}),
     ...(approvalsReviewer ? { approvalsReviewer } : {}),
     ...(approvalPolicy ? { approvalPolicy } : {}),

@@ -48,6 +48,7 @@
             }
           </span>
         </div>
+        <div class="chat-debug-logs-item-detail boundary">{{ getEventBoundaryDetails(event) }}</div>
         @if (getEventDetails(event); as details) {
         <div class="chat-debug-logs-item-detail">{{ details }}</div>
         }

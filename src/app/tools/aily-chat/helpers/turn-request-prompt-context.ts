@@ -115,6 +115,13 @@ function cloneInteractionContinuation(
   if (!continuation) {
     return undefined;
   }
+  const pendingState = continuation.pendingState
+    ? { ...continuation.pendingState }
+    : undefined;
+
+  if (isTerminalCompletedContinuation(continuation, pendingState)) {
+    return undefined;
+  }
 
   return {
     interactionId: continuation.interactionId,
@@ -123,7 +130,7 @@ function cloneInteractionContinuation(
     ...(continuation.status ? { status: continuation.status } : {}),
     ...(continuation.stopReason ? { stopReason: continuation.stopReason } : {}),
     ...(continuation.hardStopReason !== undefined ? { hardStopReason: continuation.hardStopReason } : {}),
-    ...(continuation.pendingState ? { pendingState: { ...continuation.pendingState } } : {}),
+    ...(pendingState ? { pendingState } : {}),
     ...(continuation.budgets && typeof continuation.budgets === 'object'
       ? { budgets: { ...continuation.budgets } }
       : {}),
@@ -131,6 +138,33 @@ function cloneInteractionContinuation(
       ? { diagnostics: cloneUnknownRecord(continuation.diagnostics as Record<string, unknown>) }
       : {}),
   };
+}
+
+function isTerminalCompletedContinuation(
+  continuation: NonNullable<SessionRequestContextSnapshot['interactionContinuation']>,
+  pendingState: Record<string, unknown> | undefined,
+): boolean {
+  const stopReason = typeof continuation.stopReason === 'string'
+    ? continuation.stopReason
+    : undefined;
+  const status = typeof continuation.status === 'string'
+    ? continuation.status
+    : undefined;
+  const pendingKind = typeof pendingState?.['kind'] === 'string'
+    ? pendingState['kind']
+    : undefined;
+
+  if (pendingKind && pendingKind !== 'none') {
+    return false;
+  }
+
+  if (typeof continuation.hardStopReason === 'string' && continuation.hardStopReason.startsWith('interaction_')) {
+    return true;
+  }
+
+  return stopReason === 'COMPLETED'
+    || status === 'completed'
+    || status === 'complete';
 }
 
 function normalizeSkillNames(value: unknown): string[] {

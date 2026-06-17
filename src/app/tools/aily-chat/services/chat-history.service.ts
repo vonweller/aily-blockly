@@ -69,11 +69,14 @@ import {
   DEFAULT_CHAT_SESSION_TYPE,
   normalizeChatSessionType,
   normalizeChatSurfaceModeId,
+  type ChatModeId,
   type ChatSessionInputState,
   type ChatSessionModeDescriptor,
   type ChatSessionType,
   type ChatSurfaceModeId,
+  type ChatSelectedMode,
 } from '../core/chat-mode';
+import type { PlanPart } from '../core/chat-parts';
 import {
   normalizeHostSessionRequestRoutingSummary,
   type HostSessionRequestRoutingSummary,
@@ -145,6 +148,16 @@ export interface PersistedHostResponseData {
 }
 
 export type PersistedHostTurnResponse = Omit<TurnResponseTurn, 'response'> & {
+  /** Per-turn request mode truth. This must not be inferred from the current session picker. */
+  modeId?: ChatModeId;
+  /** Per-turn selected mode snapshot used by restore/history/debug surfaces. */
+  modeSelection?: ChatSelectedMode;
+  /** Per-turn request routing snapshot. New records should prefer this over session metadata fallbacks. */
+  requestRouting?: HostSessionRequestRoutingSummary;
+  /** Durable plan artifact extracted from response parts for Plan mode restore/debug. */
+  planPart?: PlanPart;
+  /** Latest handoff / restored interaction action associated with this turn. */
+  handoffAction?: HostSessionInteractionActionSummary;
   response: TurnResponseTurn['response'] & PersistedHostResponseData;
 };
 
@@ -848,8 +861,10 @@ export class ChatHistoryService implements OnDestroy {
 
     if (entry) {
       this.deleteSessionFile(sessionId, entry.projectPath);
+      this.deleteLexSnapshotFile(sessionId, entry.projectPath);
     }
     this.deleteSessionFile(sessionId, null);
+    this.deleteLexSnapshotFile(sessionId, null);
 
     this.index = this.index.filter(e => e.sessionId !== sessionId);
     this.bumpIndexRevision();
@@ -1119,6 +1134,17 @@ export class ChatHistoryService implements OnDestroy {
     if (this.fileExists(filePath)) {
       AilyHost.get().fs.unlinkSync(filePath);
     }
+  }
+
+  private deleteLexSnapshotFile(sessionId: string, projectPath: string | null): void {
+    if (!this.hasFs()) return;
+
+    try {
+      const filePath = this.resolveLexSnapshotFilePath(sessionId, projectPath);
+      if (this.fileExists(filePath)) {
+        AilyHost.get().fs.unlinkSync(filePath);
+      }
+    } catch { }
   }
 
   private captureSingleSessionAdoptionSnapshot(sessionId: string): {

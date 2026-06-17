@@ -15,6 +15,7 @@ import {
   normalizeChatSessionInputMode,
   normalizeChatSessionInputState,
   normalizeChatSessionPermissionMode,
+  isPlanChatAgentTarget,
   resolveChatModeId,
   type ChatSessionPermissionMode,
   type ChatSessionModeDescriptor,
@@ -310,7 +311,7 @@ export function resolveHostSessionSummaryModeFromMetadata(
 ): ChatSelectedMode {
   const requestRouting = normalizeHostSessionRequestRoutingSummary(metadata?.requestRouting, metadata?.mode);
   return normalizeChatSelectedMode({
-    modeId: metadata?.mode ?? requestRouting.selectedModeId,
+    modeId: requestRouting.selectedModeId,
     customAgentTarget: requestRouting.customAgentTarget,
   });
 }
@@ -487,6 +488,10 @@ function resolveSelectedModeFromDescriptor(
   requestRouting: HostSessionRequestRoutingSummary,
   options?: HostSessionSelectedModeResolveOptions,
 ): ChatSelectedMode {
+  if (isLegacyFallbackPlanModeDescriptor(modeDescriptor)) {
+    return { modeId: 'plan' };
+  }
+
   if (modeDescriptor.kind !== 'agent' || modeDescriptor.isBuiltin !== false) {
     return normalizeChatSelectedMode({ modeId: modeDescriptor.kind });
   }
@@ -590,6 +595,10 @@ function resolveStoredModeDescriptor(
 ): ChatSessionModeDescriptor | undefined {
   const normalizedDescriptor = hydrateStoredModeDescriptor(normalizeChatSessionModeDescriptor(value), options);
   if (normalizedDescriptor) {
+    if (isLegacyFallbackPlanModeDescriptor(normalizedDescriptor)) {
+      return createChatSessionModeDescriptor({ modeId: 'plan' });
+    }
+
     return normalizedDescriptor;
   }
 
@@ -692,6 +701,10 @@ function hydrateLegacyModeDescriptor(
   selectedMode: ChatSelectedMode,
   options?: HostSessionSelectedModeResolveOptions,
 ): ChatSessionModeDescriptor | undefined {
+  if (isLegacyFallbackPlanInputMode(storedMode)) {
+    return createChatSessionModeDescriptor({ modeId: 'plan' });
+  }
+
   const resolvedMode = resolveStoredModeById(storedMode, options);
   if (!resolvedMode) {
     if (storedMode.kind === 'agent' && storedMode.modeInstructions?.name) {
@@ -784,6 +797,10 @@ function hydrateStoredModeDescriptor(
     return undefined;
   }
 
+  if (isLegacyFallbackPlanModeDescriptor(modeDescriptor)) {
+    return createChatSessionModeDescriptor({ modeId: 'plan' });
+  }
+
   const resolvedMode = resolveStoredModeDescriptorById(modeDescriptor, options);
   if (!resolvedMode) {
     return modeDescriptor;
@@ -827,6 +844,42 @@ function hydrateStoredModeDescriptor(
       : undefined),
     uri: resolvedMode.uri ?? modeDescriptor.modeInstructions?.uri,
   });
+}
+
+function isLegacyFallbackPlanModeDescriptor(modeDescriptor: ChatSessionModeDescriptor | undefined): boolean {
+  if (!modeDescriptor || modeDescriptor.kind !== 'agent' || modeDescriptor.isBuiltin !== false) {
+    return false;
+  }
+
+  const instructions = modeDescriptor.modeInstructions;
+  if (!isPlanChatAgentTarget(instructions?.name ?? modeDescriptor.name ?? modeDescriptor.id)) {
+    return false;
+  }
+
+  return isLegacyFallbackPlanInstructions(instructions);
+}
+
+function isLegacyFallbackPlanInputMode(
+  storedMode: NonNullable<ReturnType<typeof normalizeChatSessionInputMode>>,
+): boolean {
+  if (storedMode.kind !== 'agent') {
+    return false;
+  }
+
+  if (!isPlanChatAgentTarget(storedMode.modeInstructions?.name ?? storedMode.id)) {
+    return false;
+  }
+
+  return isLegacyFallbackPlanInstructions(storedMode.modeInstructions);
+}
+
+function isLegacyFallbackPlanInstructions(
+  instructions: { readonly content?: string; readonly metadata?: unknown; readonly isBuiltin?: boolean; readonly name?: string } | undefined,
+): boolean {
+  const metadata = asRecord(instructions?.metadata);
+  return (instructions?.content ?? '').trim().length === 0
+    && metadata?.['fallbackOnly'] === true
+    && metadata?.['disableModelInvocation'] === true;
 }
 
 function resolveStoredModeDescriptorById(

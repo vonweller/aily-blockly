@@ -195,6 +195,9 @@ export class HostSessionPersistenceBridge {
 
       const data = this.hostRecordStore.read(sessionId, primaryPath);
       if (data) {
+        if (this.shouldRejectRecordOwnerMismatch(data, 'loadHostRecord-primary')) {
+          return null;
+        }
         const hydrated = this.applyPendingTitleToRecord(data);
         if (hydrated !== data) {
           this.hostRecordStore.write(sessionId, hydrated);
@@ -207,6 +210,9 @@ export class HostSessionPersistenceBridge {
       if (projectPathHint && !this.options.isSamePath(projectPathHint, primaryPath)) {
         const fallbackData = this.hostRecordStore.read(sessionId, projectPathHint);
         if (fallbackData) {
+          if (this.shouldRejectRecordOwnerMismatch(fallbackData, 'loadHostRecord-fallback')) {
+            return null;
+          }
           const hydrated = this.applyPendingTitleToRecord(fallbackData);
           if (hydrated !== fallbackData) {
             this.hostRecordStore.write(sessionId, hydrated);

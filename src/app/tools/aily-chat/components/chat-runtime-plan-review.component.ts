@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, Input, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostBinding, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslateModule } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 
 import { AilyHost } from '../core/host';
@@ -10,7 +11,7 @@ import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } f
 @Component({
   selector: 'aily-chat-runtime-plan-review',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, ChatConfirmationActionsComponent],
+  imports: [CommonModule, TranslateModule, XMarkdownComponent, ChatConfirmationActionsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (activeReview; as active) {
@@ -22,7 +23,9 @@ import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } f
               <div class="rpr-plan-ref-row">
                 <div class="rpr-plan-ref">{{ getPlanLabel(planUri) }}</div>
                 @if (canOpenPlan(planUri)) {
-                  <button type="button" class="rpr-open-btn" (click)="openPlan(planUri, $event)">Open in Editor</button>
+                  <button type="button" class="rpr-open-btn" (click)="openPlan(planUri, $event)">
+                    {{ 'AILY_CHAT.PLAN_ACTION_OPEN_IN_EDITOR' | translate }}
+                  </button>
                 }
               </div>
             }
@@ -254,6 +257,11 @@ export class ChatRuntimePlanReviewComponent {
     }
 
     return active;
+  }
+
+  @HostBinding('class.has-plan-review')
+  get hasPlanReview(): boolean {
+    return !!this.activeReview;
   }
 
   get selectedActionLabel(): string {

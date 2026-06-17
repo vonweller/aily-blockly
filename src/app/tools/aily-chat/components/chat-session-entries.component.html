@@ -58,19 +58,25 @@
           </span>
           <span [class.session-list-item-title]="isListVariant" [class.session-picker-title]="isPickerVariant">{{ item.title }}</span>
         </div>
-        @if (formatStatusMeta(item)) {
+        @if (detailSegments(item).length > 0 || formatStatusMeta(item)) {
         <div
           [class.session-list-item-meta-row]="isListVariant"
           [class.session-picker-meta-row]="isPickerVariant"
           [class.session-list-item-meta-row-indented]="isListVariant"
           [class.session-picker-meta-row-indented]="isPickerVariant">
           <div [class.session-list-item-detail-row]="isListVariant" [class.session-picker-detail-row]="isPickerVariant">
+            @for (detail of detailSegments(item); track detail) {
+            <span [class.session-list-item-detail]="isListVariant" [class.session-picker-detail]="isPickerVariant">{{ detail }}</span>
+            }
+            @if (formatStatusMeta(item)) {
             <div
               [class.session-list-item-status]="isListVariant"
               [class.session-picker-status]="isPickerVariant"
+              [class.has-separator]="hasStatusSeparator(item)"
               [class]="(isListVariant ? 'session-list-item-status' : 'session-picker-status') + ' status-' + statusClass(item.status)">
               {{ formatStatusMeta(item) }}
             </div>
+            }
           </div>
         </div>
         }

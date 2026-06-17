@@ -187,10 +187,7 @@ export class ChatSwitchCoordinator {
     }
 
     if (this.ctx.isWaiting) {
-      this.ctx.chatService.saveChatMode(normalizedMode);
-      this.ctx.chatService.clearCurrentCustomAgentTarget();
-      this.assignPendingSwitch(null, normalizedMode);
-      this.ctx.message.info('模式将在当前对话完成后切换');
+      this.ctx.message.info('当前对话运行中，无法切换模式');
       return;
     }
 
@@ -225,6 +222,11 @@ export class ChatSwitchCoordinator {
       return;
     }
 
+    if (this.ctx.isWaiting) {
+      this.ctx.message.info('当前对话运行中，无法切换智能体');
+      return;
+    }
+
     if (effectiveModeId) {
       this.ctx.chatService.setChatMode(effectiveModeId, true);
     } else if (typeof this.ctx.chatService.saveSelectedMode === 'function') {
@@ -235,12 +237,6 @@ export class ChatSwitchCoordinator {
     } else {
       this.ctx.chatService.saveChatMode('agent');
       this.ctx.chatService.saveCurrentCustomAgentTarget(effectiveAgentTarget);
-    }
-
-    if (this.ctx.isWaiting) {
-      this.assignPendingSwitch(null, null);
-      this.ctx.message.info('智能体选择已更新，将在下一条消息生效');
-      return;
     }
 
     try {

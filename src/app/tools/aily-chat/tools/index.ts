@@ -1,17 +1,6 @@
 // Blockly 领域工具索引
 export { editAbiFileTool } from './editAbiFileTool';
 export { deleteFolderTool } from './deleteFolderTool';
-export {
-  smartBlockTool,
-  connectBlocksTool,
-  createCodeStructureTool,
-  configureBlockTool,
-  deleteBlockTool,
-  getWorkspaceOverviewTool,
-  queryBlockDefinitionTool,
-  analyzeLibraryBlocksTool,
-  verifyBlockExistenceTool
-} from './editBlockTool';
 export { newProjectTool } from './createProjectTool';
 export { getProjectInfoTool } from './getProjectInfoTool';
 export { syncAbsFileHandler } from './syncAbsFileTool';

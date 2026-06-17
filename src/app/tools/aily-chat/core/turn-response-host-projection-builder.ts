@@ -4,7 +4,7 @@ import type { ChatPartStore } from './chat-part-store';
 import type { ChatMessageHandle, OpaqueChatMessageHandle } from '../helpers/chat-message-handle';
 import {
   hydrateQuestionAnswersFromAskUserToolMetadata,
-  turnResponsePartToChatPart,
+  turnResponsePartToChatParts,
 } from './turn-response-part-mapper';
 import {
   getTurnResponseParticipant,
@@ -125,13 +125,13 @@ export class TurnResponseHostProjectionBuilder {
     const hydratedParts = hydrateQuestionAnswersFromAskUserToolMetadata(turn.response.parts);
     for (let partIndex = 0; partIndex < hydratedParts.length; partIndex++) {
       const part = hydratedParts[partIndex];
-      this.partStore.addPartToHandle(
-        handle,
-        turnResponsePartToChatPart(
-          part,
-          options.preserveInteractiveState ? existingParts[partIndex] : undefined,
-        ),
+      const chatParts = turnResponsePartToChatParts(
+        part,
+        options.preserveInteractiveState ? existingParts[partIndex] : undefined,
       );
+      for (const chatPart of chatParts) {
+        this.partStore.addPartToHandle(handle, chatPart);
+      }
     }
 
     if (options.syncContent !== false) {

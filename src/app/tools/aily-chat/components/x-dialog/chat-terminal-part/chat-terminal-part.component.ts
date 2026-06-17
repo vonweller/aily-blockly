@@ -59,6 +59,7 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
         role="region"
         [attr.aria-label]="'命令输出：' + (command || 'terminal command')">
         @if (hasOutput) {
+          <div class="terminal-output-label">标准输出</div>
           <pre class="terminal-output"><code [textContent]="output"></code></pre>
         } @else {
           <div class="terminal-output-empty">命令未产生输出</div>
@@ -254,6 +255,13 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       font-size: 12px;
       line-height: 1.45;
       color: var(--aily-chat-viewer-code-fg, var(--chat-fg, #cccccc));
+    }
+
+    .terminal-output-label {
+      padding: 6px 10px 0;
+      color: var(--chat-fg-muted, #a6a6a6);
+      font-size: 11px;
+      font-weight: 600;
     }
 
     .terminal-output code {

@@ -9,6 +9,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { TranslateModule } from '@ngx-translate/core';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import type { ChatSelectedMode } from '../../core/chat-mode';
 
 export type ChatContextToolbarAppearance = 'edit' | 'composer';
 
@@ -25,6 +26,7 @@ export class ChatContextToolbarComponent {
   @Input() showAddList = false;
   @Input() currentMode = 'agent';
   @Input() currentCustomAgentTarget: string | undefined;
+  @Input() selectedMode: Pick<ChatSelectedMode, 'modeId' | 'customAgentTarget'> | null | undefined;
   @Input() showModelChip = false;
   @Input() showModeLabel = true;
   @Input() modelChipLabel = '';
@@ -47,33 +49,66 @@ export class ChatContextToolbarComponent {
   }
 
   get modeIconClass(): string {
-    if (this.currentCustomAgentTarget && this.currentMode === 'agent') {
+    if (this.effectiveCustomAgentTarget && this.effectiveModeId === 'agent') {
       return 'fa-light fa-user-astronaut';
     }
 
-    switch (this.currentMode) {
+    switch (this.effectiveModeId) {
       case 'edit':
         return 'fa-light fa-pen-line';
       case 'ask':
         return 'fa-light fa-comment-smile';
+      case 'plan':
+        return 'fa-light fa-list-check';
       default:
         return 'fa-light fa-user-astronaut';
     }
   }
 
+  get displayCustomAgentTarget(): string | undefined {
+    return this.effectiveModeId === 'agent' ? this.effectiveCustomAgentTarget : undefined;
+  }
+
   get modeLabelKey(): string | undefined {
-    if (this.currentCustomAgentTarget && this.currentMode === 'agent') {
+    if (this.displayCustomAgentTarget) {
       return undefined;
     }
 
-    switch (this.currentMode) {
+    switch (this.effectiveModeId) {
       case 'edit':
         return 'AILY_CHAT.MODE_EDIT';
       case 'ask':
         return 'AILY_CHAT.MODE_QA';
+      case 'plan':
+        return undefined;
       default:
         return 'AILY_CHAT.MODE_AGENT';
     }
+  }
+
+  get modePlainLabel(): string | undefined {
+    if (this.displayCustomAgentTarget || this.modeLabelKey) {
+      return undefined;
+    }
+
+    return this.effectiveModeId === 'plan' ? 'Plan' : undefined;
+  }
+
+  private get effectiveModeId(): string {
+    const selectedModeId = typeof this.selectedMode?.modeId === 'string'
+      ? this.selectedMode.modeId.trim()
+      : '';
+    return selectedModeId || this.currentMode || 'agent';
+  }
+
+  private get effectiveCustomAgentTarget(): string | undefined {
+    const selectedCustomAgentTarget = typeof this.selectedMode?.customAgentTarget === 'string'
+      ? this.selectedMode.customAgentTarget.trim()
+      : '';
+    const currentCustomAgentTarget = typeof this.currentCustomAgentTarget === 'string'
+      ? this.currentCustomAgentTarget.trim()
+      : '';
+    return selectedCustomAgentTarget || currentCustomAgentTarget || undefined;
   }
 
   get modeTooltipTitle(): string {

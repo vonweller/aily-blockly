@@ -228,7 +228,6 @@ export class LexOwnerFacade {
         sessionId,
         metrics: this._resolveCompactionMetricsService(lex, sessionId),
         askHandler: (askContext) => askConfirmationBridge.handleAskConfirmation(askContext),
-        onSubagentEvent: (event) => this._uiEventBridge.processEvent(event, 'subagent'),
       }),
       onAgentReady: (agent, _lex, currentTodoUnsubscribe) => {
         this._flushPendingEvents();

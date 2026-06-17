@@ -1,6 +1,6 @@
 import type { ISessionAccess, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
 import type { MetricsSnapshot } from 'aily-lex/browser';
-import { resolveChatModeId } from '../core/chat-mode';
+import { resolveChatModeId, type ChatModeId } from '../core/chat-mode';
 import { normalizeReadSideToolName } from '../core/tool-name-normalizer';
 import { buildTodoListSemanticDataFromTodos } from '../services/todoUpdate.service';
 import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
@@ -117,7 +117,8 @@ export class LexHostSyncBridge {
 
   applyHandoffEvent(event: { targetAgent?: string; targetModeId?: string; reason?: string }): void {
     const targetAgent = typeof event.targetAgent === 'string' ? event.targetAgent.trim() : '';
-    const targetModeId = resolveChatModeId(event.targetModeId);
+    const explicitTargetModeId = resolveChatModeId(event.targetModeId);
+    const targetModeId = explicitTargetModeId ?? resolveCanonicalModeFromAgentLabel(targetAgent);
     if (!targetAgent && !targetModeId) {
       return;
     }
@@ -172,7 +173,7 @@ export class LexHostSyncBridge {
   }
 }
 
-function formatCanonicalChatModeLabel(modeId: 'ask' | 'edit' | 'agent'): string {
+function formatCanonicalChatModeLabel(modeId: ChatModeId): string {
   switch (modeId) {
     case 'ask':
       return 'Ask';
@@ -180,8 +181,14 @@ function formatCanonicalChatModeLabel(modeId: 'ask' | 'edit' | 'agent'): string 
       return 'Edit';
     case 'agent':
       return 'Agent';
+    case 'plan':
+      return 'Plan';
   }
   return modeId;
+}
+
+function resolveCanonicalModeFromAgentLabel(agentLabel: string): ChatModeId | null {
+  return agentLabel.trim().toLowerCase() === 'plan' ? 'plan' : null;
 }
 
 function cloneMetricsSnapshot(snapshot: MetricsSnapshot): MetricsSnapshot {

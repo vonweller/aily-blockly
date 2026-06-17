@@ -7,6 +7,7 @@ import {
 import type { TurnResponseTurn } from 'aily-lex/browser';
 
 import { findChatMessageHandleByTurnId } from './chat-message-handle';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 type LexRenderProjectionSyncContext = Pick<
   IChatViewAccess,
@@ -53,10 +54,17 @@ export class LexRenderProjectionSync {
       return;
     }
 
+    const projectionStartedAt = performance.now();
     const partsChanged = this._hostProjectionBuilder.projectIncrementalParts(handle, source, {
       syncContent: options.syncContent === true,
     });
     const metaChanged = this._hostProjectionBuilder.syncMessageMeta(handle, currentTurn);
+    ChatPerformanceTracer.recordDuration(
+      'visible_projection',
+      performance.now() - projectionStartedAt,
+      `syncContent=${options.syncContent === true},partsChanged=${partsChanged},metaChanged=${metaChanged}`,
+      { slowThresholdMs: 12 },
+    );
 
     if (partsChanged || metaChanged) {
       if (options.syncContent === true && typeof this.visibility.readCurrentViewSessionResource !== 'function') {
@@ -123,6 +131,7 @@ export class LexRenderProjectionSync {
       };
 
     this._viewRefreshHandle = schedule(() => {
+      const refreshStartedAt = performance.now();
       this._viewRefreshHandle = null;
       if (!this._viewRefreshPending) {
         return;
@@ -130,6 +139,9 @@ export class LexRenderProjectionSync {
       this._viewRefreshPending = false;
       this.ctx.invalidateHostRequestGraph();
       this.ctx.triggerSyncDetectChanges();
+      ChatPerformanceTracer.recordDuration('visible_view_refresh', performance.now() - refreshStartedAt, undefined, {
+        slowThresholdMs: 12,
+      });
     });
   }
 

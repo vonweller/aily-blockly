@@ -83,6 +83,11 @@ function resolveLatestTurnInteractionAction(
 function readTurnInteractionAction(
   turnResponse: PersistedHostTurnResponse | undefined,
 ): HostSessionInteractionActionSnapshot | undefined {
+  const topLevelAction = normalizeHostSessionInteractionActionSummary(turnResponse?.handoffAction);
+  if (topLevelAction) {
+    return topLevelAction;
+  }
+
   const metadata = asRecord(turnResponse?.request?.metadata);
   const interactionAction = asRecord(metadata?.['interactionAction']);
   if (!interactionAction) {

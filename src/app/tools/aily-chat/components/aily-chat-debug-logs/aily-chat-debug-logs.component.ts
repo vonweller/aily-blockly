@@ -62,6 +62,17 @@ export class AilyChatDebugLogsComponent {
     return getHostSessionDebugEventDetails(event);
   }
 
+  getEventBoundaryDetails(event: HostSessionDebugEvent): string {
+    const owner = event.ownerSessionId || event.sessionId;
+    const mode = event.requestModeId || event.selectedModeId || '';
+    return [
+      `owner=${owner}`,
+      `turn=${event.turnId}`,
+      mode ? `mode=${mode}` : '',
+      event.eventSource ? `source=${event.eventSource}` : '',
+    ].filter(Boolean).join(' · ');
+  }
+
   isErrorEvent(event: HostSessionDebugEvent): boolean {
     return isHostSessionDebugErrorEvent(event);
   }

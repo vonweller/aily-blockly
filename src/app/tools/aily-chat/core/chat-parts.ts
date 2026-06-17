@@ -14,18 +14,37 @@ import { normalizeToolApprovalPresentation, type ToolApprovalAction, type ToolAp
 
 // ==================== Phase 1 Part 类型 ====================
 
+export interface ChatPartScope {
+  /** Render origin. Subagent children remain first-class parts scoped to their parent invocation. */
+  sourceAgentRole?: 'main' | 'subagent';
+  /** Stable child invocation id aligned with Copilot ChatToolInvocationPart.subAgentInvocationId. */
+  subAgentInvocationId?: string;
+  /** Parent tool_call id that launched the scoped subagent. */
+  parentToolCallId?: string;
+  /** Optional producer order for future grouped projection without relying on content text. */
+  sequence?: number;
+}
+
 /** Markdown 文本 Part（收集 think/tool 之外的普通文本） */
-export interface MarkdownPart {
+export interface MarkdownPart extends ChatPartScope {
   type: 'markdown';
   /** 累积的 markdown 文本 */
   content: string;
+  /** Optional renderer-side external content reference for large live markdown blocks. */
+  contentRef?: string;
+  /** Current raw markdown content length when content is stored externally. */
+  contentLength?: number;
 }
 
 /** 思考过程 Part — 替代 filterThinkTags + think-content-store */
-export interface ThinkingPart {
+export interface ThinkingPart extends ChatPartScope {
   type: 'thinking';
   /** 思考内容原始文本 */
   content: string;
+  /** Optional renderer-side external content reference for large live thinking blocks. */
+  contentRef?: string;
+  /** Current raw thinking content length when content is stored externally. */
+  contentLength?: number;
   /** 是否已完成（未闭合的 think 块为 false） */
   isComplete: boolean;
 }
@@ -47,6 +66,10 @@ export interface ToolCallPart {
   state: 'doing' | 'done' | 'warn' | 'error' | 'pending_approval';
   /** 轻量元数据，供 restore/viewer 扩展使用 */
   metadata?: Record<string, unknown>;
+  sourceAgentRole?: 'main' | 'subagent';
+  subAgentInvocationId?: string;
+  parentToolCallId?: string;
+  sequence?: number;
 }
 
 /** 通用状态 Part — 承载任务图/调度/自治/协作团队等宿主状态 */
@@ -92,7 +115,7 @@ export interface QuestionItem {
 }
 
 /** 用户提问 Part — 替代 aily-question markdown 代码块 */
-export interface QuestionPart {
+export interface QuestionPart extends ChatPartScope {
   type: 'question';
   /** 稳定 part identity，优先绑定 ask_user requestId */
   partId?: string;
@@ -102,10 +125,11 @@ export interface QuestionPart {
   answers?: Record<string, { selected: string[]; freeText: string | null; skipped: boolean }>;
   /** 是否来自历史记录 */
   isHistory?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 /** 通用确认 Part — 对齐 Copilot standalone confirmation part 语义。 */
-export interface ConfirmationPart {
+export interface ConfirmationPart extends ChatPartScope {
   type: 'confirmation';
   /** 稳定 part identity，绑定 generic confirmation requestId */
   partId?: string;
@@ -135,10 +159,11 @@ export interface ConfirmationPart {
   result?: 'approved' | 'rejected';
   /** 可选范围（若 host 需要额外记住本次选择） */
   scope?: ToolApprovalScope;
+  metadata?: Record<string, unknown>;
 }
 
 /** 终端命令输出 Part — Phase 2 新渲染能力 */
-export interface TerminalPart {
+export interface TerminalPart extends ChatPartScope {
   type: 'terminal';
   /** 稳定 part identity，优先绑定命令会话身份 */
   partId?: string;
@@ -176,7 +201,7 @@ export interface TerminalPart {
   outputUpdateKind?: 'delta' | 'snapshot';
 }
 
-export interface TerminalPartOptions {
+export interface TerminalPartOptions extends ChatPartScope {
   processId?: string;
   outputSessionId?: string;
   terminalId?: string;
@@ -196,6 +221,9 @@ export interface SubagentChildItem {
   /** 内容（thinking 文本 / markdown 文本 / question 文本） */
   content: string;
   /** 工具名称（仅 kind='tool'） */
+  contentRef?: string;
+  contentKind?: 'markdown' | 'thinking';
+  contentLength?: number;
   toolName?: string;
   /** 工具调用ID（仅 kind='tool'） */
   toolCallId?: string;
@@ -229,30 +257,128 @@ export interface SubagentToolCallSnapshot {
   _toolTimers?: Record<string, unknown>;
 }
 
+export interface PlanStep {
+  id: string;
+  text: string;
+  status?: 'pending' | 'inProgress' | 'completed';
+}
+
+export interface PlanPart {
+  type: 'plan';
+  partId?: string;
+  status: 'streaming' | 'completed' | 'failed';
+  text: string;
+  steps?: readonly PlanStep[];
+  assumptions?: readonly string[];
+  verification?: readonly string[];
+  source?: 'proposed_plan' | 'plan_file' | 'summary';
+}
+
 // ==================== 联合类型 ====================
 
 /** 支持的 Part 类型联合 */
 export type ChatPart =
   | MarkdownPart | ThinkingPart | ToolCallPart | StatePart | ErrorPart
-  | QuestionPart | ConfirmationPart | TerminalPart;
+  | QuestionPart | ConfirmationPart | TerminalPart | PlanPart;
 
 // ==================== Part 辅助函数 ====================
 
+export function normalizeChatPartScope(scope: ChatPartScope | null | undefined): ChatPartScope | undefined {
+  if (!scope) {
+    return undefined;
+  }
+
+  const normalized: ChatPartScope = {};
+  if (scope.sourceAgentRole === 'main' || scope.sourceAgentRole === 'subagent') {
+    normalized.sourceAgentRole = scope.sourceAgentRole;
+  }
+  if (typeof scope.subAgentInvocationId === 'string' && scope.subAgentInvocationId.trim().length > 0) {
+    normalized.subAgentInvocationId = scope.subAgentInvocationId;
+  }
+  if (typeof scope.parentToolCallId === 'string' && scope.parentToolCallId.trim().length > 0) {
+    normalized.parentToolCallId = scope.parentToolCallId;
+  }
+  if (typeof scope.sequence === 'number' && Number.isFinite(scope.sequence)) {
+    normalized.sequence = scope.sequence;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function chatPartScopeOf(part: ChatPart | null | undefined): ChatPartScope | undefined {
+  if (!part) {
+    return undefined;
+  }
+
+  const directScope = normalizeChatPartScope(part as ChatPartScope);
+  if (directScope) {
+    return directScope;
+  }
+
+  if ('metadata' in part) {
+    return normalizeChatPartScope(asRecord(part.metadata));
+  }
+
+  return undefined;
+}
+
+export function getSubAgentInvocationId(part: ChatPart | null | undefined): string | undefined {
+  return chatPartScopeOf(part)?.subAgentInvocationId;
+}
+
+export function getParentToolCallId(part: ChatPart | null | undefined): string | undefined {
+  return chatPartScopeOf(part)?.parentToolCallId;
+}
+
+export function isSubagentChildPart(part: ChatPart | null | undefined): boolean {
+  const scope = chatPartScopeOf(part);
+  return scope?.sourceAgentRole === 'subagent'
+    || typeof scope?.parentToolCallId === 'string';
+}
+
+export function isSameChatPartScope(a: ChatPartScope | null | undefined, b: ChatPartScope | null | undefined): boolean {
+  const left = normalizeChatPartScope(a);
+  const right = normalizeChatPartScope(b);
+  return (left?.sourceAgentRole ?? 'main') === (right?.sourceAgentRole ?? 'main')
+    && (left?.subAgentInvocationId ?? '') === (right?.subAgentInvocationId ?? '')
+    && (left?.parentToolCallId ?? '') === (right?.parentToolCallId ?? '');
+}
+
+export function withChatPartScopeMetadata(
+  metadata: Record<string, unknown> | undefined,
+  scope: ChatPartScope | null | undefined,
+): Record<string, unknown> | undefined {
+  const normalized = normalizeChatPartScope(scope);
+  if (!normalized) {
+    return metadata;
+  }
+
+  return {
+    ...(metadata ?? {}),
+    sourceAgentRole: normalized.sourceAgentRole,
+    subAgentInvocationId: normalized.subAgentInvocationId,
+    parentToolCallId: normalized.parentToolCallId,
+    sequence: normalized.sequence,
+  };
+}
+
 /** 创建 MarkdownPart */
-export function mkMarkdown(content: string): MarkdownPart {
-  return { type: 'markdown', content };
+export function mkMarkdown(content: string, scope?: ChatPartScope): MarkdownPart {
+  return { type: 'markdown', content, ...normalizeChatPartScope(scope) };
 }
 
 /** 创建 ThinkingPart */
-export function mkThinking(content: string, isComplete: boolean): ThinkingPart {
-  return { type: 'thinking', content, isComplete };
+export function mkThinking(content: string, isComplete: boolean, scope?: ChatPartScope): ThinkingPart {
+  return { type: 'thinking', content, isComplete, ...normalizeChatPartScope(scope) };
 }
 
 /** 创建 ToolCallPart */
 export function mkToolCall(
   toolCallId: string, toolName: string, text: string,
   state: ToolCallPart['state'], args?: any, metadata?: Record<string, unknown>,
+  scope?: ChatPartScope,
 ): ToolCallPart {
+  const normalizedScope = normalizeChatPartScope(scope);
   return {
     type: 'tool_call',
     partId: buildToolCallPartId(toolCallId),
@@ -261,7 +387,8 @@ export function mkToolCall(
     text,
     state,
     args,
-    metadata,
+    metadata: normalizedScope ? withChatPartScopeMetadata(metadata, normalizedScope) : metadata,
+    ...normalizedScope,
   };
 }
 
@@ -287,12 +414,21 @@ export function mkError(
 }
 
 /** 创建 QuestionPart */
-export function mkQuestion(questions: QuestionItem[], isHistory?: boolean, requestId?: string): QuestionPart {
+export function mkQuestion(
+  questions: QuestionItem[],
+  isHistory?: boolean,
+  requestId?: string,
+  scope?: ChatPartScope,
+  metadata?: Record<string, unknown>,
+): QuestionPart {
+  const normalizedScope = normalizeChatPartScope(scope);
   return {
     type: 'question',
     partId: buildQuestionPartId(questions, requestId),
     questions,
     isHistory,
+    metadata: withChatPartScopeMetadata(metadata, normalizedScope),
+    ...normalizedScope,
   };
 }
 
@@ -302,8 +438,9 @@ export function mkConfirmation(
   message: string,
   toolName?: string,
   source?: string,
-  presentation?: Partial<Pick<ConfirmationPart, 'title' | 'subtitle' | 'description' | 'actions' | 'primaryScope' | 'args'>>,
+  presentation?: Partial<Pick<ConfirmationPart, 'title' | 'subtitle' | 'description' | 'actions' | 'primaryScope' | 'args' | 'metadata'>> & ChatPartScope,
 ): ConfirmationPart {
+  const normalizedScope = normalizeChatPartScope(presentation);
   const normalized = normalizeToolApprovalPresentation({
     toolName,
     source,
@@ -328,6 +465,8 @@ export function mkConfirmation(
     actions: normalized.actions,
     primaryScope: normalized.primaryScope,
     resolved: false,
+    metadata: withChatPartScopeMetadata(presentation?.metadata, normalizedScope),
+    ...normalizedScope,
   };
 }
 
@@ -343,6 +482,7 @@ export function mkTerminal(
     ...(toolCallId ? [toolCallId] : []),
     ...(options.sourceToolCallIds ?? []),
   ]);
+  const scope = normalizeChatPartScope(options);
   return {
     type: 'terminal',
     partId: partId ?? buildTerminalPartId(command, toolCallId, sessionId),
@@ -360,7 +500,54 @@ export function mkTerminal(
     ...(typeof options.bytesTotal === 'number' ? { bytesTotal: options.bytesTotal } : {}),
     ...(options.lastOutputAt ? { lastOutputAt: options.lastOutputAt } : {}),
     ...(options.outputUpdateKind ? { outputUpdateKind: options.outputUpdateKind } : {}),
+    ...scope,
   };
+}
+
+export function mkPlan(
+  text: string,
+  status: PlanPart['status'] = 'completed',
+  partId = 'plan:proposed',
+  options: Partial<Pick<PlanPart, 'steps' | 'assumptions' | 'verification' | 'source'>> = {},
+): PlanPart {
+  return {
+    type: 'plan',
+    partId,
+    status,
+    text,
+    ...(options.steps ? { steps: options.steps } : {}),
+    ...(options.assumptions ? { assumptions: options.assumptions } : {}),
+    ...(options.verification ? { verification: options.verification } : {}),
+    ...(options.source ? { source: options.source } : {}),
+  };
+}
+
+export function isLikelyPlanMarkdown(value: string): boolean {
+  const text = value.trim();
+  if (!text) {
+    return false;
+  }
+
+  const headingMatches = text.match(/^\s{0,3}#{1,6}\s+\S.+$/gm) ?? [];
+  const orderedListMatches = text.match(/^\s*\d+[.)、]\s+\S.+$/gm) ?? [];
+  const bulletListMatches = text.match(/^\s*[-*]\s+\S.+$/gm) ?? [];
+  const hasPlanHeading = /^\s{0,3}#{1,6}\s+.*(?:plan|方案|计划|设计|实施|implementation).*$/gim.test(text);
+  const sectionTerms = [
+    /硬件需求|组件|连线|引脚|pinmap|board|library|constraints?/i,
+    /实施步骤|实现步骤|steps?|approach|architecture/i,
+    /验证|测试|build|flash|verification/i,
+    /风险|安全|回滚|rollback|safety/i,
+    /假设|assumptions?/i,
+  ];
+  const matchedSections = sectionTerms.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+  const hasListStructure = orderedListMatches.length >= 2 || bulletListMatches.length >= 3;
+  const hasSectionStructure = headingMatches.length >= 2 || matchedSections >= 2;
+
+  if (hasPlanHeading && (hasListStructure || hasSectionStructure)) {
+    return true;
+  }
+
+  return matchedSections >= 3 && (hasListStructure || headingMatches.length >= 1);
 }
 
 function normalizeQuestionIdentitySeed(questions: readonly QuestionItem[]): string {
@@ -459,13 +646,10 @@ export function isSubagentToolCallMetadata(metadata: unknown): metadata is Recor
     return false;
   }
 
-  if (typeof record['subAgentInvocationId'] === 'string') {
-    return true;
-  }
-
   const toolSpecificData = asRecord(record['toolSpecificData']);
   return !!toolSpecificData && (
-    typeof toolSpecificData['agentName'] === 'string'
+    toolSpecificData['kind'] === 'subagent'
+    || typeof toolSpecificData['agentName'] === 'string'
     || typeof toolSpecificData['description'] === 'string'
   );
 }
@@ -484,6 +668,13 @@ export function toolCallPartToSubagentSnapshot(part: ToolCallPart): SubagentTool
       .map(item => ({
         kind: (item['kind'] as SubagentChildItem['kind']) || 'text',
         content: asString(item['content']) || '',
+        contentRef: asString(item['contentRef']),
+        contentKind: item['contentKind'] === 'thinking'
+          ? 'thinking' as const
+          : item['contentKind'] === 'markdown'
+            ? 'markdown' as const
+            : undefined,
+        contentLength: typeof item['contentLength'] === 'number' ? item['contentLength'] : undefined,
         toolName: asString(item['toolName']),
         toolCallId: asString(item['toolCallId']),
         argsSummary: asString(item['argsSummary']),

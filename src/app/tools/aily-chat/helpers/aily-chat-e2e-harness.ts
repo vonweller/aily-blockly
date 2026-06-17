@@ -7,6 +7,7 @@ import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../serv
 interface AilyChatE2eHarnessOptions {
   readonly engine: ChatEngineService;
   readonly viewState: ChatViewService;
+  readonly readRenderingDiagnostics?: () => AilyChatE2eRenderingDiagnostics;
 }
 
 interface AilyChatE2eSnapshot {
@@ -20,6 +21,23 @@ interface AilyChatE2eSnapshot {
   readonly runtimeState: unknown;
   readonly visibleText: string;
   readonly turnResponses: readonly TurnResponseTurn[];
+  readonly rendering?: AilyChatE2eRenderingDiagnostics;
+}
+
+export interface AilyChatE2eRenderingDiagnostics {
+  readonly totalDialogItems: number;
+  readonly renderedDialogItems: number;
+  readonly mountedDialogElements: number;
+  readonly virtualRows: number;
+  readonly topSpacerHeight: number;
+  readonly bottomSpacerHeight: number;
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly scrollLock: boolean;
+  readonly virtualWindowStartIndex: number;
+  readonly virtualWindowEndIndex: number;
+  readonly measuredRowCount: number;
 }
 
 interface AilyChatE2eHarnessApi {
@@ -27,6 +45,8 @@ interface AilyChatE2eHarnessApi {
   selectAsk(): Promise<AilyChatE2eSnapshot>;
   selectAgent(): Promise<AilyChatE2eSnapshot>;
   selectPlan(): Promise<AilyChatE2eSnapshot>;
+  newSession(): Promise<AilyChatE2eSnapshot>;
+  readTurns(sessionId: string): readonly TurnResponseTurn[];
   send(text: string): Promise<AilyChatE2eSnapshot>;
   startImplementation(): Promise<AilyChatE2eSnapshot>;
   sendWhileDetached(text: string): Promise<AilyChatE2eSnapshot>;
@@ -52,7 +72,7 @@ type EnginePrivateAccess = {
     currentCustomAgentTarget?: string;
   };
   switchToMode: (mode: string) => Promise<void>;
-  switchToCustomAgent: (selection: { readonly modeId?: string; readonly customAgentTarget?: string }) => Promise<void>;
+  newChat?: () => Promise<void>;
   ensureSessionReadyForSubmit: () => Promise<string | null>;
   submitUserText: (content: string, options?: { clearInput?: boolean; sessionId?: string | null }) => Promise<void>;
   detachView: () => void;
@@ -61,6 +81,7 @@ type EnginePrivateAccess = {
   replaceSessionModelTurnResponses?: (
     sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
+    ownerPolicy?: { readonly allowForkedTurns?: boolean; readonly source?: string },
   ) => readonly TurnResponseTurn[] | void;
   syncExecutionRuntimeTurnResponses?: (
     sessionId: string,
@@ -81,6 +102,7 @@ type EnginePrivateAccess = {
     result: RuntimePlanReviewDecision,
     currentRequestPermissionLevel?: string,
   ) => Promise<void>;
+  startImplementationFromPlanPart?: (sessionId?: string | null) => Promise<void>;
   attachCurrentSessionView?: () => Promise<void>;
   lexStream?: {
     hydrateTurnResponses?: (
@@ -88,6 +110,9 @@ type EnginePrivateAccess = {
       turnResponses: readonly TurnResponseTurn[],
       options?: { readonly visibility?: string },
     ) => void;
+    turns?: {
+      complete?: (response: string) => void;
+    };
     turn?: {
       run?: DeterministicRun;
     };
@@ -150,46 +175,31 @@ function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
 
 function buildDeterministicResponse(engine: EnginePrivateAccess, prompt: string): {
   readonly text: string;
+  readonly parts?: NonNullable<TurnResponseTurn['response']['parts']>;
   readonly continuation?: TurnResponseTurn['response']['continuation'];
 } {
-  const resolvedMode = engine.currentResolvedMode as {
-    readonly kind?: string;
-    readonly isBuiltin?: boolean;
-    readonly name?: string;
-    readonly customAgentTarget?: string;
-  } | null | undefined;
   const selectedMode = engine.selectedMode as { readonly modeId?: string; readonly customAgentTarget?: string } | null | undefined;
-  const agentTarget = selectedMode?.customAgentTarget ?? resolvedMode?.customAgentTarget ?? '';
   const normalizedPrompt = prompt.trim();
+  const selectedModeId = typeof selectedMode?.modeId === 'string'
+    ? selectedMode.modeId.trim().toLowerCase()
+    : '';
 
-  if (resolvedMode?.kind === 'agent' && resolvedMode.isBuiltin === false && agentTarget.toLowerCase() === 'plan') {
+  if (engine.currentMode === 'plan' || selectedModeId === 'plan') {
+    const text = [
+      'Deterministic plan:',
+      '1. Inspect the requested change.',
+      '2. Identify affected files.',
+      '3. Hand off implementation to Agent when approved.',
+    ].join('\n');
     return {
-      text: [
-        'Deterministic plan:',
-        '1. Inspect the requested change.',
-        '2. Identify affected files.',
-        '3. Hand off implementation to Agent when approved.',
-      ].join('\n'),
-      continuation: {
-        interactionId: `e2e-plan-${Date.now()}`,
-        stepIndex: 1,
-        lease: 'e2e-plan-review',
-        status: 'waiting',
-        stopReason: 'waiting_plan_review',
-        pendingState: {
-          kind: 'plan_review',
-          review: {
-            id: 'e2e-plan-review',
-            title: 'Review Plan',
-            content: normalizedPrompt,
-            actions: [
-              { id: 'start_implementation', label: 'Start Implementation', permissionLevel: 'autopilot' },
-              { id: 'exit', label: 'Exit Plan Mode' },
-            ],
-            canProvideFeedback: true,
-          },
-        },
-      },
+      text,
+      parts: [{
+        type: 'plan',
+        partId: 'plan:e2e-proposed',
+        status: 'completed',
+        text,
+        source: 'proposed_plan',
+      } as any],
     };
   }
 
@@ -218,6 +228,7 @@ function completeLatestTurn(engine: EnginePrivateAccess, sessionId: string, prom
 
   const now = Date.now();
   const response = buildDeterministicResponse(engine, prompt);
+  engine.lexStream?.turns?.complete?.(response.text);
   const nextTurns = turns.map((turn, index) => {
     if (index !== turns.length - 1) {
       return cloneTurnResponseTurn(turn);
@@ -228,7 +239,7 @@ function completeLatestTurn(engine: EnginePrivateAccess, sessionId: string, prom
       response: {
         ...turn.response,
         status: 'completed',
-        parts: [{ type: 'markdown', content: response.text }],
+        parts: response.parts ?? [{ type: 'markdown', content: response.text }],
         resultText: response.text,
         updatedAt: now,
         ...(response.continuation ? { continuation: response.continuation } : {}),
@@ -256,6 +267,7 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       : [];
     const runtimeState = engine.chatSessionRuntimeStore?.read?.(sessionId) ?? null;
     const visibleText = document.querySelector('app-aily-chat')?.textContent ?? '';
+    const rendering = options.readRenderingDiagnostics?.();
 
     return {
       currentMode: engine.currentMode,
@@ -268,6 +280,7 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       runtimeState,
       visibleText,
       turnResponses,
+      ...(rendering ? { rendering } : {}),
     };
   };
 
@@ -298,8 +311,19 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
     },
     async selectPlan() {
       await installDeterministicRuntime();
-      await engine.switchToCustomAgent({ modeId: 'Plan', customAgentTarget: 'Plan' });
+      await engine.switchToMode('plan');
       return snapshot();
+    },
+    async newSession() {
+      await installDeterministicRuntime();
+      await engine.newChat?.();
+      return snapshot();
+    },
+    readTurns(sessionId: string) {
+      const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+      return targetSessionId
+        ? (engine.readSessionTurnResponses?.(targetSessionId) ?? []).map(cloneTurnResponseTurn)
+        : [];
     },
     async send(text: string) {
       await installDeterministicRuntime();
@@ -310,6 +334,11 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
     async startImplementation() {
       await installDeterministicRuntime();
       const sessionId = getCurrentSessionId(engine);
+      if (typeof engine.startImplementationFromPlanPart === 'function') {
+        await engine.startImplementationFromPlanPart(sessionId);
+        return snapshot();
+      }
+
       await engine.applyPlanReviewTransitionBeforeResume?.(
         sessionId,
         {

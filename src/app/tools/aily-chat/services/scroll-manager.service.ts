@@ -1,5 +1,23 @@
 import { Injectable, ElementRef } from '@angular/core';
 
+export type ChatRevealTarget =
+  | 'current-response'
+  | 'pending-confirmation'
+  | 'pending-question'
+  | 'pending-plan-review'
+  | 'checkpoint-anchor';
+
+export interface ChatRevealOptions {
+  readonly behavior?: ScrollBehavior;
+  readonly relativeTop?: number;
+  readonly followBottom?: boolean;
+  readonly maxAttempts?: number;
+}
+
+export interface ChatRevealHostDelegate {
+  prepareRevealTarget?(target: ChatRevealTarget, options: ChatRevealOptions): boolean;
+}
+
 /**
  * 管理聊天窗口的滚动行为：
  * - 维护接近 VS Code ChatListWidget 的 scrollLock 语义
@@ -14,13 +32,16 @@ export class ScrollManagerService {
   private _lastAtBottom: boolean | null = null;
   private _scrollRequestId = 0;
   private _exchangeRevealRequestId = 0;
+  private _targetRevealRequestId = 0;
   private _programmaticScrollRequestId = 0;
   private _ignoreNextScrollEvent = false;
   private _followBottomAfterExchangeReveal = false;
   private readonly _pendingExchangeTimeouts = new Set<ReturnType<typeof setTimeout>>();
   private readonly _pendingScrollTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  private readonly _pendingTargetRevealTimeouts = new Set<ReturnType<typeof setTimeout>>();
 
   private containerRef: ElementRef | null = null;
+  private revealHostDelegate: ChatRevealHostDelegate | null = null;
 
   /**
    * Canonical follow-bottom state, aligned with VS Code chat list terminology.
@@ -34,10 +55,15 @@ export class ScrollManagerService {
     this._scrollLock = value;
   }
 
+  setRevealHostDelegate(delegate: ChatRevealHostDelegate | null): void {
+    this.revealHostDelegate = delegate;
+  }
+
   /** 绑定聊天容器 DOM 引用（组件 ngAfterViewInit 时调用） */
   setContainer(ref: ElementRef): void {
     this.cancelPendingExchangeReveal();
     this.cancelPendingBottomScroll();
+    this.cancelPendingTargetReveal();
     this.containerRef = ref;
     this.syncCurrentResponseMinHeight();
     const element = this.containerRef?.nativeElement as HTMLElement | undefined;
@@ -158,10 +184,89 @@ export class ScrollManagerService {
     this.scheduleExchangeAttempt(attemptReveal, 0);
   }
 
+  /**
+   * 显式 reveal 某个聊天语义目标。
+   *
+   * VS Code ChatListWidget 暴露 reveal(element, relativeTop)，调用方按元素而不是按
+   * “整段会话滚到底部”来定位。这里保留相同边界：目标未挂载时只做有界重试，
+   * 不触发全量会话重建，也不把后台 session 的 UI 状态投影到当前会话。
+   */
+  revealTarget(target: ChatRevealTarget, options: ChatRevealOptions = {}): boolean {
+    const container = this.containerRef?.nativeElement as HTMLElement | undefined;
+    if (!container) {
+      return false;
+    }
+
+    this.cancelPendingTargetReveal();
+    this.revealHostDelegate?.prepareRevealTarget?.(target, options);
+
+    const requestId = ++this._targetRevealRequestId;
+    const maxAttempts = Math.max(0, options.maxAttempts ?? 20);
+    let attempts = 0;
+
+    const attemptReveal = () => {
+      if (requestId !== this._targetRevealRequestId) {
+        return;
+      }
+
+      const element = this.findRevealTargetElement(container, target);
+      if (!element) {
+        if (attempts >= maxAttempts) {
+          return;
+        }
+
+        attempts++;
+        this.scheduleTargetRevealAttempt(attemptReveal, 16);
+        return;
+      }
+
+      this.revealElement(element, options);
+    };
+
+    this.scheduleTargetRevealAttempt(attemptReveal, 0);
+    return true;
+  }
+
+  revealElement(target: HTMLElement | null | undefined, options: ChatRevealOptions = {}): boolean {
+    const container = this.containerRef?.nativeElement as HTMLElement | undefined;
+    if (!container || !target) {
+      return false;
+    }
+
+    const behavior = options.behavior ?? 'auto';
+    const relativeTop = options.relativeTop ?? 0;
+    const targetInContainer = this.isTargetInsideContainer(container, target);
+
+    if (!targetInContainer) {
+      if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior });
+      }
+      if (options.followBottom === true) {
+        this.setScrollLock(true);
+      }
+      return true;
+    }
+
+    this.cancelPendingExchangeReveal();
+    if (options.followBottom === true) {
+      this.setScrollLock(true);
+    }
+
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetTop = Math.min(maxScrollTop, Math.max(0, this.computeDialogTop(container, target) + relativeTop));
+    this._ignoreNextScrollEvent = true;
+    container.scrollTo({ top: targetTop, behavior });
+    this._lastTop = targetTop;
+    this._lastHeight = container.scrollHeight;
+    this._lastAtBottom = this.isAtBottom(container);
+    return true;
+  }
+
   /** 重置所有追踪状态（新会话时调用） */
   reset(): void {
     this.cancelPendingExchangeReveal();
     this.cancelPendingBottomScroll();
+    this.cancelPendingTargetReveal();
     this._scrollRequestId++;
     this._programmaticScrollRequestId = 0;
     this._followBottomAfterExchangeReveal = false;
@@ -295,6 +400,14 @@ export class ScrollManagerService {
     this._pendingScrollTimeouts.add(handle);
   }
 
+  private scheduleTargetRevealAttempt(callback: () => void, delayMs: number): void {
+    const handle = setTimeout(() => {
+      this._pendingTargetRevealTimeouts.delete(handle);
+      callback();
+    }, delayMs);
+    this._pendingTargetRevealTimeouts.add(handle);
+  }
+
   private cancelPendingExchangeReveal(): void {
     this._pendingExchangeTimeouts.forEach((handle) => clearTimeout(handle));
     this._pendingExchangeTimeouts.clear();
@@ -314,6 +427,12 @@ export class ScrollManagerService {
   private cancelPendingBottomScroll(): void {
     this._pendingScrollTimeouts.forEach((handle) => clearTimeout(handle));
     this._pendingScrollTimeouts.clear();
+  }
+
+  private cancelPendingTargetReveal(): void {
+    this._targetRevealRequestId++;
+    this._pendingTargetRevealTimeouts.forEach((handle) => clearTimeout(handle));
+    this._pendingTargetRevealTimeouts.clear();
   }
 
   private syncCurrentResponseMinHeight(): void {
@@ -343,6 +462,52 @@ export class ScrollManagerService {
   private findLatestUserDialog(container: HTMLElement): HTMLElement | null {
     const dialogs = container.querySelectorAll<HTMLElement>('.dialog-box.user');
     return dialogs.length ? dialogs[dialogs.length - 1] : null;
+  }
+
+  private findRevealTargetElement(container: HTMLElement, target: ChatRevealTarget): HTMLElement | null {
+    switch (target) {
+      case 'current-response':
+        return container.querySelector<HTMLElement>('.dialog-box.chat-most-recent-response');
+      case 'checkpoint-anchor':
+        return this.normalizeRevealElement(container.querySelector<HTMLElement>(
+          '.chat-checkpoint-restore-surface, .dialog-box.user.has-turn-actions, .user-turn-actions',
+        ));
+      case 'pending-confirmation':
+        return this.normalizeRevealElement(container.querySelector<HTMLElement>(
+          '.cag-item-pending-approval, .cag-item-confirmation-widget, .chat-confirmation-widget2, x-aily-confirmation-viewer',
+        ))
+          ?? this.findPageRevealElement(container, '.chat-tool-confirmation-carousel-container.has-confirmation');
+      case 'pending-question':
+        return this.normalizeRevealElement(container.querySelector<HTMLElement>('x-aily-question-viewer'))
+          ?? this.findPageRevealElement(container, '.chat-question-carousel-widget-container.has-question');
+      case 'pending-plan-review':
+        return this.findPageRevealElement(container, '.chat-plan-review-widget-container.has-plan-review');
+      default:
+        return null;
+    }
+  }
+
+  private findPageRevealElement(container: HTMLElement, selector: string): HTMLElement | null {
+    const root = typeof container.closest === 'function'
+      ? (container.closest<HTMLElement>('.chat-stage, .window-box') ?? container.ownerDocument?.body ?? null)
+      : (container.ownerDocument?.body ?? null);
+    return root?.querySelector<HTMLElement>(selector) ?? null;
+  }
+
+  private normalizeRevealElement(element: HTMLElement | null): HTMLElement | null {
+    return element?.closest<HTMLElement>('.dialog-box') ?? element;
+  }
+
+  private isTargetInsideContainer(container: HTMLElement, target: HTMLElement): boolean {
+    if (target === container) {
+      return true;
+    }
+
+    if (typeof container.contains === 'function') {
+      return container.contains(target);
+    }
+
+    return true;
   }
 
   private computeDialogTop(container: HTMLElement, dialog: HTMLElement): number {
