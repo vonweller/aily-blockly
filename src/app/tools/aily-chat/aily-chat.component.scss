@@ -39,6 +39,12 @@
   overflow: hidden;
 }
 
+:host-context([data-theme='light']) .btn.mode .mini-tag.warn {
+  border-color: rgba(161, 98, 7, 0.32);
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+}
+
 /* AI聊天组件主容器布局 - 包含TODO面板和聊天内容 */
 .aily-chat-wrapper {
   display: flex;
@@ -90,6 +96,10 @@
   &.has-session-sidebar {
     padding: 10px 0 10px 10px;
     box-sizing: border-box;
+
+    .dialogs {
+      padding-top: 0;
+    }
   }
 }
 
@@ -319,7 +329,6 @@
     flex-shrink: 0;
     min-width: 0;
     padding: 0 10px;
-    margin-bottom: -4px;
     box-sizing: border-box;
     position: relative;
   }
@@ -365,9 +374,9 @@
     gap: 0;
   }
 
-  .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) {
-    margin-bottom: 4px;
-  }
+  // .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) {
+  //   margin-bottom: 4px;
+  // }
 
   .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget {
     padding: 10px 16px 14px 16px;
@@ -1364,8 +1373,9 @@
       flex-shrink: 0;
 
       &.warn {
-        background: rgba(229, 192, 123, 0.16);
-        color: #f4d48e;
+        border-color: color-mix(in srgb, var(--aily-chat-token-budget-fill-warn, #e5c07b) 38%, transparent);
+        background: color-mix(in srgb, var(--aily-chat-token-budget-fill-warn, #e5c07b) 16%, var(--aily-bg-elevated, transparent));
+        color: var(--aily-chat-token-budget-fill-warn, #e5c07b);
       }
 
       &.danger {

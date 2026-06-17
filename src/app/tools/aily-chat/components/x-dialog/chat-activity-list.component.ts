@@ -34,7 +34,7 @@ import type { ActivityGroupDisplayItem } from './chat-activity-group.types';
       border-radius: 0;
       padding: 0;
       margin-top: 0;
-      margin-left: 5px;
+      margin-left: 6px;
       display: flex;
       flex-direction: column;
       overflow: visible;

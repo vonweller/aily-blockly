@@ -23,7 +23,7 @@ import { FloatingTodoComponent } from './floating-todo/floating-todo.component';
       display: flex;
       flex: 1 1 auto;
       flex-direction: column;
-      gap: 3px;
+      gap: 0;
       min-height: 0;
       position: relative;
     }

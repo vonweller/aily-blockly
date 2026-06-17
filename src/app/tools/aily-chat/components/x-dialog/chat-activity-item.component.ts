@@ -689,19 +689,19 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag-item::before {
       content: '';
       position: absolute;
-      left: 10.5px;
+      left: 10px;
       top: 0;
       bottom: 0;
       width: 1px;
       border-radius: 0;
       background-color: var(--chat-border, rgba(255,255,255,0.10));
-      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 25px, #000 24px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 25px, #000 24px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 8px 19px, #000 24px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 0px 19px, #000 24px 100%);
     }
 
     .cag-item.cag-item-first::before {
-      mask-image: linear-gradient(to bottom, transparent 0 25px, #000 25px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 25px, #000 25px 100%);
+      mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
     }
 
     .cag-item.cag-item-last::before {
@@ -722,8 +722,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item[data-kind='thinking'] {
-      padding-top: 5px;
-      padding-bottom: 4px;
+      padding-top: 0px;
+      padding-bottom: 0;
       padding-left: 24px;
     }
 
