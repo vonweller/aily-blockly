@@ -853,6 +853,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       align-items: center;
       gap: 6px;
       flex-shrink: 0;
+      align-self: flex-end;
     }
 
     .cag-item-toolbar {
