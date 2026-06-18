@@ -63,7 +63,7 @@ interface QuestionAnsweredEvent {
                         <span class="aq-opt-num">{{ $index + 1 }}</span>
                         <span class="aq-option-body">
                           <span class="aq-option-label">
-                            {{ opt.label }}
+                            <span>{{ opt.label }}</span>
                             @if (opt.recommended) {
                               <span class="aq-badge-rec">推荐</span>
                             }
@@ -280,7 +280,7 @@ interface QuestionAnsweredEvent {
     .aq-option-label {
       font-size: 12px;
       color: var(--aq-fg);
-      line-height: 1.35;
+      line-height: 1.4;
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -303,7 +303,7 @@ interface QuestionAnsweredEvent {
     .aq-option-desc {
       font-size: 11px;
       color: var(--aq-fg-dim);
-      line-height: 1.3;
+      line-height: 1.4;
       white-space: pre-wrap;
       word-break: break-word;
       overflow-wrap: anywhere;
@@ -344,8 +344,8 @@ interface QuestionAnsweredEvent {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      padding: 4px 8px;
+      gap: 5px;
+      padding: 5px;
       border-top: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       min-width: 0;
     }
