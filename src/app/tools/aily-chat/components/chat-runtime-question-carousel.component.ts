@@ -30,9 +30,9 @@ import type { AskUserAnswer } from '../core/ask-user';
     .rtq-shell {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 5px;
       margin: 0;
-      padding: 4px 3px;
+      padding: 0 5px;
       box-sizing: border-box;
       border: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255,255,255,0.08));
       border-bottom: none;
@@ -59,35 +59,41 @@ import type { AskUserAnswer } from '../core/ask-user';
 
     :host ::ng-deep .rtq-viewer .aq-card .cphs-header {
       min-height: 22px;
-      padding: 0 3px;
+      padding: 10px 5px;
       border-radius: 2px;
       background: transparent;
     }
 
     :host ::ng-deep .rtq-viewer .aq-body {
-      margin-top: 2px;
       border-top: none;
     }
 
     :host ::ng-deep .rtq-viewer .aq-input-container {
       gap: 4px;
-      padding: 2px 3px 3px;
+      padding: 0;
+      margin-bottom: 5px;
     }
 
     :host ::ng-deep .rtq-viewer .aq-options {
-      gap: 4px;
+      gap: 5px;
     }
 
     :host ::ng-deep .rtq-viewer .aq-option {
       min-height: 22px;
-      padding: 0 3px;
-      border: none;
+      padding: 5px;
+      border-color: transparent;
       border-radius: 2px;
       background: transparent;
     }
 
     :host ::ng-deep .rtq-viewer .aq-option:hover:not(.aq-disabled) {
-      background: var(--aily-chat-viewer-overlay-hover, rgba(255,255,255,0.06));
+      background: var(--aily-chat-viewer-option-hover, var(--aily-chat-viewer-overlay-hover, rgba(255,255,255,0.06)));
+      border-color: var(--aq-border-soft, transparent);
+    }
+
+    :host ::ng-deep .rtq-viewer .aq-option.aq-checked {
+      background: var(--aily-chat-viewer-option-selected-bg, rgba(24,144,255,0.08));
+      border-color: var(--aily-chat-viewer-option-selected-border, rgba(24,144,255,0.35));
     }
 
     :host ::ng-deep .rtq-viewer .aq-freeform {

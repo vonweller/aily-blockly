@@ -144,7 +144,7 @@ import { CommonModule } from '@angular/common';
       display: inline;
       min-width: 0;
       font-size: 12px;
-      line-height: 1.35;
+      line-height: 1.4;
       color: inherit;
       white-space: pre-wrap;
       word-break: break-word;

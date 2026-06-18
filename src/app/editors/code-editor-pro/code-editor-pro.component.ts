@@ -54,8 +54,12 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
 
   coderEmbedSrc: SafeResourceUrl | null = null;
   coderEmbedError: string | null = null;
+  coderEmbedLoading = true;
+  coderEmbedFrameReady = false;
+  coderEmbedRevealing = false;
   /** 内嵌 iframe 打开的本地工程根路径（Electron postMessage FS 断言用） */
   private coderEmbedWorkspaceRoot: string | null = null;
+  private coderEmbedRevealTimer?: ReturnType<typeof setTimeout>;
 
   private readonly coderDevEmbedBase = 'http://127.0.0.1:5174/';
 
@@ -162,13 +166,10 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
     this.proProject.init();
     this.activatedRoute.queryParams.subscribe((params) => {
       if (params['path']) {
-        try {
-          void this.bootstrap(params['path']);
-        } catch (error) {
-          console.error('加载项目失败', error);
-          this.message.error('加载项目失败，请检查项目文件是否完整');
-        }
+        void this.bootstrap(params['path']);
       } else {
+        this.coderEmbedLoading = false;
+        this.coderEmbedError = '没有找到项目路径';
         this.message.error('没有找到项目路径');
       }
     });
@@ -205,18 +206,29 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
    * 先 loadProject 设置 currentProjectPath，再安装依赖；最后启动 iframe（避免 installBoardDeps 读错工程路径）。
    */
   private async bootstrap(projectPath: string) {
-    const pathApi = window['path'] as { resolve?: (p: string) => string };
-    const resolved = pathApi.resolve ? pathApi.resolve(projectPath) : projectPath;
-    this.coderEmbedWorkspaceRoot = resolved;
-    this.aiCoderDiffBridge.setWorkspaceRoot(resolved);
-    await this.ensureProjectPackageJsonExists(resolved);
-    await this.loadProject(resolved);
-    void this.ensureNpmDepsWithRetry(resolved);
-    await this.initCoderEmbed(resolved);
-    this.setupBuildOutputsWatch(resolved);
+    try {
+      this.beginCoderEmbedLoading();
+      const pathApi = window['path'] as { resolve?: (p: string) => string };
+      const resolved = pathApi.resolve ? pathApi.resolve(projectPath) : projectPath;
+      this.coderEmbedWorkspaceRoot = resolved;
+      this.aiCoderDiffBridge.setWorkspaceRoot(resolved);
+      await this.ensureProjectPackageJsonExists(resolved);
+      await this.loadProject(resolved);
+      void this.ensureNpmDepsWithRetry(resolved);
+      await this.initCoderEmbed(resolved);
+      this.setupBuildOutputsWatch(resolved);
+    } catch (error: any) {
+      console.error('加载项目失败', error);
+      this.coderEmbedLoading = false;
+      this.coderEmbedFrameReady = false;
+      this.coderEmbedRevealing = false;
+      this.coderEmbedError = error?.message || String(error || '加载项目失败');
+      this.message.error('加载项目失败，请检查项目文件是否完整');
+    }
   }
 
   ngOnDestroy(): void {
+    this.clearCoderEmbedRevealTimer();
     this.embedHostResizeObserver?.disconnect();
     this.embedHostResizeObserver = undefined;
     window.removeEventListener('resize', this.onEmbedLayoutResize);
@@ -312,6 +324,7 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
 
   private async initCoderEmbed(projectPath: string) {
     try {
+      this.beginCoderEmbedLoading();
       await this.writeCoderEmbedHints(projectPath);
       let base: string;
       const api = (window as any).electronAPI;
@@ -333,6 +346,9 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       setTimeout(() => void this.pushAilyCoderHostContext(projectPath), 0);
     } catch (e: any) {
       console.error(e);
+      this.coderEmbedLoading = false;
+      this.coderEmbedFrameReady = false;
+      this.coderEmbedRevealing = false;
       this.coderEmbedError = e?.message || String(e);
       this.message.error('无法启动内嵌代码编辑器：' + this.coderEmbedError);
     }
@@ -344,6 +360,14 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
   onCoderEmbedFrameLoad(): void {
     const frame = this.coderEmbedFrame?.nativeElement;
     const root = this.coderEmbedWorkspaceRoot;
+    this.coderEmbedFrameReady = true;
+    this.coderEmbedRevealing = true;
+    this.clearCoderEmbedRevealTimer();
+    this.coderEmbedRevealTimer = setTimeout(() => {
+      this.coderEmbedLoading = false;
+      this.coderEmbedRevealing = false;
+      this.coderEmbedRevealTimer = undefined;
+    }, 1240);
     if (root) {
       this.aiCoderDiffBridge.setWorkspaceRoot(root);
     }
@@ -352,6 +376,21 @@ export class CodeEditorProComponent implements OnInit, OnDestroy, AfterViewInit 
       void this.pushAilyCoderHostContext(root);
     }
     requestAnimationFrame(() => this.requestCoderEmbedLayoutRefresh());
+  }
+
+  private beginCoderEmbedLoading(): void {
+    this.clearCoderEmbedRevealTimer();
+    this.coderEmbedLoading = true;
+    this.coderEmbedFrameReady = false;
+    this.coderEmbedRevealing = false;
+    this.coderEmbedError = null;
+  }
+
+  private clearCoderEmbedRevealTimer(): void {
+    if (this.coderEmbedRevealTimer) {
+      clearTimeout(this.coderEmbedRevealTimer);
+      this.coderEmbedRevealTimer = undefined;
+    }
   }
 
   /** 解析编译产物并生成 hints / hostContext 共用的构建输出字段 */

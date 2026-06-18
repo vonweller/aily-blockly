@@ -3,6 +3,14 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from 
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 
 import type { ChatSessionListAction, ChatSessionListItem } from '../services/menu-manager.service';
+
+const PRIMARY_SESSION_ACTIONS = new Set(['pin-session', 'unpin-session']);
+const OVERFLOW_SESSION_ACTIONS = new Set([
+  'archive-session',
+  'unarchive-session',
+  'rename-session',
+  'delete-session',
+]);
 import { createBuiltinChatResolvedMode, normalizeChatModeId } from '../core/chat-mode';
 import {
   type ChatSessionInventoryGroup,
@@ -115,6 +123,18 @@ export class ChatSessionEntriesComponent {
       || action.action === 'unpin-session'
       || action.action === 'archive-session'
       || action.action === 'unarchive-session';
+  }
+
+  primaryActions(item: ChatSessionListItem): readonly ChatSessionListAction[] {
+    return item.actions.filter((action) => PRIMARY_SESSION_ACTIONS.has(action.action));
+  }
+
+  overflowActions(item: ChatSessionListItem): readonly ChatSessionListAction[] {
+    return item.actions.filter((action) => OVERFLOW_SESSION_ACTIONS.has(action.action));
+  }
+
+  hasOverflowActions(item: ChatSessionListItem): boolean {
+    return this.overflowActions(item).length > 0;
   }
 
   isCollapsibleGroup(group: ChatSessionInventoryGroup): boolean {

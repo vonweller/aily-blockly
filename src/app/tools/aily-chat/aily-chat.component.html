@@ -132,7 +132,9 @@
     </div>
     } @else {
     @if (paneStageSurfaceModel; as paneStageSurface) {
-    <div class="chat-main-layout" [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
+    <div
+      class="chat-main-layout"
+      [class.has-session-sidebar]="paneStageSurface.showSidebarSessionList">
       @if (paneStageSurface.showSidebarSessionList) {
       @if (paneStageSurface.sidebarSessionListSurface; as sidebarSessionSurface) {
       <div
@@ -155,6 +157,7 @@
         <div
           class="dialog-list sscroll"
           #chatContainer
+          [class.has-conversation]="paneStageSurface.showConversation"
           [class.has-stacked-session-list]="paneStageSurface.showStackedSessionList && !paneStageSurface.showConversation"
           (scroll)="handleConversationScroll()">
       @if (paneStageSurface.showConversation) {
@@ -189,11 +192,13 @@
             [liveParts]="getLivePartsForDialogItem(item)"
             [workspaceCheckpointPresentationMode]="vm.workspaceCheckpointPresentationMode"
             [exclusiveEditTurnId]="userMessageEditingTurnId"
+            [showModeMenu]="menuManager.showMode"
+            [showModelMenu]="menuManager.showModelMenu"
             (editSessionOpened)="onUserMessageEditSessionOpened($event)"
             (editSessionClosed)="onUserMessageEditSessionClosed()"
             (dismissSessionMenus)="closeChatSessionMenus()"
             (editAndResend)="surfaceShellCoordinator.editAndResend($event)"
-            (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event)"
+            (editModeToggle)="switchShellCoordinator.toggleModeMenu($event.event, vm.modeMenuItems)"
             (editModelToggle)="switchShellCoordinator.toggleModelMenu($event.event, vm.modelMenuItems)"
             (editAddFile)="editResourceShellCoordinator.addFile($event)"
             (editAddFolder)="editResourceShellCoordinator.addFolder($event)"
@@ -451,21 +456,33 @@
               (keydown)="composerShellCoordinator.handleKeyDown($event)" (input)="composerShellCoordinator.updateSuggestions()">
             </textarea>
           </div>
-          <div class="btns">
+          <div class="btns" [class.has-expanded-context]="resourceManager.showAddList">
             <aily-chat-context-toolbar
               [showAddList]="resourceManager.showAddList"
+              [showModeMenu]="menuManager.showMode"
+              [showModelMenu]="menuManager.showModelMenu"
               [currentMode]="vm.currentMode"
               [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
               [selectedMode]="vm.selectedMode"
-              [showModelChip]="vm.modelMenuItems.length > 0"
+              [showModelChip]="false"
+              [showModeLabel]="true"
               [modelChipLabel]="vm.currentModelChipLabel"
               [modelBillingLabel]="vm.currentModelBillingLabel"
               (toggleAddList)="resourceManager.toggleAddList()"
               (addFile)="resourceManager.addFile()"
               (addFolder)="resourceManager.addFolder()"
-              (modeClick)="switchShellCoordinator.toggleModeMenu($event)"
+              (modeClick)="switchShellCoordinator.toggleModeMenu($event, vm.modeMenuItems)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
+            <div class="btn mode permission-mode-indicator ccenter"
+              #permissionModeTooltip="nzTooltip"
+              nz-tooltip nzTooltipPlacement="bottom"
+              [nzTooltipTrigger]="permissionTooltipTrigger"
+              [nzTooltipTitle]="vm.currentPermissionLabel"
+              (click)="togglePermissionMenu($event)">
+              <i [class]="permissionButtonIconClass"></i>
+              <span>{{ vm.currentPermissionLabel | slice:0:2 }}</span>
+            </div>
             <!-- Context usage widget：按 Copilot / VS Code 的 widget/details 结构渲染 request-scoped usage -->
             @if(vm.contextUsageDisplay; as contextUsage) {
             <div class="token-budget-indicator chat-context-usage-widget ccenter"
@@ -651,18 +668,20 @@
               </span>
             </div>
             }
-            <div class="btn mode permission-mode-indicator ccenter"
-              [class.right2]="!shouldShowStopPrimaryAction() || !shouldShowSendPrimaryAction()"
-              [class.right3]="shouldShowStopPrimaryAction() && shouldShowSendPrimaryAction()"
-              nz-tooltip nzTooltipPlacement="top"
-              [nzTooltipTitle]="vm.currentPermissionLabel"
-              (click)="togglePermissionMenu($event)">
-              <i [class]="permissionButtonIconClass"></i>
+            <div class="composer-primary-actions">
+            @if(vm.modelMenuItems.length > 0) {
+            <div class="composer-model-chip ccenter"
+              #composerModelTooltip="nzTooltip"
+              nz-tooltip nzTooltipPlacement="bottom"
+              [nzTooltipTrigger]="composerModelTooltipTrigger"
+              [nzTooltipTitle]="vm.currentModelName"
+              (click)="onComposerModelMenuClick($event)">
+              <i class="fa-light fa-star-christmas"></i>
+              <span>{{ vm.currentModelChipLabel }}</span>
             </div>
+            }
             @if(shouldShowSendPrimaryAction()) {
             <div class="btn ccenter"
-              [class.right]="!shouldShowStopPrimaryAction()"
-              [class.right2]="shouldShowStopPrimaryAction()"
               [ngClass]="{'disabled': isSendPrimaryActionDisabled()}"
               nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="getSendPrimaryActionTooltip()"
@@ -671,7 +690,7 @@
             </div>
             }
             @if(shouldShowStopPrimaryAction()) {
-            <div class="btn right ccenter lloading" nzTooltipPlacement="bottom" nz-tooltip
+            <div class="btn ccenter lloading" nzTooltipPlacement="bottom" nz-tooltip
               [nzTooltipTitle]="'AILY_CHAT.STOP' | translate"
               (click)="submitShellCoordinator.stopActiveRequest()">
               <div class="stop-box ccenter">
@@ -682,6 +701,7 @@
               </div>
             </div>
             }
+            </div>
           </div>
         </div>
         </aily-chat-input-part-host>
@@ -713,17 +733,19 @@
 }
 
 @if(menuManager.showMode){
-<app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition" (closeEvent)="menuManager.closeAll()"
+<app-menu class="mode-menu" [menuList]="vm.modeMenuItems" [position]="menuManager.modeListPosition"
+  tooltipOverlayClassName="aily-chat-menu-left-tooltip" tooltipPlacement="leftTop" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modeMenuClick($event)" (actionClickEvent)="switchShellCoordinator.modeMenuActionClick($event)"></app-menu>
 }
 
 @if(menuManager.showPermissionMenu){
-<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="280" (closeEvent)="menuManager.closeAll()"
+<app-menu class="permission-menu" [menuList]="permissionMenuItems" [position]="menuManager.permissionMenuPosition" [width]="menuManager.permissionMenuWidth"
+  tooltipOverlayClassName="aily-chat-menu-left-tooltip" tooltipPlacement="leftTop" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handlePermissionMenuClick($event)"></app-menu>
 }
 
 @if(menuManager.showModelMenu){
-<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="320" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
+<app-menu class="model-menu" [menuList]="vm.modelMenuItems" [position]="menuManager.modelListPosition" [width]="menuManager.modelMenuWidth" [globalFilterPlaceholder]="'搜索模型'" [focusGlobalFilterOnOpen]="true" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (subItemClickEvent)="switchShellCoordinator.modelMenuClick($event)" (actionClickEvent)="handleModelMenuActionClick($event)"></app-menu>
 }
 
@@ -736,5 +758,3 @@
 <app-menu class="action-menu" [menuList]="actionMenuItems" [position]="menuManager.actionMenuPosition" [width]="300" (closeEvent)="menuManager.closeAll()"
   (itemClickEvent)="handleActionMenuClick($event)"></app-menu>
 }
-
-

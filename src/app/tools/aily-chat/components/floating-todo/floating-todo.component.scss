@@ -4,7 +4,7 @@
 }
 
 .chat-todo-list-widget {
-  padding: 4px 3px;
+  padding: 0 3px;
   box-sizing: border-box;
   border: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
   border-bottom: none;
@@ -14,12 +14,13 @@
   color: var(--aily-text-tertiary, #cccccc);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
   overflow: hidden;
 }
 
 .todo-list-expand {
   width: 100%;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 0;
@@ -29,11 +30,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  align-self: stretch;
   width: 100%;
+  min-height: 30px;
   min-width: 0;
   padding: 0;
   border: none;
-  border-radius: 2px;
+  border-radius: 4px;
   background: transparent;
   color: var(--aily-text-tertiary, #cccccc);
   cursor: pointer;
@@ -55,9 +58,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-left: 3px;
+  min-height: 30px;
+  padding-left: 4px;
   font-size: 12px;
-  line-height: 22px;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -84,7 +88,7 @@
   text-overflow: ellipsis;
   font-size: 12px;
   font-weight: 400;
-  line-height: 22px;
+  line-height: 18px;
   color: var(--aily-text-tertiary, #cccccc);
 }
 
@@ -99,23 +103,25 @@
   flex-shrink: 0;
   width: 12px;
   font-size: 11px;
+  line-height: 1;
 }
 
 .todo-clear-button-container {
   display: flex;
   align-items: center;
-  height: 18px;
-  padding-right: 2px;
+  align-self: stretch;
+  min-height: 30px;
+  padding-right: 3px;
   flex-shrink: 0;
   opacity: 1;
 }
 
 .todo-clear-button {
-  width: 16px;
-  height: 16px;
-  padding: 3px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: none;
-  border-radius: 2px;
+  border-radius: 4px;
   background: transparent;
   color: var(--aily-text-tertiary, #cccccc);
   display: inline-flex;
@@ -154,13 +160,15 @@
 }
 
 .todo-list-container {
-  margin-top: 2px;
-  max-height: calc(6.5 * 21px);
+  margin-top: 0;
+  max-height: calc(6.5 * 24px + 8px);
+  padding: 4px 0;
+  border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.06));
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
-  scroll-padding-top: 24px;
-  scroll-padding-bottom: 24px;
+  scroll-padding-top: 8px;
+  scroll-padding-bottom: 8px;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -179,7 +187,7 @@
 .todo-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   scroll-snap-type: y proximity;
 }
 
@@ -188,10 +196,10 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 22px;
-  padding: 0 3px;
+  min-height: 24px;
+  padding: 3px 4px;
   border: none;
-  border-radius: 2px;
+  border-radius: 4px;
   background: transparent;
   cursor: pointer;
   scroll-snap-align: start;
@@ -220,6 +228,7 @@
   flex-shrink: 0;
   width: 16px;
   font-size: 14px;
+  line-height: 1;
 
   &.status-pending,
   &.status-in-progress,
@@ -249,8 +258,10 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  line-height: 18px;
 }
 
 .todo-text {
   color: var(--aily-text-tertiary, #cccccc);
+  line-height: 18px;
 }

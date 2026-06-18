@@ -24,7 +24,6 @@
 // ===== 对话气泡容器（Copilot interactive-item-container 对齐）=====
 .dialog-box {
   position: relative;
-  margin: 2px 0;
   border-radius: 5px;
   background: transparent;
   min-width: 0;
@@ -224,7 +223,7 @@
 }
 
 .content {
-  padding: 4px 0 8px;
+  padding: 5px 0 5px;
   user-select: text;
   min-width: 0;
   max-width: 100%;
@@ -406,6 +405,7 @@
         max-width: 100%;
         display: block;
         overflow-x: auto;
+        margin-bottom: 12px;
       }
 
       h2 {
@@ -427,7 +427,7 @@
       table {
         border-collapse: collapse;
         overflow: hidden;
-        box-shadow: var(--aily-chat-xdialog-md-table-shadow, 0 1px 3px rgba(255, 255, 255, 0.05));
+        box-shadow: none;
         border-radius: 5px;
       }
       
@@ -484,7 +484,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 2px 4px;
   min-height: 24px;
   transition: opacity 0.15s ease;
 
@@ -593,7 +592,7 @@
 .edit-input-box {
   display: flex;
   flex-direction: column;
-  margin: 5px 10px 5px;
+  margin: 5px 0 5px;
   padding: 5px;
   border-radius: 5px;
   border: 1px solid var(--aily-chat-xdialog-msg-divider, var(--chat-border));
@@ -678,6 +677,8 @@
     height: 28px;
     position: relative;
     align-items: center;
+    container-type: inline-size;
+    container-name: aily-chat-edit-toolbar;
 
     .edit-btn {
       width: 28px;

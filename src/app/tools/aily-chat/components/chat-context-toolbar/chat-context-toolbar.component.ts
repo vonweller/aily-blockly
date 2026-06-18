@@ -5,10 +5,11 @@ import {
   HostBinding,
   Input,
   Output,
+  ViewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslateModule } from '@ngx-translate/core';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { NzToolTipModule, NzTooltipDirective } from 'ng-zorro-antd/tooltip';
 import type { ChatSelectedMode } from '../../core/chat-mode';
 
 export type ChatContextToolbarAppearance = 'edit' | 'composer';
@@ -22,12 +23,21 @@ export type ChatContextToolbarAppearance = 'edit' | 'composer';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatContextToolbarComponent {
+  @ViewChild('modeChipTooltip', { read: NzTooltipDirective })
+  private modeChipTooltip?: NzTooltipDirective;
+
+  @ViewChild('modelChipTooltip', { read: NzTooltipDirective })
+  private modelChipTooltip?: NzTooltipDirective;
+
   @Input() appearance: ChatContextToolbarAppearance = 'composer';
   @Input() showAddList = false;
+  @Input() showModeMenu = false;
+  @Input() showModelMenu = false;
   @Input() currentMode = 'agent';
   @Input() currentCustomAgentTarget: string | undefined;
   @Input() selectedMode: Pick<ChatSelectedMode, 'modeId' | 'customAgentTarget'> | null | undefined;
   @Input() showModelChip = false;
+  @Input() showModeLabel = true;
   @Input() modelChipLabel = '';
   @Input() modelBillingLabel = '';
 
@@ -45,6 +55,14 @@ export class ChatContextToolbarComponent {
   @HostBinding('class.acc-host--composer')
   get isComposerAppearance(): boolean {
     return this.appearance === 'composer';
+  }
+
+  get modeTooltipTrigger(): 'hover' | null {
+    return this.showModeMenu ? null : 'hover';
+  }
+
+  get modelTooltipTrigger(): 'hover' | null {
+    return this.showModelMenu ? null : 'hover';
   }
 
   get modeIconClass(): string {
@@ -108,5 +126,23 @@ export class ChatContextToolbarComponent {
       ? this.currentCustomAgentTarget.trim()
       : '';
     return selectedCustomAgentTarget || currentCustomAgentTarget || undefined;
+  }
+
+  get modeTooltipTitle(): string {
+    if (this.currentCustomAgentTarget && this.currentMode === 'agent') {
+      return this.currentCustomAgentTarget;
+    }
+
+    return this.modeLabelKey ?? '';
+  }
+
+  onModeClick(event: MouseEvent): void {
+    this.modeChipTooltip?.hide();
+    this.modeClick.emit(event);
+  }
+
+  onModelClick(event: MouseEvent): void {
+    this.modelChipTooltip?.hide();
+    this.modelClick.emit(event);
   }
 }

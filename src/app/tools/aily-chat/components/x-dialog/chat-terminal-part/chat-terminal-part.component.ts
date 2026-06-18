@@ -77,7 +77,7 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       min-width: 0;
       overflow: hidden;
       border-radius: 6px;
-      background: color-mix(in srgb, var(--chat-bg-elevated, #1f1f1f) 86%, #000 14%);
+      background: var(--aily-chat-viewer-code-bg, var(--chat-bg-subtle, #181818));
     }
 
     .terminal-tool-title {
@@ -86,11 +86,11 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       gap: 8px;
       min-width: 0;
       padding: 5px 8px;
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid var(--chat-border, rgba(255,255,255,0.12));
       border-bottom: 0;
       border-top-left-radius: 6px;
       border-top-right-radius: 6px;
-      background: color-mix(in srgb, var(--chat-bg-elevated, #252526) 92%, #fff 8%);
+      background: color-mix(in srgb, var(--aily-chat-viewer-panel, var(--chat-bg-subtle, #252526)) 88%, var(--chat-bg-hover, transparent) 12%);
     }
 
     .terminal-tool-decoration {
@@ -163,29 +163,29 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       flex: 0 0 auto;
       padding: 1px 6px;
       border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid var(--chat-border-dim, rgba(255,255,255,0.1));
       color: var(--chat-fg-dim, #8e8e8e);
-      background: rgba(255,255,255,0.04);
+      background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
       font-size: 10px;
       line-height: 1.4;
     }
 
     .terminal-tool-status[data-tone='success'] {
       color: var(--chat-success, #89d185);
-      border-color: rgba(137, 209, 133, 0.22);
-      background: rgba(137, 209, 133, 0.08);
+      border-color: color-mix(in srgb, var(--chat-success, #89d185) 32%, transparent);
+      background: color-mix(in srgb, var(--chat-success, #89d185) 10%, transparent);
     }
 
     .terminal-tool-status[data-tone='error'] {
       color: var(--chat-error, #f14c4c);
-      border-color: rgba(241, 76, 76, 0.22);
-      background: rgba(241, 76, 76, 0.08);
+      border-color: color-mix(in srgb, var(--chat-error, #f14c4c) 32%, transparent);
+      background: color-mix(in srgb, var(--chat-error, #f14c4c) 10%, transparent);
     }
 
     .terminal-tool-status[data-tone='info'] {
       color: var(--chat-info, #75beff);
-      border-color: rgba(117, 190, 255, 0.2);
-      background: rgba(117, 190, 255, 0.08);
+      border-color: color-mix(in srgb, var(--chat-info, #75beff) 30%, transparent);
+      background: color-mix(in srgb, var(--chat-info, #75beff) 10%, transparent);
     }
 
     .terminal-action-bar {
@@ -214,8 +214,8 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
     .terminal-action-button:hover:not(:disabled),
     .terminal-action-button:focus-visible:not(:disabled) {
       color: var(--chat-fg, #cccccc);
-      background: rgba(255,255,255,0.08);
-      border-color: rgba(255,255,255,0.12);
+      background: var(--chat-bg-hover, rgba(255,255,255,0.08));
+      border-color: var(--chat-border-dim, rgba(255,255,255,0.12));
       outline: none;
     }
 
@@ -228,12 +228,12 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       max-height: 300px;
       min-height: 0;
       overflow: auto;
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid var(--chat-border, rgba(255,255,255,0.12));
       border-bottom-left-radius: 6px;
       border-bottom-right-radius: 6px;
-      background: color-mix(in srgb, var(--chat-bg, #181818) 88%, #000 12%);
+      background: var(--aily-chat-viewer-code-bg, color-mix(in srgb, var(--aily-chat-viewer-panel, #181818) 88%, #000 12%));
       scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.22) transparent;
+      scrollbar-color: var(--aily-chat-viewer-scrollbar, rgba(255,255,255,0.22)) transparent;
     }
 
     .terminal-output-container:focus-visible {
@@ -254,7 +254,7 @@ import type { ActivityToolbarActionDisplayData } from '../chat-activity-group.ty
       font-family: Consolas, 'Courier New', monospace;
       font-size: 12px;
       line-height: 1.45;
-      color: var(--chat-fg, #cccccc);
+      color: var(--aily-chat-viewer-code-fg, var(--chat-fg, #cccccc));
     }
 
     .terminal-output-label {

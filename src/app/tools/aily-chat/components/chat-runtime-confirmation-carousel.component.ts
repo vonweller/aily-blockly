@@ -114,10 +114,6 @@ import { XAilyConfirmationViewerComponent } from './x-dialog/x-aily-confirmation
       margin: 0;
     }
 
-    :host ::ng-deep .rtc-viewer .aa-body {
-      gap: 4px;
-    }
-
     :host ::ng-deep .rtc-viewer .aa-message {
       padding: 0 3px;
     }

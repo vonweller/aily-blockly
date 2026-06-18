@@ -12,7 +12,7 @@ interface MenuManagerLike {
   showMode: boolean;
   showPermissionMenu: boolean;
   showModelMenu: boolean;
-  toggleModeMenu(event: MouseEvent): void;
+  toggleModeMenu(event: MouseEvent, modeItems?: IMenuItem[]): void;
   togglePermissionMenu(event: MouseEvent, permissionItems: IMenuItem[]): void;
   toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void;
 }
@@ -60,9 +60,9 @@ export class ChatSwitchShellCoordinator {
     },
   ) {}
 
-  toggleModeMenu(event: MouseEvent): void {
+  toggleModeMenu(event: MouseEvent, modeItems: IMenuItem[] = []): void {
     this.deps.viewState.closeSessionPicker();
-    this.deps.menuManager.toggleModeMenu(event);
+    this.deps.menuManager.toggleModeMenu(event, modeItems);
   }
 
   toggleModelMenu(event: MouseEvent, modelItems: IMenuItem[]): void {

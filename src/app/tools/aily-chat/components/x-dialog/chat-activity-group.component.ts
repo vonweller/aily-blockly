@@ -156,10 +156,10 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag.cag-expanded::after {
       content: '';
       position: absolute;
-      left: 3px;
-      top: 22px;
+      left: 7px;
+      top: 19px;
       height: 16px;
-      width: 5px;
+      width: 4px;
       border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom-left-radius: 5px;
@@ -196,7 +196,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       justify-content: center;
       width: 16px;
       height: 16px;
-      margin-top: 1px;
+      top: 2px;
+      position: relative;
     }
 
     .cag-icon {
@@ -253,6 +254,10 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
     .cag-tool-group-detail {
       opacity: 0.7;
+    }
+
+    .cag-subagent-detail {
+      align-self: flex-end;
     }
 
     .cag-state-title,
@@ -312,7 +317,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       min-width: 12px;
       margin-left: auto;
       align-self: flex-start;
-      padding-top: 2px;
+      padding-top: 5px;
       opacity: 0;
       transition: opacity 0.15s ease;
     }

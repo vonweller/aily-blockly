@@ -12,6 +12,9 @@
     <div
       class="acc-back ccenter"
       [class.acc-back--composer]="appearance === 'composer'"
+      nz-tooltip
+      nzTooltipPlacement="bottom"
+      [nzTooltipTitle]="'AILY_CHAT.ADD_CONTEXT' | translate"
       (click)="toggleAddList.emit()"
     >
       <i class="fa-light fa-angle-left"></i>
@@ -20,6 +23,7 @@
   <div
     class="acc-sub ccenter"
     nz-tooltip
+    nzTooltipPlacement="bottom"
     [nzTooltipTitle]="'AILY_CHAT.ADD_FILE' | translate"
     (click)="addFile.emit()"
   >
@@ -28,24 +32,43 @@
   <div
     class="acc-sub ccenter"
     nz-tooltip
+    nzTooltipPlacement="bottom"
     [nzTooltipTitle]="'AILY_CHAT.ADD_FOLDER' | translate"
     (click)="addFolder.emit()"
   >
     <i class="fa-light fa-folder-plus"></i>
   </div>
 }
-<div class="acc-chip ccenter" (click)="modeClick.emit($event)">
+<div
+  #modeChipTooltip="nzTooltip"
+  class="acc-chip ccenter"
+  [class.acc-chip--after-expanded-context]="showAddList"
+  nz-tooltip
+  nzTooltipPlacement="bottom"
+  [nzTooltipTrigger]="modeTooltipTrigger"
+  [nzTooltipTitle]="currentCustomAgentTarget && currentMode === 'agent' ? currentCustomAgentTarget : (modeTooltipTitle | translate)"
+  (click)="onModeClick($event)"
+>
   <i [class]="modeIconClass"></i>
   @if (displayCustomAgentTarget) {
     <span>{{ displayCustomAgentTarget }}</span>
-  } @else if (modeLabelKey) {
+  } @else if (showModeLabel && modeLabelKey) {
     <span>{{ modeLabelKey | translate }}</span>
   } @else if (modePlainLabel) {
     <span>{{ modePlainLabel }}</span>
   }
 </div>
 @if (showModelChip) {
-  <div class="acc-chip ccenter" (click)="modelClick.emit($event)">
+  <div
+    #modelChipTooltip="nzTooltip"
+    class="acc-chip ccenter"
+    [class.acc-chip--after-expanded-context]="showAddList"
+    nz-tooltip
+    nzTooltipPlacement="bottom"
+    [nzTooltipTrigger]="modelTooltipTrigger"
+    [nzTooltipTitle]="modelChipLabel"
+    (click)="onModelClick($event)"
+  >
     <i class="fa-light fa-star-christmas"></i><span>{{ modelChipLabel }}</span>
     <!-- @if (modelBillingLabel) {
       <span class="acc-mini-tag">{{ modelBillingLabel }}</span>

@@ -285,13 +285,13 @@ function buildFallbackToolCallOutputRow(
         ? 'progress'
         : undefined;
 
-  return {
+  return normalizeReadFileToolOutputRow({
     id,
     title: toolName || '工具输出',
     note: text,
     trailing: phase ? formatNarrativePhase(phase) : undefined,
     tone: phase ? toneFromNarrativePhase(phase) : 'neutral',
-  };
+  }, toolName);
 }
 
 function asMeaningfulToolCallFallbackText(
@@ -2120,14 +2120,14 @@ function buildToolCallOutputRows(
     });
   }
 
-  return [{
+  return [normalizeReadFileToolOutputRow({
     id: `${recordId}:output`,
     title: summary || toolName || '工具输出',
     subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
     note: resultText,
     trailing: phase ? formatNarrativePhase(phase) : undefined,
     tone: toneFromNarrativePhase(phase),
-  }];
+  }, toolName)];
 }
 
 function buildToolCallOutputRowsFromContent(
@@ -2169,20 +2169,54 @@ function buildToolCallOutputRowsFromContent(
   }
 
   return resultContent
-    .map((part, partIndex) => normalizeStructuredToolResultRow({
-      id: `${recordId}:output:${partIndex}`,
-      title: formatToolResultContentPartTitle(part.type, partIndex, summary, toolName),
-      subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
-      note: getToolResultContentText(part) || getToolResultContentDescription(part) || (hasStructuredToolResultPayload(part) ? undefined : safeJsonStringify(part)),
-      trailing: partIndex === 0 && phase ? formatNarrativePhase(phase) : undefined,
-      tone: toneFromToolResultContentPart(part.type, phase),
-      outputKind: outputKindFromToolResultContentType(part.type),
-      outputUri: getToolResultContentUri(part),
-      outputMimeType: getToolResultContentMimeType(part),
-      outputData: getToolResultContentData(part),
-      outputLabel: getToolResultContentLabel(part),
-      outputDescription: getToolResultContentDescription(part),
-    }));
+    .map((part, partIndex) => normalizeReadFileToolOutputRow(
+      normalizeStructuredToolResultRow({
+        id: `${recordId}:output:${partIndex}`,
+        title: formatToolResultContentPartTitle(part.type, partIndex, summary, toolName),
+        subtitle: [formatClock(timestamp), recordId].filter(Boolean).join(' · '),
+        note: getToolResultContentText(part) || getToolResultContentDescription(part) || (hasStructuredToolResultPayload(part) ? undefined : safeJsonStringify(part)),
+        trailing: partIndex === 0 && phase ? formatNarrativePhase(phase) : undefined,
+        tone: toneFromToolResultContentPart(part.type, phase),
+        outputKind: outputKindFromToolResultContentType(part.type),
+        outputUri: getToolResultContentUri(part),
+        outputMimeType: getToolResultContentMimeType(part),
+        outputData: getToolResultContentData(part),
+        outputLabel: getToolResultContentLabel(part),
+        outputDescription: getToolResultContentDescription(part),
+      }),
+      toolName,
+    ));
+}
+
+function normalizeReadFileToolOutputRow(row: StateDetailRow, toolName: string | undefined): StateDetailRow {
+  if (!isReadFileToolName(toolName)) {
+    return row;
+  }
+
+  switch (row.outputKind) {
+    case 'code':
+    case 'terminal-command':
+    case 'terminal-stream':
+    case 'image':
+    case 'resource':
+    case 'changed-file':
+      return row;
+    default:
+      break;
+  }
+
+  const text = row.outputCode || row.note;
+  if (!text?.trim()) {
+    return row;
+  }
+
+  return {
+    ...row,
+    note: undefined,
+    outputKind: 'code',
+    outputCode: text,
+    outputLanguage: row.outputLanguage,
+  };
 }
 
 function normalizeStructuredToolResultRow(row: StateDetailRow): StateDetailRow {

@@ -39,6 +39,12 @@
   overflow: hidden;
 }
 
+:host-context([data-theme='light']) .btn.mode .mini-tag.warn {
+  border-color: rgba(161, 98, 7, 0.32);
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+}
+
 /* AI聊天组件主容器布局 - 包含TODO面板和聊天内容 */
 .aily-chat-wrapper {
   display: flex;
@@ -90,6 +96,10 @@
   &.has-session-sidebar {
     padding: 10px 0 10px 10px;
     box-sizing: border-box;
+
+    .dialogs {
+      padding-top: 0;
+    }
   }
 }
 
@@ -174,6 +184,11 @@
   /* 确保flex子项可以收缩 */
   position: relative;
   z-index: 10;
+
+  &.has-conversation {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
 
   &.has-stacked-session-list {
     display: flex;
@@ -299,7 +314,7 @@
 
 .sender {
   flex-shrink: 0;
-  padding-top: 6px;
+  padding-top: 10px;
   border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));
 
   .interactive-input-part > .chat-input-notification-container,
@@ -314,7 +329,6 @@
     flex-shrink: 0;
     min-width: 0;
     padding: 0 10px;
-    margin-bottom: -4px;
     box-sizing: border-box;
     position: relative;
   }
@@ -349,12 +363,20 @@
   }
 
   .interactive-input-part > .chat-input-notification-container {
-    margin-bottom: -10px;
+    margin-bottom: -5px;
   }
 
   .interactive-input-part > .chat-pending-followup-widget-container {
     margin-bottom: -10px;
   }
+
+  .interactive-input-part:has(> .chat-todo-list-widget-container > app-floating-todo.has-todos) {
+    gap: 0;
+  }
+
+  // .interactive-input-part > .chat-todo-list-widget-container:has(> app-floating-todo.has-todos) {
+  //   margin-bottom: 4px;
+  // }
 
   .interactive-input-part > .chat-pending-followup-widget-container .chat-pending-followup-widget {
     padding: 10px 16px 14px 16px;
@@ -525,7 +547,7 @@
   }
 
   .interactive-input-part > .chat-input-notification-container .chat-input-notification {
-    padding: 10px 16px 16px 16px;
+    padding: 10px 10px 15px;
     box-sizing: border-box;
     border: 1px solid var(--aily-chat-input-notice-border, rgba(255, 255, 255, 0.08));
     border-bottom: none;
@@ -709,8 +731,8 @@
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
-    min-height: 140px;
-    margin: 10px;
+    min-height: 0;
+    margin: 0 10px 10px;
     padding: 5px;
     border: 1px solid transparent;
     border-radius: 5px;
@@ -796,10 +818,14 @@
     }
 
     .btns {
+      --composer-toolbar-hover-bg: var(--aily-highlight-bg, rgba(127, 127, 127, 0.12));
+      --composer-toolbar-hover-fg: var(--aily-text-primary, #fff);
       width: 100%;
       display: flex;
       height: 28px;
       position: relative;
+      container-type: inline-size;
+      container-name: aily-chat-composer-toolbar;
 
       .right {
         position: absolute;
@@ -823,6 +849,7 @@
       }
 
       .btn {
+        position: relative;
         width: 28px;
         height: 28px;
         font-size: 14px;
@@ -831,8 +858,8 @@
         border-radius: 5px;
 
         &:hover {
-          color: var(--aily-text-primary, #fff);
-          background: var(--aily-bg-tertiary, #3f3f3f);
+          color: var(--composer-toolbar-hover-fg);
+          background: var(--composer-toolbar-hover-bg);
         }
 
         &.disabled {
@@ -853,7 +880,38 @@
       }
 
       .permission-mode-indicator {
-        width: 28px;
+        --permission-mode-indicator-width: 54px;
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        width: var(--permission-mode-indicator-width);
+        min-width: var(--permission-mode-indicator-width);
+        padding: 0 6px;
+        gap: 4px;
+        box-sizing: border-box;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .permission-mode-indicator > i {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 14px;
+        width: 14px;
+      }
+
+      .permission-mode-indicator > span {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .btn.mode,
+      .token-budget-indicator {
+        flex: 0 0 auto;
       }
 
       .permission-mode-indicator .fa-robot {
@@ -862,6 +920,81 @@
 
       .permission-mode-indicator .fa-triangle-exclamation {
         color: var(--aily-chat-viewer-state-warn, #e5c07b);
+      }
+
+      .composer-primary-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 1px;
+        flex: 0 0 auto;
+        margin-left: auto;
+      }
+
+      .composer-model-chip {
+        width: auto;
+        height: 28px;
+        padding: 0 7px;
+        gap: 4px;
+        font-size: 14px;
+        color: var(--aily-text-quaternary, #eee);
+        border-radius: 5px;
+        cursor: pointer;
+        box-sizing: border-box;
+        transition: background 0.15s ease, color 0.15s ease;
+
+        &:hover {
+          color: var(--composer-toolbar-hover-fg);
+          background: var(--composer-toolbar-hover-bg);
+        }
+
+        > span {
+          white-space: nowrap;
+          font-size: 12px;
+        }
+      }
+
+      &.has-expanded-context .permission-mode-indicator {
+        width: 28px;
+        min-width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      &.has-expanded-context .permission-mode-indicator > span {
+        display: none;
+      }
+
+      &.has-expanded-context .composer-model-chip {
+        width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      &.has-expanded-context .composer-model-chip > span {
+        display: none;
+      }
+    }
+
+    @container aily-chat-composer-toolbar (max-width: 420px) {
+      .btns .interaction-budget-indicator {
+        display: none;
+      }
+    }
+
+    @container aily-chat-composer-toolbar (max-width: 360px) {
+      .btns .permission-mode-indicator {
+        width: 28px;
+        min-width: 28px;
+        padding: 1px 0 0;
+        gap: 0;
+        justify-content: center;
+      }
+
+      .btns .permission-mode-indicator > span {
+        display: none;
       }
     }
 
@@ -890,6 +1023,10 @@
       }
     }
   }
+}
+
+.chat-main-layout.has-session-sidebar .sender .input-box {
+  margin-bottom: 0;
 }
 
 .historyList {
@@ -1227,21 +1364,24 @@
       padding: 0 6px;
       margin-left: 2px;
       border-radius: 999px;
-      background: rgba(97, 175, 239, 0.14);
-      color: #8ec8ff;
+      border: 1px solid var(--aily-chat-viewer-blockly-chip-border, rgba(0, 120, 212, 0.28));
+      background: var(--aily-chat-viewer-blockly-chip-bg, rgba(0, 120, 212, 0.12));
+      color: var(--aily-chat-viewer-blockly-chip-fg, #005fb8);
       font-size: 10px;
       line-height: 1;
       letter-spacing: 0.02em;
       flex-shrink: 0;
 
       &.warn {
-        background: rgba(229, 192, 123, 0.16);
-        color: #f4d48e;
+        border-color: color-mix(in srgb, var(--aily-chat-token-budget-fill-warn, #e5c07b) 38%, transparent);
+        background: color-mix(in srgb, var(--aily-chat-token-budget-fill-warn, #e5c07b) 16%, var(--aily-bg-elevated, transparent));
+        color: var(--aily-chat-token-budget-fill-warn, #e5c07b);
       }
 
       &.danger {
-        background: rgba(224, 108, 117, 0.18);
-        color: #ffb3bb;
+        border-color: color-mix(in srgb, var(--aily-chat-token-budget-fill-danger, #e06c75) 42%, transparent);
+        background: color-mix(in srgb, var(--aily-chat-token-budget-fill-danger, #e06c75) 14%, var(--aily-bg-elevated, transparent));
+        color: var(--aily-chat-token-budget-fill-danger, #e06c75);
       }
     }
 

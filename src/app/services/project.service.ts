@@ -14,7 +14,7 @@ import { STM32_CONFIG_MENU } from '../configs/stm32.config';
 import { NRF5_CONFIG_MENU } from '../configs/nrf5.config';
 import { ActionService } from './action.service';
 import { PlatformService } from './platform.service';
-import { NewProjectData } from '../pages/project-new/project-new.component';
+import type { NewProjectData } from '../types/project-new';
 import { WorkflowService } from './workflow.service';
 import { TranslateService } from '@ngx-translate/core';
 import { NoticeService } from './notice.service';
@@ -80,6 +80,7 @@ export class ProjectService {
 
   private projectActivationSubject = new Subject<ProjectActivationEvent>();
   projectActivation$ = this.projectActivationSubject.asObservable();
+  private projectOpenTask: { path: string; promise: Promise<void> } | null = null;
 
   currentPackageData: ProjectPackageData = {
     name: 'aily blockly',
@@ -95,6 +96,11 @@ export class ProjectService {
   set currentProjectPath(path: string) {
     this.currentProjectPathSubject.next(path);
   }
+
+  get isProjectOpening(): boolean {
+    return !!this.projectOpenTask || this.stateSubject.value === 'loading';
+  }
+
 
   /** 当前工程是否为 Aily Code（根目录含 project.aci） */
   isAilyCodeProject(projectPath = this.currentProjectPath): boolean {
@@ -354,6 +360,25 @@ export class ProjectService {
 
   // 打开项目
   async projectOpen(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}) {
+    if (this.projectOpenTask) {
+      if (this.isSameProjectPath(this.projectOpenTask.path, projectPath)) {
+        return this.projectOpenTask.promise;
+      }
+      await this.projectOpenTask.promise;
+    }
+
+    const promise = this.projectOpenInternal(projectPath, options);
+    this.projectOpenTask = { path: projectPath, promise };
+    try {
+      await promise;
+    } finally {
+      if (this.projectOpenTask?.promise === promise) {
+        this.projectOpenTask = null;
+      }
+    }
+  }
+
+  private async projectOpenInternal(projectPath = this.currentProjectPath, options: ProjectOpenOptions = {}): Promise<any> {
     const previousProjectPath = this.currentProjectPath;
     const activationReason = options.reason || (this.isSameProjectPath(previousProjectPath, projectPath) ? 'reload' : 'open');
 
@@ -370,7 +395,8 @@ export class ProjectService {
     // 判断路径是否存在
     if (!this.electronService.exists(projectPath)) {
       this.removeRecentlyProject({ path: projectPath })
-      return this.message.error(this.translate.instant('PROJECT.PATH_NOT_EXIST'));
+      this.message.error(this.translate.instant('PROJECT.PATH_NOT_EXIST'));
+      return;
     }
 
     if (this.electronService.isElectron && window['projectLock']) {
@@ -412,7 +438,7 @@ export class ProjectService {
     const abiIsExist = window['path'].isExists(projectPath + '/project.abi');
     if (abiIsExist) {
       // 打开blockly编辑器
-      this.router.navigate(['/main/blockly-editor'], {
+      await this.router.navigate(['/main/blockly-editor'], {
         queryParams: {
           path: projectPath
         },
@@ -420,17 +446,58 @@ export class ProjectService {
       });
     } else {
       // 打开代码编辑器
-      this.router.navigate(['/main/code-editor-pro'], {
+      await this.router.navigate(['/main/code-editor-pro'], {
         queryParams: {
           path: projectPath
         },
         replaceUrl: true
       });
     }
+
+    await this.waitForProjectOpenCompletion(projectPath);
+  }
+
+  private waitForProjectOpenCompletion(projectPath: string): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let subscription: { unsubscribe: () => void } | null = null;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        subscription?.unsubscribe();
+        resolve();
+      };
+      const timeoutId = setTimeout(() => {
+        finish();
+        console.warn('[ProjectService] project open completion timed out:', projectPath);
+      }, 60000);
+
+      subscription = this.stateSubject.subscribe((state) => {
+        if (state !== 'loaded' && state !== 'error') {
+          return;
+        }
+        finish();
+      });
+
+      if (settled) {
+        subscription.unsubscribe();
+      }
+    });
   }
 
   // 保存项目
   save(path = this.currentProjectPath) {
+    if (this.isProjectOpening) {
+      return Promise.resolve({
+        success: false,
+        error: 'project is loading',
+        path,
+      });
+    }
+
     return new Promise<{ success: boolean; error?: string; path?: string }>((resolve) => {
       this.stateSubject.next('saving');
       this.actionService.dispatch('project-save', { path }, async result => {
@@ -520,9 +587,9 @@ export class ProjectService {
       }),
       nzMaskClosable: false,
       nzClosable: true,
+      nzClassName: 'project-lock-conflict-modal',
       nzWidth: 480,
       nzStyle: {
-        backgroundColor: '#1f1f1f',
         paddingBottom: '0',
       },
       nzFooter: [

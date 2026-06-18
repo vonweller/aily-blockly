@@ -428,7 +428,7 @@ async function importFromAbs(
     }
     await reportSyncAbsImportProgress(invocationContext, 'Preparing pre-import backup', 0.1, absFilePath);
     throwIfSyncAbsCancelled(invocationContext);
-    
+
     // 在修改前保存当前版本（AI 修改时的版本控制）
     // 注意：使用 getWorkspaceAbsContent 而不是 exportToAbs，避免覆盖用户编辑的 ABS 文件
     let versionSaved = false;
@@ -446,12 +446,12 @@ async function importFromAbs(
     }
     await reportSyncAbsImportProgress(invocationContext, 'Reading ABS file', 0.15, absFilePath);
     throwIfSyncAbsCancelled(invocationContext);
-    
+
     // 读取 ABS 文件
     const absContent = await electronService.readFile(absFilePath);
     await reportSyncAbsImportProgress(invocationContext, 'Parsing ABS blocks', 0.2);
     throwIfSyncAbsCancelled(invocationContext);
-    
+
     // 解析 ABS（不转换为 ABI JSON，而是获取 BlockConfig）
     const parser = new BlocklyAbsParser();
     const parseResult = parser.parse(absContent);
@@ -479,7 +479,7 @@ async function importFromAbs(
       `${parseResult.rootBlocks.length} root blocks`,
     );
     throwIfSyncAbsCancelled(invocationContext);
-    
+
     // 获取工作区
     const workspace = getActiveWorkspace();
     if (!workspace) {
@@ -812,7 +812,7 @@ async function importFromAbs(
     
     // 保存工作区到 ABI 文件
     const abiJson = Blockly.serialization.workspaces.save(workspace);
-    await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson, null, 2), electronService, invocationContext);
+    await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson), electronService, invocationContext);
     await reportSyncAbsImportProgress(invocationContext, 'Saving generated project files', 0.85);
     throwIfSyncAbsCancelled(invocationContext);
 
@@ -829,7 +829,7 @@ async function importFromAbs(
     
     const variableCount = allVariables.size;  // 使用收集到的所有变量数量
     await reportSyncAbsImportProgress(invocationContext, 'Blockly workspace import finished', 0.95);
-    
+
     // 警告信息
     let warnings = '';
     if (parseResult.warnings && parseResult.warnings.length > 0) {

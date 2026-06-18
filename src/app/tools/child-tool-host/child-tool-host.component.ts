@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, effect, Input, NgZone, OnChanges, OnDestroy, OnInit, SimpleChanges } from '@angular/core';
+import { Component, Input, NgZone, OnChanges, OnDestroy, OnInit, SimpleChanges } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { ActivatedRoute, Router } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
@@ -18,6 +18,7 @@ import { UiService } from '../../services/ui.service';
 
 type HostStatus = 'idle' | 'starting' | 'ready' | 'error' | 'closed';
 type HostMessageState = 'success' | 'info' | 'warning' | 'error' | 'loading';
+type ChildLifecycleReason = 'close' | 'restart' | 'destroy';
 
 interface NormalizedHostMessage {
   title: string;
@@ -44,6 +45,7 @@ interface NormalizedHostMessage {
 })
 export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   @Input() toolId = '';
+  @Input() active = true;
 
   currentUrl = '';
   resolvedToolId = '';
@@ -54,6 +56,7 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   frameLoaded = false;
   errorMessage = '';
   serverInfo: ChildToolHostInfo | null = null;
+  closing = false;
 
   private config: ChildToolConfig | null = null;
   private initialized = false;
@@ -61,7 +64,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private penpalConnection: Connection | null = null;
   private remoteApi: any = null;
   private childReadyTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly hostContextId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  private hostContextVersion = 0;
+  private beforeCloseNotified = false;
   private langSubscription: Subscription | null = null;
+  private themeSubscription: Subscription | null = null;
   private toolSignalSubscription: Subscription | null = null;
 
   constructor(
@@ -77,11 +84,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     private message: NzMessageService,
     private logService: LogService
   ) {
-    this.langSubscription = this.translate.onLangChange.subscribe(() => this.pushHostContext());
-    effect(() => {
-      this.themeService.theme();
-      this.pushHostContext();
-    });
+    this.langSubscription = this.translate.onLangChange.subscribe(() => this.syncHostContext());
+    this.themeSubscription = this.themeService.themeChanged$.subscribe(() => this.syncHostContext());
   }
 
   get isStandalone(): boolean {
@@ -114,11 +118,18 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     if (this.initialized && changes['toolId'] && !changes['toolId'].firstChange) {
       void this.initTool();
     }
+
+    if (this.initialized && changes['active'] && this.active) {
+      this.syncHostContext();
+    }
   }
 
   ngOnDestroy(): void {
+    void this.notifyChildBeforeClose('destroy');
     this.langSubscription?.unsubscribe();
     this.langSubscription = null;
+    this.themeSubscription?.unsubscribe();
+    this.themeSubscription = null;
     this.toolSignalSubscription?.unsubscribe();
     this.toolSignalSubscription = null;
     this.destroyPenpalConnection();
@@ -128,14 +139,31 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  close(): void {
+  async close(): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+
+    const canClose = await this.notifyChildBeforeClose('close');
+    if (!canClose) {
+      this.closing = false;
+      return;
+    }
+
+    if (this.isStandalone) {
+      window['iWindow']?.close?.();
+      return;
+    }
+
     if (this.resolvedToolId) {
       this.uiService.closeTool(this.resolvedToolId);
+    } else {
+      this.closing = false;
     }
   }
 
   async restart(): Promise<void> {
     if (!this.config) return;
+    if (!await this.notifyChildBeforeClose('restart')) return;
 
     this.destroyPenpalConnection();
     this.serverInfo = null;
@@ -279,7 +307,9 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
         },
         reportHostMessage: (payload: any) => this.ngZone.run(() => this.reportHostMessage(payload)),
         requestClose: () => {
-          this.ngZone.run(() => this.close());
+          this.ngZone.run(() => {
+            void this.close();
+          });
         },
         requestRestart: () => {
           this.ngZone.run(() => {
@@ -299,7 +329,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
       .then(remote => {
         this.log('penpal connected');
         this.remoteApi = remote;
-        this.pushHostContext();
+        this.beforeCloseNotified = false;
+        this.syncHostContext();
       })
       .catch(error => {
         this.ngZone.run(() => {
@@ -451,6 +482,80 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
+  private async notifyChildBeforeClose(reason: ChildLifecycleReason): Promise<boolean> {
+    if (this.beforeCloseNotified && reason === 'destroy') {
+      return true;
+    }
+
+    const beforeClose = this.remoteApi?.beforeClose;
+    if (typeof beforeClose !== 'function') {
+      this.beforeCloseNotified = true;
+      return true;
+    }
+
+    try {
+      const result = await this.withTimeout(
+        Promise.resolve(beforeClose({
+          reason,
+          toolId: this.resolvedToolId,
+          context: this.createHostContext()
+        })),
+        1500
+      );
+      const canClose = result !== false && result?.canClose !== false;
+
+      if (!canClose) {
+        const message = this.stringifyHostMessageValue(result?.message || result?.reason)
+          || this.translateWithFallback(this.key('CLOSE_BLOCKED'), {
+            zh_cn: '子应用暂时不能关闭',
+            zh_hk: '子應用暫時不能關閉',
+            default: 'Child app is not ready to close'
+          });
+        this.message.warning(message);
+        this.log('beforeClose blocked', {
+          reason,
+          message
+        });
+        return false;
+      }
+
+      this.beforeCloseNotified = true;
+      this.log('beforeClose complete', {
+        reason,
+        result: this.sanitizeLifecycleResult(result)
+      });
+      return true;
+    } catch (error) {
+      this.beforeCloseNotified = true;
+      this.logError('beforeClose failed', {
+        reason,
+        error: error instanceof Error ? error.message : String(error || '')
+      });
+      return true;
+    }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+      promise
+        .then(value => resolve(value))
+        .catch(error => reject(error))
+        .finally(() => clearTimeout(timeout));
+    });
+  }
+
+  private sanitizeLifecycleResult(result: any): any {
+    if (!result || typeof result !== 'object') {
+      return result;
+    }
+
+    return {
+      ...result,
+      context: undefined
+    };
+  }
+
   private clearChildReadyTimer(): void {
     if (this.childReadyTimer) {
       clearTimeout(this.childReadyTimer);
@@ -458,12 +563,23 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  private pushHostContext(): void {
+  private async pushHostContext(): Promise<void> {
     if (!this.remoteApi?.setHostContext) {
       return;
     }
 
-    void Promise.resolve(this.remoteApi.setHostContext(this.createHostContext())).catch(() => undefined);
+    const context = this.createHostContext();
+    try {
+      await Promise.resolve(this.remoteApi.setHostContext(context));
+    } catch {
+      // Keep iframe usable; a later sync or active switch will retry.
+    }
+  }
+
+  private syncHostContext(): void {
+    if (this.remoteApi?.setHostContext) {
+      void this.pushHostContext();
+    }
   }
 
   private forwardToolSignal(action: any): void {
@@ -523,13 +639,11 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
     try {
       const nextUrl = new URL(url);
       nextUrl.searchParams.set('lang', context['lang']);
-      nextUrl.searchParams.set('theme', context['theme']);
       return nextUrl.toString();
     } catch {
       const separator = url.includes('?') ? '&' : '?';
       const query = new URLSearchParams({
-        lang: context['lang'],
-        theme: context['theme']
+        lang: context['lang']
       });
       return `${url}${separator}${query.toString()}`;
     }
@@ -538,6 +652,8 @@ export class ChildToolHostComponent implements OnInit, OnChanges, OnDestroy {
   private createHostContext(): Record<string, string> {
     return {
       toolId: this.resolvedToolId,
+      contextId: this.hostContextId,
+      version: String(++this.hostContextVersion),
       lang: this.normalizeLang(this.translate.currentLang || this.translate.defaultLang || 'en'),
       theme: this.normalizeTheme(this.themeService.theme()),
       platform: (window as any).electronAPI?.platform?.type || 'browser'

@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, AfterViewChecked } from '@angular/core';
+import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, AfterViewChecked, NgZone } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -11,7 +11,7 @@ import { NzResizableModule } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { ChatService } from './services/chat.service';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { NzToolTipModule, NzTooltipDirective } from 'ng-zorro-antd/tooltip';
 import { NzNoAnimationDirective } from 'ng-zorro-antd/core/no-animation';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { McpService } from './services/mcp.service';
@@ -175,7 +175,15 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   } as const;
 
   @ViewChild('chatContainer') chatContainer: ElementRef;
-  @ViewChild('chatTextarea') chatTextarea: ElementRef;
+  private chatTextareaRef?: ElementRef;
+  @ViewChild('chatTextarea')
+  set chatTextarea(ref: ElementRef | undefined) {
+    this.chatTextareaRef = ref;
+    this.engine.bindChatTextareaRef(ref ?? null);
+  }
+  get chatTextarea(): ElementRef | undefined {
+    return this.chatTextareaRef;
+  }
   @ViewChild('windowBoxRoot')
   set windowBoxRoot(ref: ElementRef<HTMLElement> | undefined) {
     this.observeSessionViewport(ref?.nativeElement ?? null);
@@ -187,6 +195,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
   @ViewChildren('dialogVirtualRow', { read: ElementRef }) dialogVirtualRows: QueryList<ElementRef<HTMLElement>>;
+  @ViewChild('permissionModeTooltip', { read: NzTooltipDirective })
+  private permissionModeTooltip?: NzTooltipDirective;
+  @ViewChild('composerModelTooltip', { read: NzTooltipDirective })
+  private composerModelTooltip?: NzTooltipDirective;
 
   public readonly vm: ChatComponentViewModel;
   reasoningMenuItems: IMenuItem[] = [];
@@ -262,6 +274,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     private chatHistoryService: ChatHistoryService,
     public debugBrowser: ChatDebugBrowserService,
     private cdr: ChangeDetectorRef,
+    private ngZone: NgZone,
     private builderService: BuilderService,
     private themeService: ThemeService,
     public runtimeInteractionHost: ChatRuntimeInteractionHostService,
@@ -455,7 +468,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
             : { startOnLoad: false, theme: 'default' as const };
         MermaidCodeComponent.setMermaidInstance(instance, config);
       },
-      initializeEngine: () => this.engine.init(this.chatTextarea),
+      initializeEngine: () => this.engine.init(this.chatTextarea ?? null),
       detachEngineView: () => this.engine.detachView(),
     });
   }
@@ -651,6 +664,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.viewportShellCoordinator.initialize(this.chatContainer);
     this.scrollManager.handleContentHeightChange();
     this.syncSessionListDisplayState();
+    this.scheduleChatInputFocusAfterSessionChange();
     if (typeof globalThis.requestAnimationFrame === 'function') {
       globalThis.requestAnimationFrame(() => {
         ChatPerformanceTracer.increment('entry_open.first_stable_paint');
@@ -1006,7 +1020,21 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   togglePermissionMenu(event: MouseEvent): void {
+    this.permissionModeTooltip?.hide();
     this.switchShellCoordinator.togglePermissionMenu(event, this.permissionMenuItems);
+  }
+
+  onComposerModelMenuClick(event: MouseEvent): void {
+    this.composerModelTooltip?.hide();
+    this.switchShellCoordinator.toggleModelMenu(event, this.vm.modelMenuItems);
+  }
+
+  get permissionTooltipTrigger(): 'hover' | null {
+    return this.menuManager.showPermissionMenu ? null : 'hover';
+  }
+
+  get composerModelTooltipTrigger(): 'hover' | null {
+    return this.menuManager.showModelMenu ? null : 'hover';
   }
 
   handlePermissionMenuClick(item: IMenuItem): void {
@@ -1285,8 +1313,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       this.vm.closeSessionPicker();
       this.reasoningMenuItems = [];
       this.menuManager.showReasoningMenu = false;
-      this.menuManager.showModelMenu = false;
-      this.menuManager.toggleModelMenu(payload.event, [...this.vm.modelMenuItems]);
+      this.menuManager.showModelMenu = true;
       return;
     }
 
@@ -1776,7 +1803,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   requestNewChat(): void {
-    void this.sessionActions.requestNewChat(this.engine.editCheckpointService, this.createSessionCommandCallbacks());
+    void this.sessionActions
+      .requestNewChat(this.engine.editCheckpointService, this.createSessionCommandCallbacks())
+      .then(() => this.scheduleChatInputFocusAfterSessionChange());
   }
 
   requestReturnToEntryInventory(options?: { saveCurrentSession?: boolean }): void {
@@ -1813,10 +1842,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
         this.closeDebugBrowser();
         return this.engine.newChat();
       },
-      onEnterEntryState: (sessionId?: string | null) => {
-        this.closeDebugBrowser();
-        return this.engine.returnToEntryInventory({ sessionId });
-      },
+      onEnterEntryState: (sessionId?: string | null) => this.runReturnAwareEntryState(sessionId),
       onDeleteSession: (sessionId: string) => {
         this.closeDebugBrowser();
         return this.engine.deleteSessionAction(sessionId);
@@ -1857,13 +1883,16 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private createSessionEntryCommandCallbacks() {
     return {
       onSaveCurrentSession: () => this.engine.saveCurrentSession(),
-      onEnterEntryState: (sessionId?: string | null) => {
-        this.closeDebugBrowser();
-        return this.engine.returnToEntryInventory({
-          sessionId,
-        });
-      },
+      onEnterEntryState: (sessionId?: string | null) => this.runReturnAwareEntryState(sessionId),
     };
+  }
+
+  private async runReturnAwareEntryState(sessionId?: string | null): Promise<void> {
+    this.closeDebugBrowser();
+    await this.engine.returnToEntryInventory({
+      sessionId,
+    });
+    this.scheduleChatInputFocusAfterSessionChange();
   }
 
   private async runRestoreAwareHistoryLoad(): Promise<void> {
@@ -1885,13 +1914,28 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   ): Promise<boolean> {
     this.closeDebugBrowser();
     try {
-      return await this.engine.switchToSession(sessionId, {
+      const switched = await this.engine.switchToSession(sessionId, {
         fallbackProjectPath: fallbackProjectPath ?? null,
       });
+      if (switched) {
+        this.scheduleChatInputFocusAfterSessionChange();
+      }
+      return switched;
     } catch (error) {
       this.reportSessionRestoreFailure(error);
       return false;
     }
+  }
+
+  private scheduleChatInputFocusAfterSessionChange(): void {
+    const focusInput = () => {
+      this.engine.bindChatTextareaRef(this.chatTextarea ?? null);
+      this.engine.scheduleComposerInputFocus();
+    };
+
+    focusInput();
+    setTimeout(focusInput, 50);
+    setTimeout(focusInput, 150);
   }
 
   private reportSessionRestoreFailure(error: unknown): void {
@@ -2039,8 +2083,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
     this.sessionViewportResizeObserver = new ResizeObserver((entries) => {
       const nextWidth = entries[0]?.contentRect?.width ?? element.clientWidth;
-      this.viewState.setSessionViewportWidth(nextWidth);
-      this.syncSessionListDisplayState();
+      this.ngZone.run(() => {
+        this.viewState.setSessionViewportWidth(nextWidth);
+        this.syncSessionListDisplayState();
+      });
     });
     this.sessionViewportResizeObserver.observe(element);
   }

@@ -697,19 +697,19 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag-item::before {
       content: '';
       position: absolute;
-      left: 10.5px;
+      left: 10px;
       top: 0;
       bottom: 0;
       width: 1px;
       border-radius: 0;
       background-color: var(--chat-border, rgba(255,255,255,0.10));
-      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 25px, #000 24px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 25px, #000 24px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 8px 19px, #000 24px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 0px 19px, #000 24px 100%);
     }
 
     .cag-item.cag-item-first::before {
-      mask-image: linear-gradient(to bottom, transparent 0 25px, #000 25px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 25px, #000 25px 100%);
+      mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
     }
 
     .cag-item.cag-item-last::before {
@@ -730,8 +730,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item[data-kind='thinking'] {
-      padding-top: 5px;
-      padding-bottom: 4px;
+      padding-top: 0px;
+      padding-bottom: 0;
       padding-left: 24px;
     }
 
@@ -853,6 +853,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       align-items: center;
       gap: 6px;
       flex-shrink: 0;
+      align-self: flex-end;
     }
 
     .cag-item-toolbar {
@@ -1058,12 +1059,54 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       padding: 5px;
       border: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-radius: 5px;
-      background: rgba(255,255,255,0.025);
+      background: color-mix(in srgb, var(--aily-chat-viewer-panel, var(--chat-bg-subtle, rgba(255,255,255,0.025))) 86%, var(--chat-bg-hover, transparent) 14%);
     }
 
     .cag-item-detail-body[data-detail-kind='invocation'] {
-      border-color: rgba(255,255,255,0.08);
-      background: rgba(255,255,255,0.02);
+      border-color: var(--chat-border-dim, rgba(255,255,255,0.08));
+      background: color-mix(in srgb, var(--aily-chat-viewer-card-bg, var(--chat-bg-subtle, rgba(255,255,255,0.02))) 88%, var(--chat-bg-hover, transparent) 12%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body {
+      --cag-detail-inner-border: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 96%, #000 4%);
+      --cag-detail-inner-border-soft: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      --cag-detail-inner-bg: color-mix(in srgb, var(--aily-bg-secondary, #e0e0e0) 96%, #000 4%);
+      --cag-detail-inner-bg-soft: color-mix(in srgb, var(--aily-bg-secondary, #e0e0e0) 98%, #000 2%);
+      border-color: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      background: color-mix(in srgb, var(--aily-bg-tertiary, #d6d6d6) 42%, var(--aily-bg-elevated, #ededed) 58%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body[data-detail-kind='invocation'] {
+      border-color: color-mix(in srgb, var(--aily-border-tertiary, #bfbfbf) 98%, #000 2%);
+      background: color-mix(in srgb, var(--aily-bg-tertiary, #d6d6d6) 52%, var(--aily-bg-secondary, #e0e0e0) 48%);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-state-badge,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-instruction-filter,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-widget,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-confirmation-summary,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-args,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='data'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='code'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-group[data-group-kind='generic'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output-subpart {
+      border-color: var(--cag-detail-inner-border);
+      background: var(--cag-detail-inner-bg-soft);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-widget-title,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-tool-body + .cag-item-tool-body,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-detail-section + .cag-item-detail-section,
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='terminal-command'] + .cag-item-invocation-output[data-output-kind='terminal-stream'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='terminal-stream'] + .cag-item-invocation-output[data-output-kind='terminal-stream'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-invocation-output[data-output-kind='changed-file'] + .cag-item-invocation-output[data-output-kind='changed-file'],
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-detail-row + .cag-item-detail-row {
+      border-color: var(--cag-detail-inner-border-soft);
+    }
+
+    :host-context([data-theme='light']) .cag-item-detail-body .cag-item-instruction-filter-active {
+      border-color: var(--cag-detail-inner-border);
+      background: var(--cag-detail-inner-bg);
     }
 
     .cag-item-detail-body[data-detail-kind='subagent'] {
@@ -1754,8 +1797,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       padding: 10px 12px;
       overflow-x: auto;
       border-radius: 5px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(0,0,0,0.28);
+      border: 1px solid var(--aily-chat-viewer-code-border, var(--chat-border-dim, rgba(255,255,255,0.08)));
+      background: var(--aily-chat-viewer-code-bg, var(--chat-bg-subtle, rgba(255,255,255,0.02)));
     }
 
     .cag-item-invocation-output-code-block code {

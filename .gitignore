@@ -65,12 +65,14 @@ child/aily-builder*
 /child/aily-coder
 /child/tools/*/node_modules/*
 /child/aily-lex
+/child/aily-subapp
 /child/xpm
 
 # Playwright E2E
 /renderer
 /test-results
 /playwright-report
+/e2e/logs
 /out-tsc/e2e
 /e2e/.artifacts
 

@@ -1,8 +1,10 @@
 // 窗口控制
 const { ipcMain, BrowserWindow, app, screen } = require("electron");
 const { requestWindowAttention } = require('./window-attention');
+const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
 const { exec, execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const CODE_VIEWER_STATE_CHANNEL = 'blockly-code-viewer-state';
 const CODE_VIEWER_STATE_UPDATE_CHANNEL = 'blockly-code-viewer-state-update';
@@ -14,6 +16,35 @@ const SUB_WINDOW_POOL_SIZE = 2;
 /** 子窗口最小尺寸（4:3，约为原 800×600 的 80%） */
 const SUB_WINDOW_MIN_WIDTH = 640;
 const SUB_WINDOW_MIN_HEIGHT = 480;
+const CHILD_TOOL_RELEASE_GRACE_MS = 15000;
+
+/** @type {Map<string, { hostInfo: any, streamId: string, refCount: number, releaseTimer: NodeJS.Timeout | null }>} */
+const childToolSessions = new Map();
+const SUB_WINDOW_DARK_BACKGROUND_COLOR = '#2b2d30';
+const SUB_WINDOW_LIGHT_BACKGROUND_COLOR = '#e8e8e8';
+
+function readThemeFromConfigFile(configPath) {
+    try {
+        if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            return config && config.theme;
+        }
+    } catch (e) {
+        console.warn('[SubWindowPool] 读取主题配置失败:', e.message);
+    }
+    return null;
+}
+
+function getSubWindowBackgroundColor() {
+    const appDataPath = process.env.AILY_APPDATA_PATH || app.getPath('userData');
+    const theme =
+        readThemeFromConfigFile(path.join(appDataPath, 'config.json')) ||
+        readThemeFromConfigFile(path.join(__dirname, 'config', 'config.json'));
+
+    return theme === 'light'
+        ? SUB_WINDOW_LIGHT_BACKGROUND_COLOR
+        : SUB_WINDOW_DARK_BACKGROUND_COLOR;
+}
 
 function applySubWindowMinimumSize(win) {
     if (!win || win.isDestroyed()) {
@@ -46,6 +77,82 @@ function getSubWindowWebPreferences() {
         preload: path.join(__dirname, 'preload.js'),
         backgroundThrottling: false,
     };
+}
+
+function sanitizeChildToolId(toolId) {
+    return String(toolId || '').trim();
+}
+
+function cloneChildToolSession(session) {
+    return session
+        ? {
+            hostInfo: session.hostInfo,
+            streamId: session.streamId,
+            refCount: session.refCount,
+        }
+        : null;
+}
+
+function cancelChildToolRelease(session) {
+    if (!session || !session.releaseTimer) {
+        return;
+    }
+    clearTimeout(session.releaseTimer);
+    session.releaseTimer = null;
+}
+
+function scheduleChildToolRelease(toolId, session) {
+    if (!session || session.releaseTimer) {
+        return;
+    }
+
+    session.releaseTimer = setTimeout(() => {
+        session.releaseTimer = null;
+        if (session.refCount > 0) {
+            return;
+        }
+        if (session.streamId) {
+            killCmdProcess(session.streamId);
+        }
+        childToolSessions.delete(toolId);
+    }, CHILD_TOOL_RELEASE_GRACE_MS);
+}
+
+function releaseChildToolSession(toolId) {
+    const normalizedToolId = sanitizeChildToolId(toolId);
+    const session = childToolSessions.get(normalizedToolId);
+    if (!session) {
+        return { success: false, reason: 'not-found' };
+    }
+
+    session.refCount = Math.max(0, session.refCount - 1);
+    if (session.refCount === 0) {
+        scheduleChildToolRelease(normalizedToolId, session);
+    }
+
+    return { success: true, session: cloneChildToolSession(session) };
+}
+
+function restartChildToolSession(toolId) {
+    const normalizedToolId = sanitizeChildToolId(toolId);
+    const session = childToolSessions.get(normalizedToolId);
+    if (!session) {
+        return { success: false, reason: 'not-found' };
+    }
+
+    cancelChildToolRelease(session);
+    if (session.streamId) {
+        killCmdProcess(session.streamId);
+    }
+    childToolSessions.delete(normalizedToolId);
+    return { success: true };
+}
+
+function isChildToolSessionAlive(session) {
+    if (!session?.streamId) {
+        return false;
+    }
+    return getActiveCmdProcesses().some(processInfo => processInfo.streamId === session.streamId);
 }
 
 /** @type {import('electron').BrowserWindow[]} */
@@ -83,6 +190,7 @@ function pushPooledSubWindow(loadBasePage) {
             frame: false,
             show: false,
             opacity: 0,
+            backgroundColor: getSubWindowBackgroundColor(),
             skipTaskbar: true,
             autoHideMenuBar: true,
             thickFrame: true,
@@ -230,6 +338,7 @@ function registerWindowHandlers(mainWindow) {
             targetWindow.restore();
         }
         if (!targetWindow.isVisible()) {
+            targetWindow.setOpacity(1);
             targetWindow.show();
         }
         if (typeof targetWindow.moveTop === 'function') {
@@ -405,7 +514,6 @@ function registerWindowHandlers(mainWindow) {
         }
 
         let subWindow = null;
-        let fromPool = false;
         while (subWindowPool.length > 0) {
             const candidate = subWindowPool.shift();
             if (!candidate || candidate.isDestroyed()) {
@@ -413,13 +521,16 @@ function registerWindowHandlers(mainWindow) {
             }
             removePoolHandlersFromWin(candidate, loadSubWindowBasePage);
             subWindow = candidate;
-            fromPool = true;
+            subWindow.setBackgroundColor(getSubWindowBackgroundColor());
             break;
         }
 
         if (!subWindow) {
             subWindow = new BrowserWindow({
                 frame: false,
+                show: false,
+                opacity: 0,
+                backgroundColor: getSubWindowBackgroundColor(),
                 autoHideMenuBar: true,
                 thickFrame: true,
                 titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
@@ -469,28 +580,34 @@ function registerWindowHandlers(mainWindow) {
             }
         };
 
-        if (fromPool) {
-            let pooledRevealFinalized = false;
-            const finalizePooledReveal = () => {
-                if (pooledRevealFinalized || subWindow.isDestroyed()) {
-                    return;
-                }
-                pooledRevealFinalized = true;
-                sendInitToSubWindow();
-                revealPooledSubWindow();
-            };
-            // 同文档/hash 导航可能只触发 did-navigate-in-page 而不触发 did-finish-load
-            subWindow.webContents.once('did-finish-load', finalizePooledReveal);
-            subWindow.webContents.once('did-navigate-in-page', finalizePooledReveal);
-        } else if (needInitPayload) {
-            subWindow.webContents.on('did-finish-load', () => {
-                subWindow.webContents.send('window-init-data', {
-                    url: data.url,
-                    title: data.title,
-                    data: data.data,
-                });
-            });
-        }
+        let subWindowRevealFinalized = false;
+        let revealFallbackTimer = null;
+        const finalizeSubWindowReveal = () => {
+            if (subWindowRevealFinalized || subWindow.isDestroyed()) {
+                return;
+            }
+            subWindowRevealFinalized = true;
+            if (revealFallbackTimer) {
+                clearTimeout(revealFallbackTimer);
+                revealFallbackTimer = null;
+            }
+            sendInitToSubWindow();
+            revealPooledSubWindow();
+        };
+        const revealAfterRendererPaint = () => {
+            if (subWindowRevealFinalized || subWindow.isDestroyed()) {
+                return;
+            }
+            subWindow.webContents.executeJavaScript(
+                'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+                true
+            ).then(finalizeSubWindowReveal).catch(finalizeSubWindowReveal);
+        };
+
+        subWindow.once('ready-to-show', revealAfterRendererPaint);
+        subWindow.webContents.once('did-finish-load', revealAfterRendererPaint);
+        subWindow.webContents.once('did-navigate-in-page', revealAfterRendererPaint);
+        revealFallbackTimer = setTimeout(revealAfterRendererPaint, 3000);
 
         if (isDevServeSubWindow()) {
             subWindow.loadURL(`http://localhost:4200/#/${data.path}`);
@@ -501,6 +618,66 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.handle("window-focus-by-url", (_event, windowUrl) => {
         return focusSubWindowByUrl(windowUrl);
+    });
+
+    ipcMain.handle("child-tool-session-acquire", (_event, toolId) => {
+        const normalizedToolId = sanitizeChildToolId(toolId);
+        const session = childToolSessions.get(normalizedToolId);
+        if (!session?.hostInfo) {
+            return null;
+        }
+
+        if (!isChildToolSessionAlive(session)) {
+            cancelChildToolRelease(session);
+            childToolSessions.delete(normalizedToolId);
+            return null;
+        }
+
+        cancelChildToolRelease(session);
+        session.refCount += 1;
+        return cloneChildToolSession(session);
+    });
+
+    ipcMain.handle("child-tool-session-register", (_event, payload = {}) => {
+        const toolId = sanitizeChildToolId(payload.toolId);
+        if (!toolId || !payload.hostInfo || !payload.streamId) {
+            return { success: false, reason: 'invalid-payload' };
+        }
+
+        const existing = childToolSessions.get(toolId);
+        if (existing && existing.streamId && existing.streamId !== payload.streamId) {
+            cancelChildToolRelease(existing);
+            killCmdProcess(existing.streamId);
+        }
+
+        childToolSessions.set(toolId, {
+            hostInfo: payload.hostInfo,
+            streamId: payload.streamId,
+            refCount: 1,
+            releaseTimer: null,
+        });
+
+        return { success: true, session: cloneChildToolSession(childToolSessions.get(toolId)) };
+    });
+
+    ipcMain.handle("child-tool-session-release", (_event, toolId) => {
+        return releaseChildToolSession(toolId);
+    });
+
+    ipcMain.handle("child-tool-session-restart", (_event, toolId) => {
+        return restartChildToolSession(toolId);
+    });
+
+    ipcMain.handle("child-tool-session-unregister", (_event, payload = {}) => {
+        const toolId = sanitizeChildToolId(payload.toolId);
+        const session = childToolSessions.get(toolId);
+        if (!session || (payload.streamId && session.streamId !== payload.streamId)) {
+            return { success: false, reason: 'not-found' };
+        }
+
+        cancelChildToolRelease(session);
+        childToolSessions.delete(toolId);
+        return { success: true };
     });
 
     ipcMain.on("window-minimize", (event) => {
@@ -594,7 +771,7 @@ function registerWindowHandlers(mainWindow) {
 
     ipcMain.on("window-go-main", (event, data) => {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
-        mainWindow.webContents.send("window-go-main", data.replace('/', ''));
+        mainWindow.webContents.send("window-go-main", normalizeSubWindowUrl(data));
         senderWindow.close();
     });
 

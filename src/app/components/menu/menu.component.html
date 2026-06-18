@@ -30,12 +30,12 @@
         (input)="updateSectionFilter(getSectionId(item), $any($event.target).value)" />
     </div>
     } @else {
-    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item, $index)" (mousemove)="showSubMenu($event, item, $index)"
+    <div class="menu-item ccenter" #menuItem (click)="itemClick(item)" (mouseenter)="showSubMenu($event, item)"
       (mouseleave)="hideSubMenu($event, $index)"
       nz-tooltip
       [nzTooltipTitle]="hasHoverFlyout(item) ? null : getTooltipTitle(item.tooltip)"
-      nzTooltipOverlayClassName="aily-menu-item-tooltip"
-      nzTooltipPlacement="rightTop"
+      [nzTooltipOverlayClassName]="tooltipOverlayClassName"
+      [nzTooltipPlacement]="tooltipPlacement"
       [ngClass]="{'highlight': isHighlight(item.text), 'disabled': item.disabled, 'active': activeSubmenuItem === item, 'current': item.current, 'section': item.action?.startsWith('section-'), 'section-toggle': isSectionToggle(item)}">
       @if(item.icon){
       <div class="icon ccenter"><i class="{{ item.icon }}"></i></div>
@@ -99,11 +99,12 @@
     @for (subItem of getSubmenuChildren(activeSubmenuItem); track $index) {
     @if(shouldUseRichSubmenuOption(subItem)) {
     <div class="menu-item submenu-option" (click)="subItemClick($event,subItem)"
-      [ngClass]="{ disabled: subItem.disabled }">
+      [title]="getSubmenuRichItemTitle(subItem)"
+      [ngClass]="{ disabled: subItem.disabled, checked: subItem.check }">
       <div class="submenu-option-copy">
         <div class="submenu-option-title-row">
           <div class="submenu-option-inline-copy">
-            <div class="name ellipsis">{{ subItem.name }}</div>
+            <div class="name">{{ subItem.name }}</div>
             @if(getSubmenuItemDetail(subItem)) {
             <div class="submenu-option-separator" aria-hidden="true">-</div>
             <div class="submenu-option-detail ellipsis">{{ getSubmenuItemDetail(subItem) }}</div>

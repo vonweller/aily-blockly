@@ -54,11 +54,14 @@
     width: auto !important;
     height: 28px;
     padding: 0 6px !important;
+    gap: 4px;
+    flex-wrap: nowrap;
     font-size: 14px;
     color: var(--aily-chat-xdialog-edit-btn-fg, #eee);
     padding-top: 1px;
     border-radius: 5px;
     cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
 
     &:hover {
       color: var(--aily-chat-xdialog-edit-resource-name, #fff);
@@ -68,13 +71,15 @@
     span:not(.acc-mini-tag) {
       margin-left: 5px;
       font-size: 12px;
+      white-space: nowrap;
     }
-
-    gap: 4px;
   }
 }
 
 :host.acc-host--composer {
+  --acc-toolbar-hover-bg: var(--aily-highlight-bg, rgba(127, 127, 127, 0.12));
+  --acc-toolbar-hover-fg: var(--aily-text-primary, #fff);
+
   .acc-clip {
     margin-left: 1px;
     width: 28px;
@@ -86,8 +91,8 @@
     cursor: pointer;
 
     &:hover {
-      color: var(--aily-text-primary, #fff);
-      background: var(--aily-bg-tertiary, #3f3f3f);
+      color: var(--acc-toolbar-hover-fg);
+      background: var(--acc-toolbar-hover-bg);
     }
   }
 
@@ -116,7 +121,8 @@
     cursor: pointer;
 
     &:hover {
-      color: var(--aily-text-primary, #fff);
+      color: var(--acc-toolbar-hover-fg);
+      background: var(--acc-toolbar-hover-bg);
     }
   }
 
@@ -130,21 +136,27 @@
     height: 28px;
     padding: 0 6px !important;
     gap: 4px;
+    flex-wrap: nowrap;
     font-size: 14px;
     color: var(--aily-text-quaternary, #eee);
     padding-top: 1px;
     border-radius: 5px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.15s ease, color 0.15s ease;
 
     &:hover {
-      color: var(--aily-text-primary, #fff);
-      background: var(--aily-bg-tertiary, #3f3f3f);
+      color: var(--acc-toolbar-hover-fg);
+      background: var(--acc-toolbar-hover-bg);
     }
 
     > span:not(.acc-mini-tag) {
       margin-left: 5px;
       font-size: 12px;
+      white-space: nowrap;
+    }
+
+    &.acc-chip--after-expanded-context {
+      margin-left: 5px;
     }
   }
 }
@@ -159,10 +171,47 @@
   padding: 0 6px;
   margin-left: 2px;
   border-radius: 999px;
-  background: var(--aily-chat-viewer-badge-bg, rgba(97, 175, 239, 0.14));
-  color: var(--aily-chat-viewer-blockly-chip-fg, #8ec8ff);
+  border: 1px solid var(--aily-chat-viewer-blockly-chip-border, rgba(0, 120, 212, 0.28));
+  background: var(--aily-chat-viewer-blockly-chip-bg, rgba(0, 120, 212, 0.12));
+  color: var(--aily-chat-viewer-blockly-chip-fg, #005fb8);
   font-size: 10px;
   line-height: 1;
   letter-spacing: 0.02em;
   flex-shrink: 0;
+}
+
+@container aily-chat-composer-toolbar (max-width: 360px) {
+  :host.acc-host--composer .acc-chip {
+    width: 28px !important;
+    padding: 1px 0 0 !important;
+    gap: 0;
+  }
+
+  :host.acc-host--composer .acc-chip > span {
+    display: none;
+  }
+}
+
+@container aily-chat-edit-toolbar (max-width: 300px) {
+  :host.acc-host--edit .acc-chip {
+    width: 28px !important;
+    padding: 1px 0 0 !important;
+    gap: 0;
+  }
+
+  :host.acc-host--edit .acc-chip > span {
+    display: none;
+  }
+}
+
+:host.acc-host--edit .acc-chip.acc-chip--after-expanded-context,
+:host.acc-host--composer .acc-chip.acc-chip--after-expanded-context {
+  width: 28px !important;
+  padding: 1px 0 0 !important;
+  gap: 0;
+}
+
+:host.acc-host--edit .acc-chip.acc-chip--after-expanded-context > span,
+:host.acc-host--composer .acc-chip.acc-chip--after-expanded-context > span {
+  display: none;
 }
