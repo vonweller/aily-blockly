@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, shell, safeStorage, webFrame, clipboard } = 
 const { SerialPort } = require("serialport");
 const { createThrottledSerialPort, createRawSerialPort, listPorts } = require("./serial");
 const { exec } = require("child_process");
+const { createHash } = require("crypto");
 const { existsSync, statSync } = require("fs");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
@@ -258,6 +259,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   fs: {
     readFileSync: (path, encoding = "utf8") => require("fs").readFileSync(path, encoding),
+    readFileBuffer: (path) => {
+      const buffer = require("fs").readFileSync(path);
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    },
     readFileAsBase64: (path) => {
       const buffer = require("fs").readFileSync(path);
       return buffer.toString('base64');
@@ -268,6 +273,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     readdirSync: (path) => require("fs").readdirSync(path),
     writeFileSync: (path, data) => require("fs").writeFileSync(path, data),
+    writeFileBuffer: (path, data) => {
+      require("fs").writeFileSync(path, Buffer.from(data));
+    },
+    md5Buffer: (data) => {
+      return createHash("md5").update(Buffer.from(data)).digest("hex");
+    },
     writeBase64File: (path, base64Data) => {
       const buffer = Buffer.from(base64Data, 'base64');
       require("fs").writeFileSync(path, buffer);

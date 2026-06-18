@@ -29,6 +29,7 @@ import {
 } from '../../utils/coder-board.mapper';
 import type { AnyOrama } from '@orama/orama';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import type { NewProjectData } from '../../types/project-new';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
@@ -185,8 +186,7 @@ export class ProjectNewComponent implements OnDestroy {
 
     // 切换标题
     // this.electronService.setTitle('PROJECT_NEW.TITLE');
-
-    await this.configService.init();
+    // await this.configService.init();
 
     // 分别处理 Blockly / Coder 两套开发板数据源
     this._blocklyBoardList = this.configService.sortBoardsByUsage(
@@ -887,17 +887,6 @@ export interface BoardInfo {
   "brand": string,
   "type"?: string, // 开发板类型/核心架构 (如 esp32:esp32, arduino:avr, etc)
   "mode"?: string[]
-}
-
-export interface NewProjectData {
-  name: string,
-  path: string,
-  board: {
-    name: string,
-    nickname: string,
-    version: string
-  },
-  devmode?: string
 }
 
 interface CloudProjectTemplate {

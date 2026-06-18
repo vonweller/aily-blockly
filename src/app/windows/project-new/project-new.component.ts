@@ -17,6 +17,7 @@ import { PlatformService } from '../../services/platform.service';
 import { CloudService } from '../../tools/cloud-space/services/cloud.service';
 import { firstValueFrom } from 'rxjs';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import type { NewProjectData } from '../../types/project-new';
 import { AilyCodeProjectService } from '../../services/aily-code-project.service';
 import type { AilyCodeNewProjectData } from '../../services/aily-code-project.service';
 import type { CoderFramework } from '../../pages/project-new/project-new.component';
@@ -168,7 +169,7 @@ export class ProjectNewComponent {
       const pt = this.platformService.getPlatformSeparator();
       this.newProjectData.path = window['path'].getUserDocuments() + `${pt}aily-project${pt}`;
     }
-    await this.configService.init();
+    // await this.configService.init();
     this._blocklyBoardList = this.configService.sortBoardsByUsage(
       this.process(this.configService.boardList)
     );
@@ -569,16 +570,6 @@ export interface BoardInfo {
   "brand": string,
   "disabled": boolean, // 是否禁用
   "type"?: string, // 开发板类型/核心架构 (如 esp32:esp32, arduino:avr, etc)
-}
-
-export interface NewProjectData {
-  name: string,
-  path: string,
-  board: {
-    name: string,
-    nickname: string,
-    version: string
-  }
 }
 
 interface CloudProjectTemplate {
