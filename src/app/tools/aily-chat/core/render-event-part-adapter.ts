@@ -1552,7 +1552,7 @@ function buildErrorNoticeMetadata(code: string | undefined): Record<string, unkn
     errorDetails['confirmationButtons'] = [
       {
         data: { ailyContinueOnError: true },
-        label: 'Try Again',
+        label: '重试',
       },
     ];
   }

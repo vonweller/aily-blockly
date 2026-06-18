@@ -13,6 +13,15 @@ interface ErrorDiagnosticsRow {
 interface ErrorPresentation {
   readonly title: string;
   readonly message?: string;
+  readonly actions?: readonly ErrorActionItem[];
+}
+
+function buildRetryStreamAction(): ErrorActionItem {
+  return {
+    id: 'retry-stream-response',
+    label: '重试',
+    data: { ailyContinueOnError: true },
+  };
 }
 
 export interface ErrorActionItem {
@@ -149,6 +158,7 @@ export class XAilyErrorViewerComponent {
   } | null = null;
 
   @Input() showDiagnostics = false;
+  @Input() actionsEnabled = true;
 
   @Output() action = new EventEmitter<ErrorActionItem>();
 
@@ -158,7 +168,13 @@ export class XAilyErrorViewerComponent {
   }
 
   get actionItems(): readonly ErrorActionItem[] {
-    return this.data?.actions ?? [];
+    if (!this.actionsEnabled) {
+      return [];
+    }
+    if (this.data?.actions && this.data.actions.length > 0) {
+      return this.data.actions;
+    }
+    return this.presentation?.actions ?? [];
   }
 
   get errorIconClass(): string {
@@ -211,10 +227,11 @@ export class XAilyErrorViewerComponent {
       };
     }
 
-    if (code === '29001') {
+    if (code === '29001' || code === 'request_failed') {
       return {
         title: '对话流已中断',
         message: '本轮响应没有正常完成。可以重试本轮请求，或发送新的消息继续。',
+        actions: [buildRetryStreamAction()],
       };
     }
 
