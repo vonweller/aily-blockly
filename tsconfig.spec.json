@@ -25,7 +25,6 @@
     "src/environments/*.ts",
     "temp/**/*",
     "src/app/tools/aily-chat/tools/editBlockTool.spec.ts",
-    "src/app/tools/aily-chat/tools/claude_code/**/*",
-    "src/app/tools/aily-chat/tools/vscode_copilot/**/*"
+    "src/app/tools/aily-chat/tools/claude_code/**/*"
   ]
 }

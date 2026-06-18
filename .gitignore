@@ -65,6 +65,7 @@ child/aily-builder*
 /child/aily-coder
 /child/tools/*/node_modules/*
 /child/aily-lex
+/child/xpm
 
 # Playwright E2E
 /renderer
@@ -74,6 +75,9 @@ child/aily-builder*
 /e2e/.artifacts
 
 **/*.spec.ts
+!src/app/tools/aily-chat/tools/editorOperationEvents.spec.ts
+!src/app/tools/aily-chat/tools/blocklyEditorOperationQueue.spec.ts
+!/e2e/tests/**/*.spec.ts
 **/__tests__/**/*
 .tmp
 src/app/tools/aily-chat/logs
