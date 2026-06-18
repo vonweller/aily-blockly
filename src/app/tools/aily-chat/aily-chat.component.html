@@ -192,6 +192,8 @@
             [liveParts]="getLivePartsForDialogItem(item)"
             [workspaceCheckpointPresentationMode]="vm.workspaceCheckpointPresentationMode"
             [exclusiveEditTurnId]="userMessageEditingTurnId"
+            [showModeMenu]="menuManager.showMode"
+            [showModelMenu]="menuManager.showModelMenu"
             (editSessionOpened)="onUserMessageEditSessionOpened($event)"
             (editSessionClosed)="onUserMessageEditSessionClosed()"
             (dismissSessionMenus)="closeChatSessionMenus()"
@@ -457,6 +459,8 @@
           <div class="btns" [class.has-expanded-context]="resourceManager.showAddList">
             <aily-chat-context-toolbar
               [showAddList]="resourceManager.showAddList"
+              [showModeMenu]="menuManager.showMode"
+              [showModelMenu]="menuManager.showModelMenu"
               [currentMode]="vm.currentMode"
               [currentCustomAgentTarget]="vm.currentCustomAgentTarget"
               [selectedMode]="vm.selectedMode"
@@ -471,7 +475,9 @@
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />
             <div class="btn mode permission-mode-indicator ccenter"
+              #permissionModeTooltip="nzTooltip"
               nz-tooltip nzTooltipPlacement="bottom"
+              [nzTooltipTrigger]="permissionTooltipTrigger"
               [nzTooltipTitle]="vm.currentPermissionLabel"
               (click)="togglePermissionMenu($event)">
               <i [class]="permissionButtonIconClass"></i>
@@ -665,9 +671,11 @@
             <div class="composer-primary-actions">
             @if(vm.modelMenuItems.length > 0) {
             <div class="composer-model-chip ccenter"
+              #composerModelTooltip="nzTooltip"
               nz-tooltip nzTooltipPlacement="bottom"
+              [nzTooltipTrigger]="composerModelTooltipTrigger"
               [nzTooltipTitle]="vm.currentModelName"
-              (click)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)">
+              (click)="onComposerModelMenuClick($event)">
               <i class="fa-light fa-star-christmas"></i>
               <span>{{ vm.currentModelChipLabel }}</span>
             </div>

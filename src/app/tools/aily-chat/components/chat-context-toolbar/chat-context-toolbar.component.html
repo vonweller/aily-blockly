@@ -40,12 +40,14 @@
   </div>
 }
 <div
+  #modeChipTooltip="nzTooltip"
   class="acc-chip ccenter"
   [class.acc-chip--after-expanded-context]="showAddList"
   nz-tooltip
   nzTooltipPlacement="bottom"
+  [nzTooltipTrigger]="modeTooltipTrigger"
   [nzTooltipTitle]="currentCustomAgentTarget && currentMode === 'agent' ? currentCustomAgentTarget : (modeTooltipTitle | translate)"
-  (click)="modeClick.emit($event)"
+  (click)="onModeClick($event)"
 >
   <i [class]="modeIconClass"></i>
   @if (displayCustomAgentTarget) {
@@ -58,12 +60,14 @@
 </div>
 @if (showModelChip) {
   <div
+    #modelChipTooltip="nzTooltip"
     class="acc-chip ccenter"
     [class.acc-chip--after-expanded-context]="showAddList"
     nz-tooltip
     nzTooltipPlacement="bottom"
+    [nzTooltipTrigger]="modelTooltipTrigger"
     [nzTooltipTitle]="modelChipLabel"
-    (click)="modelClick.emit($event)"
+    (click)="onModelClick($event)"
   >
     <i class="fa-light fa-star-christmas"></i><span>{{ modelChipLabel }}</span>
     <!-- @if (modelBillingLabel) {

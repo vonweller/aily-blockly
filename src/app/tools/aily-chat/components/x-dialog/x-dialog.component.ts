@@ -126,6 +126,8 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   @Input() selectedMode: Pick<ChatSelectedMode, 'modeId' | 'customAgentTarget'> | null | undefined;
   /** 全局互斥：当前允许展开编辑框的用户 turnId；与本条不一致时需收起（由父级统一传入） */
   @Input() exclusiveEditTurnId: string | undefined;
+  @Input() showModeMenu = false;
+  @Input() showModelMenu = false;
 
   @Output() editAndResend = new EventEmitter<{ target: DialogTurnContext; newText: string; resources: ResourceItem[] }>();
   /** 本消息进入编辑态时发出 turnId，供父级互斥 */

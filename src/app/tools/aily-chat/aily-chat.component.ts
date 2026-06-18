@@ -11,7 +11,7 @@ import { NzResizableModule } from 'ng-zorro-antd/resizable';
 import { SubWindowComponent } from '../../components/sub-window/sub-window.component';
 import { CommonModule } from '@angular/common';
 import { ChatService } from './services/chat.service';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { NzToolTipModule, NzTooltipDirective } from 'ng-zorro-antd/tooltip';
 import { NzNoAnimationDirective } from 'ng-zorro-antd/core/no-animation';
 import { MenuComponent } from '../../components/menu/menu.component';
 import { McpService } from './services/mcp.service';
@@ -195,6 +195,10 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
   @ViewChildren(XDialogComponent) xDialogComponents: QueryList<XDialogComponent>;
   @ViewChildren('dialogVirtualRow', { read: ElementRef }) dialogVirtualRows: QueryList<ElementRef<HTMLElement>>;
+  @ViewChild('permissionModeTooltip', { read: NzTooltipDirective })
+  private permissionModeTooltip?: NzTooltipDirective;
+  @ViewChild('composerModelTooltip', { read: NzTooltipDirective })
+  private composerModelTooltip?: NzTooltipDirective;
 
   public readonly vm: ChatComponentViewModel;
   reasoningMenuItems: IMenuItem[] = [];
@@ -1016,7 +1020,21 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   }
 
   togglePermissionMenu(event: MouseEvent): void {
+    this.permissionModeTooltip?.hide();
     this.switchShellCoordinator.togglePermissionMenu(event, this.permissionMenuItems);
+  }
+
+  onComposerModelMenuClick(event: MouseEvent): void {
+    this.composerModelTooltip?.hide();
+    this.switchShellCoordinator.toggleModelMenu(event, this.vm.modelMenuItems);
+  }
+
+  get permissionTooltipTrigger(): 'hover' | null {
+    return this.menuManager.showPermissionMenu ? null : 'hover';
+  }
+
+  get composerModelTooltipTrigger(): 'hover' | null {
+    return this.menuManager.showModelMenu ? null : 'hover';
   }
 
   handlePermissionMenuClick(item: IMenuItem): void {
