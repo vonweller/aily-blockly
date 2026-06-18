@@ -20,6 +20,7 @@ interface AilyChatE2eSnapshot {
   readonly sessionId: string;
   readonly runtimeState: unknown;
   readonly visibleText: string;
+  readonly activeLoadingIndicators: number;
   readonly turnResponses: readonly TurnResponseTurn[];
   readonly rendering?: AilyChatE2eRenderingDiagnostics;
 }
@@ -50,6 +51,8 @@ interface AilyChatE2eHarnessApi {
   send(text: string): Promise<AilyChatE2eSnapshot>;
   startImplementation(): Promise<AilyChatE2eSnapshot>;
   sendWhileDetached(text: string): Promise<AilyChatE2eSnapshot>;
+  startCancellableSubagentTurn(): Promise<AilyChatE2eSnapshot>;
+  awaitCancellableSubagentTurnSettled(): Promise<AilyChatE2eSnapshot>;
   snapshot(): AilyChatE2eSnapshot;
 }
 
@@ -105,17 +108,48 @@ type EnginePrivateAccess = {
   startImplementationFromPlanPart?: (sessionId?: string | null) => Promise<void>;
   attachCurrentSessionView?: () => Promise<void>;
   lexStream?: {
+    agent?: {
+      stop?: (sessionId?: string | null) => unknown;
+    };
     hydrateTurnResponses?: (
       sessionId: string,
       turnResponses: readonly TurnResponseTurn[],
       options?: { readonly visibility?: string },
     ) => void;
+    finalizeCurrentTurnResponse?: (fallbackStatus?: string) => boolean;
     turns?: {
+      currentId?: () => string | undefined;
+      currentRequestMetadata?: () => Record<string, unknown> | undefined;
       complete?: (response: string) => void;
     };
     turn?: {
       run?: DeterministicRun;
     };
+    _renderEventBridge?: {
+      prepareTurnRequest?: (requestContent: string, displayContent?: string, metadata?: Record<string, unknown>) => void;
+      processEvent?: (event: Record<string, unknown>) => void;
+      finalizeCurrentTurn?: (fallbackStatus?: string) => boolean;
+    };
+    _turnExecutionBridge?: {
+      runTurnWithRenderEvents?: (
+        source: { chat(message: string, signal?: AbortSignal): AsyncIterable<Record<string, unknown>> },
+        userMessage: string,
+        displayContent?: string,
+      ) => Promise<void>;
+    };
+  };
+  chatSessionRuntimeRegistry?: {
+    setAbortController?: (sessionId: string | null | undefined, controller: AbortController | null) => boolean;
+    syncHandleState?: (
+      sessionId: string | null | undefined,
+      patch: {
+        readonly requestInProgress?: boolean;
+        readonly supportsInterruption?: boolean;
+        readonly activeResponseHandle?: unknown | null;
+        readonly stopSession?: (() => void) | null;
+      },
+    ) => void;
+    awaitPendingLexRequestCompleted?: (sessionId: string | null | undefined) => Promise<void>;
   };
   triggerSyncDetectChanges?: () => void;
 };
@@ -255,10 +289,82 @@ function completeLatestTurn(engine: EnginePrivateAccess, sessionId: string, prom
   engine.triggerSyncDetectChanges?.();
 }
 
+function settlePartForCancellation(part: NonNullable<TurnResponseTurn['response']['parts']>[number]): NonNullable<TurnResponseTurn['response']['parts']>[number] {
+  if (part.type === 'tool_call' && (part as { readonly state?: string }).state === 'doing') {
+    return {
+      ...part,
+      state: 'done',
+      isComplete: true,
+    } as NonNullable<TurnResponseTurn['response']['parts']>[number];
+  }
+
+  if (part.type === 'thinking' && (part as { readonly isComplete?: boolean }).isComplete === false) {
+    return {
+      ...part,
+      isComplete: true,
+    } as NonNullable<TurnResponseTurn['response']['parts']>[number];
+  }
+
+  return part;
+}
+
+function cancelLatestTurn(engine: EnginePrivateAccess, sessionId: string): void {
+  const turns = engine.readSessionTurnResponses?.(sessionId) ?? [];
+  if (!turns.length) {
+    return;
+  }
+
+  const now = Date.now();
+  const nextTurns = turns.map((turn, index) => {
+    if (index !== turns.length - 1) {
+      return cloneTurnResponseTurn(turn);
+    }
+
+    const cloned = cloneTurnResponseTurn(turn);
+    return {
+      ...cloned,
+      response: {
+        ...cloned.response,
+        status: 'cancelled',
+        parts: cloned.response.parts.map(settlePartForCancellation),
+        updatedAt: now,
+      },
+      updatedAt: now,
+    } satisfies TurnResponseTurn;
+  });
+
+  const committed = engine.replaceSessionModelTurnResponses?.(sessionId, nextTurns, {
+    allowForkedTurns: true,
+    source: 'e2e-cancellable-subagent-stop',
+  });
+  const committedTurns = Array.isArray(committed) ? committed : nextTurns;
+  engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns);
+  engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
+  engine.triggerSyncDetectChanges?.();
+}
+
 function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessApi {
   const engine = options.engine as unknown as EnginePrivateAccess;
   let installed = false;
   let originalRun: DeterministicRun | undefined;
+  let pendingCancellableTurn: Promise<unknown> | null = null;
+  let cancellableTurnReady: Promise<void> | null = null;
+  let resolveCancellableTurnReady: (() => void) | null = null;
+  let abortCancellableTurn: (() => void) | null = null;
+
+  const countActiveLoadingIndicators = (): number => {
+    const root = document.querySelector('app-aily-chat');
+    if (!root) {
+      return 0;
+    }
+    return root.querySelectorAll([
+      '.lloading',
+      '.fa-spinner',
+      '.fa-circle-notch',
+      '.loading-icon',
+      '[aria-busy="true"]',
+    ].join(',')).length;
+  };
 
   const snapshot = (): AilyChatE2eSnapshot => {
     const sessionId = getCurrentSessionId(engine);
@@ -279,6 +385,7 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       sessionId,
       runtimeState,
       visibleText,
+      activeLoadingIndicators: countActiveLoadingIndicators(),
       turnResponses,
       ...(rendering ? { rendering } : {}),
     };
@@ -378,6 +485,178 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       if (run) {
         engine.lexStream!.turn!.run = run;
       }
+      return snapshot();
+    },
+    async startCancellableSubagentTurn() {
+      await installDeterministicRuntime();
+      if (!engine.lexStream?.turn?.run) {
+        throw new Error('Aily chat E2E harness requires lexStream.turn.run');
+      }
+
+      const previousRun = engine.lexStream.turn.run;
+      const previousAgentStop = engine.lexStream.agent?.stop?.bind(engine.lexStream.agent);
+      cancellableTurnReady = new Promise<void>((resolve) => {
+        resolveCancellableTurnReady = resolve;
+      });
+      if (engine.lexStream.agent && typeof engine.lexStream.agent.stop === 'function') {
+        engine.lexStream.agent.stop = (sessionId?: string | null): unknown => {
+          abortCancellableTurn?.();
+          return previousAgentStop?.(sessionId);
+        };
+      }
+
+      engine.lexStream.turn.run = async (llmText: string, displayText?: string): Promise<void> => {
+        const sessionId = getCurrentSessionId(engine);
+        const turnId = engine.lexStream?.turns?.currentId?.() || `e2e-turn-${Date.now()}`;
+        const abortController = new AbortController();
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          abortController.abort();
+        };
+        abortCancellableTurn = finish;
+
+        try {
+          engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, abortController);
+          engine.chatSessionRuntimeRegistry?.syncHandleState?.(sessionId, {
+            requestInProgress: true,
+            supportsInterruption: true,
+            activeResponseHandle: `e2e-cancellable-subagent:${turnId}`,
+            stopSession: finish,
+          });
+
+          const renderBridge = engine.lexStream?._renderEventBridge;
+          renderBridge?.prepareTurnRequest?.(displayText || llmText, displayText, engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined);
+          const now = Date.now();
+          const emit = (event: Record<string, unknown>, offset = 0): void => {
+            renderBridge?.processEvent?.({
+              timestamp: now + offset,
+              ...event,
+            });
+          };
+
+          emit({ type: 'turn_begin', turnId }, 0);
+          emit({
+            type: 'subagent_begin',
+            toolCallId: 'e2e-subagent-tool',
+            subAgentInvocationId: 'e2e-subagent-invocation',
+            agentName: 'Explore',
+            description: 'E2E cancellable subagent',
+          }, 1);
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-subagent-tool',
+            subAgentInvocationId: 'e2e-subagent-invocation',
+            activityKind: 'thinking',
+            content: 'Subagent is inspecting project state...',
+          }, 2);
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-subagent-tool',
+            subAgentInvocationId: 'e2e-subagent-invocation',
+            activityKind: 'tool_started',
+            childToolCallId: 'e2e-subagent-child-tool',
+            toolName: 'read_file',
+            argsSummary: 'generator.js',
+            state: 'doing',
+          }, 3);
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-subagent-tool',
+            subAgentInvocationId: 'e2e-subagent-invocation',
+            activityKind: 'tool_progress',
+            childToolCallId: 'e2e-subagent-child-tool',
+            toolName: 'read_file',
+            content: 'Reading generator.js',
+            state: 'doing',
+          }, 4);
+          engine.triggerSyncDetectChanges?.();
+          resolveCancellableTurnReady?.();
+          resolveCancellableTurnReady = null;
+        } catch (error) {
+          console.error('[AilyChat][E2E] cancellable subagent setup failed', error);
+          resolveCancellableTurnReady?.();
+          resolveCancellableTurnReady = null;
+          throw error;
+        }
+
+        await new Promise<void>((resolve) => {
+          if (abortController.signal.aborted) {
+            resolve();
+            return;
+          }
+          abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+
+        engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+        cancelLatestTurn(engine, sessionId);
+        engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, null);
+        engine.lexStream!.turn!.run = previousRun;
+        if (engine.lexStream?.agent && previousAgentStop) {
+          engine.lexStream.agent.stop = previousAgentStop;
+        }
+        abortCancellableTurn = null;
+        const abortError = new Error('Cancellable subagent E2E turn was stopped.');
+        abortError.name = 'AbortError';
+        throw abortError;
+      };
+
+      const sessionId = await engine.ensureSessionReadyForSubmit();
+      pendingCancellableTurn = engine.submitUserText('Start a cancellable subagent E2E turn', {
+        clearInput: true,
+        sessionId,
+      });
+      try {
+        await Promise.race([
+          cancellableTurnReady,
+          pendingCancellableTurn.then(
+            () => {
+              throw new Error('Cancellable subagent E2E turn completed before entering running state.');
+            },
+            (error) => {
+              throw error instanceof Error ? error : new Error(String(error));
+            },
+          ),
+          new Promise<void>((_resolve, reject) => window.setTimeout(() => {
+            reject(new Error('Timed out waiting for cancellable subagent E2E turn to enter running state.'));
+          }, 5000)),
+        ]);
+      } catch (error) {
+        engine.lexStream.turn.run = previousRun;
+        if (engine.lexStream.agent && previousAgentStop) {
+          engine.lexStream.agent.stop = previousAgentStop;
+        }
+        pendingCancellableTurn = null;
+        cancellableTurnReady = null;
+        resolveCancellableTurnReady = null;
+        abortCancellableTurn = null;
+        throw error;
+      }
+      return snapshot();
+    },
+    async awaitCancellableSubagentTurnSettled() {
+      const pending = pendingCancellableTurn;
+      if (pending) {
+        await Promise.race([
+          pending.catch(() => undefined),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 2000)),
+        ]);
+      }
+      const sessionId = getCurrentSessionId(engine);
+      await Promise.race([
+        engine.chatSessionRuntimeRegistry?.awaitPendingLexRequestCompleted?.(sessionId)?.catch(() => undefined) ?? Promise.resolve(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1000)),
+      ]);
+      engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+      cancelLatestTurn(engine, sessionId);
+      pendingCancellableTurn = null;
+      cancellableTurnReady = null;
+      resolveCancellableTurnReady = null;
+      abortCancellableTurn = null;
+      engine.triggerSyncDetectChanges?.();
       return snapshot();
     },
     snapshot,

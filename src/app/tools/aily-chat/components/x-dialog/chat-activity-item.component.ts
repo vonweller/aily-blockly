@@ -134,22 +134,30 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
             @if (item.note && item.detailKind === 'invocation') {
               <div class="cag-item-note cag-item-summary-note">
-                <x-markdown
-                  [content]="item.note || ''"
-                  [components]="componentMap"
-                  rootClassName="x-markdown-dark cag-item-markdown"
-                />
+                @if (item.noteRenderMode === 'plain') {
+                  <pre class="cag-item-plain-note" [textContent]="item.note || ''"></pre>
+                } @else {
+                  <x-markdown
+                    [content]="item.note || ''"
+                    [components]="componentMap"
+                    rootClassName="x-markdown-dark cag-item-markdown"
+                  />
+                }
               </div>
             }
           </div>
 
           @if (item.note && item.detailKind !== 'invocation') {
             <div class="cag-item-note">
-              <x-markdown
-                [content]="item.note || ''"
-                [components]="componentMap"
-                rootClassName="x-markdown-dark cag-item-markdown"
-              />
+              @if (item.noteRenderMode === 'plain') {
+                <pre class="cag-item-plain-note" [textContent]="item.note || ''"></pre>
+              } @else {
+                <x-markdown
+                  [content]="item.note || ''"
+                  [components]="componentMap"
+                  rootClassName="x-markdown-dark cag-item-markdown"
+                />
+              }
             </div>
           }
 
@@ -947,6 +955,17 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
     .cag-item-summary-note {
       pointer-events: none;
+    }
+
+    .cag-item-plain-note {
+      margin: 0;
+      color: var(--chat-fg-dim, #8e8e8e);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      font-family: inherit;
     }
 
     .cag-item-approval {
@@ -2172,6 +2191,10 @@ export class ChatActivityItemComponent implements OnChanges {
         this.detailExpanded = true;
       }
 
+      if (this.detailExpanded) {
+        this.ensureLazyDetailLoaded();
+      }
+
       this.lastAutoDetailExpanded = nextAutoDetailExpanded;
       this.selectedInstructionFilter = 'all';
       const markdownSurfaceCount = countActivityItemMarkdownSurfaces(this.item, this.detailExpanded);
@@ -2397,7 +2420,7 @@ export class ChatActivityItemComponent implements OnChanges {
   }
 
   hasDetailContent(): boolean {
-    return this.hasDetailSections() || !!this.item.instructionMetadata;
+    return this.hasDetailSections() || !!this.item.loadDetail || !!this.item.instructionMetadata;
   }
 
   shouldAutoExpandDetails(): boolean {
@@ -2441,12 +2464,36 @@ export class ChatActivityItemComponent implements OnChanges {
     if (!this.hasDetailContent()) {
       return;
     }
-    this.detailExpanded = !this.detailExpanded;
+    const nextExpanded = !this.detailExpanded;
+    if (nextExpanded) {
+      this.ensureLazyDetailLoaded();
+    }
+    this.detailExpanded = nextExpanded;
   }
 
   toggleDetailFromKeyboard(event: Event): void {
     event.preventDefault();
     this.toggleDetail();
+  }
+
+  private ensureLazyDetailLoaded(): void {
+    if (!this.item.loadDetail || this.item.detailSections?.length || this.item.invocationDetail) {
+      return;
+    }
+
+    const startedAt = performance.now();
+    const detail = this.item.loadDetail();
+    (this.item as ActivityGroupDisplayItem).detailSections = detail.detailSections;
+    (this.item as ActivityGroupDisplayItem).invocationDetail = detail.invocationDetail;
+    if (detail.detailKind) {
+      (this.item as ActivityGroupDisplayItem).detailKind = detail.detailKind;
+    }
+    ChatPerformanceTracer.recordDuration(
+      'activity_item.lazy_detail_load',
+      performance.now() - startedAt,
+      `id=${this.item.id},kind=${this.item.detailKind || 'unknown'},sections=${detail.detailSections?.length || 0}`,
+      { slowThresholdMs: 8 },
+    );
   }
 
   getOutputImageSource(row: StateDetailRow): string | null {
@@ -2623,7 +2670,7 @@ export class ChatActivityItemComponent implements OnChanges {
 
 function countActivityItemMarkdownSurfaces(item: ActivityGroupDisplayItem, detailExpanded: boolean): number {
   let count = 0;
-  if (item.note) {
+  if (item.note && item.noteRenderMode !== 'plain') {
     count += 1;
   }
   for (const child of item.children || []) {

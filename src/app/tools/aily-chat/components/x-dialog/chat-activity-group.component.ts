@@ -475,6 +475,15 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       `parts=${this.parts.length},items=${this.displayItems.length},doing=${this.doing},state=${this.groupState}`,
       { slowThresholdMs: 8 },
     );
+    ChatPerformanceTracer.recordJankSnapshot('activity_group_refresh', {
+      parts: this.parts.length,
+      items: this.displayItems.length,
+      doing: this.doing,
+      state: this.groupState,
+      headerKind: this.groupHeader.kind,
+      scopedSubagentChildren: this.parts.filter((part) => isSubagentChildPart(part)).length,
+      legacySubagentChildren: countLegacySubagentChildren(this.parts),
+    });
   }
 
   private _attachTurnResponseContinuation(items: ActivityGroupDisplayItem[]): ActivityGroupDisplayItem[] {
@@ -752,4 +761,22 @@ function hasScopedSubagentChildren(parts: readonly ChatPart[], parent: ToolCallP
   return parts.some((part) => part !== parent
     && isSubagentChildPart(part)
     && getSubAgentInvocationId(part) === subAgentInvocationId);
+}
+
+function countLegacySubagentChildren(parts: readonly ChatPart[]): number {
+  let count = 0;
+  for (const part of parts) {
+    if (part.type !== 'tool_call') {
+      continue;
+    }
+    const toolSpecificData = part.metadata?.['toolSpecificData'];
+    if (!toolSpecificData || typeof toolSpecificData !== 'object') {
+      continue;
+    }
+    const childItems = (toolSpecificData as Record<string, unknown>)['childItems'];
+    if (Array.isArray(childItems)) {
+      count += childItems.length;
+    }
+  }
+  return count;
 }

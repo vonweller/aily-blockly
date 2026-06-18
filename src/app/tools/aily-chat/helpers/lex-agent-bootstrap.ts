@@ -40,7 +40,7 @@ import { createBlocklySlashCommandProvider } from '../core/blockly-slash-command
 import { createBlocklySubagentExtension } from '../core/blockly-subagent-extension';
 import { BlocklySkillProvider } from '../core/blockly-skill-provider';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
-import { askUserMany, askUserSingle } from '../core/ask-user';
+import { askUserMany, askUserSingle, type AskUserPresentationContext } from '../core/ask-user';
 import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
@@ -1196,6 +1196,28 @@ export function bootstrapBlocklyLexAgent(
     cwd: cwd || null,
   });
 
+  const askUserPresentationContext = (opts: {
+    readonly toolCallId?: string;
+    readonly trace?: {
+      readonly toolCallId?: string;
+      readonly parentToolCallId?: string;
+    };
+  }): AskUserPresentationContext | undefined => {
+    const parentToolCallId = opts.trace?.parentToolCallId?.trim();
+    if (!parentToolCallId) {
+      return opts.toolCallId || opts.trace?.toolCallId
+        ? { toolCallId: opts.toolCallId ?? opts.trace?.toolCallId }
+        : undefined;
+    }
+
+    return {
+      toolCallId: opts.toolCallId ?? opts.trace?.toolCallId,
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: parentToolCallId,
+      parentToolCallId,
+    };
+  };
+
   const runtimeExtensions: Record<string, unknown> = {
     environment: createEnvironmentProviderFromContext(
       contextSnapshotService,
@@ -1204,11 +1226,11 @@ export function bootstrapBlocklyLexAgent(
     ),
     contextSnapshot: contextSnapshotService,
     askUser: {
-      ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal }) => {
-        return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true);
+      ask: async (opts: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; multiSelect: boolean; allowFreeform?: boolean; signal?: AbortSignal; toolCallId?: string; trace?: { toolCallId?: string; parentToolCallId?: string } }) => {
+        return askUserSingle(opts.question, opts.options, opts.multiSelect, opts.allowFreeform ?? true, askUserPresentationContext(opts));
       },
-      askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal }) => {
-        return askUserMany(opts.questions);
+      askMany: async (opts: { questions: { question: string; options?: { label: string; description?: string; recommended?: boolean }[]; allow_freeform?: boolean; multi_select?: boolean }[]; signal?: AbortSignal; toolCallId?: string; trace?: { toolCallId?: string; parentToolCallId?: string } }) => {
+        return askUserMany(opts.questions, askUserPresentationContext(opts));
       },
     },
     diagnostics: {

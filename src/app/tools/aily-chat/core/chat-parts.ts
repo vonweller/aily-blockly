@@ -28,6 +28,8 @@ export interface ChatPartScope {
 /** Markdown 文本 Part（收集 think/tool 之外的普通文本） */
 export interface MarkdownPart extends ChatPartScope {
   type: 'markdown';
+  /** Stable renderer identity for streamed markdown blocks. */
+  partId?: string;
   /** 累积的 markdown 文本 */
   content: string;
   /** Optional renderer-side external content reference for large live markdown blocks. */
@@ -39,6 +41,8 @@ export interface MarkdownPart extends ChatPartScope {
 /** 思考过程 Part — 替代 filterThinkTags + think-content-store */
 export interface ThinkingPart extends ChatPartScope {
   type: 'thinking';
+  /** Stable renderer identity for streamed reasoning blocks. */
+  partId?: string;
   /** 思考内容原始文本 */
   content: string;
   /** Optional renderer-side external content reference for large live thinking blocks. */
@@ -214,7 +218,13 @@ export interface TerminalPartOptions extends ChatPartScope {
   outputUpdateKind?: 'delta' | 'snapshot';
 }
 
-/** 子Agent 内部的结构化子项 */
+/**
+ * Legacy 子Agent 内部结构化子项。
+ *
+ * New live subagent rendering must use first-class scoped ChatPart entries
+ * (`sourceAgentRole='subagent'`, `subAgentInvocationId`, `parentToolCallId`).
+ * This shape is kept only for old history restore/migration fallback.
+ */
 export interface SubagentChildItem {
   /** 子项类型：thinking=思考, tool=工具调用, text=文本输出, question=子代理提问 */
   kind: 'thinking' | 'tool' | 'text' | 'question';
@@ -235,7 +245,7 @@ export interface SubagentChildItem {
   duration?: number;
 }
 
-/** 子Agent tool_call metadata 的临时投影视图 */
+/** 子Agent tool_call metadata 的临时投影视图。 */
 export interface SubagentToolCallSnapshot {
   /** 工具调用 ID */
   toolCallId: string;
@@ -249,7 +259,12 @@ export interface SubagentToolCallSnapshot {
   state: 'doing' | 'done' | 'error';
   /** 子Agent 返回的结果文本（兼容/序列化用） */
   resultText: string;
-  /** 结构化子项（流式期间实时填充） */
+  /**
+   * Legacy child items for old history restore/migration only.
+   *
+   * Do not write live child output here. Live child thinking/text/tool output
+   * is represented as first-class scoped parts associated by `subAgentInvocationId`.
+   */
   childItems?: SubagentChildItem[];
   /** 轻量元数据，供 restore/viewer 扩展使用 */
   metadata?: Record<string, unknown>;
@@ -363,13 +378,13 @@ export function withChatPartScopeMetadata(
 }
 
 /** 创建 MarkdownPart */
-export function mkMarkdown(content: string, scope?: ChatPartScope): MarkdownPart {
-  return { type: 'markdown', content, ...normalizeChatPartScope(scope) };
+export function mkMarkdown(content: string, scope?: ChatPartScope, partId?: string): MarkdownPart {
+  return { type: 'markdown', partId, content, ...normalizeChatPartScope(scope) };
 }
 
 /** 创建 ThinkingPart */
-export function mkThinking(content: string, isComplete: boolean, scope?: ChatPartScope): ThinkingPart {
-  return { type: 'thinking', content, isComplete, ...normalizeChatPartScope(scope) };
+export function mkThinking(content: string, isComplete: boolean, scope?: ChatPartScope, partId?: string): ThinkingPart {
+  return { type: 'thinking', partId, content, isComplete, ...normalizeChatPartScope(scope) };
 }
 
 /** 创建 ToolCallPart */
@@ -579,6 +594,20 @@ export function buildTerminalPartId(command: string, toolCallId?: string, sessio
     : `terminal:${command.trim() || 'unknown'}`;
 }
 
+export function buildScopedTextPartId(
+  kind: 'markdown' | 'thinking',
+  scope: ChatPartScope | null | undefined,
+  localIndex: number,
+): string {
+  const normalized = normalizeChatPartScope(scope);
+  const source = normalized?.sourceAgentRole === 'subagent' ? 'subagent' : 'main';
+  const invocation = normalized?.subAgentInvocationId || normalized?.parentToolCallId || 'root';
+  const sequence = typeof normalized?.sequence === 'number' && Number.isFinite(normalized.sequence)
+    ? normalized.sequence
+    : localIndex;
+  return `${source}:${invocation}:${kind}:${sequence}`;
+}
+
 function getTerminalSessionId(options: Pick<TerminalPartOptions, 'processId' | 'outputSessionId' | 'terminalId'>): string | undefined {
   return asString(options.processId) || asString(options.outputSessionId) || asString(options.terminalId);
 }
@@ -610,6 +639,11 @@ function cloneSubagentChildItems(childItems: readonly SubagentChildItem[] | unde
   return Array.isArray(childItems)
     ? childItems.map(item => ({ ...item }))
     : [];
+}
+
+function stripLegacySubagentToolSpecificData(record: Record<string, unknown>): Record<string, unknown> {
+  const { childItems: _childItems, _toolTimers: _toolTimers, ...rest } = record;
+  return rest;
 }
 
 function subagentStateToToolState(state: SubagentToolCallSnapshot['state']): ToolCallPart['state'] {
@@ -704,10 +738,11 @@ export function toolCallPartToSubagentSnapshot(part: ToolCallPart): SubagentTool
 export function subagentSnapshotToToolCall(part: SubagentToolCallSnapshot, existing?: ToolCallPart): ToolCallPart {
   const existingMetadata = asRecord(existing?.metadata) ?? {};
   const partMetadata = asRecord(part.metadata) ?? {};
-  const existingToolSpecificData = asRecord(existingMetadata['toolSpecificData']) ?? {};
-  const partToolSpecificData = asRecord(partMetadata['toolSpecificData']) ?? {};
+  const existingToolSpecificData = stripLegacySubagentToolSpecificData(asRecord(existingMetadata['toolSpecificData']) ?? {});
+  const partToolSpecificData = stripLegacySubagentToolSpecificData(asRecord(partMetadata['toolSpecificData']) ?? {});
   const partTimeline = asRecordArray(partMetadata['timeline']);
   const existingTimeline = asRecordArray(existingMetadata['timeline']);
+  const childItems = cloneSubagentChildItems(part.childItems);
   const timeline = partTimeline.length > 0
     ? partTimeline
     : existingTimeline.length > 0
@@ -748,8 +783,8 @@ export function subagentSnapshotToToolCall(part: SubagentToolCallSnapshot, exist
         agentName: part.agentName,
         description: part.description,
         result: part.resultText,
-        childItems: cloneSubagentChildItems(part.childItems),
-        _toolTimers: part._toolTimers,
+        ...(childItems.length > 0 ? { childItems } : {}),
+        ...(part._toolTimers ? { _toolTimers: part._toolTimers } : {}),
       },
     },
   };

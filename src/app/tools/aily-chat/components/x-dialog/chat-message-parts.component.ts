@@ -22,6 +22,7 @@ import { type RenderableChatPart } from './chat-render-parts';
 import { buildChatRenderItems, type ActivityGroupRenderItem, type ChatRenderItem } from './chat-subagent-group-projection';
 import { ChatActivityGroupComponent } from './chat-activity-group.component';
 import { ChatMessagePartItemComponent } from './chat-message-part-item.component';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
 @Component({
   selector: 'aily-chat-message-parts',
@@ -79,6 +80,19 @@ export class ChatMessagePartsComponent implements OnChanges {
   }
 
   private _refresh(): void {
-    this.renderItems = buildChatRenderItems(this.parts || [], this.doing);
+    const parts = this.parts || [];
+    const startedAt = performance.now();
+    this.renderItems = buildChatRenderItems(parts, this.doing);
+    ChatPerformanceTracer.recordDuration(
+      'message_parts_component_refresh',
+      performance.now() - startedAt,
+      `parts=${parts.length},items=${this.renderItems.length},doing=${this.doing}`,
+      { slowThresholdMs: 8 },
+    );
+    ChatPerformanceTracer.recordJankSnapshot('message_parts_component', {
+      parts: parts.length,
+      renderItems: this.renderItems.length,
+      doing: this.doing,
+    });
   }
 }

@@ -15,7 +15,7 @@ import { XAilyLibraryViewerComponent } from './x-aily-library-viewer/x-aily-libr
 import { MermaidCodeComponent } from 'ngx-x-markdown';
 import { XAilyContextViewerComponent } from './x-aily-context-viewer/x-aily-context-viewer.component';
 import { XAilyBlocklyViewerComponent } from './x-aily-blockly-viewer/x-aily-blockly-viewer.component';
-import { XAilyErrorViewerComponent } from './x-aily-error-viewer/x-aily-error-viewer.component';
+import { XAilyErrorViewerComponent, type ErrorActionItem } from './x-aily-error-viewer/x-aily-error-viewer.component';
 import { XAilyTaskActionViewerComponent } from './x-aily-task-action-viewer/x-aily-task-action-viewer.component';
 import { XAilyCodeViewerComponent } from './x-aily-code-viewer/x-aily-code-viewer.component';
 import { XAilyDefaultViewerComponent } from './x-aily-default-viewer/x-aily-default-viewer.component';
@@ -31,6 +31,7 @@ import { MermaidComponent } from '../aily-mermaid-viewer/mermaid/mermaid.compone
 import mermaid from 'mermaid';
 import { AilyHost } from '../../core/host';
 import { ChatService } from '../../services/chat.service';
+import { ChatEngineService } from '../../services/chat-engine.service';
 
 /** 所有 aily-* 自定义代码块类型 */
 const AILY_TYPES = [
@@ -152,7 +153,7 @@ const AILY_TYPES = [
       <x-aily-blockly-viewer [data]="parsedData" />
     }
     @if (isType('aily-error') && parsedData) {
-      <x-aily-error-viewer [data]="parsedData" />
+      <x-aily-error-viewer [data]="parsedData" (action)="handleErrorAction($event)" />
     }
     @if (isType('aily-task-action') && parsedData) {
       <x-aily-task-action-viewer [data]="parsedData" />
@@ -237,6 +238,7 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
   mermaidDownloadSuccess = false;
   private copySuccessTimer: ReturnType<typeof setTimeout> | null = null;
   private downloadSuccessTimer: ReturnType<typeof setTimeout> | null = null;
+  private errorActionInFlight = false;
 
   constructor(
     private cdr: ChangeDetectorRef,
@@ -244,6 +246,7 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
     private message: NzMessageService,
     private translate: TranslateService,
     private chatService: ChatService,
+    private chatEngine: ChatEngineService,
   ) {}
 
   // ===== Getters =====
@@ -353,6 +356,56 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
       return buildCompatActivityParts(parsed, 'aily-state');
     }
     return [];
+  }
+
+  async handleErrorAction(action: ErrorActionItem): Promise<void> {
+    const confirmationData = this.readRetryConfirmationData(action);
+    if (!confirmationData || this.errorActionInFlight) {
+      return;
+    }
+
+    const sessionId = this.chatService.currentSessionId;
+    if (!sessionId) {
+      this.message.error('当前会话不可用，无法重试');
+      return;
+    }
+
+    this.errorActionInFlight = true;
+    try {
+      await this.chatEngine.submitInteractionActionRequest(
+        action.label,
+        {
+          kind: 'confirmation',
+          payload: {
+            result: 'approved',
+            source: 'error_details',
+            acceptedConfirmationData: [confirmationData],
+          },
+        },
+        undefined,
+        sessionId,
+      );
+    } catch (error) {
+      console.warn('[AilyChatCode] error action failed', error);
+      this.message.error('重试请求发送失败');
+    } finally {
+      this.errorActionInFlight = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  private readRetryConfirmationData(action: ErrorActionItem): { ailyContinueOnError: true } | null {
+    const data = action.data;
+    if (data && typeof data === 'object' && !Array.isArray(data) && (data as Record<string, unknown>)['ailyContinueOnError'] === true) {
+      return { ailyContinueOnError: true };
+    }
+
+    const actionRecord = action as ErrorActionItem & { action?: unknown };
+    if (action.id === 'retry-stream-response' || action.id === 'try_again' || actionRecord.action === 'try_again') {
+      return { ailyContinueOnError: true };
+    }
+
+    return null;
   }
 
   private decodeEntities(html: string): string {

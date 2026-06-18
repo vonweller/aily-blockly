@@ -20,6 +20,15 @@ import { CompileValidationService } from '../../../services/compile-validation.s
 import { AppDataResourceLockService } from '../../../services/appdata-resource-lock.service';
 import { NpmService } from '../../../services/npm.service';
 import { debounceTime } from 'rxjs/operators';
+import { ChatPerformanceTracer } from '../../../tools/aily-chat/services/chat-perf-tracer';
+
+const AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY = '__AILY_CHAT_LEX_COMPLETION_PENDING_COUNT__';
+const AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY = '__AILY_CHAT_AGENT_LOOP_PENDING_COUNT__';
+const PREPROCESS_IDLE_TIMEOUT_MS = 1800;
+const PREPROCESS_PENDING_CHAT_POLL_MS = 500;
+const PREPROCESS_PENDING_CHAT_MAX_WAIT_MS = 10_000;
+const PREPROCESS_POST_CHAT_QUIET_MS = 1500;
+const PREPROCESS_SLOW_PHASE_MS = 32;
 
 @Injectable()
 export class _BuilderService {
@@ -98,6 +107,124 @@ export class _BuilderService {
     return this.npmService.isInstalling || this.workflowService.currentState === ProcessState.INSTALLING;
   }
 
+  private getPendingChatBackgroundOperationCount(): number {
+    const value = (globalThis as Record<string, unknown>)[AILY_CHAT_LEX_COMPLETION_PENDING_COUNT_KEY];
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  private getPendingChatAgentLoopCount(): number {
+    const value = (globalThis as Record<string, unknown>)[AILY_CHAT_AGENT_LOOP_PENDING_COUNT_KEY];
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  private getPendingChatBlockingOperationCount(): number {
+    return this.getPendingChatBackgroundOperationCount() + this.getPendingChatAgentLoopCount();
+  }
+
+  private waitForOneIdleBoundary(): Promise<void> {
+    return new Promise(resolve => {
+      const requestIdle = (globalThis as any).requestIdleCallback as
+        | ((callback: () => void, options?: { timeout?: number }) => number)
+        | undefined;
+      if (typeof requestIdle === 'function') {
+        requestIdle(() => resolve(), { timeout: PREPROCESS_IDLE_TIMEOUT_MS });
+        return;
+      }
+
+      setTimeout(resolve, PREPROCESS_PENDING_CHAT_POLL_MS);
+    });
+  }
+
+  private waitForDelay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private recordPreprocessDuration(tag: string, startedAt: number, detail?: string): void {
+    const durationMs = Date.now() - startedAt;
+    ChatPerformanceTracer.recordDuration(
+      `builder_preprocess_${tag}`,
+      durationMs,
+      detail,
+      { slowThresholdMs: PREPROCESS_SLOW_PHASE_MS },
+    );
+    if (durationMs >= PREPROCESS_SLOW_PHASE_MS) {
+      console.info('[Builder][PreprocessSchedule] slow phase', {
+        tag,
+        durationMs,
+        detail,
+      });
+    }
+  }
+
+  private async unlinkFileIfExists(filePath: string): Promise<boolean> {
+    if (!window['path'].isExists(filePath)) {
+      return false;
+    }
+
+    const fsApi = window['fs'] as {
+      unlinkSync?: (path: string) => void;
+      promises?: {
+        unlink?: (path: string) => Promise<void>;
+      };
+    };
+
+    if (typeof fsApi.promises?.unlink === 'function') {
+      await fsApi.promises.unlink(filePath);
+      return true;
+    }
+
+    await this.waitForOneIdleBoundary();
+    fsApi.unlinkSync?.(filePath);
+    return true;
+  }
+
+  private async writeTextFile(filePath: string, content: string): Promise<void> {
+    const fsApi = window['fs'] as {
+      writeFileSync?: (path: string, content: string) => void;
+      promises?: {
+        writeFile?: (path: string, content: string) => Promise<void>;
+      };
+    };
+
+    if (typeof fsApi.promises?.writeFile === 'function') {
+      await fsApi.promises.writeFile(filePath, content);
+      return;
+    }
+
+    await this.waitForOneIdleBoundary();
+    fsApi.writeFileSync?.(filePath, content);
+  }
+
+  private async waitForBackgroundPreprocessIdle(reason: string): Promise<void> {
+    const startedAt = Date.now();
+    let pendingChatOperations = this.getPendingChatBlockingOperationCount();
+
+    while (pendingChatOperations > 0 && Date.now() - startedAt < PREPROCESS_PENDING_CHAT_MAX_WAIT_MS) {
+      console.info('[Builder][PreprocessSchedule] waiting for chat background completion', {
+        reason,
+        pendingChatOperations,
+        pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+        pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+        waitMs: Date.now() - startedAt,
+      });
+      await this.waitForDelay(PREPROCESS_PENDING_CHAT_POLL_MS);
+      pendingChatOperations = this.getPendingChatBlockingOperationCount();
+    }
+
+    if (reason === 'ai-complete') {
+      await this.waitForDelay(PREPROCESS_POST_CHAT_QUIET_MS);
+    }
+    await this.waitForOneIdleBoundary();
+
+    console.info('[Builder][PreprocessSchedule] idle boundary reached', {
+      reason,
+      waitMs: Date.now() - startedAt,
+      pendingChatOperations: this.getPendingChatBlockingOperationCount(),
+      pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+      pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+    });
+  }
+
   private triggerPendingPrecompile(reason: string, logMessage: string): void {
     if (!this.pendingPrecompile) {
       return;
@@ -106,8 +233,20 @@ export class _BuilderService {
     console.log(logMessage);
     this.pendingPrecompile = false;
     setTimeout(() => {
-      if (this.blocklyService.aiWaiting) {
+      const pendingChatOperations = this.getPendingChatBlockingOperationCount();
+      if (this.blocklyService.aiWaiting || pendingChatOperations > 0) {
+        if (pendingChatOperations > 0) {
+          console.info('[Builder][PreprocessSchedule] agent loop still active, keep preprocess pending', {
+            reason,
+            pendingChatOperations,
+            pendingAgentLoops: this.getPendingChatAgentLoopCount(),
+            pendingCompletions: this.getPendingChatBackgroundOperationCount(),
+          });
+        }
         this.pendingPrecompile = true;
+        setTimeout(() => {
+          this.triggerPendingPrecompile(reason, logMessage);
+        }, PREPROCESS_PENDING_CHAT_POLL_MS);
         return;
       }
 
@@ -118,7 +257,7 @@ export class _BuilderService {
       }
 
       this.blocklyService.dependencySubject.next(reason);
-    }, 100);
+    }, 800);
   }
 
   private async getMissingBoardDependencies(): Promise<string[]> {
@@ -181,7 +320,7 @@ export class _BuilderService {
       }
 
       // 互斥条件1：AI操作期间不触发自动预编译，但标记需要延迟执行
-      if (this.blocklyService.aiWaiting) {
+      if (this.blocklyService.aiWaiting || this.getPendingChatBlockingOperationCount() > 0) {
         console.log('AI操作进行中，标记延迟预编译');
         this.pendingPrecompile = true;
         return;
@@ -190,6 +329,19 @@ export class _BuilderService {
       // 互斥条件2：依赖安装进行中不触发自动预编译，但保留一次待补执行
       if (this.isInstallInProgress()) {
         console.log('依赖安装进行中，标记延迟预编译');
+        this.pendingPrecompile = true;
+        return;
+      }
+
+      await this.waitForBackgroundPreprocessIdle(String(data || 'dependency'));
+      if (this.blocklyService.aiWaiting || this.getPendingChatBlockingOperationCount() > 0) {
+        console.log('AI操作进行中，idle 后继续延迟预编译');
+        this.pendingPrecompile = true;
+        return;
+      }
+
+      if (this.isInstallInProgress()) {
+        console.log('依赖安装进行中，idle 后继续延迟预编译');
         this.pendingPrecompile = true;
         return;
       }
@@ -223,6 +375,7 @@ export class _BuilderService {
       // 1. 先终止正在运行的预处理进程（如果有）
       if (this.preprocessProcess || this.preprocessStreamId) {
         console.log('终止正在运行的预处理进程...');
+        const stopStartedAt = Date.now();
         try {
           // 先取消订阅
           if (this.preprocessProcess) {
@@ -236,32 +389,40 @@ export class _BuilderService {
           }
         } catch (error) {
           console.warn('终止旧的预处理进程失败:', error);
+        } finally {
+          this.recordPreprocessDuration('stop_existing_process', stopStartedAt);
         }
       }
 
       // 2. 删除预编译缓存文件
-      if (window['path'].isExists(preprocessCachePath)) {
-        try {
-          window['fs'].unlinkSync(preprocessCachePath);
+      try {
+        const unlinkStartedAt = Date.now();
+        if (await this.unlinkFileIfExists(preprocessCachePath)) {
           console.log('已删除预编译缓存文件:', preprocessCachePath);
-        } catch (error) {
-          console.warn('删除预编译缓存文件失败:', error);
-          return;
+          this.recordPreprocessDuration('delete_cache', unlinkStartedAt);
         }
+      } catch (error) {
+        console.warn('删除预编译缓存文件失败:', error);
+        return;
       }
 
       // 2. 在后台运行预处理脚本
       try {
+        await this.waitForOneIdleBoundary();
         // 检查 workspace 是否已初始化
         if (!this.blocklyService.workspace) {
           console.log('Blockly workspace 未初始化，跳过自动预编译');
           return;
         }
         
+        const codegenStartedAt = Date.now();
         const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+        this.recordPreprocessDuration('workspace_to_code', codegenStartedAt);
         if (!code) {
           return;
         }
+        await this.waitForOneIdleBoundary();
+
         const currentProjectPath = this.projectService.currentProjectPath;
         const ailyBuilderPath = window['path'].getAilyBuilderPath();
         const boardModule = await this.projectService.getBoardModule();
@@ -303,9 +464,14 @@ export class _BuilderService {
         // 写入配置文件
         const configFilePath = this.electronService.pathJoin(tempPath, 'build-config.json');
         if (!window['path'].isExists(tempPath)) {
+          const mkdirStartedAt = Date.now();
           await this.crossPlatformCmdService.createDirectory(tempPath, true);
+          this.recordPreprocessDuration('create_temp_dir', mkdirStartedAt);
         }
-        await window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+        const writeConfigStartedAt = Date.now();
+        await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
+        this.recordPreprocessDuration('write_config', writeConfigStartedAt);
+        await this.waitForOneIdleBoundary();
 
         // 运行预处理脚本（后台运行）
         const preprocessScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'preprocess.js');
@@ -318,6 +484,7 @@ export class _BuilderService {
         this.preprocessFullError = '';
 
         // 使用 cmdService 后台静默运行预处理脚本
+        const spawnStartedAt = Date.now();
         const subscription = this.cmdService.run(preprocessCommand, null, false).subscribe({
           next: (output) => {
             // 捕获 streamId
@@ -401,6 +568,7 @@ export class _BuilderService {
             }
           }
         });
+        this.recordPreprocessDuration('spawn_command_stream', spawnStartedAt);
         
         // 保存订阅引用以便后续终止
         this.preprocessProcess = subscription;

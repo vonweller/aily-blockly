@@ -17,7 +17,7 @@ import {
 import { AilyHost } from '../core/host';
 import { normalizeToolApprovalRequest } from './tool-approval-ui';
 import type { ToolApprovalRequest, ToolApprovalResult, ToolApprovalScope } from './tool-approval-ui';
-import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer } from '../core/ask-user';
+import type { AskUserQuestion, AskUserFullResponse, AskUserAnswer, AskUserPresentationContext } from '../core/ask-user';
 import type { QuestionItem } from '../core/chat-parts';
 import { AILY_CHAT_ONBOARDING_CONFIG } from '../../../configs/onboarding.config';
 import type { AilyChatConfigService } from '../services/aily-chat-config.service';
@@ -164,9 +164,12 @@ export class UserInteractionHelper {
    * ask_user 工具的 UI 层回调。
    * 在聊天界面显示全部问题，等待用户逐题回答后 resolve 完整结果。
    */
-  async handleAskUser(questions: AskUserQuestion[]): Promise<AskUserFullResponse | undefined> {
+  async handleAskUser(
+    questions: AskUserQuestion[],
+    context?: AskUserPresentationContext,
+  ): Promise<AskUserFullResponse | undefined> {
     this._askUserQuestions = questions;
-    this._askUserQuestionPartId = this.ctx.lexStream.ui.presentQuestion(this.toQuestionItems(questions));
+    this._askUserQuestionPartId = this.ctx.lexStream.ui.presentQuestion(this.toQuestionItems(questions), context);
 
     const partId = this._askUserQuestionPartId;
     if (!partId) {
@@ -178,6 +181,7 @@ export class UserInteractionHelper {
         this.resolveInteractionSessionResource(),
         partId,
         questions,
+        context,
       );
       if (result?.answers) {
         this.ctx.lexStream.ui.updateQuestionAnswers(result.answers, partId);

@@ -6,6 +6,7 @@ import {
   isGroupableActivityPart,
   isSubagentToolCall,
 } from './chat-activity-group-projection';
+import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 
 export interface PartRenderItem {
   kind: 'part';
@@ -26,7 +27,32 @@ export function buildChatRenderItems(
   parts: readonly RenderableChatPart[],
   doing: boolean,
 ): ChatRenderItem[] {
-  return markLiveActivityGroups(buildBaseRenderItems(parts), doing);
+  const startedAt = performance.now();
+  const baseItems = buildBaseRenderItems(parts);
+  const items = markLiveActivityGroups(baseItems, doing);
+  const groupCount = items.filter((item) => item.kind === 'group').length;
+  const subagentGroupCount = items.filter((item) => item.kind === 'group'
+    && item.parts.some((part) => isSubagentToolCall(part))).length;
+  const scopedSubagentChildCount = countScopedSubagentChildren(parts);
+  const legacyChildCount = countLegacySubagentChildren(parts);
+
+  ChatPerformanceTracer.recordDuration(
+    'message_parts_projection',
+    performance.now() - startedAt,
+    `parts=${parts.length},items=${items.length},groups=${groupCount},subagentGroups=${subagentGroupCount},scopedChildren=${scopedSubagentChildCount},legacyChildren=${legacyChildCount},doing=${doing}`,
+    { slowThresholdMs: 6 },
+  );
+  ChatPerformanceTracer.recordJankSnapshot('message_parts_projection', {
+    parts: parts.length,
+    items: items.length,
+    groups: groupCount,
+    subagentGroups: subagentGroupCount,
+    scopedSubagentChildren: scopedSubagentChildCount,
+    legacySubagentChildren: legacyChildCount,
+    doing,
+  });
+
+  return items;
 }
 
 function buildBaseRenderItems(parts: readonly RenderableChatPart[]): ChatRenderItem[] {
@@ -117,8 +143,15 @@ function collectSubagentGroup(
   startIndex: number,
   parent: ChatPart,
 ): { parts: readonly ChatPart[]; endIndex: number } {
+  const startedAt = performance.now();
   const subAgentInvocationId = getSubAgentInvocationId(parent) || (parent.type === 'tool_call' ? parent.toolCallId : undefined);
   if (!subAgentInvocationId) {
+    ChatPerformanceTracer.recordDuration(
+      'message_parts_scoped_subagent_group',
+      performance.now() - startedAt,
+      `missingSubAgent=true,start=${startIndex}`,
+      { slowThresholdMs: 3 },
+    );
     return { parts: [parent], endIndex: startIndex };
   }
 
@@ -144,6 +177,15 @@ function collectSubagentGroup(
     endIndex = index;
   }
 
+  ChatPerformanceTracer.increment('message_parts.scoped_subagent_group.count');
+  ChatPerformanceTracer.increment('message_parts.scoped_subagent_group.children', Math.max(0, group.length - 1));
+  ChatPerformanceTracer.recordDuration(
+    'message_parts_scoped_subagent_group',
+    performance.now() - startedAt,
+    `start=${startIndex},end=${endIndex},children=${Math.max(0, group.length - 1)},parts=${parts.length},subAgent=${subAgentInvocationId}`,
+    { slowThresholdMs: 3 },
+  );
+
   return { parts: group, endIndex };
 }
 
@@ -153,4 +195,35 @@ function isIgnorablePart(part: RenderableChatPart): boolean {
   }
 
   return part.type === 'markdown' && part.content.trim().length === 0;
+}
+
+function countLegacySubagentChildren(parts: readonly RenderableChatPart[]): number {
+  let count = 0;
+  for (const part of parts) {
+    if (part.type !== 'tool_call') {
+      continue;
+    }
+    const toolSpecificData = part.metadata?.['toolSpecificData'];
+    if (!toolSpecificData || typeof toolSpecificData !== 'object') {
+      continue;
+    }
+    const childItems = (toolSpecificData as Record<string, unknown>)['childItems'];
+    if (Array.isArray(childItems)) {
+      count += childItems.length;
+    }
+  }
+  return count;
+}
+
+function countScopedSubagentChildren(parts: readonly RenderableChatPart[]): number {
+  let count = 0;
+  for (const part of parts) {
+    if (isProgressMessageDisplayPart(part)) {
+      continue;
+    }
+    if (isSubagentChildPart(part)) {
+      count += 1;
+    }
+  }
+  return count;
 }

@@ -1,6 +1,6 @@
 import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
 import { buildConfirmationPartId, buildQuestionPartId, mkConfirmation, mkError, mkQuestion } from '../core/chat-parts';
-import type { ConfirmationPart, QuestionItem, QuestionPart } from '../core/chat-parts';
+import type { ChatPartScope, ConfirmationPart, QuestionItem, QuestionPart } from '../core/chat-parts';
 import type { ToolApprovalRequest } from './tool-approval-ui';
 import type { ChatListItem } from '../services/chat-history.service';
 import type { ChatMessageHandle } from './chat-message-handle';
@@ -192,7 +192,7 @@ export class LexUiEventBridge {
     }
   }
 
-  presentQuestion(questions: QuestionItem[]): string {
+  presentQuestion(questions: QuestionItem[], scope?: ChatPartScope): string {
     const requestId = `question-${Date.now()}`;
     const partId = buildQuestionPartId(questions, requestId);
     if (this.renderEventBridge?.processInteractionEvent({
@@ -205,6 +205,10 @@ export class LexUiEventBridge {
         multiSelect: question.multi_select,
       })),
       timestamp: Date.now(),
+      sourceAgentRole: scope?.sourceAgentRole,
+      subAgentInvocationId: scope?.subAgentInvocationId,
+      parentToolCallId: scope?.parentToolCallId,
+      sequence: scope?.sequence,
     })) {
       return partId;
     }
@@ -219,7 +223,7 @@ export class LexUiEventBridge {
       throw new Error('Failed to create question part: no active aily message handle after ensureAilyMessage().');
     }
 
-    this.viewWriteBridge.appendPartToHandle(handle, mkQuestion(questions, undefined, requestId));
+    this.viewWriteBridge.appendPartToHandle(handle, mkQuestion(questions, undefined, requestId, scope));
     return partId;
   }
 

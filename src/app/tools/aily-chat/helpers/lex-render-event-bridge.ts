@@ -7,7 +7,6 @@ import type {
   TurnResponseStatus,
   TurnResponseTurn,
 } from 'aily-lex/browser';
-import { collectTurnResponseText } from 'aily-lex/browser';
 import type { TurnResponseProjectionHandle } from '../core/turn-response-host-projection-builder';
 import { TurnResponseIncrementalBuilder } from '../core/turn-response-stream-builder';
 import type { LexHostSyncBridge } from './lex-host-sync-bridge';
@@ -21,7 +20,10 @@ import {
   getTurnResponseParticipant,
   resolveInitialResponseSlashCommand,
 } from '../core/turn-response-stream-contract';
-import { hydrateQuestionAnswersFromAskUserToolMetadata } from '../core/turn-response-part-mapper';
+import {
+  collectMainTurnResponseText,
+  hydrateQuestionAnswersFromAskUserToolMetadata,
+} from '../core/turn-response-part-mapper';
 import {
   type HostResponseClearToPreviousToolInvocationReason,
   type IHostStreamListener,
@@ -61,6 +63,50 @@ interface PendingLiveTurnSnapshotOptions {
   readonly modelRouting?: NonNullable<TurnResponseTurn['responseModel']>['modelRouting'];
   readonly quotaSnapshot?: TurnResponseTurn['responseModel']['quotaSnapshot'];
   readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
+}
+
+function recordRenderEventSnapshot(event: RenderEvent): void {
+  if (!ChatPerformanceTracer.isEnabled()) {
+    return;
+  }
+
+  const record = event as unknown as Record<string, unknown>;
+  const textLength = lengthOfStringValue(record['text']);
+  const contentLength = lengthOfStringValue(record['content']);
+  const messageLength = lengthOfStringValue(record['message']);
+  const data: Record<string, unknown> = {
+    type: event.type,
+  };
+
+  const activityKind = stringValue(record['activityKind']);
+  if (activityKind) data['activityKind'] = activityKind;
+  const toolCallId = stringValue(record['toolCallId']);
+  if (toolCallId) data['toolCallId'] = toolCallId;
+  const childToolCallId = stringValue(record['childToolCallId']);
+  if (childToolCallId) data['childToolCallId'] = childToolCallId;
+  const toolName = stringValue(record['toolName']);
+  if (toolName) data['toolName'] = toolName;
+  const sourceAgentRole = stringValue(record['sourceAgentRole']);
+  if (sourceAgentRole) data['sourceAgentRole'] = sourceAgentRole;
+  const subAgentInvocationId = stringValue(record['subAgentInvocationId']);
+  if (subAgentInvocationId) data['subAgentInvocationId'] = subAgentInvocationId;
+  const parentToolCallId = stringValue(record['parentToolCallId']);
+  if (parentToolCallId) data['parentToolCallId'] = parentToolCallId;
+  const state = stringValue(record['state']);
+  if (state) data['state'] = state;
+  if (textLength > 0) data['textLength'] = textLength;
+  if (contentLength > 0) data['contentLength'] = contentLength;
+  if (messageLength > 0) data['messageLength'] = messageLength;
+
+  ChatPerformanceTracer.recordRenderEvent('render_event', data);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function lengthOfStringValue(value: unknown): number {
+  return typeof value === 'string' ? value.length : 0;
 }
 
 /**
@@ -272,6 +318,7 @@ export class LexRenderEventBridge {
 
   processEvent(event: RenderEvent): void {
     ChatPerformanceTracer.increment(`render_event.${event.type}`);
+    recordRenderEventSnapshot(event);
     if (event.type === 'subagent_activity') {
       ChatPerformanceTracer.increment(`render_event.subagent_activity.${event.activityKind}`);
       const contentLength = typeof event.content === 'string' ? event.content.length : 0;
@@ -839,7 +886,7 @@ function applyHostStreamPartChanges(
       updatedAt,
       ...(patch.participant ? { participant: patch.participant } : {}),
       parts,
-      resultText: collectTurnResponseText(parts),
+      resultText: collectMainTurnResponseText(parts),
     },
   };
 }
