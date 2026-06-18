@@ -1796,8 +1796,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       padding: 10px 12px;
       overflow-x: auto;
       border-radius: 5px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(0,0,0,0.28);
+      border: 1px solid var(--aily-chat-viewer-code-border, var(--chat-border-dim, rgba(255,255,255,0.08)));
+      background: var(--aily-chat-viewer-code-bg, var(--chat-bg-subtle, rgba(255,255,255,0.02)));
     }
 
     .cag-item-invocation-output-code-block code {

@@ -843,7 +843,6 @@ export class ChatSessionItemsService implements OnDestroy {
   private buildSessionActions(item: SessionListSourceLike): readonly ChatSessionListAction[] {
     const archived = item?.archived === true;
     const pinned = item?.pinned === true;
-    const markedUnread = item?.markedUnread === true || item?.read === false;
 
     return [
       {
@@ -851,12 +850,6 @@ export class ChatSessionItemsService implements OnDestroy {
         action: pinned ? 'unpin-session' : 'pin-session',
         title: pinned ? '取消置顶' : '置顶',
         ...(pinned ? { active: true } : {}),
-      },
-      {
-        icon: markedUnread ? 'fa-light fa-envelope-open' : 'fa-light fa-envelope',
-        action: markedUnread ? 'mark-session-read' : 'mark-session-unread',
-        title: markedUnread ? '标记为已读' : '标记为未读',
-        ...(markedUnread ? { active: true } : {}),
       },
       {
         icon: archived ? 'fa-solid fa-archive' : 'fa-light fa-archive',

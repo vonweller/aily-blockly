@@ -84,7 +84,7 @@
     </button>
     @if (item.actions.length > 0) {
     <div [class.session-list-actions]="isListVariant" [class.session-picker-actions]="isPickerVariant">
-      @for (action of item.actions; track action.action) {
+      @for (action of primaryActions(item); track action.action) {
       <button
         type="button"
         [class.session-list-action]="isListVariant"
@@ -101,6 +101,39 @@
         (click)="triggerAction($event, action, item)">
         <i [class]="action.icon"></i>
       </button>
+      }
+      @if (hasOverflowActions(item)) {
+      <div [class.session-list-actions-more]="isListVariant" [class.session-picker-actions-more]="isPickerVariant">
+        <button
+          type="button"
+          [class.session-list-action]="isListVariant"
+          [class.session-picker-action]="isPickerVariant"
+          [class.session-list-action-more]="isListVariant"
+          [class.session-picker-action-more]="isPickerVariant"
+          aria-label="更多">
+          <i class="fa-light fa-ellipsis"></i>
+        </button>
+        <div [class.session-list-actions-overflow]="isListVariant" [class.session-picker-actions-overflow]="isPickerVariant">
+          @for (action of overflowActions(item); track action.action) {
+          <button
+            type="button"
+            [class.session-list-action]="isListVariant"
+            [class.session-picker-action]="isPickerVariant"
+            [class.session-list-action-toggle]="isListVariant && isToggleAction(action)"
+            [class.session-picker-action-toggle]="isPickerVariant && isToggleAction(action)"
+            [class.active]="action.active === true"
+            [attr.data-session-action]="action.action"
+            [attr.aria-label]="action.title"
+            nz-tooltip
+            nzTooltipPlacement="left"
+            [nzTooltipTitle]="action.title"
+            [nzTooltipOverlayStyle]="{ fontSize: '12px' }"
+            (click)="triggerAction($event, action, item)">
+            <i [class]="action.icon"></i>
+          </button>
+          }
+        </div>
+      </div>
       }
     </div>
     }
