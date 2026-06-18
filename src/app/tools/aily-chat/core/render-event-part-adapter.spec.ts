@@ -167,7 +167,7 @@ describe('RenderEventPartAdapter', () => {
     expect(part.metadata?.errorDetails?.confirmationButtons).toEqual([
       {
         data: { ailyContinueOnError: true },
-        label: 'Try Again',
+        label: '重试',
       },
     ]);
   });
@@ -888,8 +888,17 @@ describe('RenderEventPartAdapter', () => {
     });
 
     parts = store.getPartsForHandle(currentHandle);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems.length).toBe(1);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems[0].kind).toBe('tool');
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toBeUndefined();
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
+      toolCallId: 'child1',
+      toolName: 'grep',
+      text: 'Searching...',
+      state: 'doing',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
+    }));
 
     processCurrent({
       type: 'subagent_activity',
@@ -902,12 +911,15 @@ describe('RenderEventPartAdapter', () => {
     });
 
     parts = store.getPartsForHandle(currentHandle);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems.length).toBe(1);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems[0]).toEqual(jasmine.objectContaining({
-      kind: 'tool',
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toBeUndefined();
+    expect(parts[1]).toEqual(jasmine.objectContaining({
+      type: 'tool_call',
       toolCallId: 'child1',
-      content: 'Still searching...',
+      text: 'Still searching...',
       state: 'doing',
+      sourceAgentRole: 'subagent',
+      subAgentInvocationId: 'sa1',
+      parentToolCallId: 'sa1',
     }));
 
     processCurrent({
@@ -1014,7 +1026,7 @@ describe('RenderEventPartAdapter', () => {
         subAgentInvocationId: 'sa1',
       }),
     }));
-    expect((parts[0] as any).metadata.toolSpecificData.childItems).toEqual([]);
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toBeUndefined();
     expect(parts[1]).toEqual(jasmine.objectContaining({
       type: 'thinking',
       content: 'Inspecting files',
@@ -1426,15 +1438,16 @@ describe('RenderEventPartAdapter', () => {
         metadata: jasmine.objectContaining({
           toolSpecificData: jasmine.objectContaining({
             result: 'Found matches',
-            childItems: [
-              jasmine.objectContaining({
-                kind: 'tool',
-                toolCallId: 'child-shift',
-                state: 'doing',
-              }),
-            ],
           }),
         }),
+      }),
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'child-shift',
+        state: 'doing',
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-shift',
+        parentToolCallId: 'sa-shift',
       }),
     ]);
     expect(store.getPartsForHandle(advancedHandle)).toEqual([]);
@@ -1478,18 +1491,17 @@ describe('RenderEventPartAdapter', () => {
         type: 'tool_call',
         toolCallId: 'sa-child-shift',
         metadata: jasmine.objectContaining({
-          toolSpecificData: jasmine.objectContaining({
-            childItems: [
-              jasmine.objectContaining({
-                kind: 'tool',
-                toolCallId: 'child-keep',
-                content: 'Done',
-                state: 'done',
-                duration: 1.5,
-              }),
-            ],
-          }),
+          toolSpecificData: jasmine.objectContaining({}),
         }),
+      }),
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'child-keep',
+        text: 'Done',
+        state: 'done',
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-child-shift',
+        parentToolCallId: 'sa-child-shift',
       }),
     ]);
     expect(store.getPartsForHandle(advancedHandle)).toEqual([]);
@@ -1536,23 +1548,29 @@ describe('RenderEventPartAdapter', () => {
     });
 
     const parts = store.getPartsForHandle(currentHandle);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems).toEqual([
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toBeUndefined();
+    expect(parts.slice(1)).toEqual([
       jasmine.objectContaining({
-        kind: 'tool',
+        type: 'tool_call',
         toolCallId: 'child-first',
         toolName: 'read_file',
-        argsSummary: 'src/app/main.ts',
-        content: 'file contents',
+        args: 'src/app/main.ts',
+        text: 'file contents',
         state: 'done',
-        duration: 0.2,
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-multi-child',
+        parentToolCallId: 'sa-multi-child',
       }),
       jasmine.objectContaining({
-        kind: 'tool',
+        type: 'tool_call',
         toolCallId: 'child-second',
         toolName: 'grep_search',
-        argsSummary: 'ToolDisplayRegistry',
-        content: '',
+        args: 'ToolDisplayRegistry',
+        text: 'grep_search',
         state: 'doing',
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-multi-child',
+        parentToolCallId: 'sa-multi-child',
       }),
     ]);
   });
@@ -1603,9 +1621,23 @@ describe('RenderEventPartAdapter', () => {
     });
 
     const parts = store.getPartsForHandle(currentHandle);
-    expect((parts[0] as any).metadata.toolSpecificData.childItems).toEqual([
-      jasmine.objectContaining({ kind: 'thinking', content: 'Let me think' }),
-      jasmine.objectContaining({ kind: 'text', content: 'Hello world' }),
+    expect((parts[0] as any).metadata.toolSpecificData.childItems).toBeUndefined();
+    expect(parts.slice(1)).toEqual([
+      jasmine.objectContaining({
+        type: 'thinking',
+        content: 'Let me think',
+        isComplete: true,
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-coalesce',
+        parentToolCallId: 'sa-coalesce',
+      }),
+      jasmine.objectContaining({
+        type: 'markdown',
+        content: 'Hello world',
+        sourceAgentRole: 'subagent',
+        subAgentInvocationId: 'sa-coalesce',
+        parentToolCallId: 'sa-coalesce',
+      }),
     ]);
   });
 
