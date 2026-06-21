@@ -340,7 +340,6 @@ export class MarkdownPipe implements PipeTransform {
             scope: jsonData.scope,
           };
         default:
-          console.warn(`Unknown aily type: ${type}, using raw data`);
           return {
             type: type,
             raw: cleanedCode,
@@ -349,8 +348,6 @@ export class MarkdownPipe implements PipeTransform {
           };
       }
     } catch (parseError) {
-      console.warn(`Failed to parse JSON for ${type}:`, parseError);
-      console.log('Using raw content for rendering:', code);
       // 如果不是 JSON，返回原始字符串格式的数据
       return {
         type: type,
@@ -407,7 +404,6 @@ export class MarkdownPipe implements PipeTransform {
       if (detectedType === 'library') {
         const libValidation = this.configService.validateLibrary(queryName);
         if (libValidation.exists && libValidation.library) {
-          console.log(`[MarkdownPipe] 类型修正: "${queryName}" 被错误放入 aily-board，实际是库`);
           addCorrectionEvent({
             type: 'library',
             originalQuery: queryName,
@@ -435,7 +431,6 @@ export class MarkdownPipe implements PipeTransform {
         // 找到了真实存在的开发板
         if (validation.fuzzyMatch) {
           // 模糊匹配，记录校正事件，通知大模型
-          console.log(`[MarkdownPipe] 开发板模糊匹配: "${queryName}" -> "${validation.board.name}"`);
           addCorrectionEvent({
             type: 'board',
             originalQuery: validation.originalQuery,
@@ -458,7 +453,6 @@ export class MarkdownPipe implements PipeTransform {
       if (detectedType !== 'library') {
         const libFallback = this.configService.validateLibrary(queryName);
         if (libFallback.exists && libFallback.library) {
-          console.log(`[MarkdownPipe] 类型修正(兜底): "${queryName}" 在开发板中未找到，但在库中找到`);
           addCorrectionEvent({
             type: 'library',
             originalQuery: queryName,
@@ -517,7 +511,6 @@ export class MarkdownPipe implements PipeTransform {
       if (detectedType === 'board') {
         const boardValidation = this.configService.validateBoard(queryName);
         if (boardValidation.exists && boardValidation.board) {
-          console.log(`[MarkdownPipe] 类型修正: "${queryName}" 被错误放入 aily-library，实际是开发板`);
           addCorrectionEvent({
             type: 'board',
             originalQuery: queryName,
@@ -545,7 +538,6 @@ export class MarkdownPipe implements PipeTransform {
         // 找到了真实存在的库
         if (validation.fuzzyMatch) {
           // 模糊匹配，记录校正事件，通知大模型
-          console.log(`[MarkdownPipe] 库模糊匹配: "${queryName}" -> "${validation.library.name}"`);
           addCorrectionEvent({
             type: 'library',
             originalQuery: validation.originalQuery,
@@ -568,7 +560,6 @@ export class MarkdownPipe implements PipeTransform {
       if (detectedType !== 'board') {
         const boardFallback = this.configService.validateBoard(queryName);
         if (boardFallback.exists && boardFallback.board) {
-          console.log(`[MarkdownPipe] 类型修正(兜底): "${queryName}" 在库中未找到，但在开发板中找到`);
           addCorrectionEvent({
             type: 'board',
             originalQuery: queryName,

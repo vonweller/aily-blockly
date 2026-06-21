@@ -7,6 +7,7 @@
 
 import { Observable } from 'rxjs';
 import { AilyHost } from './host';
+import { createElectronAilyServicesTransport } from './aily-services-host-transport';
 
 type AilyLexModule = typeof import('aily-lex/browser');
 
@@ -37,12 +38,14 @@ function buildEndpoint(
   }
 
   const apiEndpoint = AilyHost.get().config?.apiEndpoint || '';
+  const hostTransport = createElectronAilyServicesTransport();
   return new lex.AilyServicesEndpoint({
     baseUrl: apiEndpoint,
     authTokenProvider: () => {
       const auth = AilyHost.get().auth;
       return auth?.getToken ? auth.getToken() : (auth?.token || '');
     },
+    ...(hostTransport ? { transport: hostTransport } : {}),
   });
 }
 

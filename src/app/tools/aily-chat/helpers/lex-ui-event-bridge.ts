@@ -178,18 +178,28 @@ export class LexUiEventBridge {
   }
 
   appendExecutionError(message: string, options: { retry?: boolean } = {}): void {
-    this.appendLifecycleError(message);
-    if (options.retry) {
-      const handle = this.messageLifecycleBridge.currentMessageHandle;
-      if (!handle) {
-        return;
-      }
-
-      const blocks = [
-        `\`\`\`aily-button\n[${JSON.stringify({ text: '重试', action: 'retry', type: 'primary' })}]\n\`\`\`\n\n`,
-      ];
-      this.viewWriteBridge.appendMarkdownToHandle(handle, blocks.join(''));
+    this.ensureAilyMessage();
+    const handle = this.messageLifecycleBridge.currentMessageHandle;
+    if (!handle) {
+      return;
     }
+
+    this.viewWriteBridge.appendPartToHandle(handle, mkError(
+      message,
+      'error',
+      options.retry
+        ? {
+          errorDetails: {
+            confirmationButtons: [
+              {
+                data: { ailyContinueOnError: true },
+                label: '重试',
+              },
+            ],
+          },
+        }
+        : undefined,
+    ), { state: 'done' });
   }
 
   presentQuestion(questions: QuestionItem[], scope?: ChatPartScope): string {

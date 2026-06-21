@@ -24,6 +24,14 @@ function buildRetryStreamAction(): ErrorActionItem {
   };
 }
 
+function buildRetryFromLatestStateAction(): ErrorActionItem {
+  return {
+    id: 'retry-from-latest-state',
+    label: '重试',
+    data: { ailyRetryLastAction: true },
+  };
+}
+
 export interface ErrorActionItem {
   id: string;
   label: string;
@@ -76,10 +84,22 @@ export interface ErrorActionItem {
   `,
   styles: [`
     .ac-error {
-      border-radius: 5px; padding: 5px 10px; margin: 0;
-      background-color: var(--aily-chat-viewer-error-surface-bg);
+      border: 1px solid color-mix(in srgb, var(--aily-chat-viewer-state-error, #f14c4c) 28%, transparent);
+      border-left-width: 3px;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin: 2px 0;
+      background: color-mix(in srgb, var(--aily-chat-viewer-state-error, #f14c4c) 9%, var(--aily-chat-viewer-error-surface-bg, transparent));
       color: var(--aily-chat-viewer-subtle);
       overflow: hidden; display: flex; flex-direction: column;
+    }
+    .ac-error[data-sev="warning"] {
+      border-color: color-mix(in srgb, var(--aily-chat-viewer-state-warn, #cca700) 30%, transparent);
+      background: color-mix(in srgb, var(--aily-chat-viewer-state-warn, #cca700) 10%, var(--aily-chat-viewer-error-surface-bg, transparent));
+    }
+    .ac-error[data-sev="info"] {
+      border-color: color-mix(in srgb, var(--aily-chat-viewer-state-info, #3794ff) 28%, transparent);
+      background: color-mix(in srgb, var(--aily-chat-viewer-state-info, #3794ff) 9%, var(--aily-chat-viewer-error-surface-bg, transparent));
     }
     .ac-error-header {
       display: flex; align-items: center; gap: 5px;
@@ -223,7 +243,8 @@ export class XAilyErrorViewerComponent {
     if (code === 'invalid_interaction_state') {
       return {
         title: '继续请求已过期',
-        message: '这个继续操作已不再可用。请发送新的消息继续当前上下文。',
+        message: '这个继续操作已不再可用。可以从当前最新上下文重试本轮请求，或发送新的消息继续。',
+        actions: [buildRetryFromLatestStateAction()],
       };
     }
 

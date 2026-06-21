@@ -112,6 +112,6 @@ export class AilyButtonViewerComponent {
     }
 
     logDetail() {
-        console.log('Button Viewer Data:', this.data);
+        // Intentionally quiet: chat renderers must not dump large payloads to DevTools.
     }
 }

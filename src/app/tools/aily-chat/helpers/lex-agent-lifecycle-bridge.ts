@@ -1,5 +1,6 @@
 import type { AgentHandle } from 'aily-lex/browser';
 import { setActiveBlocklySlashCommandSession } from '../core/blockly-slash-command-provider';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -27,6 +28,13 @@ function isAgentHandle(value: LexAgentCreationResult): value is AgentHandle {
   return typeof (value as AgentHandle).chat === 'function'
     && typeof (value as AgentHandle).saveSession === 'function'
     && !!(value as AgentHandle).agent;
+}
+
+function isLexAgentLifecycleTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceLexAgentLifecycle', [
+    '__AILY_CHAT_TRACE_LEX_AGENT_LIFECYCLE__',
+    'AILY_CHAT_TRACE_LEX_AGENT_LIFECYCLE',
+  ]);
 }
 
 export class LexAgentLifecycleBridge {
@@ -123,7 +131,9 @@ export class LexAgentLifecycleBridge {
       this._loadPromise = (async () => {
         try {
           this._lex = await this.deps.loadModule();
-          console.log('[LexStream] aily-lex 模块加载成功');
+          if (isLexAgentLifecycleTraceEnabled()) {
+            console.log('[LexStream] aily-lex 模块加载成功');
+          }
           return true;
         } catch (err) {
           console.warn('[LexStream] aily-lex 模块不可用:', err);
@@ -160,20 +170,24 @@ export class LexAgentLifecycleBridge {
     const targetSessionId = normalizeLexSessionId(sessionId)
       || normalizeLexSessionId(this.deps.getSessionId());
     if (!targetSessionId) {
-      console.info('[LexStream][debug] ensureAgent skipped without session owner', {
-        requestedSessionId: sessionId ?? null,
-        requestedConfigKey: typeof configKey === 'string' ? configKey : null,
-        durationMs: Date.now() - startedAt,
-      });
+      if (isLexAgentLifecycleTraceEnabled()) {
+        console.info('[LexStream][debug] ensureAgent skipped without session owner', {
+          requestedSessionId: sessionId ?? null,
+          requestedConfigKey: typeof configKey === 'string' ? configKey : null,
+          durationMs: Date.now() - startedAt,
+        });
+      }
       return false;
     }
 
     if (!await this.loadModule()) {
-      console.info('[LexStream][debug] ensureAgent loadModule unavailable', {
-        requestedSessionId: sessionId ?? null,
-        requestedConfigKey: typeof configKey === 'string' ? configKey : null,
-        durationMs: Date.now() - startedAt,
-      });
+      if (isLexAgentLifecycleTraceEnabled()) {
+        console.info('[LexStream][debug] ensureAgent loadModule unavailable', {
+          requestedSessionId: sessionId ?? null,
+          requestedConfigKey: typeof configKey === 'string' ? configKey : null,
+          durationMs: Date.now() - startedAt,
+        });
+      }
       return false;
     }
 
@@ -182,15 +196,17 @@ export class LexAgentLifecycleBridge {
     const existingEntry = this._sessionEntries.get(targetSessionId) ?? null;
     const shouldActivate = options?.activate !== false;
 
-    console.info('[LexStream][debug] ensureAgent start', {
-      targetSessionId,
-      requestedConfigKey: normalizedConfigKey,
-      requestedRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
-      activeSessionId: this._activeSessionId,
-      hasExistingEntry: !!existingEntry,
-      existingConfigKey: existingEntry?.configKey ?? null,
-      existingRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry?.configKey ?? null),
-    });
+    if (isLexAgentLifecycleTraceEnabled()) {
+      console.info('[LexStream][debug] ensureAgent start', {
+        targetSessionId,
+        requestedConfigKey: normalizedConfigKey,
+        requestedRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+        activeSessionId: this._activeSessionId,
+        hasExistingEntry: !!existingEntry,
+        existingConfigKey: existingEntry?.configKey ?? null,
+        existingRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry?.configKey ?? null),
+      });
+    }
 
     if (existingEntry) {
       if (normalizedConfigKey !== null) {
@@ -198,11 +214,13 @@ export class LexAgentLifecycleBridge {
           if (shouldActivate) {
             this.activateSession(targetSessionId);
           }
-          console.info('[LexStream][debug] ensureAgent reused existing entry', {
-            targetSessionId,
-            reuseReason: shouldActivate ? 'config-match' : 'config-match-acquire-only',
-            durationMs: Date.now() - startedAt,
-          });
+          if (isLexAgentLifecycleTraceEnabled()) {
+            console.info('[LexStream][debug] ensureAgent reused existing entry', {
+              targetSessionId,
+              reuseReason: shouldActivate ? 'config-match' : 'config-match-acquire-only',
+              durationMs: Date.now() - startedAt,
+            });
+          }
           this.publishSessionEntry(existingEntry);
           return true;
         }
@@ -210,11 +228,13 @@ export class LexAgentLifecycleBridge {
         if (shouldActivate) {
           this.activateSession(targetSessionId);
         }
-        console.info('[LexStream][debug] ensureAgent reused existing entry', {
-          targetSessionId,
-          reuseReason: shouldActivate ? 'active-session-switch' : 'acquire-only',
-          durationMs: Date.now() - startedAt,
-        });
+        if (isLexAgentLifecycleTraceEnabled()) {
+          console.info('[LexStream][debug] ensureAgent reused existing entry', {
+            targetSessionId,
+            reuseReason: shouldActivate ? 'active-session-switch' : 'acquire-only',
+            durationMs: Date.now() - startedAt,
+          });
+        }
         this.publishSessionEntry(existingEntry);
         return true;
       }
@@ -222,14 +242,16 @@ export class LexAgentLifecycleBridge {
 
     const snapshotToRestore = this.captureLiveSessionSnapshot(existingEntry);
     if (existingEntry) {
-      console.info('[LexStream][debug] ensureAgent rebuilding entry', {
-        targetSessionId,
-        previousConfigKey: existingEntry.configKey,
-        nextConfigKey: normalizedConfigKey,
-        previousRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry.configKey),
-        nextRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
-        hasSnapshotToRestore: !!snapshotToRestore,
-      });
+      if (isLexAgentLifecycleTraceEnabled()) {
+        console.info('[LexStream][debug] ensureAgent rebuilding entry', {
+          targetSessionId,
+          previousConfigKey: existingEntry.configKey,
+          nextConfigKey: normalizedConfigKey,
+          previousRuntimeMode: extractRuntimeModeFromConfigKey(existingEntry.configKey),
+          nextRuntimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+          hasSnapshotToRestore: !!snapshotToRestore,
+        });
+      }
     }
     if (existingEntry) {
       this.disposeSessionEntry(existingEntry);
@@ -252,13 +274,15 @@ export class LexAgentLifecycleBridge {
 
     nextEntry.todoUnsubscribe = this.deps.onAgentReady?.(nextEntry.agent, lex, nextEntry.todoUnsubscribe) ?? nextEntry.todoUnsubscribe;
     this.publishSessionEntry(nextEntry);
-    console.info('[LexStream][debug] ensureAgent ready', {
-      targetSessionId,
-      configKey: normalizedConfigKey,
-      runtimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
-      restoredSnapshot: !!snapshotToRestore,
-      durationMs: Date.now() - startedAt,
-    });
+    if (isLexAgentLifecycleTraceEnabled()) {
+      console.info('[LexStream][debug] ensureAgent ready', {
+        targetSessionId,
+        configKey: normalizedConfigKey,
+        runtimeMode: extractRuntimeModeFromConfigKey(normalizedConfigKey),
+        restoredSnapshot: !!snapshotToRestore,
+        durationMs: Date.now() - startedAt,
+      });
+    }
     return true;
   }
 

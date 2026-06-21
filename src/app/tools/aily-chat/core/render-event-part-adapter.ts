@@ -281,14 +281,15 @@ export class RenderEventPartAdapter {
         return true;
 
       case 'todo_update':
+        const todoItems = normalizeTodoItems(event.items);
         const todoMetadata = buildTodoStateMetadata(
           event.sessionId,
           event.summary,
-          event.items,
+          todoItems,
           this.getExistingStateMetadata(handle, `todo-${event.sessionId}`),
         );
         this._upsertState(handle, `todo-${event.sessionId}`, {
-          state: resolveTodoState(event.items),
+          state: resolveTodoState(todoItems),
           text: event.summary,
           kind: 'todo',
           metadata: todoMetadata,
@@ -799,6 +800,24 @@ function buildTodoStateMetadata(
     signature,
     timeline,
   };
+}
+
+function normalizeTodoItems(value: unknown): Array<{ id: number; title: string; status: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry, index) => {
+      const record = asRecord(entry);
+      if (!record) {
+        return undefined;
+      }
+      const id = asNumber(record['id']) ?? index + 1;
+      const title = asString(record['title']) || asString(record['content']) || `Todo ${id}`;
+      const status = asString(record['status']) || 'not-started';
+      return { id, title, status };
+    })
+    .filter((entry): entry is { id: number; title: string; status: string } => !!entry);
 }
 
 function classifyTodoPhase(

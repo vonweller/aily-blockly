@@ -26,6 +26,7 @@ export interface ChatRevealHostDelegate {
 @Injectable()
 export class ScrollManagerService {
   private _scrollLock = true;
+  private _showFollowBottomButton = false;
 
   private _lastTop: number | null = null;
   private _lastHeight: number | null = null;
@@ -51,8 +52,13 @@ export class ScrollManagerService {
     return this._scrollLock;
   }
 
+  get showFollowBottomButton(): boolean {
+    return this._showFollowBottomButton;
+  }
+
   setScrollLock(value: boolean): void {
     this._scrollLock = value;
+    this.updateFollowBottomAffordance();
   }
 
   setRevealHostDelegate(delegate: ChatRevealHostDelegate | null): void {
@@ -72,6 +78,7 @@ export class ScrollManagerService {
       this._lastHeight = element.scrollHeight;
       this._lastAtBottom = this.isAtBottom(element);
     }
+    this.updateFollowBottomAffordance(element);
   }
 
   /** 启用自动滚动 */
@@ -100,6 +107,23 @@ export class ScrollManagerService {
     this.scrollToBottom(behavior);
   }
 
+  resumeFollowBottom(behavior: string = 'auto'): void {
+    this.setScrollLock(true);
+    this._programmaticScrollRequestId = 0;
+    this.cancelPendingExchangeReveal();
+    this.cancelPendingBottomScroll();
+
+    const element = this.containerRef?.nativeElement;
+    if (!element) {
+      return;
+    }
+
+    const requestId = ++this._scrollRequestId;
+    this.performBottomScroll(element, behavior, requestId);
+    this.scheduleBottomScrollAttempt(() => this.performBottomScroll(element, 'auto', requestId), 16);
+    this.scheduleBottomScrollAttempt(() => this.performBottomScroll(element, 'auto', requestId), 64);
+  }
+
   handleContentHeightChange(): void {
     const element = this.containerRef?.nativeElement as HTMLElement | undefined;
     if (!element) {
@@ -111,9 +135,7 @@ export class ScrollManagerService {
     const previousHeight = this._lastHeight;
     const currentHeight = element.scrollHeight;
     const hasHeightChanged = previousHeight == null || currentHeight !== previousHeight;
-    const shouldFollow = hasHeightChanged
-      && this.scrollLock
-      && (this._lastAtBottom ?? this.isAtBottom(element));
+    const shouldFollow = hasHeightChanged && this.scrollLock;
 
     if (shouldFollow) {
       if (this._pendingExchangeTimeouts.size > 0) {
@@ -121,6 +143,7 @@ export class ScrollManagerService {
         this._lastTop = element.scrollTop;
         this._lastHeight = currentHeight;
         this._lastAtBottom = this._lastAtBottom ?? this.isAtBottom(element);
+        this.updateFollowBottomAffordance(element);
         return;
       }
 
@@ -131,6 +154,7 @@ export class ScrollManagerService {
     this._lastTop = element.scrollTop;
     this._lastHeight = currentHeight;
     this._lastAtBottom = this.isAtBottom(element);
+    this.updateFollowBottomAffordance(element);
   }
 
   /**
@@ -298,29 +322,34 @@ export class ScrollManagerService {
 
     const requestId = ++this._scrollRequestId;
     this.scheduleBottomScrollAttempt(() => {
-      if (!this.scrollLock || requestId !== this._scrollRequestId) {
-        return;
-      }
-
-      try {
-        this.syncCurrentResponseMinHeight();
-        const scrollHeight = element.scrollHeight;
-        const clientHeight = element.clientHeight;
-        const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
-
-        if (element.scrollTop < maxScrollTop - 2) {
-          this._programmaticScrollRequestId = requestId;
-          this._ignoreNextScrollEvent = true;
-          element.scrollTo({ top: scrollHeight, behavior });
-        }
-
-        this._lastTop = element.scrollTop;
-        this._lastHeight = element.scrollHeight;
-        this._lastAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 30;
-      } catch (error) {
-        console.warn('滚动到底部失败:', error);
-      }
+      this.performBottomScroll(element, behavior, requestId);
     }, 16);
+  }
+
+  private performBottomScroll(element: HTMLElement, behavior: string, requestId: number): void {
+    if (!this.scrollLock || requestId !== this._scrollRequestId) {
+      return;
+    }
+
+    try {
+      this.syncCurrentResponseMinHeight();
+      const scrollHeight = element.scrollHeight;
+      const clientHeight = element.clientHeight;
+      const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+
+      if (element.scrollTop < maxScrollTop - 2) {
+        this._programmaticScrollRequestId = requestId;
+        this._ignoreNextScrollEvent = true;
+        element.scrollTo({ top: scrollHeight, behavior: behavior as ScrollBehavior });
+      }
+
+      this._lastTop = element.scrollTop;
+      this._lastHeight = element.scrollHeight;
+      this._lastAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 30;
+      this.updateFollowBottomAffordance(element);
+    } catch (error) {
+      console.warn('滚动到底部失败:', error);
+    }
   }
 
   /**
@@ -340,6 +369,7 @@ export class ScrollManagerService {
       this._lastTop = element.scrollTop;
       this._lastHeight = element.scrollHeight;
       this._lastAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 30;
+      this.updateFollowBottomAffordance(element);
       return;
     }
 
@@ -362,11 +392,12 @@ export class ScrollManagerService {
       this._lastTop = element.scrollTop;
       this._lastHeight = element.scrollHeight;
       this._lastAtBottom = isAtBottom;
+      this.updateFollowBottomAffordance(element);
       return;
     }
 
     if (!isAtBottom && this.scrollLock) {
-      const shouldDisable = userScrolledUp || (!contentGrew && (this._lastAtBottom === true));
+      const shouldDisable = userScrolledUp || (!contentGrew && (this._lastAtBottom === true || this._lastAtBottom === false));
       if (shouldDisable) {
         this.setScrollLock(false);
         this._scrollRequestId++;
@@ -382,6 +413,7 @@ export class ScrollManagerService {
     this._lastTop = element.scrollTop;
     this._lastHeight = element.scrollHeight;
     this._lastAtBottom = isAtBottom;
+    this.updateFollowBottomAffordance(element);
   }
 
   private scheduleExchangeAttempt(callback: () => void, delayMs: number): void {
@@ -457,6 +489,19 @@ export class ScrollManagerService {
 
   private isAtBottom(element: HTMLElement, threshold: number = 30): boolean {
     return element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
+  }
+
+  private updateFollowBottomAffordance(element?: HTMLElement): void {
+    const target = element ?? this.containerRef?.nativeElement as HTMLElement | undefined;
+    if (!target) {
+      this._showFollowBottomButton = false;
+      return;
+    }
+
+    // Keep the affordance independent from scrollLock. scrollLock intentionally
+    // resumes near the bottom, but the button should remain visible until the
+    // list is actually at the latest item.
+    this._showFollowBottomButton = !this._scrollLock || !this.isAtBottom(target, 4);
   }
 
   private findLatestUserDialog(container: HTMLElement): HTMLElement | null {

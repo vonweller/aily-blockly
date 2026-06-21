@@ -55,7 +55,7 @@ import {
 } from './host-session-debug-export';
 import { resolveHostSessionRuntimeAuxiliary } from '../helpers/host-session-runtime-auxiliary';
 import { HostSessionAdoptionBridge } from './host-session-adoption-bridge';
-import { HostSessionPersistenceBridge } from './host-session-persistence-bridge';
+import { HostSessionPersistenceBridge, type HostSessionDirtyOptions } from './host-session-persistence-bridge';
 import { HostSessionRecordStore } from './host-session-record-store';
 import { ChatService } from './chat.service';
 import { ChatSessionEntryStateService } from './chat-session-entry-state.service';
@@ -429,8 +429,8 @@ export class ChatHistoryService implements OnDestroy {
     this.hostSessionPersistenceBridge = new HostSessionPersistenceBridge(this.hostRecordStore, {
       ensureIndexLoaded: () => this.ensureIndexLoaded(),
       findIndexEntry: (sessionId) => this.index.find(e => e.sessionId === sessionId),
-      upsertIndexEntry: (sessionId, metadata, messageCount, updateTimestamp) =>
-        this.upsertIndexEntry(sessionId, metadata, messageCount, updateTimestamp),
+      upsertIndexEntry: (sessionId, metadata, messageCount, updateTimestamp, options) =>
+        this.upsertIndexEntry(sessionId, metadata, messageCount, updateTimestamp, options),
       writeIndex: () => this.writeIndex(),
       markIndexDirty: () => { this.indexDirty = true; },
       hasDirtyIndex: () => this.indexDirty,
@@ -543,6 +543,18 @@ export class ChatHistoryService implements OnDestroy {
   }
 
   /**
+   * 仅保存宿主会话元数据/索引，不重写完整 transcript 数据文件。
+   * 对齐 VS Code `storeSessionsMetadataOnly(...)`：用于标题、模式、草稿/输入状态等
+   * 可发现性更新，避免把 metadata cadence 接回完整历史写入。
+   */
+  saveHostRecordMetadataOnly(record: LiveHostSessionRecord): void {
+    this.hostSessionPersistenceBridge.saveHostRecordMetadataOnly(record);
+    if (record.sessionId) {
+      this.emitHostSessionChanged({ sessionId: record.sessionId, scope: 'persisted', kind: 'updated' });
+    }
+  }
+
+  /**
    * 仅更新索引中的标题（标题生成完成时调用，低 IO）
    */
   updateTitle(sessionId: string, title: string, options?: SessionTitleUpdateOptions): void {
@@ -555,8 +567,8 @@ export class ChatHistoryService implements OnDestroy {
   /**
    * 标记会话数据有变更（用于 dirty 跟踪，30s 兜底保存时使用）
    */
-  markDirty(sessionId: string): void {
-    this.hostSessionPersistenceBridge.markDirty(sessionId);
+  markDirty(sessionId: string, options?: HostSessionDirtyOptions): void {
+    this.hostSessionPersistenceBridge.markDirty(sessionId, options);
   }
 
   // =========================================================================
@@ -905,6 +917,7 @@ export class ChatHistoryService implements OnDestroy {
     metadata: SessionMetadata,
     messageCount: number,
     updateTimestamp: boolean = true,
+    options: { readonly dataAvailable?: boolean } = {},
   ): void {
     const selectedMode = resolveHostSessionSummaryModeFromMetadata(metadata);
     const modeDescriptor = resolveHostSessionModeDescriptorFromMetadata(metadata, this.getModeResolveOptions());
@@ -938,7 +951,7 @@ export class ChatHistoryService implements OnDestroy {
       existing.projectPath = normalizedMetadataProjectPath;
       existing.projectName = this.extractProjectName(normalizedMetadataProjectPath);
       existing.sessionScopeSchemaVersion = metadata.sessionScopeSchemaVersion ?? 1;
-      existing.dataAvailable = true;
+      existing.dataAvailable = options.dataAvailable ?? true;
     } else {
       this.index.push({
         sessionId,
@@ -958,7 +971,7 @@ export class ChatHistoryService implements OnDestroy {
         requestRouting,
         ...(interactionActionSummary ? { interactionActionSummary } : {}),
         model: metadata.model ?? null,
-        dataAvailable: true,
+        dataAvailable: options.dataAvailable ?? true,
       });
     }
     this.bumpIndexRevision();

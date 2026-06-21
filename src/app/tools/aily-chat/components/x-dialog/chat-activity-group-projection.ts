@@ -896,7 +896,7 @@ export function buildScopedMarkdownActivityDisplayItem(
     kicker: 'Output',
     label: '输出',
     note: content,
-    noteRenderMode: 'plain',
+    noteRenderMode: 'markdown',
     pill: '',
     pillTone: 'neutral',
   };
@@ -2020,6 +2020,7 @@ function toSubagentActivityItems(item: Record<string, unknown>, index: number): 
     return [buildSubagentNarrativeItem({
       id: `${itemId}:${kind}`,
       text: content || '',
+      kind: kind === 'thinking' ? 'thinking' : 'text',
       tone: kind === 'thinking' ? 'info' : 'neutral',
     })];
   }
@@ -2179,16 +2180,32 @@ function normalizeSubagentText(value: string): string {
 function buildSubagentNarrativeItem(input: {
   id: string;
   text: string;
+  kind?: 'thinking' | 'text';
   tone: 'info' | 'success' | 'warn' | 'error' | 'neutral';
 }): ActivityGroupDisplayItem {
+  if (input.kind === 'thinking') {
+    return {
+      id: input.id,
+      kind: 'thinking',
+      iconClass: getSubagentStepIconClass(input.tone),
+      isSpinning: false,
+      iconColor: getSubagentStepColor(input.tone),
+      label: input.text,
+      note: input.text,
+      pill: '',
+      pillTone: 'neutral',
+    };
+  }
+
   return {
     id: input.id,
-    kind: 'thinking',
+    kind: 'activity',
     iconClass: getSubagentStepIconClass(input.tone),
     isSpinning: false,
     iconColor: getSubagentStepColor(input.tone),
-    label: input.text,
+    label: '输出',
     note: input.text,
+    noteRenderMode: 'markdown',
     pill: '',
     pillTone: 'neutral',
   };

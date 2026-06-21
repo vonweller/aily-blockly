@@ -96,6 +96,7 @@ export interface TurnResponseStreamProjection {
   readonly status: TurnResponseStatus;
   readonly terminationReason?: TurnResponseTurn['response']['terminationReason'];
   readonly parts: TurnResponseTurn['response']['parts'];
+  readonly resultText?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -367,7 +368,7 @@ export function buildTurnResponseTurn(
       status: projection.status,
       terminationReason: projection.terminationReason,
       parts: projection.parts,
-      resultText: collectMainTurnResponseText(projection.parts),
+      resultText: projection.resultText ?? collectMainTurnResponseText(projection.parts),
       createdAt: projection.createdAt,
       updatedAt: projection.updatedAt,
     },

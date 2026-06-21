@@ -136,6 +136,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // 强制终止进程（当普通中断无效时）
     killProcess: (pid, processName) => ipcRenderer.invoke("terminal-kill-process", { pid, processName }),
   },
+  ailyServicesStream: {
+    start: (data) => ipcRenderer.invoke("aily-services-stream-start", data),
+    cancel: (streamId) => ipcRenderer.invoke("aily-services-stream-cancel", { streamId }),
+    onEvent: (streamId, callback) => {
+      const channel = `aily-services-stream-event-${streamId}`;
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),

@@ -13,10 +13,16 @@ import type {
   SessionTitleUpdateOptions,
 } from './chat-history.service';
 import { countHostRecordMessages } from './chat-history.service';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 type LiveSessionProvider = (sessionId: string) => LiveHostSessionRecord | null;
 type PendingTitleUpdate = { title: string; source: PersistedChatSessionTitleSource };
 type DurablePersistedTitleCandidate = { title: string; source?: PersistedChatSessionTitleSource };
+export type HostSessionDirtyPolicy = 'recovery-snapshot' | 'authoritative';
+
+export interface HostSessionDirtyOptions {
+  readonly policy?: HostSessionDirtyPolicy;
+}
 
 function resolveDurablePersistedTitleCandidate(
   title: unknown,
@@ -45,7 +51,13 @@ function resolveDurablePersistedTitleCandidate(
 export interface HostSessionPersistenceBridgeOptions {
   ensureIndexLoaded: () => void;
   findIndexEntry: (sessionId: string) => SessionIndexEntry | undefined;
-  upsertIndexEntry: (sessionId: string, metadata: SessionMetadata, messageCount: number, updateTimestamp?: boolean) => void;
+  upsertIndexEntry: (
+    sessionId: string,
+    metadata: SessionMetadata,
+    messageCount: number,
+    updateTimestamp?: boolean,
+    options?: { readonly dataAvailable?: boolean },
+  ) => void;
   writeIndex: () => void;
   markIndexDirty: () => void;
   hasDirtyIndex: () => boolean;
@@ -58,7 +70,7 @@ export interface HostSessionPersistenceBridgeOptions {
  * Keeps cache/dirty tracking/title persistence/flush behavior out of ChatHistoryService.
  */
 export class HostSessionPersistenceBridge {
-  private readonly dirtySessionIds = new Set<string>();
+  private readonly dirtySessions = new Map<string, HostSessionDirtyPolicy>();
   private readonly sessionCache = new Map<string, HostSessionRecord>();
   private readonly pendingTitles = new Map<string, PendingTitleUpdate>();
   private liveSessionProvider: LiveSessionProvider | null = null;
@@ -73,6 +85,14 @@ export class HostSessionPersistenceBridge {
   }
 
   saveHostRecord(
+    record: LiveHostSessionRecord,
+  ): void {
+    ChatPerformanceTracer.runWithSurface('history_save', () => {
+      this.saveHostRecordCore(record);
+    }, 'full');
+  }
+
+  private saveHostRecordCore(
     record: LiveHostSessionRecord,
   ): void {
     const { sessionId } = record;
@@ -100,7 +120,36 @@ export class HostSessionPersistenceBridge {
 
     this.hostRecordStore.write(sessionId, hostRecord);
     this.options.writeIndex();
-    this.dirtySessionIds.delete(sessionId);
+    this.dirtySessions.delete(sessionId);
+  }
+
+  saveHostRecordMetadataOnly(
+    record: LiveHostSessionRecord,
+  ): void {
+    ChatPerformanceTracer.runWithSurface('history_save', () => {
+      this.saveHostRecordMetadataOnlyCore(record);
+    }, 'metadata-only');
+  }
+
+  private saveHostRecordMetadataOnlyCore(
+    record: LiveHostSessionRecord,
+  ): void {
+    const { sessionId } = record;
+    if (!sessionId || record.sessionId !== sessionId) {
+      return;
+    }
+
+    this.options.ensureIndexLoaded();
+
+    const metadata = this.retainDurableTitle(
+      this.applyPendingTitle(this.hostRecordStore.createFullMetadata(record.metadata)),
+    );
+    const existingEntry = this.options.findIndexEntry(sessionId);
+    const messageCount = existingEntry?.messageCount ?? countHostRecordMessages(record);
+    const dataAvailable = existingEntry?.dataAvailable ?? messageCount > 0;
+
+    this.options.upsertIndexEntry(sessionId, metadata, messageCount, true, { dataAvailable });
+    this.options.writeIndex();
   }
 
   updateTitle(sessionId: string, title: string, options?: SessionTitleUpdateOptions): void {
@@ -178,8 +227,18 @@ export class HostSessionPersistenceBridge {
 
   }
 
-  markDirty(sessionId: string): void {
-    this.dirtySessionIds.add(sessionId);
+  markDirty(sessionId: string, options?: HostSessionDirtyOptions): void {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    const previousPolicy = this.dirtySessions.get(normalizedSessionId);
+    const nextPolicy = options?.policy ?? 'recovery-snapshot';
+    this.dirtySessions.set(
+      normalizedSessionId,
+      previousPolicy === 'authoritative' ? 'authoritative' : nextPolicy,
+    );
   }
 
   loadHostRecord(sessionId: string, projectPathHint?: string | null): HostSessionRecord | null {
@@ -231,7 +290,13 @@ export class HostSessionPersistenceBridge {
   }
 
   flushAll(): void {
-    for (const sessionId of this.dirtySessionIds) {
+    ChatPerformanceTracer.runWithSurface('history_save', () => {
+      this.flushAllCore();
+    }, 'flush-all');
+  }
+
+  private flushAllCore(): void {
+    for (const [sessionId, policy] of this.dirtySessions) {
       let hostRecord = this.sessionCache.get(sessionId);
       let liveRecord: LiveHostSessionRecord | null = null;
       if (this.liveSessionProvider) {
@@ -259,10 +324,12 @@ export class HostSessionPersistenceBridge {
           continue;
         }
         this.hostRecordStore.write(sessionId, hostRecord);
-        this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount);
+        if (policy === 'authoritative') {
+          this.options.upsertIndexEntry(sessionId, hostRecord.metadata, messageCount);
+        }
       }
     }
-    this.dirtySessionIds.clear();
+    this.dirtySessions.clear();
 
     if (this.options.hasDirtyIndex()) {
       this.options.writeIndex();
@@ -270,11 +337,11 @@ export class HostSessionPersistenceBridge {
   }
 
   hasDirtySessions(): boolean {
-    return this.dirtySessionIds.size > 0;
+    return this.dirtySessions.size > 0;
   }
 
   getDirtySessionCount(): number {
-    return this.dirtySessionIds.size;
+    return this.dirtySessions.size;
   }
 
   getSessionCache(): Map<string, HostSessionRecord> {
@@ -283,7 +350,7 @@ export class HostSessionPersistenceBridge {
 
   clearSessionState(sessionId: string): void {
     this.sessionCache.delete(sessionId);
-    this.dirtySessionIds.delete(sessionId);
+    this.dirtySessions.delete(sessionId);
     this.pendingTitles.delete(sessionId);
   }
 

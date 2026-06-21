@@ -25,12 +25,44 @@ import {
   createHostStreamTurnRoundsUpdateItem,
   type IHostStreamListener,
 } from './host-turn-response-state';
+import type { CanonicalRenderLifecycleEvent } from '../core/render-event-item-lifecycle';
 
 export type HostStreamPartChange = {
   partIndex: number;
   kind: 'add' | 'update' | 'append';
   part: TurnResponseTurn['response']['parts'][number];
 };
+
+type CanonicalItemDeltaEvent = Extract<CanonicalRenderLifecycleEvent, { readonly type: 'itemDelta' }>;
+type CanonicalItemScope = NonNullable<Extract<CanonicalRenderLifecycleEvent, { readonly type: 'itemStarted' }>['scope']>;
+export type HostItemLifecycleTextDeltaDelivery = 'coalesced' | 'suppressed';
+
+export interface HostItemLifecycleTextDeltaPolicy {
+  readonly delivery: HostItemLifecycleTextDeltaDelivery;
+}
+
+interface PendingLifecycleDelta {
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly itemKind: CanonicalItemDeltaEvent['itemKind'];
+  readonly scope?: CanonicalItemScope;
+  readonly deltaKind: CanonicalItemDeltaEvent['deltaKind'];
+  readonly sourceEventType: CanonicalItemDeltaEvent['sourceEventType'];
+  readonly delivery: HostItemLifecycleTextDeltaDelivery;
+  timestamp: number;
+  deltaCount: number;
+  byteLength: number;
+}
+
+function isCoalescableLifecycleDelta(event: CanonicalRenderLifecycleEvent): event is CanonicalItemDeltaEvent {
+  return event.type === 'itemDelta'
+    && event.deltaKind === 'append'
+    && (event.itemKind === 'markdown' || event.itemKind === 'thinking');
+}
+
+function lifecycleDeltaKey(turnId: string, event: CanonicalItemDeltaEvent): string {
+  return `${turnId}\u0000${event.itemId}`;
+}
 
 function areTurnResponseCommandsEqual(
   left: TurnResponseCommand | undefined,
@@ -82,14 +114,172 @@ function toHostUsage(
 }
 
 export class LexRenderHostStreamEmitter {
+  private static readonly ITEM_LIFECYCLE_DELTA_FLUSH_DELAY_MS = 50;
   private _listener: IHostStreamListener | null = null;
+  private readonly _pendingItemLifecycleDeltas = new Map<string, PendingLifecycleDelta>();
+  private readonly _turnTextDeltaPolicies = new Map<string, HostItemLifecycleTextDeltaPolicy>();
+  private readonly _itemTextDeltaPolicies = new Map<string, HostItemLifecycleTextDeltaPolicy>();
+  private _pendingItemLifecycleFlushHandle: ReturnType<typeof setTimeout> | null = null;
 
   setListener(listener: IHostStreamListener | null): void {
+    if (this._listener !== listener) {
+      this.clearPendingItemLifecycleDeltas();
+    }
     this._listener = listener;
   }
 
   clearSessionState(): void {
+    this.clearPendingItemLifecycleDeltas();
+    this._turnTextDeltaPolicies.clear();
+    this._itemTextDeltaPolicies.clear();
     this._listener?.onHostStreamEvent({ type: 'session_cleared' });
+  }
+
+  setTextDeltaDeliveryPolicy(
+    turnId: string,
+    policy: HostItemLifecycleTextDeltaPolicy | null,
+    itemId?: string | null,
+  ): void {
+    const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    const normalizedItemId = typeof itemId === 'string' ? itemId.trim() : '';
+    if (!normalizedTurnId) {
+      return;
+    }
+
+    this.flushPendingItemLifecycleDeltas(normalizedTurnId, normalizedItemId || undefined);
+
+    const key = normalizedItemId
+      ? lifecycleDeltaKey(normalizedTurnId, { itemId: normalizedItemId } as CanonicalItemDeltaEvent)
+      : normalizedTurnId;
+    const target = normalizedItemId ? this._itemTextDeltaPolicies : this._turnTextDeltaPolicies;
+    if (policy) {
+      target.set(key, { delivery: policy.delivery });
+    } else {
+      target.delete(key);
+    }
+  }
+
+  emitItemLifecycleEvents(
+    turnId: string,
+    events: readonly CanonicalRenderLifecycleEvent[],
+  ): void {
+    if (!this._listener || !turnId || events.length === 0) {
+      return;
+    }
+
+    for (const event of events) {
+      if (isCoalescableLifecycleDelta(event)) {
+        this.enqueueItemLifecycleDelta(turnId, event, this.resolveTextDeltaDelivery(turnId, event));
+        continue;
+      }
+
+      if (event.type === 'itemCompleted') {
+        this.flushPendingItemLifecycleDeltas(turnId, event.itemId);
+      } else if (event.type === 'turnCompleted') {
+        this.flushPendingItemLifecycleDeltas(turnId);
+      } else if (event.type === 'turnStarted') {
+        this.flushPendingItemLifecycleDeltas();
+      }
+      this.emitItemLifecycleEvent(turnId, event);
+    }
+  }
+
+  private emitItemLifecycleEvent(turnId: string, event: CanonicalRenderLifecycleEvent): void {
+    this._listener?.onHostStreamEvent({
+      type: 'item_lifecycle',
+      turnId,
+      event,
+      emittedAt: Date.now(),
+    });
+  }
+
+  private enqueueItemLifecycleDelta(
+    turnId: string,
+    event: CanonicalItemDeltaEvent,
+    delivery: HostItemLifecycleTextDeltaDelivery,
+  ): void {
+    const key = lifecycleDeltaKey(turnId, event);
+    const existing = this._pendingItemLifecycleDeltas.get(key);
+    if (existing) {
+      if (existing.delivery !== delivery) {
+        this.flushPendingItemLifecycleDeltas(turnId, event.itemId);
+        this.enqueueItemLifecycleDelta(turnId, event, delivery);
+        return;
+      }
+      existing.timestamp = Math.max(existing.timestamp, event.timestamp);
+      existing.deltaCount += Math.max(1, event.deltaCount ?? 1);
+      existing.byteLength += Math.max(0, event.byteLength ?? 0);
+    } else {
+      this._pendingItemLifecycleDeltas.set(key, {
+        turnId,
+        itemId: event.itemId,
+        itemKind: event.itemKind,
+        scope: event.scope,
+        deltaKind: event.deltaKind,
+        sourceEventType: event.sourceEventType,
+        delivery,
+        timestamp: event.timestamp,
+        deltaCount: Math.max(1, event.deltaCount ?? 1),
+        byteLength: Math.max(0, event.byteLength ?? 0),
+      });
+    }
+    if (delivery === 'coalesced') {
+      this.scheduleItemLifecycleDeltaFlush();
+    }
+  }
+
+  private resolveTextDeltaDelivery(turnId: string, event: CanonicalItemDeltaEvent): HostItemLifecycleTextDeltaDelivery {
+    const itemPolicy = this._itemTextDeltaPolicies.get(lifecycleDeltaKey(turnId, event));
+    if (itemPolicy) {
+      return itemPolicy.delivery;
+    }
+    return this._turnTextDeltaPolicies.get(turnId)?.delivery ?? 'coalesced';
+  }
+
+  private scheduleItemLifecycleDeltaFlush(): void {
+    if (this._pendingItemLifecycleFlushHandle) {
+      return;
+    }
+    this._pendingItemLifecycleFlushHandle = setTimeout(() => {
+      this._pendingItemLifecycleFlushHandle = null;
+      this.flushPendingItemLifecycleDeltas();
+    }, LexRenderHostStreamEmitter.ITEM_LIFECYCLE_DELTA_FLUSH_DELAY_MS);
+  }
+
+  private flushPendingItemLifecycleDeltas(turnId?: string, itemId?: string): void {
+    if (!this._listener || this._pendingItemLifecycleDeltas.size === 0) {
+      return;
+    }
+
+    const matchingEntries = [...this._pendingItemLifecycleDeltas.entries()]
+      .filter(([, pending]) => (!turnId || pending.turnId === turnId) && (!itemId || pending.itemId === itemId));
+    for (const [key, pending] of matchingEntries) {
+      this._pendingItemLifecycleDeltas.delete(key);
+      this.emitItemLifecycleEvent(pending.turnId, {
+        type: 'itemDelta',
+        itemId: pending.itemId,
+        itemKind: pending.itemKind,
+        timestamp: pending.timestamp,
+        scope: pending.scope,
+        deltaKind: pending.deltaKind,
+        deltaCount: pending.deltaCount,
+        byteLength: pending.byteLength,
+        delivery: pending.delivery,
+        sourceEventType: pending.sourceEventType,
+      });
+    }
+    if (this._pendingItemLifecycleDeltas.size === 0 && this._pendingItemLifecycleFlushHandle) {
+      clearTimeout(this._pendingItemLifecycleFlushHandle);
+      this._pendingItemLifecycleFlushHandle = null;
+    }
+  }
+
+  private clearPendingItemLifecycleDeltas(): void {
+    this._pendingItemLifecycleDeltas.clear();
+    if (this._pendingItemLifecycleFlushHandle) {
+      clearTimeout(this._pendingItemLifecycleFlushHandle);
+      this._pendingItemLifecycleFlushHandle = null;
+    }
   }
 
   emitClearToPreviousToolInvocation(

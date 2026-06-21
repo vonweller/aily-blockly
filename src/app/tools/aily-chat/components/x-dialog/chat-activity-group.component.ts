@@ -317,7 +317,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       min-width: 12px;
       margin-left: auto;
       align-self: flex-start;
-      padding-top: 5px;
+      padding-top: 2px;
       opacity: 0;
       transition: opacity 0.15s ease;
     }
@@ -376,6 +376,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   @Input() doing = false;
   @Input() sessionId = '';
   @Input() turnResponse: TurnResponseTurn | null = null;
+  @Input() detailProjectionEnabled = true;
   @ViewChild('detailViewport') private detailViewportRef?: ElementRef<HTMLElement>;
 
   expanded = false;
@@ -391,16 +392,28 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   private detailViewportSyncScheduled = false;
   private detailViewportFrameId: number | null = null;
   private detailViewportTimerId: ReturnType<typeof setTimeout> | null = null;
+  private lastProjectionKey = '';
+  private lastDetailProjectionKey = '';
   showDetailViewportTopFade = false;
   showDetailViewportBottomFade = false;
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['parts'] || changes['doing'] || changes['turnResponse']) {
-      this._refresh();
+    if (changes['parts'] || changes['doing'] || changes['turnResponse'] || changes['detailProjectionEnabled']) {
+      this._refresh({
+        forceDetailProjection: !!changes['detailProjectionEnabled'] && this.detailProjectionEnabled,
+      });
     }
   }
 
   ngAfterViewChecked(): void {
+    if (!this.shouldProjectDetails() || !this.useFixedViewport) {
+      if (this.showDetailViewportTopFade || this.showDetailViewportBottomFade) {
+        this.showDetailViewportTopFade = false;
+        this.showDetailViewportBottomFade = false;
+      }
+      return;
+    }
+
     this.scheduleDetailViewportSync();
   }
 
@@ -422,6 +435,13 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       this.detailViewportAutoScrollEnabled = true;
       this.lastViewportScrollHeight = 0;
     }
+    this.lastDetailProjectionKey = '';
+    if (!this.expanded) {
+      this.displayItems = [];
+      return;
+    }
+
+    this._refresh({ forceDetailProjection: this.shouldProjectDetails() });
   }
 
   get isGroupSpinning(): boolean {
@@ -457,16 +477,81 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
     this.updateDetailViewportFades(viewport);
   }
 
-  private _refresh(): void {
+  private _refresh(options?: { forceDetailProjection?: boolean }): void {
     if (!this.parts.length) {
       this.displayItems = [];
+      this.lastProjectionKey = '';
+      this.lastDetailProjectionKey = '';
       return;
     }
     const refreshStartedAt = performance.now();
-    const pres = buildActivityGroupPresentation(this.parts);
-    const settledState = pres.state === 'doing' ? 'done' : pres.state;
-    this.groupState = this.doing ? 'doing' : settledState;
-    this.groupHeader = pres.header;
+    const projectionKey = buildActivityGroupProjectionKey(this.parts, this.doing, this.turnResponse);
+    const headerCacheHit = projectionKey === this.lastProjectionKey;
+    if (headerCacheHit && !options?.forceDetailProjection) {
+      this._syncExpandedState();
+      if (!this.shouldProjectDetails()) {
+        if (this.displayItems.length) {
+          this.displayItems = [];
+          this.lastDetailProjectionKey = '';
+        }
+        ChatPerformanceTracer.increment(`activity_group_refresh.${this.detailProjectionSkipMetric()}`);
+        ChatPerformanceTracer.recordDuration(
+          'activity_group_refresh',
+          performance.now() - refreshStartedAt,
+          `cache-hit,detail-skipped=${this.detailProjectionSkipReason()},parts=${this.parts.length},doing=${this.doing},state=${this.groupState}`,
+          { slowThresholdMs: 8 },
+        );
+        return;
+      }
+      if (projectionKey === this.lastDetailProjectionKey) {
+        ChatPerformanceTracer.increment('activity_group_refresh.cache_hit');
+        ChatPerformanceTracer.recordDuration(
+          'activity_group_refresh',
+          performance.now() - refreshStartedAt,
+          `cache-hit,parts=${this.parts.length},items=${this.displayItems.length},doing=${this.doing},state=${this.groupState}`,
+          { slowThresholdMs: 8 },
+        );
+        return;
+      }
+    }
+
+    if (!headerCacheHit) {
+      this.lastProjectionKey = projectionKey;
+      const pres = buildActivityGroupPresentation(this.parts);
+      const settledState = pres.state === 'doing' ? 'done' : pres.state;
+      this.groupState = this.doing ? 'doing' : settledState;
+      this.groupHeader = pres.header;
+    }
+
+    this._syncExpandedState();
+    if (!this.shouldProjectDetails()) {
+      if (this.displayItems.length) {
+        this.displayItems = [];
+      }
+      this.lastDetailProjectionKey = '';
+      ChatPerformanceTracer.increment(`activity_group_refresh.${this.detailProjectionSkipMetric()}`);
+      ChatPerformanceTracer.increment('activity_group_refresh.cache_hit');
+      ChatPerformanceTracer.recordDuration(
+        'activity_group_refresh',
+        performance.now() - refreshStartedAt,
+        `detail-skipped=${this.detailProjectionSkipReason()},parts=${this.parts.length},doing=${this.doing},state=${this.groupState},headerCache=${headerCacheHit}`,
+        { slowThresholdMs: 8 },
+      );
+      return;
+    }
+
+    if (!options?.forceDetailProjection && projectionKey === this.lastDetailProjectionKey) {
+      ChatPerformanceTracer.increment('activity_group_refresh.cache_hit');
+      ChatPerformanceTracer.recordDuration(
+        'activity_group_refresh',
+        performance.now() - refreshStartedAt,
+        `detail-cache-hit,parts=${this.parts.length},items=${this.displayItems.length},doing=${this.doing},state=${this.groupState}`,
+        { slowThresholdMs: 8 },
+      );
+      return;
+    }
+
+    this.lastDetailProjectionKey = projectionKey;
     this.displayItems = this._attachTurnResponseContinuation(this.parts.flatMap((part, i) => this._buildItems(part, i, this.parts)));
     this._syncExpandedState();
     ChatPerformanceTracer.recordDuration(
@@ -547,7 +632,7 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
   }
 
   private hasActivePendingInlineApproval(): boolean {
-    if (!this.sessionId || !this.displayItems.length) {
+    if (!this.sessionId || !this.parts.length) {
       return false;
     }
 
@@ -556,26 +641,70 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
       return false;
     }
 
-    return this.displayItems.some((item) => {
-      const approval = item.approval;
-      if (!approval || approval.resolved === true) {
+    return this.parts.some((part) => this.partMatchesActivePendingApproval(part, activeConfirmation));
+  }
+
+  private shouldProjectDetails(): boolean {
+    return this.expanded && (this.detailProjectionEnabled || this.hasActivePendingInlineApproval());
+  }
+
+  private detailProjectionSkipReason(): 'collapsed' | 'offscreen' {
+    return this.expanded && !this.detailProjectionEnabled ? 'offscreen' : 'collapsed';
+  }
+
+  private detailProjectionSkipMetric(): 'detail_skipped_collapsed' | 'detail_skipped_offscreen' {
+    return this.detailProjectionSkipReason() === 'offscreen'
+      ? 'detail_skipped_offscreen'
+      : 'detail_skipped_collapsed';
+  }
+
+  private partMatchesActivePendingApproval(
+    part: ChatPart,
+    activeConfirmation: ReturnType<ChatRuntimeInteractionHostService['getActiveConfirmation']>,
+  ): boolean {
+    if (!activeConfirmation) {
+      return false;
+    }
+
+    if (part.type === 'confirmation') {
+      if (part.resolved === true) {
         return false;
       }
 
-      if (activeConfirmation.partId && approval.partId) {
-        return activeConfirmation.partId === approval.partId;
+      if (activeConfirmation.partId && part.partId) {
+        return activeConfirmation.partId === part.partId;
       }
 
-      if (activeConfirmation.askId && approval.askId) {
-        return activeConfirmation.askId === approval.askId;
+      if (activeConfirmation.askId && part.askId) {
+        return activeConfirmation.askId === part.askId;
       }
 
-      if (activeConfirmation.toolCallId && approval.toolCallId) {
-        return activeConfirmation.toolCallId === approval.toolCallId;
+      if (activeConfirmation.toolCallId && part.toolName) {
+        return activeConfirmation.toolCallId === part.askId || activeConfirmation.toolCallId === part.partId;
       }
 
       return false;
-    });
+    }
+
+    if (part.type !== 'tool_call') {
+      return false;
+    }
+
+    const metadataApproval = asRecord(part.metadata?.['approval']);
+    const metadataResolved = metadataApproval?.['resolved'] === true;
+    if (part.state !== 'pending_approval' && metadataResolved) {
+      return false;
+    }
+
+    if (activeConfirmation.toolCallId && part.toolCallId) {
+      return activeConfirmation.toolCallId === part.toolCallId;
+    }
+
+    if (activeConfirmation.partId && part.partId) {
+      return activeConfirmation.partId === part.partId;
+    }
+
+    return false;
   }
 
   private _syncDetailViewportScroll(): void {
@@ -779,4 +908,240 @@ function countLegacySubagentChildren(parts: readonly ChatPart[]): number {
     }
   }
   return count;
+}
+
+const objectIdentityKeys = new WeakMap<object, number>();
+let nextObjectIdentityKey = 1;
+
+function getObjectIdentityKey(value: unknown): string {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+    return '';
+  }
+
+  const objectValue = value as object;
+  let key = objectIdentityKeys.get(objectValue);
+  if (key == null) {
+    key = nextObjectIdentityKey++;
+    objectIdentityKeys.set(objectValue, key);
+  }
+  return String(key);
+}
+
+function buildActivityGroupProjectionKey(
+  parts: readonly ChatPart[],
+  doing: boolean,
+  turnResponse: TurnResponseTurn | null,
+): string {
+  return [
+    doing ? 'doing' : 'idle',
+    buildContinuationProjectionKey(turnResponse),
+    ...parts.map((part, index) => buildActivityPartProjectionKey(part, index)),
+  ].join('|');
+}
+
+function buildContinuationProjectionKey(turnResponse: TurnResponseTurn | null): string {
+  const continuation = turnResponse?.response?.continuation;
+  return [
+    turnResponse?.turnId ?? '',
+    getObjectIdentityKey(continuation),
+    typeof continuation === 'object' && continuation
+      ? ((continuation as unknown as Record<string, unknown>)['status'] ?? '')
+      : '',
+  ].join(':');
+}
+
+function buildActivityPartProjectionKey(part: ChatPart, index: number): string {
+  const base = `${index}:${buildChatPartIdentity(part, index)}:${part.type}`;
+  switch (part.type) {
+    case 'markdown':
+      return [
+        base,
+        part.partId ?? '',
+        part.contentRef ?? '',
+        part.contentLength ?? part.content.length,
+        isSubagentChildPart(part) ? getSubAgentInvocationId(part) ?? '' : '',
+      ].join(':');
+    case 'thinking':
+      return [
+        base,
+        part.partId ?? '',
+        part.contentRef ?? '',
+        part.contentLength ?? part.content.length,
+        part.isComplete ? 'complete' : 'running',
+        isSubagentChildPart(part) ? getSubAgentInvocationId(part) ?? '' : '',
+      ].join(':');
+    case 'tool_call':
+      return [
+        base,
+        part.partId ?? '',
+        part.toolCallId,
+        part.toolName,
+        part.state,
+        part.text,
+        getObjectIdentityKey(part.args),
+        buildMetadataProjectionKey(part.metadata),
+        part.sourceAgentRole ?? '',
+        part.subAgentInvocationId ?? '',
+        part.parentToolCallId ?? '',
+      ].join(':');
+    case 'confirmation':
+      return [
+        base,
+        part.partId ?? '',
+        part.askId,
+        part.resolved ? 'resolved' : 'pending',
+        part.result ?? '',
+        getObjectIdentityKey(part.args),
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
+    case 'terminal':
+      return [
+        base,
+        part.partId ?? '',
+        part.processId ?? '',
+        part.outputSessionId ?? '',
+        part.terminalId ?? '',
+        part.toolCallId ?? '',
+        part.status ?? '',
+        part.isRunning ? 'running' : 'idle',
+        part.exitCode ?? '',
+        part.bytesTotal ?? '',
+        part.lastOutputAt ?? '',
+        part.output?.length ?? 0,
+        part.stderr?.length ?? 0,
+      ].join(':');
+    case 'state':
+      return [
+        base,
+        part.stateId,
+        part.state,
+        part.kind ?? '',
+        part.text,
+        part.progress ?? '',
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
+    case 'question':
+      return [
+        base,
+        part.partId ?? '',
+        part.questions.length,
+        part.answers ? 'answered' : 'open',
+        buildMetadataProjectionKey(part.metadata),
+      ].join(':');
+    case 'error':
+      return [base, part.message, part.severity ?? '', buildMetadataProjectionKey(part.metadata)].join(':');
+    case 'plan':
+      return [base, part.partId ?? '', part.status, part.text.length].join(':');
+    default:
+      return base;
+  }
+}
+
+function buildMetadataProjectionKey(metadata: Record<string, unknown> | undefined): string {
+  if (!metadata) {
+    return '';
+  }
+
+  const toolSpecificData = asRecord(metadata['toolSpecificData']);
+  const childItems = asArray(toolSpecificData?.['childItems']);
+  return [
+    getObjectIdentityKey(metadata),
+    projectionValue(metadata['kind']),
+    projectionValue(metadata['phase']),
+    projectionValue(metadata['status']),
+    projectionValue(metadata['argsSummary']),
+    projectionValue(metadata['duration']),
+    buildApprovalProjectionKey(metadata['approval']),
+    buildTimelineProjectionKey(metadata['timeline']),
+    getObjectIdentityKey(toolSpecificData),
+    projectionValue(toolSpecificData?.['kind']),
+    projectionValue(toolSpecificData?.['agentName']),
+    projectionValue(toolSpecificData?.['description']),
+    projectionLength(toolSpecificData?.['result']),
+    childItems.length,
+    ...childItems.map((child, index) => buildSubagentChildProjectionKey(child, index)),
+  ].join(':');
+}
+
+function buildSubagentChildProjectionKey(value: unknown, index: number): string {
+  const child = asRecord(value);
+  if (!child) {
+    return String(index);
+  }
+
+  return [
+    index,
+    getObjectIdentityKey(child),
+    projectionValue(child['kind']),
+    projectionValue(child['toolCallId']),
+    projectionValue(child['toolName']),
+    projectionValue(child['state']),
+    projectionValue(child['contentRef']),
+    projectionValue(child['contentKind']),
+    projectionValue(child['contentLength']),
+    projectionLength(child['content']),
+    projectionValue(child['duration']),
+    projectionValue(child['argsSummary']),
+  ].join(',');
+}
+
+function buildTimelineProjectionKey(value: unknown): string {
+  const timeline = asArray(value);
+  const last = asRecord(timeline[timeline.length - 1]);
+  return [
+    getObjectIdentityKey(value),
+    timeline.length,
+    projectionValue(last?.['recordId']),
+    projectionValue(last?.['phase']),
+    projectionValue(last?.['state']),
+    projectionLength(last?.['resultText']),
+    buildProgressDetailsProjectionKey(last?.['progressDetails']),
+  ].join(',');
+}
+
+function buildProgressDetailsProjectionKey(value: unknown): string {
+  const details = asRecord(value);
+  return [
+    getObjectIdentityKey(details),
+    projectionValue(details?.['contentRef']),
+    projectionValue(details?.['contentLength']),
+    projectionLength(details?.['content']),
+    projectionValue(details?.['bytesTotal']),
+  ].join(',');
+}
+
+function buildApprovalProjectionKey(value: unknown): string {
+  const approval = asRecord(value);
+  return [
+    getObjectIdentityKey(approval),
+    projectionValue(approval?.['resolved']),
+    projectionValue(approval?.['approved']),
+    projectionLength(approval?.['previousText']),
+  ].join(',');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function asArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function projectionValue(value: unknown): string {
+  switch (typeof value) {
+    case 'string':
+      return value;
+    case 'number':
+    case 'boolean':
+      return String(value);
+    default:
+      return '';
+  }
+}
+
+function projectionLength(value: unknown): string {
+  return typeof value === 'string' ? String(value.length) : '';
 }

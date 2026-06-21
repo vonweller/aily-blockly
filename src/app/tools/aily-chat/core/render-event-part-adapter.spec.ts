@@ -1112,6 +1112,29 @@ describe('RenderEventPartAdapter', () => {
     expect((nextParts[0] as any).metadata.timeline[1].phaseDetail).toBe('切换到 对齐 todo transcript 标题');
   });
 
+  it('projects todo updates with missing items as an empty canonical todo state', () => {
+    expect(() => processCurrent({
+      type: 'todo_update',
+      sessionId: 'sess-empty',
+      summary: 'Todo list updated',
+      timestamp: 1,
+    } as any)).not.toThrow();
+
+    const parts = store.getPartsForHandle(currentHandle);
+    expect(parts[0]).toEqual(jasmine.objectContaining({
+      type: 'state',
+      kind: 'todo',
+      state: 'info',
+      text: 'Todo list updated',
+    }));
+    expect((parts[0] as any).metadata).toEqual(jasmine.objectContaining({
+      totalCount: 0,
+      completedCount: 0,
+      currentStep: 0,
+      items: [],
+    }));
+  });
+
   it('patches the latest todo tool call with todoList-style toolSpecificData on todo updates', () => {
     processCurrent({
       type: 'tool_call_begin',

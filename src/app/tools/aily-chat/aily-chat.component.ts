@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, AfterViewChecked, NgZone } from '@angular/core';
+import { Component, ElementRef, ViewChild, ViewChildren, QueryList, OnDestroy, ChangeDetectorRef, ChangeDetectionStrategy, AfterViewChecked, NgZone, effect } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { FormsModule } from '@angular/forms';
@@ -34,6 +34,7 @@ import { ResourceManagerService } from './services/resource-manager.service';
 import { MenuManagerService, type ChatSessionListItem } from './services/menu-manager.service';
 import { ChatSessionActionsService } from './services/chat-session-actions.service';
 import { ChatSessionItemsService } from './services/chat-session-items.service';
+import { ChatSessionRuntimeRegistryService } from './services/chat-session-runtime-registry.service';
 import { ChatSessionsControlService } from './services/chat-sessions-control.service';
 import {
   ChatSetupSuggestionService,
@@ -232,15 +233,21 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   private dialogVirtualEndIndex = Number.POSITIVE_INFINITY;
   private dialogVirtualRefreshRaf: number | null = null;
   private dialogVirtualMeasureRaf: number | null = null;
+  private dialogBottomFollowRaf: number | null = null;
+  private dialogBottomFollowRequestId = 0;
   private syncViewRefreshRaf: number | null = null;
   private readonly liveDialogPartsCache = new Map<string, {
     readonly revision: number;
+    readonly sourceVersion: string;
     readonly parts: readonly ChatPart[] | null;
   }>();
   public dialogVirtualTopSpacerHeight = 0;
   public dialogVirtualBottomSpacerHeight = 0;
   private readonly debugBrowserChangeSubscription: Subscription;
   private readonly sessionViewModelChangeSubscription: Subscription;
+  private runtimeInteractionRevealEffect: { destroy(): void } | null = null;
+  private runtimeInteractionRevealTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastRuntimeInteractionRevealKey = '';
   private pendingFollowupEditState: {
     readonly sessionId: string;
     readonly requestId: string;
@@ -282,6 +289,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     public scrollManager: ScrollManagerService,
     public resourceManager: ResourceManagerService,
     public sessionActions: ChatSessionActionsService,
+    private chatSessionRuntimeRegistry: ChatSessionRuntimeRegistryService,
     public menuManager: MenuManagerService,
     public viewState: ChatViewService,
   ) {
@@ -294,10 +302,15 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.scrollManager.setRevealHostDelegate?.({
       prepareRevealTarget: (target, options) => this.prepareDialogRevealTarget(target, options),
     });
+    this.runtimeInteractionRevealEffect = effect(() => {
+      this.trackRuntimeInteractionReveal();
+    });
     exposeAilyChatE2eHarness({
       engine: this.engine,
       viewState: this.viewState,
       readRenderingDiagnostics: () => this.readRenderingDiagnostics(),
+      readPerformanceDiagnostics: () => ChatPerformanceTracer.snapshotPerformanceState(),
+      runWorkspaceFinalizeBoundaryProbe: () => this.runE2eWorkspaceFinalizeBoundaryProbe(),
     });
     this.engine.setPaneSessionCommandHandlers({
       requestNewChat: () => this.requestNewChat(),
@@ -650,6 +663,23 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     return this.vm.inputValue.trim().length > 0;
   }
 
+  private async runE2eWorkspaceFinalizeBoundaryProbe(): Promise<void> {
+    const sessionId = await this.engine.ensureSessionReadyForSubmit() ?? this.engine.sessionId;
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      throw new Error('Aily chat E2E terminal boundary probe requires a session.');
+    }
+
+    this.chatSessionRuntimeRegistry.scheduleLexRequestCompleted({
+      sessionId: normalizedSessionId,
+      turnId: `e2e-terminal-boundary-${Date.now()}`,
+      reason: 'e2e-terminal-boundary',
+      runWorkspaceFinalize: async () => undefined,
+      runSessionEndHooks: async () => undefined,
+    });
+    await this.chatSessionRuntimeRegistry.awaitPendingLexRequestCompleted(normalizedSessionId);
+  }
+
   ngOnInit() {
     ChatPerformanceTracer.increment('entry_open.component_ng_on_init');
     ChatPerformanceTracer.mark('entry_open.component_ng_on_init');
@@ -897,6 +927,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.disconnectSessionViewportObserver();
     this.cancelDialogVirtualRafs();
     this.cancelSyncViewRefreshRaf();
+    this.runtimeInteractionRevealEffect?.destroy();
+    this.runtimeInteractionRevealEffect = null;
+    this.cancelRuntimeInteractionReveal();
     this.scrollManager.setRevealHostDelegate?.(null);
     this.lifecycleCoordinator.detachView();
   }
@@ -1373,19 +1406,52 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       return null;
     }
 
-    const revision = this.vm.partStore.revision;
+    const revision = this.getDialogLivePartsRevision(item);
+    const sourceVersion = this.getDialogLivePartsSourceVersion(item);
     const cacheKey = `${this.vm.sessionId}:${item.trackId}:${turnId}`;
     const cached = this.liveDialogPartsCache.get(cacheKey);
-    if (cached?.revision === revision) {
+    if (cached?.revision === revision && cached.sourceVersion === sourceVersion) {
       return cached.parts;
     }
 
     const handle = findChatMessageHandleByTurnId(this.engine.list, turnId, { role: 'aily' });
     const parts = handle ? this.vm.partStore.getPartsForHandle(handle) : [];
     const snapshot = parts.length > 0 ? [...parts] : null;
-    this.liveDialogPartsCache.set(cacheKey, { revision, parts: snapshot });
+    this.liveDialogPartsCache.set(cacheKey, { revision, sourceVersion, parts: snapshot });
     this.pruneLiveDialogPartsCache();
     return snapshot;
+  }
+
+  private getDialogLivePartsRevision(item: ChatDialogViewItem): number {
+    return this.isDialogItemLive(item) ? this.vm.partStore.revision : -1;
+  }
+
+  private isDialogItemLive(item: ChatDialogViewItem): boolean {
+    const responseStatus = item.turnContext?.response?.status
+      ?? item.turnContext?.turnResponse?.response.status;
+    return item.doing || responseStatus === 'streaming';
+  }
+
+  private getDialogLivePartsSourceVersion(item: ChatDialogViewItem): string {
+    const context = item.turnContext;
+    const turn = context?.turnResponse;
+    const response = context?.response ?? turn?.response;
+    return [
+      item.trackId,
+      item.doing ? 'doing' : 'done',
+      item.content.length,
+      item.turnModelName,
+      item.turnModelBillingLabel ?? '',
+      item.responseVote ?? '',
+      context?.requestDisabled === true ? 'disabled' : 'enabled',
+      context?.roundCount ?? turn?.rounds.length ?? 0,
+      context?.toolCallCount ?? 0,
+      context?.lastRoundId ?? '',
+      turn?.updatedAt ?? '',
+      response?.updatedAt ?? '',
+      response?.status ?? '',
+      response?.parts.length ?? 0,
+    ].join('|');
   }
 
   private pruneLiveDialogPartsCache(): void {
@@ -1441,6 +1507,69 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
   handleConversationScroll(): void {
     this.scrollManager.checkUserScroll();
     this.scheduleDialogWindowRefresh();
+  }
+
+  resumeConversationAutoScroll(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.prepareDialogBottomReveal();
+    this.scrollManager.resumeFollowBottom('auto');
+    this.scheduleDialogBottomFollowConfirmation();
+    this.scheduleDialogWindowRefresh();
+    this.cdr.markForCheck();
+  }
+
+  private trackRuntimeInteractionReveal(): void {
+    const sessionId = this.vm.sessionId;
+    if (!sessionId) {
+      return;
+    }
+
+    const activeQuestion = this.runtimeInteractionHost.getQuestionWidget(sessionId);
+    const activePlanReview = this.runtimeInteractionHost.getActivePlanReview(sessionId);
+    const activeConfirmation = this.runtimeInteractionHost.getActiveConfirmation(sessionId);
+
+    let target: ChatRevealTarget | null = null;
+    let key = '';
+
+    if (activeQuestion) {
+      target = 'pending-question';
+      key = `${sessionId}:question:${activeQuestion.partId}`;
+    } else if (activePlanReview) {
+      target = 'pending-plan-review';
+      key = `${sessionId}:plan:${activePlanReview.id}`;
+    } else if (activeConfirmation) {
+      target = 'pending-confirmation';
+      key = `${sessionId}:confirmation:${activeConfirmation.id}:${activeConfirmation.data.resolved === true ? 'resolved' : 'pending'}`;
+    }
+
+    if (!target || !key || key === this.lastRuntimeInteractionRevealKey) {
+      return;
+    }
+
+    this.lastRuntimeInteractionRevealKey = key;
+    this.scheduleRuntimeInteractionReveal(target);
+  }
+
+  private scheduleRuntimeInteractionReveal(target: ChatRevealTarget): void {
+    this.cancelRuntimeInteractionReveal();
+    this.runtimeInteractionRevealTimer = setTimeout(() => {
+      this.runtimeInteractionRevealTimer = null;
+      this.scrollManager.revealTarget(target, {
+        behavior: 'auto',
+        followBottom: true,
+        maxAttempts: 30,
+      });
+      this.scheduleDialogWindowRefresh();
+      this.cdr.markForCheck();
+    }, 0);
+  }
+
+  private cancelRuntimeInteractionReveal(): void {
+    if (this.runtimeInteractionRevealTimer !== null) {
+      clearTimeout(this.runtimeInteractionRevealTimer);
+      this.runtimeInteractionRevealTimer = null;
+    }
   }
 
   private scheduleSyncViewRefresh(): void {
@@ -1640,6 +1769,86 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       this.cdr.markForCheck();
     }
     return true;
+  }
+
+  private prepareDialogBottomReveal(): boolean {
+    const items = this.vm.dialogItems;
+    if (!this.shouldUseDialogVirtualization(items)) {
+      return false;
+    }
+
+    const container = this.chatContainer?.nativeElement as HTMLElement | undefined;
+    if (!container) {
+      return false;
+    }
+
+    const totalHeight = this.computeDialogVirtualTotalHeight(items);
+    const viewportHeight = Math.max(1, container.clientHeight || 640);
+    const viewportTop = Math.max(0, totalHeight - viewportHeight);
+    const windowTop = Math.max(0, viewportTop - this.dialogVirtualOverscanPx);
+    const changed = this.computeDialogVirtualWindowForRange(items, windowTop, totalHeight, totalHeight);
+
+    container.scrollTo({
+      top: Math.round(viewportTop),
+      behavior: 'auto',
+    });
+
+    if (changed) {
+      this.cdr.markForCheck();
+    }
+    return true;
+  }
+
+  private scheduleDialogBottomFollowConfirmation(): void {
+    this.cancelDialogBottomFollowConfirmation();
+
+    const requestId = ++this.dialogBottomFollowRequestId;
+    let attempts = 0;
+    const maxAttempts = 6;
+    const schedule = typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 16) as unknown as number;
+
+    const run = () => {
+      if (requestId !== this.dialogBottomFollowRequestId) {
+        return;
+      }
+
+      this.dialogBottomFollowRaf = null;
+      attempts++;
+
+      let measured = false;
+      if (this.shouldUseDialogVirtualization(this.vm.dialogItems)) {
+        measured = this.measureRenderedDialogRows();
+      }
+
+      this.prepareDialogBottomReveal();
+      this.scrollManager.resumeFollowBottom('auto');
+
+      if (measured) {
+        this.cdr.markForCheck();
+      }
+
+      if (attempts < maxAttempts) {
+        this.dialogBottomFollowRaf = schedule(run);
+      }
+    };
+
+    this.dialogBottomFollowRaf = schedule(run);
+  }
+
+  private cancelDialogBottomFollowConfirmation(): void {
+    this.dialogBottomFollowRequestId++;
+    if (this.dialogBottomFollowRaf === null) {
+      return;
+    }
+
+    if (typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(this.dialogBottomFollowRaf);
+    } else {
+      clearTimeout(this.dialogBottomFollowRaf as unknown as ReturnType<typeof setTimeout>);
+    }
+    this.dialogBottomFollowRaf = null;
   }
 
   private resolveDialogRevealTargetIndex(items: readonly ChatDialogViewItem[], target: ChatRevealTarget): number {
@@ -2129,5 +2338,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       }
       this.dialogVirtualMeasureRaf = null;
     }
+
+    this.cancelDialogBottomFollowConfirmation();
   }
 }

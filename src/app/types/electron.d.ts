@@ -20,6 +20,11 @@ declare global {
         showItemInFolder: (fullPath: string) => void;
       };
       terminal: any;
+      ailyServicesStream?: {
+        start: (data: any) => Promise<{ ok?: boolean; streamId?: string; error?: string }>;
+        cancel: (streamId: string) => Promise<any>;
+        onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
+      };
       iWindow: any;
       subWindow: any;
       coderEmbed: {

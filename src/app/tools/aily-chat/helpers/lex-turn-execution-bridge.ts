@@ -4,6 +4,10 @@ import type { RenderEvent, SessionSnapshot, TurnRequest, TurnResponseStatus, Tur
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import { yieldToBrowserTask } from '../tools/browserTaskScheduler';
+import {
+  terminalTranscriptProjection,
+  type ChatRuntimeTurnResponseSyncOptions,
+} from '../core/chat-runtime-projection-policy';
 
 type LexTurnExecutionContext = Pick<
   IAgentLifecycle,
@@ -174,6 +178,7 @@ export class LexTurnExecutionBridge {
     private readonly syncExecutionRuntimeTurnResponses?: (
       sessionId: string | null,
       turnResponses: readonly TurnResponseTurn[] | null | undefined,
+      options: ChatRuntimeTurnResponseSyncOptions,
     ) => void,
     private readonly createDetachedRenderEventSink?: (
       sessionId: string,
@@ -230,7 +235,11 @@ export class LexTurnExecutionBridge {
         await this.preparePartsRendering();
 
         try {
-          await this.consumeAgentEvents(executionState, agent, userMessage, signal);
+          await ChatPerformanceTracer.runWithSurface(
+            'agent_loop',
+            () => this.consumeAgentEvents(executionState, agent, userMessage, signal),
+            `session=${executionState.sessionId ?? ''}`,
+          );
         } catch (error: any) {
           this.reportExecutionError(error, executionState);
         }
@@ -280,7 +289,11 @@ export class LexTurnExecutionBridge {
         await this.preparePartsRendering();
 
         try {
-          await this.consumeRenderEvents(executionState, source, userMessage, signal);
+          await ChatPerformanceTracer.runWithSurface(
+            'agent_loop',
+            () => this.consumeRenderEvents(executionState, source, userMessage, signal),
+            `session=${executionState.sessionId ?? ''}`,
+          );
         } catch (error: any) {
           this.reportExecutionError(error, executionState);
         }
@@ -343,11 +356,13 @@ export class LexTurnExecutionBridge {
         this.syncExecutionRuntimeState(state, state.detachedRenderEventBridge ?? this._renderEventBridge);
       }
       await this.uiEventBridge.finalizeTurn(this.buildExecutionSaveTarget(state));
-      console.info('[AilyChat][FinalizeDebug] finalizeTurnExecution completed', {
-        sessionId: state.sessionId,
-        elapsedMs: Date.now() - finalizeStartedAt,
-        hasDetachedSink: !!state.detachedRenderEventBridge,
-      });
+      if (isBackgroundSessionTraceEnabled()) {
+        console.info('[AilyChat][FinalizeDebug] finalizeTurnExecution completed', {
+          sessionId: state.sessionId,
+          elapsedMs: Date.now() - finalizeStartedAt,
+          hasDetachedSink: !!state.detachedRenderEventBridge,
+        });
+      }
     } finally {
       state.detachedRenderEventBridge = null;
       if (state.sessionId) {
@@ -870,7 +885,11 @@ export class LexTurnExecutionBridge {
     const startedAt = performance.now();
     const turnResponses = renderEventSink?.turnResponses
       ?? this.readExecutionTurnResponses?.(executionSessionId);
-    this.syncExecutionRuntimeTurnResponses?.(executionSessionId, turnResponses);
+    this.syncExecutionRuntimeTurnResponses?.(
+      executionSessionId,
+      turnResponses,
+      terminalTranscriptProjection('execution'),
+    );
     ChatPerformanceTracer.recordDuration(
       'runtime_turn_response_sync',
       performance.now() - startedAt,

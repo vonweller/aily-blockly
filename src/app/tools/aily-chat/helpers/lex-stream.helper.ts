@@ -36,6 +36,11 @@ import { LexSessionFacade } from './lex-session-facade';
 import type { IMetricsService, MetricsSnapshot, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { IHostStreamListener } from './host-turn-response-state';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
+import type { HostItemLifecycleTextDeltaPolicy } from './lex-render-host-stream-emitter';
+import {
+  terminalTranscriptProjection,
+  type ChatRuntimeTurnResponseSyncOptions,
+} from '../core/chat-runtime-projection-policy';
 
 type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBridge']>[0] & {
   readonly turnResponses: readonly TurnResponseTurn[];
@@ -43,6 +48,7 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void;
   setProjectionSessionResource(sessionResource: string | null | undefined): void;
   setHostStreamListener(listener: IHostStreamListener | null): void;
+  setHostItemTextDeltaDeliveryPolicy(turnId: string, policy: HostItemLifecycleTextDeltaPolicy | null, itemId?: string | null): void;
   clearSessionState(): void;
 };
 
@@ -75,6 +81,7 @@ type LexOwnerContext = BootstrapLexAgentContext
     syncExecutionRuntimeTurnResponses(
       sessionId: string | null | undefined,
       turnResponses: readonly TurnResponseTurn[] | null | undefined,
+      options: ChatRuntimeTurnResponseSyncOptions,
     ): void;
     readSessionRuntimeState?(
       sessionId: string | null | undefined,
@@ -184,14 +191,22 @@ export class LexOwnerFacade {
     );
 
     if (visibility !== 'visibleAttach' || (targetSessionId && !this.isVisibleAttachedSession(targetSessionId))) {
-      this.ctx.syncExecutionRuntimeTurnResponses?.(targetSessionId || null, turnResponses);
+      this.ctx.syncExecutionRuntimeTurnResponses?.(
+        targetSessionId || null,
+        turnResponses,
+        terminalTranscriptProjection('restore'),
+      );
       return;
     }
 
     this._renderEventBridge.setProjectionSessionResource?.(targetSessionId || null);
     this._renderEventBridge.hydrateTurnResponses(turnResponses);
     if (targetSessionId) {
-      this.ctx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses);
+      this.ctx.syncExecutionRuntimeTurnResponses?.(
+        targetSessionId,
+        turnResponses,
+        terminalTranscriptProjection('restore'),
+      );
     }
   }
 
@@ -203,6 +218,14 @@ export class LexOwnerFacade {
    *  receive incremental turn events without polling turnResponses on every CD cycle. */
   setHostStreamListener(listener: IHostStreamListener | null): void {
     this._renderEventBridge.setHostStreamListener(listener);
+  }
+
+  setHostItemTextDeltaDeliveryPolicy(
+    turnId: string,
+    policy: HostItemLifecycleTextDeltaPolicy | null,
+    itemId?: string | null,
+  ): void {
+    this._renderEventBridge.setHostItemTextDeltaDeliveryPolicy(turnId, policy, itemId);
   }
 
   resetSessionState(): void {
@@ -405,8 +428,8 @@ export class LexOwnerFacade {
         }
         return [];
       },
-      (sessionId, turnResponses) => {
-        this.ctx.syncExecutionRuntimeTurnResponses?.(sessionId, turnResponses);
+      (sessionId, turnResponses, options) => {
+        this.ctx.syncExecutionRuntimeTurnResponses?.(sessionId, turnResponses, options);
       },
       (sessionId, seedTurnResponses) => {
         const detachedPartStore = new ChatPartStore();
@@ -424,8 +447,8 @@ export class LexOwnerFacade {
             get isCancelled() { return ownerCtx.isCancelled; },
             get currentMessageSource() { return ownerCtx.currentMessageSource; },
             get contextBudgetService() { return ownerCtx.contextBudgetService; },
-            syncExecutionRuntimeTurnResponses: (targetSessionId, turnResponses) => {
-              ownerCtx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses);
+            syncExecutionRuntimeTurnResponses: (targetSessionId, turnResponses, options) => {
+              ownerCtx.syncExecutionRuntimeTurnResponses?.(targetSessionId, turnResponses, options);
             },
           },
           hostSyncBridge,

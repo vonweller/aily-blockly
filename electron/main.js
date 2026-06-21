@@ -876,6 +876,7 @@ const { registerWindowHandlers } = require("./window");
 const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = require("./npm");
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
+const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
 const { registerMCPHandlers } = require("./mcp");
 const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
 // debug模块
@@ -2131,6 +2132,7 @@ function createWindow() {
   registerWindowHandlers(mainWindow);
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
+  registerAilyServicesStreamHandlers(mainWindow);
   registerMCPHandlers(mainWindow);
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);
@@ -2540,13 +2542,15 @@ function cleanupRegisteredChildProcesses() {
   console.info('[PROC_TRACE][APP_CLEANUP_START]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
-    terminals: getActiveTerminals()
+    terminals: getActiveTerminals(),
+    ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
   return Promise.allSettled([
     killAllCmdProcesses(),
     killAllNpmProcesses(),
-    killAllTerminals()
+    killAllTerminals(),
+    cancelAllAilyServicesStreams()
   ]).then((results) => {
     console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
@@ -2578,7 +2582,8 @@ app.on("will-quit", () => {
   console.info('[PROC_TRACE][APP_WILL_QUIT]', {
     cmd: getActiveCmdProcesses(),
     npm: getActiveNpmProcesses(),
-    terminals: getActiveTerminals()
+    terminals: getActiveTerminals(),
+    ailyServicesStreams: getActiveAilyServicesStreams()
   });
 
   releaseAllAppDataResourceLocks();

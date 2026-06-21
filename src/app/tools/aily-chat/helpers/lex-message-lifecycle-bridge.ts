@@ -8,10 +8,18 @@ import { ChatViewWriteBridge } from './chat-view-write-bridge';
 import type { ChatMessageHandle } from './chat-message-handle';
 import { findChatMessageHandleByMessage } from './chat-message-handle';
 import { yieldToBrowserFrame, yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 
 type LexMessageLifecycleViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
 
 import type { EditsSummary } from '../services/edit-checkpoint.service';
+
+function isFinalizeTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceFinalize', [
+    '__AILY_CHAT_TRACE_FINALIZE__',
+    'AILY_CHAT_TRACE_FINALIZE',
+  ]);
+}
 
 type LexMessageLifecycleContext = LexMessageLifecycleViewWriteContext
   & Pick<IAgentLifecycle, 'isWaiting' | 'isCompleted' | 'isCancelled'>
@@ -169,6 +177,10 @@ export class LexMessageLifecycleBridge {
     const finalizeStartedAt = Date.now();
     let stageStartedAt = finalizeStartedAt;
     const logFinalizeStage = (stage: string): void => {
+      if (!isFinalizeTraceEnabled()) {
+        stageStartedAt = Date.now();
+        return;
+      }
       const now = Date.now();
       console.info('[AilyChat][FinalizeDebug] finalize stage', {
         sessionId: resolvedSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,
@@ -237,6 +249,10 @@ export class LexMessageLifecycleBridge {
     const deferredSaveTarget = resolvedSaveTarget ? { ...resolvedSaveTarget } : null;
     let stageStartedAt = Date.now();
     const logDeferredStage = (stage: string): void => {
+      if (!isFinalizeTraceEnabled()) {
+        stageStartedAt = Date.now();
+        return;
+      }
       const now = Date.now();
       console.info('[AilyChat][FinalizeDebug] deferred finalize stage', {
         sessionId: deferredSaveTarget?.sessionId ?? this.ctx.sessionId ?? null,

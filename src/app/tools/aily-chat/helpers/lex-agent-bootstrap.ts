@@ -8,6 +8,7 @@
 
 import type { IChatCoordination, IChatServiceAccess, IProjectContext, ISessionAccess } from '../core/chat-context';
 import { AilyHost } from '../core/host';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   normalizeChatSessionPermissionMode,
   type ChatSessionPermissionMode,
@@ -38,6 +39,7 @@ import {
 } from '../core/blockly-session-customization-item-provider';
 import { createBlocklySlashCommandProvider } from '../core/blockly-slash-command-provider';
 import { createBlocklySubagentExtension } from '../core/blockly-subagent-extension';
+import { createElectronAilyServicesTransport } from '../core/aily-services-host-transport';
 import { BlocklySkillProvider } from '../core/blockly-skill-provider';
 import { SkillRegistry as BlocklySkillRegistry } from '../core/skill-registry';
 import { askUserMany, askUserSingle, type AskUserPresentationContext } from '../core/ask-user';
@@ -45,12 +47,13 @@ import { collectDiagnostics } from '../core/diagnostics';
 import { resolveBlocklyMemoryStorageLayout } from './chat-memory-host';
 import { getProjectInfoTool } from '../tools/getProjectInfoTool';
 import { searchBoardsLibrariesTool } from '../tools/searchBoardsLibrariesTool';
-import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
+import { syncAbsFileHandler, type SyncAbsInvocationContext } from '../tools/syncAbsFileTool';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { TOOL_SETTINGS_CATALOG } from '../tools/tool-settings-catalog';
 import type { HostSessionRecord, PersistedHostResponseData } from '../services/chat-history.service';
 import { AilyAgentSessionProviderOptionsSourceService } from '../services/chat-session-provider-options-source.service';
 import { ChatSessionRuntimeRegistryService } from '../services/chat-session-runtime-registry.service';
+import { BlocklyTrackedWorkspaceChangeCollector } from '../services/blockly-tracked-workspace-change-collector';
 import { EditingContentStore } from '../services/editing-content-store.service';
 import { EditingTextDiffService } from '../services/editing-text-diff.service';
 import { EditingTimelineRepository } from '../services/editing-timeline-repository.service';
@@ -67,7 +70,6 @@ import {
 } from 'aily-lex/host/blockly';
 import {
   createConversationTurnResponse,
-  GitAwareWorkspaceChangeCollector,
   type IHostToolProvider,
   type IToolContribution,
   type IMetricsService,
@@ -89,6 +91,13 @@ import {
   type LexSessionStoredSnapshotState,
   type ResolvedLexSessionRestorePlan,
 } from './host-session-restore-resolver';
+
+function isLexBootstrapTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceLexBootstrap', [
+    '__AILY_CHAT_TRACE_LEX_BOOTSTRAP__',
+    'AILY_CHAT_TRACE_LEX_BOOTSTRAP',
+  ]);
+}
 
 export type AilyLexModule = typeof import('aily-lex/browser');
 type BlocklyLexAgentInstance = InstanceType<AilyLexModule['AilyLexAgent']>;
@@ -721,9 +730,39 @@ function positionToOffset(lineStarts: readonly number[], contentLength: number, 
   return Math.min(contentLength, lineStart + Math.max(0, column - 1));
 }
 
-export function buildExternalHostAPI(): IExternalHostAPI {
+interface BlocklyExternalHostApiOptions {
+  readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
+}
+
+const BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT = 4096;
+
+function createBoundedGeneratedCodeOverview(host: ReturnType<typeof AilyHost.get>): {
+  generatedCode?: string;
+  generatedCodePath?: string;
+  generatedCodeLength: number;
+  generatedCodeTruncated: boolean;
+} {
+  const generatedCode = host.editor?.getGeneratedCode?.() || '';
+  const generatedCodePath = host.project?.currentProjectPath && host.path
+    ? host.path.join(host.project.currentProjectPath, '.temp', 'sketch', 'sketch.ino')
+    : undefined;
+  const generatedCodeTruncated = generatedCode.length > BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT;
+  return {
+    generatedCode: generatedCodeTruncated
+      ? generatedCode.slice(0, BLOCKLY_WORKSPACE_OVERVIEW_CODE_PREVIEW_LIMIT)
+      : generatedCode,
+    generatedCodePath,
+    generatedCodeLength: generatedCode.length,
+    generatedCodeTruncated,
+  };
+}
+
+export function buildExternalHostAPI(
+  options: BlocklyExternalHostApiOptions = {},
+): IExternalHostAPI {
   const host = AilyHost.get();
   const contextSnapshotService = getBlocklyContextSnapshotService();
+  const createSyncAbsInvocationContext = options.createSyncAbsInvocationContext;
   (window as { path?: typeof host.path }).path = host.path;
   const prjPath = () => host.project?.currentProjectPath || host.project?.projectRootPath || '';
   const hasBuilder = typeof host.builder?.build === 'function';
@@ -887,6 +926,7 @@ export function buildExternalHostAPI(): IExternalHostAPI {
           host.project as any,
           host.electron as any,
           host.absSync as any,
+          createSyncAbsInvocationContext?.(),
         );
         if (result.is_error) {
           throw new Error(result.content);
@@ -894,14 +934,15 @@ export function buildExternalHostAPI(): IExternalHostAPI {
         return result.metadata?.absPreview ?? result.content;
       },
       importAbs: async (content: string) => {
-        if (typeof content === 'string' && content.trim().length > 0 && host.project?.currentProjectPath && host.fs?.writeFileSync) {
-          host.fs.writeFileSync(host.path.join(host.project.currentProjectPath, 'project.abs'), content);
-        }
         const result = await syncAbsFileHandler(
-          { operation: 'import' },
+          {
+            operation: 'import',
+            pendingAbsContent: typeof content === 'string' ? content : undefined,
+          },
           host.project as any,
           host.electron as any,
           host.absSync as any,
+          createSyncAbsInvocationContext?.(),
         );
         return {
           success: !result.is_error,
@@ -914,6 +955,7 @@ export function buildExternalHostAPI(): IExternalHostAPI {
           host.project as any,
           host.electron as any,
           host.absSync as any,
+          createSyncAbsInvocationContext?.(),
         );
         return {
           inSync: !result.is_error,
@@ -923,12 +965,14 @@ export function buildExternalHostAPI(): IExternalHostAPI {
         };
       },
       getWorkspaceOverview: async () => {
-        const generatedCode = host.editor?.getGeneratedCode?.() || '';
+        const generatedCodeOverview = createBoundedGeneratedCodeOverview(host);
         return {
-          structure: generatedCode ? 'generated-code-available' : 'workspace-structure-unavailable',
-          generatedCode,
+          structure: generatedCodeOverview.generatedCodeLength > 0
+            ? 'generated-code-available'
+            : 'workspace-structure-unavailable',
+          ...generatedCodeOverview,
           blockCount: Array.isArray(host.editor?.getBlockDefinitions?.()) ? host.editor.getBlockDefinitions().length : 0,
-          complexity: generatedCode.trim() ? 'unknown' : 'empty',
+          complexity: generatedCodeOverview.generatedCode?.trim() ? 'unknown' : 'empty',
         };
       },
       analyzeBlocks: async (libraryId: string) => {
@@ -975,9 +1019,12 @@ export function createBlocklyStandardHostBinding(
       source: ChatAgentRuntimeModeSource,
       reason?: string,
     ) => void | Promise<void>;
+    readonly createSyncAbsInvocationContext?: () => SyncAbsInvocationContext | undefined;
   } = {},
 ): BlocklyStandardHostBinding {
-  const hostAPI = buildExternalHostAPI();
+  const hostAPI = buildExternalHostAPI({
+    createSyncAbsInvocationContext: options.createSyncAbsInvocationContext,
+  });
   const toolProvider = createBlocklyToolProvider(hostAPI, {
     runtimeMode: normalizeChatAgentRuntimeMode(options.runtimeMode, 'blockly'),
     onRuntimeModeSelected: options.onRuntimeModeSelected,
@@ -1111,6 +1158,7 @@ export function buildLexEndpoint(
 
   const apiEndpoint = AilyHost.get().config?.apiEndpoint || '';
   const providerContextManagementSupport = currentModel?.providerContextManagementSupport;
+  const hostTransport = createElectronAilyServicesTransport();
   return new lex.AilyServicesEndpoint({
     baseUrl: apiEndpoint,
     authTokenProvider: () => {
@@ -1130,6 +1178,7 @@ export function buildLexEndpoint(
       };
     },
     interactionBudget: buildInteractionBudgetConfig(apiConfig),
+    ...(hostTransport ? { transport: hostTransport } : {}),
     ...(providerContextManagementSupport ? { providerContextManagementSupport } : {}),
   });
 }
@@ -1183,18 +1232,35 @@ export function bootstrapBlocklyLexAgent(
   const promptProfile = resolveRuntimePromptProfile(agentRuntimeMode);
   const requiredContext = resolveRuntimeRequiredContext(agentRuntimeMode);
   const subagentRequiredContext = createSubagentRequiredContext(requiredContext);
+  const runtimeSessionId = (sessionId || ctx.sessionId || '').trim();
+  const isRuntimeSessionStale = () => {
+    const currentSessionId = (ctx.sessionId || '').trim();
+    return runtimeSessionId.length > 0
+      && currentSessionId.length > 0
+      && currentSessionId !== runtimeSessionId;
+  };
+  const createSyncAbsInvocationContext = (): SyncAbsInvocationContext => ({
+    sessionId: runtimeSessionId || undefined,
+    isStale: isRuntimeSessionStale,
+    runOutsideAngular: ctx.ngZone?.runOutsideAngular
+      ? <T>(operation: () => Promise<T> | T): Promise<T> | T => ctx.ngZone!.runOutsideAngular(operation)
+      : undefined,
+  });
   const { hostAPI, toolProvider, adapter } = createBlocklyStandardHostBinding(cwd, {
     runtimeMode: agentRuntimeMode,
     onRuntimeModeSelected: ctx.selectAgentRuntimeMode,
+    createSyncAbsInvocationContext,
   });
   attachBlocklyCompatibilityExtensions(adapter);
   const contextSnapshotService = getBlocklyContextSnapshotService();
   const sessionStorage = createLexSessionStorage(lex, adapter.fs);
-  console.info('[LexBootstrap] agent runtime mode', {
-    runtimeMode: agentRuntimeMode,
-    promptHostId: promptProfile.hostId,
-    cwd: cwd || null,
-  });
+  if (isLexBootstrapTraceEnabled()) {
+    console.info('[LexBootstrap] agent runtime mode', {
+      runtimeMode: agentRuntimeMode,
+      promptHostId: promptProfile.hostId,
+      cwd: cwd || null,
+    });
+  }
 
   const askUserPresentationContext = (opts: {
     readonly toolCallId?: string;
@@ -1312,7 +1378,7 @@ export function bootstrapBlocklyLexAgent(
       },
     };
     runtimeExtensions['workspaceChangeCollector'] = lexPostTurnResources?.workspaceChangeCollector
-      ?? new GitAwareWorkspaceChangeCollector();
+      ?? new BlocklyTrackedWorkspaceChangeCollector();
     if (ctx.chatSessionRuntimeRegistry) {
       runtimeExtensions['sessionCompletionCoordinator'] = {
         scheduleRequestCompleted: (input: {
@@ -2450,6 +2516,10 @@ function shouldPersistInteractionContinuation(
     return false;
   }
 
+  if (continuation.stopReason === 'COMPLETED') {
+    return false;
+  }
+
   return continuation.status !== 'completed'
     && continuation.status !== 'complete';
 }
@@ -2558,7 +2628,9 @@ async function loadNpmLibraries(command: string): Promise<void> {
   for (const libPackageName of uniqueLibs) {
     try {
       await host.blockly.loadLibrary(libPackageName, projectPath);
-      console.log('[LexStream] npm 库加载成功:', libPackageName);
+      if (isLexBootstrapTraceEnabled()) {
+        console.log('[LexStream] npm 库加载成功:', libPackageName);
+      }
     } catch (e: any) {
       console.warn('[LexStream] npm 库加载失败:', libPackageName, e);
     }

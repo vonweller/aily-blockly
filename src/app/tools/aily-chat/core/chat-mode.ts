@@ -348,6 +348,7 @@ export function createPlanChatResolvedMode(): ChatResolvedMode {
         'Plan Mode is a collaboration mode. Do not confuse it with a generic TODO/checklist or progress tracker; the final plan artifact must be emitted as exactly one <proposed_plan> block.',
         'Do not edit files, install dependencies, deploy, flash firmware, or run mutating device commands in Plan mode.',
         'Use read-only project/library search, memory, and focused research agents when useful.',
+        'When delegating focused discovery, call the agent tool with agentName="Explore"; Explore subagents return findings only and must never emit <proposed_plan>.',
         'If the user answers a clarifying question while this conversation is still in Plan mode, treat that answer only as plan refinement input. Never start implementation from that answer.',
         'When persisting the current plan, use the memory path /memories/session/plan.md. Keep that file in sync with plan revisions, but never use the file as a substitute for showing the plan to the user.',
         'For Blockly and hardware work, include board/library constraints, wiring or pinmap assumptions, generated code impact, firmware/build/flash verification, and any device safety or rollback considerations.',

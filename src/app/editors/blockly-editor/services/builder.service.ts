@@ -156,6 +156,35 @@ export class _BuilderService {
     }
   }
 
+  private async runBuilderPreprocessPhase<T>(
+    tag: string,
+    operation: () => T | Promise<T>,
+    detail?: string,
+  ): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await ChatPerformanceTracer.runWithSurface(
+        'builder_preprocess',
+        operation,
+        detail ? `${tag}:${detail}` : tag,
+      );
+    } finally {
+      this.recordPreprocessDuration(tag, startedAt, detail);
+    }
+  }
+
+  private async generateWorkspaceCodeForPreprocess(
+    workspace: unknown,
+    detail?: string,
+  ): Promise<string> {
+    await this.waitForOneIdleBoundary();
+    return this.runBuilderPreprocessPhase(
+      'workspace_to_code',
+      () => arduinoGenerator.workspaceToCode(workspace as any) || '',
+      detail,
+    );
+  }
+
   private async unlinkFileIfExists(filePath: string): Promise<boolean> {
     if (!window['path'].isExists(filePath)) {
       return false;
@@ -415,9 +444,7 @@ export class _BuilderService {
           return;
         }
         
-        const codegenStartedAt = Date.now();
-        const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
-        this.recordPreprocessDuration('workspace_to_code', codegenStartedAt);
+        const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'background_preprocess');
         if (!code) {
           return;
         }
@@ -724,7 +751,7 @@ export class _BuilderService {
       const workspace = this.blocklyService.workspace;
       if (!workspace) return;
 
-      const code = arduinoGenerator.workspaceToCode(workspace);
+      const code = await this.generateWorkspaceCodeForPreprocess(workspace, 'sketch_ino');
       if (!code) return;
 
       const currentProjectPath = this.projectService.currentProjectPath;
@@ -741,7 +768,7 @@ export class _BuilderService {
         await this.crossPlatformCmdService.createDirectory(sketchPath, true);
       }
 
-      window['fs'].writeFileSync(sketchFilePath, code);
+      await this.writeTextFile(sketchFilePath, code);
       console.log('[Builder] sketch.ino 已自动生成:', sketchFilePath);
     } catch (error) {
       console.warn('[Builder] 自动生成 sketch.ino 失败:', error);
@@ -787,7 +814,7 @@ export class _BuilderService {
     const tempPath = this.electronService.pathJoin(currentProjectPath, '.temp');
     
     // 生成代码
-    const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+    const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'sync_preprocess');
     this.lastCode = code; // 保存代码用于后续 hash 计算
 
     // 构建配置对象
@@ -807,7 +834,7 @@ export class _BuilderService {
     if (!window['path'].isExists(tempPath)) {
       await this.crossPlatformCmdService.createDirectory(tempPath, true);
     }
-    await window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+    await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
 
     // 运行预处理脚本（同步等待完成）
     const preprocessScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'preprocess.js');
@@ -1164,7 +1191,7 @@ export class _BuilderService {
           console.log('发现预编译缓存，跳过预编译');
           // 即使有缓存，也需要生成代码以保存到 lastCode（用于后续 hash 计算）
           if (!this.lastCode) {
-            const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+            const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'cache_hit');
             this.lastCode = code;
           }
         }
@@ -1185,7 +1212,7 @@ export class _BuilderService {
 
         try {
           // 获取最新代码
-          const code = arduinoGenerator.workspaceToCode(this.blocklyService.workspace);
+          const code = await this.generateWorkspaceCodeForPreprocess(this.blocklyService.workspace, 'compile_config');
           this.lastCode = code;
           
           const boardModule = await this.projectService.getBoardModule();
@@ -1198,7 +1225,7 @@ export class _BuilderService {
             buildConfig = JSON.parse(window['fs'].readFileSync(configFilePath, 'utf8'));
           }
           buildConfig.code = code;
-          window['fs'].writeFileSync(configFilePath, JSON.stringify(buildConfig, null, 2));
+          await this.writeTextFile(configFilePath, JSON.stringify(buildConfig, null, 2));
 
           // 运行编译脚本
           const compileScriptPath = this.electronService.pathJoin(window['path'].getAilyChildPath(), 'scripts', 'compile.js');

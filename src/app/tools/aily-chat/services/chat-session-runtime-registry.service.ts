@@ -1,7 +1,6 @@
 import { Injectable } from '@angular/core';
 
-import type { TurnResponseTurn } from 'aily-lex/browser';
-import { GitAwareWorkspaceChangeCollector } from 'aily-lex/browser';
+import type { IWorkspaceChangeCollector, TurnResponseTurn } from 'aily-lex/browser';
 import { AilyHost } from '../core/host';
 import type { ChatSelectedMode } from '../core/chat-mode';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
@@ -12,6 +11,7 @@ import { EditingTimelineRepository } from './editing-timeline-repository.service
 import { EditingTimelineRecordingBridge } from './editing-timeline-recording-bridge';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
 import { yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
+import type { ChatRuntimeProjectionChangeOptions } from '../core/chat-runtime-projection-policy';
 import {
   ChatSessionRuntimeStoreService,
   DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
@@ -23,6 +23,7 @@ import {
   type ChatSessionRuntimeStatus,
   type ChatSessionRuntimeViewOverlay,
 } from './chat-session-runtime-store.service';
+import { BlocklyTrackedWorkspaceChangeCollector } from './blockly-tracked-workspace-change-collector';
 
 export interface ChatSessionRuntimeHandle {
   readonly sessionId: string;
@@ -72,7 +73,7 @@ export interface ChatSessionRuntimeProjectionPatch extends ChatSessionRuntimeHan
 export interface ChatSessionLexPostTurnResources {
   readonly cwd: string;
   readonly editingTimelineRecorder: EditingTimelineRecordingBridge;
-  readonly workspaceChangeCollector: GitAwareWorkspaceChangeCollector;
+  readonly workspaceChangeCollector: IWorkspaceChangeCollector;
 }
 
 export interface ChatSessionLexRequestCompletedInput {
@@ -191,7 +192,7 @@ export class ChatSessionRuntimeRegistryService {
         normalizedCwd,
         normalizedSessionId,
       ),
-      workspaceChangeCollector: new GitAwareWorkspaceChangeCollector(),
+      workspaceChangeCollector: new BlocklyTrackedWorkspaceChangeCollector(),
     };
 
     this.lexPostTurnResources.set(normalizedSessionId, nextResources);
@@ -258,8 +259,15 @@ export class ChatSessionRuntimeRegistryService {
     runPhase: () => Promise<void>,
   ): Promise<void> {
     const startedAt = getNowMs();
+    const surface = phase === 'workspace_finalize'
+      ? 'workspace_finalize'
+      : 'session_save';
     try {
-      await runPhase();
+      await ChatPerformanceTracer.runWithSurface(
+        surface,
+        () => runPhase(),
+        `session=${sessionId},turn=${turnId},phase=${phase}`,
+      );
     } finally {
       ChatPerformanceTracer.recordDuration(
         `lex_completion_${phase}`,
@@ -474,6 +482,7 @@ export class ChatSessionRuntimeRegistryService {
   projectRuntimeState(
     sessionId: string | null | undefined,
     patch: ChatSessionRuntimeProjectionPatch,
+    options?: ChatRuntimeProjectionChangeOptions,
   ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
@@ -503,7 +512,9 @@ export class ChatSessionRuntimeRegistryService {
       capabilities: handle.capabilities,
       debugSummary: patch.debugSummary,
     }, {
-      reason: this.resolveProjectionChangeReason(patch),
+      reason: options?.reason ?? this.resolveProjectionChangeReason(patch),
+      highFrequency: options?.highFrequency,
+      listAffecting: options?.listAffecting,
     });
   }
 
@@ -511,6 +522,7 @@ export class ChatSessionRuntimeRegistryService {
     sessionId: string | null | undefined,
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
     hostProjectionState: HostTurnResponseState | null,
+    options?: ChatRuntimeProjectionChangeOptions,
   ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId || !Array.isArray(turnResponses)) {
@@ -530,8 +542,9 @@ export class ChatSessionRuntimeRegistryService {
       disposeSession: () => this.disposeSession(normalizedSessionId),
       capabilities: handle.capabilities,
     }, {
-      reason: 'transcript',
-      highFrequency: true,
+      reason: options?.reason ?? 'live_transcript',
+      highFrequency: options?.highFrequency ?? true,
+      listAffecting: options?.listAffecting ?? false,
     });
   }
 

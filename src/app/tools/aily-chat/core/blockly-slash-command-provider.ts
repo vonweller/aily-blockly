@@ -1,5 +1,6 @@
 import type { IHostSlashCommandProvider, ISlashCommandContribution } from 'aily-lex/browser';
 import { SkillRegistry } from './skill-registry';
+import { isAilyCategoryDebugEnabled } from './chat-debug-flags';
 
 const ACTIVE_SESSION_WATCHERS = new Map<string, Set<() => void>>();
 let activeSessionId: string | null = null;
@@ -53,13 +54,22 @@ function ensureSkillRegistryWatcher(): void {
   }
 
   skillRegistryChangeSubscription = SkillRegistry.onDidChange(() => {
-    console.info('[BlocklySlashCommandProvider][debug] skill registry changed', {
-      activeSessionId,
-      activeWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
-      sessionWatcherCount: ACTIVE_SESSION_WATCHERS.size,
-    });
+    if (isBlocklySlashCommandTraceEnabled()) {
+      console.info('[BlocklySlashCommandProvider][debug] skill registry changed', {
+        activeSessionId,
+        activeWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
+        sessionWatcherCount: ACTIVE_SESSION_WATCHERS.size,
+      });
+    }
     notifyActiveSessionWatchers();
   });
+}
+
+function isBlocklySlashCommandTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceSlashCommand', [
+    '__AILY_CHAT_TRACE_SLASH_COMMAND__',
+    'AILY_CHAT_TRACE_SLASH_COMMAND',
+  ]);
 }
 
 function notifySessionWatchers(sessionId: string | null): void {
@@ -87,12 +97,14 @@ export function setActiveBlocklySlashCommandSession(sessionId?: string | null): 
     return;
   }
 
-  console.info('[BlocklySlashCommandProvider][debug] active session updated', {
-    previousActiveSessionId: activeSessionId,
-    nextActiveSessionId,
-    previousWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
-    nextWatcherCount: nextActiveSessionId ? (ACTIVE_SESSION_WATCHERS.get(nextActiveSessionId)?.size ?? 0) : 0,
-  });
+  if (isBlocklySlashCommandTraceEnabled()) {
+    console.info('[BlocklySlashCommandProvider][debug] active session updated', {
+      previousActiveSessionId: activeSessionId,
+      nextActiveSessionId,
+      previousWatcherCount: activeSessionId ? (ACTIVE_SESSION_WATCHERS.get(activeSessionId)?.size ?? 0) : 0,
+      nextWatcherCount: nextActiveSessionId ? (ACTIVE_SESSION_WATCHERS.get(nextActiveSessionId)?.size ?? 0) : 0,
+    });
+  }
   activeSessionId = nextActiveSessionId;
 }
 

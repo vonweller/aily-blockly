@@ -3,11 +3,19 @@ import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { ChatEngineService } from '../services/chat-engine.service';
 import type { ChatViewService } from '../services/chat-view.service';
 import type { RuntimePlanReviewAction, RuntimePlanReviewDecision } from '../services/chat-runtime-interaction-host.service';
+import {
+  terminalTranscriptProjection,
+  type ChatRuntimeTurnResponseSyncOptions,
+} from '../core/chat-runtime-projection-policy';
+import { getSharedBlocklyEditorOperationQueue } from '../tools/blocklyEditorOperationQueue';
+import { createToolCallProgressEditorOperationSink } from '../tools/editorOperationEvents';
 
 interface AilyChatE2eHarnessOptions {
   readonly engine: ChatEngineService;
   readonly viewState: ChatViewService;
   readonly readRenderingDiagnostics?: () => AilyChatE2eRenderingDiagnostics;
+  readonly readPerformanceDiagnostics?: () => unknown;
+  readonly runWorkspaceFinalizeBoundaryProbe?: () => Promise<void>;
 }
 
 interface AilyChatE2eSnapshot {
@@ -23,6 +31,7 @@ interface AilyChatE2eSnapshot {
   readonly activeLoadingIndicators: number;
   readonly turnResponses: readonly TurnResponseTurn[];
   readonly rendering?: AilyChatE2eRenderingDiagnostics;
+  readonly performance?: unknown;
 }
 
 export interface AilyChatE2eRenderingDiagnostics {
@@ -48,11 +57,16 @@ interface AilyChatE2eHarnessApi {
   selectPlan(): Promise<AilyChatE2eSnapshot>;
   newSession(): Promise<AilyChatE2eSnapshot>;
   readTurns(sessionId: string): readonly TurnResponseTurn[];
+  seedLargeFrozenHistory(count?: number): Promise<AilyChatE2eSnapshot>;
   send(text: string): Promise<AilyChatE2eSnapshot>;
   startImplementation(): Promise<AilyChatE2eSnapshot>;
   sendWhileDetached(text: string): Promise<AilyChatE2eSnapshot>;
+  runLongSubagentTurn(): Promise<AilyChatE2eSnapshot>;
+  runWorkspaceFinalizeBoundaryProbe(): Promise<AilyChatE2eSnapshot>;
   startCancellableSubagentTurn(): Promise<AilyChatE2eSnapshot>;
   awaitCancellableSubagentTurnSettled(): Promise<AilyChatE2eSnapshot>;
+  startCancellableEditorOperationTurn(): Promise<AilyChatE2eSnapshot>;
+  awaitCancellableEditorOperationTurnSettled(): Promise<AilyChatE2eSnapshot>;
   snapshot(): AilyChatE2eSnapshot;
 }
 
@@ -89,6 +103,7 @@ type EnginePrivateAccess = {
   syncExecutionRuntimeTurnResponses?: (
     sessionId: string,
     turnResponses: readonly TurnResponseTurn[],
+    options: ChatRuntimeTurnResponseSyncOptions,
   ) => void;
   resolveCurrentViewSessionResource?: () => string;
   resolveActiveRuntimeSessionId?: () => string;
@@ -106,8 +121,10 @@ type EnginePrivateAccess = {
     currentRequestPermissionLevel?: string,
   ) => Promise<void>;
   startImplementationFromPlanPart?: (sessionId?: string | null) => Promise<void>;
+  readHostItemLifecycleSnapshot?: () => unknown;
   attachCurrentSessionView?: () => Promise<void>;
   lexStream?: {
+    readonly turnResponses?: readonly TurnResponseTurn[];
     agent?: {
       stop?: (sessionId?: string | null) => unknown;
     };
@@ -126,6 +143,7 @@ type EnginePrivateAccess = {
       run?: DeterministicRun;
     };
     _renderEventBridge?: {
+      setProjectionSessionResource?: (sessionResource: string | null | undefined) => void;
       prepareTurnRequest?: (requestContent: string, displayContent?: string, metadata?: Record<string, unknown>) => void;
       processEvent?: (event: Record<string, unknown>) => void;
       finalizeCurrentTurn?: (fallbackStatus?: string) => boolean;
@@ -175,6 +193,28 @@ function getCurrentSessionId(engine: EnginePrivateAccess): string {
   return typeof engine.sessionId === 'string' ? engine.sessionId.trim() : '';
 }
 
+function withHostLifecyclePerformanceSnapshot(
+  performance: unknown,
+  hostItemLifecycle: unknown,
+): unknown {
+  if (!hostItemLifecycle) {
+    return performance;
+  }
+  const base = performance && typeof performance === 'object' && !Array.isArray(performance)
+    ? performance as Record<string, unknown>
+    : {};
+  const externalSnapshots = base['externalSnapshots'] && typeof base['externalSnapshots'] === 'object' && !Array.isArray(base['externalSnapshots'])
+    ? base['externalSnapshots'] as Record<string, unknown>
+    : {};
+  return {
+    ...base,
+    externalSnapshots: {
+      ...externalSnapshots,
+      host_item_lifecycle: externalSnapshots['host_item_lifecycle'] ?? hostItemLifecycle,
+    },
+  };
+}
+
 function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
   return {
     ...turn,
@@ -207,6 +247,40 @@ function cloneTurnResponseTurn(turn: TurnResponseTurn): TurnResponseTurn {
   };
 }
 
+function createFrozenHistoryTurn(index: number): TurnResponseTurn {
+  const createdAt = 1_700_000_000_000 + index;
+  const requestText = `Frozen history request ${index}`;
+  const responseText = `Frozen historical answer ${index}`;
+  return {
+    turnId: `e2e-frozen-history-turn-${index}`,
+    request: {
+      content: requestText,
+      displayContent: requestText,
+      metadata: {
+        e2eFrozenHistory: true,
+        historyIndex: index,
+      },
+      createdAt,
+      updatedAt: createdAt,
+    } as TurnResponseTurn['request'],
+    rounds: [],
+    response: {
+      id: `e2e-frozen-history-response-${index}`,
+      status: 'completed',
+      participant: 'main',
+      parts: [{
+        type: 'markdown',
+        content: responseText,
+      }],
+      resultText: responseText,
+      createdAt,
+      updatedAt: createdAt,
+    } as TurnResponseTurn['response'],
+    createdAt,
+    updatedAt: createdAt,
+  } as TurnResponseTurn;
+}
+
 function buildDeterministicResponse(engine: EnginePrivateAccess, prompt: string): {
   readonly text: string;
   readonly parts?: NonNullable<TurnResponseTurn['response']['parts']>;
@@ -219,11 +293,19 @@ function buildDeterministicResponse(engine: EnginePrivateAccess, prompt: string)
     : '';
 
   if (engine.currentMode === 'plan' || selectedModeId === 'plan') {
+    const planSteps = /long|large|stress|长/.test(normalizedPrompt)
+      ? Array.from(
+          { length: 96 },
+          (_value, index) => `${index + 1}. Deterministic long plan step ${index + 1}: inspect, implement, and verify one bounded surface.`,
+        )
+      : [
+          '1. Inspect the requested change.',
+          '2. Identify affected files.',
+          '3. Hand off implementation to Agent when approved.',
+        ];
     const text = [
-      'Deterministic plan:',
-      '1. Inspect the requested change.',
-      '2. Identify affected files.',
-      '3. Hand off implementation to Agent when approved.',
+      planSteps.length > 3 ? 'Deterministic long plan:' : 'Deterministic plan:',
+      ...planSteps,
     ].join('\n');
     return {
       text,
@@ -284,7 +366,7 @@ function completeLatestTurn(engine: EnginePrivateAccess, sessionId: string, prom
 
   const committed = engine.replaceSessionModelTurnResponses?.(sessionId, nextTurns);
   const committedTurns = Array.isArray(committed) ? committed : nextTurns;
-  engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns);
+  engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns, terminalTranscriptProjection('execution'));
   engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
   engine.triggerSyncDetectChanges?.();
 }
@@ -338,7 +420,7 @@ function cancelLatestTurn(engine: EnginePrivateAccess, sessionId: string): void 
     source: 'e2e-cancellable-subagent-stop',
   });
   const committedTurns = Array.isArray(committed) ? committed : nextTurns;
-  engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns);
+  engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns, terminalTranscriptProjection('execution'));
   engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
   engine.triggerSyncDetectChanges?.();
 }
@@ -351,6 +433,10 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
   let cancellableTurnReady: Promise<void> | null = null;
   let resolveCancellableTurnReady: (() => void) | null = null;
   let abortCancellableTurn: (() => void) | null = null;
+  let pendingCancellableEditorOperationTurn: Promise<unknown> | null = null;
+  let cancellableEditorOperationReady: Promise<void> | null = null;
+  let resolveCancellableEditorOperationReady: (() => void) | null = null;
+  let abortCancellableEditorOperation: (() => void) | null = null;
 
   const countActiveLoadingIndicators = (): number => {
     const root = document.querySelector('app-aily-chat');
@@ -374,6 +460,10 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
     const runtimeState = engine.chatSessionRuntimeStore?.read?.(sessionId) ?? null;
     const visibleText = document.querySelector('app-aily-chat')?.textContent ?? '';
     const rendering = options.readRenderingDiagnostics?.();
+    const performance = withHostLifecyclePerformanceSnapshot(
+      options.readPerformanceDiagnostics?.(),
+      engine.readHostItemLifecycleSnapshot?.(),
+    );
 
     return {
       currentMode: engine.currentMode,
@@ -388,6 +478,7 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       activeLoadingIndicators: countActiveLoadingIndicators(),
       turnResponses,
       ...(rendering ? { rendering } : {}),
+      ...(performance ? { performance } : {}),
     };
   };
 
@@ -431,6 +522,21 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       return targetSessionId
         ? (engine.readSessionTurnResponses?.(targetSessionId) ?? []).map(cloneTurnResponseTurn)
         : [];
+    },
+    async seedLargeFrozenHistory(count = 128) {
+      await installDeterministicRuntime();
+      const sessionId = await engine.ensureSessionReadyForSubmit() ?? getCurrentSessionId(engine);
+      const boundedCount = Math.max(1, Math.min(Math.floor(Number(count) || 128), 512));
+      const turns = Array.from({ length: boundedCount }, (_value, index) => createFrozenHistoryTurn(index));
+      const committed = engine.replaceSessionModelTurnResponses?.(sessionId, turns, {
+        allowForkedTurns: true,
+        source: 'e2e-large-frozen-history',
+      });
+      const committedTurns = Array.isArray(committed) ? committed : turns;
+      engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns, terminalTranscriptProjection('history'));
+      engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
+      engine.triggerSyncDetectChanges?.();
+      return snapshot();
     },
     async send(text: string) {
       await installDeterministicRuntime();
@@ -485,6 +591,122 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       if (run) {
         engine.lexStream!.turn!.run = run;
       }
+      return snapshot();
+    },
+    async runLongSubagentTurn() {
+      await installDeterministicRuntime();
+      if (!engine.lexStream?.turn?.run) {
+        throw new Error('Aily chat E2E harness requires lexStream.turn.run');
+      }
+
+      const previousRun = engine.lexStream.turn.run;
+      engine.lexStream.turn.run = async (llmText: string, displayText?: string): Promise<void> => {
+        const turnId = engine.lexStream?.turns?.currentId?.() || `e2e-long-subagent-turn-${Date.now()}`;
+        const renderBridge = engine.lexStream?._renderEventBridge;
+        const sessionId = getCurrentSessionId(engine);
+        const existingTurns = sessionId ? (engine.readSessionTurnResponses?.(sessionId) ?? []) : [];
+        renderBridge?.finalizeCurrentTurn?.('completed');
+        renderBridge?.setProjectionSessionResource?.(sessionId || null);
+        engine.lexStream?.hydrateTurnResponses?.(sessionId, existingTurns, { visibility: 'visibleAttach' });
+        renderBridge?.prepareTurnRequest?.(displayText || llmText, displayText, engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined);
+        const now = Date.now();
+        let offset = 0;
+        const emit = (event: Record<string, unknown>): void => {
+          offset += 1;
+          renderBridge?.processEvent?.({
+            timestamp: now + offset,
+            ...event,
+          });
+        };
+
+        emit({ type: 'turn_begin', turnId });
+        emit({
+          type: 'subagent_begin',
+          toolCallId: 'e2e-long-subagent-tool',
+          subAgentInvocationId: 'e2e-long-subagent-invocation',
+          agentName: 'Explore',
+          description: 'E2E long subagent with child tools',
+        });
+        for (let index = 0; index < 24; index += 1) {
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-long-subagent-tool',
+            subAgentInvocationId: 'e2e-long-subagent-invocation',
+            activityKind: 'thinking',
+            content: `Long subagent reasoning segment ${index + 1}. `,
+          });
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-long-subagent-tool',
+            subAgentInvocationId: 'e2e-long-subagent-invocation',
+            activityKind: 'text',
+            content: `Long subagent text segment ${index + 1}. `,
+          });
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-long-subagent-tool',
+            subAgentInvocationId: 'e2e-long-subagent-invocation',
+            activityKind: 'tool_started',
+            childToolCallId: `e2e-long-subagent-child-tool-${index + 1}`,
+            toolName: 'read_file',
+            argsSummary: `src/example-${index + 1}.ts`,
+            state: 'doing',
+          });
+          emit({
+            type: 'subagent_activity',
+            toolCallId: 'e2e-long-subagent-tool',
+            subAgentInvocationId: 'e2e-long-subagent-invocation',
+            activityKind: 'tool_completed',
+            childToolCallId: `e2e-long-subagent-child-tool-${index + 1}`,
+            toolName: 'read_file',
+            content: `Completed child tool ${index + 1}`,
+            durationMs: 10 + index,
+          });
+        }
+        emit({
+          type: 'subagent_end',
+          toolCallId: 'e2e-long-subagent-tool',
+          subAgentInvocationId: 'e2e-long-subagent-invocation',
+          agentName: 'Explore',
+          resultText: 'Long subagent completed child tool sweep.',
+          state: 'done',
+          durationMs: 240,
+        });
+        emit({
+          type: 'markdown_delta',
+          text: '[Explore/search] Long subagent completed child tool sweep.',
+        });
+        emit({ type: 'turn_end', turnId });
+        engine.lexStream?.turns?.complete?.('Long subagent completed child tool sweep.');
+      };
+
+      try {
+        const sessionId = await engine.ensureSessionReadyForSubmit();
+        await engine.submitUserText('Run a long subagent E2E turn', { clearInput: true, sessionId });
+        engine.lexStream?.finalizeCurrentTurnResponse?.('completed');
+        const finalizedTurns = engine.lexStream?.turnResponses ?? [];
+        if (finalizedTurns.length > 0) {
+          const committed = engine.replaceSessionModelTurnResponses?.(sessionId, finalizedTurns, {
+            allowForkedTurns: true,
+            source: 'e2e-long-subagent-canonical-run',
+          });
+          const committedTurns = Array.isArray(committed) ? committed : finalizedTurns;
+          engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns, terminalTranscriptProjection('execution'));
+          engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
+        }
+      } finally {
+        engine.lexStream.turn.run = previousRun;
+      }
+      engine.triggerSyncDetectChanges?.();
+      return snapshot();
+    },
+    async runWorkspaceFinalizeBoundaryProbe() {
+      await installDeterministicRuntime();
+      if (typeof options.runWorkspaceFinalizeBoundaryProbe !== 'function') {
+        throw new Error('Aily chat E2E harness requires runWorkspaceFinalizeBoundaryProbe');
+      }
+
+      await options.runWorkspaceFinalizeBoundaryProbe();
       return snapshot();
     },
     async startCancellableSubagentTurn() {
@@ -656,6 +878,194 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       cancellableTurnReady = null;
       resolveCancellableTurnReady = null;
       abortCancellableTurn = null;
+      engine.triggerSyncDetectChanges?.();
+      return snapshot();
+    },
+    async startCancellableEditorOperationTurn() {
+      await installDeterministicRuntime();
+      if (!engine.lexStream?.turn?.run) {
+        throw new Error('Aily chat E2E harness requires lexStream.turn.run');
+      }
+
+      const previousRun = engine.lexStream.turn.run;
+      const previousAgentStop = engine.lexStream.agent?.stop?.bind(engine.lexStream.agent);
+      cancellableEditorOperationReady = new Promise<void>((resolve) => {
+        resolveCancellableEditorOperationReady = resolve;
+      });
+      if (engine.lexStream.agent && typeof engine.lexStream.agent.stop === 'function') {
+        engine.lexStream.agent.stop = (sessionId?: string | null): unknown => {
+          abortCancellableEditorOperation?.();
+          return previousAgentStop?.(sessionId);
+        };
+      }
+
+      engine.lexStream.turn.run = async (llmText: string, displayText?: string): Promise<void> => {
+        const sessionId = getCurrentSessionId(engine);
+        const turnId = engine.lexStream?.turns?.currentId?.() || `e2e-editor-operation-turn-${Date.now()}`;
+        const toolCallId = 'e2e-editor-operation-tool';
+        const abortController = new AbortController();
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          abortController.abort();
+        };
+        abortCancellableEditorOperation = finish;
+
+        const renderBridge = engine.lexStream?._renderEventBridge;
+        const existingTurns = sessionId ? (engine.readSessionTurnResponses?.(sessionId) ?? []) : [];
+        renderBridge?.finalizeCurrentTurn?.('completed');
+        renderBridge?.setProjectionSessionResource?.(sessionId || null);
+        engine.lexStream?.hydrateTurnResponses?.(sessionId, existingTurns, { visibility: 'visibleAttach' });
+        renderBridge?.prepareTurnRequest?.(displayText || llmText, displayText, engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined);
+
+        const emit = (event: Record<string, unknown>): void => {
+          renderBridge?.processEvent?.({
+            timestamp: Date.now(),
+            ...event,
+          });
+        };
+
+        try {
+          engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, abortController);
+          engine.chatSessionRuntimeRegistry?.syncHandleState?.(sessionId, {
+            requestInProgress: true,
+            supportsInterruption: true,
+            activeResponseHandle: `e2e-cancellable-editor-operation:${turnId}`,
+            stopSession: finish,
+          });
+
+          emit({ type: 'turn_begin', turnId });
+          emit({
+            type: 'tool_call_begin',
+            toolCallId,
+            toolName: 'syncAbs',
+            input: { action: 'import', source: 'e2e-cancellable-editor-operation' },
+          });
+
+          const progressSink = createToolCallProgressEditorOperationSink({
+            batchProgress: false,
+            emitEvent: (event: unknown) => {
+              if (event && typeof event === 'object') {
+                renderBridge?.processEvent?.({
+                  timestamp: Date.now(),
+                  ...(event as Record<string, unknown>),
+                });
+              }
+            },
+          });
+
+          const operation = getSharedBlocklyEditorOperationQueue().enqueue(
+            'blockly.syncAbs.import',
+            'E2E cancellable editor operation',
+            async (reportProgress) => {
+              await reportProgress({ summary: 'Preparing Blockly workspace import', progress: 0.25 });
+              engine.triggerSyncDetectChanges?.();
+              resolveCancellableEditorOperationReady?.();
+              resolveCancellableEditorOperationReady = null;
+              await new Promise<void>((resolve) => {
+                if (abortController.signal.aborted) {
+                  resolve();
+                  return;
+                }
+                abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+              });
+              const abortError = new Error('Editor operation cancelled by Stop');
+              abortError.name = 'AbortError';
+              throw abortError;
+            },
+            {
+              sessionId,
+              turnId,
+              toolCallId,
+              signal: abortController.signal,
+              progressSink,
+              runOutsideAngular: operation => operation(),
+            },
+          );
+
+          await operation;
+          emit({
+            type: 'tool_call_end',
+            toolCallId,
+            toolName: 'syncAbs',
+            resultText: 'Editor operation completed',
+            state: 'done',
+          });
+          emit({ type: 'turn_end', turnId });
+          engine.lexStream?.turns?.complete?.('Editor operation completed.');
+        } catch (error) {
+          if (!abortController.signal.aborted) {
+            throw error;
+          }
+          renderBridge?.finalizeCurrentTurn?.('cancelled');
+          engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+          cancelLatestTurn(engine, sessionId);
+          throw error;
+        } finally {
+          engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, null);
+          engine.lexStream!.turn!.run = previousRun;
+          if (engine.lexStream?.agent && previousAgentStop) {
+            engine.lexStream.agent.stop = previousAgentStop;
+          }
+          abortCancellableEditorOperation = null;
+        }
+      };
+
+      const sessionId = await engine.ensureSessionReadyForSubmit();
+      pendingCancellableEditorOperationTurn = engine.submitUserText('Start a cancellable editor operation E2E turn', {
+        clearInput: true,
+        sessionId,
+      });
+      try {
+        await Promise.race([
+          cancellableEditorOperationReady,
+          pendingCancellableEditorOperationTurn.then(
+            () => {
+              throw new Error('Cancellable editor operation E2E turn completed before entering running state.');
+            },
+            (error) => {
+              throw error instanceof Error ? error : new Error(String(error));
+            },
+          ),
+          new Promise<void>((_resolve, reject) => window.setTimeout(() => {
+            reject(new Error('Timed out waiting for cancellable editor operation E2E turn to enter running state.'));
+          }, 5000)),
+        ]);
+      } catch (error) {
+        engine.lexStream.turn.run = previousRun;
+        if (engine.lexStream.agent && previousAgentStop) {
+          engine.lexStream.agent.stop = previousAgentStop;
+        }
+        pendingCancellableEditorOperationTurn = null;
+        cancellableEditorOperationReady = null;
+        resolveCancellableEditorOperationReady = null;
+        abortCancellableEditorOperation = null;
+        throw error;
+      }
+      return snapshot();
+    },
+    async awaitCancellableEditorOperationTurnSettled() {
+      const pending = pendingCancellableEditorOperationTurn;
+      if (pending) {
+        await Promise.race([
+          pending.catch(() => undefined),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 2000)),
+        ]);
+      }
+      const sessionId = getCurrentSessionId(engine);
+      await Promise.race([
+        engine.chatSessionRuntimeRegistry?.awaitPendingLexRequestCompleted?.(sessionId)?.catch(() => undefined) ?? Promise.resolve(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1000)),
+      ]);
+      engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+      cancelLatestTurn(engine, sessionId);
+      pendingCancellableEditorOperationTurn = null;
+      cancellableEditorOperationReady = null;
+      resolveCancellableEditorOperationReady = null;
+      abortCancellableEditorOperation = null;
       engine.triggerSyncDetectChanges?.();
       return snapshot();
     },

@@ -43,6 +43,7 @@ import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
 } from './turn-response-response-model';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   buildHostSessionCurrentModeDescriptor,
   buildHostSessionCurrentModeDescriptorFromResolvedMode,
@@ -83,6 +84,13 @@ type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
     readSessionCheckpointTimelineState?(sessionId?: string | null): SessionCheckpointTimelineState | null;
     invalidateHostRequestGraph?(): void;
   };
+
+function isHostSessionSaveTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceHostSessionSave', [
+    '__AILY_CHAT_TRACE_HOST_SESSION_SAVE__',
+    'AILY_CHAT_TRACE_HOST_SESSION_SAVE',
+  ]);
+}
 
 export interface HostSessionSaveTarget {
   readonly sessionId: string;
@@ -325,13 +333,15 @@ export class HostSessionSaveBridge {
       ? targetTurnResponses
       : (visibleTarget && Array.isArray(this.ctx.lexStream.turnResponses) ? this.ctx.lexStream.turnResponses : []);
     const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(targetSessionId, currentTurnResponses);
-    console.info('[HostSessionSave][owner]', [
-      `phase=build-live`,
-      `targetSessionId=${targetSessionId || '<empty>'}`,
-      `visibleTarget=${visibleTarget}`,
-      `currentViewSession=${this.ctx.readCurrentViewSessionResource?.() ?? '<unknown>'}`,
-      ...formatSessionTurnOwnerDiagnosticsFields('target', ownerDiagnostics),
-    ].join(' '));
+    if (isHostSessionSaveTraceEnabled()) {
+      console.info('[HostSessionSave][owner]', [
+        `phase=build-live`,
+        `targetSessionId=${targetSessionId || '<empty>'}`,
+        `visibleTarget=${visibleTarget}`,
+        `currentViewSession=${this.ctx.readCurrentViewSessionResource?.() ?? '<unknown>'}`,
+        ...formatSessionTurnOwnerDiagnosticsFields('target', ownerDiagnostics),
+      ].join(' '));
+    }
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
@@ -756,9 +766,11 @@ function buildVisibleChatListForSave(
 
   const serializedLiveChatList = liveChatList.map((message, msgIndex) => {
     const handle = createChatMessageHandle(message, msgIndex);
-    const content = partStore?.hasPartsForHandle(handle)
-      ? (partStore.serializeToContentHandle(handle) || message.content)
-      : message.content;
+    const existingContent = typeof message.content === 'string' ? message.content : '';
+    const shouldMaterializeCompatibilityContent = existingContent.length === 0 && message.state !== 'doing';
+    const content = shouldMaterializeCompatibilityContent && partStore?.hasPartsForHandle(handle)
+      ? (partStore.serializeToContentHandle(handle) || existingContent)
+      : existingContent;
 
     return {
       ...message,

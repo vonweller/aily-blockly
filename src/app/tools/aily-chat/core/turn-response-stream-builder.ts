@@ -45,6 +45,7 @@ interface TurnResponseIncrementalProjection {
   readonly codeCitations?: readonly NonNullable<TurnResponseTurn['response']['codeCitations']>[number][];
   readonly progressMessages?: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][];
   readonly continuation?: TurnResponseTurn['response']['continuation'];
+  readonly resultText?: string;
   readonly createdAt: number;
 }
 
@@ -150,6 +151,7 @@ export class TurnResponseIncrementalBuilder {
       return true;
     }
 
+    this.applyStreamingResultTextEvent(event);
     return this.runtime.process(event);
   }
 
@@ -172,6 +174,9 @@ export class TurnResponseIncrementalBuilder {
     const createdAt = options.snapshot?.createdAt
       ?? this.currentProjection.createdAt
       ?? options.updatedAt;
+    const streamingResultText = options.status === 'streaming' && !isPlanTurnRequest(request)
+      ? this.currentProjection.resultText
+      : undefined;
 
     this.currentProjection = {
       turnId: this.currentProjection.turnId,
@@ -202,6 +207,7 @@ export class TurnResponseIncrementalBuilder {
         ? [...this.currentProjection.progressMessages]
         : undefined,
       continuation: options.continuation ?? options.snapshot?.continuation ?? this.currentProjection.continuation,
+      resultText: streamingResultText,
       createdAt,
     };
 
@@ -226,6 +232,7 @@ export class TurnResponseIncrementalBuilder {
       status: options.status,
       terminationReason: options.terminationReason ?? options.snapshot?.terminationReason,
       parts: this.runtime.collectTurnResponseParts(),
+      resultText: streamingResultText,
       createdAt,
       updatedAt: options.updatedAt,
     });
@@ -273,6 +280,7 @@ export class TurnResponseIncrementalBuilder {
       codeCitations: turn.response.codeCitations,
       progressMessages: turn.response.progressMessages,
       continuation: turn.response.continuation,
+      resultText: turn.response.resultText,
       createdAt: turn.createdAt,
     };
   }
@@ -343,6 +351,21 @@ export class TurnResponseIncrementalBuilder {
       default:
         return false;
     }
+  }
+
+  private applyStreamingResultTextEvent(event: RenderEvent): void {
+    if (!this.currentProjection || event.type !== 'markdown_delta') {
+      return;
+    }
+
+    if (isPlanTurnRequest(this.currentProjection.request)) {
+      return;
+    }
+
+    this.currentProjection = {
+      ...this.currentProjection,
+      resultText: `${this.currentProjection.resultText ?? ''}${event.text}`,
+    };
   }
 }
 

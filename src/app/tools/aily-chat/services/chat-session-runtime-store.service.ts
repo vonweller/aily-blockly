@@ -18,6 +18,8 @@ import type { ContextBudgetSnapshot } from './context-budget-snapshot';
 import type { RequestQuotaSnapshot } from './request-quota-snapshot';
 import type { RequestQuotaServiceState } from './request-quota-state.service';
 import { buildSessionTurnOwnerDiagnostics } from '../helpers/session-turn-owner-diagnostics';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 export type ChatSessionRuntimeStatus = 'in_progress' | 'needs_input' | 'completed' | 'cancelled' | 'failed';
 
@@ -25,8 +27,20 @@ type ChatSessionRuntimeTracePhase = 'idle' | 'running' | 'needs_input' | 'comple
 
 const REQUEST_STATE_TRACE_PREFIX = '[AilyChat][RequestStateTrace]';
 
+function isRequestStateTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceRequestState', [
+    '__AILY_CHAT_TRACE_REQUEST_STATE__',
+    'AILY_CHAT_TRACE_REQUEST_STATE',
+  ]);
+}
+
 export type ChatSessionRuntimeChangeReason =
   | 'transcript'
+  | 'live_transcript'
+  | 'terminal_transcript'
+  | 'live_metadata'
+  | 'terminal_metadata'
+  | 'history_snapshot'
   | 'projection'
   | 'status'
   | 'description'
@@ -86,9 +100,24 @@ export interface ChatSessionRuntimeViewOverlay {
   readonly updatedAt: number;
 }
 
+export interface ChatSessionRuntimeLiveMetadata {
+  readonly turnCount: number;
+  readonly latestTurnId?: string;
+  readonly requestInProgress: boolean;
+  readonly needsInput: boolean;
+  readonly status?: ChatSessionRuntimeStatus;
+  readonly description?: string;
+  readonly supportsInterruption: boolean;
+  readonly title?: string;
+  readonly titleSource?: ChatSessionTitleSource;
+  readonly titleRevision?: number;
+  readonly selectedModeKey?: string;
+}
+
 export interface ChatSessionRuntimeState {
   readonly turnResponses: readonly TurnResponseTurn[];
   readonly hostProjectionState: HostTurnResponseState | null;
+  readonly liveMetadata?: ChatSessionRuntimeLiveMetadata;
   readonly pendingFollowupRequests?: readonly PendingFollowupRequest[];
   readonly yieldRequested?: boolean;
   readonly status?: ChatSessionRuntimeStatus;
@@ -246,8 +275,8 @@ interface ChatSessionListFingerprint {
   readonly attachedView: boolean;
   readonly supportsInterruption: boolean;
   readonly hasActiveResponseHandle: boolean;
-  readonly derivedTurnStatus?: ChatSessionRuntimeStatus;
-  readonly derivedTurnDescription?: string;
+  readonly titleKey?: string;
+  readonly selectedModeKey?: string;
 }
 
 @Injectable()
@@ -344,17 +373,48 @@ export class ChatSessionRuntimeStoreService {
     const nextSelectedMode = state.selectedMode !== undefined
       ? state.selectedMode ?? undefined
       : previousState?.selectedMode;
+    const nextAttachedView = typeof state.attachedView === 'boolean'
+      ? state.attachedView
+      : previousState?.attachedView ?? false;
+    const nextDebugSummary = this.resolveNextDebugSummary(state.debugSummary, previousState, {
+      requestInProgress: nextRequestInProgress,
+      attachedView: nextAttachedView,
+      status: nextStatus,
+      hasLiveOverlay: nextRequestInProgress
+        || nextTurnResponses.length > 0
+        || !!nextHostProjectionState
+        || !!nextStatus
+        || !!nextDescription
+        || !!nextQuotaOverlay
+        || !!nextViewOverlay
+        || !!nextProviderOptions
+        || !!nextSelectedMode,
+      quotaOverlayPresent: !!nextQuotaOverlay,
+      requestQuotaNotice: !!nextQuotaOverlay?.requestInputNotice,
+      authQuotaProjected: !!nextQuotaOverlay?.authQuotaInfo,
+      contextBudgetOverlayPresent: !!nextViewOverlay?.contextBudgetSnapshot,
+      inputNoticeOverlayPresent: !!nextViewOverlay?.chatInputNotice,
+      providerOptionsPresent: !!nextProviderOptions,
+      selectedModePresent: !!nextSelectedMode,
+    });
     const nextState: ChatSessionRuntimeState = {
       turnResponses: nextTurnResponses,
       hostProjectionState: nextHostProjectionState,
+      liveMetadata: this.buildLiveMetadata({
+        turnResponses: nextTurnResponses,
+        requestInProgress: nextRequestInProgress,
+        status: nextStatus,
+        description: nextDescription,
+        supportsInterruption: nextSupportsInterruption,
+        debugSummary: nextDebugSummary,
+        selectedMode: nextSelectedMode,
+      }),
       ...(nextPendingFollowupRequests?.length ? { pendingFollowupRequests: nextPendingFollowupRequests } : {}),
       ...(nextYieldRequested ? { yieldRequested: true } : {}),
       ...(nextStatus ? { status: nextStatus } : {}),
       ...(nextDescription ? { description: nextDescription } : {}),
       requestInProgress: nextRequestInProgress,
-      attachedView: typeof state.attachedView === 'boolean'
-        ? state.attachedView
-        : previousState?.attachedView ?? false,
+      attachedView: nextAttachedView,
       supportsInterruption: nextSupportsInterruption,
       ...(nextActiveResponseHandle !== undefined ? { activeResponseHandle: nextActiveResponseHandle } : {}),
       ...(nextQuotaOverlay ? { quotaOverlay: this.cloneQuotaOverlay(nextQuotaOverlay) } : {}),
@@ -376,29 +436,7 @@ export class ChatSessionRuntimeStoreService {
           ? { disposeSession: previousState.disposeSession }
           : {}),
       capabilities: nextCapabilities,
-      debugSummary: this.resolveNextDebugSummary(state.debugSummary, previousState, {
-        requestInProgress: nextRequestInProgress,
-        attachedView: typeof state.attachedView === 'boolean'
-          ? state.attachedView
-          : previousState?.attachedView ?? false,
-        status: nextStatus,
-        hasLiveOverlay: nextRequestInProgress
-          || nextTurnResponses.length > 0
-          || !!nextHostProjectionState
-          || !!nextStatus
-          || !!nextDescription
-          || !!nextQuotaOverlay
-          || !!nextViewOverlay
-          || !!nextProviderOptions
-          || !!nextSelectedMode,
-        quotaOverlayPresent: !!nextQuotaOverlay,
-        requestQuotaNotice: !!nextQuotaOverlay?.requestInputNotice,
-        authQuotaProjected: !!nextQuotaOverlay?.authQuotaInfo,
-        contextBudgetOverlayPresent: !!nextViewOverlay?.contextBudgetSnapshot,
-        inputNoticeOverlayPresent: !!nextViewOverlay?.chatInputNotice,
-        providerOptionsPresent: !!nextProviderOptions,
-        selectedModePresent: !!nextSelectedMode,
-      }),
+      debugSummary: nextDebugSummary,
     };
 
     if (!nextState.requestInProgress
@@ -506,15 +544,50 @@ export class ChatSessionRuntimeStoreService {
     options?: ChatSessionRuntimeChangeOptions,
   ): void {
     const reason = this.resolveChangeReason(options?.reason, previousState, nextState);
-    const listAffecting = options?.listAffecting ?? this.didListFingerprintChange(previousState, nextState);
-    const highFrequency = options?.highFrequency === true || reason === 'transcript';
-    this.runtimeChangedSubject.next({
+    const liveTranscript = reason === 'live_transcript';
+    const listAffecting = options?.listAffecting ?? (
+      liveTranscript
+        ? false
+        : this.didListFingerprintChange(previousState, nextState)
+    );
+    const highFrequency = options?.highFrequency === true
+      || reason === 'transcript'
+      || reason === 'live_transcript';
+    if (reason === 'live_transcript' || reason === 'terminal_transcript') {
+      ChatPerformanceTracer.increment(`runtime.${reason}`);
+    }
+    const event = {
       sessionId,
       reason,
       listAffecting,
       ...(highFrequency ? { highFrequency: true } : {}),
-    });
-    this.traceRequestStateTransition(sessionId, previousState, nextState, reason);
+    };
+    ChatPerformanceTracer.runWithSurface(this.resolveRuntimeChangeSurface(reason), () => {
+      this.runtimeChangedSubject.next(event);
+      this.traceRequestStateTransition(sessionId, previousState, nextState, reason);
+    }, `session=${sessionId},listAffecting=${listAffecting ? '1' : '0'}`);
+  }
+
+  private resolveRuntimeChangeSurface(reason: ChatSessionRuntimeChangeReason): string {
+    switch (reason) {
+      case 'live_transcript':
+        return 'live_transcript';
+      case 'terminal_transcript':
+        return 'terminal_transcript';
+      case 'live_metadata':
+      case 'terminal_metadata':
+      case 'history_snapshot':
+      case 'status':
+      case 'description':
+      case 'view':
+      case 'quota':
+      case 'debug':
+      case 'handle':
+      case 'state':
+        return 'runtime_metadata';
+      default:
+        return 'unknown';
+    }
   }
 
   private traceRequestStateTransition(
@@ -536,18 +609,20 @@ export class ChatSessionRuntimeStoreService {
       return;
     }
 
-    console.info(REQUEST_STATE_TRACE_PREFIX, {
-      sessionId,
-      from,
-      to,
-      reason,
-      previousStatus,
-      nextStatus,
-      previousRequestInProgress,
-      nextRequestInProgress,
-      pendingCount: nextState?.pendingFollowupRequests?.length ?? 0,
-      attachedView: nextState?.attachedView === true,
-    });
+    if (isRequestStateTraceEnabled()) {
+      console.info(REQUEST_STATE_TRACE_PREFIX, {
+        sessionId,
+        from,
+        to,
+        reason,
+        previousStatus,
+        nextStatus,
+        previousRequestInProgress,
+        nextRequestInProgress,
+        pendingCount: nextState?.pendingFollowupRequests?.length ?? 0,
+        attachedView: nextState?.attachedView === true,
+      });
+    }
   }
 
   private resolveChangeReason(
@@ -613,21 +688,86 @@ export class ChatSessionRuntimeStoreService {
       || previous.attachedView !== next.attachedView
       || previous.supportsInterruption !== next.supportsInterruption
       || previous.hasActiveResponseHandle !== next.hasActiveResponseHandle
-      || previous.derivedTurnStatus !== next.derivedTurnStatus
-      || previous.derivedTurnDescription !== next.derivedTurnDescription;
+      || previous.titleKey !== next.titleKey
+      || previous.selectedModeKey !== next.selectedModeKey;
   }
 
   private buildListFingerprint(state: ChatSessionRuntimeState | undefined): ChatSessionListFingerprint {
+    const liveMetadata = state?.liveMetadata;
     return {
-      requestInProgress: state?.requestInProgress === true,
-      status: state?.status,
-      description: this.normalizeDescription(state?.description),
+      requestInProgress: liveMetadata?.requestInProgress ?? state?.requestInProgress === true,
+      status: liveMetadata?.status ?? state?.status,
+      description: this.normalizeDescription(liveMetadata?.description ?? state?.description),
       attachedView: state?.attachedView === true,
-      supportsInterruption: state?.supportsInterruption === true,
+      supportsInterruption: liveMetadata?.supportsInterruption ?? state?.supportsInterruption === true,
       hasActiveResponseHandle: state?.activeResponseHandle !== undefined,
-      derivedTurnStatus: this.resolveStatusFromTurnResponses(state?.turnResponses),
-      derivedTurnDescription: this.resolveDescriptionFromTurnResponses(state?.turnResponses),
+      titleKey: this.buildTitleKey(liveMetadata),
+      selectedModeKey: liveMetadata?.selectedModeKey,
     };
+  }
+
+  private buildLiveMetadata(input: {
+    readonly turnResponses: readonly TurnResponseTurn[];
+    readonly requestInProgress: boolean;
+    readonly status?: ChatSessionRuntimeStatus;
+    readonly description?: string;
+    readonly supportsInterruption: boolean;
+    readonly debugSummary?: ChatSessionRuntimeDebugSummary;
+    readonly selectedMode?: ChatSelectedMode;
+  }): ChatSessionRuntimeLiveMetadata {
+    const latestTurn = input.turnResponses[input.turnResponses.length - 1];
+    const latestTurnId = this.readNonEmptyString(latestTurn?.turnId);
+    const status = input.status ?? this.resolveStatusFromTurnResponses(
+      latestTurn ? [latestTurn] as readonly TurnResponseTurn[] : undefined,
+    );
+    const description = this.normalizeDescription(input.description)
+      ?? this.resolveDescriptionFromTurnResponses(latestTurn ? [latestTurn] as readonly TurnResponseTurn[] : undefined);
+
+    return {
+      turnCount: input.turnResponses.length,
+      ...(latestTurnId ? { latestTurnId } : {}),
+      requestInProgress: input.requestInProgress,
+      needsInput: status === 'needs_input',
+      ...(status ? { status } : {}),
+      ...(description ? { description } : {}),
+      supportsInterruption: input.supportsInterruption,
+      ...(input.debugSummary?.title ? { title: input.debugSummary.title } : {}),
+      ...(input.debugSummary?.titleSource ? { titleSource: input.debugSummary.titleSource } : {}),
+      ...(typeof input.debugSummary?.titleRevision === 'number' ? { titleRevision: input.debugSummary.titleRevision } : {}),
+      ...(input.selectedMode ? { selectedModeKey: this.buildSelectedModeKey(input.selectedMode) } : {}),
+    };
+  }
+
+  private buildTitleKey(liveMetadata: ChatSessionRuntimeLiveMetadata | undefined): string | undefined {
+    if (!liveMetadata?.title) {
+      return undefined;
+    }
+
+    return [
+      liveMetadata.title,
+      liveMetadata.titleSource ?? '',
+      typeof liveMetadata.titleRevision === 'number' ? String(liveMetadata.titleRevision) : '',
+    ].join('|');
+  }
+
+  private buildSelectedModeKey(selectedMode: ChatSelectedMode | undefined): string | undefined {
+    if (!selectedMode) {
+      return undefined;
+    }
+
+    const record = selectedMode as unknown as Record<string, unknown>;
+    const modeId = this.readNonEmptyString(record['modeId']);
+    const customAgentTarget = this.readNonEmptyString(record['customAgentTarget']);
+    const customModeSource = this.readNonEmptyString(record['customModeSource']);
+    const permissionMode = this.readNonEmptyString(record['permissionMode']);
+    const key = [
+      modeId ? `mode:${modeId}` : '',
+      customAgentTarget ? `agent:${customAgentTarget}` : '',
+      customModeSource ? `source:${customModeSource}` : '',
+      permissionMode ? `permission:${permissionMode}` : '',
+    ].filter(Boolean).join('|');
+
+    return key || undefined;
   }
 
   private resolveStatusFromTurnResponses(

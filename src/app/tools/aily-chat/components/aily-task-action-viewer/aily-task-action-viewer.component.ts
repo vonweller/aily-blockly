@@ -202,6 +202,6 @@ export class AilyTaskActionViewerComponent implements OnInit, OnDestroy {
    * 调试日志
    */
   logDetail(): void {
-    console.log('Task Action Viewer Data:', this.data);
+    // Intentionally quiet: chat renderers must not dump large payloads to DevTools.
   }
 }

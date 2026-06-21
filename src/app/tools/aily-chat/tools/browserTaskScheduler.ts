@@ -63,3 +63,72 @@ export function yieldToBrowserFrame(): Promise<void> {
     });
   });
 }
+
+export interface BrowserFrameBudgetOptions {
+  readonly budgetMs?: number;
+  readonly maxContinuousMs?: number;
+  readonly yield?: () => Promise<void>;
+  readonly now?: () => number;
+  readonly onYield?: (info: BrowserFrameBudgetYieldInfo) => void;
+}
+
+export interface BrowserFrameBudgetYieldInfo {
+  readonly label?: string;
+  readonly elapsedMs: number;
+  readonly continuousMs: number;
+  readonly checkpointCount: number;
+}
+
+export interface BrowserFrameBudgetController {
+  readonly checkpointCount: number;
+  reset(): void;
+  checkpoint(label?: string): Promise<void>;
+}
+
+function defaultNow(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+export function createBrowserFrameBudget(
+  options: BrowserFrameBudgetOptions = {},
+): BrowserFrameBudgetController {
+  const budgetMs = Math.max(1, options.budgetMs ?? 8);
+  const maxContinuousMs = Math.max(1, options.maxContinuousMs ?? 24);
+  const yieldFrame = options.yield ?? yieldToBrowserFrame;
+  const now = options.now ?? defaultNow;
+  let lastYieldAt = now();
+  let operationStartedAt = lastYieldAt;
+  let checkpointCount = 0;
+
+  return {
+    get checkpointCount() {
+      return checkpointCount;
+    },
+    reset() {
+      lastYieldAt = now();
+      operationStartedAt = lastYieldAt;
+      checkpointCount = 0;
+    },
+    async checkpoint(label?: string): Promise<void> {
+      checkpointCount++;
+      const current = now();
+      const elapsedMs = current - lastYieldAt;
+      const continuousMs = current - operationStartedAt;
+      if (elapsedMs < budgetMs && continuousMs < maxContinuousMs) {
+        return;
+      }
+
+      options.onYield?.({
+        label,
+        elapsedMs,
+        continuousMs,
+        checkpointCount,
+      });
+      await yieldFrame();
+      lastYieldAt = now();
+      operationStartedAt = lastYieldAt;
+    },
+  };
+}

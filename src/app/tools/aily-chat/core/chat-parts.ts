@@ -96,6 +96,8 @@ export interface StatePart {
 /** 错误 Part */
 export interface ErrorPart {
   type: 'error';
+  /** Stable identity for canonical notice/error response parts. */
+  partId?: string;
   message: string;
   severity?: 'error' | 'warning' | 'info';
   metadata?: Record<string, unknown>;

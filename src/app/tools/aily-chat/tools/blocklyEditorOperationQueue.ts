@@ -1,5 +1,6 @@
 import { yieldToBrowserFrame } from './browserTaskScheduler';
 import type { EditorOperationEvent, EditorOperationEventSink, EditorOperationPhase } from './editorOperationEvents';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
 export type BlocklyEditorOperationPhase = EditorOperationPhase;
 export type BlocklyEditorOperationProgress = EditorOperationEvent;
@@ -20,6 +21,7 @@ export interface BlocklyEditorOperationContext {
   readonly turnId?: string;
   readonly toolCallId?: string;
   readonly signal?: AbortSignal;
+  readonly isStale?: () => boolean;
   readonly progressSink?: EditorOperationEventSink;
   readonly runOutsideAngular?: <T>(operation: () => Promise<T> | T) => Promise<T> | T;
 }
@@ -48,6 +50,20 @@ function createCancellationError(): Error {
   const error = new Error('Editor operation cancelled');
   error.name = 'AbortError';
   return error;
+}
+
+function isOperationStale(context?: BlocklyEditorOperationContext): boolean {
+  try {
+    return context?.isStale?.() === true;
+  } catch {
+    return true;
+  }
+}
+
+function throwIfOperationCancelled(context?: BlocklyEditorOperationContext): void {
+  if (context?.signal?.aborted || isOperationStale(context)) {
+    throw createCancellationError();
+  }
 }
 
 export class BlocklyEditorOperationQueue {
@@ -81,9 +97,7 @@ export class BlocklyEditorOperationQueue {
       await yieldToBrowserFrame();
 
       try {
-        if (context?.signal?.aborted) {
-          throw createCancellationError();
-        }
+        throwIfOperationCancelled(context);
 
         await this.emit({
           type: 'editor_operation_progress',
@@ -99,9 +113,7 @@ export class BlocklyEditorOperationQueue {
         }, context);
 
         const reportProgress: BlocklyEditorOperationProgressReporter = update => {
-          if (context?.signal?.aborted) {
-            throw createCancellationError();
-          }
+          throwIfOperationCancelled(context);
           return this.emit({
             type: 'editor_operation_progress',
             operationId,
@@ -119,10 +131,15 @@ export class BlocklyEditorOperationQueue {
           }, context);
         };
 
-        const executeOperation = () => run(reportProgress);
+        const executeOperation = () => ChatPerformanceTracer.runWithSurface(
+          'editor_operation',
+          () => run(reportProgress),
+          `${kind}:${label}`,
+        );
         const result = await (context?.runOutsideAngular
           ? context.runOutsideAngular(executeOperation)
           : executeOperation());
+        throwIfOperationCancelled(context);
         const completedAt = Date.now();
         await this.emit({
           type: 'editor_operation_progress',

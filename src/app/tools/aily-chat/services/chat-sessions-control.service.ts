@@ -126,7 +126,10 @@ export class ChatSessionsControlService {
       this.reconcileSelection();
     }
 
-    this.requestVisibleSessionDetails('state');
+    const visibleDetailsReason = this.resolveVisibleDetailsRefreshReason(delta);
+    if (visibleDetailsReason) {
+      this.requestVisibleSessionDetails(visibleDetailsReason);
+    }
     if (delta.affectsOrder && !this.updateLayoutProjection({ frameScheduled: true })) {
       this.emitControlChanged(true);
       return;
@@ -145,8 +148,38 @@ export class ChatSessionsControlService {
     }
 
     this.reconcileSelection();
-    this.requestVisibleSessionDetails('state');
+    this.requestVisibleSessionDetails('open-picker');
     this.emitControlChanged(true);
+  }
+
+  private resolveVisibleDetailsRefreshReason(delta: ChatSessionListItemsDelta): 'state' | 'terminal-transcript' | null {
+    const reason = typeof delta.reason === 'string' ? delta.reason : '';
+    if (reason === 'visible-details') {
+      ChatPerformanceTracer.increment('session_list.visible_detail_hydration.blocked_visible_details_delta');
+      return null;
+    }
+
+    if (reason === 'runtime-live_transcript') {
+      ChatPerformanceTracer.increment('session_list.visible_detail_hydration.blocked_live');
+      return null;
+    }
+
+    if (reason.startsWith('runtime-') && reason !== 'runtime-terminal_transcript') {
+      ChatPerformanceTracer.increment('session_list.visible_detail_hydration.blocked_runtime_metadata');
+      return null;
+    }
+
+    if (reason === 'runtime-terminal_transcript') {
+      ChatPerformanceTracer.increment('session_list.visible_detail_hydration.allowed_terminal');
+      return 'terminal-transcript';
+    }
+
+    if (delta.kind === 'full' || delta.affectsOrder || !delta.sessionId) {
+      ChatPerformanceTracer.increment('session_list.visible_detail_hydration.allowed_state');
+      return 'state';
+    }
+
+    return null;
   }
 
   get sessionListItems(): readonly ChatSessionListItem[] {
@@ -392,7 +425,7 @@ export class ChatSessionsControlService {
       this._pickerRevealSessionId = '';
     }
 
-    this.requestVisibleSessionDetails('state');
+    this.requestVisibleSessionDetails('layout');
     this.controlChangedSubject.next();
   }
 
@@ -586,7 +619,7 @@ export class ChatSessionsControlService {
     ].join('|');
   }
 
-  private requestVisibleSessionDetails(reason: ChatSessionListItemsDelta['kind'] extends never ? never : 'state'): void {
+  private requestVisibleSessionDetails(reason: 'state' | 'terminal-transcript' | 'open-picker' | 'layout'): void {
     const sessionIds = this.resolveVisibleSessionIds();
     if (sessionIds.length === 0) {
       return;

@@ -4,10 +4,12 @@ import type { IExternalHostAPI } from 'aily-lex/host/blockly';
 import { AilyHost } from './host';
 import { analyzeLibraryBlocksTool } from '../tools/editBlockTool';
 import { syncAbsFileHandler } from '../tools/syncAbsFileTool';
+import { isAilyCategoryDebugEnabled } from './chat-debug-flags';
 import {
   createToolCallProgressEditorOperationSink,
   type EditorOperationEventSink,
 } from '../tools/editorOperationEvents';
+import { getSharedBlocklyEditorOperationQueue } from '../tools/blocklyEditorOperationQueue';
 import type { EditingTimelineWriter } from '../services/editing-timeline-recording-bridge';
 import { error, fromToolResult, text, type InvokeHandler } from './blockly-contributed-tool-runtime';
 
@@ -80,6 +82,49 @@ function resolveLintSourceCode(host: ReturnType<typeof AilyHost.get>): string {
   } catch {
     return '';
   }
+}
+
+function resolveLintSource(host: ReturnType<typeof AilyHost.get>): {
+  generatedCode: string;
+  inMemoryCode: string;
+  source: 'editor-memory' | 'project-sketch-file' | 'none';
+  sketchDebugInfo: ReturnType<typeof getLintSketchFileDebugInfo>;
+} {
+  const sketchDebugInfo = getLintSketchFileDebugInfo(host);
+  const inMemoryCode = host.editor?.getGeneratedCode?.() || '';
+  if (inMemoryCode.trim()) {
+    return {
+      generatedCode: inMemoryCode,
+      inMemoryCode,
+      source: 'editor-memory',
+      sketchDebugInfo,
+    };
+  }
+
+  const generatedCode = resolveLintSourceCode({
+    ...host,
+    editor: undefined,
+  } as ReturnType<typeof AilyHost.get>);
+  return {
+    generatedCode,
+    inMemoryCode,
+    source: sketchDebugInfo.exists ? 'project-sketch-file' : 'none',
+    sketchDebugInfo,
+  };
+}
+
+function isBlocklyWorkspaceTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceBlocklyWorkspace', [
+    '__AILY_CHAT_TRACE_BLOCKLY_WORKSPACE__',
+    'AILY_CHAT_TRACE_BLOCKLY_WORKSPACE',
+  ]);
+}
+
+function isAbortLikeError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) {
+    return true;
+  }
+  return err instanceof Error && (err.name === 'AbortError' || /cancelled|canceled|aborted/i.test(err.message));
 }
 
 export interface BlocklyWorkspaceToolOverrides {
@@ -194,7 +239,10 @@ export function createBlocklyWorkspaceHandlers(
         forwardTo: forwardedEditorOperationEvents,
       });
       const result = await syncAbsHandler(
-        { operation: input['action'] as 'export' | 'import' | 'status' },
+        {
+          operation: input['action'] as 'export' | 'import' | 'status',
+          pendingAbsContent: typeof input['content'] === 'string' ? input['content'] : undefined,
+        },
         host.project as any,
         host.electron as any,
         host.absSync as any,
@@ -211,7 +259,7 @@ export function createBlocklyWorkspaceHandlers(
       return fromToolResult(result);
     },
 
-    lint: async (_input, _hostAPI) => {
+    lint: async (_input, _hostAPI, invocationContext) => {
       try {
         const globalScope = typeof window !== 'undefined'
           ? (window as any)
@@ -220,38 +268,80 @@ export function createBlocklyWorkspaceHandlers(
         if (!arduinoLintService) return error('Arduino lint service is not available.');
 
         const host = AilyHost.get();
-        const sketchDebugInfo = getLintSketchFileDebugInfo(host);
-        const inMemoryCode = host.editor?.getGeneratedCode?.() || '';
-        const generatedCode = resolveLintSourceCode(host);
-        const source = inMemoryCode.trim() ? 'editor-memory' : (sketchDebugInfo.exists ? 'project-sketch-file' : 'none');
-        console.info('[BlocklyLintTool] lint source resolved', {
-          source,
-          length: generatedCode.length,
-          fingerprint: createLintCodeFingerprint(generatedCode),
-          inMemoryLength: inMemoryCode.length,
-          inMemoryFingerprint: inMemoryCode ? createLintCodeFingerprint(inMemoryCode) : undefined,
-          sketchFilePath: sketchDebugInfo.sketchFilePath,
-          sketchFileExists: sketchDebugInfo.exists,
-          sketchFileModifiedAt: sketchDebugInfo.modifiedAt,
+        const hostExecutionBoundary = invocationContext?.host?.getExtension<HostExecutionBoundary>('hostExecutionBoundary');
+        const forwardedEditorOperationEvents = invocationContext?.host?.getExtension<EditorOperationEventSink>('editorOperationEvents');
+        const editorOperationProgress = createToolCallProgressEditorOperationSink({
+          emitEvent: invocationContext?.emitEvent,
+          trace: invocationContext?.trace,
+          forwardTo: forwardedEditorOperationEvents,
         });
-        if (!generatedCode.trim()) return text('No generated code to lint (workspace is empty).');
 
-        const startTime = Date.now();
-        const result = await arduinoLintService.checkSyntax(generatedCode, {
-          mode: 'ast-grep',
-          format: 'json',
-        });
-        const duration = Date.now() - startTime;
+        return await getSharedBlocklyEditorOperationQueue().enqueue(
+          'blockly.lint',
+          'Run Blockly generated-code lint',
+          async reportProgress => {
+            await reportProgress({ summary: 'Resolving generated code', progress: 0.2 });
+            const {
+              generatedCode,
+              inMemoryCode,
+              source,
+              sketchDebugInfo,
+            } = resolveLintSource(host);
+            if (isBlocklyWorkspaceTraceEnabled()) {
+              console.info('[BlocklyLintTool] lint source resolved', {
+                source,
+                length: generatedCode.length,
+                fingerprint: createLintCodeFingerprint(generatedCode),
+                inMemoryLength: inMemoryCode.length,
+                inMemoryFingerprint: inMemoryCode ? createLintCodeFingerprint(inMemoryCode) : undefined,
+                sketchFilePath: sketchDebugInfo.sketchFilePath,
+                sketchFileExists: sketchDebugInfo.exists,
+                sketchFileModifiedAt: sketchDebugInfo.modifiedAt,
+              });
+            }
+            if (!generatedCode.trim()) return text('No generated code to lint (workspace is empty).');
 
-        const lintResult: Record<string, unknown> = {
-          isValid: result.success && (result.errors?.length ?? 0) === 0,
-          errors: result.errors || [],
-          warnings: result.warnings || [],
-          notes: result.notes || [],
-          duration,
-        };
-        return text(JSON.stringify(lintResult, null, 2));
+            await reportProgress({ summary: 'Running lint', progress: 0.7 });
+            const startTime = Date.now();
+            const result = await arduinoLintService.checkSyntax(generatedCode, {
+              mode: 'ast-grep',
+              format: 'json',
+            });
+            const duration = Date.now() - startTime;
+
+            const lintResult: Record<string, unknown> = {
+              isValid: result.success && (result.errors?.length ?? 0) === 0,
+              errors: result.errors || [],
+              warnings: result.warnings || [],
+              notes: result.notes || [],
+              duration,
+              source,
+              generatedCodeLength: generatedCode.length,
+            };
+            return {
+              content: [{ type: 'text', text: JSON.stringify(lintResult, null, 2) }],
+              metadata: {
+                blocklyLint: {
+                  source,
+                  generatedCodeLength: generatedCode.length,
+                  duration,
+                },
+              },
+            };
+          },
+          {
+            sessionId: invocationContext?.sessionId,
+            turnId: invocationContext?.trace?.turnId,
+            toolCallId: invocationContext?.toolCallId,
+            signal: invocationContext?.signal,
+            progressSink: editorOperationProgress,
+            runOutsideAngular: hostExecutionBoundary?.runOutsideAngular,
+          },
+        );
       } catch (err) {
+        if (isAbortLikeError(err, invocationContext?.signal)) {
+          throw err;
+        }
         return error(`Lint failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     },

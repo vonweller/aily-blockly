@@ -23,6 +23,7 @@ import {
 } from './skill-types';
 import { normalizeAgentIdentifiers } from './agent-identifiers';
 import { AilyHost } from './host';
+import { isAilyCategoryDebugEnabled } from './chat-debug-flags';
 
 const MAX_SKILL_RELATED_FILES = 50;
 const MAX_SKILL_RELATED_DEPTH = 5;
@@ -38,6 +39,13 @@ const IGNORED_SKILL_DIRECTORY_NAMES = new Set([
   '.cache',
   'coverage',
 ]);
+
+function isSkillRegistryTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceSkillRegistry', [
+    '__AILY_CHAT_TRACE_SKILL_REGISTRY__',
+    'AILY_CHAT_TRACE_SKILL_REGISTRY',
+  ]);
+}
 
 interface SkillRegistryInitializeOptions {
   readonly projectSkillFolders?: readonly string[];
@@ -226,13 +234,15 @@ class SkillRegistryImpl {
     this._initializationOptions = this.normalizeInitializationOptions(options);
     this.skills.clear();
 
-    console.info('[SkillRegistry][debug] initialize start', {
-      initializationSequence,
-      debugSource,
-      projectRoot: projectRoot ?? null,
-      activatedSkillCount: this._activatedSkills.size,
-      wasInitialized: this._initialized,
-    });
+    if (isSkillRegistryTraceEnabled()) {
+      console.info('[SkillRegistry][debug] initialize start', {
+        initializationSequence,
+        debugSource,
+        projectRoot: projectRoot ?? null,
+        activatedSkillCount: this._activatedSkills.size,
+        wasInitialized: this._initialized,
+      });
+    }
 
     const host = AilyHost.get();
     if (!host?.fs || !host?.path) {
@@ -969,19 +979,23 @@ class SkillRegistryImpl {
   /** 清除会话级激活状态（会话结束时调用） */
   clearSessionState(debugSource: string = 'unspecified'): void {
     if (this._activatedSkills.size === 0) {
-      console.info('[SkillRegistry][debug] clear session state skipped', {
-        debugSource,
-        activatedSkillCount: 0,
-      });
+      if (isSkillRegistryTraceEnabled()) {
+        console.info('[SkillRegistry][debug] clear session state skipped', {
+          debugSource,
+          activatedSkillCount: 0,
+        });
+      }
       return;
     }
 
     const clearedSkillCount = this._activatedSkills.size;
     this._activatedSkills.clear();
-    console.info('[SkillRegistry][debug] clear session state', {
-      debugSource,
-      clearedSkillCount,
-    });
+    if (isSkillRegistryTraceEnabled()) {
+      console.info('[SkillRegistry][debug] clear session state', {
+        debugSource,
+        clearedSkillCount,
+      });
+    }
     this.emitDidChange('clear-session-state');
   }
 
@@ -1291,12 +1305,14 @@ class SkillRegistryImpl {
   }
 
   private emitDidChange(reason: string): void {
-    console.info('[SkillRegistry][debug] emit change', {
-      reason,
-      listenerCount: this._changeListeners.size,
-      skillCount: this.skills.size,
-      activatedSkillCount: this._activatedSkills.size,
-    });
+    if (isSkillRegistryTraceEnabled()) {
+      console.info('[SkillRegistry][debug] emit change', {
+        reason,
+        listenerCount: this._changeListeners.size,
+        skillCount: this.skills.size,
+        activatedSkillCount: this._activatedSkills.size,
+      });
+    }
     for (const listener of Array.from(this._changeListeners)) {
       listener();
     }

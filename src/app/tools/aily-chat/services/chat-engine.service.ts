@@ -73,10 +73,16 @@ import {
   type ChatSurfaceModeId,
   PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT,
 } from '../core/chat-mode';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 import {
   normalizeChatSessionTitleCandidate,
   normalizeChatSessionTitleText,
 } from '../core/chat-session-title';
+import {
+  runtimeChangeOptionsFromTranscriptProjection,
+  terminalTranscriptProjection,
+  type ChatRuntimeTurnResponseSyncOptions,
+} from '../core/chat-runtime-projection-policy';
 
 import { AbsAutoSyncService } from './abs-auto-sync.service';
 import type { EditsSummary } from './edit-checkpoint.service';
@@ -393,11 +399,13 @@ import {
   buildHostResponseStateFromCanonical,
   buildHostProjectionStateFromPersistedRecord,
   LiveHostRequestGraphCache,
+  type HostItemLifecycleSnapshot,
   type HostRequestModel,
   type HostResponseProjection,
   type HostResponseVoteDirection,
   type HostTurnResponseState,
 } from '../helpers/host-turn-response-state';
+import { ChatPerformanceTracer } from './chat-perf-tracer';
 
 const INTERACTIVE_PLAN_REVIEW_ACTION_ID = 'interactive';
 const EXIT_ONLY_PLAN_REVIEW_ACTION_ID = 'exit_only';
@@ -453,6 +461,34 @@ function traceBackgroundSessionExecution(event: string, details: Record<string, 
     return;
   }
   // console.info('[AilyChat][bg-session][execution]', event, details);
+}
+
+function isRequestStateTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceRequestState', [
+    '__AILY_CHAT_TRACE_REQUEST_STATE__',
+    'AILY_CHAT_TRACE_REQUEST_STATE',
+  ]);
+}
+
+function isSendDebugTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceSendDebug', [
+    '__AILY_CHAT_TRACE_SEND_DEBUG__',
+    'AILY_CHAT_TRACE_SEND_DEBUG',
+  ]);
+}
+
+function isSendTitleTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceSendTitle', [
+    '__AILY_CHAT_TRACE_SEND_TITLE__',
+    'AILY_CHAT_TRACE_SEND_TITLE',
+  ]);
+}
+
+function isAgentRuntimeModeTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceAgentRuntimeMode', [
+    '__AILY_CHAT_TRACE_AGENT_RUNTIME_MODE__',
+    'AILY_CHAT_TRACE_AGENT_RUNTIME_MODE',
+  ]);
 }
 
 type PendingPlanReview = NonNullable<ReturnType<typeof readPendingPlanReview>>;
@@ -1076,6 +1112,10 @@ export class ChatEngineService implements IChatContext {
   /** Part 存储 facade：实际读写按当前 ChatViewModel.sessionResource 路由到 ChatSessionModel.partStore。 */
   readonly partStore: ChatPartStore = this.createSessionRoutedPartStore();
   private readonly liveHostRequestGraphCache = new LiveHostRequestGraphCache();
+  private readonly hostItemLifecyclePerfSnapshotHandle = ChatPerformanceTracer.registerExternalSnapshotProvider(
+    'hostItemLifecycle',
+    (): HostItemLifecycleSnapshot => this.liveHostRequestGraphCache.getItemLifecycleSnapshot(),
+  );
   private restoreCheckpointDialogOpen = false;
   private readonly messageDisplayContext = this.createMessageDisplayContext();
   private readonly userInteractionContext = this.createUserInteractionContext();
@@ -1093,6 +1133,10 @@ export class ChatEngineService implements IChatContext {
 
   // ==================== 辅助类 ====================
   readonly msg = new MessageDisplayHelper(this.messageDisplayContext);
+
+  readHostItemLifecycleSnapshot(): HostItemLifecycleSnapshot {
+    return this.liveHostRequestGraphCache.getItemLifecycleSnapshot();
+  }
   readonly session = new SessionLifecycleHelper(this.sessionLifecycleContext);
   readonly lexStream = new LexOwnerFacade(this.lexOwnerContext);
   readonly editActions = new EditActionsHelper(this.editActionsContext);
@@ -1954,14 +1998,16 @@ export class ChatEngineService implements IChatContext {
     if (typeof syncCurrentSessionEntryTargetRuntimeMode === 'function') {
       syncCurrentSessionEntryTargetRuntimeMode.call(this, currentViewSessionResource || null);
     }
-    console.info('[AilyChat] agent runtime mode selected', {
-      previousMode,
-      previousSource,
-      mode: normalizedMode,
-      source: normalizedSource,
-      reason: typeof reason === 'string' ? reason : undefined,
-      sessionId: currentViewSessionResource || null,
-    });
+    if (isAgentRuntimeModeTraceEnabled()) {
+      console.info('[AilyChat] agent runtime mode selected', {
+        previousMode,
+        previousSource,
+        mode: normalizedMode,
+        source: normalizedSource,
+        reason: typeof reason === 'string' ? reason : undefined,
+        sessionId: currentViewSessionResource || null,
+      });
+    }
     return normalizedMode;
   }
 
@@ -2858,6 +2904,7 @@ export class ChatEngineService implements IChatContext {
     hostProjectionState: HostTurnResponseState | null,
     options: {
       readonly attachedView: boolean;
+      readonly projection: ChatRuntimeTurnResponseSyncOptions;
     },
   ): boolean {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -2892,10 +2939,12 @@ export class ChatEngineService implements IChatContext {
       attachedView: options.attachedView,
       capabilities,
     };
+    const projection = options.projection;
+    const runtimeChangeOptions = runtimeChangeOptionsFromTranscriptProjection(projection);
     const projected = typeof modelStore.applyRuntimeState === 'function'
-      ? modelStore.applyRuntimeState(targetSessionId, runtimeStatePatch, { reason: 'transcript' })
+      ? modelStore.applyRuntimeState(targetSessionId, runtimeStatePatch, runtimeChangeOptions)
       : (typeof model.applyRuntimeState === 'function'
-        ? (model.applyRuntimeState(runtimeStatePatch, { reason: 'transcript' }), true)
+        ? (model.applyRuntimeState(runtimeStatePatch, runtimeChangeOptions), true)
         : false);
     if (!projected) {
       modelReference?.dispose();
@@ -3048,8 +3097,11 @@ export class ChatEngineService implements IChatContext {
       }).projectModelTranscriptToRuntimeMirror
       ?? ChatEngineService.prototype['projectModelTranscriptToRuntimeMirror']
     );
+    const projection = terminalTranscriptProjection('restore');
+    const runtimeChangeOptions = runtimeChangeOptionsFromTranscriptProjection(projection);
     if (projectModelTranscriptToRuntimeMirror.call(this, targetSessionId, turnResponses, hostProjectionState, {
       attachedView: options.attachedView,
+      projection,
     })) {
       return;
     }
@@ -3061,7 +3113,7 @@ export class ChatEngineService implements IChatContext {
         attachedView: options.attachedView,
         capabilities,
         concurrencyScope,
-      });
+      }, runtimeChangeOptions);
       return;
     }
 
@@ -3070,9 +3122,7 @@ export class ChatEngineService implements IChatContext {
       hostProjectionState,
       attachedView: options.attachedView,
       capabilities,
-    }, {
-      reason: 'transcript',
-    });
+    }, runtimeChangeOptions);
   }
 
   private createLexOwnerContext(): ConstructorParameters<typeof LexOwnerFacade>[0] {
@@ -3133,7 +3183,7 @@ export class ChatEngineService implements IChatContext {
       readSessionRuntimeState: (sessionId) => thisEngine.chatSessionRuntimeStore.read(sessionId),
       readCurrentViewSessionResource: () => thisEngine.chatSessionViewModelStore.currentSessionResource,
       syncExecutionRuntimeState: (saveTarget) => thisEngine.syncExecutionRuntimeState(saveTarget),
-      syncExecutionRuntimeTurnResponses: (sessionId, turnResponses) => thisEngine.syncExecutionRuntimeTurnResponses(sessionId, turnResponses),
+      syncExecutionRuntimeTurnResponses: (sessionId, turnResponses, options) => thisEngine.syncExecutionRuntimeTurnResponses(sessionId, turnResponses, options),
       applyPendingSwitch: (sessionId) => this.applyPendingSwitch(sessionId),
       processPendingFollowupRequests: (sessionId) => thisEngine.processPendingFollowupRequests(sessionId),
       get repetitionDetectionService() { return thisEngine.repetitionDetectionService; },
@@ -4305,16 +4355,18 @@ export class ChatEngineService implements IChatContext {
 
     const requestInProgress = typeof readVisibleSessionRequestInProgress === 'function'
       && readVisibleSessionRequestInProgress.call(this, targetSessionId);
-    console.info('[AilyChat][RequestStateTrace]', {
-      phase: 'runNext',
-      action: 'run-next',
-      sessionId: targetSessionId,
-      requestId: targetRequest.id,
-      state: runtimeState?.status ?? (requestInProgress ? 'running' : 'idle'),
-      pendingCount: pendingRequests.length,
-      queueKind: targetRequest.kind,
-      interruptingActiveRequest: requestInProgress,
-    });
+    if (isRequestStateTraceEnabled()) {
+      console.info('[AilyChat][RequestStateTrace]', {
+        phase: 'runNext',
+        action: 'run-next',
+        sessionId: targetSessionId,
+        requestId: targetRequest.id,
+        state: runtimeState?.status ?? (requestInProgress ? 'running' : 'idle'),
+        pendingCount: pendingRequests.length,
+        queueKind: targetRequest.kind,
+        interruptingActiveRequest: requestInProgress,
+      });
+    }
 
     if (requestInProgress) {
       return typeof stopSessionAction === 'function'
@@ -4369,20 +4421,22 @@ export class ChatEngineService implements IChatContext {
     ).readVisibleSessionRequestInProgress
       ?? ChatEngineService.prototype['readVisibleSessionRequestInProgress'];
     const runtimeState = this.chatSessionRuntimeStore?.read?.(targetSessionId);
-    console.info('[AilyChat][RequestStateTrace]', {
-      phase: 'queue',
-      action: 'queue',
-      sessionId: targetSessionId,
-      requestId: readPreparedPendingFollowupRequestId(prepared),
-      state: runtimeState?.status
-        ?? (typeof readVisibleSessionRequestInProgress === 'function'
-          && readVisibleSessionRequestInProgress.call(this, targetSessionId)
-            ? 'running'
-            : 'idle'),
-      queueKind: kind,
-      pendingCount: queue.length,
-      textLength: normalizedContent.length,
-    });
+    if (isRequestStateTraceEnabled()) {
+      console.info('[AilyChat][RequestStateTrace]', {
+        phase: 'queue',
+        action: 'queue',
+        sessionId: targetSessionId,
+        requestId: readPreparedPendingFollowupRequestId(prepared),
+        state: runtimeState?.status
+          ?? (typeof readVisibleSessionRequestInProgress === 'function'
+            && readVisibleSessionRequestInProgress.call(this, targetSessionId)
+              ? 'running'
+              : 'idle'),
+        queueKind: kind,
+        pendingCount: queue.length,
+        textLength: normalizedContent.length,
+      });
+    }
     const syncPendingFollowupRuntimeState = (
       this as unknown as { syncPendingFollowupRuntimeState?: (sessionId?: string | null) => void }
     ).syncPendingFollowupRuntimeState
@@ -4474,17 +4528,19 @@ export class ChatEngineService implements IChatContext {
       return false;
     }
 
-    console.info('[AilyChat][RequestStateTrace]', {
-      phase: 'processingQueued',
-      action: 'flush',
-      sessionId: targetSessionId,
-      requestId: nextRequests.length === 1 ? readPreparedPendingFollowupRequestId(nextRequests[0].prepared) : null,
-      state: runtimeState?.status ?? 'idle',
-      pendingCount: pendingCountBeforeDequeue,
-      nextRequestCount: nextRequests.length,
-      nextRequestKinds: nextRequests.map(request => request.kind),
-      nextRequestIds: nextRequests.map(request => readPreparedPendingFollowupRequestId(request.prepared)),
-    });
+    if (isRequestStateTraceEnabled()) {
+      console.info('[AilyChat][RequestStateTrace]', {
+        phase: 'processingQueued',
+        action: 'flush',
+        sessionId: targetSessionId,
+        requestId: nextRequests.length === 1 ? readPreparedPendingFollowupRequestId(nextRequests[0].prepared) : null,
+        state: runtimeState?.status ?? 'idle',
+        pendingCount: pendingCountBeforeDequeue,
+        nextRequestCount: nextRequests.length,
+        nextRequestKinds: nextRequests.map(request => request.kind),
+        nextRequestIds: nextRequests.map(request => readPreparedPendingFollowupRequestId(request.prepared)),
+      });
+    }
 
     queue.splice(0, nextRequests.length);
     replacePendingFollowupQueue.call(this, targetSessionId, queue);
@@ -4993,6 +5049,7 @@ export class ChatEngineService implements IChatContext {
   private syncExecutionRuntimeTurnResponses(
     sessionId?: string | null,
     turnResponses?: readonly TurnResponseTurn[] | null,
+    options?: ChatRuntimeTurnResponseSyncOptions,
   ): void {
     const targetSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!targetSessionId || !Array.isArray(turnResponses)) {
@@ -5037,8 +5094,15 @@ export class ChatEngineService implements IChatContext {
       ?? ChatEngineService.prototype['projectModelTranscriptToRuntimeMirror']
     );
     const currentViewSessionResource = resolveCurrentViewSessionResource.call(this);
+    if (!options) {
+      console.warn('[AilyChat][SyncRuntime][missing-projection-options]', { targetSessionId });
+      return;
+    }
+
+    const projectionOptions = options;
     projectModelTranscriptToRuntimeMirror.call(this, targetSessionId, turnResponses, hostProjectionState, {
       attachedView: currentViewSessionResource === targetSessionId,
+      projection: projectionOptions,
     });
 
     if (this.chatSessionRuntimeRegistry) {
@@ -5053,6 +5117,7 @@ export class ChatEngineService implements IChatContext {
         targetSessionId,
         turnResponses,
         hostProjectionState,
+        runtimeChangeOptionsFromTranscriptProjection(projectionOptions),
       );
       return;
     }
@@ -5065,7 +5130,7 @@ export class ChatEngineService implements IChatContext {
       turnResponses,
       hostProjectionState,
       capabilities: runtimeCapabilities,
-    });
+    }, runtimeChangeOptionsFromTranscriptProjection(projectionOptions));
   }
 
   private buildRuntimeProjectionForVisibleAttach(
@@ -5384,28 +5449,32 @@ export class ChatEngineService implements IChatContext {
       && (runtimeState?.attachedView === true || !!this.chatTextareaRef);
 
     if (isVisibleCurrentSession) {
-      console.info('[AilyChat][RequestStateTrace]', {
-        phase: 'stop-dispatch',
-        action: 'stop',
-        sessionId: targetSessionId,
-        requestId: runtimeState?.activeResponseHandle ?? null,
-        state: runtimeState?.status ?? 'in_progress',
-        interrupted: true,
-      });
+      if (isRequestStateTraceEnabled()) {
+        console.info('[AilyChat][RequestStateTrace]', {
+          phase: 'stop-dispatch',
+          action: 'stop',
+          sessionId: targetSessionId,
+          requestId: runtimeState?.activeResponseHandle ?? null,
+          state: runtimeState?.status ?? 'in_progress',
+          interrupted: true,
+        });
+      }
       void this.stopCoordinator.stopVisibleSession(targetSessionId);
       this.captureVisibleAttachedSessionRuntimeState();
       return true;
     }
 
     const interrupted = this.interruptSessionRuntime(targetSessionId);
-    console.info('[AilyChat][RequestStateTrace]', {
-      phase: 'stop-dispatch',
-      action: 'stop',
-      sessionId: targetSessionId,
-      requestId: runtimeState?.activeResponseHandle ?? null,
-      state: runtimeState?.status ?? 'in_progress',
-      interrupted,
-    });
+    if (isRequestStateTraceEnabled()) {
+      console.info('[AilyChat][RequestStateTrace]', {
+        phase: 'stop-dispatch',
+        action: 'stop',
+        sessionId: targetSessionId,
+        requestId: runtimeState?.activeResponseHandle ?? null,
+        state: runtimeState?.status ?? 'in_progress',
+        interrupted,
+      });
+    }
     return interrupted;
   }
 
@@ -5829,7 +5898,11 @@ export class ChatEngineService implements IChatContext {
 
     // 预加载 aily-lex 模块
     this.lexStream.agent.loadModule().then(ok => {
-      if (ok) { console.log('[ChatEngine] aily-lex 模块预加载成功'); }
+      if (ok) {
+        if (isAgentRuntimeModeTraceEnabled()) {
+          console.log('[ChatEngine] aily-lex 模块预加载成功');
+        }
+      }
       else { console.error('[ChatEngine] aily-lex 模块加载失败，聊天功能不可用'); }
     });
 
@@ -5870,6 +5943,7 @@ export class ChatEngineService implements IChatContext {
     this.disposeAllSessionRuntimes();
     this.disposeVisibleProjection();
     this.disposeOwnerLifecycle();
+    this.hostItemLifecyclePerfSnapshotHandle?.dispose?.();
   }
 
   disposeVisibleProjection(): void {
@@ -5968,7 +6042,10 @@ export class ChatEngineService implements IChatContext {
     }
 
     await this.applyRuntimeSelectedModeTransition(targetSessionId, { modeId: 'agent' });
-    await this.submitUserText(PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT, {
+    await this.submitUserText(this.resolveLocalizedPlanActionText(
+      'AILY_CHAT.PLAN_ACTION_START_IMPLEMENTATION',
+      PLAN_CHAT_MODE_START_IMPLEMENTATION_PROMPT,
+    ), {
       clearInput: false,
       sessionId: targetSessionId,
     });
@@ -6176,6 +6253,24 @@ Do not create non-existent boards and libraries.
   getHistory(): Promise<void> { return this.session.getHistory(); }
   getCurrentTools(): any[] { return this.lexStream.runtime.tools(); }
   getCurrentLLMConfig(): any { return this.lexStream.runtime.llmConfig(); }
+  setTurnHostTextDeltaVisibility(turnId: string | null | undefined, visible: boolean): void {
+    const targetTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    if (!targetTurnId) {
+      return;
+    }
+    this.lexStream.setHostItemTextDeltaDeliveryPolicy(
+      targetTurnId,
+      visible ? null : { delivery: 'suppressed' },
+    );
+  }
+
+  private resolveLocalizedPlanActionText(key: string, fallback: string): string {
+    const translated = this.translate?.instant?.(key);
+    if (typeof translated === 'string' && translated !== key && translated.trim().length > 0) {
+      return translated.trim();
+    }
+    return fallback;
+  }
 
   // ==================== 消息发送 ====================
 
@@ -6342,21 +6437,23 @@ Do not create non-existent boards and libraries.
 
     const currentModel = this.chatService.currentModel as { model?: string; presetId?: string; name?: string } | null;
     const requestModelRouting = prepared.requestMetadata?.['modelRouting'] as Record<string, unknown> | undefined;
-    console.info('[AilyChat][Send] request model routing:', {
-      currentModel: currentModel
-        ? {
-            model: currentModel.model,
-            presetId: currentModel.presetId,
-            name: currentModel.name,
-          }
-        : null,
-      modelRouting: requestModelRouting
-        ? { ...requestModelRouting }
-        : undefined,
-    });
-    console.info(
-      `[AilyChat][Send] request model routing scalar currentModel=${currentModel?.model ?? ''}/${currentModel?.presetId ?? ''}/${currentModel?.name ?? ''} requestedModel=${typeof requestModelRouting?.['requestedModel'] === 'string' ? requestModelRouting['requestedModel'] : ''} requestedPresetId=${typeof requestModelRouting?.['requestedPresetId'] === 'string' ? requestModelRouting['requestedPresetId'] : ''}`,
-    );
+    if (isSendDebugTraceEnabled()) {
+      console.info('[AilyChat][Send] request model routing:', {
+        currentModel: currentModel
+          ? {
+              model: currentModel.model,
+              presetId: currentModel.presetId,
+              name: currentModel.name,
+            }
+          : null,
+        modelRouting: requestModelRouting
+          ? { ...requestModelRouting }
+          : undefined,
+      });
+      console.info(
+        `[AilyChat][Send] request model routing scalar currentModel=${currentModel?.model ?? ''}/${currentModel?.presetId ?? ''}/${currentModel?.name ?? ''} requestedModel=${typeof requestModelRouting?.['requestedModel'] === 'string' ? requestModelRouting['requestedModel'] : ''} requestedPresetId=${typeof requestModelRouting?.['requestedPresetId'] === 'string' ? requestModelRouting['requestedPresetId'] : ''}`,
+      );
+    }
 
     const activeResponseHandle = (readPreparedPendingFollowupRequestId(prepared) ?? targetSessionId) || null;
     const ensureRuntimeAgentForSession = (
@@ -6487,6 +6584,7 @@ Do not create non-existent boards and libraries.
           this,
           targetSessionId,
           nextTurnResponses,
+          terminalTranscriptProjection('handoff'),
         );
       }
       const waitForCheckpointMetadataSettled = this.editCheckpointService?.waitForCheckpointMetadataSettled;
@@ -6501,28 +6599,32 @@ Do not create non-existent boards and libraries.
         && typeof titleModel.baseUrl === 'string'
         && titleModel.baseUrl.trim().length > 0
       );
-      console.info('[AilyChat][SendTitle]', {
-        event: 'before-title-flow',
-        sessionId: targetSessionId || null,
-        displayTextLength: (prepared.displayText || prepared.text).trim().length,
-        requestTextLength: prepared.text.trim().length,
-        requestTextPreview: prepared.text.trim().slice(0, 120),
-        currentTitleBeforeSend: this.chatService.currentSessionTitle,
-        currentModelId: titleModel?.model ?? '',
-        currentModelIsCustom: titleModel?.isCustom === true,
-        titleRequestUsesCustomLlmPath: hasCustomCredentials,
-      });
-      console.info('[AilyChat][RequestStateTrace]', {
-        phase: 'sending',
-        action: 'send',
-        sessionId: targetSessionId || null,
-        requestId: readPreparedPendingFollowupRequestId(prepared),
-        state: this.chatSessionRuntimeStore?.read?.(targetSessionId || null)?.status
-          ?? 'idle',
-        sender: 'user',
-        displayTextLength: (prepared.displayText || prepared.text).trim().length,
-        requestTextLength: prepared.text.trim().length,
-      });
+      if (isSendTitleTraceEnabled()) {
+        console.info('[AilyChat][SendTitle]', {
+          event: 'before-title-flow',
+          sessionId: targetSessionId || null,
+          displayTextLength: (prepared.displayText || prepared.text).trim().length,
+          requestTextLength: prepared.text.trim().length,
+          requestTextPreview: prepared.text.trim().slice(0, 120),
+          currentTitleBeforeSend: this.chatService.currentSessionTitle,
+          currentModelId: titleModel?.model ?? '',
+          currentModelIsCustom: titleModel?.isCustom === true,
+          titleRequestUsesCustomLlmPath: hasCustomCredentials,
+        });
+      }
+      if (isRequestStateTraceEnabled()) {
+        console.info('[AilyChat][RequestStateTrace]', {
+          phase: 'sending',
+          action: 'send',
+          sessionId: targetSessionId || null,
+          requestId: readPreparedPendingFollowupRequestId(prepared),
+          state: this.chatSessionRuntimeStore?.read?.(targetSessionId || null)?.status
+            ?? 'idle',
+          sender: 'user',
+          displayTextLength: (prepared.displayText || prepared.text).trim().length,
+          requestTextLength: prepared.text.trim().length,
+        });
+      }
       this.applyDefaultSessionTitleIfNeeded(prepared.displayText || prepared.text, targetSessionId);
       void this.titleCoordinator.generate(prepared.text, targetSessionId);
       traceBackgroundSessionExecution('send-turn-begin', {
@@ -6542,16 +6644,20 @@ Do not create non-existent boards and libraries.
         runtimeSessionId,
       });
       const turnRunStartedAt = Date.now();
-      console.info('[AilyChat][SendDebug] before turn.run', {
-        runtimeSessionId: runtimeSessionId || null,
-        requestTextLength: prepared.text.trim().length,
-        displayTextLength: (prepared.displayText || prepared.text).trim().length,
-      });
+      if (isSendDebugTraceEnabled()) {
+        console.info('[AilyChat][SendDebug] before turn.run', {
+          runtimeSessionId: runtimeSessionId || null,
+          requestTextLength: prepared.text.trim().length,
+          displayTextLength: (prepared.displayText || prepared.text).trim().length,
+        });
+      }
       await this.lexStream.turn.run(prepared.llmText, prepared.displayText);
-      console.info('[AilyChat][SendDebug] after turn.run', {
-        runtimeSessionId: runtimeSessionId || null,
-        durationMs: Date.now() - turnRunStartedAt,
-      });
+      if (isSendDebugTraceEnabled()) {
+        console.info('[AilyChat][SendDebug] after turn.run', {
+          runtimeSessionId: runtimeSessionId || null,
+          durationMs: Date.now() - turnRunStartedAt,
+        });
+      }
     } finally {
       if (targetSessionId && typeof this.chatSessionRuntimeRegistry?.completeRequest === 'function') {
         this.chatSessionRuntimeRegistry.completeRequest(targetSessionId, activeResponseHandle, {
@@ -6563,15 +6669,19 @@ Do not create non-existent boards and libraries.
       runtimeSessionId,
     });
     const postTurnStartedAt = Date.now();
-    console.info('[AilyChat][SendDebug] after turn.run before finalize side-effects', {
-      runtimeSessionId: runtimeSessionId || null,
-    });
+    if (isSendDebugTraceEnabled()) {
+      console.info('[AilyChat][SendDebug] after turn.run before finalize side-effects', {
+        runtimeSessionId: runtimeSessionId || null,
+      });
+    }
     this.acceptLiveRequestQuotaState(runtimeSessionId);
     this.refreshAuthQuotaStateAfterSuccessfulTurn(runtimeSessionId);
-    console.info('[AilyChat][SendDebug] after quota side-effects', {
-      runtimeSessionId: runtimeSessionId || null,
-      durationMs: Date.now() - postTurnStartedAt,
-    });
+    if (isSendDebugTraceEnabled()) {
+      console.info('[AilyChat][SendDebug] after quota side-effects', {
+        runtimeSessionId: runtimeSessionId || null,
+        durationMs: Date.now() - postTurnStartedAt,
+      });
+    }
 
     const syncSessionId = targetSessionId;
     if (syncSessionId) {
@@ -6581,11 +6691,13 @@ Do not create non-existent boards and libraries.
         ?? ChatEngineService.prototype['syncResolvedActiveModelForSession']
       );
       const resolvedModelProjected = await syncResolvedActiveModelForSession.call(this, syncSessionId);
-      console.info('[AilyChat][SendDebug] after resolved model sync', {
-        runtimeSessionId: runtimeSessionId || null,
-        projected: resolvedModelProjected,
-        durationMs: Date.now() - postTurnStartedAt,
-      });
+      if (isSendDebugTraceEnabled()) {
+        console.info('[AilyChat][SendDebug] after resolved model sync', {
+          runtimeSessionId: runtimeSessionId || null,
+          projected: resolvedModelProjected,
+          durationMs: Date.now() - postTurnStartedAt,
+        });
+      }
       if (resolvedModelProjected) {
         this.triggerSyncDetectChanges();
       }
@@ -6713,16 +6825,20 @@ Do not create non-existent boards and libraries.
       ).ensureBlankSessionRuntimeProviderOptions;
       if (typeof ensureBlankSessionRuntimeProviderOptions === 'function') {
         const ensureRuntimeStartedAt = Date.now();
-        console.info('[AilyChat][SendDebug] before ensure runtime agent', {
-          runtimeSessionId: runtimeSessionId || null,
-          elapsedMs: ensureRuntimeStartedAt - sendExecutionStartedAt,
-        });
+        if (isSendDebugTraceEnabled()) {
+          console.info('[AilyChat][SendDebug] before ensure runtime agent', {
+            runtimeSessionId: runtimeSessionId || null,
+            elapsedMs: ensureRuntimeStartedAt - sendExecutionStartedAt,
+          });
+        }
         await ensureBlankSessionRuntimeProviderOptions.call(this, runtimeSessionId);
-        console.info('[AilyChat][SendDebug] after ensure runtime agent', {
-          runtimeSessionId: runtimeSessionId || null,
-          durationMs: Date.now() - ensureRuntimeStartedAt,
-          elapsedMs: Date.now() - sendExecutionStartedAt,
-        });
+        if (isSendDebugTraceEnabled()) {
+          console.info('[AilyChat][SendDebug] after ensure runtime agent', {
+            runtimeSessionId: runtimeSessionId || null,
+            durationMs: Date.now() - ensureRuntimeStartedAt,
+            elapsedMs: Date.now() - sendExecutionStartedAt,
+          });
+        }
       }
 
       const executePreparedUserSend = (
@@ -6776,12 +6892,14 @@ Do not create non-existent boards and libraries.
     const currentTitleSource = modelTitle?.source ?? this.chatService.currentSessionTitleSource;
     if (isMeaningfulRuntimeSessionTitle(currentTitle)
       && currentTitleSource !== 'default-first-request') {
-      console.info('[AilyChat][SendTitle]', {
-        event: 'skip-default-title-existing-meaningful',
-        sessionId: targetSessionId || null,
-        currentTitle,
-        currentSource: currentTitleSource,
-      });
+      if (isSendTitleTraceEnabled()) {
+        console.info('[AilyChat][SendTitle]', {
+          event: 'skip-default-title-existing-meaningful',
+          sessionId: targetSessionId || null,
+          currentTitle,
+          currentSource: currentTitleSource,
+        });
+      }
       return;
     }
 
@@ -6791,11 +6909,13 @@ Do not create non-existent boards and libraries.
         : undefined);
     const defaultTitle = deriveDefaultSessionTitle(firstUserMessageContent ?? content);
     if (!defaultTitle) {
-      console.info('[AilyChat][SendTitle]', {
-        event: 'skip-default-title-empty',
-        sessionId: targetSessionId || null,
-        contentLength: typeof content === 'string' ? content.trim().length : 0,
-      });
+      if (isSendTitleTraceEnabled()) {
+        console.info('[AilyChat][SendTitle]', {
+          event: 'skip-default-title-empty',
+          sessionId: targetSessionId || null,
+          contentLength: typeof content === 'string' ? content.trim().length : 0,
+        });
+      }
       return;
     }
 
@@ -6827,12 +6947,14 @@ Do not create non-existent boards and libraries.
           : undefined,
       });
     }
-    console.info('[AilyChat][SendTitle]', {
-      event: 'apply-default-title',
-      sessionId: targetSessionId || null,
-      title: defaultTitle,
-      source: firstUserMessageContent ? 'first-user-message' : 'current-content',
-    });
+    if (isSendTitleTraceEnabled()) {
+      console.info('[AilyChat][SendTitle]', {
+        event: 'apply-default-title',
+        sessionId: targetSessionId || null,
+        title: defaultTitle,
+        source: firstUserMessageContent ? 'first-user-message' : 'current-content',
+      });
+    }
   }
 
   private async maybeRewriteContentForTestSetup(
@@ -7249,6 +7371,71 @@ Do not create non-existent boards and libraries.
     }
   }
 
+  private buildLocalizedPlanReviewResumeContent(
+    pendingReview: PendingPlanReview,
+    result: RuntimePlanReviewDecision,
+  ): string {
+    const translate = (this as unknown as {
+      translate?: Pick<TranslateService, 'instant'>;
+    }).translate;
+    if (!translate || typeof translate.instant !== 'function') {
+      return buildPlanReviewResumeContent(pendingReview, result);
+    }
+
+    const actionLabel = this.resolveLocalizedPlanReviewActionLabel(pendingReview, result);
+    const feedback = typeof result.feedback === 'string' ? result.feedback.trim() : '';
+    const key = feedback.length > 0
+      ? actionLabel
+        ? 'AILY_CHAT.PLAN_REVIEW_RESUME_FEEDBACK_WITH_ACTION'
+        : 'AILY_CHAT.PLAN_REVIEW_RESUME_FEEDBACK'
+      : result.approved
+        ? actionLabel
+          ? 'AILY_CHAT.PLAN_REVIEW_RESUME_APPROVED_WITH_ACTION'
+          : 'AILY_CHAT.PLAN_REVIEW_RESUME_APPROVED'
+        : actionLabel
+          ? 'AILY_CHAT.PLAN_REVIEW_RESUME_REJECTED_WITH_ACTION'
+          : 'AILY_CHAT.PLAN_REVIEW_RESUME_REJECTED';
+    const translated = translate.instant(key, { action: actionLabel ?? '' });
+    return typeof translated === 'string' && translated !== key
+      ? translated
+      : buildPlanReviewResumeContent(pendingReview, result);
+  }
+
+  private resolveLocalizedPlanReviewActionLabel(
+    pendingReview: PendingPlanReview,
+    result: RuntimePlanReviewDecision,
+  ): string | undefined {
+    const actionId = typeof result.actionId === 'string' ? result.actionId.trim() : '';
+    if (!actionId) {
+      return undefined;
+    }
+
+    const actionLabelKey = (() => {
+      switch (actionId) {
+        case 'start_implementation':
+        case INTERACTIVE_PLAN_REVIEW_ACTION_ID:
+          return 'AILY_CHAT.PLAN_ACTION_START_IMPLEMENTATION';
+        case 'autopilot':
+          return 'AILY_CHAT.PLAN_REVIEW_ACTION_AUTOPILOT';
+        case 'autopilot_fleet':
+          return 'AILY_CHAT.PLAN_REVIEW_ACTION_AUTOPILOT_FLEET';
+        case EXIT_ONLY_PLAN_REVIEW_ACTION_ID:
+          return 'AILY_CHAT.PLAN_REVIEW_ACTION_EXIT_ONLY';
+        default:
+          return '';
+      }
+    })();
+
+    if (actionLabelKey) {
+      const translated = this.translate?.instant?.(actionLabelKey);
+      if (typeof translated === 'string' && translated !== actionLabelKey && translated.trim().length > 0) {
+        return translated.trim();
+      }
+    }
+
+    return pendingReview.actions.find(action => action.id === actionId)?.label ?? actionId;
+  }
+
   private async presentPendingPlanReviewFromLatestContinuation(sessionId?: string | null): Promise<void> {
     const targetSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
       ? sessionId.trim()
@@ -7281,11 +7468,22 @@ Do not create non-existent boards and libraries.
         ? resolvePlanReviewAutopilotDecision(pendingReview)
         : await this.runtimeInteractionHost.presentPlanReview(targetSessionId, pendingReview);
       const previousState = this.capturePlanReviewTransitionState(targetSessionId);
+      const buildLocalizedPlanReviewResumeContent = (
+        this as unknown as {
+          buildLocalizedPlanReviewResumeContent?: (
+            pendingReview: PendingPlanReview,
+            result: RuntimePlanReviewDecision,
+          ) => string;
+        }
+      ).buildLocalizedPlanReviewResumeContent
+        ?? ChatEngineService.prototype['buildLocalizedPlanReviewResumeContent'];
 
       try {
         await this.applyPlanReviewTransitionBeforeResume(targetSessionId, pendingReview, result, currentRequestPermissionLevel);
+        this.scrollManager?.setScrollLock?.(true);
+        this.scrollManager?.resumeFollowBottom?.('auto');
         await this.submitInteractionActionRequest(
-          buildPlanReviewResumeContent(pendingReview, result),
+          buildLocalizedPlanReviewResumeContent.call(this, pendingReview, result),
           buildPlanReviewInteractionAction(continuation, result),
           resolvePlanReviewPermissionLevel(pendingReview, result, currentRequestPermissionLevel)
             ? {

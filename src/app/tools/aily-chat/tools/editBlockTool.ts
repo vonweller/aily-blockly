@@ -5,7 +5,12 @@ import { ArduinoSyntaxTool } from "./arduinoSyntaxTool";
 import { fixBlockConfig } from './blockConfigFixer';
 import { normalizeInputNameForAbs } from './abiAbsConverter';
 import { getProjectInfoTool } from './getProjectInfoTool';
-import { yieldToBrowserFrame } from './browserTaskScheduler';
+import {
+  createBrowserFrameBudget,
+  yieldToBrowserFrame,
+  type BrowserFrameBudgetController,
+} from './browserTaskScheduler';
+import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 declare const Blockly: any;
 
 /**
@@ -51,6 +56,38 @@ let maxCount = 4;
 interface Position {
   x?: number;
   y?: number;
+}
+
+export interface EditorOperationFrameBudgetContext {
+  editorFrameBudget?: BrowserFrameBudgetController;
+}
+
+function createEditBlockFrameBudget(operation: string): BrowserFrameBudgetController {
+  return createBrowserFrameBudget({
+    budgetMs: 6,
+    maxContinuousMs: 18,
+    onYield: info => {
+      ChatPerformanceTracer.increment('editor_operation.frame_budget.yield');
+      ChatPerformanceTracer.recordDuration(
+        'editor_operation_frame_budget_elapsed',
+        info.elapsedMs,
+        `${operation}:${info.label ?? 'checkpoint'}`,
+        { slowThresholdMs: 12 },
+      );
+    },
+  });
+}
+
+async function checkpointEditBlockFrameBudget(
+  context: EditorOperationFrameBudgetContext | undefined,
+  label: string,
+): Promise<void> {
+  const budget = context?.editorFrameBudget;
+  if (budget) {
+    await budget.checkpoint(label);
+    return;
+  }
+  await yieldToBrowserFrame();
 }
 
 interface BlockReference {
@@ -982,10 +1019,11 @@ async function createBlockSafely(
   workspace: any,
   type: string,
   position: Position,
-  animate: boolean
+  animate: boolean,
+  frameBudgetContext?: EditorOperationFrameBudgetContext,
 ): Promise<any> {
   try {
-    await yieldToBrowserFrame();
+    await checkpointEditBlockFrameBudget(frameBudgetContext, `createBlock.${type}.before-newBlock`);
 
     if (!workspace || workspace.disposed) {
       throw new Error('工作区已被销毁');
@@ -1005,9 +1043,11 @@ async function createBlockSafely(
 
     // 初始化块
     block.initSvg();
+    await checkpointEditBlockFrameBudget(frameBudgetContext, `createBlock.${type}.initSvg`);
 
     if (animate) {
       block.render();
+      await checkpointEditBlockFrameBudget(frameBudgetContext, `createBlock.${type}.render`);
     }
 
     return block;
@@ -1523,9 +1563,7 @@ function configureBlockFields(block: any, fields: FieldConfig): {
                   // ⚠️ 传入的值看起来像变量ID但不是有效ID
                   const errorMsg = `变量字段 "${fieldName}" 的值 "${actualValue}" 看起来像变量ID，但不是工作区中有效的变量ID`;
                   const suggestion = `请使用变量名（如 "myVar", "counter"）而不是变量ID。系统会自动处理变量名到ID的转换。`;
-                  console.warn(`⚠️ ${errorMsg}`);
-                  console.warn(`💡 ${suggestion}`);
-                  
+
                   failedFields.push({
                     fieldName,
                     value: actualValue,
@@ -5265,7 +5303,8 @@ async function configureBlockInputs(
   workspace: any, 
   block: any, 
   inputs: InputConfig, 
-  blockMap?: Map<string, any>
+  blockMap?: Map<string, any>,
+  frameBudgetContext?: EditorOperationFrameBudgetContext,
 ): Promise<{ 
   updatedInputs: string[]; 
   extractedNext?: any;
@@ -5307,7 +5346,7 @@ async function configureBlockInputs(
           if (inputConfig.block) {
             // console.log('🏗️ 创建子块...');
             // 创建并连接块，传递blockMap以便子块也能被映射
-            const childResult = await createBlockFromConfig(workspace, inputConfig.block, blockMap);
+            const childResult = await createBlockFromConfig(workspace, inputConfig.block, blockMap, frameBudgetContext);
             const childBlock = childResult?.block;
             
             // 🆕 收集子块创建中的失败
@@ -5377,7 +5416,7 @@ async function configureBlockInputs(
         } else if (inputConfig.shadow) {
           // console.log('👤 创建影子块...');
           // 创建影子块，也传递blockMap以便影子块能被映射
-          const shadowResult = await createBlockFromConfig(workspace, inputConfig.shadow, blockMap);
+          const shadowResult = await createBlockFromConfig(workspace, inputConfig.shadow, blockMap, frameBudgetContext);
           const shadowBlock = shadowResult?.block;
           
           // 🆕 收集影子块创建中的失败
@@ -5521,6 +5560,7 @@ async function configureBlockInputs(
           error: `处理输入失败: ${inputError instanceof Error ? inputError.message : String(inputError)}`
         });
       }
+      await checkpointEditBlockFrameBudget(frameBudgetContext, `configureInputs.${block.type}.${inputName}`);
     }
     
     // console.log(`✅ configureBlockInputs 完成，更新了 ${updatedInputs.length} 个输入: ${updatedInputs.join(', ')}`);
@@ -5549,7 +5589,8 @@ async function configureBlockInputs(
 export async function createBlockFromConfig(
   workspace: any, 
   config: BlockConfig | string, 
-  blockMap?: Map<string, any>
+  blockMap?: Map<string, any>,
+  frameBudgetContext?: EditorOperationFrameBudgetContext,
 ): Promise<{ 
   block: any; 
   totalBlocks: number;
@@ -5560,13 +5601,16 @@ export async function createBlockFromConfig(
   
   // 🆕 收集失败的块
   const failedBlocks: Array<{ blockType: string; error: string; suggestion?: string }> = [];
+  const operationFrameBudgetContext = frameBudgetContext ?? {
+    editorFrameBudget: createEditBlockFrameBudget('editBlock.createBlockFromConfig'),
+  };
   
   try {
     // 如果是字符串，创建一个文本块
     if (typeof config === 'string') {
       // console.log(`🔨 创建文本块: ${config}`);
       try {
-        const textBlock = await createBlockSafely(workspace, 'text', { x: 100, y: 100 }, false);
+        const textBlock = await createBlockSafely(workspace, 'text', { x: 100, y: 100 }, false, operationFrameBudgetContext);
         if (textBlock) {
           textBlock.setFieldValue(config, 'TEXT');
           // console.log(`✅ 文本块创建成功: ${config}`);
@@ -5592,7 +5636,7 @@ export async function createBlockFromConfig(
     // 🆕 单独捕获 createBlockSafely 的错误
     let block: any = null;
     try {
-      block = await createBlockSafely(workspace, config.type, position, false);
+      block = await createBlockSafely(workspace, config.type, position, false, operationFrameBudgetContext);
     } catch (createError) {
       debugBlocklyImportIssue(`createBlockSafely threw: ${config.type}`, createError);
       const suggestion = generateBlockFailureSuggestion(config.type);
@@ -5637,6 +5681,7 @@ export async function createBlockFromConfig(
     
     // 检查并应用动态扩展
     await applyDynamicExtensions(block, config);
+    await checkpointEditBlockFrameBudget(operationFrameBudgetContext, `createBlock.${config.type}.dynamicExtensions`);
     
     // 🆕 动态字段映射：将 EXTRA_N 字段映射到块上实际存在的未配置字段
     // 这对于动态扩展添加的字段（如 dht_init 的 PIN）特别重要
@@ -5647,6 +5692,7 @@ export async function createBlockFromConfig(
     if (config.fields) {
       // console.log('🏷️ 配置块字段...');
       const fieldResult = configureBlockFields(block, config.fields);
+      await checkpointEditBlockFrameBudget(operationFrameBudgetContext, `createBlock.${config.type}.fields`);
       // console.log('✅ 字段配置完成');
       
       // 收集字段配置失败信息（如无效的下拉选项值）
@@ -5674,7 +5720,7 @@ export async function createBlockFromConfig(
     
     if (config.inputs) {
       // console.log('🔌 配置块输入...');
-      const inputResult = await configureBlockInputs(workspace, block, config.inputs, blockMap);
+      const inputResult = await configureBlockInputs(workspace, block, config.inputs, blockMap, operationFrameBudgetContext);
       // console.log('✅ 块输入配置完成');
       
       // 🆕 收集输入配置中失败的块
@@ -5693,7 +5739,7 @@ export async function createBlockFromConfig(
     // 处理next连接
     if (config.next) {
       // console.log('🔗 配置next连接...');
-      const nextResult = await createBlockFromConfig(workspace, config.next.block, blockMap);
+      const nextResult = await createBlockFromConfig(workspace, config.next.block, blockMap, operationFrameBudgetContext);
       const nextBlock = nextResult?.block;
       
       // 🆕 收集 next 块创建中的失败
@@ -5704,6 +5750,7 @@ export async function createBlockFromConfig(
       if (nextBlock && block.nextConnection && nextBlock.previousConnection) {
         try {
           block.nextConnection.connect(nextBlock.previousConnection);
+          await checkpointEditBlockFrameBudget(operationFrameBudgetContext, `createBlock.${config.type}.next`);
           // console.log(`✅ next连接成功: ${block.type} -> ${nextBlock.type}`);
           totalBlocks += nextResult.totalBlocks;
         } catch (connectionError) {
@@ -10652,12 +10699,15 @@ async function createDynamicStructure(
   
   // 存储所有创建的块，用于后续连接
   const blockMap = new Map<string, any>();
+  const frameBudgetContext: EditorOperationFrameBudgetContext = {
+    editorFrameBudget: createEditBlockFrameBudget('editBlock.codeStructure'),
+  };
   
   // 1. 创建根块
   // console.log('📦 创建根块:', rootConfig.type);
   // console.log('🔍 根块配置:', JSON.stringify(rootConfig, null, 2));
   const enhancedRootConfig = enhanceConfigWithInputs(rootConfig, blockInputRequirements);
-  const rootResult = await createBlockFromConfig(workspace, enhancedRootConfig, blockMap);
+  const rootResult = await createBlockFromConfig(workspace, enhancedRootConfig, blockMap, frameBudgetContext);
   if (rootResult?.block) {
     const rootBlock = rootResult.block;
     // console.log(`✅ 根块创建成功: ${rootBlock.type}[${rootBlock.id}]`);
@@ -10689,7 +10739,7 @@ async function createDynamicStructure(
     const enhancedConfig = enhanceConfigWithInputs(blockConfig, blockInputRequirements);
     // console.log(`🔧 增强后的配置:`, JSON.stringify(enhancedConfig, null, 2));
     
-    const blockResult = await createBlockFromConfig(workspace, enhancedConfig, blockMap);
+    const blockResult = await createBlockFromConfig(workspace, enhancedConfig, blockMap, frameBudgetContext);
     // console.log(`📊 创建结果:`, blockResult ? `block: ${blockResult.block ? 'success' : 'null'}, totalBlocks: ${blockResult.totalBlocks}` : 'null');
     
     if (blockResult?.block) {
@@ -11809,6 +11859,17 @@ interface AnalyzeLibraryBlocksArgs {
   analyzeGenerator?: boolean;
 }
 
+const ANALYZE_LIBRARY_REPORT_MAX_CHARS = 60_000;
+
+interface AnalyzeLibraryReportBudget {
+  maxChars: number;
+  originalChars: number;
+  emittedChars: number;
+  truncated: boolean;
+  omittedChars: number;
+  omittedLines: number;
+}
+
 interface AnalyzeLibraryDocReference {
   hasReadme: boolean;
   readmePath?: string;
@@ -11835,6 +11896,7 @@ interface AnalyzeLibraryBlocksResult extends ToolUseResult {
         categories: string[];
       };
     };
+    reportBudget?: AnalyzeLibraryReportBudget;
   };
 }
 
@@ -11846,6 +11908,102 @@ interface AnalyzeLibraryResolvedProjectInfo {
     path: string;
     readmePath?: string;
   }>;
+}
+
+class BoundedAnalyzeLibraryReportBuilder {
+  private readonly parts: string[] = [];
+  private originalChars = 0;
+  private emittedChars = 0;
+  private omittedChars = 0;
+  private omittedLines = 0;
+  private truncated = false;
+
+  constructor(private readonly maxChars: number) {}
+
+  append(text: string): void {
+    if (!text) {
+      return;
+    }
+
+    this.originalChars += text.length;
+
+    if (this.truncated) {
+      this.omit(text);
+      return;
+    }
+
+    const remaining = this.maxChars - this.emittedChars;
+    if (remaining <= 0) {
+      this.truncated = true;
+      this.omit(text);
+      return;
+    }
+
+    if (text.length <= remaining) {
+      this.parts.push(text);
+      this.emittedChars += text.length;
+      return;
+    }
+
+    const visible = text.slice(0, remaining);
+    const omitted = text.slice(remaining);
+    if (visible) {
+      this.parts.push(visible);
+      this.emittedChars += visible.length;
+    }
+    this.truncated = true;
+    this.omit(omitted);
+  }
+
+  appendLine(line = ''): void {
+    this.append(`${line}\n`);
+  }
+
+  finalize(): { text: string; budget: AnalyzeLibraryReportBudget } {
+    let text = this.parts.join('');
+
+    if (this.truncated) {
+      const notice = [
+        '',
+        '',
+        `[Analyze library report truncated: ${this.omittedChars} chars omitted across approximately ${this.omittedLines} lines.]`,
+        'Use readme_ai.md references when available, or run analyzeLibrary for a narrower library/section.',
+        '',
+      ].join('\n');
+
+      if (text.length + notice.length > this.maxChars) {
+        text = text.slice(0, Math.max(0, this.maxChars - notice.length));
+      }
+
+      text += notice;
+    }
+
+    const emittedText = text.trimEnd();
+    return {
+      text: emittedText,
+      budget: {
+        maxChars: this.maxChars,
+        originalChars: this.originalChars,
+        emittedChars: emittedText.length,
+        truncated: this.truncated,
+        omittedChars: this.omittedChars,
+        omittedLines: this.omittedLines,
+      },
+    };
+  }
+
+  private omit(text: string): void {
+    this.omittedChars += text.length;
+    this.omittedLines += countApproximateLines(text);
+  }
+}
+
+function countApproximateLines(text: string): number {
+  if (!text) {
+    return 0;
+  }
+
+  return (text.match(/\n/g)?.length ?? 0) + 1;
 }
 
 /**
@@ -12027,18 +12185,21 @@ export async function analyzeLibraryBlocksTool(
     const analysisTime = Date.now() - startTime;
     
     // 生成简化的块定义报告（类似 readme.md 格式）
-    let report = `# Library Block Definitions\n\n`;
+    const reportBuilder = new BoundedAnalyzeLibraryReportBuilder(ANALYZE_LIBRARY_REPORT_MAX_CHARS);
+    reportBuilder.appendLine('# Library Block Definitions');
+    reportBuilder.appendLine();
 
     for (const [libraryName, knowledge] of Object.entries(libraryResults)) {
-      report += `## ${libraryName}\n\n`;
+      reportBuilder.appendLine(`## ${libraryName}`);
+      reportBuilder.appendLine();
       
       if (knowledge.blocks.length > 0) {
         // 检测有动态扩展的块
         const dynamicBlocks: string[] = [];
         
         // 生成块定义表格
-        report += `| Block Type | Connection | Parameters | ABS Format |\n`;
-        report += `|------------|------------|------------|------------|\n`;
+        reportBuilder.appendLine('| Block Type | Connection | Parameters | ABS Format |');
+        reportBuilder.appendLine('|------------|------------|------------|------------|');
         
         for (const block of knowledge.blocks) {
           const blockType = block.type;
@@ -12090,66 +12251,74 @@ export async function analyzeLibraryBlocksTool(
           // ABS格式示例 - 已经包含反引号格式
           const absFormat = generateAbsFormat(block);
           
-          report += `| \`${blockType}\` | ${connectionType} | ${fieldInputStr} | ${absFormat} |\n`;
+          reportBuilder.appendLine(`| \`${blockType}\` | ${connectionType} | ${fieldInputStr} | ${absFormat} |`);
         }
         
-        report += '\n';
+        reportBuilder.appendLine();
         
         // 如果有动态扩展的块，添加提示信息
         if (dynamicBlocks.length > 0) {
-          report += `### ⚠️ Dynamic Fields Notice\n\n`;
-          report += `The following blocks have dynamic fields that may change based on other field values:\n`;
-          report += `- ${dynamicBlocks.map(b => `\`${b}\``).join(', ')}\n\n`;
-          report += `**Tip**: Read the library's \`generator.js\` file for complete parameter usage.\n\n`;
+          reportBuilder.appendLine('### ⚠️ Dynamic Fields Notice');
+          reportBuilder.appendLine();
+          reportBuilder.appendLine('The following blocks have dynamic fields that may change based on other field values:');
+          reportBuilder.appendLine(`- ${dynamicBlocks.map(b => `\`${b}\``).join(', ')}`);
+          reportBuilder.appendLine();
+          reportBuilder.appendLine("**Tip**: Read the library's `generator.js` file for complete parameter usage.");
+          reportBuilder.appendLine();
         }
         
         // 添加 ABS 参数类型映射说明
-        report += `### ABS Parameter Type Mapping\n\n`;
-        report += `| Type | ABS Format | Example |\n`;
-        report += `|------|------------|---------|`;
+        reportBuilder.appendLine('### ABS Parameter Type Mapping');
+        reportBuilder.appendLine();
+        reportBuilder.appendLine('| Type | ABS Format | Example |');
+        reportBuilder.appendLine('|------|------------|---------|');
         
         const fieldTypeExamples = collectFieldTypeExamples(knowledge.blocks);
         for (const [fieldType, example] of Object.entries(fieldTypeExamples)) {
-          report += `| ${fieldType} | ${example.format} | \`${example.sample}\` |\n`;
+          reportBuilder.appendLine(`| ${fieldType} | ${example.format} | \`${example.sample}\` |`);
         }
         
-        report += '\n';
+        reportBuilder.appendLine();
         
         // 添加连接规则说明（符合 ABS 规范描述）
-        report += `### Connection Rules\n\n`;
+        reportBuilder.appendLine('### Connection Rules');
+        reportBuilder.appendLine();
         const statementBlocks = knowledge.blocks.filter(b => b.connectionTypes.hasPrevious || b.connectionTypes.hasNext);
         const valueBlocks = knowledge.blocks.filter(b => b.connectionTypes.hasOutput);
         const hatBlocks = knowledge.blocks.filter(b => !b.connectionTypes.hasPrevious && !b.connectionTypes.hasNext && !b.connectionTypes.hasOutput);
         
         if (statementBlocks.length > 0) {
-          report += `- **Statement**: ${statementBlocks.map(b => `\`${b.type}\``).join(', ')} — standalone line, chains via \`next\`\n`;
+          reportBuilder.appendLine(`- **Statement**: ${statementBlocks.map(b => `\`${b.type}\``).join(', ')} — standalone line, chains via \`next\``);
         }
         if (valueBlocks.length > 0) {
-          report += `- **Value**: ${valueBlocks.map(b => `\`${b.type}\``).join(', ')} — embedded as parameter\n`;
+          reportBuilder.appendLine(`- **Value**: ${valueBlocks.map(b => `\`${b.type}\``).join(', ')} — embedded as parameter`);
         }
         if (hatBlocks.length > 0) {
-          report += `- **Hat**: ${hatBlocks.map(b => `\`${b.type}\``).join(', ')} — root block, program entry\n`;
+          reportBuilder.appendLine(`- **Hat**: ${hatBlocks.map(b => `\`${b.type}\``).join(', ')} — root block, program entry`);
         }
         
-        report += '\n';
+        reportBuilder.appendLine();
         
         // 收集并添加参数枚举选项表格
         const dropdownOptions = collectDropdownOptionsFromBlocks(knowledge.blocks);
         if (Object.keys(dropdownOptions).length > 0) {
-          report += `### Parameter Options\n\n`;
-          report += `| Parameter | Values | Description |\n`;
-          report += `|-----------|--------|-------------|`;
+          reportBuilder.appendLine('### Parameter Options');
+          reportBuilder.appendLine();
+          reportBuilder.appendLine('| Parameter | Values | Description |');
+          reportBuilder.appendLine('|-----------|--------|-------------|');
           
           for (const [fieldName, options] of Object.entries(dropdownOptions)) {
             const optionsStr = options.values.slice(0, 10).join(', ') + (options.values.length > 10 ? '...' : '');
-            report += `| ${fieldName} | ${optionsStr} | ${options.description || '-'} |\n`;
+            reportBuilder.appendLine(`| ${fieldName} | ${optionsStr} | ${options.description || '-'} |`);
           }
           
-          report += '\n';
+          reportBuilder.appendLine();
         }
       }
     }
 
+    const reportResult = reportBuilder.finalize();
+    const report = reportResult.text;
     toolResult = prependAnalyzeLibraryReadmeReport(report, librariesWithReadme, libraryDocs);
 
     // 生成元数据
@@ -12169,7 +12338,8 @@ export async function analyzeLibraryBlocksTool(
       totalPatterns,
       analysisTime,
       libraryDocs,
-      libraries: libraryMetadata
+      libraries: libraryMetadata,
+      reportBudget: reportResult.budget,
     };
 
     // console.log(`✅ 库块分析完成: ${Object.keys(libraryResults).length} 个库, ${totalBlocks} 个块`);

@@ -359,6 +359,24 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
   }
 
   async handleErrorAction(action: ErrorActionItem): Promise<void> {
+    if (this.isRetryLastAction(action)) {
+      if (this.errorActionInFlight) {
+        return;
+      }
+
+      this.errorActionInFlight = true;
+      try {
+        await this.chatEngine.retryLastAction();
+      } catch (error) {
+        console.warn('[AilyChatCode] retry-last action failed', error);
+        this.message.error('重试请求发送失败');
+      } finally {
+        this.errorActionInFlight = false;
+        this.cdr.markForCheck();
+      }
+      return;
+    }
+
     const confirmationData = this.readRetryConfirmationData(action);
     if (!confirmationData || this.errorActionInFlight) {
       return;
@@ -406,6 +424,14 @@ export class AilyChatCodeComponent implements OnChanges, OnDestroy {
     }
 
     return null;
+  }
+
+  private isRetryLastAction(action: ErrorActionItem): boolean {
+    const data = action.data;
+    return !!data
+      && typeof data === 'object'
+      && !Array.isArray(data)
+      && (data as Record<string, unknown>)['ailyRetryLastAction'] === true;
   }
 
   private decodeEntities(html: string): string {

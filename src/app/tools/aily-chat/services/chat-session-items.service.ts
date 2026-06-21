@@ -29,6 +29,7 @@ import type {
 import { EditCheckpointService } from './edit-checkpoint.service';
 import { buildHostSessionCurrentPickerInputState } from '../helpers/host-session-input-state';
 import { buildHostSessionCurrentPickerRoutingSummary } from '../helpers/host-session-request-routing';
+import { isChatSessionUnread } from '../helpers/chat-session-presentation';
 
 type SessionListSourceLike = Partial<HostSessionHistoryItem> & Partial<HostSessionListProjectionItem> & Partial<ChatSessionListItem> & {
   readonly name?: string;
@@ -39,10 +40,25 @@ export interface ChatSessionListItemsDelta {
   readonly kind: 'full' | 'item';
   readonly affectsOrder: boolean;
   readonly sessionId?: string;
+  readonly reason?: string;
 }
 
 export interface SessionListRefreshRequest {
-  readonly reason: 'open' | 'entry' | 'reopen' | 'filter' | 'state' | 'runtime' | 'manual' | 'project' | 'service-created' | 'shell';
+  readonly reason:
+    | 'open'
+    | 'open-picker'
+    | 'entry'
+    | 'reopen'
+    | 'filter'
+    | 'state'
+    | 'terminal-transcript'
+    | 'visible-details'
+    | 'layout'
+    | 'runtime'
+    | 'manual'
+    | 'project'
+    | 'service-created'
+    | 'shell';
   readonly scope: 'summary' | 'visible-details' | 'full';
   readonly priority: 'after-paint' | 'normal' | 'idle';
   readonly sessionIds?: readonly string[];
@@ -72,7 +88,7 @@ export class ChatSessionItemsService implements OnDestroy {
   private readonly sessionListItemsDeltaSubject = new Subject<ChatSessionListItemsDelta>();
   private readonly sessionInventoryChangedSubject = new Subject<void>();
   private readonly sessionListItemMap = new Map<string, ChatSessionListItem>();
-  private readonly pendingSessionItemRefresh = new Set<string>();
+  private readonly pendingSessionItemRefresh = new Map<string, string>();
   private pendingFullRefresh = false;
   private refreshScheduled = false;
   private pendingRefreshRequest: SessionListRefreshRequest | null = null;
@@ -187,6 +203,7 @@ export class ChatSessionItemsService implements OnDestroy {
     this.commitSessionListItems(Array.isArray(value) ? [...value] : [], {
       kind: 'full',
       affectsOrder: true,
+      reason: 'setter',
     });
   }
 
@@ -294,6 +311,7 @@ export class ChatSessionItemsService implements OnDestroy {
     this.commitSessionListItems(nextItems, {
       kind: 'full',
       affectsOrder: !this.isSessionListOrderEqual(this._sessionListItems, nextItems),
+      reason: 'summary',
     });
     this.markSessionListReady();
   }
@@ -330,6 +348,7 @@ export class ChatSessionItemsService implements OnDestroy {
     this.commitSessionListItems(mergedItems, {
       kind: 'full',
       affectsOrder: !this.isSessionListOrderEqual(this._sessionListItems, mergedItems),
+      reason: 'summary-more',
     });
     this.markSessionListReady();
   }
@@ -341,17 +360,20 @@ export class ChatSessionItemsService implements OnDestroy {
     projectRootPath?: string | null,
     filter: 'all' | 'current-project' = 'current-project',
   ): void {
-    ChatPerformanceTracer.increment('session_list.load.visible-details');
-    const prepared = this.prepareVisibleDetailsRefresh(sessionIds, projectPath, projectRootPath, filter);
-    if (!prepared) {
-      return;
-    }
+    ChatPerformanceTracer.runWithSurface('detail_hydration', () => {
+      ChatPerformanceTracer.increment('session_list.load.visible-details');
+      const prepared = this.prepareVisibleDetailsRefresh(sessionIds, projectPath, projectRootPath, filter);
+      if (!prepared) {
+        return;
+      }
 
-    this.commitSessionListItems(prepared.items, {
-      kind: 'item',
-      affectsOrder: prepared.affectsOrder,
-    });
-    this.markSessionListReady();
+      this.commitSessionListItems(prepared.items, {
+        kind: 'item',
+        affectsOrder: prepared.affectsOrder,
+        reason: _reason,
+      });
+      this.markSessionListReady();
+    }, `reason=${_reason},count=${sessionIds.length}`);
   }
 
   private prepareVisibleDetailsRefresh(
@@ -424,17 +446,20 @@ export class ChatSessionItemsService implements OnDestroy {
     projectPath?: string | null,
     projectRootPath?: string | null,
   ): void {
-    const refreshSpan = ChatPerformanceTracer.begin('session_list.full_refresh');
-    ChatPerformanceTracer.increment('session_list.load.full');
-    ChatPerformanceTracer.increment('session_list.sync_refresh_history');
-    const nextItems = [...this.readSessionSummaryViewItems(projectPath, projectRootPath, undefined)];
-    ChatPerformanceTracer.mark('session_list.full_rows_projected', `count=${nextItems.length}`);
-    this.commitSessionListItems(nextItems, {
-      kind: 'full',
-      affectsOrder: !this.isSessionListOrderEqual(this._sessionListItems, nextItems),
-    });
-    this.markSessionListReady();
-    ChatPerformanceTracer.end(refreshSpan, 'session_list.full_refresh', `count=${nextItems.length}`);
+    ChatPerformanceTracer.runWithSurface('session_list', () => {
+      const refreshSpan = ChatPerformanceTracer.begin('session_list.full_refresh');
+      ChatPerformanceTracer.increment('session_list.load.full');
+      ChatPerformanceTracer.increment('session_list.sync_refresh_history');
+      const nextItems = [...this.readSessionSummaryViewItems(projectPath, projectRootPath, undefined)];
+      ChatPerformanceTracer.mark('session_list.full_rows_projected', `count=${nextItems.length}`);
+      this.commitSessionListItems(nextItems, {
+        kind: 'full',
+        affectsOrder: !this.isSessionListOrderEqual(this._sessionListItems, nextItems),
+        reason: 'full-refresh',
+      });
+      this.markSessionListReady();
+      ChatPerformanceTracer.end(refreshSpan, 'session_list.full_refresh', `count=${nextItems.length}`);
+    }, 'full-refresh');
   }
 
   retryLastSessionListRefresh(): void {
@@ -473,7 +498,7 @@ export class ChatSessionItemsService implements OnDestroy {
       return;
     }
 
-    this.pendingSessionItemRefresh.add(normalizedSessionId);
+    this.pendingSessionItemRefresh.set(normalizedSessionId, _reason);
     this.scheduleRefreshFlush();
   }
 
@@ -519,6 +544,7 @@ export class ChatSessionItemsService implements OnDestroy {
         kind: 'item',
         sessionId: normalizedSessionId,
         affectsOrder: true,
+        reason: _reason,
       });
       return;
     }
@@ -542,6 +568,7 @@ export class ChatSessionItemsService implements OnDestroy {
       kind: 'item',
       sessionId: normalizedSessionId,
       affectsOrder: !this.isSessionListOrderEqual(previousItems, nextItems),
+      reason: _reason,
     });
   }
 
@@ -553,9 +580,15 @@ export class ChatSessionItemsService implements OnDestroy {
     }
 
     if (!event.listAffecting) {
+      if (event.reason === 'live_transcript') {
+        ChatPerformanceTracer.increment('session_list.live_transcript_ignored');
+      }
       return;
     }
 
+    if (event.reason === 'terminal_transcript') {
+      ChatPerformanceTracer.increment('session_list.terminal_transcript_refresh');
+    }
     this.bumpSessionInventoryRevision();
     this.scheduleSessionItemRefresh(event.sessionId, `runtime-${event.reason}`);
   }
@@ -587,10 +620,10 @@ export class ChatSessionItemsService implements OnDestroy {
       return;
     }
 
-    const sessionIds = [...this.pendingSessionItemRefresh.values()];
+    const pendingItems = [...this.pendingSessionItemRefresh.entries()];
     this.pendingSessionItemRefresh.clear();
-    for (const sessionId of sessionIds) {
-      this.refreshSessionListItem(sessionId, 'runtime-batch');
+    for (const [sessionId, reason] of pendingItems) {
+      this.refreshSessionListItem(sessionId, reason || 'runtime-batch');
     }
   }
 
@@ -843,6 +876,10 @@ export class ChatSessionItemsService implements OnDestroy {
   private buildSessionActions(item: SessionListSourceLike): readonly ChatSessionListAction[] {
     const archived = item?.archived === true;
     const pinned = item?.pinned === true;
+    const unread = isChatSessionUnread({
+      read: item?.read !== false,
+      markedUnread: item?.markedUnread === true,
+    });
 
     return [
       {
@@ -850,6 +887,11 @@ export class ChatSessionItemsService implements OnDestroy {
         action: pinned ? 'unpin-session' : 'pin-session',
         title: pinned ? '取消置顶' : '置顶',
         ...(pinned ? { active: true } : {}),
+      },
+      {
+        icon: unread ? 'fa-light fa-envelope-open' : 'fa-light fa-envelope',
+        action: unread ? 'mark-session-read' : 'mark-session-unread',
+        title: unread ? '标为已读' : '标为未读',
       },
       {
         icon: archived ? 'fa-solid fa-archive' : 'fa-light fa-archive',
@@ -1296,6 +1338,7 @@ export class ChatSessionItemsService implements OnDestroy {
           this.commitSessionListItems(nextItems, {
             kind: 'full',
             affectsOrder,
+            reason: request.reason,
           });
         };
       }
@@ -1315,6 +1358,7 @@ export class ChatSessionItemsService implements OnDestroy {
           this.commitSessionListItems(prepared.items, {
             kind: 'item',
             affectsOrder: prepared.affectsOrder,
+            reason: request.reason,
           });
         };
       }
@@ -1334,6 +1378,7 @@ export class ChatSessionItemsService implements OnDestroy {
           this.commitSessionListItems(nextItems, {
             kind: 'full',
             affectsOrder,
+            reason: request.reason,
           });
         };
       }

@@ -632,6 +632,17 @@ export class HostSessionRecordStore {
       if (!isRecord(part) || part['type'] !== 'markdown') {
         continue;
       }
+      const metadata = isRecord(part['metadata']) ? part['metadata'] : undefined;
+      if (
+        part['sourceAgentRole'] === 'subagent'
+        || typeof part['subAgentInvocationId'] === 'string'
+        || typeof part['parentToolCallId'] === 'string'
+        || metadata?.['sourceAgentRole'] === 'subagent'
+        || typeof metadata?.['subAgentInvocationId'] === 'string'
+        || typeof metadata?.['parentToolCallId'] === 'string'
+      ) {
+        continue;
+      }
 
       const text = typeof part['content'] === 'string' ? part['content'].trim() : '';
       if (!isLikelyPlanMarkdown(text)) {

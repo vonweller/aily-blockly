@@ -9,6 +9,12 @@ import {
 
 import type { ChatPartStore, ChatPartStoreReadableHandle } from '../core/chat-part-store';
 import type { ChatPart } from '../core/chat-parts';
+import type {
+  CanonicalRenderItemKind,
+  CanonicalRenderItemStatus,
+  CanonicalRenderItemScope,
+  CanonicalRenderLifecycleEvent,
+} from '../core/render-event-item-lifecycle';
 import { collectMainTurnResponseText } from '../core/turn-response-part-mapper';
 import {
   buildDialogTurnContext,
@@ -284,6 +290,45 @@ export interface HostDialogProjectionMetrics {
   readonly frozenTurnCount: number;
   readonly prunedTurnCount: number;
   readonly durationMs: number;
+}
+
+export interface HostItemLifecycleItemSnapshot {
+  readonly itemId: string;
+  readonly itemKind: CanonicalRenderItemKind;
+  readonly status: CanonicalRenderItemStatus;
+  readonly scope?: CanonicalRenderItemScope;
+  readonly startedAt?: number;
+  readonly updatedAt: number;
+  readonly completedAt?: number;
+  readonly deltaCount: number;
+  readonly totalDeltaBytes: number;
+  readonly lastSourceEventType?: string;
+}
+
+export interface HostItemLifecycleTurnSnapshot {
+  readonly turnId: string;
+  readonly status: CanonicalRenderItemStatus;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+  readonly updatedAt: number;
+  readonly itemCount: number;
+  readonly runningItemCount: number;
+  readonly completedItemCount: number;
+  readonly failedItemCount: number;
+  readonly cancelledItemCount: number;
+  readonly deltaCount: number;
+  readonly totalDeltaBytes: number;
+  readonly recentItems: readonly HostItemLifecycleItemSnapshot[];
+}
+
+export interface HostItemLifecycleSnapshot {
+  readonly turnCount: number;
+  readonly runningTurnCount: number;
+  readonly itemCount: number;
+  readonly runningItemCount: number;
+  readonly deltaCount: number;
+  readonly totalDeltaBytes: number;
+  readonly turns: readonly HostItemLifecycleTurnSnapshot[];
 }
 
 interface HostTurnRuntimeState {
@@ -804,6 +849,13 @@ export interface HostStreamSessionClearedEvent {
   type: 'session_cleared';
 }
 
+export interface HostStreamItemLifecycleEvent {
+  type: 'item_lifecycle';
+  turnId: string;
+  event: CanonicalRenderLifecycleEvent;
+  emittedAt: number;
+}
+
 /**
  * Events with a direct or near-direct semantic peer on VS Code ChatResponseStream.
  * These are the only host events that should keep chasing upstream stream-method naming.
@@ -837,9 +889,201 @@ export type HostStreamInternalBridgeEvent =
   | HostStreamResponseStatusUpdateItemEvent
   | HostStreamResponsePartUpdateItemEvent
   | HostStreamPushItemEvent
+  | HostStreamItemLifecycleEvent
   | HostStreamSessionClearedEvent;
 
 export type HostStreamEvent = HostStreamVsCodeStreamLikeEvent | HostStreamInternalBridgeEvent;
+
+interface HostItemLifecycleMutableItem {
+  itemId: string;
+  itemKind: CanonicalRenderItemKind;
+  status: CanonicalRenderItemStatus;
+  scope?: CanonicalRenderItemScope;
+  startedAt?: number;
+  updatedAt: number;
+  completedAt?: number;
+  deltaCount: number;
+  totalDeltaBytes: number;
+  lastSourceEventType?: string;
+}
+
+interface HostItemLifecycleMutableTurn {
+  turnId: string;
+  status: CanonicalRenderItemStatus;
+  startedAt?: number;
+  completedAt?: number;
+  updatedAt: number;
+  items: Map<string, HostItemLifecycleMutableItem>;
+  itemOrder: string[];
+}
+
+class HostItemLifecycleStore {
+  private static readonly MAX_TURNS = 20;
+  private static readonly MAX_ITEMS_PER_TURN = 200;
+  private readonly turns = new Map<string, HostItemLifecycleMutableTurn>();
+  private turnOrder: string[] = [];
+
+  record(turnId: string, event: CanonicalRenderLifecycleEvent): void {
+    const normalizedTurnId = typeof turnId === 'string' ? turnId.trim() : '';
+    if (!normalizedTurnId) {
+      return;
+    }
+
+    const timestamp = readCanonicalLifecycleTimestamp(event);
+    const turn = this.ensureTurn(normalizedTurnId, timestamp);
+    switch (event.type) {
+      case 'turnStarted':
+        turn.status = 'running';
+        turn.startedAt = timestamp;
+        turn.completedAt = undefined;
+        turn.updatedAt = timestamp;
+        turn.items.clear();
+        turn.itemOrder = [];
+        return;
+      case 'turnCompleted':
+        turn.status = event.status;
+        turn.completedAt = timestamp;
+        turn.updatedAt = timestamp;
+        return;
+      case 'itemStarted': {
+        const item = this.ensureItem(turn, event.itemId, event.itemKind, timestamp);
+        item.status = 'running';
+        item.scope = event.scope;
+        item.startedAt = item.startedAt ?? timestamp;
+        item.updatedAt = timestamp;
+        item.lastSourceEventType = event.sourceEventType;
+        return;
+      }
+      case 'itemDelta': {
+        const item = this.ensureItem(turn, event.itemId, event.itemKind, timestamp);
+        item.scope = event.scope ?? item.scope;
+        item.deltaCount += Math.max(1, event.deltaCount ?? 1);
+        item.totalDeltaBytes += Math.max(0, event.byteLength ?? 0);
+        item.updatedAt = timestamp;
+        item.lastSourceEventType = event.sourceEventType;
+        return;
+      }
+      case 'itemCompleted': {
+        const item = this.ensureItem(turn, event.itemId, event.itemKind, timestamp);
+        item.status = event.status;
+        item.scope = event.scope ?? item.scope;
+        item.completedAt = timestamp;
+        item.updatedAt = timestamp;
+        item.lastSourceEventType = event.sourceEventType;
+        return;
+      }
+    }
+  }
+
+  snapshot(): HostItemLifecycleSnapshot {
+    const turns = this.turnOrder
+      .map(turnId => this.turns.get(turnId))
+      .filter((turn): turn is HostItemLifecycleMutableTurn => !!turn)
+      .map(turn => this.snapshotTurn(turn));
+
+    return {
+      turnCount: turns.length,
+      runningTurnCount: turns.filter(turn => turn.status === 'running').length,
+      itemCount: turns.reduce((total, turn) => total + turn.itemCount, 0),
+      runningItemCount: turns.reduce((total, turn) => total + turn.runningItemCount, 0),
+      deltaCount: turns.reduce((total, turn) => total + turn.deltaCount, 0),
+      totalDeltaBytes: turns.reduce((total, turn) => total + turn.totalDeltaBytes, 0),
+      turns,
+    };
+  }
+
+  clear(): void {
+    this.turns.clear();
+    this.turnOrder = [];
+  }
+
+  private ensureTurn(turnId: string, timestamp: number): HostItemLifecycleMutableTurn {
+    let turn = this.turns.get(turnId);
+    if (!turn) {
+      turn = {
+        turnId,
+        status: 'running',
+        updatedAt: timestamp,
+        items: new Map<string, HostItemLifecycleMutableItem>(),
+        itemOrder: [],
+      };
+      this.turns.set(turnId, turn);
+      this.turnOrder.push(turnId);
+      this.pruneTurns();
+    }
+    turn.updatedAt = Math.max(turn.updatedAt, timestamp);
+    return turn;
+  }
+
+  private ensureItem(
+    turn: HostItemLifecycleMutableTurn,
+    itemId: string,
+    itemKind: CanonicalRenderItemKind,
+    timestamp: number,
+  ): HostItemLifecycleMutableItem {
+    let item = turn.items.get(itemId);
+    if (!item) {
+      item = {
+        itemId,
+        itemKind,
+        status: 'running',
+        updatedAt: timestamp,
+        deltaCount: 0,
+        totalDeltaBytes: 0,
+      };
+      turn.items.set(itemId, item);
+      turn.itemOrder.push(itemId);
+      this.pruneItems(turn);
+    }
+    item.itemKind = itemKind;
+    item.updatedAt = Math.max(item.updatedAt, timestamp);
+    return item;
+  }
+
+  private snapshotTurn(turn: HostItemLifecycleMutableTurn): HostItemLifecycleTurnSnapshot {
+    const items = turn.itemOrder
+      .map(itemId => turn.items.get(itemId))
+      .filter((item): item is HostItemLifecycleMutableItem => !!item);
+    const recentItems = items.slice(-20).map(item => ({ ...item }));
+    return {
+      turnId: turn.turnId,
+      status: turn.status,
+      ...(typeof turn.startedAt === 'number' ? { startedAt: turn.startedAt } : {}),
+      ...(typeof turn.completedAt === 'number' ? { completedAt: turn.completedAt } : {}),
+      updatedAt: turn.updatedAt,
+      itemCount: items.length,
+      runningItemCount: items.filter(item => item.status === 'running').length,
+      completedItemCount: items.filter(item => item.status === 'completed').length,
+      failedItemCount: items.filter(item => item.status === 'failed').length,
+      cancelledItemCount: items.filter(item => item.status === 'cancelled').length,
+      deltaCount: items.reduce((total, item) => total + item.deltaCount, 0),
+      totalDeltaBytes: items.reduce((total, item) => total + item.totalDeltaBytes, 0),
+      recentItems,
+    };
+  }
+
+  private pruneTurns(): void {
+    while (this.turnOrder.length > HostItemLifecycleStore.MAX_TURNS) {
+      const removedTurnId = this.turnOrder.shift();
+      if (removedTurnId) {
+        this.turns.delete(removedTurnId);
+      }
+    }
+  }
+
+  private pruneItems(turn: HostItemLifecycleMutableTurn): void {
+    while (turn.itemOrder.length > HostItemLifecycleStore.MAX_ITEMS_PER_TURN) {
+      const removedItemId = turn.itemOrder.shift();
+      if (removedItemId) {
+        turn.items.delete(removedItemId);
+      }
+    }
+  }
+}
+
+function readCanonicalLifecycleTimestamp(event: CanonicalRenderLifecycleEvent): number {
+  return Number.isFinite(event.timestamp) ? event.timestamp : Date.now();
+}
 
 function normalizeHostStreamEvent(event: HostStreamEvent): {
   turnId: string;
@@ -847,6 +1091,8 @@ function normalizeHostStreamEvent(event: HostStreamEvent): {
 } | null {
   switch (event.type) {
     case 'session_cleared':
+      return null;
+    case 'item_lifecycle':
       return null;
     case 'response_started':
       return {
@@ -1019,6 +1265,7 @@ function normalizeHostStreamEvent(event: HostStreamEvent): {
 /** Consumer side of the H1 host-facing stream contract. */
 export interface IHostStreamListener {
   onHostStreamEvent(event: HostStreamEvent): void;
+  onHostItemLifecycleEvent?(turnId: string, event: CanonicalRenderLifecycleEvent): void;
 }
 
 export class LiveHostRequestGraphCache implements IHostStreamListener {
@@ -1029,14 +1276,30 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
   private cachedRequestModel: HostRequestModel | null = null;
   private hasPrimedModel = false;
   private readonly dialogItemStore = new HostDialogItemProjectionStore();
+  private readonly itemLifecycleStore = new HostItemLifecycleStore();
   private readonly turnEntriesById = new Map<string, HostTurnResponseEntry>();
+  private readonly hostStreamTurnIds = new Set<string>();
   private turnEntryOrder: string[] = [];
 
   /** H1: Respond to a host stream event emitted by the extension-side aggregator.
    *  Incrementally updates the turn entry map without waiting for a full pull cycle. */
   onHostStreamEvent(event: HostStreamEvent): void {
+    if (event.type === 'item_lifecycle') {
+      this.itemLifecycleStore.record(event.turnId, event.event);
+      return;
+    }
+
+    if (event.type === 'session_cleared') {
+      this.itemLifecycleStore.clear();
+      return;
+    }
+
     const normalized = normalizeHostStreamEvent(event);
     this.applyNormalizedHostStreamEvent(normalized);
+  }
+
+  onHostItemLifecycleEvent(turnId: string, event: CanonicalRenderLifecycleEvent): void {
+    this.itemLifecycleStore.record(turnId, event);
   }
 
   private applyNormalizedHostStreamEvent(normalized: {
@@ -1067,6 +1330,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
       this.turnEntriesById.set(normalized.turnId, entry);
       this.turnEntryOrder.push(normalized.turnId);
     }
+    this.hostStreamTurnIds.add(normalized.turnId);
 
     this.turnEntryStateRevision += 1;
     this.markDirty();
@@ -1079,6 +1343,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
   replaceState(state: HostTurnResponseState | null): void {
     this.dialogItemStore.clear();
     this.turnEntriesById.clear();
+    this.hostStreamTurnIds.clear();
     this.turnEntryOrder = [];
 
     for (const entry of state?.entries ?? []) {
@@ -1096,6 +1361,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
       ? buildHostRequestModelFromEntries(state.entries)
       : null;
     this.hasPrimedModel = true;
+    this.itemLifecycleStore.clear();
     this.turnEntryStateRevision += 1;
   }
 
@@ -1105,7 +1371,9 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     this.cachedRequestModel = null;
     this.hasPrimedModel = false;
     this.dialogItemStore.clear();
+    this.itemLifecycleStore.clear();
     this.turnEntriesById.clear();
+    this.hostStreamTurnIds.clear();
     this.turnEntryOrder = [];
     this.turnEntryStateRevision += 1;
     this.viewRevision += 1;
@@ -1125,6 +1393,10 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
 
   getLastDialogProjectionMetrics(): HostDialogProjectionMetrics {
     return this.dialogItemStore.getLastMetrics();
+  }
+
+  getItemLifecycleSnapshot(): HostItemLifecycleSnapshot {
+    return this.itemLifecycleStore.snapshot();
   }
 
   private resolveCurrentOutputs(
@@ -1256,9 +1528,12 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     let changed = false;
     const liveTurnIds = new Set(liveTurnResponses.map(turn => turn.turnId));
     const snapshotTurnIdsForRetention = new Set(snapshot?.turns?.map(turn => turn.id) ?? []);
+    const hasSnapshotTurns = snapshotTurnIdsForRetention.size > 0;
     const retainedTurnIds = liveTurnResponses.length > 0
       ? liveTurnIds
-      : snapshotTurnIdsForRetention;
+      : hasSnapshotTurns
+        ? snapshotTurnIdsForRetention
+        : new Set([...this.hostStreamTurnIds].filter(turnId => this.turnEntriesById.has(turnId)));
 
     if (liveTurnResponses.length === 0) {
       this.pruneTurnEntries(retainedTurnIds);
@@ -1293,7 +1568,9 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
 
     const nextTurnEntryOrder = liveTurnResponses.length > 0
       ? liveTurnResponses.map(turn => turn.turnId).filter(turnId => this.turnEntriesById.has(turnId))
-      : (snapshot?.turns?.map(turn => turn.id).filter(turnId => this.turnEntriesById.has(turnId)) ?? []);
+      : hasSnapshotTurns
+        ? (snapshot?.turns?.map(turn => turn.id).filter(turnId => this.turnEntriesById.has(turnId)) ?? [])
+        : this.turnEntryOrder.filter(turnId => this.turnEntriesById.has(turnId));
     if (nextTurnEntryOrder.length !== this.turnEntryOrder.length
       || nextTurnEntryOrder.some((turnId, index) => turnId !== this.turnEntryOrder[index])) {
       changed = true;
@@ -1312,6 +1589,7 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
     for (const turnId of [...this.turnEntriesById.keys()]) {
       if (!retainedTurnIds.has(turnId)) {
         this.turnEntriesById.delete(turnId);
+        this.hostStreamTurnIds.delete(turnId);
         changed = true;
       }
     }
@@ -1321,9 +1599,11 @@ export class LiveHostRequestGraphCache implements IHostStreamListener {
 }
 
 export function hasHostResponseConversationContent(
-  model: Pick<HostResponseProjection, 'chatList' | 'dialogItems'> | null | undefined,
+  model: Pick<HostResponseProjection, 'turnResponses' | 'chatList' | 'dialogItems'> | null | undefined,
 ): boolean {
-  return (model?.chatList.length ?? 0) > 0 || (model?.dialogItems.length ?? 0) > 0;
+  return (model?.turnResponses.length ?? 0) > 0
+    || (model?.chatList.length ?? 0) > 0
+    || (model?.dialogItems.length ?? 0) > 0;
 }
 
 export function buildHostRequestModel(
@@ -2085,7 +2365,12 @@ function resolveOrderedTurnIds(
     return turnEntryOrder.filter(turnId => turnEntriesById.has(turnId));
   }
 
-  return snapshot?.turns?.map(turn => turn.id).filter(turnId => turnEntriesById.has(turnId)) ?? [];
+  const snapshotOrder = snapshot?.turns?.map(turn => turn.id).filter(turnId => turnEntriesById.has(turnId)) ?? [];
+  if (snapshotOrder.length > 0) {
+    return snapshotOrder;
+  }
+
+  return [...turnEntriesById.keys()];
 }
 
 function createHostTurnEntriesById(
@@ -2233,7 +2518,8 @@ function buildLiveHostRequestGraphStamp(
   const lastTurn = source.liveTurnResponses[source.liveTurnResponses.length - 1];
   const sourceHasConversationContent = stampedChatList.length > 0
     || source.liveTurnResponses.length > 0
-    || (source.snapshot?.turns?.length ?? 0) > 0;
+    || (source.snapshot?.turns?.length ?? 0) > 0
+    || source.orderedTurnIds.length > 0;
 
   return {
     viewRevision,
@@ -3583,10 +3869,38 @@ function applyHostStreamEvent(
     response: {
       ...baseTurn.response,
       parts: nextParts,
-      resultText: collectMainTurnResponseText(nextParts),
+      resultText: deriveHostStreamResultText(baseTurn.response.resultText, event, nextParts),
       updatedAt: event.updatedAt,
     },
   };
+}
+
+function deriveHostStreamResultText(
+  previousResultText: string | undefined,
+  event: HostStreamResponsePartUpdateEvent,
+  nextParts: readonly TurnResponsePart[],
+): string {
+  let resultText = previousResultText ?? '';
+  if (event.part.type !== 'markdown' || isSubagentScopedHostStreamResponsePart(event.part)) {
+    return resultText;
+  }
+
+  if (event.kind === 'add') {
+    return resultText + event.part.content;
+  }
+
+  if (event.kind === 'append' && event.appendTextMode === 'delta') {
+    return resultText + event.part.content;
+  }
+
+  return collectMainTurnResponseText(nextParts);
+}
+
+function isSubagentScopedHostStreamResponsePart(part: TurnResponsePart): boolean {
+  const metadata = (part as { readonly metadata?: unknown }).metadata;
+  return !!metadata
+    && typeof metadata === 'object'
+    && (metadata as Record<string, unknown>)['sourceAgentRole'] === 'subagent';
 }
 
 function mergeHostStreamResponsePart(

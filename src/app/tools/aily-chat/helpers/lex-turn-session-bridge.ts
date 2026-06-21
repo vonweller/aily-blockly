@@ -1,4 +1,5 @@
 import type { ITurnDataSource, TurnSpan } from '../core/turn-data-source';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 
 type LexSessionSnapshot = import('aily-lex/browser').SessionSnapshot;
 type LexTurnRequestMetadata = import('aily-lex/browser').TurnRequest['metadata'];
@@ -66,6 +67,13 @@ interface LexTurnManagerAccess {
 interface LexTurnSessionAgentAccess {
   readonly turnManager: LexTurnManagerAccess;
   saveSession?(): LexSessionSnapshot;
+}
+
+function isLexTurnSessionTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceLexTurnSession', [
+    '__AILY_CHAT_TRACE_LEX_TURN_SESSION__',
+    'AILY_CHAT_TRACE_LEX_TURN_SESSION',
+  ]);
 }
 
 /**
@@ -201,7 +209,7 @@ export class LexTurnSessionBridge implements ITurnDataSource {
     );
     const activeMetadata = agent.turnManager.activeTurn?.request.metadata;
     const activeModelRouting = activeMetadata?.['modelRouting'];
-    if (effectiveMetadata?.['modelRouting'] || activeModelRouting) {
+    if (isLexTurnSessionTraceEnabled() && (effectiveMetadata?.['modelRouting'] || activeModelRouting)) {
       console.info('[LexTurnSession] startTurn request model routing:', {
         incomingModelRouting: metadata?.['modelRouting'],
         effectiveModelRouting: effectiveMetadata?.['modelRouting'],
@@ -318,6 +326,11 @@ function shouldCarryExistingInteractionContinuation(continuation: unknown): bool
 
   const hardStopReason = typeof record['hardStopReason'] === 'string' ? record['hardStopReason'] : undefined;
   if (hardStopReason?.startsWith('interaction_')) {
+    return false;
+  }
+
+  const stopReason = typeof record['stopReason'] === 'string' ? record['stopReason'] : undefined;
+  if (stopReason === 'COMPLETED') {
     return false;
   }
 

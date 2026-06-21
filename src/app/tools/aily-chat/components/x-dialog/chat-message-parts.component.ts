@@ -37,7 +37,13 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     @for (item of renderItems; track item.id) {
       @if (isGroupItem(item)) {
         <!-- 统一活动组：对齐 Copilot ChatThinkingContentPart -->
-        <aily-chat-activity-group [parts]="item.parts" [doing]="item.live" [sessionId]="sessionId" [turnResponse]="turnResponse" />
+        <aily-chat-activity-group
+          [parts]="item.parts"
+          [doing]="item.live"
+          [sessionId]="sessionId"
+          [turnResponse]="turnResponse"
+          [detailProjectionEnabled]="detailProjectionEnabled"
+        />
       } @else {
         <!-- 独立 Part：路由至专用 viewer -->
         <div class="chat-part" [attr.data-part-type]="item.part.type">
@@ -66,6 +72,7 @@ export class ChatMessagePartsComponent implements OnChanges {
   @Input() doing = false;
   @Input() sessionId = '';
   @Input() turnResponse: TurnResponseTurn | null = null;
+  @Input() detailProjectionEnabled = true;
 
   renderItems: ChatRenderItem[] = [];
 
@@ -82,7 +89,7 @@ export class ChatMessagePartsComponent implements OnChanges {
   private _refresh(): void {
     const parts = this.parts || [];
     const startedAt = performance.now();
-    this.renderItems = buildChatRenderItems(parts, this.doing);
+    this.renderItems = reuseStableRenderItems(this.renderItems, buildChatRenderItems(parts, this.doing));
     ChatPerformanceTracer.recordDuration(
       'message_parts_component_refresh',
       performance.now() - startedAt,
@@ -95,4 +102,49 @@ export class ChatMessagePartsComponent implements OnChanges {
       doing: this.doing,
     });
   }
+}
+
+function reuseStableRenderItems(
+  previousItems: readonly ChatRenderItem[],
+  nextItems: readonly ChatRenderItem[],
+): ChatRenderItem[] {
+  if (previousItems.length === 0 || nextItems.length === 0) {
+    return [...nextItems];
+  }
+
+  const previousById = new Map(previousItems.map((item) => [item.id, item]));
+  return nextItems.map((nextItem) => {
+    const previousItem = previousById.get(nextItem.id);
+    if (!previousItem || previousItem.kind !== nextItem.kind) {
+      return nextItem;
+    }
+
+    if (nextItem.kind === 'part') {
+      return nextItem;
+    }
+
+    return previousItem.kind === 'group'
+      && !nextItem.live
+      && previousItem.live === nextItem.live
+      && samePartReferences(previousItem.parts, nextItem.parts)
+      ? previousItem
+      : nextItem;
+  });
+}
+
+function samePartReferences(
+  previousParts: readonly RenderableChatPart[],
+  nextParts: readonly RenderableChatPart[],
+): boolean {
+  if (previousParts.length !== nextParts.length) {
+    return false;
+  }
+
+  for (let index = 0; index < previousParts.length; index += 1) {
+    if (previousParts[index] !== nextParts[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }

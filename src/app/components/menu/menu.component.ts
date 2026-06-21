@@ -100,6 +100,8 @@ export class MenuComponent implements AfterViewChecked {
   private pendingViewportAdjustment = false;
   private pendingAnchorAlignment = false;
   private pendingSubmenuGeometry = false;
+  private pendingMenuGeometryCorrection = false;
+  private menuGeometryCorrectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // 添加子菜单显示状态管理
   activeSubmenuItem: IMenuItem | null = null;
@@ -314,14 +316,9 @@ export class MenuComponent implements AfterViewChecked {
 
     // Defer the first geometry correction until after the initial change-detection
     // pass so the menu can align against its rendered height without triggering NG0100.
-    setTimeout(() => {
-      if (!this.menuBox?.nativeElement) {
-        return;
-      }
-
-      this.alignMenuPositionToAnchor();
-      this.adjustMenuPositionWithinViewport();
-    });
+    this.pendingAnchorAlignment = true;
+    this.pendingViewportAdjustment = true;
+    this.scheduleMenuGeometryCorrection();
   }
 
   ngAfterViewChecked(): void {
@@ -335,21 +332,18 @@ export class MenuComponent implements AfterViewChecked {
       this.refineSubmenuPosition();
     }
 
-    if (this.pendingAnchorAlignment) {
-      this.alignMenuPositionToAnchor();
-      this.pendingAnchorAlignment = false;
+    if (this.pendingAnchorAlignment || this.pendingViewportAdjustment) {
+      this.scheduleMenuGeometryCorrection();
     }
-
-    if (!this.pendingViewportAdjustment) {
-      return;
-    }
-
-    this.adjustMenuPositionWithinViewport();
   }
 
   ngOnDestroy(): void {
     document.removeEventListener('click', this.handleDocumentClick);
     document.removeEventListener('contextmenu', this.handleDocumentClick);
+    if (this.menuGeometryCorrectionTimeout) {
+      clearTimeout(this.menuGeometryCorrectionTimeout);
+      this.menuGeometryCorrectionTimeout = null;
+    }
     this.setModelSubmenuBodyState(false);
   }
 
@@ -709,6 +703,27 @@ export class MenuComponent implements AfterViewChecked {
       ...this.position,
       y: anchoredTop,
     };
+  }
+
+  private scheduleMenuGeometryCorrection(): void {
+    if (this.pendingMenuGeometryCorrection) {
+      return;
+    }
+
+    this.pendingMenuGeometryCorrection = true;
+    this.menuGeometryCorrectionTimeout = setTimeout(() => {
+      this.pendingMenuGeometryCorrection = false;
+      this.menuGeometryCorrectionTimeout = null;
+
+      if (this.pendingAnchorAlignment) {
+        this.alignMenuPositionToAnchor();
+        this.pendingAnchorAlignment = false;
+      }
+
+      if (this.pendingViewportAdjustment) {
+        this.adjustMenuPositionWithinViewport();
+      }
+    });
   }
 
   private adjustMenuPositionWithinViewport(): void {

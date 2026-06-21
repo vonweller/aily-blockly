@@ -261,6 +261,18 @@
     @if (paneStageSurface.showSender) {
     <!-- 发送部分 -->
     <div class="sender">
+      @if (paneStageSurface.showConversation && scrollManager.showFollowBottomButton) {
+      <div class="chat-follow-bottom-layer" aria-hidden="false">
+        <button
+          type="button"
+          class="chat-follow-bottom-button"
+          aria-label="Scroll to latest message"
+          title="Scroll to latest message"
+          (click)="resumeConversationAutoScroll($event)">
+          <i class="fa-light fa-arrow-down" aria-hidden="true"></i>
+        </button>
+      </div>
+      }
       <div class="s-box">
         <aily-chat-input-part-host [sessionId]="vm.sessionId" (todoFocusToggleRequested)="handleTodoFocusToggleShortcut()">
         @if(vm.chatInputNotice$ | async; as chatInputNotice) {

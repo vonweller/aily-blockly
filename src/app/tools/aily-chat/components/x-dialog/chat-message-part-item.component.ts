@@ -49,10 +49,15 @@ interface ContinueInteractionActionData {
   readonly ailyContinueInteraction: true;
 }
 
+interface RetryLastActionData {
+  readonly ailyRetryLastAction: true;
+}
+
 type ErrorConfirmationData =
   | ContinueOnErrorConfirmationData
   | SwitchToAutoOnRateLimitConfirmationData
-  | ContinueInteractionActionData;
+  | ContinueInteractionActionData
+  | RetryLastActionData;
 
 const PLAN_MARKDOWN_RENDER_CHAR_LIMIT = 6_000;
 const PLAN_CHUNK_SIZE = 2_000;
@@ -588,6 +593,13 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
 
     if (markdown) {
       if (markdown.contentRef) {
+        if (liveStreamingRef && this.activeMarkdownContentRef === markdown.contentRef && this.markdownDisplayContent().length > 0) {
+          this.activeMarkdownContentLength = typeof markdown.contentLength === 'number'
+            ? markdown.contentLength
+            : this.activeMarkdownContentLength;
+          return;
+        }
+
         if (liveStreamingRef) {
           rawContent = readStoredMarkdownContentWindow(
             markdown.contentRef,
@@ -860,6 +872,11 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
       return;
     }
 
+    if (isRetryLastAction(action.data)) {
+      await this.chatEngine.retryLastAction();
+      return;
+    }
+
     if (isSwitchToAutoOnRateLimitConfirmation(action.data)) {
       const autoModel = this.resolveDefaultAutoModel();
       if (!autoModel || this.isDefaultAutoModelSelected()) {
@@ -943,7 +960,8 @@ export class ChatMessagePartItemComponent implements OnChanges, OnDestroy {
     const rawData = value['data'];
     if (isContinueOnErrorConfirmation(rawData)
       || isSwitchToAutoOnRateLimitConfirmation(rawData)
-      || isContinueInteractionAction(rawData)) {
+      || isContinueInteractionAction(rawData)
+      || isRetryLastAction(rawData)) {
       return rawData;
     }
 
@@ -1039,6 +1057,10 @@ function isSwitchToAutoOnRateLimitConfirmation(value: unknown): value is SwitchT
 
 function isContinueInteractionAction(value: unknown): value is ContinueInteractionActionData {
   return isRecord(value) && value['ailyContinueInteraction'] === true;
+}
+
+function isRetryLastAction(value: unknown): value is RetryLastActionData {
+  return isRecord(value) && value['ailyRetryLastAction'] === true;
 }
 
 function isContinuableErrorContinuation(

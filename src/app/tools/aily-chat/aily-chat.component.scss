@@ -104,6 +104,7 @@
 }
 
 .chat-stage {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -312,7 +313,55 @@
   }
 }
 
+.chat-follow-bottom-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -44px;
+  z-index: 80;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.chat-follow-bottom-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--aily-border-primary, rgba(255, 255, 255, 0.16));
+  border-radius: 50%;
+  background: var(--aily-bg-elevated, rgba(36, 36, 36, 0.94));
+  color: var(--aily-chat-xdialog-msg-text, #d4d4d4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+
+.chat-follow-bottom-button i {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chat-follow-bottom-button:hover {
+  border-color: var(--aily-chat-viewer-state-info, #6cb6ff);
+  background: var(--aily-bg-hover, rgba(54, 54, 54, 0.98));
+  transform: translateY(-1px);
+}
+
+.chat-follow-bottom-button:active {
+  transform: translateY(0);
+}
+
 .sender {
+  position: relative;
+  z-index: 20;
   flex-shrink: 0;
   padding-top: 10px;
   border-top: 1px solid var(--aily-chat-xdialog-msg-divider, rgba(255, 255, 255, 0.08));

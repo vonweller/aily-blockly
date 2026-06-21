@@ -1,5 +1,6 @@
 ﻿import { Injectable } from '@angular/core';
 import { AilyHost } from '../core/host';
+import { isAilyCategoryDebugEnabled } from '../core/chat-debug-flags';
 
 // Arduino 代码检查器
 declare const arduinoGenerator: any;
@@ -28,6 +29,13 @@ type AilyBuilderLintFormat = 'human' | 'vscode' | 'json';
 
 function toAilyBuilderLintFormat(format: LintFormat): AilyBuilderLintFormat {
   return format === 'diagnostic' ? 'vscode' : format;
+}
+
+function isArduinoLintTraceEnabled(): boolean {
+  return isAilyCategoryDebugEnabled('aily.chat.traceArduinoLint', [
+    '__AILY_CHAT_TRACE_ARDUINO_LINT__',
+    'AILY_CHAT_TRACE_ARDUINO_LINT',
+  ]);
 }
 
 /**
@@ -144,13 +152,15 @@ export class ArduinoLintService {
       // 像 BuilderService 一样，在方法开始时统一赋值项目路径
       this.currentProjectPath = this.projectService.currentProjectPath;
 
-      console.info('[ArduinoLintService] checkSyntax start', {
-        projectPath: this.currentProjectPath,
-        mode,
-        format,
-        length: code.length,
-        fingerprint: createLintCodeFingerprint(code),
-      });
+      if (isArduinoLintTraceEnabled()) {
+        console.info('[ArduinoLintService] checkSyntax start', {
+          projectPath: this.currentProjectPath,
+          mode,
+          format,
+          length: code.length,
+          fingerprint: createLintCodeFingerprint(code),
+        });
+      }
 
       // console.log(`🔍 开始 Arduino 语法检查 (模式: ${mode}, 格式: ${format})...`);
 
@@ -279,11 +289,13 @@ export class ArduinoLintService {
 
       // 高效写入代码到 sketch.ino 文件（覆盖模式，无需预先删除）
       await AilyHost.get().fs.writeFileSync(sketchFilePath, code);
-      console.info('[ArduinoLintService] lint sketch prepared', {
-        sketchFilePath,
-        length: code.length,
-        fingerprint: createLintCodeFingerprint(code),
-      });
+      if (isArduinoLintTraceEnabled()) {
+        console.info('[ArduinoLintService] lint sketch prepared', {
+          sketchFilePath,
+          length: code.length,
+          fingerprint: createLintCodeFingerprint(code),
+        });
+      }
       // console.log(`✅ 写入代码到: ${sketchFilePath} (${code.length} 字符)`);
 
       // console.log(`✅ 临时环境准备完成，复用项目 .temp 目录: ${tempPath}`);

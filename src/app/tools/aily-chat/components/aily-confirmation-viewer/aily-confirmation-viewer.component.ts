@@ -93,6 +93,6 @@ export class AilyConfirmationViewerComponent implements OnChanges {
   }
 
   logDetail(): void {
-    console.log('[AilyConfirmation]', this.data);
+    // Intentionally quiet: chat renderers must not dump large payloads to DevTools.
   }
 }

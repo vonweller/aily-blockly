@@ -15,8 +15,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { XMarkdownComponent } from 'ngx-x-markdown';
-import type { StreamingOption, ComponentMap } from 'ngx-x-markdown';
-import { AilyChatCodeComponent } from '../aily-chat-code.component';
+import type { ComponentMap, StreamingOption } from 'ngx-x-markdown';
 import { getClosingTagsForOpenBlocks } from '../../../services/content-sanitizer.service';
 import {
   getThinkContent,
@@ -24,6 +23,7 @@ import {
   getThinkContentWindow,
 } from '../../../core/think-content-store';
 import { ChatPerformanceTracer } from '../../../services/chat-perf-tracer';
+import { AilyChatCodeComponent } from '../aily-chat-code.component';
 
 const LIVE_THINK_RENDER_WINDOW_CHARS = 48 * 1024;
 const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\n';
@@ -211,11 +211,8 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         position: relative;
       }
 
-      /* Markdown 内容样式 */
+      /* Markdown 内容样式：复用普通 assistant markdown/code 组件，只收敛容器约束 */
       :host ::ng-deep .ac-think-body .x-markdown-dark {
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--chat-fg-dim, #8e8e8e);
         word-break: break-word;
         overflow-wrap: anywhere;
         white-space: normal;
@@ -223,20 +220,9 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         min-width: 0;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark * { max-width: 100%; }
-      :host ::ng-deep .ac-think-body .x-markdown-dark p { margin: 2px 0; }
-      :host ::ng-deep .ac-think-body .x-markdown-dark h1,
-      :host ::ng-deep .ac-think-body .x-markdown-dark h2,
-      :host ::ng-deep .ac-think-body .x-markdown-dark h3,
-      :host ::ng-deep .ac-think-body .x-markdown-dark h4 {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--chat-fg, #ccc);
-        margin: 4px 0 2px;
-      }
       :host ::ng-deep .ac-think-body .x-markdown-dark ul,
       :host ::ng-deep .ac-think-body .x-markdown-dark ol {
         padding-left: 1.2em;
-        margin: 2px 0;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark pre {
         max-width: 100%;
@@ -247,16 +233,6 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         display: block;
         overflow-x: auto;
       }
-      :host ::ng-deep .ac-think-body .x-markdown-dark th,
-      :host ::ng-deep .ac-think-body .x-markdown-dark td {
-        padding: 3px 6px;
-        font-size: 11px;
-      }
-      :host ::ng-deep .ac-think-body .x-markdown-dark blockquote {
-        margin: 3px 0;
-        padding: 2px 6px;
-      }
-
       @keyframes ac-spin {
         to { transform: rotate(360deg); }
       }
@@ -280,9 +256,9 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
 
   thinkContent = '';
   thinkExpanded = false;
+  readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   markdownContent = signal('');
   streamingConfig = signal<StreamingOption>({ hasNextChunk: false, enableAnimation: false });
-  readonly componentMap: ComponentMap = { code: AilyChatCodeComponent };
   private shouldScrollThink = false;
   /** 用户未主动上滚时跟随流式到底部 */
   private thinkStickToBottom = true;
@@ -344,6 +320,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
   // ===== Polling: 因 v 字段已移除，x-markdown 不再逐帧触发 ngOnChanges =====
   // think viewer 需自行轮询 store 获取最新内容
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
+  private _activeContentRef = '';
 
   ngOnChanges(changes: SimpleChanges): void {
     if (!changes['data'] || !this.data) return;
@@ -356,15 +333,27 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
       this.thinkStickToBottom = true;
     }
 
+    const contentRef = this.data.ref || '';
+    const liveStreamingRef = !!contentRef && this.data.isComplete === false;
+    if (liveStreamingRef && this._activeContentRef === contentRef && this.markdownContent().length > 0) {
+      this.thinkExpanded = true;
+      this.shouldScrollThink = !this.embedded;
+      this._startPhraseRotation();
+      this._startPolling();
+      return;
+    }
+
+    this._activeContentRef = contentRef;
+
     // 获取原始内容
     let raw = '';
     let rawLength = 0;
-    if (this.data.ref) {
-      rawLength = getThinkContentLength(this.data.ref);
+    if (contentRef) {
+      rawLength = getThinkContentLength(contentRef);
       if (this.data.isComplete === false || this.embedded) {
-        raw = getThinkContentWindow(this.data.ref, LIVE_THINK_RENDER_WINDOW_CHARS, LIVE_THINK_OMITTED_MARKER);
+        raw = getThinkContentWindow(contentRef, LIVE_THINK_RENDER_WINDOW_CHARS, LIVE_THINK_OMITTED_MARKER);
       } else {
-        raw = getThinkContent(this.data.ref);
+        raw = getThinkContent(contentRef);
       }
     } else if (this.data.encoded && this.data.content) {
       try {
@@ -427,21 +416,14 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
    *
    * 修复：
    * - 存储最新 raw → _pendingRaw
-   * - 如果距上次渲染增长 <500 bytes，跳过（batch 进 pending）
+   * - 首帧立即渲染，让用户看到正在思考
+   * - 后续仅保留最新快照，按 100ms + rAF 限频提交
    * - 已在 pending 时不再重复 schedule
-   * - 100ms 后在 rAF 中渲染
    *
-   * 效果：think 内容每 100ms 最多 render 一次，每次只处理 500+ bytes 增量
+   * 效果：think 内容每 100ms 最多 render 一次，避免长 think 每 500 bytes 全量 markdown parse 抢帧
    */
   private _scheduleRender(raw: string, rawLength = raw.length): void {
-    const rawLen = rawLength;
-    const prevRendered = this._lastRenderedRawLen;
-
-    // 立即渲染的条件：
-    // 1. 距上次渲染增长了 500+ bytes
-    // 2. 这是第一次渲染（_lastRenderedRawLen === 0）
-    // 3. 内容已完成（isComplete）
-    if (rawLen >= prevRendered + 500 || prevRendered === 0) {
+    if (this._lastRenderedRawLen === 0) {
       this._cancelThrottle();
       this._renderNow(raw, false, rawLength);
       return;
@@ -460,10 +442,17 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
           const pendingLength = this._pendingRawLength || pending.length;
           this._pendingRaw = null;
           this._pendingRawLength = 0;
-          this.ngZone.run(() => {
-            this._renderNow(pending, false, pendingLength);
-            this.cdr.markForCheck();
-          });
+          const commit = () => {
+            this.ngZone.run(() => {
+              this._renderNow(pending, false, pendingLength);
+              this.cdr.markForCheck();
+            });
+          };
+          if (typeof globalThis.requestAnimationFrame === 'function') {
+            globalThis.requestAnimationFrame(commit);
+          } else {
+            commit();
+          }
         }
       }, 100);
     });
@@ -493,7 +482,7 @@ export class XAilyThinkViewerComponent implements AfterViewChecked, OnChanges, O
           LIVE_THINK_RENDER_WINDOW_CHARS,
           LIVE_THINK_OMITTED_MARKER,
         );
-        if (raw && rawLength !== this._lastRenderedRawLen) {
+        if (raw && (rawLength !== this._lastRenderedRawLen || raw !== this.thinkContent)) {
           this.ngZone.run(() => {
             const updateStartedAt = performance.now();
             this.thinkContent = raw;

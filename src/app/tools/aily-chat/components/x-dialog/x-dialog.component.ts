@@ -51,6 +51,7 @@ import { buildRenderableProgressParts, type RenderableChatPart } from './chat-re
 import type { HostResponseVoteDirection } from '../../helpers/host-turn-response-state';
 import { ChatRuntimeInteractionHostService } from '../../services/chat-runtime-interaction-host.service';
 import type { WorkspaceCheckpointPresentationMode } from '../../services/edit-checkpoint.service';
+import { ChatEngineService } from '../../services/chat-engine.service';
 
 const EMPTY_TURN_PARTS: readonly TurnResponsePart[] = [];
 const EMPTY_PROGRESS_MESSAGES: readonly NonNullable<TurnResponseTurn['response']['progressMessages']>[number][] = [];
@@ -173,12 +174,14 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   private _effectivePartsDoing = false;
   private _effectivePartsRevisionKey = '';
   private _effectivePartsCache = [] as RenderableChatPart[];
+  private hostTextDeltaVisibilityTurnId: string | null = null;
 
   constructor(
     private cdr: ChangeDetectorRef,
     private hostElement: ElementRef<HTMLElement>,
     private ngZone: NgZone,
     @Optional() private runtimeInteractionHost: ChatRuntimeInteractionHostService | null = null,
+    @Optional() private chatEngine: ChatEngineService | null = null,
   ) {}
 
   /** 在已进入编辑态之后通过 setTimeout 挂载，避免「点开编辑」的同一次点击误关 */
@@ -451,7 +454,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get regenerateActionDisabled(): boolean {
-    return this.isRequestDisabled || this.isCheckpointWorkspaceUnavailable;
+    return this.isRequestDisabled;
   }
 
   get editTooltipTitle(): string {
@@ -612,10 +615,6 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   }
 
   get regenerateActionTitle(): string {
-    if (this.isCheckpointWorkspaceUnavailable) {
-      return '当前工作区 checkpoint 尚未就绪，不能安全重新执行该历史请求。';
-    }
-
     if (this.regenerateActionDisabled) {
       return '该请求已失活，不能重新执行；这只影响聊天历史操作，工作区恢复状态请看单独的恢复入口';
     }
@@ -993,6 +992,9 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     }
 
     if (changes['doing'] || changes['content'] || changes['parts'] || changes['turnResponse'] || changes['turnContext'] || changes['liveParts']) {
+      if (changes['turnResponse'] || changes['turnContext']) {
+        this.syncHostTextDeltaVisibility();
+      }
       if (!this.shouldRenderHeavyContent) {
         this.streamingConfig.set({ hasNextChunk: this.effectiveDoing, enableAnimation: false });
         return;
@@ -1018,6 +1020,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
   ngAfterViewInit(): void {
     this.observeViewportVisibility();
     this.observeContentHeight();
+    this.syncHostTextDeltaVisibility();
   }
 
   ngAfterViewChecked(): void { }
@@ -1027,6 +1030,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
     this.visibilityObserver = null;
     this.contentResizeObserver?.disconnect();
     this.contentResizeObserver = null;
+    this.syncHostTextDeltaVisibility(true);
     this.detachEditOutsideClickListener();
     if (this.isEditing) {
       this.editSessionClosed.emit();
@@ -1055,6 +1059,7 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
 
         this.ngZone.run(() => {
           this.isViewportVisible = nextVisible;
+          this.syncHostTextDeltaVisibility();
           if (nextVisible) {
             this.refreshRenderableContent();
           }
@@ -1067,6 +1072,26 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
       });
       this.visibilityObserver.observe(host);
     });
+  }
+
+  private syncHostTextDeltaVisibility(forceVisible?: boolean): void {
+    if (!this.chatEngine) {
+      return;
+    }
+
+    const turnId = this.role === 'aily' ? this.activityTurnResponse?.turnId : undefined;
+    if (this.hostTextDeltaVisibilityTurnId && this.hostTextDeltaVisibilityTurnId !== turnId) {
+      this.chatEngine.setTurnHostTextDeltaVisibility(this.hostTextDeltaVisibilityTurnId, true);
+      this.hostTextDeltaVisibilityTurnId = null;
+    }
+
+    if (!turnId) {
+      return;
+    }
+
+    const visible = forceVisible ?? this.shouldRenderHeavyContent;
+    this.chatEngine.setTurnHostTextDeltaVisibility(turnId, visible);
+    this.hostTextDeltaVisibilityTurnId = turnId;
   }
 
   private observeContentHeight(): void {
