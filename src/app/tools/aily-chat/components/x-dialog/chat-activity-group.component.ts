@@ -159,7 +159,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       position: absolute;
       left: 7px;
       top: 18px;
-      height: 17px;
+      height: 16px;
       width: 4px;
       border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));

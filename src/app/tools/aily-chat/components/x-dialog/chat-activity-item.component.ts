@@ -704,8 +704,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       width: 1px;
       border-radius: 0;
       background-color: var(--chat-border, rgba(255,255,255,0.10));
-      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 8px 19px, #000 24px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 0px 19px, #000 24px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 4px, transparent 5px 18px, #000 21px 100%);;
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 4px, transparent 5px 18px, #000 21px 100%);;
     }
 
     .cag-item:not(.cag-item-tool)::before {
@@ -714,8 +714,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item.cag-item-first::before {
-      mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
+      mask-image: linear-gradient(to bottom, transparent 0 16px, #000 24px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0 16px, #000 24px 100%);
     }
 
     .cag-item.cag-item-first:not(.cag-item-tool)::before {
@@ -724,8 +724,8 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     }
 
     .cag-item.cag-item-last::before {
-      mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 100%);
-      -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 100%);
+      mask-image: linear-gradient(to bottom, #000 0 4px, transparent 5px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 4px, transparent 5px 100%);
     }
 
     .cag-item.cag-item-last:not(.cag-item-tool)::before {
@@ -754,7 +754,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
     .cag-item-icon-shell {
       position: absolute;
       left: 5px;
-      top: 7px;
+      top: 6px;
       width: 12px;
       height: 12px;
     }
