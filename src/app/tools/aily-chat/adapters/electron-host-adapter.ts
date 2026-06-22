@@ -64,6 +64,7 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   const wMcp = (window as any)['mcp'];
   const wOs = (window as any)['os'];
   const wLog = (window as any)['log'];
+  const wClipboard = (window as any)['electronAPI']?.clipboard ?? (window as any)['clipboard'];
   const textDocumentContentProviders = new Map<string, {
     provideTextDocumentContent(uri: string): Promise<string | undefined> | string | undefined;
   }>();
@@ -380,7 +381,12 @@ export function createElectronHostAdapter(deps: ElectronAdapterDeps): IAilyHostA
   return {
     fs, path, terminal, dialog, platform,
     project, auth, config, builder, notification,
-    env, shell, log, editor, mcp,
+    env, shell,
+    clipboard: wClipboard ? {
+      writeText: (text: string) => wClipboard.writeText(text),
+      readText: () => wClipboard.readText?.() ?? '',
+    } : undefined,
+    log, editor, mcp,
     // 宿主特有服务透传
     blockly: deps.blocklyService,
     connectionGraph: deps.connectionGraphService,

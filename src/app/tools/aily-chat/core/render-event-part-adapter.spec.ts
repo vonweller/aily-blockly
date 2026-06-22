@@ -1336,41 +1336,75 @@ describe('RenderEventPartAdapter', () => {
           operationKind: 'blockly.syncAbs.import',
           operationLabel: 'Import ABS',
           durationMs: 1250,
-          toolSpecificData: jasmine.objectContaining({
-            kind: 'editor_operation',
-            operationId: 'op-1',
-            operationKind: 'blockly.syncAbs.import',
-            label: 'Import ABS',
-            phase: 'completed',
-            running: false,
-          }),
-          timeline: [
-            jasmine.objectContaining({
-              recordId: 'tc-editor-op:op-1:queued',
-              phase: 'queued',
-              summary: 'Import ABS queued',
-              progressDetails: jasmine.objectContaining({
-                kind: 'editor_operation',
-                operationKind: 'blockly.syncAbs.import',
-                queueSize: 2,
-                running: true,
-              }),
-            }),
-            jasmine.objectContaining({
-              recordId: 'tc-editor-op:op-1:completed',
-              phase: 'completed',
-              summary: 'Import ABS completed',
-              progressDetails: jasmine.objectContaining({
-                kind: 'editor_operation',
-                operationKind: 'blockly.syncAbs.import',
-                durationMs: 1250,
-                running: false,
-              }),
-            }),
-          ],
+          running: false,
         }),
       }),
     ]);
+    const metadata = (store.getPartsForHandle(currentHandle)[0] as any).metadata;
+    expect(metadata.toolSpecificData).toBeUndefined();
+    expect(metadata.timeline).toBeUndefined();
+    expect(metadata.queueSize).toBeUndefined();
+  });
+
+  it('maps cancelled editor operations to a terminal warn state', () => {
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'tc-editor-op-cancel',
+      toolName: 'syncAbs',
+      input: { action: 'import' },
+      timestamp: 1,
+    });
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-editor-op-cancel',
+      data: {
+        kind: 'editor_operation',
+        operationId: 'op-cancel',
+        operationKind: 'blockly.syncAbs.import',
+        phase: 'started',
+        label: 'Import ABS',
+        summary: 'Import ABS started',
+        running: true,
+      },
+      timestamp: 2,
+    } as RenderEvent);
+
+    processCurrent({
+      type: 'tool_call_progress',
+      toolCallId: 'tc-editor-op-cancel',
+      data: {
+        kind: 'editor_operation',
+        operationId: 'op-cancel',
+        operationKind: 'blockly.syncAbs.import',
+        phase: 'cancelled',
+        label: 'Import ABS',
+        summary: 'Import ABS cancelled',
+        running: false,
+      },
+      timestamp: 3,
+    } as RenderEvent);
+
+    expect(store.getPartsForHandle(currentHandle)).toEqual([
+      jasmine.objectContaining({
+        type: 'tool_call',
+        toolCallId: 'tc-editor-op-cancel',
+        state: 'warn',
+        text: 'Import ABS cancelled',
+        metadata: jasmine.objectContaining({
+          toolName: 'syncAbs',
+          phase: 'cancelled',
+          progressKind: 'editor_operation',
+          operationId: 'op-cancel',
+          operationKind: 'blockly.syncAbs.import',
+          operationLabel: 'Import ABS',
+          running: false,
+        }),
+      }),
+    ]);
+    const metadata = (store.getPartsForHandle(currentHandle)[0] as any).metadata;
+    expect(metadata.toolSpecificData).toBeUndefined();
+    expect(metadata.timeline).toBeUndefined();
   });
 
   it('keeps command output progress on the originating tool handle after current handle advances', () => {

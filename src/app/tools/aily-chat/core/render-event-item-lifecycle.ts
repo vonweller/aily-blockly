@@ -891,6 +891,28 @@ function toolProgressPayload(event: Extract<RenderEvent, { type: 'tool_call_prog
     return undefined;
   }
 
+  const phase = normalizeProgressPhase(progress.phase);
+  if (progress.kind === 'editor_operation') {
+    return {
+      type: 'tool',
+      toolCallId: event.toolCallId,
+      toolName: progress.toolName || 'tool',
+      text: progress.summary || progress.label || progress.statusText || 'Tool still running...',
+      state: resolveProgressToolState(progress),
+      metadata: boundedRecord({
+        phase,
+        progress: progress.progress,
+        progressKind: 'editor_operation',
+        operationId: progress.operationId,
+        operationKind: progress.operationKind,
+        operationLabel: progress.label,
+        queueSize: progress.queueSize,
+        durationMs: progress.durationMs,
+        running: progress.running,
+      }),
+    };
+  }
+
   return {
     type: 'tool',
     toolCallId: event.toolCallId,
@@ -898,7 +920,7 @@ function toolProgressPayload(event: Extract<RenderEvent, { type: 'tool_call_prog
     text: progress.summary || progress.label || progress.statusText || 'Tool still running...',
     state: resolveProgressToolState(progress),
     metadata: boundedRecord({
-      phase: normalizeProgressPhase(progress.phase),
+      phase,
       progress: progress.progress,
       progressKind: progress.kind,
       operationId: progress.operationId,
@@ -906,22 +928,10 @@ function toolProgressPayload(event: Extract<RenderEvent, { type: 'tool_call_prog
       operationLabel: progress.label,
       queueSize: progress.queueSize,
       durationMs: progress.durationMs,
-      toolSpecificData: progress.kind === 'editor_operation'
-        ? {
-            kind: 'editor_operation',
-            operationId: progress.operationId,
-            operationKind: progress.operationKind,
-            label: progress.label,
-            phase: normalizeProgressPhase(progress.phase),
-            running: progress.running,
-          }
-        : undefined,
       timeline: [
         {
-          recordId: progress.kind === 'editor_operation' && progress.operationId
-            ? `${event.toolCallId}:${progress.operationId}:${normalizeProgressPhase(progress.phase)}`
-            : `${event.toolCallId}:progress`,
-          phase: normalizeProgressPhase(progress.phase),
+          recordId: `${event.toolCallId}:progress`,
+          phase,
           summary: progress.summary,
           progress: progress.progress,
           progressDetails: buildToolProgressDetails(progress),

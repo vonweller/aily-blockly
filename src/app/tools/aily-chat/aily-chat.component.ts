@@ -50,7 +50,7 @@ import { ChatSurfaceShellCoordinator } from './helpers/chat-surface-shell-coordi
 import { ChatSubmitShellCoordinator } from './helpers/chat-submit-shell-coordinator';
 import { ChatRequestController } from './helpers/chat-request-controller';
 import type { ChatPendingRequestKind, PendingFollowupRequest } from './helpers/chat-pending-request';
-import { ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
+import { AILY_CHAT_INPUT_MAX_CHARS, ChatComposerShellCoordinator } from './helpers/chat-composer-shell-coordinator';
 import { ChatInputHistoryNavigator, type ChatInputHistoryEntry } from './helpers/chat-input-history-navigator';
 import { ChatViewportShellCoordinator } from './helpers/chat-viewport-shell-coordinator';
 import { ChatComponentLifecycleCoordinator } from './helpers/chat-component-lifecycle-coordinator';
@@ -167,6 +167,8 @@ interface PendingFollowupSection {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AilyChatComponent implements OnDestroy, AfterViewChecked {
+  readonly chatInputMaxChars = AILY_CHAT_INPUT_MAX_CHARS;
+
   readonly debugBrowserViewState = {
     Home: ChatDebugBrowserViewState.Home,
     Overview: ChatDebugBrowserViewState.Overview,
@@ -395,6 +397,9 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
       navigateInputHistory: (direction, currentValue) => this.navigateInputHistory(direction, currentValue),
       submitCurrentInput: (options) => this.submitCurrentDraftAction(options),
       getTextareaRef: () => this.chatTextarea,
+      notifyInputTruncated: (maxChars) => {
+        this.message.warning(`输入内容已截断到 ${maxChars.toLocaleString()} 个字符。请把大段内容作为文件或上下文添加。`);
+      },
     });
     this.viewportShellCoordinator = new ChatViewportShellCoordinator({
       scrollManager: this.scrollManager,

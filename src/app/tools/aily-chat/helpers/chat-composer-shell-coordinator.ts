@@ -1,6 +1,9 @@
 import type { ComposerKeyAction } from './chat-composer-view';
 import type { ChatPendingRequestKind } from './chat-pending-request';
 
+export const AILY_CHAT_INPUT_MAX_CHARS = 32_000;
+const INPUT_TRUNCATION_NOTICE_INTERVAL_MS = 2000;
+
 interface ComposerViewStateLike {
   updateAgentSuggestions(inputValue: string): void;
   applyAgentSelection(agentName: string): string;
@@ -36,8 +39,11 @@ export class ChatComposerShellCoordinator {
       submitCurrentInput: (options?: { queueKind?: ChatPendingRequestKind }) => Promise<unknown>;
       getTextareaRef: () => TextareaRefLike | undefined;
       schedule?: (work: () => void) => void;
+      notifyInputTruncated?: (maxChars: number) => void;
     },
   ) {}
+
+  private lastInputTruncationNoticeAt = 0;
 
   updateSuggestions(): void {
     if (typeof this.deps.viewState.updateAgentSuggestions === 'function') {
@@ -46,25 +52,27 @@ export class ChatComposerShellCoordinator {
   }
 
   updateInputValue(value: string): void {
-    this.deps.setInputValue(value);
+    this.deps.setInputValue(this.clampInputValue(value));
   }
 
   selectAgent(agentName: string): void {
-    this.deps.setInputValue(this.deps.viewState.applyAgentSelection(agentName));
+    this.deps.setInputValue(this.clampInputValue(this.deps.viewState.applyAgentSelection(agentName)));
     this.schedule(() => {
       this.deps.getTextareaRef()?.nativeElement?.focus();
     });
   }
 
   applyLineBreak(value: string, caret: number, textarea: HTMLTextAreaElement | null): void {
-    this.deps.setInputValue(value);
+    const nextValue = this.clampInputValue(value);
+    const nextCaret = Math.min(caret, nextValue.length);
+    this.deps.setInputValue(nextValue);
     if (!textarea) {
       return;
     }
 
     this.schedule(() => {
-      textarea.selectionStart = caret;
-      textarea.selectionEnd = caret;
+      textarea.selectionStart = nextCaret;
+      textarea.selectionEnd = nextCaret;
     });
   }
 
@@ -138,9 +146,10 @@ export class ChatComposerShellCoordinator {
     }
 
     event.preventDefault();
-    this.deps.setInputValue(nextValue);
+    const normalizedNextValue = this.clampInputValue(nextValue);
+    this.deps.setInputValue(normalizedNextValue);
     if (textarea) {
-      const caret = direction === 'previous' ? 0 : nextValue.length;
+      const caret = direction === 'previous' ? 0 : normalizedNextValue.length;
       this.schedule(() => {
         textarea.selectionStart = caret;
         textarea.selectionEnd = caret;
@@ -172,5 +181,28 @@ export class ChatComposerShellCoordinator {
   private schedule(work: () => void): void {
     const scheduler = this.deps.schedule ?? ((callback: () => void) => setTimeout(callback, 0));
     scheduler(work);
+  }
+
+  private clampInputValue(value: string): string {
+    if (value.length <= AILY_CHAT_INPUT_MAX_CHARS) {
+      return value;
+    }
+
+    this.notifyInputTruncated();
+    return value.slice(0, AILY_CHAT_INPUT_MAX_CHARS);
+  }
+
+  private notifyInputTruncated(): void {
+    if (!this.deps.notifyInputTruncated) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastInputTruncationNoticeAt < INPUT_TRUNCATION_NOTICE_INTERVAL_MS) {
+      return;
+    }
+
+    this.lastInputTruncationNoticeAt = now;
+    this.deps.notifyInputTruncated(AILY_CHAT_INPUT_MAX_CHARS);
   }
 }

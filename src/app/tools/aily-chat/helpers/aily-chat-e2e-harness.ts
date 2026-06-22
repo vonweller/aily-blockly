@@ -63,6 +63,7 @@ interface AilyChatE2eHarnessApi {
   sendWhileDetached(text: string): Promise<AilyChatE2eSnapshot>;
   runLongSubagentTurn(): Promise<AilyChatE2eSnapshot>;
   runWorkspaceFinalizeBoundaryProbe(): Promise<AilyChatE2eSnapshot>;
+  runEditorOperationStreamingProbe(): Promise<AilyChatE2eSnapshot>;
   startCancellableSubagentTurn(): Promise<AilyChatE2eSnapshot>;
   awaitCancellableSubagentTurnSettled(): Promise<AilyChatE2eSnapshot>;
   startCancellableEditorOperationTurn(): Promise<AilyChatE2eSnapshot>;
@@ -707,6 +708,134 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       }
 
       await options.runWorkspaceFinalizeBoundaryProbe();
+      return snapshot();
+    },
+    async runEditorOperationStreamingProbe() {
+      await installDeterministicRuntime();
+      if (!engine.lexStream?.turn?.run) {
+        throw new Error('Aily chat E2E harness requires lexStream.turn.run');
+      }
+
+      const previousRun = engine.lexStream.turn.run;
+      engine.lexStream.turn.run = async (llmText: string, displayText?: string): Promise<void> => {
+        const sessionId = getCurrentSessionId(engine);
+        const turnId = engine.lexStream?.turns?.currentId?.() || `e2e-editor-operation-streaming-turn-${Date.now()}`;
+        const toolCallId = 'e2e-editor-operation-streaming-tool';
+        const renderBridge = engine.lexStream?._renderEventBridge;
+        const existingTurns = sessionId ? (engine.readSessionTurnResponses?.(sessionId) ?? []) : [];
+        const yieldToBrowser = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+        renderBridge?.finalizeCurrentTurn?.('completed');
+        renderBridge?.setProjectionSessionResource?.(sessionId || null);
+        engine.lexStream?.hydrateTurnResponses?.(sessionId, existingTurns, { visibility: 'visibleAttach' });
+        renderBridge?.prepareTurnRequest?.(
+          displayText || llmText,
+          displayText,
+          engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined,
+        );
+
+        const emit = (event: Record<string, unknown>): void => {
+          renderBridge?.processEvent?.({
+            timestamp: Date.now(),
+            ...event,
+          });
+        };
+
+        emit({ type: 'turn_begin', turnId });
+        emit({
+          type: 'tool_call_begin',
+          toolCallId,
+          toolName: 'syncAbs',
+          input: { action: 'import', source: 'e2e-editor-operation-streaming-probe' },
+        });
+
+        const progressSink = createToolCallProgressEditorOperationSink({
+          // Keep this deterministic probe on the same bounded bus as real tool paths,
+          // while making the assertion stable by preventing timer flushes mid-loop.
+          progressBatchMs: 1000,
+          emitEvent: (event: unknown) => {
+            if (event && typeof event === 'object') {
+              renderBridge?.processEvent?.({
+                timestamp: Date.now(),
+                ...(event as Record<string, unknown>),
+              });
+            }
+          },
+        });
+
+        const operation = getSharedBlocklyEditorOperationQueue().enqueue(
+          'blockly.syncAbs.import',
+          'E2E editor operation while chat streams',
+          async (reportProgress) => {
+            for (let index = 0; index < 48; index += 1) {
+              await reportProgress({
+                summary: `Applying Blockly batch ${index + 1}`,
+                progress: (index + 1) / 48,
+              });
+              if (index % 4 === 3) {
+                await yieldToBrowser();
+              }
+            }
+            return 'editor-operation-streaming-ok';
+          },
+          {
+            sessionId,
+            turnId,
+            toolCallId,
+            progressSink,
+            runOutsideAngular: operationRunner => operationRunner(),
+          },
+        );
+
+        for (let index = 0; index < 18; index += 1) {
+          emit({
+            type: 'thinking_delta',
+            text: `Streaming probe reasoning chunk ${index + 1}. `,
+          });
+          emit({
+            type: 'markdown_delta',
+            text: `Live markdown chunk ${index + 1}. `,
+          });
+          await yieldToBrowser();
+        }
+        emit({ type: 'thinking_complete' });
+
+        await operation;
+        emit({
+          type: 'tool_call_end',
+          toolCallId,
+          toolName: 'syncAbs',
+          resultText: 'Editor operation streaming probe completed',
+          state: 'done',
+        });
+        emit({
+          type: 'markdown_delta',
+          text: 'Streaming/editor operation probe completed.',
+        });
+        emit({ type: 'turn_end', turnId });
+        engine.lexStream?.turns?.complete?.('Streaming/editor operation probe completed.');
+      };
+
+      try {
+        const sessionId = await engine.ensureSessionReadyForSubmit();
+        await engine.submitUserText('Run editor operation streaming probe', { clearInput: true, sessionId });
+        engine.lexStream?.finalizeCurrentTurnResponse?.('completed');
+        const finalizedTurns = engine.lexStream?.turnResponses ?? [];
+        if (finalizedTurns.length > 0) {
+          const committed = engine.replaceSessionModelTurnResponses?.(sessionId, finalizedTurns, {
+            allowForkedTurns: true,
+            source: 'e2e-editor-operation-streaming-probe',
+          });
+          const committedTurns = Array.isArray(committed) ? committed : finalizedTurns;
+          engine.syncExecutionRuntimeTurnResponses?.(sessionId, committedTurns, terminalTranscriptProjection('execution'));
+          engine.lexStream?.hydrateTurnResponses?.(sessionId, committedTurns, { visibility: 'visibleAttach' });
+        }
+      } finally {
+        engine.lexStream.turn.run = previousRun;
+      }
+      engine.triggerSyncDetectChanges?.();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+      engine.triggerSyncDetectChanges?.();
       return snapshot();
     },
     async startCancellableSubagentTurn() {
