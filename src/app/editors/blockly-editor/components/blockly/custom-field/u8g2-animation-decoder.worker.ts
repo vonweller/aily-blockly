@@ -28,6 +28,9 @@ interface DecodeResult {
 
 const DEFAULT_THRESHOLD = 127;
 const MICROSECONDS_PER_SECOND = 1000000;
+const DEFAULT_ANIMATION_SECONDS = 60;
+const MAX_FPS = 30;
+const MAX_FRAMES = 1800;
 
 function postProgress(requestId: number, message: string, progress?: number) {
     self.postMessage({
@@ -51,12 +54,23 @@ function normalizeDimension(value: number, fallback: number, min: number, max: n
     return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function getMaxFramesLimit() {
+    return MAX_FRAMES;
+}
+
+function getDefaultMaxFrames(fps: number) {
+    return Math.min(getMaxFramesLimit(), Math.max(1, Math.floor(fps) * DEFAULT_ANIMATION_SECONDS));
+}
+
 function normalizeDecodeOptions(request: DecodeRequest) {
+    const fps = normalizeDimension(request.fps, 10, 1, MAX_FPS);
+    const maxFramesLimit = getMaxFramesLimit();
+
     return {
         width: normalizeDimension(request.width, 128, 1, 256),
         height: normalizeDimension(request.height, 64, 1, 128),
-        fps: normalizeDimension(request.fps, 10, 1, 60),
-        maxFrames: normalizeDimension(request.maxFrames, 30, 1, 500),
+        fps,
+        maxFrames: normalizeDimension(request.maxFrames, getDefaultMaxFrames(fps), 1, maxFramesLimit),
         dither: !!request.dither,
         threshold: normalizeDimension(request.threshold, DEFAULT_THRESHOLD, 0, 255),
     };
