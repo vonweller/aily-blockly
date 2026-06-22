@@ -44,6 +44,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       [attr.data-kind]="item.kind"
       [class.cag-item-first]="first"
       [class.cag-item-last]="last"
+      [class.cag-item-tool]="isToolHeader()"
       [class.cag-item-only]="only"
       [class.cag-item-pending-approval]="isPendingApprovalItem()">
       <div class="cag-item-icon-shell ccenter" [class.loading-icon]="item.kind !== 'thinking' && item.isSpinning" [class.lloading]="item.kind !== 'thinking' && item.isSpinning">
@@ -707,14 +708,29 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 0px 19px, #000 24px 100%);
     }
 
+    .cag-item:not(.cag-item-tool)::before {
+      mask-image: linear-gradient(to bottom, #000 0 8px, transparent 0px 21px, #000 28px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 8px, transparent 0px 21px, #000 28px 100%);
+    }
+
     .cag-item.cag-item-first::before {
       mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
       -webkit-mask-image: linear-gradient(to bottom, transparent 0 19px, #000 25px 100%);
     }
 
+    .cag-item.cag-item-first:not(.cag-item-tool)::before {
+      mask-image: linear-gradient(to bottom, transparent 0 22px, #000 28px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0 22px, #000 28px 100%);
+    }
+
     .cag-item.cag-item-last::before {
       mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 100%);
       -webkit-mask-image: linear-gradient(to bottom, #000 0 5px, transparent 5px 100%);
+    }
+
+    .cag-item.cag-item-last:not(.cag-item-tool)::before {
+      mask-image: linear-gradient(to bottom, #000 0 8px, transparent 8px 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0 8px, transparent 8px 100%);
     }
 
     .cag-item.cag-item-only::before {
@@ -741,6 +757,10 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       top: 7px;
       width: 12px;
       height: 12px;
+    }
+
+    .cag-item:not(.cag-item-tool) .cag-item-icon-shell {
+      top: 10px;
     }
 
     .cag-item-icon {

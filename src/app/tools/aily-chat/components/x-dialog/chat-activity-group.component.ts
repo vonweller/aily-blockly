@@ -63,6 +63,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       class="cag"
       [attr.data-state]="groupState"
       [class.cag-expanded]="expanded"
+      [class.cag-first-item-not-tool]="isFirstItemNotTool"
       [class.cag-fixed-streaming]="useFixedViewport"
       [class.cag-fade-top]="showDetailViewportTopFade"
       [class.cag-fade-bottom]="showDetailViewportBottomFade">
@@ -157,13 +158,17 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       content: '';
       position: absolute;
       left: 7px;
-      top: 19px;
-      height: 16px;
+      top: 18px;
+      height: 17px;
       width: 4px;
       border-left: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom: 1px solid var(--chat-border, rgba(255,255,255,0.10));
       border-bottom-left-radius: 5px;
       pointer-events: none;
+    }
+
+    .cag.cag-expanded.cag-first-item-not-tool::after {
+      height: 20px;
     }
 
     .cag-header {
@@ -196,7 +201,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       justify-content: center;
       width: 16px;
       height: 16px;
-      top: 2px;
+      top: 1px;
       position: relative;
     }
 
@@ -214,7 +219,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
       font-size: 13px;
       font-weight: 500;
       color: var(--chat-fg-dim, #8e8e8e);
-      line-height: 1.4;
+      line-height: 1.35;
       white-space: normal;
       word-break: break-word;
       overflow-wrap: anywhere;
@@ -446,6 +451,11 @@ export class ChatActivityGroupComponent implements OnChanges, AfterViewChecked, 
 
   get isGroupSpinning(): boolean {
     return this.doing;
+  }
+
+  get isFirstItemNotTool(): boolean {
+    const firstItem = this.displayItems[0];
+    return !!firstItem && !firstItem.toolHeader && firstItem.headerKind !== 'tool';
   }
 
   get useFixedViewport(): boolean {

@@ -167,7 +167,7 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         max-height: none;
         overflow: visible;
         scrollbar-gutter: auto;
-        padding: 2px 12px 4px 0px;
+        padding: 2px 12px 0 0px;
         padding-top: 0;
         margin-top: 0;
       }

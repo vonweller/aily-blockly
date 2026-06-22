@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, HostListener, Input, Output } from '@angular/core';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 
 import type { ChatSessionListAction, ChatSessionListItem } from '../services/menu-manager.service';
@@ -30,6 +30,7 @@ import {
 })
 export class ChatSessionEntriesComponent {
   archivedExpanded = false;
+  openOverflowSessionId = '';
 
   @Input() groups: ReadonlyArray<ChatSessionInventoryGroup> | null = null;
   @Input() items: readonly ChatSessionListItem[] = [];
@@ -81,7 +82,27 @@ export class ChatSessionEntriesComponent {
 
   triggerAction(event: MouseEvent, action: ChatSessionListAction, item: ChatSessionListItem): void {
     event.stopPropagation();
+    this.openOverflowSessionId = '';
     this.actionClick.emit({ action: action.action, data: item });
+  }
+
+  toggleOverflow(event: MouseEvent, item: ChatSessionListItem): void {
+    event.stopPropagation();
+    this.openOverflowSessionId = this.isOverflowOpen(item) ? '' : item.sessionId;
+  }
+
+  isOverflowOpen(item: ChatSessionListItem): boolean {
+    return this.openOverflowSessionId === item.sessionId;
+  }
+
+  @HostListener('document:click')
+  closeOverflow(): void {
+    this.openOverflowSessionId = '';
+  }
+
+  @HostListener('document:keydown.escape')
+  closeOverflowOnEscape(): void {
+    this.openOverflowSessionId = '';
   }
 
   formatStatusMeta(item: ChatSessionListItem): string {

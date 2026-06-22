@@ -29,6 +29,8 @@
     [class.session-picker-row]="isPickerVariant"
     [class.session-list-row-has-toggle-action]="isListVariant && (item.pinned === true || item.archived === true)"
     [class.session-picker-row-has-toggle-action]="isPickerVariant && (item.pinned === true || item.archived === true)"
+    [class.session-list-row-overflow-open]="isListVariant && isOverflowOpen(item)"
+    [class.session-picker-row-overflow-open]="isPickerVariant && isOverflowOpen(item)"
     [class.current]="item.current"
     [class.selected]="isSelected(item)">
     <button
@@ -103,17 +105,26 @@
       </button>
       }
       @if (hasOverflowActions(item)) {
-      <div [class.session-list-actions-more]="isListVariant" [class.session-picker-actions-more]="isPickerVariant">
+      <div
+        [class.session-list-actions-more]="isListVariant"
+        [class.session-picker-actions-more]="isPickerVariant"
+        [class.open]="isOverflowOpen(item)">
         <button
           type="button"
           [class.session-list-action]="isListVariant"
           [class.session-picker-action]="isPickerVariant"
           [class.session-list-action-more]="isListVariant"
           [class.session-picker-action-more]="isPickerVariant"
-          aria-label="更多">
+          aria-label="更多"
+          aria-haspopup="menu"
+          [attr.aria-expanded]="isOverflowOpen(item)"
+          (click)="toggleOverflow($event, item)">
           <i class="fa-light fa-ellipsis"></i>
         </button>
-        <div [class.session-list-actions-overflow]="isListVariant" [class.session-picker-actions-overflow]="isPickerVariant">
+        <div
+          [class.session-list-actions-overflow]="isListVariant"
+          [class.session-picker-actions-overflow]="isPickerVariant"
+          role="menu">
           @for (action of overflowActions(item); track action.action) {
           <button
             type="button"
@@ -124,6 +135,7 @@
             [class.active]="action.active === true"
             [attr.data-session-action]="action.action"
             [attr.aria-label]="action.title"
+            role="menuitem"
             nz-tooltip
             nzTooltipPlacement="left"
             [nzTooltipTitle]="action.title"
