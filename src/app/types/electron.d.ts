@@ -19,6 +19,10 @@ declare global {
       shell?: {
         showItemInFolder: (fullPath: string) => void;
       };
+      clipboard?: {
+        writeText: (text: string) => void;
+        readText: () => string;
+      };
       terminal: any;
       ailyServicesStream?: {
         start: (data: any) => Promise<{ ok?: boolean; streamId?: string; error?: string }>;

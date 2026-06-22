@@ -1258,8 +1258,44 @@ function buildToolCallProgressMetadataPatch(input: {
   existingMetadata?: Record<string, unknown>;
 }): Record<string, unknown> {
   const existingMetadata = asRecord(input.existingMetadata) ?? {};
-  const existingTimeline = asRecordArray(existingMetadata['timeline']);
   const phase = normalizeProgressPhase(input.phase);
+  if (input.kind === 'editor_operation') {
+    const {
+      phase: _previousPhase,
+      progress: _previousProgress,
+      progressKind: _previousProgressKind,
+      operationId: _previousOperationId,
+      operationKind: _previousOperationKind,
+      operationLabel: _previousOperationLabel,
+      queueSize: _previousQueueSize,
+      durationMs: _previousDurationMs,
+      running: _previousRunning,
+      timeline: _previousTimeline,
+      toolSpecificData: _previousToolSpecificData,
+      ...stableMetadata
+    } = existingMetadata;
+    return {
+      ...stableMetadata,
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      progress: undefined,
+      queueSize: undefined,
+      durationMs: undefined,
+      running: undefined,
+      timeline: undefined,
+      toolSpecificData: undefined,
+      phase,
+      ...(input.progress != null ? { progress: input.progress } : {}),
+      progressKind: 'editor_operation',
+      ...(input.operationId ? { operationId: input.operationId } : {}),
+      ...(input.operationKind ? { operationKind: input.operationKind } : {}),
+      ...(input.label ? { operationLabel: input.label } : {}),
+      ...(input.queueSize != null ? { queueSize: input.queueSize } : {}),
+      ...(input.durationMs != null ? { durationMs: input.durationMs } : {}),
+      ...(input.running != null ? { running: input.running } : {}),
+    };
+  }
+
+  const existingTimeline = asRecordArray(existingMetadata['timeline']);
   const recordId = input.kind === 'editor_operation' && input.operationId
     ? `${input.toolCallId}:${input.operationId}:${phase === 'progress' ? 'progress' : phase}`
     : `${input.toolCallId}:progress`;
@@ -1274,16 +1310,7 @@ function buildToolCallProgressMetadataPatch(input: {
   };
 
   const timeline = mergeProgressTimeline(existingTimeline, progressEntry);
-  const toolSpecificData = input.kind === 'editor_operation'
-    ? {
-        kind: 'editor_operation',
-        ...(input.operationId ? { operationId: input.operationId } : {}),
-        ...(input.operationKind ? { operationKind: input.operationKind } : {}),
-        ...(input.label ? { label: input.label } : {}),
-        phase,
-        ...(input.running != null ? { running: input.running } : {}),
-      }
-    : existingMetadata['toolSpecificData'];
+  const toolSpecificData = existingMetadata['toolSpecificData'];
 
   return {
     ...existingMetadata,

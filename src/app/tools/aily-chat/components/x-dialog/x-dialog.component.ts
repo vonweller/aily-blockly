@@ -669,7 +669,64 @@ export class XDialogComponent implements OnChanges, AfterViewInit, AfterViewChec
         ? getTurnResponseAssistantText(this.effectiveTurnContext.turnResponse)
         : '');
     const text = turnText || extractHistoricalDialogCopyText(this.content || '');
-    navigator.clipboard.writeText(text).catch(() => {});
+    void this.writeClipboardText(text);
+  }
+
+  private async writeClipboardText(text: string): Promise<void> {
+    if (!text) {
+      return;
+    }
+
+    const hostClipboard = AilyHost.get().clipboard;
+    const electronClipboard = (window as any)['electronAPI']?.clipboard ?? (window as any)['clipboard'];
+
+    try {
+      if (hostClipboard?.writeText) {
+        await Promise.resolve(hostClipboard.writeText(text));
+        return;
+      }
+
+      if (electronClipboard?.writeText) {
+        await Promise.resolve(electronClipboard.writeText(text));
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      if (this.writeClipboardTextWithTextarea(text)) {
+        return;
+      }
+
+      throw new Error('No clipboard writer available');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      AilyHost.get().log?.warn?.(`[AilyChat] Copy response failed: ${message}`);
+    }
+  }
+
+  private writeClipboardTextWithTextarea(text: string): boolean {
+    if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
+      return false;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
   }
 
   onFeedback(feedback: 'helpful' | 'unhelpful'): void {

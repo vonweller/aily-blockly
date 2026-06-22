@@ -11,7 +11,6 @@ import type { EditingTimelineWriter } from '../services/editing-timeline-recordi
 import { loadProjectBlockDefinitions, parseAbs, BlocklyAbsParser } from './absParser';
 import { arduinoGenerator } from '../../../editors/blockly-editor/components/blockly/generators/arduino/arduino';
 import {
-  createBrowserFrameBudget,
   yieldToBrowserIdle,
   type BrowserFrameBudgetController,
 } from './browserTaskScheduler';
@@ -50,6 +49,23 @@ function debugSyncAbsImportIssue(message: string, error?: unknown): void {
     return;
   }
   console.warn(`${message}: ${describeSyncAbsImportError(error)}`);
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return !!value && typeof (value as { then?: unknown }).then === 'function';
+}
+
+export function runWithBlocklyEventsDisabled<T>(operation: () => T): T {
+  Blockly.Events.disable();
+  try {
+    const result = operation();
+    if (isPromiseLike(result)) {
+      throw new Error('Blockly.Events.disable() scope must stay synchronous');
+    }
+    return result;
+  } finally {
+    Blockly.Events.enable();
+  }
 }
 
 async function writeGeneratedSketchIno(
@@ -132,27 +148,13 @@ export interface SyncAbsInvocationContext {
   editorFrameBudget?: BrowserFrameBudgetController;
 }
 
-function createSyncAbsFrameBudget(operation: string): BrowserFrameBudgetController {
-  return createBrowserFrameBudget({
-    budgetMs: 6,
-    maxContinuousMs: 18,
-    onYield: info => {
-      ChatPerformanceTracer.increment('editor_operation.frame_budget.yield');
-      ChatPerformanceTracer.recordDuration(
-        'editor_operation_frame_budget_elapsed',
-        info.elapsedMs,
-        `${operation}:${info.label ?? 'checkpoint'}`,
-        { slowThresholdMs: 12 },
-      );
-    },
-  });
-}
-
 async function checkpointSyncAbsFrameBudget(
   invocationContext: SyncAbsInvocationContext | undefined,
   label: string,
 ): Promise<void> {
+  throwIfSyncAbsCancelled(invocationContext);
   await invocationContext?.editorFrameBudget?.checkpoint(label);
+  throwIfSyncAbsCancelled(invocationContext);
 }
 
 async function disposeBlocklyBlocksInBatches(
@@ -164,13 +166,10 @@ async function disposeBlocklyBlocksInBatches(
   let disposedCount = 0;
   for (const block of blocks) {
     throwIfSyncAbsCancelled(invocationContext);
-    Blockly.Events.disable();
-    try {
+    runWithBlocklyEventsDisabled(() => {
       block?.dispose?.(true);
       disposedCount++;
-    } finally {
-      Blockly.Events.enable();
-    }
+    });
     if (disposedCount % batchSize === 0) {
       await checkpointSyncAbsFrameBudget(invocationContext, `${label}.${disposedCount}`);
     }
@@ -181,11 +180,40 @@ async function disposeBlocklyBlocksInBatches(
   return disposedCount;
 }
 
-async function renderBlocklyBlocksInBatches(
+function getWorkspaceRenderRoots(workspace: any): readonly any[] {
+  if (workspace && typeof workspace.getTopBlocks === 'function') {
+    const topBlocks = workspace.getTopBlocks(false);
+    if (Array.isArray(topBlocks)) {
+      return topBlocks;
+    }
+  }
+
+  if (!workspace || typeof workspace.getAllBlocks !== 'function') {
+    return [];
+  }
+  const allBlocks = workspace.getAllBlocks(false);
+  if (!Array.isArray(allBlocks)) {
+    return [];
+  }
+  return allBlocks.filter(block => {
+    if (!block) {
+      return false;
+    }
+    if (typeof block.getParent === 'function') {
+      return !block.getParent();
+    }
+    if (typeof block.getSurroundParent === 'function') {
+      return !block.getSurroundParent();
+    }
+    return true;
+  });
+}
+
+async function renderBlocklyRootBlocksInBatches(
   blocks: readonly any[],
   invocationContext: SyncAbsInvocationContext | undefined,
   label: string,
-  batchSize = 5,
+  batchSize = 3,
 ): Promise<void> {
   let renderedCount = 0;
   for (const block of blocks) {
@@ -200,6 +228,24 @@ async function renderBlocklyBlocksInBatches(
   }
   if (renderedCount > 0) {
     await checkpointSyncAbsFrameBudget(invocationContext, `${label}.done`);
+  }
+}
+
+export async function refreshBlocklyWorkspaceRenderInBatches(
+  workspace: any,
+  invocationContext: SyncAbsInvocationContext | undefined,
+  label: string,
+): Promise<void> {
+  throwIfSyncAbsCancelled(invocationContext);
+  const renderRoots = getWorkspaceRenderRoots(workspace);
+  await renderBlocklyRootBlocksInBatches(renderRoots, invocationContext, `${label}.roots`);
+  throwIfSyncAbsCancelled(invocationContext);
+  if (typeof Blockly !== 'undefined' && Blockly && typeof Blockly.svgResize === 'function') {
+    await checkpointSyncAbsFrameBudget(invocationContext, `${label}.before-resize`);
+    Blockly.svgResize(workspace);
+    await checkpointSyncAbsFrameBudget(invocationContext, `${label}.resize`);
+  } else {
+    await checkpointSyncAbsFrameBudget(invocationContext, `${label}.no-resize`);
   }
 }
 
@@ -394,14 +440,13 @@ export async function syncAbsFileHandler(
     
     case 'import': {
       const editorOperationQueue = invocationContext?.editorOperationQueue ?? getSharedBlocklyEditorOperationQueue();
-      const editorFrameBudget = createSyncAbsFrameBudget('syncAbs.import');
       return await editorOperationQueue.enqueue(
         'blockly.syncAbs.import',
         'Apply ABS to Blockly workspace',
-        reportOperationProgress => importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService, {
+        (reportOperationProgress, operationContext) => importFromAbs(absFilePath, abiFilePath, electronService, absAutoSyncService, projectService, {
           ...invocationContext,
           reportOperationProgress,
-          editorFrameBudget,
+          editorFrameBudget: operationContext.frameBudget,
         }, args.pendingAbsContent),
         {
           sessionId: invocationContext?.sessionId,
@@ -411,6 +456,7 @@ export async function syncAbsFileHandler(
           isStale: invocationContext?.isStale,
           progressSink: invocationContext?.progressSink,
           runOutsideAngular: invocationContext?.runOutsideAngular,
+          editorFrameBudget: invocationContext?.editorFrameBudget,
         },
       );
     }
@@ -657,15 +703,18 @@ async function importFromAbs(
     const variableMap = workspace.getVariableMap();
     const existingVars = workspace.getAllVariables();
     if (variableMap && existingVars.length > 0) {
-      Blockly.Events.disable();
-      try {
-        for (const oldVar of existingVars) {
-          if (!allVariables.has(oldVar.name) && !autoCreatedVars.has(oldVar.name)) {
+      let deletedVariableCount = 0;
+      for (const oldVar of existingVars) {
+        throwIfSyncAbsCancelled(invocationContext);
+        if (!allVariables.has(oldVar.name) && !autoCreatedVars.has(oldVar.name)) {
+          runWithBlocklyEventsDisabled(() => {
             variableMap.deleteVariable(oldVar);
+            deletedVariableCount++;
+          });
+          if (deletedVariableCount % 8 === 0) {
+            await checkpointSyncAbsFrameBudget(invocationContext, 'variables.delete-batch');
           }
         }
-      } finally {
-        Blockly.Events.enable();
       }
     }
     await checkpointSyncAbsFrameBudget(invocationContext, 'variables.deleted');
@@ -676,10 +725,11 @@ async function importFromAbs(
     // 禁用事件，避免删除/重建变量时触发代码生成导致 getVariableById 返回 null
     const variableNameToId = new Map<string, string>();
     
-    Blockly.Events.disable();
-    try {
-      for (const [name, type] of allVariables) {
-        let variable: any;
+    let syncedVariableCount = 0;
+    for (const [name, type] of allVariables) {
+      throwIfSyncAbsCancelled(invocationContext);
+      let variable: any;
+      runWithBlocklyEventsDisabled(() => {
         if (type) {
           // 类型已知时，按名称+类型精确查找
           variable = workspace.getVariable(name, type);
@@ -688,7 +738,7 @@ async function importFromAbs(
             const wrongTypeVar = workspace.getVariable(name);
             if (wrongTypeVar && wrongTypeVar.type !== type) {
               // 删除旧的错误类型变量，用正确类型重建
-              variableMap.deleteVariable(wrongTypeVar);
+              variableMap?.deleteVariable(wrongTypeVar);
             }
             variable = workspace.createVariable(name, type);
           }
@@ -699,9 +749,11 @@ async function importFromAbs(
           }
         }
         variableNameToId.set(name, variable.getId());
+        syncedVariableCount++;
+      });
+      if (syncedVariableCount % 8 === 0) {
+        await checkpointSyncAbsFrameBudget(invocationContext, 'variables.sync-batch');
       }
-    } finally {
-      Blockly.Events.enable();
     }
     await checkpointSyncAbsFrameBudget(invocationContext, 'variables.synced');
     // console.log(`📋 同步 ${allVariables.size} 个变量`);
@@ -756,53 +808,70 @@ async function importFromAbs(
         }
       }
       
-      // 清空非受保护块，删除重复的受保护块
-      Blockly.Events.disable();
-      try {
-        let disposeCount = 0;
-        for (const block of existingTopBlocks) {
-          if (!PROTECTED_ROOT_BLOCKS.has(block.type)) {
+      // 清空非受保护块，删除重复的受保护块。使用短事件事务，避免
+      // Blockly workspace mutation 长时间占用主线程。
+      let disposeCount = 0;
+      for (const block of existingTopBlocks) {
+        throwIfSyncAbsCancelled(invocationContext);
+        if (!PROTECTED_ROOT_BLOCKS.has(block.type)) {
+          runWithBlocklyEventsDisabled(() => {
             block.dispose(true);
             disposeCount++;
-            // 每销毁 3 个块后让出事件循环，允许 UI 刷新
-            if (disposeCount % 3 === 0) {
-              Blockly.Events.enable();
-              await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.dispose-batch');
-              Blockly.Events.disable();
-            }
-          } else {
-            // 受保护块：只保留 protectedBlocksMap 中记录的那个（第一个），删除重复的
-            const protectedInfo = protectedBlocksMap.get(block.type);
-            if (protectedInfo && protectedInfo.block === block) {
-              // 这是要保留的块，清空其子块
-              for (const input of block.inputList || []) {
-                if (input.connection?.isConnected()) {
-                  const child = input.connection.targetBlock();
-                  if (child && !child.isShadow()) {
+          });
+          // 每销毁 3 个块后让出事件循环，允许 UI 刷新
+          if (disposeCount % 3 === 0) {
+            await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.dispose-batch');
+          }
+        } else {
+          // 受保护块：只保留 protectedBlocksMap 中记录的那个（第一个），删除重复的
+          const protectedInfo = protectedBlocksMap.get(block.type);
+          if (protectedInfo && protectedInfo.block === block) {
+            // 这是要保留的块，清空其子块
+            let clearedProtectedChildCount = 0;
+            for (const input of block.inputList || []) {
+              if (input.connection?.isConnected()) {
+                const child = input.connection.targetBlock();
+                if (child && !child.isShadow()) {
+                  throwIfSyncAbsCancelled(invocationContext);
+                  runWithBlocklyEventsDisabled(() => {
                     input.connection.disconnect();
                     child.dispose(true);
+                    clearedProtectedChildCount++;
+                  });
+                  if (clearedProtectedChildCount % 4 === 0) {
+                    await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.protected-children-batch');
                   }
                 }
               }
-            } else {
-              // 这是重复的受保护块，删除
+            }
+          } else {
+            // 这是重复的受保护块，删除
+            runWithBlocklyEventsDisabled(() => {
               block.dispose(true);
+              disposeCount++;
+            });
+            if (disposeCount % 3 === 0) {
+              await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.dispose-batch');
             }
           }
         }
-      } finally {
-        Blockly.Events.enable();
       }
       
       // 重新创建变量
       await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.cleaned');
       variableNameToId.clear();
+      let recreatedVariableCount = 0;
       for (const [name, type] of allVariables) {
+        throwIfSyncAbsCancelled(invocationContext);
         let variable = workspace.getVariable(name);
         if (!variable) {
           variable = workspace.createVariable(name, type || undefined);
         }
         variableNameToId.set(name, variable.getId());
+        recreatedVariableCount++;
+        if (recreatedVariableCount % 8 === 0) {
+          await checkpointSyncAbsFrameBudget(invocationContext, 'full-recreate.variables-batch');
+        }
       }
       
       let yPosition = 30;
@@ -932,17 +1001,32 @@ async function importFromAbs(
     // 触发 FINISHED_LOADING 事件，让各库的初始化逻辑执行
     // （如 _initFunctionLibOnLoad 绑定 FUNC 变量到 custom_function_def）
     // createBlockFromConfig 路径不像 Blockly.serialization.workspaces.load 那样自动触发此事件
+    await checkpointSyncAbsFrameBudget(invocationContext, 'finished-loading.before');
     try {
       const finishedLoadingEvent = new Blockly.Events.FinishedLoading(workspace);
       Blockly.Events.fire(finishedLoadingEvent);
     } catch (e) {
       console.warn('[syncAbsFile] 触发 FINISHED_LOADING 事件失败:', e);
     }
+    await checkpointSyncAbsFrameBudget(invocationContext, 'finished-loading.after');
     
     // 保存工作区到 ABI 文件
     await reportSyncAbsImportProgress(invocationContext, 'Saving Blockly workspace snapshot', 0.8, abiFilePath);
     throwIfSyncAbsCancelled(invocationContext);
-    const abiJson = Blockly.serialization.workspaces.save(workspace);
+    await checkpointSyncAbsFrameBudget(invocationContext, 'workspace-save.before');
+    const workspaceSaveStartedAt = performance.now();
+    const abiJson = await ChatPerformanceTracer.runWithSurface(
+      'editor_operation',
+      () => Blockly.serialization.workspaces.save(workspace),
+      'syncAbs.import:workspace.save',
+    );
+    ChatPerformanceTracer.recordDuration(
+      'syncAbs_workspace_save',
+      performance.now() - workspaceSaveStartedAt,
+      abiFilePath,
+      { slowThresholdMs: 16 },
+    );
+    await checkpointSyncAbsFrameBudget(invocationContext, 'workspace-save.after');
     await writeTimelineAwareTextFile(abiFilePath, JSON.stringify(abiJson), electronService, invocationContext);
     await reportSyncAbsImportProgress(invocationContext, 'Saving generated project files', 0.85);
     throwIfSyncAbsCancelled(invocationContext);
@@ -1739,28 +1823,40 @@ async function rebuildBlockChildren(
   // 4. 禁用事件，清空所有子块
   if (blocksToDelete.length > 0) {
     // console.log(`    🗑️ 清空 ${blocksToDelete.length} 个子块`);
-    Blockly.Events.disable();
-    try {
-      // 先断开所有输入连接
-      for (const input of existingBlock.inputList || []) {
-        if (input.connection?.isConnected()) {
-          const child = input.connection.targetBlock();
-          if (child && !child.isShadow()) {
+    // 先断开所有输入连接。每个 Blockly mutation 使用短事件事务，避免一整段
+    // Events.disable() 阻塞聊天 UI 的 hover/loading/scrollbar 动画。
+    let disconnectedChildCount = 0;
+    for (const input of existingBlock.inputList || []) {
+      if (input.connection?.isConnected()) {
+        const child = input.connection.targetBlock();
+        if (child && !child.isShadow()) {
+          throwIfSyncAbsCancelled(invocationContext);
+          runWithBlocklyEventsDisabled(() => {
             input.connection.disconnect();
+            disconnectedChildCount++;
+          });
+          if (disconnectedChildCount % 8 === 0) {
+            await checkpointSyncAbsFrameBudget(invocationContext, `rebuild.${existingBlock.type}.children-disconnected`);
           }
         }
       }
-      
-      // 删除所有收集的块（去重）
-      const deletedIds = new Set<string>();
-      for (const { block } of blocksToDelete) {
-        if (!deletedIds.has(block.id) && !block.disposed) {
+    }
+
+    // 删除所有收集的块（去重）
+    const deletedIds = new Set<string>();
+    let deletedChildCount = 0;
+    for (const { block } of blocksToDelete) {
+      if (!deletedIds.has(block.id) && !block.disposed) {
+        throwIfSyncAbsCancelled(invocationContext);
+        runWithBlocklyEventsDisabled(() => {
           block.dispose(false);
           deletedIds.add(block.id);
+          deletedChildCount++;
+        });
+        if (deletedChildCount % 8 === 0) {
+          await checkpointSyncAbsFrameBudget(invocationContext, `rebuild.${existingBlock.type}.children-delete-batch`);
         }
       }
-    } finally {
-      Blockly.Events.enable();
     }
     await checkpointSyncAbsFrameBudget(invocationContext, `rebuild.${existingBlock.type}.children-deleted`);
   }
@@ -2143,14 +2239,13 @@ async function incrementalUpdate(
           if (alreadyHasValid) {
             // 已有同类型有效块，这是重复块，直接删除
             // console.log(`  🗑️ 删除重复受保护块: ${blockType} (ID: ${item.block.id})`);
-            Blockly.Events.disable();
             try {
-              item.block.dispose(true);
-              removedCount++;
+              runWithBlocklyEventsDisabled(() => {
+                item.block.dispose(true);
+                removedCount++;
+              });
             } catch (e) {
               debugSyncAbsImportIssue(`Deleting duplicate protected block failed: ${blockType}`, e);
-            } finally {
-              Blockly.Events.enable();
             }
             processedExistingBlocks.add(item.block.id);
             await checkpointSyncAbsFrameBudget(invocationContext, `incremental.cleanup-duplicate-protected.${blockType}`);
@@ -2158,22 +2253,28 @@ async function incrementalUpdate(
           }
           // 没有同类型有效块，保留此块（清空子块）
           // console.log(`  🛡️ 保留受保护块: ${blockType} (ID: ${item.block.id})，清空其子块`);
-          Blockly.Events.disable();
           try {
-            // 清空受保护块的所有子块
+            // 清空受保护块的所有子块。短事务 + 批次 checkpoint，避免大块
+            // workspace mutation 抢占聊天流式渲染。
+            let clearedChildCount = 0;
             for (const input of item.block.inputList || []) {
               if (input.connection?.isConnected()) {
                 const child = input.connection.targetBlock();
                 if (child && !child.isShadow()) {
-                  input.connection.disconnect();
-                  child.dispose(true);
+                  throwIfSyncAbsCancelled(invocationContext);
+                  runWithBlocklyEventsDisabled(() => {
+                    input.connection.disconnect();
+                    child.dispose(true);
+                    clearedChildCount++;
+                  });
+                  if (clearedChildCount % 4 === 0) {
+                    await checkpointSyncAbsFrameBudget(invocationContext, `incremental.cleanup-protected-children.${blockType}`);
+                  }
                 }
               }
             }
           } catch (e) {
             debugSyncAbsImportIssue(`Clearing protected block children failed: ${blockType}`, e);
-          } finally {
-            Blockly.Events.enable();
           }
           validBlockIds.add(item.block.id);
         }
@@ -2184,14 +2285,13 @@ async function incrementalUpdate(
       }
       
       // console.log(`  🗑️ 删除无匹配块: ${blockType} (ID: ${item.block.id})`);
-      Blockly.Events.disable();
       try {
-        item.block.dispose(true);
-        removedCount++;
+        runWithBlocklyEventsDisabled(() => {
+          item.block.dispose(true);
+          removedCount++;
+        });
       } catch (e) {
         debugSyncAbsImportIssue(`Deleting unmatched block failed: ${blockType}`, e);
-      } finally {
-        Blockly.Events.enable();
       }
       await checkpointSyncAbsFrameBudget(invocationContext, `incremental.cleanup.${blockType}`);
     }
@@ -2250,18 +2350,13 @@ async function incrementalUpdate(
     removedCount += cleanupCount;
   }
   
-  // 强制重新渲染工作区，确保视觉状态正确
+  // 终端刷新工作区，确保视觉状态正确；只渲染顶层块树，避免对子块重复 render。
   try {
-    // 分片渲染所有块，避免一次 workspace.render() 长任务饿死聊天 UI。
-    if (workspace.getAllBlocks) {
-      const allBlocks = workspace.getAllBlocks(false);
-      await renderBlocklyBlocksInBatches(allBlocks, invocationContext, 'incremental.workspace-render.blocks');
-    }
+    await refreshBlocklyWorkspaceRenderInBatches(workspace, invocationContext, 'incremental.workspace-render');
     // console.log(`🎨 工作区渲染刷新完成`);
   } catch (e) {
     debugSyncAbsImportIssue('Workspace render refresh failed', e);
   }
-  await checkpointSyncAbsFrameBudget(invocationContext, 'incremental.workspace-render');
   
   return {
     added: addedCount,

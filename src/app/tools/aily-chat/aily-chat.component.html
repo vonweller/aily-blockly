@@ -463,7 +463,7 @@
                 }
               </div>
             }
-            <textarea #chatTextarea class="sscroll" [ngModel]="vm.inputValue" (ngModelChange)="composerShellCoordinator.updateInputValue($event)"
+            <textarea #chatTextarea class="sscroll" [ngModel]="vm.inputValue" [attr.maxlength]="chatInputMaxChars" (ngModelChange)="composerShellCoordinator.updateInputValue($event)"
               (focus)="setComposerFocusState(true)" (blur)="setComposerFocusState(false)"
               (keydown)="composerShellCoordinator.handleKeyDown($event)" (input)="composerShellCoordinator.updateSuggestions()">
             </textarea>

@@ -43,6 +43,8 @@ export interface IAilyHostAPI {
   readonly env: IEnvProvider;
   /** 杂项系统操作 */
   readonly shell: IShellUtils;
+  /** 系统剪贴板 */
+  readonly clipboard?: IClipboardProvider;
   /** 宿主日志 */
   readonly log?: IHostLogProvider;
 
@@ -226,6 +228,15 @@ export interface IHostLogProvider {
   info(message: string): void;
   warn(message: string): void;
   error(message: string, error?: unknown): void;
+}
+
+// ============================================================
+// 剪贴板
+// ============================================================
+
+export interface IClipboardProvider {
+  writeText(text: string): void | Promise<void>;
+  readText?(): string | Promise<string>;
 }
 
 // ============================================================
