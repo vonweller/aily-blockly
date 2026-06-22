@@ -55,7 +55,7 @@ import './renderer/aily-zelos/zelos';
 import './custom-category';
 import './custom-field/field-bitmap';
 import './custom-field/field-bitmap-u8g2';
-import './custom-field/field-u8g2-animation';
+import { setU8g2AnimationFieldTranslator } from './custom-field/field-u8g2-animation';
 import './custom-field/field-image';
 import './custom-field/field-image-preview';
 import './custom-field/field-led-matrix';
@@ -749,8 +749,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
 
       // 根据当前语言设置 Blockly locale
       const currentLang = this.translateService.currentLang || 'zh_cn';
-      const locale = BLOCKLY_LOCALES[currentLang] || BLOCKLY_LOCALES['en'] || zhHans;
-      Blockly.setLocale(locale);
+      this.updateBlocklyLocale(currentLang);
 
       // 在工作区创建前设置 block registry 拦截
       this.setupBlockRegistryInterception();
@@ -1472,6 +1471,7 @@ export class BlocklyComponent implements OnInit, AfterViewInit, OnDestroy {
     Blockly.Msg["CONTROLS_SWITCH_CASE"] = this.translateService.instant('BLOCKLY.CONTROLS_SWITCH_CASE') || (lang.startsWith('zh') ? "情况" : "case");
     Blockly.Msg["CONTROLS_SWITCH_DO"] = this.translateService.instant('BLOCKLY.CONTROLS_SWITCH_DO') || (lang.startsWith('zh') ? "执行" : "do");
     Blockly.Msg["CONTROLS_SWITCH_DEFAULT"] = this.translateService.instant('BLOCKLY.CONTROLS_SWITCH_DEFAULT') || (lang.startsWith('zh') ? "默认执行" : "default");
+    setU8g2AnimationFieldTranslator((key, params) => this.translateService.instant(key, params));
 
     // 如果工作区已存在，刷新工具箱以应用新语言
     if (this.workspace) {

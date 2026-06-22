@@ -1,21 +1,118 @@
 import * as Blockly from 'blockly/core';
 
-Blockly.Msg['U8G2_ANIMATION_BUTTON_UPLOAD'] = '上传';
-Blockly.Msg['U8G2_ANIMATION_UPLOAD_TOOLTIP'] = '支持格式：MP4、GIF、PNG';
-Blockly.Msg['U8G2_ANIMATION_BUTTON_CLEAR'] = '清空';
-Blockly.Msg['U8G2_ANIMATION_LABEL_WIDTH'] = 'W';
-Blockly.Msg['U8G2_ANIMATION_LABEL_HEIGHT'] = 'H';
-Blockly.Msg['U8G2_ANIMATION_LABEL_FPS'] = 'FPS';
-Blockly.Msg['U8G2_ANIMATION_LABEL_MAX_FRAMES'] = '帧数';
-Blockly.Msg['U8G2_ANIMATION_LABEL_THRESHOLD'] = '阈值';
-Blockly.Msg['U8G2_ANIMATION_LABEL_THRESHOLD_VALUE'] = '阈值';
-Blockly.Msg['U8G2_ANIMATION_LABEL_DITHER'] = '抖动';
-Blockly.Msg['U8G2_ANIMATION_EMPTY'] = '未上传动画';
-Blockly.Msg['U8G2_ANIMATION_READY'] = '已取模';
-Blockly.Msg['U8G2_ANIMATION_FRAME_EDIT'] = '编辑该帧';
-Blockly.Msg['U8G2_ANIMATION_FRAME_DELETE'] = '删除该帧';
-Blockly.Msg['U8G2_ANIMATION_FRAME_DONE'] = '完成';
-Blockly.Msg['U8G2_ANIMATION_RENDERING_FRAMES'] = '正在加载帧';
+type U8g2AnimationI18nParams = Record<string, string | number>;
+type U8g2AnimationTranslator = (key: string, params?: U8g2AnimationI18nParams) => string;
+
+const U8G2_ANIMATION_I18N_PREFIX = 'BLOCKLY.U8G2_ANIMATION';
+const U8G2_ANIMATION_BLOCKLY_MESSAGE_NAMES = [
+    'BUTTON_UPLOAD',
+    'UPLOAD_TOOLTIP',
+    'BUTTON_CLEAR',
+    'LABEL_WIDTH',
+    'LABEL_HEIGHT',
+    'LABEL_FPS',
+    'LABEL_MAX_FRAMES',
+    'LABEL_THRESHOLD',
+    'LABEL_THRESHOLD_VALUE',
+    'LABEL_DITHER',
+    'EMPTY',
+    'READY',
+    'FRAME_EDIT',
+    'FRAME_DELETE',
+    'FRAME_DONE',
+    'FRAME_CANCEL',
+    'RENDERING_FRAMES',
+    'FRAME_HINT',
+] as const;
+const DEFAULT_U8G2_ANIMATION_MESSAGES: Record<string, string> = {
+    BUTTON_UPLOAD: "上传",
+    UPLOAD_TOOLTIP: "支持格式：MP4、GIF、PNG",
+    BUTTON_CLEAR: "清空",
+    LABEL_WIDTH: "W",
+    LABEL_HEIGHT: "H",
+    LABEL_FPS: "FPS",
+    LABEL_MAX_FRAMES: "帧数",
+    LABEL_THRESHOLD: "阈值",
+    LABEL_THRESHOLD_VALUE: "阈值",
+    LABEL_DITHER: "抖动",
+    EMPTY: "未上传动画",
+    READY: "已取模",
+    FRAME_EDIT: "编辑该帧",
+    FRAME_DELETE: "删除该帧",
+    FRAME_DONE: "保存",
+    FRAME_CANCEL: "取消，不保存",
+    RENDERING_FRAMES: "正在加载帧",
+    FRAME_HINT: "鼠标左键绘制，右键擦除",
+    ERROR_FRAME_EDITOR_CONTEXT: "无法获取动画帧编辑器 canvas 2d context",
+    ERROR_FILE_SIZE_EXCEEDED: "文件大小不能超过 {{maxSize}}，当前文件 {{currentSize}}",
+    STATUS_READING_FILE: "正在读取 {{name}}...",
+    STATUS_SAVING_FILE: "正在保存 {{name}}...",
+    ERROR_DECODE_FAILED: "动画取模失败",
+    STATUS_DECODING: "正在取模...",
+    STATUS_READY_WITH_COUNT: "已取模 {{frames}} 帧",
+    ERROR_PROJECT_PATH_MISSING: "未找到当前项目目录，无法保存动画资源",
+    ERROR_FS_CREATE_ASSETS_UNAVAILABLE: "文件系统接口不可用，无法创建 assets 目录",
+    ERROR_FS_SAVE_UNAVAILABLE: "文件系统接口不可用，无法保存动画资源",
+    ERROR_SOURCE_MISSING_REDECODE: "未找到动画源文件，无法重新取模",
+    ERROR_SOURCE_NOT_FOUND: "源文件不存在: {{path}}",
+    STATUS_REDECODING: "正在重新取模 {{name}}...",
+    ERROR_REDECODE_FAILED: "重新取模失败",
+    ERROR_FS_READ_UNAVAILABLE: "文件系统接口不可用，无法读取动画源文件",
+    ERROR_SOURCE_READ_INVALID: "动画源文件读取结果无效",
+    ERROR_MD5_UNAVAILABLE: "文件 MD5 接口不可用，请完全重启软件后再上传",
+    ERROR_MD5_FAILED: "文件 MD5 计算失败",
+    STATUS_RENDERING_FRAMES_WITH_COUNT: "正在加载 {{frames}} 帧...",
+    FRAME_EDITOR_TITLE: "编辑第 {{index}} 帧",
+    STATUS_INFO: "{{sourcePrefix}}{{frames}} 帧 | {{width}}x{{height}} | {{fps}} FPS | {{mode}}",
+    WORKER_ERROR_CREATE_CANVAS: "无法创建取模画布",
+    WORKER_ERROR_MP4_PARSE_FAILED: "MP4 解析失败",
+    WORKER_ERROR_MP4_NO_VIDEO_TRACK: "MP4 中没有找到视频轨道",
+    WORKER_ERROR_MP4_METADATA_FAILED: "MP4 元数据解析失败",
+    WORKER_ERROR_MP4_FRAME_EXTRACTION_FAILED: "MP4 视频帧提取失败",
+    WORKER_ERROR_WEB_CODECS_UNSUPPORTED: "当前浏览器不支持 WebCodecs VideoDecoder",
+    WORKER_STATUS_PARSE_MP4: "正在解析 MP4...",
+    WORKER_ERROR_CODEC_UNSUPPORTED: "当前浏览器不支持解码 {{codec}}",
+    WORKER_STATUS_DECODE_MP4_FRAME: "正在取模 MP4 帧 {{current}}/{{total}}",
+    WORKER_ERROR_MP4_NO_VALID_FRAMES: "MP4 解码成功，但没有取到有效帧",
+    WORKER_ERROR_IMAGE_DECODER_UNSUPPORTED: "当前浏览器不支持 ImageDecoder",
+    WORKER_STATUS_PARSE_IMAGE: "正在解析 {{format}}...",
+    WORKER_STATUS_DECODE_IMAGE_FRAME: "正在取模 {{format}} 帧 {{current}}/{{total}}",
+    WORKER_ERROR_IMAGE_NO_VALID_FRAMES: "{{format}} 解码成功，但没有取到有效帧",
+    WORKER_ERROR_UNSUPPORTED_FILE_TYPE: "只支持 MP4、GIF 或 PNG 文件",
+};
+let u8g2AnimationTranslator: U8g2AnimationTranslator | null = null;
+
+function interpolateU8g2AnimationMessage(message: string, params?: U8g2AnimationI18nParams) {
+    if (!params) return message;
+    return message.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => (
+        Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : match
+    ));
+}
+
+function translateU8g2AnimationMessage(messageName: string, params?: U8g2AnimationI18nParams) {
+    const translationKey = `${U8G2_ANIMATION_I18N_PREFIX}.${messageName}`;
+    const translated = u8g2AnimationTranslator?.(translationKey, params);
+    if (translated && translated !== translationKey) {
+        return translated;
+    }
+    return interpolateU8g2AnimationMessage(
+        DEFAULT_U8G2_ANIMATION_MESSAGES[messageName] || translationKey,
+        params,
+    );
+}
+
+function applyU8g2AnimationBlocklyMessages() {
+    U8G2_ANIMATION_BLOCKLY_MESSAGE_NAMES.forEach((messageName) => {
+        Blockly.Msg[`U8G2_ANIMATION_${messageName}`] = translateU8g2AnimationMessage(messageName);
+    });
+}
+
+export function setU8g2AnimationFieldTranslator(translator: U8g2AnimationTranslator | null) {
+    u8g2AnimationTranslator = translator;
+    applyU8g2AnimationBlocklyMessages();
+}
+
+applyU8g2AnimationBlocklyMessages();
 
 export interface U8g2AnimationValue {
     width: number;
@@ -34,6 +131,8 @@ interface DecodeWorkerMessage {
     type: 'progress' | 'done' | 'error';
     requestId: number;
     message?: string;
+    messageKey?: string;
+    messageParams?: U8g2AnimationI18nParams;
     progress?: number;
     result?: U8g2AnimationValue;
 }
@@ -379,34 +478,54 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private createFrameEditor() {
-        this.frameEditor = this.createElementWithClassname('div', 'u8g2AnimationFrameEditor');
+        this.frameEditor = this.createElementWithClassname('div', 'u8g2AnimationFrameEditorModal');
         this.frameEditor.classList.add('is-hidden');
+        this.frameEditor.setAttribute('role', 'dialog');
+        this.frameEditor.setAttribute('aria-modal', 'true');
+
+        const editorPanel = this.createElementWithClassname('div', 'u8g2AnimationFrameEditor');
 
         const header = this.createElementWithClassname('div', 'u8g2AnimationFrameEditorHeader');
         this.frameEditorTitle = this.createElementWithClassname('span', 'u8g2AnimationFrameEditorTitle');
         header.appendChild(this.frameEditorTitle);
 
-        const doneButton = this.createIconButton(
-            'u8g2AnimationFrameEditorDone',
+        const editorActions = this.createElementWithClassname('div', 'u8g2AnimationFrameEditorActions');
+        const cancelButton = this.createIconButton(
+            'u8g2AnimationFrameEditorButton u8g2AnimationFrameEditorCancel',
+            'fa-light fa-xmark',
+            Blockly.Msg['U8G2_ANIMATION_FRAME_CANCEL'],
+            () => this.closeFrameEditor(false),
+        );
+        const saveButton = this.createIconButton(
+            'u8g2AnimationFrameEditorButton u8g2AnimationFrameEditorSave',
             'fa-light fa-check',
             Blockly.Msg['U8G2_ANIMATION_FRAME_DONE'],
             () => this.closeFrameEditor(),
         );
-        header.appendChild(doneButton);
-        this.frameEditor.appendChild(header);
+        editorActions.appendChild(cancelButton);
+        editorActions.appendChild(saveButton);
+        header.appendChild(editorActions);
+        editorPanel.appendChild(header);
 
         const canvasWrap = this.createElementWithClassname('div', 'u8g2AnimationFrameEditorCanvasWrap');
         this.frameEditorCanvas = document.createElement('canvas');
         this.frameEditorCanvas.className = 'u8g2AnimationFrameEditorCanvas';
+        this.frameEditorCanvas.tabIndex = 0;
         this.setFrameEditorCursor(false);
         canvasWrap.appendChild(this.frameEditorCanvas);
-        this.frameEditor.appendChild(canvasWrap);
+        editorPanel.appendChild(canvasWrap);
+
+        const mouseHint = this.createElementWithClassname('div', 'u8g2AnimationFrameEditorHint');
+        mouseHint.textContent = Blockly.Msg['U8G2_ANIMATION_FRAME_HINT'];
+        editorPanel.appendChild(mouseHint);
 
         this.frameEditorContext = this.frameEditorCanvas.getContext('2d');
         if (!this.frameEditorContext) {
-            throw new Error('无法获取动画帧编辑器 canvas 2d context');
+            throw new Error(this.t('ERROR_FRAME_EDITOR_CONTEXT'));
         }
 
+        this.frameEditor.appendChild(editorPanel);
+        this.bindFrameEditorModalEvents();
         this.bindFrameEditorCanvasEvents();
         return this.frameEditor;
     }
@@ -675,14 +794,17 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
         try {
             if (file.size > MAX_SOURCE_FILE_SIZE_BYTES) {
-                throw new Error(`文件大小不能超过 10MB，当前文件 ${this.formatFileSize(file.size)}`);
+                throw new Error(this.t('ERROR_FILE_SIZE_EXCEEDED', {
+                    maxSize: this.formatFileSize(MAX_SOURCE_FILE_SIZE_BYTES),
+                    currentSize: this.formatFileSize(file.size),
+                }));
             }
 
-            this.setStatus(`正在读取 ${file.name}...`);
+            this.setStatus(this.t('STATUS_READING_FILE', { name: file.name }));
             const buffer = await file.arrayBuffer();
             this.invalidateSourceRedecode();
             this.clearSourceRedecodeTimer();
-            this.setStatus(`正在保存 ${file.name}...`);
+            this.setStatus(this.t('STATUS_SAVING_FILE', { name: file.name }));
             const sourcePath = this.persistSourceFile(file, buffer);
             await this.decodeAnimation({
                 fileName: file.name,
@@ -691,7 +813,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
                 sourcePath,
             }, width, height, fps, maxFrames, dither, threshold);
         } catch (error: any) {
-            this.setStatus(error?.message || '动画取模失败', true);
+            this.setStatus(error?.message || this.t('ERROR_DECODE_FAILED'), true);
         }
     }
 
@@ -720,7 +842,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
                     if (!message || message.requestId !== requestId) return;
 
                     if (message.type === 'progress') {
-                        this.setStatus(message.message || '正在取模...');
+                        this.setStatus(this.resolveWorkerMessage(message, 'STATUS_DECODING'));
                         return;
                     }
 
@@ -734,7 +856,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
                         if (shouldApplyResult()) {
                             this.closeFrameEditor(false);
                             this.setValue(result, false);
-                            this.setStatus(`${Blockly.Msg['U8G2_ANIMATION_READY']} ${result.frames.length} 帧`);
+                            this.setStatus(this.t('STATUS_READY_WITH_COUNT', { frames: result.frames.length }));
                         }
                         resolve();
                         return;
@@ -742,7 +864,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
                     if (message.type === 'error') {
                         if (shouldApplyResult()) {
-                            reject(new Error(message.message || '动画取模失败'));
+                            reject(new Error(this.resolveWorkerMessage(message, 'ERROR_DECODE_FAILED')));
                         } else {
                             resolve();
                         }
@@ -751,7 +873,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
                 worker.onerror = (error) => {
                     if (shouldApplyResult()) {
-                        reject(new Error(error.message || 'Worker 执行失败'));
+                        reject(new Error(error.message || this.t('ERROR_DECODE_FAILED')));
                     } else {
                         resolve();
                     }
@@ -784,11 +906,11 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const pathApi = (window as any)['path'];
 
         if (!projectPath || !fsApi || !pathApi?.join || !pathApi?.relative) {
-            throw new Error('未找到当前项目目录，无法保存动画资源');
+            throw new Error(this.t('ERROR_PROJECT_PATH_MISSING'));
         }
 
         if (typeof fsApi.mkdirSync !== 'function') {
-            throw new Error('文件系统接口不可用，无法创建 assets 目录');
+            throw new Error(this.t('ERROR_FS_CREATE_ASSETS_UNAVAILABLE'));
         }
 
         const assetsDir = pathApi.join(projectPath, 'assets', 'u8g2-animation');
@@ -810,7 +932,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         } else if (typeof fsApi.writeBase64File === 'function') {
             fsApi.writeBase64File(assetFilePath, this.arrayBufferToBase64(buffer));
         } else {
-            throw new Error('文件系统接口不可用，无法保存动画资源');
+            throw new Error(this.t('ERROR_FS_SAVE_UNAVAILABLE'));
         }
 
         return this.normalizeAssetPath(pathApi.relative(projectPath, assetFilePath));
@@ -852,12 +974,12 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const sourceFilePath = this.resolveSourceFilePath(value.sourcePath);
         const fsApi = (window as any)['fs'];
         if (!sourceFilePath || (!fsApi?.readFileBuffer && !fsApi?.readFileAsBase64)) {
-            this.setStatus('未找到动画源文件，无法重新取模', true);
+            this.setStatus(this.t('ERROR_SOURCE_MISSING_REDECODE'), true);
             return;
         }
 
         if (typeof fsApi.existsSync === 'function' && !fsApi.existsSync(sourceFilePath)) {
-            this.setStatus(`源文件不存在: ${value.sourcePath}`, true);
+            this.setStatus(this.t('ERROR_SOURCE_NOT_FOUND', { path: value.sourcePath }), true);
             return;
         }
 
@@ -865,7 +987,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.sourceRedecodeInProgress = true;
         try {
             const sourceName = value.sourceName || this.getPathBaseName(value.sourcePath);
-            this.setStatus(`正在重新取模 ${sourceName}...`);
+            this.setStatus(this.t('STATUS_REDECODING', { name: sourceName }));
             const buffer = this.readSourceFileBuffer(sourceFilePath, fsApi);
             await this.decodeAnimation({
                 fileName: sourceName,
@@ -875,7 +997,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             }, value.width, value.height, value.fps, value.maxFrames, value.dither, value.threshold, () => decodeVersion === this.sourceRedecodeVersion);
         } catch (error: any) {
             if (decodeVersion === this.sourceRedecodeVersion) {
-                this.setStatus(error?.message || '重新取模失败', true);
+                this.setStatus(error?.message || this.t('ERROR_REDECODE_FAILED'), true);
             }
         } finally {
             this.sourceRedecodeInProgress = false;
@@ -895,7 +1017,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             return this.base64ToArrayBuffer(fsApi.readFileAsBase64(sourceFilePath));
         }
 
-        throw new Error('文件系统接口不可用，无法读取动画源文件');
+        throw new Error(this.t('ERROR_FS_READ_UNAVAILABLE'));
     }
 
     private toArrayBuffer(data: unknown): ArrayBuffer {
@@ -917,7 +1039,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             return new Uint8Array(maybeBuffer.data).buffer;
         }
 
-        throw new Error('动画源文件读取结果无效');
+        throw new Error(this.t('ERROR_SOURCE_READ_INVALID'));
     }
 
     private resolveSourceFilePath(sourcePath: string): string | null {
@@ -985,12 +1107,12 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
     private calculateSourceMd5(buffer: ArrayBuffer, fsApi: any) {
         if (typeof fsApi.md5Buffer !== 'function') {
-            throw new Error('文件 MD5 接口不可用，请完全重启软件后再上传');
+            throw new Error(this.t('ERROR_MD5_UNAVAILABLE'));
         }
 
         const md5 = String(fsApi.md5Buffer(buffer) || '').toLowerCase();
         if (!/^[a-f0-9]{32}$/.test(md5)) {
-            throw new Error('文件 MD5 计算失败');
+            throw new Error(this.t('ERROR_MD5_FAILED'));
         }
         return md5;
     }
@@ -1084,7 +1206,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
         this.frameStrip.style.minHeight = `${Math.ceil(value.height * previewScale) + 32}px`;
         const loading = this.createElementWithClassname('div', 'u8g2AnimationFrameLoading');
-        loading.textContent = `${Blockly.Msg['U8G2_ANIMATION_RENDERING_FRAMES']} ${frames.length} 帧...`;
+        loading.textContent = this.t('STATUS_RENDERING_FRAMES_WITH_COUNT', { frames: frames.length });
         this.frameStrip.appendChild(loading);
 
         const renderVersion = this.frameStripRenderVersion;
@@ -1145,12 +1267,12 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         actions.appendChild(this.createFrameActionButton(
             'fa-light fa-paintbrush',
             Blockly.Msg['U8G2_ANIMATION_FRAME_EDIT'],
-            (event) => this.openFrameEditor(index, event),
+            (event) => this.openFrameEditor(this.getFrameStripItemIndex(item), event),
         ));
         actions.appendChild(this.createFrameActionButton(
             'fa-light fa-trash',
             Blockly.Msg['U8G2_ANIMATION_FRAME_DELETE'],
-            (event) => this.deleteFrame(index, event),
+            (event) => this.deleteFrame(this.getFrameStripItemIndex(item), event),
         ));
         const label = document.createElement('span');
         label.textContent = String(index + 1);
@@ -1159,6 +1281,11 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         item.appendChild(preview);
         item.appendChild(label);
         return item;
+    }
+
+    private getFrameStripItemIndex(item: HTMLElement) {
+        const index = Number(item.dataset['frameIndex']);
+        return Number.isInteger(index) ? index : -1;
     }
 
     private updateFrameStripEditingState() {
@@ -1170,6 +1297,49 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
                 Number(item.dataset['frameIndex']) === editingFrameIndex,
             );
         });
+    }
+
+    private updateFrameStripItem(index: number, frame: number[][], width: number, height: number) {
+        const item = this.getFrameStripItem(index);
+        if (!item) return;
+
+        const nextItem = this.createFrameStripItem(
+            frame,
+            index,
+            width,
+            height,
+            this.getPreviewScale(width, height),
+        );
+        item.replaceWith(nextItem);
+    }
+
+    private updateFrameStripAfterDelete(index: number, frameCount: number) {
+        const item = this.getFrameStripItem(index);
+        item?.remove();
+
+        if (!this.frameStrip) return;
+        this.frameStrip.querySelectorAll<HTMLElement>('.u8g2AnimationFrameItem').forEach((frameItem) => {
+            const currentIndex = this.getFrameStripItemIndex(frameItem);
+            if (currentIndex <= index) return;
+
+            const nextIndex = currentIndex - 1;
+            frameItem.dataset['frameIndex'] = String(nextIndex);
+            const label = frameItem.querySelector('span');
+            if (label) {
+                label.textContent = String(nextIndex + 1);
+            }
+        });
+
+        if (frameCount <= 1 && !this.frameStrip.querySelector('.u8g2AnimationFrameItem')) {
+            this.renderFrameStrip();
+        } else {
+            this.updateFrameStripEditingState();
+        }
+    }
+
+    private getFrameStripItem(index: number) {
+        if (!this.frameStrip || index < 0) return null;
+        return this.frameStrip.querySelector<HTMLElement>(`.u8g2AnimationFrameItem[data-frame-index="${index}"]`);
     }
 
     private cancelFrameStripRender() {
@@ -1208,6 +1378,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             this.stopFrameEditorEvent(event);
         }
 
+        if (index < 0) return;
         const value = this.getValue();
         if (!value.frames[index]) return;
 
@@ -1222,6 +1393,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.updateFrameEditorTitle();
         this.renderFrameEditorCanvas();
         this.frameEditor?.classList.remove('is-hidden');
+        this.frameEditorCanvas?.focus();
         this.updateFrameStripEditingState();
     }
 
@@ -1248,7 +1420,8 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         if (this.editingFrameIndex === null || !this.editingFrameDraft) return;
 
         const value = this.getValue();
-        const frame = value.frames[this.editingFrameIndex];
+        const frameIndex = this.editingFrameIndex;
+        const frame = value.frames[frameIndex];
         if (!frame) return;
 
         const nextFrame = this.cloneFrame(this.editingFrameDraft, value.width, value.height);
@@ -1256,12 +1429,10 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
 
         this.invalidateSourceRedecode();
         this.clearSourceRedecodeTimer();
-        const frames = value.frames.map((currentFrame, frameIndex) => (
-            frameIndex === this.editingFrameIndex
-                ? nextFrame
-                : this.cloneFrame(currentFrame, value.width, value.height)
-        ));
-        this.setValue(this.createManualValue(value, frames), false);
+        const frames = value.frames.slice();
+        frames[frameIndex] = nextFrame;
+        this.commitManualFrames(value, frames);
+        this.updateFrameStripItem(frameIndex, nextFrame, value.width, value.height);
     }
 
     private deleteFrame(index: number, event?: Event) {
@@ -1269,6 +1440,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             this.stopFrameEditorEvent(event);
         }
 
+        if (index < 0) return;
         if (this.editingFrameIndex !== null && this.editingFrameIndex !== index) {
             this.applyFrameEditorDraft();
         }
@@ -1279,28 +1451,37 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.invalidateSourceRedecode();
         this.clearSourceRedecodeTimer();
 
-        const frames = value.frames
-            .filter((_, frameIndex) => frameIndex !== index)
-            .map(frame => this.cloneFrame(frame, value.width, value.height));
+        const wasFrameStripRendering = this.frameStripRenderFrameId !== null;
+        if (wasFrameStripRendering) {
+            this.cancelFrameStripRender();
+        }
+
+        const frames = [
+            ...value.frames.slice(0, index),
+            ...value.frames.slice(index + 1),
+        ];
         const nextFrames = frames.length
             ? frames
             : [this.createEmptyFrame(value.width, value.height)];
 
         if (this.editingFrameIndex === index) {
-            this.editingFrameIndex = null;
-            this.editingFrameDraft = null;
-            this.frameEditor?.classList.add('is-hidden');
+            this.closeFrameEditor(false);
         } else if (this.editingFrameIndex !== null && this.editingFrameIndex > index) {
             this.editingFrameIndex -= 1;
             this.updateFrameEditorTitle();
         }
 
-        this.setValue(this.createManualValue(value, nextFrames), false);
+        this.commitManualFrames(value, nextFrames);
+        if (wasFrameStripRendering || value.frames.length <= 1) {
+            this.renderFrameStrip();
+        } else {
+            this.updateFrameStripAfterDelete(index, nextFrames.length);
+        }
     }
 
     private updateFrameEditorTitle() {
         if (!this.frameEditorTitle || this.editingFrameIndex === null) return;
-        this.frameEditorTitle.textContent = `#${this.editingFrameIndex + 1}`;
+        this.frameEditorTitle.textContent = this.t('FRAME_EDITOR_TITLE', { index: this.editingFrameIndex + 1 });
     }
 
     private resizeFrameEditorCanvas(width: number, height: number) {
@@ -1321,6 +1502,13 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         }
     }
 
+    private bindFrameEditorModalEvents() {
+        if (!this.frameEditor) return;
+
+        this.bindEvent(this.frameEditor, 'click', this.onFrameEditorModalClick.bind(this));
+        this.bindEvent(document, 'keydown', this.onFrameEditorKeyDown.bind(this));
+    }
+
     private bindFrameEditorCanvasEvents() {
         if (!this.frameEditorCanvas) return;
 
@@ -1331,6 +1519,24 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.bindEvent(this.frameEditorCanvas, 'pointercancel', this.onFrameEditorPointerEnd.bind(this));
         this.bindEvent(this.frameEditorCanvas, 'contextmenu', this.stopFrameEditorEvent.bind(this));
         this.bindEvent(this.frameEditorCanvas, 'touchmove', this.stopFrameEditorEvent.bind(this));
+    }
+
+    private onFrameEditorModalClick(event: Event) {
+        event.stopPropagation();
+        if (event.target === this.frameEditor) {
+            event.preventDefault();
+            this.closeFrameEditor(false);
+        }
+    }
+
+    private onFrameEditorKeyDown(event: Event) {
+        if (this.editingFrameIndex === null) return;
+
+        const keyboardEvent = event as KeyboardEvent;
+        if (keyboardEvent.key !== 'Escape') return;
+
+        this.stopFrameEditorEvent(event);
+        this.closeFrameEditor(false);
     }
 
     private onFrameEditorPointerStart(event: Event) {
@@ -1370,9 +1576,6 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             this.stopFrameEditorEvent(event);
         }
 
-        if (this.frameEditorPointerIsDown) {
-            this.applyFrameEditorDraft();
-        }
         this.frameEditorPointerIsDown = false;
         this.frameEditorPaintValue = undefined;
         this.frameEditorLastRow = -1;
@@ -1542,8 +1745,26 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const modeText = value.dither
             ? Blockly.Msg['U8G2_ANIMATION_LABEL_DITHER']
             : `${Blockly.Msg['U8G2_ANIMATION_LABEL_THRESHOLD']} ${value.threshold}`;
-        this.statusElement.textContent = `${source}${value.frames.length} 帧 · ${value.width}x${value.height} · ${value.fps} FPS · ${modeText}`;
+        this.statusElement.textContent = this.t('STATUS_INFO', {
+            sourcePrefix: source,
+            frames: value.frames.length,
+            width: value.width,
+            height: value.height,
+            fps: value.fps,
+            mode: modeText,
+        });
         this.statusElement.classList.remove('is-error');
+    }
+
+    private t(messageName: string, params?: U8g2AnimationI18nParams) {
+        return translateU8g2AnimationMessage(messageName, params);
+    }
+
+    private resolveWorkerMessage(message: DecodeWorkerMessage, fallbackMessageName: string) {
+        if (message.messageKey) {
+            return this.t(message.messageKey, message.messageParams);
+        }
+        return message.message || this.t(fallbackMessageName);
     }
 
     private setStatus(message: string, isError = false) {
@@ -1622,6 +1843,13 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             threshold: value.threshold,
             frames,
         };
+    }
+
+    private commitManualFrames(value: U8g2AnimationValue, frames: number[][][]) {
+        this.value_ = this.createManualValue(value, frames);
+        this.updateBlockDisplayImage();
+        this.updateControlsFromValue();
+        this.updateStatusFromValue();
     }
 
     private createEmptyValue(config?: FieldU8g2AnimationFromJsonConfig): U8g2AnimationValue {
@@ -1728,6 +1956,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private dropdownDispose() {
+        this.closeFrameEditor();
         this.cancelFrameStripRender();
         this.clearSourceRedecodeTimer();
         this.terminateWorker();
@@ -1911,18 +2140,33 @@ Blockly.Css.register(`
 .u8g2AnimationStatus.is-error {
   color: #ffb3b3;
 }
+.u8g2AnimationFrameEditorModal {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.46);
+  box-sizing: border-box;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 100001;
+}
+.u8g2AnimationFrameEditorModal.is-hidden {
+  display: none;
+}
 .u8g2AnimationFrameEditor {
   background: #1b1b1b;
   border: 1px solid #666;
-  border-radius: 4px;
+  border-radius: 6px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-width: 600px;
-  padding: 8px;
-}
-.u8g2AnimationFrameEditor.is-hidden {
-  display: none;
+  gap: 8px;
+  max-height: min(88vh, 560px);
+  max-width: min(92vw, 620px);
+  padding: 10px;
+  width: max-content;
 }
 .u8g2AnimationFrameEditorHeader {
   align-items: center;
@@ -1935,7 +2179,11 @@ Blockly.Css.register(`
   font-size: 12px;
   line-height: 1;
 }
-.u8g2AnimationFrameEditorDone {
+.u8g2AnimationFrameEditorActions {
+  display: inline-flex;
+  gap: 6px;
+}
+.u8g2AnimationFrameEditorButton {
   align-items: center;
   background: #333;
   border: 1px solid #666;
@@ -1949,15 +2197,25 @@ Blockly.Css.register(`
   padding: 0;
   width: 24px;
 }
-.u8g2AnimationFrameEditorDone:hover {
+.u8g2AnimationFrameEditorButton:hover {
   background: #444;
   border-color: #888;
 }
+.u8g2AnimationFrameEditorSave:hover {
+  background: #4db6ac;
+  border-color: #73d8d0;
+  color: #111;
+}
+.u8g2AnimationFrameEditorCancel:hover {
+  background: #4a4a4a;
+  border-color: #aaa;
+}
 .u8g2AnimationFrameEditorCanvasWrap {
+  align-self: center;
   background: #111;
   border: 1px solid #444;
-  max-height: 320px;
-  max-width: 560px;
+  max-height: min(66vh, 420px);
+  max-width: min(86vw, 560px);
   overflow: auto;
   scrollbar-color: var(--aily-border-tertiary, #666) transparent;
   scrollbar-width: thin;
@@ -1978,6 +2236,13 @@ Blockly.Css.register(`
   display: block;
   image-rendering: pixelated;
   touch-action: none;
+}
+.u8g2AnimationFrameEditorHint {
+  color: #cfcfcf;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
 }
 .u8g2AnimationFrameStrip {
   align-items: flex-start;
@@ -2060,7 +2325,7 @@ Blockly.Css.register(`
   color: #111;
 }
 .u8g2AnimationFrameAction i,
-.u8g2AnimationFrameEditorDone i {
+.u8g2AnimationFrameEditorButton i {
   font-size: 12px;
   line-height: 1;
 }
