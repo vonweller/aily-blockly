@@ -1,5 +1,6 @@
 import type { ChatPartStore, TextPayloadPartPatch } from './chat-part-store';
 import { mkTerminal, type ChatPartScope, type ConfirmationPart, type ToolCallPart } from './chat-parts';
+import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 import type { CanonicalRenderLifecycleEvent } from './render-event-item-lifecycle';
 
 type CanonicalPayloadProjectionHandle = Parameters<ChatPartStore['upsertTextPayloadPartForHandle']>[0];
@@ -129,12 +130,20 @@ export class CanonicalRenderPayloadProjector {
         return true;
 
       case 'notice':
+        const normalizedNotice = payload.severity === 'error'
+          ? normalizeChatErrorNotice({
+            message: payload.message,
+            code: payload.code,
+            details: payload.metadata?.['details'],
+            metadata: payload.metadata,
+          })
+          : undefined;
         return this.store.upsertNoticePartForHandle(
           handle,
           `canonical:notice:${event.itemId}`,
-          payload.message,
+          normalizedNotice?.message ?? payload.message,
           payload.severity,
-          noticePayloadToMetadata(payload),
+          normalizedNotice?.metadata ?? noticePayloadToMetadata(payload),
           scope,
         );
 
@@ -240,26 +249,18 @@ function confirmationPayloadToMetadata(
 function noticePayloadToMetadata(
   payload: Extract<NonNullable<Extract<CanonicalRenderLifecycleEvent, { type: 'itemDelta' }>['structuredPayload']>, { type: 'notice' }>,
 ): Record<string, unknown> | undefined {
-  const base = payload.metadata ? { ...payload.metadata } : {};
-  if (payload.code) {
-    base['code'] = payload.code;
+  if (payload.severity !== 'error') {
+    const base = payload.metadata ? { ...payload.metadata } : {};
+    if (payload.code) {
+      base['code'] = payload.code;
+    }
+    return Object.keys(base).length > 0 ? base : undefined;
   }
 
-  if (payload.severity === 'error' && payload.code && isRetryableServiceStreamErrorCode(payload.code)) {
-    base['errorDetails'] = {
-      code: payload.code,
-      confirmationButtons: [
-        {
-          data: { ailyContinueOnError: true },
-          label: '重试',
-        },
-      ],
-    };
-  }
-
-  return Object.keys(base).length > 0 ? base : undefined;
-}
-
-function isRetryableServiceStreamErrorCode(code: string): boolean {
-  return code === '29001' || code === 'request_failed';
+  return normalizeChatErrorNotice({
+    message: payload.message,
+    code: payload.code,
+    details: payload.metadata?.['details'],
+    metadata: payload.metadata,
+  }).metadata;
 }

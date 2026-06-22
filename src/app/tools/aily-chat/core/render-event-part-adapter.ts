@@ -46,6 +46,7 @@ import {
   type ToolCallPartPatch,
 } from './chat-part-store';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
+import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 
 export type RenderEventPartStoreAccess = Pick<
   ChatPartStore,
@@ -1578,36 +1579,16 @@ function getStandaloneApprovalRequestId(
 }
 
 function errorNoticeToPart(event: Extract<RenderEvent, { type: 'error_notice' }>) {
-  const code = typeof event.code === 'string' && event.code.trim().length > 0
-    ? event.code.trim()
-    : undefined;
+  const normalized = normalizeChatErrorNotice({
+    message: event.message,
+    code: event.code,
+    details: (event as { readonly details?: unknown }).details,
+  });
   return mkError(
-    event.message,
+    normalized.message,
     'error',
-    withChatPartScopeMetadata(buildErrorNoticeMetadata(code), eventScope(event)),
+    withChatPartScopeMetadata(normalized.metadata, eventScope(event)),
   );
-}
-
-function buildErrorNoticeMetadata(code: string | undefined): Record<string, unknown> | undefined {
-  if (!code) {
-    return undefined;
-  }
-
-  const errorDetails: Record<string, unknown> = { code };
-  if (isRetryableServiceStreamErrorCode(code)) {
-    errorDetails['confirmationButtons'] = [
-      {
-        data: { ailyContinueOnError: true },
-        label: '重试',
-      },
-    ];
-  }
-
-  return { errorDetails };
-}
-
-function isRetryableServiceStreamErrorCode(code: string): boolean {
-  return code === '29001' || code === 'request_failed';
 }
 
 function warningNoticeToPart(event: Extract<RenderEvent, { type: 'warning_notice' }>) {
