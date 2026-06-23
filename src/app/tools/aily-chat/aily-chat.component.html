@@ -471,6 +471,7 @@
           <div class="btns" [class.has-expanded-context]="resourceManager.showAddList">
             <aily-chat-context-toolbar
               [showAddList]="resourceManager.showAddList"
+              [showManageMemory]="true"
               [showModeMenu]="menuManager.showMode"
               [showModelMenu]="menuManager.showModelMenu"
               [currentMode]="vm.currentMode"
@@ -483,6 +484,7 @@
               (toggleAddList)="resourceManager.toggleAddList()"
               (addFile)="resourceManager.addFile()"
               (addFolder)="resourceManager.addFolder()"
+              (manageMemory)="memoryShellCoordinator.requestManageMemories()"
               (modeClick)="switchShellCoordinator.toggleModeMenu($event, vm.modeMenuItems)"
               (modelClick)="switchShellCoordinator.toggleModelMenu($event, vm.modelMenuItems)"
             />

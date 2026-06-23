@@ -1,0 +1,90 @@
+<app-base-dialog
+  [title]="'AILY_CHAT.MEMORY_TITLE' | translate"
+  [showFooter]="false"
+  (closeDialog)="closeDialog()">
+  <div class="memory-manager">
+    <div class="memory-toolbar">
+      <div class="memory-tabs">
+        @for (item of scopeOptions; track trackByScope($index, item)) {
+          <button
+            type="button"
+            class="memory-tab"
+            [class.active]="state.activeScope === item.scope"
+            (click)="switchScope(item.scope)">
+            {{ item.labelKey | translate }}
+          </button>
+        }
+      </div>
+
+      <div class="memory-toolbar-actions">
+        <input
+          type="text"
+          class="memory-search"
+          [ngModel]="state.searchTerm"
+          [placeholder]="'AILY_CHAT.MEMORY_SEARCH_PLACEHOLDER' | translate"
+          (ngModelChange)="updateSearch($event)" />
+        <button
+          type="button"
+          class="memory-icon-btn"
+          [attr.aria-label]="'AILY_CHAT.MANAGE_MEMORY_CREATE' | translate"
+          (click)="createEntry()">
+          <i class="fa-light fa-plus"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="memory-body" [class.memory-body--split]="state.hasSplitLayout">
+      @if (state.hasSplitLayout) {
+        <aside class="memory-nav">
+          @if (state.navigationItems.length > 0) {
+            @for (item of state.navigationItems; track trackByNavigationId($index, item)) {
+              <button
+                type="button"
+                class="memory-nav-item"
+                [class.active]="state.selectedNavigationItem?.id === item.id"
+                (click)="selectNavigationItem(item)">
+                <span class="memory-nav-title">{{ item.title }}</span>
+                <span class="memory-nav-time">{{ formatRelativeTime(item.updatedAt) }}</span>
+              </button>
+            }
+          } @else {
+            <div class="memory-empty memory-empty--sidebar">
+              {{ 'AILY_CHAT.MEMORY_EMPTY' | translate }}
+            </div>
+          }
+        </aside>
+      }
+
+      <section class="memory-content">
+        @if (state.visibleEntries.length > 0) {
+          <div class="memory-entry-list">
+            @for (entry of state.visibleEntries; track trackByPath($index, entry)) {
+              <div class="memory-entry-row">
+                <input
+                  type="text"
+                  class="memory-entry-input"
+                  [ngModel]="state.getDraftValue(entry)"
+                  [placeholder]="'AILY_CHAT.MEMORY_EDITOR_PLACEHOLDER' | translate"
+                  (ngModelChange)="updateDraft(entry, $event)"
+                  (blur)="flushEntry(entry)" />
+                <button
+                  type="button"
+                  class="memory-delete-btn"
+                  nz-popconfirm
+                  nzPopconfirmPlacement="left"
+                  [nzPopconfirmTitle]="'AILY_CHAT.MEMORY_DELETE_CONFIRM' | translate:{ title: describeEntry(entry) }"
+                  (nzOnConfirm)="deleteEntry(entry)">
+                  <i class="fa-light fa-xmark"></i>
+                </button>
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="memory-empty">
+            {{ (state.searchTerm ? 'AILY_CHAT.MEMORY_EMPTY_SEARCH' : 'AILY_CHAT.MEMORY_EMPTY') | translate }}
+          </div>
+        }
+      </section>
+    </div>
+  </div>
+</app-base-dialog>

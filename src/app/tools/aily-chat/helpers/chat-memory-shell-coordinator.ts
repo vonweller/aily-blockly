@@ -1,15 +1,25 @@
 ﻿import type { NzModalService } from 'ng-zorro-antd/modal';
 
 import type { IAilyHostAPI } from '../core/host-api';
+import type { ChatSessionListItem } from '../services/menu-manager.service';
 import { ChatClearMemoriesDialogComponent } from '../components/chat-clear-memories-dialog/chat-clear-memories-dialog.component';
 import { ChatShowMemoriesDialogComponent } from '../components/chat-show-memories-dialog/chat-show-memories-dialog.component';
+import { MemoryManagerDialogComponent } from '../components/memory/memory-manager-dialog.component';
 import { clearBlocklyLocalMemories, listBlocklyLocalMemoryEntries, type BlocklyMemoryEntry } from './chat-memory-host';
+
+interface RecentProjectItem {
+  readonly name: string;
+  readonly path: string;
+  readonly nickname?: string;
+}
 
 export interface ChatMemoryShellCoordinatorDeps {
   readonly modal: Pick<NzModalService, 'create'>;
   readonly getHost: () => IAilyHostAPI;
   readonly getProjectPath: () => string;
   readonly getSessionId: () => string | undefined;
+  readonly getRecentProjects: () => readonly RecentProjectItem[];
+  readonly getSessionItems: () => readonly ChatSessionListItem[];
   readonly getRepositoryMemoryEnabled: () => boolean;
   readonly notifyInfo: (message: string) => void;
   readonly notifyError: (message: string) => void;
@@ -17,6 +27,26 @@ export interface ChatMemoryShellCoordinatorDeps {
 
 export class ChatMemoryShellCoordinator {
   constructor(private readonly deps: ChatMemoryShellCoordinatorDeps) {}
+
+  requestManageMemories(): boolean {
+    this.deps.modal.create({
+      nzTitle: null,
+      nzFooter: null,
+      nzClosable: false,
+      nzBodyStyle: { padding: '0' },
+      nzWidth: 980,
+      nzContent: MemoryManagerDialogComponent,
+      nzData: {
+        host: this.deps.getHost(),
+        projectPath: this.deps.getProjectPath(),
+        sessionId: this.deps.getSessionId(),
+        recentProjects: this.deps.getRecentProjects(),
+        sessionItems: this.deps.getSessionItems(),
+      },
+    });
+
+    return true;
+  }
 
   requestShowMemories(): boolean {
     const entries = listBlocklyLocalMemoryEntries(

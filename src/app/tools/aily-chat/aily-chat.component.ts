@@ -418,6 +418,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
         return host.project.currentProjectPath || host.project.projectRootPath || this.projectService.currentProjectPath || this.projectService.projectRootPath || '';
       },
       getSessionId: () => this.vm.sessionId,
+      getRecentProjects: () => this.projectService.recentlyProjects ?? [],
+      getSessionItems: () => this.sessionListItems,
       getRepositoryMemoryEnabled: () => this.ailyChatConfigService.repositoryMemoryEnabled === true,
       notifyInfo: (text) => this.message.info(text),
       notifyError: (text) => this.message.error(text),
