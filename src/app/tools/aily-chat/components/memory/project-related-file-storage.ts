@@ -413,6 +413,12 @@ export class ProjectRelatedFileStorage {
   }
 
   private copyPath(sourcePath: string, destinationPath: string): void {
+    // Prefer the host's native copy so binary assets keep their original bytes.
+    if (this.host.fs.copySync) {
+      this.host.fs.copySync(sourcePath, destinationPath);
+      return;
+    }
+
     const sourceStat = this.host.fs.statSync(sourcePath);
     if (sourceStat.isDirectory()) {
       this.copyDirectory(sourcePath, destinationPath);
