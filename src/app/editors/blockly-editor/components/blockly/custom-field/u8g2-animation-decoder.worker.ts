@@ -26,23 +26,46 @@ interface DecodeResult {
     sourceType: string;
 }
 
+type WorkerMessageParams = Record<string, string | number>;
+
 const DEFAULT_THRESHOLD = 127;
 const MICROSECONDS_PER_SECOND = 1000000;
+const DEFAULT_ANIMATION_SECONDS = 60;
+const MAX_FPS = 30;
+const MAX_FRAMES = 1800;
 
-function postProgress(requestId: number, message: string, progress?: number) {
+class LocalizedWorkerError extends Error {
+    constructor(
+        readonly messageKey: string,
+        readonly messageParams: WorkerMessageParams = {},
+        fallbackMessage = messageKey,
+    ) {
+        super(fallbackMessage);
+    }
+}
+
+function createWorkerError(messageKey: string, messageParams: WorkerMessageParams = {}, fallbackMessage?: string) {
+    return new LocalizedWorkerError(messageKey, messageParams, fallbackMessage);
+}
+
+function postProgress(requestId: number, messageKey: string, messageParams: WorkerMessageParams = {}, progress?: number) {
     self.postMessage({
         type: 'progress',
         requestId,
-        message,
+        messageKey,
+        messageParams,
         progress,
     });
 }
 
-function postError(requestId: number, message: string) {
+function postError(requestId: number, error: unknown) {
+    const localizedError = error instanceof LocalizedWorkerError ? error : null;
     self.postMessage({
         type: 'error',
         requestId,
-        message,
+        message: localizedError ? undefined : (error as any)?.message,
+        messageKey: localizedError?.messageKey,
+        messageParams: localizedError?.messageParams,
     });
 }
 
@@ -51,12 +74,23 @@ function normalizeDimension(value: number, fallback: number, min: number, max: n
     return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function getMaxFramesLimit() {
+    return MAX_FRAMES;
+}
+
+function getDefaultMaxFrames(fps: number) {
+    return Math.min(getMaxFramesLimit(), Math.max(1, Math.floor(fps) * DEFAULT_ANIMATION_SECONDS));
+}
+
 function normalizeDecodeOptions(request: DecodeRequest) {
+    const fps = normalizeDimension(request.fps, 10, 1, MAX_FPS);
+    const maxFramesLimit = getMaxFramesLimit();
+
     return {
         width: normalizeDimension(request.width, 128, 1, 256),
         height: normalizeDimension(request.height, 64, 1, 128),
-        fps: normalizeDimension(request.fps, 10, 1, 60),
-        maxFrames: normalizeDimension(request.maxFrames, 30, 1, 500),
+        fps,
+        maxFrames: normalizeDimension(request.maxFrames, getDefaultMaxFrames(fps), 1, maxFramesLimit),
         dither: !!request.dither,
         threshold: normalizeDimension(request.threshold, DEFAULT_THRESHOLD, 0, 255),
     };
@@ -158,7 +192,7 @@ function frameToBitmap(frame: VideoFrame, width: number, height: number, dither:
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) {
-        throw new Error('无法创建取模画布');
+        throw createWorkerError('WORKER_ERROR_CREATE_CANVAS');
     }
 
     context.clearRect(0, 0, width, height);
@@ -199,13 +233,15 @@ async function getMp4VideoSamples(buffer: ArrayBuffer): Promise<{ track: any; sa
         const samples: any[] = [];
 
         mp4boxFile.onError = (module: string, message: string) => {
-            reject(new Error(message || module || 'MP4 解析失败'));
+            reject(message || module
+                ? new Error(message || module)
+                : createWorkerError('WORKER_ERROR_MP4_PARSE_FAILED'));
         };
 
         mp4boxFile.onReady = (info: any) => {
             videoTrack = info.tracks?.find((track: any) => track.video);
             if (!videoTrack) {
-                reject(new Error('MP4 中没有找到视频轨道'));
+                reject(createWorkerError('WORKER_ERROR_MP4_NO_VIDEO_TRACK'));
                 return;
             }
 
@@ -226,11 +262,11 @@ async function getMp4VideoSamples(buffer: ArrayBuffer): Promise<{ track: any; sa
 
         setTimeout(() => {
             if (!videoTrack) {
-                reject(new Error('MP4 元数据解析失败'));
+                reject(createWorkerError('WORKER_ERROR_MP4_METADATA_FAILED'));
                 return;
             }
             if (samples.length === 0) {
-                reject(new Error('MP4 视频帧提取失败'));
+                reject(createWorkerError('WORKER_ERROR_MP4_FRAME_EXTRACTION_FAILED'));
                 return;
             }
             resolve({ track: videoTrack, samples });
@@ -242,11 +278,11 @@ async function decodeMp4(request: DecodeRequest): Promise<DecodeResult> {
     const VideoDecoderCtor = (self as any).VideoDecoder;
     const EncodedVideoChunkCtor = (self as any).EncodedVideoChunk;
     if (!VideoDecoderCtor || !EncodedVideoChunkCtor) {
-        throw new Error('当前浏览器不支持 WebCodecs VideoDecoder');
+        throw createWorkerError('WORKER_ERROR_WEB_CODECS_UNSUPPORTED');
     }
 
     const options = normalizeDecodeOptions(request);
-    postProgress(request.requestId, '正在解析 MP4...', 0.08);
+    postProgress(request.requestId, 'WORKER_STATUS_PARSE_MP4', {}, 0.08);
     const { track, samples } = await getMp4VideoSamples(request.buffer);
     const firstSample = samples[0];
     const decoderDescription = getDecoderDescription(firstSample);
@@ -263,7 +299,7 @@ async function decodeMp4(request: DecodeRequest): Promise<DecodeResult> {
     if (typeof VideoDecoderCtor.isConfigSupported === 'function') {
         const support = await VideoDecoderCtor.isConfigSupported(config);
         if (!support.supported) {
-            throw new Error(`当前浏览器不支持解码 ${track.codec}`);
+            throw createWorkerError('WORKER_ERROR_CODEC_UNSUPPORTED', { codec: track.codec });
         }
     }
 
@@ -286,7 +322,8 @@ async function decodeMp4(request: DecodeRequest): Promise<DecodeResult> {
                     nextCaptureAt += intervalUs;
                     postProgress(
                         request.requestId,
-                        `正在取模 MP4 帧 ${frames.length}/${options.maxFrames}`,
+                        'WORKER_STATUS_DECODE_MP4_FRAME',
+                        { current: frames.length, total: options.maxFrames },
                         Math.min(0.95, frames.length / options.maxFrames),
                     );
                 }
@@ -318,7 +355,7 @@ async function decodeMp4(request: DecodeRequest): Promise<DecodeResult> {
     decoder.close();
 
     if (frames.length === 0) {
-        throw new Error('MP4 解码成功，但没有取到有效帧');
+        throw createWorkerError('WORKER_ERROR_MP4_NO_VALID_FRAMES');
     }
 
     return {
@@ -347,7 +384,7 @@ function getImageFormatLabel(imageType: string): string {
 async function decodeImageAnimation(request: DecodeRequest): Promise<DecodeResult> {
     const ImageDecoderCtor = (self as any).ImageDecoder;
     if (!ImageDecoderCtor) {
-        throw new Error('当前浏览器不支持 ImageDecoder');
+        throw createWorkerError('WORKER_ERROR_IMAGE_DECODER_UNSUPPORTED');
     }
 
     const options = normalizeDecodeOptions(request);
@@ -359,7 +396,7 @@ async function decodeImageAnimation(request: DecodeRequest): Promise<DecodeResul
         type: imageType,
     });
 
-    postProgress(request.requestId, `正在解析 ${imageLabel}...`, 0.08);
+    postProgress(request.requestId, 'WORKER_STATUS_PARSE_IMAGE', { format: imageLabel }, 0.08);
     await decoder.tracks.ready;
 
     const selectedTrack = decoder.tracks.selectedTrack;
@@ -390,7 +427,8 @@ async function decodeImageAnimation(request: DecodeRequest): Promise<DecodeResul
             nextCaptureAt += intervalUs;
             postProgress(
                 request.requestId,
-                `正在取模 ${imageLabel} 帧 ${frames.length}/${options.maxFrames}`,
+                'WORKER_STATUS_DECODE_IMAGE_FRAME',
+                { format: imageLabel, current: frames.length, total: options.maxFrames },
                 Math.min(0.95, frames.length / options.maxFrames),
             );
         }
@@ -402,7 +440,7 @@ async function decodeImageAnimation(request: DecodeRequest): Promise<DecodeResul
     decoder.close();
 
     if (frames.length === 0) {
-        throw new Error(`${imageLabel} 解码成功，但没有取到有效帧`);
+        throw createWorkerError('WORKER_ERROR_IMAGE_NO_VALID_FRAMES', { format: imageLabel });
     }
 
     return {
@@ -425,7 +463,7 @@ self.addEventListener('message', async (event: MessageEvent<DecodeRequest>) => {
         const isMp4 = mimeType.includes('mp4') || fileName.endsWith('.mp4') || mimeType.includes('quicktime');
 
         if (!isGif && !isPng && !isMp4) {
-            throw new Error('只支持 MP4、GIF 或 PNG 文件');
+            throw createWorkerError('WORKER_ERROR_UNSUPPORTED_FILE_TYPE');
         }
 
         const result = isMp4 ? await decodeMp4(request) : await decodeImageAnimation(request);
@@ -435,6 +473,6 @@ self.addEventListener('message', async (event: MessageEvent<DecodeRequest>) => {
             result,
         });
     } catch (error: any) {
-        postError(request.requestId, error?.message || '动画取模失败');
+        postError(request.requestId, error);
     }
 });
