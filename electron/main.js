@@ -2780,7 +2780,13 @@ ipcMain.handle("select-folder-saveAs", async (event, data) => {
 ipcMain.handle("dialog-select-files", async (event, options) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   try {
-    const result = await dialog.showOpenDialog(senderWindow, options);
+    const normalizedOptions = {
+      ...(options || {}),
+      properties: Array.isArray(options?.properties) && options.properties.length > 0
+        ? options.properties
+        : ["openFile"],
+    };
+    const result = await dialog.showOpenDialog(senderWindow, normalizedOptions);
     return result;
   } catch (error) {
     throw error;
