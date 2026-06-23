@@ -692,7 +692,11 @@ export class BlocklyService {
 
   loadAbiJson(jsonData) {
     const document = this.normalizeProjectDocument(jsonData);
-    this.applyProjectDocument(document);
+    this.loadProjectDocument(document, false);
+  }
+
+  loadProjectDocument(document: BlocklyProjectDocument, cloneState = true) {
+    this.applyProjectDocument(document, cloneState);
     this.loadActivePageIntoWorkspace();
   }
 
@@ -702,6 +706,10 @@ export class BlocklyService {
 
   normalizeProjectAbi(jsonData: any): BlocklyProjectDocument {
     return this.normalizeProjectDocument(jsonData);
+  }
+
+  normalizeProjectAbiForLoad(jsonData: any): BlocklyProjectDocument {
+    return this.normalizeProjectDocument(jsonData, false);
   }
 
   switchPage(pageId: string): boolean {
@@ -889,12 +897,12 @@ export class BlocklyService {
   }
 
   // 加载 blockly 当前工作区的 JSON 数据
-  loadWorkspaceJson(jsonData: any) {
+  loadWorkspaceJson(jsonData: any, clone = true) {
     if (!this.workspace) {
       return;
     }
 
-    const workspaceJson = this.cloneJson(jsonData) || this.createEmptyWorkspaceContent();
+    const workspaceJson = (clone ? this.cloneJson(jsonData) : jsonData) || this.createEmptyWorkspaceContent();
     workspaceJson.blocks?.blocks?.forEach((block) => {
       const ailyIcons = this.iconsMap.get(block.type);
       if (ailyIcons) {
@@ -1541,7 +1549,7 @@ export class BlocklyService {
     return this.composeWorkspacePayload(activePage?.content, this.sharedModelSubject.value);
   }
 
-  private collectBlockTypesFromProjectDocument(document: BlocklyProjectDocument): string[] {
+  collectBlockTypesFromProjectDocument(document: BlocklyProjectDocument): string[] {
     const blockTypes = new Set<string>();
 
     for (const page of document.pages || []) {
@@ -1981,10 +1989,10 @@ export class BlocklyService {
     return `page-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private normalizeProjectDocument(jsonData: any): BlocklyProjectDocument {
+  private normalizeProjectDocument(jsonData: any, clone = true): BlocklyProjectDocument {
     if (Array.isArray(jsonData?.pages)) {
       const pages = jsonData.pages.length
-        ? jsonData.pages.map((page, index) => this.normalizePageSnapshot(page, index))
+        ? jsonData.pages.map((page, index) => this.normalizePageSnapshot(page, index, clone))
         : [this.createEmptyPageSnapshot('page-1', this.buildDefaultPageTitle(1))];
       const activePageId = pages.some((page) => page.id === jsonData.activePageId)
         ? jsonData.activePageId
@@ -1996,20 +2004,21 @@ export class BlocklyService {
         activePageId,
         openedPageIds,
         pages,
-        sharedModel: this.normalizeSharedModel(jsonData.sharedModel),
+        sharedModel: this.normalizeSharedModel(jsonData.sharedModel, clone),
       };
     }
 
-    const legacyWorkspaceJson = this.normalizeWorkspaceJson(jsonData);
+    const legacyWorkspaceJson = this.normalizeWorkspaceJson(jsonData, clone);
     const legacyPage = this.createEmptyPageSnapshot('page-1', this.buildDefaultPageTitle(1));
-    legacyPage.content = this.stripSharedModel(legacyWorkspaceJson);
+    const sharedModel = this.extractSharedModel(legacyWorkspaceJson, clone);
+    legacyPage.content = this.stripSharedModel(legacyWorkspaceJson, clone);
 
     return {
       schemaVersion: this.projectDocumentSchemaVersion,
       activePageId: legacyPage.id,
       openedPageIds: [legacyPage.id],
       pages: [legacyPage],
-      sharedModel: this.extractSharedModel(legacyWorkspaceJson),
+      sharedModel,
     };
   }
 
@@ -2025,17 +2034,17 @@ export class BlocklyService {
     return nextOpenedPageIds.length ? nextOpenedPageIds : [activePageId];
   }
 
-  private normalizePageSnapshot(page: any, index: number): BlocklyPageSnapshot {
+  private normalizePageSnapshot(page: any, index: number, clone = true): BlocklyPageSnapshot {
     return {
       id: page?.id || this.generatePageId(),
       title: page?.title || this.buildDefaultPageTitle(index + 1),
-      content: this.normalizePageContent(page?.content),
+      content: this.normalizePageContent(page?.content, clone),
       viewState: page?.viewState || this.createDefaultViewState(),
     };
   }
 
-  private normalizePageContent(content: any): any {
-    const workspaceJson = this.normalizeWorkspaceJson(content);
+  private normalizePageContent(content: any, clone = true): any {
+    const workspaceJson = this.normalizeWorkspaceJson(content, clone);
     delete workspaceJson.variables;
     workspaceJson.blocks.blocks = workspaceJson.blocks.blocks.filter(
       (block) => !this.isSharedProcedureBlock(block),
@@ -2043,8 +2052,8 @@ export class BlocklyService {
     return workspaceJson;
   }
 
-  private normalizeWorkspaceJson(workspaceJson: any): any {
-    const nextJson = this.cloneJson(workspaceJson) || this.createEmptyWorkspaceContent();
+  private normalizeWorkspaceJson(workspaceJson: any, clone = true): any {
+    const nextJson = (clone ? this.cloneJson(workspaceJson) : workspaceJson) || this.createEmptyWorkspaceContent();
 
     if (!nextJson.blocks) {
       nextJson.blocks = {
@@ -2060,20 +2069,22 @@ export class BlocklyService {
     return nextJson;
   }
 
-  private normalizeSharedModel(sharedModel: any): BlocklySharedModel {
+  private normalizeSharedModel(sharedModel: any, clone = true): BlocklySharedModel {
     return {
-      variables: sharedModel?.variables ? this.cloneJson(sharedModel.variables) : undefined,
+      variables: sharedModel?.variables
+        ? clone ? this.cloneJson(sharedModel.variables) : sharedModel.variables
+        : undefined,
       procedureBlocks: Array.isArray(sharedModel?.procedureBlocks)
-        ? sharedModel.procedureBlocks.map((block) => this.cloneJson(block))
+        ? clone ? sharedModel.procedureBlocks.map((block) => this.cloneJson(block)) : sharedModel.procedureBlocks
         : [],
     };
   }
 
-  private applyProjectDocument(document: BlocklyProjectDocument) {
-    this.pagesSubject.next(document.pages.map((page) => this.cloneJson(page)));
+  private applyProjectDocument(document: BlocklyProjectDocument, clone = true) {
+    this.pagesSubject.next(clone ? document.pages.map((page) => this.cloneJson(page)) : document.pages);
     this.activePageIdSubject.next(document.activePageId);
-    this.openedPageIdsSubject.next(this.cloneJson(document.openedPageIds));
-    this.sharedModelSubject.next(this.normalizeSharedModel(document.sharedModel));
+    this.openedPageIdsSubject.next(clone ? this.cloneJson(document.openedPageIds) : document.openedPageIds);
+    this.sharedModelSubject.next(this.normalizeSharedModel(document.sharedModel, clone));
   }
 
   private persistActiveWorkspaceToState() {
@@ -2124,7 +2135,7 @@ export class BlocklyService {
     try {
       Blockly.Events.disable();
       this.workspace.clear();
-      this.loadWorkspaceJson(workspaceJson);
+      this.loadWorkspaceJson(workspaceJson, false);
     } finally {
       if (wereEventsEnabled) {
         Blockly.Events.enable();
@@ -2177,8 +2188,8 @@ export class BlocklyService {
     return workspaceJson;
   }
 
-  private extractSharedModel(workspaceJson: any): BlocklySharedModel {
-    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson);
+  private extractSharedModel(workspaceJson: any, clone = true): BlocklySharedModel {
+    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson, clone);
     const workspaceBlocks = Array.isArray(normalizedWorkspaceJson.blocks?.blocks)
       ? normalizedWorkspaceJson.blocks.blocks
       : [];
@@ -2193,8 +2204,8 @@ export class BlocklyService {
     };
   }
 
-  private stripSharedModel(workspaceJson: any): any {
-    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson);
+  private stripSharedModel(workspaceJson: any, clone = true): any {
+    const normalizedWorkspaceJson = this.normalizeWorkspaceJson(workspaceJson, clone);
     normalizedWorkspaceJson.blocks.blocks = normalizedWorkspaceJson.blocks.blocks.filter(
       (block) => !this.isSharedProcedureBlock(block),
     );

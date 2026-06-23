@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, Injector } from '@angular/core';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { UiService } from './ui.service';
 import { ElectronService } from './electron.service';
@@ -96,13 +96,14 @@ export class ProjectService {
     reject: (error: any) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
+  private messageService: NzMessageService | null = null;
+  private modalService: NzModalService | null = null;
   // STM32选择开发板时定义引脚使用
   currentStm32Config: { board: any, variant: any, variant_h: any } = { board: null, variant: null, variant_h: null };
 
   constructor(
     private uiService: UiService,
     private electronService: ElectronService,
-    private message: NzMessageService,
     private router: Router,
     private cmdService: CmdService,
     private crossPlatformCmdService: CrossPlatformCmdService,
@@ -112,9 +113,23 @@ export class ProjectService {
     private workflowService: WorkflowService,
     private translate: TranslateService,
     private noticeService: NoticeService,
-    private modal: NzModalService,
     private appDataResourceLock: AppDataResourceLockService,
+    private injector: Injector,
   ) {
+  }
+
+  private get message(): NzMessageService {
+    if (!this.messageService) {
+      this.messageService = this.injector.get(NzMessageService);
+    }
+    return this.messageService;
+  }
+
+  private get modal(): NzModalService {
+    if (!this.modalService) {
+      this.modalService = this.injector.get(NzModalService);
+    }
+    return this.modalService;
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用
