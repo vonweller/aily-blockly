@@ -121,15 +121,36 @@
             <div class="memory-related-title">
               {{ "AILY_CHAT.MEMORY_RELATED_TITLE" | translate }}
             </div>
-            <button
-              type="button"
-              class="memory-icon-btn"
-              [attr.aria-label]="'AILY_CHAT.MEMORY_RELATED_ADD' | translate"
-              (click)="addRelatedFiles()"
-            >
-              <i class="fa-light fa-plus"></i>
-            </button>
+            <div class="memory-related-actions">
+              <button
+                type="button"
+                class="memory-icon-btn"
+                [attr.aria-label]="'AILY_CHAT.MEMORY_RELATED_LINK' | translate"
+                (click)="toggleRelatedLinkInput()"
+              >
+                <i class="fa-light fa-link"></i>
+              </button>
+              <button
+                type="button"
+                class="memory-icon-btn"
+                [attr.aria-label]="'AILY_CHAT.MEMORY_RELATED_ADD' | translate"
+                (click)="addRelatedFiles()"
+              >
+                <i class="fa-light fa-plus"></i>
+              </button>
+            </div>
           </div>
+
+          @if (showRelatedLinkInput) {
+            <input
+              type="text"
+              class="memory-related-link-input"
+              [ngModel]="pendingRelatedLink"
+              [placeholder]="'AILY_CHAT.MEMORY_RELATED_LINK_PLACEHOLDER' | translate"
+              (ngModelChange)="updatePendingRelatedLink($event)"
+              (blur)="addRelatedLinkOnBlur()"
+            />
+          }
 
           @if (relatedFiles.length > 0) {
             <div class="memory-related-list">

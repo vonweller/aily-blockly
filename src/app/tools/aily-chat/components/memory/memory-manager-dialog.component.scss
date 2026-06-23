@@ -273,8 +273,30 @@
           color: var(--aily-text-primary, #1f1f1f);
         }
 
-        .memory-icon-btn {
-          margin-right: -8px;
+        .memory-related-actions {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+
+          .memory-icon-btn {
+            margin-right: -4px;
+          }
+        }
+      }
+
+      .memory-related-link-input {
+        width: 100%;
+        height: 32px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--aily-bg-secondary, #fafafa);
+        color: var(--aily-text-primary, #1f1f1f);
+        outline: none;
+        box-shadow: none;
+
+        &::placeholder {
+          color: var(--aily-text-tertiary, #8c8c8c);
         }
       }
 

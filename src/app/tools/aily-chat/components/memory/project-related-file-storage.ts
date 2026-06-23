@@ -5,6 +5,7 @@ import type {
 } from './project-related-file.types';
 
 const RELATED_FILES_METADATA_NAME = '.related-files.json';
+const RELATED_CONTENT_COPY_LIMIT_BYTES = 10 * 1024 * 1024;
 
 interface FileDialogSelection {
   canceled: boolean;
@@ -15,8 +16,9 @@ interface RelatedFileMetadataEntry {
   readonly originalPath: string;
   readonly relativePath: string;
   readonly name?: string;
-  readonly type?: 'file' | 'folder';
+  readonly type?: 'file' | 'folder' | 'link';
   readonly isExternal?: boolean;
+  readonly addedAt?: number;
 }
 
 interface PickAndCopyResult {
@@ -72,7 +74,14 @@ export class ProjectRelatedFileStorage {
       .filter((entry) => entry.name.trim().length > 0);
 
     return [...copiedEntries, ...externalEntries]
-      .sort((left, right) => left.name.localeCompare(right.name));
+      .sort((left, right) => {
+        const leftAddedAt = metadataByRelativePath.get(left.relativePath)?.addedAt ?? 0;
+        const rightAddedAt = metadataByRelativePath.get(right.relativePath)?.addedAt ?? 0;
+        if (rightAddedAt !== leftAddedAt) {
+          return rightAddedAt - leftAddedAt;
+        }
+        return left.name.localeCompare(right.name);
+      });
   }
 
   async pickAndCopy(
@@ -118,6 +127,37 @@ export class ProjectRelatedFileStorage {
       }
 
       const name = this.host.path.basename(sourcePath);
+      const sourceStat = this.host.fs.statSync(sourcePath);
+      const type: ProjectRelatedFileEntry['type'] = sourceStat.isDirectory()
+        ? 'folder'
+        : 'file';
+      const shouldStoreAsReference = sourceStat.isFile()
+        && ((Number.isFinite(sourceStat.size) ? sourceStat.size : 0) > RELATED_CONTENT_COPY_LIMIT_BYTES);
+
+      if (shouldStoreAsReference) {
+        if (normalizedOriginalPath) {
+          existingOriginalPaths.add(normalizedOriginalPath);
+          nextMetadataEntries.push({
+            originalPath: sourcePath,
+            relativePath: sourcePath,
+            name,
+            type,
+            isExternal: true,
+            addedAt: Date.now(),
+          });
+        }
+
+        addedEntries.push({
+          type,
+          name,
+          absolutePath: sourcePath,
+          relativePath: sourcePath,
+          ...(normalizedOriginalPath ? { originalPath: sourcePath } : {}),
+          isExternal: true,
+        });
+        continue;
+      }
+
       const destinationPath = this.createUniqueDestination(rootDir, name);
       this.copyPath(sourcePath, destinationPath);
       const relativePath = this.host.path.join(
@@ -129,6 +169,7 @@ export class ProjectRelatedFileStorage {
         nextMetadataEntries.push({
           originalPath: sourcePath,
           relativePath,
+          addedAt: Date.now(),
         });
       }
       addedEntries.push({
@@ -137,6 +178,63 @@ export class ProjectRelatedFileStorage {
         absolutePath: destinationPath,
         relativePath,
         ...(normalizedOriginalPath ? { originalPath: sourcePath } : {}),
+      });
+    }
+
+    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
+    return { addedEntries, skippedOriginalPaths };
+  }
+
+  importLinks(
+    scope: RelatedContentScope,
+    projectPath: string,
+    urls: readonly string[],
+    sessionId?: string,
+  ): PickAndCopyResult {
+    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
+    this.ensureDir(rootDir);
+    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
+    const existingOriginalPaths = new Set(
+      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
+    );
+
+    const addedEntries: ProjectRelatedFileEntry[] = [];
+    const skippedOriginalPaths: string[] = [];
+    const nextMetadataEntries = [...metadataEntries];
+
+    for (const rawUrl of urls) {
+      const normalizedUrl = this.normalizeUrl(rawUrl);
+      if (!normalizedUrl) {
+        skippedOriginalPaths.push(rawUrl);
+        continue;
+      }
+
+      const dedupeKey = this.normalizePath(normalizedUrl);
+      if (dedupeKey && existingOriginalPaths.has(dedupeKey)) {
+        skippedOriginalPaths.push(rawUrl);
+        continue;
+      }
+
+      const name = this.buildLinkName(normalizedUrl);
+      if (dedupeKey) {
+        existingOriginalPaths.add(dedupeKey);
+        nextMetadataEntries.push({
+          originalPath: normalizedUrl,
+          relativePath: normalizedUrl,
+          name,
+          type: 'link',
+          isExternal: true,
+          addedAt: Date.now(),
+        });
+      }
+
+      addedEntries.push({
+        type: 'link',
+        name,
+        absolutePath: normalizedUrl,
+        relativePath: normalizedUrl,
+        originalPath: normalizedUrl,
+        isExternal: true,
       });
     }
 
@@ -182,6 +280,7 @@ export class ProjectRelatedFileStorage {
           name,
           type,
           isExternal: true,
+          addedAt: Date.now(),
         });
       }
 
@@ -236,8 +335,7 @@ export class ProjectRelatedFileStorage {
     }
 
     const lines = [
-      `Reference related content copied into the current ${scope} may be useful.`,
-      'Review them when relevant before making assumptions.',
+      `Reference related content when it may help with the current ${scope}.`,
       ...entries.map((entry) => `- ${entry.relativePath}`),
     ];
 
@@ -350,10 +448,11 @@ export class ProjectRelatedFileStorage {
           originalPath: entry.originalPath,
           relativePath: entry.relativePath,
           ...(typeof entry.name === 'string' ? { name: entry.name } : {}),
-          ...(entry.type === 'file' || entry.type === 'folder'
+          ...(entry.type === 'file' || entry.type === 'folder' || entry.type === 'link'
             ? { type: entry.type }
             : {}),
           ...(entry.isExternal === true ? { isExternal: true } : {}),
+          ...(typeof entry.addedAt === 'number' ? { addedAt: entry.addedAt } : {}),
         }));
     } catch {
       return [];
@@ -421,6 +520,29 @@ export class ProjectRelatedFileStorage {
     return typeof path === 'string'
       ? path.trim().replace(/\\/g, '/').toLowerCase()
       : '';
+  }
+
+  private normalizeUrl(value: string): string | undefined {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      return undefined;
+    }
+
+    try {
+      return new URL(trimmed).toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private buildLinkName(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname === '/' ? '' : parsed.pathname;
+      return `${parsed.hostname}${path}`;
+    } catch {
+      return url;
+    }
   }
 }
 

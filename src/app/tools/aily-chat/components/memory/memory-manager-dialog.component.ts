@@ -84,6 +84,8 @@ export class MemoryManagerDialogComponent {
   );
   readonly relatedFileStorage = new ProjectRelatedFileStorage(this.data.host);
   relatedFiles: readonly ProjectRelatedFileEntry[] = [];
+  showRelatedLinkInput = false;
+  pendingRelatedLink = '';
 
   constructor() {
     this.state.initialize();
@@ -193,8 +195,57 @@ export class MemoryManagerDialogComponent {
   }
 
   openRelatedFileInExplorer(entry: ProjectRelatedFileEntry): void {
+    if (entry.type === 'link') {
+      this.data.host.shell?.openByBrowser?.(entry.absolutePath);
+      return;
+    }
+
     const targetPath = this.resolveExplorerPath(entry);
     this.data.host.shell?.openByExplorer?.(targetPath);
+  }
+
+  toggleRelatedLinkInput(): void {
+    this.showRelatedLinkInput = !this.showRelatedLinkInput;
+    if (!this.showRelatedLinkInput) {
+      this.pendingRelatedLink = '';
+    }
+    this.cdr.markForCheck();
+  }
+
+  updatePendingRelatedLink(value: string): void {
+    this.pendingRelatedLink = value ?? '';
+  }
+
+  addRelatedLinkOnBlur(): void {
+    const context = this.getSelectedRelatedContentContext();
+    const rawLink = this.pendingRelatedLink.trim();
+    this.showRelatedLinkInput = false;
+    this.pendingRelatedLink = '';
+
+    if (!context || !rawLink) {
+      this.cdr.markForCheck();
+      return;
+    }
+
+    try {
+      const result = this.relatedFileStorage.importLinks(
+        context.scope,
+        context.projectPath,
+        [rawLink],
+        context.sessionId,
+      );
+      this.refreshRelatedFiles();
+      if (result.addedEntries.length === 0) {
+        this.message.info(
+          this.translate.instant('AILY_CHAT.MEMORY_RELATED_SKIP_DUPLICATE', {
+            count: 1,
+          }),
+        );
+      }
+    } catch (error) {
+      console.error('[MemoryManagerDialog] related link add failed:', error);
+      this.message.error(this.translate.instant('AILY_CHAT.MEMORY_RELATED_LINK_ERROR'));
+    }
   }
 
   trackByScope(_: number, item: MemoryScopeOption): ChatMemoryScope {
