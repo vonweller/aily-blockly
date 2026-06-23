@@ -160,7 +160,12 @@
               ) {
                 <section class="memory-related-group">
                   <div class="memory-related-group-title">
-                    {{ resolveRelatedGroupLabelKey(group.type) | translate }}
+                    <span>{{
+                      resolveRelatedGroupLabelKey(group.type) | translate
+                    }}</span>
+                    <span class="memory-related-group-badge">{{
+                      group.entries.length
+                    }}</span>
                   </div>
                   @for (
                     entry of group.entries;
