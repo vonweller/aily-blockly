@@ -8,3 +8,8 @@ export interface ProjectRelatedFileEntry {
   readonly originalPath?: string;
   readonly isExternal?: boolean;
 }
+
+export interface ProjectRelatedContentGroup {
+  readonly type: ProjectRelatedFileEntry['type'];
+  readonly entries: readonly ProjectRelatedFileEntry[];
+}

@@ -1,5 +1,6 @@
 import type { IAilyHostAPI, IDirent, IFileSystem } from '../../core/host-api';
 import type {
+  ProjectRelatedContentGroup,
   ProjectRelatedFileEntry,
   RelatedContentScope,
 } from './project-related-file.types';
@@ -82,6 +83,26 @@ export class ProjectRelatedFileStorage {
         }
         return left.name.localeCompare(right.name);
       });
+  }
+
+  listGrouped(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): ProjectRelatedContentGroup[] {
+    const entries = this.list(scope, projectPath, sessionId);
+    const orderedTypes: readonly ProjectRelatedFileEntry['type'][] = [
+      'file',
+      'folder',
+      'link',
+    ];
+
+    return orderedTypes
+      .map((type) => ({
+        type,
+        entries: entries.filter((entry) => entry.type === type),
+      }))
+      .filter((group) => group.entries.length > 0);
   }
 
   async pickAndCopy(

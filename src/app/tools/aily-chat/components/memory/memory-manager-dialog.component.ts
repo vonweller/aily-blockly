@@ -17,6 +17,7 @@ import type { ChatSessionListItem } from '../../services/menu-manager.service';
 import { ChatMemoryManagerState } from './memory-manager.state';
 import { ProjectRelatedFileStorage } from './project-related-file-storage';
 import type {
+  ProjectRelatedContentGroup,
   ProjectRelatedFileEntry,
   RelatedContentScope,
 } from './project-related-file.types';
@@ -83,7 +84,7 @@ export class MemoryManagerDialogComponent {
     this.buildSessionNavigationItems(),
   );
   readonly relatedFileStorage = new ProjectRelatedFileStorage(this.data.host);
-  relatedFiles: readonly ProjectRelatedFileEntry[] = [];
+  relatedGroups: readonly ProjectRelatedContentGroup[] = [];
   showRelatedLinkInput = false;
   pendingRelatedLink = '';
 
@@ -264,6 +265,10 @@ export class MemoryManagerDialogComponent {
     return item.absolutePath;
   }
 
+  trackByRelatedGroupType(_: number, item: ProjectRelatedContentGroup): string {
+    return item.type;
+  }
+
   describeEntry(entry: ChatMemoryEntry): string {
     return this.readContentSummary(entry.content) || entry.fileName;
   }
@@ -292,6 +297,17 @@ export class MemoryManagerDialogComponent {
       'AILY_CHAT.MEMORY_RELATIVE_DAYS',
       { count: days },
     );
+  }
+
+  resolveRelatedGroupLabelKey(type: ProjectRelatedFileEntry['type']): string {
+    switch (type) {
+      case 'file':
+        return 'AILY_CHAT.MEMORY_RELATED_GROUP_FILE';
+      case 'folder':
+        return 'AILY_CHAT.MEMORY_RELATED_GROUP_FOLDER';
+      default:
+        return 'AILY_CHAT.MEMORY_RELATED_GROUP_LINK';
+    }
   }
 
   private runWithHandling(action: () => void, errorKey: string): void {
@@ -352,14 +368,14 @@ export class MemoryManagerDialogComponent {
 
   private refreshRelatedFiles(): void {
     if (this.state.activeScope !== 'project' && this.state.activeScope !== 'session') {
-      this.relatedFiles = [];
+      this.relatedGroups = [];
       this.cdr.markForCheck();
       return;
     }
 
     const context = this.getSelectedRelatedContentContext();
-    this.relatedFiles = context
-      ? this.relatedFileStorage.list(
+    this.relatedGroups = context
+      ? this.relatedFileStorage.listGrouped(
         context.scope,
         context.projectPath,
         context.sessionId,

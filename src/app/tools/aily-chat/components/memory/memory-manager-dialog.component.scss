@@ -303,17 +303,31 @@
       .memory-related-list {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 14px;
         max-height: 460px;
         overflow: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
+        padding-bottom: 8px;
 
         &::-webkit-scrollbar {
           width: 0;
           height: 0;
           display: none;
         }
+      }
+
+      .memory-related-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .memory-related-group-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--aily-text-tertiary, #8c8c8c);
+        padding: 0 2px;
       }
 
       .memory-related-item {
