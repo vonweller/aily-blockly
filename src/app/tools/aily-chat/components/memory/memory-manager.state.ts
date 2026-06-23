@@ -5,6 +5,9 @@ import type {
   ChatMemoryScope,
 } from './memory-manager.types';
 
+const MEMORY_DIALOG_TAB_STORAGE_KEY = 'memory_dialog_tab';
+const MEMORY_DIALOG_NAV_STORAGE_KEY = 'memory_dialog_nav';
+
 export class ChatMemoryManagerState {
   activeScope: ChatMemoryScope = 'global';
   searchTerm = '';
@@ -25,11 +28,13 @@ export class ChatMemoryManagerState {
   ) {}
 
   initialize(): void {
+    this.restorePersistedSelection();
     this.reloadGlobalEntries();
     this.ensureNavigationSelection('project');
     this.ensureNavigationSelection('session');
     this.reloadScopedEntries('project');
     this.reloadScopedEntries('session');
+    this.persistSelections();
   }
 
   get hasSplitLayout(): boolean {
@@ -73,6 +78,7 @@ export class ChatMemoryManagerState {
     this.flushScope(this.activeScope);
     this.activeScope = scope;
     this.searchTerm = '';
+    this.persistActiveScope();
 
     if (scope === 'project' || scope === 'session') {
       this.ensureNavigationSelection(scope);
@@ -105,6 +111,7 @@ export class ChatMemoryManagerState {
 
     this.flushScope(this.activeScope);
     this.selectedTargetIdByScope[this.activeScope] = item.id;
+    this.persistSelections();
     this.reloadScopedEntries(this.activeScope);
   }
 
@@ -125,7 +132,13 @@ export class ChatMemoryManagerState {
       return entry;
     }
 
-    const updatedEntry = this.storage.saveEntry(entry, this.getDraftValue(entry));
+    const nextValue = this.getDraftValue(entry);
+    if (nextValue.trim().length === 0) {
+      this.draftContentByPath.delete(entry.absolutePath);
+      return entry;
+    }
+
+    const updatedEntry = this.storage.saveEntry(entry, nextValue);
     this.replaceEntry(updatedEntry);
     this.draftContentByPath.delete(entry.absolutePath);
     return updatedEntry;
@@ -199,6 +212,7 @@ export class ChatMemoryManagerState {
     }
 
     this.selectedTargetIdByScope[scope] = items[0]?.id ?? null;
+    this.persistSelections();
   }
 
   private filterEntries(entries: readonly ChatMemoryEntry[]): ChatMemoryEntry[] {
@@ -305,5 +319,74 @@ export class ChatMemoryManagerState {
       projectPath: this.selectedNavigationItem?.projectPath,
       sessionId: this.selectedNavigationItem?.sessionId,
     };
+  }
+
+  private restorePersistedSelection(): void {
+    const storedTab = this.readStorageItem(MEMORY_DIALOG_TAB_STORAGE_KEY);
+    if (
+      storedTab === 'global'
+      || storedTab === 'project'
+      || storedTab === 'session'
+    ) {
+      this.activeScope = storedTab;
+    }
+
+    const storedNav = this.readStorageItem(MEMORY_DIALOG_NAV_STORAGE_KEY);
+    if (!storedNav) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(storedNav) as {
+        readonly project?: unknown;
+        readonly session?: unknown;
+      };
+      this.selectedTargetIdByScope.project =
+        typeof parsed?.project === 'string' && parsed.project.trim().length > 0
+          ? parsed.project.trim()
+          : null;
+      this.selectedTargetIdByScope.session =
+        typeof parsed?.session === 'string' && parsed.session.trim().length > 0
+          ? parsed.session.trim()
+          : null;
+    } catch {
+      this.selectedTargetIdByScope.project = null;
+      this.selectedTargetIdByScope.session = null;
+    }
+  }
+
+  private persistActiveScope(): void {
+    this.writeStorageItem(MEMORY_DIALOG_TAB_STORAGE_KEY, this.activeScope);
+  }
+
+  private persistSelections(): void {
+    this.persistActiveScope();
+    this.writeStorageItem(
+      MEMORY_DIALOG_NAV_STORAGE_KEY,
+      JSON.stringify({
+        project: this.selectedTargetIdByScope.project,
+        session: this.selectedTargetIdByScope.session,
+      }),
+    );
+  }
+
+  private readStorageItem(key: string): string | null {
+    try {
+      return typeof localStorage !== 'undefined'
+        ? localStorage.getItem(key)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeStorageItem(key: string, value: string): void {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(key, value);
+      }
+    } catch {
+      return;
+    }
   }
 }
