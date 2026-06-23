@@ -6,4 +6,5 @@ export interface ProjectRelatedFileEntry {
   readonly absolutePath: string;
   readonly relativePath: string;
   readonly originalPath?: string;
+  readonly isExternal?: boolean;
 }

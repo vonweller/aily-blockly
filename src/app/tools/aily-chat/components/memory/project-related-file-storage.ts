@@ -14,6 +14,9 @@ interface FileDialogSelection {
 interface RelatedFileMetadataEntry {
   readonly originalPath: string;
   readonly relativePath: string;
+  readonly name?: string;
+  readonly type?: 'file' | 'folder';
+  readonly isExternal?: boolean;
 }
 
 interface PickAndCopyResult {
@@ -30,28 +33,45 @@ export class ProjectRelatedFileStorage {
 
   list(scope: RelatedContentScope, projectPath: string, sessionId?: string): ProjectRelatedFileEntry[] {
     const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
-    if (!rootDir || !this.host.fs.existsSync(rootDir)) {
-      return [];
-    }
+    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
+    const metadataByRelativePath = new Map(
+      metadataEntries.map((entry) => [entry.relativePath, entry]),
+    );
 
-    const metadataByRelativePath = this.readMetadataByRelativePath(scope, projectPath, sessionId);
+    const copiedEntries = rootDir && this.host.fs.existsSync(rootDir)
+      ? readDirEntries(this.host.fs, rootDir)
+        .filter((entry) => !entry.name.startsWith('.') && entry.name !== RELATED_FILES_METADATA_NAME)
+        .map((entry) => {
+          const absolutePath = this.host.path.join(rootDir, entry.name);
+          const relativePath = this.host.path.join(
+            this.resolveRelativeRootDirName(scope, sessionId),
+            entry.name,
+          );
+          return {
+            type: entry.isDirectory() ? 'folder' : 'file',
+            name: entry.name,
+            absolutePath,
+            relativePath,
+            originalPath: metadataByRelativePath.get(relativePath)?.originalPath,
+          } as ProjectRelatedFileEntry;
+        })
+      : [];
 
-    return readDirEntries(this.host.fs, rootDir)
-      .filter((entry) => !entry.name.startsWith('.') && entry.name !== RELATED_FILES_METADATA_NAME)
+    const externalEntries = metadataEntries
+      .filter((entry) => entry.isExternal === true)
       .map((entry) => {
-        const absolutePath = this.host.path.join(rootDir, entry.name);
-        const relativePath = this.host.path.join(
-          this.resolveRelativeRootDirName(scope, sessionId),
-          entry.name,
-        );
         return {
-          type: entry.isDirectory() ? 'folder' : 'file',
-          name: entry.name,
-          absolutePath,
-          relativePath,
-          originalPath: metadataByRelativePath.get(relativePath)?.originalPath,
+          type: entry.type ?? 'file',
+          name: entry.name || this.host.path.basename(entry.originalPath),
+          absolutePath: entry.originalPath,
+          relativePath: entry.relativePath,
+          originalPath: entry.originalPath,
+          isExternal: true,
         } as ProjectRelatedFileEntry;
       })
+      .filter((entry) => entry.name.trim().length > 0);
+
+    return [...copiedEntries, ...externalEntries]
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -124,12 +144,72 @@ export class ProjectRelatedFileStorage {
     return { addedEntries, skippedOriginalPaths };
   }
 
+  importPathReferences(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sourcePaths: readonly string[],
+    sessionId?: string,
+  ): PickAndCopyResult {
+    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
+    this.ensureDir(rootDir);
+    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
+    const existingOriginalPaths = new Set(
+      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
+    );
+
+    const addedEntries: ProjectRelatedFileEntry[] = [];
+    const skippedOriginalPaths: string[] = [];
+    const nextMetadataEntries = [...metadataEntries];
+
+    for (const sourcePath of sourcePaths) {
+      const normalizedOriginalPath = this.normalizePath(sourcePath);
+      if (normalizedOriginalPath && existingOriginalPaths.has(normalizedOriginalPath)) {
+        skippedOriginalPaths.push(sourcePath);
+        continue;
+      }
+
+      const stat = this.host.fs.statSync(sourcePath);
+      const type: ProjectRelatedFileEntry['type'] = stat.isDirectory()
+        ? 'folder'
+        : 'file';
+      const name = this.host.path.basename(sourcePath);
+
+      if (normalizedOriginalPath) {
+        existingOriginalPaths.add(normalizedOriginalPath);
+        nextMetadataEntries.push({
+          originalPath: sourcePath,
+          relativePath: sourcePath,
+          name,
+          type,
+          isExternal: true,
+        });
+      }
+
+      addedEntries.push({
+        type,
+        name,
+        absolutePath: sourcePath,
+        relativePath: sourcePath,
+        originalPath: sourcePath,
+        isExternal: true,
+      });
+    }
+
+    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
+    return { addedEntries, skippedOriginalPaths };
+  }
+
   remove(
     scope: RelatedContentScope,
     projectPath: string,
     entry: ProjectRelatedFileEntry,
     sessionId?: string,
   ): void {
+    if (entry.isExternal === true) {
+      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
+      return;
+    }
+
     if (!this.host.fs.existsSync(entry.absolutePath)) {
       this.removeMetadataEntry(scope, projectPath, entry, sessionId);
       return;
@@ -269,6 +349,11 @@ export class ProjectRelatedFileStorage {
         .map((entry) => ({
           originalPath: entry.originalPath,
           relativePath: entry.relativePath,
+          ...(typeof entry.name === 'string' ? { name: entry.name } : {}),
+          ...(entry.type === 'file' || entry.type === 'folder'
+            ? { type: entry.type }
+            : {}),
+          ...(entry.isExternal === true ? { isExternal: true } : {}),
         }));
     } catch {
       return [];

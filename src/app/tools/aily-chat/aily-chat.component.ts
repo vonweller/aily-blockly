@@ -850,7 +850,7 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
     try {
       const storage = new ProjectRelatedFileStorage(AilyHost.get());
-      storage.importPaths('session', projectPath, sourcePaths, sessionId);
+      storage.importPathReferences('session', projectPath, sourcePaths, sessionId);
     } catch (error) {
       console.warn('[AilyChat] 同步会话关联内容失败:', error);
     }
