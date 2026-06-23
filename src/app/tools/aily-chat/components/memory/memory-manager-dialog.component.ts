@@ -16,7 +16,10 @@ import type { IAilyHostAPI } from '../../core/host-api';
 import type { ChatSessionListItem } from '../../services/menu-manager.service';
 import { ChatMemoryManagerState } from './memory-manager.state';
 import { ProjectRelatedFileStorage } from './project-related-file-storage';
-import type { ProjectRelatedFileEntry } from './project-related-file.types';
+import type {
+  ProjectRelatedFileEntry,
+  RelatedContentScope,
+} from './project-related-file.types';
 import { ChatMemoryStorage } from './memory-storage';
 import type {
   ChatMemoryEntry,
@@ -145,12 +148,16 @@ export class MemoryManagerDialogComponent {
 
   async addRelatedFiles(): Promise<void> {
     try {
-      const projectPath = this.getSelectedProjectPath();
-      if (!projectPath) {
+      const context = this.getSelectedRelatedContentContext();
+      if (!context) {
         return;
       }
 
-      const result = await this.relatedFileStorage.pickAndCopy(projectPath);
+      const result = await this.relatedFileStorage.pickAndCopy(
+        context.scope,
+        context.projectPath,
+        context.sessionId,
+      );
       this.refreshRelatedFiles();
       if (result.skippedOriginalPaths.length > 0) {
         this.message.info(
@@ -167,12 +174,17 @@ export class MemoryManagerDialogComponent {
 
   removeRelatedFile(entry: ProjectRelatedFileEntry): void {
     try {
-      const projectPath = this.getSelectedProjectPath();
-      if (!projectPath) {
+      const context = this.getSelectedRelatedContentContext();
+      if (!context) {
         return;
       }
 
-      this.relatedFileStorage.remove(projectPath, entry);
+      this.relatedFileStorage.remove(
+        context.scope,
+        context.projectPath,
+        entry,
+        context.sessionId,
+      );
       this.refreshRelatedFiles();
     } catch (error) {
       console.error('[MemoryManagerDialog] related files remove failed:', error);
@@ -288,23 +300,52 @@ export class MemoryManagerDialogComponent {
   }
 
   private refreshRelatedFiles(): void {
-    if (this.state.activeScope !== 'project') {
+    if (this.state.activeScope !== 'project' && this.state.activeScope !== 'session') {
       this.relatedFiles = [];
       this.cdr.markForCheck();
       return;
     }
 
-    const projectPath = this.getSelectedProjectPath();
-    this.relatedFiles = projectPath
-      ? this.relatedFileStorage.list(projectPath)
+    const context = this.getSelectedRelatedContentContext();
+    this.relatedFiles = context
+      ? this.relatedFileStorage.list(
+        context.scope,
+        context.projectPath,
+        context.sessionId,
+      )
       : [];
     this.cdr.markForCheck();
   }
 
-  private getSelectedProjectPath(): string | undefined {
-    return this.state.activeScope === 'project'
-      ? this.state.selectedNavigationItem?.projectPath
-      : undefined;
+  private getSelectedRelatedContentContext():
+    | {
+      scope: RelatedContentScope;
+      projectPath: string;
+      sessionId?: string;
+    }
+    | undefined {
+    const navigationItem = this.state.selectedNavigationItem;
+    const projectPath = navigationItem?.projectPath?.trim();
+    if (!projectPath) {
+      return undefined;
+    }
+
+    if (this.state.activeScope === 'project') {
+      return {
+        scope: 'project',
+        projectPath,
+      };
+    }
+
+    if (this.state.activeScope === 'session') {
+      return {
+        scope: 'session',
+        projectPath,
+        sessionId: navigationItem?.sessionId,
+      };
+    }
+
+    return undefined;
   }
 
   private resolveExplorerPath(entry: ProjectRelatedFileEntry): string {

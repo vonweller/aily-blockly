@@ -1,7 +1,9 @@
 import type { IAilyHostAPI, IDirent, IFileSystem } from '../../core/host-api';
-import type { ProjectRelatedFileEntry } from './project-related-file.types';
+import type {
+  ProjectRelatedFileEntry,
+  RelatedContentScope,
+} from './project-related-file.types';
 
-const RELATED_FILES_DIR_NAME = 'files';
 const RELATED_FILES_METADATA_NAME = '.related-files.json';
 
 interface FileDialogSelection {
@@ -26,19 +28,22 @@ export class ProjectRelatedFileStorage {
     private readonly host: Pick<IAilyHostAPI, 'fs' | 'path' | 'dialog'>,
   ) {}
 
-  list(projectPath: string): ProjectRelatedFileEntry[] {
-    const rootDir = this.resolveRootDir(projectPath);
+  list(scope: RelatedContentScope, projectPath: string, sessionId?: string): ProjectRelatedFileEntry[] {
+    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
     if (!rootDir || !this.host.fs.existsSync(rootDir)) {
       return [];
     }
 
-    const metadataByRelativePath = this.readMetadataByRelativePath(projectPath);
+    const metadataByRelativePath = this.readMetadataByRelativePath(scope, projectPath, sessionId);
 
     return readDirEntries(this.host.fs, rootDir)
       .filter((entry) => !entry.name.startsWith('.') && entry.name !== RELATED_FILES_METADATA_NAME)
       .map((entry) => {
         const absolutePath = this.host.path.join(rootDir, entry.name);
-        const relativePath = this.host.path.join(RELATED_FILES_DIR_NAME, entry.name);
+        const relativePath = this.host.path.join(
+          this.resolveRelativeRootDirName(scope, sessionId),
+          entry.name,
+        );
         return {
           type: entry.isDirectory() ? 'folder' : 'file',
           name: entry.name,
@@ -50,14 +55,11 @@ export class ProjectRelatedFileStorage {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async pickAndCopy(projectPath: string): Promise<PickAndCopyResult> {
-    const rootDir = this.requireRootDir(projectPath);
-    this.ensureDir(rootDir);
-    const metadataEntries = this.readMetadata(projectPath);
-    const existingOriginalPaths = new Set(
-      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
-    );
-
+  async pickAndCopy(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): Promise<PickAndCopyResult> {
     const result = await this.host.dialog.selectFiles({
       title: '选择文件或文件夹',
       properties: ['multiSelections', 'openFile', 'openDirectory'],
@@ -68,11 +70,27 @@ export class ProjectRelatedFileStorage {
       return { addedEntries: [], skippedOriginalPaths: [] };
     }
 
+    return this.importPaths(scope, projectPath, result.filePaths, sessionId);
+  }
+
+  importPaths(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sourcePaths: readonly string[],
+    sessionId?: string,
+  ): PickAndCopyResult {
+    const rootDir = this.requireRootDir(scope, projectPath, sessionId);
+    this.ensureDir(rootDir);
+    const metadataEntries = this.readMetadata(scope, projectPath, sessionId);
+    const existingOriginalPaths = new Set(
+      metadataEntries.map((entry) => this.normalizePath(entry.originalPath)).filter(Boolean),
+    );
+
     const addedEntries: ProjectRelatedFileEntry[] = [];
     const skippedOriginalPaths: string[] = [];
     const nextMetadataEntries = [...metadataEntries];
 
-    for (const sourcePath of result.filePaths) {
+    for (const sourcePath of sourcePaths) {
       const normalizedOriginalPath = this.normalizePath(sourcePath);
       if (normalizedOriginalPath && existingOriginalPaths.has(normalizedOriginalPath)) {
         skippedOriginalPaths.push(sourcePath);
@@ -83,7 +101,7 @@ export class ProjectRelatedFileStorage {
       const destinationPath = this.createUniqueDestination(rootDir, name);
       this.copyPath(sourcePath, destinationPath);
       const relativePath = this.host.path.join(
-        RELATED_FILES_DIR_NAME,
+        this.resolveRelativeRootDirName(scope, sessionId),
         this.host.path.basename(destinationPath),
       );
       if (normalizedOriginalPath) {
@@ -102,34 +120,43 @@ export class ProjectRelatedFileStorage {
       });
     }
 
-    this.writeMetadata(projectPath, nextMetadataEntries);
+    this.writeMetadata(scope, projectPath, sessionId, nextMetadataEntries);
     return { addedEntries, skippedOriginalPaths };
   }
 
-  remove(projectPath: string, entry: ProjectRelatedFileEntry): void {
+  remove(
+    scope: RelatedContentScope,
+    projectPath: string,
+    entry: ProjectRelatedFileEntry,
+    sessionId?: string,
+  ): void {
     if (!this.host.fs.existsSync(entry.absolutePath)) {
-      this.removeMetadataEntry(projectPath, entry);
+      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
       return;
     }
 
     if (this.host.fs.statSync(entry.absolutePath).isDirectory()) {
       this.host.fs.rmdirSync(entry.absolutePath, { recursive: true, force: true });
-      this.removeMetadataEntry(projectPath, entry);
+      this.removeMetadataEntry(scope, projectPath, entry, sessionId);
       return;
     }
 
     this.host.fs.unlinkSync(entry.absolutePath);
-    this.removeMetadataEntry(projectPath, entry);
+    this.removeMetadataEntry(scope, projectPath, entry, sessionId);
   }
 
-  buildPromptText(projectPath: string): string {
-    const entries = this.list(projectPath);
+  buildPromptText(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): string {
+    const entries = this.list(scope, projectPath, sessionId);
     if (entries.length === 0) {
       return '';
     }
 
     const lines = [
-      'Reference related files/folders copied into the current project may be useful.',
+      `Reference related content copied into the current ${scope} may be useful.`,
       'Review them when relevant before making assumptions.',
       ...entries.map((entry) => `- ${entry.relativePath}`),
     ];
@@ -137,15 +164,26 @@ export class ProjectRelatedFileStorage {
     return lines.join('\n');
   }
 
-  private resolveRootDir(projectPath: string): string | undefined {
+  private resolveRootDir(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): string | undefined {
     const normalizedProjectPath = typeof projectPath === 'string' ? projectPath.trim() : '';
     return normalizedProjectPath
-      ? this.host.path.join(normalizedProjectPath, RELATED_FILES_DIR_NAME)
+      ? this.host.path.join(
+        normalizedProjectPath,
+        this.resolveRelativeRootDirName(scope, sessionId),
+      )
       : undefined;
   }
 
-  private requireRootDir(projectPath: string): string {
-    const rootDir = this.resolveRootDir(projectPath);
+  private requireRootDir(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): string {
+    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
     if (!rootDir) {
       throw new Error('Project path is required for related files.');
     }
@@ -204,8 +242,12 @@ export class ProjectRelatedFileStorage {
     this.host.fs.writeFileSync(destinationPath, content);
   }
 
-  private readMetadata(projectPath: string): RelatedFileMetadataEntry[] {
-    const metadataPath = this.resolveMetadataPath(projectPath);
+  private readMetadata(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): RelatedFileMetadataEntry[] {
+    const metadataPath = this.resolveMetadataPath(scope, projectPath, sessionId);
     if (!metadataPath || !this.host.fs.existsSync(metadataPath)) {
       return [];
     }
@@ -233,13 +275,22 @@ export class ProjectRelatedFileStorage {
     }
   }
 
-  private readMetadataByRelativePath(projectPath: string): Map<string, RelatedFileMetadataEntry> {
-    const entries = this.readMetadata(projectPath);
+  private readMetadataByRelativePath(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): Map<string, RelatedFileMetadataEntry> {
+    const entries = this.readMetadata(scope, projectPath, sessionId);
     return new Map(entries.map((entry) => [entry.relativePath, entry]));
   }
 
-  private writeMetadata(projectPath: string, entries: readonly RelatedFileMetadataEntry[]): void {
-    const metadataPath = this.resolveMetadataPath(projectPath);
+  private writeMetadata(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId: string | undefined,
+    entries: readonly RelatedFileMetadataEntry[],
+  ): void {
+    const metadataPath = this.resolveMetadataPath(scope, projectPath, sessionId);
     if (!metadataPath) {
       return;
     }
@@ -250,16 +301,35 @@ export class ProjectRelatedFileStorage {
     this.host.fs.writeFileSync(metadataPath, JSON.stringify(nextEntries, null, 2), 'utf-8');
   }
 
-  private removeMetadataEntry(projectPath: string, entry: ProjectRelatedFileEntry): void {
-    const entries = this.readMetadata(projectPath).filter((item) => item.relativePath !== entry.relativePath);
-    this.writeMetadata(projectPath, entries);
+  private removeMetadataEntry(
+    scope: RelatedContentScope,
+    projectPath: string,
+    entry: ProjectRelatedFileEntry,
+    sessionId?: string,
+  ): void {
+    const entries = this.readMetadata(scope, projectPath, sessionId)
+      .filter((item) => item.relativePath !== entry.relativePath);
+    this.writeMetadata(scope, projectPath, sessionId, entries);
   }
 
-  private resolveMetadataPath(projectPath: string): string | undefined {
-    const rootDir = this.resolveRootDir(projectPath);
+  private resolveMetadataPath(
+    scope: RelatedContentScope,
+    projectPath: string,
+    sessionId?: string,
+  ): string | undefined {
+    const rootDir = this.resolveRootDir(scope, projectPath, sessionId);
     return rootDir
       ? this.host.path.join(rootDir, RELATED_FILES_METADATA_NAME)
       : undefined;
+  }
+
+  private resolveRelativeRootDirName(
+    scope: RelatedContentScope,
+    sessionId?: string,
+  ): string {
+    return scope === 'project'
+      ? 'files'
+      : this.host.path.join('.chat_history', 'memory-tool', 'contents', sessionId || 'default');
   }
 
   private normalizePath(path: string): string {

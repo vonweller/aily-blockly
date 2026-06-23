@@ -144,9 +144,21 @@ export const BLOCKLY_PROMPT_PROFILE: IPromptProfile = {
     })];
     const fileContext = collectRuntimePromptFileContext(host, ['project.abs', '.temp/sketch/sketch.ino']);
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
-    const relatedFilesPrompt = buildProjectRelatedFilesPromptText(host.project?.currentProjectPath);
-    if (relatedFilesPrompt) {
-      envExtra.push(relatedFilesPrompt);
+    const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
+      'project',
+      host.project?.currentProjectPath,
+    );
+    if (projectRelatedContentPrompt) {
+      envExtra.push(projectRelatedContentPrompt);
+    }
+
+    const sessionRelatedContentPrompt = buildProjectRelatedFilesPromptText(
+      'session',
+      host.project?.currentProjectPath,
+      undefined,
+    );
+    if (sessionRelatedContentPrompt) {
+      envExtra.push(sessionRelatedContentPrompt);
     }
 
     return {
