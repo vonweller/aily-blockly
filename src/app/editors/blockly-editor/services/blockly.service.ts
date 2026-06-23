@@ -71,6 +71,8 @@ interface LoadedBlocklyLibraryInfo {
 }
 
 export const AILY_BLOCKLY_USED_LIBRARIES_FIELD = 'ailyBlocklyUsedLibraries';
+const AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX = '@aily-project/lib-';
+const AILY_BLOCKLY_LIBRARY_TOOLBOX_ITEM_KINDS = new Set(['category', 'block', 'label', 'sep', 'separator', 'button']);
 
 export interface BlocklyUsedLibraryManifestEntry {
   version: string;
@@ -931,7 +933,7 @@ export class BlocklyService {
     }
 
     // 检查库的完整性
-    const integrityCheck = this.checkLibraryIntegrity(libPackagePath);
+    const integrityCheck = this.checkLibraryIntegrity(libPackagePath, libPackageName);
     if (!integrityCheck.valid) {
       return;
     }
@@ -998,6 +1000,7 @@ export class BlocklyService {
           if (i18nData) {
             toolbox = processToolboxI18n(toolbox, i18nData);
           }
+          this.normalizeLibraryToolboxJson(toolbox);
           this.attachLibraryMetadataToToolbox(toolbox, libPackageName, libPackagePath);
           this.loadLibToolbox(toolbox);
         }
@@ -1022,16 +1025,27 @@ export class BlocklyService {
     }
   }
 
-  private checkLibraryIntegrity(libPackagePath: string): BlocklyLibraryIntegrityCheckResult {
+  private checkLibraryIntegrity(libPackagePath: string, expectedPackageName?: string): BlocklyLibraryIntegrityCheckResult {
     const errors: string[] = [];
     const packageJsonPath = this.electronService.pathJoin(libPackagePath, 'package.json');
     const toolboxJsonPath = this.electronService.pathJoin(libPackagePath, 'toolbox.json');
     const blockJsonPath = this.electronService.pathJoin(libPackagePath, 'block.json');
     const generatorFilePath = this.electronService.pathJoin(libPackagePath, 'generator.js');
 
-    this.checkRequiredJsonLibraryFile(packageJsonPath, 'package.json', errors);
-    this.checkRequiredJsonLibraryFile(toolboxJsonPath, 'toolbox.json', errors);
-    this.checkRequiredJsonLibraryFile(blockJsonPath, 'block.json', errors);
+    const packageJson = this.checkRequiredJsonLibraryFile(packageJsonPath, 'package.json', errors);
+    const toolboxJson = this.checkRequiredJsonLibraryFile(toolboxJsonPath, 'toolbox.json', errors);
+    const blockJson = this.checkRequiredJsonLibraryFile(blockJsonPath, 'block.json', errors);
+
+    if (packageJson !== null) {
+      this.validateLibraryPackageJson(packageJson, packageJsonPath, errors, expectedPackageName);
+    }
+    if (blockJson !== null) {
+      this.validateLibraryBlockJson(blockJson, blockJsonPath, errors);
+    }
+    if (toolboxJson !== null) {
+      this.validateLibraryToolboxJson(toolboxJson, toolboxJsonPath, errors);
+    }
+
     this.checkRequiredGeneratorFile(generatorFilePath, errors);
 
     if (errors.length > 0) {
@@ -1047,16 +1061,154 @@ export class BlocklyService {
     };
   }
 
-  private checkRequiredJsonLibraryFile(filePath: string, fileName: string, errors: string[]) {
+  private checkRequiredJsonLibraryFile(filePath: string, fileName: string, errors: string[]): any | null {
     if (!this.electronService.exists(filePath)) {
       errors.push(`${fileName} 不合规: 文件不存在 (${filePath})`);
-      return;
+      return null;
     }
 
     try {
-      JSON.parse(this.electronService.readFile(filePath));
+      return JSON.parse(this.electronService.readFile(filePath));
     } catch (error) {
       errors.push(`${fileName} 不合规: JSON 格式错误 (${filePath})，${this.formatLibraryIntegrityError(error)}`);
+      return null;
+    }
+  }
+
+  private validateLibraryPackageJson(packageJson: any, filePath: string, errors: string[], expectedPackageName?: string) {
+    if (!this.isPlainObject(packageJson)) {
+      errors.push(`package.json 不合规: 顶层必须是对象 (${filePath})`);
+      return;
+    }
+
+    const packageNameValue = packageJson['name'];
+    if (typeof packageNameValue !== 'string' || !packageNameValue.trim()) {
+      errors.push(`package.json 不合规: 缺少字符串字段 name (${filePath})`);
+    } else {
+      const packageName = packageNameValue.trim();
+      if (!packageName.startsWith(AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX)) {
+        errors.push(`package.json 不合规: name 必须以 ${AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX} 开头，当前为 ${packageName} (${filePath})`);
+      }
+      if (expectedPackageName && packageName !== expectedPackageName) {
+        errors.push(`package.json 不合规: name 与待加载库名不一致，期望 ${expectedPackageName}，当前为 ${packageName} (${filePath})`);
+      }
+    }
+
+    const packageVersionValue = packageJson['version'];
+    if (typeof packageVersionValue !== 'string' || !packageVersionValue.trim()) {
+      errors.push(`package.json 不合规: 缺少字符串字段 version (${filePath})`);
+    }
+  }
+
+  private validateLibraryBlockJson(blockJson: any, filePath: string, errors: string[]) {
+    if (!Array.isArray(blockJson)) {
+      errors.push(`block.json 不合规: 顶层必须是 block 定义数组 (${filePath})`);
+      return;
+    }
+
+    if (blockJson.length === 0) {
+      errors.push(`block.json 不合规: 至少需要包含一个 block 定义 (${filePath})`);
+      return;
+    }
+
+    const seenTypes = new Set<string>();
+    blockJson.forEach((block: any, index: number) => {
+      const location = `block.json[${index}]`;
+      if (!this.isPlainObject(block)) {
+        errors.push(`${location} 不合规: 每个 block 定义必须是对象 (${filePath})`);
+        return;
+      }
+
+      const blockType = block['type'];
+      if (typeof blockType !== 'string' || !blockType.trim()) {
+        errors.push(`${location} 不合规: 缺少字符串字段 type (${filePath})`);
+      } else if (seenTypes.has(blockType)) {
+        errors.push(`${location} 不合规: block type 重复: ${blockType} (${filePath})`);
+      } else {
+        seenTypes.add(blockType);
+      }
+
+      if (block['message0'] !== undefined && typeof block['message0'] !== 'string') {
+        errors.push(`${location} 不合规: message0 必须是字符串 (${filePath})`);
+      }
+
+      Object.keys(block)
+        .filter((key) => /^args\d+$/.test(key) && block[key] !== undefined)
+        .forEach((key) => {
+          if (!Array.isArray(block[key])) {
+            errors.push(`${location}.${key} 不合规: 必须是数组 (${filePath})`);
+          }
+        });
+    });
+  }
+
+  private validateLibraryToolboxJson(toolboxJson: any, filePath: string, errors: string[]) {
+    if (Array.isArray(toolboxJson)) {
+      errors.push(`toolbox.json 不合规: 顶层必须是单个 toolbox item 对象，不能是数组。请去掉最外层 [] (${filePath})`);
+      return;
+    }
+
+    this.validateLibraryToolboxItem(toolboxJson, 'toolbox.json', filePath, errors);
+  }
+
+  private validateLibraryToolboxItem(item: any, location: string, filePath: string, errors: string[]) {
+    if (!this.isPlainObject(item)) {
+      errors.push(`${location} 不合规: toolbox item 必须是对象 (${filePath})`);
+      return;
+    }
+
+    const itemKind = item['kind'];
+    if (typeof itemKind !== 'string' || !itemKind.trim()) {
+      errors.push(`${location} 不合规: 缺少字符串字段 kind (${filePath})`);
+      return;
+    }
+
+    const kind = itemKind.trim().toLowerCase();
+    if (!AILY_BLOCKLY_LIBRARY_TOOLBOX_ITEM_KINDS.has(kind)) {
+      errors.push(`${location} 不合规: 不支持的 kind: ${itemKind} (${filePath})`);
+      return;
+    }
+
+    if (kind === 'category') {
+      if (typeof item['name'] !== 'string' || !item['name'].trim()) {
+        errors.push(`${location} 不合规: category 缺少字符串字段 name (${filePath})`);
+      }
+      if (!Array.isArray(item['contents'])) {
+        errors.push(`${location} 不合规: category.contents 必须是数组 (${filePath})`);
+        return;
+      }
+      item['contents'].forEach((child: any, index: number) => {
+        this.validateLibraryToolboxItem(child, `${location}.contents[${index}]`, filePath, errors);
+      });
+      return;
+    }
+
+    if (kind === 'block' && (typeof item['type'] !== 'string' || !item['type'].trim())) {
+      errors.push(`${location} 不合规: block 缺少字符串字段 type (${filePath})`);
+    }
+
+    if (kind === 'label' && (typeof item['text'] !== 'string' || !item['text'].trim())) {
+      errors.push(`${location} 不合规: label 缺少字符串字段 text (${filePath})`);
+    }
+
+    if (Array.isArray(item['contents'])) {
+      item['contents'].forEach((child: any, index: number) => {
+        this.validateLibraryToolboxItem(child, `${location}.contents[${index}]`, filePath, errors);
+      });
+    }
+  }
+
+  private normalizeLibraryToolboxJson(item: any) {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    if (typeof item['kind'] === 'string' && item['kind'].trim().toLowerCase() === 'separator') {
+      item['kind'] = 'sep';
+    }
+
+    if (Array.isArray(item['contents'])) {
+      item['contents'].forEach((child: any) => this.normalizeLibraryToolboxJson(child));
     }
   }
 
@@ -1092,6 +1244,10 @@ export class BlocklyService {
 
   private formatLibraryIntegrityError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private isPlainObject(value: any): value is Record<string, any> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
   }
 
   // 卸载库（通过包名和项目路径）
