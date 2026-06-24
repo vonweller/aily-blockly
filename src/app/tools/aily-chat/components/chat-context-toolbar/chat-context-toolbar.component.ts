@@ -40,10 +40,12 @@ export class ChatContextToolbarComponent {
   @Input() showModeLabel = true;
   @Input() modelChipLabel = '';
   @Input() modelBillingLabel = '';
+  @Input() showManageMemory = false;
 
   @Output() toggleAddList = new EventEmitter<void>();
   @Output() addFile = new EventEmitter<void>();
   @Output() addFolder = new EventEmitter<void>();
+  @Output() manageMemory = new EventEmitter<void>();
   @Output() modeClick = new EventEmitter<MouseEvent>();
   @Output() modelClick = new EventEmitter<MouseEvent>();
 
@@ -63,6 +65,14 @@ export class ChatContextToolbarComponent {
 
   get modelTooltipTrigger(): 'hover' | null {
     return this.showModelMenu ? null : 'hover';
+  }
+
+  get showManageMemoryAction(): boolean {
+    return this.appearance === 'composer' && this.showManageMemory;
+  }
+
+  get expandedBackdropWidth(): number {
+    return this.showManageMemoryAction ? 112 : 84;
   }
 
   get modeIconClass(): string {
@@ -144,5 +154,9 @@ export class ChatContextToolbarComponent {
   onModelClick(event: MouseEvent): void {
     this.modelChipTooltip?.hide();
     this.modelClick.emit(event);
+  }
+
+  onManageMemory(): void {
+    this.manageMemory.emit();
   }
 }

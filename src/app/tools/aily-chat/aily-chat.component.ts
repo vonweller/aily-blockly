@@ -65,6 +65,7 @@ import { ChatMemoryShellCoordinator } from './helpers/chat-memory-shell-coordina
 import { runChatTodoFocusAction } from './helpers/chat-todo-focus-action';
 import { isSessionLifecycleSupersededError, readSessionLifecycleRestoreErrorDetails } from './helpers/session-lifecycle.helper';
 import type { ChatTaskActionDetail } from './helpers/chat-task-action-coordinator';
+import { ProjectRelatedFileStorage } from './components/memory/project-related-file-storage';
 
 import { NzMessageService } from 'ng-zorro-antd/message';
 import { AuthService } from '../../services/auth.service';
@@ -418,6 +419,8 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
         return host.project.currentProjectPath || host.project.projectRootPath || this.projectService.currentProjectPath || this.projectService.projectRootPath || '';
       },
       getSessionId: () => this.vm.sessionId,
+      getRecentProjects: () => this.projectService.recentlyProjects ?? [],
+      getSessionItems: () => this.sessionListItems,
       getRepositoryMemoryEnabled: () => this.ailyChatConfigService.repositoryMemoryEnabled === true,
       notifyInfo: (text) => this.message.info(text),
       notifyError: (text) => this.message.error(text),
@@ -800,6 +803,16 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     return this.viewState.paneStageSurfaceModel;
   }
 
+  async onComposerAddFileRequest(): Promise<void> {
+    const resources = await this.resourceManager.addFileResources();
+    await this.syncSessionRelatedContentFromResources(resources);
+  }
+
+  async onComposerAddFolderRequest(): Promise<void> {
+    const resource = await this.resourceManager.addFolderResource();
+    await this.syncSessionRelatedContentFromResources(resource ? [resource] : []);
+  }
+
   get sessionPickerSurfaceModel(): ChatPaneSessionPickerSurfaceModel | null {
     return this.viewState.sessionPickerSurfaceModel;
   }
@@ -810,6 +823,37 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
 
   focusChatInputFromTitleControl(): void {
     this.chatTextarea?.nativeElement?.focus();
+  }
+
+  private async syncSessionRelatedContentFromResources(
+    resources: readonly ResourceItem[],
+  ): Promise<void> {
+    const sessionId = this.vm.sessionId?.trim();
+    const projectPath = this.projectService.currentProjectPath?.trim()
+      || this.projectService.projectRootPath?.trim();
+
+    if (!sessionId || !projectPath) {
+      return;
+    }
+
+    const sourcePaths = resources
+      .filter((item) =>
+        (item.type === 'file' || item.type === 'folder')
+        && typeof item.path === 'string'
+        && item.path.trim().length > 0,
+      )
+      .map((item) => item.path!.trim());
+
+    if (sourcePaths.length === 0) {
+      return;
+    }
+
+    try {
+      const storage = new ProjectRelatedFileStorage(AilyHost.get());
+      storage.importPathReferences('session', projectPath, sourcePaths, sessionId);
+    } catch (error) {
+      console.warn('[AilyChat] 同步会话关联内容失败:', error);
+    }
   }
 
   handleHostHeaderActionRequested(request: ChatHostHeaderActionRequest): void {

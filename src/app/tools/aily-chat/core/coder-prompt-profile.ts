@@ -29,6 +29,7 @@ import {
   createSkillCommandSection,
   createSkillsListingSection,
 } from './runtime-prompt-shared';
+import { buildProjectRelatedFilesPromptText } from '../components/memory/project-related-file-prompt';
 
 export const CODER_MAIN_AGENT_REQUIRED_CONTEXT = {
   scopes: ['workspaceIdentity', 'projectInfo', 'boardInfo', 'libraryIndex', 'libraryReadmeRefs', 'workspaceArtifacts'],
@@ -143,6 +144,22 @@ export const CODER_PROMPT_PROFILE: IPromptProfile = {
     })];
     const fileContext = collectRuntimePromptFileContext(host, ['src/main.cpp']);
     const platformType = appendStandardPromptEnv(envExtra, host, fileContext);
+    const projectRelatedContentPrompt = buildProjectRelatedFilesPromptText(
+      'project',
+      host.project?.currentProjectPath,
+    );
+    if (projectRelatedContentPrompt) {
+      envExtra.push(projectRelatedContentPrompt);
+    }
+
+    const sessionRelatedContentPrompt = buildProjectRelatedFilesPromptText(
+      'session',
+      host.project?.currentProjectPath,
+      undefined,
+    );
+    if (sessionRelatedContentPrompt) {
+      envExtra.push(sessionRelatedContentPrompt);
+    }
 
     return {
       platform: platformType,

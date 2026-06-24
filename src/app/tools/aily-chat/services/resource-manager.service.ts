@@ -27,6 +27,18 @@ export class ResourceManagerService {
         this.items.push(item);
       }
     }
+    return;
+  }
+
+  async addFileResources(): Promise<ResourceItem[]> {
+    const resources = await pickFileResources(AilyHost.get().dialog);
+    for (const item of resources) {
+      const exists = this.items.some((resource) => resource.type === 'file' && resource.path === item.path);
+      if (!exists) {
+        this.items.push(item);
+      }
+    }
+    return resources;
   }
 
   async addFolder(): Promise<void> {
@@ -37,6 +49,18 @@ export class ResourceManagerService {
         this.items.push(item);
       }
     }
+    return;
+  }
+
+  async addFolderResource(): Promise<ResourceItem | null> {
+    const item = await pickFolderResource(AilyHost.get().dialog);
+    if (item) {
+      const exists = this.items.some((resource) => resource.type === 'folder' && resource.path === item.path);
+      if (!exists) {
+        this.items.push(item);
+      }
+    }
+    return item;
   }
 
   addUrl(): void {
