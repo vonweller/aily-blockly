@@ -13,8 +13,10 @@ import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { ProjectService } from '../../services/project.service';
 import { LogService } from '../../services/log.service';
 import { ConfigService } from '../../services/config.service';
+import { AuthService } from '../../services/auth.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { stripAnsi } from 'fancy-ansi';
+import { Subscription } from 'rxjs';
 
 import { version } from '../../../../package.json';
 
@@ -47,6 +49,8 @@ export class FeedbackDialogComponent implements OnDestroy {
 
   // 图片上传计数器，用于生成唯一占位符
   private uploadCounter: number = 0;
+
+  private userInfoSubscription?: Subscription;
 
   // 反馈类型
   feedbackType: string = 'bug';
@@ -100,6 +104,7 @@ export class FeedbackDialogComponent implements OnDestroy {
     private projectService: ProjectService,
     private logService: LogService,
     private configService: ConfigService,
+    private authService: AuthService,
     private translate: TranslateService
   ) { }
 
@@ -109,12 +114,24 @@ export class FeedbackDialogComponent implements OnDestroy {
 
   ngOnInit(): void {
     this.loadDraft();
+    this.applyUserEmail(this.authService.currentUser);
+    this.userInfoSubscription = this.authService.userInfo$.subscribe(userInfo => {
+      this.applyUserEmail(userInfo);
+    });
   }
 
   ngOnDestroy(): void {
+    this.userInfoSubscription?.unsubscribe();
     // 组件销毁时，如果未成功提交，则保存草稿
     if (!this.isSubmitted) {
       this.saveDraft();
+    }
+  }
+
+  private applyUserEmail(userInfo: any): void {
+    const userEmail = userInfo?.email?.trim();
+    if (!this.email.trim() && userEmail) {
+      this.email = userEmail;
     }
   }
 

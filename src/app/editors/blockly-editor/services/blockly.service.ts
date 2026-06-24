@@ -121,6 +121,9 @@ export class BlocklyService {
   set workspace(workspace: Blockly.WorkspaceSvg | null) {
     this._workspace = workspace;
     this.workspaceReadySubject.next(workspace);
+    if (workspace) {
+      this.syncSerialDynamicToolboxBlocks(workspace);
+    }
   }
 
   toolbox = {
@@ -1311,6 +1314,62 @@ export class BlocklyService {
     }
     this.rebuildToolboxFacade();
     this.syncToolboxFacadeWithWorkspace();
+  }
+
+  syncSerialDynamicToolboxBlocks(workspace: Blockly.WorkspaceSvg | null = this._workspace): void {
+    if (!workspace) {
+      return;
+    }
+
+    const ensureListener = (window as any).ensureSerialToolboxListener;
+    if (typeof ensureListener === 'function') {
+      ensureListener(workspace);
+    }
+
+    const syncFn = (window as any).loadExistingSerialBlockToToolbox;
+    if (typeof syncFn === 'function') {
+      syncFn(workspace);
+    }
+  }
+
+  refreshBoardDependentBlockDefinitions(): void {
+    for (const [libPackagePath, libraryInfo] of this.loadedLibraryInfos.entries()) {
+      const blockJsonPath = this.electronService.pathJoin(libPackagePath, 'block.json');
+      if (!this.electronService.exists(blockJsonPath)) {
+        continue;
+      }
+
+      try {
+        let blocks = JSON.parse(this.electronService.readFile(blockJsonPath));
+        const i18nFilePath = this.electronService.pathJoin(
+          libPackagePath,
+          'i18n',
+          `${this.translateService.currentLang}.json`,
+        );
+        if (this.electronService.exists(i18nFilePath)) {
+          const i18nData = JSON.parse(this.electronService.readFile(i18nFilePath));
+          blocks = processI18n(blocks, i18nData);
+        }
+
+        const staticPath = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'))
+          ? this.electronService.pathJoin(libPackagePath, 'static')
+          : null;
+        const libVersion = libraryInfo.packageName
+          ? (() => {
+            try {
+              const pkg = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'package.json')));
+              return pkg.version || '';
+            } catch {
+              return '';
+            }
+          })()
+          : '';
+
+        this.loadLibBlocks(blocks, staticPath, libraryInfo.packageName, libVersion);
+      } catch (error) {
+        console.warn('[BlocklyService] failed to refresh board-dependent blocks:', libPackagePath, error);
+      }
+    }
   }
 
   private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string, isLocalLibrary: boolean) {

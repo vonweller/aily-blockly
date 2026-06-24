@@ -521,6 +521,7 @@
         "TIP_2": "2. After successful feedback, the above information will be publicly available on",
         "TIP_2_LINK": "this project's GitHub issues",
         "TIP_2_END": "",
+        "TIP_3": "3. Submit feedback after logging in. Valid feedback will receive points rewards.",
         "SUBMIT": "Submit",
         "CANCEL": "Cancel",
         "WARNING_CONTENT_EMPTY": "Please enter feedback content",
