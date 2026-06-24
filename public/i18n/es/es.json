@@ -477,6 +477,7 @@
         "TIP_2": "2. Después de comentarios exitosos, la información anterior estará disponible públicamente en",
         "TIP_2_LINK": "los issues de GitHub de este proyecto",
         "TIP_2_END": "",
+        "TIP_3": "3. Envía comentarios después de iniciar sesión. Los comentarios válidos recibirán recompensas de puntos.",
         "SUBMIT": "Enviar",
         "CANCEL": "Cancelar",
         "WARNING_CONTENT_EMPTY": "Por favor ingrese el contenido del comentario",

@@ -477,6 +477,7 @@
         "TIP_2": "2. Após o feedback bem-sucedido, as informações acima estarão disponíveis publicamente em",
         "TIP_2_LINK": "issues do GitHub deste projeto",
         "TIP_2_END": "",
+        "TIP_3": "3. Envie feedback após fazer login. Feedback válido receberá recompensas em pontos.",
         "SUBMIT": "Enviar",
         "CANCEL": "Cancelar",
         "WARNING_CONTENT_EMPTY": "Por favor, insira o conteúdo do feedback",
