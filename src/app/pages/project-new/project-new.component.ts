@@ -71,6 +71,7 @@ export class ProjectNewComponent implements OnDestroy {
   keyword = '';
 
   _boardList: any[] = [];
+  private boardListInConfigOrder: any[] = [];
   boardList: any[] = [];
 
   private searchSubject = new Subject<string>();
@@ -131,6 +132,7 @@ export class ProjectNewComponent implements OnDestroy {
 
     // 先处理开发板列表数据
     let processedBoardList = this.process(this.configService.boardList);
+    this.boardListInConfigOrder = processedBoardList;
 
     // 按使用次数排序
     this._boardList = this.configService.sortBoardsByUsage(processedBoardList);
@@ -432,13 +434,12 @@ export class ProjectNewComponent implements OnDestroy {
         this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
       } else {
         // 普通品牌过滤
-        let filteredBoardList = this._boardList.filter(board => {
+        let filteredBoardList = this.boardListInConfigOrder.filter(board => {
           const boardBrand = board.brand ? board.brand.toLowerCase() : '';
           const selectedBrandValue = brand.value.toLowerCase();
           return boardBrand === selectedBrandValue
         });
-        // 对过滤后的列表按使用次数排序
-        this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
+        this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(filteredBoardList)));
       }
 
       console.log('过滤后的开发板列表:', this.boardList);
@@ -468,7 +469,7 @@ export class ProjectNewComponent implements OnDestroy {
       if (core.value === 'other') {
         // 当选择"其他核心架构"时，显示已有核心列表未覆盖的元素
         const definedCores = this.getDefinedCores();
-        filteredBoardList = this._boardList.filter(board => {
+        filteredBoardList = this.boardListInConfigOrder.filter(board => {
           if (board.type && typeof board.type === 'string') {
             const boardType = board.type.toLowerCase();
             // 检查是否包含任何已定义的核心架构
@@ -478,7 +479,7 @@ export class ProjectNewComponent implements OnDestroy {
         });
       } else {
         // 普通核心架构过滤
-        filteredBoardList = this._boardList.filter(board => {
+        filteredBoardList = this.boardListInConfigOrder.filter(board => {
           // 检查开发板的 type 字段是否包含指定的 core
           if (board.type && typeof board.type === 'string') {
             // 支持多种格式：esp32:esp32, arduino:avr, aily:esp32 等
@@ -488,8 +489,7 @@ export class ProjectNewComponent implements OnDestroy {
         });
       }
 
-      // 对过滤后的列表按使用次数排序
-      this.boardList = this.applyLocalization(this.configService.sortBoardsByUsage(filteredBoardList));
+      this.boardList = this.applyLocalization(JSON.parse(JSON.stringify(filteredBoardList)));
 
       console.log('按核心架构过滤后的开发板列表:', this.boardList);
 
