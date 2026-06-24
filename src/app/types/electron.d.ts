@@ -29,6 +29,10 @@ declare global {
         cancel: (streamId: string) => Promise<any>;
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
       };
+      webviewBridge?: {
+        fetchPage: (data: any) => Promise<any>;
+        searchWeb: (data: any) => Promise<any>;
+      };
       iWindow: any;
       subWindow: any;
       coderEmbed: {

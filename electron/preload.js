@@ -148,6 +148,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
   },
+  webviewBridge: {
+    fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
+    searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),

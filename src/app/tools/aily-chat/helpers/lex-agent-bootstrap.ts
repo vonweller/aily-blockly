@@ -1050,6 +1050,80 @@ function attachBlocklyCompatibilityExtensions(adapter: BlocklyHostAdapter): void
   if (searchExtension) {
     adapter.registerExtension('search', searchExtension);
   }
+
+  const webFetchBridgeExtension = createBlocklyWebFetchBridgeExtension();
+  if (webFetchBridgeExtension) {
+    adapter.registerExtension('webFetchBridge', webFetchBridgeExtension);
+  }
+
+  const webSearchBridgeExtension = createBlocklyWebSearchBridgeExtension();
+  if (webSearchBridgeExtension) {
+    adapter.registerExtension('webSearchBridge', webSearchBridgeExtension);
+  }
+}
+
+function createBlocklyWebFetchBridgeExtension(): {
+  fetchPage(options: {
+    url: string;
+    signal?: AbortSignal;
+  }): Promise<{ text: string; status: number; contentType?: string }>;
+} | null {
+  const webviewBridge = (window as any)?.electronAPI?.webviewBridge;
+  if (typeof webviewBridge?.fetchPage !== 'function') {
+    return null;
+  }
+
+  return {
+    fetchPage: async (options) => {
+      const fallback = await webviewBridge.fetchPage({
+        url: options.url,
+        timeoutMs: 20000,
+      });
+
+      if (!fallback?.ok) {
+        throw new Error(fallback?.error || `webview bridge fetch failed for ${options.url}`);
+      }
+
+      return {
+        text: String(fallback.html || fallback.text || ''),
+        status: Number.isFinite(fallback.status) ? Number(fallback.status) : 200,
+        contentType: typeof fallback.contentType === 'string' ? fallback.contentType : 'text/html; charset=utf-8',
+      };
+    },
+  };
+}
+
+function createBlocklyWebSearchBridgeExtension(): {
+  searchPage(options: {
+    query: string;
+    maxResults: number;
+    signal?: AbortSignal;
+  }): Promise<{ html: string; url?: string; title?: string }>;
+} | null {
+  const webviewBridge = (window as any)?.electronAPI?.webviewBridge;
+  if (typeof webviewBridge?.searchWeb !== 'function') {
+    return null;
+  }
+
+  return {
+    searchPage: async (options) => {
+      const result = await webviewBridge.searchWeb({
+        query: options.query,
+        maxResults: options.maxResults,
+        timeoutMs: 20000,
+      });
+
+      if (!result?.ok) {
+        throw new Error(result?.error || `webview bridge search failed for ${options.query}`);
+      }
+
+      return {
+        html: String(result.html || ''),
+        url: typeof result.url === 'string' ? result.url : undefined,
+        title: typeof result.title === 'string' ? result.title : undefined,
+      };
+    },
+  };
 }
 
 export function createLexSessionStorage(
