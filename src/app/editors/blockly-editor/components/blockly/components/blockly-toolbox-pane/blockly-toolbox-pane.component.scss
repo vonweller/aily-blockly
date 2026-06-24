@@ -165,6 +165,7 @@
 }
 
 .toolbox-item {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 1;
@@ -221,4 +222,16 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.toolbox-item__local-badge {
+  display: block;
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--aily-color-link);
+  position: absolute;
+  left: 4px;
 }
