@@ -29,6 +29,7 @@ import {
   resolveCoderFrameworkOption,
   resolveDefaultCoderFramework,
 } from '../utils/coder-board.mapper';
+import { applyCdcSerialPortOverrides } from '../editors/blockly-editor/components/blockly/abf';
 
 interface ProjectPackageData {
   name: string;
@@ -73,6 +74,7 @@ export class ProjectService {
 
   // 开发板变更事件通知，只在变更时发出
   boardChangeSubject = new Subject<void>();
+  boardConfigUpdatedSubject = new Subject<any>();
 
   // 当前项目路径的订阅源
   private currentProjectPathSubject = new BehaviorSubject<string>('');
@@ -1027,6 +1029,92 @@ export class ProjectService {
     } catch (e) {
       console.warn('同步开发板配置失败:', e);
       return false;
+    }
+  }
+
+  async resolveBoardConfigForRuntime(rawBoardJson?: any): Promise<any> {
+    const boardJson = rawBoardJson ?? await this.getBoardJson();
+    const resolvedBoardJson = JSON.parse(JSON.stringify(boardJson));
+    const cdcEnabled = await this.isCdcOnBootEnabledForProject(resolvedBoardJson);
+    applyCdcSerialPortOverrides(resolvedBoardJson, cdcEnabled);
+    return resolvedBoardJson;
+  }
+
+  async refreshRuntimeBoardConfig(): Promise<any> {
+    const resolvedBoardJson = await this.resolveBoardConfigForRuntime();
+    this.currentBoardConfig = resolvedBoardJson;
+    window['boardConfig'] = resolvedBoardJson;
+    this.boardConfigUpdatedSubject.next(resolvedBoardJson);
+    return resolvedBoardJson;
+  }
+
+  async isCdcOnBootEnabledForProject(
+    rawBoardJson?: any,
+    cdcOnBootOption?: string,
+  ): Promise<boolean> {
+    try {
+      const boardJson = rawBoardJson ?? await this.getBoardJson();
+      if (!Array.isArray(boardJson?.cdcSerialPort) || boardJson.cdcSerialPort.length === 0) {
+        return false;
+      }
+
+      const core = String(boardJson?.core || '');
+      if (!core.includes('esp32')) {
+        return false;
+      }
+
+      const boardName = this.getBoardNameFromBoardJson(boardJson);
+      if (!boardName) {
+        return false;
+      }
+
+      const packageJson = await this.getPackageJson();
+      const option = cdcOnBootOption ?? packageJson?.projectConfig?.CDCOnBoot;
+      if (!option) {
+        return false;
+      }
+
+      const rawBoardConfig = await this.getRawBoardsTxtConfig(boardName);
+      if (!rawBoardConfig) {
+        return false;
+      }
+
+      const cdcOnBootKey = `${boardName}.menu.CDCOnBoot.${option}.build.cdc_on_boot`;
+      return rawBoardConfig[cdcOnBootKey] === '1';
+    } catch (error) {
+      console.warn('[ProjectService] failed to resolve CDCOnBoot state:', error);
+      return false;
+    }
+  }
+
+  private getBoardNameFromBoardJson(boardJson: any): string | null {
+    const type = boardJson?.type;
+    if (typeof type !== 'string' || !type) {
+      return null;
+    }
+
+    const parts = type.split(':');
+    return parts[parts.length - 1] || null;
+  }
+
+  private async getRawBoardsTxtConfig(boardName: string): Promise<Record<string, string> | null> {
+    try {
+      const sdkPath = await this.getSdkPath();
+      if (!sdkPath) {
+        return null;
+      }
+
+      const boardsFilePath = `${sdkPath}/boards.txt`;
+      if (!window['fs'].existsSync(boardsFilePath)) {
+        return null;
+      }
+
+      const boardsContent = window['fs'].readFileSync(boardsFilePath, 'utf8');
+      const lines = boardsContent.split('\n');
+      return this.parseBoardsConfig(lines, boardName);
+    } catch (error) {
+      console.warn('[ProjectService] failed to read raw boards.txt config:', error);
+      return null;
     }
   }
 

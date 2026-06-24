@@ -31,6 +31,7 @@ import { LocalLibrarySyncService } from '../../services/local-library-sync.servi
 import { CodeViewerIpcService } from './services/code-viewer-ipc.service';
 import { CrossPlatformCmdService } from '../../services/cross-platform-cmd.service';
 import { MissingLibInfo, PasteInstallDialogComponent } from './components/paste-install-dialog/paste-install-dialog.component';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-blockly-editor',
@@ -77,6 +78,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     attempts: number;
   } | null = null;
   private boardDependencyReloadInProgress = false;
+  private boardConfigUpdatedSubscription: Subscription | null = null;
 
   devmode;
 
@@ -129,6 +131,9 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
     this._projectService.init();
     this._builderService.init();
     this._uploadService.init();
+    this.boardConfigUpdatedSubscription = this.projectService.boardConfigUpdatedSubject.subscribe((boardConfig) => {
+      this.applyRuntimeBoardConfig(boardConfig);
+    });
 
     // 阻止鼠标按键前进后退
     window.history.replaceState(null, '', window.location.href);
@@ -161,6 +166,8 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   ngOnDestroy(): void {
+    this.boardConfigUpdatedSubscription?.unsubscribe();
+    this.boardConfigUpdatedSubscription = null;
     this.uiService.closeTool('code-viewer');
     this.clearProjectLoadedCodeRefreshTimer();
     this.localLibrarySyncService.stop();
@@ -210,7 +217,7 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       state: 'doing',
       text: this.translate.instant('BLOCKLY_EDITOR.LOADING_BOARD_CONFIG'),
     });
-    const boardJson = await this.projectService.getBoardJson();
+    const boardJson = await this.projectService.resolveBoardConfigForRuntime();
 
     this.projectService.currentBoardConfig = boardJson;
     this.blocklyService.boardConfig = boardJson;
@@ -300,6 +307,17 @@ export class BlocklyEditorComponent implements OnInit, AfterViewInit, OnDestroy 
       this.projectLoadedCodeRefreshTimer = null;
       this.blocklyService.requestCodeViewerRefresh(true);
     }, this.projectLoadedCodeRefreshDelayMs);
+  }
+
+  private applyRuntimeBoardConfig(boardConfig: any): void {
+    this.blocklyService.boardConfig = boardConfig;
+    window['boardConfig'] = boardConfig;
+    this.blocklyService.refreshBoardDependentBlockDefinitions();
+    this.blocklyService.syncSerialDynamicToolboxBlocks();
+    const updateSerialCustomPorts = (window as any).updateSerialCustomPorts;
+    if (typeof updateSerialCustomPorts === 'function') {
+      updateSerialCustomPorts();
+    }
   }
 
   private clearProjectLoadedCodeRefreshTimer(): void {

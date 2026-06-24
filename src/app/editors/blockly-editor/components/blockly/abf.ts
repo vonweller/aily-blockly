@@ -184,3 +184,65 @@ function getLastElement<T>(array: T[]): T | undefined {
     }
     return array[array.length - 1];
 }
+
+type BoardSerialPortOption = [string, string];
+
+function cloneBoardSerialPortOptions(options: BoardSerialPortOption[]): BoardSerialPortOption[] {
+    return options.map(([label, value]) => [label, value]);
+}
+
+/**
+ * 根据 USB CDC 开关，用 board.json 中的 cdcSerialPort 覆盖 serialPort 显示名。
+ * 通过 cdcSerialPort[i][1] 与 serialPort[j][1] 匹配，仅替换 label（[0]），value 保持不变。
+ */
+export function applyCdcSerialPortOverrides(
+    boardConfig: any,
+    cdcEnabled: boolean,
+): any {
+    if (!boardConfig || !Array.isArray(boardConfig.cdcSerialPort) || boardConfig.cdcSerialPort.length === 0) {
+        return boardConfig;
+    }
+
+    const baseSerialPort: BoardSerialPortOption[] = Array.isArray(boardConfig._serialPortBase)
+        ? cloneBoardSerialPortOptions(boardConfig._serialPortBase)
+        : cloneBoardSerialPortOptions(boardConfig.serialPort || []);
+
+    boardConfig._serialPortBase = cloneBoardSerialPortOptions(baseSerialPort);
+
+    if (!cdcEnabled) {
+        boardConfig.serialPort = cloneBoardSerialPortOptions(baseSerialPort);
+        delete boardConfig.serialPortOriginal;
+        if (boardConfig._serialPinsBase) {
+            boardConfig.serialPins = JSON.parse(JSON.stringify(boardConfig._serialPinsBase));
+        }
+        return boardConfig;
+    }
+
+    const cdcLabelByValue = new Map<string, string>();
+    for (const entry of boardConfig.cdcSerialPort) {
+        if (!Array.isArray(entry) || entry.length < 2) {
+            continue;
+        }
+        cdcLabelByValue.set(String(entry[1]), String(entry[0]));
+    }
+
+    boardConfig.serialPort = baseSerialPort.map(([label, value]) => {
+        const cdcLabel = cdcLabelByValue.get(value);
+        return cdcLabel ? [cdcLabel, value] : [label, value];
+    });
+    delete boardConfig.serialPortOriginal;
+
+    if (boardConfig.serialPins && typeof boardConfig.serialPins === 'object') {
+        if (!boardConfig._serialPinsBase) {
+            boardConfig._serialPinsBase = JSON.parse(JSON.stringify(boardConfig.serialPins));
+        }
+        for (const entry of boardConfig.cdcSerialPort) {
+            if (!Array.isArray(entry) || entry.length < 2) {
+                continue;
+            }
+            delete boardConfig.serialPins[String(entry[1])];
+        }
+    }
+
+    return boardConfig;
+}

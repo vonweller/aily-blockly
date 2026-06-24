@@ -1360,6 +1360,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
       packageJson['projectConfig'][subItem.key] = subItem.data;
       this.projectService.setPackageJson(packageJson);
+      if (subItem.key === 'CDCOnBoot') {
+        await this.projectService.refreshRuntimeBoardConfig();
+      }
       // 判断是否是STM32，是则更新项目配置
       if (this.projectService.currentBoardConfig['core'].indexOf('stm32') > -1 &&
         this.projectService.currentBoardConfig['description'].indexOf('Series') > -1) {
