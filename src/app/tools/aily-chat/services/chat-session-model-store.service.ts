@@ -23,6 +23,7 @@ import {
   normalizeHostSessionProviderOptions,
   type HostSessionProviderOptions,
 } from '../helpers/host-session-input-state';
+import { turnResponsePartToChatParts } from '../core/turn-response-part-mapper';
 import {
   ChatSessionRuntimeStoreService,
   type ChatSessionRuntimeChangeOptions,
@@ -135,6 +136,7 @@ export class ChatSessionModel {
     this.sessionTypeState = normalizeChatSessionType(props.sessionType, DEFAULT_CHAT_SESSION_TYPE);
     this.inputStateValue = normalizeInputState(props.inputState);
     this.turnResponsesValue = cloneTurnResponses(props.turnResponses);
+    this.syncCanonicalResponsePartStore(this.turnResponsesValue);
   }
 
   readonly sessionResource: ChatSessionResource;
@@ -187,10 +189,12 @@ export class ChatSessionModel {
   }
 
   replaceTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): readonly TurnResponseTurn[] {
+    const previousTurnIds = this.turnResponsesValue.map(turn => turn.turnId);
     const existingTurnsById = new Map(this.turnResponsesValue.map(turn => [turn.turnId, turn]));
     this.turnResponsesValue = Array.isArray(turnResponses)
       ? turnResponses.map(turnResponse => mergeTurnResponseWithExistingRequest(existingTurnsById.get(turnResponse.turnId), turnResponse))
       : [];
+    this.syncCanonicalResponsePartStore(this.turnResponsesValue, previousTurnIds);
     return this.getTurnResponses();
   }
 
@@ -206,6 +210,7 @@ export class ChatSessionModel {
       this.turnResponsesValue.push(clonedTurnResponse);
     }
 
+    this.syncCanonicalResponsePartStore([clonedTurnResponse]);
     return this.getTurnResponses();
   }
 
@@ -220,7 +225,9 @@ export class ChatSessionModel {
       return this.getTurnResponses();
     }
 
+    const removedTurnIds = this.turnResponsesValue.slice(turnIndex + 1).map(turn => turn.turnId);
     this.turnResponsesValue = this.turnResponsesValue.slice(0, turnIndex + 1);
+    this.syncCanonicalResponsePartStore(this.turnResponsesValue.slice(turnIndex), removedTurnIds);
     return this.getTurnResponses();
   }
 
@@ -382,6 +389,30 @@ export class ChatSessionModel {
     this.checkpointTimelineState = null;
     this.partStore.destroy();
   }
+
+  private syncCanonicalResponsePartStore(
+    turns: readonly TurnResponseTurn[],
+    clearTurnIds: readonly string[] = [],
+  ): void {
+    const turnIdsToClear = new Set<string>();
+    for (const turnId of clearTurnIds) {
+      const normalizedTurnId = normalizeChatSessionResource(turnId);
+      if (normalizedTurnId) {
+        turnIdsToClear.add(normalizedTurnId);
+      }
+    }
+    for (const turn of turns) {
+      const normalizedTurnId = normalizeChatSessionResource(turn.turnId);
+      if (normalizedTurnId) {
+        turnIdsToClear.add(normalizedTurnId);
+      }
+    }
+
+    for (const turnId of turnIdsToClear) {
+      const turn = turns.find(candidate => normalizeChatSessionResource(candidate.turnId) === turnId);
+      this.partStore.replacePartsForResponse(turnId, turnResponsePartsToChatParts(turn?.response?.parts));
+    }
+  }
 }
 
 function cloneTurnResponses(turnResponses: readonly TurnResponseTurn[] | null | undefined): TurnResponseTurn[] {
@@ -396,6 +427,14 @@ function cloneTurnResponse(turnResponse: TurnResponseTurn): TurnResponseTurn {
   }
 
   return JSON.parse(JSON.stringify(turnResponse)) as TurnResponseTurn;
+}
+
+function turnResponsePartsToChatParts(
+  parts: TurnResponseTurn['response']['parts'] | null | undefined,
+) {
+  return Array.isArray(parts)
+    ? parts.flatMap(part => turnResponsePartToChatParts(part))
+    : [];
 }
 
 function mergeTurnResponseWithExistingRequest(

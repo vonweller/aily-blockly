@@ -10,7 +10,7 @@ import type { InteractionBudgetSnapshot } from '../services/interaction-budget-s
 import type { RequestQuotaSnapshot } from '../services/request-quota-snapshot';
 import type { WorkspaceCheckpointPresentationMode } from '../services/edit-checkpoint.service';
 import type { IMenuItem } from '../../../configs/menu.config';
-import type { ChatDialogViewItem } from './chat-dialog-view-items';
+import type { ChatVisibleTranscriptDialogItem } from '../core/chat-visible-transcript-model';
 import type { CheckpointRestoreSurface } from './checkpoint-restore-visibility';
 import type { ChatSessionActionState } from './chat-request-controller';
 import type { HostRequestModel } from './host-turn-response-state';
@@ -18,7 +18,7 @@ import type { MenuPosition } from '../services/menu-manager.service';
 
 interface ChatEngineViewLike {
   readonly hostRequestModel: HostRequestModel | null;
-  readonly dialogItems: readonly ChatDialogViewItem[];
+  readonly dialogItems: readonly ChatVisibleTranscriptDialogItem[];
   readonly checkpointRestoreSurface: CheckpointRestoreSurface | null;
   readonly partStore: ChatPartStore;
   readonly isWaiting: boolean;
@@ -142,7 +142,7 @@ export class ChatComponentViewModel {
       || hostRequestModel?.response?.entireResponse != null;
   }
 
-  get dialogItems(): readonly ChatDialogViewItem[] {
+  get dialogItems(): readonly ChatVisibleTranscriptDialogItem[] {
     return this.deps.engine.dialogItems;
   }
 

@@ -6,7 +6,6 @@ import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzResizableModule, NzResizeEvent } from 'ng-zorro-antd/resizable';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { AilyChatComponent } from '../tools/aily-chat/aily-chat.component';
-import { AILY_CHAT_RUNTIME_PROVIDERS } from '../tools/aily-chat/aily-chat.providers';
 import { TerminalComponent } from '../tools/terminal/terminal.component';
 import { LogComponent } from '../tools/log/log.component';
 import { UiService } from '../services/ui.service';
@@ -36,6 +35,7 @@ import { isChildTool } from '../configs/tool.config';
 import { LibManagerToolComponent } from '../tools/lib-manager-tool/lib-manager-tool.component';
 import { ModeWelcomeComponent } from '../components/mode-welcome/mode-welcome.component';
 import type { DevelopmentModePreference } from '../services/config.service';
+import { ChatRuntimeHostBootstrapService } from '../tools/aily-chat/services/chat-runtime-host-bootstrap.service';
 
 @Component({
   selector: 'app-main-window',
@@ -70,7 +70,6 @@ import type { DevelopmentModePreference } from '../services/config.service';
   ],
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
-  providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
 })
 export class MainWindowComponent {
   @ViewChild('logComponent') logComponent!: LogComponent;
@@ -118,7 +117,8 @@ export class MainWindowComponent {
     private router: Router,
     private configService: ConfigService,
     private modal: NzModalService,
-    private onboardingService: OnboardingService
+    private onboardingService: OnboardingService,
+    private chatRuntimeHostBootstrap: ChatRuntimeHostBootstrapService
   ) { }
 
   ngOnInit(): void {
@@ -126,6 +126,9 @@ export class MainWindowComponent {
     this.projectService.init();
     this.updateService.init();
     this.npmService.init();
+    void this.chatRuntimeHostBootstrap.startMainWindowRuntimeOwner().catch((error) => {
+      console.error('[AilyChat] Failed to register main-window runtime owner:', error);
+    });
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 

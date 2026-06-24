@@ -7,7 +7,6 @@
 
 import type { IChatViewAccess } from '../core/chat-context';
 import { ChatMessage, ToolCallState, ToolCallInfo } from '../core/chat-types';
-import { ChatViewWriteBridge } from './chat-view-write-bridge';
 import {
   makeJsonSafe as _makeJsonSafe,
   markContentAsHistory as _markContentAsHistory,
@@ -21,55 +20,13 @@ import {
   generateToolResultText as _generateToolResultText,
 } from '../services/tool-display.service';
 
-type MessageDisplayViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
-type MessageDisplayContext = MessageDisplayViewWriteContext & Pick<IChatViewAccess, 'toolCallStates'>;
-type MessageDisplayViewWriteAccess = Pick<ChatViewWriteBridge, 'appendMarkdownToLatestPartsMessage'>;
+type MessageDisplayContext = Pick<
+  IChatViewAccess,
+  'viewAdapter' | 'toolCallStates'
+>;
 
 export class MessageDisplayHelper {
-  private readonly viewWriteBridge: MessageDisplayViewWriteAccess;
-
-  constructor(private ctx: MessageDisplayContext) {
-    const viewWriteContext: MessageDisplayViewWriteContext = {
-      get list() {
-        return ctx.list;
-      },
-      set list(list) {
-        ctx.list = list;
-      },
-      get partStore() {
-        return ctx.partStore;
-      },
-      get viewAdapter() {
-        return ctx.viewAdapter;
-      },
-      get scrollManager() {
-        return ctx.scrollManager;
-      },
-      get invalidateHostRequestGraph() {
-        return ctx.invalidateHostRequestGraph;
-      },
-      get triggerSyncDetectChanges() {
-        return ctx.triggerSyncDetectChanges;
-      },
-      get sessionId() {
-        return ctx.sessionId;
-      },
-      get chatHistoryService() {
-        return ctx.chatHistoryService;
-      },
-      get currentModelName() {
-        return ctx.currentModelName;
-      },
-      get currentMessageSource() {
-        return ctx.currentMessageSource;
-      },
-      get ngZone() {
-        return ctx.ngZone;
-      },
-      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
-    };
-    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
-  }
+  constructor(private ctx: MessageDisplayContext) {}
 
   // ==================== 纯函数包装 ====================
 
@@ -166,7 +123,5 @@ export class MessageDisplayHelper {
   appendMessage(role: string, text: string, source?: string): void {
     // 非流式追加：先 flush pending，再立即写入
     this.ctx.viewAdapter.appendImmediate(role, text, source);
-    // ★ Phase 1: 同步到 Part store（useParts 消息的非流式写入不经过 _processEvent）
-    this.viewWriteBridge.appendMarkdownToLatestPartsMessage(role, text, source);
   }
 }

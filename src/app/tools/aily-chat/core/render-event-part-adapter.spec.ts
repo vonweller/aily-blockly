@@ -129,6 +129,43 @@ describe('RenderEventPartAdapter', () => {
     expect((parts[0] as any).text).toBe('File read successfully');
   });
 
+  it('patches duplicate tool ids only within the current response handle', () => {
+    const staleHandle = store.createDetachedHandle();
+    adapter.process({
+      type: 'tool_call_begin',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      input: { path: '/old.ts' },
+      timestamp: 1,
+    }, staleHandle);
+
+    processCurrent({
+      type: 'tool_call_begin',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      input: { path: '/new.ts' },
+      timestamp: 2,
+    });
+
+    processCurrent({
+      type: 'tool_call_end',
+      toolCallId: 'duplicate-tool',
+      toolName: 'readFile',
+      resultText: 'current response done',
+      durationMs: 12,
+      state: 'done',
+      isError: false,
+      timestamp: 3,
+    });
+
+    const stalePart = store.getPartsForHandle(staleHandle)[0] as any;
+    const currentPart = store.getPartsForHandle(currentHandle)[0] as any;
+    expect(stalePart.state).toBe('doing');
+    expect(stalePart.text).toBe('readFile…');
+    expect(currentPart.state).toBe('done');
+    expect(currentPart.text).toBe('current response done');
+  });
+
   it('should handle error tool call', () => {
     processCurrent({
       type: 'tool_call_begin',

@@ -148,6 +148,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
       };
     },
   },
+  chatRuntimeHost: {
+    registerOwner: (ownerId) => ipcRenderer.invoke("aily-chat-runtime-owner-register", { ownerId }),
+    unregisterOwner: (ownerId) => ipcRenderer.invoke("aily-chat-runtime-owner-unregister", { ownerId }),
+    call: (method, args) => ipcRenderer.invoke("aily-chat-runtime-host-command", { method, args }),
+    onOwnerCommand: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-owner-command", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-owner-command", listener);
+    },
+    sendOwnerResponse: (payload) => ipcRenderer.send("aily-chat-runtime-owner-response", payload),
+    emitOwnerEvent: (payload) => ipcRenderer.send("aily-chat-runtime-owner-event", payload),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("aily-chat-runtime-host-event", listener);
+      return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
+    },
+  },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),
     maximize: () => ipcRenderer.send("window-maximize"),
@@ -156,6 +173,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     close: () => ipcRenderer.send("window-close"),
     // 子窗口收回到主窗口事件
     goMain: (data) => ipcRenderer.send("window-go-main", data),
+    returnMain: (data) => ipcRenderer.invoke("window-return-main", data),
     // 向其他窗口发送消息
     send: (data) => ipcRenderer.invoke("window-send", data),
     onReceive: (callback) => ipcRenderer.on("window-receive", callback),

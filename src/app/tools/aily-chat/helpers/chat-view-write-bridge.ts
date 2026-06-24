@@ -39,6 +39,7 @@ export type ChatViewWriteBridgeContext = Pick<
   & Pick<IChatServiceAccess, 'ngZone'>
   & {
     markCurrentViewVisibleProjectionOwner: () => void;
+    readonly legacyListProjectionBoundary?: 'history-import' | 'edit-action-result' | 'session-restore';
   };
 
 type ChatViewWriteListAccess = Pick<
@@ -618,12 +619,14 @@ export class ChatViewWriteBridge {
   private readonly historyRestoreHelper: ChatViewHistoryRestoreHelper;
   private readonly partMutationHelper: ChatViewPartMutationHelper;
   private readonly resetHelper: ChatViewResetHelper;
+  private readonly legacyListProjectionBoundary: ChatViewWriteBridgeContext['legacyListProjectionBoundary'];
 
   constructor(ctx: ChatViewWriteBridgeContext) {
     this.listAccess = ctx;
     this.storeAccess = ctx;
     this.historyAccess = ctx;
     this.viewSyncAccess = ctx;
+    this.legacyListProjectionBoundary = ctx.legacyListProjectionBoundary;
     const bridge = this;
     this.messageHandleHelper = new ChatViewMessageHandleHelper({
       get list() {
@@ -765,6 +768,7 @@ export class ChatViewWriteBridge {
       turnId?: string;
     } = {},
   ): ChatMessageHandle<ChatListItem> {
+    this.assertLegacyListProjectionBoundary('ensureTrailingAilyPartsMessageHandle');
     return this.messageHandleHelper.ensureTrailingAilyPartsMessageHandle(options);
   }
 
@@ -777,6 +781,7 @@ export class ChatViewWriteBridge {
       turnId?: string;
     } = {},
   ): ChatMessageHandle<ChatListItem> {
+    this.assertLegacyListProjectionBoundary('insertAilyPartsMessageHandleAfter');
     return this.messageHandleHelper.insertAilyPartsMessageHandleAfter(anchorHandle, options);
   }
 
@@ -842,6 +847,7 @@ export class ChatViewWriteBridge {
   }
 
   appendMarkdownToLatestPartsMessage(role: string, text: string, source?: string): boolean {
+    this.assertLegacyListProjectionBoundary('appendMarkdownToLatestPartsMessage');
     return this.partMutationHelper.appendMarkdownToLatestPartsMessage(role, text, source);
   }
 
@@ -854,7 +860,13 @@ export class ChatViewWriteBridge {
       markDirty?: boolean;
     } = {},
   ): ChatMessageHandle<ChatListItem> {
+    this.assertLegacyListProjectionBoundary('appendAilyPartsMessageHandle');
     return this.partMutationHelper.appendAilyPartsMessageHandle(parts, options);
+  }
+
+  findLatestIndexedAilyPartsMessageHandle(): ChatMessageHandle<ChatListItem> | null {
+    this.assertLegacyListProjectionBoundary('findLatestIndexedAilyPartsMessageHandle');
+    return this.messageHandleHelper.findLatestIndexedAilyPartsMessageHandle();
   }
 
   findTurnStartHandle(turnId: string): ChatMessageHandle<ChatListItem> | null {
@@ -879,5 +891,13 @@ export class ChatViewWriteBridge {
     }
 
     this.historyAccess.chatHistoryService.markDirty(this.historyAccess.sessionId);
+  }
+
+  private assertLegacyListProjectionBoundary(method: string): void {
+    if (this.legacyListProjectionBoundary) {
+      return;
+    }
+
+    throw new Error(`${method} is a legacy list projection API and cannot be used by live transcript rendering.`);
   }
 }

@@ -23,7 +23,7 @@ import type { SubagentChildItem } from './chat-parts';
 import type { ConfirmationPart, QuestionPart } from './chat-parts';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 
-type ChatPartStoreKey = object | symbol | number;
+type ChatPartStoreKey = object | symbol | number | string;
 const TERMINAL_LIVE_STREAM_MAX_CHARS = 32 * 1024;
 const TERMINAL_LIVE_OMITTED_MARKER = '[earlier terminal output omitted]\n';
 const SUBAGENT_CHILD_LIVE_STREAM_MAX_CHARS = 12 * 1024;
@@ -81,11 +81,20 @@ interface ChatPartStoreIndexedHandle extends ChatPartStoreHandleBase {
   msgIndex: number;
 }
 
+export interface ChatPartStoreResponseHandle {
+  readonly kind: 'response';
+  readonly turnId: string;
+  readonly responseId?: string;
+  readonly itemId?: string;
+}
+
 export type ChatPartStoreReadableHandle<TMessage extends object = object> =
   | ChatPartStoreOpaqueHandle
+  | ChatPartStoreResponseHandle
+  | ChatPartStoreIndexedHandle
   | (ChatPartStoreHandleBase & { msgIndex: number; readonly message: TMessage });
 
-type ChatPartStoreHandle = ChatPartStoreIndexedHandle | ChatPartStoreOpaqueHandle;
+type ChatPartStoreHandle = ChatPartStoreIndexedHandle | ChatPartStoreOpaqueHandle | ChatPartStoreResponseHandle;
 
 interface TrackedPartChange {
   storeKey: ChatPartStoreKey;
@@ -97,12 +106,28 @@ function getHandleMessageStoreKey(handle: ChatPartStoreHandle | null): object | 
   return message && typeof message === 'object' ? message as object : null;
 }
 
-function getHandleOpaqueStoreKey(handle: ChatPartStoreHandle | null): object | symbol | null {
+function getHandleOpaqueStoreKey(handle: ChatPartStoreHandle | null): object | symbol | string | null {
   if (!handle) {
     return null;
   }
 
-  return handle.storeKey ?? getHandleMessageStoreKey(handle);
+  return 'storeKey' in handle
+    ? (handle.storeKey ?? getHandleMessageStoreKey(handle))
+    : getHandleMessageStoreKey(handle);
+}
+
+function getHandleResponseStoreKey(handle: ChatPartStoreHandle | null): string | null {
+  if (!handle || !('kind' in handle) || handle.kind !== 'response') {
+    return null;
+  }
+
+  const turnId = typeof handle.turnId === 'string' ? handle.turnId.trim() : '';
+  if (!turnId) {
+    return null;
+  }
+
+  const itemId = typeof handle.itemId === 'string' ? handle.itemId.trim() : '';
+  return itemId || `response:${turnId}`;
 }
 
 function getHandleOrderIndex(handle: ChatPartStoreHandle | null): number | null {
@@ -136,6 +161,24 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function getChatPartStableStoreKey(part: ChatPart): string | undefined {
+  switch (part.type) {
+    case 'markdown':
+    case 'thinking':
+    case 'question':
+    case 'confirmation':
+    case 'terminal':
+    case 'plan':
+      return asString(part.partId);
+    case 'tool_call':
+      return asString(part.partId) || `tool:${part.toolCallId}`;
+    case 'state':
+      return `state:${part.stateId}`;
+    case 'error':
+      return asString(part.partId);
+  }
 }
 
 function appendTerminalLiveStream(existing: string | undefined, delta: string | undefined): string | undefined {
@@ -515,7 +558,11 @@ function appendSubagentTextChildInPlace(
 function isUsableChatPartStoreHandle(
   handle: ChatPartStoreHandle | null,
 ): handle is ChatPartStoreHandle {
-  return !!handle && (getHandleOpaqueStoreKey(handle) !== null || getHandleOrderIndex(handle) !== null);
+  return !!handle && (
+    getHandleResponseStoreKey(handle) !== null
+    || getHandleOpaqueStoreKey(handle) !== null
+    || getHandleOrderIndex(handle) !== null
+  );
 }
 
 // ==================== Store ====================
@@ -581,6 +628,11 @@ export class ChatPartStore {
   private resolveStoreKey(handle: ChatPartStoreHandle | null): ChatPartStoreKey | null {
     if (!isUsableChatPartStoreHandle(handle)) {
       return null;
+    }
+
+    const responseKey = getHandleResponseStoreKey(handle);
+    if (responseKey !== null) {
+      return responseKey;
     }
 
     const explicitKey = getHandleOpaqueStoreKey(handle);
@@ -658,6 +710,15 @@ export class ChatPartStore {
     };
   }
 
+  createResponseHandle(turnId: string, responseId?: string, itemId?: string): ChatPartStoreResponseHandle {
+    return {
+      kind: 'response',
+      turnId,
+      ...(responseId ? { responseId } : {}),
+      ...(itemId ? { itemId } : {}),
+    };
+  }
+
   // ==================== 查询 ====================
 
   /** 获取指定消息的所有 Parts */
@@ -673,6 +734,10 @@ export class ChatPartStore {
   getPartsForHandle(handle: ChatPartStoreReadableHandle | null): ChatPart[] {
     const storeKey = this.resolveStoreKey(handle);
     return storeKey !== null ? this.getParts(storeKey) : [];
+  }
+
+  getPartsForResponse(turnId: string): ChatPart[] {
+    return this.getPartsForHandle(this.createResponseHandle(turnId));
   }
 
   /** 获取指定消息的最后一个 Part */
@@ -741,6 +806,47 @@ export class ChatPartStore {
     }
 
     return this.addPart(storeKey, part);
+  }
+
+  upsertPartForResponse(turnId: string, part: ChatPart): boolean {
+    const storeKey = this.resolveStoreKey(this.createResponseHandle(turnId));
+    if (storeKey === null) {
+      return false;
+    }
+
+    const partKey = getChatPartStableStoreKey(part);
+    if (!partKey) {
+      this.addPart(storeKey, part);
+      return true;
+    }
+
+    const parts = this.getParts(storeKey);
+    const existingIndex = parts.findIndex(candidate => getChatPartStableStoreKey(candidate) === partKey);
+    if (existingIndex < 0) {
+      this.addPart(storeKey, part);
+      return true;
+    }
+
+    this.updatePart(storeKey, existingIndex, part);
+    return true;
+  }
+
+  replacePartsForResponse(turnId: string, parts: readonly ChatPart[] | null | undefined): boolean {
+    const handle = this.createResponseHandle(turnId);
+    const storeKey = this.resolveStoreKey(handle);
+    if (storeKey === null) {
+      return false;
+    }
+
+    this.clearMessage(storeKey);
+    if (!Array.isArray(parts) || parts.length === 0) {
+      return true;
+    }
+
+    for (const part of parts) {
+      this.addPart(storeKey, part);
+    }
+    return true;
   }
 
   upsertToolCallPartForHandle(

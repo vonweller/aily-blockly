@@ -24,6 +24,10 @@ export interface HostSessionDirtyOptions {
   readonly policy?: HostSessionDirtyPolicy;
 }
 
+export interface HostSessionFlushOptions {
+  readonly shouldSkipSession?: (sessionId: string, policy: HostSessionDirtyPolicy) => boolean;
+}
+
 function resolveDurablePersistedTitleCandidate(
   title: unknown,
   source: unknown,
@@ -289,14 +293,20 @@ export class HostSessionPersistenceBridge {
     }
   }
 
-  flushAll(): void {
+  flushAll(options?: HostSessionFlushOptions): void {
     ChatPerformanceTracer.runWithSurface('history_save', () => {
-      this.flushAllCore();
+      this.flushAllCore(options);
     }, 'flush-all');
   }
 
-  private flushAllCore(): void {
+  private flushAllCore(options?: HostSessionFlushOptions): void {
+    const skippedSessions = new Map<string, HostSessionDirtyPolicy>();
     for (const [sessionId, policy] of this.dirtySessions) {
+      if (options?.shouldSkipSession?.(sessionId, policy)) {
+        skippedSessions.set(sessionId, policy);
+        continue;
+      }
+
       let hostRecord = this.sessionCache.get(sessionId);
       let liveRecord: LiveHostSessionRecord | null = null;
       if (this.liveSessionProvider) {
@@ -330,6 +340,9 @@ export class HostSessionPersistenceBridge {
       }
     }
     this.dirtySessions.clear();
+    for (const [sessionId, policy] of skippedSessions) {
+      this.dirtySessions.set(sessionId, policy);
+    }
 
     if (this.options.hasDirtyIndex()) {
       this.options.writeIndex();

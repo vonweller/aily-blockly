@@ -182,6 +182,7 @@ export class EditActionsHelper {
         return ctx.ngZone;
       },
       markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
+      legacyListProjectionBoundary: 'edit-action-result',
     };
     this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
     this.checkpointReplayCoordinator = new CheckpointReplayCoordinator(this.ctx, this.viewWriteBridge);

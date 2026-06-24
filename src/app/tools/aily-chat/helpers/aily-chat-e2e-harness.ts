@@ -23,6 +23,8 @@ interface AilyChatE2eSnapshot {
   readonly selectedMode: unknown;
   readonly currentCustomAgentTarget?: string;
   readonly currentResolvedMode: unknown;
+  readonly currentPaneSurface?: string;
+  readonly currentViewSessionResource?: string;
   readonly inputValue: string;
   readonly isWaiting: boolean;
   readonly sessionId: string;
@@ -30,6 +32,13 @@ interface AilyChatE2eSnapshot {
   readonly visibleText: string;
   readonly activeLoadingIndicators: number;
   readonly turnResponses: readonly TurnResponseTurn[];
+  readonly dialogItems: readonly {
+    readonly id: string;
+    readonly turnId?: string;
+    readonly responseId?: string;
+    readonly role?: string;
+    readonly isStreaming?: boolean;
+  }[];
   readonly rendering?: AilyChatE2eRenderingDiagnostics;
   readonly performance?: unknown;
 }
@@ -61,6 +70,8 @@ interface AilyChatE2eHarnessApi {
   send(text: string): Promise<AilyChatE2eSnapshot>;
   startImplementation(): Promise<AilyChatE2eSnapshot>;
   sendWhileDetached(text: string): Promise<AilyChatE2eSnapshot>;
+  startCancellableStreamingTurn(): Promise<AilyChatE2eSnapshot>;
+  awaitCancellableStreamingTurnSettled(): Promise<AilyChatE2eSnapshot>;
   runLongSubagentTurn(): Promise<AilyChatE2eSnapshot>;
   runWorkspaceFinalizeBoundaryProbe(): Promise<AilyChatE2eSnapshot>;
   runEditorOperationStreamingProbe(): Promise<AilyChatE2eSnapshot>;
@@ -95,6 +106,13 @@ type EnginePrivateAccess = {
   submitUserText: (content: string, options?: { clearInput?: boolean; sessionId?: string | null }) => Promise<void>;
   detachView: () => void;
   chatSessionRuntimeStore?: { read?: (sessionId?: string | null) => unknown };
+  dialogItems?: readonly {
+    readonly id?: unknown;
+    readonly turnId?: unknown;
+    readonly responseId?: unknown;
+    readonly role?: unknown;
+    readonly isStreaming?: unknown;
+  }[];
   readSessionTurnResponses?: (sessionId: string) => readonly TurnResponseTurn[];
   replaceSessionModelTurnResponses?: (
     sessionId: string,
@@ -434,6 +452,10 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
   let cancellableTurnReady: Promise<void> | null = null;
   let resolveCancellableTurnReady: (() => void) | null = null;
   let abortCancellableTurn: (() => void) | null = null;
+  let pendingCancellableStreamingTurn: Promise<unknown> | null = null;
+  let cancellableStreamingTurnReady: Promise<void> | null = null;
+  let resolveCancellableStreamingTurnReady: (() => void) | null = null;
+  let abortCancellableStreamingTurn: (() => void) | null = null;
   let pendingCancellableEditorOperationTurn: Promise<unknown> | null = null;
   let cancellableEditorOperationReady: Promise<void> | null = null;
   let resolveCancellableEditorOperationReady: (() => void) | null = null;
@@ -465,12 +487,23 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       options.readPerformanceDiagnostics?.(),
       engine.readHostItemLifecycleSnapshot?.(),
     );
+    const dialogItems = Array.isArray(engine.dialogItems)
+      ? engine.dialogItems.map((item) => ({
+        id: typeof item.id === 'string' ? item.id : '',
+        turnId: typeof item.turnId === 'string' ? item.turnId : undefined,
+        responseId: typeof item.responseId === 'string' ? item.responseId : undefined,
+        role: typeof item.role === 'string' ? item.role : undefined,
+        isStreaming: item.isStreaming === true,
+      }))
+      : [];
 
     return {
       currentMode: engine.currentMode,
       selectedMode: engine.selectedMode,
       currentCustomAgentTarget: engine.chatService.currentCustomAgentTarget,
       currentResolvedMode: engine.currentResolvedMode,
+      currentPaneSurface: (options.viewState as unknown as { currentPaneSurface?: string }).currentPaneSurface,
+      currentViewSessionResource: (options.viewState as unknown as { currentViewSessionResource?: string }).currentViewSessionResource,
       inputValue: engine.inputValue,
       isWaiting: engine.isWaiting,
       sessionId,
@@ -478,6 +511,7 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       visibleText,
       activeLoadingIndicators: countActiveLoadingIndicators(),
       turnResponses,
+      dialogItems,
       ...(rendering ? { rendering } : {}),
       ...(performance ? { performance } : {}),
     };
@@ -592,6 +626,150 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       if (run) {
         engine.lexStream!.turn!.run = run;
       }
+      return snapshot();
+    },
+    async startCancellableStreamingTurn() {
+      await installDeterministicRuntime();
+      if (!engine.lexStream?.turn?.run) {
+        throw new Error('Aily chat E2E harness requires lexStream.turn.run');
+      }
+
+      const previousRun = engine.lexStream.turn.run;
+      const previousAgentStop = engine.lexStream.agent?.stop?.bind(engine.lexStream.agent);
+      cancellableStreamingTurnReady = new Promise<void>((resolve) => {
+        resolveCancellableStreamingTurnReady = resolve;
+      });
+      if (engine.lexStream.agent && typeof engine.lexStream.agent.stop === 'function') {
+        engine.lexStream.agent.stop = (sessionId?: string | null): unknown => {
+          abortCancellableStreamingTurn?.();
+          return previousAgentStop?.(sessionId);
+        };
+      }
+
+      engine.lexStream.turn.run = async (llmText: string, displayText?: string): Promise<void> => {
+        const sessionId = getCurrentSessionId(engine);
+        const turnId = engine.lexStream?.turns?.currentId?.() || `e2e-cancellable-streaming-turn-${Date.now()}`;
+        const abortController = new AbortController();
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          abortController.abort();
+        };
+        abortCancellableStreamingTurn = finish;
+
+        try {
+          engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, abortController);
+          engine.chatSessionRuntimeRegistry?.syncHandleState?.(sessionId, {
+            requestInProgress: true,
+            supportsInterruption: true,
+            activeResponseHandle: `e2e-cancellable-streaming:${turnId}`,
+            stopSession: finish,
+          });
+
+          const renderBridge = engine.lexStream?._renderEventBridge;
+          renderBridge?.prepareTurnRequest?.(
+            displayText || llmText,
+            displayText,
+            engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined,
+          );
+          const now = Date.now();
+          let offset = 0;
+          const emit = (event: Record<string, unknown>): void => {
+            offset += 1;
+            renderBridge?.processEvent?.({
+              timestamp: now + offset,
+              ...event,
+            });
+          };
+
+          emit({ type: 'turn_begin', turnId });
+          emit({
+            type: 'thinking_delta',
+            text: 'Streaming route probe is preparing the canonical response owner. ',
+          });
+          emit({
+            type: 'markdown_delta',
+            text: 'Streaming route probe chunk before route detach. ',
+          });
+          engine.triggerSyncDetectChanges?.();
+          resolveCancellableStreamingTurnReady?.();
+          resolveCancellableStreamingTurnReady = null;
+        } catch (error) {
+          console.error('[AilyChat][E2E] cancellable streaming setup failed', error);
+          resolveCancellableStreamingTurnReady?.();
+          resolveCancellableStreamingTurnReady = null;
+          throw error;
+        }
+
+        await new Promise<void>((resolve) => {
+          if (abortController.signal.aborted) {
+            resolve();
+            return;
+          }
+          abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+
+        engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+        cancelLatestTurn(engine, sessionId);
+        engine.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, null);
+        engine.lexStream!.turn!.run = previousRun;
+        if (engine.lexStream?.agent && previousAgentStop) {
+          engine.lexStream.agent.stop = previousAgentStop;
+        }
+        abortCancellableStreamingTurn = null;
+        const abortError = new Error('Cancellable streaming E2E turn was stopped.');
+        abortError.name = 'AbortError';
+        throw abortError;
+      };
+
+      const sessionId = await engine.ensureSessionReadyForSubmit();
+      pendingCancellableStreamingTurn = engine.submitUserText('Start a cancellable streaming E2E turn', {
+        clearInput: true,
+        sessionId,
+      });
+      try {
+        await Promise.race([
+          cancellableStreamingTurnReady,
+          new Promise<void>((_resolve, reject) => window.setTimeout(() => {
+            reject(new Error('Timed out waiting for cancellable streaming E2E turn to enter running state.'));
+          }, 5000)),
+        ]);
+      } catch (error) {
+        engine.lexStream.turn.run = previousRun;
+        if (engine.lexStream.agent && previousAgentStop) {
+          engine.lexStream.agent.stop = previousAgentStop;
+        }
+        pendingCancellableStreamingTurn = null;
+        cancellableStreamingTurnReady = null;
+        resolveCancellableStreamingTurnReady = null;
+        abortCancellableStreamingTurn = null;
+        throw error;
+      }
+      return snapshot();
+    },
+    async awaitCancellableStreamingTurnSettled() {
+      const pending = pendingCancellableStreamingTurn;
+      if (pending) {
+        await Promise.race([
+          pending.catch(() => undefined),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 2000)),
+        ]);
+      }
+      const sessionId = getCurrentSessionId(engine);
+      await Promise.race([
+        engine.chatSessionRuntimeRegistry?.awaitPendingLexRequestCompleted?.(sessionId)?.catch(() => undefined) ?? Promise.resolve(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1000)),
+      ]);
+      engine.lexStream?.finalizeCurrentTurnResponse?.('cancelled');
+      cancelLatestTurn(engine, sessionId);
+      pendingCancellableStreamingTurn = null;
+      cancellableStreamingTurnReady = null;
+      resolveCancellableStreamingTurnReady = null;
+      abortCancellableStreamingTurn = null;
+      engine.triggerSyncDetectChanges?.();
       return snapshot();
     },
     async runLongSubagentTurn() {
@@ -880,6 +1058,10 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
           });
 
           const renderBridge = engine.lexStream?._renderEventBridge;
+          const existingTurns = sessionId ? (engine.readSessionTurnResponses?.(sessionId) ?? []) : [];
+          renderBridge?.finalizeCurrentTurn?.('completed');
+          renderBridge?.setProjectionSessionResource?.(sessionId || null);
+          engine.lexStream?.hydrateTurnResponses?.(sessionId, existingTurns, { visibility: 'visibleAttach' });
           renderBridge?.prepareTurnRequest?.(displayText || llmText, displayText, engine.lexStream?.turns?.currentRequestMetadata?.() as Record<string, unknown> | undefined);
           const now = Date.now();
           const emit = (event: Record<string, unknown>, offset = 0): void => {
@@ -963,14 +1145,6 @@ function createHarness(options: AilyChatE2eHarnessOptions): AilyChatE2eHarnessAp
       try {
         await Promise.race([
           cancellableTurnReady,
-          pendingCancellableTurn.then(
-            () => {
-              throw new Error('Cancellable subagent E2E turn completed before entering running state.');
-            },
-            (error) => {
-              throw error instanceof Error ? error : new Error(String(error));
-            },
-          ),
           new Promise<void>((_resolve, reject) => window.setTimeout(() => {
             reject(new Error('Timed out waiting for cancellable subagent E2E turn to enter running state.'));
           }, 5000)),

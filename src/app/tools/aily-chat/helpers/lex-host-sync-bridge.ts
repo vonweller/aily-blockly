@@ -1,17 +1,17 @@
-import type { ISessionAccess, IChatCoordination, IChatServiceAccess, IChatViewAccess } from '../core/chat-context';
+import type { ISessionAccess, IChatCoordination, IChatServiceAccess } from '../core/chat-context';
 import type { MetricsSnapshot } from 'aily-lex/browser';
+import type { ChatRuntimeHostTodoItem } from '../core/chat-runtime-host-contract';
 import { resolveChatModeId, type ChatModeId } from '../core/chat-mode';
 import { normalizeReadSideToolName } from '../core/tool-name-normalizer';
-import { buildTodoListSemanticDataFromTodos } from '../services/todoUpdate.service';
-import { setTodos, type TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
+import type { ChatRuntimeOwnerViewRequestPort } from '../services/chat-runtime-owner-ports';
+import type { TodoItem as BlocklyTodoItem } from '../utils/todoStorage';
 
-/** Narrow context: editCheckpointService for recording edits, ngZone for UI sync, sessionId for todo keying */
+/** Narrow context: host sync owns model/runtime facts and requests view side effects through the host boundary. */
 type LexHostSyncContext = Pick<ISessionAccess, 'sessionId'>
-  & Pick<IChatServiceAccess, 'editCheckpointService' | 'ngZone' | 'message'>
+  & Pick<IChatServiceAccess, 'editCheckpointService'>
   & Pick<IChatCoordination, 'lexStream'>
-  & Pick<IChatViewAccess, 'inputValue' | 'triggerSyncDetectChanges'>
   & {
-    switchToMode?(mode: string): Promise<void>;
+    readonly viewRequests: ChatRuntimeOwnerViewRequestPort;
   };
 
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
@@ -79,7 +79,7 @@ export class LexHostSyncBridge {
   }
 
   applyLexTodos(sessionId: string, lexTodos: readonly LexTodoItem[]): void {
-    const blocklyTodos: BlocklyTodoItem[] = lexTodos.map(t => ({
+    const blocklyTodos: ChatRuntimeHostTodoItem[] = lexTodos.map(t => ({
       id: t.id,
       content: t.activeForm || t.title,
       status: t.status,
@@ -87,26 +87,7 @@ export class LexHostSyncBridge {
       updatedAt: Date.now(),
     }));
 
-    try {
-      setTodos(blocklyTodos, sessionId);
-    } catch {
-      // ignore persistence failures for UI sync bridge
-    }
-
-    this.ctx.ngZone.run(() => {
-      try {
-        const svc = (window as any).todoUpdateService;
-        if (svc) {
-          svc.updateTodoListSemanticData(
-            sessionId,
-            buildTodoListSemanticDataFromTodos(blocklyTodos),
-            blocklyTodos,
-          );
-        }
-      } catch {
-        // ignore UI notification failures
-      }
-    });
+    this.ctx.viewRequests.syncTodoState(sessionId, blocklyTodos);
   }
 
   applyTodoStateEvent(event: { sessionId?: string; trace?: { sessionId?: string }; snapshot?: { items?: readonly LexTodoItem[] } }): void {
@@ -131,37 +112,12 @@ export class LexHostSyncBridge {
       : `代理请求切换到 ${targetLabel}`;
     const suggestedInput = `@${targetAgent} `;
 
-    this.ctx.ngZone.run(() => {
-      if (targetModeId && this.ctx.switchToMode) {
-        void this.ctx.switchToMode(targetModeId).catch((error) => {
-          console.error('应用 handoff 模式切换失败:', error);
-        });
-
-        try {
-          this.ctx.message.info(handoffMessage);
-        } catch {
-          // ignore UI notification failures for host sync bridge
-        }
-        return;
-      }
-
-      let prefilled = false;
-
-      if ((this.ctx.inputValue || '').trim().length === 0) {
-        this.ctx.inputValue = suggestedInput;
-        this.ctx.triggerSyncDetectChanges();
-        prefilled = true;
-      }
-
-      try {
-        this.ctx.message.info(
-          prefilled
-            ? `${handoffMessage}。已在输入框中预填 ${suggestedInput.trim()}，等待你确认发送。`
-            : handoffMessage,
-        );
-      } catch {
-        // ignore UI notification failures for host sync bridge
-      }
+    this.ctx.viewRequests.requestHandoff({
+      sessionId: this.ctx.sessionId,
+      ...(targetAgent ? { targetAgent } : {}),
+      ...(targetModeId ? { targetModeId } : {}),
+      message: handoffMessage,
+      suggestedInput,
     });
   }
 

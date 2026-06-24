@@ -1,4 +1,4 @@
-import type { ChatPartStore, ChatPartStoreReadableHandle } from './chat-part-store';
+import type { ChatPartStore, ChatPartStoreReadableHandle, ChatPartStoreResponseHandle } from './chat-part-store';
 import type { ChatPart, StatePart, SubagentToolCallSnapshot, TerminalPart, ToolCallPart } from './chat-parts';
 
 export interface MutableSubagentPart extends SubagentToolCallSnapshot {
@@ -20,7 +20,6 @@ export type ChatPartMutationStoreAccess = Pick<
   | 'upsertTerminalForHandle'
   | 'postProcessMarkdownForHandle'
   | 'updateLatestRunningSubagentForHandle'
-  | 'findToolCallOpaqueHandle'
 >;
 
 type ChatPartMutationStateUpdate = {
@@ -34,15 +33,15 @@ type ChatPartMutationStateUpdate = {
 export class ChatPartMutationBridge {
   constructor(
     private readonly store: ChatPartMutationStoreAccess,
-    private readonly getCurrentMessageHandle: () => ChatPartStoreReadableHandle | null,
+    private readonly getCurrentStoreHandle: () => ChatPartStoreReadableHandle | null,
   ) {}
 
-  currentMessageHandle(): ChatPartStoreReadableHandle | null {
-    return this.getCurrentMessageHandle() ?? null;
+  currentStoreHandle(): ChatPartStoreResponseHandle {
+    return this.currentResponseHandle();
   }
 
   addPartToCurrentMessage(part: ChatPart): number {
-    return this.store.addPartToHandle(this.currentMessageHandle(), part);
+    return this.store.addPartToHandle(this.currentStoreHandle(), part);
   }
 
   addTerminalPartForToolCall(toolCallId: string, part: TerminalPart): number {
@@ -50,15 +49,15 @@ export class ChatPartMutationBridge {
   }
 
   appendMarkdownToCurrentMessage(text: string): number {
-    return this.store.appendToMarkdownHandle(this.currentMessageHandle(), text);
+    return this.store.appendToMarkdownHandle(this.currentStoreHandle(), text);
   }
 
   appendThinkingToCurrentMessage(text: string): number {
-    return this.store.appendToThinkingHandle(this.currentMessageHandle(), text);
+    return this.store.appendToThinkingHandle(this.currentStoreHandle(), text);
   }
 
   completeThinkingOnCurrentMessage(): void {
-    this.store.completeThinkingHandle(this.currentMessageHandle());
+    this.store.completeThinkingHandle(this.currentStoreHandle());
   }
 
   updateToolCall(
@@ -100,27 +99,46 @@ export class ChatPartMutationBridge {
     stateId: string,
     next: ChatPartMutationStateUpdate,
   ): void {
-    this.store.updateStateForHandle(this.currentMessageHandle(), stateId, next);
+    this.store.updateStateForHandle(this.currentStoreHandle(), stateId, next);
   }
 
   upsertStateOnCurrentMessage(
     stateId: string,
     next: ChatPartMutationStateUpdate,
   ): void {
-    this.store.upsertStateForHandle(this.currentMessageHandle(), stateId, next);
+    this.store.upsertStateForHandle(this.currentStoreHandle(), stateId, next);
   }
 
   postProcessMarkdownOnCurrentMessage(): void {
-    this.store.postProcessMarkdownForHandle(this.currentMessageHandle());
+    this.store.postProcessMarkdownForHandle(this.currentStoreHandle());
   }
 
   updateLatestRunningSubagentOnCurrentMessage(
     update: (part: MutableSubagentPart) => MutableSubagentPart,
   ): MutableSubagentPart | null {
-    return this.store.updateLatestRunningSubagentForHandle(this.currentMessageHandle(), update);
+    return this.store.updateLatestRunningSubagentForHandle(this.currentStoreHandle(), update);
   }
 
   private findToolCallHandle(toolCallId: string): ChatPartStoreReadableHandle | null {
-    return this.store.findToolCallOpaqueHandle(toolCallId) ?? this.currentMessageHandle();
+    void toolCallId;
+    return this.currentResponseHandle();
   }
+
+  private currentResponseHandle(): ChatPartStoreResponseHandle {
+    const handle = this.getCurrentStoreHandle() ?? null;
+    if (isResponseHandle(handle)) {
+      return handle;
+    }
+
+    throw new Error('Live transcript part writes require a canonical response handle.');
+  }
+}
+
+function isResponseHandle(handle: ChatPartStoreReadableHandle | null): handle is ChatPartStoreResponseHandle {
+  return !!handle
+    && typeof handle === 'object'
+    && 'kind' in handle
+    && handle.kind === 'response'
+    && typeof handle.turnId === 'string'
+    && handle.turnId.trim().length > 0;
 }

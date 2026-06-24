@@ -4,7 +4,6 @@ import type {
   IChatServiceAccess,
   IProjectContext,
   ISessionAccess,
-  IChatViewAccess,
 } from '../core/chat-context';
 import type { SessionSnapshot, TurnResponseCommand, TurnResponseFollowup, TurnResponseTurn } from 'aily-lex/browser';
 import type {
@@ -38,7 +37,6 @@ import {
   type HostTurnResponseState,
   hasHostResponseConversationContent,
 } from './host-turn-response-state';
-import { createChatMessageHandle } from './chat-message-handle';
 import {
   cloneTurnResponseModelSidecar,
   normalizeTurnResponseSummaryPreview,
@@ -69,15 +67,12 @@ import {
   hasBlockingSessionTurnOwnerMismatch,
 } from './session-turn-owner-diagnostics';
 
-type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
+export type HostSessionSaveContext = Pick<IAgentLifecycle, 'toolCallingIteration'>
   & Pick<IProjectContext, 'currentMode' | 'currentAgentRuntimeMode' | 'currentAgentRuntimeModeSource' | 'currentModel'>
   & Pick<ISessionAccess, 'sessionId' | 'sessionTitle' | 'chatService' | 'chatHistoryService'>
   & Pick<IChatServiceAccess, 'contextBudgetService' | 'editCheckpointService'>
   & Pick<IChatCoordination, 'lexStream'>
-  & Pick<IChatViewAccess, 'list' | 'partStore'>
   & {
-    readonly hostRequestModel?: HostRequestModel | null;
-    readonly hostResponseProjection?: HostResponseProjection | null;
     readCurrentViewSessionResource?(): string | null | undefined;
     readSessionTurnResponses?(sessionId?: string | null): readonly TurnResponseTurn[];
     readSessionRuntimeState?(sessionId?: string | null): Readonly<ChatSessionRuntimeState> | undefined;
@@ -164,12 +159,10 @@ export class HostSessionSaveBridge {
     }
 
     const visibleChatList = options?.visibleChatList
-      ? options.visibleChatList.map(message => ({ ...message })) as HostSessionSaveContext['list']
+      ? options.visibleChatList.map(message => ({ ...message })) as ChatListItem[]
       : buildVisibleChatListForSave(
           previousHostProjection?.chatList ?? [],
           currentHostProjection?.chatList ?? [],
-          undefined,
-          undefined,
         );
     const canonicalTurnResponses = applyVisibleRequestDisplayContentToTurnResponses(
       visibleChatList,
@@ -329,9 +322,7 @@ export class HostSessionSaveBridge {
       ?? (Array.isArray(rawTarget?.turnResponses) ? rawTarget.turnResponses : undefined)
       ?? this.resolveTargetTurnResponses(targetSessionId);
     const visibleTarget = this.isVisibleSaveTarget(targetSessionId);
-    const currentTurnResponses = targetTurnResponses.length > 0
-      ? targetTurnResponses
-      : (visibleTarget && Array.isArray(this.ctx.lexStream.turnResponses) ? this.ctx.lexStream.turnResponses : []);
+    const currentTurnResponses = targetTurnResponses;
     const ownerDiagnostics = buildSessionTurnOwnerDiagnostics(targetSessionId, currentTurnResponses);
     if (isHostSessionSaveTraceEnabled()) {
       console.info('[HostSessionSave][owner]', [
@@ -345,7 +336,6 @@ export class HostSessionSaveBridge {
     return this.buildHostSessionRecord({
       ...options,
       allowPersistedLookup: false,
-      hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
       turnResponsesOverride: currentTurnResponses,
       target: rawTarget ?? {
         sessionId: targetSessionId,
@@ -385,20 +375,16 @@ export class HostSessionSaveBridge {
       const sessionSnapshot = saveTarget.sessionSnapshot
         ?? this.ctx.lexStream.session?.save?.(saveTarget.sessionId)
         ?? null;
-      const previousHostProjection = visibleTarget
-        ? options?.hostProjection ?? this.ctx.hostResponseProjection ?? null
-        : this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget));
+      const previousHostProjection = options?.hostProjection
+        ?? this.buildPersistedProjection(this.resolvePersistedRecord(saveTarget));
       if (visibleTarget) {
         this.ctx.invalidateHostRequestGraph?.();
       }
-      const hostProjection = visibleTarget
-        ? this.ctx.hostResponseProjection ?? options?.hostProjection
-        : options?.hostProjection;
       const record = this.buildHostSessionRecord({
         previousHostProjection,
-        hostProjection,
-        visibleChatList: options?.visibleChatList ?? (visibleTarget ? this.ctx.list : undefined),
-        hostRequestModel: options?.hostRequestModel ?? (visibleTarget ? this.ctx.hostRequestModel ?? null : null),
+        hostProjection: options?.hostProjection,
+        visibleChatList: options?.visibleChatList,
+        hostRequestModel: options?.hostRequestModel,
         sessionSnapshotOverride: sessionSnapshot,
         target: saveTarget
           ? {
@@ -499,10 +485,6 @@ export class HostSessionSaveBridge {
     const runtimeTurnResponses = this.ctx.readSessionRuntimeState?.(saveTarget.sessionId)?.turnResponses;
     if (Array.isArray(runtimeTurnResponses) && runtimeTurnResponses.length > 0) {
       return runtimeTurnResponses;
-    }
-
-    if (this.isVisibleSaveTarget(saveTarget.sessionId) && Array.isArray(this.ctx.lexStream.turnResponses)) {
-      return this.ctx.lexStream.turnResponses;
     }
 
     return [];
@@ -705,7 +687,7 @@ function readRequestTextCandidate(candidate: unknown): string {
 }
 
 function applyVisibleRequestDisplayContentToTurnResponses(
-  visibleChatList: readonly HostSessionSaveContext['list'][number][],
+  visibleChatList: readonly ChatListItem[],
   turnResponses: readonly TurnResponseTurn[],
 ) : TurnResponseTurn[] {
   if (visibleChatList.length === 0 || turnResponses.length === 0) {
@@ -752,70 +734,13 @@ function applyVisibleRequestDisplayContentToTurnResponses(
 function buildVisibleChatListForSave(
   previousProjectedChatList: HostResponseProjection['chatList'],
   currentProjectedChatList: HostResponseProjection['chatList'],
-  liveChatList: HostSessionSaveContext['list'] | undefined,
-  partStore: HostSessionSaveContext['partStore'] | undefined,
-): HostSessionSaveContext['list'] {
+): ChatListItem[] {
   const projectedChatList = mergeProjectedChatListsForSave(
     previousProjectedChatList,
     currentProjectedChatList,
   );
 
-  if (!liveChatList?.length) {
-    return projectedChatList.map(message => ({ ...message })) as HostSessionSaveContext['list'];
-  }
-
-  const serializedLiveChatList = liveChatList.map((message, msgIndex) => {
-    const handle = createChatMessageHandle(message, msgIndex);
-    const existingContent = typeof message.content === 'string' ? message.content : '';
-    const shouldMaterializeCompatibilityContent = existingContent.length === 0 && message.state !== 'doing';
-    const content = shouldMaterializeCompatibilityContent && partStore?.hasPartsForHandle(handle)
-      ? (partStore.serializeToContentHandle(handle) || existingContent)
-      : existingContent;
-
-    return {
-      ...message,
-      content,
-    };
-  }) as HostSessionSaveContext['list'];
-
-  if (projectedChatList.length === 0) {
-    return serializedLiveChatList;
-  }
-
-  const consumedLiveIndexes = new Set<number>();
-  const mergedChatList = projectedChatList.map((projectedMessage) => {
-    const matchedLiveIndex = serializedLiveChatList.findIndex((liveMessage, liveIndex) => {
-      if (consumedLiveIndexes.has(liveIndex)) {
-        return false;
-      }
-
-      if (typeof projectedMessage.turnId === 'string' && projectedMessage.turnId.length > 0) {
-        return liveMessage.turnId === projectedMessage.turnId && liveMessage.role === projectedMessage.role;
-      }
-
-      return liveMessage.turnId === projectedMessage.turnId
-        && liveMessage.role === projectedMessage.role
-        && liveMessage.content === projectedMessage.content
-        && liveMessage.state === projectedMessage.state;
-    });
-
-    if (matchedLiveIndex === -1) {
-      return { ...projectedMessage };
-    }
-
-    consumedLiveIndexes.add(matchedLiveIndex);
-    return { ...serializedLiveChatList[matchedLiveIndex] };
-  });
-
-  serializedLiveChatList.forEach((liveMessage, liveIndex) => {
-    if (consumedLiveIndexes.has(liveIndex)) {
-      return;
-    }
-
-    mergedChatList.push({ ...liveMessage });
-  });
-
-  return mergedChatList as HostSessionSaveContext['list'];
+  return projectedChatList.map(message => ({ ...message }));
 }
 
 function mergeProjectedChatListsForSave(

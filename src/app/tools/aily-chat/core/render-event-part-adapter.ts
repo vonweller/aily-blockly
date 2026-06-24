@@ -62,19 +62,22 @@ export type RenderEventPartStoreAccess = Pick<
   | 'upsertStateForHandle'
   | 'updateConfirmationResultForHandle'
   | 'updateSubagentForHandle'
-  | 'findToolCallOpaqueHandle'
   | 'upsertTerminalForHandle'
   | 'materializeFinalMarkdownAsPlanForHandle'
 >;
 
 function hasUsableStoreHandle(
-  handle: ({ storeKey?: object | symbol; message?: unknown; msgIndex?: unknown } & object) | null,
+  handle: ({ storeKey?: object | symbol | string; message?: unknown; msgIndex?: unknown } & object) | null,
 ): boolean {
   if (!handle) {
     return false;
   }
 
-  if (typeof handle.storeKey === 'object' || typeof handle.storeKey === 'symbol') {
+  if (
+    typeof handle.storeKey === 'object'
+    || typeof handle.storeKey === 'symbol'
+    || (typeof handle.storeKey === 'string' && handle.storeKey.trim().length > 0)
+  ) {
     return true;
   }
 
@@ -177,6 +180,7 @@ export class RenderEventPartAdapter {
   private readonly _store: RenderEventPartStoreAccess;
   private _planStreamState: 'markdown' | 'plan' = 'markdown';
   private _planStreamBuffer = '';
+  private readonly _toolOriginHandles = new Map<string, ChatPartStoreOpaqueHandle>();
 
   constructor(store: RenderEventPartStoreAccess) {
     this._store = store;
@@ -215,6 +219,7 @@ export class RenderEventPartAdapter {
 
       // ---- Tool Call ----
       case 'tool_call_begin':
+        this._rememberToolOrigin(event.toolCallId, handle, eventScope(event));
         this._store.addPartToHandle(handle, mkToolCall(
           event.toolCallId,
           event.toolName,
@@ -230,8 +235,9 @@ export class RenderEventPartAdapter {
         return finish(this._applyToolCallProgress(handle, event));
 
       case 'tool_call_end': {
-        const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
-        if (!this._hasExactToolCallHandle(event.toolCallId)) {
+        const scope = eventScope(event);
+        const toolHandle = this._findToolCallHandle(event.toolCallId, handle, scope);
+        if (!this._hasExactToolCallHandle(event.toolCallId, handle, scope)) {
           recordScopedSubagentToolHandleMiss(event, 'tool_call_end');
         }
         this._store.patchToolCallForHandle(
@@ -248,7 +254,7 @@ export class RenderEventPartAdapter {
               result: event.result,
               timestamp: event.timestamp,
               durationMs: event.durationMs,
-            }), eventScope(event)),
+            }), scope),
           },
         );
         this._appendTerminalPart(handle, event);
@@ -306,7 +312,7 @@ export class RenderEventPartAdapter {
       case 'approval_request':
         if (isToolExecutionApprovalEvent(event)) {
           this._store.patchToolCallForHandle(
-            this._findToolCallHandle(event.toolCallId, handle),
+            this._findToolCallHandle(event.toolCallId, handle, eventScope(event)),
             event.toolCallId,
             approvalRequestToToolCallPatch(event),
           );
@@ -319,7 +325,7 @@ export class RenderEventPartAdapter {
         if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
           const toolCallId = event.toolCallId;
           this._store.patchToolCallForHandle(
-            this._findToolCallHandle(toolCallId, handle),
+            this._findToolCallHandle(toolCallId, handle, eventScope(event)),
             toolCallId,
             approvalAutoReviewStartToToolCallPatch({ ...event, toolCallId }),
           );
@@ -331,7 +337,7 @@ export class RenderEventPartAdapter {
         if (typeof event.toolCallId === 'string' && event.toolCallId.trim().length > 0) {
           const toolCallId = event.toolCallId;
           this._store.patchToolCallForHandle(
-            this._findToolCallHandle(toolCallId, handle),
+            this._findToolCallHandle(toolCallId, handle, eventScope(event)),
             toolCallId,
             approvalAutoReviewCompleteToToolCallPatch({ ...event, toolCallId }),
           );
@@ -342,7 +348,7 @@ export class RenderEventPartAdapter {
       case 'approval_resolve':
         if (isToolExecutionApprovalEvent(event)) {
           this._store.patchToolCallForHandle(
-            this._findToolCallHandle(event.toolCallId, handle),
+            this._findToolCallHandle(event.toolCallId, handle, eventScope(event)),
             event.toolCallId,
             approvalResolveToToolCallPatch(event),
           );
@@ -370,6 +376,7 @@ export class RenderEventPartAdapter {
 
       // ---- Sub-agent ----
       case 'subagent_begin': {
+        this._rememberToolOrigin(event.toolCallId, handle);
         this._store.addPartToHandle(handle, subagentBeginToPart(event));
         return finish(true);
       }
@@ -379,7 +386,7 @@ export class RenderEventPartAdapter {
 
       case 'subagent_end': {
         const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
-        if (!this._hasExactToolCallHandle(event.toolCallId)) {
+        if (!this._hasExactToolCallHandle(event.toolCallId, handle)) {
           recordScopedSubagentToolHandleMiss(event, 'subagent_end');
         }
         this._store.updateSubagentForHandle(toolHandle, event.toolCallId, event.state, event.resultText);
@@ -403,6 +410,7 @@ export class RenderEventPartAdapter {
   reset(): void {
     this._planStreamState = 'markdown';
     this._planStreamBuffer = '';
+    this._toolOriginHandles.clear();
   }
 
   finalize(
@@ -477,6 +485,7 @@ export class RenderEventPartAdapter {
       case 'tool_started': {
         this._store.completeThinkingHandle(parentHandle, scope);
         const toolCallId = subagentActivityToolCallId(event);
+        this._rememberToolOrigin(toolCallId, parentHandle, scope);
         this._store.addPartToHandle(parentHandle, mkToolCall(
           toolCallId,
           event.toolName || 'tool',
@@ -516,7 +525,7 @@ export class RenderEventPartAdapter {
   ): boolean {
     this._store.completeThinkingHandle(handle, scope);
     const toolCallId = subagentActivityToolCallId(event);
-    const toolHandle = this._store.findToolCallOpaqueHandle(toolCallId);
+    const toolHandle = this._findToolCallHandle(toolCallId, handle, scope);
     const text = subagentActivityToolText(event, event.toolName || 'Tool');
     const metadata = withChatPartScopeMetadata({
       toolName: event.toolName,
@@ -526,6 +535,7 @@ export class RenderEventPartAdapter {
     }, scope);
 
     if (!toolHandle) {
+      this._rememberToolOrigin(toolCallId, handle, scope);
       this._store.addPartToHandle(handle, mkToolCall(
         toolCallId,
         event.toolName || 'tool',
@@ -550,8 +560,9 @@ export class RenderEventPartAdapter {
     fallbackHandle: ChatPartStoreOpaqueHandle,
     event: Extract<RenderEvent, { type: 'tool_call_progress' }>,
   ): boolean {
-    const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle);
-    if (!this._hasExactToolCallHandle(event.toolCallId)) {
+    const scope = eventScope(event);
+    const toolHandle = this._findToolCallHandle(event.toolCallId, fallbackHandle, scope);
+    if (!this._hasExactToolCallHandle(event.toolCallId, fallbackHandle, scope)) {
       recordScopedSubagentToolHandleMiss(event, 'tool_call_progress');
     }
     if (!toolHandle) {
@@ -601,7 +612,7 @@ export class RenderEventPartAdapter {
       durationMs: progressUpdate.durationMs,
       running: progressUpdate.running,
       existingMetadata: toolPart?.metadata,
-    }), eventScope(event));
+    }), scope);
 
     this._store.patchToolCallForHandle(toolHandle, event.toolCallId, {
       state: resolveProgressToolCallState(progressUpdate),
@@ -621,12 +632,40 @@ export class RenderEventPartAdapter {
     );
   }
 
-  private _findToolCallHandle(toolCallId: string, fallbackHandle: ChatPartStoreOpaqueHandle | null): ChatPartStoreOpaqueHandle | null {
-    return this._store.findToolCallOpaqueHandle(toolCallId) ?? fallbackHandle;
+  private _findToolCallHandle(
+    toolCallId: string,
+    fallbackHandle: ChatPartStoreOpaqueHandle | null,
+    scope?: ChatPartScope,
+  ): ChatPartStoreOpaqueHandle | null {
+    const originHandle = this._toolOriginHandles.get(this._toolOriginKey(toolCallId, scope))
+      ?? this._toolOriginHandles.get(this._toolOriginKey(toolCallId));
+    if (originHandle && this._findToolCallPart(originHandle, toolCallId)) {
+      return originHandle;
+    }
+
+    if (!fallbackHandle) {
+      return null;
+    }
+
+    return this._findToolCallPart(fallbackHandle, toolCallId) ? fallbackHandle : null;
   }
 
-  private _hasExactToolCallHandle(toolCallId: string): boolean {
-    return !!this._store.findToolCallOpaqueHandle(toolCallId);
+  private _hasExactToolCallHandle(toolCallId: string, handle: ChatPartStoreOpaqueHandle | null, scope?: ChatPartScope): boolean {
+    return !!this._findToolCallHandle(toolCallId, handle, scope);
+  }
+
+  private _rememberToolOrigin(toolCallId: string, handle: ChatPartStoreOpaqueHandle, scope?: ChatPartScope): void {
+    this._toolOriginHandles.set(this._toolOriginKey(toolCallId, scope), handle);
+  }
+
+  private _toolOriginKey(toolCallId: string, scope?: ChatPartScope): string {
+    const normalizedScope = normalizeChatPartScope(scope);
+    return [
+      normalizedScope?.sourceAgentRole ?? '',
+      normalizedScope?.subAgentInvocationId ?? '',
+      normalizedScope?.parentToolCallId ?? '',
+      toolCallId,
+    ].join('\u001f');
   }
 
   private getExistingStateMetadata(
@@ -675,7 +714,7 @@ export class RenderEventPartAdapter {
       Object.assign(terminal, scope);
     }
 
-    const toolHandle = this._findToolCallHandle(event.toolCallId, handle);
+    const toolHandle = this._findToolCallHandle(event.toolCallId, handle, eventScope(event));
     this._store.upsertTerminalForHandle(toolHandle ?? handle, terminal);
   }
 

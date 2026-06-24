@@ -1,88 +1,52 @@
-import { Injectable } from '@angular/core';
+import { Inject, Injectable } from '@angular/core';
 
-import type { IWorkspaceChangeCollector, TurnResponseTurn } from 'aily-lex/browser';
-import { AilyHost } from '../core/host';
-import type { ChatSelectedMode } from '../core/chat-mode';
+import type { TurnResponseTurn } from 'aily-lex/browser';
 import type { HostTurnResponseState } from '../helpers/host-turn-response-state';
-import type { PendingFollowupRequest } from '../helpers/chat-pending-request';
-import type { HostSessionProviderOptions } from '../helpers/host-session-input-state';
-import { EditingContentStore } from './editing-content-store.service';
-import { EditingTimelineRepository } from './editing-timeline-repository.service';
-import { EditingTimelineRecordingBridge } from './editing-timeline-recording-bridge';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
-import { yieldToBrowserIdle, yieldToBrowserTask } from '../tools/browserTaskScheduler';
-import type { ChatRuntimeProjectionChangeOptions } from '../core/chat-runtime-projection-policy';
-import {
-  ChatSessionRuntimeStoreService,
-  DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
-  type ChatSessionRuntimeChangeReason,
-  type ChatSessionRuntimeCapabilities,
-  type ChatSessionRuntimeDebugSummary,
-  type ChatSessionRuntimeQuotaOverlay,
-  type ChatSessionRuntimeState,
-  type ChatSessionRuntimeStatus,
-  type ChatSessionRuntimeViewOverlay,
+import type {
+  ChatSessionRuntimeChangeOptions,
+  ChatSessionRuntimeDebugSummary,
+  ChatSessionRuntimeState,
 } from './chat-session-runtime-store.service';
-import { BlocklyTrackedWorkspaceChangeCollector } from './blockly-tracked-workspace-change-collector';
+import {
+  ChatSessionRuntimeRegistryCore,
+  type ChatSessionActiveRequestHandle,
+  type ChatSessionRuntimeHandle,
+  type ChatSessionRuntimeHandlePatch,
+} from './chat-session-runtime-registry-core';
+import {
+  ChatSessionRuntimeCompletionQueueCore,
+  type ChatSessionLexRequestCompletedInput,
+  type ChatSessionRuntimeCompletionPhase,
+} from './chat-session-runtime-completion-queue-core';
+import {
+  ChatSessionRuntimeProjectionCore,
+  type ChatSessionRuntimeProjectionPatch,
+} from './chat-session-runtime-projection-core';
+import { ChatSessionRuntimePostTurnResourcesCore } from './chat-session-runtime-post-turn-resources-core';
+import {
+  CHAT_SESSION_RUNTIME_MIRROR_WRITER,
+  type ChatSessionRuntimeMirrorWriterPort,
+} from './chat-session-runtime-mirror-writer';
+import {
+  CHAT_SESSION_LEX_POST_TURN_RESOURCE_FACTORY,
+  type ChatSessionLexPostTurnResourceFactory,
+  type ChatSessionLexPostTurnResources,
+} from './chat-session-lex-post-turn-resource-factory.service';
+import {
+  CHAT_RUNTIME_OWNER_SCHEDULER,
+  type ChatRuntimeOwnerSchedulerPort,
+} from './chat-runtime-owner-ports';
 
-export interface ChatSessionRuntimeHandle {
-  readonly sessionId: string;
-  readonly capabilities: ChatSessionRuntimeCapabilities;
-  readonly concurrencyScope?: string;
-  readonly requestInProgress: boolean;
-  readonly supportsInterruption: boolean;
-  readonly activeResponseHandle?: unknown;
-  readonly abortController?: AbortController;
-  readonly stopSession?: () => void;
-  readonly disposeSession?: () => void;
-}
+export type {
+  ChatSessionActiveRequestHandle,
+  ChatSessionRuntimeHandle,
+  ChatSessionRuntimeHandlePatch,
+} from './chat-session-runtime-registry-core';
 
-export interface ChatSessionRuntimeHandlePatch {
-  readonly capabilities?: Partial<ChatSessionRuntimeCapabilities> | null;
-  readonly concurrencyScope?: string | null;
-  readonly requestInProgress?: boolean;
-  readonly supportsInterruption?: boolean;
-  readonly activeResponseHandle?: unknown | null;
-  readonly abortController?: AbortController | null;
-  readonly stopSession?: (() => void) | null;
-  readonly disposeSession?: (() => void) | null;
-}
-
-export interface ChatSessionActiveRequestHandle extends ChatSessionRuntimeHandlePatch {
-  readonly requestInProgress: true;
-  readonly supportsInterruption: true;
-  readonly activeResponseHandle: unknown;
-  readonly stopSession: () => void;
-}
-
-export interface ChatSessionRuntimeProjectionPatch extends ChatSessionRuntimeHandlePatch {
-  readonly turnResponses?: readonly TurnResponseTurn[] | null | undefined;
-  readonly hostProjectionState?: HostTurnResponseState | null | undefined;
-  readonly pendingFollowupRequests?: readonly PendingFollowupRequest[] | null | undefined;
-  readonly yieldRequested?: boolean | null | undefined;
-  readonly status?: ChatSessionRuntimeStatus | null | undefined;
-  readonly description?: string | null | undefined;
-  readonly attachedView?: boolean | undefined;
-  readonly quotaOverlay?: ChatSessionRuntimeQuotaOverlay | null | undefined;
-  readonly viewOverlay?: ChatSessionRuntimeViewOverlay | null | undefined;
-  readonly providerOptions?: HostSessionProviderOptions | null | undefined;
-  readonly selectedMode?: ChatSelectedMode | null | undefined;
-  readonly debugSummary?: Partial<ChatSessionRuntimeDebugSummary> | null | undefined;
-}
-
-export interface ChatSessionLexPostTurnResources {
-  readonly cwd: string;
-  readonly editingTimelineRecorder: EditingTimelineRecordingBridge;
-  readonly workspaceChangeCollector: IWorkspaceChangeCollector;
-}
-
-export interface ChatSessionLexRequestCompletedInput {
-  readonly sessionId: string;
-  readonly turnId: string;
-  readonly reason: string;
-  readonly runWorkspaceFinalize: () => Promise<void>;
-  readonly runSessionEndHooks: () => Promise<void>;
-}
+export type { ChatSessionLexRequestCompletedInput } from './chat-session-runtime-completion-queue-core';
+export type { ChatSessionRuntimeProjectionPatch } from './chat-session-runtime-projection-core';
+export type { ChatSessionLexPostTurnResources } from './chat-session-lex-post-turn-resource-factory.service';
 
 const LEX_COMPLETION_IDLE_TIMEOUT_MS = 500;
 const LEX_COMPLETION_SLOW_PHASE_MS = 64;
@@ -104,17 +68,26 @@ function updateLexCompletionBackgroundOperation(delta: number): void {
 
 @Injectable()
 export class ChatSessionRuntimeRegistryService {
-  private readonly handles = new Map<string, ChatSessionRuntimeHandle>();
-  private readonly lexPostTurnResources = new Map<string, ChatSessionLexPostTurnResources>();
-  private readonly pendingLexRequestCompletion = new Map<string, Promise<void>>();
-
+  private readonly registryCore = new ChatSessionRuntimeRegistryCore();
+  private readonly projectionCore = new ChatSessionRuntimeProjectionCore();
+  private readonly completionQueueCore = new ChatSessionRuntimeCompletionQueueCore({
+    onPendingCountDelta: delta => updateLexCompletionBackgroundOperation(delta),
+    beforePhase: (sessionId, turnId, phase) => this.yieldBeforeLexCompletionPhase(sessionId, turnId, phase),
+    runPhase: (sessionId, turnId, phase, runPhase) =>
+      this.runLexCompletionPhase(sessionId, turnId, phase, runPhase),
+  });
+  private readonly postTurnResourcesCore = new ChatSessionRuntimePostTurnResourcesCore<ChatSessionLexPostTurnResources>();
   constructor(
-    private readonly runtimeStore: ChatSessionRuntimeStoreService,
+    @Inject(CHAT_SESSION_RUNTIME_MIRROR_WRITER)
+    private readonly runtimeMirror: ChatSessionRuntimeMirrorWriterPort,
+    @Inject(CHAT_RUNTIME_OWNER_SCHEDULER)
+    private readonly ownerScheduler: ChatRuntimeOwnerSchedulerPort,
+    @Inject(CHAT_SESSION_LEX_POST_TURN_RESOURCE_FACTORY)
+    private readonly lexPostTurnResourceFactory: ChatSessionLexPostTurnResourceFactory,
   ) {}
 
   readHandle(sessionId: string | null | undefined): ChatSessionRuntimeHandle | undefined {
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    return normalizedSessionId ? this.handles.get(normalizedSessionId) : undefined;
+    return this.registryCore.readHandle(sessionId);
   }
 
   readProjectedRuntimeState(sessionId: string | null | undefined): ChatSessionRuntimeState | undefined {
@@ -123,45 +96,17 @@ export class ChatSessionRuntimeRegistryService {
       return undefined;
     }
 
-    const runtimeState = this.runtimeStore.read(normalizedSessionId);
-    const activeHandle = this.handles.get(normalizedSessionId);
-    if (activeHandle?.requestInProgress) {
-      return {
-        ...(runtimeState ?? {
-          turnResponses: [],
-          hostProjectionState: null,
-          attachedView: false,
-        }),
-        requestInProgress: true,
-        status: runtimeState?.status ?? 'in_progress',
-        supportsInterruption: activeHandle.supportsInterruption,
-        activeResponseHandle: activeHandle.activeResponseHandle ?? runtimeState?.activeResponseHandle,
-      };
-    }
-
-    if (!runtimeState || !this.hasRuntimeRequestGate(runtimeState)) {
-      return runtimeState;
-    }
-
-    const {
-      activeResponseHandle: _activeResponseHandle,
-      stopSession: _stopSession,
-      status,
-      ...rest
-    } = runtimeState;
-    return {
-      ...rest,
-      ...(status && status !== 'in_progress' ? { status } : {}),
-      requestInProgress: false,
-      supportsInterruption: false,
-    };
+    const runtimeState = this.runtimeMirror.read(normalizedSessionId);
+    const activeHandle = this.registryCore.readHandle(normalizedSessionId);
+    return this.projectionCore.readProjectedRuntimeState(runtimeState, activeHandle);
   }
 
   getSessionIds(): readonly string[] {
     return [...new Set([
-      ...this.runtimeStore.getSessionIds(),
-      ...this.handles.keys(),
-      ...this.lexPostTurnResources.keys(),
+      ...this.runtimeMirror.getSessionIds(),
+      ...this.registryCore.getSessionIds(),
+      ...this.postTurnResourcesCore.getSessionIds(),
+      ...this.completionQueueCore.getSessionIds(),
     ])];
   }
 
@@ -169,81 +114,26 @@ export class ChatSessionRuntimeRegistryService {
     sessionId: string | null | undefined,
     cwd: string | null | undefined,
   ): ChatSessionLexPostTurnResources | undefined {
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    const normalizedCwd = typeof cwd === 'string' ? cwd.trim() : '';
-    if (!normalizedSessionId || !normalizedCwd) {
-      return undefined;
-    }
-
-    const existing = this.lexPostTurnResources.get(normalizedSessionId);
-    if (existing && existing.cwd === normalizedCwd) {
-      return existing;
-    }
-
-    const nextResources: ChatSessionLexPostTurnResources = {
-      cwd: normalizedCwd,
-      editingTimelineRecorder: new EditingTimelineRecordingBridge(
-        new EditingTimelineRepository({
-          joinPath: (...parts) => AilyHost.get().path.join(...parts),
-        }),
-        new EditingContentStore({
-          joinPath: (...parts) => AilyHost.get().path.join(...parts),
-        }),
-        normalizedCwd,
-        normalizedSessionId,
-      ),
-      workspaceChangeCollector: new BlocklyTrackedWorkspaceChangeCollector(),
-    };
-
-    this.lexPostTurnResources.set(normalizedSessionId, nextResources);
-    return nextResources;
+    return this.postTurnResourcesCore.getOrCreate(
+      sessionId,
+      cwd,
+      (normalizedSessionId, normalizedCwd) =>
+        this.createLexPostTurnResources(normalizedSessionId, normalizedCwd, this.lexPostTurnResourceFactory),
+    );
   }
 
   scheduleLexRequestCompleted(input: ChatSessionLexRequestCompletedInput): void {
-    const normalizedSessionId = this.normalizeSessionId(input.sessionId);
-    if (!normalizedSessionId) {
-      return;
-    }
-
-    const runCompletion = async (): Promise<void> => {
-      updateLexCompletionBackgroundOperation(1);
-      try {
-        await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'workspace-finalize');
-        await this.runLexCompletionPhase(
-          normalizedSessionId,
-          input.turnId,
-          'workspace_finalize',
-          input.runWorkspaceFinalize,
-        );
-        await this.yieldBeforeLexCompletionPhase(normalizedSessionId, input.turnId, 'session-end-hooks');
-        await this.runLexCompletionPhase(
-          normalizedSessionId,
-          input.turnId,
-          'session_end_hooks',
-          input.runSessionEndHooks,
-        );
-      } finally {
-        updateLexCompletionBackgroundOperation(-1);
-      }
-    };
-
-    const previous = this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve();
-    const next = previous.then(runCompletion, runCompletion).finally(() => {
-      if (this.pendingLexRequestCompletion.get(normalizedSessionId) === next) {
-        this.pendingLexRequestCompletion.delete(normalizedSessionId);
-      }
-    });
-    this.pendingLexRequestCompletion.set(normalizedSessionId, next);
+    this.completionQueueCore.schedule(input);
   }
 
   private async yieldBeforeLexCompletionPhase(
     sessionId: string,
     turnId: string,
-    phase: string,
+    phase: ChatSessionRuntimeCompletionPhase,
   ): Promise<void> {
     const startedAt = getNowMs();
-    await yieldToBrowserIdle(LEX_COMPLETION_IDLE_TIMEOUT_MS);
-    await yieldToBrowserTask(0);
+    await this.ownerScheduler.yieldToIdle(LEX_COMPLETION_IDLE_TIMEOUT_MS);
+    await this.ownerScheduler.yieldToTask(0);
     ChatPerformanceTracer.recordDuration(
       'lex_completion_idle_boundary',
       getNowMs() - startedAt,
@@ -255,7 +145,7 @@ export class ChatSessionRuntimeRegistryService {
   private async runLexCompletionPhase(
     sessionId: string,
     turnId: string,
-    phase: string,
+    phase: ChatSessionRuntimeCompletionPhase,
     runPhase: () => Promise<void>,
   ): Promise<void> {
     const startedAt = getNowMs();
@@ -279,23 +169,12 @@ export class ChatSessionRuntimeRegistryService {
   }
 
   async awaitPendingLexRequestCompleted(sessionId?: string | null): Promise<void> {
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    if (normalizedSessionId) {
-      await (this.pendingLexRequestCompletion.get(normalizedSessionId) ?? Promise.resolve());
-      return;
-    }
-
-    await Promise.all([...this.pendingLexRequestCompletion.values()]);
+    await this.completionQueueCore.awaitPending(sessionId);
   }
 
   canStartRequest(sessionId: string | null | undefined): boolean {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
-    const handle = this.readHandle(normalizedSessionId);
-    if (!handle?.requestInProgress) {
-      return !normalizedSessionId || !this.hasBlockingConcurrentHandle(normalizedSessionId, handle);
-    }
-
-    return handle.capabilities.canContinueInPlace;
+    return this.registryCore.canStartRequest(normalizedSessionId);
   }
 
   beginRequest(
@@ -332,7 +211,7 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    const previous = this.handles.get(normalizedSessionId);
+    const previous = this.registryCore.readHandle(normalizedSessionId);
     if (!previous?.requestInProgress) {
       return false;
     }
@@ -379,28 +258,19 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    const handle = this.handles.get(normalizedSessionId);
+    const handle = this.registryCore.readHandle(normalizedSessionId);
     if (handle?.requestInProgress) {
       return false;
     }
 
-    const runtimeState = this.runtimeStore.read(normalizedSessionId);
-    if (!this.hasRuntimeRequestGate(runtimeState)) {
+    const runtimeState = this.runtimeMirror.read(normalizedSessionId);
+    if (!this.projectionCore.hasRuntimeRequestGate(runtimeState)) {
       return false;
     }
 
-    if (handle) {
-      this.handles.set(normalizedSessionId, {
-        ...handle,
-        requestInProgress: false,
-        supportsInterruption: false,
-        activeResponseHandle: undefined,
-        abortController: undefined,
-        stopSession: undefined,
-      });
-    }
+    this.registryCore.markRequestComplete(normalizedSessionId);
 
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
+    this.runtimeMirror.write(normalizedSessionId, {
       status: null,
       requestInProgress: false,
       yieldRequested: false,
@@ -425,13 +295,13 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    const previous = this.handles.get(normalizedSessionId);
+    const previous = this.registryCore.readHandle(normalizedSessionId);
     const handle = this.upsertHandle(normalizedSessionId, {
       abortController: controller,
       requestInProgress: controller ? previous?.requestInProgress ?? true : previous?.requestInProgress,
       supportsInterruption: controller ? true : previous?.supportsInterruption,
     });
-    if (!this.runtimeStore.read(normalizedSessionId)) {
+    if (!this.runtimeMirror.hasSession(normalizedSessionId)) {
       return true;
     }
 
@@ -449,7 +319,7 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     const handle = this.upsertHandle(normalizedSessionId, patch);
-    if (!this.runtimeStore.read(normalizedSessionId)) {
+    if (!this.runtimeMirror.hasSession(normalizedSessionId)) {
       return;
     }
 
@@ -462,12 +332,12 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    const hadHandle = this.handles.delete(normalizedSessionId);
-    if (!this.runtimeStore.read(normalizedSessionId)) {
+    const hadHandle = this.registryCore.releaseHandle(normalizedSessionId);
+    if (!this.runtimeMirror.hasSession(normalizedSessionId)) {
       return hadHandle;
     }
 
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
+    this.runtimeMirror.write(normalizedSessionId, {
       requestInProgress: false,
       supportsInterruption: false,
       activeResponseHandle: null,
@@ -482,7 +352,7 @@ export class ChatSessionRuntimeRegistryService {
   projectRuntimeState(
     sessionId: string | null | undefined,
     patch: ChatSessionRuntimeProjectionPatch,
-    options?: ChatRuntimeProjectionChangeOptions,
+    options?: ChatSessionRuntimeChangeOptions,
   ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
@@ -490,39 +360,22 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     const handle = this.upsertHandle(normalizedSessionId, patch);
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
-      turnResponses: patch.turnResponses,
-      hostProjectionState: patch.hostProjectionState,
-      pendingFollowupRequests: patch.pendingFollowupRequests,
-      yieldRequested: patch.yieldRequested,
-      status: patch.status,
-      description: patch.description,
-      quotaOverlay: patch.quotaOverlay,
-      viewOverlay: patch.viewOverlay,
-      providerOptions: patch.providerOptions,
-      selectedMode: patch.selectedMode,
-      requestInProgress: handle.requestInProgress,
-      attachedView: patch.attachedView,
-      supportsInterruption: handle.supportsInterruption,
-      activeResponseHandle: handle.activeResponseHandle,
-      stopSession: handle.supportsInterruption
-        ? () => this.stopSession(normalizedSessionId)
-        : null,
-      disposeSession: () => this.disposeSession(normalizedSessionId),
-      capabilities: handle.capabilities,
-      debugSummary: patch.debugSummary,
-    }, {
-      reason: options?.reason ?? this.resolveProjectionChangeReason(patch),
-      highFrequency: options?.highFrequency,
-      listAffecting: options?.listAffecting,
-    });
+    this.runtimeMirror.write(
+      normalizedSessionId,
+      this.projectionCore.buildRuntimeStatePatch(
+        patch,
+        handle,
+        this.buildProjectionCallbacks(normalizedSessionId),
+      ),
+      this.projectionCore.resolveProjectionChangeOptions(patch, options),
+    );
   }
 
   syncTurnResponses(
     sessionId: string | null | undefined,
     turnResponses: readonly TurnResponseTurn[] | null | undefined,
     hostProjectionState: HostTurnResponseState | null,
-    options?: ChatRuntimeProjectionChangeOptions,
+    options?: ChatSessionRuntimeChangeOptions,
   ): void {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
     if (!normalizedSessionId || !Array.isArray(turnResponses)) {
@@ -530,31 +383,25 @@ export class ChatSessionRuntimeRegistryService {
     }
 
     const handle = this.upsertHandle(normalizedSessionId, {});
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
-      turnResponses,
-      hostProjectionState,
-      requestInProgress: handle.requestInProgress,
-      supportsInterruption: handle.supportsInterruption,
-      activeResponseHandle: handle.activeResponseHandle,
-      stopSession: handle.supportsInterruption
-        ? () => this.stopSession(normalizedSessionId)
-        : null,
-      disposeSession: () => this.disposeSession(normalizedSessionId),
-      capabilities: handle.capabilities,
-    }, {
-      reason: options?.reason ?? 'live_transcript',
-      highFrequency: options?.highFrequency ?? true,
-      listAffecting: options?.listAffecting ?? false,
-    });
+    this.runtimeMirror.write(
+      normalizedSessionId,
+      this.projectionCore.buildTurnResponsesStatePatch(
+        turnResponses,
+        hostProjectionState,
+        handle,
+        this.buildProjectionCallbacks(normalizedSessionId),
+      ),
+      this.projectionCore.resolveTurnResponsesChangeOptions(options),
+    );
   }
 
   attachView(sessionId: string | null | undefined): boolean {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
-    if (!normalizedSessionId || !this.runtimeStore.read(normalizedSessionId)) {
+    if (!normalizedSessionId || !this.runtimeMirror.hasSession(normalizedSessionId)) {
       return false;
     }
 
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, { attachedView: true }, {
+    this.runtimeMirror.write(normalizedSessionId, { attachedView: true }, {
       reason: 'view',
     });
     return true;
@@ -562,11 +409,11 @@ export class ChatSessionRuntimeRegistryService {
 
   detachView(sessionId: string | null | undefined): boolean {
     const normalizedSessionId = this.normalizeSessionId(sessionId);
-    if (!normalizedSessionId || !this.runtimeStore.read(normalizedSessionId)) {
+    if (!normalizedSessionId || !this.runtimeMirror.hasSession(normalizedSessionId)) {
       return false;
     }
 
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
+    this.runtimeMirror.write(normalizedSessionId, {
       attachedView: false,
       debugSummary: {
         lastViewDetachAt: Date.now(),
@@ -587,9 +434,9 @@ export class ChatSessionRuntimeRegistryService {
       return false;
     }
 
-    const handle = this.handles.get(normalizedSessionId);
+    const handle = this.registryCore.readHandle(normalizedSessionId);
     handle?.disposeSession?.();
-    this.runtimeStore.replaceRuntimeState(normalizedSessionId, {
+    this.runtimeMirror.write(normalizedSessionId, {
       requestInProgress: false,
       supportsInterruption: false,
       stopSession: null,
@@ -602,10 +449,10 @@ export class ChatSessionRuntimeRegistryService {
     }, {
       reason: 'handle',
     });
-    this.handles.delete(normalizedSessionId);
-    this.lexPostTurnResources.delete(normalizedSessionId);
-    this.pendingLexRequestCompletion.delete(normalizedSessionId);
-    this.runtimeStore.clearSession(normalizedSessionId);
+    this.registryCore.deleteHandle(normalizedSessionId);
+    this.postTurnResourcesCore.clearSession(normalizedSessionId);
+    this.completionQueueCore.clearSession(normalizedSessionId);
+    this.runtimeMirror.clearSession(normalizedSessionId);
     return true;
   }
 
@@ -615,207 +462,64 @@ export class ChatSessionRuntimeRegistryService {
       return;
     }
 
-    this.handles.delete(normalizedSessionId);
-    this.lexPostTurnResources.delete(normalizedSessionId);
-    this.pendingLexRequestCompletion.delete(normalizedSessionId);
-    this.runtimeStore.clearSession(normalizedSessionId);
+    this.registryCore.deleteHandle(normalizedSessionId);
+    this.postTurnResourcesCore.clearSession(normalizedSessionId);
+    this.completionQueueCore.clearSession(normalizedSessionId);
+    this.runtimeMirror.clearSession(normalizedSessionId);
   }
 
   clearAll(): void {
-    this.handles.clear();
-    this.lexPostTurnResources.clear();
-    this.pendingLexRequestCompletion.clear();
-    this.runtimeStore.clearAll();
+    this.registryCore.clear();
+    this.postTurnResourcesCore.clearAll();
+    this.completionQueueCore.clearAll();
+    this.runtimeMirror.clearAll();
+  }
+
+  private createLexPostTurnResources(
+    sessionId: string,
+    cwd: string,
+    factory: ChatSessionLexPostTurnResourceFactory,
+  ): ChatSessionLexPostTurnResources {
+    return factory.create(sessionId, cwd);
   }
 
   private markRequestComplete(
     sessionId: string,
     debugSummary?: Partial<ChatSessionRuntimeDebugSummary>,
   ): void {
-    const previous = this.handles.get(sessionId);
-    if (previous) {
-      this.handles.set(sessionId, {
-        ...previous,
-        requestInProgress: false,
-        supportsInterruption: false,
-        activeResponseHandle: undefined,
-        abortController: undefined,
-        stopSession: undefined,
-      });
-    }
+    const previous = this.registryCore.markRequestComplete(sessionId);
 
-    this.runtimeStore.replaceRuntimeState(sessionId, {
-      status: null,
-      requestInProgress: false,
-      yieldRequested: false,
-      supportsInterruption: false,
-      activeResponseHandle: null,
-      stopSession: null,
-      capabilities: previous?.capabilities ?? DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
-      debugSummary,
-    }, {
+    this.runtimeMirror.write(sessionId, this.projectionCore.buildRequestCompleteStatePatch(previous, debugSummary), {
       reason: 'status',
     });
-  }
-
-  private resolveProjectionChangeReason(
-    patch: ChatSessionRuntimeProjectionPatch,
-  ): ChatSessionRuntimeChangeReason {
-    if (patch.status !== undefined) {
-      return 'status';
-    }
-    if (patch.description !== undefined) {
-      return 'description';
-    }
-    if (patch.attachedView !== undefined) {
-      return 'view';
-    }
-    if (patch.requestInProgress !== undefined
-      || patch.supportsInterruption !== undefined
-      || patch.activeResponseHandle !== undefined
-      || patch.stopSession !== undefined
-      || patch.disposeSession !== undefined) {
-      return 'handle';
-    }
-    if (patch.quotaOverlay !== undefined) {
-      return 'quota';
-    }
-    if (patch.viewOverlay !== undefined) {
-      return 'view';
-    }
-    if (patch.providerOptions !== undefined || patch.selectedMode !== undefined) {
-      return 'state';
-    }
-    if (patch.debugSummary !== undefined) {
-      return 'debug';
-    }
-    if (patch.turnResponses !== undefined || patch.hostProjectionState !== undefined) {
-      return 'transcript';
-    }
-
-    return 'state';
   }
 
   private upsertHandle(
     sessionId: string,
     patch: ChatSessionRuntimeHandlePatch,
   ): ChatSessionRuntimeHandle {
-    const previous = this.handles.get(sessionId);
-    const capabilities = this.resolveCapabilities(patch.capabilities, previous);
-    const concurrencyScope = patch.concurrencyScope !== undefined
-      ? patch.concurrencyScope ?? undefined
-      : previous?.concurrencyScope;
-    const requestInProgress = typeof patch.requestInProgress === 'boolean'
-      ? patch.requestInProgress
-      : previous?.requestInProgress ?? false;
-    const supportsInterruption = typeof patch.supportsInterruption === 'boolean'
-      ? patch.supportsInterruption
-      : requestInProgress
-        ? previous?.supportsInterruption ?? false
-        : false;
-    const activeResponseHandle = patch.activeResponseHandle !== undefined
-      ? patch.activeResponseHandle ?? undefined
-      : requestInProgress
-        ? previous?.activeResponseHandle
-        : undefined;
-    const abortController = patch.abortController !== undefined
-      ? patch.abortController ?? undefined
-      : requestInProgress
-        ? previous?.abortController
-        : undefined;
-    const next: ChatSessionRuntimeHandle = {
-      sessionId,
-      capabilities,
-      ...(concurrencyScope ? { concurrencyScope } : {}),
-      requestInProgress,
-      supportsInterruption,
-      ...(activeResponseHandle !== undefined ? { activeResponseHandle } : {}),
-      ...(abortController ? { abortController } : {}),
-      ...(typeof patch.stopSession === 'function'
-        ? { stopSession: patch.stopSession }
-        : patch.stopSession === null
-          ? {}
-          : supportsInterruption && previous?.stopSession
-            ? { stopSession: previous.stopSession }
-            : {}),
-      ...(typeof patch.disposeSession === 'function'
-        ? { disposeSession: patch.disposeSession }
-        : patch.disposeSession === null
-          ? {}
-          : previous?.disposeSession
-            ? { disposeSession: previous.disposeSession }
-            : {}),
-    };
-
-    this.handles.set(sessionId, next);
-    return next;
+    return this.registryCore.upsertHandle(sessionId, patch);
   }
 
   private projectHandleToRuntimeStore(
     sessionId: string,
     handle: ChatSessionRuntimeHandle,
   ): void {
-    this.runtimeStore.replaceRuntimeState(sessionId, {
-      requestInProgress: handle.requestInProgress,
-      supportsInterruption: handle.supportsInterruption,
-      activeResponseHandle: handle.activeResponseHandle ?? null,
-      stopSession: handle.supportsInterruption
-        ? () => this.stopSession(sessionId)
-        : null,
-      disposeSession: () => this.disposeSession(sessionId),
-      capabilities: handle.capabilities,
-    }, {
+    this.runtimeMirror.write(sessionId, this.projectionCore.buildHandleStatePatch(
+      handle,
+      this.buildProjectionCallbacks(sessionId),
+    ), {
       reason: 'handle',
     });
   }
 
-  private hasBlockingConcurrentHandle(
-    sessionId: string,
-    handle: ChatSessionRuntimeHandle | undefined,
-  ): boolean {
-    if (!handle || handle.capabilities.canRunConcurrently) {
-      return false;
-    }
-
-    const targetScope = this.resolveConcurrencyScope(handle);
-    for (const candidate of this.handles.values()) {
-      if (candidate.sessionId === sessionId
-        || !candidate.requestInProgress
-        || candidate.capabilities.canRunConcurrently
-        || this.resolveConcurrencyScope(candidate) !== targetScope) {
-        continue;
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private resolveConcurrencyScope(handle: ChatSessionRuntimeHandle): string {
-    return handle.concurrencyScope ?? handle.sessionId;
-  }
-
-  private hasRuntimeRequestGate(runtimeState: ChatSessionRuntimeState | undefined): boolean {
-    return runtimeState?.requestInProgress === true
-      || runtimeState?.supportsInterruption === true
-      || runtimeState?.status === 'in_progress'
-      || typeof runtimeState?.stopSession === 'function'
-      || (runtimeState?.activeResponseHandle !== undefined && runtimeState.activeResponseHandle !== null);
-  }
-
-  private resolveCapabilities(
-    capabilities: Partial<ChatSessionRuntimeCapabilities> | null | undefined,
-    previous: ChatSessionRuntimeHandle | undefined,
-  ): ChatSessionRuntimeCapabilities {
-    if (capabilities === null) {
-      return { ...DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES };
-    }
-
+  private buildProjectionCallbacks(sessionId: string): {
+    readonly stopSession: () => void;
+    readonly disposeSession: () => void;
+  } {
     return {
-      ...DEFAULT_CHAT_SESSION_RUNTIME_CAPABILITIES,
-      ...(previous?.capabilities ?? {}),
-      ...(capabilities ?? {}),
+      stopSession: () => this.stopSession(sessionId),
+      disposeSession: () => this.disposeSession(sessionId),
     };
   }
 

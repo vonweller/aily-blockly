@@ -1,5 +1,9 @@
 @if (vm.isStandaloneWindow) {
-<app-sub-window [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)" [winBtns]="['go-main', 'minimize', 'maximize', 'close']">
+<app-sub-window
+  [title]="currentPaneTitle ? '' : ('AILY_CHAT.SERVICE_TITLE' | translate)"
+  [winBtns]="['go-main', 'minimize', 'maximize', 'close']"
+  (goMainEvent)="returnStandaloneSurfaceToEntryInventory()"
+  (closeEvent)="returnStandaloneSurfaceToMain()">
   <ng-container header-title-prefix>
     <aily-chat-session-title-control
       [surface]="sessionTitleSurfaceModel"
@@ -166,30 +170,22 @@
         @if (dialogVirtualTopSpacerHeight > 0) {
           <div class="dialog-virtual-spacer" [style.height.px]="dialogVirtualTopSpacerHeight" aria-hidden="true"></div>
         }
-        @for(item of renderedDialogItems; track item.trackId){
+        @for(item of renderedDialogItems; track item.id){
           <div
             class="dialog-virtual-row"
             #dialogVirtualRow
-            [attr.data-track-id]="item.trackId">
+            [attr.data-chat-item-id]="item.id"
+            [attr.data-turn-id]="item.turnId || null"
+            [attr.data-response-id]="item.responseId || null">
           <aily-x-dialog
-            [role]="item.role"
-            [content]="item.content"
-            [doing]="item.doing"
-            [isLastAily]="item.isLastAily"
-            [isFirstUserTurn]="item.isFirstUserTurn"
+            [item]="item"
             [sessionId]="vm.sessionId"
             [currentMode]="vm.currentMode"
             [selectedMode]="vm.selectedMode"
             [currentModelName]="vm.currentModelName"
             [currentModelChipLabel]="vm.currentModelChipLabel"
             [currentModelBillingLabel]="vm.currentModelBillingLabel"
-            [turnModelName]="item.turnModelName"
-            [turnModelBillingLabel]="item.turnModelBillingLabel || ''"
-            [responseVote]="item.responseVote"
             [isWaiting]="vm.isWaiting"
-            [turnContext]="item.turnContext"
-            [turnResponse]="item.turnContext?.turnResponse ?? null"
-            [liveParts]="getLivePartsForDialogItem(item)"
             [workspaceCheckpointPresentationMode]="vm.workspaceCheckpointPresentationMode"
             [exclusiveEditTurnId]="userMessageEditingTurnId"
             [showModeMenu]="menuManager.showMode"

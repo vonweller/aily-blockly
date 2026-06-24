@@ -1,5 +1,8 @@
 import { Routes } from '@angular/router';
-import { AILY_CHAT_RUNTIME_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
+import {
+    AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+    AILY_CHAT_VIEW_PROVIDERS,
+} from './tools/aily-chat/aily-chat.providers';
 
 export const routes: Routes = [
     {
@@ -9,6 +12,10 @@ export const routes: Routes = [
     },
     {
         path: 'main',
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+            ...AILY_CHAT_RUNTIME_OWNER_PROVIDERS,
+        ],
         loadComponent: () => import('./main-window/main-window.component').then(m => m.MainWindowComponent),
         children: [
             {
@@ -116,7 +123,9 @@ export const routes: Routes = [
     },
     {
         path: "aily-chat",
-        providers: [...AILY_CHAT_RUNTIME_PROVIDERS],
+        providers: [
+            ...AILY_CHAT_VIEW_PROVIDERS,
+        ],
         loadComponent: () => import('./tools/aily-chat/aily-chat.component').then(m => m.AilyChatComponent)
     },
     {

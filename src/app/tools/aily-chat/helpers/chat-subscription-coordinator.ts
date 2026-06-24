@@ -79,6 +79,14 @@ export class ChatSubscriptionCoordinator {
       return;
     }
 
+    const currentSessionId = typeof this.ctx.sessionId === 'string'
+      ? this.ctx.sessionId.trim()
+      : '';
+    if (currentSessionId.length > 0) {
+      this.ctx.hasInitializedForThisLogin = true;
+      return;
+    }
+
     this.ctx.hasInitializedForThisLogin = true;
     await this.ctx.session.initializeEntryInventory({ restorePersistedTarget: false });
   }

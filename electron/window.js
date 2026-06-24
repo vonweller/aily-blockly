@@ -2,6 +2,7 @@
 const { ipcMain, BrowserWindow, app, screen } = require("electron");
 const { requestWindowAttention } = require('./window-attention');
 const { killCmdProcess, getActiveCmdProcesses } = require('./cmd');
+const { registerChatRuntimeHostIpc } = require('./chat-runtime-host');
 const { exec, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -280,6 +281,8 @@ function terminateAilyProcess() {
 }
 
 function registerWindowHandlers(mainWindow) {
+    registerChatRuntimeHostIpc(mainWindow);
+
     // 添加一个映射来存储已打开的窗口
     const openWindows = new Map();
     let codeViewerState = {
@@ -773,6 +776,26 @@ function registerWindowHandlers(mainWindow) {
         const senderWindow = BrowserWindow.fromWebContents(event.sender);
         mainWindow.webContents.send("window-go-main", normalizeSubWindowUrl(data));
         senderWindow.close();
+    });
+
+    ipcMain.handle("window-return-main", (event, data) => {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const normalizedPath = normalizeSubWindowUrl(data);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("window-go-main", normalizedPath);
+            if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+            }
+            mainWindow.show();
+            if (typeof mainWindow.moveTop === 'function') {
+                mainWindow.moveTop();
+            }
+            mainWindow.focus();
+        }
+        if (senderWindow && senderWindow !== mainWindow && !senderWindow.isDestroyed()) {
+            senderWindow.hide();
+        }
+        return { success: true };
     });
 
     ipcMain.on("window-alwaysOnTop", (event, alwaysOnTop) => {

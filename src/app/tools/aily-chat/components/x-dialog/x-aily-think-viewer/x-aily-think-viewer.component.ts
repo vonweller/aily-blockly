@@ -83,6 +83,9 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
       }
       .ac-think.embedded {
         margin: 0;
+        color: var(--chat-fg-dim, #8e8e8e);
+        font-size: 12px;
+        line-height: 1.35;
       }
 
       /* ===== 折叠头部（Copilot .monaco-button.monaco-icon-button 风格）===== */
@@ -211,7 +214,7 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         position: relative;
       }
 
-      /* Markdown 内容样式：复用普通 assistant markdown/code 组件，只收敛容器约束 */
+      /* Markdown 内容样式：复用普通 assistant markdown/code 组件；内嵌 activity 模式继承工具状态文本权重 */
       :host ::ng-deep .ac-think-body .x-markdown-dark {
         word-break: break-word;
         overflow-wrap: anywhere;
@@ -220,9 +223,40 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
         min-width: 0;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark * { max-width: 100%; }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark,
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark p,
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark li,
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark blockquote {
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--chat-fg-dim, #8e8e8e);
+        font-weight: 400;
+      }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark p {
+        margin: 0 0 4px;
+      }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark p:last-child {
+        margin-bottom: 0;
+      }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark strong {
+        color: inherit;
+        font-weight: 600;
+      }
       :host ::ng-deep .ac-think-body .x-markdown-dark ul,
       :host ::ng-deep .ac-think-body .x-markdown-dark ol {
         padding-left: 1.2em;
+      }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark ul,
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark ol {
+        margin: 2px 0 4px;
+      }
+      :host ::ng-deep .ac-think.embedded .ac-think-body .x-markdown-dark code:not(pre code) {
+        font-size: 11px;
+        line-height: 1.25;
+        color: var(--chat-fg-dim, #8e8e8e);
+        background: var(--chat-bg-subtle, rgba(255,255,255,0.04));
+        border-radius: 3px;
+        padding: 0 3px;
       }
       :host ::ng-deep .ac-think-body .x-markdown-dark pre {
         max-width: 100%;

@@ -26,6 +26,7 @@ import {
 } from './chat-parts';
 import { getMarkdownContent } from './markdown-content-store';
 import { getThinkContent } from './think-content-store';
+import { normalizeChatErrorNotice } from './chat-error-notice-normalizer';
 
 type MutableQuestionAnswers = Extract<ChatPart, { type: 'question' }>['answers'];
 type ScopedTurnResponsePartMetadata = { readonly metadata?: Record<string, unknown> };
@@ -237,8 +238,22 @@ export function turnResponsePartToChatPart(part: TurnResponsePart, existing?: Ch
       };
     case 'state':
       return mkState(part.stateId, part.text, part.state, part.kind, part.progress, part.metadata);
-    case 'error':
-      return mkError(part.message, 'error', readPartMetadata(part));
+    case 'error': {
+      const metadata = readPartMetadata(part);
+      const normalized = normalizeChatErrorNotice({
+        message: part.message,
+        details: metadata?.['details'],
+        metadata,
+      });
+      const existingErrorDetails = metadata?.['errorDetails'];
+      const hasExistingErrorActions = !!existingErrorDetails
+        && typeof existingErrorDetails === 'object'
+        && Array.isArray((existingErrorDetails as Record<string, unknown>)['confirmationButtons']);
+      if (normalized.message === part.message && (!normalized.retryable || hasExistingErrorActions)) {
+        return mkError(part.message, 'error', metadata);
+      }
+      return mkError(normalized.message, 'error', normalized.metadata);
+    }
     case 'warning':
       return mkError(part.message, 'warning', part.metadata);
     case 'info':

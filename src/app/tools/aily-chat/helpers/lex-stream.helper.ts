@@ -37,6 +37,7 @@ import type { IMetricsService, MetricsSnapshot, TurnResponseStatus, TurnResponse
 import type { IHostStreamListener } from './host-turn-response-state';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
 import type { HostItemLifecycleTextDeltaPolicy } from './lex-render-host-stream-emitter';
+import type { ChatSessionLexPostTurnResources } from '../services/chat-session-lex-post-turn-resource-factory.service';
 import {
   terminalTranscriptProjection,
   type ChatRuntimeTurnResponseSyncOptions,
@@ -46,7 +47,7 @@ type LexOwnerRenderBridge = Parameters<LexTurnExecutionBridge['setRenderEventBri
   readonly turnResponses: readonly TurnResponseTurn[];
   finalizeCurrentTurn(fallbackStatus?: TurnResponseStatus): boolean;
   hydrateTurnResponses(turnResponses: readonly TurnResponseTurn[]): void;
-  setProjectionSessionResource(sessionResource: string | null | undefined): void;
+  setProjectionSessionResource(sessionResource: string | null | undefined, visibleAttachmentGeneration?: number | null): void;
   setHostStreamListener(listener: IHostStreamListener | null): void;
   setHostItemTextDeltaDeliveryPolicy(turnId: string, policy: HostItemLifecycleTextDeltaPolicy | null, itemId?: string | null): void;
   clearSessionState(): void;
@@ -64,15 +65,15 @@ type LexOwnerTurnControlAccess = Pick<
 >;
 type LexOwnerRuntimeAccess = Pick<LexRuntimeConfigBridge, 'tools' | 'llmConfig'>;
 type LexOwnerSessionAccess = Pick<LexSessionFacade, 'save' | 'snapshot' | 'forkSnapshot' | 'resolveRestorePlan' | 'restoreResolvedSnapshot' | 'restore'>;
-type LexOwnerMessageLifecycleAccess = Pick<LexMessageLifecycleBridge, 'resetTurnState' | 'currentMessageHandle'>;
+type LexOwnerMessageLifecycleAccess = Pick<LexMessageLifecycleBridge, 'resetTurnState' | 'currentResponseHandle'>;
 type LexOwnerExecutionAccess = Pick<LexTurnExecutionBridge, 'flushPendingEvents'>;
 type LexOwnerPendingEventAccess = Pick<LexSessionPersistenceBridge, 'drainPendingEvents'>;
 
 // aily-lex 类型按需获取（运行时动态加载，编译期仅用 type import）
 type AilyLexModule = import('./lex-agent-bootstrap').AilyLexModule;
 
-type LexOwnerContext = BootstrapLexAgentContext
-  & Pick<IChatCoordination, 'lexStream' | 'openSettings' | 'syncCustomAgentProviderSource' | 'syncCustomAgentProviderModes' | 'syncRegisteredAgentNames'>
+export type LexOwnerContext = BootstrapLexAgentContext
+  & Pick<IChatCoordination, 'lexStream' | 'syncCustomAgentProviderSource' | 'syncCustomAgentProviderModes' | 'syncRegisteredAgentNames'>
   & Pick<IChatServiceAccess, 'runtimeInteractionHost'>
   & Pick<ISessionAccess, 'sessionTitle' | 'chatService'>
   & {
@@ -83,13 +84,40 @@ type LexOwnerContext = BootstrapLexAgentContext
       turnResponses: readonly TurnResponseTurn[] | null | undefined,
       options: ChatRuntimeTurnResponseSyncOptions,
     ): void;
+    readSessionTurnResponses?(sessionId: string | null | undefined): readonly TurnResponseTurn[];
+    appendSessionModelTurnResponse?(
+      sessionId: string | null | undefined,
+      turnResponse: TurnResponseTurn,
+      ownerPolicy?: { readonly allowForkedTurns?: boolean; readonly source?: string },
+    ): readonly TurnResponseTurn[] | null;
+    syncRuntimeHostSubmitReadiness?(sessionId: string | null | undefined): void;
+    syncRuntimeAgentEntryReady?(
+      sessionId: string | null | undefined,
+      disposeSession: () => void,
+    ): void;
+    releaseRuntimeHandle?(sessionId: string | null | undefined): boolean;
+    setRuntimeAbortController?(
+      sessionId: string | null | undefined,
+      controller: AbortController | null,
+    ): boolean;
+    getOrCreateLexPostTurnResources?(
+      sessionId: string | null | undefined,
+      cwd: string | null | undefined,
+    ): ChatSessionLexPostTurnResources | undefined;
+    scheduleLexRequestCompleted?(input: {
+      sessionId: string;
+      turnId: string;
+      reason: string;
+      runWorkspaceFinalize: () => Promise<void>;
+      runSessionEndHooks: () => Promise<void>;
+    }): void;
     readSessionRuntimeState?(
       sessionId: string | null | undefined,
     ): {
       readonly turnResponses?: readonly TurnResponseTurn[];
       readonly yieldRequested?: boolean;
     } | undefined;
-    readCurrentViewSessionResource?(): string | null;
+    runWithRuntimeSessionOwner?<T>(sessionId: string, action: () => Promise<T>): Promise<T>;
   }
   & ConstructorParameters<typeof LexHostSyncBridge>[0]
   & ConstructorParameters<typeof LexMessageLifecycleBridge>[0]
@@ -199,7 +227,12 @@ export class LexOwnerFacade {
       return;
     }
 
-    this._renderEventBridge.setProjectionSessionResource?.(targetSessionId || null);
+    this._renderEventBridge.setProjectionSessionResource?.(
+      targetSessionId || null,
+      targetSessionId
+        ? this.ctx.readRuntimeViewAttachmentGeneration?.(targetSessionId) ?? null
+        : null,
+    );
     this._renderEventBridge.hydrateTurnResponses(turnResponses);
     if (targetSessionId) {
       this.ctx.syncExecutionRuntimeTurnResponses?.(
@@ -283,16 +316,10 @@ export class LexOwnerFacade {
         return null;
       },
       onEntryReady: (entry) => {
-        this.ctx.chatSessionRuntimeRegistry?.syncHandleState?.(entry.sessionId, {
-          requestInProgress: false,
-          supportsInterruption: false,
-          activeResponseHandle: null,
-          stopSession: null,
-          disposeSession: entry.disposeSession,
-        });
+        this.ctx.syncRuntimeAgentEntryReady?.(entry.sessionId, entry.disposeSession);
       },
       onEntryDisposed: (sessionId) => {
-        this.ctx.chatSessionRuntimeRegistry?.releaseHandle?.(sessionId);
+        this.ctx.releaseRuntimeHandle?.(sessionId);
       },
     });
     this._agentLifecycleBridge = agentLifecycleBridge;
@@ -322,7 +349,7 @@ export class LexOwnerFacade {
     );
     const partProcessor = new PartEventProcessor(
       this.ctx.partStore,
-      () => this._messageLifecycleBridge.currentMessageHandle,
+      () => this._messageLifecycleBridge.currentResponseHandle,
     );
     const messageLifecycleBridge = new LexMessageLifecycleBridge(
       this.ctx,
@@ -353,7 +380,7 @@ export class LexOwnerFacade {
       this.ctx,
       (userMessage, displayContent, metadata) => turnControlBridge.start(userMessage, displayContent, metadata),
       (turnId, userMessage, displayContent, metadata) => renderEventBridge.seedPendingTurn(turnId, userMessage, displayContent, metadata),
-      () => uiEventBridge.ensureAilyMessage(),
+      (turnId) => uiEventBridge.ensureResponseItem(turnId),
       () => turnBridge.messages(),
       () => runtimeConfigBridge.tools(),
     );
@@ -361,11 +388,11 @@ export class LexOwnerFacade {
       this.ctx,
       uiEventBridge,
       (sessionId, controller) => {
-        this.ctx.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, controller);
+        this.ctx.setRuntimeAbortController?.(sessionId, controller);
         agentLifecycleBridge.setAbortController(sessionId, controller);
       },
       (sessionId) => {
-        this.ctx.chatSessionRuntimeRegistry?.setAbortController?.(sessionId, null);
+        this.ctx.setRuntimeAbortController?.(sessionId, null);
         agentLifecycleBridge.setAbortController(sessionId, null);
       },
       () => this.ctx.sessionId,
@@ -453,8 +480,7 @@ export class LexOwnerFacade {
           },
           hostSyncBridge,
           {
-            ensureAilyMessage: () => {},
-            get currentMessageHandle() { return null; },
+            ensureResponseItem: () => {},
           },
           () => agentLifecycleBridge.getSessionSnapshot(sessionId),
         );
@@ -463,7 +489,9 @@ export class LexOwnerFacade {
       },
       () => this.ctx.resolveActiveRuntimeSessionId?.() ?? this.ctx.sessionId,
       (sessionId) => this.ctx.readSessionRuntimeState?.(sessionId)?.yieldRequested === true,
-      () => this.ctx.readCurrentViewSessionResource?.(),
+      (sessionId) => this.ctx.isRuntimeViewAttached?.(sessionId) === true,
+      (sessionId) => this.ctx.readRuntimeViewAttachmentGeneration?.(sessionId) ?? null,
+      (sessionId, generation) => this.ctx.isRuntimeViewAttachmentCurrent?.(sessionId, generation) === true,
     );
     this._turnExecutionBridge = turnExecutionBridge;
     // Activate the RenderEvent path: wire the render bridge into execution
@@ -481,17 +509,7 @@ export class LexOwnerFacade {
   }
 
   private isVisibleAttachedSession(sessionId: string): boolean {
-    const currentViewSessionResource = typeof this.ctx.readCurrentViewSessionResource === 'function'
-      ? this.ctx.readCurrentViewSessionResource()
-      : null;
-    const normalizedViewSessionResource = typeof currentViewSessionResource === 'string'
-      ? currentViewSessionResource.trim()
-      : '';
-    if (normalizedViewSessionResource) {
-      return normalizedViewSessionResource === sessionId;
-    }
-
-    return false;
+    return this.ctx.isRuntimeViewAttached?.(sessionId) === true;
   }
 
   private _resolveCompactionMetricsService(lex: AilyLexModule, sessionId: string): IMetricsService {

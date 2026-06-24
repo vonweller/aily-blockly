@@ -1,6 +1,6 @@
 import type { TurnRequest } from 'aily-lex/browser';
 import { readTurnRequestModeInfo, resolveTurnRequestModeCustomAgentTarget } from 'aily-lex/browser';
-import type { IAgentLifecycle, IChatCoordination, IChatServiceAccess, IChatViewAccess, ISessionAccess } from '../core/chat-context';
+import type { IAgentLifecycle, IChatServiceAccess, IChatViewAccess, ISessionAccess } from '../core/chat-context';
 import type { IProjectContext } from '../core/chat-context';
 import { MAIN_AGENT_TYPE, normalizeAgentIdentifier } from '../core/agent-identifiers';
 
@@ -11,8 +11,11 @@ type LexTurnStartupContext = Pick<
   & Pick<ISessionAccess, 'sessionId'>
   & Pick<IProjectContext, 'currentModel' | 'prjPath' | 'prjRootPath'>
   & Pick<IChatServiceAccess, 'repetitionDetectionService' | 'editCheckpointService' | 'ailyChatConfigService' | 'contextBudgetService'>
-  & Pick<IChatCoordination, 'editActions'>
   & {
+    readonly turnStartupEditLifecycle: {
+      ensureAbsExport(): void;
+      saveCheckpointToDisk(): void;
+    };
     resolveActiveRuntimeSessionId?(): string | null | undefined;
     readCurrentViewSessionResource?(): string | null;
   };
@@ -28,7 +31,7 @@ export class LexTurnStartupBridge {
     private readonly ctx: LexTurnStartupContext,
     private readonly startTurn: (userMessage: string, displayContent?: string, metadata?: TurnRequest['metadata']) => string | undefined,
     private readonly seedPendingTurn: (turnId: string, userMessage: string, displayContent?: string, metadata?: TurnRequest['metadata']) => void,
-    private readonly ensureAilyMessage: () => void,
+    private readonly ensureResponseItem: (turnId?: string) => void,
     private readonly getConversationMessages: () => any[],
     private readonly getCurrentTools: () => any[],
   ) {}
@@ -127,12 +130,12 @@ export class LexTurnStartupBridge {
     }
 
     if (!isDetachedRuntimeOwner) {
-      this.ensureAilyMessage();
+      this.ensureResponseItem(turnId);
     }
 
-    this.ctx.editActions.ensureAbsExport();
+    this.ctx.turnStartupEditLifecycle.ensureAbsExport();
     this.ctx.editCheckpointService.autoSaveEdits = this.ctx.ailyChatConfigService.autoSaveEdits;
-    this.ctx.editActions.saveCheckpointToDisk();
+    this.ctx.turnStartupEditLifecycle.saveCheckpointToDisk();
 
     const conversationMessages = this.getConversationMessages();
     const workspaceRoot = this.ctx.prjPath || this.ctx.prjRootPath || null;

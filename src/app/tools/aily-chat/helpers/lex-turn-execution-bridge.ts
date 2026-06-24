@@ -1,4 +1,5 @@
-import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
+import type { IAgentLifecycle } from '../core/chat-context';
+import type { ChatRuntimeOwnerScheduler } from '../core/chat-runtime-owner-scheduler';
 import { ChatPerformanceTracer } from '../services/chat-perf-tracer';
 import type { RenderEvent, SessionSnapshot, TurnRequest, TurnResponseStatus, TurnResponseTurn } from 'aily-lex/browser';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
@@ -12,7 +13,9 @@ import {
 type LexTurnExecutionContext = Pick<
   IAgentLifecycle,
   'activeToolExecutions' | 'currentStatelessMode' | 'toolCallingIteration' | 'isCancelled' | 'isWaiting'
-> & Pick<IChatServiceAccess, 'ngZone'>;
+> & {
+  readonly ownerScheduler: Pick<ChatRuntimeOwnerScheduler, 'runOutsideOwner'>;
+};
 
 type LexTurnRunOptions = {
   readonly yieldRequested?: () => boolean;
@@ -30,18 +33,18 @@ type RenderEventSource = {
 type RenderEventSink = {
   readonly turnResponses?: readonly TurnResponseTurn[];
   reset(): void;
-  setProjectionSessionResource?(sessionResource: string | null | undefined): void;
+  setProjectionSessionResource?(sessionResource: string | null | undefined, visibleAttachmentGeneration?: number | null): void;
   getProjectionSessionResource?(): string | null | undefined;
   hydrateTurnResponses?(turnResponses: readonly TurnResponseTurn[]): void;
   prepareTurnRequest(requestContent: string, displayContent?: string, metadata?: TurnRequest['metadata']): void;
   processEvent(event: RenderEvent): void;
   flushPendingEvents(events: readonly RenderEvent[]): void;
   finalizeCurrentTurn?(fallbackStatus?: TurnResponseStatus): boolean;
-  appendExecutionError(message: string): boolean;
+  appendExecutionError(message: string, options?: { readonly retry?: boolean }): boolean;
 };
 
 type TurnUiEventSink = {
-  ensureAilyMessage(): void;
+  ensureResponseItem(): void;
   resetTurnState(): void;
   getCurrentTurnDraft(): LexTurnDraft;
   finalizeTurn(saveTarget?: HostSessionSaveTarget | null): Promise<void>;
@@ -57,6 +60,7 @@ interface LexTurnExecutionRunState {
   readonly saveTarget: HostSessionSaveTarget | null;
   abortSignal?: AbortSignal;
   detachedRenderEventBridge: RenderEventSink | null;
+  visibleSinkGeneration: number | null;
   activeTurnId: string | null;
   activeSubagentRenderScopes: ActiveSubagentRenderScope[];
   requestContent: string;
@@ -136,11 +140,11 @@ function cloneExecutionTurnResponse(turn: TurnResponseTurn): TurnResponseTurn {
   }
 }
 
-async function yieldOutsideAngular(ctx: Pick<IChatServiceAccess, 'ngZone'>, label = 'turn'): Promise<void> {
+async function yieldOutsideOwner(ctx: Pick<LexTurnExecutionContext, 'ownerScheduler'>, label = 'turn'): Promise<void> {
   const startedAt = performance.now();
   try {
-    if (typeof ctx.ngZone?.runOutsideAngular === 'function') {
-      await ctx.ngZone.runOutsideAngular(() => yieldToBrowserTask(0));
+    if (typeof ctx.ownerScheduler?.runOutsideOwner === 'function') {
+      await ctx.ownerScheduler.runOutsideOwner(() => yieldToBrowserTask(0));
       ChatPerformanceTracer.recordDuration('turn_yield', performance.now() - startedAt, label, {
         slowThresholdMs: 24,
       });
@@ -186,7 +190,12 @@ export class LexTurnExecutionBridge {
     ) => RenderEventSink | null,
     private readonly getExecutionSessionId?: () => string | null | undefined,
     private readonly readExecutionYieldRequested?: (sessionId: string | null | undefined) => boolean,
-    private readonly readCurrentViewSessionResource?: () => string | null | undefined,
+    private readonly isRuntimeViewAttached?: (sessionId: string | null | undefined) => boolean,
+    private readonly readRuntimeViewAttachmentGeneration?: (sessionId: string | null | undefined) => number | null | undefined,
+    private readonly isRuntimeViewAttachmentCurrent?: (
+      sessionId: string | null | undefined,
+      generation: number | null | undefined,
+    ) => boolean,
   ) {}
 
   /**
@@ -231,7 +240,7 @@ export class LexTurnExecutionBridge {
     this.resetTurnState();
 
     try {
-      return this.ctx.ngZone.runOutsideAngular(async () => {
+      return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
         await this.preparePartsRendering();
 
         try {
@@ -247,7 +256,7 @@ export class LexTurnExecutionBridge {
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `toolCalls=${turnDraft.toolCallCount}`);
         await this.finalizeTurnExecution(executionState);
-      });
+      }));
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn', `error: ${error.message}`);
       return this.finalizeTurnExecution(executionState);
@@ -285,7 +294,7 @@ export class LexTurnExecutionBridge {
     this.resetRenderEventTurnState(executionState, userMessage, displayContent);
 
     try {
-      return this.ctx.ngZone.runOutsideAngular(async () => {
+      return Promise.resolve(this.ctx.ownerScheduler.runOutsideOwner(async () => {
         await this.preparePartsRendering();
 
         try {
@@ -301,7 +310,7 @@ export class LexTurnExecutionBridge {
         const turnDraft = this.uiEventBridge.getCurrentTurnDraft();
         ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `toolCalls=${turnDraft.toolCallCount}`);
         await this.finalizeTurnExecution(executionState);
-      });
+      }));
     } catch (error: any) {
       ChatPerformanceTracer.end(turnSpan, 'lex_runTurn_render', `error: ${error.message}`);
       return this.finalizeTurnExecution(executionState);
@@ -317,6 +326,7 @@ export class LexTurnExecutionBridge {
       sessionId,
       saveTarget: this.captureExecutionSaveTarget?.(sessionId) ?? null,
       detachedRenderEventBridge: null,
+      visibleSinkGeneration: null,
       activeTurnId: null,
       activeSubagentRenderScopes: [],
       requestContent,
@@ -421,7 +431,8 @@ export class LexTurnExecutionBridge {
       this.readExecutionTurnResponses?.(state.sessionId),
     );
     this._renderEventBridge!.reset();
-    this._renderEventBridge!.setProjectionSessionResource?.(state.sessionId ?? null);
+    state.visibleSinkGeneration = this.captureVisibleAttachmentGeneration(state.sessionId);
+    this.setVisibleRenderSinkProjectionSession(state.sessionId, state.visibleSinkGeneration);
     this._renderEventBridge!.hydrateTurnResponses?.(executionTurnResponses);
     this._renderEventBridge!.prepareTurnRequest(
       state.requestContent || userMessage,
@@ -487,7 +498,7 @@ export class LexTurnExecutionBridge {
       }
       const now = performance.now();
       if (now - lastYieldTime >= 16) {
-        await yieldOutsideAngular(this.ctx, 'render');
+        await yieldOutsideOwner(this.ctx, 'render');
         lastYieldTime = performance.now();
       }
     }
@@ -798,10 +809,10 @@ export class LexTurnExecutionBridge {
   }
 
   private async preparePartsRendering(): Promise<void> {
-    this.uiEventBridge.ensureAilyMessage();
+    this.uiEventBridge.ensureResponseItem();
 
     // 等待同步 detectChanges 之后再进入 for-await，确保 Parts 组件已挂载。
-    await yieldOutsideAngular(this.ctx, 'prepare');
+    await yieldOutsideOwner(this.ctx, 'prepare');
   }
 
   private async consumeAgentEvents(
@@ -827,7 +838,7 @@ export class LexTurnExecutionBridge {
 
       const now = performance.now();
       if (now - lastYieldTime >= 16) {
-        await yieldOutsideAngular(this.ctx, 'legacy');
+        await yieldOutsideOwner(this.ctx, 'legacy');
         lastYieldTime = performance.now();
       }
     }
@@ -866,7 +877,7 @@ export class LexTurnExecutionBridge {
     }
 
     const renderEventSink = this.resolveExecutionRenderEventSink(state);
-    if (renderEventSink.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE)) {
+    if (renderEventSink.appendExecutionError(GENERIC_EXECUTION_ERROR_MESSAGE, { retry: true })) {
       this.syncExecutionRuntimeState(state, renderEventSink);
       return;
     }
@@ -906,7 +917,8 @@ export class LexTurnExecutionBridge {
     const executionSessionId = state.sessionId;
     if (!executionSessionId || this.isExecutionSessionVisible(executionSessionId)) {
       const visibleOwnerMismatch = !!executionSessionId
-        && !this.isVisibleRenderEventBridgeOwnedBy(executionSessionId);
+        && (!this.isVisibleRenderEventBridgeOwnedBy(executionSessionId)
+          || !this.isVisibleAttachmentGenerationCurrent(state));
       if (state.detachedRenderEventBridge || visibleOwnerMismatch) {
         const mergedTurnResponses = mergeExecutionTurnResponsesById(
           this.readExecutionTurnResponses?.(executionSessionId),
@@ -916,14 +928,21 @@ export class LexTurnExecutionBridge {
           sessionId: executionSessionId ?? null,
           replayedTurnResponses: mergedTurnResponses.length,
           visibleOwnerMismatch,
+          visibleAttachmentGeneration: state.visibleSinkGeneration,
+          currentVisibleAttachmentGeneration: this.captureVisibleAttachmentGeneration(executionSessionId),
         });
-        this._renderEventBridge.setProjectionSessionResource?.(executionSessionId ?? null);
+        state.visibleSinkGeneration = this.captureVisibleAttachmentGeneration(executionSessionId);
+        this.setVisibleRenderSinkProjectionSession(executionSessionId, state.visibleSinkGeneration);
         this._renderEventBridge.hydrateTurnResponses?.(mergedTurnResponses);
         this._renderEventBridge.prepareTurnRequest(
           state.requestContent,
           state.requestDisplayContent,
           state.requestMetadata,
         );
+      }
+      if (state.visibleSinkGeneration === null && this.hasVisibleAttachmentGenerationReader()) {
+        state.visibleSinkGeneration = this.captureVisibleAttachmentGeneration(executionSessionId);
+        this.setVisibleRenderSinkProjectionSession(executionSessionId, state.visibleSinkGeneration);
       }
       state.detachedRenderEventBridge = null;
       return this._renderEventBridge;
@@ -954,6 +973,7 @@ export class LexTurnExecutionBridge {
       throw new Error(`Detached render sink is required for background session ${executionSessionId}.`);
     }
 
+    state.visibleSinkGeneration = null;
     return state.detachedRenderEventBridge;
   }
 
@@ -1039,6 +1059,9 @@ export class LexTurnExecutionBridge {
   }
 
   private isExecutionSessionVisible(executionSessionId: string): boolean {
+    if (typeof this.isRuntimeViewAttached === 'function') {
+      return this.isRuntimeViewAttached(executionSessionId) === true;
+    }
     return this.captureVisibleSessionId() === executionSessionId;
   }
 
@@ -1051,8 +1074,55 @@ export class LexTurnExecutionBridge {
     return normalizeSessionResource(readProjectionSessionResource.call(this._renderEventBridge)) === executionSessionId;
   }
 
+  private isVisibleAttachmentGenerationCurrent(state: LexTurnExecutionRunState): boolean {
+    if (!state.sessionId || !this.isExecutionSessionVisible(state.sessionId)) {
+      return false;
+    }
+
+    if (!this.hasVisibleAttachmentGenerationReader()) {
+      return true;
+    }
+
+    const expectedGeneration = normalizeVisibleAttachmentGeneration(state.visibleSinkGeneration);
+    if (expectedGeneration === null) {
+      return false;
+    }
+
+    if (typeof this.isRuntimeViewAttachmentCurrent === 'function') {
+      return this.isRuntimeViewAttachmentCurrent(state.sessionId, expectedGeneration) === true;
+    }
+
+    const currentGeneration = this.captureVisibleAttachmentGeneration(state.sessionId);
+    return currentGeneration !== null && currentGeneration === expectedGeneration;
+  }
+
+  private captureVisibleAttachmentGeneration(sessionId: string | null | undefined): number | null {
+    if (!sessionId || !this.hasVisibleAttachmentGenerationReader()) {
+      return null;
+    }
+
+    return normalizeVisibleAttachmentGeneration(this.readRuntimeViewAttachmentGeneration(sessionId));
+  }
+
+  private hasVisibleAttachmentGenerationReader(): boolean {
+    return typeof this.readRuntimeViewAttachmentGeneration === 'function';
+  }
+
+  private setVisibleRenderSinkProjectionSession(sessionId: string | null | undefined, generation: number | null): void {
+    if (!this._renderEventBridge?.setProjectionSessionResource) {
+      return;
+    }
+
+    if (generation === null) {
+      this._renderEventBridge.setProjectionSessionResource(sessionId ?? null);
+      return;
+    }
+
+    this._renderEventBridge.setProjectionSessionResource(sessionId ?? null, generation);
+  }
+
   private captureVisibleSessionId(): string | null {
-    const currentSessionId = this.readCurrentViewSessionResource?.() ?? this.getCurrentSessionId();
+    const currentSessionId = this.getCurrentSessionId();
     if (typeof currentSessionId !== 'string') {
       return null;
     }
@@ -1088,6 +1158,10 @@ export class LexTurnExecutionBridge {
 
 function normalizeSessionResource(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeVisibleAttachmentGeneration(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function isSubagentToolName(toolName: string | null | undefined): boolean {

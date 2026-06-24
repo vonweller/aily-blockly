@@ -8,7 +8,6 @@ import { HostSessionItemController } from '../helpers/host-session-item-controll
 import { ChatSessionStateService } from './chat-session-state.service';
 import type { ChatSessionRuntimeChangedEvent } from './chat-session-runtime-store.service';
 import { ChatSessionRuntimeStoreService } from './chat-session-runtime-store.service';
-import { ChatSessionRuntimeRegistryService } from './chat-session-runtime-registry.service';
 import { ChatSessionModelStoreService, type ChatSessionModel } from './chat-session-model-store.service';
 import { ChatSessionViewModelStoreService } from './chat-session-view-model-store.service';
 import { ChatPerformanceTracer } from './chat-perf-tracer';
@@ -114,7 +113,6 @@ export class ChatSessionItemsService implements OnDestroy {
     private readonly chatSessionRuntimeStore: ChatSessionRuntimeStoreService,
     @Optional() private readonly editCheckpointService: EditCheckpointService | null = null,
     @Optional() private readonly chatSessionStateService: ChatSessionStateService | null = null,
-    @Optional() private readonly chatSessionRuntimeRegistry: ChatSessionRuntimeRegistryService | null = null,
     @Optional() private readonly chatSessionModelStore: ChatSessionModelStoreService | null = null,
     @Optional() private readonly chatSessionViewModelStore: ChatSessionViewModelStoreService | null = null,
   ) {
@@ -169,13 +167,7 @@ export class ChatSessionItemsService implements OnDestroy {
   }
 
   private readLiveSessionRuntimeState(sessionId: string | null | undefined): ReturnType<ChatSessionRuntimeStoreService['read']> {
-    const projectedRuntimeState = this.chatSessionRuntimeRegistry?.readProjectedRuntimeState(sessionId);
-    if (projectedRuntimeState) {
-      return projectedRuntimeState;
-    }
-
-    const runtimeState = this.chatSessionRuntimeStore.read(sessionId);
-    return runtimeState;
+    return this.chatSessionRuntimeStore.read(sessionId);
   }
 
   get sessionListItems(): ChatSessionListItem[] {
@@ -604,7 +596,12 @@ export class ChatSessionItemsService implements OnDestroy {
     }
 
     this.refreshScheduled = true;
-    queueMicrotask(() => this.flushScheduledRefreshes());
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => this.flushScheduledRefreshes());
+      return;
+    }
+
+    setTimeout(() => this.flushScheduledRefreshes(), 0);
   }
 
   private flushScheduledRefreshes(): void {

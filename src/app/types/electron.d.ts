@@ -29,6 +29,15 @@ declare global {
         cancel: (streamId: string) => Promise<any>;
         onEvent: (streamId: string, callback: (payload: any) => void) => () => void;
       };
+      chatRuntimeHost?: {
+        registerOwner: (ownerId: string) => Promise<{ ok?: boolean; ownerId?: string }>;
+        unregisterOwner: (ownerId: string) => Promise<{ ok?: boolean }>;
+        call: (method: string, args: readonly unknown[]) => Promise<unknown>;
+        onOwnerCommand: (callback: (payload: unknown) => void) => () => void;
+        sendOwnerResponse: (payload: unknown) => void;
+        emitOwnerEvent: (payload: unknown) => void;
+        onEvent: (callback: (payload: any) => void) => () => void;
+      };
       iWindow: any;
       subWindow: any;
       coderEmbed: {

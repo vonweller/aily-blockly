@@ -7,6 +7,7 @@ import { provideAnimations } from '@angular/platform-browser/animations';
 import { NzModalModule } from 'ng-zorro-antd/modal';
 import { authInterceptor } from './interceptors/auth.interceptor';
 import { retryInterceptor } from './interceptors/retry.interceptor';
+import { AILY_CHAT_SHARED_PROVIDERS } from './tools/aily-chat/aily-chat.providers';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -22,6 +23,7 @@ export const appConfig: ApplicationConfig = {
       withInterceptors([authInterceptor, retryInterceptor])
     ),
     provideAnimations(),
-    importProvidersFrom(NzModalModule)
+    importProvidersFrom(NzModalModule),
+    ...AILY_CHAT_SHARED_PROVIDERS
   ]
 };

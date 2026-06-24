@@ -1,9 +1,7 @@
 import type { IAgentLifecycle, IChatServiceAccess } from '../core/chat-context';
-import { buildConfirmationPartId, buildQuestionPartId, mkConfirmation, mkError, mkQuestion } from '../core/chat-parts';
+import { buildConfirmationPartId, buildQuestionPartId } from '../core/chat-parts';
 import type { ChatPartScope, ConfirmationPart, QuestionItem, QuestionPart } from '../core/chat-parts';
 import type { ToolApprovalRequest } from './tool-approval-ui';
-import type { ChatListItem } from '../services/chat-history.service';
-import type { ChatMessageHandle } from './chat-message-handle';
 import type { LexTurnDraft } from './lex-message-lifecycle-bridge';
 import type { RenderEvent } from 'aily-lex/browser';
 import type { HostSessionSaveTarget } from './host-session-save-bridge';
@@ -12,44 +10,30 @@ import {
   type LexAgentHostSyncAccess,
   type LexAgentPartProcessor,
 } from './lex-agent-event-bridge';
-import { ChatViewWriteBridge } from './chat-view-write-bridge';
 
-type LexUiEventViewWriteContext = ConstructorParameters<typeof ChatViewWriteBridge>[0];
-
-type LexUiEventContext = LexUiEventViewWriteContext
-  & ConstructorParameters<typeof LexAgentEventBridge>[0]
+type LexUiEventContext = ConstructorParameters<typeof LexAgentEventBridge>[0]
   & {
+    readonly sessionId: string;
     readCurrentViewSessionResource?(): string | null;
   };
 
 type LexUiEventLifecycleAccess = {
-  ensureAilyMessage(): void;
+  ensureResponseItem(turnId?: string): void;
   resetTurnState(): void;
   getCurrentTurnDraft(): LexTurnDraft;
   finalize(saveTarget?: HostSessionSaveTarget | null): Promise<void>;
-  readonly currentMessageHandle: ChatMessageHandle<ChatListItem> | null;
   closeNativeThinking(): void;
   startNativeThinking(): void;
 };
 
 type LexUiEventMainLifecycleAccess = Pick<
   LexUiEventLifecycleAccess,
-  'ensureAilyMessage' | 'closeNativeThinking' | 'startNativeThinking'
+  'ensureResponseItem' | 'closeNativeThinking' | 'startNativeThinking'
 >;
 
 type LexUiEventOwnerLifecycleAccess = Pick<
   LexUiEventLifecycleAccess,
-  'ensureAilyMessage' | 'resetTurnState' | 'getCurrentTurnDraft' | 'finalize' | 'currentMessageHandle'
->;
-
-type LexUiEventWriteAccess = Pick<
-  ChatViewWriteBridge,
-  | 'appendPartToHandle'
-  | 'appendMarkdownToHandle'
-  | 'updateQuestionAnswersByPartId'
-  | 'updateConfirmationResultByPartId'
-  | 'updateToolCallApprovalRequestByToolCallId'
-  | 'resolveToolCallApprovalByToolCallId'
+  'ensureResponseItem' | 'resetTurnState' | 'getCurrentTurnDraft' | 'finalize'
 >;
 
 type LexUiEventMainEventBridge = Pick<
@@ -62,6 +46,7 @@ type LexUiInteractionRenderEvent = Extract<RenderEvent, { type: 'approval_reques
 type LexUiEventRenderAccess = {
   processInteractionEvent(event: LexUiInteractionRenderEvent): boolean;
   updateQuestionAnswers(answers: QuestionPart['answers'], partId: string): boolean;
+  appendExecutionError(message: string, options?: { readonly retry?: boolean }): boolean;
 };
 
 /**
@@ -72,7 +57,6 @@ type LexUiEventRenderAccess = {
  */
 export class LexUiEventBridge {
   private readonly mainEventBridge: LexUiEventMainEventBridge;
-  private readonly viewWriteBridge: LexUiEventWriteAccess;
   private readonly messageLifecycleBridge: LexUiEventOwnerLifecycleAccess;
   private readonly renderEventBridge?: LexUiEventRenderAccess;
 
@@ -83,45 +67,6 @@ export class LexUiEventBridge {
     messageLifecycleBridge: LexUiEventLifecycleAccess,
     renderEventBridge?: LexUiEventRenderAccess,
   ) {
-    const viewWriteContext: LexUiEventViewWriteContext = {
-      get list() {
-        return ctx.list;
-      },
-      set list(list) {
-        ctx.list = list;
-      },
-      get partStore() {
-        return ctx.partStore;
-      },
-      get viewAdapter() {
-        return ctx.viewAdapter;
-      },
-      get scrollManager() {
-        return ctx.scrollManager;
-      },
-      get invalidateHostRequestGraph() {
-        return ctx.invalidateHostRequestGraph;
-      },
-      get triggerSyncDetectChanges() {
-        return ctx.triggerSyncDetectChanges;
-      },
-      get sessionId() {
-        return ctx.sessionId;
-      },
-      get chatHistoryService() {
-        return ctx.chatHistoryService;
-      },
-      get currentModelName() {
-        return ctx.currentModelName;
-      },
-      get currentMessageSource() {
-        return ctx.currentMessageSource;
-      },
-      get ngZone() {
-        return ctx.ngZone;
-      },
-      markCurrentViewVisibleProjectionOwner: () => ctx.markCurrentViewVisibleProjectionOwner(),
-    };
     const mainLifecycleBridge: LexUiEventMainLifecycleAccess = messageLifecycleBridge;
     this.messageLifecycleBridge = messageLifecycleBridge;
     this.renderEventBridge = renderEventBridge;
@@ -131,11 +76,10 @@ export class LexUiEventBridge {
       hostSyncBridge,
       mainLifecycleBridge,
     );
-    this.viewWriteBridge = new ChatViewWriteBridge(viewWriteContext);
   }
 
-  ensureAilyMessage(): void {
-    this.messageLifecycleBridge.ensureAilyMessage();
+  ensureResponseItem(turnId?: string): void {
+    this.messageLifecycleBridge.ensureResponseItem(turnId);
   }
 
   resetTurnState(): void {
@@ -168,38 +112,17 @@ export class LexUiEventBridge {
   }
 
   appendLifecycleError(message: string): void {
-    this.ensureAilyMessage();
-    const handle = this.messageLifecycleBridge.currentMessageHandle;
-    if (!handle) {
+    if (this.renderEventBridge?.appendExecutionError(message)) {
       return;
     }
-
-    this.viewWriteBridge.appendPartToHandle(handle, mkError(message), { state: 'done' });
+    throw new Error('Failed to append lifecycle error: no active canonical response.');
   }
 
   appendExecutionError(message: string, options: { retry?: boolean } = {}): void {
-    this.ensureAilyMessage();
-    const handle = this.messageLifecycleBridge.currentMessageHandle;
-    if (!handle) {
+    if (this.renderEventBridge?.appendExecutionError(message, options)) {
       return;
     }
-
-    this.viewWriteBridge.appendPartToHandle(handle, mkError(
-      message,
-      'error',
-      options.retry
-        ? {
-          errorDetails: {
-            confirmationButtons: [
-              {
-                data: { ailyContinueOnError: true },
-                label: '重试',
-              },
-            ],
-          },
-        }
-        : undefined,
-    ), { state: 'done' });
+    throw new Error('Failed to append execution error: no active canonical response.');
   }
 
   presentQuestion(questions: QuestionItem[], scope?: ChatPartScope): string {
@@ -227,24 +150,11 @@ export class LexUiEventBridge {
       return partId;
     }
 
-    this.ensureAilyMessage();
-    const handle = this.messageLifecycleBridge.currentMessageHandle;
-    if (!handle) {
-      throw new Error('Failed to create question part: no active aily message handle after ensureAilyMessage().');
-    }
-
-    this.viewWriteBridge.appendPartToHandle(handle, mkQuestion(questions, undefined, requestId, scope));
-    return partId;
+    throw new Error('Failed to create question part: no active canonical response.');
   }
 
   updateQuestionAnswers(answers: QuestionPart['answers'], partId: string): boolean {
-    const mirrored = this.renderEventBridge?.updateQuestionAnswers(answers, partId) ?? false;
-    if (!this.canWriteCurrentView()) {
-      return mirrored;
-    }
-
-    const updated = this.viewWriteBridge.updateQuestionAnswersByPartId(answers, partId);
-    return mirrored || updated;
+    return this.renderEventBridge?.updateQuestionAnswers(answers, partId) ?? false;
   }
 
   presentToolCallApproval(request: ToolApprovalRequest): string {
@@ -265,12 +175,11 @@ export class LexUiEventBridge {
       return request.toolCallId;
     }
 
-    const updated = this.viewWriteBridge.updateToolCallApprovalRequestByToolCallId(request);
-    if (mirrored || updated) {
+    if (mirrored) {
       return request.toolCallId;
     }
 
-    throw new Error(`Failed to present tool approval ${request.toolCallId}: no matching tool_call part found.`);
+    throw new Error(`Failed to present tool approval ${request.toolCallId}: no active canonical response.`);
   }
 
   resolveToolCallApproval(
@@ -289,12 +198,11 @@ export class LexUiEventBridge {
       return;
     }
 
-    const updated = this.viewWriteBridge.resolveToolCallApprovalByToolCallId(toolCallId, { approved, scope });
-    if (mirrored || updated) {
+    if (mirrored) {
       return;
     }
 
-    throw new Error(`Failed to resolve tool approval ${toolCallId}: no matching tool_call part found.`);
+    throw new Error(`Failed to resolve tool approval ${toolCallId}: no active canonical response.`);
   }
 
   presentConfirmation(
@@ -325,17 +233,7 @@ export class LexUiEventBridge {
       return partId;
     }
 
-    this.ensureAilyMessage();
-    const handle = this.messageLifecycleBridge.currentMessageHandle;
-    if (!handle) {
-      throw new Error(`Failed to present confirmation ${askId}: no active aily message handle after ensureAilyMessage().`);
-    }
-
-    if (!this.viewWriteBridge.appendPartToHandle(handle, mkConfirmation(askId, message, toolName, source, presentation))) {
-      throw new Error(`Failed to append confirmation part for ${askId}.`);
-    }
-
-    return partId;
+    throw new Error(`Failed to present confirmation ${askId}: no active canonical response.`);
   }
 
   resolveConfirmation(
@@ -344,6 +242,7 @@ export class LexUiEventBridge {
     approved: boolean,
     scope?: ConfirmationPart['scope'],
   ): void {
+    void partId;
     if (this.renderEventBridge?.processInteractionEvent({
       type: 'approval_resolve',
       requestId: askId,
@@ -354,17 +253,7 @@ export class LexUiEventBridge {
       return;
     }
 
-    if (!this.canWriteCurrentView()) {
-      return;
-    }
-
-    if (!this.viewWriteBridge.updateConfirmationResultByPartId(partId, {
-      resolved: true,
-      result: approved ? 'approved' : 'rejected',
-      scope,
-    })) {
-      throw new Error(`Failed to resolve confirmation ${askId}: no matching confirmation part found.`);
-    }
+    throw new Error(`Failed to resolve confirmation ${askId}: no active canonical response.`);
   }
 
   private canWriteCurrentView(): boolean {

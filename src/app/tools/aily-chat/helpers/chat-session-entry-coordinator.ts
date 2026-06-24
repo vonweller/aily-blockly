@@ -14,11 +14,24 @@ export class ChatSessionEntryCoordinator {
   constructor(private readonly ctx: ChatSessionEntryCoordinatorContext) {}
 
   async initializeEntryInventory(options?: { readonly restorePersistedTarget?: boolean }): Promise<boolean> {
+    const shouldRestorePersistedTarget = options?.restorePersistedTarget !== false;
+    if (this.ctx.hasCurrentSession) {
+      if (shouldRestorePersistedTarget) {
+        const restoredCurrent = await this.ctx.restorePersistedSessionTarget().catch((error: unknown) => {
+          console.warn('恢复持久化 session target 失败:', error);
+          return false;
+        });
+        if (restoredCurrent) {
+          return true;
+        }
+      }
+      return true;
+    }
+
     this.ctx.enterEntryState({ disposeRuntime: false });
     ChatPerformanceTracer.increment('entry_open.entry_shell_visible');
     ChatPerformanceTracer.mark('entry_open.entry_shell_visible');
 
-    const shouldRestorePersistedTarget = options?.restorePersistedTarget !== false;
     const restored = shouldRestorePersistedTarget
       ? await this.ctx.restorePersistedSessionTarget().catch((error: unknown) => {
           console.warn('恢复持久化 session target 失败:', error);

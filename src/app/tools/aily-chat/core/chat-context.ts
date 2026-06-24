@@ -34,7 +34,7 @@ import type { ScrollManagerService } from '../services/scroll-manager.service';
 import type { ResourceManagerService } from '../services/resource-manager.service';
 import type { MenuManagerService } from '../services/menu-manager.service';
 import type { ChatViewAdapter } from '../services/chat-view-adapter';
-import type { ChatRuntimeInteractionHostService } from '../services/chat-runtime-interaction-host.service';
+import type { ChatRuntimeOwnerInteractionHostPort } from '../services/chat-runtime-owner-ports';
 
 import type { ChatMessage } from './chat-types';
 import type { ChatPartStore } from './chat-part-store';
@@ -90,6 +90,8 @@ export interface IChatViewAccess {
   invalidateHostRequestGraph(): void;
   /** 同步触发变更检测 */
   triggerSyncDetectChanges(): void;
+  /** 当前可见 transcript attachment generation；live 写入必须匹配该 generation。 */
+  readVisibleTranscriptAttachmentGeneration?(sessionId?: string | null): number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +147,7 @@ export interface IChatServiceAccess {
   readonly translate: TranslateService;
   readonly message: NzMessageService;
   readonly resourceManager: ResourceManagerService;
-  readonly runtimeInteractionHost: ChatRuntimeInteractionHostService;
+  readonly runtimeInteractionHost: ChatRuntimeOwnerInteractionHostPort;
 }
 
 // ---------------------------------------------------------------------------
