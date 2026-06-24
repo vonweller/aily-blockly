@@ -52,6 +52,7 @@ export interface BlocklyToolboxFacadeItem {
   toolboxItemId: string;
   libraryName?: string | null;
   libraryPath?: string | null;
+  isLocalLibrary?: boolean;
   parentKey: string | null;
   level: number;
   expanded: boolean;
@@ -982,11 +983,8 @@ export class BlocklyService {
           const projPkgJsonPath = this.electronService.pathJoin(projectPath, 'package.json');
           if (this.electronService.exists(projPkgJsonPath)) {
             const projPkgJson = JSON.parse(this.electronService.readFile(projPkgJsonPath));
-            const depVersion = projPkgJson?.dependencies?.[libPackageName] || '';
-            if (typeof depVersion === 'string' && depVersion.startsWith('file:')) {
-              const relativePath = depVersion.substring(5); // 去掉 "file:" 前缀
-              libLocalPath = this.electronService.pathJoin(projectPath, relativePath);
-            }
+            const depVersion = this.getPackageDependencySpec(projPkgJson, libPackageName);
+            libLocalPath = this.resolveFileDependencyPath(projectPath, depVersion);
           }
         } catch (e) { }
         // 替换block中静态图片路径
@@ -1001,7 +999,7 @@ export class BlocklyService {
             toolbox = processToolboxI18n(toolbox, i18nData);
           }
           this.normalizeLibraryToolboxJson(toolbox);
-          this.attachLibraryMetadataToToolbox(toolbox, libPackageName, libPackagePath);
+          this.attachLibraryMetadataToToolbox(toolbox, libPackageName, libPackagePath, !!libLocalPath);
           this.loadLibToolbox(toolbox);
         }
       } else {
@@ -1315,7 +1313,7 @@ export class BlocklyService {
     this.syncToolboxFacadeWithWorkspace();
   }
 
-  private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string) {
+  private attachLibraryMetadataToToolbox(toolboxItem: any, libraryName: string, libraryPath: string, isLocalLibrary: boolean) {
     if (!toolboxItem || typeof toolboxItem !== 'object') {
       return;
     }
@@ -1323,10 +1321,11 @@ export class BlocklyService {
     if (toolboxItem.kind === 'category') {
       toolboxItem.ailyLibraryName = libraryName;
       toolboxItem.ailyLibraryPath = libraryPath;
+      toolboxItem.ailyIsLocalLibrary = isLocalLibrary;
     }
 
     if (Array.isArray(toolboxItem.contents)) {
-      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(child, libraryName, libraryPath));
+      toolboxItem.contents.forEach((child: any) => this.attachLibraryMetadataToToolbox(child, libraryName, libraryPath, isLocalLibrary));
     }
   }
 
@@ -1752,6 +1751,23 @@ export class BlocklyService {
     return typeof dependencySpec === 'string' ? dependencySpec : String(dependencySpec || '');
   }
 
+  private resolveFileDependencyPath(projectPath: string, dependencySpec: string): string | undefined {
+    if (!dependencySpec.startsWith('file:')) {
+      return undefined;
+    }
+
+    const filePath = dependencySpec.slice(5);
+    if (!filePath) {
+      return undefined;
+    }
+
+    if (window['path']?.isAbsolute?.(filePath)) {
+      return filePath;
+    }
+
+    return this.electronService.pathJoin(projectPath, filePath);
+  }
+
   private isSameUsedLibraryManifestEntry(previousEntry: any, nextEntry: BlocklyUsedLibraryManifestEntry): boolean {
     if (!previousEntry || typeof previousEntry !== 'object') {
       return false;
@@ -1838,6 +1854,7 @@ export class BlocklyService {
       toolboxItemId: item.toolboxitemid || item.categoryId || `${item.kind}:${item.name}`,
       libraryName: item.ailyLibraryName || null,
       libraryPath: item.ailyLibraryPath || null,
+      isLocalLibrary: item.ailyIsLocalLibrary === true,
       parentKey,
       level,
       expanded: this.normalizeToolboxExpandedState(item.expanded, false),
