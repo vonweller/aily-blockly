@@ -778,7 +778,7 @@ export class ConfigService {
         originalError
       );
       console.error('[ConfigService] 从线上恢复 coder_board_index.json 失败:', remoteError);
-      this.showDedupedError('coder-board-list', message);
+      this.emitDedupedError('coder-board-list', message);
     }
   }
 
