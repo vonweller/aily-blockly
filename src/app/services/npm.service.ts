@@ -1,8 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { ElectronService } from './electron.service';
-import { ConfigService } from './config.service';
-import { UiService } from './ui.service';
 import { API } from '../configs/api.config';
 import { ProjectService } from './project.service';
 import { CmdService } from './cmd.service';
@@ -21,8 +19,6 @@ export class NpmService {
   constructor(
     private http: HttpClient,
     private electronService: ElectronService,
-    private configService: ConfigService,
-    private uiService: UiService,
     private prjService: ProjectService,
     private cmdService: CmdService,
     private workflowService: WorkflowService,
