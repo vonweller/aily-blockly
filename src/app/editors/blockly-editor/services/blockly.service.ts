@@ -3,8 +3,10 @@ import { BehaviorSubject, Subject, debounceTime, filter, firstValueFrom, map, sw
 import * as Blockly from 'blockly';
 import { processI18n, processJsonVar, processStaticFilePath, processToolboxI18n } from '../components/blockly/abf';
 import { TranslateService } from '@ngx-translate/core';
-import { parse as parseJavaScript } from 'acorn';
 import { ElectronService } from '../../../services/electron.service';
+import { LogService } from '../../../services/log.service';
+import { NoticeService } from '../../../services/notice.service';
+import { BlocklyLibraryDiagnostics, BlocklyLibraryPackageService, BlocklyLibraryPackageSnapshot } from '../../../services/blockly-library-package.service';
 import { BlockCodeMapping, CodeLineRange } from '../components/blockly/generators/arduino/arduino';
 import { convertBlockTreeToAbs, convertAbiToAbsWithLineMap } from '../../../tools/aily-chat/public-api';
 import { BlockSearcher } from '../components/blockly/plugins/toolbox-search/src/block_searcher';
@@ -60,11 +62,6 @@ export interface BlocklyToolboxFacadeItem {
   children: BlocklyToolboxFacadeItem[];
 }
 
-interface BlocklyLibraryIntegrityCheckResult {
-  valid: boolean;
-  errors: string[];
-}
-
 interface LoadedBlocklyLibraryInfo {
   packageName: string;
   blockTypes: string[];
@@ -72,8 +69,6 @@ interface LoadedBlocklyLibraryInfo {
 }
 
 export const AILY_BLOCKLY_USED_LIBRARIES_FIELD = 'ailyBlocklyUsedLibraries';
-const AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX = '@aily-project/lib-';
-const AILY_BLOCKLY_LIBRARY_TOOLBOX_ITEM_KINDS = new Set(['category', 'block', 'label', 'sep', 'separator', 'button']);
 
 export interface BlocklyUsedLibraryManifestEntry {
   version: string;
@@ -144,6 +139,9 @@ export class BlocklyService {
   // 追踪已加载的库,避免重复加载
   loadedLibraries = new Set<string>(); // libPackagePath
   loadedLibraryInfos = new Map<string, LoadedBlocklyLibraryInfo>(); // libPackagePath -> loaded metadata
+  private libraryLoadTasks = new Map<string, Promise<void>>();
+  private libraryIntegrityFailureLogSignatures = new Map<string, string>();
+  private libraryIntegrityWarningLogSignatures = new Map<string, string>();
   // blockType → 库信息映射（用于跨实例复制粘贴时携带库元信息）
   blockTypeToLibMap = new Map<string, { name: string; version: string; localPath?: string }>();
 
@@ -237,7 +235,10 @@ export class BlocklyService {
 
   constructor(
     private translateService: TranslateService,
-    private electronService: ElectronService
+    private electronService: ElectronService,
+    private logService: LogService,
+    private noticeService: NoticeService,
+    private blocklyLibraryPackageService: BlocklyLibraryPackageService
   ) {
     (window as any).__ailyBlockDefinitionsMap = this.blockDefinitionsMap;
     (window as any).__ailyBlockTypeToLibMap = this.blockTypeToLibMap;
@@ -925,43 +926,51 @@ export class BlocklyService {
     // const normalizedProjectPath = projectPath.replace(/\//g, '\\');
     // const libPackagePath = normalizedProjectPath + '\\node_modules\\' + libPackageName.replace(/\//g, '\\');
 
-    const libPackagePath = this.electronService.pathJoin(
-      projectPath,
-      'node_modules',
-      ...libPackageName.split('/')
-    );
+    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
 
     // 防止重复加载
     if (this.loadedLibraries.has(libPackagePath)) {
       return;
     }
 
+    const existingLoadTask = this.libraryLoadTasks.get(libPackagePath);
+    if (existingLoadTask) {
+      await existingLoadTask;
+      return;
+    }
+
+    const loadTask = this.loadLibraryInternal(libPackageName, projectPath, libPackagePath);
+    this.libraryLoadTasks.set(libPackagePath, loadTask);
+    try {
+      await loadTask;
+    } finally {
+      if (this.libraryLoadTasks.get(libPackagePath) === loadTask) {
+        this.libraryLoadTasks.delete(libPackagePath);
+      }
+    }
+  }
+
+  private async loadLibraryInternal(libPackageName: string, projectPath: string, libPackagePath: string): Promise<void> {
+    const librarySnapshot = this.blocklyLibraryPackageService.readLibraryPackage(projectPath, libPackageName);
     // 检查库的完整性
-    const integrityCheck = this.checkLibraryIntegrity(libPackagePath, libPackageName);
+    const integrityCheck = this.checkLibraryIntegrity(librarySnapshot, libPackageName);
     if (!integrityCheck.valid) {
       return;
     }
 
     let generatorLoadSuccess = true;
     let loadedBlockTypes: string[] = [];
-    const generatorFilePath = this.electronService.pathJoin(libPackagePath, 'generator.js');
+    const generatorFilePath = librarySnapshot.paths.generatorJs;
     try {
       // 加载block
-      // const blockFileIsExist = this.electronService.exists(libPackagePath + '\\block.json');
-      const blockFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'block.json'));
-
-      if (blockFileIsExist) {
+      if (Array.isArray(librarySnapshot.blockJson)) {
         // 加载blocks
-        let blocks = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'block.json')));
+        let blocks = this.cloneJson(librarySnapshot.blockJson);
         loadedBlockTypes = blocks
           .map((block: any) => block?.type)
           .filter((type: any): type is string => typeof type === 'string' && type.length > 0);
         // 读取库版本号（用于跨实例复制粘贴时携带库元信息）
-        let libVersion = '';
-        const libPkgJsonPath = this.electronService.pathJoin(libPackagePath, 'package.json');
-        if (this.electronService.exists(libPkgJsonPath)) {
-          try { libVersion = JSON.parse(this.electronService.readFile(libPkgJsonPath)).version || ''; } catch (e) { }
-        }
+        const libVersion = librarySnapshot.packageJson?.version || '';
         let i18nData = null;
         // 检查多语言文件是否存在（先于 generator.js 加载，确保动态扩展能读取到 i18n 数据）
         const i18nFilePath = this.electronService.pathJoin(libPackagePath, 'i18n', this.translateService.currentLang + '.json');
@@ -994,9 +1003,8 @@ export class BlocklyService {
         const staticFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'static'));
         this.loadLibBlocks(blocks, staticFileIsExist ? this.electronService.pathJoin(libPackagePath, 'static') : null, libPackageName, libVersion, libLocalPath);
         // 加载toolbox
-        const toolboxFileIsExist = this.electronService.exists(this.electronService.pathJoin(libPackagePath, 'toolbox.json'));
-        if (toolboxFileIsExist) {
-          let toolbox = JSON.parse(this.electronService.readFile(this.electronService.pathJoin(libPackagePath, 'toolbox.json')));
+        if (librarySnapshot.toolboxRoot) {
+          let toolbox = this.cloneJson(librarySnapshot.toolboxRoot);
           // 处理 toolbox 多语言（包括 name 和 labels）
           if (i18nData) {
             toolbox = processToolboxI18n(toolbox, i18nData);
@@ -1026,177 +1034,76 @@ export class BlocklyService {
     }
   }
 
-  private checkLibraryIntegrity(libPackagePath: string, expectedPackageName?: string): BlocklyLibraryIntegrityCheckResult {
-    const errors: string[] = [];
-    const packageJsonPath = this.electronService.pathJoin(libPackagePath, 'package.json');
-    const toolboxJsonPath = this.electronService.pathJoin(libPackagePath, 'toolbox.json');
-    const blockJsonPath = this.electronService.pathJoin(libPackagePath, 'block.json');
-    const generatorFilePath = this.electronService.pathJoin(libPackagePath, 'generator.js');
+  private checkLibraryIntegrity(
+    snapshot: BlocklyLibraryPackageSnapshot,
+    expectedPackageName?: string,
+  ): BlocklyLibraryDiagnostics {
+    const diagnostics = this.blocklyLibraryPackageService.validateLibraryPackage(snapshot, expectedPackageName);
 
-    const packageJson = this.checkRequiredJsonLibraryFile(packageJsonPath, 'package.json', errors);
-    const toolboxJson = this.checkRequiredJsonLibraryFile(toolboxJsonPath, 'toolbox.json', errors);
-    const blockJson = this.checkRequiredJsonLibraryFile(blockJsonPath, 'block.json', errors);
-
-    if (packageJson !== null) {
-      this.validateLibraryPackageJson(packageJson, packageJsonPath, errors, expectedPackageName);
-    }
-    if (blockJson !== null) {
-      this.validateLibraryBlockJson(blockJson, blockJsonPath, errors);
-    }
-    if (toolboxJson !== null) {
-      this.validateLibraryToolboxJson(toolboxJson, toolboxJsonPath, errors);
-    }
-
-    this.checkRequiredGeneratorFile(generatorFilePath, errors);
-
-    if (errors.length > 0) {
-      console.error([
-        `[checkLibraryIntegrity] 库完整性检查失败`,
-        ...errors.map((error) => `- ${error}`),
-      ].join('\n'));
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
-  }
-
-  private checkRequiredJsonLibraryFile(filePath: string, fileName: string, errors: string[]): any | null {
-    if (!this.electronService.exists(filePath)) {
-      errors.push(`${fileName} 不合规: 文件不存在 (${filePath})`);
-      return null;
-    }
-
-    try {
-      return JSON.parse(this.electronService.readFile(filePath));
-    } catch (error) {
-      errors.push(`${fileName} 不合规: JSON 格式错误 (${filePath})，${this.formatLibraryIntegrityError(error)}`);
-      return null;
-    }
-  }
-
-  private validateLibraryPackageJson(packageJson: any, filePath: string, errors: string[], expectedPackageName?: string) {
-    if (!this.isPlainObject(packageJson)) {
-      errors.push(`package.json 不合规: 顶层必须是对象 (${filePath})`);
-      return;
-    }
-
-    const packageNameValue = packageJson['name'];
-    if (typeof packageNameValue !== 'string' || !packageNameValue.trim()) {
-      errors.push(`package.json 不合规: 缺少字符串字段 name (${filePath})`);
+    if (diagnostics.errors.length > 0) {
+      this.logLibraryIntegrityErrors(snapshot.ref.path, diagnostics.errors);
     } else {
-      const packageName = packageNameValue.trim();
-      if (!packageName.startsWith(AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX)) {
-        errors.push(`package.json 不合规: name 必须以 ${AILY_BLOCKLY_LIBRARY_PACKAGE_PREFIX} 开头，当前为 ${packageName} (${filePath})`);
-      }
-      if (expectedPackageName && packageName !== expectedPackageName) {
-        errors.push(`package.json 不合规: name 与待加载库名不一致，期望 ${expectedPackageName}，当前为 ${packageName} (${filePath})`);
-      }
+      this.libraryIntegrityFailureLogSignatures.delete(snapshot.ref.path);
+    }
+    if (diagnostics.warnings.length > 0) {
+      this.logLibraryIntegrityWarnings(snapshot.ref.path, diagnostics.warnings);
+    } else {
+      this.libraryIntegrityWarningLogSignatures.delete(snapshot.ref.path);
     }
 
-    const packageVersionValue = packageJson['version'];
-    if (typeof packageVersionValue !== 'string' || !packageVersionValue.trim()) {
-      errors.push(`package.json 不合规: 缺少字符串字段 version (${filePath})`);
-    }
+    return diagnostics;
   }
 
-  private validateLibraryBlockJson(blockJson: any, filePath: string, errors: string[]) {
-    if (!Array.isArray(blockJson)) {
-      errors.push(`block.json 不合规: 顶层必须是 block 定义数组 (${filePath})`);
+  private logLibraryIntegrityErrors(libPackagePath: string, errors: string[]): void {
+    const signature = this.buildLibraryIntegrityLogSignature(libPackagePath, errors);
+    if (this.libraryIntegrityFailureLogSignatures.get(libPackagePath) === signature) {
       return;
     }
 
-    if (blockJson.length === 0) {
-      errors.push(`block.json 不合规: 至少需要包含一个 block 定义 (${filePath})`);
+    this.libraryIntegrityFailureLogSignatures.set(libPackagePath, signature);
+    console.error([
+      `[checkLibraryIntegrity] 库完整性检查失败`,
+      ...errors.map((error) => `- ${error}`),
+    ].join('\n'));
+  }
+
+  private logLibraryIntegrityWarnings(libPackagePath: string, warnings: string[]): void {
+    const signature = this.buildLibraryIntegrityLogSignature(libPackagePath, warnings);
+    if (this.libraryIntegrityWarningLogSignatures.get(libPackagePath) === signature) {
       return;
     }
 
-    const seenTypes = new Set<string>();
-    blockJson.forEach((block: any, index: number) => {
-      const location = `block.json[${index}]`;
-      if (!this.isPlainObject(block)) {
-        errors.push(`${location} 不合规: 每个 block 定义必须是对象 (${filePath})`);
-        return;
-      }
-
-      const blockType = block['type'];
-      if (typeof blockType !== 'string' || !blockType.trim()) {
-        errors.push(`${location} 不合规: 缺少字符串字段 type (${filePath})`);
-      } else if (seenTypes.has(blockType)) {
-        errors.push(`${location} 不合规: block type 重复: ${blockType} (${filePath})`);
-      } else {
-        seenTypes.add(blockType);
-      }
-
-      if (block['message0'] !== undefined && typeof block['message0'] !== 'string') {
-        errors.push(`${location} 不合规: message0 必须是字符串 (${filePath})`);
-      }
-
-      Object.keys(block)
-        .filter((key) => /^args\d+$/.test(key) && block[key] !== undefined)
-        .forEach((key) => {
-          if (!Array.isArray(block[key])) {
-            errors.push(`${location}.${key} 不合规: 必须是数组 (${filePath})`);
-          }
-        });
+    this.libraryIntegrityWarningLogSignatures.set(libPackagePath, signature);
+    const warningMessage = warnings.map((warning) => `- ${warning}`).join('\n');
+    console.warn([
+      `[checkLibraryIntegrity] 库完整性检查警告`,
+      warningMessage,
+    ].join('\n'));
+    this.logService.update({
+      title: '库完整性检查警告',
+      detail: warningMessage,
+      state: 'warn',
+    });
+    this.noticeService.update({
+      title: '库完整性检查警告',
+      text: warnings[0],
+      detail: warningMessage,
+      state: 'warn',
+      showProgress: false,
+      setTimeout: 10000,
+      sendToLog: false,
     });
   }
 
-  private validateLibraryToolboxJson(toolboxJson: any, filePath: string, errors: string[]) {
-    if (Array.isArray(toolboxJson)) {
-      errors.push(`toolbox.json 不合规: 顶层必须是单个 toolbox item 对象，不能是数组。请去掉最外层 [] (${filePath})`);
-      return;
-    }
+  private buildLibraryIntegrityLogSignature(libPackagePath: string, messages: string[]): string {
+    const paths = this.blocklyLibraryPackageService.getPackagePaths(libPackagePath);
+    const fileSignatures = Object.values(paths)
+      .map((filePath) => this.blocklyLibraryPackageService.getIntegrityFileSignature(filePath));
 
-    this.validateLibraryToolboxItem(toolboxJson, 'toolbox.json', filePath, errors);
-  }
-
-  private validateLibraryToolboxItem(item: any, location: string, filePath: string, errors: string[]) {
-    if (!this.isPlainObject(item)) {
-      errors.push(`${location} 不合规: toolbox item 必须是对象 (${filePath})`);
-      return;
-    }
-
-    const itemKind = item['kind'];
-    if (typeof itemKind !== 'string' || !itemKind.trim()) {
-      errors.push(`${location} 不合规: 缺少字符串字段 kind (${filePath})`);
-      return;
-    }
-
-    const kind = itemKind.trim().toLowerCase();
-    if (!AILY_BLOCKLY_LIBRARY_TOOLBOX_ITEM_KINDS.has(kind)) {
-      errors.push(`${location} 不合规: 不支持的 kind: ${itemKind} (${filePath})`);
-      return;
-    }
-
-    if (kind === 'category') {
-      if (typeof item['name'] !== 'string' || !item['name'].trim()) {
-        errors.push(`${location} 不合规: category 缺少字符串字段 name (${filePath})`);
-      }
-      if (!Array.isArray(item['contents'])) {
-        errors.push(`${location} 不合规: category.contents 必须是数组 (${filePath})`);
-        return;
-      }
-      item['contents'].forEach((child: any, index: number) => {
-        this.validateLibraryToolboxItem(child, `${location}.contents[${index}]`, filePath, errors);
-      });
-      return;
-    }
-
-    if (kind === 'block' && (typeof item['type'] !== 'string' || !item['type'].trim())) {
-      errors.push(`${location} 不合规: block 缺少字符串字段 type (${filePath})`);
-    }
-
-    if (kind === 'label' && (typeof item['text'] !== 'string' || !item['text'].trim())) {
-      errors.push(`${location} 不合规: label 缺少字符串字段 text (${filePath})`);
-    }
-
-    if (Array.isArray(item['contents'])) {
-      item['contents'].forEach((child: any, index: number) => {
-        this.validateLibraryToolboxItem(child, `${location}.contents[${index}]`, filePath, errors);
-      });
-    }
+    return JSON.stringify({
+      messages,
+      files: fileSignatures,
+    });
   }
 
   private normalizeLibraryToolboxJson(item: any) {
@@ -1213,52 +1120,9 @@ export class BlocklyService {
     }
   }
 
-  private checkRequiredGeneratorFile(filePath: string, errors: string[]) {
-    if (!this.electronService.exists(filePath)) {
-      errors.push(`generator.js 不合规: 文件不存在 (${filePath})`);
-      return;
-    }
-
-    try {
-      const generatorSource = this.electronService.readFile(filePath);
-      const syntaxError = this.getJavaScriptSyntaxError(generatorSource);
-      if (syntaxError) {
-        errors.push(`generator.js 不合规: JS 语法错误 (${filePath})，${syntaxError}`);
-      }
-    } catch (error) {
-      errors.push(`generator.js 不合规: 读取失败 (${filePath})，${this.formatLibraryIntegrityError(error)}`);
-    }
-  }
-
-  private getJavaScriptSyntaxError(source: string): string | null {
-    try {
-      parseJavaScript(source, {
-        ecmaVersion: 'latest',
-        sourceType: 'script',
-        allowHashBang: true,
-      });
-      return null;
-    } catch (error) {
-      return this.formatLibraryIntegrityError(error);
-    }
-  }
-
-  private formatLibraryIntegrityError(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-  }
-
-  private isPlainObject(value: any): value is Record<string, any> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-  }
-
   // 卸载库（通过包名和项目路径）
   async unloadLibrary(libPackageName, projectPath) {
-    // 统一路径分隔符，使用electronService.pathJoin处理跨平台路径
-    const libPackagePath = this.electronService.pathJoin(
-      projectPath,
-      'node_modules',
-      ...libPackageName.split('/')
-    );
+    const libPackagePath = this.blocklyLibraryPackageService.getPackagePath(projectPath, libPackageName);
 
     // 直接调用 removeLibrary 函数
     this.removeLibrary(libPackagePath);
@@ -1484,6 +1348,8 @@ export class BlocklyService {
   removeLibrary(libPackagePath) {
     // 路径已经是标准格式，无需再次分割
     // electronService.pathJoin已经处理了路径分隔符
+    this.libraryIntegrityFailureLogSignatures.delete(libPackagePath);
+    this.libraryIntegrityWarningLogSignatures.delete(libPackagePath);
 
     // 检查是否已加载
     if (!this.loadedLibraries.has(libPackagePath)) {
@@ -1680,6 +1546,9 @@ export class BlocklyService {
     this.loadedGenerators.clear();
     this.loadedLibraries.clear();
     this.loadedLibraryInfos.clear();
+    this.libraryLoadTasks.clear();
+    this.libraryIntegrityFailureLogSignatures.clear();
+    this.libraryIntegrityWarningLogSignatures.clear();
     this.blockTypeToLibMap.clear();
     this.nativeToolboxElement = null;
     this.externalToolboxHost = null;
