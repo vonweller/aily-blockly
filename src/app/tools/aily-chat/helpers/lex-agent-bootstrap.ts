@@ -1095,8 +1095,7 @@ function createBlocklyWebFetchBridgeExtension(): {
 
 function createBlocklyWebSearchBridgeExtension(): {
   searchPage(options: {
-    query: string;
-    maxResults: number;
+    url: string;
     signal?: AbortSignal;
   }): Promise<{ html: string; url?: string; title?: string }>;
 } | null {
@@ -1108,13 +1107,12 @@ function createBlocklyWebSearchBridgeExtension(): {
   return {
     searchPage: async (options) => {
       const result = await webviewBridge.searchWeb({
-        query: options.query,
-        maxResults: options.maxResults,
+        url: options.url,
         timeoutMs: 20000,
       });
 
       if (!result?.ok) {
-        throw new Error(result?.error || `webview bridge search failed for ${options.query}`);
+        throw new Error(result?.error || `webview bridge search failed for ${options.url}`);
       }
 
       return {
