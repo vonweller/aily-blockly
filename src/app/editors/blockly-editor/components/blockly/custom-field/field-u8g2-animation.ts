@@ -8,6 +8,10 @@ const U8G2_ANIMATION_BLOCKLY_MESSAGE_NAMES = [
     'BUTTON_UPLOAD',
     'UPLOAD_TOOLTIP',
     'BUTTON_CLEAR',
+    'BUTTON_INVERT',
+    'BUTTON_PLAY_TEST',
+    'BUTTON_STOP_PLAY_TEST',
+    'PLAY_TEST_TOOLTIP',
     'LABEL_WIDTH',
     'LABEL_HEIGHT',
     'LABEL_FPS',
@@ -28,10 +32,14 @@ const DEFAULT_U8G2_ANIMATION_MESSAGES: Record<string, string> = {
     BUTTON_UPLOAD: "上传",
     UPLOAD_TOOLTIP: "支持格式：MP4、GIF、PNG",
     BUTTON_CLEAR: "清空",
+    BUTTON_INVERT: "反色",
+    BUTTON_PLAY_TEST: "播放测试",
+    BUTTON_STOP_PLAY_TEST: "停止播放",
+    PLAY_TEST_TOOLTIP: "测试播放",
     LABEL_WIDTH: "W",
     LABEL_HEIGHT: "H",
     LABEL_FPS: "FPS",
-    LABEL_MAX_FRAMES: "帧数",
+    LABEL_MAX_FRAMES: "总帧数",
     LABEL_THRESHOLD: "阈值",
     LABEL_THRESHOLD_VALUE: "阈值",
     LABEL_DITHER: "抖动",
@@ -63,7 +71,7 @@ const DEFAULT_U8G2_ANIMATION_MESSAGES: Record<string, string> = {
     ERROR_MD5_FAILED: "文件 MD5 计算失败",
     STATUS_RENDERING_FRAMES_WITH_COUNT: "正在加载 {{frames}} 帧...",
     FRAME_EDITOR_TITLE: "编辑第 {{index}} 帧",
-    STATUS_INFO: "{{sourcePrefix}}{{frames}} 帧 | {{width}}x{{height}} | {{fps}} FPS | {{mode}}",
+    STATUS_INFO: "{{sourcePrefix}}{{frames}} 帧 | {{width}}x{{height}} | {{fps}} FPS | {{mode}} | 数据 {{dataSize}}",
     WORKER_ERROR_CREATE_CANVAS: "无法创建取模画布",
     WORKER_ERROR_MP4_PARSE_FAILED: "MP4 解析失败",
     WORKER_ERROR_MP4_NO_VIDEO_TRACK: "MP4 中没有找到视频轨道",
@@ -169,11 +177,12 @@ const MAX_FPS = 30;
 const MAX_FRAMES = 1800;
 const DEFAULT_THRESHOLD = 127;
 const DEFAULT_FIELD_HEIGHT = 32;
-const MAX_SOURCE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_SOURCE_FILE_SIZE_BYTES = 12 * 1024 * 1024;
 const FRAME_EDITOR_MAX_WIDTH = 560;
 const FRAME_EDITOR_MAX_HEIGHT = 320;
 const FRAME_STRIP_RENDER_BATCH_SIZE = 16;
 const FRAME_STRIP_RENDER_BUDGET_MS = 8;
+const DIMENSION_INPUT_DEBOUNCE_MS = 350;
 const DEFAULT_PIXEL_COLOURS: PixelColours = {
     empty: '#151515',
     filled: '#f4f4f4',
@@ -220,6 +229,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     private frameStrip: HTMLElement | null = null;
     private statusElement: HTMLElement | null = null;
     private fileInput: HTMLInputElement | null = null;
+    private playTestButton: HTMLButtonElement | null = null;
     private widthInput: HTMLInputElement | null = null;
     private heightInput: HTMLInputElement | null = null;
     private fpsInput: HTMLInputElement | null = null;
@@ -245,8 +255,12 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     private sourceRedecodeInProgress = false;
     private sourceRedecodePending = false;
     private sourceRedecodeVersion = 0;
+    private dimensionInputTimerId: ReturnType<typeof setTimeout> | null = null;
     private frameStripRenderFrameId: number | null = null;
     private frameStripRenderVersion = 0;
+    private playTestTimerId: ReturnType<typeof setTimeout> | null = null;
+    private playTestActive = false;
+    private playTestFrameIndex = 0;
     private requestId = 0;
 
     constructor(
@@ -313,6 +327,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.updateBlockDisplayImage();
         this.updateControlsFromValue();
         this.renderFrameStrip();
+        this.updatePlayTestButtonState();
     }
 
     protected override showEditor_(e?: Event) {
@@ -386,6 +401,8 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     override dispose() {
+        this.commitDimensionInputChange();
+        this.stopPlayTest(false);
         this.clearSourceRedecodeTimer();
         this.terminateWorker();
         for (const event of this.boundEvents) {
@@ -402,18 +419,34 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         );
         this.bindEditorContainerEvents(dropdownEditor);
 
-        dropdownEditor.appendChild(this.createToolbar());
+        const toolbar = this.createToolbar();
+        dropdownEditor.appendChild(toolbar);
         dropdownEditor.appendChild(this.createStatus());
         dropdownEditor.appendChild(this.createFrameEditor());
 
         this.frameStrip = this.createElementWithClassname('div', 'u8g2AnimationFrameStrip');
         dropdownEditor.appendChild(this.frameStrip);
         this.renderFrameStrip();
+        this.syncDropdownWidthToToolbar(dropdownEditor, toolbar);
 
         Blockly.DropDownDiv.getContentDiv().classList.add('contains-u8g2-animation-editor');
         this.initialValue = this.cloneValue(this.getValue());
 
         return dropdownEditor;
+    }
+
+    private syncDropdownWidthToToolbar(dropdownEditor: HTMLElement, toolbar: HTMLElement) {
+        requestAnimationFrame(() => {
+            if (!dropdownEditor.isConnected) return;
+
+            const toolbarWidth = Math.ceil(toolbar.getBoundingClientRect().width || toolbar.scrollWidth);
+            if (toolbarWidth <= 0) return;
+
+            const style = getComputedStyle(dropdownEditor);
+            const horizontalPadding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+            dropdownEditor.style.width = `${Math.ceil(toolbarWidth + horizontalPadding)}px`;
+            this.repositionDropdownIfOpen();
+        });
     }
 
     private createToolbar() {
@@ -423,7 +456,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.widthInput = this.createNumberInput('W', this.imgWidth, 1, 256);
         this.heightInput = this.createNumberInput('H', this.imgHeight, 1, 128);
         this.fpsInput = this.createNumberInput('FPS', this.fps, 1, MAX_FPS);
-        this.maxFramesInput = this.createNumberInput('Max frames', this.maxFrames, 1, getMaxFramesLimit());
+        this.maxFramesInput = this.createNumberInput(Blockly.Msg['U8G2_ANIMATION_LABEL_MAX_FRAMES'], this.maxFrames, 1, getMaxFramesLimit());
         this.thresholdInput = this.createBitmapModeInput('Threshold', 'threshold', !this.dither);
         this.ditherInput = this.createBitmapModeInput('Dither', 'dither', this.dither);
         this.thresholdValueInput = this.createThresholdValueInput(this.threshold);
@@ -465,6 +498,11 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             actionGroup,
             Blockly.Msg['U8G2_ANIMATION_BUTTON_CLEAR'],
             () => this.clearAnimation(),
+        );
+        this.addControlButton(
+            actionGroup,
+            Blockly.Msg['U8G2_ANIMATION_BUTTON_INVERT'],
+            () => this.invertAnimation(),
         );
         toolbar.appendChild(actionGroup);
 
@@ -594,7 +632,9 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         onClick: (e?: Event) => void,
         tooltip?: string,
     ) {
-        const button = this.createElementWithClassname('button', 'u8g2AnimationButton');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'u8g2AnimationButton';
         button.textContent = buttonText;
         if (tooltip) {
             button.title = tooltip;
@@ -630,8 +670,8 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private bindDimensionInputEvents(input: HTMLInputElement) {
-        this.bindEvent(input, 'change', this.onDimensionInputChange.bind(this));
-        this.bindEvent(input, 'input', this.onDimensionInputChange.bind(this));
+        this.bindEvent(input, 'change', this.commitDimensionInputChange.bind(this));
+        this.bindEvent(input, 'input', this.scheduleDimensionInputChange.bind(this));
     }
 
     private bindPlaybackInputEvents(input: HTMLInputElement) {
@@ -670,6 +710,29 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             this.bindEvent(dropdownEditor, eventName, stopEventPropagation);
         }
         this.bindEvent(dropdownEditor, 'contextmenu', stopContextMenu);
+    }
+
+    private scheduleDimensionInputChange() {
+        this.clearDimensionInputTimer();
+        if (!this.widthInput || !this.heightInput) return;
+        if (this.widthInput.value === '' || this.heightInput.value === '') return;
+
+        this.dimensionInputTimerId = setTimeout(() => {
+            this.dimensionInputTimerId = null;
+            this.onDimensionInputChange();
+        }, DIMENSION_INPUT_DEBOUNCE_MS);
+    }
+
+    private commitDimensionInputChange() {
+        this.clearDimensionInputTimer();
+        this.onDimensionInputChange();
+    }
+
+    private clearDimensionInputTimer() {
+        if (this.dimensionInputTimerId !== null) {
+            clearTimeout(this.dimensionInputTimerId);
+            this.dimensionInputTimerId = null;
+        }
     }
 
     private onDimensionInputChange() {
@@ -781,6 +844,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         if (!file) return;
 
         input.value = '';
+        this.commitDimensionInputChange();
         this.closeFrameEditor(false);
         const width = this.widthInput ? this.clampInput(this.widthInput, this.imgWidth) : this.imgWidth;
         const height = this.heightInput ? this.clampInput(this.heightInput, this.imgHeight) : this.imgHeight;
@@ -1180,6 +1244,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private clearAnimation() {
+        this.stopPlayTest(false);
         this.closeFrameEditor(false);
         this.invalidateSourceRedecode();
         this.clearSourceRedecodeTimer();
@@ -1187,10 +1252,26 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.setStatus(Blockly.Msg['U8G2_ANIMATION_EMPTY']);
     }
 
+    private invertAnimation() {
+        this.closeFrameEditor();
+        this.invalidateSourceRedecode();
+        this.clearSourceRedecodeTimer();
+
+        const value = this.getValue();
+        const nextFrames = value.frames.map(frame => (
+            frame.map(row => row.map(cell => cell === 1 ? 0 : 1))
+        ));
+
+        this.commitManualFrames(value, nextFrames);
+        this.renderFrameStrip();
+    }
+
     private renderFrameStrip() {
         if (!this.frameStrip) return;
 
+        this.stopPlayTest(false);
         this.cancelFrameStripRender();
+        this.playTestButton = null;
         this.frameStrip.replaceChildren();
         const value = this.getValue();
         const frames = value.frames || [];
@@ -1264,6 +1345,16 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         const preview = this.createElementWithClassname('div', 'u8g2AnimationFramePreview');
         const canvas = this.renderBitmapToCanvas(frame, width, height, previewScale);
         const actions = this.createElementWithClassname('div', 'u8g2AnimationFrameActions');
+        if (index === 0) {
+            this.playTestButton = this.createFrameActionButton(
+                'fa-light fa-play',
+                Blockly.Msg['U8G2_ANIMATION_BUTTON_PLAY_TEST'],
+                () => this.togglePlayTest(),
+            );
+            this.playTestButton.classList.add('u8g2AnimationFramePlayAction');
+            this.updatePlayTestButtonState();
+            actions.appendChild(this.playTestButton);
+        }
         actions.appendChild(this.createFrameActionButton(
             'fa-light fa-paintbrush',
             Blockly.Msg['U8G2_ANIMATION_FRAME_EDIT'],
@@ -1374,6 +1465,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private openFrameEditor(index: number, event?: Event) {
+        this.stopPlayTest();
         if (event) {
             this.stopFrameEditorEvent(event);
         }
@@ -1436,6 +1528,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private deleteFrame(index: number, event?: Event) {
+        this.stopPlayTest();
         if (event) {
             this.stopFrameEditorEvent(event);
         }
@@ -1671,6 +1764,144 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.blockDisplayImage.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
     }
 
+    private togglePlayTest() {
+        if (this.playTestActive) {
+            this.stopPlayTest();
+            return;
+        }
+        this.startPlayTest();
+    }
+
+    private startPlayTest() {
+        const value = this.getValue();
+        if (!this.canPlayTest(value)) {
+            this.updatePlayTestButtonState();
+            return;
+        }
+
+        this.closeFrameEditor(false);
+        this.playTestActive = true;
+        this.playTestFrameIndex = 0;
+        this.updatePlayTestButtonState();
+        this.renderPlayTestFrame();
+    }
+
+    private stopPlayTest(restorePreview = true) {
+        if (this.playTestTimerId !== null) {
+            clearTimeout(this.playTestTimerId);
+            this.playTestTimerId = null;
+        }
+
+        const wasActive = this.playTestActive;
+        this.playTestActive = false;
+        this.playTestFrameIndex = 0;
+        this.updatePlayTestButtonState();
+
+        if (restorePreview && wasActive) {
+            this.restorePlayTestPreview();
+        }
+    }
+
+    private renderPlayTestFrame() {
+        if (!this.playTestActive) return;
+
+        const value = this.getValue();
+        if (!this.canPlayTest(value)) {
+            this.stopPlayTest();
+            return;
+        }
+
+        const frameIndex = this.playTestFrameIndex % value.frames.length;
+        const frame = value.frames[frameIndex] || value.frames[0];
+        this.updatePreviewFrame(frame, value.width, value.height, frameIndex, value.frames.length);
+        this.playTestFrameIndex = (frameIndex + 1) % value.frames.length;
+
+        const frameDelayMs = Math.max(1, Math.round(1000 / Math.max(1, value.fps)));
+        this.playTestTimerId = setTimeout(() => this.renderPlayTestFrame(), frameDelayMs);
+    }
+
+    private canPlayTest(value: U8g2AnimationValue) {
+        return value.frames.length > 1;
+    }
+
+    private updatePreviewFrame(
+        frame: number[][],
+        width: number,
+        height: number,
+        frameIndex: number,
+        frameCount: number,
+    ) {
+        if (this.blockDisplayImage) {
+            const canvas = this.renderBitmapToCanvas(frame, width, height, 1);
+            const dataUrl = canvas.toDataURL();
+            this.blockDisplayImage.setAttribute('href', dataUrl);
+            this.blockDisplayImage.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
+        }
+
+        this.updateFirstFrameStripPreview(frame, width, height, frameIndex, frameCount);
+    }
+
+    private updateFirstFrameStripPreview(
+        frame: number[][],
+        width: number,
+        height: number,
+        frameIndex: number,
+        frameCount: number,
+    ) {
+        const firstItem = this.getFrameStripItem(0);
+        if (!firstItem) return;
+
+        firstItem.classList.add('is-playing');
+        const preview = firstItem.querySelector<HTMLElement>('.u8g2AnimationFramePreview');
+        const currentCanvas = preview?.querySelector<HTMLCanvasElement>('.u8g2AnimationCanvas');
+        const nextCanvas = this.renderBitmapToCanvas(
+            frame,
+            width,
+            height,
+            this.getPreviewScale(width, height),
+        );
+        if (currentCanvas) {
+            currentCanvas.replaceWith(nextCanvas);
+        } else {
+            preview?.prepend(nextCanvas);
+        }
+
+        const label = firstItem.querySelector('span');
+        if (label) {
+            label.textContent = `${frameIndex + 1}/${frameCount}`;
+        }
+    }
+
+    private restorePlayTestPreview() {
+        this.updateBlockDisplayImage();
+
+        const value = this.getValue();
+        const firstFrame = value.frames[0];
+        if (firstFrame) {
+            this.updateFrameStripItem(0, firstFrame, value.width, value.height);
+        }
+    }
+
+    private updatePlayTestButtonState() {
+        if (!this.playTestButton) return;
+
+        const label = this.playTestActive
+            ? Blockly.Msg['U8G2_ANIMATION_BUTTON_STOP_PLAY_TEST']
+            : Blockly.Msg['U8G2_ANIMATION_BUTTON_PLAY_TEST'];
+        this.playTestButton.title = this.playTestActive
+            ? Blockly.Msg['U8G2_ANIMATION_BUTTON_STOP_PLAY_TEST']
+            : Blockly.Msg['U8G2_ANIMATION_PLAY_TEST_TOOLTIP'];
+        this.playTestButton.setAttribute('aria-label', label);
+        this.playTestButton.setAttribute('aria-pressed', String(this.playTestActive));
+        this.playTestButton.disabled = !this.playTestActive && !this.canPlayTest(this.getValue());
+        this.playTestButton.classList.toggle('is-active', this.playTestActive);
+
+        const icon = this.playTestButton.querySelector('i');
+        if (icon) {
+            icon.className = this.playTestActive ? 'fa-light fa-stop' : 'fa-light fa-play';
+        }
+    }
+
     private renderBitmapToCanvas(frame: number[][], width: number, height: number, scale: number) {
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, width * scale);
@@ -1741,7 +1972,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             return;
         }
 
-        const source = value.sourceName ? `${value.sourceName} · ` : '';
+        const source = value.sourceName ? `${this.truncateStatusSourceName(value.sourceName)} · ` : '';
         const modeText = value.dither
             ? Blockly.Msg['U8G2_ANIMATION_LABEL_DITHER']
             : `${Blockly.Msg['U8G2_ANIMATION_LABEL_THRESHOLD']} ${value.threshold}`;
@@ -1752,8 +1983,47 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
             height: value.height,
             fps: value.fps,
             mode: modeText,
+            dataSize: this.formatDataSize(this.getConvertedDataSizeBytes(value)),
         });
         this.statusElement.classList.remove('is-error');
+    }
+
+    private getConvertedDataSizeBytes(value: U8g2AnimationValue) {
+        return Math.ceil(value.width / 8) * value.height * value.frames.length;
+    }
+
+    private truncateStatusSourceName(sourceName: string) {
+        const maxUnits = 10;
+        let usedUnits = 0;
+        let result = '';
+
+        for (const char of Array.from(sourceName)) {
+            const charUnits = this.getStatusSourceNameCharUnits(char);
+            if (usedUnits + charUnits > maxUnits) {
+                return `${result}...`;
+            }
+
+            result += char;
+            usedUnits += charUnits;
+        }
+
+        return result;
+    }
+
+    private getStatusSourceNameCharUnits(char: string) {
+        return char.codePointAt(0)! > 0xff ? 2 : 1;
+    }
+
+    private formatDataSize(bytes: number) {
+        if (bytes < 1024) {
+            return `${bytes} B`;
+        }
+        if (bytes < 1024 * 1024) {
+            const value = bytes / 1024;
+            return `${value < 10 ? value.toFixed(1) : Math.round(value)} KB`;
+        }
+        const value = bytes / (1024 * 1024);
+        return `${value < 10 ? value.toFixed(1) : Math.round(value)} MB`;
     }
 
     private t(messageName: string, params?: U8g2AnimationI18nParams) {
@@ -1846,6 +2116,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private commitManualFrames(value: U8g2AnimationValue, frames: number[][][]) {
+        this.stopPlayTest(false);
         this.value_ = this.createManualValue(value, frames);
         this.updateBlockDisplayImage();
         this.updateControlsFromValue();
@@ -1956,7 +2227,9 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
     }
 
     private dropdownDispose() {
+        this.commitDimensionInputChange();
         this.closeFrameEditor();
+        this.stopPlayTest(false);
         this.cancelFrameStripRender();
         this.clearSourceRedecodeTimer();
         this.terminateWorker();
@@ -1985,6 +2258,7 @@ export class FieldU8g2Animation extends Blockly.Field<U8g2AnimationValue> {
         this.frameStrip = null;
         this.statusElement = null;
         this.fileInput = null;
+        this.playTestButton = null;
         this.widthInput = null;
         this.heightInput = null;
         this.fpsInput = null;
@@ -2047,26 +2321,33 @@ Blockly.Css.register(`
 .u8g2AnimationEditor {
   align-items: stretch;
   background: #2a2a2a;
+  box-sizing: border-box;
   color: #f4f4f4;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 600px;
+  max-width: min(94vw, 880px);
   padding: 5px 10px;
+  width: max-content;
 }
 .u8g2AnimationToolbar {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   justify-content: space-between;
+  max-width: 100%;
+  width: max-content;
 }
 .u8g2AnimationControlGroup,
 .u8g2AnimationButtonGroup {
   align-items: center;
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+}
+.u8g2AnimationButtonGroup {
+  margin-left: auto;
 }
 .u8g2AnimationNumberControl {
   align-items: center;
@@ -2131,11 +2412,20 @@ Blockly.Css.register(`
   background: #444;
   border-color: #888;
 }
+.u8g2AnimationButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .u8g2AnimationStatus {
   color: #cfcfcf;
   font-size: 12px;
   line-height: 1.4;
+  max-width: 100%;
   min-height: 18px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .u8g2AnimationStatus.is-error {
   color: #ffb3b3;
@@ -2249,14 +2539,17 @@ Blockly.Css.register(`
   background: #1b1b1b;
   border: 1px solid #666;
   border-radius: 4px;
+  box-sizing: border-box;
   display: flex;
   gap: 8px;
   max-height: 360px;
-  max-width: 600px;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: scroll;
   padding: 8px 8px 0 8px;
   scrollbar-color: var(--aily-border-tertiary, #666) transparent;
   scrollbar-width: thin;
+  width: 100%;
 }
 .u8g2AnimationFrameStrip::-webkit-scrollbar {
   height: 4px;
@@ -2324,6 +2617,20 @@ Blockly.Css.register(`
   border-color: #73d8d0;
   color: #111;
 }
+.u8g2AnimationFrameAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.u8g2AnimationFrameAction:disabled:hover {
+  background: rgba(35, 35, 35, 0.92);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+.u8g2AnimationFrameAction.is-active {
+  background: #f4c542;
+  border-color: #ffe27a;
+  color: #111;
+}
 .u8g2AnimationFrameAction i,
 .u8g2AnimationFrameEditorButton i {
   font-size: 12px;
@@ -2332,6 +2639,10 @@ Blockly.Css.register(`
 .u8g2AnimationFrameItem.is-editing .u8g2AnimationCanvas {
   border-color: #4db6ac;
   box-shadow: 0 0 0 1px #4db6ac;
+}
+.u8g2AnimationFrameItem.is-playing .u8g2AnimationCanvas {
+  border-color: #f4c542;
+  box-shadow: 0 0 0 1px #f4c542;
 }
 .u8g2AnimationFrameItem span,
 .u8g2AnimationEmpty {

@@ -31,6 +31,15 @@ export class ElectronService {
     return window['fs'].readFileSync(filePath, 'utf8');
   }
 
+  async readFileAsync(filePath: string, encoding = 'utf8'): Promise<string> {
+    const fsApi = window['fs'];
+    if (fsApi?.readFile) {
+      return await fsApi.readFile(filePath, encoding);
+    }
+
+    return this.readFile(filePath);
+  }
+
   /**
    * 读取目录内容
    */

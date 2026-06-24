@@ -12,6 +12,7 @@ import { ElectronService } from '../../services/electron.service';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { ProjectService } from '../../services/project.service';
 import { LogService } from '../../services/log.service';
+import { ConfigService } from '../../services/config.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { stripAnsi } from 'fancy-ansi';
 import packageJson from '../../../../package.json';
@@ -97,8 +98,13 @@ export class FeedbackDialogComponent implements OnDestroy {
     private electronService: ElectronService,
     private projectService: ProjectService,
     private logService: LogService,
+    private configService: ConfigService,
     private translate: TranslateService
   ) { }
+
+  get isCnRegion(): boolean {
+    return this.configService.isCnRegion;
+  }
 
   ngOnInit(): void {
     this.loadDraft();
@@ -179,7 +185,7 @@ export class FeedbackDialogComponent implements OnDestroy {
 
     return `
 - OS Version: ${window['platform'].type}
-- Software Version: ${packageJson.version}
+- Software Version: ${packageJson.version}${this.isCnRegion ? '-cn' : ''}
 - Project Dependencies:
 \`\`\`json
 ${dependenciesStr}

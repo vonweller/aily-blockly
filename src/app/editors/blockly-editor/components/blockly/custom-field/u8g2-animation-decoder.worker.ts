@@ -123,7 +123,7 @@ function imageDataToThresholdBitmap(imageData: ImageData, width: number, height:
             const green = imageData.data[index + 1];
             const blue = imageData.data[index + 2];
             const gray = getWeightedGray(red, green, blue);
-            row.push(gray < threshold ? 1 : 0);
+            row.push(gray < threshold ? 0 : 1);
         }
         bitmap.push(row);
     }
@@ -175,7 +175,7 @@ function imageDataToDitheredBitmap(imageData: ImageData, width: number, height: 
             const newPixel = oldPixel < DEFAULT_THRESHOLD ? 0 : 255;
             const quantError = oldPixel - newPixel;
             luminance[index] = newPixel;
-            row.push(newPixel === 0 ? 1 : 0);
+            row.push(newPixel === 0 ? 0 : 1);
 
             addError(x + 1, y, quantError, 7 / 16);
             addError(x - 1, y + 1, quantError, 3 / 16);

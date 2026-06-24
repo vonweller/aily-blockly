@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, Injector, inject } from '@angular/core';
 import { RouterOutlet, Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
@@ -32,21 +32,31 @@ export class AppComponent implements OnInit, OnDestroy {
   private authService = inject(AuthService);
   private themeService = inject(ThemeService);
   private projectService = inject(ProjectService);
-  private message = inject(NzMessageService);
+  private injector = inject(Injector);
   private router = inject(Router);
   private translate = inject(TranslateService);
   private toolI18n = inject(ToolI18nService);
+  private messageService: NzMessageService | null = null;
 
   private oauthResultListener: (() => void) | null = null;
   private exampleListListener: (() => void) | null = null;
+  private configNoticeSubscription: Subscription | null = null;
   private projectStateSubscription: Subscription | null = null;
   private startupLoadingHideTimer: ReturnType<typeof setTimeout> | null = null;
   private startupLoadingMaxWaitTimer: ReturnType<typeof setTimeout> | null = null;
   private startupLoadingObservedProjectLoad = false;
   private startupLoadingHidden = false;
 
+  private get message(): NzMessageService {
+    if (!this.messageService) {
+      this.messageService = this.injector.get(NzMessageService);
+    }
+    return this.messageService;
+  }
+
   async ngOnInit() {
     this.watchStartupLoadingState();
+    this.watchConfigNotices();
 
     await this.electronService.init();
     await this.configService.init();
@@ -73,6 +83,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.configNoticeSubscription?.unsubscribe();
     this.projectStateSubscription?.unsubscribe();
     this.clearStartupLoadingTimers();
 
@@ -98,6 +109,14 @@ export class AppComponent implements OnInit, OnDestroy {
       if (state === 'loaded' || state === 'error') {
         this.startupLoadingObservedProjectLoad = true;
         this.scheduleStartupLoadingHide(120);
+      }
+    });
+  }
+
+  private watchConfigNotices() {
+    this.configNoticeSubscription = this.configService.configNotice$.subscribe((notice) => {
+      if (notice.type === 'error') {
+        this.message.error(notice.message);
       }
     });
   }
