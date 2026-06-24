@@ -1,4 +1,5 @@
 import { ApplicationConfig, importProvidersFrom, provideZoneChangeDetection } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import { provideRouter, withHashLocation } from '@angular/router';
 import { provideTranslateService } from "@ngx-translate/core";
 import { routes } from './app.routes';
@@ -14,6 +15,7 @@ export const appConfig: ApplicationConfig = {
       eventCoalescing: true,
       runCoalescing: true
     }),
+    { provide: DOCUMENT, useFactory: () => document },
     provideRouter(routes, 
       withHashLocation()
     ),

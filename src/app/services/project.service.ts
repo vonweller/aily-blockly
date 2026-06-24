@@ -98,13 +98,13 @@ export class ProjectService {
   } | null = null;
   private messageService: NzMessageService | null = null;
   private modalService: NzModalService | null = null;
+  private routerService: Router | null = null;
   // STM32选择开发板时定义引脚使用
   currentStm32Config: { board: any, variant: any, variant_h: any } = { board: null, variant: null, variant_h: null };
 
   constructor(
     private uiService: UiService,
     private electronService: ElectronService,
-    private router: Router,
     private cmdService: CmdService,
     private crossPlatformCmdService: CrossPlatformCmdService,
     private configService: ConfigService,
@@ -130,6 +130,13 @@ export class ProjectService {
       this.modalService = this.injector.get(NzModalService);
     }
     return this.modalService;
+  }
+
+  private get router(): Router {
+    if (!this.routerService) {
+      this.routerService = this.injector.get(Router);
+    }
+    return this.routerService;
   }
 
   // 初始化UI服务，这个init函数仅供main-window使用

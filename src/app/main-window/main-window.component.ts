@@ -1,4 +1,4 @@
-import { Component, ChangeDetectorRef, ViewChild } from '@angular/core';
+import { Component, ChangeDetectorRef, OnDestroy, ViewChild } from '@angular/core';
 import { FooterComponent } from './components/footer/footer.component';
 import { HeaderComponent } from './components/header/header.component';
 import { CommonModule } from '@angular/common';
@@ -22,7 +22,7 @@ import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NpmService } from '../services/npm.service';
 import { SimulatorComponent } from '../tools/simulator/simulator.component';
 import { NavigationEnd, Router, RouterModule } from '@angular/router';
-import { filter } from 'rxjs';
+import { filter, Subscription } from 'rxjs';
 import { ConfigService } from '../services/config.service';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { CloudSpaceComponent } from '../tools/cloud-space/cloud-space.component';
@@ -32,6 +32,10 @@ import { OnboardingComponent } from '../components/onboarding/onboarding.compone
 import { OnboardingService } from '../services/onboarding.service';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { isChildTool } from '../configs/tool.config';
+import { AuthService } from '../services/auth.service';
+import { ElectronService } from '../services/electron.service';
+import { resolveTranslatedApiErrorMessage } from '../utils/api-error.utils';
+import { ToolI18nService } from '../services/tool-i18n.service';
 
 @Component({
   selector: 'app-main-window',
@@ -65,7 +69,7 @@ import { isChildTool } from '../configs/tool.config';
   templateUrl: './main-window.component.html',
   styleUrl: './main-window.component.scss',
 })
-export class MainWindowComponent {
+export class MainWindowComponent implements OnDestroy {
   @ViewChild('logComponent') logComponent!: LogComponent;
   @ViewChild('terminalComponent') terminalComponent!: TerminalComponent;
 
@@ -95,6 +99,9 @@ export class MainWindowComponent {
   // 新手引导相关
   showOnboarding = false;
   onboardingConfig = null;
+  private oauthResultListener: (() => void) | null = null;
+  private exampleListListener: (() => void) | null = null;
+  private configNoticeSubscription: Subscription | null = null;
 
   constructor(
     private uiService: UiService,
@@ -107,14 +114,23 @@ export class MainWindowComponent {
     private router: Router,
     private configService: ConfigService,
     private modal: NzModalService,
-    private onboardingService: OnboardingService
+    private onboardingService: OnboardingService,
+    private authService: AuthService,
+    private electronService: ElectronService,
+    private toolI18n: ToolI18nService
   ) { }
 
-  ngOnInit(): void {
+  async ngOnInit(): Promise<void> {
+    this.watchConfigNotices();
+    await this.toolI18n.loadChildTools();
     this.uiService.init();
     this.projectService.init();
     this.updateService.init();
     this.npmService.init();
+    await this.authService.initializeAuth();
+    this.setupGlobalOAuthListener();
+    this.setupExampleListListener();
+    this.electronService.sendRendererReady();
     // 重置 footer 状态
     this.uiService.updateFooterState({ text: '', timeout: 0 });
 
@@ -146,6 +162,89 @@ export class MainWindowComponent {
         }, 100);
       }
     });
+  }
+
+  ngOnDestroy(): void {
+    this.configNoticeSubscription?.unsubscribe();
+    this.configNoticeSubscription = null;
+    this.oauthResultListener?.();
+    this.oauthResultListener = null;
+    this.exampleListListener?.();
+    this.exampleListListener = null;
+  }
+
+  private watchConfigNotices() {
+    this.configNoticeSubscription = this.configService.configNotice$.subscribe((notice) => {
+      if (notice.type === 'error') {
+        this.message.error(notice.message);
+      }
+    });
+  }
+
+  private setupGlobalOAuthListener() {
+    if (window['oauth'] && window['oauth'].onCallback) {
+      this.oauthResultListener = window['oauth'].onCallback(async (callbackData: any) => {
+        try {
+          const result = await this.authService.handleOAuthCallback(callbackData);
+
+          if (result.success) {
+            this.message.success('GitHub 登录成功');
+          } else {
+            let errorMessage = 'GitHub 登录超时，请重试';
+
+            switch (result.error) {
+              case 'needs_wechat_bind':
+                this.authService.emitNeedsWechatBind(result.data?.pending_ticket);
+                return;
+              case 'timeout':
+              case 'invalid_state':
+                errorMessage = '登录状态无效或已超时，请重试';
+                break;
+              case 'missing_parameters':
+                errorMessage = '授权参数缺失，请重试';
+                break;
+              case 'access_denied':
+                errorMessage = '您取消了授权';
+                break;
+              case 'callback_processing_failed':
+                errorMessage = resolveTranslatedApiErrorMessage(result, this.translate, {
+                  fallbackMessage: result.message || '处理授权回调失败',
+                });
+                break;
+              default:
+                errorMessage = resolveTranslatedApiErrorMessage(result, this.translate, {
+                  fallbackMessage: result.message || 'GitHub 登录超时，请重试',
+                });
+            }
+
+            this.message.error(errorMessage);
+          }
+        } catch (error) {
+          console.error('处理OAuth回调异常:', error);
+          this.message.error(resolveTranslatedApiErrorMessage(error, this.translate, {
+            fallbackMessage: '登录处理失败，请重试',
+          }));
+        }
+      });
+    }
+  }
+
+  private setupExampleListListener() {
+    if (window['exampleList'] && window['exampleList'].onOpen) {
+      this.exampleListListener = window['exampleList'].onOpen((data: any) => {
+        console.log('收到打开示例列表请求:', data);
+
+        this.router.navigate(['/main/playground'], {
+          queryParams: {
+            keyword: data.keyword || '',
+            id: data.id || '',
+            sessionId: data.sessionId || '',
+            params: data.params || '',
+            version: data.version || ''
+          }
+        });
+      });
+    }
   }
 
   ngAfterViewInit(): void {

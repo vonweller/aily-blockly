@@ -1,10 +1,9 @@
 /* 这个服务用来控制窗口、工具的显示和隐藏，通过 Subject 来实现组件之间的通信。
  */
 import { Injectable, Injector } from '@angular/core';
-import { filter, Observable, Subject } from 'rxjs';
+import { Subject } from 'rxjs';
 import { ElectronService } from './electron.service';
 import { TerminalService } from '../tools/terminal/terminal.service';
-import { NavigationEnd, Router } from '@angular/router';
 import { FeedbackDialogComponent } from '../components/feedback-dialog/feedback-dialog.component';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { ProjectSettingDialogComponent } from '../components/project-setting-dialog/project-setting-dialog.component';
@@ -46,17 +45,23 @@ export class UiService {
    */
   private chatMessageSubject = new Subject<{ text: string; options?: Record<string, any> }>();
   chatMessage$ = this.chatMessageSubject.asObservable();
+  private modalService: NzModalService | null = null;
 
 
   constructor(
     private electronService: ElectronService,
     private terminalService: TerminalService,
-    private router: Router,
-    private modal: NzModalService,
     private authService: AuthService,
     private logService: LogService,
     private injector: Injector
   ) { }
+
+  private get modal(): NzModalService {
+    if (!this.modalService) {
+      this.modalService = this.injector.get(NzModalService);
+    }
+    return this.modalService;
+  }
 
 
   // 初始化UI服务，这个init函数仅供main-window使用
