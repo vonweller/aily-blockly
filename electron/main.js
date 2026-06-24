@@ -2189,7 +2189,7 @@ function cleanupRegisteredChildProcesses() {
     killAllNpmProcesses(),
     killAllTerminals()
   ]).then((results) => {
-    console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
+    // console.info('[PROC_TRACE][APP_CLEANUP_DONE]', { results });
   });
 }
 

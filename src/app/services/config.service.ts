@@ -1,10 +1,15 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { NzMessageService } from 'ng-zorro-antd/message';
 import { lastValueFrom, Subject, timeout } from 'rxjs';
 import { ElectronService } from './electron.service';
 import { API, setServerUrl, setRegistryUrl, setToolWebUrl } from '../configs/api.config';
 import { calculateSimilarity, extractKeywords } from '../utils/fuzzy-search.utils';
+
+export interface ConfigServiceNotice {
+  key: string;
+  type: 'error';
+  message: string;
+}
 
 @Injectable({
   providedIn: 'root',
@@ -19,6 +24,7 @@ export class ConfigService {
 
   /** 配置重新加载完成时发出，供 blockly 等组件实时应用新配置 */
   configReloaded$ = new Subject<void>();
+  readonly configNotice$ = new Subject<ConfigServiceNotice>();
   
   // 数据加载状态标识
   private _isDataReady = false;
@@ -48,8 +54,7 @@ export class ConfigService {
 
   constructor(
     private http: HttpClient,
-    private electronService: ElectronService,
-    private message: NzMessageService
+    private electronService: ElectronService
   ) { }
 
   private normalizeBuildFlavor(flavor?: string): string {
@@ -576,7 +581,7 @@ export class ConfigService {
       this.boardList = [];
       const message = this.getBoardReloadFailureMessage(remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 boards.json 失败:', remoteError);
-      this.showBoardLoadError(message);
+      this.emitBoardLoadError(message);
     }
   }
 
@@ -603,8 +608,8 @@ export class ConfigService {
     return '未知错误';
   }
 
-  private showBoardLoadError(message: string): void {
-    this.showDedupedError('board-list', message);
+  private emitBoardLoadError(message: string): void {
+    this.emitDedupedError('board-list', message);
   }
 
   async loadBoardList(): Promise<any[]> {
@@ -639,7 +644,7 @@ export class ConfigService {
       this.libraryList = [];
       const message = this.getLibraryReloadFailureMessage(remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 libraries.json 失败:', remoteError);
-      this.showLibraryLoadError(message);
+      this.emitLibraryLoadError(message);
     }
   }
 
@@ -647,8 +652,8 @@ export class ConfigService {
     return this.buildReloadFailureMessage('扩展库列表', 'libraries.json', remoteError, originalError);
   }
 
-  private showLibraryLoadError(message: string): void {
-    this.showDedupedError('library-list', message);
+  private emitLibraryLoadError(message: string): void {
+    this.emitDedupedError('library-list', message);
   }
 
   async loadLibraryList(): Promise<any[]> {
@@ -710,7 +715,7 @@ export class ConfigService {
       this.tagList = {};
       const message = this.buildReloadFailureMessage('标签列表', 'tags.json', remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 tags.json 失败:', remoteError);
-      this.showDedupedError('tag-list', message);
+      this.emitDedupedError('tag-list', message);
     }
   }
 
@@ -856,7 +861,7 @@ export class ConfigService {
       this.boardIndex = [];
       const message = this.getBoardIndexReloadFailureMessage(remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 boards-index.json 失败:', remoteError);
-      this.showBoardIndexLoadError(message);
+      this.emitBoardIndexLoadError(message);
     }
   }
 
@@ -870,7 +875,7 @@ export class ConfigService {
       this.libraryIndex = [];
       const message = this.getLibraryIndexReloadFailureMessage(remoteError, originalError);
       console.error('[ConfigService] 从线上恢复 libraries-index.json 失败:', remoteError);
-      this.showLibraryIndexLoadError(message);
+      this.emitLibraryIndexLoadError(message);
     }
   }
 
@@ -882,12 +887,12 @@ export class ConfigService {
     return this.buildReloadFailureMessage('扩展库索引', 'libraries-index.json', remoteError, originalError);
   }
 
-  private showBoardIndexLoadError(message: string): void {
-    this.showDedupedError('board-index', message);
+  private emitBoardIndexLoadError(message: string): void {
+    this.emitDedupedError('board-index', message);
   }
 
-  private showLibraryIndexLoadError(message: string): void {
-    this.showDedupedError('library-index', message);
+  private emitLibraryIndexLoadError(message: string): void {
+    this.emitDedupedError('library-index', message);
   }
 
   private parseArrayPayload(raw: string, invalidMessage: string, wrapperKey?: string): any[] {
@@ -932,7 +937,7 @@ export class ConfigService {
     return `${resourceLabel}加载失败${compactMessage}`;
   }
 
-  private showDedupedError(key: string, message: string): void {
+  private emitDedupedError(key: string, message: string): void {
     const now = Date.now();
     const state = this.errorNoticeState[key];
     if (state?.message === message && now - state.at < ConfigService.ERROR_MESSAGE_DEDUP_MS) {
@@ -940,7 +945,8 @@ export class ConfigService {
     }
 
     this.errorNoticeState[key] = { message, at: now };
-    this.message.error(message);
+    this.configNotice$.next({ key, type: 'error', message });
+    console.warn('[ConfigService]', message);
   }
 
   async loadBoardIndex(): Promise<any[]> {
