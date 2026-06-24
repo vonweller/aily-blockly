@@ -112,6 +112,32 @@ export class SessionLifecycleHelper {
     return entries[0] || null;
   }
 
+  private shouldRestoreUnsavedEmptySession(projectPath: string | null): boolean {
+    const currentSessionId = this.engine.chatService.currentSessionId;
+    if (!currentSessionId) return false;
+    if (this.engine.chatHistoryService.findEntry(currentSessionId)) return false;
+
+    const currentSessionPath = this.getPersistableProjectPath(this.engine.chatService.currentSessionPath);
+    return this.isSamePath(currentSessionPath, projectPath);
+  }
+
+  private async startUnsavedEmptySession(projectPath: string | null): Promise<void> {
+    const previousSessionId = this.engine.sessionId;
+    this.clearClientSessionState(previousSessionId);
+    this.engine.chatService.currentSessionId = '';
+    this.engine.chatService.currentSessionTitle = '';
+    this.engine.chatService.currentSessionPath = projectPath || '';
+    this.engine.isSessionStarting = false;
+    this.engine.serverSessionActive = false;
+
+    if (this.engine.isLoggedIn) {
+      await this.startSession();
+    }
+
+    this.refreshHistoryList();
+    this.engine.requestViewUpdate(true);
+  }
+
   private clearClientSessionState(previousSessionId?: string): void {
     this.engine.list = [];
     this.engine.scrollManager.autoScrollEnabled = true;
@@ -230,6 +256,11 @@ export class SessionLifecycleHelper {
   async initializeSessionForCurrentProject(): Promise<void> {
     const currentProjectPath = AilyHost.get().project.currentProjectPath;
     const persistableProjectPath = this.getPersistableProjectPath(currentProjectPath);
+
+    if (this.shouldRestoreUnsavedEmptySession(persistableProjectPath)) {
+      await this.startUnsavedEmptySession(persistableProjectPath);
+      return;
+    }
 
     if (persistableProjectPath) {
       this.engine.chatHistoryService.reloadProjectIndex(persistableProjectPath);
