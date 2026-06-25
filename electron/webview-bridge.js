@@ -5,7 +5,7 @@ const SEARCH_CHANNEL = "webview-bridge-search";
 const PARTITION = "persist:aily-webview-bridge";
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_WAIT_AFTER_LOAD_MS = 800;
-const IDLE_DESTROY_MS = 3 * 60 * 1000;
+const IDLE_DESTROY_MS = 60 * 1000;
 const MAX_HTML_CHARS = 1_000_000;
 const MAX_TEXT_CHARS = 200_000;
 const SEARCH_WAIT_AFTER_LOAD_MS = 1500;
@@ -13,8 +13,8 @@ const SEARCH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 let sessionConfigured = false;
-let sharedBridgeWindow = null;
-let sharedBridgeWindowIdleTimer = null;
+let nextBridgeTabId = 1;
+const bridgeTabs = [];
 
 function describeError(error) {
   return error instanceof Error ? error.message : String(error);
@@ -63,6 +63,15 @@ function getSafeUrl(win) {
   }
 }
 
+function getBridgeTabMeta(tab) {
+  return {
+    tabId: tab?.id ?? null,
+    busy: tab?.busy === true,
+    operation: typeof tab?.operation === "string" ? tab.operation : null,
+    ...getBridgeWindowMeta(tab?.win),
+  };
+}
+
 function ensureBridgeSessionConfigured() {
   if (sessionConfigured) {
     return;
@@ -84,60 +93,76 @@ function ensureBridgeSessionConfigured() {
   logBridgeInfo("configured bridge session", { partition: PARTITION });
 }
 
-function clearSharedBridgeWindowReference(win) {
-  if (sharedBridgeWindow === win) {
-    sharedBridgeWindow = null;
+function removeBridgeTab(tab) {
+  const index = bridgeTabs.indexOf(tab);
+  if (index >= 0) {
+    bridgeTabs.splice(index, 1);
   }
 }
 
-function destroyBridgeWindow(win, reason, details) {
+function clearTabIdleDestroyTimer(tab) {
+  if (!tab?.idleTimer) {
+    return;
+  }
+  clearTimeout(tab.idleTimer);
+  tab.idleTimer = null;
+}
+
+function destroyBridgeTab(tab, reason, details) {
+  if (!tab) {
+    return;
+  }
+
+  const win = tab.win;
   if (!win) {
+    removeBridgeTab(tab);
     return;
   }
 
   const meta = {
-    ...getBridgeWindowMeta(win),
+    ...getBridgeTabMeta(tab),
     url: getSafeUrl(win),
     reason,
     ...details,
   };
-  clearIdleDestroyTimer();
-  clearSharedBridgeWindowReference(win);
+  clearTabIdleDestroyTimer(tab);
+  removeBridgeTab(tab);
 
   if (win.isDestroyed()) {
-    logBridgeWarn("bridge window already destroyed", meta);
+    logBridgeWarn("bridge tab already destroyed", meta);
     return;
   }
 
-  logBridgeWarn("destroying bridge window", meta);
+  logBridgeWarn("destroying bridge tab", meta);
   try {
     win.destroy();
   } catch (error) {
-    logBridgeError("failed to destroy bridge window", {
+    logBridgeError("failed to destroy bridge tab", {
       ...meta,
       error: describeError(error),
     });
   }
 }
 
-function attachBridgeWindowObservers(win) {
-  const baseMeta = getBridgeWindowMeta(win);
+function attachBridgeWindowObservers(tab) {
+  const win = tab.win;
+  const baseMeta = getBridgeTabMeta(tab);
 
   win.once("closed", () => {
-    clearSharedBridgeWindowReference(win);
-    clearIdleDestroyTimer();
-    logBridgeInfo("bridge window closed", {
+    clearTabIdleDestroyTimer(tab);
+    removeBridgeTab(tab);
+    logBridgeInfo("bridge tab closed", {
       ...baseMeta,
       url: getSafeUrl(win),
     });
   });
 
   win.on("unresponsive", () => {
-    destroyBridgeWindow(win, "unresponsive", baseMeta);
+    destroyBridgeTab(tab, "unresponsive", baseMeta);
   });
 
   win.webContents.on("render-process-gone", (_event, details) => {
-    destroyBridgeWindow(win, "render-process-gone", {
+    destroyBridgeTab(tab, "render-process-gone", {
       ...baseMeta,
       exitCode: details?.exitCode,
       reason: details?.reason,
@@ -160,16 +185,16 @@ function attachBridgeWindowObservers(win) {
       };
 
       if (errorCode === -3) {
-        logBridgeWarn("bridge load aborted", detail);
+        logBridgeWarn("bridge tab load aborted", detail);
         return;
       }
 
-      destroyBridgeWindow(win, "did-fail-load", detail);
+      destroyBridgeTab(tab, "did-fail-load", detail);
     },
   );
 }
 
-function createHiddenBridgeWindow() {
+function createBridgeTab() {
   ensureBridgeSessionConfigured();
   const win = new BrowserWindow({
     show: false,
@@ -186,51 +211,70 @@ function createHiddenBridgeWindow() {
       spellcheck: false,
     },
   });
-  attachBridgeWindowObservers(win);
-  logBridgeInfo("created bridge window", {
-    ...getBridgeWindowMeta(win),
+  const tab = {
+    id: nextBridgeTabId++,
+    win,
+    busy: false,
+    operation: null,
+    idleTimer: null,
+  };
+  bridgeTabs.push(tab);
+  attachBridgeWindowObservers(tab);
+  logBridgeInfo("created bridge tab", {
+    ...getBridgeTabMeta(tab),
     partition: PARTITION,
   });
-  return win;
+  return tab;
 }
 
-function clearIdleDestroyTimer() {
-  if (!sharedBridgeWindowIdleTimer) {
+function scheduleTabIdleDestroy(tab) {
+  if (!tab) {
     return;
   }
-  clearTimeout(sharedBridgeWindowIdleTimer);
-  sharedBridgeWindowIdleTimer = null;
-}
-
-function destroySharedBridgeWindow() {
-  clearIdleDestroyTimer();
-  if (!sharedBridgeWindow || sharedBridgeWindow.isDestroyed()) {
-    sharedBridgeWindow = null;
-    return;
-  }
-  destroyBridgeWindow(sharedBridgeWindow, "idle-timeout");
-}
-
-function scheduleIdleDestroy() {
-  clearIdleDestroyTimer();
-  sharedBridgeWindowIdleTimer = setTimeout(() => {
-    destroySharedBridgeWindow();
+  clearTabIdleDestroyTimer(tab);
+  tab.idleTimer = setTimeout(() => {
+    if (tab.busy) {
+      return;
+    }
+    destroyBridgeTab(tab, "idle-timeout");
   }, IDLE_DESTROY_MS);
 }
 
-function getSharedBridgeWindow() {
-  clearIdleDestroyTimer();
-
-  if (sharedBridgeWindow && !sharedBridgeWindow.isDestroyed()) {
-    logBridgeInfo("reusing bridge window", {
-      ...getBridgeWindowMeta(sharedBridgeWindow),
-      url: getSafeUrl(sharedBridgeWindow),
+function acquireBridgeTab(operationLabel = "bridge") {
+  for (const tab of bridgeTabs) {
+    if (!tab || tab.busy || !tab.win || tab.win.isDestroyed()) {
+      continue;
+    }
+    clearTabIdleDestroyTimer(tab);
+    tab.busy = true;
+    tab.operation = operationLabel;
+    logBridgeInfo("reusing bridge tab", {
+      ...getBridgeTabMeta(tab),
+      url: getSafeUrl(tab.win),
     });
-    return sharedBridgeWindow;
+    return tab;
   }
 
-  sharedBridgeWindow = createHiddenBridgeWindow();
-  return sharedBridgeWindow;
+  const tab = createBridgeTab();
+  tab.busy = true;
+  tab.operation = operationLabel;
+  return tab;
+}
+
+function releaseBridgeTab(tab) {
+  if (!tab) {
+    return;
+  }
+  if (!bridgeTabs.includes(tab)) {
+    return;
+  }
+  if (!tab.win || tab.win.isDestroyed()) {
+    removeBridgeTab(tab);
+    return;
+  }
+  tab.busy = false;
+  tab.operation = null;
+  scheduleTabIdleDestroy(tab);
 }
 
 function delay(ms) {
@@ -243,14 +287,15 @@ function normalizeTimeout(value, fallback = DEFAULT_TIMEOUT_MS) {
     : fallback;
 }
 
-async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL") {
+async function loadUrlWithTimeout(tab, url, timeoutMs, operationLabel = "loadURL") {
+  const win = tab.win;
   const meta = {
-    ...getBridgeWindowMeta(win),
+    ...getBridgeTabMeta(tab),
     url,
     timeoutMs,
     operation: operationLabel,
   };
-  logBridgeInfo("starting bridge navigation", meta);
+  logBridgeInfo("starting bridge tab navigation", meta);
 
   await new Promise((resolve, reject) => {
     let settled = false;
@@ -283,7 +328,7 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
       reject(error);
     };
     const onFinish = () => {
-      logBridgeInfo("bridge navigation finished", {
+      logBridgeInfo("bridge tab navigation finished", {
         ...meta,
         finalUrl: getSafeUrl(win),
       });
@@ -293,16 +338,19 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
       if (!isMainFrame || settled) {
         return;
       }
-      logBridgeWarn("bridge navigation failed", {
+      logBridgeWarn("bridge tab navigation failed", {
         ...meta,
         errorCode,
         errorDescription,
         validatedUrl,
       });
+      if (errorCode === -3) {
+        return;
+      }
       settleReject(new Error(`Load failed (${errorCode}): ${errorDescription || validatedUrl || url}`));
     };
     const onGone = (_event, details) => {
-      logBridgeError("bridge renderer process gone during navigation", {
+      logBridgeError("bridge tab renderer process gone during navigation", {
         ...meta,
         reason: details?.reason,
         exitCode: details?.exitCode,
@@ -312,20 +360,20 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
       );
     };
     const onUnresponsive = () => {
-      logBridgeError("bridge window unresponsive during navigation", meta);
-      settleReject(new Error(`Bridge window became unresponsive during ${operationLabel}`));
+      logBridgeError("bridge tab unresponsive during navigation", meta);
+      settleReject(new Error(`Bridge tab became unresponsive during ${operationLabel}`));
     };
     const onClosed = () => {
-      logBridgeWarn("bridge window closed during navigation", meta);
-      settleReject(new Error(`Bridge window closed during ${operationLabel}`));
+      logBridgeWarn("bridge tab closed during navigation", meta);
+      settleReject(new Error(`Bridge tab closed during ${operationLabel}`));
     };
     const onTimeout = () => {
       if (settled) {
         return;
       }
-      logBridgeWarn("bridge navigation timed out", meta);
+      logBridgeWarn("bridge tab navigation timed out", meta);
       settleReject(new Error(`webview bridge timed out after ${timeoutMs}ms`));
-      destroyBridgeWindow(win, "navigation-timeout", meta);
+      destroyBridgeTab(tab, "navigation-timeout", meta);
     };
 
     timeoutHandle = setTimeout(onTimeout, timeoutMs);
@@ -335,7 +383,7 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
     win.once("unresponsive", onUnresponsive);
     win.once("closed", onClosed);
     void win.loadURL(url).catch(error => {
-      logBridgeError("bridge loadURL threw", {
+      logBridgeError("bridge tab loadURL threw", {
         ...meta,
         error: describeError(error),
       });
@@ -344,21 +392,21 @@ async function loadUrlWithTimeout(win, url, timeoutMs, operationLabel = "loadURL
   });
 }
 
-async function withBridgeWindow(task) {
-  const win = getSharedBridgeWindow();
+async function withBridgeWindow(task, operationLabel = "bridge") {
+  const tab = acquireBridgeTab(operationLabel);
   try {
-    return await task(win);
+    return await task(tab.win, tab);
   } finally {
-    scheduleIdleDestroy();
+    releaseBridgeTab(tab);
   }
 }
 
 async function fetchViaWebview(payload = {}) {
   const timeoutMs = normalizeTimeout(payload.timeoutMs);
   const waitAfterLoadMs = normalizeTimeout(payload.waitAfterLoadMs, DEFAULT_WAIT_AFTER_LOAD_MS);
-  return await withBridgeWindow(async (win) => {
-    const targetUrl = String(payload.url || "");
-    await loadUrlWithTimeout(win, targetUrl, timeoutMs, `fetch:${targetUrl}`);
+  const targetUrl = String(payload.url || "");
+  return await withBridgeWindow(async (win, tab) => {
+    await loadUrlWithTimeout(tab, targetUrl, timeoutMs, `fetch:${targetUrl}`);
     if (waitAfterLoadMs > 0) {
       await delay(waitAfterLoadMs);
     }
@@ -379,8 +427,8 @@ async function fetchViaWebview(payload = {}) {
         true,
       );
     } catch (error) {
-      destroyBridgeWindow(win, "execute-javascript-failed", {
-        ...getBridgeWindowMeta(win),
+      destroyBridgeTab(tab, "execute-javascript-failed", {
+        ...getBridgeTabMeta(tab),
         url: targetUrl,
         operation: "fetch",
         error: describeError(error),
@@ -394,12 +442,12 @@ async function fetchViaWebview(payload = {}) {
       contentType: "text/html; charset=utf-8",
       ...result,
     };
-  });
+  }, `fetch:${targetUrl}`);
 }
 
 async function loadSearchPageViaWebview(searchUrl, timeoutMs) {
-  return await withBridgeWindow(async (win) => {
-    await loadUrlWithTimeout(win, searchUrl, timeoutMs, `search:${searchUrl}`);
+  return await withBridgeWindow(async (win, tab) => {
+    await loadUrlWithTimeout(tab, searchUrl, timeoutMs, `search:${searchUrl}`);
     await delay(SEARCH_WAIT_AFTER_LOAD_MS);
 
     try {
@@ -412,15 +460,15 @@ async function loadSearchPageViaWebview(searchUrl, timeoutMs) {
         true,
       );
     } catch (error) {
-      destroyBridgeWindow(win, "execute-javascript-failed", {
-        ...getBridgeWindowMeta(win),
+      destroyBridgeTab(tab, "execute-javascript-failed", {
+        ...getBridgeTabMeta(tab),
         url: searchUrl,
         operation: `search:${searchUrl}`,
         error: describeError(error),
       });
       throw error;
     }
-  });
+  }, `search:${searchUrl}`);
 }
 
 async function searchViaWebview(payload = {}) {
