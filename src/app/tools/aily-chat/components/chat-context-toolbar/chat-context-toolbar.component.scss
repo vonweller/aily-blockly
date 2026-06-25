@@ -74,6 +74,22 @@
       white-space: nowrap;
     }
   }
+
+  .acc-process {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    color: var(--aily-chat-xdialog-edit-btn-fg, #eee);
+    padding-top: 1px;
+    border-radius: 5px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--aily-chat-xdialog-edit-resource-name, #fff);
+      background: var(--aily-chat-xdialog-edit-btn-hover-bg, #3f3f3f);
+    }
+  }
 }
 
 :host.acc-host--composer {
@@ -81,6 +97,23 @@
   --acc-toolbar-hover-fg: var(--aily-text-primary, #fff);
 
   .acc-clip {
+    margin-left: 1px;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    color: var(--aily-text-quaternary, #eee);
+    padding-top: 1px;
+    border-radius: 5px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--acc-toolbar-hover-fg);
+      background: var(--acc-toolbar-hover-bg);
+    }
+  }
+
+  .acc-process {
+    position: relative;
     margin-left: 1px;
     width: 28px;
     height: 28px;
@@ -160,6 +193,25 @@
       margin-left: 5px;
     }
   }
+}
+
+:host .acc-process-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #d4380d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--aily-bg-primary, #fff);
 }
 
 :host.acc-host--edit .acc-chip .acc-mini-tag,

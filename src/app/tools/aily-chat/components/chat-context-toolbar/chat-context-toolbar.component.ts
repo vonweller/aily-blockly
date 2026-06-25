@@ -41,11 +41,14 @@ export class ChatContextToolbarComponent {
   @Input() modelChipLabel = '';
   @Input() modelBillingLabel = '';
   @Input() showManageMemory = false;
+  @Input() showProcessButton = false;
+  @Input() runningProcessCount = 0;
 
   @Output() toggleAddList = new EventEmitter<void>();
   @Output() addFile = new EventEmitter<void>();
   @Output() addFolder = new EventEmitter<void>();
   @Output() manageMemory = new EventEmitter<void>();
+  @Output() openProcessManager = new EventEmitter<void>();
   @Output() modeClick = new EventEmitter<MouseEvent>();
   @Output() modelClick = new EventEmitter<MouseEvent>();
 
@@ -158,5 +161,9 @@ export class ChatContextToolbarComponent {
 
   onManageMemory(): void {
     this.manageMemory.emit();
+  }
+
+  onOpenProcessManager(): void {
+    this.openProcessManager.emit();
   }
 }

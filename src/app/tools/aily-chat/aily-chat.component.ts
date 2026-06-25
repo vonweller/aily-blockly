@@ -958,13 +958,13 @@ export class AilyChatComponent implements OnDestroy, AfterViewChecked {
     this.lifecycleCoordinator.detachView();
   }
 
-  shouldShowBackgroundProcessButton(): boolean {
-    return this.getBackgroundRunningProcessCount() > 0;
+  shouldShowProcessEntryButton(): boolean {
+    return this.readCurrentSessionProcesses().length > 0;
   }
 
-  getBackgroundRunningProcessCount(): number {
+  getRunningProcessCount(): number {
     return this.readCurrentSessionProcesses()
-      .filter(process => process.running === true && process.background === true)
+      .filter(process => process.running === true)
       .length;
   }
 
