@@ -812,24 +812,37 @@ export class SerialMonitorComponent {
     this.cd.detectChanges();
   }
 
-  contextMenuClick(menuItem: any) {
-    if (!this.contextMenuItem) return;
+  async contextMenuClick(menuItem: any) {
+    const contextMenuItem = this.contextMenuItem;
+    if (!contextMenuItem) return;
     switch (menuItem.data.action) {
       case 'copy':
-        navigator.clipboard.writeText(this.contextMenuItem.data).then(() => {
+        try {
+          await this.electronService.clipboardWriteText(this.getDataItemCopyText(contextMenuItem));
           this.message.info('已复制到剪贴板');
-        });
+        } catch (error) {
+          console.error('Copy serial data failed:', error);
+          this.message.error('复制失败');
+        }
         break;
       case 'hex':
-        this.contextMenuItem.showHex = !this.contextMenuItem.showHex;
+        contextMenuItem.showHex = !contextMenuItem.showHex;
         break;
       case 'highlight':
-        this.contextMenuItem.highlight = !this.contextMenuItem.highlight;
+        contextMenuItem.highlight = !contextMenuItem.highlight;
         break;
     }
     this.showContextMenu = false;
     this.contextMenuItem = null;
     this.cd.detectChanges();
+  }
+
+  private getDataItemCopyText(item: dataItem): string {
+    if (Buffer.isBuffer(item.data)) {
+      return item.data.toString();
+    }
+
+    return item.data == null ? '' : String(item.data);
   }
 
   showChartBox = false;
