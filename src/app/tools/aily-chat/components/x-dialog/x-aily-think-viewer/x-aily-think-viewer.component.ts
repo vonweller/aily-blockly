@@ -24,6 +24,7 @@ import {
 } from '../../../core/think-content-store';
 import { ChatPerformanceTracer } from '../../../services/chat-perf-tracer';
 import { AilyChatCodeComponent } from '../aily-chat-code.component';
+import { AilyMarkdownExternalLinksDirective } from '../../../directives/aily-markdown-external-links.directive';
 
 const LIVE_THINK_RENDER_WINDOW_CHARS = 48 * 1024;
 const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\n';
@@ -31,7 +32,7 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
 @Component({
   selector: 'x-aily-think-viewer',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent],
+  imports: [CommonModule, XMarkdownComponent, AilyMarkdownExternalLinksDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="ac-think" [class.expanded]="thinkExpanded || embedded" [class.streaming]="data?.isComplete === false" [class.embedded]="embedded">
@@ -56,6 +57,7 @@ const LIVE_THINK_OMITTED_MARKER = '[earlier reasoning omitted from live view]\n\
               [streaming]="streamingConfig()"
               [components]="componentMap"
               rootClassName="x-markdown-dark"
+              ailyMarkdownExternalLinks
             />
           }
         </div>

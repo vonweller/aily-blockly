@@ -4,6 +4,7 @@ import { TranslateModule } from '@ngx-translate/core';
 import { XMarkdownComponent } from 'ngx-x-markdown';
 
 import { AilyHost } from '../core/host';
+import { AilyMarkdownExternalLinksDirective } from '../directives/aily-markdown-external-links.directive';
 import { getBlocklyArtifactReferenceLabel, resolveBlocklyArtifactReferenceTarget } from '../helpers/chat-artifact-reference';
 import { ChatRuntimeInteractionHostService } from '../services/chat-runtime-interaction-host.service';
 import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } from './x-dialog/chat-confirmation-actions/chat-confirmation-actions.component';
@@ -11,7 +12,7 @@ import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } f
 @Component({
   selector: 'aily-chat-runtime-plan-review',
   standalone: true,
-  imports: [CommonModule, TranslateModule, XMarkdownComponent, ChatConfirmationActionsComponent],
+  imports: [CommonModule, TranslateModule, XMarkdownComponent, ChatConfirmationActionsComponent, AilyMarkdownExternalLinksDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (activeReview; as active) {
@@ -40,7 +41,7 @@ import { ChatConfirmationActionsComponent, type ChatConfirmationActionOption } f
         </div>
 
         <div class="rpr-body">
-          <x-markdown [content]="active.data.content" rootClassName="x-markdown-dark" />
+          <x-markdown [content]="active.data.content" rootClassName="x-markdown-dark" ailyMarkdownExternalLinks />
         </div>
 
         @if (showFeedbackSection(active)) {

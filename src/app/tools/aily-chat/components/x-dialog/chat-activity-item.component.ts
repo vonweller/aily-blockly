@@ -7,6 +7,7 @@ import { AilyHost } from '../../core/host';
 import { AilyChatCodeComponent } from './aily-chat-code.component';
 import { ChatTerminalPartComponent } from './chat-terminal-part/chat-terminal-part.component';
 import { XAilyThinkViewerComponent } from './x-aily-think-viewer/x-aily-think-viewer.component';
+import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
 import type { ActivityGroupDisplayItem, ActivityToolbarActionDisplayData } from './chat-activity-group.types';
 import { XAilyConfirmationViewerComponent } from './x-aily-confirmation-viewer/x-aily-confirmation-viewer.component';
 import {
@@ -36,7 +37,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
 @Component({
   selector: 'aily-chat-activity-item',
   standalone: true,
-  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent],
+  imports: [CommonModule, XMarkdownComponent, XAilyConfirmationViewerComponent, ChatTerminalPartComponent, XAilyThinkViewerComponent, AilyMarkdownExternalLinksDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -142,6 +143,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                     [content]="item.note || ''"
                     [components]="componentMap"
                     rootClassName="x-markdown-dark cag-item-markdown"
+                    ailyMarkdownExternalLinks
                   />
                 }
               </div>
@@ -157,6 +159,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                   [content]="item.note || ''"
                   [components]="componentMap"
                   rootClassName="x-markdown-dark cag-item-markdown"
+                  ailyMarkdownExternalLinks
                 />
               }
             </div>
@@ -194,6 +197,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                         [content]="child.content"
                         [components]="componentMap"
                         rootClassName="x-markdown-dark cag-item-markdown"
+                        ailyMarkdownExternalLinks
                       />
                     </div>
                   }
@@ -264,6 +268,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                 [content]="row.note"
                                 [components]="componentMap"
                                 rootClassName="x-markdown-dark cag-item-markdown"
+                                ailyMarkdownExternalLinks
                               />
                             </div>
                           }
@@ -293,6 +298,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                 [content]="row.note"
                                 [components]="componentMap"
                                 rootClassName="x-markdown-dark cag-item-markdown"
+                                ailyMarkdownExternalLinks
                               />
                             </div>
                           }
@@ -332,6 +338,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                   [content]="row.note"
                                   [components]="componentMap"
                                   rootClassName="x-markdown-dark cag-item-markdown"
+                                  ailyMarkdownExternalLinks
                                 />
                               </div>
                             }
@@ -359,7 +366,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                         </div>
                                         <div class="cag-item-invocation-diff-file-meta">
                                           @if (diffFile.href) {
-                                            <a class="cag-item-invocation-diff-file-link" [href]="diffFile.href" target="_blank" rel="noopener noreferrer">{{ diffFile.href }}</a>
+                                            <a class="cag-item-invocation-diff-file-link" [href]="diffFile.href" target="_blank" rel="noopener noreferrer" (click)="openExternalLink(diffFile.href, $event)">{{ diffFile.href }}</a>
                                           }
                                           @if (diffFile.language && diffFile.language !== 'diff') {
                                             <span class="cag-item-invocation-diff-language">{{ diffFile.language }}</span>
@@ -428,6 +435,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                             [content]="row.note"
                                             [components]="componentMap"
                                             rootClassName="x-markdown-dark cag-item-markdown"
+                                            ailyMarkdownExternalLinks
                                           />
                                         </div>
                                       }
@@ -481,6 +489,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                             [content]="row.note"
                                             [components]="componentMap"
                                             rootClassName="x-markdown-dark cag-item-markdown"
+                                            ailyMarkdownExternalLinks
                                           />
                                         </div>
                                       }
@@ -507,7 +516,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                         </div>
                                       }
                                       @if (getOutputResourceHref(row); as resourceHref) {
-                                        <a class="cag-item-invocation-output-resource-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer">{{ resourceHref }}</a>
+                                        <a class="cag-item-invocation-output-resource-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer" (click)="openExternalLink(resourceHref, $event)">{{ resourceHref }}</a>
                                       }
                                       @if (row.note) {
                                         <div class="cag-item-invocation-output-resource-note">
@@ -515,6 +524,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                             [content]="row.note"
                                             [components]="componentMap"
                                             rootClassName="x-markdown-dark cag-item-markdown"
+                                            ailyMarkdownExternalLinks
                                           />
                                         </div>
                                       }
@@ -535,7 +545,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                           <div class="cag-item-invocation-output-diff-shell">
                                             <div class="cag-item-invocation-output-diff-meta">
                                               @if (getOutputCodeHref(row); as codeHref) {
-                                                <a class="cag-item-invocation-output-diff-file-link" [href]="codeHref" target="_blank" rel="noopener noreferrer">{{ codeHref }}</a>
+                                                <a class="cag-item-invocation-output-diff-file-link" [href]="codeHref" target="_blank" rel="noopener noreferrer" (click)="openExternalLink(codeHref, $event)">{{ codeHref }}</a>
                                               }
                                               @if (row.outputLanguage && row.outputLanguage !== 'diff') {
                                                 <span class="cag-item-invocation-output-diff-language">{{ row.outputLanguage }}</span>
@@ -576,6 +586,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                               [content]="row.note"
                                               [components]="componentMap"
                                               rootClassName="x-markdown-dark cag-item-markdown"
+                                              ailyMarkdownExternalLinks
                                             />
                                           </div>
                                         }
@@ -598,6 +609,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                             [content]="row.note"
                                             [components]="componentMap"
                                             rootClassName="x-markdown-dark cag-item-markdown"
+                                            ailyMarkdownExternalLinks
                                           />
                                         </div>
                                       }
@@ -633,6 +645,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                                     [content]="row.note"
                                     [components]="componentMap"
                                     rootClassName="x-markdown-dark cag-item-markdown"
+                                    ailyMarkdownExternalLinks
                                   />
                                 </div>
                               }
@@ -666,6 +679,7 @@ import { ChatPerformanceTracer } from '../../services/chat-perf-tracer';
                               [content]="row.note"
                               [components]="componentMap"
                               rootClassName="x-markdown-dark cag-item-markdown"
+                              ailyMarkdownExternalLinks
                             />
                           </div>
                         }
@@ -2536,6 +2550,23 @@ export class ChatActivityItemComponent implements OnChanges {
 
   getOutputCodeHref(row: StateDetailRow): string | null {
     return getDiffOutputHref(row);
+  }
+
+  openExternalLink(url: string | null | undefined, event?: Event): void {
+    if (!url) {
+      return;
+    }
+
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const host = AilyHost.get();
+    if (host.shell?.openByBrowser) {
+      host.shell.openByBrowser(url);
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   isDiffOutput(row: StateDetailRow): boolean {
