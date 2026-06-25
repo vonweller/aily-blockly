@@ -877,6 +877,7 @@ const { registerNpmHandlers, killAllNpmProcesses, getActiveNpmProcesses } = requ
 const { registerUpdaterHandlers } = require("./updater");
 const { registerCmdHandlers, killAllCmdProcesses, getActiveCmdProcesses } = require("./cmd");
 const { registerAilyServicesStreamHandlers, cancelAllAilyServicesStreams, getActiveAilyServicesStreams } = require("./aily-services-stream");
+const { registerWebviewBridgeHandlers } = require("./webview-bridge");
 const { registerMCPHandlers } = require("./mcp");
 const { registerAppDataResourceLockHandlers, releaseAllAppDataResourceLocks } = require("./appdata-resource-lock");
 // debug模块
@@ -2133,6 +2134,7 @@ function createWindow() {
   registerNpmHandlers(mainWindow);
   registerCmdHandlers(mainWindow);
   registerAilyServicesStreamHandlers(mainWindow);
+  registerWebviewBridgeHandlers();
   registerMCPHandlers(mainWindow);
   registerToolsHandlers(mainWindow);
   registerNotificationHandlers(mainWindow);

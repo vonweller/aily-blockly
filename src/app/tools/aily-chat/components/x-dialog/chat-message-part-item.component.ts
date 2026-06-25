@@ -24,6 +24,7 @@ import { XAilyErrorViewerComponent, type ErrorActionItem } from './x-aily-error-
 import { XAilyQuestionViewerComponent } from './x-aily-question-viewer/x-aily-question-viewer.component';
 import { ChatActivityGroupComponent } from './chat-activity-group.component';
 import { ChatStandaloneToolCallComponent } from './chat-standalone-tool-call.component';
+import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
 import { isGroupableActivityPart, isSubagentToolCall } from './chat-activity-group-projection';
 import { isProgressMessageDisplayPart, type ProgressMessageDisplayPart, type RenderableChatPart } from './chat-render-parts';
 import { ChatEngineService } from '../../services/chat-engine.service';
@@ -88,6 +89,7 @@ interface MarkdownTextChunk {
     XAilyQuestionViewerComponent,
     ChatActivityGroupComponent,
     ChatStandaloneToolCallComponent,
+    AilyMarkdownExternalLinksDirective,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -105,6 +107,7 @@ interface MarkdownTextChunk {
             [streaming]="streamingConfig()"
             [components]="componentMap"
             rootClassName="x-markdown-dark"
+            ailyMarkdownExternalLinks
           />
         }
       }
@@ -166,6 +169,7 @@ interface MarkdownTextChunk {
                 [streaming]="streamingConfig()"
                 [components]="componentMap"
                 rootClassName="x-markdown-dark"
+                ailyMarkdownExternalLinks
               />
             }
           </div>

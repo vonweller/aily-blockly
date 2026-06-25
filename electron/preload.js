@@ -6,9 +6,49 @@ const { createHash } = require("crypto");
 const { existsSync, statSync } = require("fs");
 const { isAbsolute } = require("path");
 const { tmpdir } = require("os");
+const nodeFsp = require("node:fs/promises");
 
 // 单双杠虽不影响实用性，为了路径规范好看，还是单独使用
 const pt = process.platform === "win32" ? "\\" : "/"
+
+const pathApi = {
+  getUserHome: () => require("os").homedir(),
+  getAilyChildPath: () => process.env.AILY_CHILD_PATH,
+  getAppDataPath: () => process.env.AILY_APPDATA_PATH,
+  getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
+  getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
+  getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
+  isExists: (path) => existsSync(path),
+  getElectronPath: () => {
+    if (__dirname.includes('app.asar.unpacked')) {
+      return __dirname.replace('app.asar.unpacked', 'app.asar');
+    }
+    return __dirname;
+  },
+  isDir: (path) => statSync(path).isDirectory(),
+  join: (...args) => require("path").join(...args),
+  dirname: (path) => require("path").dirname(path),
+  extname: (path) => require("path").extname(path),
+  normalize: (path) => require("path").normalize(path),
+  resolve: (path) => require("path").resolve(path),
+  relative: (from, to) => require("path").relative(from, to),
+  basename: (path, suffix = undefined) => require("path").basename(path, suffix),
+  isAbsolute: (path) => isAbsolute(path),
+};
+
+const fspApi = {
+  glob: (...args) => nodeFsp.glob(...args),
+  readFile: (...args) => nodeFsp.readFile(...args),
+  writeFile: (...args) => nodeFsp.writeFile(...args),
+  appendFile: (...args) => nodeFsp.appendFile(...args),
+  readdir: (...args) => nodeFsp.readdir(...args),
+  stat: (...args) => nodeFsp.stat(...args),
+  mkdir: (...args) => nodeFsp.mkdir(...args),
+  rm: (...args) => nodeFsp.rm(...args),
+  access: (...args) => nodeFsp.access(...args),
+  unlink: (...args) => nodeFsp.unlink(...args),
+  open: (...args) => nodeFsp.open(...args),
+};
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ipcRenderer: {
@@ -16,31 +56,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     on: (channel, callback) => ipcRenderer.on(channel, callback),
     invoke: (channel, data) => ipcRenderer.invoke(channel, data),
   },
-  path: {
-    getUserHome: () => require("os").homedir(),
-    getAilyChildPath: () => process.env.AILY_CHILD_PATH,
-    getAppDataPath: () => process.env.AILY_APPDATA_PATH,
-    getAilyBuilderPath: () => process.env.AILY_BUILDER_PATH,
-    getAilyBuilderBuildPath: () => process.env.AILY_BUILDER_BUILD_PATH,
-    getUserDocuments: () => require("os").homedir() + `${pt}Documents`,
-    isExists: (path) => existsSync(path),
-    getElectronPath: () => {
-      // 当 preload.js 从 asar 解包后，将路径重定向到 asar 内部以便 fs 操作正常工作
-      if (__dirname.includes('app.asar.unpacked')) {
-        return __dirname.replace('app.asar.unpacked', 'app.asar');
-      }
-      return __dirname;
-    },
-    isDir: (path) => statSync(path).isDirectory(),
-    join: (...args) => require("path").join(...args),
-    dirname: (path) => require("path").dirname(path),
-    extname: (path) => require("path").extname(path),
-    normalize: (path) => require("path").normalize(path),
-    resolve: (path) => require("path").resolve(path),
-    relative: (from, to) => require("path").relative(from, to),
-    basename: (path, suffix = undefined) => require("path").basename(path, suffix),
-    isAbsolute: (path) => isAbsolute(path),
-  },
+  path: pathApi,
+  fsp: fspApi,
   versions: () => process.versions,
   SerialPort: {
     list: async () => await listPorts(),
@@ -172,6 +189,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("aily-chat-runtime-host-event", listener);
       return () => ipcRenderer.removeListener("aily-chat-runtime-host-event", listener);
     },
+  },
+  webviewBridge: {
+    fetchPage: (data) => ipcRenderer.invoke("webview-bridge-fetch", data),
+    searchWeb: (data) => ipcRenderer.invoke("webview-bridge-search", data),
   },
   iWindow: {
     minimize: () => ipcRenderer.send("window-minimize"),

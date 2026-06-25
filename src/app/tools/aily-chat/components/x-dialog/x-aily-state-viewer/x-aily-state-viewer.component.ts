@@ -171,7 +171,7 @@ interface StateViewerData {
                               </div>
                             }
                             @if (getOutputResourceHref(row); as resourceHref) {
-                              <a class="ac-state-list-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer">{{ resourceHref }}</a>
+                              <a class="ac-state-list-link" [href]="resourceHref" target="_blank" rel="noopener noreferrer" (click)="openExternalLink(resourceHref, $event)">{{ resourceHref }}</a>
                             }
                             @if (row.note) {
                               <div class="ac-state-list-note">{{ row.note }}</div>
@@ -213,7 +213,7 @@ interface StateViewerData {
                           </div>
                         }
                         @if (row.outputUri) {
-                          <a class="ac-state-list-link" [href]="row.outputUri" target="_blank" rel="noopener noreferrer">{{ row.outputUri }}</a>
+                          <a class="ac-state-list-link" [href]="row.outputUri" target="_blank" rel="noopener noreferrer" (click)="openExternalLink(row.outputUri, $event)">{{ row.outputUri }}</a>
                         }
                         @if (row.note) {
                           <div class="ac-state-list-note">{{ row.note }}</div>
@@ -1308,6 +1308,23 @@ export class XAilyStateViewerComponent implements OnChanges {
 
   getOutputResourceHref(row: { outputKind?: string; outputUri?: string }): string | null {
     return row.outputKind === 'resource' && row.outputUri ? row.outputUri : null;
+  }
+
+  openExternalLink(url: string | null | undefined, event?: Event): void {
+    if (!url) {
+      return;
+    }
+
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const host = AilyHost.get();
+    if (host.shell?.openByBrowser) {
+      host.shell.openByBrowser(url);
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   getResolvedReferenceLabel(reference: string): string {

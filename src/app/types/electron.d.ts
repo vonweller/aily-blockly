@@ -43,6 +43,10 @@ declare global {
         emitExecutionWorkerEvent: (payload: unknown) => void;
         onEvent: (callback: (payload: any) => void) => () => void;
       };
+      webviewBridge?: {
+        fetchPage: (data: any) => Promise<any>;
+        searchWeb: (data: any) => Promise<any>;
+      };
       iWindow: any;
       subWindow: any;
       coderEmbed: {

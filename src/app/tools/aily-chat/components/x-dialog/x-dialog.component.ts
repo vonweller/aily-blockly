@@ -36,6 +36,7 @@ import { extractUserTurnResources, mergeUserTurnResources, parseUserTurnTextAndR
 import type { ChatTaskActionDetail } from '../../helpers/chat-task-action-coordinator';
 import { ChatMessagePartsComponent } from './chat-message-parts.component';
 import { ChatContextToolbarComponent } from '../chat-context-toolbar/chat-context-toolbar.component';
+import { AilyMarkdownExternalLinksDirective } from '../../directives/aily-markdown-external-links.directive';
 import type { TurnResponsePart, TurnResponseTurn } from 'aily-lex/browser';
 import { collectTurnResponseText } from 'aily-lex/browser';
 import {
@@ -69,6 +70,7 @@ const EMPTY_CHAT_PARTS: readonly ChatPart[] = [];
     XMarkdownComponent,
     ChatMessagePartsComponent,
     ChatContextToolbarComponent,
+    AilyMarkdownExternalLinksDirective,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
