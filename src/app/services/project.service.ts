@@ -89,6 +89,7 @@ export class ProjectService {
   };
 
   projectRootPath: string;
+  private projectRootPathInitPromise: Promise<void> | null = null;
 
   // 当前项目路径的 getter 和 setter
   get currentProjectPath(): string {
@@ -259,11 +260,37 @@ export class ProjectService {
         }
       });
 
-      this.projectRootPath = (await window['env'].get("AILY_PROJECT_PATH")).replace('%HOMEPATH%\\Documents\\', window['path'].getUserDocuments() + this.platformService.getPlatformSeparator());
+      await this.ensureProjectRootPath();
       // if (!this.currentProjectPath) {
       //   this.currentProjectPath = this.projectRootPath;
       // }
     }
+  }
+
+  /** 解析 AILY_PROJECT_PATH，供主窗口与 chat execution-worker 等独立 renderer 复用。 */
+  async ensureProjectRootPath(): Promise<void> {
+    if (typeof this.projectRootPath === 'string' && this.projectRootPath.trim().length > 0) {
+      return;
+    }
+    if (this.projectRootPathInitPromise) {
+      return this.projectRootPathInitPromise;
+    }
+
+    this.projectRootPathInitPromise = this.loadProjectRootPathFromEnv();
+    try {
+      await this.projectRootPathInitPromise;
+    } finally {
+      this.projectRootPathInitPromise = null;
+    }
+  }
+
+  private async loadProjectRootPathFromEnv(): Promise<void> {
+    if (!this.electronService.isElectron) {
+      return;
+    }
+
+    const rawAilyProjectPath = await window['env'].get("AILY_PROJECT_PATH");
+    this.projectRootPath = rawAilyProjectPath.replace('%HOMEPATH%\\Documents\\', window['path'].getUserDocuments() + this.platformService.getPlatformSeparator());
   }
 
   // 检测字符串是否包含中文字符
